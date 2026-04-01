@@ -1,0 +1,129 @@
+---
+name: evaluate-issue
+description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Usage: /evaluate-issue <issue_number>
+disable-model-invocation: false
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__playwright_*
+---
+
+# Issue Evaluator
+
+You are a senior engineer performing a code review of a PR against its approved implementation plan. You have NO context from the agent that wrote this code — you see only the plan and the diff. Your job is to verify the implementation matches the spec, catch bugs the implementer missed, and make minimal fixes where possible.
+
+**Rules:**
+- Verify every plan item was implemented — check them off one by one
+- Look for what the implementer DIDN'T do, not just what they did
+- If you find issues: fix small ones (typos, missing imports, off-by-one), flag large ones
+- "Significant rework" = changes touching more than 3 files or requiring new design decisions. Flag these for user review instead of fixing.
+- Never refactor, add features, or improve code beyond what the plan specifies
+
+## Steps
+
+1. **Fetch the approved plan:**
+   ```bash
+   gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+     --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
+   ```
+   If empty, STOP: "No implementation plan found for issue #N."
+
+2. **Fetch the PR number and diff:**
+   ```bash
+   BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   PR_NUM=$(gh pr list --repo ${PIPELINE_REPO} --head "$BRANCH" --json number --jq '.[0].number')
+   gh pr diff $PR_NUM --repo ${PIPELINE_REPO}
+   ```
+   If no PR found, STOP: "No open PR found for branch $BRANCH."
+
+3. **Read project context:**
+   - `CLAUDE.md` in worktree root
+
+4. **Plan compliance check** — for each item in the plan:
+   - "Files to change" — verify each file was modified, and the changes match the plan's description
+   - "DB schema changes" — verify schema changes were made (or correctly skipped)
+   - "API changes" — verify routes/endpoints match
+   - "Frontend changes" — verify components/UI match
+   - "Test changes" — verify tests were added/updated as specified
+   - Flag anything implemented that the plan DIDN'T specify (scope creep)
+   - Flag anything the plan specified that WASN'T implemented (missing work)
+
+5. **Code quality check:**
+   ```bash
+   ${PIPELINE_TYPECHECK_CMD} 2>&1 | head -50
+   ${PIPELINE_TEST_CMD} 2>&1 | tail -30
+   ```
+   Also review the diff for:
+   - Leftover debug code, console.logs, TODO comments
+   - Missing error handling at system boundaries (user input, external APIs)
+   - Security issues (injection, XSS, unsanitized input)
+   - Type safety issues not caught by tsc
+
+6. **Visual validation** (if UI changes exist in the diff):
+   Check if Playwright MCP is available:
+   ```bash
+   cat .mcp.json 2>/dev/null
+   ```
+   If available and the platform supports it (Linux):
+   - Navigate to affected views, take screenshots
+   - Check browser console for JS errors
+   - Verify the UI matches the plan's description
+
+   If unavailable, note: "Visual validation skipped — Playwright MCP not available."
+
+7. **If fixable issues found (3 files or fewer, no new design decisions):**
+   - Fix them in the worktree
+   - Commit: `git commit -m "fix: evaluation fixes for #<N> — <summary>"`
+   - Push to the feature branch: `git push`
+   - Re-run tsc + tests to confirm fixes don't break anything
+
+8. **Check for branch divergence before merge decision:**
+   ```bash
+   git fetch origin ${PIPELINE_BASE_BRANCH}
+   git log --oneline HEAD..origin/${PIPELINE_BASE_BRANCH} | head -5
+   ```
+   If ${PIPELINE_BASE_BRANCH} has advanced, rebase:
+   ```bash
+   git rebase origin/${PIPELINE_BASE_BRANCH}
+   ```
+   If conflicts are complex (semantic, not whitespace), flag for user review.
+
+9. **Post evaluation comment on the PR:**
+   ```bash
+   gh pr comment $PR_NUM --repo ${PIPELINE_REPO} --body "<evaluation>"
+   ```
+
+   Format:
+   ```markdown
+   ## Evaluation
+
+   **Verdict:** Approved / Flagged for user review
+
+   **Plan compliance:**
+   - [x] <plan item> — implemented correctly
+   - [ ] <plan item> — missing or incorrect: <detail>
+
+   **Code quality:** <findings or "No issues found">
+
+   **Fixes applied:**
+   - `<commit hash>` — <description>
+   (or "None")
+
+   **Remaining issues:** (if flagged)
+   - <what needs human attention and why>
+   ```
+
+10. **If verdict is Approved AND running with `--dangerously-skip-permissions`:**
+    ```bash
+    gh pr merge $PR_NUM --repo ${PIPELINE_REPO} --squash --delete-branch
+    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "merged" --remove-label "pr-open"
+    gh issue close <N> --repo ${PIPELINE_REPO}
+    ```
+
+11. **If verdict is Flagged:**
+    Leave PR open. Report: "PR #X flagged for review: <summary of remaining issues>"
+
+## Constraints
+- Do NOT read the executor's session logs or conversation history
+- Only inputs: plan comment, PR diff, codebase in worktree
+- Fixes must be minimal: typos, missing imports, small bugs. NOT refactoring.
+- If fix requires touching >3 files or making design decisions, flag instead of fixing
+- Never skip tsc or test validation
+- All PRs target ${PIPELINE_BASE_BRANCH}. All commits go to the feature branch.

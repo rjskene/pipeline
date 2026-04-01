@@ -1,0 +1,207 @@
+#!/bin/bash
+set -euo pipefail
+
+# Source project config
+source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+
+# Orchestrate multiple agent sessions with concurrency limits.
+# Launches up to MAX_CONCURRENT agents at a time, polls for completion,
+# and launches the next queued issue when a slot opens.
+#
+# Usage: bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
+# Example: bash .claude/scripts/run-queue.sh --skip-permissions 66 68 69 71
+#
+# Must be run inside a tmux session (the queue runner uses window 0,
+# agents spawn in new windows).
+#
+# Queue log is written to .claude/logs/queue-YYYYMMDD-HHMMSS.log
+
+SKIP_PERMS=""
+if [ "${1:-}" = "--skip-permissions" ]; then
+  SKIP_PERMS="--dangerously-skip-permissions"
+  shift
+fi
+
+SKILL_FLAG=""
+if [ "${1:-}" = "--skill" ]; then
+  SKILL_FLAG="--skill $2"
+  shift 2
+fi
+
+MAX_CONCURRENT="${MAX_AGENTS:-2}"
+POLL_INTERVAL="${POLL_SECONDS:-60}"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
+LOG_DIR="${REPO_ROOT}/.claude/logs"
+QUEUE_LOG="${LOG_DIR}/queue-$(date +%Y%m%d-%H%M%S).log"
+
+# Log to both stdout and queue log file
+log() {
+  echo "$@" | tee -a "$QUEUE_LOG"
+}
+
+# Collect issue queue from args
+QUEUE=("$@")
+if [ ${#QUEUE[@]} -eq 0 ]; then
+  echo "Usage: bash $0 [--skip-permissions] <issue1> <issue2> ..."
+  exit 1
+fi
+
+# Verify we're inside tmux
+if [ -z "${TMUX:-}" ]; then
+  echo "ERROR: Must be run inside a tmux session."
+  echo "  Start one with: tmux new -s dev"
+  exit 1
+fi
+
+# Single issue — launch directly, no queue overhead
+if [ ${#QUEUE[@]} -eq 1 ]; then
+  ISSUE="${QUEUE[0]}"
+  WT_PATH=$(git worktree list --porcelain | grep -B0 "worktree.*${PIPELINE_WORKTREE_PREFIX}-${ISSUE}-" | head -1 | sed 's/worktree //')
+  if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
+    log "ERROR: No worktree found for issue #${ISSUE}."
+    exit 1
+  fi
+  SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//")
+  log "Single issue — launching directly (no queue)."
+  log "Queue log: ${QUEUE_LOG}"
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
+  exit 0
+fi
+
+# Track active and completed issues
+declare -A ACTIVE=()    # issue -> worktree path
+declare -A RESULTS=()   # issue -> status (running/done/failed)
+declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
+QUEUE_INDEX=0
+IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
+
+log "========================================"
+log "AGENT QUEUE RUNNER"
+log "========================================"
+log "  Issues: ${QUEUE[*]}"
+log "  Max concurrent: ${MAX_CONCURRENT}"
+log "  Poll interval: ${POLL_INTERVAL}s"
+log "  Skill: ${SKILL_FLAG:-execute-issue (default)}"
+log "  Skip permissions: $([ -n "$SKIP_PERMS" ] && echo 'yes' || echo 'no')"
+log "  Queue log: ${QUEUE_LOG}"
+log "========================================"
+log ""
+
+# Find worktree path for an issue number
+find_worktree() {
+  local issue="$1"
+  local wt_path
+  wt_path=$(git worktree list --porcelain | grep -B0 "worktree.*${PIPELINE_WORKTREE_PREFIX}-${issue}-" | head -1 | sed 's/worktree //')
+  echo "$wt_path"
+}
+
+# Extract slug from worktree path (e.g., ct-66-rating-consistency -> rating-consistency)
+slug_from_path() {
+  local path="$1"
+  basename "$path" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//"
+}
+
+# Check if an agent's tmux window is still alive
+is_agent_running() {
+  local issue="$1"
+  tmux list-windows -t dev -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
+}
+
+# Launch an agent for an issue
+launch_agent() {
+  local issue="$1"
+  local wt_path
+  wt_path=$(find_worktree "$issue")
+
+  if [ -z "$wt_path" ] || [ ! -d "$wt_path" ]; then
+    log "[$(date +%H:%M:%S)] ERROR: No worktree found for issue #${issue}. Skipping."
+    RESULTS[$issue]="failed-no-worktree"
+    return 1
+  fi
+
+  local slug
+  slug=$(slug_from_path "$wt_path")
+
+  log "[$(date +%H:%M:%S)] Launching agent for issue #${issue} (${slug})..."
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$wt_path" "$issue" "$slug" tmux
+
+  ACTIVE[$issue]="$wt_path"
+  RESULTS[$issue]="running"
+}
+
+# Check GitHub for issue outcome (PR created? merged?)
+check_issue_outcome() {
+  local issue="$1"
+  local labels
+  labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+
+  if echo "$labels" | grep -q "merged"; then
+    echo "merged"
+  elif echo "$labels" | grep -q "pr-open"; then
+    echo "pr-open"
+  elif echo "$labels" | grep -q "in-progress"; then
+    echo "in-progress"
+  else
+    echo "unknown"
+  fi
+}
+
+# Fill available slots from the queue
+fill_slots() {
+  while [ ${#ACTIVE[@]} -lt $MAX_CONCURRENT ] && [ $QUEUE_INDEX -lt ${#QUEUE[@]} ]; do
+    local next_issue="${QUEUE[$QUEUE_INDEX]}"
+    QUEUE_INDEX=$((QUEUE_INDEX + 1))
+    launch_agent "$next_issue" || true
+  done
+}
+
+# Initial launch
+fill_slots
+
+log ""
+log "[$(date +%H:%M:%S)] Monitoring... (polling every ${POLL_INTERVAL}s)"
+log ""
+
+# Poll loop
+while [ ${#ACTIVE[@]} -gt 0 ]; do
+  sleep "$POLL_INTERVAL"
+
+  # Check each active agent
+  for issue in "${!ACTIVE[@]}"; do
+    if ! is_agent_running "$issue"; then
+      # Agent finished — check outcome
+      outcome=$(check_issue_outcome "$issue")
+      RESULTS[$issue]="$outcome"
+      unset 'ACTIVE['"$issue"']'
+      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
+
+      # Fill the open slot
+      fill_slots
+    fi
+  done
+
+  # Status line
+  active_list=""
+  for issue in "${!ACTIVE[@]}"; do
+    active_list="${active_list}#${issue} "
+  done
+  remaining=$((${#QUEUE[@]} - QUEUE_INDEX))
+  log "[$(date +%H:%M:%S)] Active: ${active_list:-none} | Queued: ${remaining}"
+done
+
+# Final summary
+log ""
+log "========================================"
+log "QUEUE COMPLETE — $(date)"
+log "========================================"
+printf "%-10s %-15s %s\n" "Issue" "Outcome" "Log" | tee -a "$QUEUE_LOG"
+log "----------------------------------------"
+for issue in "${QUEUE[@]}"; do
+  outcome="${RESULTS[$issue]:-unknown}"
+  log_file=$(ls -t "${LOG_DIR}"/issue-"${issue}"-*.log 2>/dev/null | head -1 || echo "n/a")
+  printf "%-10s %-15s %s\n" "#${issue}" "$outcome" "$(basename "${log_file}")" | tee -a "$QUEUE_LOG"
+done
+log "========================================"
+log ""
+log "Review details: bash .claude/scripts/review-logs.sh"

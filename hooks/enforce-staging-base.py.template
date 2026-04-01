@@ -1,0 +1,26 @@
+"""
+PreToolUse hook — ensures all PRs target '${PIPELINE_BASE_BRANCH}', never 'main'.
+Blocks `gh pr create` commands that use `--base main` or omit `--base` entirely.
+"""
+import json
+import re
+import sys
+
+data = json.load(sys.stdin)
+command = data.get("tool_input", {}).get("command", "")
+
+# Only inspect gh pr create commands
+if not re.search(r"\bgh\s+pr\s+create\b", command):
+    sys.exit(0)
+
+# Block if --base main
+if re.search(r"--base\s+main\b", command):
+    print("BLOCKED: PRs must target '${PIPELINE_BASE_BRANCH}', not 'main'. Use --base ${PIPELINE_BASE_BRANCH}.", file=sys.stderr)
+    sys.exit(1)
+
+# Block if no --base flag at all (would default to repo default branch)
+if not re.search(r"--base\s+\S+", command):
+    print("BLOCKED: PRs must explicitly use --base ${PIPELINE_BASE_BRANCH}.", file=sys.stderr)
+    sys.exit(1)
+
+sys.exit(0)

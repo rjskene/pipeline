@@ -1,0 +1,248 @@
+---
+name: pipeline
+description: Check the status of the GitHub issue pipeline and advance the next stage. Run this at the start of any coding session to see what is ready and propose next actions.
+disable-model-invocation: false
+allowed-tools: Read, Bash, Glob, Grep, Agent
+---
+
+# Pipeline Coordinator
+
+## Issue discovery
+
+Pipeline issues are fetched dynamically from GitHub — not hardcoded. At the start of each run, fetch all open issues:
+
+```bash
+gh issue list --repo ${PIPELINE_REPO} --state open --json number,title,labels --limit 100
+```
+
+**Excluded labels:** Issues with the label `${PIPELINE_LABELS_EXCLUDED}` are skipped entirely. Issues with the label `${PIPELINE_LABELS_LATER}` are shown in the status table (stage = `${PIPELINE_LABELS_LATER}`) but are **not** proposed for any action. All other open issues are pipeline candidates.
+
+### Branch and worktree naming convention
+- Branch: `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short)
+- Worktree path: `.claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-<issue_number>-<slug>` (e.g., `.claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-25-gantt-contract-creation`)
+- If an issue already has a branch (check `gh issue view N` body/comments or existing branches), use that branch name
+- Issues that share a branch (noted in issue body or comments) should be grouped together
+
+## Label flow
+
+```
+(no label) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged → (cleaned up)
+```
+
+- `plan-pending` — plan posted, awaiting evaluation
+- `plan-reviewed` — evaluation posted, awaiting user approval
+- `plan-approved` — user approved the plan; ready for execution
+- `in-progress` — execution agent is implementing
+- `pr-open` — PR created, awaiting evaluation/review/merge
+- `merged` — PR merged, worktree ready for cleanup
+
+## Worktree-only rule
+
+**NEVER implement GitHub issue work directly on the current branch.** All issue-related changes — no matter how small — must go through a worktree, feature branch, and PR. This ensures the main working directory stays clean and every issue follows the full pipeline flow (worktree → branch → PR → merge → cleanup).
+
+If the user asks to "just fix" an issue or work on it directly, remind them that pipeline issues require a worktree and propose setting one up.
+
+## Steps
+
+0. **Housekeeping — sync worktrees + kill stale sessions** — if any worktrees exist, run the sync script to ensure all active worktrees have up-to-date CLAUDE.md files, `.claude/` settings, and hooks:
+   ```bash
+   bash .claude/scripts/sync-worktrees.sh
+   ```
+   Report any fixes briefly.
+
+   Then check for stale tmux sessions from previous pipeline runs. If a tmux `dev` session exists, kill any leftover queue runner and agent windows:
+   ```bash
+   # List all windows in the dev session
+   tmux list-windows -t dev -F '#{window_name}' 2>/dev/null
+   ```
+   - Kill any `issue-*` windows (stale agent sessions from prior runs)
+   - If window 0 is running a queue runner (`run-queue.sh`), send Ctrl-C to stop it
+   ```bash
+   # Kill stale agent windows
+   for win in $(tmux list-windows -t dev -F '#{window_name}' 2>/dev/null | grep '^issue-'); do
+     tmux kill-window -t "dev:${win}" 2>/dev/null || true
+   done
+   # Interrupt any running queue runner in the first window
+   tmux send-keys -t dev:0 C-c 2>/dev/null || true
+   ```
+   Report what was cleaned up, then proceed.
+
+1. **Check for agent session logs** — if any logs exist in `.claude/logs/`, run the summary:
+   ```bash
+   bash .claude/scripts/review-logs.sh
+   ```
+   If there are logs, show the summary table and ask: **"Review any session logs before continuing? (issue number / all / skip)"**
+   - If the user gives an issue number, run `bash .claude/scripts/review-logs.sh <N>` and display the output.
+   - If "all", run the detail view for each issue with errors > 0.
+   - If "skip", proceed to the next step.
+
+2. **Discover pipeline issues** — fetch all open AND recently closed issues, and classify by label:
+   ```bash
+   gh issue list --repo ${PIPELINE_REPO} --state open --json number,title,labels --limit 100
+   gh issue list --repo ${PIPELINE_REPO} --state closed --json number,title,labels --limit 20
+   gh pr list --repo ${PIPELINE_REPO} --state merged --json headRefName,number --jq '[.[] | {branch: .headRefName, pr: .number}]'
+   git worktree list
+   ```
+   Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `${PIPELINE_LABELS_EXCLUDED}`.
+
+   **Detect cleanup candidates:** Cross-reference active worktrees (from `git worktree list`) with merged PRs. A worktree whose branch appears in the merged PR list is a cleanup candidate. Also check for `pr-open` issues whose PR has been merged (state = MERGED) — these need cleanup too.
+
+3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
+
+4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `${PIPELINE_LABELS_LATER}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc.
+   ```
+   PIPELINE STATUS — <today's date>
+   ================================================================
+    Issue  Title                    Stage          Tags                   Blocked?
+   ----------------------------------------------------------------
+    #N     <title>                  <stage>        feature, ui            <yes/no>
+    ...
+   ================================================================
+   ```
+
+5. **Propose ONE action** based on state priority:
+   - If any worktrees are cleanup candidates (merged PR with active worktree) → propose cleanup. List each candidate with its issue number and worktree path.
+   - Else if any issues have `in-progress` → print which ones and note agents are working. Do not propose anything else.
+   - Else if any issues have `pr-open`:
+     - For each, check if the PR has an evaluation comment:
+       ```bash
+       PR_NUM=$(gh pr list --repo ${PIPELINE_REPO} --head <branch> --json number --jq '.[0].number')
+       gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json comments --jq '[.comments[] | select(.body | contains("## Evaluation"))] | length'
+       ```
+     - If any `pr-open` issues have NO evaluation comment → propose running `/evaluate-issue` for those issues (in their existing worktrees).
+     - If all `pr-open` issues HAVE evaluation comments → remind user to review flagged PRs or note they're ready to merge.
+   - Else if any issues have `plan-pending`:
+     - For each, check if the issue has a plan evaluation comment:
+       ```bash
+       gh issue view $N --repo ${PIPELINE_REPO} --json comments --jq '[.comments[] | select(.body | contains("## Plan Evaluation"))] | length'
+       ```
+     - If any `plan-pending` issues have NO plan evaluation → propose running `/evaluate-plan` for those issues.
+     - If any `plan-pending` issues HAVE a plan evaluation AND user feedback comments (from rjskene) posted AFTER the evaluation → propose re-running `/plan-issue N` to revise.
+     - Otherwise, note they are awaiting user review.
+   - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
+   - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
+   - Else if any issues have no pipeline label and are not blocked → propose planning for those issues (in parallel).
+   - If all issues are merged/done → congratulate and exit.
+
+6. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
+
+7. **On confirmation:**
+
+   **IMPORTANT: All agents MUST run in foreground (never `run_in_background`).** Background agents lose tool permissions and the user cannot monitor progress.
+
+   **For cleanup (merged PRs with active worktrees):**
+
+   **Step A — Update CLAUDE.md files.** Before removing any worktree, review what the merged branch changed and update the CLAUDE.md documentation so it reflects the new state of the codebase. For each cleanup candidate:
+   1. Get the diff of the merged branch against ${PIPELINE_BASE_BRANCH}:
+      ```bash
+      gh pr view <pr_number> --repo ${PIPELINE_REPO} --json files --jq '.files[].path'
+      gh pr diff <pr_number> --repo ${PIPELINE_REPO}
+      ```
+   2. Read the current CLAUDE.md files (check each file listed in: ${PIPELINE_CONTEXT_FILES}).
+   3. Determine if the changes introduced new routes, env vars, Python scripts, schema fields, CLI args, or other items that should be documented. If so, update the relevant CLAUDE.md file(s) in the **main repo** working directory.
+   4. If multiple worktrees are being cleaned up, batch all CLAUDE.md updates into a single commit.
+   5. Commit the CLAUDE.md updates (if any) to the current branch before proceeding:
+      ```bash
+      git add CLAUDE.md web/CLAUDE.md redline/CLAUDE.md
+      git diff --cached --quiet || git commit -m "docs: update CLAUDE.md files after merging #<N>"
+      ```
+
+   **Step B — Run cleanup.** Then run the cleanup script for each candidate:
+   ```bash
+   bash .claude/scripts/cleanup-worktree.sh <issue_number>
+   ```
+   This script (in order): verifies the PR is merged/closed, closes the GitHub issue with the `merged` label, consolidates tool-use logs, removes the git worktree, and deletes the remote+local branch.
+
+   If multiple worktrees need cleanup, run them sequentially. After all cleanups, print a summary:
+   ```
+   CLEANUP COMPLETE
+   ================================================================
+   Issue  CLAUDE.md Updated?   Status
+   ----------------------------------------------------------------
+   #N     yes / no              Cleaned up (worktree removed, containers stopped, issue closed)
+   ================================================================
+   ```
+
+   **For plan evaluation (plan-pending → plan-reviewed):** Run `/evaluate-plan N` for each issue needing evaluation. If multiple issues need evaluation, spawn one Agent per issue in parallel (foreground), each invoking `/evaluate-plan N`. The evaluate-plan skill is read-only — it reads the plan comment and codebase, posts an evaluation comment, and updates labels. If the verdict is "Approve," the label changes to `plan-reviewed`. If "Revise," the label stays `plan-pending` and the evaluation comment explains what needs to change.
+
+   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Run `/plan-issue N` for each issue. If multiple issues need planning, spawn one Agent per issue in parallel (foreground), each invoking `/plan-issue N`. If multiple issues share a branch (discovered from issue body/comments or matching branch names), plan them together in a single agent call. The plan-issue skill reads prior comments (including user feedback) and produces a revised plan when feedback exists.
+
+   **For PR evaluation (pr-open → evaluated):** Use the same launch flow as execution — the worktree already exists from execute-issue, no setup needed.
+   1. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
+   2. Launch via spawn-claude.sh with `--skill evaluate-issue`:
+      ```bash
+      bash .claude/scripts/spawn-claude.sh [--dangerously-skip-permissions] --skill evaluate-issue <worktree-path> <issue> <slug> <mode>
+      ```
+   3. For multiple issues, use the queue runner:
+      ```bash
+      bash .claude/scripts/run-queue.sh [--skip-permissions] --skill evaluate-issue <issue1> <issue2> ...
+      ```
+   4. The evaluate-issue skill reviews the PR diff against the plan, makes minimal fixes if needed, and either auto-merges (if approved and running with skip-permissions) or flags for user review.
+
+   **For execution (plan-approved → worktree setup):** For each approved issue's branch (deduplicated — issues sharing a branch get one worktree):
+   1. Run the setup script with the issue number:
+      ```bash
+      bash .claude/scripts/setup-worktree.sh <branch> <issue_number>
+      ```
+      This creates the worktree at `.claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-<issue_number>-<slug>`, copies `.claude/settings.local.json`, installs dependencies, and seeds the dev database.
+
+   2. After ALL worktrees are set up, print a summary with the frontend URL for each issue. The frontend port is `${PIPELINE_FRONTEND_PORT_OFFSET} + issue_number`:
+      ```
+      WORKTREES READY
+      ================================================================
+      Issue  Frontend URL                        Worktree Path
+      ----------------------------------------------------------------
+      #N     http://<droplet-ip>:<${PIPELINE_FRONTEND_PORT_OFFSET}+N>        .claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-N-<slug>
+      ================================================================
+      ```
+      To get the droplet IP, run: `curl -s ifconfig.me`
+
+   3. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
+      If the user opts in to skip permissions, pass `--dangerously-skip-permissions` to the spawn script. This lets agents run without any permission prompts (all tool calls auto-approved).
+      - **terminal** (default) — new Terminal.app window per issue with interactive Claude, auto-fires `/execute-issue N`. User monitors and interacts locally.
+      - **tmux** — tmux windows in a `dev` session, auto-fires `/execute-issue N`
+      - **remote-control** — `claude remote-control` servers, control from Claude mobile app or claude.ai/code. Only use this mode when the user explicitly says "remote-control".
+      - **manual** — print instructions only
+
+   4. **If user says tmux and there are 2+ issues** — use the queue runner to manage concurrency (max 2 at a time):
+      ```bash
+      bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
+      ```
+      Only pass `--skip-permissions` if the user opted in at step 3. The queue runner must be executed from inside a tmux session. If no tmux session exists, create one first:
+      ```bash
+      tmux new -s dev -d
+      ```
+      Then launch the queue runner in a tmux window:
+      ```bash
+      tmux send-keys -t dev "bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ..." Enter
+      ```
+      The queue runner launches up to 2 agents at a time, polls for completion every 60s, and fills slots as agents finish. Override with `MAX_AGENTS=N` or `POLL_SECONDS=N` env vars.
+
+      After launching, print:
+      ```
+      QUEUE STARTED (tmux mode, max 2 concurrent)
+      ================================================================
+      Issue  Worktree
+      ----------------------------------------------------------------
+      #N     .claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-N-<slug>
+      ================================================================
+      ```
+      Add: "Queue runner is in tmux window 0. Agent windows appear as they launch."
+      Add: "Monitor with: tmux attach -t dev"
+
+   5. **If user says tmux/terminal/remote-control and there is only 1 issue** — spawn directly:
+      ```bash
+      bash .claude/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue_number> <slug> <mode>
+      ```
+      Where `<mode>` is `terminal`, `tmux`, or `remote-control`. Only pass `--dangerously-skip-permissions` if the user opted in at step 3.
+
+   6. **If user says manual** — print manual instructions:
+      ```
+      Open each worktree in a terminal. They can run in parallel.
+
+      Interactive: cd <worktree-path> && claude [--dangerously-skip-permissions] "/execute-issue N"
+      Remote:      cd <worktree-path> && claude [--dangerously-skip-permissions] remote-control --name "issue-N-<slug>"
+      Queue:       bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
+      ```
+
+8. **After agents complete**, report results and tell the user what to do next (review plans on GitHub, merge PRs, etc).

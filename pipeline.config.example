@@ -1,0 +1,21 @@
+# pipeline.config.example — Copy to pipeline.config in your project root and edit.
+#
+# This file is sourced by shell scripts at runtime and used by install.sh
+# for template substitution into SKILL.md files and Python hooks.
+
+PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
+PIPELINE_BASE_BRANCH="staging"                     # PR target branch (e.g., staging, main, develop)
+PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
+PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
+PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
+PIPELINE_TEST_CMD="npm test"                       # Test command
+PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
+PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read
+PIPELINE_SYNC_ENVS=""                              # Space-separated .env files to sync to worktrees
+PIPELINE_SYNC_VENVS=""                             # Space-separated venv dirs to symlink to worktrees
+PIPELINE_SYNC_DOCS="CLAUDE.md"                     # Space-separated doc files to sync across worktrees
+PIPELINE_SYNC_FILES=""                             # Space-separated other files to sync (e.g., .mcp.json)
+PIPELINE_FRONTEND_PORT_OFFSET=4000                 # Frontend port = offset + issue number
+PIPELINE_LABELS_EXCLUDED="excluded"                # Label to exclude issues from pipeline
+PIPELINE_LABELS_LATER="later"                      # Label for deferred issues
+PIPELINE_WIN_TEMP=""                               # Windows temp dir (e.g., /c/Users/you/AppData/Local/Temp). Leave empty for non-Windows.

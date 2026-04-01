@@ -1,0 +1,181 @@
+#!/bin/bash
+set -euo pipefail
+
+# install.sh — Generate project-specific pipeline files from templates.
+#
+# Reads pipeline.config from the project root, then:
+# - Renders .template SKILL.md files → .claude/skills/<name>/SKILL.md
+# - Renders .template script files   → .claude/scripts/<name>.sh
+# - Renders .template hook files     → .claude/hooks/<name>
+# - Copies non-template files as-is
+#
+# Usage: bash .claude-pipeline/install.sh
+
+PIPELINE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$PIPELINE_DIR/.." && pwd)"
+CONFIG_FILE="$PROJECT_ROOT/pipeline.config"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "ERROR: pipeline.config not found at $CONFIG_FILE"
+  echo "Copy .claude-pipeline/pipeline.config.example to pipeline.config and edit it."
+  exit 1
+fi
+
+# Check for envsubst
+if ! command -v envsubst &>/dev/null; then
+  echo "ERROR: envsubst not found."
+  echo "  Linux:  sudo apt-get install gettext-base"
+  echo "  macOS:  brew install gettext && brew link --force gettext"
+  echo "  Git Bash (Windows): included by default"
+  exit 1
+fi
+
+# Source config and export all PIPELINE_* variables
+source "$CONFIG_FILE"
+export PIPELINE_REPO PIPELINE_BASE_BRANCH PIPELINE_WORKTREE_PREFIX
+export PIPELINE_INSTALL_CMD PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TYPECHECK_CMD
+export PIPELINE_CONTEXT_FILES PIPELINE_SYNC_ENVS PIPELINE_SYNC_VENVS
+export PIPELINE_SYNC_DOCS PIPELINE_SYNC_FILES
+export PIPELINE_FRONTEND_PORT_OFFSET PIPELINE_LABELS_EXCLUDED PIPELINE_LABELS_LATER
+export PIPELINE_WIN_TEMP
+
+# Build explicit envsubst variable list to avoid clobbering unrelated $VAR references
+ENVSUBST_VARS='$PIPELINE_REPO $PIPELINE_BASE_BRANCH $PIPELINE_WORKTREE_PREFIX'
+ENVSUBST_VARS+=' $PIPELINE_INSTALL_CMD $PIPELINE_SEED_CMD $PIPELINE_TEST_CMD $PIPELINE_TYPECHECK_CMD'
+ENVSUBST_VARS+=' $PIPELINE_CONTEXT_FILES $PIPELINE_SYNC_ENVS $PIPELINE_SYNC_VENVS'
+ENVSUBST_VARS+=' $PIPELINE_SYNC_DOCS $PIPELINE_SYNC_FILES'
+ENVSUBST_VARS+=' $PIPELINE_FRONTEND_PORT_OFFSET $PIPELINE_LABELS_EXCLUDED $PIPELINE_LABELS_LATER'
+ENVSUBST_VARS+=' $PIPELINE_WIN_TEMP'
+
+SKILLS_INSTALLED=0
+SCRIPTS_INSTALLED=0
+HOOKS_INSTALLED=0
+SKIPPED=0
+
+echo "=== Claude Pipeline Installer ==="
+echo "  Pipeline dir: $PIPELINE_DIR"
+echo "  Project root: $PROJECT_ROOT"
+echo "  Config: $CONFIG_FILE"
+echo ""
+
+# --- Install skill templates ---
+echo "--- Skills ---"
+for template in "$PIPELINE_DIR"/skills/*/SKILL.md.template; do
+  [ -f "$template" ] || continue
+  skill_name="$(basename "$(dirname "$template")")"
+  output_dir="$PROJECT_ROOT/.claude/skills/$skill_name"
+  output_file="$output_dir/SKILL.md"
+
+  mkdir -p "$output_dir"
+
+  # Generate from template
+  rendered=$(envsubst "$ENVSUBST_VARS" < "$template")
+
+  # Skip if identical
+  if [ -f "$output_file" ] && [ "$(echo "$rendered" | diff -q - "$output_file" 2>/dev/null; echo $?)" = "0" ]; then
+    echo "  [skip] $skill_name/SKILL.md (unchanged)"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    echo "$rendered" > "$output_file"
+    echo "  [ok]   $skill_name/SKILL.md"
+    SKILLS_INSTALLED=$((SKILLS_INSTALLED + 1))
+  fi
+done
+
+# --- Install script templates ---
+echo ""
+echo "--- Scripts ---"
+for template in "$PIPELINE_DIR"/scripts/*.template; do
+  [ -f "$template" ] || continue
+  # Remove .template suffix to get output filename
+  base_name="$(basename "$template" .template)"
+  output_file="$PROJECT_ROOT/.claude/scripts/$base_name"
+
+  mkdir -p "$PROJECT_ROOT/.claude/scripts"
+
+  # Shell scripts source pipeline.config at runtime — just copy them as-is.
+  # Do NOT run envsubst on scripts (their $PIPELINE_* vars resolve at runtime).
+  if [ -f "$output_file" ] && diff -q "$template" "$output_file" >/dev/null 2>&1; then
+    echo "  [skip] $base_name (unchanged)"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    cp "$template" "$output_file"
+    chmod +x "$output_file"
+    echo "  [ok]   $base_name"
+    SCRIPTS_INSTALLED=$((SCRIPTS_INSTALLED + 1))
+  fi
+done
+
+# Copy non-template scripts as-is
+for script in "$PIPELINE_DIR"/scripts/*.sh; do
+  [ -f "$script" ] || continue
+  base_name="$(basename "$script")"
+  # Skip if there's a .template version (already handled above)
+  [ -f "$PIPELINE_DIR/scripts/${base_name}.template" ] && continue
+  output_file="$PROJECT_ROOT/.claude/scripts/$base_name"
+
+  mkdir -p "$PROJECT_ROOT/.claude/scripts"
+
+  if [ -f "$output_file" ] && diff -q "$script" "$output_file" >/dev/null 2>&1; then
+    echo "  [skip] $base_name (unchanged)"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    cp "$script" "$output_file"
+    chmod +x "$output_file"
+    echo "  [ok]   $base_name"
+    SCRIPTS_INSTALLED=$((SCRIPTS_INSTALLED + 1))
+  fi
+done
+
+# --- Install hook templates ---
+echo ""
+echo "--- Hooks ---"
+for template in "$PIPELINE_DIR"/hooks/*.template; do
+  [ -f "$template" ] || continue
+  # Remove .template suffix
+  base_name="$(basename "$template" .template)"
+  output_file="$PROJECT_ROOT/.claude/hooks/$base_name"
+
+  mkdir -p "$PROJECT_ROOT/.claude/hooks"
+
+  rendered=$(envsubst "$ENVSUBST_VARS" < "$template")
+
+  if [ -f "$output_file" ] && [ "$(echo "$rendered" | diff -q - "$output_file" 2>/dev/null; echo $?)" = "0" ]; then
+    echo "  [skip] $base_name (unchanged)"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    echo "$rendered" > "$output_file"
+    # Make .sh hooks executable
+    case "$base_name" in *.sh) chmod +x "$output_file" ;; esac
+    echo "  [ok]   $base_name"
+    HOOKS_INSTALLED=$((HOOKS_INSTALLED + 1))
+  fi
+done
+
+# Copy non-template hooks as-is
+for hook in "$PIPELINE_DIR"/hooks/*; do
+  [ -f "$hook" ] || continue
+  base_name="$(basename "$hook")"
+  # Skip template files (already handled above)
+  case "$base_name" in *.template) continue ;; esac
+  output_file="$PROJECT_ROOT/.claude/hooks/$base_name"
+
+  mkdir -p "$PROJECT_ROOT/.claude/hooks"
+
+  if [ -f "$output_file" ] && diff -q "$hook" "$output_file" >/dev/null 2>&1; then
+    echo "  [skip] $base_name (unchanged)"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    cp "$hook" "$output_file"
+    case "$base_name" in *.sh) chmod +x "$output_file" ;; esac
+    echo "  [ok]   $base_name"
+    HOOKS_INSTALLED=$((HOOKS_INSTALLED + 1))
+  fi
+done
+
+echo ""
+echo "=== Done ==="
+TOTAL=$((SKILLS_INSTALLED + SCRIPTS_INSTALLED + HOOKS_INSTALLED))
+echo "  Installed: ${SKILLS_INSTALLED} skills, ${SCRIPTS_INSTALLED} scripts, ${HOOKS_INSTALLED} hooks"
+echo "  Skipped:   ${SKIPPED} (unchanged)"
+echo "  Total:     $((TOTAL + SKIPPED)) files processed"

@@ -1,0 +1,75 @@
+---
+name: plan-issue
+description: Produce an implementation plan for a specific GitHub issue, post it as a comment, and add the plan-pending label. Usage: /plan-issue <issue_number>
+disable-model-invocation: false
+allowed-tools: Read, Bash, Glob, Grep
+---
+
+# Planning Agent
+
+You will receive an issue number as the argument (or from context). Perform these steps:
+
+## Steps
+
+1. **Fetch issue details and existing comments:**
+   ```bash
+   gh issue view <N> --repo ${PIPELINE_REPO} --json number,title,body
+   gh issue view <N> --repo ${PIPELINE_REPO} --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
+   ```
+
+2. **Analyze existing comments** — look for:
+   - **Prior plans**: comments containing `## Implementation Plan` (posted by the planning agent or user)
+   - **User feedback**: any comments from the repo owner (rjskene) that are NOT plans — these are revision requests
+   - If user feedback exists on an existing plan, this is a **plan revision**. The revised plan MUST address every point in the user's feedback. Call out what changed with a `**Changes from previous plan:**` section at the top.
+
+3. **Read project context:**
+   - Read each file listed in the project's context files config: ${PIPELINE_CONTEXT_FILES}
+
+4. **Explore the codebase** — use Glob, Grep, and Read to find all files relevant to this issue. Look at:
+   - Schema files if the issue touches data
+   - Route files if the issue touches API
+   - Frontend components if the issue touches UI
+   - Test files if tests need updating
+
+5. **Write an implementation plan** using this exact format:
+
+   ```markdown
+   ## Implementation Plan
+
+   **Changes from previous plan:** (only if revising — bullet each change and which feedback it addresses)
+
+   **Files to change:**
+   - `path/to/file.ts` — reason
+
+   **DB schema changes:** (or "None")
+   **API changes:** (or "None")
+   **Frontend changes:** (or "None")
+   **Test changes:** (or "None")
+   **Design decisions:** (architecture, data structures, algorithms, mode behaviors — anything a developer needs to implement without ambiguity)
+   **Risks/unknowns:** (or "None")
+   **Estimated effort:** X hours
+   ```
+
+   **IMPORTANT — the GitHub comment IS the plan.** The `/execute-issue` skill reads ONLY the GitHub comment when implementing in a worktree. It has no access to local `.claude/plans/` files. Therefore:
+   - Include ALL design detail directly in the comment — data structures, tier tables, formulas, mode behaviors, prompt strategies, etc.
+   - Never summarize and point to a local plan file (e.g., "see `compressed-wibbling-sutherland.md` for details").
+   - If you used Claude's plan mode internally, fold its full content into the comment before posting.
+   - The executing Claude should be able to implement the feature from the comment alone, with zero missing context.
+
+6. **Post the plan as a GitHub comment:**
+   ```bash
+   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<plan markdown>"
+   ```
+
+7. **Update labels** — add `plan-pending`:
+   ```bash
+   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-pending"
+   ```
+
+8. **Report back:** "Plan posted to issue #N."
+
+## Constraints
+- READ ONLY — do not modify any source files.
+- Bullet points only, no prose padding.
+- Do not scope-creep beyond what the issue asks for.
+- If two issues share a branch (e.g. #13 and #12 both on feature/ui-polish), you may be called for both at once — post a separate comment on each issue.

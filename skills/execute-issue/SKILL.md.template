@@ -1,0 +1,157 @@
+---
+name: execute-issue
+description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /execute-issue <issue_number>
+disable-model-invocation: false
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__playwright_*
+---
+
+# Execution Agent
+
+You will receive an issue number as the argument (or from context). You should be running inside the correct feature worktree already. Perform these steps:
+
+## Steps
+
+1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan`:
+   ```bash
+   gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+     --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
+   ```
+   This finds the LATEST plan comment (supports revisions — latest plan wins).
+   If the output is empty or `null`, **STOP** and report: "No implementation plan found on issue #N. Run `/plan-issue N` first."
+   Read the plan carefully before proceeding.
+
+2. **Read project conventions:**
+   Read `CLAUDE.md` in the current working directory (worktree root).
+
+3. **Dependency check — issue #5 only:**
+   If this is issue #5 (project-numbers), verify that `feature/schema-cleanup` has been merged:
+   ```bash
+   gh pr list --repo ${PIPELINE_REPO} --state merged --json headRefName --jq '[.[].headRefName]'
+   ```
+   If `feature/schema-cleanup` is NOT in the list, **STOP** and report: "Issue #5 is blocked — feature/schema-cleanup has not been merged yet."
+
+4. **Mark as in-progress:**
+   ```bash
+   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "in-progress" --remove-label "plan-approved"
+   ```
+
+5. **Implement the approved plan exactly.** No scope creep — only what the plan specifies.
+   - Commit after each logical unit of work
+   - Follow commit message conventions from CLAUDE.md (clear "why", not just "what")
+   - Each commit must leave the app in a working state
+   - Never commit directly to main
+
+6. **Validate — types, tests, server, and UI:**
+
+   **6a. Type check:**
+   ```bash
+   ${PIPELINE_TYPECHECK_CMD}
+   ```
+   Fix any type errors before proceeding.
+
+   **6b. Run tests:**
+   ```bash
+   ${PIPELINE_TEST_CMD}
+   ```
+   Fix any failures before proceeding.
+
+   **6c. Visual validation with Playwright** (Linux only):
+   Use the Playwright MCP tools to verify the UI renders correctly. The MCP server is configured in `.mcp.json`.
+   - Navigate to the frontend URL (e.g., `http://localhost:<frontend-port>`)
+   - Take a screenshot to verify the page loads without errors
+   - If your changes affect specific UI elements, navigate to those views and verify they render
+   - Check the browser console for JavaScript errors (use `browser_console_messages` tool)
+   - If visual issues are found, fix them and re-validate
+
+   **Important:** Do not skip visual validation for UI changes. For backend-only changes, server health check + tests are sufficient.
+
+7. **Open a pull request:**
+   ```bash
+   gh pr create \
+     --repo ${PIPELINE_REPO} \
+     --title "<issue title>" \
+     --base ${PIPELINE_BASE_BRANCH} \
+     --body "$(cat <<'EOF'
+   Closes #<N>
+
+   ## Summary
+   <bullet points summarising what changed>
+
+   ## Test plan
+   - [ ] `npm test` — all tests pass
+   - [ ] Feature works end to end
+   - [ ] No console errors in browser dev tools
+   EOF
+   )"
+   ```
+
+8. **Mark as pr-open:**
+   ```bash
+   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "pr-open" --remove-label "in-progress"
+   ```
+
+9. **Validate test plan (only when running with `--dangerously-skip-permissions`):**
+   Skip this step entirely if not running in bypass permissions mode.
+
+   Go back and read the test plan you wrote in the PR body. Work through each checklist item and attempt to validate it:
+   - Run `npm test` and `tsc --noEmit` if not already passing
+   - Use Playwright MCP to navigate to relevant pages, take screenshots, and verify UI behavior
+   - Check for backend errors in the terminal output
+   - Use `curl` to hit API endpoints and verify responses
+   - For each item you can confirm, update the PR body to check it off (`- [x]`)
+   - For items you cannot validate (e.g., requires real Windows environment, manual user interaction), leave them unchecked and add a note: `<!-- Agent: could not validate — <reason> -->`
+
+   Update the PR body with your results:
+   ```bash
+   gh pr edit <PR_NUMBER> --repo ${PIPELINE_REPO} --body "$(cat <<'EOF'
+   <updated body with checked/unchecked items and notes>
+   EOF
+   )"
+   ```
+
+   **If any checklist items failed validation** (not "could not validate" — actually failed):
+   Fix the issue, push the fix, and re-validate. Repeat until all validatable items pass.
+
+   **If all validatable items pass**, proceed to auto-merge.
+   **If some items could not be validated**, leave the PR open for human review. Do NOT auto-merge. Report which items need human attention and stop.
+
+10. **Auto-merge (only when running with `--dangerously-skip-permissions`):**
+   Skip this step if step 9 left items that could not be validated.
+
+   Try to merge the PR:
+   ```bash
+   gh pr merge <PR_NUMBER> --repo ${PIPELINE_REPO} --squash --delete-branch
+   ```
+
+   **If merge succeeds:** Mark the issue as merged and report done.
+   ```bash
+   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "merged" --remove-label "pr-open"
+   gh issue close <N> --repo ${PIPELINE_REPO}
+   ```
+
+   **If merge fails due to conflicts:**
+   1. Fetch and attempt to rebase onto ${PIPELINE_BASE_BRANCH}:
+      ```bash
+      git fetch origin ${PIPELINE_BASE_BRANCH}
+      git rebase origin/${PIPELINE_BASE_BRANCH}
+      ```
+   2. If the conflicts are straightforward (e.g., import ordering, adjacent line changes, whitespace):
+      - Resolve them in the worktree
+      - Run tests again (`npm test`, `tsc --noEmit`)
+      - Force-push the branch: `git push --force-with-lease`
+      - Retry the merge: `gh pr merge <PR_NUMBER> --repo ${PIPELINE_REPO} --squash --delete-branch`
+      - If it succeeds, mark as merged (same as above)
+   3. If the conflicts are complex (semantic changes, overlapping logic, architectural decisions):
+      - Abort the rebase: `git rebase --abort`
+      - Push your branch as-is (so work is saved)
+      - Leave the PR open for human review
+      - Report: "PR #X has merge conflicts that need human review: <describe conflicts>"
+
+11. **Report:** "PR opened for #N: <PR URL>" (or "PR merged for #N" if auto-merged)
+
+## Constraints
+- Implement ONLY what the approved plan says.
+- Never commit to main.
+- All PRs target `${PIPELINE_BASE_BRANCH}`, never `main`. Always use `--base ${PIPELINE_BASE_BRANCH}`.
+- Never use `--no-verify` or `--force`.
+- Never skip build verification (`${PIPELINE_TEST_CMD}`).
