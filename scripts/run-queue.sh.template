@@ -28,7 +28,7 @@ if [ "${1:-}" = "--skill" ]; then
   shift 2
 fi
 
-MAX_CONCURRENT="${MAX_AGENTS:-2}"
+MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
