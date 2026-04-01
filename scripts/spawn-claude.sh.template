@@ -11,11 +11,8 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 #         "remote-control"     — remote-control server (control from mobile app / claude.ai/code)
 
 SKIP_PERMS=""
-RUN_AS=""
 if [ "${1:-}" = "--dangerously-skip-permissions" ]; then
   SKIP_PERMS="--dangerously-skip-permissions"
-  # Must run as non-root user (claude blocks --dangerously-skip-permissions as root)
-  RUN_AS="claude-dev"
   shift
 fi
 
@@ -39,54 +36,12 @@ mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="${LOG_DIR}/issue-${ISSUE_NUM}-${TIMESTAMP}.log"
 
-# If running as claude-dev, ensure they can write to the log file and own the worktree
-if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
-  chgrp "$RUN_AS" "$LOG_DIR"
-  chmod g+rwX "$LOG_DIR"
-  touch "$LOG_FILE"
-  chown "$RUN_AS":"$RUN_AS" "$LOG_FILE"
-fi
-
-# If running as claude-dev, ensure they own the worktree files + entire .git dir
-# (worktrees share .git/objects, .git/refs, etc. with the main repo)
-if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
-  # Mark all repo paths as safe FIRST — must happen before any git commands or
-  # chown, otherwise git refuses with "dubious ownership" after ownership changes
-  su - "$RUN_AS" -c "git config --global --add safe.directory '*'" 2>/dev/null || true
-  git config --global --add safe.directory '*' 2>/dev/null || true
-
-  # Resolve git dirs BEFORE chown (avoids dubious ownership errors)
-  MAIN_GIT_DIR="$(git -C "$WORKTREE_PATH" rev-parse --git-common-dir 2>/dev/null || true)"
-
-  # Construct worktree git metadata path directly — don't use git rev-parse
-  # which can fail after chown due to dubious ownership. The path is always
-  # .git/worktrees/<worktree-basename> in the main repo.
-  WT_BASENAME="$(basename "$WORKTREE_PATH")"
-  WT_GIT_DIR="${MAIN_GIT_DIR:+${MAIN_GIT_DIR}/worktrees/${WT_BASENAME}}"
-
-  # Give claude-dev ownership of the worktree files
-  chown -R "$RUN_AS":"$RUN_AS" "$WORKTREE_PATH"
-
-  # Ensure .git is group-writable so both root and claude-dev can commit
-  if [ -n "$MAIN_GIT_DIR" ] && [ -d "$MAIN_GIT_DIR" ]; then
-    chgrp -R "$RUN_AS" "$MAIN_GIT_DIR"
-    chmod -R g+rwX "$MAIN_GIT_DIR"
-    git -C "$WORKTREE_PATH" config core.sharedRepository group 2>/dev/null || true
-  fi
-
-  # Give claude-dev full ownership of this worktree's git metadata dir
-  # (index, index.lock, HEAD.lock, COMMIT_EDITMSG are written here during commits)
-  if [ -n "$WT_GIT_DIR" ] && [ -d "$WT_GIT_DIR" ]; then
-    chown -R "$RUN_AS":"$RUN_AS" "$WT_GIT_DIR"
-  fi
-fi
-
 if [ ! -d "$WORKTREE_PATH" ]; then
   echo "ERROR: Worktree not found at $WORKTREE_PATH"
   exit 1
 fi
 
-# Write a temp launcher script to avoid nested quoting issues with su + tmux
+# Write a temp launcher script to avoid nested quoting issues with tmux
 LAUNCHER=$(mktemp /tmp/claude-launch-XXXXXX.sh)
 chmod +x "$LAUNCHER"
 
@@ -99,33 +54,24 @@ echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${
 exec script -a ${LOG_FILE} -c "claude ${SKIP_PERMS} '/${SKILL} ${ISSUE_NUM}'"
 SCRIPT
 
-  if [ -n "$RUN_AS" ]; then
-    chown "$RUN_AS":"$RUN_AS" "$LAUNCHER"
-    if command -v osascript &>/dev/null; then
-      osascript -e "tell application \"Terminal\" to do script \"su - ${RUN_AS} -c '${LAUNCHER}'\""
-    else
-      powershell.exe -NoProfile -Command "Start-Process 'C:\\Program Files\\Git\\bin\\bash.exe' -ArgumentList '-c','su - ${RUN_AS} -c ${LAUNCHER}' -WorkingDirectory '$(cygpath -w ${WORKTREE_PATH})'"
-    fi
+  if command -v osascript &>/dev/null; then
+    osascript -e "tell application \"Terminal\" to do script \"${LAUNCHER}\""
   else
-    if command -v osascript &>/dev/null; then
-      osascript -e "tell application \"Terminal\" to do script \"${LAUNCHER}\""
-    else
-      # Windows: write a .bat launcher to avoid argument-splitting issues with wt.exe
-      if [ -n "$PIPELINE_WIN_TEMP" ]; then
-        WIN_TMPDIR="$PIPELINE_WIN_TEMP"
-        WIN_BAT="${WIN_TMPDIR}/launch-${ISSUE_NUM}.bat"
-        WIN_WORKTREE="$(cygpath -w ${WORKTREE_PATH})"
-        BASH_EXE="C:\\Program Files\\Git\\bin\\bash.exe"
-        cat > "$WIN_BAT" << BATEOF
+    # Windows: write a .bat launcher to avoid argument-splitting issues with wt.exe
+    if [ -n "$PIPELINE_WIN_TEMP" ]; then
+      WIN_TMPDIR="$PIPELINE_WIN_TEMP"
+      WIN_BAT="${WIN_TMPDIR}/launch-${ISSUE_NUM}.bat"
+      WIN_WORKTREE="$(cygpath -w ${WORKTREE_PATH})"
+      BASH_EXE="C:\\Program Files\\Git\\bin\\bash.exe"
+      cat > "$WIN_BAT" << BATEOF
 @echo off
 cd /d "${WIN_WORKTREE}"
 "${BASH_EXE}" -c "claude ${SKIP_PERMS} '/${SKILL} ${ISSUE_NUM}'"
 BATEOF
-        WIN_BAT_W="$(cygpath -w "$WIN_BAT")"
-        powershell.exe -NoProfile -Command "Start-Process wt.exe -ArgumentList 'new-tab', '--title', 'issue-${ISSUE_NUM}', '--', 'C:\Windows\System32\cmd.exe', '/k', '${WIN_BAT_W}'"
-      else
-        echo "WARNING: Windows launcher not configured. Set PIPELINE_WIN_TEMP in pipeline.config."
-      fi
+      WIN_BAT_W="$(cygpath -w "$WIN_BAT")"
+      powershell.exe -NoProfile -Command "Start-Process wt.exe -ArgumentList 'new-tab', '--title', 'issue-${ISSUE_NUM}', '--', 'C:\Windows\System32\cmd.exe', '/k', '${WIN_BAT_W}'"
+    else
+      echo "WARNING: Windows launcher not configured. Set PIPELINE_WIN_TEMP in pipeline.config."
     fi
   fi
   echo "Launched terminal window for issue #${ISSUE_NUM} (interactive)"
@@ -142,21 +88,11 @@ exec script -a ${LOG_FILE} -c "claude ${SKIP_PERMS} remote-control --name '${SES
 SCRIPT
 
   if command -v tmux &>/dev/null && tmux has-session -t dev 2>/dev/null; then
-    if [ -n "$RUN_AS" ]; then
-      chown "$RUN_AS":"$RUN_AS" "$LAUNCHER"
-      tmux new-window -t dev -n "$TMUX_WINDOW" "su - ${RUN_AS} -c ${LAUNCHER}"
-    else
-      tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
-    fi
+    tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
     echo "Launched remote-control session for issue #${ISSUE_NUM} (tmux)"
     echo "  tmux window: dev:${TMUX_WINDOW}"
   else
-    if [ -n "$RUN_AS" ]; then
-      chown "$RUN_AS":"$RUN_AS" "$LAUNCHER"
-      osascript -e "tell application \"Terminal\" to do script \"su - ${RUN_AS} -c '${LAUNCHER}'\""
-    else
-      osascript -e "tell application \"Terminal\" to do script \"${LAUNCHER}\""
-    fi
+    osascript -e "tell application \"Terminal\" to do script \"${LAUNCHER}\""
     echo "Launched remote-control session for issue #${ISSUE_NUM} (Terminal.app)"
   fi
   echo "  Log: ${LOG_FILE}"
@@ -179,12 +115,7 @@ echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORK
 exec script -a ${LOG_FILE} -c "timeout --foreground --signal=TERM --kill-after=30 5400 claude ${SKIP_PERMS} -p '/${SKILL} ${ISSUE_NUM}'"
 SCRIPT
 
-  if [ -n "$RUN_AS" ]; then
-    chown "$RUN_AS":"$RUN_AS" "$LAUNCHER"
-    tmux new-window -t dev -n "$TMUX_WINDOW" "su - ${RUN_AS} -c ${LAUNCHER}"
-  else
-    tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
-  fi
+  tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
   echo "Launched tmux session for issue #${ISSUE_NUM}"
   echo "  tmux window: dev:${TMUX_WINDOW}"
   echo "  Log: ${LOG_FILE}"
