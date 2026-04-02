@@ -7,6 +7,47 @@ allowed-tools: Read, Bash, Glob, Grep, Agent, CronCreate, CronDelete
 
 # Pipeline Coordinator
 
+## Shortcuts
+
+| Shortcut | Meaning |
+|----------|---------|
+| **full send** | Run all pipeline stages autonomously without intermediate confirmations, stopping before merge. |
+
+### Full Send — autonomous end-to-end execution
+
+When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages:
+
+1. **Plan** — run `/plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
+2. **Evaluate plans** — run `/evaluate-plan N` for every `plan-pending` issue (in parallel, one Agent per issue). Wait for all to complete.
+3. **Re-plan loop** — for any issue whose evaluation verdict is "Revise": re-run `/plan-issue N`, then `/evaluate-plan N`. Repeat until all pass (max 3 iterations per issue). If an issue still fails after 3 iterations, skip it and flag it in the final report.
+4. **Approve** — for every issue now at `plan-reviewed`, run:
+   ```bash
+   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-approved" --remove-label "plan-reviewed"
+   ```
+5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). Pass the current branch as base if it is not `main` or `staging`.
+6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Use `run-queue.sh --skip-permissions <issue1> <issue2> ...`. Set up auto-status polling (5-minute cron) as documented in the execution section.
+7. **Evaluate PRs** — once all agents finish (queue complete), run `/evaluate-issue N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue`).
+8. **Report** — print a summary table of all issues with their final stage and any flags:
+   ```
+   FULL SEND COMPLETE
+   ================================================================
+   Issue  Title                    Result
+   ----------------------------------------------------------------
+   #N     <title>                  PR approved / Flagged / Skipped (plan failed)
+   ================================================================
+   MERGING IS NOT AUTOMATIC — review the table above and confirm merges manually.
+   ```
+9. **Stop** — do NOT merge. Wait for explicit user confirmation before any merge.
+
+**Constraints during full send:**
+- Housekeeping (step 0) and log review (step 1) still run at the start, but do not pause for user input — auto-skip log review and proceed.
+- If a worktree cleanup is pending at the start, run cleanup first (still auto, no confirmation needed), then continue with the full send stages.
+- Issues labeled `${PIPELINE_LABELS_EXCLUDED}` are always skipped.
+- Issues labeled `${PIPELINE_LABELS_LATER}` are shown in the final report (stage = `${PIPELINE_LABELS_LATER}`) but not processed.
+- Blocked issues (blocked-by dependency not yet merged) are skipped; noted in final report as "Blocked".
+- The re-plan loop cap of 3 prevents infinite loops on stubborn issues.
+- If any stage fails unexpectedly (script error, API failure), stop full send and report the failure with enough detail for the user to diagnose.
+
 ## Issue discovery
 
 Pipeline issues are fetched dynamically from GitHub — not hardcoded. At the start of each run, fetch all open issues:

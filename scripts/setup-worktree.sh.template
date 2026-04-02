@@ -5,12 +5,21 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 
 # Atomic worktree setup for the pipeline.
-# Usage: bash .claude/scripts/setup-worktree.sh <branch-name> [issue-number]
-# Example: bash .claude/scripts/setup-worktree.sh feature/rating-system 5
+# Usage: bash .claude/scripts/setup-worktree.sh [--base <base-branch>] <branch-name> [issue-number]
+# Example: bash .claude/scripts/setup-worktree.sh --base remove-user-switching feature/rating-system 5
+
+# Parse optional --base flag
+BASE_BRANCH=""
+BASE_BRANCH_EXPLICIT=false
+if [ "${1:-}" = "--base" ]; then
+  BASE_BRANCH="$2"
+  BASE_BRANCH_EXPLICIT=true
+  shift 2
+fi
 
 if [ $# -lt 1 ]; then
-  echo "Usage: bash .claude/scripts/setup-worktree.sh <branch-name> [issue-number]"
-  echo "Example: bash .claude/scripts/setup-worktree.sh feature/rating-system 5"
+  echo "Usage: bash .claude/scripts/setup-worktree.sh [--base <base-branch>] <branch-name> [issue-number]"
+  echo "Example: bash .claude/scripts/setup-worktree.sh --base remove-user-switching feature/rating-system 5"
   exit 1
 fi
 
@@ -32,9 +41,9 @@ echo ""
 
 # Step 1: Create worktree (skip if exists)
 if git -C "$MAIN_REPO" worktree list | grep -q "$WORKTREE_PATH"; then
-  echo "[1/4] Worktree already exists — skipping creation"
+  echo "[1/5] Worktree already exists — skipping creation"
 else
-  echo "[1/4] Creating worktree..."
+  echo "[1/5] Creating worktree..."
   if git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" "$BRANCH"
   else
@@ -43,7 +52,7 @@ else
 fi
 
 # Step 2: Sync untracked .claude/ files (settings.local.json, untracked hooks, .env files, venvs)
-echo "[2/4] Syncing untracked files (.claude/, .env)..."
+echo "[2/5] Syncing untracked files (.claude/, .env)..."
 mkdir -p "$WORKTREE_PATH/.claude/hooks"
 if [ -f "$MAIN_REPO/.claude/settings.local.json" ]; then
   cp "$MAIN_REPO/.claude/settings.local.json" "$WORKTREE_PATH/.claude/settings.local.json"
@@ -75,19 +84,42 @@ for hook in "$MAIN_REPO/.claude/hooks/"*; do
 done
 
 # Step 3: Install dependencies
-echo "[3/4] Installing dependencies..."
+echo "[3/5] Installing dependencies..."
 (cd "$WORKTREE_PATH" && eval "$PIPELINE_INSTALL_CMD")
 
 # Step 4: Seed database (if configured)
 if [ -n "$PIPELINE_SEED_CMD" ]; then
-  echo "[4/4] Seeding database..."
+  echo "[4/5] Seeding database..."
   (cd "$WORKTREE_PATH" && eval "$PIPELINE_SEED_CMD")
 else
-  echo "[4/4] No seed command configured — skipping"
+  echo "[4/5] No seed command configured — skipping"
 fi
+
+# Step 5: Write base-branch metadata file
+if [ -z "$BASE_BRANCH" ]; then
+  BASE_BRANCH="$PIPELINE_BASE_BRANCH"
+fi
+# Warn if --base was not provided and current branch is not staging/main
+if [ "$BASE_BRANCH_EXPLICIT" = false ]; then
+  CURRENT_BRANCH=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD)
+  if [ "$CURRENT_BRANCH" != "staging" ] && [ "$CURRENT_BRANCH" != "main" ]; then
+    echo "WARNING: No --base provided, but current branch is '$CURRENT_BRANCH' (not staging/main)."
+    echo "  Defaulting to PIPELINE_BASE_BRANCH='$BASE_BRANCH'."
+    echo "  Did you mean: --base $CURRENT_BRANCH?"
+  fi
+fi
+# Verify base branch exists on remote; push if needed
+if ! git -C "$MAIN_REPO" ls-remote --heads origin "$BASE_BRANCH" | grep -q "$BASE_BRANCH"; then
+  echo "[5/5] Base branch '$BASE_BRANCH' not on remote — pushing..."
+  git -C "$MAIN_REPO" push -u origin "$BASE_BRANCH"
+fi
+mkdir -p "$WORKTREE_PATH/.claude"
+echo "$BASE_BRANCH" > "$WORKTREE_PATH/.claude/base-branch"
+echo "[5/5] Wrote base branch metadata: $BASE_BRANCH"
 
 echo ""
 echo "=== Setup complete ==="
 echo ""
-echo "  Worktree: $WORKTREE_PATH"
+echo "  Worktree:    $WORKTREE_PATH"
+echo "  Base branch: $BASE_BRANCH"
 echo "  Execute issue:  claude \"/execute-issue <N>\""

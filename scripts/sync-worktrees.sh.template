@@ -10,6 +10,89 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 MAIN_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 ISSUES=0
 
+# ---------------------------------------------------------------------------
+# Prune remote feature/* branches whose PR is merged or closed
+# ---------------------------------------------------------------------------
+prune_orphaned_branches() {
+  # Read ALLOW_DELETIONS from settings.local.json
+  ALLOW_DELETIONS="$(jq -r '.env.ALLOW_DELETIONS // empty' "$MAIN_REPO/.claude/settings.local.json" 2>/dev/null || echo "")"
+
+  echo ""
+  echo "=== Orphaned Branch Pruning ==="
+
+  if [ "$ALLOW_DELETIONS" != "true" ]; then
+    echo "  [skip] ALLOW_DELETIONS != true in settings.local.json"
+    echo "  Set ALLOW_DELETIONS=true to enable automated branch pruning."
+    return 0
+  fi
+
+  # Fetch remote branch list
+  git -C "$MAIN_REPO" fetch --prune --quiet 2>/dev/null || true
+  REMOTE_BRANCHES="$(git -C "$MAIN_REPO" branch -r --list 'origin/feature/*' 2>/dev/null || echo "")"
+
+  if [ -z "$REMOTE_BRANCHES" ]; then
+    echo "  No remote feature/* branches found."
+    return 0
+  fi
+
+  CHECKED=0
+  PRUNED=0
+
+  while IFS= read -r remote_branch; do
+    # Strip leading whitespace and "origin/" prefix
+    BRANCH="$(echo "$remote_branch" | sed 's|^ *origin/||')"
+
+    # Skip origin/HEAD pseudo-ref
+    [ "$BRANCH" = "HEAD" ] && continue
+    # Skip non-feature branches (redundant with glob but defensive)
+    [[ "$BRANCH" == feature/* ]] || continue
+
+    CHECKED=$((CHECKED + 1))
+
+    # Skip branches currently checked out in a worktree (brackets required)
+    if git -C "$MAIN_REPO" worktree list | grep -qF "[$BRANCH]"; then
+      echo "  [skip] $BRANCH — currently checked out in a worktree"
+      continue
+    fi
+
+    # Query GitHub for any PR with this branch as head
+    PR_JSON="$(gh pr list --repo "$PIPELINE_REPO" --head "$BRANCH" --state all \
+      --json state,number --jq '.[0] // empty' 2>/dev/null || echo "")"
+
+    if [ -z "$PR_JSON" ]; then
+      echo "  [warn]  $BRANCH — no PR found; skipping (manual cleanup if needed)"
+      continue
+    fi
+
+    PR_STATE="$(echo "$PR_JSON" | jq -r '.state')"
+    PR_NUM="$(echo "$PR_JSON" | jq -r '.number')"
+
+    if [ "$PR_STATE" = "OPEN" ]; then
+      echo "  [skip]  $BRANCH (PR #$PR_NUM — OPEN)"
+      continue
+    fi
+
+    # PR is MERGED or CLOSED — prune
+    REMOTE_DELETED="no"
+    LOCAL_DELETED="no"
+
+    git -C "$MAIN_REPO" push origin --delete "$BRANCH" 2>/dev/null \
+      && REMOTE_DELETED="yes" || true
+    git -C "$MAIN_REPO" branch -D "$BRANCH" 2>/dev/null \
+      && LOCAL_DELETED="yes" || true
+
+    echo "  [pruned] $BRANCH (PR #$PR_NUM — $PR_STATE) — remote: $REMOTE_DELETED, local: $LOCAL_DELETED"
+    PRUNED=$((PRUNED + 1))
+  done <<< "$REMOTE_BRANCHES"
+
+  echo "  Checked $CHECKED remote feature/* branch(es)"
+  if [ $PRUNED -gt 0 ]; then
+    echo "  === Pruned $PRUNED branch(es) ==="
+  else
+    echo "  === No orphaned branches found ==="
+  fi
+}
+
 echo "=== Worktree Sync ==="
 echo "  Main repo: $MAIN_REPO"
 echo ""
@@ -131,6 +214,9 @@ for wt in "${WORKTREES[@]}"; do
 
   echo ""
 done
+
+# Run orphaned branch pruning after worktree sync
+prune_orphaned_branches
 
 if [ $ISSUES -eq 0 ]; then
   echo "=== All worktrees in sync ==="

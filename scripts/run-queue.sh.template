@@ -1,6 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
+# --add mode: append issues to a running queue's pending file
+if [ "${1:-}" = "--add" ]; then
+  shift
+  REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  PENDING_FILE="${REPO_ROOT}/.claude/logs/queue-pending.txt"
+  if [ $# -eq 0 ]; then
+    echo "Usage: bash $0 --add <issue1> <issue2> ..."
+    exit 1
+  fi
+  for issue in "$@"; do
+    echo "$issue" >> "$PENDING_FILE"
+  done
+  echo "Added $# issue(s) to pending queue: $*"
+  echo "Pending file: ${PENDING_FILE}"
+  exit 0
+fi
+
 # Source project config
 source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 
@@ -8,8 +25,11 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 # Launches up to MAX_CONCURRENT agents at a time, polls for completion,
 # and launches the next queued issue when a slot opens.
 #
-# Usage: bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
-# Example: bash .claude/scripts/run-queue.sh --skip-permissions 66 68 69 71
+# Usage:
+#   bash .claude/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
+#   bash .claude/scripts/run-queue.sh --add <issue1> <issue2> ...
+#
+# The --add flag appends issues to a running queue via a watch file.
 #
 # Must be run inside a tmux session (the queue runner uses window 0,
 # agents spawn in new windows).
@@ -34,6 +54,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
 QUEUE_LOG="${LOG_DIR}/queue-$(date +%Y%m%d-%H%M%S).log"
+PENDING_FILE="${LOG_DIR}/queue-pending.txt"
 
 # Log to both stdout and queue log file
 log() {
@@ -85,6 +106,7 @@ log "  Poll interval: ${POLL_INTERVAL}s"
 log "  Skill: ${SKILL_FLAG:-execute-issue (default)}"
 log "  Skip permissions: $([ -n "$SKIP_PERMS" ] && echo 'yes' || echo 'no')"
 log "  Queue log: ${QUEUE_LOG}"
+log "  Pending file: ${PENDING_FILE} (append issue numbers here to add mid-run)"
 log "========================================"
 log ""
 
@@ -147,6 +169,33 @@ check_issue_outcome() {
   fi
 }
 
+# Check if the pending file has at least one non-empty line
+pending_file_has_items() {
+  [ -f "$PENDING_FILE" ] || return 1
+  grep -q '[^[:space:]]' "$PENDING_FILE" 2>/dev/null
+}
+
+# Atomically drain the pending file and add new issues to the queue
+drain_pending_file() {
+  [ -f "$PENDING_FILE" ] || return 0
+  # Atomically move to a temp file on the same filesystem
+  local tmp
+  tmp=$(mktemp "${LOG_DIR}/queue-drain-XXXXXX")
+  mv "$PENDING_FILE" "$tmp"
+  while IFS= read -r line; do
+    line=$(echo "$line" | tr -d '[:space:]')
+    [ -z "$line" ] && continue
+    if [[ "${RESULTS[$line]+_}" ]]; then
+      log "[$(date +%H:%M:%S)] WARN: Issue #${line} already in queue — skipping duplicate."
+      continue
+    fi
+    log "[$(date +%H:%M:%S)] Picked up new issue #${line} from pending file."
+    QUEUE+=("$line")
+    RESULTS[$line]=""  # mark as known
+  done < "$tmp"
+  rm -f "$tmp"
+}
+
 # Fill available slots from the queue
 fill_slots() {
   while [ ${#ACTIVE[@]} -lt $MAX_CONCURRENT ] && [ $QUEUE_INDEX -lt ${#QUEUE[@]} ]; do
@@ -163,9 +212,13 @@ log ""
 log "[$(date +%H:%M:%S)] Monitoring... (polling every ${POLL_INTERVAL}s)"
 log ""
 
-# Poll loop
-while [ ${#ACTIVE[@]} -gt 0 ]; do
+# Poll loop — continues while agents are active, items are queued, or pending file has items
+while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_file_has_items; do
   sleep "$POLL_INTERVAL"
+
+  # Pick up any dynamically added issues
+  drain_pending_file
+  fill_slots
 
   # Check each active agent
   for issue in "${!ACTIVE[@]}"; do
