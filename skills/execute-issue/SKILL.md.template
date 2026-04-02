@@ -90,64 +90,7 @@ You will receive an issue number as the argument (or from context). You should b
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "pr-open" --remove-label "in-progress"
    ```
 
-9. **Validate test plan (only when running with `--dangerously-skip-permissions`):**
-   Skip this step entirely if not running in bypass permissions mode.
-
-   Go back and read the test plan you wrote in the PR body. Work through each checklist item and attempt to validate it:
-   - Run `npm test` and `tsc --noEmit` if not already passing
-   - Use Playwright MCP to navigate to relevant pages, take screenshots, and verify UI behavior
-   - Check for backend errors in the terminal output
-   - Use `curl` to hit API endpoints and verify responses
-   - For each item you can confirm, update the PR body to check it off (`- [x]`)
-   - For items you cannot validate (e.g., requires real Windows environment, manual user interaction), leave them unchecked and add a note: `<!-- Agent: could not validate — <reason> -->`
-
-   Update the PR body with your results:
-   ```bash
-   gh pr edit <PR_NUMBER> --repo ${PIPELINE_REPO} --body "$(cat <<'EOF'
-   <updated body with checked/unchecked items and notes>
-   EOF
-   )"
-   ```
-
-   **If any checklist items failed validation** (not "could not validate" — actually failed):
-   Fix the issue, push the fix, and re-validate. Repeat until all validatable items pass.
-
-   **If all validatable items pass**, proceed to auto-merge.
-   **If some items could not be validated**, leave the PR open for human review. Do NOT auto-merge. Report which items need human attention and stop.
-
-10. **Auto-merge (only when running with `--dangerously-skip-permissions`):**
-   Skip this step if step 9 left items that could not be validated.
-
-   Try to merge the PR:
-   ```bash
-   gh pr merge <PR_NUMBER> --repo ${PIPELINE_REPO} --squash --delete-branch
-   ```
-
-   **If merge succeeds:** Mark the issue as merged and report done.
-   ```bash
-   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "merged" --remove-label "pr-open"
-   gh issue close <N> --repo ${PIPELINE_REPO}
-   ```
-
-   **If merge fails due to conflicts:**
-   1. Fetch and attempt to rebase onto ${PIPELINE_BASE_BRANCH}:
-      ```bash
-      git fetch origin ${PIPELINE_BASE_BRANCH}
-      git rebase origin/${PIPELINE_BASE_BRANCH}
-      ```
-   2. If the conflicts are straightforward (e.g., import ordering, adjacent line changes, whitespace):
-      - Resolve them in the worktree
-      - Run tests again (`npm test`, `tsc --noEmit`)
-      - Force-push the branch: `git push --force-with-lease`
-      - Retry the merge: `gh pr merge <PR_NUMBER> --repo ${PIPELINE_REPO} --squash --delete-branch`
-      - If it succeeds, mark as merged (same as above)
-   3. If the conflicts are complex (semantic changes, overlapping logic, architectural decisions):
-      - Abort the rebase: `git rebase --abort`
-      - Push your branch as-is (so work is saved)
-      - Leave the PR open for human review
-      - Report: "PR #X has merge conflicts that need human review: <describe conflicts>"
-
-11. **Report:** "PR opened for #N: <PR URL>" (or "PR merged for #N" if auto-merged)
+9. **Report:** "PR opened for #N: <PR URL>"
 
 ## Constraints
 - Implement ONLY what the approved plan says.
@@ -155,3 +98,4 @@ You will receive an issue number as the argument (or from context). You should b
 - All PRs target `${PIPELINE_BASE_BRANCH}`, never `main`. Always use `--base ${PIPELINE_BASE_BRANCH}`.
 - Never use `--no-verify` or `--force`.
 - Never skip build verification (`${PIPELINE_TEST_CMD}`).
+- Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.
