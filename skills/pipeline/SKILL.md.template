@@ -2,7 +2,7 @@
 name: pipeline
 description: Check the status of the GitHub issue pipeline and advance the next stage. Run this at the start of any coding session to see what is ready and propose next actions.
 disable-model-invocation: false
-allowed-tools: Read, Bash, Glob, Grep, Agent, CronCreate, CronDelete
+allowed-tools: Read, Bash, Glob, Grep, Agent
 ---
 
 # Pipeline Coordinator
@@ -25,7 +25,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
 5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). Pass the current branch as base if it is not `main` or `staging`.
-6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Use `run-queue.sh --skip-permissions <issue1> <issue2> ...`. Set up auto-status polling (5-minute cron) as documented in the execution section.
+6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Use `run-queue.sh --skip-permissions <issue1> <issue2> ...`. Status updates are emitted automatically by the queue runner every 5 minutes (configurable via `STATUS_INTERVAL`).
 7. **Evaluate PRs** — once all agents finish (queue complete), run `/evaluate-issue N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue`).
 8. **Report** — print a summary table of all issues with their final stage and any flags:
    ```
@@ -271,30 +271,8 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       Add: "Queue runner is in tmux window 0. Agent windows appear as they launch."
       Add: "Monitor with: tmux attach -t dev"
 
-      **After launching, set up automatic status polling:**
+      **Automatic status updates:** The queue runner emits a rich status table (per-agent CPU%, memory, runtime, PR URLs) every `STATUS_INTERVAL` polls (default 5, so every 5 minutes at 60s poll interval). Configure with `STATUS_INTERVAL=N` env var. No manual setup needed — status output is built into the poll loop.
 
-      1. Bootstrap to get the cron job ID (three-step sequence — required because CronCreate returns the ID after the call, so you cannot embed the ID in the prompt of the same call that generates it):
-         a. Call `CronCreate` with cron `"*/5 * * * *"`, recurring: true, durable: false, prompt: `"placeholder"`. Note the returned job ID as `CRON_ID`.
-         b. Immediately call `CronDelete` with that job ID to cancel the placeholder.
-         c. Call `CronCreate` again with cron `"*/5 * * * *"`, recurring: true, durable: false, and this prompt (substitute `<CRON_ID>` with the literal string value from step a):
-            ```
-            Auto-status check: Run `bash .claude/scripts/queue-status.sh` and display its output verbatim.
-            If the output shows "Active agents : 0" and completed count equals total launched, the queue is complete.
-            When the queue is complete: call CronDelete with id="<CRON_ID>" and report "Queue complete — auto-status updates cancelled."
-            ```
-         The second CronCreate call is the live job. Store its returned ID in working memory as `LIVE_CRON_ID` (it will equal `CRON_ID` if CronCreate reuses IDs, or differ — either way, use the second call's returned ID for future CronDelete operations).
-
-      2. Print the following to the user:
-         ```
-         AUTO-STATUS ENABLED (every 5 minutes, cron job: <LIVE_CRON_ID>)
-         Say "cancel status updates" to stop early, or "change status interval to N minutes" to adjust.
-         ```
-
-      3. If CronCreate is unavailable (tool not in scope), skip the polling setup and tell the user: "Auto-status polling unavailable — ask for manual updates."
-
-      4. If the user says "cancel status updates": call `CronDelete` with the stored `LIVE_CRON_ID` and confirm cancellation.
-
-      5. If the user says "change status interval to N minutes": call `CronDelete` on `LIVE_CRON_ID`, then repeat the three-step bootstrap above with cron `"*/N * * * *"`, embed the new ID, and print the new job ID.
 
    5. **If user says tmux/terminal/remote-control and there is only 1 issue** — spawn directly:
       ```bash

@@ -50,6 +50,7 @@ fi
 
 MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
+STATUS_INTERVAL="${STATUS_INTERVAL:-5}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
@@ -96,13 +97,16 @@ declare -A RESULTS=()   # issue -> status (running/done/failed)
 declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
+POLL_COUNT=0
 
+STATUS_INTERVAL_SECS=$((STATUS_INTERVAL * POLL_INTERVAL))
 log "========================================"
 log "AGENT QUEUE RUNNER"
 log "========================================"
 log "  Issues: ${QUEUE[*]}"
 log "  Max concurrent: ${MAX_CONCURRENT}"
 log "  Poll interval: ${POLL_INTERVAL}s"
+log "  Status interval: every ${STATUS_INTERVAL} polls (${STATUS_INTERVAL_SECS}s)"
 log "  Skill: ${SKILL_FLAG:-execute-issue (default)}"
 log "  Skip permissions: $([ -n "$SKIP_PERMS" ] && echo 'yes' || echo 'no')"
 log "  Queue log: ${QUEUE_LOG}"
@@ -145,7 +149,7 @@ launch_agent() {
   local slug
   slug=$(slug_from_path "$wt_path")
 
-  log "[$(date +%H:%M:%S)] Launching agent for issue #${issue} (${slug})..."
+  log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug})..."
   bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"
@@ -215,6 +219,7 @@ log ""
 # Poll loop — continues while agents are active, items are queued, or pending file has items
 while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_file_has_items; do
   sleep "$POLL_INTERVAL"
+  POLL_COUNT=$((POLL_COUNT + 1))
 
   # Pick up any dynamically added issues
   drain_pending_file
@@ -234,13 +239,17 @@ while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_fi
     fi
   done
 
-  # Status line
-  active_list=""
-  for issue in "${!ACTIVE[@]}"; do
-    active_list="${active_list}#${issue} "
-  done
-  remaining=$((${#QUEUE[@]} - QUEUE_INDEX))
-  log "[$(date +%H:%M:%S)] Active: ${active_list:-none} | Queued: ${remaining}"
+  # Periodic rich status or simple status line
+  if [ $((POLL_COUNT % STATUS_INTERVAL)) -eq 0 ]; then
+    bash "${SCRIPT_DIR}/queue-status.sh" --queue-log "$QUEUE_LOG" 2>&1 | tee -a "$QUEUE_LOG"
+  else
+    active_list=""
+    for issue in "${!ACTIVE[@]}"; do
+      active_list="${active_list}#${issue} "
+    done
+    remaining=$((${#QUEUE[@]} - QUEUE_INDEX))
+    log "[$(date +%H:%M:%S)] Active: ${active_list:-none} | Queued: ${remaining}"
+  fi
 done
 
 # Final summary
