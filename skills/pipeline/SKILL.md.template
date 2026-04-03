@@ -31,7 +31,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
 5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). Pass the current branch as base if it is not `main` or `staging`.
-6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Use `run-queue.sh --skip-permissions <issue1> <issue2> ...`. Status updates are emitted automatically by the queue runner every 5 minutes (configurable via `STATUS_INTERVAL`).
+6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Use `run-queue.sh --skip-permissions <issue1> <issue2> ...`. Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
 7. **Evaluate PRs** — once all agents finish (queue complete), run `/evaluate-issue N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue`).
 8. **Report** — print a summary table of all issues with their final stage and any flags:
    ```
@@ -277,7 +277,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       Add: "Queue runner is in tmux window 0. Agent windows appear as they launch."
       Add: "Monitor with: tmux attach -t dev"
 
-      **Automatic status updates:** The queue runner emits a rich status table (per-agent CPU%, memory, runtime, PR URLs) every `STATUS_INTERVAL` polls (default 5, so every 5 minutes at 60s poll interval). Configure with `STATUS_INTERVAL=N` env var. No manual setup needed — status output is built into the poll loop.
+      **Automatic status updates:** The queue runner emits a rich status table (per-agent CPU%, memory, runtime, PR URLs) every `STATUS_INTERVAL` polls (default 3, so every 3 minutes at 60s poll interval). Configure with `STATUS_INTERVAL=N` env var. No manual setup needed — status output is built into the poll loop.
 
 
    5. **If user says tmux/terminal/remote-control and there is only 1 issue** — spawn directly:

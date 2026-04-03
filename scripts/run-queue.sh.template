@@ -50,7 +50,7 @@ fi
 
 MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
-STATUS_INTERVAL="${STATUS_INTERVAL:-5}"
+STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
