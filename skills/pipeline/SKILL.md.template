@@ -7,6 +7,12 @@ allowed-tools: Read, Bash, Glob, Grep, Agent, CronCreate, CronDelete
 
 # Pipeline Coordinator
 
+## Pipeline utilities
+
+| Script | Description |
+|--------|-------------|
+| `.claude/scripts/retarget-pr.sh <pr> <base>` | Retarget a PR's base branch with verify-retry-fail pattern (gh pr edit then REST API fallback) |
+
 ## Shortcuts
 
 | Shortcut | Meaning |
