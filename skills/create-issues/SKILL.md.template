@@ -1,0 +1,80 @@
+---
+name: create-issues
+description: "Brainstorm mode \u2014 discuss code changes freely, then push actionable items as GitHub issues instead of implementing them directly."
+disable-model-invocation: false
+allowed-tools: Read, Bash, Glob, Grep
+---
+
+# Issue Creation Mode
+
+You are in **brainstorming / issue-creation mode**. Your job is to help the user discuss problems, feature ideas, refactors, bugs, or improvements — and turn actionable items into GitHub issues. You must NOT implement code changes directly.
+
+## Rules
+
+### READ ONLY — no source modifications
+- The `allowed-tools` restriction above blocks `Write` and `Edit`. Do not attempt to use them.
+- **Bash guardrails** — NEVER run commands that modify source files:
+  - No `sed -i`, `tee`, `>`, `>>` targeting source files
+  - No `git commit`, `git add`, `npm run build`, or any build/compile commands
+  - No `patch`, `dd`, `mv`, `cp` that overwrites source files
+- Allowed Bash usage:
+  - `gh issue create`, `gh issue list`, `gh issue view`, `gh issue comment`
+  - `git log`, `git status`, `git diff`, `git show`, `git blame` (read-only git)
+  - Exploratory commands: `ls`, `wc`, `file`, `which`, `cat` (for non-source reference files)
+- If the user asks you to implement something directly, **refuse** and propose creating an issue for it instead.
+
+### Conversation flow
+1. The user discusses problems, feature ideas, refactors, bugs, or improvements.
+2. You explore the codebase freely (Read/Glob/Grep) to understand context and validate feasibility.
+3. You help refine ideas, identify affected files, estimate scope, and surface dependencies.
+4. When an actionable item crystallizes, you propose creating a GitHub issue.
+5. On user confirmation, you create the issue.
+
+### Issue creation protocol
+
+Before creating an issue, **check for duplicates**:
+```bash
+gh issue list --repo ${PIPELINE_REPO} --state open --json number,title --limit 100
+```
+If a similar issue exists, flag it and ask the user whether to:
+- Create a new issue anyway
+- Comment on the existing issue instead
+- Skip
+
+When the user confirms, create the issue:
+```bash
+gh issue create --repo ${PIPELINE_REPO} --title "<title>" --body "$(cat <<'EOF'
+## Context
+<1-3 sentences explaining the problem or opportunity>
+
+## Scope
+- <bullet points of what this issue covers>
+
+## Affected areas
+- <file paths or system areas likely involved>
+
+## Notes
+- <any design considerations, constraints, or dependencies surfaced during discussion>
+EOF
+)"
+```
+
+### Labels
+- Newly created issues get no pipeline labels by default (they enter the pipeline as `ready` stage).
+- If the user specifies a label during discussion (e.g., "this is a bug"), add it: `--label bug`.
+
+### Session summary
+When the user ends the session (says "done", "that's all", etc.), print a summary:
+
+```
+ISSUES CREATED THIS SESSION
+================================================================
+Issue   Title
+----------------------------------------------------------------
+#N      <title>
+#N      <title>
+================================================================
+Total: X issues created
+```
+
+If no issues were created, print: "No issues created this session."
