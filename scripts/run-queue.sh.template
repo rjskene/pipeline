@@ -241,7 +241,12 @@ while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_fi
 
   # Periodic rich status or simple status line
   if [ $((POLL_COUNT % STATUS_INTERVAL)) -eq 0 ]; then
-    bash "${SCRIPT_DIR}/queue-status.sh" --queue-log "$QUEUE_LOG" 2>&1 | tee -a "$QUEUE_LOG"
+    # Capture status output first, then append — avoids simultaneous read/write
+    # on $QUEUE_LOG. Non-fatal: status reporting must never kill the queue runner.
+    _status_out=$(bash "${SCRIPT_DIR}/queue-status.sh" --queue-log "$QUEUE_LOG" 2>&1) || true
+    if [ -n "$_status_out" ]; then
+      echo "$_status_out" | tee -a "$QUEUE_LOG"
+    fi
   else
     active_list=""
     for issue in "${!ACTIVE[@]}"; do

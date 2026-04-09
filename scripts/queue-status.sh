@@ -3,7 +3,11 @@
 # Usage: bash .claude/scripts/queue-status.sh [--queue-log <path>]
 # Outputs a pipeline status snapshot for the queue runner and manual checks.
 
-set -euo pipefail
+set -uo pipefail
+# NOTE: set -e intentionally omitted. This is a reporter script called from
+# the queue runner's poll loop. Any transient failure (tmux window gone, gh API
+# timeout, process exited mid-stat) must NOT propagate — the queue runner runs
+# under set -euo pipefail and a non-zero exit here kills the entire queue.
 
 # Parse --queue-log argument
 QUEUE_LOG_ARG=""
