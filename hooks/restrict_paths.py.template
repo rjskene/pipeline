@@ -71,6 +71,10 @@ def extract_paths() -> list[str]:
                 continue
             if candidate.startswith("/tmp"):
                 continue
+            # Skip fragments that aren't real paths (e.g. branch names
+            # like /rerate-after-edits or commit message fragments like /Reject)
+            if not os.path.exists(candidate):
+                continue
             paths.append(candidate)
 
     return paths

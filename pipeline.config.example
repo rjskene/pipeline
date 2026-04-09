@@ -18,4 +18,5 @@ PIPELINE_SYNC_FILES=""                             # Space-separated other files
 PIPELINE_FRONTEND_PORT_OFFSET=4000                 # Frontend port = offset + issue number
 PIPELINE_LABELS_EXCLUDED="excluded"                # Label to exclude issues from pipeline
 PIPELINE_LABELS_LATER="later"                      # Label for deferred issues
+PIPELINE_LABELS_HUMAN="human"                      # Label for issues that need a human in the loop (skipped by autonomous full send)
 PIPELINE_WIN_TEMP=""                               # Windows temp dir (e.g., /c/Users/you/AppData/Local/Temp). Leave empty for non-Windows.

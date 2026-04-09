@@ -99,11 +99,11 @@ fi
 if [ -z "$BASE_BRANCH" ]; then
   BASE_BRANCH="$PIPELINE_BASE_BRANCH"
 fi
-# Warn if --base was not provided and current branch is not staging/main
+# Warn if --base was not provided and current branch is not the configured default
 if [ "$BASE_BRANCH_EXPLICIT" = false ]; then
   CURRENT_BRANCH=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD)
-  if [ "$CURRENT_BRANCH" != "staging" ] && [ "$CURRENT_BRANCH" != "main" ]; then
-    echo "WARNING: No --base provided, but current branch is '$CURRENT_BRANCH' (not staging/main)."
+  if [ "$CURRENT_BRANCH" != "$PIPELINE_BASE_BRANCH" ] && [ "$CURRENT_BRANCH" != "main" ]; then
+    echo "WARNING: No --base provided, but current branch is '$CURRENT_BRANCH' (not $PIPELINE_BASE_BRANCH/main)."
     echo "  Defaulting to PIPELINE_BASE_BRANCH='$BASE_BRANCH'."
     echo "  Did you mean: --base $CURRENT_BRANCH?"
   fi

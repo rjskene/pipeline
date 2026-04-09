@@ -30,7 +30,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```bash
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
-5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). Pass the current branch as base if it is not `main` or `staging`.
+5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `${PIPELINE_BASE_BRANCH}` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Use `run-queue.sh --skip-permissions <issue1> <issue2> ...`. Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
 7. **Evaluate PRs** — once all agents finish (queue complete), run `/evaluate-issue N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue`).
 8. **Report** — print a summary table of all issues with their final stage and any flags:
@@ -50,6 +50,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 - If a worktree cleanup is pending at the start, run cleanup first (still auto, no confirmation needed), then continue with the full send stages.
 - Issues labeled `${PIPELINE_LABELS_EXCLUDED}` are always skipped.
 - Issues labeled `${PIPELINE_LABELS_LATER}` are shown in the final report (stage = `${PIPELINE_LABELS_LATER}`) but not processed.
+- Issues labeled `${PIPELINE_LABELS_HUMAN}` are shown in the final report (stage = `${PIPELINE_LABELS_HUMAN}`) but never processed by autonomous full send. These need a human in the loop — usually for architecture decisions, cross-platform validation, production deploy risk, or items where the planner can't make the right call without you. They must be picked up manually with `/plan-issue` / `/execute-issue`, never via full send.
 - Blocked issues (blocked-by dependency not yet merged) are skipped; noted in final report as "Blocked".
 - The re-plan loop cap of 3 prevents infinite loops on stubborn issues.
 - If any stage fails unexpectedly (script error, API failure), stop full send and report the failure with enough detail for the user to diagnose.
@@ -62,7 +63,7 @@ Pipeline issues are fetched dynamically from GitHub — not hardcoded. At the st
 gh issue list --repo ${PIPELINE_REPO} --state open --json number,title,labels --limit 100
 ```
 
-**Excluded labels:** Issues with the label `${PIPELINE_LABELS_EXCLUDED}` are skipped entirely. Issues with the label `${PIPELINE_LABELS_LATER}` are shown in the status table (stage = `${PIPELINE_LABELS_LATER}`) but are **not** proposed for any action. All other open issues are pipeline candidates.
+**Excluded labels:** Issues with the label `${PIPELINE_LABELS_EXCLUDED}` are skipped entirely. Issues with the label `${PIPELINE_LABELS_LATER}` are shown in the status table (stage = `${PIPELINE_LABELS_LATER}`) but are **not** proposed for any action. Issues with the label `${PIPELINE_LABELS_HUMAN}` are shown in the status table (stage = `${PIPELINE_LABELS_HUMAN}`) and are **never** included in autonomous full send — they require manual handling because they involve architecture decisions, cross-platform validation, production deploy risk, or other judgment that the autonomous pipeline shouldn't make. The user can still pick them up manually with `/plan-issue` or `/execute-issue`. All other open issues are pipeline candidates.
 
 ### Branch and worktree naming convention
 - Branch: `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short)
@@ -130,13 +131,13 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    gh pr list --repo ${PIPELINE_REPO} --state merged --json headRefName,number --jq '[.[] | {branch: .headRefName, pr: .number}]'
    git worktree list
    ```
-   Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `${PIPELINE_LABELS_EXCLUDED}`.
+   Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `${PIPELINE_LABELS_EXCLUDED}`. Issues labeled `${PIPELINE_LABELS_HUMAN}` are shown in the table but never proposed by full send (treat them like `${PIPELINE_LABELS_LATER}`).
 
    **Detect cleanup candidates:** Cross-reference active worktrees (from `git worktree list`) with merged PRs. A worktree whose branch appears in the merged PR list is a cleanup candidate. Also check for `pr-open` issues whose PR has been merged (state = MERGED) — these need cleanup too.
 
 3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `${PIPELINE_LABELS_LATER}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc.
+4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `${PIPELINE_LABELS_LATER}`, `${PIPELINE_LABELS_HUMAN}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc.
    ```
    PIPELINE STATUS — <today's date>
    ================================================================
@@ -168,7 +169,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      - Otherwise, note they are awaiting user review.
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
    - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
-   - Else if any issues have no pipeline label and are not blocked → propose planning for those issues (in parallel).
+   - Else if any issues have no pipeline label and are not blocked and are not labeled `${PIPELINE_LABELS_HUMAN}` → propose planning for those issues (in parallel). Issues labeled `${PIPELINE_LABELS_HUMAN}` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
    - If all issues are merged/done → congratulate and exit.
 
 6. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
@@ -224,7 +225,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       ```bash
       bash .claude/scripts/run-queue.sh [--skip-permissions] --skill evaluate-issue <issue1> <issue2> ...
       ```
-   4. The evaluate-issue skill reviews the PR diff against the plan, makes minimal fixes if needed, and either auto-merges (if approved and running with skip-permissions) or flags for user review.
+   4. The evaluate-issue skill reviews the PR diff against the plan, makes minimal fixes if needed, and posts a verdict (Approved or Flagged). It does NOT merge — merge orchestration is handled by the pipeline (see step 8 below).
 
    **For execution (plan-approved → worktree setup):** For each approved issue's branch (deduplicated — issues sharing a branch get one worktree):
    1. Run the setup script with the issue number:
@@ -295,4 +296,43 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       Queue:       bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
       ```
 
-8. **After agents complete**, report results and tell the user what to do next (review plans on GitHub, merge PRs, etc).
+8. **Merge orchestration** — after all evaluations complete and verdicts are "Approved", the pipeline handles merging:
+
+   **Only run this step when the user confirms they want to merge.** After evaluation agents finish, report the verdicts and ask: "Merge approved PRs? (yes / no)"
+
+   If the user confirms:
+   1. For each approved PR, detect its base branch:
+      ```bash
+      gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json baseRefName --jq '.baseRefName'
+      ```
+   1b. Verify and retarget if needed — compare the PR's current base with the expected base from the worktree metadata:
+      ```bash
+      EXPECTED_BASE=$(cat <worktree-path>/.claude/base-branch 2>/dev/null || echo "${PIPELINE_BASE_BRANCH}")
+      ACTUAL_BASE=$(gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json baseRefName --jq '.baseRefName')
+      if [ "$ACTUAL_BASE" != "$EXPECTED_BASE" ]; then
+        bash .claude/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE
+      fi
+      ```
+      If `retarget-pr.sh` exits non-zero, stop the merge sequence and report the failure.
+   2. Check for merge conflicts:
+      ```bash
+      gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json mergeable --jq '.mergeable'
+      ```
+   3. If conflicts exist, attempt rebase in the worktree:
+      ```bash
+      cd <worktree-path>
+      BASE_BRANCH=$(cat .claude/base-branch 2>/dev/null || echo "${PIPELINE_BASE_BRANCH}")
+      git fetch origin "$BASE_BRANCH"
+      git rebase "origin/$BASE_BRANCH"
+      ```
+      - If rebase succeeds: run tests, force-push with `--force-with-lease`, retry merge
+      - If conflicts are complex: abort rebase, flag for user review, skip this PR
+   4. Merge PRs sequentially to avoid cascading conflicts:
+      ```bash
+      gh pr merge $PR_NUM --repo ${PIPELINE_REPO} --squash --delete-branch
+      gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "merged" --remove-label "pr-open"
+      gh issue close <N> --repo ${PIPELINE_REPO}
+      ```
+   5. If a merge fails, stop and report the failure. Do not continue merging remaining PRs (they may depend on the failed one).
+
+9. **After agents complete** (or after merge orchestration), report results and tell the user what to do next (review plans on GitHub, merge PRs, etc).
