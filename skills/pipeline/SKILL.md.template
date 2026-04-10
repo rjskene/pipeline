@@ -92,9 +92,24 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 ## Steps
 
-0. **Housekeeping — subtree drift check + sync worktrees + kill stale sessions**
+0. **Housekeeping — branch check + subtree drift check + sync worktrees + kill stale sessions**
 
-   First, check if `.claude-pipeline/` is in sync with the source repo:
+   **First, confirm the orchestrator is on the configured base branch.** The base branch for all PRs is read from `pipeline.config` (`PIPELINE_BASE_BRANCH=${PIPELINE_BASE_BRANCH}`). The orchestrator session should be on that branch so spawned worktrees inherit from it and PRs target it.
+
+   ```bash
+   EXPECTED_BASE="${PIPELINE_BASE_BRANCH}"
+   CURRENT_BRANCH=$(git branch --show-current)
+   echo "Session base branch: ${EXPECTED_BASE} (orchestrator on: ${CURRENT_BRANCH})"
+   ```
+
+   If `CURRENT_BRANCH` does not equal `EXPECTED_BASE`:
+   - Warn the user: **"Orchestrator is on `<CURRENT_BRANCH>` but the configured pipeline base is `<EXPECTED_BASE>`. Switch to `<EXPECTED_BASE>`? (yes / no)"**
+   - If yes: `git checkout "${EXPECTED_BASE}" && git pull origin "${EXPECTED_BASE}"`
+   - If no: abort the pipeline run — running on the wrong branch will cause PRs to target the wrong base and create orphan worktrees.
+
+   Also print a reminder: *"PRs created by spawned agents will target `${EXPECTED_BASE}`. The enforce-base-branch hook blocks any `gh pr create` without `--base ${EXPECTED_BASE}`."*
+
+   Then, check if `.claude-pipeline/` is in sync with the source repo:
    ```bash
    bash .claude/scripts/check-subtree-drift.sh 2>/dev/null || true
    ```
