@@ -276,7 +276,8 @@ After installation, the generated files live in `.claude/skills/`, `.claude/scri
 │   ├── retarget-pr.sh.template             # PR base-branch retargeting
 │   ├── queue-status.sh                     # Queue status display
 │   ├── review-logs.sh                      # Tool-use log reviewer
-│   └── check-server.sh                     # Server health check
+│   ├── check-server.sh                     # Server health check
+│   └── check-subtree-drift.sh              # Detects upstream/local drift in subtree installs
 └── hooks/
     ├── block_deletions.py                  # Guards against accidental deletions
     ├── enforce-base-branch.py.template    # Blocks PRs that target the wrong branch

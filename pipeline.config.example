@@ -20,3 +20,5 @@ PIPELINE_LABELS_EXCLUDED="excluded"                # Label to exclude issues fro
 PIPELINE_LABELS_LATER="later"                      # Label for deferred issues
 PIPELINE_LABELS_HUMAN="human"                      # Label for issues that need a human in the loop (skipped by autonomous full send)
 PIPELINE_WIN_TEMP=""                               # Windows temp dir (e.g., /c/Users/you/AppData/Local/Temp). Leave empty for non-Windows.
+PIPELINE_SUBTREE_REMOTE=""                         # Git remote name for pipeline source repo (auto-detected if empty)
+PIPELINE_SUBTREE_BRANCH="main"                     # Branch to track on the pipeline source remote
