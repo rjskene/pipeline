@@ -170,7 +170,7 @@ The installer generates hook scripts but does **not** modify your `.claude/setti
       },
       {
         "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "python3 .claude/hooks/enforce-staging-base.py" }]
+        "hooks": [{ "type": "command", "command": "python3 .claude/hooks/enforce-base-branch.py" }]
       },
       {
         "matcher": "*",
@@ -279,7 +279,7 @@ After installation, the generated files live in `.claude/skills/`, `.claude/scri
 │   └── check-server.sh                     # Server health check
 └── hooks/
     ├── block_deletions.py                  # Guards against accidental deletions
-    ├── enforce-staging-base.py.template    # Blocks PRs that target the wrong branch
+    ├── enforce-base-branch.py.template    # Blocks PRs that target the wrong branch
     ├── restrict_paths.py.template          # Restricts file access to project boundaries
     └── log-tool-use.sh                     # Logs all tool invocations
 ```
