@@ -94,12 +94,17 @@ fi
 UPSTREAM_AHEAD=$(git log --oneline "$LAST_SYNCED_HASH..FETCH_HEAD" 2>/dev/null | wc -l | tr -d ' ')
 
 # --- Check local-ahead ---
-# Find the most recent commit that merged the subtree (add or pull)
-MERGE_COMMIT=$(git log --all --format='%H %s' | grep "'$PREFIX'" | head -1 | awk '{print $1}' || true)
+# Compare tree objects: local subtree dir vs upstream repo root.
+# If trees match, content is identical regardless of commit history.
+LOCAL_TREE=$(git rev-parse "HEAD:$PREFIX" 2>/dev/null || echo "")
+UPSTREAM_TREE=$(git rev-parse "FETCH_HEAD^{tree}" 2>/dev/null || echo "")
 
 LOCAL_AHEAD=0
-if [ -n "$MERGE_COMMIT" ]; then
-  LOCAL_AHEAD=$(git log --oneline "$MERGE_COMMIT..HEAD" -- "$PREFIX/" 2>/dev/null | wc -l | tr -d ' ')
+if [ -z "$LOCAL_TREE" ] || [ -z "$UPSTREAM_TREE" ]; then
+  # Can't compare — skip (already handled by earlier guards, but be safe)
+  LOCAL_AHEAD=0
+elif [ "$LOCAL_TREE" != "$UPSTREAM_TREE" ]; then
+  LOCAL_AHEAD=1
 fi
 
 # --- Report ---
@@ -131,7 +136,7 @@ if [ "$UPSTREAM_AHEAD" -gt 0 ]; then
   echo "  Upstream: $UPSTREAM_AHEAD commit(s) ahead"
 fi
 if [ "$LOCAL_AHEAD" -gt 0 ]; then
-  echo "  Local: $LOCAL_AHEAD commit(s) ahead"
+  echo "  Local: has unpushed changes (tree mismatch)"
 fi
 
 echo ""
