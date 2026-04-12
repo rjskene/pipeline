@@ -39,13 +39,13 @@ You will receive an issue number as the argument (or from context). You should b
 
    <!-- Composes with: superpowers:test-driven-development, superpowers:executing-plans (optional) -->
 
-   **If `superpowers:test-driven-development` is in your available skills list**, invoke it. Follow its RED-GREEN-REFACTOR cycle for each plan item:
+   **If `superpowers:test-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:test-driven-development")`. You MUST use this exact name — do not abbreviate or alias it (e.g., do NOT use "tdd"). Follow its RED-GREEN-REFACTOR cycle for each plan item:
    - RED: Write one failing test that demonstrates the desired behavior
    - GREEN: Write the minimum code to make it pass
    - REFACTOR: Clean up while keeping tests green
    - No production code without a failing test first
 
-   **If `superpowers:executing-plans` is in your available skills list**, use it to manage task decomposition and checkpoints. Tell it: "Do NOT invoke finishing-a-development-branch — the pipeline handles PR creation." Pass it the plan from step 1.
+   **If `superpowers:executing-plans` is in your available skills list**, invoke it via `Skill(skill: "superpowers:executing-plans")`. You MUST use this exact name — do not abbreviate or alias it. Use it to manage task decomposition and checkpoints. Tell it: "Do NOT invoke finishing-a-development-branch — the pipeline handles PR creation." Pass it the plan from step 1.
 
    **If neither is available**, implement the plan directly:
    - Commit after each logical unit of work

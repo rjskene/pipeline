@@ -31,8 +31,8 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
 5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `${PIPELINE_BASE_BRANCH}` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
-6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Use `run-queue.sh --skip-permissions <issue1> <issue2> ...`. Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
-7. **Evaluate PRs** — once all agents finish (queue complete), run `/evaluate-issue N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue`).
+6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
+7. **Evaluate PRs** — once all agents finish (queue complete), run `/evaluate-issue N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6.
 8. **Report** — print a summary table of all issues with their final stage and any flags:
    ```
    FULL SEND COMPLETE
@@ -199,7 +199,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 7. **On confirmation:**
 
-   **IMPORTANT: All agents MUST run in foreground (never `run_in_background`).** Background agents lose tool permissions and the user cannot monitor progress.
+   **IMPORTANT: All spawned `claude` agent processes MUST run in foreground (never `run_in_background`).** Background agents lose tool permissions and the user cannot monitor progress. The **queue runner script** (`run-queue.sh`) is a plain bash process that manages tmux windows — it does NOT need tool permissions. The orchestrator should launch the queue runner via `Bash` with `run_in_background: true` to receive a single completion notification instead of blocking (see sub-step 4 below for details).
 
    **For cleanup (merged PRs with active worktrees):**
 
@@ -301,6 +301,19 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       Add: "Queue runner is in tmux window 0. Agent windows appear as they launch."
       Add: "Monitor with: tmux attach -t dev"
 
+      **Waiting for queue completion:** After launching the queue runner, use `Bash` with `run_in_background: true` to wait:
+      ```bash
+      timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'
+      ```
+      The orchestrator receives a single completion notification when the queue finishes. Do NOT poll in a `while ... sleep ... grep` loop.
+
+      If the queue runner crashes without emitting the completion event, the `timeout 7200` (2 hours) ensures the wait does not hang forever. On timeout, check the queue log and tmux session manually for errors.
+
+      **Live per-agent events (optional):** To receive a notification each time an agent finishes, use `Monitor`:
+      ```bash
+      tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep --line-buffered "EVENT: agent-finished"
+      ```
+
       **Automatic status updates:** The queue runner emits a rich status table (per-agent CPU%, memory, runtime, PR URLs) every `STATUS_INTERVAL` polls (default 3, so every 3 minutes at 60s poll interval). Configure with `STATUS_INTERVAL=N` env var. No manual setup needed — status output is built into the poll loop.
 
 
@@ -318,6 +331,10 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       Remote:      cd <worktree-path> && claude [--dangerously-skip-permissions] remote-control --name "issue-N-<slug>"
       Queue:       bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
       ```
+
+### Anti-patterns
+
+**Do not poll for queue completion with `while ... sleep ... grep` inside Bash tool calls.** This pattern burns context tokens on every poll cycle and ties up the orchestrator for the duration. Use `Bash run_in_background: true` for one-shot completion waits, or `Monitor` for streaming per-event notifications. The queue runner's internal `sleep` polling (inside `run-queue.sh`) is fine — it runs in its own process and does not consume orchestrator context.
 
 8. **Merge orchestration** — after all evaluations complete and verdicts are "Approved", the pipeline handles merging:
 

@@ -35,7 +35,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
    <!-- Composes with: superpowers:writing-plans (optional) -->
 
-   **If `superpowers:writing-plans` is in your available skills list**, invoke it via the Skill tool:
+   **If `superpowers:writing-plans` is in your available skills list**, invoke it via the Skill tool using `Skill(skill: "superpowers:writing-plans")`. You MUST use this exact name — do not abbreviate or alias it.
    - Pass the issue title, body, any existing plan comments, and your codebase findings from step 4 as context
    - Tell it: "Do NOT save the plan to a file. Return the plan content directly."
    - Take the output and reformat it into the canonical structure below
