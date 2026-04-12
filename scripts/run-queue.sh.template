@@ -150,6 +150,7 @@ launch_agent() {
   slug=$(slug_from_path "$wt_path")
 
   log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug})..."
+  log "EVENT: agent-launched issue=${issue} slug=${slug} worktree=${wt_path}"
   bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"
@@ -233,6 +234,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_fi
       RESULTS[$issue]="$outcome"
       unset 'ACTIVE['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
+      log "EVENT: agent-finished issue=${issue} outcome=${outcome}"
 
       # Fill the open slot
       fill_slots
@@ -262,6 +264,7 @@ log ""
 log "========================================"
 log "QUEUE COMPLETE — $(date)"
 log "========================================"
+log "EVENT: queue-complete total=${#QUEUE[@]}"
 printf "%-10s %-15s %s\n" "Issue" "Outcome" "Log" | tee -a "$QUEUE_LOG"
 log "----------------------------------------"
 for issue in "${QUEUE[@]}"; do
