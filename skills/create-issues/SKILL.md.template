@@ -30,7 +30,7 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
 
    <!-- Composes with: superpowers:brainstorming (optional) -->
 
-   **If `superpowers:brainstorming` is in your available skills list**, invoke it via the Skill tool to refine the idea through Socratic questioning — one question at a time, multiple-choice when possible, validation gates between sections. Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately."
+   **If `superpowers:brainstorming` is in your available skills list**, invoke it via `Skill(skill: "superpowers:brainstorming")`. You MUST use this exact name — do not abbreviate or alias it. Refine the idea through Socratic questioning — one question at a time, multiple-choice when possible, validation gates between sections. Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately."
 
    **If `superpowers:brainstorming` is NOT available**, help refine ideas conversationally — identify affected files, estimate scope, surface dependencies.
 4. When an actionable item crystallizes, you propose creating a GitHub issue.
