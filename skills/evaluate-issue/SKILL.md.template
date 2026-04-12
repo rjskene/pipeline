@@ -2,7 +2,7 @@
 name: evaluate-issue
 description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Usage: /evaluate-issue <issue_number>
 disable-model-invocation: false
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__playwright_*
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
 
 # Issue Evaluator
@@ -36,7 +36,17 @@ You are a senior engineer performing a code review of a PR against its approved 
 3. **Read project context:**
    - `CLAUDE.md` in worktree root
 
-4. **Phase 1 — Plan compliance.** For each item in the plan:
+4. **Two-phase review.**
+
+   <!-- Composes with: superpowers:subagent-driven-development (optional) -->
+
+   **If `superpowers:subagent-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. Give it two independent tasks:
+   - **Task 1 — Plan compliance:** For each item in the plan: verify "Files to change" were modified and changes match descriptions. Verify "DB schema changes", "API changes", "Frontend changes", "Test changes" were made or correctly skipped. Flag scope creep (implemented but not planned) and missing work (planned but not implemented).
+   - **Task 2 — Code quality:** Run `${PIPELINE_TYPECHECK_CMD} 2>&1 | head -50` and `${PIPELINE_TEST_CMD} 2>&1 | tail -30`. Review the diff for: leftover debug code, console.logs, TODO comments; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type safety issues not caught by tsc; test coverage for every implemented feature.
+
+   **If `superpowers:subagent-driven-development` is NOT available**, run both phases inline:
+
+   **Phase 1 — Plan compliance.** For each item in the plan:
    - "Files to change" — verify each file was modified, and the changes match the plan's description
    - "DB schema changes" — verify schema changes were made (or correctly skipped)
    - "API changes" — verify routes/endpoints match
@@ -45,7 +55,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Flag anything implemented that the plan DIDN'T specify (scope creep)
    - Flag anything the plan specified that WASN'T implemented (missing work)
 
-5. **Phase 2 — Code quality.** Run automated checks and review the diff:
+   **Phase 2 — Code quality.** Run automated checks and review the diff:
    ```bash
    ${PIPELINE_TYPECHECK_CMD} 2>&1 | head -50
    ${PIPELINE_TEST_CMD} 2>&1 | tail -30
@@ -57,7 +67,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Type safety issues not caught by tsc
    - Test coverage: verify tests exist for every implemented feature (if TDD was used, tests should already cover each plan item)
 
-6. **Visual validation** (if UI changes exist in the diff):
+5. **Visual validation** (if UI changes exist in the diff):
    Check if Playwright MCP is available:
    ```bash
    cat .mcp.json 2>/dev/null
@@ -69,13 +79,13 @@ You are a senior engineer performing a code review of a PR against its approved 
 
    If unavailable, note: "Visual validation skipped — Playwright MCP not available."
 
-7. **If fixable issues found (3 files or fewer, no new design decisions):**
+6. **If fixable issues found (3 files or fewer, no new design decisions):**
    - Fix them in the worktree
    - Commit: `git commit -m "fix: evaluation fixes for #<N> — <summary>"`
    - Push to the feature branch: `git push`
    - Re-run tsc + tests to confirm fixes don't break anything
 
-8. **Check for branch divergence before merge decision:**
+7. **Check for branch divergence before merge decision:**
    ```bash
    git fetch origin ${PIPELINE_BASE_BRANCH}
    git log --oneline HEAD..origin/${PIPELINE_BASE_BRANCH} | head -5
@@ -86,7 +96,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    ```
    If conflicts are complex (semantic, not whitespace), flag for user review.
 
-9. **Post evaluation comment on the PR:**
+8. **Post evaluation comment on the PR:**
    ```bash
    gh pr comment $PR_NUM --repo ${PIPELINE_REPO} --body "<evaluation>"
    ```
@@ -111,7 +121,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - <what needs human attention and why>
    ```
 
-10. **Report verdict:**
+9. **Report verdict:**
     - If **Approved**: "PR #X approved — ready for merge."
     - If **Flagged**: "PR #X flagged for review: <summary of remaining issues>"
     The evaluator never merges. Merging is handled by the pipeline orchestrator (step 8 of the pipeline skill) only after the user explicitly confirms.

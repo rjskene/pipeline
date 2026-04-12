@@ -2,7 +2,7 @@
 name: evaluate-plan
 description: Independently evaluate an implementation plan posted on a GitHub issue. Posts findings and adds plan-reviewed label. Usage: /evaluate-plan <issue_number>
 disable-model-invocation: false
-allowed-tools: Read, Bash, Glob, Grep
+allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
 
 # Plan Evaluator
@@ -32,7 +32,17 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
    - Read each file listed in: ${PIPELINE_CONTEXT_FILES}
    - Also read `redline/CLAUDE.md` if redline files are in the plan
 
-3. **Phase 1 — Spec compliance.** Verify the plan matches the issue:
+3. **Two-phase review.**
+
+   <!-- Composes with: superpowers:subagent-driven-development (optional) -->
+
+   **If `superpowers:subagent-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. Give it two independent tasks:
+   - **Task 1 — Spec compliance:** Verify the plan matches the issue. Check: does the plan address every requirement? Does it add scope the issue didn't ask for? Are "Files to change" complete? Verify every listed file exists. Read each file — is the plan's description consistent with actual contents? Check for missing imports, type definitions, or test files. If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed. If the plan lists changes, verify they're consistent with existing patterns.
+   - **Task 2 — Implementability:** Verify the plan is executable without guessing. Check: are there ambiguous steps? Are data structures, algorithms, or mode behaviors specified concretely? Would the executor need to make design decisions the plan doesn't address? Could an executor implement every step from the comment alone?
+
+   **If `superpowers:subagent-driven-development` is NOT available**, run both phases inline:
+
+   **Phase 1 — Spec compliance.** Verify the plan matches the issue:
    - Does the plan address every requirement in the issue body?
    - Does the plan add scope the issue didn't ask for?
    - Are "Files to change" complete — nothing missing, nothing extraneous?
@@ -42,20 +52,20 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
    - If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed
    - If the plan lists changes, verify they're consistent with existing patterns in the codebase
 
-4. **Phase 2 — Implementability.** Verify the plan is executable without guessing:
+   **Phase 2 — Implementability.** Verify the plan is executable without guessing:
    - Are there ambiguous steps that could be interpreted multiple ways?
    - Are data structures, algorithms, or mode behaviors specified concretely?
    - Would the executor need to make design decisions the plan doesn't address?
    - Could an executor implement every step from the comment alone?
 
-5. **Check for conflicts with in-flight work:**
+4. **Check for conflicts with in-flight work:**
    ```bash
    gh pr list --repo ${PIPELINE_REPO} --state open --json number,title,files \
      --jq '.[] | {pr: .number, title: .title, files: [.files[].path]}'
    ```
    Flag any files that appear in both the plan and an open PR.
 
-6. **Post evaluation comment on the issue:**
+5. **Post evaluation comment on the issue:**
    ```bash
    gh issue comment <N> --repo ${PIPELINE_REPO} --body "<evaluation>"
    ```
@@ -79,7 +89,7 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
    If verdict is **Approve**: no blocking issues found, plan is implementable as-is.
    If verdict is **Revise**: at least one blocking issue. List exactly what must change.
 
-7. **Update labels:**
+6. **Update labels:**
 
    If verdict is **Approve**:
    ```bash

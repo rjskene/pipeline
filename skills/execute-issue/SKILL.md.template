@@ -52,6 +52,8 @@ You will receive an issue number as the argument (or from context). You should b
    - Follow commit message conventions from CLAUDE.md (clear "why", not just "what")
    - Each commit must leave the app in a working state
 
+   **If `superpowers:test-driven-development` is skipped** (e.g., pure markdown/template changes with no executable code to test), explicitly state why in the PR or commit message. Never silently skip it.
+
    In all cases:
    - Implement ONLY what the plan specifies. No scope creep.
    - Never commit directly to main.
@@ -81,7 +83,21 @@ You will receive an issue number as the argument (or from context). You should b
 
    **Important:** Do not skip visual validation for UI changes. For backend-only changes, server health check + tests are sufficient.
 
-7. **Open a pull request:**
+7. **Self-review checkpoint before opening PR.**
+
+   <!-- Composes with: superpowers:requesting-code-review (optional) -->
+
+   **If `superpowers:requesting-code-review` is in your available skills list**, invoke it via `Skill(skill: "superpowers:requesting-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Tell it: "Review my work against the approved plan from step 1. Check for: missed plan items, leftover debug code, scope creep, and anything that would fail code review." Fix any issues it surfaces before proceeding.
+
+   **If `superpowers:requesting-code-review` is NOT available**, perform a manual self-review:
+   - Re-read the plan from step 1 and verify every item was implemented
+   - Run `git diff --stat` to check no unintended files were modified
+   - Grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`)
+   - Verify no scope creep — nothing implemented beyond what the plan specifies
+
+   Fix any issues found before proceeding.
+
+8. **Open a pull request:**
    ```bash
    gh pr create \
      --repo ${PIPELINE_REPO} \
@@ -101,12 +117,27 @@ You will receive an issue number as the argument (or from context). You should b
    )"
    ```
 
-8. **Mark as pr-open:**
+9. **Mark as pr-open:**
    ```bash
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "pr-open" --remove-label "in-progress"
    ```
 
-9. **Report:** "PR opened for #N: <PR URL>"
+10. **Report:** "PR opened for #N: <PR URL>"
+
+## Handling evaluation feedback
+
+If the evaluate-issue agent flags the PR with actionable feedback and the executor session is still active:
+
+<!-- Composes with: superpowers:receiving-code-review (optional) -->
+
+**If `superpowers:receiving-code-review` is in your available skills list**, invoke it via `Skill(skill: "superpowers:receiving-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Pass it the evaluation comment. It will guide you through verifying each feedback item with technical rigor before implementing changes.
+
+**If `superpowers:receiving-code-review` is NOT available**, handle feedback directly:
+- Read each flagged item carefully
+- Verify the feedback is technically correct before acting on it
+- Make minimal, targeted fixes — do not refactor beyond what the feedback requires
+- Re-run validation (step 6) after fixes
+- Push fixes to the feature branch
 
 ## Constraints
 - Implement ONLY what the approved plan says.
