@@ -22,7 +22,7 @@ if [ "${1:-}" = "--skill" ]; then
   shift 2
 fi
 
-WORKTREE_PATH="$1"
+WORKTREE_PATH="$(realpath "$1" 2>/dev/null || echo "$1")"
 ISSUE_NUM="$2"
 SLUG="${3:-issue-$ISSUE_NUM}"
 MODE="${4:-terminal}"
@@ -51,7 +51,11 @@ if [ "$MODE" = "terminal" ]; then
 cd ${WORKTREE_PATH}
 echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
 echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
-exec script -a ${LOG_FILE} -c "claude ${SKIP_PERMS} '/${SKILL} ${ISSUE_NUM}'"
+if [ "\$(uname -s)" = "Darwin" ]; then
+  exec script -a ${LOG_FILE} bash -c "claude ${SKIP_PERMS} '/${SKILL} ${ISSUE_NUM}'"
+else
+  exec script -a ${LOG_FILE} -c "claude ${SKIP_PERMS} '/${SKILL} ${ISSUE_NUM}'"
+fi
 SCRIPT
 
   if command -v osascript &>/dev/null; then
@@ -84,7 +88,11 @@ elif [ "$MODE" = "remote-control" ]; then
 cd ${WORKTREE_PATH}
 echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
 echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: remote-control | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
-exec script -a ${LOG_FILE} -c "claude ${SKIP_PERMS} remote-control --name '${SESSION_NAME}' --spawn same-dir"
+if [ "\$(uname -s)" = "Darwin" ]; then
+  exec script -a ${LOG_FILE} bash -c "claude ${SKIP_PERMS} remote-control --name '${SESSION_NAME}' --spawn same-dir"
+else
+  exec script -a ${LOG_FILE} -c "claude ${SKIP_PERMS} remote-control --name '${SESSION_NAME}' --spawn same-dir"
+fi
 SCRIPT
 
   if command -v tmux &>/dev/null && tmux has-session -t dev 2>/dev/null; then
@@ -112,7 +120,11 @@ echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
 echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
 # -p (print mode): Claude processes the task then exits (no interactive prompt).
 # timeout safety net: 90 min with 30s grace before SIGKILL.
-exec script -a ${LOG_FILE} -c "timeout --foreground --signal=TERM --kill-after=30 5400 claude ${SKIP_PERMS} -p '/${SKILL} ${ISSUE_NUM}'"
+if [ "\$(uname -s)" = "Darwin" ]; then
+  exec script -a ${LOG_FILE} bash -c "timeout --foreground --signal=TERM --kill-after=30 5400 claude ${SKIP_PERMS} -p '/${SKILL} ${ISSUE_NUM}'"
+else
+  exec script -a ${LOG_FILE} -c "timeout --foreground --signal=TERM --kill-after=30 5400 claude ${SKIP_PERMS} -p '/${SKILL} ${ISSUE_NUM}'"
+fi
 SCRIPT
 
   tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
