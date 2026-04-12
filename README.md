@@ -293,3 +293,5 @@ After installation, the generated files live in `.claude/skills/`, `.claude/scri
   - Git Bash (Windows): included by default
 - **`gh` CLI** — for GitHub issue/PR operations
 - **`jq`** — for hook JSON parsing
+- **`bash` 4+** — queue and status scripts use associative arrays
+  - macOS ships bash 3.2; install a newer version: `brew install bash`

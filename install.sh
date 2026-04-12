@@ -30,6 +30,14 @@ if ! command -v envsubst &>/dev/null; then
   exit 1
 fi
 
+# Check bash version (scripts use associative arrays requiring bash 4+)
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "WARNING: bash ${BASH_VERSION} detected. Pipeline scripts require bash 4+."
+  echo "  macOS:  brew install bash"
+  echo "  The installer will continue, but queue scripts will fail at runtime."
+  echo ""
+fi
+
 # Source config and export all PIPELINE_* variables
 source "$CONFIG_FILE"
 export PIPELINE_REPO PIPELINE_BASE_BRANCH PIPELINE_WORKTREE_PREFIX

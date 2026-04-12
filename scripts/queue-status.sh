@@ -9,6 +9,11 @@ set -uo pipefail
 # timeout, process exited mid-stat) must NOT propagate — the queue runner runs
 # under set -euo pipefail and a non-zero exit here kills the entire queue.
 
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "Requires bash 4+. Install via: brew install bash" >&2
+  exit 1
+fi
+
 # Parse --queue-log argument
 QUEUE_LOG_ARG=""
 if [ "${1:-}" = "--queue-log" ] && [ -n "${2:-}" ]; then
