@@ -36,6 +36,12 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
    <!-- Composes with: superpowers:subagent-driven-development (optional) -->
 
+   **MANDATORY — announce which path you are taking before proceeding:**
+   - If `superpowers:subagent-driven-development` is in your available skills list, print: `[superpowers] Using superpowers:subagent-driven-development`
+   - If it is NOT available, print: `[superpowers] superpowers:subagent-driven-development not available — using inline two-phase review`
+   - If you invoke it and the Skill tool call fails, print: `[superpowers] ERROR: superpowers:subagent-driven-development invocation failed — falling back to inline two-phase review`
+   - Set `$EVAL_TOOL` to either `superpowers:subagent-driven-development` or `inline two-phase review` for the footer in step 5.
+
    **If `superpowers:subagent-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. Give it two independent tasks:
    - **Task 1 — Spec compliance:** Verify the plan matches the issue. Check: does the plan address every requirement? Does it add scope the issue didn't ask for? Are "Files to change" complete? Verify every listed file exists. Read each file — is the plan's description consistent with actual contents? Check for missing imports, type definitions, or test files. If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed. If the plan lists changes, verify they're consistent with existing patterns.
    - **Task 2 — Implementability:** Verify the plan is executable without guessing. Check: are there ambiguous steps? Are data structures, algorithms, or mode behaviors specified concretely? Would the executor need to make design decisions the plan doesn't address? Could an executor implement every step from the comment alone?
@@ -84,6 +90,8 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
    **Spec gaps:** (ambiguities an executor would have to guess about)
    **Conflict risk:** (overlap with open PRs)
    **Recommendations:** (specific, actionable changes — not vague suggestions)
+
+   _Generated with $EVAL_TOOL_
    ```
 
    If verdict is **Approve**: no blocking issues found, plan is implementable as-is.

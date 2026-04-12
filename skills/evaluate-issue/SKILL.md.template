@@ -40,6 +40,12 @@ You are a senior engineer performing a code review of a PR against its approved 
 
    <!-- Composes with: superpowers:subagent-driven-development (optional) -->
 
+   **MANDATORY — announce which path you are taking before proceeding:**
+   - If `superpowers:subagent-driven-development` is in your available skills list, print: `[superpowers] Using superpowers:subagent-driven-development`
+   - If it is NOT available, print: `[superpowers] superpowers:subagent-driven-development not available — using inline two-phase review`
+   - If you invoke it and the Skill tool call fails, print: `[superpowers] ERROR: superpowers:subagent-driven-development invocation failed — falling back to inline two-phase review`
+   - Set `$EVAL_TOOL` to either `superpowers:subagent-driven-development` or `inline two-phase review` for the footer in step 8.
+
    **If `superpowers:subagent-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. Give it two independent tasks:
    - **Task 1 — Plan compliance:** For each item in the plan: verify "Files to change" were modified and changes match descriptions. Verify "DB schema changes", "API changes", "Frontend changes", "Test changes" were made or correctly skipped. Flag scope creep (implemented but not planned) and missing work (planned but not implemented).
    - **Task 2 — Code quality:** Run `${PIPELINE_TYPECHECK_CMD} 2>&1 | head -50` and `${PIPELINE_TEST_CMD} 2>&1 | tail -30`. Review the diff for: leftover debug code, console.logs, TODO comments; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type safety issues not caught by tsc; test coverage for every implemented feature.
@@ -119,6 +125,8 @@ You are a senior engineer performing a code review of a PR against its approved 
 
    **Remaining issues:** (if flagged)
    - <what needs human attention and why>
+
+   _Generated with $EVAL_TOOL_
    ```
 
 9. **Report verdict:**

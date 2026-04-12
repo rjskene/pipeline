@@ -39,6 +39,17 @@ You will receive an issue number as the argument (or from context). You should b
 
    <!-- Composes with: superpowers:test-driven-development, superpowers:executing-plans (optional) -->
 
+   **MANDATORY — announce which path you are taking for EACH skill before proceeding:**
+   - Track which superpowers you actually use in `$SKILLS_USED` (comma-separated list for the PR footer in step 8).
+   - For `superpowers:test-driven-development`:
+     - If available, print: `[superpowers] Using superpowers:test-driven-development`
+     - If NOT available, print: `[superpowers] superpowers:test-driven-development not available — using inline TDD`
+     - If invocation fails, print: `[superpowers] ERROR: superpowers:test-driven-development invocation failed — falling back to inline TDD`
+   - For `superpowers:executing-plans`:
+     - If available, print: `[superpowers] Using superpowers:executing-plans`
+     - If NOT available, print: `[superpowers] superpowers:executing-plans not available — using inline plan execution`
+     - If invocation fails, print: `[superpowers] ERROR: superpowers:executing-plans invocation failed — falling back to inline plan execution`
+
    **If `superpowers:test-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:test-driven-development")`. You MUST use this exact name — do not abbreviate or alias it (e.g., do NOT use "tdd"). Follow its RED-GREEN-REFACTOR cycle for each plan item:
    - RED: Write one failing test that demonstrates the desired behavior
    - GREEN: Write the minimum code to make it pass
@@ -87,6 +98,11 @@ You will receive an issue number as the argument (or from context). You should b
 
    <!-- Composes with: superpowers:requesting-code-review (optional) -->
 
+   **MANDATORY — announce which path you are taking before proceeding:**
+   - If available, print: `[superpowers] Using superpowers:requesting-code-review` and add it to `$SKILLS_USED`.
+   - If NOT available, print: `[superpowers] superpowers:requesting-code-review not available — using inline self-review`
+   - If invocation fails, print: `[superpowers] ERROR: superpowers:requesting-code-review invocation failed — falling back to inline self-review`
+
    **If `superpowers:requesting-code-review` is in your available skills list**, invoke it via `Skill(skill: "superpowers:requesting-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Tell it: "Review my work against the approved plan from step 1. Check for: missed plan items, leftover debug code, scope creep, and anything that would fail code review." Fix any issues it surfaces before proceeding.
 
    **If `superpowers:requesting-code-review` is NOT available**, perform a manual self-review:
@@ -98,6 +114,7 @@ You will receive an issue number as the argument (or from context). You should b
    Fix any issues found before proceeding.
 
 8. **Open a pull request:**
+   Include a footer in the PR body listing which superpowers were used (from `$SKILLS_USED`). If no superpowers were used, use `inline implementation`.
    ```bash
    gh pr create \
      --repo ${PIPELINE_REPO} \
@@ -113,9 +130,12 @@ You will receive an issue number as the argument (or from context). You should b
    - [ ] `npm test` — all tests pass
    - [ ] Feature works end to end
    - [ ] No console errors in browser dev tools
+
+   _Generated with $SKILLS_USED_
    EOF
    )"
    ```
+   (where `$SKILLS_USED` is the comma-separated list of superpowers actually used, e.g. `superpowers:test-driven-development, superpowers:executing-plans`, or `inline implementation` if none were available)
 
 9. **Mark as pr-open:**
    ```bash
@@ -129,6 +149,11 @@ You will receive an issue number as the argument (or from context). You should b
 If the evaluate-issue agent flags the PR with actionable feedback and the executor session is still active:
 
 <!-- Composes with: superpowers:receiving-code-review (optional) -->
+
+**MANDATORY — announce which path you are taking before proceeding:**
+- If available, print: `[superpowers] Using superpowers:receiving-code-review`
+- If NOT available, print: `[superpowers] superpowers:receiving-code-review not available — using inline feedback handling`
+- If invocation fails, print: `[superpowers] ERROR: superpowers:receiving-code-review invocation failed — falling back to inline feedback handling`
 
 **If `superpowers:receiving-code-review` is in your available skills list**, invoke it via `Skill(skill: "superpowers:receiving-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Pass it the evaluation comment. It will guide you through verifying each feedback item with technical rigor before implementing changes.
 
