@@ -31,9 +31,11 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
    <!-- Composes with: superpowers:brainstorming (optional) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
-   - If `superpowers:brainstorming` is in your available skills list, print: `[superpowers] Using superpowers:brainstorming`
-   - If it is NOT available, print: `[superpowers] superpowers:brainstorming not available — using inline brainstorming`
-   - If you invoke it and the Skill tool call fails, print: `[superpowers] ERROR: superpowers:brainstorming invocation failed — falling back to inline brainstorming`
+
+   You MUST print EXACTLY ONE of these lines immediately after the decision:
+   - `[superpowers] DISPATCH: superpowers:brainstorming` — you invoked the Skill tool and it succeeded
+   - `[superpowers] SKIP: superpowers:brainstorming — not available` — skill not in your available skills list
+   - `[superpowers] SKIP: superpowers:brainstorming — invocation failed` — Skill tool call returned an error
 
    **If `superpowers:brainstorming` is in your available skills list**, invoke it via `Skill(skill: "superpowers:brainstorming")`. You MUST use this exact name — do not abbreviate or alias it. Refine the idea through Socratic questioning — one question at a time, multiple-choice when possible, validation gates between sections. Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately."
 

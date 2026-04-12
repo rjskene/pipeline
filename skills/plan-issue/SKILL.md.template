@@ -36,10 +36,17 @@ You will receive an issue number as the argument (or from context). Perform thes
    <!-- Composes with: superpowers:writing-plans (optional) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
-   - If `superpowers:writing-plans` is in your available skills list, print: `[superpowers] Using superpowers:writing-plans`
-   - If it is NOT available, print: `[superpowers] superpowers:writing-plans not available — using inline planning`
-   - If you invoke it and the Skill tool call fails, print: `[superpowers] ERROR: superpowers:writing-plans invocation failed — falling back to inline planning`
-   - Set `$PLAN_TOOL` to either `superpowers:writing-plans` or `inline planning` for the footer in step 6.
+
+   You MUST print EXACTLY ONE of these lines immediately after the decision:
+   - `[superpowers] DISPATCH: superpowers:writing-plans` — you invoked the Skill tool and it succeeded
+   - `[superpowers] SKIP: superpowers:writing-plans — not available` — skill not in your available skills list
+   - `[superpowers] SKIP: superpowers:writing-plans — invocation failed` — Skill tool call returned an error
+
+   Collect ALL `[superpowers] DISPATCH:` and `[superpowers] SKIP:` lines you printed during this session.
+   You MUST paste them verbatim into the `## Superpowers` section of the plan comment (step 6).
+   The `_Generated with ..._` footer is derived from DISPATCH lines only (comma-separated skill names, or `inline planning` if zero dispatches).
+
+   ⚠ DISPATCH claims are auditable against tool-use logs. False claims are flagged.
 
    **If `superpowers:writing-plans` is in your available skills list**, invoke it via the Skill tool using `Skill(skill: "superpowers:writing-plans")`. You MUST use this exact name — do not abbreviate or alias it.
    - Pass the issue title, body, any existing plan comments, and your codebase findings from step 4 as context
@@ -74,13 +81,16 @@ You will receive an issue number as the argument (or from context). Perform thes
    - The executing Claude should be able to implement the feature from the comment alone, with zero missing context.
 
 6. **Post the plan as a GitHub comment:**
-   Append a footer line to the plan markdown before posting:
+   Append a `## Superpowers` section and a footer line to the plan markdown before posting:
+   ```markdown
+   ## Superpowers
+   <paste all [superpowers] DISPATCH: and SKIP: lines here>
+   Session: <CLAUDE_SESSION_ID or "unknown">
+
+   _Generated with <derived from DISPATCH lines>_
    ```
-   _Generated with $PLAN_TOOL_
-   ```
-   (where `$PLAN_TOOL` is either `superpowers:writing-plans` or `inline planning`, as determined in step 5)
    ```bash
-   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<plan markdown with footer>"
+   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<plan markdown with superpowers section and footer>"
    ```
 
 7. **Update labels** — add `plan-pending`:

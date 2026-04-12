@@ -41,10 +41,17 @@ You are a senior engineer performing a code review of a PR against its approved 
    <!-- Composes with: superpowers:subagent-driven-development (optional) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
-   - If `superpowers:subagent-driven-development` is in your available skills list, print: `[superpowers] Using superpowers:subagent-driven-development`
-   - If it is NOT available, print: `[superpowers] superpowers:subagent-driven-development not available — using inline two-phase review`
-   - If you invoke it and the Skill tool call fails, print: `[superpowers] ERROR: superpowers:subagent-driven-development invocation failed — falling back to inline two-phase review`
-   - Set `$EVAL_TOOL` to either `superpowers:subagent-driven-development` or `inline two-phase review` for the footer in step 8.
+
+   You MUST print EXACTLY ONE of these lines immediately after the decision:
+   - `[superpowers] DISPATCH: superpowers:subagent-driven-development` — you invoked the Skill tool and it succeeded
+   - `[superpowers] SKIP: superpowers:subagent-driven-development — not available` — skill not in your available skills list
+   - `[superpowers] SKIP: superpowers:subagent-driven-development — invocation failed` — Skill tool call returned an error
+
+   Collect ALL `[superpowers] DISPATCH:` and `[superpowers] SKIP:` lines you printed during this session.
+   You MUST paste them verbatim into the `## Superpowers` section of the evaluation comment (step 8).
+   The `_Generated with ..._` footer is derived from DISPATCH lines only (comma-separated skill names, or `inline two-phase review` if zero dispatches).
+
+   ⚠ DISPATCH claims are auditable against tool-use logs. False claims are flagged.
 
    **If `superpowers:subagent-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. Give it two independent tasks:
    - **Task 1 — Plan compliance:** For each item in the plan: verify "Files to change" were modified and changes match descriptions. Verify "DB schema changes", "API changes", "Frontend changes", "Test changes" were made or correctly skipped. Flag scope creep (implemented but not planned) and missing work (planned but not implemented).
@@ -72,6 +79,34 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Security issues (injection, XSS, unsanitized input)
    - Type safety issues not caught by tsc
    - Test coverage: verify tests exist for every implemented feature (if TDD was used, tests should already cover each plan item)
+
+   **Phase 2b — Superpowers audit.** Cross-reference the PR's DISPATCH claims against tool-use logs:
+   ```bash
+   # 1. Extract DISPATCH claims and session ID from PR body
+   PR_BODY=$(gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json body --jq '.body')
+   echo "$PR_BODY" | grep -o 'DISPATCH: superpowers:[a-z-]*' | sed 's/DISPATCH: //' | sort > /tmp/sp-claims.txt
+   EXEC_SESSION=$(echo "$PR_BODY" | grep -oP 'Session: \K\S+' | head -1)
+
+   # 2. Extract actual Skill tool invocations from tool-use log, filtered by execute agent's session
+   WORKTREE_ROOT=$(git rev-parse --show-toplevel)
+   if [ -n "$EXEC_SESSION" ] && [ "$EXEC_SESSION" != "unknown" ]; then
+     grep "Skill:.*superpowers:.*session=${EXEC_SESSION}" "$WORKTREE_ROOT/.claude/logs/tool-use.log" 2>/dev/null \
+       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > /tmp/sp-evidence.txt
+   else
+     grep 'Skill:.*skill=superpowers:' "$WORKTREE_ROOT/.claude/logs/tool-use.log" 2>/dev/null \
+       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > /tmp/sp-evidence.txt
+   fi
+
+   # 3. Find claims without evidence
+   comm -23 /tmp/sp-claims.txt /tmp/sp-evidence.txt > /tmp/sp-unverified.txt
+
+   # 4. Find evidence without claims (used but not announced)
+   comm -13 /tmp/sp-claims.txt /tmp/sp-evidence.txt > /tmp/sp-unannounced.txt
+   ```
+   - If `/tmp/sp-unverified.txt` is non-empty: flag as **"Superpowers: unverified DISPATCH claims"** with the specific skill names
+   - If `/tmp/sp-unannounced.txt` is non-empty: note as **"Superpowers: used but not announced"** (informational)
+   - If no `Session:` line found in PR body or session is `unknown`: note as **"Superpowers audit: session ID unavailable — audit is best-effort"**
+   - If no tool-use log found: note as **"Superpowers audit: no tool-use log available"**
 
 5. **Visual validation** (if UI changes exist in the diff):
    Check if Playwright MCP is available:
@@ -123,10 +158,16 @@ You are a senior engineer performing a code review of a PR against its approved 
    - `<commit hash>` — <description>
    (or "None")
 
+   **Superpowers audit:** <findings or "All DISPATCH claims verified" or "No claims to audit">
+
    **Remaining issues:** (if flagged)
    - <what needs human attention and why>
 
-   _Generated with $EVAL_TOOL_
+   ## Superpowers
+   <paste all [superpowers] DISPATCH: and SKIP: lines here>
+   Session: <CLAUDE_SESSION_ID or "unknown">
+
+   _Generated with <derived from DISPATCH lines>_
    ```
 
 9. **Report verdict:**
