@@ -36,7 +36,7 @@ You are a senior engineer performing a code review of a PR against its approved 
 3. **Read project context:**
    - `CLAUDE.md` in worktree root
 
-4. **Plan compliance check** — for each item in the plan:
+4. **Phase 1 — Plan compliance.** For each item in the plan:
    - "Files to change" — verify each file was modified, and the changes match the plan's description
    - "DB schema changes" — verify schema changes were made (or correctly skipped)
    - "API changes" — verify routes/endpoints match
@@ -45,7 +45,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Flag anything implemented that the plan DIDN'T specify (scope creep)
    - Flag anything the plan specified that WASN'T implemented (missing work)
 
-5. **Code quality check:**
+5. **Phase 2 — Code quality.** Run automated checks and review the diff:
    ```bash
    ${PIPELINE_TYPECHECK_CMD} 2>&1 | head -50
    ${PIPELINE_TEST_CMD} 2>&1 | tail -30
@@ -55,6 +55,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Missing error handling at system boundaries (user input, external APIs)
    - Security issues (injection, XSS, unsanitized input)
    - Type safety issues not caught by tsc
+   - Test coverage: verify tests exist for every implemented feature (if TDD was used, tests should already cover each plan item)
 
 6. **Visual validation** (if UI changes exist in the diff):
    Check if Playwright MCP is available:

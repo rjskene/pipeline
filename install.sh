@@ -182,6 +182,29 @@ echo "  Installed: ${SKILLS_INSTALLED} skills, ${SCRIPTS_INSTALLED} scripts, ${H
 echo "  Skipped:   ${SKIPPED} (unchanged)"
 echo "  Total:     $((TOTAL + SKIPPED)) files processed"
 
+# --- Advisory: check for superpowers plugin ---
+echo ""
+echo "--- Plugin dependencies ---"
+SUPERPOWERS_INSTALLED=false
+SUPERPOWERS_MANIFEST="$HOME/.claude/plugins/installed_plugins.json"
+if [ -f "$SUPERPOWERS_MANIFEST" ]; then
+  if grep -q '"superpowers' "$SUPERPOWERS_MANIFEST" 2>/dev/null; then
+    SUPERPOWERS_INSTALLED=true
+    echo "  [ok]   superpowers plugin detected"
+  fi
+fi
+
+if [ "$SUPERPOWERS_INSTALLED" = false ]; then
+  echo "  [warn] superpowers plugin not found"
+  echo ""
+  echo "  Pipeline skills can compose with superpowers for enhanced planning,"
+  echo "  TDD, and brainstorming. Install from Claude Code:"
+  echo ""
+  echo "      /plugin install superpowers@claude-plugins-official"
+  echo ""
+  echo "  Skills fall back to inline behavior when superpowers is absent."
+fi
+
 # --- Advisory: check for subtree drift ---
 if [ -f "$PIPELINE_DIR/scripts/check-subtree-drift.sh" ]; then
   bash "$PIPELINE_DIR/scripts/check-subtree-drift.sh" --quiet 2>/dev/null || true

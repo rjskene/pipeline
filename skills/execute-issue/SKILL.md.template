@@ -2,7 +2,7 @@
 name: execute-issue
 description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /execute-issue <issue_number>
 disable-model-invocation: false
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__playwright_*
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
 
 # Execution Agent
@@ -35,11 +35,27 @@ You will receive an issue number as the argument (or from context). You should b
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan exactly.** No scope creep — only what the plan specifies.
+5. **Implement the approved plan using test-driven development.**
+
+   <!-- Composes with: superpowers:test-driven-development, superpowers:executing-plans (optional) -->
+
+   **If `superpowers:test-driven-development` is in your available skills list**, invoke it. Follow its RED-GREEN-REFACTOR cycle for each plan item:
+   - RED: Write one failing test that demonstrates the desired behavior
+   - GREEN: Write the minimum code to make it pass
+   - REFACTOR: Clean up while keeping tests green
+   - No production code without a failing test first
+
+   **If `superpowers:executing-plans` is in your available skills list**, use it to manage task decomposition and checkpoints. Tell it: "Do NOT invoke finishing-a-development-branch — the pipeline handles PR creation." Pass it the plan from step 1.
+
+   **If neither is available**, implement the plan directly:
    - Commit after each logical unit of work
    - Follow commit message conventions from CLAUDE.md (clear "why", not just "what")
    - Each commit must leave the app in a working state
-   - Never commit directly to main
+
+   In all cases:
+   - Implement ONLY what the plan specifies. No scope creep.
+   - Never commit directly to main.
+   - Never use `--no-verify` or `--force`.
 
 6. **Validate — types, tests, server, and UI:**
 

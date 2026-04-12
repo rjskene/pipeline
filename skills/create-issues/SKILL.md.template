@@ -2,7 +2,7 @@
 name: create-issues
 description: "Brainstorm mode \u2014 discuss code changes freely, then push actionable items as GitHub issues instead of implementing them directly."
 disable-model-invocation: false
-allowed-tools: Read, Bash, Glob, Grep
+allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
 
 # Issue Creation Mode
@@ -26,7 +26,13 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
 ### Conversation flow
 1. The user discusses problems, feature ideas, refactors, bugs, or improvements.
 2. You explore the codebase freely (Read/Glob/Grep) to understand context and validate feasibility.
-3. You help refine ideas, identify affected files, estimate scope, and surface dependencies.
+3. **Refine the idea.**
+
+   <!-- Composes with: superpowers:brainstorming (optional) -->
+
+   **If `superpowers:brainstorming` is in your available skills list**, invoke it via the Skill tool to refine the idea through Socratic questioning — one question at a time, multiple-choice when possible, validation gates between sections. Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately."
+
+   **If `superpowers:brainstorming` is NOT available**, help refine ideas conversationally — identify affected files, estimate scope, surface dependencies.
 4. When an actionable item crystallizes, you propose creating a GitHub issue.
 5. On user confirmation, you create the issue.
 
