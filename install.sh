@@ -58,6 +58,7 @@ ENVSUBST_VARS+=' $PIPELINE_WIN_TEMP'
 ENVSUBST_VARS+=' $PIPELINE_SUBTREE_REMOTE $PIPELINE_SUBTREE_BRANCH'
 
 SKILLS_INSTALLED=0
+SKILLS_PRUNED=0
 SCRIPTS_INSTALLED=0
 HOOKS_INSTALLED=0
 SKIPPED=0
@@ -89,6 +90,17 @@ for template in "$PIPELINE_DIR"/skills/*/SKILL.md.template; do
     echo "$rendered" > "$output_file"
     echo "  [ok]   $skill_name/SKILL.md"
     SKILLS_INSTALLED=$((SKILLS_INSTALLED + 1))
+  fi
+done
+
+# --- Prune stale skills (no matching template) ---
+for installed_skill in "$PROJECT_ROOT"/.claude/skills/*/SKILL.md; do
+  [ -f "$installed_skill" ] || continue
+  skill_name="$(basename "$(dirname "$installed_skill")")"
+  if [ ! -f "$PIPELINE_DIR/skills/$skill_name/SKILL.md.template" ]; then
+    rm -rf "$PROJECT_ROOT/.claude/skills/$skill_name"
+    echo "  [prune] $skill_name/SKILL.md (no template)"
+    SKILLS_PRUNED=$((SKILLS_PRUNED + 1))
   fi
 done
 
@@ -187,6 +199,7 @@ echo ""
 echo "=== Done ==="
 TOTAL=$((SKILLS_INSTALLED + SCRIPTS_INSTALLED + HOOKS_INSTALLED))
 echo "  Installed: ${SKILLS_INSTALLED} skills, ${SCRIPTS_INSTALLED} scripts, ${HOOKS_INSTALLED} hooks"
+echo "  Pruned:    ${SKILLS_PRUNED} stale skills"
 echo "  Skipped:   ${SKIPPED} (unchanged)"
 echo "  Total:     $((TOTAL + SKIPPED)) files processed"
 
