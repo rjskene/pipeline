@@ -15,6 +15,10 @@ fi
 ISSUE_NUM="$1"
 WORKTREE_PATH="${2:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
+# Use per-invocation temp dir to avoid race conditions with concurrent runs
+TMPDIR_SP=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_SP"' EXIT
+
 LOG_DIR="${WORKTREE_PATH}/.claude/logs"
 SESSION_LOG=$(ls -t "$LOG_DIR"/issue-"${ISSUE_NUM}"-*.log 2>/dev/null | head -1 || true)
 TOOL_USE_LOG="${LOG_DIR}/tool-use.log"
@@ -51,13 +55,13 @@ fi
 CLEANED=$(cat "$SESSION_LOG" | strip_ansi)
 
 echo "$CLEANED" | grep -o '\[superpowers\] DISPATCH: superpowers:[a-z-]*' \
-  | sed 's/\[superpowers\] DISPATCH: //' | sort -u > /tmp/sp-claims.txt 2>/dev/null || true
+  | sed 's/\[superpowers\] DISPATCH: //' | sort -u > $TMPDIR_SP/sp-claims.txt 2>/dev/null || true
 
 echo "$CLEANED" | grep -o '\[superpowers\] SKIP: superpowers:[a-z-]*' \
-  | sed 's/\[superpowers\] SKIP: //' | sort -u > /tmp/sp-skips.txt 2>/dev/null || true
+  | sed 's/\[superpowers\] SKIP: //' | sort -u > $TMPDIR_SP/sp-skips.txt 2>/dev/null || true
 
-DISPATCH_COUNT=$(wc -l < /tmp/sp-claims.txt 2>/dev/null | tr -d ' ')
-SKIP_COUNT=$(wc -l < /tmp/sp-skips.txt 2>/dev/null | tr -d ' ')
+DISPATCH_COUNT=$(wc -l < $TMPDIR_SP/sp-claims.txt 2>/dev/null | tr -d ' ')
+SKIP_COUNT=$(wc -l < $TMPDIR_SP/sp-skips.txt 2>/dev/null | tr -d ' ')
 
 # --- Try to extract session ID from ## Superpowers block ---
 
@@ -73,33 +77,33 @@ if [ -f "$TOOL_USE_LOG" ]; then
   # Extract Skill invocations, optionally filtered by session
   if [ -n "$SESSION_ID" ] && [ "$SESSION_ID" != "unknown" ]; then
     grep "Skill:.*superpowers:.*session=${SESSION_ID}" "$TOOL_USE_LOG" 2>/dev/null \
-      | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > /tmp/sp-evidence.txt 2>/dev/null || true
+      | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > $TMPDIR_SP/sp-evidence.txt 2>/dev/null || true
   else
     grep 'Skill:.*skill=superpowers:' "$TOOL_USE_LOG" 2>/dev/null \
-      | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > /tmp/sp-evidence.txt 2>/dev/null || true
+      | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > $TMPDIR_SP/sp-evidence.txt 2>/dev/null || true
   fi
 
   # Claims without evidence
-  comm -23 /tmp/sp-claims.txt /tmp/sp-evidence.txt > /tmp/sp-unverified.txt 2>/dev/null || true
+  comm -23 $TMPDIR_SP/sp-claims.txt $TMPDIR_SP/sp-evidence.txt > $TMPDIR_SP/sp-unverified.txt 2>/dev/null || true
   # Evidence without claims
-  comm -13 /tmp/sp-claims.txt /tmp/sp-evidence.txt > /tmp/sp-unannounced.txt 2>/dev/null || true
+  comm -13 $TMPDIR_SP/sp-claims.txt $TMPDIR_SP/sp-evidence.txt > $TMPDIR_SP/sp-unannounced.txt 2>/dev/null || true
 
   # Report DISPATCH results
   while IFS= read -r skill; do
-    if grep -qx "$skill" /tmp/sp-evidence.txt 2>/dev/null; then
+    if grep -qx "$skill" $TMPDIR_SP/sp-evidence.txt 2>/dev/null; then
       echo "PASS: $skill — dispatched and verified in tool-use log"
       VERIFIED=$((VERIFIED + 1))
     else
       echo "FAIL: $skill — DISPATCH claimed but no Skill invocation found"
       UNVERIFIED=$((UNVERIFIED + 1))
     fi
-  done < /tmp/sp-claims.txt
+  done < $TMPDIR_SP/sp-claims.txt
 
   # Report unannounced invocations
   while IFS= read -r skill; do
     echo "INFO: $skill — invoked via Skill tool but no DISPATCH announcement"
     UNANNOUNCED=$((UNANNOUNCED + 1))
-  done < /tmp/sp-unannounced.txt
+  done < $TMPDIR_SP/sp-unannounced.txt
 
   # Session ID warning
   if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "unknown" ]; then
@@ -109,22 +113,20 @@ else
   # No tool-use log — report all claims as NODATA
   while IFS= read -r skill; do
     echo "NODATA: $skill — no tool-use log available"
-  done < /tmp/sp-claims.txt
+  done < $TMPDIR_SP/sp-claims.txt
 fi
 
 # Report SKIP results
 while IFS= read -r skill; do
   echo "OK: $skill — SKIP announced"
-done < /tmp/sp-skips.txt
+done < $TMPDIR_SP/sp-skips.txt
 
 # --- Summary ---
 
 echo ""
 echo "Audit: ${DISPATCH_COUNT} dispatched (${VERIFIED} verified, ${UNVERIFIED} unverified), ${SKIP_COUNT} skipped"
 
-# --- Cleanup ---
-
-rm -f /tmp/sp-claims.txt /tmp/sp-skips.txt /tmp/sp-evidence.txt /tmp/sp-unverified.txt /tmp/sp-unannounced.txt
+# Temp dir cleanup handled by EXIT trap
 
 # Exit 1 if unverified claims found
 if [ "$UNVERIFIED" -gt 0 ]; then
