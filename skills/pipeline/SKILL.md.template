@@ -24,6 +24,12 @@ allowed-tools: Read, Bash, Glob, Grep, Agent
 When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages:
 
 1. **Plan** — run `/plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
+   - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
+     ```bash
+     PLAN_COUNT=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+       --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
+     ```
+     If any targeted issue has `PLAN_COUNT == 0` (regardless of whether `plan-pending` was added), the plan-issue agent failed. Re-run `/plan-issue N` for that issue (max 1 retry). If still missing after retry, skip the issue and flag it in the final report as "Skipped (plan not posted)".
 2. **Evaluate plans** — run `/evaluate-issue-plan N` for every `plan-pending` issue (in parallel, one Agent per issue). Wait for all to complete.
 3. **Re-plan loop** — for any issue whose evaluation verdict is "Revise": re-run `/plan-issue N`, then `/evaluate-issue-plan N`. Repeat until all pass (max 3 iterations per issue). If an issue still fails after 3 iterations, skip it and flag it in the final report.
 4. **Approve** — for every issue now at `plan-reviewed`, run:
@@ -237,6 +243,19 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    **For plan evaluation (plan-pending → plan-reviewed):** Run `/evaluate-issue-plan N` for each issue needing evaluation. If multiple issues need evaluation, spawn one Agent per issue in parallel (foreground), each invoking `/evaluate-issue-plan N`. The evaluate-issue-plan skill is read-only — it reads the plan comment and codebase, posts an evaluation comment, and updates labels. If the verdict is "Approve," the label changes to `plan-reviewed`. If "Revise," the label stays `plan-pending` and the evaluation comment explains what needs to change.
 
    **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Run `/plan-issue N` for each issue. If multiple issues need planning, spawn one Agent per issue in parallel (foreground), each invoking `/plan-issue N`. If multiple issues share a branch (discovered from issue body/comments or matching branch names), plan them together in a single agent call. The plan-issue skill reads prior comments (including user feedback) and produces a revised plan when feedback exists.
+
+   After all planning agents complete, verify each targeted issue has a plan comment:
+   ```bash
+   for N in <planned_issues>; do
+     PLAN_COUNT=$(gh issue view $N --repo ${PIPELINE_REPO} --json comments \
+       --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
+     if [ "$PLAN_COUNT" -eq 0 ]; then
+       echo "WARNING: Issue #$N has no plan comment. Re-running /plan-issue $N."
+       # Re-run plan-issue for this issue (max 1 retry)
+     fi
+   done
+   ```
+   If a re-run also fails to post the comment, flag the issue in the status report as "Plan failed — no comment posted" and do not advance it to evaluate-plan.
 
    **For PR evaluation (pr-open → evaluated):** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
    1. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"

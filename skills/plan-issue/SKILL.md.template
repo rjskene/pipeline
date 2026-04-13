@@ -51,6 +51,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    **You MUST invoke `superpowers:writing-plans`** via the Skill tool using `Skill(skill: "superpowers:writing-plans")`. You MUST use this exact name — do not abbreviate or alias it.
    - Pass the issue title, body, any existing plan comments, and your codebase findings from step 4 as context
    - Tell it: "Do NOT save the plan to a file. Return the plan content directly."
+   - **Important:** "Return the plan content directly" means return it to THIS agent (the plan-issue agent), NOT to the orchestrator. You (the plan-issue agent) are still responsible for posting it as a GitHub comment in step 6.
    - Take the output and reformat it into the canonical structure below
 
    **If the Skill tool call fails or the skill is not in your available skills list**, fall back to inline planning and announce the fallback via `[superpowers] SKIP`.
@@ -93,12 +94,21 @@ You will receive an issue number as the argument (or from context). Perform thes
    gh issue comment <N> --repo ${PIPELINE_REPO} --body "<plan markdown with superpowers section and footer>"
    ```
 
-7. **Update labels** — add `plan-pending`:
+7. **Verify the plan comment was posted:**
+   ```bash
+   PLAN_COUNT=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+     --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
+   echo "Plan comments found: $PLAN_COUNT"
+   ```
+   - If `$PLAN_COUNT` >= 1, proceed to step 8.
+   - If `$PLAN_COUNT` is 0: the comment failed to post. Retry once by re-running the `gh issue comment` from step 6. Then re-check. If still 0, STOP and report: "FAILED: Plan was generated but could not be posted as a GitHub comment on issue #N." Include the full plan text in your response so the orchestrator can recover. Do NOT add the `plan-pending` label.
+
+8. **Update labels** — add `plan-pending`:
    ```bash
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-pending"
    ```
 
-8. **Report back:** "Plan posted to issue #N."
+9. **Report back:** "Plan posted to issue #N."
 
 ## Constraints
 - READ ONLY — do not modify any source files.
