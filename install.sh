@@ -91,15 +91,19 @@ for template in "$PIPELINE_DIR"/skills/*/SKILL.md.template; do
     echo "  [ok]   $skill_name/SKILL.md"
     SKILLS_INSTALLED=$((SKILLS_INSTALLED + 1))
   fi
+  # Mark as pipeline-managed so pruning skips project-specific skills
+  touch "$output_dir/.pipeline-managed"
 done
 
-# --- Prune stale skills (no matching template) ---
+# --- Prune stale pipeline-managed skills (marker present, no matching template) ---
 for installed_skill in "$PROJECT_ROOT"/.claude/skills/*/SKILL.md; do
   [ -f "$installed_skill" ] || continue
-  skill_name="$(basename "$(dirname "$installed_skill")")"
-  if [ ! -f "$PIPELINE_DIR/skills/$skill_name/SKILL.md.template" ]; then
-    rm -rf "$PROJECT_ROOT/.claude/skills/$skill_name"
-    echo "  [prune] $skill_name/SKILL.md (no template)"
+  skill_dir="$(dirname "$installed_skill")"
+  skill_name="$(basename "$skill_dir")"
+  # Only prune skills that were installed by this script (have the marker)
+  if [ -f "$skill_dir/.pipeline-managed" ] && [ ! -f "$PIPELINE_DIR/skills/$skill_name/SKILL.md.template" ]; then
+    rm -rf "$skill_dir"
+    echo "  [prune] $skill_name/ (stale pipeline-managed skill)"
     SKILLS_PRUNED=$((SKILLS_PRUNED + 1))
   fi
 done
