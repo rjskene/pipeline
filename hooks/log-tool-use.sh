@@ -28,6 +28,13 @@ case "$TOOL" in
   Agent)
     SUMMARY=$(echo "$INPUT" | jq -r '.tool_input.description // "no description"')
     ;;
+  Skill)
+    SKILL_NAME=$(echo "$INPUT" | jq -r '.tool_input.skill // "unknown"')
+    SUMMARY="skill=${SKILL_NAME}"
+    SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
+    echo "[$TIMESTAMP] $TOOL: $SUMMARY session=$SESSION_ID" >> "$LOG_FILE"
+    exit 0
+    ;;
   *)
     SUMMARY=$(echo "$INPUT" | jq -r '.tool_input | tostring' | head -c 200)
     ;;
