@@ -23,9 +23,9 @@ create-issues → plan-issue → evaluate-plan → (approve) → execute-issue �
 |-------|---------------|---------------------------|
 | Ideation | `/create-issues` | `brainstorming` |
 | Planning | `/plan-issue` | `writing-plans` |
-| Plan review | `/evaluate-plan` | — |
-| Execution | `/execute-issue` | `test-driven-development`, `systematic-debugging`, `executing-plans` |
-| PR review | `/evaluate-issue` | `requesting-code-review` |
+| Plan review | `/evaluate-plan` | `subagent-driven-development` |
+| Execution | `/execute-issue` | `test-driven-development`, `executing-plans`, `requesting-code-review` |
+| PR review | `/evaluate-issue` | `subagent-driven-development` |
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
