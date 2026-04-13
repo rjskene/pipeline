@@ -74,7 +74,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    **Estimated effort:** X hours
    ```
 
-   **IMPORTANT — the GitHub comment IS the plan.** The `/execute-issue` skill reads ONLY the GitHub comment when implementing in a worktree. It has no access to local `.claude/plans/` files. Therefore:
+   **IMPORTANT — the GitHub comment IS the plan.** The `/execute-issue-plan` skill reads ONLY the GitHub comment when implementing in a worktree. It has no access to local `.claude/plans/` files. Therefore:
    - Include ALL design detail directly in the comment — data structures, tier tables, formulas, mode behaviors, prompt strategies, etc.
    - Never summarize and point to a local plan file (e.g., "see `compressed-wibbling-sutherland.md` for details").
    - If you used Claude's plan mode internally, fold its full content into the comment before posting.

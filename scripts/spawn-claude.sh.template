@@ -6,8 +6,8 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 
 # Launch a claude CLI session for a worktree.
 # Usage: bash .claude/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue-number> [slug] [mode]
-#   mode: "terminal" (default) — new Terminal.app window with /execute-issue
-#         "tmux"               — tmux window with auto-fire /execute-issue
+#   mode: "terminal" (default) — new Terminal.app window with /execute-issue-plan
+#         "tmux"               — tmux window with auto-fire /execute-issue-plan
 #         "remote-control"     — remote-control server (control from mobile app / claude.ai/code)
 
 SKIP_PERMS=""
@@ -16,7 +16,7 @@ if [ "${1:-}" = "--dangerously-skip-permissions" ]; then
   shift
 fi
 
-SKILL="execute-issue"
+SKILL="execute-issue-plan"
 if [ "${1:-}" = "--skill" ]; then
   SKILL="$2"
   shift 2
