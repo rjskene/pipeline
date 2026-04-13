@@ -115,11 +115,16 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    Also print a reminder: *"PRs created by spawned agents will target `${EXPECTED_BASE}`. The enforce-base-branch hook blocks any `gh pr create` without `--base ${EXPECTED_BASE}`."*
 
-   Then, check if `.claude-pipeline/` is in sync with the source repo:
+   Then, check if `.claude-pipeline/` is in sync with the source repo and resolve any drift:
    ```bash
-   bash .claude/scripts/check-subtree-drift.sh 2>/dev/null || true
+   bash .claude/scripts/resolve-subtree-drift.sh 2>/dev/null; DRIFT_EXIT=$?
    ```
-   If drift is detected, report it briefly. This is advisory — do not block or take action unless the user asks.
+   - **Interactive mode** (default): the script prompts for each action (pull? push? reinstall?). Follow the prompts.
+   - **Full-send mode**: pass `--auto` — auto-pulls + reinstalls without prompting. Never auto-pushes (push is a sharing decision).
+     ```bash
+     bash .claude/scripts/resolve-subtree-drift.sh --auto 2>/dev/null; DRIFT_EXIT=$?
+     ```
+   - If the script reports "Skills updated", note it in the housekeeping output but do not stop — spawned agents read updated skills from disk.
 
    Then, if any worktrees exist, run the sync script to ensure all active worktrees have up-to-date CLAUDE.md files, `.claude/` settings, and hooks:
    ```bash
