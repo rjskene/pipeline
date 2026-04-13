@@ -34,7 +34,7 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
 3. **Two-phase review.**
 
-   <!-- Composes with: superpowers:subagent-driven-development (optional) -->
+   <!-- Composes with: superpowers:subagent-driven-development (use if available, fallback if not) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
 

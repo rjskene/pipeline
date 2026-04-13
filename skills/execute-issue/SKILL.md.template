@@ -37,7 +37,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 5. **Implement the approved plan using test-driven development.**
 
-   <!-- Composes with: superpowers:test-driven-development, superpowers:executing-plans (optional) -->
+   <!-- Composes with: superpowers:test-driven-development, superpowers:executing-plans (use if available, fallback if not) -->
 
    **MANDATORY — announce which path you are taking for EACH skill before proceeding:**
 
@@ -99,7 +99,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 7. **Self-review checkpoint before opening PR.**
 
-   <!-- Composes with: superpowers:requesting-code-review (optional) -->
+   <!-- Composes with: superpowers:requesting-code-review (use if available, fallback if not) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
 
@@ -157,7 +157,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 If the evaluate-issue agent flags the PR with actionable feedback and the executor session is still active:
 
-<!-- Composes with: superpowers:receiving-code-review (optional) -->
+<!-- Composes with: superpowers:receiving-code-review (use if available, fallback if not) -->
 
 **MANDATORY — announce which path you are taking before proceeding:**
 

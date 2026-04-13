@@ -28,7 +28,7 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
 2. You explore the codebase freely (Read/Glob/Grep) to understand context and validate feasibility.
 3. **Refine the idea.**
 
-   <!-- Composes with: superpowers:brainstorming (optional) -->
+   <!-- Composes with: superpowers:brainstorming (use if available, fallback if not) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
 

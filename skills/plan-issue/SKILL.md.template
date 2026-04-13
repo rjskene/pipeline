@@ -33,7 +33,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 5. **Generate the implementation plan.**
 
-   <!-- Composes with: superpowers:writing-plans (optional) -->
+   <!-- Composes with: superpowers:writing-plans (use if available, fallback if not) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
 
