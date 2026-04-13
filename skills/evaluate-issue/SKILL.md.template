@@ -83,28 +83,30 @@ You are a senior engineer performing a code review of a PR against its approved 
    **Phase 2b — Superpowers audit.** Cross-reference the PR's DISPATCH claims against tool-use logs:
    ```bash
    # 1. Extract DISPATCH claims and session ID from PR body
+   SP_TMP=$(mktemp -d)
+   trap 'rm -rf "$SP_TMP"' EXIT
    PR_BODY=$(gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json body --jq '.body')
-   echo "$PR_BODY" | grep -o 'DISPATCH: superpowers:[a-z-]*' | sed 's/DISPATCH: //' | sort > /tmp/sp-claims.txt
+   echo "$PR_BODY" | grep -o 'DISPATCH: superpowers:[a-z-]*' | sed 's/DISPATCH: //' | sort > "$SP_TMP/claims.txt"
    EXEC_SESSION=$(echo "$PR_BODY" | grep -oP 'Session: \K\S+' | head -1)
 
    # 2. Extract actual Skill tool invocations from tool-use log, filtered by execute agent's session
    WORKTREE_ROOT=$(git rev-parse --show-toplevel)
    if [ -n "$EXEC_SESSION" ] && [ "$EXEC_SESSION" != "unknown" ]; then
      grep "Skill:.*superpowers:.*session=${EXEC_SESSION}" "$WORKTREE_ROOT/.claude/logs/tool-use.log" 2>/dev/null \
-       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > /tmp/sp-evidence.txt
+       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > "$SP_TMP/evidence.txt"
    else
      grep 'Skill:.*skill=superpowers:' "$WORKTREE_ROOT/.claude/logs/tool-use.log" 2>/dev/null \
-       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > /tmp/sp-evidence.txt
+       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > "$SP_TMP/evidence.txt"
    fi
 
    # 3. Find claims without evidence
-   comm -23 /tmp/sp-claims.txt /tmp/sp-evidence.txt > /tmp/sp-unverified.txt
+   comm -23 "$SP_TMP/claims.txt" "$SP_TMP/evidence.txt" > "$SP_TMP/unverified.txt"
 
    # 4. Find evidence without claims (used but not announced)
-   comm -13 /tmp/sp-claims.txt /tmp/sp-evidence.txt > /tmp/sp-unannounced.txt
+   comm -13 "$SP_TMP/claims.txt" "$SP_TMP/evidence.txt" > "$SP_TMP/unannounced.txt"
    ```
-   - If `/tmp/sp-unverified.txt` is non-empty: flag as **"Superpowers: unverified DISPATCH claims"** with the specific skill names
-   - If `/tmp/sp-unannounced.txt` is non-empty: note as **"Superpowers: used but not announced"** (informational)
+   - If `$SP_TMP/unverified.txt` is non-empty: flag as **"Superpowers: unverified DISPATCH claims"** with the specific skill names
+   - If `$SP_TMP/unannounced.txt` is non-empty: note as **"Superpowers: used but not announced"** (informational)
    - If no `Session:` line found in PR body or session is `unknown`: note as **"Superpowers audit: session ID unavailable — audit is best-effort"**
    - If no tool-use log found: note as **"Superpowers audit: no tool-use log available"**
 
