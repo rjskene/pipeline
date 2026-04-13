@@ -39,9 +39,8 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 ## Branches
 
-- **`master`** — production branch, deployed to Fly.io
-- **`pipeline`** — mirrors master, used as the base for worktree-based execution. New fixtures or changes on master must be merged into pipeline before training runs can use them.
-- **`feat/*`** — feature branches created by `/execute-issue` in worktrees
+- **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
+- **`feature/*`** — feature branches created by `/execute-issue` in worktrees, one per issue. Merged back to the base branch via PR.
 
 ## Design Principles
 
