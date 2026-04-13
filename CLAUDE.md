@@ -16,16 +16,16 @@ Pipeline orchestrates. Superpowers execute.
 ## Lifecycle Stages
 
 ```
-create-issues → plan-issue → evaluate-plan → (approve) → execute-issue → evaluate-issue → (merge)
+create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-issue-plan → evaluate-issue-pr → (merge)
 ```
 
 | Stage | Pipeline skill | Superpowers used internally |
 |-------|---------------|---------------------------|
 | Ideation | `/create-issues` | `brainstorming` |
 | Planning | `/plan-issue` | `writing-plans` |
-| Plan review | `/evaluate-plan` | — |
-| Execution | `/execute-issue` | `subagent-driven-development` |
-| PR review | `/evaluate-issue` | `subagent-driven-development` |
+| Plan review | `/evaluate-issue-plan` | — |
+| Execution | `/execute-issue-plan` | `subagent-driven-development` |
+| PR review | `/evaluate-issue-pr` | `subagent-driven-development` |
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
@@ -35,12 +35,12 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 **Issues → Plans:** Each issue gets its own implementation plan via `/plan-issue`, which uses `writing-plans` internally.
 
-**Plans → Execution:** After a plan is reviewed (`/evaluate-plan`) and approved (human adds `plan-approved` label), `/execute-issue` implements it in an isolated worktree.
+**Plans → Execution:** After a plan is reviewed (`/evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/execute-issue-plan` implements it in an isolated worktree.
 
 ## Branches
 
 - **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
-- **`feature/*`** — feature branches created by `/execute-issue` in worktrees, one per issue. Merged back to the base branch via PR.
+- **`feature/*`** — feature branches created by `/execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 
 ## Design Principles
 

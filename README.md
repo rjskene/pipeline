@@ -3,7 +3,7 @@
 A reusable automation layer for Claude Code projects. Manages the full GitHub issue lifecycle — planning, evaluation, execution, PR creation, and cleanup — through slash commands.
 
 ```
-(new issue) → /plan-issue → /evaluate-plan → (approve) → /execute-issue → /evaluate-issue → (merge)
+(new issue) → /plan-issue → /evaluate-issue-plan → (approve) → /execute-issue-plan → /evaluate-issue-pr → (merge)
 ```
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
@@ -232,9 +232,9 @@ Run `/pipeline` in Claude Code. It should fetch your issues and print a status t
 |---|---|
 | `/pipeline` | Check pipeline status, see what's ready, advance the next stage |
 | `/plan-issue 42` | Generate an implementation plan for issue #42 and post it as a comment |
-| `/evaluate-plan 42` | Independently review the plan on issue #42 |
-| `/execute-issue 42` | Implement the approved plan (run from inside the feature worktree) |
-| `/evaluate-issue 42` | Review the PR against its plan (run from inside the feature worktree) |
+| `/evaluate-issue-plan 42` | Independently review the plan on issue #42 |
+| `/execute-issue-plan 42` | Implement the approved plan (run from inside the feature worktree) |
+| `/evaluate-issue-pr 42` | Review the PR against its plan (run from inside the feature worktree) |
 | `/create-issues` | Brainstorm mode — discuss changes, then push as GitHub issues |
 | `/worktree-sync` | Sync `.claude/` files to all active worktrees |
 
@@ -262,9 +262,9 @@ After installation, the generated files live in `.claude/skills/`, `.claude/scri
 ├── skills/
 │   ├── pipeline/SKILL.md.template          # Pipeline status + coordinator
 │   ├── plan-issue/SKILL.md.template        # Planning agent
-│   ├── evaluate-plan/SKILL.md.template     # Plan evaluator
-│   ├── execute-issue/SKILL.md.template     # Execution agent
-│   ├── evaluate-issue/SKILL.md.template    # PR evaluator
+│   ├── evaluate-issue-plan/SKILL.md.template # Plan evaluator
+│   ├── execute-issue-plan/SKILL.md.template  # Execution agent
+│   ├── evaluate-issue-pr/SKILL.md.template   # PR evaluator
 │   ├── create-issues/SKILL.md.template     # Issue creation from brainstorm
 │   └── worktree-sync/SKILL.md.template     # Worktree file sync
 ├── scripts/
