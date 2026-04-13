@@ -277,7 +277,8 @@ After installation, the generated files live in `.claude/skills/`, `.claude/scri
 │   ├── queue-status.sh                     # Queue status display
 │   ├── review-logs.sh                      # Tool-use log reviewer
 │   ├── check-server.sh                     # Server health check
-│   └── check-subtree-drift.sh              # Detects upstream/local drift in subtree installs
+│   ├── check-subtree-drift.sh              # Detects upstream/local drift in subtree installs
+│   └── resolve-subtree-drift.sh            # Resolves drift: pull/push/reinstall with interactive or auto mode
 └── hooks/
     ├── block_deletions.py                  # Guards against accidental deletions
     ├── enforce-base-branch.py.template    # Blocks PRs that target the wrong branch
