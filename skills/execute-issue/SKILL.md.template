@@ -35,17 +35,16 @@ You will receive an issue number as the argument (or from context). You should b
    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan using test-driven development.**
+5. **Implement the approved plan.**
 
-   <!-- Composes with: superpowers:test-driven-development, superpowers:executing-plans (use if available, fallback if not) -->
+   <!-- Composes with: superpowers:subagent-driven-development (mandatory when available) -->
 
-   **MANDATORY — announce which path you are taking for EACH skill before proceeding:**
+   **MANDATORY — announce which path you are taking before proceeding:**
 
-   For each superpowers composition point below, you MUST print EXACTLY ONE of these lines immediately after the decision:
-   - `[superpowers] DISPATCH: <skill-name>` — you invoked the Skill tool and it succeeded
-   - `[superpowers] SKIP: <skill-name> — not available` — skill not in your available skills list
-   - `[superpowers] SKIP: <skill-name> — invocation failed` — Skill tool call returned an error
-   - `[superpowers] SKIP: <skill-name> — not applicable (<reason>)` — intentionally skipped with stated reason
+   You MUST print EXACTLY ONE of these lines immediately after the decision:
+   - `[superpowers] DISPATCH: superpowers:subagent-driven-development` — you invoked the Skill tool and it succeeded
+   - `[superpowers] SKIP: superpowers:subagent-driven-development — not available` — skill not in your available skills list
+   - `[superpowers] SKIP: superpowers:subagent-driven-development — invocation failed` — Skill tool call returned an error
 
    Collect ALL `[superpowers] DISPATCH:` and `[superpowers] SKIP:` lines you printed during this session.
    You MUST paste them verbatim into the `## Superpowers` section of the PR body (step 8).
@@ -53,20 +52,12 @@ You will receive an issue number as the argument (or from context). You should b
 
    ⚠ The evaluate-issue agent audits DISPATCH claims against tool-use logs. False claims are flagged.
 
-   **If `superpowers:test-driven-development` is in your available skills list**, invoke it via `Skill(skill: "superpowers:test-driven-development")`. You MUST use this exact name — do not abbreviate or alias it (e.g., do NOT use "tdd"). Follow its RED-GREEN-REFACTOR cycle for each plan item:
-   - RED: Write one failing test that demonstrates the desired behavior
-   - GREEN: Write the minimum code to make it pass
-   - REFACTOR: Clean up while keeping tests green
-   - No production code without a failing test first
+   **You MUST invoke `superpowers:subagent-driven-development`** via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. It manages task decomposition, TDD cycles, and review checkpoints internally. Tell it: "Do NOT invoke finishing-a-development-branch — the pipeline handles PR creation." Pass it the plan from step 1.
 
-   **If `superpowers:executing-plans` is in your available skills list**, invoke it via `Skill(skill: "superpowers:executing-plans")`. You MUST use this exact name — do not abbreviate or alias it. Use it to manage task decomposition and checkpoints. Tell it: "Do NOT invoke finishing-a-development-branch — the pipeline handles PR creation." Pass it the plan from step 1.
-
-   **If neither is available**, implement the plan directly:
+   **If the Skill tool call fails or the skill is not in your available skills list**, fall back to inline implementation and announce the fallback via `[superpowers] SKIP`:
    - Commit after each logical unit of work
    - Follow commit message conventions from CLAUDE.md (clear "why", not just "what")
    - Each commit must leave the app in a working state
-
-   **If `superpowers:test-driven-development` is skipped** (e.g., pure markdown/template changes with no executable code to test), explicitly state why in the PR or commit message. Never silently skip it.
 
    In all cases:
    - Implement ONLY what the plan specifies. No scope creep.
@@ -99,20 +90,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 7. **Self-review checkpoint before opening PR.**
 
-   <!-- Composes with: superpowers:requesting-code-review (use if available, fallback if not) -->
-
-   **MANDATORY — announce which path you are taking before proceeding:**
-
-   You MUST print EXACTLY ONE of these lines immediately after the decision:
-   - `[superpowers] DISPATCH: superpowers:requesting-code-review` — you invoked the Skill tool and it succeeded
-   - `[superpowers] SKIP: superpowers:requesting-code-review — not available` — skill not in your available skills list
-   - `[superpowers] SKIP: superpowers:requesting-code-review — invocation failed` — Skill tool call returned an error
-
-   Add this line to the `## Superpowers` section of the PR body (step 8).
-
-   **If `superpowers:requesting-code-review` is in your available skills list**, invoke it via `Skill(skill: "superpowers:requesting-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Tell it: "Review my work against the approved plan from step 1. Check for: missed plan items, leftover debug code, scope creep, and anything that would fail code review." Fix any issues it surfaces before proceeding.
-
-   **If `superpowers:requesting-code-review` is NOT available**, perform a manual self-review:
+   Before opening the PR, perform a self-review:
    - Re-read the plan from step 1 and verify every item was implemented
    - Run `git diff --stat` to check no unintended files were modified
    - Grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`)
@@ -157,7 +135,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 If the evaluate-issue agent flags the PR with actionable feedback and the executor session is still active:
 
-<!-- Composes with: superpowers:receiving-code-review (use if available, fallback if not) -->
+<!-- Composes with: superpowers:receiving-code-review (mandatory when available) -->
 
 **MANDATORY — announce which path you are taking before proceeding:**
 
@@ -166,9 +144,9 @@ You MUST print EXACTLY ONE of these lines immediately after the decision:
 - `[superpowers] SKIP: superpowers:receiving-code-review — not available` — skill not in your available skills list
 - `[superpowers] SKIP: superpowers:receiving-code-review — invocation failed` — Skill tool call returned an error
 
-**If `superpowers:receiving-code-review` is in your available skills list**, invoke it via `Skill(skill: "superpowers:receiving-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Pass it the evaluation comment. It will guide you through verifying each feedback item with technical rigor before implementing changes.
+**You MUST invoke `superpowers:receiving-code-review`** via `Skill(skill: "superpowers:receiving-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Pass it the evaluation comment. It will guide you through verifying each feedback item with technical rigor before implementing changes.
 
-**If `superpowers:receiving-code-review` is NOT available**, handle feedback directly:
+**If the Skill tool call fails or the skill is not in your available skills list**, fall back to handling feedback directly and announce the fallback via `[superpowers] SKIP`:
 - Read each flagged item carefully
 - Verify the feedback is technically correct before acting on it
 - Make minimal, targeted fixes — do not refactor beyond what the feedback requires

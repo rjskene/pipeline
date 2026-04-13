@@ -28,7 +28,7 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
 2. You explore the codebase freely (Read/Glob/Grep) to understand context and validate feasibility.
 3. **Refine the idea.**
 
-   <!-- Composes with: superpowers:brainstorming (use if available, fallback if not) -->
+   <!-- Composes with: superpowers:brainstorming (mandatory when available) -->
 
    **MANDATORY — announce which path you are taking before proceeding:**
 
@@ -37,9 +37,9 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
    - `[superpowers] SKIP: superpowers:brainstorming — not available` — skill not in your available skills list
    - `[superpowers] SKIP: superpowers:brainstorming — invocation failed` — Skill tool call returned an error
 
-   **If `superpowers:brainstorming` is in your available skills list**, invoke it via `Skill(skill: "superpowers:brainstorming")`. You MUST use this exact name — do not abbreviate or alias it. Refine the idea through Socratic questioning — one question at a time, multiple-choice when possible, validation gates between sections. Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately."
+   **You MUST invoke `superpowers:brainstorming`** via `Skill(skill: "superpowers:brainstorming")`. You MUST use this exact name — do not abbreviate or alias it. Refine the idea through Socratic questioning — one question at a time, multiple-choice when possible, validation gates between sections. Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately."
 
-   **If `superpowers:brainstorming` is NOT available**, help refine ideas conversationally — identify affected files, estimate scope, surface dependencies.
+   **If the Skill tool call fails or the skill is not in your available skills list**, fall back to conversational refinement and announce the fallback via `[superpowers] SKIP`.
 4. When an actionable item crystallizes, you propose creating a GitHub issue.
 5. On user confirmation, you create the issue.
 
