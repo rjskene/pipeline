@@ -1,6 +1,6 @@
 ---
-name: evaluate-plan
-description: Independently evaluate an implementation plan posted on a GitHub issue. Posts findings and adds plan-reviewed label. Usage: /evaluate-plan <issue_number>
+name: evaluate-issue-plan
+description: Independently evaluate an implementation plan posted on a GitHub issue. Posts findings and adds plan-reviewed label. Usage: /evaluate-issue-plan <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Skill
 ---

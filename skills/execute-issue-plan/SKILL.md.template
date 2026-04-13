@@ -1,6 +1,6 @@
 ---
-name: execute-issue
-description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /execute-issue <issue_number>
+name: execute-issue-plan
+description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /execute-issue-plan <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
@@ -50,7 +50,7 @@ You will receive an issue number as the argument (or from context). You should b
    You MUST paste them verbatim into the `## Superpowers` section of the PR body (step 8).
    The `_Generated with ..._` footer is derived from DISPATCH lines only (comma-separated skill names, or `inline implementation` if zero dispatches).
 
-   ⚠ The evaluate-issue agent audits DISPATCH claims against tool-use logs. False claims are flagged.
+   ⚠ The evaluate-issue-pr agent audits DISPATCH claims against tool-use logs. False claims are flagged.
 
    **You MUST invoke `superpowers:subagent-driven-development`** via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. It manages task decomposition, TDD cycles, and review checkpoints internally. Tell it: "Do NOT invoke finishing-a-development-branch — the pipeline handles PR creation." Pass it the plan from step 1.
 
@@ -133,7 +133,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 ## Handling evaluation feedback
 
-If the evaluate-issue agent flags the PR with actionable feedback and the executor session is still active:
+If the evaluate-issue-pr agent flags the PR with actionable feedback and the executor session is still active:
 
 <!-- Composes with: superpowers:receiving-code-review (mandatory when available) -->
 
