@@ -36,21 +36,12 @@ if [ -n "${1:-}" ]; then
   echo "--- Session boundaries ---"
   grep -E "^=== Session|Script started|Script done" "$LOG_FILE" || echo "  (none found)"
   echo ""
-  echo "--- Superpowers audit ---"
-  AUDIT_SCRIPT="${REPO_ROOT}/.claude-pipeline/scripts/audit-superpowers.sh"
-  if [ -x "$AUDIT_SCRIPT" ]; then
-    bash "$AUDIT_SCRIPT" "$ISSUE_NUM" "$REPO_ROOT" 2>&1 || true
-  else
-    echo "  (audit script not available)"
-  fi
-  echo ""
   echo "Full log: $LOG_FILE"
 else
   # Summarize all logs
-  AUDIT_SCRIPT="${REPO_ROOT}/.claude-pipeline/scripts/audit-superpowers.sh"
   echo "AGENT SESSION LOGS — $(date +%Y-%m-%d)"
   echo "======================================================================="
-  printf "%-12s %-22s %-8s %-4s %-8s %s\n" "Issue" "Timestamp" "Errors" "SP" "Lines" "File"
+  printf "%-12s %-22s %-8s %-8s %s\n" "Issue" "Timestamp" "Errors" "Lines" "File"
   echo "-----------------------------------------------------------------------"
   for LOG_FILE in $(ls -t "$LOG_DIR"/issue-*.log 2>/dev/null); do
     BASENAME=$(basename "$LOG_FILE")
@@ -59,17 +50,7 @@ else
     TS=$(echo "$BASENAME" | sed 's/issue-[0-9]*-\(.*\)\.log/\1/')
     LINES=$(wc -l < "$LOG_FILE")
     ERRORS=$(grep -ciE "$ERROR_PATTERNS" "$LOG_FILE" 2>/dev/null || echo "0")
-    # Superpowers audit status
-    if [ -x "$AUDIT_SCRIPT" ]; then
-      if bash "$AUDIT_SCRIPT" "$ISSUE" "$REPO_ROOT" > /dev/null 2>&1; then
-        SP_STATUS="✓"
-      else
-        SP_STATUS="!"
-      fi
-    else
-      SP_STATUS="-"
-    fi
-    printf "%-12s %-22s %-8s %-4s %-8s %s\n" "#${ISSUE}" "$TS" "$ERRORS" "$SP_STATUS" "$LINES" "$BASENAME"
+    printf "%-12s %-22s %-8s %-8s %s\n" "#${ISSUE}" "$TS" "$ERRORS" "$LINES" "$BASENAME"
   done
   echo "======================================================================="
   echo ""
