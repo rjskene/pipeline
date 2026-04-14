@@ -77,7 +77,7 @@ try:
     jsonl_path_hint = f"/tmp/claude-{uid}/{slug}/{session_id}/tasks/{agent_id}.output" if agent_id else ""
 
     # 1. Write per-agent JSON file
-    file_ts = now.strftime("%Y%m%d-%H%M%S")
+    file_ts = now.strftime("%Y%m%d-%H%M%S-%f")
     filename = f"{file_ts}_{slug}_{agent_id_short}.json"
     json_dir = subagents_dir()
     json_dir.mkdir(parents=True, exist_ok=True)
