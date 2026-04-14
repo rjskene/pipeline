@@ -200,6 +200,21 @@ for hook in "$PIPELINE_DIR"/hooks/*; do
 done
 
 echo ""
+echo "--- Pipeline config ---"
+PIPELINE_CONFIG_SRC="$PIPELINE_DIR/pipeline-config.json"
+PIPELINE_CONFIG_DEST="$PROJECT_ROOT/.claude/pipeline-config.json"
+if [ -f "$PIPELINE_CONFIG_SRC" ]; then
+  mkdir -p "$PROJECT_ROOT/.claude"
+  if [ -f "$PIPELINE_CONFIG_DEST" ]; then
+    echo "  [skip] pipeline-config.json (user-editable, already exists)"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    cp "$PIPELINE_CONFIG_SRC" "$PIPELINE_CONFIG_DEST"
+    echo "  [ok]   pipeline-config.json"
+  fi
+fi
+
+echo ""
 echo "=== Done ==="
 TOTAL=$((SKILLS_INSTALLED + SCRIPTS_INSTALLED + HOOKS_INSTALLED))
 echo "  Installed: ${SKILLS_INSTALLED} skills, ${SCRIPTS_INSTALLED} scripts, ${HOOKS_INSTALLED} hooks"
