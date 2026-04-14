@@ -32,25 +32,28 @@ TMUX_WINDOW="issue-${ISSUE_NUM}"
 # Pre-populate skill gate so it's active from tool #1
 # (slash commands like /execute-issue-plan don't emit Skill tool events,
 #  so the gate can't self-activate via PostToolUse)
-if [ -f "$WORKTREE_PATH/.claude/pipeline-config.json" ]; then
-  python3 <<PYEOF
-import json
+if [ -d "$WORKTREE_PATH" ] && [ -f "$WORKTREE_PATH/.claude/pipeline-config.json" ]; then
+  python3 <<PYEOF || true
+import json, sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-wt = Path("$WORKTREE_PATH")
-config = json.load(open(wt / ".claude/pipeline-config.json"))
-required = config.get("skill_gates", {}).get("$SKILL", [])
-if required:
-    state = {
-        "active_skill": "$SKILL",
-        "required": required,
-        "satisfied": [],
-        "activated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "session_id": "unknown",
-    }
-    (wt / ".claude/state").mkdir(parents=True, exist_ok=True)
-    json.dump(state, open(wt / ".claude/state/skill-gate.json", "w"), indent=2)
+try:
+    wt = Path("$WORKTREE_PATH")
+    config = json.load(open(wt / ".claude/pipeline-config.json"))
+    required = config.get("skill_gates", {}).get("$SKILL", [])
+    if required:
+        state = {
+            "active_skill": "$SKILL",
+            "required": required,
+            "satisfied": [],
+            "activated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "session_id": "unknown",
+        }
+        (wt / ".claude/state").mkdir(parents=True, exist_ok=True)
+        json.dump(state, open(wt / ".claude/state/skill-gate.json", "w"), indent=2)
+except Exception:
+    pass
 PYEOF
 fi
 
