@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # Review agent session logs for errors and key events.
-# Usage: bash .claude/scripts/review-logs.sh [issue-number]
+# Usage: bash .claude/scripts/review-logs.sh [issue-number|--subagents [filter]]
 #   No args: summarize all logs
 #   With issue number: show details for that issue's latest log
+#   --subagents: show subagent activity (optional filter fragment to grep)
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
@@ -16,6 +17,38 @@ fi
 
 # Error patterns to search for
 ERROR_PATTERNS="ERROR|FAIL|error:|failed|permission denied|EACCES|ENOENT|fatal:|panic:|Traceback|denied|refused|timed out|timeout|OOM|killed|Cannot|could not"
+
+if [ "${1:-}" = "--subagents" ]; then
+  SUBAGENT_LOG="${REPO_ROOT}/.claude/logs/subagents.log"
+  SUBAGENTS_DIR="${REPO_ROOT}/.claude/logs/subagents"
+  FILTER="${2:-}"
+
+  if [ ! -f "$SUBAGENT_LOG" ]; then
+    echo "No subagent logs found"
+    exit 0
+  fi
+
+  if [ -n "$FILTER" ]; then
+    echo "=== Subagent logs matching '$FILTER' ==="
+    grep -i "$FILTER" "$SUBAGENT_LOG" | while IFS=$'\t' read -r ts session desc result_chars tokens dur_ms filename; do
+      echo ""
+      printf "%-24s %-40s %-8s %-8s\n" "$ts" "${desc:0:40}" "$tokens" "$dur_ms"
+      JSON_FILE="${SUBAGENTS_DIR}/${filename}"
+      if [ -f "$JSON_FILE" ]; then
+        echo "--- ${filename} ---"
+        cat "$JSON_FILE"
+      fi
+    done
+  else
+    echo "=== All subagent activity ==="
+    printf "%-24s %-40s %-8s %-8s\n" "Time" "Description" "Tokens" "Dur(ms)"
+    echo "-----------------------------------------------------------------------"
+    cat "$SUBAGENT_LOG" | while IFS=$'\t' read -r ts session desc result_chars tokens dur_ms filename; do
+      printf "%-24s %-40s %-8s %-8s\n" "$ts" "${desc:0:40}" "$tokens" "$dur_ms"
+    done
+  fi
+  exit 0
+fi
 
 if [ -n "${1:-}" ]; then
   # Show details for a specific issue
@@ -55,4 +88,18 @@ else
   echo "======================================================================="
   echo ""
   echo "View details: bash .claude/scripts/review-logs.sh <issue-number>"
+
+  # Subagent activity summary
+  SUBAGENT_LOG="${REPO_ROOT}/.claude/logs/subagents.log"
+  if [ -f "$SUBAGENT_LOG" ]; then
+    echo ""
+    echo "SUBAGENTS — last 20"
+    echo "======================================================================="
+    printf "%-24s %-40s %-8s %-8s\n" "Time" "Description" "Tokens" "Dur(ms)"
+    echo "-----------------------------------------------------------------------"
+    tail -20 "$SUBAGENT_LOG" | while IFS=$'\t' read -r ts session desc result_chars tokens dur_ms filename; do
+      printf "%-24s %-40s %-8s %-8s\n" "$ts" "${desc:0:40}" "$tokens" "$dur_ms"
+    done
+    echo "======================================================================="
+  fi
 fi
