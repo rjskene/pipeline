@@ -30,6 +30,15 @@
             "command": "python3 .claude/hooks/restrict_paths.py"
           }
         ]
+      },
+      {
+        "matcher": "Read|Write|Edit|Bash|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/skill_gate.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -39,6 +48,15 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/log-tool-use.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/skill_gate.py"
           }
         ]
       }
