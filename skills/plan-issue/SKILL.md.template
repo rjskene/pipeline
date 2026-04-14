@@ -33,28 +33,14 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 5. **Generate the implementation plan.**
 
-   <!-- Composes with: superpowers:writing-plans (mandatory when available) -->
-
-   **MANDATORY — announce which path you are taking before proceeding:**
-
-   You MUST print EXACTLY ONE of these lines immediately after the decision:
-   - `[superpowers] DISPATCH: superpowers:writing-plans` — you invoked the Skill tool and it succeeded
-   - `[superpowers] SKIP: superpowers:writing-plans — not available` — skill not in your available skills list
-   - `[superpowers] SKIP: superpowers:writing-plans — invocation failed` — Skill tool call returned an error
-
-   Collect ALL `[superpowers] DISPATCH:` and `[superpowers] SKIP:` lines you printed during this session.
-   You MUST paste them verbatim into the `## Superpowers` section of the plan comment (step 6).
-   The `_Generated with ..._` footer is derived from DISPATCH lines only (comma-separated skill names, or `inline planning` if zero dispatches).
-
-   ⚠ DISPATCH claims are auditable against tool-use logs. False claims are flagged.
-
-   **You MUST invoke `superpowers:writing-plans`** via the Skill tool using `Skill(skill: "superpowers:writing-plans")`. You MUST use this exact name — do not abbreviate or alias it.
+   Invoke `superpowers:writing-plans` to structure the plan:
+   ```
+   Skill(skill: "superpowers:writing-plans")
+   ```
    - Pass the issue title, body, any existing plan comments, and your codebase findings from step 4 as context
    - Tell it: "Do NOT save the plan to a file. Return the plan content directly."
    - **Important:** "Return the plan content directly" means return it to THIS agent (the plan-issue agent), NOT to the orchestrator. You (the plan-issue agent) are still responsible for posting it as a GitHub comment in step 6.
    - Take the output and reformat it into the canonical structure below
-
-   **If the Skill tool call fails or the skill is not in your available skills list**, fall back to inline planning and announce the fallback via `[superpowers] SKIP`.
 
    **In either case**, the final plan MUST use this exact format:
 
@@ -82,16 +68,8 @@ You will receive an issue number as the argument (or from context). Perform thes
    - The executing Claude should be able to implement the feature from the comment alone, with zero missing context.
 
 6. **Post the plan as a GitHub comment:**
-   Append a `## Superpowers` section and a footer line to the plan markdown before posting:
-   ```markdown
-   ## Superpowers
-   <paste all [superpowers] DISPATCH: and SKIP: lines here>
-   Session: <CLAUDE_SESSION_ID or "unknown">
-
-   _Generated with <derived from DISPATCH lines>_
-   ```
    ```bash
-   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<plan markdown with superpowers section and footer>"
+   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<plan markdown>"
    ```
 
 7. **Verify the plan comment was posted:**

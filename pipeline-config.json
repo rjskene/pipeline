@@ -1,8 +1,0 @@
-{
-  "skill_gates": {
-    "plan-issue": ["superpowers:writing-plans"],
-    "execute-issue-plan": ["superpowers:subagent-driven-development"],
-    "create-issues": ["superpowers:brainstorming"],
-    "evaluate-issue-pr": ["superpowers:subagent-driven-development"]
-  }
-}

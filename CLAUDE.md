@@ -37,16 +37,6 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 **Plans → Execution:** After a plan is reviewed (`/evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/execute-issue-plan` implements it in an isolated worktree.
 
-## Pipeline Skill Gates
-
-Pipeline skills (`plan-issue`, `execute-issue-plan`, `create-issues`, `evaluate-issue-pr`) are required to load specific superpowers skills before using codebase tools. Enforcement is zero-trust: a hook physically blocks `Read|Write|Edit|Bash|Grep|Glob` until the declared superpowers are loaded via the `Skill` tool.
-
-- Configuration: `.claude/pipeline-config.json` maps pipeline skill names to required superpowers. Ships with a default mapping; user-editable and preserved across reinstalls.
-- Hook: `.claude/hooks/skill_gate.py` (PreToolUse gates tools; PostToolUse on `Skill` activates/satisfies gates)
-- State: `.claude/state/skill-gate.json` (gitignored, ephemeral; TTL 4 hours; auto-cleared on session change)
-- `Skill` is never gated — agents can always load more skills.
-- Conditional mid-execution requirements (e.g. `receiving-code-review`) are not pre-gated; skills still use the prompt-based `[superpowers] DISPATCH/SKIP` audit pattern for those.
-
 ## Branches
 
 - **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.

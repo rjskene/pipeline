@@ -24,7 +24,6 @@ PROTECTED_PATTERNS = [
     r"\.claude/settings\.json$",
     r"\.claude/settings\.local\.json$",
     r"\.claude/hooks/",
-    r"\.claude/pipeline-config\.json$",
 ]
 
 

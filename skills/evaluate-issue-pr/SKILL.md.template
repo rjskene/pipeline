@@ -38,26 +38,21 @@ You are a senior engineer performing a code review of a PR against its approved 
 
 4. **Two-phase review.**
 
-   <!-- Composes with: superpowers:subagent-driven-development (mandatory when available) -->
-
-   **MANDATORY — announce which path you are taking before proceeding:**
-
-   You MUST print EXACTLY ONE of these lines immediately after the decision:
-   - `[superpowers] DISPATCH: superpowers:subagent-driven-development` — you invoked the Skill tool and it succeeded
-   - `[superpowers] SKIP: superpowers:subagent-driven-development — not available` — skill not in your available skills list
-   - `[superpowers] SKIP: superpowers:subagent-driven-development — invocation failed` — Skill tool call returned an error
-
-   Collect ALL `[superpowers] DISPATCH:` and `[superpowers] SKIP:` lines you printed during this session.
-   You MUST paste them verbatim into the `## Superpowers` section of the evaluation comment (step 8).
-   The `_Generated with ..._` footer is derived from DISPATCH lines only (comma-separated skill names, or `inline two-phase review` if zero dispatches).
-
-   ⚠ DISPATCH claims are auditable against tool-use logs. False claims are flagged.
-
-   **You MUST invoke `superpowers:subagent-driven-development`** via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. Give it two independent tasks:
+   Invoke `superpowers:subagent-driven-development` to run the two review phases as independent subagents in parallel:
+   ```
+   Skill(skill: "superpowers:subagent-driven-development")
+   ```
+   Give it two independent tasks:
    - **Task 1 — Plan compliance:** For each item in the plan: verify "Files to change" were modified and changes match descriptions. Verify "DB schema changes", "API changes", "Frontend changes", "Test changes" were made or correctly skipped. Flag scope creep (implemented but not planned) and missing work (planned but not implemented).
    - **Task 2 — Code quality:** Run `${PIPELINE_TYPECHECK_CMD} 2>&1 | head -50` and `${PIPELINE_TEST_CMD} 2>&1 | tail -30`. Review the diff for: leftover debug code, console.logs, TODO comments; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type safety issues not caught by tsc; test coverage for every implemented feature.
 
-   **If the Skill tool call fails or the skill is not in your available skills list**, fall back to inline two-phase review and announce the fallback via `[superpowers] SKIP`:
+   Then invoke `superpowers:requesting-code-review` to apply a senior-review lens over the combined findings and produce the final verdict:
+   ```
+   Skill(skill: "superpowers:requesting-code-review")
+   ```
+   Tell it: "Review this PR against the attached implementation plan. The plan is <paste>. The PR diff is <paste from `gh pr diff`>. The subagent-driven review produced <paste findings>. Flag plan-compliance issues (missing planned work, scope creep beyond the plan) and code-quality issues. Do not refactor. Report back; this agent will post the evaluation comment, apply minimal fixes itself if any are flagged and small, and rebase if the base branch moved."
+
+   If the Skill tool is unavailable, perform the review inline:
 
    **Phase 1 — Plan compliance.** For each item in the plan:
    - "Files to change" — verify each file was modified, and the changes match the plan's description
@@ -78,37 +73,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Missing error handling at system boundaries (user input, external APIs)
    - Security issues (injection, XSS, unsanitized input)
    - Type safety issues not caught by tsc
-   - Test coverage: verify tests exist for every implemented feature (if TDD was used, tests should already cover each plan item)
-
-   **Phase 2b — Superpowers audit.** Cross-reference the PR's DISPATCH claims against tool-use logs:
-   ```bash
-   # 1. Extract DISPATCH claims and session ID from PR body
-   SP_TMP=$(mktemp -d)
-   trap 'rm -rf "$SP_TMP"' EXIT
-   PR_BODY=$(gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json body --jq '.body')
-   echo "$PR_BODY" | grep -o 'DISPATCH: superpowers:[a-z-]*' | sed 's/DISPATCH: //' | sort > "$SP_TMP/claims.txt"
-   EXEC_SESSION=$(echo "$PR_BODY" | grep -oP 'Session: \K\S+' | head -1)
-
-   # 2. Extract actual Skill tool invocations from tool-use log, filtered by execute agent's session
-   WORKTREE_ROOT=$(git rev-parse --show-toplevel)
-   if [ -n "$EXEC_SESSION" ] && [ "$EXEC_SESSION" != "unknown" ]; then
-     grep "Skill:.*superpowers:.*session=${EXEC_SESSION}" "$WORKTREE_ROOT/.claude/logs/tool-use.log" 2>/dev/null \
-       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > "$SP_TMP/evidence.txt"
-   else
-     grep 'Skill:.*skill=superpowers:' "$WORKTREE_ROOT/.claude/logs/tool-use.log" 2>/dev/null \
-       | grep -oP 'skill=\Ksuperpowers:[a-z-]*' | sort -u > "$SP_TMP/evidence.txt"
-   fi
-
-   # 3. Find claims without evidence
-   comm -23 "$SP_TMP/claims.txt" "$SP_TMP/evidence.txt" > "$SP_TMP/unverified.txt"
-
-   # 4. Find evidence without claims (used but not announced)
-   comm -13 "$SP_TMP/claims.txt" "$SP_TMP/evidence.txt" > "$SP_TMP/unannounced.txt"
-   ```
-   - If `$SP_TMP/unverified.txt` is non-empty: flag as **"Superpowers: unverified DISPATCH claims"** with the specific skill names
-   - If `$SP_TMP/unannounced.txt` is non-empty: note as **"Superpowers: used but not announced"** (informational)
-   - If no `Session:` line found in PR body or session is `unknown`: note as **"Superpowers audit: session ID unavailable — audit is best-effort"**
-   - If no tool-use log found: note as **"Superpowers audit: no tool-use log available"**
+   - Test coverage: verify tests exist for every implemented feature
 
 5. **Visual validation** (if UI changes exist in the diff):
    Check if Playwright MCP is available:
@@ -160,16 +125,8 @@ You are a senior engineer performing a code review of a PR against its approved 
    - `<commit hash>` — <description>
    (or "None")
 
-   **Superpowers audit:** <findings or "All DISPATCH claims verified" or "No claims to audit">
-
    **Remaining issues:** (if flagged)
    - <what needs human attention and why>
-
-   ## Superpowers
-   <paste all [superpowers] DISPATCH: and SKIP: lines here>
-   Session: <CLAUDE_SESSION_ID or "unknown">
-
-   _Generated with <derived from DISPATCH lines>_
    ```
 
 9. **Report verdict:**

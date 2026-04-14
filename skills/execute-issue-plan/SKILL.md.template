@@ -37,27 +37,13 @@ You will receive an issue number as the argument (or from context). You should b
 
 5. **Implement the approved plan.**
 
-   <!-- Composes with: superpowers:subagent-driven-development (mandatory when available) -->
-
-   **MANDATORY — announce which path you are taking before proceeding:**
-
-   You MUST print EXACTLY ONE of these lines immediately after the decision:
-   - `[superpowers] DISPATCH: superpowers:subagent-driven-development` — you invoked the Skill tool and it succeeded
-   - `[superpowers] SKIP: superpowers:subagent-driven-development — not available` — skill not in your available skills list
-   - `[superpowers] SKIP: superpowers:subagent-driven-development — invocation failed` — Skill tool call returned an error
-
-   Collect ALL `[superpowers] DISPATCH:` and `[superpowers] SKIP:` lines you printed during this session.
-   You MUST paste them verbatim into the `## Superpowers` section of the PR body (step 8).
-   The `_Generated with ..._` footer is derived from DISPATCH lines only (comma-separated skill names, or `inline implementation` if zero dispatches).
-
-   ⚠ The evaluate-issue-pr agent audits DISPATCH claims against tool-use logs. False claims are flagged.
-
-   **You MUST invoke `superpowers:subagent-driven-development`** via `Skill(skill: "superpowers:subagent-driven-development")`. You MUST use this exact name — do not abbreviate or alias it. It manages task decomposition, TDD cycles, and review checkpoints internally. Tell it: "Do NOT invoke finishing-a-development-branch — the pipeline handles PR creation." Pass it the plan from step 1.
-
-   **If the Skill tool call fails or the skill is not in your available skills list**, fall back to inline implementation and announce the fallback via `[superpowers] SKIP`:
-   - Commit after each logical unit of work
-   - Follow commit message conventions from CLAUDE.md (clear "why", not just "what")
-   - Each commit must leave the app in a working state
+   Invoke `superpowers:subagent-driven-development` with the following `args` (this makes TDD mandatory for every implementer subagent):
+   ```text
+   Skill(
+     skill: "superpowers:subagent-driven-development",
+     args: "MANDATORY: Every implementer subagent you dispatch must be instructed to follow TDD. Inject this block into every implementer-prompt you construct, before the 'Your Job' section:\n\n'REQUIRED METHODOLOGY — TDD: Write a failing test first. Run it to confirm it fails for the right reason. Then write the minimum code to make it pass. Refactor. Commit.'\n\nDo NOT dispatch an implementer subagent without this block. Do NOT invoke superpowers:finishing-a-development-branch — the pipeline handles PR creation."
+   )
+   ```
 
    In all cases:
    - Implement ONLY what the plan specifies. No scope creep.
@@ -99,7 +85,6 @@ You will receive an issue number as the argument (or from context). You should b
    Fix any issues found before proceeding.
 
 8. **Open a pull request:**
-   Include a `## Superpowers` section listing all DISPATCH and SKIP lines from this session. Derive the footer from DISPATCH lines only.
    ```bash
    gh pr create \
      --repo ${PIPELINE_REPO} \
@@ -111,15 +96,9 @@ You will receive an issue number as the argument (or from context). You should b
    ## Summary
    <bullet points summarising what changed>
 
-   ## Superpowers
-   <paste all [superpowers] DISPATCH: and SKIP: lines here>
-   Session: <CLAUDE_SESSION_ID or "unknown">
-
    ## Test plan
    - [ ] `${PIPELINE_TEST_CMD}` — all tests pass
    - [ ] Feature works end to end
-
-   _Generated with <comma-separated DISPATCH skill names, or "inline implementation" if zero dispatches>_
    EOF
    )"
    ```
@@ -135,23 +114,11 @@ You will receive an issue number as the argument (or from context). You should b
 
 If the evaluate-issue-pr agent flags the PR with actionable feedback and the executor session is still active:
 
-<!-- Composes with: superpowers:receiving-code-review (mandatory when available) -->
-
-**MANDATORY — announce which path you are taking before proceeding:**
-
-You MUST print EXACTLY ONE of these lines immediately after the decision:
-- `[superpowers] DISPATCH: superpowers:receiving-code-review` — you invoked the Skill tool and it succeeded
-- `[superpowers] SKIP: superpowers:receiving-code-review — not available` — skill not in your available skills list
-- `[superpowers] SKIP: superpowers:receiving-code-review — invocation failed` — Skill tool call returned an error
-
-**You MUST invoke `superpowers:receiving-code-review`** via `Skill(skill: "superpowers:receiving-code-review")`. You MUST use this exact name — do not abbreviate or alias it. Pass it the evaluation comment. It will guide you through verifying each feedback item with technical rigor before implementing changes.
-
-**If the Skill tool call fails or the skill is not in your available skills list**, fall back to handling feedback directly and announce the fallback via `[superpowers] SKIP`:
-- Read each flagged item carefully
-- Verify the feedback is technically correct before acting on it
-- Make minimal, targeted fixes — do not refactor beyond what the feedback requires
-- Re-run validation (step 6) after fixes
-- Push fixes to the feature branch
+Invoke `superpowers:receiving-code-review` to handle the feedback:
+```
+Skill(skill: "superpowers:receiving-code-review")
+```
+Pass the evaluation comment as context. It will guide you through verifying each feedback item with technical rigor before implementing changes.
 
 ## Constraints
 - Implement ONLY what the approved plan says.
