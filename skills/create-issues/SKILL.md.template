@@ -36,6 +36,22 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
 4. When an actionable item crystallizes, you propose creating a GitHub issue.
 5. On user confirmation, you create the issue.
 
+### Issue proposal format
+
+When one or more actionable items have crystallized and you are ready to propose issues, show them as a **compact list only**:
+
+```
+Proposed issues:
+- (pending) <title> — <one-line summary of scope, max ~15 words>
+- (pending) <title> — <one-line summary of scope>
+```
+
+Then ask for confirmation in a single prompt, e.g. "Create these N issues? (y/n, or list numbers to keep)".
+
+**Do NOT render the full issue body (Context / Scope / Affected areas / Notes) inline in the conversation.** The user has already seen the reasoning in the preceding discussion, and the full body will be persisted on GitHub when the issue is created. Inline rendering adds scroll noise and duplicates context.
+
+You still build the full body internally — you just do not print it to the user before creation.
+
 ### Issue creation protocol
 
 Before creating an issue, **check for duplicates**:
@@ -47,7 +63,7 @@ If a similar issue exists, flag it and ask the user whether to:
 - Comment on the existing issue instead
 - Skip
 
-When the user confirms, create the issue:
+After the user confirms the compact list, create each confirmed issue in a batch (one `gh issue create` call per issue, run sequentially or in a single message). Use the same body template below for all of them. Do NOT re-render the body to the user — it is only passed to `gh`.
 ```bash
 gh issue create --repo ${PIPELINE_REPO} --title "<title>" --body "$(cat <<'EOF'
 ## Context
@@ -64,6 +80,8 @@ gh issue create --repo ${PIPELINE_REPO} --title "<title>" --body "$(cat <<'EOF'
 EOF
 )"
 ```
+
+After each issue is created, print a single line: `Created: #N — <title> — <url>`. Do not re-print the body.
 
 ### Labels
 - Newly created issues get no pipeline labels by default (they enter the pipeline as `ready` stage).
