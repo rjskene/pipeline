@@ -39,9 +39,17 @@ fi
 
 BRANCH="$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
 
+# Discover the merged/closed PR number for this branch (used for checkpoint-tag annotation)
+PR_NUM="$(gh pr list --repo "$PIPELINE_REPO" --head "$BRANCH" --state all \
+  --json number --jq '.[0].number // empty' 2>/dev/null || echo "")"
+if [ -z "$PR_NUM" ]; then
+  PR_NUM="none"
+fi
+
 echo "=== Worktree Cleanup: Issue #${ISSUE_NUM} ==="
 echo "  Worktree: $WORKTREE_PATH"
 echo "  Branch:   $BRANCH"
+echo "  PR:       ${PR_NUM}"
 echo ""
 
 # --- Step 1: Verify PR is merged or closed ---
@@ -107,3 +115,7 @@ fi
 
 echo ""
 echo "=== Cleanup complete for issue #${ISSUE_NUM} ==="
+
+# Machine-readable summary line — parsed by the pipeline skill orchestrator
+# to batch a single checkpoint tag per full-send run.
+echo "CLEANUP-SUMMARY: issue=${ISSUE_NUM} pr=${PR_NUM} branch=${BRANCH}"

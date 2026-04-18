@@ -230,19 +230,36 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       git diff --cached --quiet || git commit -m "docs: update CLAUDE.md files after merging #<N>"
       ```
 
-   **Step B — Run cleanup.** Then run the cleanup script for each candidate:
+   **Step B — Run cleanup.** Then run the cleanup script for each candidate, capturing its stdout to a per-issue temp file so the orchestrator can parse the final `CLEANUP-SUMMARY:` line for batch tagging:
    ```bash
-   bash .claude/scripts/cleanup-worktree.sh <issue_number>
+   mkdir -p /tmp/pipeline-cleanup
+   OUT_LOG=$(mktemp /tmp/pipeline-cleanup/issue-<issue_number>-XXXX.log)
+   bash .claude/scripts/cleanup-worktree.sh <issue_number> | tee "$OUT_LOG"
    ```
-   This script (in order): verifies the PR is merged/closed, closes the GitHub issue with the `merged` label, consolidates tool-use logs, removes the git worktree, and deletes the remote+local branch.
+   This script (in order): verifies the PR is merged/closed, closes the GitHub issue with the `merged` label, consolidates tool-use logs, removes the git worktree, and deletes the remote+local branch. Its final line is machine-readable: `CLEANUP-SUMMARY: issue=<N> pr=<PR|none> branch=<branch>`.
 
-   If multiple worktrees need cleanup, run them sequentially. After all cleanups, print a summary:
+   If multiple worktrees need cleanup, run them sequentially, each to its own temp log.
+
+   **Step B.5 — Create a checkpoint tag for the batch.** After every cleanup invocation finishes (including a batch of one), aggregate the `CLEANUP-SUMMARY` lines and create a single local checkpoint tag on the base branch:
+   ```bash
+   ISSUES=$(grep -h '^CLEANUP-SUMMARY:' /tmp/pipeline-cleanup/*.log \
+     | sed -n 's/.*issue=\([0-9][0-9]*\).*/\1/p' | paste -sd ',' -)
+   PRS=$(grep -h '^CLEANUP-SUMMARY:' /tmp/pipeline-cleanup/*.log \
+     | sed -n 's/.*pr=\([0-9][0-9]*\).*/\1/p' | paste -sd ',' -)
+   if [ -n "$ISSUES" ]; then
+     bash .claude/scripts/create-checkpoint-tag.sh --issues "$ISSUES" --prs "$PRS"
+   fi
+   rm -f /tmp/pipeline-cleanup/*.log
+   ```
+   The tag is created **locally only** (never pushed) and named `checkpoint/YYYY-MM-DD-NN`. It annotates all issues + PRs in the batch so a later `git checkout -B pipeline checkpoint/<name>` (hook-safe rollback — `git reset --hard` is blocked by `block_deletions.py`) can roll back the entire cleanup if a regression surfaces. If zero cleanups succeeded (no `CLEANUP-SUMMARY` lines), skip the tag step.
+
+   After all cleanups (and the checkpoint tag, if created), print a summary:
    ```
    CLEANUP COMPLETE
    ================================================================
-   Issue  CLAUDE.md Updated?   Status
+   Issue  CLAUDE.md Updated?   Checkpoint Tag              Status
    ----------------------------------------------------------------
-   #N     yes / no              Cleaned up (worktree removed, containers stopped, issue closed)
+   #N     yes / no              checkpoint/YYYY-MM-DD-NN   Cleaned up
    ================================================================
    ```
 
