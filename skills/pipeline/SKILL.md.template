@@ -76,6 +76,7 @@ gh issue list --repo ${PIPELINE_REPO} --state open --json number,title,labels --
 - Worktree path: `.claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-<issue_number>-<slug>` (e.g., `.claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-25-gantt-contract-creation`)
 - If an issue already has a branch (check `gh issue view N` body/comments or existing branches), use that branch name
 - Issues that share a branch (noted in issue body or comments) should be grouped together
+- **Commit messages must follow Conventional Commits** (see CLAUDE.md → Commit Conventions & Releases). release-please parses these to drive automated versioning and CHANGELOG generation. Use `feat:`, `fix:`, `chore:`, etc. with a scope when relevant (`feat(redline):`, `fix(email-pull):`).
 
 ## Label flow
 
@@ -391,7 +392,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       ```
       - If rebase succeeds: run tests, force-push with `--force-with-lease`, retry merge
       - If conflicts are complex: abort rebase, flag for user review, skip this PR
-   4. Merge PRs sequentially to avoid cascading conflicts:
+   4. Merge PRs sequentially to avoid cascading conflicts. Before merging, ensure the PR title / squash subject follows Conventional Commits (see CLAUDE.md → Commit Conventions & Releases) — release-please reads the squash commit on merge. If not, amend via `gh pr edit $PR_NUM --title "<type>(<scope>): <summary>"` before merging.
       ```bash
       gh pr merge $PR_NUM --repo ${PIPELINE_REPO} --squash --delete-branch
       gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "merged" --remove-label "pr-open"
