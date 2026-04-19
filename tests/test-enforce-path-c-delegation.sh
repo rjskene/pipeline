@@ -230,6 +230,81 @@ PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id
 RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task" CLAUDE_SESSION_ID=other-sess)
 if [ "$RC" = "0" ]; then pass_msg "stdin session_id wins over env"; else fail_msg "expected exit 0, got $RC"; fi
 
+# --- Test 13: target=. is rejected (trivial sentinel) -> exit 2 ---
+echo "Test 13: target=. is rejected -> exit 2"
+inc
+reset_state
+write_dispatch "sess-13" "tdd-implementer" "target=. Attempt global" "Attempt global"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-13"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (trivial target rejected)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 13a: target=../.. is rejected (parent-traversal-only sentinel) -> exit 2 ---
+echo "Test 13a: target=../.. is rejected -> exit 2"
+inc
+reset_state
+write_dispatch "sess-13a" "tdd-implementer" "target=../.. Attempt escape" "Attempt escape"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-13a"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (parent-traversal target rejected)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 14: target=/ is rejected -> exit 2 ---
+echo "Test 14: target=/ is rejected -> exit 2"
+inc
+reset_state
+write_dispatch "sess-14" "tdd-implementer" "target=/ Attempt global" "Attempt global"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-14"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (absolute-root target rejected)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 15: target=./ normalizes to . and is rejected -> exit 2 ---
+echo "Test 15: target=./ normalizes to . and is rejected -> exit 2"
+inc
+reset_state
+write_dispatch "sess-15" "tdd-implementer" "target=./ Attempt global" "Attempt global"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-15"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (trailing-slash-current-dir rejected)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 16: stale cache is swept, fresh cache is written ---
+echo "Test 16: stale /tmp cache swept; fresh cache written"
+inc
+reset_state
+# Pre-create a stale cache after reset_state (which just purged /tmp caches).
+STALE_CACHE=/tmp/claude-path-c-OTHER-sess-888.cache
+printf 'NOT_PATH_C\n0.0\n' > "$STALE_CACHE"
+touch -d '25 hours ago' "$STALE_CACHE"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-16"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+FRESH_CACHE=/tmp/claude-path-c-sess-16-999.cache
+SUB_OK=1
+if [ "$RC" != "2" ]; then SUB_OK=0; fail_reason="RC was $RC, expected 2"; fi
+if [ -f "$STALE_CACHE" ]; then SUB_OK=0; fail_reason="${fail_reason:-}stale cache $STALE_CACHE still present"; fi
+if [ ! -f "$FRESH_CACHE" ]; then
+  SUB_OK=0; fail_reason="${fail_reason:-}fresh cache $FRESH_CACHE not written"
+else
+  FIRST_LINE=$(head -n1 "$FRESH_CACHE")
+  if [ "$FIRST_LINE" != "PATH_C" ]; then
+    SUB_OK=0; fail_reason="${fail_reason:-}fresh cache first line '$FIRST_LINE' != 'PATH_C'"
+  fi
+fi
+if [ "$SUB_OK" = "1" ]; then
+  pass_msg "exit 2, stale cache swept, fresh PATH_C cache written"
+else
+  fail_msg "$fail_reason"
+fi
+unset fail_reason
+
+# --- Test 17: dispatch log older than LOG_MTIME_WINDOW_SECONDS is skipped -> exit 2 ---
+echo "Test 17: stale dispatch log (mtime > 24h ago) skipped -> exit 2"
+inc
+reset_state
+write_dispatch "sess-17" "tdd-implementer" "target=web/" "Add foo"
+touch -d '25 hours ago' "$PROJ/.claude/logs/subagents"/*.json
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-17"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (stale dispatch skipped by mtime filter)"; else fail_msg "expected exit 2, got $RC"; fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

@@ -26,6 +26,8 @@ PIPELINE_REPO = "${PIPELINE_REPO}"
 
 LABEL_CACHE_TTL_SECONDS = 300
 GH_TIMEOUT_SECONDS = 5
+CACHE_TTL_SECONDS = 24 * 60 * 60
+LOG_MTIME_WINDOW_SECONDS = 24 * 60 * 60
 
 # Allowlist patterns (case-insensitive). Files matching any of these can be
 # edited directly by the orchestrator with no subagent dispatch.
@@ -69,6 +71,20 @@ def is_allowlisted(file_path: str) -> bool:
 
 def label_cache_path(session_id: str, issue_number: str) -> Path:
     return Path("/tmp") / f"claude-path-c-{session_id}-{issue_number}.cache"
+
+
+def sweep_stale_caches() -> None:
+    """Best-effort deletion of /tmp/claude-path-c-*.cache files older than CACHE_TTL_SECONDS."""
+    cutoff = time.time() - CACHE_TTL_SECONDS
+    try:
+        for p in Path("/tmp").glob("claude-path-c-*.cache"):
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except (FileNotFoundError, OSError):
+                continue
+    except Exception:
+        pass
 
 
 def read_label_cache(path: Path) -> str | None:
@@ -128,6 +144,18 @@ def get_label_status(session_id: str, issue_number: str) -> str:
     return fresh
 
 
+def _is_trivial_target(p: PurePosixPath) -> bool:
+    """Reject targets that would authorize the entire repo, root, or anything
+    reachable via parent-traversal only ('.', '/', '..', '../..', etc.).
+    """
+    s = str(p)
+    if s in (".", "", "/"):
+        return True
+    if not p.is_absolute() and all(part in ("..", ".") for part in p.parts):
+        return True
+    return False
+
+
 def collect_authorized_dirs(session_id: str) -> set[PurePosixPath]:
     """Read every dispatch log for the current session and return the set of
     directories authorized by `target=<dir>` sentinels in tdd-implementer
@@ -137,7 +165,16 @@ def collect_authorized_dirs(session_id: str) -> set[PurePosixPath]:
     log_dir = project_dir() / ".claude" / "logs" / "subagents"
     if not log_dir.is_dir():
         return authorized
+    # Bound scan growth at O(recent-logs) as .claude/logs/subagents/ accumulates
+    # over time. Stale logs are skipped without the json.loads cost; correctness
+    # of session-scoping is still handled by the session_id check below.
+    cutoff = time.time() - LOG_MTIME_WINDOW_SECONDS
     for json_path in log_dir.glob("*.json"):
+        try:
+            if json_path.stat().st_mtime < cutoff:
+                continue
+        except OSError:
+            continue
         try:
             data = json.loads(json_path.read_text())
         except (OSError, json.JSONDecodeError):
@@ -150,9 +187,13 @@ def collect_authorized_dirs(session_id: str) -> set[PurePosixPath]:
         for match in SENTINEL_RE.finditer(haystack):
             raw = match.group(1)
             try:
-                authorized.add(PurePosixPath(raw))
+                candidate = PurePosixPath(raw)
             except (TypeError, ValueError):
                 continue
+            if _is_trivial_target(candidate):
+                log_error(f"rejected trivial target sentinel: raw={raw!r}")
+                continue
+            authorized.add(candidate)
     return authorized
 
 
@@ -176,6 +217,11 @@ def main() -> int:
     issue_number = os.environ.get("CLAUDE_PIPELINE_ISSUE_NUMBER", "").strip()
     if not issue_number:
         return 0
+
+    # Only pipeline sessions write /tmp/claude-path-c-*.cache files, so only
+    # pipeline sessions pay the sweep cost. Non-pipeline Edit/Write calls exit
+    # above on the zero-I/O fast path.
+    sweep_stale_caches()
 
     raw_input = sys.stdin.read()
     try:
