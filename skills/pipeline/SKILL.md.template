@@ -54,6 +54,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 
 **Constraints during full send:**
 - Housekeeping (step 0) and log review (step 1) still run at the start, but do not pause for user input — auto-skip log review and proceed.
+- Audit review (step 1b) also auto-skips during full send.
 - If a worktree cleanup is pending at the start, run cleanup first (still auto, no confirmation needed), then continue with the full send stages.
 - Issues labeled `${PIPELINE_LABELS_EXCLUDED}` are always skipped.
 - Issues labeled `${PIPELINE_LABELS_LATER}` are shown in the final report (stage = `${PIPELINE_LABELS_LATER}`) but not processed.
@@ -159,6 +160,20 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    - If the user gives an issue number, run `bash .claude/scripts/review-logs.sh <N>` and display the output.
    - If "all", run the detail view for each issue with errors > 0.
    - If "skip", proceed to the next step.
+
+1b. **Check audit data.** If `.claude/logs/runs.log` exists and has at least one row, ask:
+
+   **"Review audits before continuing? (last / path / deviations / issue / skip)"**
+
+   - `last N`   — run `bash .claude/scripts/review-audits.sh --last N` (prompt for N, default 5).
+   - `path X`   — run `bash .claude/scripts/review-audits.sh --path X` (prompt for A/B/C).
+   - `deviations` — run `bash .claude/scripts/review-audits.sh --deviations`.
+   - `issue N`  — run `bash .claude/scripts/review-audits.sh --issue N` (prompt for N).
+   - `skip`     — proceed to step 2.
+
+   Display the script output and continue to step 2.
+
+   **During full send:** auto-skip audit review (same behavior as log review in step 1).
 
 2. **Discover pipeline issues** — fetch all open AND recently closed issues, and classify by label:
    ```bash

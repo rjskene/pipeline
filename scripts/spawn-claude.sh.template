@@ -95,6 +95,30 @@ if [ -n "$SKILL_ALIAS" ] && [ -n "$ISSUE_NUM" ]; then
   fi
 fi
 
+# --- Generate session id and bind to CLI via --session-id flag ---
+# The claude CLI's --session-id flag (verified in claude --help) accepts a UUID
+# and makes that the session_id present in every PostToolUse hook payload, which
+# log-tool-use.sh and log_subagent.py key their TSV rows on. Emitting the same
+# UUID to runs.log is therefore a reliable 1:1 join key across all three logs.
+# Single-line `>>` appends under PIPE_BUF (4096B on Linux) are atomic, so the
+# 3-way concurrency in run-queue.sh.template is race-safe without a lockfile.
+PROC_UUID="/proc/sys/kernel/random/uuid"
+if command -v uuidgen >/dev/null 2>&1; then
+  GENERATED_SESSION_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+elif [ -r "$PROC_UUID" ]; then
+  GENERATED_SESSION_ID="$(cat "$PROC_UUID")"
+else
+  echo "ERROR: neither uuidgen nor the kernel random-uuid pseudo-file is available; cannot generate a valid UUID for --session-id" >&2
+  echo "       On Git-Bash install uuidgen via the Git-for-Windows SDK; on Linux install util-linux." >&2
+  exit 1
+fi
+
+RUNS_LOG="${PIPELINE_RUNS_LOG_OVERRIDE:-${LOG_DIR}/runs.log}"
+RUNS_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s\tsession=%s\tissue=%s\tpath=%s\tskill=%s\tworktree=%s\n' \
+  "$RUNS_TS" "$GENERATED_SESSION_ID" "$ISSUE_NUM" "$PATH_LETTER" "$SKILL" "$WORKTREE_PATH" \
+  >> "$RUNS_LOG"
+
 # Deferred temp-file cleanup.
 #
 # Both $APPEND_PROMPT_FILE and $LAUNCHER must outlive this script: the terminal /
@@ -177,25 +201,12 @@ if [ -n "$SKILL_ALIAS" ]; then
   fi
 fi
 
-# Test hook: dump resolved state and exit before launching anything.
-if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
-  echo "PATH_LETTER=$PATH_LETTER"
-  echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
-  if [ -n "$APPEND_PROMPT_FILE" ] && [ -f "$APPEND_PROMPT_FILE" ]; then
-    echo "=== PAYLOAD ==="
-    cat "$APPEND_PROMPT_FILE"
-    echo "=== END PAYLOAD ==="
-  fi
-  exit 0
-fi
-
-# Write a temp launcher script to avoid nested quoting issues with tmux
-LAUNCHER=$(mktemp /tmp/claude-launch-XXXXXX.sh)
-chmod +x "$LAUNCHER"
-
 # Build-claude-argv snippet injected into each mode's launcher. Using bash
 # arrays + printf %q keeps multi-line system-prompt payloads intact.
 # $SYSPROMPT_FILE is the payload file path, or empty when no directive applies.
+# The --session-id flag binds the claude CLI's session_id to the UUID we
+# emitted into runs.log, so PostToolUse hook payloads join 1:1 across
+# tool-use.log / subagents.log and runs.log.
 BUILD_ARGV='
 declare -a CLAUDE_ARGV
 [ -n "'"$SKIP_PERMS"'" ] && CLAUDE_ARGV+=("'"$SKIP_PERMS"'")
@@ -210,7 +221,30 @@ SYSPROMPT_FILE="'"$APPEND_PROMPT_FILE"'"
 if [ -n "$SYSPROMPT_FILE" ] && [ -f "$SYSPROMPT_FILE" ]; then
   CLAUDE_ARGV+=(--append-system-prompt "$(cat "$SYSPROMPT_FILE")")
 fi
+CLAUDE_ARGV+=(--session-id '"'"''"$GENERATED_SESSION_ID"''"'"')
 '
+
+# Test hook: dump resolved state and exit before launching anything.
+if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
+  echo "PATH_LETTER=$PATH_LETTER"
+  echo "GENERATED_SESSION_ID=$GENERATED_SESSION_ID"
+  echo "RUNS_LOG=$RUNS_LOG"
+  echo "RUNS_LOG_LINE=$(tail -1 "$RUNS_LOG")"
+  echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
+  echo "=== BUILD_ARGV ==="
+  echo "$BUILD_ARGV"
+  echo "=== END BUILD_ARGV ==="
+  if [ -n "$APPEND_PROMPT_FILE" ] && [ -f "$APPEND_PROMPT_FILE" ]; then
+    echo "=== PAYLOAD ==="
+    cat "$APPEND_PROMPT_FILE"
+    echo "=== END PAYLOAD ==="
+  fi
+  exit 0
+fi
+
+# Write a temp launcher script to avoid nested quoting issues with tmux
+LAUNCHER=$(mktemp /tmp/claude-launch-XXXXXX.sh)
+chmod +x "$LAUNCHER"
 
 if [ "$MODE" = "terminal" ]; then
   cat > "$LAUNCHER" <<SCRIPT
