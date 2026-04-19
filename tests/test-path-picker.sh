@@ -147,6 +147,23 @@ else
   sed 's/^/    /' "$STDERR_FILE"
 fi
 
+echo "Test 9: BUILD_ARGV exports CLAUDE_PIPELINE_ISSUE_NUMBER and CLAUDE_PIPELINE_SKILL"
+inc
+if grep -q 'export CLAUDE_PIPELINE_ISSUE_NUMBER=' "$SCRIPT_UNDER_TEST" \
+   && grep -q 'export CLAUDE_PIPELINE_SKILL=' "$SCRIPT_UNDER_TEST"; then
+  pass_msg "both env exports present in template"
+else
+  fail_msg "expected 'export CLAUDE_PIPELINE_ISSUE_NUMBER=' and 'export CLAUDE_PIPELINE_SKILL=' in template"
+fi
+
+echo "Test 10: spawn-claude-canary stderr line present in template"
+inc
+if grep -q 'spawn-claude-canary' "$SCRIPT_UNDER_TEST"; then
+  pass_msg "canary string present"
+else
+  fail_msg "expected 'spawn-claude-canary' marker in template"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

@@ -199,6 +199,13 @@ chmod +x "$LAUNCHER"
 BUILD_ARGV='
 declare -a CLAUDE_ARGV
 [ -n "'"$SKIP_PERMS"'" ] && CLAUDE_ARGV+=("'"$SKIP_PERMS"'")
+# Surface session metadata to in-session hooks (e.g. enforce-path-c-delegation.py).
+# Both vars are inherited by the claude CLI and by any hook subprocess it spawns.
+export CLAUDE_PIPELINE_ISSUE_NUMBER='"$ISSUE_NUM"'
+export CLAUDE_PIPELINE_SKILL='"$SKILL"'
+# Canary line: if `script -c` strips env on some shell, this shows up in the log
+# with UNSET sentinels so the operator can spot the regression.
+echo "[spawn-claude-canary] CLAUDE_PIPELINE_ISSUE_NUMBER=${CLAUDE_PIPELINE_ISSUE_NUMBER:-UNSET} CLAUDE_PIPELINE_SKILL=${CLAUDE_PIPELINE_SKILL:-UNSET}" >&2
 SYSPROMPT_FILE="'"$APPEND_PROMPT_FILE"'"
 if [ -n "$SYSPROMPT_FILE" ] && [ -f "$SYSPROMPT_FILE" ]; then
   CLAUDE_ARGV+=(--append-system-prompt "$(cat "$SYSPROMPT_FILE")")

@@ -23,6 +23,24 @@
         ]
       },
       {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/enforce-path-c-delegation.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/enforce-path-c-delegation.py"
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {

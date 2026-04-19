@@ -61,6 +61,8 @@ SKILLS_INSTALLED=0
 SKILLS_PRUNED=0
 SCRIPTS_INSTALLED=0
 HOOKS_INSTALLED=0
+AGENTS_INSTALLED=0
+AGENTS_PRUNED=0
 SKIPPED=0
 
 echo "=== Claude Pipeline Installer ==="
@@ -199,11 +201,51 @@ for hook in "$PIPELINE_DIR"/hooks/*; do
   fi
 done
 
+# --- Install agent definitions ---
+# Renders .claude-pipeline/agents/*.md to .claude/agents/<name>.md.
+# Tracks each install with a per-file marker (.<name>.pipeline-managed) so
+# user-authored agents in the same dir are never pruned.
+echo ""
+echo "--- Agents ---"
+mkdir -p "$PROJECT_ROOT/.claude/agents"
+for src in "$PIPELINE_DIR"/agents/*.md; do
+  [ -f "$src" ] || continue
+  base_name="$(basename "$src")"
+  output_file="$PROJECT_ROOT/.claude/agents/$base_name"
+  marker="$PROJECT_ROOT/.claude/agents/.${base_name%.md}.pipeline-managed"
+
+  rendered=$(envsubst "$ENVSUBST_VARS" < "$src")
+
+  if [ -f "$output_file" ] && [ "$(echo "$rendered" | diff -q - "$output_file" 2>/dev/null; echo $?)" = "0" ]; then
+    echo "  [skip] $base_name (unchanged)"
+    SKIPPED=$((SKIPPED + 1))
+  else
+    echo "$rendered" > "$output_file"
+    echo "  [ok]   $base_name"
+    AGENTS_INSTALLED=$((AGENTS_INSTALLED + 1))
+  fi
+  touch "$marker"
+done
+
+# Prune pipeline-managed agents (marker present, no matching source).
+# User-authored agents (no marker) are skipped.
+for marker in "$PROJECT_ROOT"/.claude/agents/.*.pipeline-managed; do
+  [ -f "$marker" ] || continue
+  marker_base="$(basename "$marker")"
+  agent_base="${marker_base#.}"          # strip leading dot
+  agent_base="${agent_base%.pipeline-managed}.md"
+  if [ ! -f "$PIPELINE_DIR/agents/$agent_base" ]; then
+    rm -f "$PROJECT_ROOT/.claude/agents/$agent_base" "$marker"
+    echo "  [prune] $agent_base (stale pipeline-managed agent)"
+    AGENTS_PRUNED=$((AGENTS_PRUNED + 1))
+  fi
+done
+
 echo ""
 echo "=== Done ==="
-TOTAL=$((SKILLS_INSTALLED + SCRIPTS_INSTALLED + HOOKS_INSTALLED))
-echo "  Installed: ${SKILLS_INSTALLED} skills, ${SCRIPTS_INSTALLED} scripts, ${HOOKS_INSTALLED} hooks"
-echo "  Pruned:    ${SKILLS_PRUNED} stale skills"
+TOTAL=$((SKILLS_INSTALLED + SCRIPTS_INSTALLED + HOOKS_INSTALLED + AGENTS_INSTALLED))
+echo "  Installed: ${SKILLS_INSTALLED} skills, ${SCRIPTS_INSTALLED} scripts, ${HOOKS_INSTALLED} hooks, ${AGENTS_INSTALLED} agents"
+echo "  Pruned:    ${SKILLS_PRUNED} stale skills, ${AGENTS_PRUNED} stale agents"
 echo "  Skipped:   ${SKIPPED} (unchanged)"
 echo "  Total:     $((TOTAL + SKIPPED)) files processed"
 
