@@ -22,3 +22,53 @@ PIPELINE_LABELS_HUMAN="human"                      # Label for issues that need 
 PIPELINE_WIN_TEMP=""                               # Windows temp dir (e.g., /c/Users/you/AppData/Local/Temp). Leave empty for non-Windows.
 PIPELINE_SUBTREE_REMOTE=""                         # Git remote name for pipeline source repo (auto-detected if empty)
 PIPELINE_SUBTREE_BRANCH="main"                     # Branch to track on the pipeline source remote
+
+# --- Label-driven 3-path execution (optional) ---
+#
+# spawn-claude.sh reads the issue's labels and injects a path-specific
+# --append-system-prompt directive before launching the Claude CLI.
+#
+# Label -> path precedence (first match wins):
+#   docs-only   -> PATH A (trivial; no TDD gate)
+#   multi-task  -> PATH C (dispatch one implementer subagent per task)
+#   (none)      -> PATH B (standard; TDD mandatory - default)
+# If both docs-only and multi-task are set, PATH A wins and a stderr warning is logged.
+# If `gh issue view` fails (offline/auth), PATH B is used silently.
+#
+# Three key families, all resolved via bash indirect expansion (${!var}):
+#
+#   PIPELINE_PATH_<X>_SKILLS_<ALIAS>
+#     Space-separated list of fully-qualified skill names (e.g. "superpowers:test-driven-development")
+#     to require at the START of the session. Leave empty to skip.
+#
+#   PIPELINE_PATH_<X>_REVIEWER_<ALIAS>
+#     Single subagent name to dispatch as the FINAL tool call (e.g. "superpowers:code-reviewer").
+#     Leave empty to skip the reviewer step.
+#
+#   PIPELINE_PATH_<X>_SKILL_ARGS_<ALIAS>_<NORM>
+#     Path (relative to repo root) to a plain-text args file whose content is passed
+#     as the `args:` parameter to the matching Skill() invocation.
+#
+# Placeholders:
+#   <X>     in {A, B, C}
+#   <ALIAS> in {EXECUTE, EVALUATE_PR, PLAN, EVALUATE_PLAN} (maps to the /skill being launched)
+#   <NORM>  = skill name with `superpowers:` stripped, `-` -> `_`, uppercased.
+#     e.g. `superpowers:test-driven-development` -> `TEST_DRIVEN_DEVELOPMENT`
+#
+# Args files live under `scripts/skill-args/<path-letter-lower>-<alias-lower-with-hyphens>-<skill-name-lower-with-hyphens>.txt`.
+# Reviewer on EVALUATE_PR is intentionally empty by default - the evaluator is already a review step.
+#
+# Example (uncomment + adjust for your project):
+#
+# PIPELINE_PATH_A_SKILLS_EXECUTE="superpowers:verification-before-completion"
+# PIPELINE_PATH_A_REVIEWER_EXECUTE="superpowers:code-reviewer"
+# PIPELINE_PATH_A_SKILL_ARGS_EXECUTE_VERIFICATION_BEFORE_COMPLETION="scripts/skill-args/a-execute-verification-before-completion.txt"
+#
+# PIPELINE_PATH_B_SKILLS_EXECUTE="superpowers:test-driven-development superpowers:verification-before-completion"
+# PIPELINE_PATH_B_REVIEWER_EXECUTE="superpowers:code-reviewer"
+# PIPELINE_PATH_B_SKILL_ARGS_EXECUTE_TEST_DRIVEN_DEVELOPMENT="scripts/skill-args/b-execute-test-driven-development.txt"
+# PIPELINE_PATH_B_SKILL_ARGS_EXECUTE_VERIFICATION_BEFORE_COMPLETION="scripts/skill-args/b-execute-verification-before-completion.txt"
+#
+# PIPELINE_PATH_C_SKILLS_EXECUTE="superpowers:subagent-driven-development"
+# PIPELINE_PATH_C_REVIEWER_EXECUTE="superpowers:code-reviewer"
+# PIPELINE_PATH_C_SKILL_ARGS_EXECUTE_SUBAGENT_DRIVEN_DEVELOPMENT="scripts/skill-args/c-execute-subagent-driven-development.txt"

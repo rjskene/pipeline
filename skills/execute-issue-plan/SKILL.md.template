@@ -37,13 +37,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 5. **Implement the approved plan.**
 
-   Invoke `superpowers:subagent-driven-development` with the following `args` (this makes TDD mandatory for every implementer subagent):
-   ```text
-   Skill(
-     skill: "superpowers:subagent-driven-development",
-     args: "MANDATORY: Every implementer subagent you dispatch must be instructed to follow TDD. Inject this block into every implementer-prompt you construct, before the 'Your Job' section:\n\n'REQUIRED METHODOLOGY — TDD: Write a failing test first. Run it to confirm it fails for the right reason. Then write the minimum code to make it pass. Refactor. Commit.'\n\nDo NOT dispatch an implementer subagent without this block. Do NOT invoke superpowers:finishing-a-development-branch — the pipeline handles PR creation."
-   )
-   ```
+   The pipeline orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*` and `PIPELINE_PATH_<X>_REVIEWER_EXECUTE`) already requires you to invoke the path-specific skills in order and to dispatch `Agent(subagent_type='superpowers:code-reviewer')` as your final tool call. Follow that guidance — do NOT invoke those skills / subagent yourself here.
 
    In all cases:
    - Implement ONLY what the plan specifies. No scope creep.

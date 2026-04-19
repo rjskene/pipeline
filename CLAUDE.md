@@ -54,3 +54,10 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 2. **Human gates matter.** Plan approval and PR merge are manual. The pipeline automates the work between human decisions, not the decisions themselves.
 3. **Superpowers are composable.** Pipeline skills declare which superpowers they use. A skill can compose with any superpowers available in the environment — if a superpowers skill isn't installed, the pipeline skill falls back to inline behavior.
 4. **Isolation by default.** Execution happens in git worktrees. The main workspace stays clean.
+
+## Spawn-claude degradation behavior
+
+`spawn-claude.sh` is intentionally fail-soft when external inputs are unreliable:
+
+- **`gh issue view` fails** (offline/auth): logs `[spawn-claude] WARN: gh issue view failed ...` to stderr and falls back to **PATH B** (the standard path). The session still launches.
+- **Skill args file configured but missing on disk**: logs `WARNING: args file not found for <skill>: <path>` to stderr and emits the `Skill()` line **without** an `args=` field. The skill still fires; it just runs without its project-specific directive. Fix the typo or restore the file to remove the warning.

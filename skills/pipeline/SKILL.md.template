@@ -172,13 +172,13 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `${PIPELINE_LABELS_LATER}`, `${PIPELINE_LABELS_HUMAN}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc.
+4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `${PIPELINE_LABELS_LATER}`, `${PIPELINE_LABELS_HUMAN}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Path** column — `A` if the issue is labeled `docs-only`, `C` if labeled `multi-task`, else `B` (default). If both `docs-only` and `multi-task` are present, show `A!` (collision — PATH A wins, but flag it).
    ```
    PIPELINE STATUS — <today's date>
    ================================================================
-    Issue  Title                    Stage          Tags                   Blocked?
+    Issue  Title                    Stage          Tags           Path   Blocked?
    ----------------------------------------------------------------
-    #N     <title>                  <stage>        feature, ui            <yes/no>
+    #N     <title>                  <stage>        feature, ui    B      <yes/no>
     ...
    ================================================================
    ```

@@ -38,19 +38,9 @@ You are a senior engineer performing a code review of a PR against its approved 
 
 4. **Two-phase review.**
 
-   Invoke `superpowers:subagent-driven-development` to run the two review phases as independent subagents in parallel:
-   ```
-   Skill(skill: "superpowers:subagent-driven-development")
-   ```
-   Give it two independent tasks:
+   The pipeline orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR` + `PIPELINE_PATH_<X>_SKILL_ARGS_EVALUATE_PR_*`) already requires you to invoke the path-specific review skills before doing anything else. Follow that skill's guidance to run the two review phases (plan compliance + code quality) and combine findings:
    - **Task 1 — Plan compliance:** For each item in the plan: verify "Files to change" were modified and changes match descriptions. Verify "DB schema changes", "API changes", "Frontend changes", "Test changes" were made or correctly skipped. Flag scope creep (implemented but not planned) and missing work (planned but not implemented).
    - **Task 2 — Code quality:** Run `${PIPELINE_TYPECHECK_CMD} 2>&1 | head -50` and `${PIPELINE_TEST_CMD} 2>&1 | tail -30`. Review the diff for: leftover debug code, console.logs, TODO comments; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type safety issues not caught by tsc; test coverage for every implemented feature.
-
-   Then invoke `superpowers:requesting-code-review` to apply a senior-review lens over the combined findings and produce the final verdict:
-   ```
-   Skill(skill: "superpowers:requesting-code-review")
-   ```
-   Tell it: "Review this PR against the attached implementation plan. The plan is <paste>. The PR diff is <paste from `gh pr diff`>. The subagent-driven review produced <paste findings>. Flag plan-compliance issues (missing planned work, scope creep beyond the plan) and code-quality issues. Do not refactor. Report back; this agent will post the evaluation comment, apply minimal fixes itself if any are flagged and small, and rebase if the base branch moved."
 
    If the Skill tool is unavailable, perform the review inline:
 
