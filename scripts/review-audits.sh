@@ -20,9 +20,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 [ -f "${REPO_ROOT}/pipeline.config" ] && source "${REPO_ROOT}/pipeline.config"
 
 RUNS_LOG="${REPO_ROOT}/.claude/logs/runs.log"
-TOOL_LOG="${REPO_ROOT}/.claude/logs/tool-use.log"
-SUBAGENTS_LOG="${REPO_ROOT}/.claude/logs/subagents.log"
-SUBAGENTS_DIR="${REPO_ROOT}/.claude/logs/subagents"
+# tool-use.log, subagents.log, and the subagents/ dir are per-worktree:
+# spawn-claude.sh launches the CLI with cwd=<worktree>, so CLAUDE_PROJECT_DIR
+# resolves to the worktree and both log-tool-use.sh and log_subagent.py write
+# under <worktree>/.claude/logs/. Per-run paths are derived from the
+# worktree=<path> column in runs.log via worktree_tool_log /
+# worktree_subagents_log / worktree_subagents_dir helpers below.
 TDD_IMPLEMENTER_MARKER="${REPO_ROOT}/.claude/agents/tdd-implementer.md"
 
 usage() {
@@ -141,33 +144,65 @@ expected_skills() {
   echo "${!var:-}"
 }
 
-# actual_skills <session>  (prints one skill per line, invocation order)
+# worktree_tool_log <worktree>  (empty if worktree missing/unavailable)
+worktree_tool_log() {
+  local wt="$1"
+  [ -n "$wt" ] && [ -d "$wt" ] && echo "$wt/.claude/logs/tool-use.log"
+}
+
+# worktree_subagents_log <worktree>
+worktree_subagents_log() {
+  local wt="$1"
+  [ -n "$wt" ] && [ -d "$wt" ] && echo "$wt/.claude/logs/subagents.log"
+}
+
+# worktree_subagents_dir <worktree>
+worktree_subagents_dir() {
+  local wt="$1"
+  [ -n "$wt" ] && [ -d "$wt" ] && echo "$wt/.claude/logs/subagents"
+}
+
+# actual_skills <session> <worktree>  (prints one skill per line, invocation order)
 actual_skills() {
-  local session="$1"
-  [ -f "$TOOL_LOG" ] || return 0
+  local session="$1" wt="$2"
+  local tool_log
+  tool_log=$(worktree_tool_log "$wt")
+  [ -n "$tool_log" ] && [ -f "$tool_log" ] || return 0
   awk -F'\t' -v s="session=$session" '
     $2=="Skill" && $3==s {
       for (i=4; i<=NF; i++) {
         if (index($i, "skill=")==1) { print substr($i, 7); next }
       }
     }
-  ' "$TOOL_LOG"
+  ' "$tool_log"
 }
 
-# first_tools <session>  (first 5 tool names, tab-separated)
+# first_tools <session> <worktree>  (first 5 tool names, tab-separated)
 first_tools() {
-  local session="$1"
-  [ -f "$TOOL_LOG" ] || return 0
-  awk -F'\t' -v s="session=$session" '$3==s {print $2}' "$TOOL_LOG" | head -5 | paste -sd '  ' -
+  local session="$1" wt="$2"
+  local tool_log
+  tool_log=$(worktree_tool_log "$wt")
+  [ -n "$tool_log" ] && [ -f "$tool_log" ] || return 0
+  awk -F'\t' -v s="session=$session" '$3==s {print $2}' "$tool_log" | head -5 | paste -sd '  ' -
 }
 
-# deviations <path> <skill> <session>
+# deviations <path> <skill> <session> <worktree>
 # Prints 0 or more deviation descriptions, one per line. Count = line count.
+# If the worktree has been cleaned (or was never set), the session's tool-use
+# log is unreachable — in that case return nothing rather than fabricating
+# "no tool call" deviations for every expected skill.
 deviations_for() {
-  local p="$1" s="$2" session="$3"
+  local p="$1" s="$2" session="$3" wt="$4"
   local expected
   expected=$(expected_skills "$p" "$s")
   [ -z "$expected" ] && return 0
+
+  # No accessible tool-use.log → can't distinguish "agent skipped skill" from
+  # "log was cleaned up". Return empty; the cleaned-row annotation is surfaced
+  # separately by the detail/table view.
+  local tool_log
+  tool_log=$(worktree_tool_log "$wt")
+  [ -n "$tool_log" ] && [ -f "$tool_log" ] || return 0
 
   # Load expected into array
   local -a exp_arr=()
@@ -179,7 +214,7 @@ deviations_for() {
   local a
   while IFS= read -r a; do
     [ -n "$a" ] && act_arr+=("$a")
-  done < <(actual_skills "$session")
+  done < <(actual_skills "$session" "$wt")
   local m=${#act_arr[@]}
 
   local i
@@ -192,15 +227,18 @@ deviations_for() {
   done
 }
 
-# subagent_dispatches <session>
+# subagent_dispatches <session> <worktree>
 # Prints "type\tdesc" lines for each subagent dispatch.
 subagent_dispatches() {
-  local session="$1"
-  [ -f "$SUBAGENTS_LOG" ] || return 0
-  awk -F'\t' -v s="$session" '$2==s {print $7}' "$SUBAGENTS_LOG" | \
+  local session="$1" wt="$2"
+  local subagents_log subagents_dir
+  subagents_log=$(worktree_subagents_log "$wt")
+  subagents_dir=$(worktree_subagents_dir "$wt")
+  [ -n "$subagents_log" ] && [ -f "$subagents_log" ] || return 0
+  awk -F'\t' -v s="$session" '$2==s {print $7}' "$subagents_log" | \
     while IFS= read -r fn; do
       [ -z "$fn" ] && continue
-      local p="$SUBAGENTS_DIR/$fn"
+      local p="$subagents_dir/$fn"
       if [ -f "$p" ] && command -v jq >/dev/null 2>&1; then
         jq -r '[.subagent_type, .description] | @tsv' "$p" 2>/dev/null || true
       fi
@@ -312,14 +350,23 @@ if [ -n "$FLAG_ISSUE" ]; then
     s=$(parse_skill "$line")
     wt=$(parse_worktree "$line")
 
+    # Flag cleaned-up / missing worktrees so the reader doesn't misread
+    # a zero-signals row as "everything was fine".
+    wt_annotation=""
+    if [ -z "$wt" ]; then
+      wt_annotation=" (no worktree recorded)"
+    elif [ ! -d "$wt" ]; then
+      wt_annotation=" (cleaned — per-run signals unavailable)"
+    fi
+
     echo "DETAIL — issue #$FLAG_ISSUE"
     echo "================================================================="
     echo "Session:       $session"
     echo "Timestamp:     $ts"
     echo "Path:          $p"
     echo "Skill:         $s"
-    echo "Worktree:      $wt"
-    echo "Tool seq (5):  $(first_tools "$session")"
+    echo "Worktree:      ${wt:-<unset>}${wt_annotation}"
+    echo "Tool seq (5):  $(first_tools "$session" "$wt")"
 
     expected=$(expected_skills "$p" "$s")
     echo "Expected:      ${expected:-<none for this path/skill>}"
@@ -328,10 +375,10 @@ if [ -n "$FLAG_ISSUE" ]; then
     while IFS= read -r a; do
       [ -z "$a" ] && continue
       [ -z "$act" ] && act="$a" || act="${act}\n               $a"
-    done < <(actual_skills "$session")
+    done < <(actual_skills "$session" "$wt")
     echo -e "Actual:        ${act:-<none>}"
 
-    devs=$(deviations_for "$p" "$s" "$session")
+    devs=$(deviations_for "$p" "$s" "$session" "$wt")
     if [ -z "$devs" ]; then
       echo "Deviations:    none"
     else
@@ -353,7 +400,7 @@ if [ -n "$FLAG_ISSUE" ]; then
       [ -z "$ln" ] && continue
       sa_count=$((sa_count + 1))
       [ -z "$sa_lines" ] && sa_lines="$ln" || sa_lines="$(printf '%s\n%s' "$sa_lines" "$ln")"
-    done < <(subagent_dispatches "$session")
+    done < <(subagent_dispatches "$session" "$wt")
     if [ "$sa_count" = 0 ]; then
       echo "Subagents (0): none"
     else
@@ -367,7 +414,7 @@ if [ -n "$FLAG_ISSUE" ]; then
       c_count=0
       while IFS=$'\t' read -r st _; do
         [ "$st" = "tdd-implementer" ] && c_count=$((c_count + 1))
-      done < <(subagent_dispatches "$session")
+      done < <(subagent_dispatches "$session" "$wt")
       echo "PATH C check:  $(tdd_implementer_label "$c_count")"
     fi
     echo "TDD pattern:   $(tdd_for "$p" "$FLAG_ISSUE")"
@@ -388,9 +435,11 @@ ROW_SUBC=()
 ROW_DEVC=()
 ROW_TDD=()
 ROW_STAGE=()
+ROW_CLEANED=()
 # Per-path deviation reason frequency map — key encoding: "<path>|<reason>".
 # Used to compute the "Most-common deviation" summary column per Design-decision 6.
 declare -A DEV_REASON_COUNT
+CLEANED_COUNT=0
 if [ "${#FILTERED[@]}" -gt 0 ]; then
 for line in "${FILTERED[@]}"; do
   ts=$(parse_ts "$line")
@@ -398,10 +447,19 @@ for line in "${FILTERED[@]}"; do
   p=$(parse_path "$line")
   s=$(parse_skill "$line")
   session=$(parse_session "$line")
+  wt=$(parse_worktree "$line")
+
+  # Worktree may have been cleaned up by cleanup-worktree.sh, or may never
+  # have been recorded (legacy runs.log rows). In either case per-run
+  # signals (skills, subagents, deviations) are unavailable.
+  cleaned=0
+  if [ -z "$wt" ] || [ ! -d "$wt" ]; then
+    cleaned=1
+  fi
 
   # subagent dispatch count
   subc=0
-  while IFS= read -r _; do subc=$((subc + 1)); done < <(subagent_dispatches "$session")
+  while IFS= read -r _; do subc=$((subc + 1)); done < <(subagent_dispatches "$session" "$wt")
 
   # deviation count + frequency accumulation
   devc=0
@@ -410,7 +468,7 @@ for line in "${FILTERED[@]}"; do
     devc=$((devc + 1))
     key="${p}|${d}"
     DEV_REASON_COUNT[$key]=$(( ${DEV_REASON_COUNT[$key]:-0} + 1 ))
-  done < <(deviations_for "$p" "$s" "$session")
+  done < <(deviations_for "$p" "$s" "$session" "$wt")
 
   if [ "$FLAG_DEVIATIONS" = "1" ] && [ "$devc" = "0" ]; then continue; fi
 
@@ -422,6 +480,8 @@ for line in "${FILTERED[@]}"; do
   ROW_DEVC+=("$devc")
   ROW_TDD+=("$(tdd_for "$p" "$i")")
   ROW_STAGE+=("$(pr_stage "$i")")
+  ROW_CLEANED+=("$cleaned")
+  if [ "$cleaned" = "1" ]; then CLEANED_COUNT=$((CLEANED_COUNT + 1)); fi
 done
 fi
 
@@ -463,12 +523,26 @@ printf ' %-21s %-6s %-5s %-24s %-10s %-11s %-12s %s\n' \
   "Timestamp" "Issue" "Path" "Skill" "Subagents" "Deviations" "TDD" "Stage"
 echo "----------------------------------------------------------------------------------------------------------------"
 for idx in $(seq 0 $((N-1))); do
-  printf ' %-21s %-6s %-5s %-24s %-10s %-11s %-12s %s\n' \
-    "${ROW_TS[idx]}" "#${ROW_ISSUE[idx]}" "${ROW_PATH[idx]}" \
-    "${ROW_SKILL[idx]:0:24}" "${ROW_SUBC[idx]}" "${ROW_DEVC[idx]}" \
-    "${ROW_TDD[idx]:0:12}" "${ROW_STAGE[idx]}"
+  if [ "${ROW_CLEANED[idx]}" = "1" ]; then
+    # Per-run signals are unreachable — render em-dashes rather than 0, and
+    # append a marker to the Stage column so the reader sees the row isn't
+    # just "passed audit with 0 deviations".
+    stage_col="${ROW_STAGE[idx]} (worktree-cleaned)"
+    printf ' %-21s %-6s %-5s %-24s %-10s %-11s %-12s %s\n' \
+      "${ROW_TS[idx]}" "#${ROW_ISSUE[idx]}" "${ROW_PATH[idx]}" \
+      "${ROW_SKILL[idx]:0:24}" "—" "—" \
+      "${ROW_TDD[idx]:0:12}" "$stage_col"
+  else
+    printf ' %-21s %-6s %-5s %-24s %-10s %-11s %-12s %s\n' \
+      "${ROW_TS[idx]}" "#${ROW_ISSUE[idx]}" "${ROW_PATH[idx]}" \
+      "${ROW_SKILL[idx]:0:24}" "${ROW_SUBC[idx]}" "${ROW_DEVC[idx]}" \
+      "${ROW_TDD[idx]:0:12}" "${ROW_STAGE[idx]}"
+  fi
 done
 echo "================================================================================================================"
+if [ "$CLEANED_COUNT" -gt 0 ]; then
+  echo "Note: $CLEANED_COUNT row(s) had no/unavailable worktree; per-run signals are unavailable."
+fi
 echo ""
 
 # Summary grouped by path.

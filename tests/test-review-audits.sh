@@ -28,7 +28,7 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-mkdir -p "$TMP/.claude/logs/subagents" "$TMP/.claude/scripts"
+mkdir -p "$TMP/.claude/logs" "$TMP/.claude/scripts"
 
 # Minimal pipeline.config with path-family keys so signal computation works.
 cat > "$TMP/pipeline.config" <<'EOF'
@@ -48,24 +48,33 @@ UUID_B="22222222-2222-2222-2222-222222222222"
 UUID_C="33333333-3333-3333-3333-333333333333"
 
 RUNS_LOG="$TMP/.claude/logs/runs.log"
-TOOL_LOG="$TMP/.claude/logs/tool-use.log"
-SUBAGENTS_LOG="$TMP/.claude/logs/subagents.log"
 
-printf '2026-04-18T10:00:00Z\tsession=%s\tissue=900\tpath=A\tskill=execute-issue-plan\tworktree=/tmp/a\n' "$UUID_A"  > "$RUNS_LOG"
-printf '2026-04-18T11:00:00Z\tsession=%s\tissue=901\tpath=B\tskill=execute-issue-plan\tworktree=/tmp/b\n' "$UUID_B" >> "$RUNS_LOG"
-printf '2026-04-18T12:00:00Z\tsession=%s\tissue=902\tpath=C\tskill=execute-issue-plan\tworktree=/tmp/c\n' "$UUID_C" >> "$RUNS_LOG"
+# Per-session worktree dirs — matches prod layout where each session writes
+# its tool-use.log / subagents.log / subagents/ dir under its own worktree.
+WT_A="$TMP/wt-a"
+WT_B="$TMP/wt-b"
+WT_C="$TMP/wt-c"
+for wt in "$WT_A" "$WT_B" "$WT_C"; do
+  mkdir -p "$wt/.claude/logs/subagents"
+done
 
-# tool-use.log: session A follows expected (single skill, in order); session B
-# invokes skills in the wrong order (verification first, TDD second) -> 1
-# deviation. Session C matches expected.
-printf '2026-04-18T10:00:01Z\tSkill\tsession=%s\tskill=superpowers:verification-before-completion\n' "$UUID_A"  > "$TOOL_LOG"
-printf '2026-04-18T11:00:02Z\tSkill\tsession=%s\tskill=superpowers:verification-before-completion\n' "$UUID_B" >> "$TOOL_LOG"
-printf '2026-04-18T11:00:03Z\tSkill\tsession=%s\tskill=superpowers:test-driven-development\n' "$UUID_B"       >> "$TOOL_LOG"
-printf '2026-04-18T12:00:01Z\tSkill\tsession=%s\tskill=superpowers:subagent-driven-development\n' "$UUID_C"   >> "$TOOL_LOG"
+printf '2026-04-18T10:00:00Z\tsession=%s\tissue=900\tpath=A\tskill=execute-issue-plan\tworktree=%s\n' "$UUID_A" "$WT_A"  > "$RUNS_LOG"
+printf '2026-04-18T11:00:00Z\tsession=%s\tissue=901\tpath=B\tskill=execute-issue-plan\tworktree=%s\n' "$UUID_B" "$WT_B" >> "$RUNS_LOG"
+printf '2026-04-18T12:00:00Z\tsession=%s\tissue=902\tpath=C\tskill=execute-issue-plan\tworktree=%s\n' "$UUID_C" "$WT_C" >> "$RUNS_LOG"
 
-# subagents.log + one JSON for session B (code-reviewer)
-printf '2026-04-18T11:30:00Z\t%s\tReview\t0\t0\t0\t%s_code-reviewer.json\n' "$UUID_B" "$UUID_B" > "$SUBAGENTS_LOG"
-cat > "$TMP/.claude/logs/subagents/${UUID_B}_code-reviewer.json" <<EOF
+# Per-worktree tool-use.log:
+#   Session A follows expected (single skill, in order).
+#   Session B invokes skills in the wrong order (verification first, TDD
+#   second) -> 1 deviation.
+#   Session C matches expected.
+printf '2026-04-18T10:00:01Z\tSkill\tsession=%s\tskill=superpowers:verification-before-completion\n' "$UUID_A" > "$WT_A/.claude/logs/tool-use.log"
+printf '2026-04-18T11:00:02Z\tSkill\tsession=%s\tskill=superpowers:verification-before-completion\n' "$UUID_B" >  "$WT_B/.claude/logs/tool-use.log"
+printf '2026-04-18T11:00:03Z\tSkill\tsession=%s\tskill=superpowers:test-driven-development\n'        "$UUID_B" >> "$WT_B/.claude/logs/tool-use.log"
+printf '2026-04-18T12:00:01Z\tSkill\tsession=%s\tskill=superpowers:subagent-driven-development\n'    "$UUID_C" >  "$WT_C/.claude/logs/tool-use.log"
+
+# subagents.log + one JSON for session B (code-reviewer) — lives under WT_B.
+printf '2026-04-18T11:30:00Z\t%s\tReview\t0\t0\t0\t%s_code-reviewer.json\n' "$UUID_B" "$UUID_B" > "$WT_B/.claude/logs/subagents.log"
+cat > "$WT_B/.claude/logs/subagents/${UUID_B}_code-reviewer.json" <<EOF
 {"session_id":"${UUID_B}","subagent_type":"code-reviewer","description":"Review"}
 EOF
 
@@ -288,6 +297,78 @@ if [ "$RC1" -eq 0 ] && [ "$RC2" -eq 0 ] && [ "$RC3" -eq 0 ]; then
 else
   fail_msg "valid inputs rejected (last=$RC1 path=$RC2 since=$RC3)"
 fi
+
+# -------------------------------------------------------------------------
+# Test 16: per-worktree log resolution — detail view for an issue whose
+# worktree dir contains its own tool-use.log + subagents.log + subagent
+# JSON must surface those signals. Regression for the bug where
+# review-audits.sh read the main repo's .claude/logs/ instead of the
+# worktree's.
+# -------------------------------------------------------------------------
+echo "Test 16: detail view resolves logs from the run's worktree dir"
+inc
+OUT=$(bash .claude/scripts/review-audits.sh --issue 901 2>&1 || true)
+ok=1
+# Actual skills must show both of session B's Skill invocations (sourced
+# from $WT_B/.claude/logs/tool-use.log, not the main repo).
+echo "$OUT" | grep -q 'superpowers:verification-before-completion' \
+  || { fail_msg "Test 16: detail view missing 'verification-before-completion' in Actual"; ok=0; }
+if [ "$ok" = "1" ]; then
+  echo "$OUT" | grep -q 'superpowers:test-driven-development' \
+    || { fail_msg "Test 16: detail view missing 'test-driven-development' in Actual"; ok=0; }
+fi
+# Subagent dispatch must be counted from $WT_B/.claude/logs/subagents.log.
+if [ "$ok" = "1" ]; then
+  echo "$OUT" | grep -qE 'Subagents \(1\)' \
+    || { fail_msg "Test 16: expected 'Subagents (1)' in detail view"; ok=0; }
+fi
+# Worktree line should print the actual worktree path.
+if [ "$ok" = "1" ]; then
+  echo "$OUT" | grep -qF "Worktree:" \
+    || { fail_msg "Test 16: missing Worktree: line"; ok=0; }
+fi
+if [ "$ok" = "1" ]; then
+  echo "$OUT" | grep -qF "$WT_B" \
+    || { fail_msg "Test 16: Worktree line did not include \$WT_B=$WT_B"; ok=0; }
+fi
+[ "$ok" = "1" ] && pass_msg "Test 16: per-worktree log resolution works end-to-end"
+
+# -------------------------------------------------------------------------
+# Test 17: cleaned-worktree fallback — when a runs.log entry's worktree
+# path no longer exists on disk, review-audits.sh must exit 0, the row
+# must still appear, and per-run signals must degrade gracefully.
+# -------------------------------------------------------------------------
+echo "Test 17: row whose worktree has been cleaned up degrades gracefully"
+inc
+CLEAN_TMP=$(mktemp -d)
+mkdir -p "$CLEAN_TMP/.claude/logs" "$CLEAN_TMP/.claude/scripts"
+cp "$TMP/pipeline.config" "$CLEAN_TMP/pipeline.config"
+cp "$SCRIPT_UNDER_TEST" "$CLEAN_TMP/.claude/scripts/review-audits.sh"
+chmod +x "$CLEAN_TMP/.claude/scripts/review-audits.sh"
+UUID_CLEAN="44444444-4444-4444-4444-444444444444"
+MISSING_WT="$CLEAN_TMP/does-not-exist"
+printf '2026-04-18T13:00:00Z\tsession=%s\tissue=903\tpath=B\tskill=execute-issue-plan\tworktree=%s\n' \
+  "$UUID_CLEAN" "$MISSING_WT" > "$CLEAN_TMP/.claude/logs/runs.log"
+set +e
+OUT=$(cd "$CLEAN_TMP" && bash .claude/scripts/review-audits.sh --last 1 2>&1)
+RC=$?
+set -e
+ok=1
+if [ "$RC" -ne 0 ]; then
+  fail_msg "Test 17: expected exit 0 for cleaned-worktree row, got rc=$RC; output:"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ]; then
+  echo "$OUT" | grep -q '#903' \
+    || { fail_msg "Test 17: row #903 missing from output"; ok=0; }
+fi
+if [ "$ok" = "1" ]; then
+  echo "$OUT" | grep -qi 'cleaned' \
+    || { fail_msg "Test 17: expected 'cleaned' annotation somewhere in output; got:"; echo "$OUT" | sed 's/^/    /'; ok=0; }
+fi
+rm -rf "$CLEAN_TMP"
+[ "$ok" = "1" ] && pass_msg "Test 17: cleaned-worktree row renders without error"
 
 echo ""
 echo "================================"
