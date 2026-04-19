@@ -1,0 +1,79 @@
+---
+name: classify-issue
+description: Advisory triage for a pipeline issue — reads title/body/labels/comments and recommends PATH A (docs-only), B (standard), or C (multi-task). Posts a `## Classification` comment; does NOT modify labels. Usage: /classify-issue <issue_number>
+disable-model-invocation: false
+allowed-tools: Read, Bash, Glob, Grep
+---
+
+# Classify Issue
+
+You will receive an issue number as the argument. Perform:
+
+1. **Fetch issue details:**
+   ```bash
+   gh issue view <N> --repo ${PIPELINE_REPO} --json number,title,body,labels,updatedAt
+   gh issue view <N> --repo ${PIPELINE_REPO} --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
+   ```
+
+2. **Cache check** — if the latest `## Classification` comment's `createdAt` is newer than the issue's `updatedAt`, exit early with "cached — no re-classification needed" and do NOT re-post.
+   ```bash
+   LATEST_CLASS_TS=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+     --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .createdAt // empty')
+   ISSUE_TS=$(gh issue view <N> --repo ${PIPELINE_REPO} --json updatedAt --jq '.updatedAt')
+   # ISO-8601 timestamps are lexicographically ordered, so bash `[[ > ]]` string
+   # comparison is equivalent to chronological comparison. Do NOT switch to `[ > ]`
+   # (redirects stdout) or `-gt` (numeric only) — both are wrong for these values.
+   if [[ -n "$LATEST_CLASS_TS" && "$LATEST_CLASS_TS" > "$ISSUE_TS" ]]; then
+       echo "Cached classification reused for issue #$N (last classified at $LATEST_CLASS_TS)."
+       exit 0
+   fi
+   ```
+
+3. **Read first-level comments only** — ignore quoted/nested text. Consider only top-level comments.
+
+4. **Score against rule set** (first match wins):
+
+   | Signal | Path | Confidence |
+   |--------|------|-----------|
+   | Labels include `docs-only` | A | high |
+   | Labels include `multi-task` | C | high |
+   | Body/title contains `docs-only`, `update README`, `update CLAUDE.md`, "no logic", "documentation only", "rename", "typo" | A | medium |
+   | Body has a numbered/bulleted list of 3+ independent tasks OR phrases "for each of", "multiple", "parallel", "batch", "one per" | C | medium |
+   | Body mentions schema + API + frontend changes in a single issue | C | low |
+   | Otherwise | B | medium |
+
+5. **Compose the classification output:**
+
+   ```markdown
+   ## Classification
+
+   - **recommended_path:** A | B | C
+   - **confidence:** high | medium | low
+   - **rationale:** <one or two sentences citing the signal(s)>
+
+   _Advisory only — this skill does not modify labels. Reconcile by adding/removing `docs-only` or `multi-task` on the issue before `/plan-issue` runs._
+   ```
+
+6. **Post the classification comment:**
+   ```bash
+   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<classification markdown>"
+   ```
+
+7. **Verify post** — count `## Classification` comments; retry once on 0; report FAILED if still 0. Never touch labels.
+   ```bash
+   CLASS_COUNT=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+     --jq '[.comments[] | select(.body | contains("## Classification"))] | length')
+   ```
+
+8. **Report:** "Classification posted to issue #N: <path> (<confidence>)."
+
+## Prompt strategy
+
+- Prefer **recall over precision**: false A→B is mild (plan-issue still works with extra detail), false B→A is disruptive (skips design rigor). Default to B when unsure.
+- Existing labels are strong priors but not absolute. Explicit label → confidence=high unless content directly contradicts.
+- Keep rationale to 1-2 sentences — human reads it during reconciliation, not a downstream skill.
+- If an explicit user label contradicts the content (e.g., `docs-only` on a refactor), still recommend the user-labeled path but set confidence=low and note the conflict in rationale.
+
+## Constraints
+- READ ONLY on the repo — never run `gh issue edit` or modify code.
+- Bullet points only. No prose padding.
