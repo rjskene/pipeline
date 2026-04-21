@@ -432,7 +432,21 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    **Only run this step when the user confirms they want to merge.** After evaluation agents finish, report the verdicts and ask: "Merge approved PRs? (yes / no)"
 
-   If the user confirms:
+   If the user confirms, first run a batch pre-validation pass to surface any PR titles that don't match the Conventional Commits format. This is informational — it lets the user batch-reword before the sequential merge loop. The per-PR gate below (sub-step 4) is the actual enforcement point.
+
+   ```bash
+   echo "=== Pre-merge PR title validation ==="
+   for PR_NUM in $(gh pr list --repo ${PIPELINE_REPO} --state open --json number --jq '.[].number'); do
+     PR_TITLE=$(gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json title --jq '.title')
+     if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|refactor|docs|ci|perf|test|build|style)(\(.+\))?!?: .+'; then
+       echo "  ⚠ PR #$PR_NUM: $PR_TITLE"
+     else
+       echo "  ✓ PR #$PR_NUM: $PR_TITLE"
+     fi
+   done
+   ```
+
+   Then:
    1. For each approved PR, detect its base branch:
       ```bash
       gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json baseRefName --jq '.baseRefName'
@@ -459,7 +473,23 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       ```
       - If rebase succeeds: run tests, force-push with `--force-with-lease`, retry merge
       - If conflicts are complex: abort rebase, flag for user review, skip this PR
-   4. Merge PRs sequentially to avoid cascading conflicts. Before merging, ensure the PR title / squash subject follows Conventional Commits (see CLAUDE.md → Commit Conventions & Releases) — release-please reads the squash commit on merge. If not, amend via `gh pr edit $PR_NUM --title "<type>(<scope>): <summary>"` before merging.
+   4. Merge PRs sequentially to avoid cascading conflicts. Before each merge, validate the PR title against the Conventional Commits format — release-please reads the squash commit on merge, so a non-conforming title breaks automated versioning and CHANGELOG generation.
+
+      ```bash
+      # Validate PR title against Conventional Commits format
+      PR_TITLE=$(gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json title --jq '.title')
+      if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|refactor|docs|ci|perf|test|build|style)(\(.+\))?!?: .+'; then
+        echo "⚠ PR #$PR_NUM title does not match conventional commit format: $PR_TITLE"
+        echo "  Expected: type(scope): description  (e.g. feat(web): add modal component)"
+        # Propose a reword based on the issue title/body, then apply with:
+        # gh pr edit $PR_NUM --repo ${PIPELINE_REPO} --title "<type>(<scope>): <summary>"
+      fi
+      ```
+
+      - **Interactive mode:** if validation fails, print the warning, propose a reword derived from the PR's issue title/body, and ask the user to confirm or provide an alternative. If the user confirms (or supplies one), apply via `gh pr edit $PR_NUM --repo ${PIPELINE_REPO} --title "..."` and proceed. If the user declines, skip the merge for this PR and flag it in the final report.
+      - **Full send (autonomous mode):** auto-propose a reword from the PR's issue title/body, apply it with `gh pr edit`, and proceed without blocking. If a valid reword cannot be determined, skip the PR and flag it in the final report.
+
+      Once the title passes validation, run the merge:
       ```bash
       gh pr merge $PR_NUM --repo ${PIPELINE_REPO} --squash --delete-branch
       gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "merged" --remove-label "pr-open"
