@@ -47,6 +47,7 @@ export PIPELINE_SYNC_DOCS PIPELINE_SYNC_FILES
 export PIPELINE_FRONTEND_PORT_OFFSET PIPELINE_LABELS_EXCLUDED PIPELINE_LABELS_LATER PIPELINE_LABELS_HUMAN
 export PIPELINE_WIN_TEMP
 export PIPELINE_SUBTREE_REMOTE PIPELINE_SUBTREE_BRANCH
+export PIPELINE_CI_CHECK_ENABLED
 
 # Build explicit envsubst variable list to avoid clobbering unrelated $VAR references
 ENVSUBST_VARS='$PIPELINE_REPO $PIPELINE_BASE_BRANCH $PIPELINE_WORKTREE_PREFIX'
@@ -56,6 +57,31 @@ ENVSUBST_VARS+=' $PIPELINE_SYNC_DOCS $PIPELINE_SYNC_FILES'
 ENVSUBST_VARS+=' $PIPELINE_FRONTEND_PORT_OFFSET $PIPELINE_LABELS_EXCLUDED $PIPELINE_LABELS_LATER $PIPELINE_LABELS_HUMAN'
 ENVSUBST_VARS+=' $PIPELINE_WIN_TEMP'
 ENVSUBST_VARS+=' $PIPELINE_SUBTREE_REMOTE $PIPELINE_SUBTREE_BRANCH'
+ENVSUBST_VARS+=' $PIPELINE_CI_CHECK_ENABLED'
+
+# Strip <!-- BEGIN X --> ... <!-- END X --> blocks from rendered template content
+# based on PIPELINE_<X>_ENABLED config vars. Default is "true" (block kept, markers
+# stripped). Any other value removes the entire block inclusive of its marker lines.
+# Used so optional skill steps can be gated by project config without leaking HTML
+# comments into the final SKILL.md an LLM will read.
+strip_conditional_blocks() {
+  local content="$1"
+  local markers
+  markers=$(printf '%s\n' "$content" | sed -n 's/.*<!-- BEGIN \([A-Z_][A-Z_]*\) -->.*/\1/p' | sort -u)
+  local marker enabled_var enabled
+  for marker in $markers; do
+    enabled_var="PIPELINE_${marker}_ENABLED"
+    # Use ${var-default} (no colon) so only an unset var falls back to "true".
+    # An explicit empty or "false" value must opt the block OUT.
+    enabled="${!enabled_var-true}"
+    if [ "$enabled" = "true" ]; then
+      content=$(printf '%s\n' "$content" | sed "/<!-- BEGIN ${marker} -->/d; /<!-- END ${marker} -->/d")
+    else
+      content=$(printf '%s\n' "$content" | sed "/<!-- BEGIN ${marker} -->/,/<!-- END ${marker} -->/d")
+    fi
+  done
+  printf '%s' "$content"
+}
 
 SKILLS_INSTALLED=0
 SKILLS_PRUNED=0
@@ -83,6 +109,7 @@ for template in "$PIPELINE_DIR"/skills/*/SKILL.md.template; do
 
   # Generate from template
   rendered=$(envsubst "$ENVSUBST_VARS" < "$template")
+  rendered=$(strip_conditional_blocks "$rendered")
 
   # Skip if identical
   if [ -f "$output_file" ] && [ "$(echo "$rendered" | diff -q - "$output_file" 2>/dev/null; echo $?)" = "0" ]; then
@@ -167,6 +194,7 @@ for template in "$PIPELINE_DIR"/hooks/*.template; do
   mkdir -p "$PROJECT_ROOT/.claude/hooks"
 
   rendered=$(envsubst "$ENVSUBST_VARS" < "$template")
+  rendered=$(strip_conditional_blocks "$rendered")
 
   if [ -f "$output_file" ] && [ "$(echo "$rendered" | diff -q - "$output_file" 2>/dev/null; echo $?)" = "0" ]; then
     echo "  [skip] $base_name (unchanged)"
@@ -215,6 +243,7 @@ for src in "$PIPELINE_DIR"/agents/*.md; do
   marker="$PROJECT_ROOT/.claude/agents/.${base_name%.md}.pipeline-managed"
 
   rendered=$(envsubst "$ENVSUBST_VARS" < "$src")
+  rendered=$(strip_conditional_blocks "$rendered")
 
   if [ -f "$output_file" ] && [ "$(echo "$rendered" | diff -q - "$output_file" 2>/dev/null; echo $?)" = "0" ]; then
     echo "  [skip] $base_name (unchanged)"

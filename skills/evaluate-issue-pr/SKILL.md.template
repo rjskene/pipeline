@@ -65,7 +65,48 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Type safety issues not caught by tsc
    - Test coverage: verify tests exist for every implemented feature
 
-5. **Visual validation** (if UI changes exist in the diff):
+<!-- BEGIN CI_CHECK -->
+5. **Check CI workflow status.**
+
+   Verify every required GitHub Actions check passes before posting a verdict. A red PR must never receive an Approved verdict.
+
+   **5a. Detect CI presence.** If the PR has no checks configured, skip this step entirely:
+   ```bash
+   CHECK_COUNT=$(gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json statusCheckRollup --jq '.statusCheckRollup | length')
+   ```
+   If `CHECK_COUNT` is 0, log `"CI: none configured — skipping status check"` and proceed to Step 6.
+
+   **5b. Wait for in-progress checks to settle.** Use a single bounded wait via `Bash` with `run_in_background: true`:
+   ```bash
+   timeout 600 gh pr checks $PR_NUM --repo ${PIPELINE_REPO} --watch --fail-fast --interval 30
+   ```
+   This is a one-shot 10-minute wait (30-second poll interval). You will receive a completion notification when all checks finish, a check fails (`--fail-fast`), or the timeout expires. Do NOT wrap this in a `while ... sleep ... grep` poll loop — the project convention is `Bash run_in_background` for bounded waits.
+
+   **5c. Inspect final check state.** After the background wait completes (or times out), read the rollup:
+   ```bash
+   gh pr view $PR_NUM --repo ${PIPELINE_REPO} --json statusCheckRollup \
+     --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED") | {name: .name, conclusion: .conclusion, url: .detailsUrl}'
+   ```
+
+   For each failed check, extract the run ID from `detailsUrl` and fetch the first error line:
+   ```bash
+   RUN_ID=$(echo "$DETAILS_URL" | sed 's|.*/runs/\([0-9]*\)/.*|\1|')
+   gh run view "$RUN_ID" --repo ${PIPELINE_REPO} --log-failed 2>&1 | head -20
+   ```
+   Fallback if `detailsUrl` parsing yields an empty or non-numeric RUN_ID:
+   ```bash
+   BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   RUN_ID=$(gh run list --repo ${PIPELINE_REPO} --branch "$BRANCH" --status failure --limit 1 --json databaseId --jq '.[0].databaseId')
+   gh run view "$RUN_ID" --repo ${PIPELINE_REPO} --log-failed 2>&1 | head -20
+   ```
+
+   **5d. Decide verdict interaction:**
+   - Any check FAILURE or CANCELLED → you MUST NOT post an "Approved" verdict, regardless of plan compliance and code quality findings.
+   - If the failure looks fixable within the existing fix budget (≤3 files, no new design decisions): attempt the fix in-worktree, commit, `git push`, and re-run the bounded wait from 5b with a fresh 10-minute timeout.
+   - If the failure exceeds the fix budget, persists after one fix attempt, or the wait timed out with checks still in progress: post a "Flagged" verdict that includes the failing job names and the first error line from 5c in the `**CI status:**` section of the evaluation comment (see Step 9).
+<!-- END CI_CHECK -->
+
+6. **Visual validation** (if UI changes exist in the diff):
    Check if Playwright MCP is available:
    ```bash
    cat .mcp.json 2>/dev/null
@@ -77,13 +118,13 @@ You are a senior engineer performing a code review of a PR against its approved 
 
    If unavailable, note: "Visual validation skipped — Playwright MCP not available."
 
-6. **If fixable issues found (3 files or fewer, no new design decisions):**
+7. **If fixable issues found (3 files or fewer, no new design decisions):**
    - Fix them in the worktree
    - Commit: `git commit -m "fix: evaluation fixes for #<N> — <summary>"`
    - Push to the feature branch: `git push`
    - Re-run tsc + tests to confirm fixes don't break anything
 
-7. **Check for branch divergence before merge decision:**
+8. **Check for branch divergence before merge decision:**
    ```bash
    git fetch origin ${PIPELINE_BASE_BRANCH}
    git log --oneline HEAD..origin/${PIPELINE_BASE_BRANCH} | head -5
@@ -94,7 +135,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    ```
    If conflicts are complex (semantic, not whitespace), flag for user review.
 
-8. **Post evaluation comment on the PR:**
+9. **Post evaluation comment on the PR:**
    ```bash
    gh pr comment $PR_NUM --repo ${PIPELINE_REPO} --body "<evaluation>"
    ```
@@ -111,6 +152,8 @@ You are a senior engineer performing a code review of a PR against its approved 
 
    **Code quality:** <findings or "No issues found">
 
+   **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out (checks still in progress)
+
    **Fixes applied:**
    - `<commit hash>` — <description>
    (or "None")
@@ -119,7 +162,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - <what needs human attention and why>
    ```
 
-9. **Report verdict:**
+10. **Report verdict:**
     - If **Approved**: "PR #X approved — ready for merge."
     - If **Flagged**: "PR #X flagged for review: <summary of remaining issues>"
     The evaluator never merges. Merging is handled by the pipeline orchestrator (step 8 of the pipeline skill) only after the user explicitly confirms.

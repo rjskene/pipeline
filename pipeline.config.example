@@ -22,6 +22,7 @@ PIPELINE_LABELS_HUMAN="human"                      # Label for issues that need 
 PIPELINE_WIN_TEMP=""                               # Windows temp dir (e.g., /c/Users/you/AppData/Local/Temp). Leave empty for non-Windows.
 PIPELINE_SUBTREE_REMOTE=""                         # Git remote name for pipeline source repo (auto-detected if empty)
 PIPELINE_SUBTREE_BRANCH="main"                     # Branch to track on the pipeline source remote
+PIPELINE_CI_CHECK_ENABLED="true"                   # Gate the evaluate-issue-pr CI status check step. "true" keeps it; any other value (incl. "") strips the block from the rendered SKILL.md. Projects with no CI or with non-blocking CI should set this to "".
 
 # --- Label-driven 3-path execution (optional) ---
 #
