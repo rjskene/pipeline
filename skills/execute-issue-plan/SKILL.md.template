@@ -37,7 +37,9 @@ You will receive an issue number as the argument (or from context). You should b
 
 5. **Implement the approved plan.**
 
-   The pipeline orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*` and `PIPELINE_PATH_<X>_REVIEWER_EXECUTE`) already requires you to invoke the path-specific skills in order and to dispatch `Agent(subagent_type='superpowers:code-reviewer')` as your final tool call. Follow that guidance — do NOT invoke those skills / subagent yourself here.
+   The plan's `**Tasks (ordered):**` section tells you the path-specific Task 0 directive (PATH A: flat edits, PATH B: invoke `superpowers:test-driven-development`, PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). Follow it exactly.
+
+   The pipeline orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*`) may also inject path-specific skill invocations. Earlier versions additionally used `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` to dispatch `code-reviewer` as the FINAL tool call of the session. This skill now owns the review flow explicitly (step 8 below, BEFORE `gh pr create`). Leaving `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` unset in `pipeline.config` is the recommended configuration; if it is set, the system prompt's end-of-session dispatch becomes a belt-and-suspenders redundancy, which is harmless.
 
    In all cases:
    - Implement ONLY what the plan specifies. No scope creep.
@@ -78,7 +80,45 @@ You will receive an issue number as the argument (or from context). You should b
 
    Fix any issues found before proceeding.
 
-8. **Open a pull request:**
+8. **Pre-PR code review loop.**
+
+   This step runs BEFORE `gh pr create`. The goal is to catch plan-compliance gaps and real bugs while the branch is still local-only, so the first external reviewer (pipeline `evaluate-issue-pr` or a human) sees a polished PR.
+
+   **8a. Author self-check.** Invoke `superpowers:requesting-code-review` as the author self-check:
+   ```
+   Skill(skill: "superpowers:requesting-code-review")
+   ```
+   Pass the plan comment body (from step 1) as context. The skill verifies plan requirements are met, tests pass, and CI-equivalent checks are green locally. If it flags a gap, fix it and re-run step 6 (validate) before continuing.
+
+   **8b. Independent reviewer dispatch.** Dispatch a separate code-reviewer subagent:
+   ```
+   Agent(
+     subagent_type: "superpowers:code-reviewer",
+     description: "Independent review of the implementation for issue #<N> against the approved plan",
+     prompt: "<full plan comment body + git diff ${PIPELINE_BASE_BRANCH}..HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
+   )
+   ```
+   The reviewer returns a list of findings (or "LGTM").
+
+   **8c. Triage findings.** Invoke `superpowers:receiving-code-review`:
+   ```
+   Skill(skill: "superpowers:receiving-code-review")
+   ```
+   Pass the reviewer's output. The skill classifies each finding as:
+   - **must-fix** (plan-compliance gap, test gap, real bug) → fix
+   - **nice-to-have** (style, rename) → skip unless trivial
+   - **incorrect** (reviewer misread) → reject with a one-line rationale in the follow-up commit message
+
+   Path-specific constraints when applying must-fixes:
+   - **PATH C (`multi-task`):** any must-fix that touches impl code MUST go through a NEW `tdd-implementer` dispatch. The orchestrator cannot `Edit`/`Write` impl files directly — the `enforce-path-c-delegation` hook will block it.
+   - **PATH B (standard):** must-fix code edits must still follow red→green→commit discipline (write a test for the missed behavior, watch fail, fix, watch pass, commit).
+   - **PATH A (`docs-only`):** must-fix edits are direct.
+
+   **8d. Commit fixes.** Commit each must-fix as its own `fix(review): ...` commit so the PR history shows the review loop. If zero must-fixes were applied, skip this sub-step.
+
+   **8e. Re-validate.** Re-run step 6 (type check + tests + visual validation) once more to confirm the review fixes did not regress anything.
+
+9. **Open a pull request:**
    ```bash
    gh pr create \
      --repo ${PIPELINE_REPO} \
@@ -97,12 +137,12 @@ You will receive an issue number as the argument (or from context). You should b
    )"
    ```
 
-9. **Mark as pr-open:**
-   ```bash
-   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "pr-open" --remove-label "in-progress"
-   ```
+10. **Mark as pr-open:**
+    ```bash
+    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "pr-open" --remove-label "in-progress"
+    ```
 
-10. **Report:** "PR opened for #N: <PR URL>"
+11. **Report:** "PR opened for #N: <PR URL>"
 
 ## Handling evaluation feedback
 

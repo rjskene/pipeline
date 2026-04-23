@@ -23,7 +23,7 @@ allowed-tools: Read, Bash, Glob, Grep, Agent
 
 When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages:
 
-1. **Plan** — before dispatching plan-issue, complete the classification pass from step 2 of pipeline discovery (dispatch `/classify-issue N` in parallel for stale/missing classifications, then reconcile recommendations into the current path). Record any `⚠ mismatch` flags for inclusion in the final report. Do NOT block on mismatches — proceed with the user-set labels. Then run `/plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
+1. **Plan** — before dispatching plan-issue, run `/classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
      ```bash
      PLAN_COUNT=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
@@ -83,9 +83,10 @@ gh issue list --repo ${PIPELINE_REPO} --state open --json number,title,labels --
 ## Label flow
 
 ```
-(no label) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged → (cleaned up)
+(no label) → [classified: docs-only | multi-task | none] → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged → (cleaned up)
 ```
 
+- `docs-only` / `multi-task` — PATH tag applied by classify-issue; persists through the rest of the lifecycle. Read by plan-issue (to emit PATH-aware Task 0/N), by spawn-claude.sh (to inject the path-specific execute skills), and by the enforce-path-c-delegation hook (to block direct orchestrator edits on multi-task issues).
 - `plan-pending` — plan posted, awaiting evaluation
 - `plan-reviewed` — evaluation posted, awaiting user approval
 - `plan-approved` — user approved the plan; ready for execution
@@ -212,31 +213,26 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    done
    ```
 
-   Dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel** (single tool-call batch, one Agent per issue), each invoking `/classify-issue N`. Wait for all to complete. Cached issues skip dispatch.
+   Dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel** (single tool-call batch, one Agent per issue), each invoking `/classify-issue N`. Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. No user reconciliation step is needed — labels are now authoritative.
 
    **Caching semantics:** A classification is fresh when the latest `## Classification` comment's `createdAt > issue.updatedAt`. GitHub's `updatedAt` bumps on body edits AND label changes, so the cache auto-invalidates. Forced reclassification: delete the classification comment OR edit the issue body/labels. Both `/pipeline` (this step) and the `classify-issue` skill itself perform the same cache check so the skill can be re-invoked directly without duplicating work.
 
-   **Reconcile recommendations into current path:** For each `ready` issue, read the most recent `## Classification` comment and extract `recommended_path`. Compare against the current label-derived path:
-   - Current path = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`
-   - If `recommended_path == current_path` → no flag
-   - If `recommended_path != current_path` → flag as `⚠ mismatch`
+   **Detect residual mismatch (audit only):** For each `ready` issue with a fresh classification, compare the cached comment's `recommended_path` against the current label-derived path (`A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`). They should match — classify-issue writes them together. If they diverge, it means a user hand-edited a label after the last classify run; flag as `⚠ mismatch` and include in the final report column. Do NOT block planning on a mismatch: the label is authoritative, the comment is history.
 
    **Detect cleanup candidates:** Cross-reference active worktrees (from `git worktree list`) with merged PRs. A worktree whose branch appears in the merged PR list is a cleanup candidate. Also check for `pr-open` issues whose PR has been merged (state = MERGED) — these need cleanup too.
 
 3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `${PIPELINE_LABELS_LATER}`, `${PIPELINE_LABELS_HUMAN}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `${PIPELINE_BASE_BRANCH}`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path / Recommend** column:
-   - Current path = `A` if the issue is labeled `docs-only`, `C` if labeled `multi-task`, else `B` (default). If both `docs-only` and `multi-task` are present, show `A!` (collision — PATH A wins, but flag it).
-   - For `ready` issues, append the classifier's recommendation in the form `<current_path> / <recommended_path> (<confidence>)`. If they mismatch, prefix with `⚠` (e.g. `B / ⚠ C (med)`).
-   - For non-`ready` stages, show only the current path (classifier is advisory only for `ready`).
-   - Keep the combined column to ≤20 chars so wide titles stay on-screen on narrow terminals.
+4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `${PIPELINE_LABELS_LATER}`, `${PIPELINE_LABELS_HUMAN}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `${PIPELINE_BASE_BRANCH}`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path** column:
+   - Path = `A` if the issue is labeled `docs-only`, `C` if labeled `multi-task`, else `B` (default). If both `docs-only` and `multi-task` are present, show `A!` (collision — PATH A wins, but flag it).
+   - classify-issue writes labels directly, so the label and the recommendation always match after a classify run. The audit-only `⚠ mismatch` flag (see step 2) lives in the final report, not this column.
    ```
    PIPELINE STATUS — <today's date>
    ================================================================
-    Issue  Title          Stage    Tags           Target Base  Path / Recommend    Blocked?
+    Issue  Title          Stage    Tags           Target Base  Path   Blocked?
    ----------------------------------------------------------------
-    #N     <title>        ready    feature, ui    pipeline     B / ⚠ C (med)       no
-    #N     <title>        ready    next-major     next         B / B (high)        no
+    #N     <title>        ready    feature, ui    pipeline     B      no
+    #N     <title>        ready    next-major     next         A      no
     ...
    ================================================================
    ```
@@ -263,15 +259,8 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
    - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `${PIPELINE_LABELS_HUMAN}`:
-     - **Before proposing planning:** if any `ready` issues show a `⚠ mismatch` flag, surface them first:
-       ```
-       ⚠ CLASSIFICATION MISMATCH — reconcile before planning:
-       #N    label=B    rec=C (medium)    "<title>"
-               → To accept: gh issue edit N --repo ${PIPELINE_REPO} --add-label multi-task
-               → To override: leave as-is (current label wins)
-       ```
-       Ask: "Reconcile labels, or proceed with current labels? (reconcile / proceed)". Do NOT spawn plan-issue agents until the user answers.
-     - Then propose planning for those issues (in parallel). Issues labeled `${PIPELINE_LABELS_HUMAN}` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
+     - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
+     - Then propose planning for the ready issues (in parallel). Issues labeled `${PIPELINE_LABELS_HUMAN}` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
    - If all issues are merged/done → congratulate and exit.
 
 6. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
