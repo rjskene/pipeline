@@ -10,10 +10,8 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 
 # Parse optional --base flag
 BASE_BRANCH=""
-BASE_BRANCH_EXPLICIT=false
 if [ "${1:-}" = "--base" ]; then
   BASE_BRANCH="$2"
-  BASE_BRANCH_EXPLICIT=true
   shift 2
 fi
 
@@ -95,17 +93,15 @@ else
   echo "[4/5] No seed command configured — skipping"
 fi
 
-# Step 5: Write base-branch metadata file
+# Step 5: Determine base branch (if not explicitly provided) and write metadata file
 if [ -z "$BASE_BRANCH" ]; then
-  BASE_BRANCH="$PIPELINE_BASE_BRANCH"
-fi
-# Warn if --base was not provided and current branch is not the configured default
-if [ "$BASE_BRANCH_EXPLICIT" = false ]; then
-  CURRENT_BRANCH=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD)
-  if [ "$CURRENT_BRANCH" != "$PIPELINE_BASE_BRANCH" ] && [ "$CURRENT_BRANCH" != "main" ]; then
-    echo "WARNING: No --base provided, but current branch is '$CURRENT_BRANCH' (not $PIPELINE_BASE_BRANCH/main)."
-    echo "  Defaulting to PIPELINE_BASE_BRANCH='$BASE_BRANCH'."
-    echo "  Did you mean: --base $CURRENT_BRANCH?"
+  CURRENT_BRANCH=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+  if [ "$CURRENT_BRANCH" = "HEAD" ] || [ "$CURRENT_BRANCH" = "main" ]; then
+    BASE_BRANCH="$PIPELINE_BASE_BRANCH"
+    echo "  Current branch is '$CURRENT_BRANCH' — defaulting base to PIPELINE_BASE_BRANCH='$BASE_BRANCH'."
+  else
+    BASE_BRANCH="$CURRENT_BRANCH"
+    echo "  No --base provided — defaulting base to current branch: '$BASE_BRANCH'."
   fi
 fi
 # Verify base branch exists on remote; push if needed

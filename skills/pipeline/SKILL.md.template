@@ -118,6 +118,23 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    Also print a reminder: *"PRs created by spawned agents will target `${EXPECTED_BASE}`. The enforce-base-branch hook blocks any `gh pr create` without `--base ${EXPECTED_BASE}`."*
 
+   Then, check for `next-major-release` issues in the open pipeline set. These should be processed from the `next` branch by convention:
+
+   ```bash
+   NEXT_ISSUES=$(gh issue list --repo ${PIPELINE_REPO} --state open \
+     --label next-major-release --json number,title \
+     --jq '.[] | "#\(.number) \(.title)"')
+   if [ -n "$NEXT_ISSUES" ] && [ "$CURRENT_BRANCH" != "next" ]; then
+     echo ""
+     echo "WARNING: The following open issues are labeled 'next-major-release':"
+     echo "$NEXT_ISSUES" | sed 's/^/  /'
+     echo ""
+     echo "These should be processed from the 'next' branch. You are currently on '$CURRENT_BRANCH'."
+     echo "Switch to 'next' before proceeding (if you intend to work on those issues)."
+   fi
+   ```
+   Do not auto-switch. Proceed with the run; the user decides.
+
    Then, check if `.claude-pipeline/` is in sync with the source repo and resolve any drift:
    ```bash
    bash .claude/scripts/resolve-subtree-drift.sh 2>/dev/null; DRIFT_EXIT=$?
@@ -208,7 +225,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `${PIPELINE_LABELS_LATER}`, `${PIPELINE_LABELS_HUMAN}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Path / Recommend** column:
+4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `${PIPELINE_LABELS_LATER}`, `${PIPELINE_LABELS_HUMAN}`, or `${PIPELINE_LABELS_EXCLUDED}`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `${PIPELINE_BASE_BRANCH}`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path / Recommend** column:
    - Current path = `A` if the issue is labeled `docs-only`, `C` if labeled `multi-task`, else `B` (default). If both `docs-only` and `multi-task` are present, show `A!` (collision — PATH A wins, but flag it).
    - For `ready` issues, append the classifier's recommendation in the form `<current_path> / <recommended_path> (<confidence>)`. If they mismatch, prefix with `⚠` (e.g. `B / ⚠ C (med)`).
    - For non-`ready` stages, show only the current path (classifier is advisory only for `ready`).
@@ -216,10 +233,10 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    PIPELINE STATUS — <today's date>
    ================================================================
-    Issue  Title          Stage    Tags           Path / Recommend    Blocked?
+    Issue  Title          Stage    Tags           Target Base  Path / Recommend    Blocked?
    ----------------------------------------------------------------
-    #N     <title>        ready    feature, ui    B / ⚠ C (med)       no
-    #N     <title>        ready    docs-only      A / A (high)        no
+    #N     <title>        ready    feature, ui    pipeline     B / ⚠ C (med)       no
+    #N     <title>        ready    next-major     next         B / B (high)        no
     ...
    ================================================================
    ```
