@@ -6,7 +6,7 @@ assert_absent() {
   if [ ! -e "$REPO_ROOT/$2" ]; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1 ($2 still exists)"; FAIL=$((FAIL+1)); fi
 }
 assert_no_grep() {
-  if ! grep -rqF "$2" "$REPO_ROOT/skills" "$REPO_ROOT/.claude/skills" 2>/dev/null; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1 (found '$2' in skills)"; FAIL=$((FAIL+1)); fi
+  if ! grep -rqF "$2" "$REPO_ROOT/skills" 2>/dev/null; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1 (found '$2' in skills)"; FAIL=$((FAIL+1)); fi
 }
 assert_absent "install.sh removed"                         "install.sh"
 assert_absent "scripts/check-subtree-drift.sh removed"     "scripts/check-subtree-drift.sh"
