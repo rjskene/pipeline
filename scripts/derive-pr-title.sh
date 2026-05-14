@@ -134,5 +134,9 @@ if has_label "enhancement"; then
   exit 0
 fi
 
-# No rule matched yet — later tasks extend this.
-exit 1
+# Default — no recognized signal. Emit chore(general) so release-please
+# still ingests it cleanly; a human can rename with `gh pr edit --title`
+# and the merge-gate validation in skills/run/SKILL.md is the final
+# reword opportunity.
+printf 'chore(general): %s\n' "$(summary_from_title)"
+exit 0

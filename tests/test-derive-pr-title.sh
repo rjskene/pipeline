@@ -123,5 +123,11 @@ assert_stdout \
   "feat(general): add support for X" \
   999 --title-override 'web modal: add support for X' --labels-override 'enhancement,priority/P1'
 
+# Task 7: no signal → default chore(general).
+assert_stdout \
+  "default fallback: chore(general) when no prefix/bug/enhancement signal" \
+  "chore(general): random title with no prefix" \
+  999 --title-override 'random title with no prefix' --labels-override 'priority/P2'
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
