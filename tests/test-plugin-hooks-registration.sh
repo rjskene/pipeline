@@ -19,6 +19,7 @@ hooks = manifest.get("hooks", {})
 EXPECTED = [
     ("PreToolUse",  "Bash",  "block_deletions.py"),
     ("PreToolUse",  "Bash",  "enforce-base-branch.py"),
+    ("PreToolUse",  "Bash",  "check-ci-skip-markers.py"),
     ("PreToolUse",  "Edit",  "enforce-path-c-delegation.py"),
     ("PreToolUse",  "Write", "enforce-path-c-delegation.py"),
     ("PreToolUse",  "*",     "restrict_paths.py"),
