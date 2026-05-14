@@ -77,5 +77,8 @@ assert "allows \${CLAUDE_PLUGIN_ROOT}/skills/ references" \
   "(cd \"$SB6\" && bash scripts/check-no-consumer-claude-writes.sh >/dev/null 2>&1)"
 rm -rf "$SB6"
 
+assert ".github/workflows/ci.yml exists and references the lint" \
+  "grep -qF 'check-no-consumer-claude-writes.sh' \"$REPO_ROOT/.github/workflows/ci.yml\""
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
