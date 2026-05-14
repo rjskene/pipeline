@@ -28,6 +28,7 @@ from _pipeline_config import read as _read_config  # noqa: E402
 GH_TIMEOUT_SECONDS = 10
 ROLLUP_RE = re.compile(r"\bgh\s+pr\s+view\s+(\d+)\b.*--json\s+statusCheckRollup")
 WATCH_RE = re.compile(r"\bgh\s+pr\s+checks\s+(\d+)\b.*--watch\b")
+APPROVED_RE = re.compile(r"\bgh\s+pr\s+comment\s+(\d+)\b.*--body\b.*\bApproved\b")
 
 
 def project_dir() -> Path:
@@ -81,6 +82,27 @@ def _gh_rollup_length(pr_number: str) -> int | None:
                 "--repo", _read_config("PIPELINE_REPO", ""),
                 "--json", "statusCheckRollup",
                 "--jq", ". | length",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT_SECONDS,
+        )
+        if result.returncode != 0:
+            return None
+        return int(result.stdout.strip() or "0")
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError, OSError):
+        return None
+
+
+def _gh_failed_check_count(pr_number: str) -> int | None:
+    try:
+        result = subprocess.run(
+            [
+                "gh", "pr", "view", pr_number,
+                "--repo", _read_config("PIPELINE_REPO", ""),
+                "--json", "statusCheckRollup",
+                "--jq",
+                '[.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED")] | length',
             ],
             capture_output=True,
             text=True,
@@ -157,6 +179,24 @@ def main() -> int:
             "Run that command, then retry Stop.\n"
         )
         return 2
+
+    # Block Approved verdicts when the final rollup contains FAILURE/CANCELLED.
+    approved_pr = None
+    for _ts, summary in rows:
+        m = APPROVED_RE.search(summary)
+        if m:
+            approved_pr = m.group(1)
+            break
+    if approved_pr is not None:
+        failed = _gh_failed_check_count(approved_pr)
+        if failed is not None and failed > 0:
+            sys.stderr.write(
+                "CI-wait gate: Approved verdict with failing CI.\n"
+                f"PR #{approved_pr} has {failed} FAILURE/CANCELLED check(s) in the\n"
+                "final rollup. Re-evaluate the PR with a Flagged verdict, or fix\n"
+                "the failing job and re-run Step 5 before approving.\n"
+            )
+            return 2
 
     return 0
 

@@ -48,19 +48,31 @@ PROJ="$WORKDIR/proj"
 mkdir -p "$PROJ/.claude/logs"
 printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
 
-# Stub gh on PATH. Reads STUB_GH_OUT to know what to print; defaults to empty JSON.
+# Stub gh on PATH. Routes by argv pattern:
+#   --jq '. | length'          -> STUB_GH_ROLLUP_LEN (default: "1")
+#   --jq '[.statusCheckRollup  -> STUB_GH_FAIL_COUNT  (default: "0")
+#   gh issue edit ...          -> records call, exits 0
+#   gh pr comment ...          -> records call, exits 0
 # When STUB_GH_FAIL=1, exits 1.
 STUB_DIR="$WORKDIR/stub"
 mkdir -p "$STUB_DIR"
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/bin/bash
-# Record invocation for assertion
 echo "$@" >> "${STUB_GH_CALLS:-/dev/null}"
 if [ "${STUB_GH_FAIL:-0}" = "1" ]; then
   exit 1
 fi
-# Allow per-call output via STUB_GH_OUT (printed verbatim).
-printf '%s' "${STUB_GH_OUT:-}"
+args="$*"
+case "$args" in
+  *"[.statusCheckRollup"*)
+    printf '%s' "${STUB_GH_FAIL_COUNT:-0}" ;;
+  *". | length"*)
+    printf '%s' "${STUB_GH_ROLLUP_LEN:-1}" ;;
+  *"issue edit"*|*"pr comment"*)
+    : ;;
+  *)
+    printf '%s' "${STUB_GH_OUT:-}" ;;
+esac
 EOF
 chmod +x "$STUB_DIR/gh"
 
@@ -126,8 +138,7 @@ reset_state
 seed_log_row "2026-05-14T10:00:00Z" "sess-2" "Bash" \
   "gh pr view 123 --repo fake/repo --json statusCheckRollup"
 PAYLOAD='{"session_id":"sess-2","cwd":"'"$PROJ"'"}'
-# gh stub returns "0" — the --jq '. | length' for an empty rollup yields 0.
-RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="0")
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN="0")
 if [ "$RC" = "0" ]; then pass_msg "exit 0 (no CI)"; else fail_msg "expected exit 0, got $RC"; fi
 
 # --- Test 3: CI present, no --watch invocation -> exit 2 ---
@@ -137,7 +148,7 @@ reset_state
 seed_log_row "2026-05-14T10:00:00Z" "sess-3" "Bash" \
   "gh pr view 123 --repo fake/repo --json statusCheckRollup"
 PAYLOAD='{"session_id":"sess-3","cwd":"'"$PROJ"'"}'
-RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="1")
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN="1")
 ERR=$(cat "$WORKDIR/err.txt")
 if [ "$RC" = "2" ] && echo "$ERR" | grep -q "CI-wait gate: --watch invocation not found"; then
   pass_msg "exit 2 + stderr matches"
@@ -154,7 +165,7 @@ seed_log_row "2026-05-14T10:00:00Z" "sess-4a" "Bash" \
 seed_log_row "2026-05-14T10:01:00Z" "sess-4a" "Bash" \
   "timeout 600 gh pr checks 123 --repo fake/repo --watch --fail-fast --interval 30"
 PAYLOAD='{"session_id":"sess-4a","cwd":"'"$PROJ"'"}'
-RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="1")
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN="1")
 ERR=$(cat "$WORKDIR/err.txt")
 if [ "$RC" = "2" ] && echo "$ERR" | grep -q "final rollup not re-checked after --watch"; then
   pass_msg "exit 2 + post-watch rollup stderr matches"
@@ -173,8 +184,47 @@ seed_log_row "2026-05-14T10:01:00Z" "sess-4b" "Bash" \
 seed_log_row "2026-05-14T10:02:00Z" "sess-4b" "Bash" \
   "gh pr view 123 --repo fake/repo --json statusCheckRollup --jq '.statusCheckRollup'"
 PAYLOAD='{"session_id":"sess-4b","cwd":"'"$PROJ"'"}'
-RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="1")
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN="1")
 if [ "$RC" = "0" ]; then pass_msg "exit 0 (well-formed sequence)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 5a: Approved verdict + final rollup FAILURE -> exit 2 ---
+echo "Test 5a: Approved verdict + red final rollup -> exit 2"
+inc
+reset_state
+seed_log_row "2026-05-14T10:00:00Z" "sess-5a" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+seed_log_row "2026-05-14T10:01:00Z" "sess-5a" "Bash" \
+  "timeout 600 gh pr checks 123 --repo fake/repo --watch --fail-fast --interval 30"
+seed_log_row "2026-05-14T10:02:00Z" "sess-5a" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+seed_log_row "2026-05-14T10:03:00Z" "sess-5a" "Bash" \
+  'gh pr comment 123 --repo fake/repo --body "## Evaluation **Verdict:** Approved"'
+PAYLOAD='{"session_id":"sess-5a","cwd":"'"$PROJ"'"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr \
+  STUB_GH_ROLLUP_LEN="1" STUB_GH_FAIL_COUNT="1")
+ERR=$(cat "$WORKDIR/err.txt")
+if [ "$RC" = "2" ] && echo "$ERR" | grep -q "Approved verdict with failing CI"; then
+  pass_msg "exit 2 + red-Approved stderr matches"
+else
+  fail_msg "expected exit 2 with Approved-red stderr; got rc=$RC stderr=$ERR"
+fi
+
+# --- Test 5b: Approved verdict + all-green final rollup -> exit 0 ---
+echo "Test 5b: Approved verdict + green final rollup -> exit 0"
+inc
+reset_state
+seed_log_row "2026-05-14T10:00:00Z" "sess-5b" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+seed_log_row "2026-05-14T10:01:00Z" "sess-5b" "Bash" \
+  "timeout 600 gh pr checks 123 --repo fake/repo --watch --fail-fast --interval 30"
+seed_log_row "2026-05-14T10:02:00Z" "sess-5b" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+seed_log_row "2026-05-14T10:03:00Z" "sess-5b" "Bash" \
+  'gh pr comment 123 --repo fake/repo --body "## Evaluation **Verdict:** Approved"'
+PAYLOAD='{"session_id":"sess-5b","cwd":"'"$PROJ"'"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr \
+  STUB_GH_ROLLUP_LEN="1" STUB_GH_FAIL_COUNT="0")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (Approved + green)"; else fail_msg "expected exit 0, got $RC"; fi
 
 echo ""
 echo "================================"
