@@ -440,10 +440,12 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    If the user confirms, first run a batch pre-validation pass to surface any PR titles that don't match the Conventional Commits format. This is informational — it lets the user batch-reword before the sequential merge loop. The per-PR gate below (sub-step 4) is the actual enforcement point.
 
    ```bash
+   # Uses canonical regex from scripts/check-conventional-title.sh — see Issue #45.
+   source $CLAUDE_PLUGIN_ROOT/scripts/check-conventional-title.sh
    echo "=== Pre-merge PR title validation ==="
    for PR_NUM in $(gh pr list --repo $PIPELINE_REPO --state open --json number --jq '.[].number'); do
      PR_TITLE=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json title --jq '.title')
-     if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|refactor|docs|ci|perf|test|build|style)(\(.+\))?!?: .+'; then
+     if ! check_conventional_title "$PR_TITLE"; then
        echo "  ⚠ PR #$PR_NUM: $PR_TITLE"
      else
        echo "  ✓ PR #$PR_NUM: $PR_TITLE"
@@ -481,9 +483,11 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    4. Merge PRs sequentially to avoid cascading conflicts. Before each merge, validate the PR title against the Conventional Commits format — release-please reads the squash commit on merge, so a non-conforming title breaks automated versioning and CHANGELOG generation.
 
       ```bash
-      # Validate PR title against Conventional Commits format
+      # Validate PR title against Conventional Commits format.
+      # Uses canonical regex from scripts/check-conventional-title.sh — see Issue #45.
+      source $CLAUDE_PLUGIN_ROOT/scripts/check-conventional-title.sh
       PR_TITLE=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json title --jq '.title')
-      if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|refactor|docs|ci|perf|test|build|style)(\(.+\))?!?: .+'; then
+      if ! check_conventional_title "$PR_TITLE"; then
         echo "⚠ PR #$PR_NUM title does not match conventional commit format: $PR_TITLE"
         echo "  Expected: type(scope): description  (e.g. feat(web): add modal component)"
         # Propose a reword based on the issue title/body, then apply with:
