@@ -6,8 +6,8 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 
 # Launch a claude CLI session for a worktree.
 # Usage: bash .claude/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue-number> [slug] [mode]
-#   mode: "terminal" (default) — new Terminal.app window with /execute-issue-plan
-#         "tmux"               — tmux window with auto-fire /execute-issue-plan
+#   mode: "terminal" (default) — new Terminal.app window with /pipeline:execute-issue-plan
+#         "tmux"               — tmux window with auto-fire /pipeline:execute-issue-plan
 #         "remote-control"     — remote-control server (control from mobile app / claude.ai/code)
 
 SKIP_PERMS=""
@@ -253,7 +253,7 @@ cd ${WORKTREE_PATH}
 echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
 echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
 ${BUILD_ARGV}
-CLAUDE_ARGV+=('/${SKILL} ${ISSUE_NUM}')
+CLAUDE_ARGV+=('/pipeline:${SKILL} ${ISSUE_NUM}')
 CMD=\$(printf ' %q' claude "\${CLAUDE_ARGV[@]}")
 CMD="\${CMD# }"
 if [ "\$(uname -s)" = "Darwin" ]; then
@@ -306,10 +306,10 @@ else
 fi
 SCRIPT
 
-  if command -v tmux &>/dev/null && tmux has-session -t dev 2>/dev/null; then
-    tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
+  if command -v tmux &>/dev/null && tmux has-session -t "${PIPELINE_TMUX_SESSION:-dev}" 2>/dev/null; then
+    tmux new-window -t "${PIPELINE_TMUX_SESSION:-dev}" -n "$TMUX_WINDOW" "$LAUNCHER"
     echo "Launched remote-control session for issue #${ISSUE_NUM} (tmux)"
-    echo "  tmux window: dev:${TMUX_WINDOW}"
+    echo "  tmux window: ${PIPELINE_TMUX_SESSION:-dev}:${TMUX_WINDOW}"
   else
     osascript -e "tell application \"Terminal\" to do script \"${LAUNCHER}\""
     echo "Launched remote-control session for issue #${ISSUE_NUM} (Terminal.app)"
@@ -318,8 +318,8 @@ SCRIPT
   echo "  Connect from Claude app or claude.ai/code → session: ${SESSION_NAME}"
 
 elif [ "$MODE" = "tmux" ]; then
-  if ! tmux has-session -t dev 2>/dev/null; then
-    echo "ERROR: No tmux session named 'dev'. Start one with: tmux new -s dev"
+  if ! tmux has-session -t "${PIPELINE_TMUX_SESSION:-dev}" 2>/dev/null; then
+    echo "ERROR: No tmux session named '${PIPELINE_TMUX_SESSION:-dev}'. Start one with: tmux new -s ${PIPELINE_TMUX_SESSION:-dev}"
     rm -f "$LAUNCHER"
     exit 1
   fi
@@ -330,7 +330,7 @@ cd ${WORKTREE_PATH}
 echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
 echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
 ${BUILD_ARGV}
-CLAUDE_ARGV+=(-p '/${SKILL} ${ISSUE_NUM}')
+CLAUDE_ARGV+=(-p '/pipeline:${SKILL} ${ISSUE_NUM}')
 INNER=\$(printf ' %q' claude "\${CLAUDE_ARGV[@]}")
 INNER="\${INNER# }"
 # -p (print mode): Claude processes the task then exits (no interactive prompt).
@@ -344,9 +344,9 @@ else
 fi
 SCRIPT
 
-  tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
+  tmux new-window -t "${PIPELINE_TMUX_SESSION:-dev}" -n "$TMUX_WINDOW" "$LAUNCHER"
   echo "Launched tmux session for issue #${ISSUE_NUM}"
-  echo "  tmux window: dev:${TMUX_WINDOW}"
+  echo "  tmux window: ${PIPELINE_TMUX_SESSION:-dev}:${TMUX_WINDOW}"
   echo "  Log: ${LOG_FILE}"
 
 else

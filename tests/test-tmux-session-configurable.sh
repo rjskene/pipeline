@@ -83,12 +83,12 @@ fi
 # --- Test 12: install.sh renders SKILL.md.template with custom session name ---
 PROJ="$WORKDIR/proj"
 PIPE="$PROJ/.claude-pipeline"
-mkdir -p "$PIPE/skills/pipeline" "$PIPE/scripts" "$PIPE/hooks" "$PIPE/agents"
+mkdir -p "$PIPE/skills/run" "$PIPE/scripts" "$PIPE/hooks" "$PIPE/agents"
 mkdir -p "$PROJ/.claude/skills" "$PROJ/.claude/scripts" "$PROJ/.claude/hooks" "$PROJ/.claude/agents"
 
 cp "$REPO_ROOT/install.sh" "$PIPE/install.sh"
 chmod +x "$PIPE/install.sh"
-cp "$REPO_ROOT/skills/pipeline/SKILL.md.template" "$PIPE/skills/pipeline/SKILL.md.template"
+cp "$REPO_ROOT/skills/run/SKILL.md.template" "$PIPE/skills/run/SKILL.md.template"
 
 cat > "$PROJ/pipeline.config" <<'EOF'
 PIPELINE_REPO="fake/repo"
@@ -120,7 +120,7 @@ EOF
   exit 1
 }
 
-RENDERED="$PROJ/.claude/skills/pipeline/SKILL.md"
+RENDERED="$PROJ/.claude/skills/run/SKILL.md"
 
 inc
 if grep -q 'pipeline-dogfood' "$RENDERED"; then
@@ -141,11 +141,11 @@ fi
 # --- Test 13: install.sh falls back to 'dev' when var is unset ---
 PROJ2="$WORKDIR/proj-default"
 PIPE2="$PROJ2/.claude-pipeline"
-mkdir -p "$PIPE2/skills/pipeline" "$PIPE2/scripts" "$PIPE2/hooks" "$PIPE2/agents"
+mkdir -p "$PIPE2/skills/run" "$PIPE2/scripts" "$PIPE2/hooks" "$PIPE2/agents"
 mkdir -p "$PROJ2/.claude/skills" "$PROJ2/.claude/scripts" "$PROJ2/.claude/hooks" "$PROJ2/.claude/agents"
 cp "$REPO_ROOT/install.sh" "$PIPE2/install.sh"
 chmod +x "$PIPE2/install.sh"
-cp "$REPO_ROOT/skills/pipeline/SKILL.md.template" "$PIPE2/skills/pipeline/SKILL.md.template"
+cp "$REPO_ROOT/skills/run/SKILL.md.template" "$PIPE2/skills/run/SKILL.md.template"
 
 cat > "$PROJ2/pipeline.config" <<'EOF'
 PIPELINE_REPO="fake/repo"
@@ -176,7 +176,7 @@ EOF
   exit 1
 }
 
-RENDERED2="$PROJ2/.claude/skills/pipeline/SKILL.md"
+RENDERED2="$PROJ2/.claude/skills/run/SKILL.md"
 inc
 if grep -qE 'tmux[^a-zA-Z0-9_-]*\bdev:0|tmux new -s dev -d|tmux attach -t dev' "$RENDERED2"; then
   pass_msg "rendered SKILL.md falls back to 'dev' when PIPELINE_TMUX_SESSION unset"

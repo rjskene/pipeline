@@ -3,7 +3,7 @@
 A reusable automation layer for Claude Code projects. Manages the full GitHub issue lifecycle — planning, evaluation, execution, PR creation, and cleanup — through slash commands.
 
 ```
-(new issue) → /plan-issue → /evaluate-issue-plan → (approve) → /execute-issue-plan → /evaluate-issue-pr → (merge)
+(new issue) → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
 ```
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
@@ -222,7 +222,7 @@ gh label create human          --repo $REPO --color "F9D0C4" --description "Need
 
 ### 5. Verify
 
-Run `/pipeline` in Claude Code. It should fetch your issues and print a status table.
+Run `/pipeline:run` in Claude Code. It should fetch your issues and print a status table.
 
 ---
 
@@ -230,13 +230,13 @@ Run `/pipeline` in Claude Code. It should fetch your issues and print a status t
 
 | Command | What it does |
 |---|---|
-| `/pipeline` | Check pipeline status, see what's ready, advance the next stage |
-| `/plan-issue 42` | Generate an implementation plan for issue #42 and post it as a comment |
-| `/evaluate-issue-plan 42` | Independently review the plan on issue #42 |
-| `/execute-issue-plan 42` | Implement the approved plan (run from inside the feature worktree) |
-| `/evaluate-issue-pr 42` | Review the PR against its plan (run from inside the feature worktree) |
-| `/create-issues` | Brainstorm mode — discuss changes, then push as GitHub issues |
-| `/worktree-sync` | Sync `.claude/` files to all active worktrees |
+| `/pipeline:run` | Check pipeline status, see what's ready, advance the next stage |
+| `/pipeline:plan-issue 42` | Generate an implementation plan for issue #42 and post it as a comment |
+| `/pipeline:evaluate-issue-plan 42` | Independently review the plan on issue #42 |
+| `/pipeline:execute-issue-plan 42` | Implement the approved plan (run from inside the feature worktree) |
+| `/pipeline:evaluate-issue-pr 42` | Review the PR against its plan (run from inside the feature worktree) |
+| `/pipeline:create-issues` | Brainstorm mode — discuss changes, then push as GitHub issues |
+| `/pipeline:worktree-sync` | Sync `.claude/` files to all active worktrees |
 
 ---
 
@@ -260,7 +260,7 @@ After installation, the generated files live in `.claude/skills/`, `.claude/scri
 ├── settings.json.template                  # Reference hook wiring
 ├── README.md                               # This file
 ├── skills/
-│   ├── pipeline/SKILL.md.template          # Pipeline status + coordinator
+│   ├── run/SKILL.md.template               # Pipeline status + coordinator (/pipeline:run)
 │   ├── plan-issue/SKILL.md.template        # Planning agent
 │   ├── evaluate-issue-plan/SKILL.md.template # Plan evaluator
 │   ├── execute-issue-plan/SKILL.md.template  # Execution agent

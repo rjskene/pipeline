@@ -1,6 +1,6 @@
 ---
 name: evaluate-issue-pr
-description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Usage: /evaluate-issue-pr <issue_number>
+description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Usage: /pipeline:evaluate-issue-pr <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---

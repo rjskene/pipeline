@@ -1,6 +1,6 @@
 ---
 name: execute-issue-plan
-description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /execute-issue-plan <issue_number>
+description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /pipeline:execute-issue-plan <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
@@ -17,7 +17,7 @@ You will receive an issue number as the argument (or from context). You should b
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
    ```
    This finds the LATEST plan comment (supports revisions — latest plan wins).
-   If the output is empty or `null`, **STOP** and report: "No implementation plan found on issue #N. Run `/plan-issue N` first."
+   If the output is empty or `null`, **STOP** and report: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
    Read the plan carefully before proceeding.
 
 2. **Read project conventions:**

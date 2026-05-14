@@ -32,7 +32,7 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
    ```
    Skill(skill: "superpowers:brainstorming")
    ```
-   Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately." It will ask one question at a time, multiple-choice when possible, with validation gates between sections.
+   Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /pipeline:plan-issue separately." It will ask one question at a time, multiple-choice when possible, with validation gates between sections.
 4. **Scope check — one issue vs many.**
 
    Before proposing issues, take your own read on scope:

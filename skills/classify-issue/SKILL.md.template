@@ -1,6 +1,6 @@
 ---
 name: classify-issue
-description: Triage a pipeline issue — reads title/body/labels/comments, recommends PATH A (docs-only), B (standard), or C (multi-task), and applies the `docs-only` / `multi-task` label directly. Posts a `## Classification` comment. Usage: /classify-issue <issue_number>
+description: Triage a pipeline issue — reads title/body/labels/comments, recommends PATH A (docs-only), B (standard), or C (multi-task), and applies the `docs-only` / `multi-task` label directly. Posts a `## Classification` comment. Usage: /pipeline:classify-issue <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep
 ---
