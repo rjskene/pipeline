@@ -69,6 +69,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/enforce-ci-wait.py"
+          }
+        ]
+      }
     ]
   }
 }

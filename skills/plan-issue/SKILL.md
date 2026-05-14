@@ -23,8 +23,8 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 1. **Fetch issue details and existing comments:**
    ```bash
-   gh issue view <N> --repo HTS-COLLAB-ORG/claude-pipeline --json number,title,body
-   gh issue view <N> --repo HTS-COLLAB-ORG/claude-pipeline --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
+   gh issue view <N> --repo $PIPELINE_REPO --json number,title,body
+   gh issue view <N> --repo $PIPELINE_REPO --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
    ```
 
 2. **Analyze existing comments** — look for:
@@ -38,7 +38,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 3a. **Determine PATH** — the executor's discipline depends on the path label, so the plan must include a path-specific Task 0:
 
    ```bash
-   LABELS=$(gh issue view <N> --repo HTS-COLLAB-ORG/claude-pipeline --json labels --jq '.labels[].name')
+   LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
    if echo "$LABELS" | grep -qx "docs-only"; then
      PATH_LETTER=A
    elif echo "$LABELS" | grep -qx "multi-task"; then
@@ -50,7 +50,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    # parse `recommended_path` from its body. If still indeterminate, default
    # to B. Label always wins.
    if [ -z "$PATH_LETTER" ]; then
-     CACHED=$(gh issue view <N> --repo HTS-COLLAB-ORG/claude-pipeline --json comments \
+     CACHED=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
        --jq '[.comments[] | select(.body | contains("## Classification"))] | last | .body' \
        | grep -oE 'recommended_path:\*\* [ABC]' | awk '{print $2}' | head -1)
      case "$CACHED" in A|B|C) PATH_LETTER="$CACHED" ;; *) PATH_LETTER=B ;; esac
@@ -63,6 +63,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    - Route files if the issue touches API
    - Frontend components if the issue touches UI
    - Test files if tests need updating
+   - Scan the issue title, body, and any quoted text for GitHub Actions CI-blocking markers (the bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`). If any are present in literal form, prepend a `**Heads-up — CI-blocking markers:** the issue text quotes <marker(s)>. The executor must escape them when writing PR titles or commit subjects (e.g. backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` without brackets). The `check-ci-skip-markers` PreToolUse hook will block any unescaped occurrence.` line to the plan body, in addition to the standard `Files to change` / `Tasks (ordered)` / etc. sections.
 
 5. **Generate the implementation plan.**
 
@@ -117,7 +118,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 #### Task 0 — PATH B (standard)
 
-   `Task 0: invoke superpowers:test-driven-development before any code edit. Every subsequent code task must follow the red→green→commit cycle: write a failing test → run for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done → watch it fail for the RIGHT reason → write minimum impl → run for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done → watch it pass → commit.`
+   `Task 0: invoke superpowers:test-driven-development before any code edit. Every subsequent code task must follow the red→green→commit cycle: write a failing test → run $PIPELINE_TEST_CMD → watch it fail for the RIGHT reason → write minimum impl → run $PIPELINE_TEST_CMD → watch it pass → commit.`
 
    Code-task format for PATH B: each task that modifies impl code includes all five steps explicitly — the test file path, the exact pytest/test command to run, the expected FAIL output, the impl code sketch, the expected PASS output, and the commit message. No step may be skipped; a task that does not follow red→green is a planning defect.
 
@@ -129,12 +130,12 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 6. **Post the plan as a GitHub comment:**
    ```bash
-   gh issue comment <N> --repo HTS-COLLAB-ORG/claude-pipeline --body "<plan markdown>"
+   gh issue comment <N> --repo $PIPELINE_REPO --body "<plan markdown>"
    ```
 
 7. **Verify the plan comment was posted:**
    ```bash
-   PLAN_COUNT=$(gh issue view <N> --repo HTS-COLLAB-ORG/claude-pipeline --json comments \
+   PLAN_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
    echo "Plan comments found: $PLAN_COUNT"
    ```
@@ -143,7 +144,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 8. **Update labels** — add `plan-pending`:
    ```bash
-   gh issue edit <N> --repo HTS-COLLAB-ORG/claude-pipeline --add-label "plan-pending"
+   gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-pending"
    ```
 
 9. **Report back:** "Plan posted to issue #N (PATH $PATH_LETTER)."

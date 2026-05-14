@@ -1,15 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-# Asserts that every rendered .claude/skills/*/SKILL.md:
+# Asserts that every plugin-root skills/*/SKILL.md:
 #  (1) has a `## Boot` heading whose body references both `source` and
 #      `pipeline.config` (so the agent knows to source the project config
 #      at session start), and
 #  (2) contains no leftover literal `${PIPELINE_*}` envsubst placeholders
-#      (plugin-rendered SKILL.md must work without install-time substitution).
+#      (plugin SKILL.md must work without install-time substitution).
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKILL_ROOT="$REPO_ROOT/.claude/skills"
+SKILL_ROOT="$REPO_ROOT/skills"
 
 [ -d "$SKILL_ROOT" ] || { echo "FAIL: $SKILL_ROOT missing"; exit 1; }
 

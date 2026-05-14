@@ -21,6 +21,8 @@ You will receive an issue number as the argument (or from context). You should b
 
 ## Steps
 
+**0b. CI-fix mode.** If `$PIPELINE_CI_FIX_CONTEXT` is non-empty, you were dispatched to fix a red CI run on an existing PR — not to implement a new plan. Skip steps 1–4 and step 9. Read the failure log at `$PIPELINE_CI_FIX_CONTEXT` and run `gh pr diff` to see the PR so far. Diagnose the failure, apply red→green→commit TDD discipline for the fix, run step 6 (Validate) once, then push the follow-up commit to the existing branch with `git push`. Do NOT call `gh pr create`. Do NOT change the `pr-open` label. Report the new commit SHA back to the orchestrator.
+
 1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan`:
    ```bash
    gh issue view <N> --repo $PIPELINE_REPO --json comments \
@@ -55,6 +57,7 @@ You will receive an issue number as the argument (or from context). You should b
    - Implement ONLY what the plan specifies. No scope creep.
    - Never commit directly to main.
    - Never use `--no-verify` or `--force`.
+   - When the plan or issue references a GH Actions CI-blocking marker (the bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`), do NOT propagate the literal marker into any `git commit -m`, `gh pr create --title`, or `gh pr create --body` argument. Substitute a safe form: backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` (no brackets). The `check-ci-skip-markers` PreToolUse hook blocks the literal form to prevent silent workflow skips on the very PR that is fixing CI behavior.
 
 6. **Validate — types, tests, server, and UI:**
 
@@ -128,11 +131,45 @@ You will receive an issue number as the argument (or from context). You should b
 
    **8e. Re-validate.** Re-run step 6 (type check + tests + visual validation) once more to confirm the review fixes did not regress anything.
 
-9. **Open a pull request:**
+9. **Open a pull request.**
+
+   **9a. Derive the PR title from the issue.** The PR title must be a strict
+   Conventional-Commits string (`feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert(<scope>)?: <summary>`)
+   so release-please can drive versioning + CHANGELOG. Issue titles are intentionally
+   expressive (`bug(...)`, `epic(...)`, `skill: ...`) and must NOT pass through verbatim.
+   Run the helper to derive it:
+
+   ```bash
+   PR_TITLE=$("${CLAUDE_PLUGIN_ROOT}/scripts/derive-pr-title.sh" <N>)
+   rc=$?
+   if [ "$rc" -eq 2 ]; then
+     # exit 2 = tracker (epic title or `tracker` label) — these never get PRs.
+     echo "ABORT: Issue #<N> is a tracker (epic title); trackers don't get PRs. Close the issue or rename it." >&2
+     exit 1
+   elif [ "$rc" -ne 0 ]; then
+     echo "ABORT: derive-pr-title.sh failed with exit $rc for issue #<N>" >&2
+     exit 1
+   fi
+   ```
+
+   The helper applies this rule table (source of truth lives in `scripts/derive-pr-title.sh`):
+
+   | Order | Condition | Action |
+   |-------|-----------|--------|
+   | 1 | Labels include `tracker` | exit 2 (refusal) |
+   | 2 | Title matches `^epic\(` | exit 2 (refusal) |
+   | 3 | Title is already Conventional Commits | passthrough |
+   | 4 | Title matches `^bug\(<scope>\):` | rewrite to `fix(<scope>): <rest>` |
+   | 5 | Labels include `bug` | `fix(<scope-or-general>): <summary>` |
+   | 6 | Labels include `enhancement` | `feat(<scope-or-general>): <summary>` |
+   | 7 | default | `chore(general): <summary>` |
+
+   **9b. Open the PR:**
+
    ```bash
    gh pr create \
      --repo $PIPELINE_REPO \
-     --title "<issue title>" \
+     --title "$PR_TITLE" \
      --base $PIPELINE_BASE_BRANCH \
      --body "$(cat <<'EOF'
    Closes #<N>
@@ -146,6 +183,8 @@ You will receive an issue number as the argument (or from context). You should b
    EOF
    )"
    ```
+
+   Both `--title` and `--body` values are scanned by the `check-ci-skip-markers` hook before this command runs. If you need to *describe* a marker in the PR body, wrap it in backticks (e.g. `` `[skip ci]` ``) so GH Actions does not honor it.
 
 10. **Mark as pr-open:**
     ```bash

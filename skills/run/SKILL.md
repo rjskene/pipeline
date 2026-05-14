@@ -48,7 +48,37 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```
 5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
+6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parse the emitted `ACTION=` line. Act per the table:
+
+   | ACTION | Behavior |
+   |--------|----------|
+   | `green` | leave the issue for step 7 (Evaluate PRs). |
+   | `pending` | defer; in single-pass full send, treat as green so step 7 still runs. |
+   | `red-retry` | autonomous mode: fire `bash .claude/scripts/run-queue.sh --ci-fix <N> <LOG>` in the background. Interactive mode: propose "re-dispatch executor on #N (CI red, retry budget <NEXT>/<BUDGET>)" as a candidate action. |
+   | `red-budget-exhausted` | issue is already labelled `human` by the helper; mark "Flagged (CI persistent failure)" in the final report and skip evaluate-issue-pr for that issue. |
+
+   The helper writes a tail-truncated failure log to `.claude/logs/ci-fix-<N>-attempt-<n>.log` and posts a `pipeline.ci-retries: <n>` issue comment to track the retry counter. Step 4's status table should source the `CI` column (`green` / `red` / `pending` / `—`) from the same helper invocation for `pr-open` rows.
+
 7. **Evaluate PRs** — once all agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6.
+7b. **Auto-merge green release PRs (opt-in)** — runs after step 7 (Evaluate PRs) and before step 8 (Report). Only fires when `PIPELINE_RELEASE_PR_AUTO_MERGE=true` AND at least one release PR has `ci=pass`. Feature PRs land first; the release PR consolidates them so version bumps + CHANGELOG stay coherent.
+
+   ```bash
+   if [ "${PIPELINE_RELEASE_PR_AUTO_MERGE:-false}" = "true" ]; then
+     while IFS= read -r line; do
+       [ -z "$line" ] && continue
+       PR_NUM=$(echo "$line" | sed -n 's/^pr=\([0-9][0-9]*\).*/\1/p')
+       CI=$(echo "$line" | sed -n 's/.* ci=\([a-z]*\) .*/\1/p')
+       if [ "$CI" = "pass" ] && [ -n "$PR_NUM" ]; then
+         gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch \
+           || echo "WARN: failed to merge release PR #$PR_NUM"
+       else
+         echo "SKIP: release PR #$PR_NUM ci=$CI (auto-merge only on green)"
+       fi
+     done <<< "$(bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)"
+   fi
+   ```
+
+   Default is **off** — existing repos that gate releases behind manual review are not surprised on upgrade. Step 8's final-report table should include any merged release PRs as their own section.
 8. **Report** — print a summary table of all issues with their final stage and any flags. Include a **Classification mismatch** column showing, for each issue, the current-label path vs. the recommended path when they diverged (else blank):
    ```
    FULL SEND COMPLETE
@@ -152,6 +182,14 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    Report any fixes briefly.
 
+   Then discover open release-bot PRs (release-please by default) so they can be surfaced in the status table and proposed/auto-merged in later steps. The helper lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL` (default `autorelease: pending`):
+
+   ```bash
+   RELEASE_PRS=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)
+   ```
+
+   Output schema, one line per PR: `pr=<num> ci=<pass|fail|pending> title=<title>`. Empty when no release PRs are open or `gh` is unavailable — degrade silently in that case.
+
    Then check for stale tmux sessions from previous pipeline runs. If a tmux `PIPELINE_TMUX_SESSION` session exists, kill any leftover queue runner and agent windows:
    ```bash
    # List all windows in the $PIPELINE_TMUX_SESSION session
@@ -236,6 +274,29 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ================================================================
    ```
 
+   **Release PRs row group.** If `RELEASE_PRS` (from step 0) is non-empty, render an additional table ABOVE the pipeline-issue table. Parse each line (`pr=<num> ci=<pass|fail|pending> title=<title>`) into a row:
+
+   ```
+   RELEASE PRs
+   ================================================================
+    PR     Title                              Stage             CI
+   ----------------------------------------------------------------
+    #201   chore(main): release 1.2.3         release-pending   pass
+    #202   chore(main): release 1.3.0         release-pending   fail
+   ================================================================
+   ```
+   `release-pending` is a **display-only** Stage value — it is NOT a GitHub label. The PR already carries `autorelease: pending` (release-please convention) and writing a second label would force consumer repos to define it. The Stage column is purely a rendering concern.
+
+<!--
+Priority order for "Propose ONE action" (highest → lowest):
+  cleanup > in-progress > pr-open eval > plan-pending eval > plan-reviewed (await user)
+  > plan-approved exec > merge release PR > ready planning.
+
+Rationale: a release PR is the end of the release loop — it must NOT preempt
+active feature work, but it should come BEFORE pulling in new ready work
+(no point planning new issues if a release is queued and ready to merge).
+-->
+
 5. **Propose ONE action** based on state priority:
    - If any worktrees are cleanup candidates (merged PR with active worktree) → propose cleanup. List each candidate with its issue number and worktree path.
    - Else if any issues have `in-progress` → print which ones and note agents are working. Do not propose anything else.
@@ -257,6 +318,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      - Otherwise, note they are awaiting user review.
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
    - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
+   - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN`:
      - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
      - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
@@ -440,10 +502,12 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    If the user confirms, first run a batch pre-validation pass to surface any PR titles that don't match the Conventional Commits format. This is informational — it lets the user batch-reword before the sequential merge loop. The per-PR gate below (sub-step 4) is the actual enforcement point.
 
    ```bash
+   # Uses canonical regex from scripts/check-conventional-title.sh — see Issue #45.
+   source $CLAUDE_PLUGIN_ROOT/scripts/check-conventional-title.sh
    echo "=== Pre-merge PR title validation ==="
    for PR_NUM in $(gh pr list --repo $PIPELINE_REPO --state open --json number --jq '.[].number'); do
      PR_TITLE=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json title --jq '.title')
-     if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|refactor|docs|ci|perf|test|build|style)(\(.+\))?!?: .+'; then
+     if ! check_conventional_title "$PR_TITLE"; then
        echo "  ⚠ PR #$PR_NUM: $PR_TITLE"
      else
        echo "  ✓ PR #$PR_NUM: $PR_TITLE"
@@ -481,9 +545,11 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    4. Merge PRs sequentially to avoid cascading conflicts. Before each merge, validate the PR title against the Conventional Commits format — release-please reads the squash commit on merge, so a non-conforming title breaks automated versioning and CHANGELOG generation.
 
       ```bash
-      # Validate PR title against Conventional Commits format
+      # Validate PR title against Conventional Commits format.
+      # Uses canonical regex from scripts/check-conventional-title.sh — see Issue #45.
+      source $CLAUDE_PLUGIN_ROOT/scripts/check-conventional-title.sh
       PR_TITLE=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json title --jq '.title')
-      if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|chore|refactor|docs|ci|perf|test|build|style)(\(.+\))?!?: .+'; then
+      if ! check_conventional_title "$PR_TITLE"; then
         echo "⚠ PR #$PR_NUM title does not match conventional commit format: $PR_TITLE"
         echo "  Expected: type(scope): description  (e.g. feat(web): add modal component)"
         # Propose a reword based on the issue title/body, then apply with:

@@ -3,7 +3,7 @@
 # This file is sourced by shell scripts at runtime.
 
 PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
-PIPELINE_BASE_BRANCH="staging"                     # PR target branch (e.g., staging, main, develop)
+PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: staging — dev trunk; override per-repo if needed)
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
@@ -21,6 +21,8 @@ PIPELINE_LABELS_HUMAN="human"                      # Label for issues that need 
 PIPELINE_WIN_TEMP=""                               # Windows temp dir (e.g., /c/Users/you/AppData/Local/Temp). Leave empty for non-Windows.
 PIPELINE_TMUX_SESSION="dev"                        # tmux session name for the queue runner + per-issue windows (default 'dev'; set per project to avoid collisions)
 PIPELINE_CI_CHECK_ENABLED="true"                   # Gate the evaluate-issue-pr CI status check step. "true" keeps it; any other value (incl. "") strips the block from the rendered SKILL.md. Projects with no CI or with non-blocking CI should set this to "".
+PIPELINE_RELEASE_PR_AUTO_MERGE="false"             # Opt-in: auto-merge green release-bot PRs during /pipeline:run full send. Default false so manual-review release flows aren't surprised on upgrade.
+PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies release-bot PRs to discover. Default matches release-please; override for other bots (e.g. "please-release").
 
 # --- Label-driven 3-path execution (optional) ---
 #
@@ -71,3 +73,8 @@ PIPELINE_CI_CHECK_ENABLED="true"                   # Gate the evaluate-issue-pr 
 # PIPELINE_PATH_C_SKILLS_EXECUTE="superpowers:subagent-driven-development"
 # PIPELINE_PATH_C_REVIEWER_EXECUTE="superpowers:code-reviewer"
 # PIPELINE_PATH_C_SKILL_ARGS_EXECUTE_SUBAGENT_DRIVEN_DEVELOPMENT="scripts/skill-args/c-execute-subagent-driven-development.txt"
+
+# CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
+PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true; further gated by PIPELINE_CI_CHECK_ENABLED
+PIPELINE_CI_FIX_RETRY_BUDGET="2"      # max re-dispatches per PR before applying the human label
+PIPELINE_CI_FIX_LOG_LINES="200"       # tail size when injecting CI failure log into executor context

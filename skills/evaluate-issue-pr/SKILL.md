@@ -30,7 +30,7 @@ You are a senior engineer performing a code review of a PR against its approved 
 
 1. **Fetch the approved plan:**
    ```bash
-   gh issue view <N> --repo HTS-COLLAB-ORG/claude-pipeline --json comments \
+   gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
    ```
    If empty, STOP: "No implementation plan found for issue #N."
@@ -38,8 +38,8 @@ You are a senior engineer performing a code review of a PR against its approved 
 2. **Fetch the PR number and diff:**
    ```bash
    BRANCH=$(git rev-parse --abbrev-ref HEAD)
-   PR_NUM=$(gh pr list --repo HTS-COLLAB-ORG/claude-pipeline --head "$BRANCH" --json number --jq '.[0].number')
-   gh pr diff $PR_NUM --repo HTS-COLLAB-ORG/claude-pipeline
+   PR_NUM=$(gh pr list --repo $PIPELINE_REPO --head "$BRANCH" --json number --jq '.[0].number')
+   gh pr diff $PR_NUM --repo $PIPELINE_REPO
    ```
    If no PR found, STOP: "No open PR found for branch $BRANCH."
 
@@ -50,7 +50,7 @@ You are a senior engineer performing a code review of a PR against its approved 
 
    The pipeline orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR` + `PIPELINE_PATH_<X>_SKILL_ARGS_EVALUATE_PR_*`) already requires you to invoke the path-specific review skills before doing anything else. Follow that skill's guidance to run the two review phases (plan compliance + code quality) and combine findings:
    - **Task 1 — Plan compliance:** For each item in the plan: verify "Files to change" were modified and changes match descriptions. Verify "DB schema changes", "API changes", "Frontend changes", "Test changes" were made or correctly skipped. Flag scope creep (implemented but not planned) and missing work (planned but not implemented).
-   - **Task 2 — Code quality:** Run ` 2>&1 | head -50` and `for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done 2>&1 | tail -30`. Review the diff for: leftover debug code, console.logs, TODO comments; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type safety issues not caught by tsc; test coverage for every implemented feature.
+   - **Task 2 — Code quality:** Run `$PIPELINE_TYPECHECK_CMD 2>&1 | head -50` and `$PIPELINE_TEST_CMD 2>&1 | tail -30`. Review the diff for: leftover debug code, console.logs, TODO comments; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type safety issues not caught by tsc; test coverage for every implemented feature.
 
    If the Skill tool is unavailable, perform the review inline:
 
@@ -65,8 +65,8 @@ You are a senior engineer performing a code review of a PR against its approved 
 
    **Phase 2 — Code quality.** Run automated checks and review the diff:
    ```bash
-    2>&1 | head -50
-   for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done 2>&1 | tail -30
+   $PIPELINE_TYPECHECK_CMD 2>&1 | head -50
+   $PIPELINE_TEST_CMD 2>&1 | tail -30
    ```
    Also review the diff for:
    - Leftover debug code, console.logs, TODO comments
@@ -75,44 +75,47 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Type safety issues not caught by tsc
    - Test coverage: verify tests exist for every implemented feature
 
+<!-- BEGIN CI_CHECK -->
 5. **Check CI workflow status.**
 
    Verify every required GitHub Actions check passes before posting a verdict. A red PR must never receive an Approved verdict.
 
    **5a. Detect CI presence.** If the PR has no checks configured, skip this step entirely:
    ```bash
-   CHECK_COUNT=$(gh pr view $PR_NUM --repo HTS-COLLAB-ORG/claude-pipeline --json statusCheckRollup --jq '.statusCheckRollup | length')
+   CHECK_COUNT=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup --jq '.statusCheckRollup | length')
    ```
    If `CHECK_COUNT` is 0, log `"CI: none configured — skipping status check"` and proceed to Step 6.
 
    **5b. Wait for in-progress checks to settle.** Use a single bounded wait via `Bash` with `run_in_background: true`:
    ```bash
-   timeout 600 gh pr checks $PR_NUM --repo HTS-COLLAB-ORG/claude-pipeline --watch --fail-fast --interval 30
+   timeout 600 gh pr checks $PR_NUM --repo $PIPELINE_REPO --watch --fail-fast --interval 30
    ```
    This is a one-shot 10-minute wait (30-second poll interval). You will receive a completion notification when all checks finish, a check fails (`--fail-fast`), or the timeout expires. Do NOT wrap this in a `while ... sleep ... grep` poll loop — the project convention is `Bash run_in_background` for bounded waits.
 
    **5c. Inspect final check state.** After the background wait completes (or times out), read the rollup:
    ```bash
-   gh pr view $PR_NUM --repo HTS-COLLAB-ORG/claude-pipeline --json statusCheckRollup \
+   gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup \
      --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED") | {name: .name, conclusion: .conclusion, url: .detailsUrl}'
    ```
 
    For each failed check, extract the run ID from `detailsUrl` and fetch the first error line:
    ```bash
    RUN_ID=$(echo "$DETAILS_URL" | sed 's|.*/runs/\([0-9]*\)/.*|\1|')
-   gh run view "$RUN_ID" --repo HTS-COLLAB-ORG/claude-pipeline --log-failed 2>&1 | head -20
+   gh run view "$RUN_ID" --repo $PIPELINE_REPO --log-failed 2>&1 | head -20
    ```
    Fallback if `detailsUrl` parsing yields an empty or non-numeric RUN_ID:
    ```bash
    BRANCH=$(git rev-parse --abbrev-ref HEAD)
-   RUN_ID=$(gh run list --repo HTS-COLLAB-ORG/claude-pipeline --branch "$BRANCH" --status failure --limit 1 --json databaseId --jq '.[0].databaseId')
-   gh run view "$RUN_ID" --repo HTS-COLLAB-ORG/claude-pipeline --log-failed 2>&1 | head -20
+   RUN_ID=$(gh run list --repo $PIPELINE_REPO --branch "$BRANCH" --status failure --limit 1 --json databaseId --jq '.[0].databaseId')
+   gh run view "$RUN_ID" --repo $PIPELINE_REPO --log-failed 2>&1 | head -20
    ```
 
    **5d. Decide verdict interaction:**
    - Any check FAILURE or CANCELLED → you MUST NOT post an "Approved" verdict, regardless of plan compliance and code quality findings.
    - If the failure looks fixable within the existing fix budget (≤3 files, no new design decisions): attempt the fix in-worktree, commit, `git push`, and re-run the bounded wait from 5b with a fresh 10-minute timeout.
    - If the failure exceeds the fix budget, persists after one fix attempt, or the wait timed out with checks still in progress: post a "Flagged" verdict that includes the failing job names and the first error line from 5c in the `**CI status:**` section of the evaluation comment (see Step 9).
+   **Hook-enforced.** Step 5's wait is gated by the `enforce-ci-wait` Stop hook (`hooks/enforce-ci-wait.py`). The hook reads `.claude/logs/tool-use.log` and blocks Stop unless the prescribed `gh pr view` → `gh pr checks --watch` → `gh pr view` sequence is recorded for the current session. An Approved verdict with a red final rollup is also blocked. The skill prose remains the source of truth for HOW to wait; the hook only verifies that it happened.
+<!-- END CI_CHECK -->
 
 6. **Visual validation** (if UI changes exist in the diff):
    Check if Playwright MCP is available:
@@ -134,18 +137,18 @@ You are a senior engineer performing a code review of a PR against its approved 
 
 8. **Check for branch divergence before merge decision:**
    ```bash
-   git fetch origin staging
-   git log --oneline HEAD..origin/staging | head -5
+   git fetch origin $PIPELINE_BASE_BRANCH
+   git log --oneline HEAD..origin/$PIPELINE_BASE_BRANCH | head -5
    ```
    If `PIPELINE_BASE_BRANCH` has advanced, rebase:
    ```bash
-   git rebase origin/staging
+   git rebase origin/$PIPELINE_BASE_BRANCH
    ```
    If conflicts are complex (semantic, not whitespace), flag for user review.
 
 9. **Post evaluation comment on the PR:**
    ```bash
-   gh pr comment $PR_NUM --repo HTS-COLLAB-ORG/claude-pipeline --body "<evaluation>"
+   gh pr comment $PR_NUM --repo $PIPELINE_REPO --body "<evaluation>"
    ```
 
    Format:

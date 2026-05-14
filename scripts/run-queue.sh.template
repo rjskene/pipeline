@@ -23,6 +23,34 @@ if [ "${1:-}" = "--add" ]; then
   exit 0
 fi
 
+# --ci-fix mode: re-dispatch execute-issue-plan inside an existing
+# feature worktree to fix a red CI run. Does NOT open a new PR; the
+# executor pushes a follow-up commit to the existing branch.
+if [ "${1:-}" = "--ci-fix" ]; then
+  shift
+  if [ $# -lt 2 ]; then
+    echo "Usage: $0 --ci-fix <issue> <log-path>" >&2
+    exit 1
+  fi
+  CI_FIX_ISSUE="$1"; CI_FIX_LOG="$2"
+  REPO_ROOT_CI_FIX="$(cd "$(dirname "$0")/../.." && pwd)"
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT_CI_FIX}/pipeline.config"
+  WT_PATH=$(git worktree list --porcelain \
+    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-" \
+        '/^worktree / { wt=$2 } wt ~ p { print wt; exit }')
+  if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
+    echo "ERROR: No worktree for issue #${CI_FIX_ISSUE} (prefix ${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-*)" >&2
+    exit 1
+  fi
+  SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-//")
+  export PIPELINE_CI_FIX_CONTEXT="$CI_FIX_LOG"
+  exec bash "$(dirname "$0")/spawn-claude.sh" \
+    --dangerously-skip-permissions \
+    --skill execute-issue-plan \
+    "$WT_PATH" "$CI_FIX_ISSUE" "$SLUG" tmux
+fi
+
 # Source project config
 source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 
