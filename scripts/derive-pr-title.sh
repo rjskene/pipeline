@@ -51,6 +51,16 @@ else
   TITLE=$(gh issue view "$N" --repo "$PIPELINE_REPO" --json title --jq '.title')
 fi
 
+refuse_tracker() {
+  echo "Issue #$N is a tracker (epic title); trackers don't get PRs. Close the issue or rename it." >&2
+  exit 2
+}
+
+# Tracker refusal — epic(...) issues track other issues and never get PRs.
+if [[ "$TITLE" =~ ^epic\( ]]; then
+  refuse_tracker
+fi
+
 # Conventional-commits passthrough — keep this regex in sync with
 # .github/workflows/pr-title-check.yml and skills/run/SKILL.md merge gate.
 CC_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)(\([a-z0-9_-]+\))?!?: .+'

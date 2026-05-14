@@ -73,5 +73,10 @@ assert_stdout \
   "feat(execute-issue-plan): derive PR title" \
   999 --title-override 'feat(execute-issue-plan): derive PR title' --labels-override ''
 
+# Task 2: epic-prefix issues are trackers and must be refused.
+assert_refusal \
+  "refusal: epic(scope) title exits 2 with tracker stderr" \
+  999 --title-override 'epic(redline): tracker for #1, #2' --labels-override ''
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
