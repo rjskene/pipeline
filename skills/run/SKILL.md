@@ -246,7 +246,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    # Required env: ISSUE_LIST_JSON (output of `gh issue list ... --json number,title,labels`).
    # Emits: READY_ISSUES (space-separated numbers), TRACKER_ISSUES (space-separated numbers).
    STAGE_LABELS='plan-pending|plan-reviewed|plan-approved|in-progress|pr-open|merged'
-   SKIP_LABELS="tracker|${PIPELINE_LABELS_EXCLUDED}|${PIPELINE_LABELS_LATER}|${PIPELINE_LABELS_HUMAN}"
+   SKIP_LABELS="tracker|$PIPELINE_LABELS_EXCLUDED|$PIPELINE_LABELS_LATER|$PIPELINE_LABELS_HUMAN"
    READY_ISSUES=$(echo "$ISSUE_LIST_JSON" | jq -r --arg stage "$STAGE_LABELS" --arg skip "$SKIP_LABELS" '
      .[] | select(
        ([.labels[].name] | any(test("^(" + $stage + ")$"))) | not
