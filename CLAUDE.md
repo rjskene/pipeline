@@ -47,25 +47,26 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 ## Branches
 
-- **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
+- **`main`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here. release-please tracks this branch.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 
 ### Release cadence (this repo only)
 
-This repo uses a two-branch model: `staging` is the dev trunk (where wave PRs land); `main` is the release branch (what consumers install from).
+This repo uses a **one-branch model**: `main` is both the dev trunk and the release branch. Releases are driven by [release-please](https://github.com/googleapis/release-please).
 
-**To cut a release:**
+**How a release happens:**
 
-1. Branch `release/vX.Y.Z` off `staging`, bump `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (both `metadata.version` and `plugins[0].version`), commit.
-2. PR `release/vX.Y.Z` → `main`. Squash-merge, delete branch.
-3. `gh release create vX.Y.Z --target main`.
-4. **Back-sync to staging:** cherry-pick the release commit onto `chore/sync-vX.Y.Z-to-staging`, PR → `staging`, squash-merge. This step is mandatory — squash-merge in step 2 produces a SHA-disconnected commit on `main`, so `staging` won't fast-forward and subsequent feature PRs would branch from a version-stale base.
-5. **Reload the plugin** so subsequent dogfood sessions pick up the new code:
+1. Feature PRs merge to `main` using Conventional Commits (`feat:`, `fix:`, `chore:`, etc.).
+2. On every push to `main`, the `release-please` workflow (`.github/workflows/release-please.yml`) opens — or updates — a Release PR titled `chore(main): release X.Y.Z`. The Release PR bumps `version` in `.claude-plugin/plugin.json` and both `metadata.version` and `plugins[0].version` in `.claude-plugin/marketplace.json` (synced via `extra-files` in `release-please-config.json`), and appends to `CHANGELOG.md`.
+3. When ready to ship, **squash-merge the Release PR**. release-please then creates the `vX.Y.Z` git tag and a corresponding GitHub Release automatically.
+4. **Reload the plugin** so subsequent dogfood sessions pick up the new code:
    ```
    /plugin uninstall pipeline@claude-pipeline
    /plugin install   pipeline@claude-pipeline
    ```
-   (Or, if installed via local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
+   (If installed via a local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
+
+The previous two-branch model (`staging` dev trunk + `main` release branch) and its manual 5-step release ritual (release branch, version bump, squash-merge, tag, back-sync) have been retired. release-please owns version bumps, tags, and the GitHub Release entirely.
 
 ## Plugin architecture
 

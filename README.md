@@ -34,7 +34,7 @@ Create the file with the values for your project:
 
 ```bash
 PIPELINE_REPO="your-org/your-repo"          # GitHub owner/repo
-PIPELINE_BASE_BRANCH="staging"              # Branch that PRs target
+PIPELINE_BASE_BRANCH="main"                 # Branch that PRs target
 PIPELINE_WORKTREE_PREFIX="wt"               # Worktree directory prefix
 PIPELINE_INSTALL_CMD="npm ci"               # How to install dependencies
 PIPELINE_TEST_CMD="npm test"                # How to run tests
