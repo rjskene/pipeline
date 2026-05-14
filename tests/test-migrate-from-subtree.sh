@@ -73,6 +73,131 @@ else
   sed 's/^/      /' "$STDERR_LOG"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "clean": every pipeline-managed surface present — script removes the
+# managed files end-to-end, leaves user-authored siblings untouched, prints
+# the post-migration instructions.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'clean': end-to-end removal of pipeline-managed surfaces"
+
+PROJ_CLEAN="$WORKDIR/proj-clean"
+mkdir -p "$PROJ_CLEAN/.claude-pipeline/scripts" "$PROJ_CLEAN/.claude-pipeline/hooks"
+touch "$PROJ_CLEAN/.claude-pipeline/install.sh"
+touch "$PROJ_CLEAN/.claude-pipeline/pipeline.config.example"
+
+# Pipeline manifest under .claude-pipeline/ — names the migration script
+# enumerates to identify managed scripts/hooks.
+touch "$PROJ_CLEAN/.claude-pipeline/scripts/spawn-claude.sh.template"
+touch "$PROJ_CLEAN/.claude-pipeline/hooks/log-tool-use.sh"
+
+# Installed surfaces
+mkdir -p "$PROJ_CLEAN/.claude/skills/run" \
+         "$PROJ_CLEAN/.claude/skills/userwritten" \
+         "$PROJ_CLEAN/.claude/agents" \
+         "$PROJ_CLEAN/.claude/scripts" \
+         "$PROJ_CLEAN/.claude/hooks"
+
+# Skills: one managed (marker), one user-authored
+echo "managed skill" > "$PROJ_CLEAN/.claude/skills/run/SKILL.md"
+touch "$PROJ_CLEAN/.claude/skills/run/.pipeline-managed"
+echo "user skill" > "$PROJ_CLEAN/.claude/skills/userwritten/SKILL.md"
+
+# Agents: one managed (per-file marker), one user-authored
+echo "managed agent" > "$PROJ_CLEAN/.claude/agents/tdd-implementer.md"
+touch "$PROJ_CLEAN/.claude/agents/.tdd-implementer.pipeline-managed"
+echo "user agent" > "$PROJ_CLEAN/.claude/agents/handwritten.md"
+
+# Scripts: one matches pipeline manifest (managed), one does not (user)
+echo "managed" > "$PROJ_CLEAN/.claude/scripts/spawn-claude.sh"
+echo "user" > "$PROJ_CLEAN/.claude/scripts/custom.sh"
+
+# Hooks: one matches manifest, one does not
+echo "managed" > "$PROJ_CLEAN/.claude/hooks/log-tool-use.sh"
+echo "user" > "$PROJ_CLEAN/.claude/hooks/custom-hook.sh"
+
+STDERR_LOG="$WORKDIR/clean.stderr"
+STDOUT_LOG="$WORKDIR/clean.stdout"
+(cd "$PROJ_CLEAN" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "clean: exit 0"; else fail_msg "clean: exit $EXIT"; fi
+
+inc
+if [ ! -d "$PROJ_CLEAN/.claude-pipeline" ]; then
+  pass_msg "clean: .claude-pipeline/ removed"
+else
+  fail_msg "clean: .claude-pipeline/ still present"
+fi
+
+inc
+if [ ! -d "$PROJ_CLEAN/.claude/skills/run" ]; then
+  pass_msg "clean: managed skill dir removed"
+else
+  fail_msg "clean: managed skill dir still present"
+fi
+
+inc
+if [ -f "$PROJ_CLEAN/.claude/skills/userwritten/SKILL.md" ]; then
+  pass_msg "clean: user-authored skill preserved"
+else
+  fail_msg "clean: user-authored skill was deleted"
+fi
+
+inc
+if [ ! -f "$PROJ_CLEAN/.claude/agents/tdd-implementer.md" ] && \
+   [ ! -f "$PROJ_CLEAN/.claude/agents/.tdd-implementer.pipeline-managed" ]; then
+  pass_msg "clean: managed agent + marker removed"
+else
+  fail_msg "clean: managed agent or marker still present"
+  ls -la "$PROJ_CLEAN/.claude/agents/" | sed 's/^/    /'
+fi
+
+inc
+if [ -f "$PROJ_CLEAN/.claude/agents/handwritten.md" ]; then
+  pass_msg "clean: user-authored agent preserved"
+else
+  fail_msg "clean: user-authored agent was deleted"
+fi
+
+inc
+if [ ! -f "$PROJ_CLEAN/.claude/scripts/spawn-claude.sh" ]; then
+  pass_msg "clean: managed script removed"
+else
+  fail_msg "clean: managed script still present"
+fi
+
+inc
+if [ -f "$PROJ_CLEAN/.claude/scripts/custom.sh" ]; then
+  pass_msg "clean: user-authored script preserved"
+else
+  fail_msg "clean: user-authored script was deleted"
+fi
+
+inc
+if [ ! -f "$PROJ_CLEAN/.claude/hooks/log-tool-use.sh" ]; then
+  pass_msg "clean: managed hook removed"
+else
+  fail_msg "clean: managed hook still present"
+fi
+
+inc
+if [ -f "$PROJ_CLEAN/.claude/hooks/custom-hook.sh" ]; then
+  pass_msg "clean: user-authored hook preserved"
+else
+  fail_msg "clean: user-authored hook was deleted"
+fi
+
+inc
+if grep -qF 'Install the plugin: claude plugin install hts-collab-org/claude-pipeline' "$STDOUT_LOG"; then
+  pass_msg "clean: install instructions printed to stdout"
+else
+  fail_msg "clean: install instructions missing from stdout"
+  echo "    stdout:"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
