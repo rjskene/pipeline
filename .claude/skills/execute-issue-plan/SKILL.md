@@ -5,6 +5,16 @@ disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
 
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+
 # Execution Agent
 
 You will receive an issue number as the argument (or from context). You should be running inside the correct feature worktree already. Perform these steps:
@@ -131,7 +141,7 @@ You will receive an issue number as the argument (or from context). You should b
    <bullet points summarising what changed>
 
    ## Test plan
-   - [ ] `for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done` — all tests pass
+   - [ ] `PIPELINE_TEST_CMD` — all tests pass
    - [ ] Feature works end to end
    EOF
    )"
@@ -157,7 +167,7 @@ Pass the evaluation comment as context. It will guide you through verifying each
 ## Constraints
 - Implement ONLY what the approved plan says.
 - Never commit to main.
-- All PRs target `staging`, never `main`. Always use `--base staging`.
+- All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base staging` to `gh pr create`.
 - Never use `--no-verify` or `--force`.
-- Never skip build verification (`for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done`).
+- Never skip build verification (`PIPELINE_TEST_CMD` from the sourced config).
 - Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.

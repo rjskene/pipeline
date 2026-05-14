@@ -5,6 +5,16 @@ disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
 
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+
 # Planning Agent
 
 You will receive an issue number as the argument (or from context). Perform these steps:
@@ -13,8 +23,8 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 1. **Fetch issue details and existing comments:**
    ```bash
-   gh issue view <N> --repo ${PIPELINE_REPO} --json number,title,body
-   gh issue view <N> --repo ${PIPELINE_REPO} --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
+   gh issue view <N> --repo $PIPELINE_REPO --json number,title,body
+   gh issue view <N> --repo $PIPELINE_REPO --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
    ```
 
 2. **Analyze existing comments** — look for:
@@ -23,12 +33,12 @@ You will receive an issue number as the argument (or from context). Perform thes
    - If user feedback exists on an existing plan, this is a **plan revision**. The revised plan MUST address every point in the user's feedback. Call out what changed with a `**Changes from previous plan:**` section at the top.
 
 3. **Read project context:**
-   - Read each file listed in the project's context files config: ${PIPELINE_CONTEXT_FILES}
+   - Read each file listed in the project's context files config: `PIPELINE_CONTEXT_FILES`
 
 3a. **Determine PATH** — the executor's discipline depends on the path label, so the plan must include a path-specific Task 0:
 
    ```bash
-   LABELS=$(gh issue view <N> --repo ${PIPELINE_REPO} --json labels --jq '.labels[].name')
+   LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
    if echo "$LABELS" | grep -qx "docs-only"; then
      PATH_LETTER=A
    elif echo "$LABELS" | grep -qx "multi-task"; then
@@ -40,7 +50,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    # parse `recommended_path` from its body. If still indeterminate, default
    # to B. Label always wins.
    if [ -z "$PATH_LETTER" ]; then
-     CACHED=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+     CACHED=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
        --jq '[.comments[] | select(.body | contains("## Classification"))] | last | .body' \
        | grep -oE 'recommended_path:\*\* [ABC]' | awk '{print $2}' | head -1)
      case "$CACHED" in A|B|C) PATH_LETTER="$CACHED" ;; *) PATH_LETTER=B ;; esac
@@ -107,7 +117,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 #### Task 0 — PATH B (standard)
 
-   `Task 0: invoke superpowers:test-driven-development before any code edit. Every subsequent code task must follow the red→green→commit cycle: write a failing test → run ${PIPELINE_TEST_CMD} → watch it fail for the RIGHT reason → write minimum impl → run ${PIPELINE_TEST_CMD} → watch it pass → commit.`
+   `Task 0: invoke superpowers:test-driven-development before any code edit. Every subsequent code task must follow the red→green→commit cycle: write a failing test → run $PIPELINE_TEST_CMD → watch it fail for the RIGHT reason → write minimum impl → run $PIPELINE_TEST_CMD → watch it pass → commit.`
 
    Code-task format for PATH B: each task that modifies impl code includes all five steps explicitly — the test file path, the exact pytest/test command to run, the expected FAIL output, the impl code sketch, the expected PASS output, and the commit message. No step may be skipped; a task that does not follow red→green is a planning defect.
 
@@ -119,12 +129,12 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 6. **Post the plan as a GitHub comment:**
    ```bash
-   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<plan markdown>"
+   gh issue comment <N> --repo $PIPELINE_REPO --body "<plan markdown>"
    ```
 
 7. **Verify the plan comment was posted:**
    ```bash
-   PLAN_COUNT=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+   PLAN_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
    echo "Plan comments found: $PLAN_COUNT"
    ```
@@ -133,7 +143,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 8. **Update labels** — add `plan-pending`:
    ```bash
-   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-pending"
+   gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-pending"
    ```
 
 9. **Report back:** "Plan posted to issue #N (PATH $PATH_LETTER)."

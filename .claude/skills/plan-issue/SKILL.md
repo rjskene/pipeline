@@ -5,6 +5,16 @@ disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
 
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+
 # Planning Agent
 
 You will receive an issue number as the argument (or from context). Perform these steps:
@@ -23,7 +33,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    - If user feedback exists on an existing plan, this is a **plan revision**. The revised plan MUST address every point in the user's feedback. Call out what changed with a `**Changes from previous plan:**` section at the top.
 
 3. **Read project context:**
-   - Read each file listed in the project's context files config: CLAUDE.md
+   - Read each file listed in the project's context files config: `PIPELINE_CONTEXT_FILES`
 
 3a. **Determine PATH** — the executor's discipline depends on the path label, so the plan must include a path-specific Task 0:
 

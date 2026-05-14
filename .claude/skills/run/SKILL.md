@@ -5,6 +5,16 @@ disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Agent
 ---
 
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+
 # Pipeline Coordinator
 
 ## Pipeline utilities
@@ -36,7 +46,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```bash
    gh issue edit <N> --repo HTS-COLLAB-ORG/claude-pipeline --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
-5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `staging` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
+5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
 7. **Evaluate PRs** — once all agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6.
 8. **Report** — print a summary table of all issues with their final stage and any flags. Include a **Classification mismatch** column showing, for each issue, the current-label path vs. the recommended path when they diverged (else blank):
@@ -56,9 +66,9 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 - Housekeeping (step 0) and log review (step 1) still run at the start, but do not pause for user input — auto-skip log review and proceed.
 - Audit review (step 1b) also auto-skips during full send.
 - If a worktree cleanup is pending at the start, run cleanup first (still auto, no confirmation needed), then continue with the full send stages.
-- Issues labeled `excluded` are always skipped.
-- Issues labeled `later` are shown in the final report (stage = `later`) but not processed.
-- Issues labeled `human` are shown in the final report (stage = `human`) but never processed by autonomous full send. These need a human in the loop — usually for architecture decisions, cross-platform validation, production deploy risk, or items where the planner can't make the right call without you. They must be picked up manually with `/pipeline:plan-issue` / `/pipeline:execute-issue-plan`, never via full send.
+- Issues labeled `PIPELINE_LABELS_EXCLUDED` are always skipped.
+- Issues labeled `PIPELINE_LABELS_LATER` are shown in the final report (stage = `PIPELINE_LABELS_LATER`) but not processed.
+- Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the final report (stage = `PIPELINE_LABELS_HUMAN`) but never processed by autonomous full send. These need a human in the loop — usually for architecture decisions, cross-platform validation, production deploy risk, or items where the planner can't make the right call without you. They must be picked up manually with `/pipeline:plan-issue` / `/pipeline:execute-issue-plan`, never via full send.
 - Blocked issues (blocked-by dependency not yet merged) are skipped; noted in final report as "Blocked".
 - The re-plan loop cap of 3 prevents infinite loops on stubborn issues.
 - If any stage fails unexpectedly (script error, API failure), stop full send and report the failure with enough detail for the user to diagnose.
@@ -71,7 +81,7 @@ Pipeline issues are fetched dynamically from GitHub — not hardcoded. At the st
 gh issue list --repo HTS-COLLAB-ORG/claude-pipeline --state open --json number,title,labels --limit 100
 ```
 
-**Excluded labels:** Issues with the label `excluded` are skipped entirely. Issues with the label `later` are shown in the status table (stage = `later`) but are **not** proposed for any action. Issues with the label `human` are shown in the status table (stage = `human`) and are **never** included in autonomous full send — they require manual handling because they involve architecture decisions, cross-platform validation, production deploy risk, or other judgment that the autonomous pipeline shouldn't make. The user can still pick them up manually with `/pipeline:plan-issue` or `/pipeline:execute-issue-plan`. All other open issues are pipeline candidates.
+**Excluded labels:** Issues with the label `PIPELINE_LABELS_EXCLUDED` are skipped entirely. Issues with the label `PIPELINE_LABELS_LATER` are shown in the status table (stage = `PIPELINE_LABELS_LATER`) but are **not** proposed for any action. Issues with the label `PIPELINE_LABELS_HUMAN` are shown in the status table (stage = `PIPELINE_LABELS_HUMAN`) and are **never** included in autonomous full send — they require manual handling because they involve architecture decisions, cross-platform validation, production deploy risk, or other judgment that the autonomous pipeline shouldn't make. The user can still pick them up manually with `/pipeline:plan-issue` or `/pipeline:execute-issue-plan`. All other open issues are pipeline candidates.
 
 ### Branch and worktree naming convention
 - Branch: `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short)
@@ -153,7 +163,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    Report any fixes briefly.
 
-   Then check for stale tmux sessions from previous pipeline runs. If a tmux `pipeline-dogfood` session exists, kill any leftover queue runner and agent windows:
+   Then check for stale tmux sessions from previous pipeline runs. If a tmux `PIPELINE_TMUX_SESSION` session exists, kill any leftover queue runner and agent windows:
    ```bash
    # List all windows in the pipeline-dogfood session
    tmux list-windows -t pipeline-dogfood -F '#{window_name}' 2>/dev/null
@@ -200,7 +210,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    gh pr list --repo HTS-COLLAB-ORG/claude-pipeline --state merged --json headRefName,number --jq '[.[] | {branch: .headRefName, pr: .number}]'
    git worktree list
    ```
-   Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `excluded`. Issues labeled `human` are shown in the table but never proposed by full send (treat them like `later`).
+   Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `PIPELINE_LABELS_EXCLUDED`. Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed by full send (treat them like `PIPELINE_LABELS_LATER`).
 
    **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
 
@@ -223,7 +233,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `later`, `human`, or `excluded`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `staging`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path** column:
+4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `PIPELINE_LABELS_LATER`, `PIPELINE_LABELS_HUMAN`, or `PIPELINE_LABELS_EXCLUDED`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `PIPELINE_BASE_BRANCH`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path** column:
    - Path = `A` if the issue is labeled `docs-only`, `C` if labeled `multi-task`, else `B` (default). If both `docs-only` and `multi-task` are present, show `A!` (collision — PATH A wins, but flag it).
    - classify-issue writes labels directly, so the label and the recommendation always match after a classify run. The audit-only `⚠ mismatch` flag (see step 2) lives in the final report, not this column.
    ```
@@ -258,9 +268,9 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      - Otherwise, note they are awaiting user review.
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
    - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
-   - Else if any issues have no pipeline label and are not blocked and are not labeled `human`:
+   - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN`:
      - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
-     - Then propose planning for the ready issues (in parallel). Issues labeled `human` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
+     - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
    - If all issues are merged/done → congratulate and exit.
 
 6. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
@@ -272,12 +282,12 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    **For cleanup (merged PRs with active worktrees):**
 
    **Step A — Update CLAUDE.md files.** Before removing any worktree, review what the merged branch changed and update the CLAUDE.md documentation so it reflects the new state of the codebase. For each cleanup candidate:
-   1. Get the diff of the merged branch against staging:
+   1. Get the diff of the merged branch against `PIPELINE_BASE_BRANCH`:
       ```bash
       gh pr view <pr_number> --repo HTS-COLLAB-ORG/claude-pipeline --json files --jq '.files[].path'
       gh pr diff <pr_number> --repo HTS-COLLAB-ORG/claude-pipeline
       ```
-   2. Read the current CLAUDE.md files (check each file listed in: CLAUDE.md).
+   2. Read the current CLAUDE.md files (check each file listed in: `PIPELINE_CONTEXT_FILES`).
    3. Determine if the changes introduced new routes, env vars, Python scripts, schema fields, CLI args, or other items that should be documented. If so, update the relevant CLAUDE.md file(s) in the **main repo** working directory.
    4. If multiple worktrees are being cleaned up, batch all CLAUDE.md updates into a single commit.
    5. Commit the CLAUDE.md updates (if any) to the current branch before proceeding:
@@ -369,7 +379,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    3. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
       If the user opts in to skip permissions, pass `--dangerously-skip-permissions` to the spawn script. This lets agents run without any permission prompts (all tool calls auto-approved).
       - **terminal** (default) — new Terminal.app window per issue with interactive Claude, auto-fires `/pipeline:execute-issue-plan N`. User monitors and interacts locally.
-      - **tmux** — tmux windows in a `pipeline-dogfood` session, auto-fires `/pipeline:execute-issue-plan N`
+      - **tmux** — tmux windows in a `PIPELINE_TMUX_SESSION` session, auto-fires `/pipeline:execute-issue-plan N`
       - **remote-control** — `claude remote-control` servers, control from Claude mobile app or claude.ai/code. Only use this mode when the user explicitly says "remote-control".
       - **manual** — print instructions only
 

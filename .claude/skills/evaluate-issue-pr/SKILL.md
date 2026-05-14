@@ -5,6 +5,16 @@ disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
 
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+
 # Issue Evaluator
 
 You are a senior engineer performing a code review of a PR against its approved implementation plan. You have NO context from the agent that wrote this code — you see only the plan and the diff. Your job is to verify the implementation matches the spec, catch bugs the implementer missed, and make minimal fixes where possible.
@@ -127,7 +137,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    git fetch origin staging
    git log --oneline HEAD..origin/staging | head -5
    ```
-   If staging has advanced, rebase:
+   If `PIPELINE_BASE_BRANCH` has advanced, rebase:
    ```bash
    git rebase origin/staging
    ```
@@ -171,5 +181,5 @@ You are a senior engineer performing a code review of a PR against its approved 
 - Fixes must be minimal: typos, missing imports, small bugs. NOT refactoring.
 - If fix requires touching >3 files or making design decisions, flag instead of fixing
 - Never skip tsc or test validation
-- All PRs target staging. All commits go to the feature branch.
+- All PRs target `PIPELINE_BASE_BRANCH` (the configured base). All commits go to the feature branch.
 - Evaluator does NOT merge, close issues, or change `pr-open` labels — only reviews, posts verdict, and (optionally) rebases against the base branch.
