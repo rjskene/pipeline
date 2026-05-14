@@ -50,6 +50,14 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 - **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 
+## Plugin architecture
+
+Pipeline assets live outside the consumer project. The plugin installs to `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`). Hooks, skills, scripts, and the `tdd-implementer` subagent are all registered from the plugin manifest, so the consumer project's `.claude/` stays clean.
+
+The consumer project owns exactly one pipeline file: `pipeline.config` at the project root. The plugin reads it via `${CLAUDE_PLUGIN_ROOT}/scripts/...` shims at runtime — there is no install-time template rendering anymore.
+
+All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:run`, …). Bare `/plan-issue` is intentionally not registered so the plugin coexists with other plugins that might claim those names.
+
 ## Design Principles
 
 1. **Issues are the unit of work.** All planned work lives in GitHub issues. Specs, brainstorm notes, and design docs are transient — they get converted to issues and deleted.
