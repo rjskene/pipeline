@@ -80,5 +80,8 @@ rm -rf "$SB6"
 assert ".github/workflows/ci.yml exists and references the lint" \
   "grep -qF 'check-no-consumer-claude-writes.sh' \"$REPO_ROOT/.github/workflows/ci.yml\""
 
+assert "CLAUDE.md documents namespace discipline" \
+  "grep -qF 'Namespace discipline' \"$REPO_ROOT/CLAUDE.md\""
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

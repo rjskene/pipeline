@@ -60,6 +60,16 @@ All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/p
 
 > Legacy install (`install.sh`, the `.claude-pipeline/` subtree, and the subtree-drift tooling) has been retired. Existing subtree consumers run `scripts/migrate-from-subtree.sh` once and then install the plugin.
 
+## Namespace discipline
+
+The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json`. All plugin assets live under `~/.claude/plugins/claude-pipeline/` (read at runtime via `${CLAUDE_PLUGIN_ROOT}`).
+
+**Runtime allow-list (consumer-owned, pipeline may read/write):**
+- `.claude/logs/` — observability artifacts (tool-use, subagents, runs).
+- `.claude/worktrees/` — pipeline-managed worktree checkouts.
+
+Everything else under consumer `.claude/` is consumer-owned. CI enforces this via `scripts/check-no-consumer-claude-writes.sh` — adding any new source reference to `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` requires an explicit entry in `tests/no-consumer-claude-writes.allow` with a justification comment. Allow-list entries are the audit trail for legacy code waiting to be retired.
+
 ## Design Principles
 
 1. **Issues are the unit of work.** All planned work lives in GitHub issues. Specs, brainstorm notes, and design docs are transient — they get converted to issues and deleted.
