@@ -12,7 +12,21 @@ set -euo pipefail
 # Usage: bash .claude-pipeline/install.sh
 
 PIPELINE_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$PIPELINE_DIR/.." && pwd)"
+
+# --self: render into the pipeline repo itself (dogfood mode).
+# Default: assume install.sh lives in <project>/.claude-pipeline/ and render one dir up.
+SELF_INSTALL=false
+for arg in "$@"; do
+  case "$arg" in
+    --self) SELF_INSTALL=true ;;
+  esac
+done
+
+if [ "$SELF_INSTALL" = true ]; then
+  PROJECT_ROOT="$PIPELINE_DIR"
+else
+  PROJECT_ROOT="$(cd "$PIPELINE_DIR/.." && pwd)"
+fi
 CONFIG_FILE="$PROJECT_ROOT/pipeline.config"
 
 if [ ! -f "$CONFIG_FILE" ]; then

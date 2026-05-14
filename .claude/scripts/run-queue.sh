@@ -1,0 +1,282 @@
+#!/bin/bash
+set -euo pipefail
+
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "Requires bash 4+. Install via: brew install bash" >&2
+  exit 1
+fi
+
+# --add mode: append issues to a running queue's pending file
+if [ "${1:-}" = "--add" ]; then
+  shift
+  REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  PENDING_FILE="${REPO_ROOT}/.claude/logs/queue-pending.txt"
+  if [ $# -eq 0 ]; then
+    echo "Usage: bash $0 --add <issue1> <issue2> ..."
+    exit 1
+  fi
+  for issue in "$@"; do
+    echo "$issue" >> "$PENDING_FILE"
+  done
+  echo "Added $# issue(s) to pending queue: $*"
+  echo "Pending file: ${PENDING_FILE}"
+  exit 0
+fi
+
+# Source project config
+source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+
+# Orchestrate multiple agent sessions with concurrency limits.
+# Launches up to MAX_CONCURRENT agents at a time, polls for completion,
+# and launches the next queued issue when a slot opens.
+#
+# Usage:
+#   bash .claude/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
+#   bash .claude/scripts/run-queue.sh --add <issue1> <issue2> ...
+#
+# The --add flag appends issues to a running queue via a watch file.
+#
+# Must be run inside a tmux session (the queue runner uses window 0,
+# agents spawn in new windows).
+#
+# Queue log is written to .claude/logs/queue-YYYYMMDD-HHMMSS.log
+
+SKIP_PERMS=""
+if [ "${1:-}" = "--skip-permissions" ]; then
+  SKIP_PERMS="--dangerously-skip-permissions"
+  shift
+fi
+
+SKILL_FLAG=""
+if [ "${1:-}" = "--skill" ]; then
+  SKILL_FLAG="--skill $2"
+  shift 2
+fi
+
+MAX_CONCURRENT="${MAX_AGENTS:-3}"
+POLL_INTERVAL="${POLL_SECONDS:-60}"
+STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
+LOG_DIR="${REPO_ROOT}/.claude/logs"
+QUEUE_LOG="${LOG_DIR}/queue-$(date +%Y%m%d-%H%M%S).log"
+PENDING_FILE="${LOG_DIR}/queue-pending.txt"
+
+# Log to both stdout and queue log file
+log() {
+  echo "$@" | tee -a "$QUEUE_LOG"
+}
+
+# Collect issue queue from args
+QUEUE=("$@")
+if [ ${#QUEUE[@]} -eq 0 ]; then
+  echo "Usage: bash $0 [--skip-permissions] <issue1> <issue2> ..."
+  exit 1
+fi
+
+# Verify we're inside tmux
+if [ -z "${TMUX:-}" ]; then
+  echo "ERROR: Must be run inside a tmux session."
+  echo "  Start one with: tmux new -s dev"
+  exit 1
+fi
+
+# Single issue — launch directly, no queue overhead
+if [ ${#QUEUE[@]} -eq 1 ]; then
+  ISSUE="${QUEUE[0]}"
+  WT_PATH=$(git worktree list --porcelain | grep -B0 "worktree.*${PIPELINE_WORKTREE_PREFIX}-${ISSUE}-" | head -1 | sed 's/worktree //')
+  if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
+    log "ERROR: No worktree found for issue #${ISSUE}."
+    exit 1
+  fi
+  SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//")
+  log "Single issue — launching directly (no queue)."
+  log "Queue log: ${QUEUE_LOG}"
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
+  exit 0
+fi
+
+# Track active and completed issues
+declare -A ACTIVE=()    # issue -> worktree path
+declare -A RESULTS=()   # issue -> status (running/done/failed)
+declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
+QUEUE_INDEX=0
+IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
+POLL_COUNT=0
+
+STATUS_INTERVAL_SECS=$((STATUS_INTERVAL * POLL_INTERVAL))
+log "========================================"
+log "AGENT QUEUE RUNNER"
+log "========================================"
+log "  Issues: ${QUEUE[*]}"
+log "  Max concurrent: ${MAX_CONCURRENT}"
+log "  Poll interval: ${POLL_INTERVAL}s"
+log "  Status interval: every ${STATUS_INTERVAL} polls (${STATUS_INTERVAL_SECS}s)"
+log "  Skill: ${SKILL_FLAG:-execute-issue-plan (default)}"
+log "  Skip permissions: $([ -n "$SKIP_PERMS" ] && echo 'yes' || echo 'no')"
+log "  Queue log: ${QUEUE_LOG}"
+log "  Pending file: ${PENDING_FILE} (append issue numbers here to add mid-run)"
+log "========================================"
+log ""
+
+# Find worktree path for an issue number
+find_worktree() {
+  local issue="$1"
+  local wt_path
+  wt_path=$(git worktree list --porcelain | grep -B0 "worktree.*${PIPELINE_WORKTREE_PREFIX}-${issue}-" | head -1 | sed 's/worktree //')
+  echo "$wt_path"
+}
+
+# Extract slug from worktree path (e.g., ct-66-rating-consistency -> rating-consistency)
+slug_from_path() {
+  local path="$1"
+  basename "$path" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//"
+}
+
+# Check if an agent's tmux window is still alive
+is_agent_running() {
+  local issue="$1"
+  tmux list-windows -t dev -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
+}
+
+# Launch an agent for an issue
+launch_agent() {
+  local issue="$1"
+  local wt_path
+  wt_path=$(find_worktree "$issue")
+
+  if [ -z "$wt_path" ] || [ ! -d "$wt_path" ]; then
+    log "[$(date +%H:%M:%S)] ERROR: No worktree found for issue #${issue}. Skipping."
+    RESULTS[$issue]="failed-no-worktree"
+    return 1
+  fi
+
+  local slug
+  slug=$(slug_from_path "$wt_path")
+
+  log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug})..."
+  log "EVENT: agent-launched issue=${issue} slug=${slug} worktree=${wt_path}"
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$wt_path" "$issue" "$slug" tmux
+
+  ACTIVE[$issue]="$wt_path"
+  RESULTS[$issue]="running"
+}
+
+# Check GitHub for issue outcome (PR created? merged?)
+check_issue_outcome() {
+  local issue="$1"
+  local labels
+  labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+
+  if echo "$labels" | grep -q "merged"; then
+    echo "merged"
+  elif echo "$labels" | grep -q "pr-open"; then
+    echo "pr-open"
+  elif echo "$labels" | grep -q "in-progress"; then
+    echo "in-progress"
+  else
+    echo "unknown"
+  fi
+}
+
+# Check if the pending file has at least one non-empty line
+pending_file_has_items() {
+  [ -f "$PENDING_FILE" ] || return 1
+  grep -q '[^[:space:]]' "$PENDING_FILE" 2>/dev/null
+}
+
+# Atomically drain the pending file and add new issues to the queue
+drain_pending_file() {
+  [ -f "$PENDING_FILE" ] || return 0
+  # Atomically move to a temp file on the same filesystem
+  local tmp
+  tmp=$(mktemp "${LOG_DIR}/queue-drain-XXXXXX")
+  mv "$PENDING_FILE" "$tmp"
+  while IFS= read -r line; do
+    line=$(echo "$line" | tr -d '[:space:]')
+    [ -z "$line" ] && continue
+    if [[ "${RESULTS[$line]+_}" ]]; then
+      log "[$(date +%H:%M:%S)] WARN: Issue #${line} already in queue — skipping duplicate."
+      continue
+    fi
+    log "[$(date +%H:%M:%S)] Picked up new issue #${line} from pending file."
+    QUEUE+=("$line")
+    RESULTS[$line]=""  # mark as known
+  done < "$tmp"
+  rm -f "$tmp"
+}
+
+# Fill available slots from the queue
+fill_slots() {
+  while [ ${#ACTIVE[@]} -lt $MAX_CONCURRENT ] && [ $QUEUE_INDEX -lt ${#QUEUE[@]} ]; do
+    local next_issue="${QUEUE[$QUEUE_INDEX]}"
+    QUEUE_INDEX=$((QUEUE_INDEX + 1))
+    launch_agent "$next_issue" || true
+  done
+}
+
+# Initial launch
+fill_slots
+
+log ""
+log "[$(date +%H:%M:%S)] Monitoring... (polling every ${POLL_INTERVAL}s)"
+log ""
+
+# Poll loop — continues while agents are active, items are queued, or pending file has items
+while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_file_has_items; do
+  sleep "$POLL_INTERVAL"
+  POLL_COUNT=$((POLL_COUNT + 1))
+
+  # Pick up any dynamically added issues
+  drain_pending_file
+  fill_slots
+
+  # Check each active agent
+  for issue in "${!ACTIVE[@]}"; do
+    if ! is_agent_running "$issue"; then
+      # Agent finished — check outcome
+      outcome=$(check_issue_outcome "$issue")
+      RESULTS[$issue]="$outcome"
+      unset 'ACTIVE['"$issue"']'
+      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
+      log "EVENT: agent-finished issue=${issue} outcome=${outcome}"
+
+      # Fill the open slot
+      fill_slots
+    fi
+  done
+
+  # Periodic rich status or simple status line
+  if [ $((POLL_COUNT % STATUS_INTERVAL)) -eq 0 ]; then
+    # Capture status output first, then append — avoids simultaneous read/write
+    # on $QUEUE_LOG. Non-fatal: status reporting must never kill the queue runner.
+    _status_out=$(bash "${SCRIPT_DIR}/queue-status.sh" --queue-log "$QUEUE_LOG" 2>&1) || true
+    if [ -n "$_status_out" ]; then
+      echo "$_status_out" | tee -a "$QUEUE_LOG"
+    fi
+  else
+    active_list=""
+    for issue in "${!ACTIVE[@]}"; do
+      active_list="${active_list}#${issue} "
+    done
+    remaining=$((${#QUEUE[@]} - QUEUE_INDEX))
+    log "[$(date +%H:%M:%S)] Active: ${active_list:-none} | Queued: ${remaining}"
+  fi
+done
+
+# Final summary
+log ""
+log "========================================"
+log "QUEUE COMPLETE — $(date)"
+log "========================================"
+log "EVENT: queue-complete total=${#QUEUE[@]}"
+printf "%-10s %-15s %s\n" "Issue" "Outcome" "Log" | tee -a "$QUEUE_LOG"
+log "----------------------------------------"
+for issue in "${QUEUE[@]}"; do
+  outcome="${RESULTS[$issue]:-unknown}"
+  log_file=$(ls -t "${LOG_DIR}"/issue-"${issue}"-*.log 2>/dev/null | head -1 || echo "n/a")
+  printf "%-10s %-15s %s\n" "#${issue}" "$outcome" "$(basename "${log_file}")" | tee -a "$QUEUE_LOG"
+done
+log "========================================"
+log ""
+log "Review details: bash .claude/scripts/review-logs.sh"

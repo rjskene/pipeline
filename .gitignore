@@ -1,0 +1,7 @@
+# Pipeline rendered output (regenerate via: bash install.sh --self) is TRACKED.
+# Worktree provisioning relies on these files being checked in.
+# Only runtime outputs and per-instance config are ignored:
+/.claude/logs/
+/.claude/worktrees/
+/.claude/settings.local.json
+/pipeline.config
