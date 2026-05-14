@@ -1,0 +1,40 @@
+# Allow-list for scripts/check-no-consumer-claude-writes.sh
+# One repo-relative path per line. Blank lines and `#` comments ignored.
+# Each entry must explain WHY it is exempt. Entries shrink as legacy code is
+# migrated to ${CLAUDE_PLUGIN_ROOT}/...
+
+# Runtime path-protection regex — legitimately matches consumer .claude/hooks/
+# as a STRING to block writes via the restrict_paths hook itself.
+hooks/restrict_paths.py
+
+# One-shot migration tool whose job is to REMOVE consumer
+# .claude/{skills,hooks,scripts,agents} — references are inherent.
+scripts/migrate-from-subtree.sh
+
+# Reference example, copy/adapt only — vestigial after plugin-manifest
+# migration (#82). Flagged for follow-up removal in a separate issue.
+settings.json.template
+
+# Runtime worktree provisioning — copies hooks into per-worktree
+# .claude/hooks/. Predates plugin-rooted hooks; flagged for follow-up cleanup.
+scripts/setup-worktree.sh.template
+scripts/sync-worktrees.sh.template
+
+# Scripts with usage docstrings referencing the dogfood-rendered path
+# .claude/scripts/<self>. Flagged for follow-up: docstrings should point at
+# ${CLAUDE_PLUGIN_ROOT}/scripts/.
+scripts/spawn-claude.sh.template
+scripts/run-queue.sh.template
+scripts/retarget-pr.sh.template
+scripts/cleanup-worktree.sh.template
+scripts/queue-status.sh
+scripts/review-audits.sh
+scripts/review-logs.sh
+scripts/check-server.sh
+scripts/create-checkpoint-tag.sh
+scripts/prune-checkpoints.sh
+
+# Skill templates with usage docstrings referencing .claude/scripts/.
+# Flagged for follow-up.
+skills/run/SKILL.md.template
+skills/worktree-sync/SKILL.md.template
