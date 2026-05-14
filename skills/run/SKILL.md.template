@@ -1,6 +1,6 @@
 ---
-name: pipeline
-description: Check the status of the GitHub issue pipeline and advance the next stage. Run this at the start of any coding session to see what is ready and propose next actions.
+name: run
+description: Check the status of the GitHub issue pipeline and advance the next stage. Run this at the start of any coding session to see what is ready and propose next actions. Usage: /pipeline:run
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Agent
 ---
