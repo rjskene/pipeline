@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "pipeline",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
   "author": {
     "name": "HTS Collab Org",
@@ -10,23 +10,103 @@
   "homepage": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
   "repository": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
   "license": "MIT",
-  "keywords": ["pipeline", "github-issues", "automation", "ci", "claude-code"],
-  "agents": ["./agents/tdd-implementer.md"],
+  "keywords": [
+    "pipeline",
+    "github-issues",
+    "automation",
+    "ci",
+    "claude-code"
+  ],
+  "agents": [
+    "./agents/tdd-implementer.md"
+  ],
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Bash",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/block_deletions.py"}]},
-      {"matcher": "Bash",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py"}]},
-      {"matcher": "Bash",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/check-ci-skip-markers.py"}]},
-      {"matcher": "Edit",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py"}]},
-      {"matcher": "Write", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py"}]},
-      {"matcher": "*",     "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/restrict_paths.py"}]}
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/block_deletions.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/check-ci-skip-markers.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/restrict_paths.py"
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      {"matcher": "*",     "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.sh"}]},
-      {"matcher": "Agent", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/log_subagent.py"}]}
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/log_subagent.py"
+          }
+        ]
+      }
     ],
     "Stop": [
-      {"matcher": "*",     "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py"}]}
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py"
+          }
+        ]
+      }
     ]
   }
 }
