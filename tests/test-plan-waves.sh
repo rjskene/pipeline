@@ -154,6 +154,25 @@ else
   echo "    stderr:"; sed 's/^/      /' "$D/stderr"
 fi
 
+# ---- Case E: dangling blocker (blocker not in input list) ----
+echo "Case E: 'blocked by #99' where #99 is not in input → place in Wave 1"
+inc
+E="$TMP/case-e"; mkdir -p "$E"; export GH_ISSUE_DIR="$E"
+write_issue "$E" 1 "priority/P2" "Touches \`only.sh\`. blocked by #99 (external)."
+
+if OUT=$(run_helper 1 2>"$E/stderr"); then
+  if echo "$OUT" | grep -qE "^Wave 1: classify #1"; then
+    pass_msg "Case E: dangling blocker treated as satisfied; #1 placed in Wave 1"
+  else
+    fail_msg "Case E: unexpected output"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case E: helper exited $rc (dangling blocker should not deadlock)"
+  echo "    stderr:"; sed 's/^/      /' "$E/stderr"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

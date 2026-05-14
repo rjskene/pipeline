@@ -134,6 +134,12 @@ for TIER in P0 P1 P2 P3; do
       reason=""
 
       for B in ${BLOCKERS[$N]}; do
+        # Dangling blocker: $B is not in the input set (no PRIORITY entry) →
+        # treat as already satisfied. Otherwise: defer if not yet placed OR
+        # placed in the current wave.
+        if [ -z "${PRIORITY[$B]+x}" ]; then
+          continue
+        fi
         if [ -z "${PLACED[$B]+x}" ] || [ "${PLACED[$B]}" = "$WAVE" ]; then
           eligible=0
           reason="blocked by #$B"
