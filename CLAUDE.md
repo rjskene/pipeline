@@ -50,6 +50,19 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 - **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 
+### Release cadence (this repo only)
+
+This repo uses a two-branch model: `staging` is the dev trunk (where wave PRs land); `main` is the release branch (what consumers install from). Cut a release by opening a `staging → main` PR, bumping `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, and merging.
+
+**After each dev release, reload the plugin** so subsequent dogfood sessions pick up the new code:
+
+```
+/plugin uninstall pipeline@claude-pipeline
+/plugin install   pipeline@claude-pipeline
+```
+
+(Or, if installed via local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
+
 ## Plugin architecture
 
 Pipeline assets live outside the consumer project. The plugin installs to `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`). Hooks, skills, scripts, and the `tdd-implementer` subagent are all registered from the plugin manifest, so the consumer project's `.claude/` stays clean.
