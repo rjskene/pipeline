@@ -63,6 +63,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    - Route files if the issue touches API
    - Frontend components if the issue touches UI
    - Test files if tests need updating
+   - Scan the issue title, body, and any quoted text for GitHub Actions CI-blocking markers (the bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`). If any are present in literal form, prepend a `**Heads-up — CI-blocking markers:** the issue text quotes <marker(s)>. The executor must escape them when writing PR titles or commit subjects (e.g. backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` without brackets). The `check-ci-skip-markers` PreToolUse hook will block any unescaped occurrence.` line to the plan body, in addition to the standard `Files to change` / `Tasks (ordered)` / etc. sections.
 
 5. **Generate the implementation plan.**
 

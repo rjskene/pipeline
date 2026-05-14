@@ -16,6 +16,7 @@
     "PreToolUse": [
       {"matcher": "Bash",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/block_deletions.py"}]},
       {"matcher": "Bash",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py"}]},
+      {"matcher": "Bash",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/check-ci-skip-markers.py"}]},
       {"matcher": "Edit",  "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py"}]},
       {"matcher": "Write", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py"}]},
       {"matcher": "*",     "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/restrict_paths.py"}]}
