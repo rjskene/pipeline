@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "pipeline",
+  "version": "0.1.0",
+  "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
+  "author": {
+    "name": "HTS Collab Org",
+    "url": "https://github.com/HTS-COLLAB-ORG/claude-pipeline"
+  },
+  "homepage": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
+  "repository": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
+  "license": "MIT",
+  "keywords": ["pipeline", "github-issues", "automation", "ci", "claude-code"],
+  "dependencies": ["superpowers"]
+}
