@@ -1,6 +1,6 @@
 ---
 name: plan-issue
-description: Produce an implementation plan for a specific GitHub issue, post it as a comment, and add the plan-pending label. Usage: /plan-issue <issue_number>
+description: Produce an implementation plan for a specific GitHub issue, post it as a comment, and add the plan-pending label. Usage: /pipeline:plan-issue <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
@@ -89,7 +89,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    **Estimated effort:** X hours
    ```
 
-   **IMPORTANT — the GitHub comment IS the plan.** The `/execute-issue-plan` skill reads ONLY the GitHub comment when implementing in a worktree. It has no access to local `.claude/plans/` files. Therefore:
+   **IMPORTANT — the GitHub comment IS the plan.** The `/pipeline:execute-issue-plan` skill reads ONLY the GitHub comment when implementing in a worktree. It has no access to local `.claude/plans/` files. Therefore:
    - Include ALL design detail directly in the comment — data structures, tier tables, formulas, mode behaviors, prompt strategies, etc.
    - Never summarize and point to a local plan file (e.g., "see `compressed-wibbling-sutherland.md` for details").
    - If you used Claude's plan mode internally, fold its full content into the comment before posting.
