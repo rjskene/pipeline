@@ -112,7 +112,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 ## Steps
 
-0. **Housekeeping — branch check + subtree drift check + sync worktrees + kill stale sessions**
+0. **Housekeeping — branch check + sync worktrees + kill stale sessions**
 
    **First, confirm the orchestrator is on the configured base branch.** The base branch for all PRs is read from `pipeline.config` (`PIPELINE_BASE_BRANCH=$PIPELINE_BASE_BRANCH`). The orchestrator session should be on that branch so spawned worktrees inherit from it and PRs target it.
 
@@ -145,17 +145,6 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    fi
    ```
    Do not auto-switch. Proceed with the run; the user decides.
-
-   Then, check if `.claude-pipeline/` is in sync with the source repo and resolve any drift:
-   ```bash
-   bash .claude/scripts/resolve-subtree-drift.sh 2>/dev/null; DRIFT_EXIT=$?
-   ```
-   - **Interactive mode** (default): the script prompts for each action (pull? push? reinstall?). Follow the prompts.
-   - **Full-send mode**: pass `--auto` — auto-pulls + reinstalls without prompting. Never auto-pushes (push is a sharing decision).
-     ```bash
-     bash .claude/scripts/resolve-subtree-drift.sh --auto 2>/dev/null; DRIFT_EXIT=$?
-     ```
-   - If the script reports "Skills updated", note it in the housekeeping output but do not stop — spawned agents read updated skills from disk.
 
    Then, if any worktrees exist, run the sync script to ensure all active worktrees have up-to-date CLAUDE.md files, `.claude/` settings, and hooks:
    ```bash
