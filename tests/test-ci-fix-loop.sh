@@ -184,6 +184,59 @@ else
   fail_msg "D no human label in: $(cat "$fd/gh.log")"
 fi
 
+# ---- Fixture E: run-queue.sh --ci-fix dispatch -------------------------
+echo "Fixture E: run-queue.sh --ci-fix dispatches spawn-claude with PIPELINE_CI_FIX_CONTEXT"
+inc
+fe=$(mktemp -d)
+WT_FAKE="$fe/.claude/worktrees/wt-42-fake"
+mkdir -p "$WT_FAKE" "$fe/.claude/scripts"
+cat > "$fe/.claude/scripts/spawn-claude.sh" <<'REC'
+#!/usr/bin/env bash
+echo "ARGS=$*" >> "$RECORDER_LOG"
+echo "PIPELINE_CI_FIX_CONTEXT=${PIPELINE_CI_FIX_CONTEXT:-}" >> "$RECORDER_LOG"
+REC
+chmod +x "$fe/.claude/scripts/spawn-claude.sh"
+
+cat > "$fe/pipeline.config" <<'CFG'
+PIPELINE_REPO="fake/repo"
+PIPELINE_WORKTREE_PREFIX="wt"
+CFG
+
+cp "$REPO_ROOT/scripts/run-queue.sh.template" "$fe/.claude/scripts/run-queue.sh.template"
+
+# Fake `git worktree list` to advertise the fake worktree directory.
+cat > "$fe/git" <<GIT
+#!/usr/bin/env bash
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+  echo "worktree $WT_FAKE"
+  echo "HEAD deadbeef"
+  echo "branch refs/heads/feature/42-fake"
+  exit 0
+fi
+exec /usr/bin/git "\$@"
+GIT
+chmod +x "$fe/git"
+
+RECORDER_LOG="$fe/recorder.log"
+: > "$RECORDER_LOG"
+
+set +e
+( cd "$fe" && PATH="$fe:$PATH" RECORDER_LOG="$RECORDER_LOG" \
+  bash .claude/scripts/run-queue.sh.template --ci-fix 42 /tmp/some.log >"$fe/dispatch.out" 2>&1 )
+disp_rc=$?
+set -e
+
+if [ "$disp_rc" -ne 0 ]; then
+  fail_msg "E dispatch exit=$disp_rc: $(cat "$fe/dispatch.out")"
+elif grep -q "PIPELINE_CI_FIX_CONTEXT=/tmp/some.log" "$RECORDER_LOG" && \
+     grep -q "$WT_FAKE" "$RECORDER_LOG"; then
+  pass_msg "E dispatch fires spawn-claude with context env + worktree path"
+else
+  fail_msg "E recorder missing expected entries:
+$(cat "$RECORDER_LOG")
+dispatch out: $(cat "$fe/dispatch.out")"
+fi
+
 # ---- Summary -----------------------------------------------------------
 echo
 echo "Tests: $TESTS  Pass: $PASS  Fail: $FAIL"
