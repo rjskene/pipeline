@@ -2,15 +2,16 @@
 set -euo pipefail
 
 # Tests for the PATH-aware Task 0 / Task N wording in the plan-issue skill
-# (.claude-pipeline/skills/plan-issue/SKILL.md.template).
+# (skills/plan-issue/SKILL.md at plugin root).
 #
-# plan-issue now emits a `**Tasks (ordered):**` section whose Task 0 differs
+# plan-issue emits a `**Tasks (ordered):**` section whose Task 0 differs
 # per PATH (A/B/C) and whose final Task N is a self-verification checkpoint.
-# This test renders the template with envsubst and greps for the expected
-# directives inside each path-branch block.
+# This test greps the canonical SKILL.md (no rendering — `$PIPELINE_*` refs
+# are now runtime shell variables sourced from pipeline.config) for the
+# expected directives inside each path-branch block.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TEMPLATE="$SCRIPT_DIR/../skills/plan-issue/SKILL.md.template"
+SKILL_FILE="$SCRIPT_DIR/../skills/plan-issue/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -20,20 +21,12 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-if [ ! -f "$TEMPLATE" ]; then
-  echo "ERROR: plan-issue template not found at $TEMPLATE" >&2
+if [ ! -f "$SKILL_FILE" ]; then
+  echo "ERROR: plan-issue SKILL.md not found at $SKILL_FILE" >&2
   exit 1
 fi
 
-WORKDIR=$(mktemp -d)
-trap 'rm -rf "$WORKDIR"' EXIT
-
-RENDERED="$WORKDIR/SKILL.md"
-PIPELINE_REPO="fake/repo" \
-  PIPELINE_CONTEXT_FILES="CLAUDE.md" \
-  PIPELINE_TEST_CMD="bash verify.sh" \
-  envsubst '$PIPELINE_REPO $PIPELINE_CONTEXT_FILES $PIPELINE_TEST_CMD' \
-    < "$TEMPLATE" > "$RENDERED"
+RENDERED="$SKILL_FILE"
 
 # Extract the content of a "#### Task 0 — PATH X" section up to the next
 # "#### " heading (or end of file). Returns the block text on stdout.
