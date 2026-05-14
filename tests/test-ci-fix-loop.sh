@@ -284,6 +284,80 @@ else
 $PAYLOAD_F"
 fi
 
+# ---- Fixture G: end-to-end smoke (helper -> run-queue --ci-fix) --------
+echo "Fixture G: helper red-retry -> run-queue --ci-fix dispatch with parsed LOG path"
+inc
+fg=$(mktemp -d)
+mkdir -p "$fg/.claude/scripts" "$fg/.claude/worktrees/wt-42-fake" "$fg/stub"
+make_shim "$fg/stub"
+echo "conclusion=failure" >  "$fg/stub/gh-state"
+echo "pr=42"             >> "$fg/stub/gh-state"
+echo "run_id=999"        >> "$fg/stub/gh-state"
+echo "retries=0"         >> "$fg/stub/gh-state"
+echo "fail_log=boom"     >> "$fg/stub/gh-state"
+
+cp "$REPO_ROOT/scripts/check-ci-fix-loop.sh" "$fg/.claude/scripts/"
+cp "$REPO_ROOT/scripts/run-queue.sh.template" "$fg/.claude/scripts/"
+cat > "$fg/.claude/scripts/spawn-claude.sh" <<'REC'
+#!/usr/bin/env bash
+echo "ARGS=$*" >> "$RECORDER_LOG"
+echo "PIPELINE_CI_FIX_CONTEXT=${PIPELINE_CI_FIX_CONTEXT:-}" >> "$RECORDER_LOG"
+REC
+chmod +x "$fg/.claude/scripts/spawn-claude.sh"
+
+cat > "$fg/pipeline.config" <<'CFG'
+PIPELINE_REPO="fake/repo"
+PIPELINE_WORKTREE_PREFIX="wt"
+CFG
+
+# Fake `git worktree list` to advertise the fake worktree directory.
+cat > "$fg/stub/git" <<GIT
+#!/usr/bin/env bash
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+  echo "worktree $fg/.claude/worktrees/wt-42-fake"
+  echo "HEAD deadbeef"
+  echo "branch refs/heads/feature/42-fake"
+  exit 0
+fi
+exec /usr/bin/git "\$@"
+GIT
+chmod +x "$fg/stub/git"
+
+# Step 1: run the helper, capture LOG= path.
+set +e
+HELPER_OUT=$( cd "$fg" && PATH="$fg/stub:$PATH" \
+  GH_FAKE_LOG="$fg/gh.log" GH_FAKE_STATE="$fg/stub/gh-state" \
+  PIPELINE_REPO="fake/repo" \
+  PIPELINE_CI_FIX_RETRY_BUDGET="2" \
+  PIPELINE_CI_FIX_LOG_LINES="200" \
+  bash .claude/scripts/check-ci-fix-loop.sh 42 2>&1 )
+helper_rc=$?
+set -e
+
+if [ "$helper_rc" -ne 0 ]; then
+  fail_msg "G helper failed: $HELPER_OUT"
+else
+  LOG_PATH=$(echo "$HELPER_OUT" | grep -oE 'LOG=[^ ]+' | cut -d= -f2)
+  if [ -z "$LOG_PATH" ] || [ ! -f "$LOG_PATH" ]; then
+    fail_msg "G no LOG= in helper output: $HELPER_OUT"
+  else
+    # Step 2: dispatch
+    RECORDER_LOG="$fg/recorder.log"; : > "$RECORDER_LOG"
+    set +e
+    ( cd "$fg" && PATH="$fg/stub:$PATH" RECORDER_LOG="$RECORDER_LOG" \
+      bash .claude/scripts/run-queue.sh.template --ci-fix 42 "$LOG_PATH" >"$fg/dispatch.out" 2>&1 )
+    drc=$?
+    set -e
+    if [ "$drc" -eq 0 ] && grep -q "PIPELINE_CI_FIX_CONTEXT=$LOG_PATH" "$RECORDER_LOG"; then
+      pass_msg "G chain: helper LOG -> dispatch env"
+    else
+      fail_msg "G chain failed (rc=$drc):
+RECORDER: $(cat "$RECORDER_LOG")
+DISPATCH: $(cat "$fg/dispatch.out")"
+    fi
+  fi
+fi
+
 # ---- Summary -----------------------------------------------------------
 echo
 echo "Tests: $TESTS  Pass: $PASS  Fail: $FAIL"
