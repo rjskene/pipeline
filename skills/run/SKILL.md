@@ -239,6 +239,29 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `PIPELINE_LABELS_EXCLUDED`. Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed by full send (treat them like `PIPELINE_LABELS_LATER`).
 
+   **Tracker issues are coordination artifacts**, not implementation work. They carry the `tracker` label and roll up child issues for visibility. The orchestrator excludes them from the action queue (never proposed for plan/execute) but surfaces them in the status table with `stage=tracker`. The filter block below partitions the issue list into `READY_ISSUES` (no pipeline-stage label AND no `tracker`/excluded/later/human label) and `TRACKER_ISSUES` (carry `tracker`). Assume `ISSUE_LIST_JSON` holds the output of `gh issue list ... --json number,title,labels --limit 100`.
+
+   ```bash
+   # BEGIN-TRACKER-FILTER
+   # Required env: ISSUE_LIST_JSON (output of `gh issue list ... --json number,title,labels`).
+   # Emits: READY_ISSUES (space-separated numbers), TRACKER_ISSUES (space-separated numbers).
+   STAGE_LABELS='plan-pending|plan-reviewed|plan-approved|in-progress|pr-open|merged'
+   SKIP_LABELS="tracker|$PIPELINE_LABELS_EXCLUDED|$PIPELINE_LABELS_LATER|$PIPELINE_LABELS_HUMAN"
+   READY_ISSUES=$(echo "$ISSUE_LIST_JSON" | jq -r --arg stage "$STAGE_LABELS" --arg skip "$SKIP_LABELS" '
+     .[] | select(
+       ([.labels[].name] | any(test("^(" + $stage + ")$"))) | not
+     ) | select(
+       ([.labels[].name] | any(test("^(" + $skip  + ")$"))) | not
+     ) | .number
+   ' | tr '\n' ' ')
+   TRACKER_ISSUES=$(echo "$ISSUE_LIST_JSON" | jq -r '
+     .[] | select([.labels[].name] | any(. == "tracker")) | .number
+   ' | tr '\n' ' ')
+   # END-TRACKER-FILTER
+   ```
+
+   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 5. `TRACKER_ISSUES` feeds the status-table render in step 4 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
+
    **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
 
    ```bash
@@ -270,9 +293,12 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ----------------------------------------------------------------
     #N     <title>        ready    feature, ui    pipeline     B      no
     #N     <title>        ready    next-major     next         A      no
+    #N     <title>        tracker  tracker        —            —      —
     ...
    ================================================================
    ```
+
+   Tracker issues (from `TRACKER_ISSUES`) appear in the table with `Stage=tracker` and are never proposed for plan/execute. Their child-issue rollup is visible in the issue body on GitHub.
 
    **Release PRs row group.** If `RELEASE_PRS` (from step 0) is non-empty, render an additional table ABOVE the pipeline-issue table. Parse each line (`pr=<num> ci=<pass|fail|pending> title=<title>`) into a row:
 
@@ -319,6 +345,7 @@ active feature work, but it should come BEFORE pulling in new ready work
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
    - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
    - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
+   - Issues labeled `tracker` are shown in the table (stage=`tracker`) but never proposed for plan/execute — they are coordination rollups, not implementation work.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN`:
      - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
      - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".

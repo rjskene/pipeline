@@ -119,7 +119,7 @@ After each issue is created, print a single line: `Created: #N — <title> — <
 **Tracker issue body template (multi-issue case only).** After all sub-issues are created and their numbers are known, create the tracker last. Use this body template:
 
 ```bash
-gh issue create --repo $PIPELINE_REPO --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
+gh issue create --repo $PIPELINE_REPO --label tracker --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
 ## Context
 <1-3 sentences explaining why this work exists and the shape of the rollup>
 
@@ -147,6 +147,7 @@ Every tracker body MUST include these sections in this order: **Context**, **Rol
 ### Labels
 - Newly created issues get no pipeline labels by default (they enter the pipeline as `ready` stage).
 - If the user specifies a label during discussion (e.g., "this is a bug"), add it: `--label bug`.
+- Tracker issues (multi-issue case, created via the tracker body template) automatically receive the `tracker` label so the pipeline orchestrator excludes them from the action queue.
 
 ### Session summary
 When the user ends the session (says "done", "that's all", etc.), print a summary:
