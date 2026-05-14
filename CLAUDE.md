@@ -29,6 +29,8 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
+**Full Send wave model.** When the user invokes `/pipeline:run` in "full send" mode, the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
+
 ## Key Handoffs
 
 **Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/pipeline:create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/pipeline:plan-issue`.

@@ -23,6 +23,8 @@ PIPELINE_TMUX_SESSION="dev"                        # tmux session name for the q
 PIPELINE_CI_CHECK_ENABLED="true"                   # Gate the evaluate-issue-pr CI status check step. "true" keeps it; any other value (incl. "") strips the block from the rendered SKILL.md. Projects with no CI or with non-blocking CI should set this to "".
 PIPELINE_RELEASE_PR_AUTO_MERGE="false"             # Opt-in: auto-merge green release-bot PRs during /pipeline:run full send. Default false so manual-review release flows aren't surprised on upgrade.
 PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies release-bot PRs to discover. Default matches release-please; override for other bots (e.g. "please-release").
+# Pre-think wave planner for /pipeline:run full send. When "true", the orchestrator runs scripts/plan-waves.sh before dispatching classify/plan agents and processes ready issues wave-by-wave (priority tier + explicit blockers + shared-file conflicts). Set to "false" to restore the legacy single-blast parallel dispatch.
+PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED="true"
 
 # --- Label-driven 3-path execution (optional) ---
 #
