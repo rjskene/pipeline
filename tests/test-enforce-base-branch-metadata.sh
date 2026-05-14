@@ -8,7 +8,7 @@ set -euo pipefail
 # empty, or unreadable.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TEMPLATE="$SCRIPT_DIR/../hooks/enforce-base-branch.py.template"
+HOOK="$SCRIPT_DIR/../hooks/enforce-base-branch.py"
 
 PASS=0
 FAIL=0
@@ -18,25 +18,25 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-if [ ! -f "$TEMPLATE" ]; then
-  echo "ERROR: template not found at $TEMPLATE" >&2
+if [ ! -f "$HOOK" ]; then
+  echo "ERROR: hook not found at $HOOK" >&2
   exit 1
 fi
 
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-# Render the template with PIPELINE_BASE_BRANCH=pipeline so the fallback
-# default is a known string.
-HOOK="$WORKDIR/enforce-base-branch.py"
-PIPELINE_BASE_BRANCH="pipeline" \
-  envsubst '$PIPELINE_BASE_BRANCH' < "$TEMPLATE" > "$HOOK"
-
 # Run the hook with a payload and a CLAUDE_PROJECT_DIR. Echoes the
 # exit code on stdout; writes stderr/stdout to $WORKDIR/out, $WORKDIR/err.
 run_hook() {
   local payload="$1"
   local project_dir="$2"
+  # Ensure the fallback PIPELINE_BASE_BRANCH resolves to a known string
+  # ("pipeline") via the project's pipeline.config — the fire-time runtime
+  # substitute for the old envsubst-substituted DEFAULT_BASE.
+  if [ ! -f "$project_dir/pipeline.config" ]; then
+    printf 'PIPELINE_BASE_BRANCH="pipeline"\n' > "$project_dir/pipeline.config"
+  fi
   set +e
   echo "$payload" | env -i \
     HOME="$HOME" \

@@ -16,7 +16,7 @@ set -euo pipefail
 #     impl file, with no covering subagent dispatch.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-HOOK_TEMPLATE="$SCRIPT_DIR/../hooks/enforce-path-c-delegation.py.template"
+HOOK="$SCRIPT_DIR/../hooks/enforce-path-c-delegation.py"
 
 PASS=0
 FAIL=0
@@ -26,11 +26,11 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc() { TESTS=$((TESTS + 1)); }
 
-if [ ! -f "$HOOK_TEMPLATE" ]; then
-  echo "ERROR: hook template not found at $HOOK_TEMPLATE" >&2
-  echo "Test 0: hook template exists"
+if [ ! -f "$HOOK" ]; then
+  echo "ERROR: hook not found at $HOOK" >&2
+  echo "Test 0: hook exists"
   inc
-  fail_msg "missing $HOOK_TEMPLATE"
+  fail_msg "missing $HOOK"
   echo ""
   echo "================================"
   echo "  $TESTS tests: $PASS passed, $FAIL failed"
@@ -41,12 +41,10 @@ fi
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-# Render the template (PIPELINE_REPO is the only var) to a runnable hook.
-HOOK="$WORKDIR/enforce-path-c-delegation.py"
-PIPELINE_REPO="fake/repo" envsubst '$PIPELINE_REPO' < "$HOOK_TEMPLATE" > "$HOOK"
-
 PROJ="$WORKDIR/proj"
 mkdir -p "$PROJ/.claude/logs/subagents" "$PROJ/web"
+# pipeline.config provides PIPELINE_REPO at hook fire time.
+printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
 
 # Stub gh on PATH. Returns labels from STUB_LABELS (newline-separated). Fails if STUB_GH_FAIL=1.
 STUB_DIR="$WORKDIR/stub"

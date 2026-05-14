@@ -299,6 +299,8 @@ echo "  Installed: ${SKILLS_INSTALLED} skills, ${SCRIPTS_INSTALLED} scripts, ${H
 echo "  Pruned:    ${SKILLS_PRUNED} stale skills, ${AGENTS_PRUNED} stale agents"
 echo "  Skipped:   ${SKIPPED} (unchanged)"
 echo "  Total:     $((TOTAL + SKIPPED)) files processed"
+echo ""
+echo "  Hooks now registered via plugin manifest; .claude/hooks/ copy is transitional."
 
 # --- Advisory: check for superpowers plugin ---
 echo ""

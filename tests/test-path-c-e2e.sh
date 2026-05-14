@@ -9,7 +9,7 @@ set -euo pipefail
 #           cache; re-run the same Edit; expect exit 0 (allowed).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-HOOK_TEMPLATE="$SCRIPT_DIR/../hooks/enforce-path-c-delegation.py.template"
+HOOK="$SCRIPT_DIR/../hooks/enforce-path-c-delegation.py"
 
 PASS=0
 FAIL=0
@@ -19,19 +19,17 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc() { TESTS=$((TESTS + 1)); }
 
-if [ ! -f "$HOOK_TEMPLATE" ]; then
-  echo "ERROR: hook template missing at $HOOK_TEMPLATE" >&2
+if [ ! -f "$HOOK" ]; then
+  echo "ERROR: hook missing at $HOOK" >&2
   exit 1
 fi
 
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-HOOK="$WORKDIR/enforce-path-c-delegation.py"
-PIPELINE_REPO="fake/repo" envsubst '$PIPELINE_REPO' < "$HOOK_TEMPLATE" > "$HOOK"
-
 PROJ="$WORKDIR/proj"
 mkdir -p "$PROJ/.claude/logs/subagents" "$PROJ/web"
+printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
 
 STUB_DIR="$WORKDIR/stub"
 mkdir -p "$STUB_DIR"
