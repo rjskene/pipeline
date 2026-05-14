@@ -150,6 +150,7 @@ Every tracker body MUST include these sections in this order: **Context**, **Rol
 - Newly created issues get no pipeline labels by default (they enter the pipeline as `ready` stage).
 - If the user specifies a label during discussion (e.g., "this is a bug"), add it: `--label bug`.
 - Tracker issues (multi-issue case, created via the tracker body template) automatically receive the `tracker` label so the pipeline orchestrator excludes them from the action queue.
+- If the user's framing is architectural critique, open-ended exploration, or "should we / could we" without a commit-to-act, propose creating the issue with `--label brainstorm`. The label parks the issue in the pipeline's discussion bucket — visible in `/pipeline:run` status (stage = `brainstorm`) but never auto-planned or auto-executed. The user promotes it later by removing the label.
 
 ### Session summary
 When the user ends the session (says "done", "that's all", etc.), print a summary:
