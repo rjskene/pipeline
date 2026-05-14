@@ -198,6 +198,42 @@ else
   sed 's/^/      /' "$STDOUT_LOG"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "partial": marker present but no .claude-pipeline/. Migration should
+# still remove the marker + its agent and exit 0.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'partial': managed marker without .claude-pipeline/"
+
+PROJ_PARTIAL="$WORKDIR/proj-partial"
+mkdir -p "$PROJ_PARTIAL/.claude/agents"
+echo "managed agent" > "$PROJ_PARTIAL/.claude/agents/tdd-implementer.md"
+touch "$PROJ_PARTIAL/.claude/agents/.tdd-implementer.pipeline-managed"
+
+STDERR_LOG="$WORKDIR/partial.stderr"
+STDOUT_LOG="$WORKDIR/partial.stdout"
+(cd "$PROJ_PARTIAL" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "partial: exit 0"; else fail_msg "partial: exit $EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_PARTIAL/.claude/agents/tdd-implementer.md" ] && \
+   [ ! -f "$PROJ_PARTIAL/.claude/agents/.tdd-implementer.pipeline-managed" ]; then
+  pass_msg "partial: managed agent + marker removed"
+else
+  fail_msg "partial: managed agent or marker still present"
+  ls -la "$PROJ_PARTIAL/.claude/agents/" | sed 's/^/    /'
+fi
+
+inc
+if grep -qF 'Install the plugin: claude plugin install hts-collab-org/claude-pipeline' "$STDOUT_LOG"; then
+  pass_msg "partial: install instructions printed"
+else
+  fail_msg "partial: install instructions missing"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
