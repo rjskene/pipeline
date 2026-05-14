@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$REPO_ROOT/.claude-plugin/plugin.json"
-HOOK_TEMPLATE="$REPO_ROOT/hooks/enforce-path-c-delegation.py.template"
+HOOK_TEMPLATE="$REPO_ROOT/hooks/enforce-path-c-delegation.py"
 PASS=0; FAIL=0
 assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
 

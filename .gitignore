@@ -5,3 +5,4 @@
 /.claude/worktrees/
 /.claude/settings.local.json
 /pipeline.config
+hooks/__pycache__/

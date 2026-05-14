@@ -6,6 +6,10 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _pipeline_config import read as _read_config  # noqa: E402
 
 data = json.load(sys.stdin)
 tool_name = data.get("tool_name", "")
@@ -17,7 +21,8 @@ CLAUDE_HOME = os.path.realpath(os.path.expanduser("~/.claude"))
 ALLOWED_ROOTS = [PROJECT_DIR, CLAUDE_HOME]
 
 # Also allow worktrees that live outside the project dir (sibling dirs like <prefix>-<N>-*)
-WORKTREE_PATTERN = re.compile(re.escape(os.path.dirname(PROJECT_DIR)) + r"/" + re.escape("${PIPELINE_WORKTREE_PREFIX}") + r"-\d+-")
+_WORKTREE_PREFIX = _read_config("PIPELINE_WORKTREE_PREFIX", "wt", project_dir=PROJECT_DIR)
+WORKTREE_PATTERN = re.compile(re.escape(os.path.dirname(PROJECT_DIR)) + r"/" + re.escape(_WORKTREE_PREFIX) + r"-\d+-")
 
 # Protected paths — block Write/Edit to settings and hook files (in project and worktrees)
 PROTECTED_PATTERNS = [
