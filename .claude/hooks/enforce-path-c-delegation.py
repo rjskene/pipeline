@@ -22,7 +22,12 @@ import time
 import traceback
 from pathlib import Path, PurePosixPath
 
-PIPELINE_REPO = "HTS-COLLAB-ORG/claude-pipeline"
+sys.path.insert(0, str(Path(__file__).parent))
+from _pipeline_config import read as _read_config  # noqa: E402
+
+
+def _pipeline_repo() -> str:
+    return _read_config("PIPELINE_REPO", "")
 
 LABEL_CACHE_TTL_SECONDS = 300
 GH_TIMEOUT_SECONDS = 5
@@ -118,7 +123,7 @@ def fetch_label_status(issue_number: str) -> str:
         result = subprocess.run(
             [
                 "gh", "issue", "view", issue_number,
-                "--repo", PIPELINE_REPO,
+                "--repo", _pipeline_repo(),
                 "--json", "labels",
                 "--jq", ".labels[].name",
             ],
