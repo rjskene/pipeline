@@ -84,5 +84,16 @@ assert_refusal \
   "refusal: tracker label exits 2 even without epic title" \
   999 --title-override 'Something descriptive' --labels-override 'tracker'
 
+# Task 4: bug(<scope>): ... → fix(<scope>): ... with scope normalization.
+assert_stdout \
+  "rewrite: bug(install) -> fix(install)" \
+  "fix(install): X breaks Y" \
+  999 --title-override 'bug(install): X breaks Y' --labels-override ''
+
+assert_stdout \
+  "rewrite: bug(Install_Path) lowercases scope, preserves underscores" \
+  "fix(install_path): X" \
+  999 --title-override 'bug(Install_Path): X' --labels-override ''
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

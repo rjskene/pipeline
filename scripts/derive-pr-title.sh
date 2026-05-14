@@ -86,5 +86,19 @@ if [[ "$TITLE" =~ $CC_RE ]]; then
   exit 0
 fi
 
+normalize_scope() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9_-]/-/g; s/^-*//; s/-*$//'
+}
+
+# bug(<scope>): <rest> → fix(<normalized-scope>): <rest>
+if [[ "$TITLE" =~ ^bug\(([^\)]+)\):[[:space:]]+(.+)$ ]]; then
+  scope=$(normalize_scope "${BASH_REMATCH[1]}")
+  rest="${BASH_REMATCH[2]}"
+  printf 'fix(%s): %s\n' "$scope" "$rest"
+  exit 0
+fi
+
 # No rule matched yet — later tasks extend this.
 exit 1
