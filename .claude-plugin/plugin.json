@@ -11,5 +11,6 @@
   "repository": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
   "license": "MIT",
   "keywords": ["pipeline", "github-issues", "automation", "ci", "claude-code"],
+  "agents": ["./agents/tdd-implementer.md"],
   "dependencies": ["superpowers"]
 }
