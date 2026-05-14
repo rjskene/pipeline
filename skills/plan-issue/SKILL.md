@@ -67,13 +67,14 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 5. **Generate the implementation plan.**
 
+   > **CRITICAL — DO NOT return the plan as your final message.** The plan body MUST be written to a draft file under `.claude/logs/plan-drafts/` and posted by `scripts/post-plan.sh`. Returning the plan as terminal agent output is a skill failure — the orchestrator will see no comment and no `plan-pending` label.
+
    Invoke `superpowers:writing-plans` to structure the plan:
    ```
    Skill(skill: "superpowers:writing-plans")
    ```
    - Pass the issue title, body, any existing plan comments, your codebase findings from step 4, AND the detected `PATH_LETTER` from step 3a.
-   - Tell it: "Do NOT save the plan to a file. Return the plan content directly."
-   - **Important:** "Return the plan content directly" means return it to THIS agent (the plan-issue agent), NOT to the orchestrator. You (the plan-issue agent) are still responsible for posting it as a GitHub comment in step 6.
+   - Tell it: "Do NOT save the plan to a file in `docs/`. Return the plan content directly so I can write it to the draft file under `.claude/logs/plan-drafts/`."
    - Take the output and reformat it into the canonical structure below, inserting the `**Tasks (ordered):**` section between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording from the section further down this skill.
 
    **In either case**, the final plan MUST use this exact format:
@@ -128,26 +129,23 @@ You will receive an issue number as the argument (or from context). Perform thes
 
    Code-task format for PATH C: every code task is a single `tdd-implementer` dispatch. Each dispatch includes a `target=<dir>/` sentinel (must be a real subdirectory — `target=.`, `target=./`, or `target=/` are rejected by the delegation hook) and a prompt detailed enough for the subagent to execute autonomously (what file, what behavior, what test, what commit message). Multiple dispatches may run in parallel when their targets don't overlap.
 
-6. **Post the plan as a GitHub comment:**
+6. **Write the plan to a draft file.**
    ```bash
-   gh issue comment <N> --repo $PIPELINE_REPO --body "<plan markdown>"
+   mkdir -p .claude/logs/plan-drafts
+   DRAFT=".claude/logs/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
+   # Use the Write tool to write the canonical plan markdown to "$DRAFT".
    ```
+   Use the `Write` tool (not heredoc, not `echo`) so the full plan body is preserved verbatim and the file path is logged.
 
-7. **Verify the plan comment was posted:**
+7. **Post atomically via helper — this is the only post path.**
    ```bash
-   PLAN_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
-     --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
-   echo "Plan comments found: $PLAN_COUNT"
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
    ```
-   - If `$PLAN_COUNT` >= 1, proceed to step 8.
-   - If `$PLAN_COUNT` is 0: the comment failed to post. Retry once by re-running the `gh issue comment` from step 6. Then re-check. If still 0, STOP and report: "FAILED: Plan was generated but could not be posted as a GitHub comment on issue #N." Include the full plan text in your response so the orchestrator can recover. Do NOT add the `plan-pending` label.
+   The helper posts the comment, verifies it, applies `plan-pending`, and verifies the label — each sub-step retries once on failure. Do not retry from the skill; the helper already retries.
 
-8. **Update labels** — add `plan-pending`:
-   ```bash
-   gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-pending"
-   ```
+   If the helper exits non-zero, surface its stderr AND the `$DRAFT` path verbatim, then STOP with: `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`. The draft is on disk and the operator can re-run the helper manually.
 
-9. **Report back:** "Plan posted to issue #N (PATH $PATH_LETTER)."
+8. **Report back:** "Plan posted to issue #N (PATH $PATH_LETTER)."
 
 ## Revision handling
 
