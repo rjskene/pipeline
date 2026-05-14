@@ -32,14 +32,14 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
 1. **Fetch issue details and the latest plan comment:**
    ```bash
-   gh issue view <N> --repo ${PIPELINE_REPO} --json number,title,body
-   gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+   gh issue view <N> --repo $PIPELINE_REPO --json number,title,body
+   gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
    ```
    If no plan comment exists, STOP and report: "No implementation plan found on issue #N."
 
 2. **Read project context:**
-   - Read each file listed in: ${PIPELINE_CONTEXT_FILES}
+   - Read each file listed in: `PIPELINE_CONTEXT_FILES`
    - Also read `redline/CLAUDE.md` if redline files are in the plan
 
 3. **Two-phase review.**
@@ -62,14 +62,14 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
 4. **Check for conflicts with in-flight work:**
    ```bash
-   gh pr list --repo ${PIPELINE_REPO} --state open --json number,title,files \
+   gh pr list --repo $PIPELINE_REPO --state open --json number,title,files \
      --jq '.[] | {pr: .number, title: .title, files: [.files[].path]}'
    ```
    Flag any files that appear in both the plan and an open PR.
 
 5. **Post evaluation comment on the issue:**
    ```bash
-   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<evaluation>"
+   gh issue comment <N> --repo $PIPELINE_REPO --body "<evaluation>"
    ```
 
    Use this exact format:
@@ -95,7 +95,7 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
    If verdict is **Approve**:
    ```bash
-   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-reviewed" --remove-label "plan-pending"
+   gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-reviewed" --remove-label "plan-pending"
    ```
 
    If verdict is **Revise**: do NOT change labels. Leave `plan-pending` in place. The evaluation comment is posted so the user can see the feedback. The pipeline will detect the evaluation comment and await user feedback before re-planning.

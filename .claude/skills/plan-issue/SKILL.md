@@ -33,7 +33,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    - If user feedback exists on an existing plan, this is a **plan revision**. The revised plan MUST address every point in the user's feedback. Call out what changed with a `**Changes from previous plan:**` section at the top.
 
 3. **Read project context:**
-   - Read each file listed in the project's context files config: CLAUDE.md
+   - Read each file listed in the project's context files config: `PIPELINE_CONTEXT_FILES`
 
 3a. **Determine PATH** — the executor's discipline depends on the path label, so the plan must include a path-specific Task 0:
 

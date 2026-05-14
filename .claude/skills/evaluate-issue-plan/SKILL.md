@@ -39,7 +39,7 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
    If no plan comment exists, STOP and report: "No implementation plan found on issue #N."
 
 2. **Read project context:**
-   - Read each file listed in: CLAUDE.md
+   - Read each file listed in: `PIPELINE_CONTEXT_FILES`
    - Also read `redline/CLAUDE.md` if redline files are in the plan
 
 3. **Two-phase review.**

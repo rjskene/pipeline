@@ -137,7 +137,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    git fetch origin staging
    git log --oneline HEAD..origin/staging | head -5
    ```
-   If staging has advanced, rebase:
+   If `PIPELINE_BASE_BRANCH` has advanced, rebase:
    ```bash
    git rebase origin/staging
    ```
@@ -181,5 +181,5 @@ You are a senior engineer performing a code review of a PR against its approved 
 - Fixes must be minimal: typos, missing imports, small bugs. NOT refactoring.
 - If fix requires touching >3 files or making design decisions, flag instead of fixing
 - Never skip tsc or test validation
-- All PRs target staging. All commits go to the feature branch.
+- All PRs target `PIPELINE_BASE_BRANCH` (the configured base). All commits go to the feature branch.
 - Evaluator does NOT merge, close issues, or change `pr-open` labels — only reviews, posts verdict, and (optionally) rebases against the base branch.

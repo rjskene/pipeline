@@ -167,7 +167,7 @@ Pass the evaluation comment as context. It will guide you through verifying each
 ## Constraints
 - Implement ONLY what the approved plan says.
 - Never commit to main.
-- All PRs target `staging`, never `main`. Always use `--base staging`.
+- All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base staging` to `gh pr create`.
 - Never use `--no-verify` or `--force`.
-- Never skip build verification (`for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done`).
+- Never skip build verification (`PIPELINE_TEST_CMD` from the sourced config).
 - Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.

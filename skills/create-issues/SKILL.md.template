@@ -89,7 +89,7 @@ Tracker titles follow the convention `epic(<scope>): <feature> — tracker for #
 
 Before creating an issue, **check for duplicates**:
 ```bash
-gh issue list --repo ${PIPELINE_REPO} --state open --json number,title --limit 100
+gh issue list --repo $PIPELINE_REPO --state open --json number,title --limit 100
 ```
 If a similar issue exists, flag it and ask the user whether to:
 - Create a new issue anyway
@@ -98,7 +98,7 @@ If a similar issue exists, flag it and ask the user whether to:
 
 After the user confirms the compact list, create each confirmed issue in a batch (one `gh issue create` call per issue, run sequentially or in a single message). Use the same body template below for all of them. Do NOT re-render the body to the user — it is only passed to `gh`.
 ```bash
-gh issue create --repo ${PIPELINE_REPO} --title "<title>" --body "$(cat <<'EOF'
+gh issue create --repo $PIPELINE_REPO --title "<title>" --body "$(cat <<'EOF'
 ## Context
 <1-3 sentences explaining the problem or opportunity>
 
@@ -119,7 +119,7 @@ After each issue is created, print a single line: `Created: #N — <title> — <
 **Tracker issue body template (multi-issue case only).** After all sub-issues are created and their numbers are known, create the tracker last. Use this body template:
 
 ```bash
-gh issue create --repo ${PIPELINE_REPO} --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
+gh issue create --repo $PIPELINE_REPO --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
 ## Context
 <1-3 sentences explaining why this work exists and the shape of the rollup>
 
