@@ -119,6 +119,32 @@ PAYLOAD='{"session_id":"sess-1b","cwd":"'"$PROJ"'"}'
 RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=plan-issue)
 if [ "$RC" = "0" ]; then pass_msg "exit 0 (wrong skill)"; else fail_msg "expected exit 0, got $RC"; fi
 
+# --- Test 2: no CI configured -> exit 0 (gh returns empty rollup) ---
+echo "Test 2: PR has no CI configured -> exit 0"
+inc
+reset_state
+seed_log_row "2026-05-14T10:00:00Z" "sess-2" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+PAYLOAD='{"session_id":"sess-2","cwd":"'"$PROJ"'"}'
+# gh stub returns "0" — the --jq '. | length' for an empty rollup yields 0.
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="0")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (no CI)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 3: CI present, no --watch invocation -> exit 2 ---
+echo "Test 3: CI present, no --watch -> exit 2 with stderr"
+inc
+reset_state
+seed_log_row "2026-05-14T10:00:00Z" "sess-3" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+PAYLOAD='{"session_id":"sess-3","cwd":"'"$PROJ"'"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="1")
+ERR=$(cat "$WORKDIR/err.txt")
+if [ "$RC" = "2" ] && echo "$ERR" | grep -q "CI-wait gate: --watch invocation not found"; then
+  pass_msg "exit 2 + stderr matches"
+else
+  fail_msg "expected exit 2 with --watch stderr; got rc=$RC stderr=$ERR"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
