@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.3.0...v0.3.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **tests:** exclude CHANGELOG.md from removed-file guard (unbreaks release CI) ([#117](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/117)) ([a93c9ca](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/a93c9ca8be427892ab0dac599855fd6610ff5579))
+
 ## [0.3.0](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.2.0...v0.3.0) (2026-05-14)
 
 
