@@ -56,7 +56,7 @@ Pipeline assets live outside the consumer project. The plugin installs to `~/.cl
 
 The consumer project owns exactly one pipeline file: `pipeline.config` at the project root. The plugin reads it via `${CLAUDE_PLUGIN_ROOT}/scripts/...` shims at runtime — there is no install-time template rendering anymore.
 
-All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:run`, …). Bare `/plan-issue` is intentionally not registered so the plugin coexists with other plugins that might claim those names.
+All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:run`, …). Unprefixed command names like `plan-issue` are intentionally not registered so the plugin coexists with other plugins that might claim those names.
 
 ## Design Principles
 
