@@ -17,3 +17,8 @@ grep -q 'PIPELINE_RELEASE_PR_AUTO_MERGE' "$SKILL" || { echo "FAIL: full-send mus
 grep -qE 'gh pr merge .* --squash' "$SKILL" || { echo "FAIL: full-send must squash-merge"; exit 1; }
 grep -qE 'after step 7|post-step-7|step 7b|7b\.' "$SKILL" || { echo "FAIL: full-send must place merge after step 7"; exit 1; }
 echo "PASS test_release_pr_skill (task4)"
+
+# Task 5 markers — interactive propose-action entry for release PRs
+grep -qE 'merge release PR|merge the release PR' "$SKILL" || { echo "FAIL: interactive mode must propose merging release PRs"; exit 1; }
+awk '/Propose ONE action/,/Wait for user confirmation/' "$SKILL" | grep -q 'release PR' || { echo "FAIL: release PR proposal missing from propose-action block"; exit 1; }
+echo "PASS test_release_pr_skill (task5)"

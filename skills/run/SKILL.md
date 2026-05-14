@@ -276,6 +276,16 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    `release-pending` is a **display-only** Stage value — it is NOT a GitHub label. The PR already carries `autorelease: pending` (release-please convention) and writing a second label would force consumer repos to define it. The Stage column is purely a rendering concern.
 
+<!--
+Priority order for "Propose ONE action" (highest → lowest):
+  cleanup > in-progress > pr-open eval > plan-pending eval > plan-reviewed (await user)
+  > plan-approved exec > merge release PR > ready planning.
+
+Rationale: a release PR is the end of the release loop — it must NOT preempt
+active feature work, but it should come BEFORE pulling in new ready work
+(no point planning new issues if a release is queued and ready to merge).
+-->
+
 5. **Propose ONE action** based on state priority:
    - If any worktrees are cleanup candidates (merged PR with active worktree) → propose cleanup. List each candidate with its issue number and worktree path.
    - Else if any issues have `in-progress` → print which ones and note agents are working. Do not propose anything else.
@@ -297,6 +307,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      - Otherwise, note they are awaiting user review.
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
    - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
+   - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN`:
      - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
      - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
