@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # derive-pr-title — convert a GitHub issue title + label set into a strict
-# Conventional-Commits PR title. Used by skills/execute-issue-plan when
-# opening a PR so release-please can drive versioning + CHANGELOG without a
-# late-stage rewording step. See issue #56 for the rule rationale.
+# Conventional-Commits PR title. Used by the pipeline:execute-issue-plan
+# skill when opening a PR so release-please can drive versioning +
+# CHANGELOG without a late-stage rewording step. See issue #56 for the
+# rule rationale.
 #
 # Usage: derive-pr-title.sh <issue-number> [--title-override <str>]
 #                                          [--labels-override <comma-or-space-list>]
