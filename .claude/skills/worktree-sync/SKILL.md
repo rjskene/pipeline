@@ -13,7 +13,7 @@ At session start, before running any of the steps below, source the project's `p
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 ```
 
-The bash code blocks below reference these variables via `HTS-COLLAB-ORG/claude-pipeline`, `staging`, `for t in tests/test*.sh tests/test_*.sh; do [ -f "$t" ] && bash "$t" || true; done`, `CLAUDE.md`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
 
 # Worktree Sync
 
