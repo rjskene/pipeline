@@ -77,7 +77,7 @@ fi
 # Verify we're inside tmux
 if [ -z "${TMUX:-}" ]; then
   echo "ERROR: Must be run inside a tmux session."
-  echo "  Start one with: tmux new -s dev"
+  echo "  Start one with: tmux new -s ${PIPELINE_TMUX_SESSION:-dev}"
   exit 1
 fi
 
@@ -136,7 +136,7 @@ slug_from_path() {
 # Check if an agent's tmux window is still alive
 is_agent_running() {
   local issue="$1"
-  tmux list-windows -t dev -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
+  tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
 }
 
 # Launch an agent for an issue

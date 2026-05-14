@@ -306,10 +306,10 @@ else
 fi
 SCRIPT
 
-  if command -v tmux &>/dev/null && tmux has-session -t dev 2>/dev/null; then
-    tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
+  if command -v tmux &>/dev/null && tmux has-session -t "${PIPELINE_TMUX_SESSION:-dev}" 2>/dev/null; then
+    tmux new-window -t "${PIPELINE_TMUX_SESSION:-dev}" -n "$TMUX_WINDOW" "$LAUNCHER"
     echo "Launched remote-control session for issue #${ISSUE_NUM} (tmux)"
-    echo "  tmux window: dev:${TMUX_WINDOW}"
+    echo "  tmux window: ${PIPELINE_TMUX_SESSION:-dev}:${TMUX_WINDOW}"
   else
     osascript -e "tell application \"Terminal\" to do script \"${LAUNCHER}\""
     echo "Launched remote-control session for issue #${ISSUE_NUM} (Terminal.app)"
@@ -318,8 +318,8 @@ SCRIPT
   echo "  Connect from Claude app or claude.ai/code → session: ${SESSION_NAME}"
 
 elif [ "$MODE" = "tmux" ]; then
-  if ! tmux has-session -t dev 2>/dev/null; then
-    echo "ERROR: No tmux session named 'dev'. Start one with: tmux new -s dev"
+  if ! tmux has-session -t "${PIPELINE_TMUX_SESSION:-dev}" 2>/dev/null; then
+    echo "ERROR: No tmux session named '${PIPELINE_TMUX_SESSION:-dev}'. Start one with: tmux new -s ${PIPELINE_TMUX_SESSION:-dev}"
     rm -f "$LAUNCHER"
     exit 1
   fi
@@ -344,9 +344,9 @@ else
 fi
 SCRIPT
 
-  tmux new-window -t dev -n "$TMUX_WINDOW" "$LAUNCHER"
+  tmux new-window -t "${PIPELINE_TMUX_SESSION:-dev}" -n "$TMUX_WINDOW" "$LAUNCHER"
   echo "Launched tmux session for issue #${ISSUE_NUM}"
-  echo "  tmux window: dev:${TMUX_WINDOW}"
+  echo "  tmux window: ${PIPELINE_TMUX_SESSION:-dev}:${TMUX_WINDOW}"
   echo "  Log: ${LOG_FILE}"
 
 else

@@ -32,8 +32,8 @@ MEM_PCT=$(( USED_MEM_MB * 100 / TOTAL_MEM_MB ))
 # CPU snapshot (user + system %, single pass)
 CPU_PCT=$(top -bn1 | awk '/^%Cpu/{gsub(/[^0-9.]/, " "); split($0, a); printf "%d", a[1]+a[2]}' 2>/dev/null || echo "n/a")
 
-# Active agent windows in tmux dev session
-ACTIVE_ISSUES=$(tmux list-windows -t dev -F '#{window_name}' 2>/dev/null | grep '^issue-' | sed 's/issue-//' | tr '\n' ' ' || true)
+# Active agent windows in the configured tmux session (PIPELINE_TMUX_SESSION; default 'dev')
+ACTIVE_ISSUES=$(tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep '^issue-' | sed 's/issue-//' | tr '\n' ' ' || true)
 ACTIVE_COUNT=$(echo "${ACTIVE_ISSUES}" | wc -w || echo 0)
 
 # Queue log — use argument or auto-detect latest
@@ -95,7 +95,7 @@ if [ -n "${QUEUE_LOG:-}" ] && [ -f "${QUEUE_LOG}" ]; then
       AGENT_RUNTIME[$issue_num]="—"
       AGENT_CPU[$issue_num]="—"
       AGENT_MEM[$issue_num]="—"
-    elif tmux list-windows -t dev -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue_num}$"; then
+    elif tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue_num}$"; then
       AGENT_STATUS[$issue_num]="running"
 
       # Runtime from epoch in launch line
@@ -116,7 +116,7 @@ if [ -n "${QUEUE_LOG:-}" ] && [ -f "${QUEUE_LOG}" ]; then
       fi
 
       # Per-agent CPU% and memory via tmux pane PID
-      PANE_PID=$(tmux list-panes -t "dev:issue-${issue_num}" -F '#{pane_pid}' 2>/dev/null | head -1 || true)
+      PANE_PID=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue_num}" -F '#{pane_pid}' 2>/dev/null | head -1 || true)
       if [ -n "$PANE_PID" ]; then
         # Sum CPU% and RSS across child processes
         read -r total_cpu total_rss < <(ps -o pcpu=,rss= --ppid "$PANE_PID" 2>/dev/null \
