@@ -51,12 +51,29 @@ else
   TITLE=$(gh issue view "$N" --repo "$PIPELINE_REPO" --json title --jq '.title')
 fi
 
+if [ "$LABELS_OVERRIDDEN" -eq 1 ]; then
+  LABELS_RAW="$LABELS_OVERRIDE"
+else
+  LABELS_RAW=$(gh issue view "$N" --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(",")')
+fi
+
+# Normalize labels into a comma-bounded string for whole-token matching.
+LABELS_NORM=$(printf '%s' "$LABELS_RAW" | tr ' ' ',' | tr -s ',')
+LABELS_NORM=",${LABELS_NORM},"
+
+has_label() {
+  [[ "$LABELS_NORM" == *",$1,"* ]]
+}
+
 refuse_tracker() {
   echo "Issue #$N is a tracker (epic title); trackers don't get PRs. Close the issue or rename it." >&2
   exit 2
 }
 
-# Tracker refusal — epic(...) issues track other issues and never get PRs.
+# Tracker refusal — `tracker` label or epic(...) title prefix.
+if has_label "tracker"; then
+  refuse_tracker
+fi
 if [[ "$TITLE" =~ ^epic\( ]]; then
   refuse_tracker
 fi

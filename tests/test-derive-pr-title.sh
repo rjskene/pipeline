@@ -78,5 +78,11 @@ assert_refusal \
   "refusal: epic(scope) title exits 2 with tracker stderr" \
   999 --title-override 'epic(redline): tracker for #1, #2' --labels-override ''
 
+# Task 3: the `tracker` label is a secondary signal — refuse even when the
+# title has no epic() prefix.
+assert_refusal \
+  "refusal: tracker label exits 2 even without epic title" \
+  999 --title-override 'Something descriptive' --labels-override 'tracker'
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
