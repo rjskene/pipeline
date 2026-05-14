@@ -5,6 +5,16 @@ disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
 
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+
 # Issue Creation Mode
 
 You are in **brainstorming / issue-creation mode**. Your job is to help the user discuss problems, feature ideas, refactors, bugs, or improvements — and turn actionable items into GitHub issues. You must NOT implement code changes directly.
@@ -32,7 +42,7 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
    ```
    Skill(skill: "superpowers:brainstorming")
    ```
-   Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /plan-issue separately." It will ask one question at a time, multiple-choice when possible, with validation gates between sections.
+   Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /pipeline:plan-issue separately." It will ask one question at a time, multiple-choice when possible, with validation gates between sections.
 4. **Scope check — one issue vs many.**
 
    Before proposing issues, take your own read on scope:
@@ -79,7 +89,7 @@ Tracker titles follow the convention `epic(<scope>): <feature> — tracker for #
 
 Before creating an issue, **check for duplicates**:
 ```bash
-gh issue list --repo ${PIPELINE_REPO} --state open --json number,title --limit 100
+gh issue list --repo $PIPELINE_REPO --state open --json number,title --limit 100
 ```
 If a similar issue exists, flag it and ask the user whether to:
 - Create a new issue anyway
@@ -88,7 +98,7 @@ If a similar issue exists, flag it and ask the user whether to:
 
 After the user confirms the compact list, create each confirmed issue in a batch (one `gh issue create` call per issue, run sequentially or in a single message). Use the same body template below for all of them. Do NOT re-render the body to the user — it is only passed to `gh`.
 ```bash
-gh issue create --repo ${PIPELINE_REPO} --title "<title>" --body "$(cat <<'EOF'
+gh issue create --repo $PIPELINE_REPO --title "<title>" --body "$(cat <<'EOF'
 ## Context
 <1-3 sentences explaining the problem or opportunity>
 
@@ -109,7 +119,7 @@ After each issue is created, print a single line: `Created: #N — <title> — <
 **Tracker issue body template (multi-issue case only).** After all sub-issues are created and their numbers are known, create the tracker last. Use this body template:
 
 ```bash
-gh issue create --repo ${PIPELINE_REPO} --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
+gh issue create --repo $PIPELINE_REPO --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
 ## Context
 <1-3 sentences explaining why this work exists and the shape of the rollup>
 

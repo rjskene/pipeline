@@ -1,0 +1,132 @@
+"""
+Shared helpers for subagent activity logging.
+
+Provides:
+- Log path computation (relative to CLAUDE_PROJECT_DIR)
+- Slug sanitization for file names
+- Field truncation with byte-count markers
+- Per-agent JSON record builder (schema_version 1)
+- fcntl-based append locking for the consolidated log
+"""
+import fcntl
+import os
+import re
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Log paths
+# ---------------------------------------------------------------------------
+
+def _project_dir() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+
+
+def subagents_dir() -> Path:
+    """Per-agent JSON files directory: .claude/logs/subagents/"""
+    return _project_dir() / ".claude" / "logs" / "subagents"
+
+
+def consolidated_log_path() -> Path:
+    """One-line-per-agent log: .claude/logs/subagents.log"""
+    return _project_dir() / ".claude" / "logs" / "subagents.log"
+
+
+def error_log_path() -> Path:
+    """Error log: .claude/logs/subagent-hook-errors.log"""
+    return _project_dir() / ".claude" / "logs" / "subagent-hook-errors.log"
+
+
+# ---------------------------------------------------------------------------
+# Slug sanitization
+# ---------------------------------------------------------------------------
+
+def sanitize_slug(description: str) -> str:
+    """Collapse non-alnum runs to single hyphens, max 60 chars."""
+    slug = re.sub(r'[^a-z0-9]+', '-', description.lower()).strip('-')[:60]
+    return slug or "no-description"
+
+
+# ---------------------------------------------------------------------------
+# Field truncation
+# ---------------------------------------------------------------------------
+
+PROMPT_MAX_CHARS = 4096
+RESULT_MAX_CHARS = 8192
+
+
+def truncate_field(value: str, max_chars: int) -> tuple[str, bool]:
+    """Truncate a string at max_chars, appending a byte-count marker.
+
+    Returns (possibly_truncated_string, was_truncated).
+    """
+    if len(value) <= max_chars:
+        return value, False
+    original_bytes = len(value.encode("utf-8", errors="replace"))
+    marker = f"... [truncated {original_bytes} bytes]"
+    return value[:max_chars] + marker, True
+
+
+# ---------------------------------------------------------------------------
+# JSON record builder
+# ---------------------------------------------------------------------------
+
+def build_json_record(
+    *,
+    timestamp_utc: str,
+    session_id: str,
+    agent_id: str | None,
+    description: str,
+    subagent_type: str,
+    prompt: str,
+    result: str,
+    usage: dict,
+    total_tokens: int,
+    total_duration_ms: int,
+    num_turns: int,
+    jsonl_path_hint: str,
+) -> dict:
+    """Build the per-agent JSON record (schema_version 1)."""
+    prompt_truncated_val, prompt_was_truncated = truncate_field(prompt, PROMPT_MAX_CHARS)
+    result_truncated_val, result_was_truncated = truncate_field(result, RESULT_MAX_CHARS)
+
+    return {
+        "schema_version": 1,
+        "timestamp_utc": timestamp_utc,
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "description": description,
+        "subagent_type": subagent_type,
+        "prompt": prompt_truncated_val,
+        "prompt_truncated": prompt_was_truncated,
+        "result": result_truncated_val,
+        "result_truncated": result_was_truncated,
+        "usage": {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+        },
+        "total_tokens": total_tokens,
+        "total_duration_ms": total_duration_ms,
+        "num_turns": num_turns,
+        "jsonl_path_hint": jsonl_path_hint,
+    }
+
+
+# ---------------------------------------------------------------------------
+# fcntl-based append locking
+# ---------------------------------------------------------------------------
+
+def append_locked(path: Path, line: str) -> None:
+    """Append a line to the given file, using fcntl.flock for atomicity.
+
+    Creates parent directories as needed.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.write(line if line.endswith("\n") else line + "\n")
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)

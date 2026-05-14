@@ -1,9 +1,19 @@
 ---
 name: evaluate-issue-plan
-description: Independently evaluate an implementation plan posted on a GitHub issue. Posts findings and adds plan-reviewed label. Usage: /evaluate-issue-plan <issue_number>
+description: Independently evaluate an implementation plan posted on a GitHub issue. Posts findings and adds plan-reviewed label. Usage: /pipeline:evaluate-issue-plan <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
+
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
 
 # Plan Evaluator
 
@@ -22,14 +32,14 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
 1. **Fetch issue details and the latest plan comment:**
    ```bash
-   gh issue view <N> --repo ${PIPELINE_REPO} --json number,title,body
-   gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+   gh issue view <N> --repo $PIPELINE_REPO --json number,title,body
+   gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
    ```
    If no plan comment exists, STOP and report: "No implementation plan found on issue #N."
 
 2. **Read project context:**
-   - Read each file listed in: ${PIPELINE_CONTEXT_FILES}
+   - Read each file listed in: `PIPELINE_CONTEXT_FILES`
    - Also read `redline/CLAUDE.md` if redline files are in the plan
 
 3. **Two-phase review.**
@@ -52,14 +62,14 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
 4. **Check for conflicts with in-flight work:**
    ```bash
-   gh pr list --repo ${PIPELINE_REPO} --state open --json number,title,files \
+   gh pr list --repo $PIPELINE_REPO --state open --json number,title,files \
      --jq '.[] | {pr: .number, title: .title, files: [.files[].path]}'
    ```
    Flag any files that appear in both the plan and an open PR.
 
 5. **Post evaluation comment on the issue:**
    ```bash
-   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<evaluation>"
+   gh issue comment <N> --repo $PIPELINE_REPO --body "<evaluation>"
    ```
 
    Use this exact format:
@@ -85,7 +95,7 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
 
    If verdict is **Approve**:
    ```bash
-   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "plan-reviewed" --remove-label "plan-pending"
+   gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-reviewed" --remove-label "plan-pending"
    ```
 
    If verdict is **Revise**: do NOT change labels. Leave `plan-pending` in place. The evaluation comment is posted so the user can see the feedback. The pipeline will detect the evaluation comment and await user feedback before re-planning.

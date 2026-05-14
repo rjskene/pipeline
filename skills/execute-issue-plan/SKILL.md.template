@@ -1,9 +1,19 @@
 ---
 name: execute-issue-plan
-description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /execute-issue-plan <issue_number>
+description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /pipeline:execute-issue-plan <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
+
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
 
 # Execution Agent
 
@@ -13,11 +23,11 @@ You will receive an issue number as the argument (or from context). You should b
 
 1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan`:
    ```bash
-   gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+   gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
    ```
    This finds the LATEST plan comment (supports revisions — latest plan wins).
-   If the output is empty or `null`, **STOP** and report: "No implementation plan found on issue #N. Run `/plan-issue N` first."
+   If the output is empty or `null`, **STOP** and report: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
    Read the plan carefully before proceeding.
 
 2. **Read project conventions:**
@@ -26,13 +36,13 @@ You will receive an issue number as the argument (or from context). You should b
 3. **Dependency check — issue #5 only:**
    If this is issue #5 (project-numbers), verify that `feature/schema-cleanup` has been merged:
    ```bash
-   gh pr list --repo ${PIPELINE_REPO} --state merged --json headRefName --jq '[.[].headRefName]'
+   gh pr list --repo $PIPELINE_REPO --state merged --json headRefName --jq '[.[].headRefName]'
    ```
    If `feature/schema-cleanup` is NOT in the list, **STOP** and report: "Issue #5 is blocked — feature/schema-cleanup has not been merged yet."
 
 4. **Mark as in-progress:**
    ```bash
-   gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "in-progress" --remove-label "plan-approved"
+   gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
 5. **Implement the approved plan.**
@@ -50,13 +60,13 @@ You will receive an issue number as the argument (or from context). You should b
 
    **6a. Type check:**
    ```bash
-   ${PIPELINE_TYPECHECK_CMD}
+   $PIPELINE_TYPECHECK_CMD
    ```
    Fix any type errors before proceeding.
 
    **6b. Run tests:**
    ```bash
-   ${PIPELINE_TEST_CMD}
+   $PIPELINE_TEST_CMD
    ```
    Fix any failures before proceeding.
 
@@ -95,7 +105,7 @@ You will receive an issue number as the argument (or from context). You should b
    Agent(
      subagent_type: "superpowers:code-reviewer",
      description: "Independent review of the implementation for issue #<N> against the approved plan",
-     prompt: "<full plan comment body + git diff ${PIPELINE_BASE_BRANCH}..HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
+     prompt: "<full plan comment body + git diff $PIPELINE_BASE_BRANCH..HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
    )
    ```
    The reviewer returns a list of findings (or "LGTM").
@@ -121,9 +131,9 @@ You will receive an issue number as the argument (or from context). You should b
 9. **Open a pull request:**
    ```bash
    gh pr create \
-     --repo ${PIPELINE_REPO} \
+     --repo $PIPELINE_REPO \
      --title "<issue title>" \
-     --base ${PIPELINE_BASE_BRANCH} \
+     --base $PIPELINE_BASE_BRANCH \
      --body "$(cat <<'EOF'
    Closes #<N>
 
@@ -131,7 +141,7 @@ You will receive an issue number as the argument (or from context). You should b
    <bullet points summarising what changed>
 
    ## Test plan
-   - [ ] `${PIPELINE_TEST_CMD}` — all tests pass
+   - [ ] `PIPELINE_TEST_CMD` — all tests pass
    - [ ] Feature works end to end
    EOF
    )"
@@ -139,7 +149,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 10. **Mark as pr-open:**
     ```bash
-    gh issue edit <N> --repo ${PIPELINE_REPO} --add-label "pr-open" --remove-label "in-progress"
+    gh issue edit <N> --repo $PIPELINE_REPO --add-label "pr-open" --remove-label "in-progress"
     ```
 
 11. **Report:** "PR opened for #N: <PR URL>"
@@ -157,7 +167,7 @@ Pass the evaluation comment as context. It will guide you through verifying each
 ## Constraints
 - Implement ONLY what the approved plan says.
 - Never commit to main.
-- All PRs target `${PIPELINE_BASE_BRANCH}`, never `main`. Always use `--base ${PIPELINE_BASE_BRANCH}`.
+- All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base $PIPELINE_BASE_BRANCH` to `gh pr create`.
 - Never use `--no-verify` or `--force`.
-- Never skip build verification (`${PIPELINE_TEST_CMD}`).
+- Never skip build verification (`PIPELINE_TEST_CMD` from the sourced config).
 - Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.

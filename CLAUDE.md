@@ -21,21 +21,21 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 
 | Stage | Pipeline skill | Superpowers used internally |
 |-------|---------------|---------------------------|
-| Ideation | `/create-issues` | `brainstorming` |
-| Planning | `/plan-issue` | `writing-plans` |
-| Plan review | `/evaluate-issue-plan` | — |
-| Execution | `/execute-issue-plan` | `subagent-driven-development` |
-| PR review | `/evaluate-issue-pr` | `subagent-driven-development` |
+| Ideation | `/pipeline:create-issues` | `brainstorming` |
+| Planning | `/pipeline:plan-issue` | `writing-plans` |
+| Plan review | `/pipeline:evaluate-issue-plan` | — |
+| Execution | `/pipeline:execute-issue-plan` | `subagent-driven-development` |
+| PR review | `/pipeline:evaluate-issue-pr` | `subagent-driven-development` |
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
 ## Key Handoffs
 
-**Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/plan-issue`.
+**Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/pipeline:create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/pipeline:plan-issue`.
 
-**Issues → Plans:** Each issue gets its own implementation plan via `/plan-issue`, which uses `writing-plans` internally.
+**Issues → Plans:** Each issue gets its own implementation plan via `/pipeline:plan-issue`, which uses `writing-plans` internally.
 
-**Plans → Execution:** After a plan is reviewed (`/evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/execute-issue-plan` implements it in an isolated worktree.
+**Plans → Execution:** After a plan is reviewed (`/pipeline:evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/pipeline:execute-issue-plan` implements it in an isolated worktree.
 
 ## Observability
 
@@ -48,7 +48,40 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 ## Branches
 
 - **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
-- **`feature/*`** — feature branches created by `/execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
+- **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
+
+### Release cadence (this repo only)
+
+This repo uses a two-branch model: `staging` is the dev trunk (where wave PRs land); `main` is the release branch (what consumers install from). Cut a release by opening a `staging → main` PR, bumping `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, and merging.
+
+**After each dev release, reload the plugin** so subsequent dogfood sessions pick up the new code:
+
+```
+/plugin uninstall pipeline@claude-pipeline
+/plugin install   pipeline@claude-pipeline
+```
+
+(Or, if installed via local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
+
+## Plugin architecture
+
+Pipeline assets live outside the consumer project. The plugin installs to `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`). Hooks, skills, scripts, and the `tdd-implementer` subagent are all registered from the plugin manifest, so the consumer project's `.claude/` stays clean.
+
+The consumer project owns exactly one pipeline file: `pipeline.config` at the project root. The plugin reads it via `${CLAUDE_PLUGIN_ROOT}/scripts/...` shims at runtime — there is no install-time template rendering anymore.
+
+All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:run`, …). Unprefixed command names like `plan-issue` are intentionally not registered so the plugin coexists with other plugins that might claim those names.
+
+> Legacy install (`install.sh`, the `.claude-pipeline/` subtree, and the subtree-drift tooling) has been retired. Existing subtree consumers run `scripts/migrate-from-subtree.sh` once and then install the plugin.
+
+## Namespace discipline
+
+The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json`. All plugin assets live under `~/.claude/plugins/claude-pipeline/` (read at runtime via `${CLAUDE_PLUGIN_ROOT}`).
+
+**Runtime allow-list (consumer-owned, pipeline may read/write):**
+- `.claude/logs/` — observability artifacts (tool-use, subagents, runs).
+- `.claude/worktrees/` — pipeline-managed worktree checkouts.
+
+Everything else under consumer `.claude/` is consumer-owned. CI enforces this via `scripts/check-no-consumer-claude-writes.sh` — adding any new source reference to `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` requires an explicit entry in `tests/no-consumer-claude-writes.allow` with a justification comment. Allow-list entries are the audit trail for legacy code waiting to be retired.
 
 ## Design Principles
 

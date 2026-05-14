@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.claude/settings-schema.json",
-  "_comment": "Reference example \u2014 NOT auto-applied by install.sh. Copy/adapt to .claude/settings.json manually.",
+  "_comment": "Reference example \u2014 copy/adapt to .claude/settings.json manually.",
   "permissions": {},
   "hooks": {
     "PreToolUse": [

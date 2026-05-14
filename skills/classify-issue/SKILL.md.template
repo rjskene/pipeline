@@ -1,9 +1,19 @@
 ---
 name: classify-issue
-description: Triage a pipeline issue — reads title/body/labels/comments, recommends PATH A (docs-only), B (standard), or C (multi-task), and applies the `docs-only` / `multi-task` label directly. Posts a `## Classification` comment. Usage: /classify-issue <issue_number>
+description: Triage a pipeline issue — reads title/body/labels/comments, recommends PATH A (docs-only), B (standard), or C (multi-task), and applies the `docs-only` / `multi-task` label directly. Posts a `## Classification` comment. Usage: /pipeline:classify-issue <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep
 ---
+
+## Boot
+
+At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+```
+
+The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
 
 # Classify Issue
 
@@ -11,8 +21,8 @@ You will receive an issue number as the argument. Perform:
 
 1. **Fetch issue details:**
    ```bash
-   gh issue view <N> --repo ${PIPELINE_REPO} --json number,title,body,labels,updatedAt
-   gh issue view <N> --repo ${PIPELINE_REPO} --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
+   gh issue view <N> --repo $PIPELINE_REPO --json number,title,body,labels,updatedAt
+   gh issue view <N> --repo $PIPELINE_REPO --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
    ```
 
 2. **Cache check** — if the latest `## Classification` comment's `createdAt` is newer than the issue's `updatedAt`, the classification is fresh. In that case:
@@ -20,18 +30,18 @@ You will receive an issue number as the argument. Perform:
    - If the current labels do NOT match the cached recommendation → a user may have edited labels after the comment was posted. Print `Reconciling labels for cached classification #<N>`, then skip steps 3-6 and jump straight to step 5a (label application) using `recommended_path` pulled from the cached comment. Do NOT re-post the classification comment.
 
    ```bash
-   LATEST_CLASS_TS=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+   LATEST_CLASS_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .createdAt // empty')
-   ISSUE_TS=$(gh issue view <N> --repo ${PIPELINE_REPO} --json updatedAt --jq '.updatedAt')
+   ISSUE_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
    # ISO-8601 timestamps are lexicographically ordered, so bash `[[ > ]]` string
    # comparison is equivalent to chronological comparison. Do NOT switch to `[ > ]`
    # (redirects stdout) or `-gt` (numeric only) — both are wrong for these values.
    if [[ -n "$LATEST_CLASS_TS" && "$LATEST_CLASS_TS" > "$ISSUE_TS" ]]; then
        # Pull recommended_path from the cached comment.
-       CACHED_PATH=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+       CACHED_PATH=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
          --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .body' \
          | grep -oE 'recommended_path:\*\* [ABC]' | awk '{print $2}' | head -1)
-       CURRENT_LABELS=$(gh issue view <N> --repo ${PIPELINE_REPO} --json labels --jq '.labels[].name')
+       CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
        current_a=0; current_c=0
        printf '%s\n' "$CURRENT_LABELS" | grep -qx docs-only  && current_a=1
        printf '%s\n' "$CURRENT_LABELS" | grep -qx multi-task && current_c=1
@@ -74,13 +84,13 @@ You will receive an issue number as the argument. Perform:
    _Label applied by classify-issue. Override by editing the label directly — the label always wins over the comment recommendation on next classification._
    ```
 
-5a. **Apply the path label.** Set `ISSUE_N=<N>`, `RECOMMENDED_PATH=<A|B|C>`, and `CURRENT_LABELS=$(gh issue view <N> --repo ${PIPELINE_REPO} --json labels --jq '.labels[].name')`, then run this block directly. It is bounded by sentinel comments that the pipeline test suite extracts.
+5a. **Apply the path label.** Set `ISSUE_N=<N>`, `RECOMMENDED_PATH=<A|B|C>`, and `CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')`, then run this block directly. It is bounded by sentinel comments that the pipeline test suite extracts.
 
    ```bash
    # BEGIN-LABEL-APPLY
    # Required env: ISSUE_N (issue number), RECOMMENDED_PATH (A|B|C),
    #   CURRENT_LABELS (newline-separated label names), REPO (owner/name).
-   REPO="${REPO:-${PIPELINE_REPO}}"
+   REPO="${REPO:-$PIPELINE_REPO}"
    _has_label() { printf '%s\n' "$CURRENT_LABELS" | grep -qx "$1"; }
    _safe_label() {
      # Guardrail: this skill may only edit the two path labels.
@@ -115,12 +125,12 @@ You will receive an issue number as the argument. Perform:
 
 6. **Post the classification comment:**
    ```bash
-   gh issue comment <N> --repo ${PIPELINE_REPO} --body "<classification markdown>"
+   gh issue comment <N> --repo $PIPELINE_REPO --body "<classification markdown>"
    ```
 
 7. **Verify post** — count `## Classification` comments; retry once on 0; report FAILED if still 0.
    ```bash
-   CLASS_COUNT=$(gh issue view <N> --repo ${PIPELINE_REPO} --json comments \
+   CLASS_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Classification"))] | length')
    ```
 

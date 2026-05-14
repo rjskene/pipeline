@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MANIFEST="$REPO_ROOT/.claude-plugin/plugin.json"
+PASS=0; FAIL=0
+assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
+assert "manifest file exists" "[ -f '$MANIFEST' ]"
+assert "manifest is valid JSON" "python3 -c 'import json; json.load(open(\"$MANIFEST\"))' 2>/dev/null"
+assert "name is 'pipeline'" "[ \"\$(python3 -c 'import json; print(json.load(open(\"$MANIFEST\")).get(\"name\",\"\"))' 2>/dev/null)\" = pipeline ]"
+assert "version is set" "python3 -c 'import json,sys; v=json.load(open(\"$MANIFEST\")).get(\"version\"); sys.exit(0 if v else 1)' 2>/dev/null"
+assert "description is set" "python3 -c 'import json,sys; sys.exit(0 if json.load(open(\"$MANIFEST\")).get(\"description\") else 1)' 2>/dev/null"
+assert "superpowers is a declared dependency" "python3 -c 'import json,sys; d=json.load(open(\"$MANIFEST\")).get(\"dependencies\",[]); names=[x if isinstance(x,str) else x.get(\"name\") for x in d]; sys.exit(0 if \"superpowers\" in names else 1)' 2>/dev/null"
+assert "manifest declares an 'agents' field (array)" "python3 -c 'import json,sys; m=json.load(open(\"$MANIFEST\")); a=m.get(\"agents\"); sys.exit(0 if isinstance(a,list) and a else 1)' 2>/dev/null"
+assert "agents[0] points at an existing file under plugin root" "python3 -c 'import json,os,sys; m=json.load(open(\"$MANIFEST\")); p=m.get(\"agents\",[None])[0]; sys.exit(0 if p and os.path.isfile(os.path.join(\"$REPO_ROOT\",p)) else 1)' 2>/dev/null"
+assert "referenced agent file has name: tdd-implementer" "python3 -c 'import json,os,sys,re; m=json.load(open(\"$MANIFEST\")); p=m.get(\"agents\",[None])[0]; t=open(os.path.join(\"$REPO_ROOT\",p)).read() if p else \"\"; sys.exit(0 if re.search(r\"(?m)^name:\\s*tdd-implementer\\s*\$\", t) else 1)' 2>/dev/null"
+assert "hooks is an object" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\"); sys.exit(0 if isinstance(h,dict) else 1)' 2>/dev/null"
+assert "hooks.PreToolUse is a non-empty array" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}).get(\"PreToolUse\"); sys.exit(0 if isinstance(h,list) and h else 1)' 2>/dev/null"
+assert "hooks.PostToolUse is a non-empty array" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}).get(\"PostToolUse\"); sys.exit(0 if isinstance(h,list) and h else 1)' 2>/dev/null"
+echo "RESULT: $PASS passed, $FAIL failed"
+[ "$FAIL" = "0" ]
