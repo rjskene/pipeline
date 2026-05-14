@@ -237,6 +237,53 @@ $(cat "$RECORDER_LOG")
 dispatch out: $(cat "$fe/dispatch.out")"
 fi
 
+# ---- Fixture F: spawn-claude CI-FIX MODE prompt injection --------------
+echo "Fixture F: spawn-claude.sh dry-run payload contains CI-FIX MODE when PIPELINE_CI_FIX_CONTEXT is set"
+inc
+ff=$(mktemp -d)
+PROJ_F="$ff/proj"
+mkdir -p "$PROJ_F/.claude/scripts" "$PROJ_F/worktree"
+cp "$REPO_ROOT/scripts/spawn-claude.sh.template" "$PROJ_F/.claude/scripts/spawn-claude.sh"
+chmod +x "$PROJ_F/.claude/scripts/spawn-claude.sh"
+
+cat > "$PROJ_F/pipeline.config" <<'CFG'
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="pipeline"
+PIPELINE_WORKTREE_PREFIX="wt"
+PIPELINE_WIN_TEMP=""
+CFG
+
+# Stub gh that returns empty labels (-> PATH B default), succeeds.
+mkdir -p "$ff/stub"
+cat > "$ff/stub/gh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$ff/stub/gh"
+
+set +e
+OUT=$( cd "$PROJ_F" && PATH="$ff/stub:$PATH" \
+  PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_CI_FIX_CONTEXT=/tmp/fake.log \
+  bash .claude/scripts/spawn-claude.sh "$PROJ_F/worktree" 42 slug tmux 2>/dev/null )
+set -e
+
+PAYLOAD_F=$(echo "$OUT" | sed -n '/^=== PAYLOAD ===/,/^=== END PAYLOAD ===/p' | sed '1d;$d')
+
+if echo "$PAYLOAD_F" | grep -q "CI-FIX MODE"; then
+  pass_msg "F payload contains 'CI-FIX MODE'"
+else
+  fail_msg "F missing CI-FIX MODE; payload was:
+$PAYLOAD_F"
+fi
+inc
+if echo "$PAYLOAD_F" | grep -q "/tmp/fake.log"; then
+  pass_msg "F payload references /tmp/fake.log"
+else
+  fail_msg "F missing /tmp/fake.log; payload was:
+$PAYLOAD_F"
+fi
+
 # ---- Summary -----------------------------------------------------------
 echo
 echo "Tests: $TESTS  Pass: $PASS  Fail: $FAIL"
