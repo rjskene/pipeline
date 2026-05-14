@@ -153,20 +153,20 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    Report any fixes briefly.
 
-   Then check for stale tmux sessions from previous pipeline runs. If a tmux `dev` session exists, kill any leftover queue runner and agent windows:
+   Then check for stale tmux sessions from previous pipeline runs. If a tmux `${PIPELINE_TMUX_SESSION}` session exists, kill any leftover queue runner and agent windows:
    ```bash
-   # List all windows in the dev session
-   tmux list-windows -t dev -F '#{window_name}' 2>/dev/null
+   # List all windows in the ${PIPELINE_TMUX_SESSION} session
+   tmux list-windows -t ${PIPELINE_TMUX_SESSION} -F '#{window_name}' 2>/dev/null
    ```
    - Kill any `issue-*` windows (stale agent sessions from prior runs)
    - If window 0 is running a queue runner (`run-queue.sh`), send Ctrl-C to stop it
    ```bash
    # Kill stale agent windows
-   for win in $(tmux list-windows -t dev -F '#{window_name}' 2>/dev/null | grep '^issue-'); do
-     tmux kill-window -t "dev:${win}" 2>/dev/null || true
+   for win in $(tmux list-windows -t ${PIPELINE_TMUX_SESSION} -F '#{window_name}' 2>/dev/null | grep '^issue-'); do
+     tmux kill-window -t "${PIPELINE_TMUX_SESSION}:${win}" 2>/dev/null || true
    done
    # Interrupt any running queue runner in the first window
-   tmux send-keys -t dev:0 C-c 2>/dev/null || true
+   tmux send-keys -t ${PIPELINE_TMUX_SESSION}:0 C-c 2>/dev/null || true
    ```
    Report what was cleaned up, then proceed.
 
@@ -369,7 +369,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    3. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
       If the user opts in to skip permissions, pass `--dangerously-skip-permissions` to the spawn script. This lets agents run without any permission prompts (all tool calls auto-approved).
       - **terminal** (default) — new Terminal.app window per issue with interactive Claude, auto-fires `/execute-issue-plan N`. User monitors and interacts locally.
-      - **tmux** — tmux windows in a `dev` session, auto-fires `/execute-issue-plan N`
+      - **tmux** — tmux windows in a `${PIPELINE_TMUX_SESSION}` session, auto-fires `/execute-issue-plan N`
       - **remote-control** — `claude remote-control` servers, control from Claude mobile app or claude.ai/code. Only use this mode when the user explicitly says "remote-control".
       - **manual** — print instructions only
 
@@ -379,11 +379,11 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       ```
       Only pass `--skip-permissions` if the user opted in at step 3. The queue runner must be executed from inside a tmux session. If no tmux session exists, create one first:
       ```bash
-      tmux new -s dev -d
+      tmux new -s ${PIPELINE_TMUX_SESSION} -d
       ```
       Then launch the queue runner in a tmux window:
       ```bash
-      tmux send-keys -t dev "bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ..." Enter
+      tmux send-keys -t ${PIPELINE_TMUX_SESSION} "bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ..." Enter
       ```
       The queue runner launches up to 3 agents at a time, polls for completion every 60s, and fills slots as agents finish. Override with `MAX_AGENTS=N` or `POLL_SECONDS=N` env vars.
 
@@ -397,7 +397,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
       ================================================================
       ```
       Add: "Queue runner is in tmux window 0. Agent windows appear as they launch."
-      Add: "Monitor with: tmux attach -t dev"
+      Add: "Monitor with: tmux attach -t ${PIPELINE_TMUX_SESSION}"
 
       **Waiting for queue completion:** After launching the queue runner, use `Bash` with `run_in_background: true` to wait:
       ```bash
