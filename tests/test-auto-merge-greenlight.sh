@@ -31,7 +31,7 @@ case "$ALL_ARGS" in
     printf '%s' "${GH_EVAL_BODY:-}"
     ;;
   *"pr view"*"--json statusCheckRollup,mergeable,mergeStateStatus"*)
-    printf '%s' "${GH_ROLLUP:-{\"statusCheckRollup\":[],\"mergeable\":\"MERGEABLE\",\"mergeStateStatus\":\"CLEAN\"}}"
+    printf '%s' "${GH_ROLLUP:-}"
     ;;
   *)
     echo "[gh shim] unhandled: $ALL_ARGS" >&2
@@ -126,8 +126,11 @@ echo "=== argv ordering: --manual-merge consumed from any position ==="
 # args (one per line) to stdout.
 for argv in "--manual-merge 122 123" "122 123 --manual-merge" "122 --manual-merge 123"; do
   unset MANUAL_MERGE
+  REMAINING_FILE="$TMP/remaining.txt"
+  # Run in current shell (no subshell) so MANUAL_MERGE assignment persists.
   # shellcheck disable=SC2086
-  REMAINING=$(parse_manual_merge_argv $argv)
+  parse_manual_merge_argv $argv > "$REMAINING_FILE"
+  REMAINING=$(cat "$REMAINING_FILE")
   check "parser MANUAL_MERGE for [$argv]" "1" "${MANUAL_MERGE:-0}"
   check "parser remaining for [$argv]" "122
 123" "$REMAINING"
