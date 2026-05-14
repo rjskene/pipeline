@@ -152,6 +152,14 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    Report any fixes briefly.
 
+   Then discover open release-bot PRs (release-please by default) so they can be surfaced in the status table and proposed/auto-merged in later steps. The helper lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL` (default `autorelease: pending`):
+
+   ```bash
+   RELEASE_PRS=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)
+   ```
+
+   Output schema, one line per PR: `pr=<num> ci=<pass|fail|pending> title=<title>`. Empty when no release PRs are open or `gh` is unavailable — degrade silently in that case.
+
    Then check for stale tmux sessions from previous pipeline runs. If a tmux `PIPELINE_TMUX_SESSION` session exists, kill any leftover queue runner and agent windows:
    ```bash
    # List all windows in the $PIPELINE_TMUX_SESSION session
@@ -235,6 +243,19 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
     ...
    ================================================================
    ```
+
+   **Release PRs row group.** If `RELEASE_PRS` (from step 0) is non-empty, render an additional table ABOVE the pipeline-issue table. Parse each line (`pr=<num> ci=<pass|fail|pending> title=<title>`) into a row:
+
+   ```
+   RELEASE PRs
+   ================================================================
+    PR     Title                              Stage             CI
+   ----------------------------------------------------------------
+    #201   chore(main): release 1.2.3         release-pending   pass
+    #202   chore(main): release 1.3.0         release-pending   fail
+   ================================================================
+   ```
+   `release-pending` is a **display-only** Stage value — it is NOT a GitHub label. The PR already carries `autorelease: pending` (release-please convention) and writing a second label would force consumer repos to define it. The Stage column is purely a rendering concern.
 
 5. **Propose ONE action** based on state priority:
    - If any worktrees are cleanup candidates (merged PR with active worktree) → propose cleanup. List each candidate with its issue number and worktree path.
