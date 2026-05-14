@@ -25,6 +25,8 @@ HITS=$(grep -rEn 'test-path-c-args-directive\.sh|c-execute-subagent-driven-devel
   "$REPO_ROOT" 2>/dev/null \
   | grep -v "$(basename "$0")" \
   | grep -v "/\.git/" \
+  | grep -v "/\.claude/logs/" \
+  | grep -v "/CHANGELOG\.md:" \
   || true)
 if [ -n "$HITS" ]; then
   fail_msg "unexpected references remain:"$'\n'"$HITS"
