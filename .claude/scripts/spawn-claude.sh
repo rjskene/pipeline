@@ -253,7 +253,7 @@ cd ${WORKTREE_PATH}
 echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
 echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
 ${BUILD_ARGV}
-CLAUDE_ARGV+=('/pipeline:${SKILL} ${ISSUE_NUM}')
+CLAUDE_ARGV+=('/${SKILL} ${ISSUE_NUM}')
 CMD=\$(printf ' %q' claude "\${CLAUDE_ARGV[@]}")
 CMD="\${CMD# }"
 if [ "\$(uname -s)" = "Darwin" ]; then
@@ -330,7 +330,7 @@ cd ${WORKTREE_PATH}
 echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
 echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
 ${BUILD_ARGV}
-CLAUDE_ARGV+=(-p '/pipeline:${SKILL} ${ISSUE_NUM}')
+CLAUDE_ARGV+=(-p '/${SKILL} ${ISSUE_NUM}')
 INNER=\$(printf ' %q' claude "\${CLAUDE_ARGV[@]}")
 INNER="\${INNER# }"
 # -p (print mode): Claude processes the task then exits (no interactive prompt).
