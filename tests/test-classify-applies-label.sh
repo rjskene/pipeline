@@ -2,18 +2,18 @@
 set -euo pipefail
 
 # Tests for the label-application algorithm in the classify-issue skill
-# (.claude-pipeline/skills/classify-issue/SKILL.md.template).
+# (skills/classify-issue/SKILL.md at plugin root).
 #
-# The skill now applies `docs-only` / `multi-task` labels directly instead
-# of just recommending them. The label-application logic lives in a bash
+# The skill applies `docs-only` / `multi-task` labels directly instead of
+# just recommending them. The label-application logic lives in a bash
 # block between the sentinel comments `# BEGIN-LABEL-APPLY` and
-# `# END-LABEL-APPLY`. This test extracts that block from the rendered
-# template, stubs `gh` to log invocations, and asserts the expected
+# `# END-LABEL-APPLY`. This test extracts that block from the canonical
+# SKILL.md, stubs `gh` to log invocations, and asserts the expected
 # add-label / remove-label calls for each recommendation × current-label
 # combination.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TEMPLATE="$SCRIPT_DIR/../skills/classify-issue/SKILL.md.template"
+SKILL_FILE="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -23,16 +23,15 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-if [ ! -f "$TEMPLATE" ]; then
-  echo "ERROR: classify-issue template not found at $TEMPLATE" >&2
+if [ ! -f "$SKILL_FILE" ]; then
+  echo "ERROR: classify-issue SKILL.md not found at $SKILL_FILE" >&2
   exit 1
 fi
 
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-RENDERED="$WORKDIR/SKILL.md"
-PIPELINE_REPO="fake/repo" envsubst '$PIPELINE_REPO' < "$TEMPLATE" > "$RENDERED"
+RENDERED="$SKILL_FILE"
 
 # Extract the label-application bash block. Include the BEGIN line (not the
 # END line) so the block is a runnable fragment.

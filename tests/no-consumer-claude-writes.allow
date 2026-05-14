@@ -33,8 +33,3 @@ scripts/review-logs.sh
 scripts/check-server.sh
 scripts/create-checkpoint-tag.sh
 scripts/prune-checkpoints.sh
-
-# Skill templates with usage docstrings referencing .claude/scripts/.
-# Flagged for follow-up.
-skills/run/SKILL.md.template
-skills/worktree-sync/SKILL.md.template
