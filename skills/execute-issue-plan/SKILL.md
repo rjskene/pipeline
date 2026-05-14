@@ -128,11 +128,45 @@ You will receive an issue number as the argument (or from context). You should b
 
    **8e. Re-validate.** Re-run step 6 (type check + tests + visual validation) once more to confirm the review fixes did not regress anything.
 
-9. **Open a pull request:**
+9. **Open a pull request.**
+
+   **9a. Derive the PR title from the issue.** The PR title must be a strict
+   Conventional-Commits string (`feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert(<scope>)?: <summary>`)
+   so release-please can drive versioning + CHANGELOG. Issue titles are intentionally
+   expressive (`bug(...)`, `epic(...)`, `skill: ...`) and must NOT pass through verbatim.
+   Run the helper to derive it:
+
+   ```bash
+   PR_TITLE=$("${CLAUDE_PLUGIN_ROOT}/scripts/derive-pr-title.sh" <N>)
+   rc=$?
+   if [ "$rc" -eq 2 ]; then
+     # exit 2 = tracker (epic title or `tracker` label) — these never get PRs.
+     echo "ABORT: Issue #<N> is a tracker (epic title); trackers don't get PRs. Close the issue or rename it." >&2
+     exit 1
+   elif [ "$rc" -ne 0 ]; then
+     echo "ABORT: derive-pr-title.sh failed with exit $rc for issue #<N>" >&2
+     exit 1
+   fi
+   ```
+
+   The helper applies this rule table (source of truth lives in `scripts/derive-pr-title.sh`):
+
+   | Order | Condition | Action |
+   |-------|-----------|--------|
+   | 1 | Labels include `tracker` | exit 2 (refusal) |
+   | 2 | Title matches `^epic\(` | exit 2 (refusal) |
+   | 3 | Title is already Conventional Commits | passthrough |
+   | 4 | Title matches `^bug\(<scope>\):` | rewrite to `fix(<scope>): <rest>` |
+   | 5 | Labels include `bug` | `fix(<scope-or-general>): <summary>` |
+   | 6 | Labels include `enhancement` | `feat(<scope-or-general>): <summary>` |
+   | 7 | default | `chore(general): <summary>` |
+
+   **9b. Open the PR:**
+
    ```bash
    gh pr create \
      --repo $PIPELINE_REPO \
-     --title "<issue title>" \
+     --title "$PR_TITLE" \
      --base $PIPELINE_BASE_BRANCH \
      --body "$(cat <<'EOF'
    Closes #<N>
