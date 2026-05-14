@@ -52,16 +52,20 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 ### Release cadence (this repo only)
 
-This repo uses a two-branch model: `staging` is the dev trunk (where wave PRs land); `main` is the release branch (what consumers install from). Cut a release by opening a `staging → main` PR, bumping `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, and merging.
+This repo uses a two-branch model: `staging` is the dev trunk (where wave PRs land); `main` is the release branch (what consumers install from).
 
-**After each dev release, reload the plugin** so subsequent dogfood sessions pick up the new code:
+**To cut a release:**
 
-```
-/plugin uninstall pipeline@claude-pipeline
-/plugin install   pipeline@claude-pipeline
-```
-
-(Or, if installed via local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
+1. Branch `release/vX.Y.Z` off `staging`, bump `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (both `metadata.version` and `plugins[0].version`), commit.
+2. PR `release/vX.Y.Z` → `main`. Squash-merge, delete branch.
+3. `gh release create vX.Y.Z --target main`.
+4. **Back-sync to staging:** cherry-pick the release commit onto `chore/sync-vX.Y.Z-to-staging`, PR → `staging`, squash-merge. This step is mandatory — squash-merge in step 2 produces a SHA-disconnected commit on `main`, so `staging` won't fast-forward and subsequent feature PRs would branch from a version-stale base.
+5. **Reload the plugin** so subsequent dogfood sessions pick up the new code:
+   ```
+   /plugin uninstall pipeline@claude-pipeline
+   /plugin install   pipeline@claude-pipeline
+   ```
+   (Or, if installed via local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
 
 ## Plugin architecture
 
