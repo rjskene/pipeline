@@ -128,5 +128,11 @@ if has_label "bug"; then
   exit 0
 fi
 
+# `enhancement` label fallback — same shape, emits feat(...).
+if has_label "enhancement"; then
+  printf 'feat(%s): %s\n' "$(scope_from_title)" "$(summary_from_title)"
+  exit 0
+fi
+
 # No rule matched yet — later tasks extend this.
 exit 1

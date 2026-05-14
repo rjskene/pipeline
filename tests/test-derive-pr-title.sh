@@ -112,5 +112,16 @@ assert_stdout \
   "fix(general): fix the thing" \
   999 --title-override 'skill: fix the thing' --labels-override 'bug'
 
+# Task 6: `enhancement` label fallback — same shape as bug label, emits feat.
+assert_stdout \
+  "enhancement label: no prefix → feat(general) with full title" \
+  "feat(general): Add modal for X" \
+  999 --title-override 'Add modal for X' --labels-override 'enhancement'
+
+assert_stdout \
+  "enhancement label: strips 'web modal:' prefix; multi-label list" \
+  "feat(general): add support for X" \
+  999 --title-override 'web modal: add support for X' --labels-override 'enhancement,priority/P1'
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
