@@ -55,6 +55,7 @@ You will receive an issue number as the argument (or from context). You should b
    - Implement ONLY what the plan specifies. No scope creep.
    - Never commit directly to main.
    - Never use `--no-verify` or `--force`.
+   - When the plan or issue references a GH Actions CI-blocking marker (the bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`), do NOT propagate the literal marker into any `git commit -m`, `gh pr create --title`, or `gh pr create --body` argument. Substitute a safe form: backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` (no brackets). The `check-ci-skip-markers` PreToolUse hook blocks the literal form to prevent silent workflow skips on the very PR that is fixing CI behavior.
 
 6. **Validate — types, tests, server, and UI:**
 
@@ -146,6 +147,8 @@ You will receive an issue number as the argument (or from context). You should b
    EOF
    )"
    ```
+
+   Both `--title` and `--body` values are scanned by the `check-ci-skip-markers` hook before this command runs. If you need to *describe* a marker in the PR body, wrap it in backticks (e.g. `` `[skip ci]` ``) so GH Actions does not honor it.
 
 10. **Mark as pr-open:**
     ```bash
