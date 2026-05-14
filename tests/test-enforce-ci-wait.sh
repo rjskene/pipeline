@@ -145,6 +145,37 @@ else
   fail_msg "expected exit 2 with --watch stderr; got rc=$RC stderr=$ERR"
 fi
 
+# --- Test 4a: --watch ran but no post-watch rollup -> exit 2 ---
+echo "Test 4a: --watch but no post-watch rollup -> exit 2"
+inc
+reset_state
+seed_log_row "2026-05-14T10:00:00Z" "sess-4a" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+seed_log_row "2026-05-14T10:01:00Z" "sess-4a" "Bash" \
+  "timeout 600 gh pr checks 123 --repo fake/repo --watch --fail-fast --interval 30"
+PAYLOAD='{"session_id":"sess-4a","cwd":"'"$PROJ"'"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="1")
+ERR=$(cat "$WORKDIR/err.txt")
+if [ "$RC" = "2" ] && echo "$ERR" | grep -q "final rollup not re-checked after --watch"; then
+  pass_msg "exit 2 + post-watch rollup stderr matches"
+else
+  fail_msg "expected exit 2 with post-watch stderr; got rc=$RC stderr=$ERR"
+fi
+
+# --- Test 4b: well-formed sequence -> exit 0 ---
+echo "Test 4b: rollup -> --watch -> rollup -> exit 0"
+inc
+reset_state
+seed_log_row "2026-05-14T10:00:00Z" "sess-4b" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+seed_log_row "2026-05-14T10:01:00Z" "sess-4b" "Bash" \
+  "timeout 600 gh pr checks 123 --repo fake/repo --watch --fail-fast --interval 30"
+seed_log_row "2026-05-14T10:02:00Z" "sess-4b" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup --jq '.statusCheckRollup'"
+PAYLOAD='{"session_id":"sess-4b","cwd":"'"$PROJ"'"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_OUT="1")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (well-formed sequence)"; else fail_msg "expected exit 0, got $RC"; fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

@@ -142,6 +142,22 @@ def main() -> int:
         )
         return 2
 
+    # Require a second rollup query after the --watch.
+    post_watch_rollup = False
+    for ts, summary in rows:
+        if ts > watch_ts and ROLLUP_RE.search(summary):
+            post_watch_rollup = True
+            break
+    if not post_watch_rollup:
+        sys.stderr.write(
+            "CI-wait gate: final rollup not re-checked after --watch.\n"
+            "Step 5c of evaluate-issue-pr requires re-reading statusCheckRollup\n"
+            "after --watch completes:\n"
+            "  gh pr view <PR> --repo <REPO> --json statusCheckRollup ...\n"
+            "Run that command, then retry Stop.\n"
+        )
+        return 2
+
     return 0
 
 
