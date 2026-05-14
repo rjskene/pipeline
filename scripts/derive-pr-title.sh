@@ -100,5 +100,33 @@ if [[ "$TITLE" =~ ^bug\(([^\)]+)\):[[:space:]]+(.+)$ ]]; then
   exit 0
 fi
 
+# Derive scope from a `(...)` parenthetical in the title; else `general`.
+scope_from_title() {
+  if [[ "$TITLE" =~ \(([A-Za-z0-9_-]+)\) ]]; then
+    normalize_scope "${BASH_REMATCH[1]}"
+  else
+    printf 'general'
+  fi
+}
+
+# Strip a leading `prefix:` from the title (e.g. `skill: ...`, `web modal: ...`)
+# so the PR title doesn't double-prefix. Multi-word prefixes are supported as
+# long as they end at the first `:` with no parentheses before it.
+summary_from_title() {
+  local t="$TITLE"
+  if [[ "$t" =~ ^[a-z][a-z[:space:]]*:[[:space:]]+(.+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    printf '%s' "$t"
+  fi
+}
+
+# `bug` label fallback — title had no recognized prefix, but the issue is
+# tagged as a bug.
+if has_label "bug"; then
+  printf 'fix(%s): %s\n' "$(scope_from_title)" "$(summary_from_title)"
+  exit 0
+fi
+
 # No rule matched yet — later tasks extend this.
 exit 1

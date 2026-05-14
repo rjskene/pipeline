@@ -95,5 +95,22 @@ assert_stdout \
   "fix(install_path): X" \
   999 --title-override 'bug(Install_Path): X' --labels-override ''
 
+# Task 5: `bug` label fallback — no bug() prefix, take scope from title
+# parenthetical (if any) else `general`; strip `prefix:` from summary.
+assert_stdout \
+  "bug label: no parenthetical → general scope, full title as summary" \
+  "fix(general): Postsearch audit: distinguish BLOCKED from peeks" \
+  999 --title-override 'Postsearch audit: distinguish BLOCKED from peeks' --labels-override 'bug'
+
+assert_stdout \
+  "bug label: parenthetical in title wins for scope" \
+  "fix(audit): Crash in (audit): something" \
+  999 --title-override 'Crash in (audit): something' --labels-override 'bug'
+
+assert_stdout \
+  "bug label: strips 'prefix:' from summary" \
+  "fix(general): fix the thing" \
+  999 --title-override 'skill: fix the thing' --labels-override 'bug'
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
