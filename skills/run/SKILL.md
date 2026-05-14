@@ -48,6 +48,17 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```
 5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
+6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parse the emitted `ACTION=` line. Act per the table:
+
+   | ACTION | Behavior |
+   |--------|----------|
+   | `green` | leave the issue for step 7 (Evaluate PRs). |
+   | `pending` | defer; in single-pass full send, treat as green so step 7 still runs. |
+   | `red-retry` | autonomous mode: fire `bash .claude/scripts/run-queue.sh --ci-fix <N> <LOG>` in the background. Interactive mode: propose "re-dispatch executor on #N (CI red, retry budget <NEXT>/<BUDGET>)" as a candidate action. |
+   | `red-budget-exhausted` | issue is already labelled `human` by the helper; mark "Flagged (CI persistent failure)" in the final report and skip evaluate-issue-pr for that issue. |
+
+   The helper writes a tail-truncated failure log to `.claude/logs/ci-fix-<N>-attempt-<n>.log` and posts a `pipeline.ci-retries: <n>` issue comment to track the retry counter. Step 4's status table should source the `CI` column (`green` / `red` / `pending` / `—`) from the same helper invocation for `pr-open` rows.
+
 7. **Evaluate PRs** — once all agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6.
 8. **Report** — print a summary table of all issues with their final stage and any flags. Include a **Classification mismatch** column showing, for each issue, the current-label path vs. the recommended path when they diverged (else blank):
    ```

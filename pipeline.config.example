@@ -71,3 +71,8 @@ PIPELINE_CI_CHECK_ENABLED="true"                   # Gate the evaluate-issue-pr 
 # PIPELINE_PATH_C_SKILLS_EXECUTE="superpowers:subagent-driven-development"
 # PIPELINE_PATH_C_REVIEWER_EXECUTE="superpowers:code-reviewer"
 # PIPELINE_PATH_C_SKILL_ARGS_EXECUTE_SUBAGENT_DRIVEN_DEVELOPMENT="scripts/skill-args/c-execute-subagent-driven-development.txt"
+
+# CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
+PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true; further gated by PIPELINE_CI_CHECK_ENABLED
+PIPELINE_CI_FIX_RETRY_BUDGET="2"      # max re-dispatches per PR before applying the human label
+PIPELINE_CI_FIX_LOG_LINES="200"       # tail size when injecting CI failure log into executor context

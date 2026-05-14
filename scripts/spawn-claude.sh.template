@@ -201,6 +201,26 @@ if [ -n "$SKILL_ALIAS" ]; then
   fi
 fi
 
+# CI-fix mode (issue #52): when PIPELINE_CI_FIX_CONTEXT is set, append a
+# directive that tells the executor to read the failure log + PR diff and
+# push a follow-up commit to the existing branch instead of opening a new
+# PR. Creates the system-prompt file if no other directive populated it.
+if [ -n "${PIPELINE_CI_FIX_CONTEXT:-}" ]; then
+  if [ -z "$APPEND_PROMPT_FILE" ]; then
+    APPEND_PROMPT_FILE=$(mktemp /tmp/claude-sysprompt-XXXXXX.txt)
+  fi
+  {
+    echo ""
+    echo "---"
+    echo "CI-FIX MODE: A prior commit on this branch failed CI. Read the failure log at"
+    echo "${PIPELINE_CI_FIX_CONTEXT} and the current PR diff (gh pr diff), then push a"
+    echo "follow-up commit to the existing branch. Do NOT open a new PR. Do NOT remove"
+    echo "the pr-open label. Stay inside this worktree. Apply red->green->commit TDD"
+    echo "discipline to the fix itself."
+    echo "---"
+  } >> "$APPEND_PROMPT_FILE"
+fi
+
 # Build-claude-argv snippet injected into each mode's launcher. Using bash
 # arrays + printf %q keeps multi-line system-prompt payloads intact.
 # $SYSPROMPT_FILE is the payload file path, or empty when no directive applies.
