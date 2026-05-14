@@ -3,7 +3,7 @@
 # This file is sourced by shell scripts at runtime.
 
 PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
-PIPELINE_BASE_BRANCH="main"                        # PR target branch (default: main)
+PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: staging — dev trunk; override per-repo if needed)
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
