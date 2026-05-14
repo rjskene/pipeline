@@ -21,21 +21,21 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 
 | Stage | Pipeline skill | Superpowers used internally |
 |-------|---------------|---------------------------|
-| Ideation | `/create-issues` | `brainstorming` |
-| Planning | `/plan-issue` | `writing-plans` |
-| Plan review | `/evaluate-issue-plan` | — |
-| Execution | `/execute-issue-plan` | `subagent-driven-development` |
-| PR review | `/evaluate-issue-pr` | `subagent-driven-development` |
+| Ideation | `/pipeline:create-issues` | `brainstorming` |
+| Planning | `/pipeline:plan-issue` | `writing-plans` |
+| Plan review | `/pipeline:evaluate-issue-plan` | — |
+| Execution | `/pipeline:execute-issue-plan` | `subagent-driven-development` |
+| PR review | `/pipeline:evaluate-issue-pr` | `subagent-driven-development` |
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
 ## Key Handoffs
 
-**Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/plan-issue`.
+**Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/pipeline:create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/pipeline:plan-issue`.
 
-**Issues → Plans:** Each issue gets its own implementation plan via `/plan-issue`, which uses `writing-plans` internally.
+**Issues → Plans:** Each issue gets its own implementation plan via `/pipeline:plan-issue`, which uses `writing-plans` internally.
 
-**Plans → Execution:** After a plan is reviewed (`/evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/execute-issue-plan` implements it in an isolated worktree.
+**Plans → Execution:** After a plan is reviewed (`/pipeline:evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/pipeline:execute-issue-plan` implements it in an isolated worktree.
 
 ## Observability
 
@@ -48,7 +48,7 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 ## Branches
 
 - **`pipeline`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
-- **`feature/*`** — feature branches created by `/execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
+- **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 
 ## Design Principles
 
