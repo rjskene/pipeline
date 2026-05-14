@@ -226,6 +226,61 @@ RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr \
   STUB_GH_ROLLUP_LEN="1" STUB_GH_FAIL_COUNT="0")
 if [ "$RC" = "0" ]; then pass_msg "exit 0 (Approved + green)"; else fail_msg "expected exit 0, got $RC"; fi
 
+# --- Test 6a/b/c: retry counter increments on each block ---
+echo "Test 6a-c: retry counter increments + escalates on 3rd block"
+inc
+reset_state
+seed_log_row "2026-05-14T10:00:00Z" "sess-6" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+# No --watch row, so every invocation blocks.
+PAYLOAD='{"session_id":"sess-6","cwd":"'"$PROJ"'"}'
+COUNT_FILE="$PROJ/.claude/logs/enforce-ci-wait-state/sess-6.count"
+SUB_OK=1
+for n in 1 2 3; do
+  RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=54 \
+    CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN="1")
+  if [ "$RC" != "2" ]; then SUB_OK=0; reason="rc=$RC on block #$n"; break; fi
+  if [ ! -f "$COUNT_FILE" ]; then SUB_OK=0; reason="count file missing after block #$n"; break; fi
+  CUR=$(cat "$COUNT_FILE")
+  if [ "$CUR" != "$n" ]; then SUB_OK=0; reason="count=$CUR, expected $n"; break; fi
+done
+# On block #3, expect issue-edit + pr-comment gh calls.
+if [ "$SUB_OK" = "1" ]; then
+  if ! grep -q "issue edit 54" "$WORKDIR/gh-calls.log"; then
+    SUB_OK=0; reason="gh issue edit not invoked on 3rd block"
+  elif ! grep -q "needs-human" "$WORKDIR/gh-calls.log"; then
+    SUB_OK=0; reason="needs-human label not added"
+  elif ! grep -q "pr comment 123" "$WORKDIR/gh-calls.log"; then
+    SUB_OK=0; reason="pr comment not posted on 3rd block"
+  fi
+fi
+if [ "$SUB_OK" = "1" ]; then
+  pass_msg "counter increments + escalates on 3rd block"
+else
+  fail_msg "${reason:-unknown}"
+fi
+
+# --- Test 6d: counter file deleted on successful exit 0 ---
+echo "Test 6d: counter file deleted on successful (exit 0) Stop"
+inc
+reset_state
+# Pre-seed a counter from a prior session as if blocks had occurred.
+mkdir -p "$PROJ/.claude/logs/enforce-ci-wait-state"
+echo "2" > "$PROJ/.claude/logs/enforce-ci-wait-state/sess-6d.count"
+seed_log_row "2026-05-14T10:00:00Z" "sess-6d" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+seed_log_row "2026-05-14T10:01:00Z" "sess-6d" "Bash" \
+  "timeout 600 gh pr checks 123 --repo fake/repo --watch --fail-fast --interval 30"
+seed_log_row "2026-05-14T10:02:00Z" "sess-6d" "Bash" \
+  "gh pr view 123 --repo fake/repo --json statusCheckRollup"
+PAYLOAD='{"session_id":"sess-6d","cwd":"'"$PROJ"'"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN="1")
+if [ "$RC" = "0" ] && [ ! -f "$PROJ/.claude/logs/enforce-ci-wait-state/sess-6d.count" ]; then
+  pass_msg "exit 0 + counter cleared"
+else
+  fail_msg "expected exit 0 + cleared count; got rc=$RC, file=$(ls $PROJ/.claude/logs/enforce-ci-wait-state/ 2>/dev/null || echo missing)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
