@@ -234,6 +234,39 @@ else
   fail_msg "partial: install instructions missing"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "idempotent": after the "clean" run, re-running on the same $PROJ is
+# a no-op (exit 0, stderr 'nothing to migrate', filesystem identical).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'idempotent': second run on already-migrated project is a no-op"
+
+BEFORE=$(cd "$PROJ_CLEAN" && find . -type f -o -type d | sort)
+STDERR_LOG="$WORKDIR/idem.stderr"
+STDOUT_LOG="$WORKDIR/idem.stdout"
+(cd "$PROJ_CLEAN" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+AFTER=$(cd "$PROJ_CLEAN" && find . -type f -o -type d | sort)
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "idempotent: exit 0"; else fail_msg "idempotent: exit $EXIT"; fi
+
+inc
+if [ "$BEFORE" = "$AFTER" ]; then
+  pass_msg "idempotent: filesystem unchanged on second run"
+else
+  fail_msg "idempotent: filesystem changed on second run"
+  diff <(echo "$BEFORE") <(echo "$AFTER") | sed 's/^/    /'
+fi
+
+inc
+if grep -qi 'nothing to migrate' "$STDERR_LOG"; then
+  pass_msg "idempotent: stderr mentions 'nothing to migrate'"
+else
+  fail_msg "idempotent: stderr missing 'nothing to migrate'"
+  sed 's/^/      /' "$STDERR_LOG"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
