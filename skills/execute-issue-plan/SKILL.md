@@ -21,6 +21,8 @@ You will receive an issue number as the argument (or from context). You should b
 
 ## Steps
 
+**0b. CI-fix mode.** If `$PIPELINE_CI_FIX_CONTEXT` is non-empty, you were dispatched to fix a red CI run on an existing PR — not to implement a new plan. Skip steps 1–4 and step 9. Read the failure log at `$PIPELINE_CI_FIX_CONTEXT` and run `gh pr diff` to see the PR so far. Diagnose the failure, apply red→green→commit TDD discipline for the fix, run step 6 (Validate) once, then push the follow-up commit to the existing branch with `git push`. Do NOT call `gh pr create`. Do NOT change the `pr-open` label. Report the new commit SHA back to the orchestrator.
+
 1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan`:
    ```bash
    gh issue view <N> --repo $PIPELINE_REPO --json comments \
