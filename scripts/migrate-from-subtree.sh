@@ -58,20 +58,28 @@ if [ -d .claude-pipeline ]; then
   done
 fi
 
-# Detect pipeline-hook references in .claude/settings.json. We capture the
-# matching lines NOW (before mutation removes .claude-pipeline/) so the
-# enumerated hook-name list is still in scope.
+# Detect pipeline-hook references in .claude/settings.json. Two signals:
+#   1. Hook basenames enumerated from .claude-pipeline/hooks/ (when present).
+#   2. Path-fragment match on ".claude/hooks/" — catches consumers who have
+#      already deleted .claude-pipeline/ but still carry hook entries in
+#      settings.json (residual injection from the abandoned auto-merge path
+#      in #4). Pure text grep; settings.json itself is never mutated.
 SETTINGS_FILE=".claude/settings.json"
 SETTINGS_REPORT=".claude/settings.json.pipeline-migration-report.txt"
 SETTINGS_HAS_INJECTIONS=false
-SETTINGS_MATCHES=""
-if [ -f "$SETTINGS_FILE" ] && [ ${#PIPELINE_HOOK_NAMES[@]} -gt 0 ]; then
-  for name in "${PIPELINE_HOOK_NAMES[@]}"; do
+declare -A SETTINGS_MATCH_LINES=()
+if [ -f "$SETTINGS_FILE" ]; then
+  collect_matches() {
+    local pat="$1"
     while IFS= read -r line; do
-      SETTINGS_MATCHES+="$line"$'\n'
-    done < <(grep -n -F "$name" "$SETTINGS_FILE" 2>/dev/null || true)
+      [ -n "$line" ] && SETTINGS_MATCH_LINES["$line"]=1
+    done < <(grep -n -F "$pat" "$SETTINGS_FILE" 2>/dev/null || true)
+  }
+  for name in "${PIPELINE_HOOK_NAMES[@]:-}"; do
+    [ -n "$name" ] && collect_matches "$name"
   done
-  if [ -n "$SETTINGS_MATCHES" ]; then
+  collect_matches ".claude/hooks/"
+  if [ ${#SETTINGS_MATCH_LINES[@]} -gt 0 ]; then
     SETTINGS_HAS_INJECTIONS=true
   fi
 fi
@@ -82,7 +90,8 @@ if [ ! -d .claude-pipeline ] \
    && [ ${#TO_REMOVE_SKILLS[@]} -eq 0 ] \
    && [ ${#TO_REMOVE_AGENTS[@]} -eq 0 ] \
    && [ ${#TO_REMOVE_SCRIPTS[@]} -eq 0 ] \
-   && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ]; then
+   && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ] \
+   && [ "$SETTINGS_HAS_INJECTIONS" = false ]; then
   echo "migrate-from-subtree: nothing to migrate." >&2
   exit 0
 fi
@@ -102,7 +111,10 @@ done
 if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
   {
     printf '%s\n' "Pipeline-injected hook references detected in $SETTINGS_FILE:"
-    printf '%s' "$SETTINGS_MATCHES"
+    # Sort numerically by leading "linenum:" prefix so the report reads top-down.
+    for line in "${!SETTINGS_MATCH_LINES[@]}"; do
+      printf '%s\n' "$line"
+    done | sort -t: -k1,1n
     printf '\n%s\n' "Review and remove these entries manually."
   } > "$SETTINGS_REPORT"
   echo "Pipeline-injected entries detected in settings.json — see report."

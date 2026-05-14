@@ -375,6 +375,46 @@ else
   fail_msg "clean-s: warning incorrectly emitted"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "settings injection w/o manifest": consumer manually removed
+# .claude-pipeline/ but still has .claude/hooks/* references in settings.json.
+# Path-fragment matching (".claude/hooks/") must still flag these so the user
+# gets the advisory report.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings injection no-manifest': path-fragment detection without .claude-pipeline/"
+
+PROJ_NOMAN="$WORKDIR/proj-noman"
+mkdir -p "$PROJ_NOMAN/.claude"
+cat > "$PROJ_NOMAN/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/log-tool-use.sh"}]}
+    ]
+  }
+}
+EOF
+
+STDERR_LOG="$WORKDIR/noman.stderr"
+STDOUT_LOG="$WORKDIR/noman.stdout"
+(cd "$PROJ_NOMAN" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || true
+
+REPORT="$PROJ_NOMAN/.claude/settings.json.pipeline-migration-report.txt"
+inc
+if [ -f "$REPORT" ]; then
+  pass_msg "noman: report file created via path-fragment detection"
+else
+  fail_msg "noman: no report despite .claude/hooks/ reference in settings.json"
+fi
+
+inc
+if grep -qF 'Pipeline-injected entries detected in settings.json — see report.' "$STDOUT_LOG"; then
+  pass_msg "noman: stdout warning printed"
+else
+  fail_msg "noman: stdout warning missing"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
