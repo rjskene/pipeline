@@ -74,6 +74,35 @@ gh label create human          --repo $REPO --color "F9D0C4" --description "Need
 
 Hooks are registered by the plugin manifest at install time — you do not need to touch `.claude/settings.json` yourself.
 
+### Release-PR awareness (release-please et al.)
+
+`/pipeline:run` discovers open release-bot PRs in housekeeping and surfaces them in a dedicated **Release PRs** row group above the regular pipeline-issue table:
+
+```
+RELEASE PRs
+================================================================
+ PR     Title                              Stage             CI
+----------------------------------------------------------------
+ #201   chore(main): release 1.2.3         release-pending   pass
+ #202   chore(main): release 1.3.0         release-pending   fail
+================================================================
+```
+
+`release-pending` is a display-only Stage value — it is NOT a GitHub label. The PR already carries `autorelease: pending` (release-please convention); writing a second label would force consumer repos to define it.
+
+In **interactive mode**, a green release PR is proposed for merge once feature work in flight is done (priority slots between `plan-approved` execution and `ready` planning). In **full send**, step 7b auto-merges green release PRs between PR evaluation (step 7) and report (step 8) — gated on the opt-in flag below.
+
+Two config flags control behavior (defaults shown):
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `PIPELINE_RELEASE_PR_AUTO_MERGE` | `"false"` | Opt-in auto-merge of green release PRs during full send. Default off so manual-review release flows aren't surprised on upgrade. |
+| `PIPELINE_RELEASE_PR_LABEL` | `"autorelease: pending"` | Label used to discover release-bot PRs. Override for non-release-please bots (e.g. `please-release`). |
+
+PRs with `ci=fail` or `ci=pending` are surfaced in the table but never proposed/merged — wait for CI to settle (or fix it) first.
+
+The discovery helper requires `jq` (already a pipeline prerequisite) and `gh`. If `gh` is unavailable or no release PRs are open, the row group is omitted silently.
+
 ---
 
 ## Usage
