@@ -1,7 +1,6 @@
 # pipeline.config.example — Copy to pipeline.config in your project root and edit.
 #
-# This file is sourced by shell scripts at runtime and used by install.sh
-# for template substitution into SKILL.md files and Python hooks.
+# This file is sourced by shell scripts at runtime.
 
 PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
 PIPELINE_BASE_BRANCH="staging"                     # PR target branch (e.g., staging, main, develop)
@@ -21,8 +20,6 @@ PIPELINE_LABELS_LATER="later"                      # Label for deferred issues
 PIPELINE_LABELS_HUMAN="human"                      # Label for issues that need a human in the loop (skipped by autonomous full send)
 PIPELINE_WIN_TEMP=""                               # Windows temp dir (e.g., /c/Users/you/AppData/Local/Temp). Leave empty for non-Windows.
 PIPELINE_TMUX_SESSION="dev"                        # tmux session name for the queue runner + per-issue windows (default 'dev'; set per project to avoid collisions)
-PIPELINE_SUBTREE_REMOTE=""                         # Git remote name for pipeline source repo (auto-detected if empty)
-PIPELINE_SUBTREE_BRANCH="main"                     # Branch to track on the pipeline source remote
 PIPELINE_CI_CHECK_ENABLED="true"                   # Gate the evaluate-issue-pr CI status check step. "true" keeps it; any other value (incl. "") strips the block from the rendered SKILL.md. Projects with no CI or with non-blocking CI should set this to "".
 
 # --- Label-driven 3-path execution (optional) ---
