@@ -127,14 +127,15 @@ def _block(session_id: str, rows, reason: str) -> int:
 
 
 def _session_bash_rows(session_id: str):
-    """Yield (timestamp, summary) tuples for Bash rows in this session."""
+    """Yield (timestamp, summary) tuples for Bash rows in this session.
+
+    Raises OSError if the log path is unreadable/corrupt — the top-level
+    try/except converts that to a fail-open exit with an errors.log entry.
+    """
     log = tool_use_log_path()
     if not log.exists():
         return
-    try:
-        text = log.read_text()
-    except OSError:
-        return
+    text = log.read_text()
     needle = f"session={session_id}"
     for line in text.splitlines():
         cols = line.split("\t")

@@ -281,6 +281,32 @@ else
   fail_msg "expected exit 0 + cleared count; got rc=$RC, file=$(ls $PROJ/.claude/logs/enforce-ci-wait-state/ 2>/dev/null || echo missing)"
 fi
 
+# --- Test 8a: SKILL.md mentions hook-enforced ---
+echo "Test 8a: evaluate-issue-pr SKILL.md mentions hook-enforced"
+inc
+SKILL_PATH="$SCRIPT_DIR/../skills/evaluate-issue-pr/SKILL.md"
+if grep -qi "hook-enforced" "$SKILL_PATH"; then
+  pass_msg "SKILL.md contains 'hook-enforced'"
+else
+  fail_msg "SKILL.md missing 'hook-enforced' phrase at $SKILL_PATH"
+fi
+
+# --- Test 8b: unreadable tool-use.log -> exit 0 + errors.log line (fail-open) ---
+echo "Test 8b: unreadable tool-use.log -> exit 0 + errors.log gains a line"
+inc
+reset_state
+# Make .claude/logs a directory whose tool-use.log is itself a directory — read_text
+# will raise IsADirectoryError -> caught by top-level except -> writes to errors.log.
+mkdir -p "$PROJ/.claude/logs/tool-use.log"
+PAYLOAD='{"session_id":"sess-8b","cwd":"'"$PROJ"'"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN="1")
+rmdir "$PROJ/.claude/logs/tool-use.log" 2>/dev/null || true
+if [ "$RC" = "0" ] && [ -s "$PROJ/.claude/logs/enforce-ci-wait-errors.log" ]; then
+  pass_msg "fail-open: exit 0 + errors.log gained a line"
+else
+  fail_msg "expected exit 0 + non-empty errors.log; got rc=$RC, err=$(ls -la $PROJ/.claude/logs/ 2>&1 | head -5)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

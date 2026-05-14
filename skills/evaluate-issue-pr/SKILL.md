@@ -114,6 +114,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    - Any check FAILURE or CANCELLED → you MUST NOT post an "Approved" verdict, regardless of plan compliance and code quality findings.
    - If the failure looks fixable within the existing fix budget (≤3 files, no new design decisions): attempt the fix in-worktree, commit, `git push`, and re-run the bounded wait from 5b with a fresh 10-minute timeout.
    - If the failure exceeds the fix budget, persists after one fix attempt, or the wait timed out with checks still in progress: post a "Flagged" verdict that includes the failing job names and the first error line from 5c in the `**CI status:**` section of the evaluation comment (see Step 9).
+   **Hook-enforced.** Step 5's wait is gated by the `enforce-ci-wait` Stop hook (`hooks/enforce-ci-wait.py`). The hook reads `.claude/logs/tool-use.log` and blocks Stop unless the prescribed `gh pr view` → `gh pr checks --watch` → `gh pr view` sequence is recorded for the current session. An Approved verdict with a red final rollup is also blocked. The skill prose remains the source of truth for HOW to wait; the hook only verifies that it happened.
 <!-- END CI_CHECK -->
 
 6. **Visual validation** (if UI changes exist in the diff):
