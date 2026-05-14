@@ -7,7 +7,7 @@ assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  
 assert "guide file exists" "[ -f '$GUIDE' ]"
 assert "references migrate-from-subtree.sh" "grep -q 'scripts/migrate-from-subtree.sh' '$GUIDE'"
 assert "references marketplace add" "grep -qF '/plugin marketplace add HTS-COLLAB-ORG/claude-pipeline' '$GUIDE'"
-assert "references plugin install" "grep -qF '/plugin install claude-pipeline' '$GUIDE'"
+assert "references plugin install (plugin@marketplace form)" "grep -qF '/plugin install pipeline@claude-pipeline' '$GUIDE'"
 assert "references /pipeline:run for verify step" "grep -qF '/pipeline:run' '$GUIDE'"
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

@@ -50,10 +50,12 @@ Run this inside Claude Code. It registers the claude-pipeline marketplace with t
 ## 5. Install the plugin
 
 ```bash
-/plugin install claude-pipeline
+/plugin install pipeline@claude-pipeline
 ```
 
-The plugin is fetched into `~/.claude/plugins/claude-pipeline/` and all of its slash commands, hooks, skills, and the `tdd-implementer` subagent are registered automatically.
+The form is `<plugin-name>@<marketplace-name>` — `pipeline` is the plugin (from `plugin.json`), `claude-pipeline` is the marketplace (from `marketplace.json`). The plugin is fetched into `~/.claude/plugins/claude-pipeline/` and all of its slash commands, hooks, skills, and the `tdd-implementer` subagent are registered automatically.
+
+If the migration script printed a different install hint at the end of step 2 (e.g., `claude plugin install ...`), ignore it and use the slash commands above.
 
 ## 6. Verify
 

@@ -19,7 +19,7 @@ The pipeline is distributed as a Claude Code plugin. Install it from the marketp
 ```
 
 ```
-/plugin install claude-pipeline
+/plugin install pipeline@claude-pipeline
 ```
 
 The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`) and registers all slash commands, hooks, skills, and the `tdd-implementer` subagent automatically. Nothing is copied into your project tree.
