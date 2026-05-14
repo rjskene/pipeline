@@ -267,6 +267,114 @@ else
   sed 's/^/      /' "$STDERR_LOG"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "settings injection": settings.json references pipeline hook basenames
+# → report file written, settings.json untouched, stdout warning printed.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings injection': pipeline hook refs in settings.json reported"
+
+PROJ_INJ="$WORKDIR/proj-inj"
+mkdir -p "$PROJ_INJ/.claude-pipeline/hooks" "$PROJ_INJ/.claude"
+touch "$PROJ_INJ/.claude-pipeline/hooks/log-tool-use.sh"
+touch "$PROJ_INJ/.claude-pipeline/hooks/enforce-base-branch.sh"
+cat > "$PROJ_INJ/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/log-tool-use.sh"}]}
+    ],
+    "PreToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/enforce-base-branch.sh"}]}
+    ]
+  }
+}
+EOF
+
+SETTINGS_SHA_BEFORE=$(sha256sum "$PROJ_INJ/.claude/settings.json" | awk '{print $1}')
+
+STDERR_LOG="$WORKDIR/inj.stderr"
+STDOUT_LOG="$WORKDIR/inj.stdout"
+(cd "$PROJ_INJ" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+SETTINGS_SHA_AFTER=$(sha256sum "$PROJ_INJ/.claude/settings.json" | awk '{print $1}')
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "inj: exit 0"; else fail_msg "inj: exit $EXIT"; fi
+
+inc
+if [ "$SETTINGS_SHA_BEFORE" = "$SETTINGS_SHA_AFTER" ]; then
+  pass_msg "inj: settings.json byte-identical"
+else
+  fail_msg "inj: settings.json was modified"
+fi
+
+REPORT="$PROJ_INJ/.claude/settings.json.pipeline-migration-report.txt"
+inc
+if [ -f "$REPORT" ]; then
+  pass_msg "inj: report file created"
+else
+  fail_msg "inj: report file missing"
+fi
+
+inc
+if [ -f "$REPORT" ] && grep -qF 'log-tool-use.sh' "$REPORT" && grep -qF 'enforce-base-branch.sh' "$REPORT"; then
+  pass_msg "inj: report mentions both hook basenames"
+else
+  fail_msg "inj: report missing one or both hook basenames"
+  [ -f "$REPORT" ] && sed 's/^/      /' "$REPORT"
+fi
+
+inc
+if [ -f "$REPORT" ] && grep -qF 'Review and remove these entries manually.' "$REPORT"; then
+  pass_msg "inj: report includes advisory line"
+else
+  fail_msg "inj: report missing advisory line"
+fi
+
+inc
+if grep -qF 'Pipeline-injected entries detected in settings.json — see report.' "$STDOUT_LOG"; then
+  pass_msg "inj: stdout warning printed"
+else
+  fail_msg "inj: stdout warning missing"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "settings clean": settings.json has no pipeline hook refs → no report,
+# no warning. Mutation phase still runs (because .claude-pipeline/ exists).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings clean': benign settings.json produces no report"
+
+PROJ_CLEAN_S="$WORKDIR/proj-clean-s"
+mkdir -p "$PROJ_CLEAN_S/.claude-pipeline/hooks" "$PROJ_CLEAN_S/.claude"
+touch "$PROJ_CLEAN_S/.claude-pipeline/hooks/log-tool-use.sh"
+echo '{"hooks": []}' > "$PROJ_CLEAN_S/.claude/settings.json"
+
+STDERR_LOG="$WORKDIR/clean-s.stderr"
+STDOUT_LOG="$WORKDIR/clean-s.stdout"
+(cd "$PROJ_CLEAN_S" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "clean-s: exit 0"; else fail_msg "clean-s: exit $EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_CLEAN_S/.claude/settings.json.pipeline-migration-report.txt" ]; then
+  pass_msg "clean-s: no report file created"
+else
+  fail_msg "clean-s: spurious report file created"
+fi
+
+inc
+if ! grep -qF 'Pipeline-injected entries detected in settings.json' "$STDOUT_LOG"; then
+  pass_msg "clean-s: no spurious warning in stdout"
+else
+  fail_msg "clean-s: warning incorrectly emitted"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

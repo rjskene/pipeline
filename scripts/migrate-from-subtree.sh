@@ -22,6 +22,7 @@ TO_REMOVE_SKILLS=()
 TO_REMOVE_AGENTS=()
 TO_REMOVE_SCRIPTS=()
 TO_REMOVE_HOOKS=()
+PIPELINE_HOOK_NAMES=()
 
 # Skills: one dir-level marker per managed skill
 for marker in .claude/skills/*/.pipeline-managed; do
@@ -52,8 +53,27 @@ if [ -d .claude-pipeline ]; then
     [ -f "$src" ] || continue
     name="$(basename "$src")"
     name="${name%.template}"
+    PIPELINE_HOOK_NAMES+=("$name")
     [ -f ".claude/hooks/$name" ] && TO_REMOVE_HOOKS+=(".claude/hooks/$name")
   done
+fi
+
+# Detect pipeline-hook references in .claude/settings.json. We capture the
+# matching lines NOW (before mutation removes .claude-pipeline/) so the
+# enumerated hook-name list is still in scope.
+SETTINGS_FILE=".claude/settings.json"
+SETTINGS_REPORT=".claude/settings.json.pipeline-migration-report.txt"
+SETTINGS_HAS_INJECTIONS=false
+SETTINGS_MATCHES=""
+if [ -f "$SETTINGS_FILE" ] && [ ${#PIPELINE_HOOK_NAMES[@]} -gt 0 ]; then
+  for name in "${PIPELINE_HOOK_NAMES[@]}"; do
+    while IFS= read -r line; do
+      SETTINGS_MATCHES+="$line"$'\n'
+    done < <(grep -n -F "$name" "$SETTINGS_FILE" 2>/dev/null || true)
+  done
+  if [ -n "$SETTINGS_MATCHES" ]; then
+    SETTINGS_HAS_INJECTIONS=true
+  fi
 fi
 
 # --- Validation phase ---
@@ -76,6 +96,17 @@ for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@
   rm -f "$f"
 done
 [ -d .claude-pipeline ] && rm -rf .claude-pipeline
+
+# --- Settings.json injection report (advisory only; never mutates) ---
+
+if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
+  {
+    printf '%s\n' "Pipeline-injected hook references detected in $SETTINGS_FILE:"
+    printf '%s' "$SETTINGS_MATCHES"
+    printf '\n%s\n' "Review and remove these entries manually."
+  } > "$SETTINGS_REPORT"
+  echo "Pipeline-injected entries detected in settings.json — see report."
+fi
 
 # --- Report phase ---
 
