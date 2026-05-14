@@ -71,6 +71,27 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
 
 The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. The mandatory cherry-pick back-sync survives but is now a single `git cherry-pick`.
 
+### Dev/prerelease channel
+
+Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace (`.claude-plugin/marketplace-dev.json`) that carries release candidates of the same `pipeline` plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
+
+1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
+2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, and `.release-please-manifest.json` atomically via `extra-files`.
+3. **Dev install.** Consumers add the dev marketplace and install the dev-channel plugin:
+   ```
+   /plugin marketplace add HTS-COLLAB-ORG/claude-pipeline@main .claude-plugin/marketplace-dev.json
+   /plugin install pipeline@claude-pipeline-dev
+   ```
+4. **Revert to stable.**
+   ```
+   /plugin uninstall pipeline@claude-pipeline-dev
+   /plugin marketplace remove claude-pipeline-dev
+   /plugin install pipeline@claude-pipeline
+   ```
+5. **Graduation.** Prereleases do NOT auto-graduate. The next normal `staging → main` cut WITHOUT a `Release-As:` footer produces the stable `X.Y.Z` bump. RC and stable are mutually exclusive per `staging → main` PR.
+6. **No back-sync for RCs.** Stable releases require cherry-picking the version bump back to `staging` because the squash-merge on `main` is SHA-disconnected. **For RC cuts, no back-sync is required** (cherry-pick is not required for RC) — `staging` is already the prerelease source and the next stable cut will overwrite the version. The cherry-pick back-sync remains mandatory only for stable releases.
+7. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
+
 ## Plugin architecture
 
 Pipeline assets live outside the consumer project. The plugin installs to `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`). Hooks, scripts, and the `tdd-implementer` subagent are registered from the plugin manifest; skills auto-discover from `${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md` and the manifest does not enumerate them. The consumer project's `.claude/` stays clean.
