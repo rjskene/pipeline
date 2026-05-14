@@ -9,7 +9,11 @@ assert "manifest is valid JSON" "python3 -c 'import json; json.load(open(\"$MANI
 assert "name is 'pipeline'" "[ \"\$(python3 -c 'import json; print(json.load(open(\"$MANIFEST\")).get(\"name\",\"\"))' 2>/dev/null)\" = pipeline ]"
 assert "version is set" "python3 -c 'import json,sys; v=json.load(open(\"$MANIFEST\")).get(\"version\"); sys.exit(0 if v else 1)' 2>/dev/null"
 assert "description is set" "python3 -c 'import json,sys; sys.exit(0 if json.load(open(\"$MANIFEST\")).get(\"description\") else 1)' 2>/dev/null"
-assert "superpowers is a declared dependency" "python3 -c 'import json,sys; d=json.load(open(\"$MANIFEST\")).get(\"dependencies\",[]); names=[x if isinstance(x,str) else x.get(\"name\") for x in d]; sys.exit(0 if \"superpowers\" in names else 1)' 2>/dev/null"
+# Soft dependency on superpowers — documented in CLAUDE.md, NOT a manifest dep.
+# A hard dep here causes install failures when superpowers is installed from a
+# different marketplace (e.g., superpowers@claude-plugins-official). Pipeline
+# skills check at call-site and fall back to inline behavior if absent.
+assert "manifest does NOT declare hard 'dependencies' (soft dep only)" "python3 -c 'import json,sys; m=json.load(open(\"$MANIFEST\")); d=m.get(\"dependencies\"); sys.exit(0 if (d is None or d==[] or d=={}) else 1)' 2>/dev/null"
 assert "manifest declares an 'agents' field (array)" "python3 -c 'import json,sys; m=json.load(open(\"$MANIFEST\")); a=m.get(\"agents\"); sys.exit(0 if isinstance(a,list) and a else 1)' 2>/dev/null"
 assert "agents[0] points at an existing file under plugin root" "python3 -c 'import json,os,sys; m=json.load(open(\"$MANIFEST\")); p=m.get(\"agents\",[None])[0]; sys.exit(0 if p and os.path.isfile(os.path.join(\"$REPO_ROOT\",p)) else 1)' 2>/dev/null"
 assert "referenced agent file has name: tdd-implementer" "python3 -c 'import json,os,sys,re; m=json.load(open(\"$MANIFEST\")); p=m.get(\"agents\",[None])[0]; t=open(os.path.join(\"$REPO_ROOT\",p)).read() if p else \"\"; sys.exit(0 if re.search(r\"(?m)^name:\\s*tdd-implementer\\s*\$\", t) else 1)' 2>/dev/null"
