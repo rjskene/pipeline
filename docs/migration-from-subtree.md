@@ -39,6 +39,14 @@ When you are done, delete the report file:
 rm -f .claude/settings.json.pipeline-migration-report.txt
 ```
 
+## 3a. Review the CLAUDE.md advisory report
+
+If `.claude/migration-cleanup-report-claudemd.txt` exists, the migration detected pipeline-legacy content in your `CLAUDE.md`(s). Open the file; each finding lists `<path>:<line>: <text>` under one of three subsections (Section headers / Legacy paths / Deprecated slash commands).
+
+A unified-diff patch is also written to `.claude/migration-cleanup-claudemd.patch`. Review it (`less .claude/migration-cleanup-claudemd.patch`), then apply with `git apply .claude/migration-cleanup-claudemd.patch` (or edit your `CLAUDE.md` by hand if you want partial coverage). The patch deletes entire flagged `## Pipeline*` sections and the individual legacy-reference lines that fall outside those sections — preview before applying.
+
+After cleanup, delete the artifacts with `rm -f .claude/migration-cleanup-report-claudemd.txt .claude/migration-cleanup-claudemd.patch`, then run `/pipeline:doctor` (introduced by #144, merged at `120640b`) to validate your install end-to-end.
+
 ## 4. Add the plugin marketplace
 
 ```bash
