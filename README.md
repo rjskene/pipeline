@@ -56,21 +56,21 @@ Then create the GitHub labels the pipeline uses to track issue progress:
 | `excluded` | Issue excluded from pipeline (configurable via `PIPELINE_LABELS_EXCLUDED`) |
 | `later` | Deferred — shown in status but not processed (configurable via `PIPELINE_LABELS_LATER`) |
 | `human` | Needs human in the loop — never processed by autonomous runs (configurable via `PIPELINE_LABELS_HUMAN`) |
+| `brainstorm` | Non-actionable discussion or exploration — surfaced in status but never auto-planned (configurable via `PIPELINE_LABELS_BRAINSTORM`) |
 
-You can create them quickly with `gh`:
+After installing the plugin, validate your setup:
 
-```bash
-REPO="your-org/your-repo"
-gh label create plan-pending   --repo $REPO --color "C2E0C6" --description "Plan posted, awaiting review"
-gh label create plan-reviewed  --repo $REPO --color "BFD4F2" --description "Plan evaluated"
-gh label create plan-approved  --repo $REPO --color "0E8A16" --description "Approved, ready for execution"
-gh label create in-progress    --repo $REPO --color "FBCA04" --description "Currently being implemented"
-gh label create pr-open        --repo $REPO --color "1D76DB" --description "PR open, awaiting review"
-gh label create merged         --repo $REPO --color "6F42C1" --description "PR merged, ready for cleanup"
-gh label create excluded       --repo $REPO --color "E4E669" --description "Excluded from pipeline"
-gh label create later          --repo $REPO --color "D4C5F9" --description "Deferred"
-gh label create human          --repo $REPO --color "F9D0C4" --description "Needs human in the loop"
 ```
+/pipeline:doctor
+```
+
+This is a read-only audit — it reports any gaps in `pipeline.config`, `gh` auth, plugin registration, residual subtree artifacts, the base branch, and label setup. To seed the GitHub labels listed above in one shot, run:
+
+```
+/pipeline:doctor --fix labels
+```
+
+`--fix labels` is idempotent (uses `gh label create --force`) and honors `PIPELINE_LABELS_*` overrides from `pipeline.config`.
 
 Hooks are registered by the plugin manifest at install time — you do not need to touch `.claude/settings.json` yourself.
 
