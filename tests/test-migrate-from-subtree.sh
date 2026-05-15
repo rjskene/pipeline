@@ -453,6 +453,110 @@ else
   [ -f "$REPORT_INTG" ] && sed 's/^/    /' "$REPORT_INTG"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "settings patch: pipeline-only" — settings.json carries only pipeline
+# hook entries. Script must emit .claude/migration-cleanup-settings.patch
+# alongside the report. Patch must apply cleanly via `git apply` and yield
+# valid JSON (empty hooks block) or remove the file entirely (with loud
+# warning in the report). Source settings.json must remain byte-identical.
+# Patch must be byte-stable across re-runs (idempotency).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings patch: pipeline-only settings.json'"
+
+PROJ_PATCH_PO="$WORKDIR/proj-patch-po"
+mkdir -p "$PROJ_PATCH_PO/.claude-pipeline/hooks" "$PROJ_PATCH_PO/.claude"
+touch "$PROJ_PATCH_PO/.claude-pipeline/hooks/log-tool-use.sh"
+touch "$PROJ_PATCH_PO/.claude-pipeline/hooks/enforce-base-branch.sh"
+cat > "$PROJ_PATCH_PO/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/log-tool-use.sh"}]}
+    ],
+    "PreToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/enforce-base-branch.sh"}]}
+    ]
+  }
+}
+EOF
+(cd "$PROJ_PATCH_PO" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m init)
+
+PO_SETTINGS_SHA_BEFORE=$(sha256sum "$PROJ_PATCH_PO/.claude/settings.json" | awk '{print $1}')
+
+STDERR_LOG="$WORKDIR/patch-po.stderr"
+STDOUT_LOG="$WORKDIR/patch-po.stdout"
+(cd "$PROJ_PATCH_PO" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || true
+
+PATCH_PO="$PROJ_PATCH_PO/.claude/migration-cleanup-settings.patch"
+REPORT_PO="$PROJ_PATCH_PO/.claude/settings.json.pipeline-migration-report.txt"
+
+inc
+if [ -f "$PATCH_PO" ]; then
+  pass_msg "patch-po: patch file created"
+else
+  fail_msg "patch-po: patch file missing"
+fi
+
+inc
+if [ -f "$PATCH_PO" ] && (cd "$PROJ_PATCH_PO" && git apply --check .claude/migration-cleanup-settings.patch) 2>/dev/null; then
+  pass_msg "patch-po: git apply --check clean"
+else
+  fail_msg "patch-po: git apply --check failed"
+fi
+
+inc
+PO_SETTINGS_SHA_AFTER=$(sha256sum "$PROJ_PATCH_PO/.claude/settings.json" 2>/dev/null | awk '{print $1}')
+if [ "$PO_SETTINGS_SHA_BEFORE" = "$PO_SETTINGS_SHA_AFTER" ]; then
+  pass_msg "patch-po: source settings.json byte-identical pre/post"
+else
+  fail_msg "patch-po: source settings.json was modified"
+fi
+
+inc
+if [ -f "$PATCH_PO" ]; then
+  PO_COPY="$WORKDIR/po-copy"
+  cp -r "$PROJ_PATCH_PO" "$PO_COPY"
+  if (cd "$PO_COPY" && git apply .claude/migration-cleanup-settings.patch) 2>/dev/null; then
+    if [ ! -f "$PO_COPY/.claude/settings.json" ]; then
+      if grep -qF '+++ /dev/null' "$PATCH_PO" && grep -qiF 'functionally empty' "$REPORT_PO"; then
+        pass_msg "patch-po: deletion-form patch + loud warning"
+      else
+        fail_msg "patch-po: file removed but missing /dev/null marker or warning"
+      fi
+    elif jq -e '(.hooks // {}) | to_entries | all(.value | length == 0)' "$PO_COPY/.claude/settings.json" >/dev/null 2>&1; then
+      pass_msg "patch-po: post-patch JSON valid with empty hooks"
+    else
+      fail_msg "patch-po: post-patch JSON invalid or hooks not empty"
+    fi
+  else
+    fail_msg "patch-po: post-patch apply failed in copy"
+  fi
+else
+  fail_msg "patch-po: cannot validate post-patch state (no patch)"
+fi
+
+inc
+if [ -f "$REPORT_PO" ] && grep -qF 'migration-cleanup-settings.patch' "$REPORT_PO"; then
+  pass_msg "patch-po: report references the patch file"
+else
+  fail_msg "patch-po: report missing patch reference"
+fi
+
+inc
+if [ -f "$PATCH_PO" ]; then
+  PO_PATCH_SHA_1=$(sha256sum "$PATCH_PO" | awk '{print $1}')
+  (cd "$PROJ_PATCH_PO" && bash "$MIGRATE_SH" >/dev/null 2>&1) || true
+  PO_PATCH_SHA_2=$(sha256sum "$PATCH_PO" 2>/dev/null | awk '{print $1}')
+  if [ "$PO_PATCH_SHA_1" = "$PO_PATCH_SHA_2" ]; then
+    pass_msg "patch-po: patch byte-stable across re-runs"
+  else
+    fail_msg "patch-po: patch differs across re-runs"
+  fi
+else
+  fail_msg "patch-po: cannot test idempotency (no patch)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
