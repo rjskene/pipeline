@@ -206,6 +206,44 @@ else
   fail_msg "fp: CLAUDE.md sha256 changed"
 fi
 
+# ---------------------------------------------------------------------------
+# Task 5: scan nested CLAUDE.md files from PIPELINE_CONTEXT_FILES.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'scan: nested CLAUDE.md from PIPELINE_CONTEXT_FILES'"
+
+PROJ_NESTED="$WORKDIR/proj-nested"
+mkdir -p "$PROJ_NESTED/docs" "$PROJ_NESTED/src"
+cat > "$PROJ_NESTED/pipeline.config" <<'EOF'
+PIPELINE_CONTEXT_FILES="CLAUDE.md docs/CLAUDE.md src/CLAUDE.md nonexistent.md"
+EOF
+echo "# Project root" > "$PROJ_NESTED/CLAUDE.md"
+printf 'Run `.claude-pipeline/install.sh` before starting.\n' > "$PROJ_NESTED/docs/CLAUDE.md"
+echo "# Source" > "$PROJ_NESTED/src/CLAUDE.md"
+
+(cd "$PROJ_NESTED" && bash "$SCANNER_SH") >/dev/null 2>&1
+EXIT=$?
+
+REPORT_N="$PROJ_NESTED/.claude/migration-cleanup-report-claudemd.txt"
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "nested: exit 0"; else fail_msg "nested: exit $EXIT"; fi
+
+inc
+if [ -f "$REPORT_N" ] && grep -qE 'docs/CLAUDE\.md:[0-9]+:' "$REPORT_N"; then
+  pass_msg "nested: docs/CLAUDE.md flagged with line number"
+else
+  fail_msg "nested: docs/CLAUDE.md NOT flagged"
+  [ -f "$REPORT_N" ] && sed 's/^/    /' "$REPORT_N"
+fi
+
+inc
+if [ -f "$REPORT_N" ] && ! grep -qF 'src/CLAUDE.md' "$REPORT_N"; then
+  pass_msg "nested: src/CLAUDE.md NOT in report"
+else
+  fail_msg "nested: src/CLAUDE.md unexpectedly in report"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

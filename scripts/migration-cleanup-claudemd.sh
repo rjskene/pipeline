@@ -93,9 +93,19 @@ scan_file() {
 
 mkdir -p .claude
 
-if [ -f CLAUDE.md ]; then
-  scan_file CLAUDE.md
+FILES_TO_SCAN=()
+[ -f CLAUDE.md ] && FILES_TO_SCAN+=("CLAUDE.md")
+if [ -n "${PIPELINE_CONTEXT_FILES:-}" ]; then
+  for entry in $PIPELINE_CONTEXT_FILES; do
+    [ "$entry" = "CLAUDE.md" ] && continue
+    [ -f "$entry" ] || continue
+    FILES_TO_SCAN+=("$entry")
+  done
 fi
+
+for f in "${FILES_TO_SCAN[@]:-}"; do
+  [ -n "$f" ] && scan_file "$f"
+done
 
 if [ ${#HEADER_FINDINGS[@]} -eq 0 ] \
    && [ ${#PATHS_FINDINGS[@]} -eq 0 ] \
