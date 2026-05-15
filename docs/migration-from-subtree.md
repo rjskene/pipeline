@@ -31,12 +31,16 @@ If the migration script detected pipeline hook entries in `.claude/settings.json
 .claude/settings.json.pipeline-migration-report.txt
 ```
 
-The script never mutates `settings.json` itself. Open the report, then open `settings.json`, and manually delete any flagged hook entries. After the plugin install the harness registers its own hooks via the plugin manifest, so leftover entries in your project's `settings.json` will double-register and cause duplicate hook fires.
+The script never mutates `settings.json` itself. After the plugin install the harness registers its own hooks via the plugin manifest, so leftover entries in your project's `settings.json` will double-register and cause duplicate hook fires.
 
-When you are done, delete the report file:
+A unified-diff patch is also written to `.claude/migration-cleanup-settings.patch` (parallel to step 3a below). Review it (`less .claude/migration-cleanup-settings.patch`), then apply with `git apply .claude/migration-cleanup-settings.patch`. The patch is JSON-aware — it removes only the pipeline-flagged hook entries and preserves consumer-authored entries plus other top-level keys (`env`, `permissions`, `mcpServers`, …).
+
+If the report contains a `WARNING: applying this patch will leave .claude/settings.json functionally empty` block, the patch will delete `settings.json` entirely (the post-patch content would be `{}`). Review for non-pipeline customizations the detector may have missed before applying — when in doubt, edit `settings.json` by hand instead.
+
+When you are done, delete the artifacts:
 
 ```bash
-rm -f .claude/settings.json.pipeline-migration-report.txt
+rm -f .claude/migration-cleanup-settings.patch .claude/settings.json.pipeline-migration-report.txt
 ```
 
 ## 3a. Review the CLAUDE.md advisory report
