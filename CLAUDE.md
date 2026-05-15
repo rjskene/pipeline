@@ -29,6 +29,8 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
+**Full Send wave model.** When the user invokes `/pipeline:run` in "full send" mode, the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
+
 ## Key Handoffs
 
 **Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/pipeline:create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/pipeline:plan-issue`.
@@ -36,6 +38,25 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 **Issues → Plans:** Each issue gets its own implementation plan via `/pipeline:plan-issue`, which uses `writing-plans` internally.
 
 **Plans → Execution:** After a plan is reviewed (`/pipeline:evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/pipeline:execute-issue-plan` implements it in an isolated worktree.
+
+## Auto-merge default
+
+When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, the pipeline auto-squash-merges the PR (with branch delete), flips the issue to `merged`, and closes it — no manual confirmation. The interesting gate is the eval verdict, not the merge button.
+
+**Four greenlight conditions** (all must hold; otherwise the PR is left for manual merge with a `block-*` reason):
+
+1. Latest `## Evaluation` comment contains `**Verdict:** Approved`.
+2. Every entry in the PR's `statusCheckRollup` has `conclusion == SUCCESS` (or the rollup is empty for repos with no CI configured).
+3. `mergeable == MERGEABLE`.
+4. `mergeStateStatus == CLEAN` (not BLOCKED/BEHIND/DIRTY/UNSTABLE).
+
+**Three opt-outs** restore today's stop-before-merge behavior:
+
+- `FULL SEND --manual-merge` (token may appear anywhere in argv — before, between, or after issue numbers).
+- `/pipeline:evaluate-issue-pr <N> --manual-merge` for one-off evaluations.
+- A `manual-merge` label on the issue, for per-issue control without re-typing the flag.
+
+The implementation lives in `scripts/auto-merge-gate.sh` (helper exposing `auto_merge_should_fire`), the evaluate-issue-pr skill (Step 11), and the run skill (Step 8). **Release-please PRs are out of scope** — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of the run skill, unchanged.
 
 ## Observability
 
@@ -71,6 +92,27 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
 
 The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. The mandatory cherry-pick back-sync survives but is now a single `git cherry-pick`.
 
+### Dev/prerelease channel
+
+Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace (`.claude-plugin/marketplace-dev.json`) that carries release candidates of the same `pipeline` plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
+
+1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
+2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, and `.release-please-manifest.json` atomically via `extra-files`.
+3. **Dev install.** Consumers add the dev marketplace and install the dev-channel plugin:
+   ```
+   /plugin marketplace add HTS-COLLAB-ORG/claude-pipeline@main .claude-plugin/marketplace-dev.json
+   /plugin install pipeline@claude-pipeline-dev
+   ```
+4. **Revert to stable.**
+   ```
+   /plugin uninstall pipeline@claude-pipeline-dev
+   /plugin marketplace remove claude-pipeline-dev
+   /plugin install pipeline@claude-pipeline
+   ```
+5. **Graduation.** Prereleases do NOT auto-graduate. The next normal `staging → main` cut WITHOUT a `Release-As:` footer produces the stable `X.Y.Z` bump. RC and stable are mutually exclusive per `staging → main` PR.
+6. **No back-sync for RCs.** Stable releases require cherry-picking the version bump back to `staging` because the squash-merge on `main` is SHA-disconnected. **For RC cuts, no back-sync is required** (cherry-pick is not required for RC) — `staging` is already the prerelease source and the next stable cut will overwrite the version. The cherry-pick back-sync remains mandatory only for stable releases.
+7. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
+
 ## Plugin architecture
 
 Pipeline assets live outside the consumer project. The plugin installs to `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`). Hooks, scripts, and the `tdd-implementer` subagent are registered from the plugin manifest; skills auto-discover from `${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md` and the manifest does not enumerate them. The consumer project's `.claude/` stays clean.
@@ -90,6 +132,10 @@ The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks
 - `.claude/worktrees/` — pipeline-managed worktree checkouts.
 
 Everything else under consumer `.claude/` is consumer-owned. CI enforces this via `scripts/check-no-consumer-claude-writes.sh` — adding any new source reference to `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` requires an explicit entry in `tests/no-consumer-claude-writes.allow` with a justification comment. Allow-list entries are the audit trail for legacy code waiting to be retired.
+
+## Tracker lifecycle
+
+Tracker issues (label: `tracker`) are coordination artifacts that roll up child issues under a `## Rollout sequence` checklist. The orchestrator excludes them from the action queue and never proposes them for plan/execute. `/pipeline:run` housekeeping auto-closes any open issue labelled `tracker` whose `## Rollout sequence` children are all in state `CLOSED`, posting the comment `Auto-closed: all children merged.` and leaving the issue history preserved. This depends on the `tracker` label introduced by #31 — without that label the housekeeping pass has nothing to scan. Entrypoint: `scripts/auto-close-trackers.sh`. Contract / test substrate: `tests/test-auto-close-trackers.sh`.
 
 ## Design Principles
 

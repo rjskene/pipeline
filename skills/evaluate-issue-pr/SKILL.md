@@ -1,6 +1,6 @@
 ---
 name: evaluate-issue-pr
-description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Usage: /pipeline:evaluate-issue-pr <issue_number>
+description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Auto-merges on green; pass --manual-merge to opt out. Usage: /pipeline:evaluate-issue-pr <issue_number> [--manual-merge]
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---
@@ -176,7 +176,52 @@ You are a senior engineer performing a code review of a PR against its approved 
 10. **Report verdict:**
     - If **Approved**: "PR #X approved — ready for merge."
     - If **Flagged**: "PR #X flagged for review: <summary of remaining issues>"
-    The evaluator never merges. Merging is handled by the pipeline orchestrator (step 8 of the pipeline skill) only after the user explicitly confirms.
+    The evaluator auto-merges on the greenlight matrix (see Step 11) unless `--manual-merge` was passed or the issue carries the `manual-merge` label. Otherwise the orchestrator's step 8 handles merge.
+
+11. **Auto-merge gate.**
+
+    1. **Flag parsing.** `--manual-merge` may appear anywhere in argv — before or after the issue number; the parser is loop-based, not positional. The flag is also honored via the environment: if `MANUAL_MERGE=1` is exported (set by `spawn-claude.sh` when the spawn carried `--manual-merge`), treat it as if the flag were present. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
+
+    2. **Source the helper and run the gate.**
+       ```bash
+       source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
+       REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+       ```
+       The helper checks, in order: `MANUAL_MERGE` env, `manual-merge` issue label, `**Verdict:** Approved` in the latest `## Evaluation` comment, `statusCheckRollup` all SUCCESS (or empty), `mergeable == MERGEABLE`, `mergeStateStatus == CLEAN`. It prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-ci`, `block-mergeable`, or `block-mergestate`.
+
+    3. **On `green`:**
+       - Merge synchronously (NOT `--auto`):
+         ```bash
+         gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch
+         ```
+       - Capture the squash SHA AFTER merge succeeds:
+         ```bash
+         SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
+         ```
+         The squash commit is created synchronously on the PR object, so this call returns the oid without polling. If `$SHA` is empty (rare API lag), omit the SHA segment from the close comment — the merge itself is authoritative.
+       - Append the auto-merged footer (exact literal prefix — Step 8 of `run/SKILL.md` greps it):
+         ```bash
+         TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+         FOOTER="Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at ${TS}"
+         gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" --body "$FOOTER"
+         ```
+       - Flip labels and close the issue:
+         ```bash
+         gh issue edit "$ISSUE" --repo "$PIPELINE_REPO" --add-label "merged" --remove-label "pr-open"
+         if [ -n "$SHA" ]; then
+           gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM} (${SHA}). ${FOOTER}"
+         else
+           gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}. ${FOOTER}"
+         fi
+         ```
+
+    4. **On any `block-*` reason:** post a single comment to the PR explaining why auto-merge was skipped, then return Approved-but-not-merged. Do not flip labels. Do not close the issue.
+       ```bash
+       gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" \
+         --body "Auto-merge skipped: ${REASON}. Run \`gh pr merge\` manually."
+       ```
+
+    Release-please PRs are out of scope for this gate — they continue to flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of `run/SKILL.md`.
 
 ## Constraints
 - Do NOT read the executor's session logs or conversation history

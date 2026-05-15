@@ -76,14 +76,16 @@ You still build the full body internally — you just do not print it to the use
 
 ```
 Proposed issues:
-- (pending) <sub-issue 1 title> — <one-line summary>
-- (pending) <sub-issue 2 title> — <one-line summary>
-- (pending tracker) <tracker title> — rolls up the sub-issues above
+- (pending) feat(tracker-lifecycle): <sub-issue 1 title> — <one-line summary>
+- (pending) feat(tracker-lifecycle): <sub-issue 2 title> — <one-line summary>
+- (pending tracker) epic(tracker-lifecycle): <feature> — rolls up the sub-issues above
 ```
 
 The tracker is the **default** for multi-issue sets. The user can opt out by replying "skip tracker" (or listing only the sub-issue numbers to keep). Do not ask "do you want a tracker?" — assume yes unless the user opts out.
 
 Tracker titles follow the convention `epic(<scope>): <feature> — tracker for #A, #B` (example: issue #247 rolls up #245 and #246). Fill in the sub-issue numbers **after** the children are created; the tracker is created last so its body can reference real issue numbers.
+
+**Shared scope across the set.** When proposing a multi-issue set with a tracker, derive a single `<scope>` token from the conversation topic (the same `<scope>` used in the tracker's `epic(<scope>): ...` title) and apply it as the conventional-commit scope on every sub-issue title — e.g. tracker `epic(tracker-lifecycle): …` produces children `feat(tracker-lifecycle): …`, `fix(tracker-lifecycle): …`. The `<type>` may vary per child (`feat`, `fix`, `refactor`, etc.); the `<scope>` must not. Scope is chosen once and applied uniformly so the issue list self-organizes by topic.
 
 ### Issue creation protocol
 
@@ -119,7 +121,7 @@ After each issue is created, print a single line: `Created: #N — <title> — <
 **Tracker issue body template (multi-issue case only).** After all sub-issues are created and their numbers are known, create the tracker last. Use this body template:
 
 ```bash
-gh issue create --repo $PIPELINE_REPO --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
+gh issue create --repo $PIPELINE_REPO --label tracker --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
 ## Context
 <1-3 sentences explaining why this work exists and the shape of the rollup>
 
@@ -147,6 +149,8 @@ Every tracker body MUST include these sections in this order: **Context**, **Rol
 ### Labels
 - Newly created issues get no pipeline labels by default (they enter the pipeline as `ready` stage).
 - If the user specifies a label during discussion (e.g., "this is a bug"), add it: `--label bug`.
+- Tracker issues (multi-issue case, created via the tracker body template) automatically receive the `tracker` label so the pipeline orchestrator excludes them from the action queue.
+- If the user's framing is architectural critique, open-ended exploration, or "should we / could we" without a commit-to-act, propose creating the issue with `--label brainstorm`. The label parks the issue in the pipeline's discussion bucket — visible in `/pipeline:run` status (stage = `brainstorm`) but never auto-planned or auto-executed. The user promotes it later by removing the label.
 
 ### Session summary
 When the user ends the session (says "done", "that's all", etc.), print a summary:

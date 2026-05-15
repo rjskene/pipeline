@@ -31,9 +31,13 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 
 ### Full Send — autonomous end-to-end execution
 
-When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages:
+When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages.
 
-1. **Plan** — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
+**Flag parsing.** `--manual-merge` may appear anywhere in argv (before, between, or after issue numbers; e.g. `FULL SEND --manual-merge 1 2 3`, `FULL SEND 1 2 3 --manual-merge`, `FULL SEND 1 --manual-merge 2 3`). The token cannot collide with issue numbers because those are bare integers. When present, set `MANUAL_MERGE=1` for all spawned `evaluate-issue-pr` agents (passed via `run-queue.sh --manual-merge` → `spawn-claude.sh --manual-merge`) and skip the greenlight auto-merge path in Step 8 below.
+
+**0a. Wave plan (pre-think).** Before dispatching any classify/plan agents, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh <ready-issue-numbers>` and capture stdout as the wave plan. Process the rest of step 1 (classify, then plan) wave by wave: dispatch all issues in Wave K in parallel, await completion, then advance to Wave K+1. In interactive mode, print the wave plan once before launching; in autonomous full send mode, log it and proceed. The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default true) — when `false`, fall back to the legacy single-blast parallel dispatch.
+
+1. **Plan** — Process wave by wave per Step 0a — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
      ```bash
      PLAN_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
@@ -83,14 +87,14 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```
    FULL SEND COMPLETE
    ================================================================
-   Issue  Title                    Classification mismatch   Result
-   ----------------------------------------------------------------
-   #N     <title>                  B / C (med)               PR approved / Flagged / Skipped (plan failed)
-   #N     <title>                                            PR approved
+   Issue  Title                    Classification mismatch   Auto-merged?   Result
+   --------------------------------------------------------------------------------
+   #N     <title>                  B / C (med)               no (block-ci)  PR approved / Flagged / Skipped (plan failed)
+   #N     <title>                                            yes (step8)    PR merged
    ================================================================
-   MERGING IS NOT AUTOMATIC — review the table above and confirm merges manually.
+   The `Auto-merged?` column reflects Step 8's outcome per PR: `yes (eval)` — the evaluator's Step 11 already merged it; `yes (step8)` — Step 8 merged it on the greenlight path; `no (<block-reason>)` — manual merge required.
    ```
-9. **Stop** — do NOT merge. Wait for explicit user confirmation before any merge.
+9. **Stop** — do NOT merge unless the greenlight matrix held in Step 8. Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
 
 **Constraints during full send:**
 - Housekeeping (step 0) and log review (step 1) still run at the start, but do not pause for user input — auto-skip log review and proceed.
@@ -99,6 +103,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 - Issues labeled `PIPELINE_LABELS_EXCLUDED` are always skipped.
 - Issues labeled `PIPELINE_LABELS_LATER` are shown in the final report (stage = `PIPELINE_LABELS_LATER`) but not processed.
 - Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the final report (stage = `PIPELINE_LABELS_HUMAN`) but never processed by autonomous full send. These need a human in the loop — usually for architecture decisions, cross-platform validation, production deploy risk, or items where the planner can't make the right call without you. They must be picked up manually with `/pipeline:plan-issue` / `/pipeline:execute-issue-plan`, never via full send.
+- Issues labeled `PIPELINE_LABELS_BRAINSTORM` are shown in the final report (stage = `PIPELINE_LABELS_BRAINSTORM`) but never processed by autonomous full send — same handling as `PIPELINE_LABELS_HUMAN`. The body is open-ended discussion/architectural critique, not a commit-to-act spec. Manual pickup via `/pipeline:plan-issue` is allowed once the idea crystallizes.
 - Blocked issues (blocked-by dependency not yet merged) are skipped; noted in final report as "Blocked".
 - The re-plan loop cap of 3 prevents infinite loops on stubborn issues.
 - If any stage fails unexpectedly (script error, API failure), stop full send and report the failure with enough detail for the user to diagnose.
@@ -111,7 +116,7 @@ Pipeline issues are fetched dynamically from GitHub — not hardcoded. At the st
 gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --limit 100
 ```
 
-**Excluded labels:** Issues with the label `PIPELINE_LABELS_EXCLUDED` are skipped entirely. Issues with the label `PIPELINE_LABELS_LATER` are shown in the status table (stage = `PIPELINE_LABELS_LATER`) but are **not** proposed for any action. Issues with the label `PIPELINE_LABELS_HUMAN` are shown in the status table (stage = `PIPELINE_LABELS_HUMAN`) and are **never** included in autonomous full send — they require manual handling because they involve architecture decisions, cross-platform validation, production deploy risk, or other judgment that the autonomous pipeline shouldn't make. The user can still pick them up manually with `/pipeline:plan-issue` or `/pipeline:execute-issue-plan`. All other open issues are pipeline candidates.
+**Excluded labels:** Issues with the label `PIPELINE_LABELS_EXCLUDED` are skipped entirely. Issues with the label `PIPELINE_LABELS_LATER` are shown in the status table (stage = `PIPELINE_LABELS_LATER`) but are **not** proposed for any action. Issues with the label `PIPELINE_LABELS_HUMAN` are shown in the status table (stage = `PIPELINE_LABELS_HUMAN`) and are **never** included in autonomous full send — they require manual handling because they involve architecture decisions, cross-platform validation, production deploy risk, or other judgment that the autonomous pipeline shouldn't make. The user can still pick them up manually with `/pipeline:plan-issue` or `/pipeline:execute-issue-plan`. Issues with the label `PIPELINE_LABELS_BRAINSTORM` are shown in the status table (stage = `PIPELINE_LABELS_BRAINSTORM`) but are **not** proposed for any action — same handling as `PIPELINE_LABELS_LATER` / `PIPELINE_LABELS_HUMAN`. These represent open-ended discussion or architectural critique; the body is not yet a commit-to-act spec. All other open issues are pipeline candidates.
 
 ### Branch and worktree naming convention
 - Branch: `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short)
@@ -207,6 +212,13 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    Report what was cleaned up, then proceed.
 
+   Then, auto-close any tracker issue whose Rollout-sequence children are all closed. This is cheap (one `gh issue list` + one `gh issue view` per open tracker) and fail-soft — a non-zero exit from the helper is logged but never aborts the run:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/auto-close-trackers.sh" --apply || \
+     echo "[run] WARN: auto-close-trackers.sh exited non-zero (continuing)"
+   ```
+
 1. **Check for agent session logs** — if any logs exist in `.claude/logs/`, run the summary:
    ```bash
    bash .claude/scripts/review-logs.sh
@@ -237,9 +249,32 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    gh pr list --repo $PIPELINE_REPO --state merged --json headRefName,number --jq '[.[] | {branch: .headRefName, pr: .number}]'
    git worktree list
    ```
-   Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `PIPELINE_LABELS_EXCLUDED`. Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed by full send (treat them like `PIPELINE_LABELS_LATER`).
+   Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `PIPELINE_LABELS_EXCLUDED`. Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed by full send (treat them like `PIPELINE_LABELS_LATER`).
 
-   **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
+   **Tracker issues are coordination artifacts**, not implementation work. They carry the `tracker` label and roll up child issues for visibility. The orchestrator excludes them from the action queue (never proposed for plan/execute) but surfaces them in the status table with `stage=tracker`. The filter block below partitions the issue list into `READY_ISSUES` (no pipeline-stage label AND no `tracker`/excluded/later/human label) and `TRACKER_ISSUES` (carry `tracker`). Assume `ISSUE_LIST_JSON` holds the output of `gh issue list ... --json number,title,labels --limit 100`.
+
+   ```bash
+   # BEGIN-TRACKER-FILTER
+   # Required env: ISSUE_LIST_JSON (output of `gh issue list ... --json number,title,labels`).
+   # Emits: READY_ISSUES (space-separated numbers), TRACKER_ISSUES (space-separated numbers).
+   STAGE_LABELS='plan-pending|plan-reviewed|plan-approved|in-progress|pr-open|merged'
+   SKIP_LABELS="tracker|$PIPELINE_LABELS_EXCLUDED|$PIPELINE_LABELS_LATER|$PIPELINE_LABELS_HUMAN|$PIPELINE_LABELS_BRAINSTORM"
+   READY_ISSUES=$(echo "$ISSUE_LIST_JSON" | jq -r --arg stage "$STAGE_LABELS" --arg skip "$SKIP_LABELS" '
+     .[] | select(
+       ([.labels[].name] | any(test("^(" + $stage + ")$"))) | not
+     ) | select(
+       ([.labels[].name] | any(test("^(" + $skip  + ")$"))) | not
+     ) | .number
+   ' | tr '\n' ' ')
+   TRACKER_ISSUES=$(echo "$ISSUE_LIST_JSON" | jq -r '
+     .[] | select([.labels[].name] | any(. == "tracker")) | .number
+   ' | tr '\n' ' ')
+   # END-TRACKER-FILTER
+   ```
+
+   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 5. `TRACKER_ISSUES` feeds the status-table render in step 4 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
+
+   **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human/brainstorm-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
 
    ```bash
    for N in <ready_issue_numbers>; do
@@ -260,7 +295,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `PIPELINE_LABELS_LATER`, `PIPELINE_LABELS_HUMAN`, or `PIPELINE_LABELS_EXCLUDED`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `PIPELINE_BASE_BRANCH`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path** column:
+4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `PIPELINE_LABELS_LATER`, `PIPELINE_LABELS_HUMAN`, `PIPELINE_LABELS_BRAINSTORM`, or `PIPELINE_LABELS_EXCLUDED`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `PIPELINE_BASE_BRANCH`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path** column:
    - Path = `A` if the issue is labeled `docs-only`, `C` if labeled `multi-task`, else `B` (default). If both `docs-only` and `multi-task` are present, show `A!` (collision — PATH A wins, but flag it).
    - classify-issue writes labels directly, so the label and the recommendation always match after a classify run. The audit-only `⚠ mismatch` flag (see step 2) lives in the final report, not this column.
    ```
@@ -270,9 +305,12 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ----------------------------------------------------------------
     #N     <title>        ready    feature, ui    pipeline     B      no
     #N     <title>        ready    next-major     next         A      no
+    #N     <title>        tracker  tracker        —            —      —
     ...
    ================================================================
    ```
+
+   Tracker issues (from `TRACKER_ISSUES`) appear in the table with `Stage=tracker` and are never proposed for plan/execute. Their child-issue rollup is visible in the issue body on GitHub.
 
    **Release PRs row group.** If `RELEASE_PRS` (from step 0) is non-empty, render an additional table ABOVE the pipeline-issue table. Parse each line (`pr=<num> ci=<pass|fail|pending> title=<title>`) into a row:
 
@@ -319,9 +357,10 @@ active feature work, but it should come BEFORE pulling in new ready work
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
    - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
    - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
-   - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN`:
+   - Issues labeled `tracker` are shown in the table (stage=`tracker`) but never proposed for plan/execute — they are coordination rollups, not implementation work.
+   - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM`:
      - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
-     - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)".
+     - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)" or "(brainstorm, manual)".
    - If all issues are merged/done → congratulate and exit.
 
 6. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
@@ -495,11 +534,35 @@ active feature work, but it should come BEFORE pulling in new ready work
 
 **Do not poll for queue completion with `while ... sleep ... grep` inside Bash tool calls.** This pattern burns context tokens on every poll cycle and ties up the orchestrator for the duration. Use `Bash run_in_background: true` for one-shot completion waits, or `Monitor` for streaming per-event notifications. The queue runner's internal `sleep` polling (inside `run-queue.sh`) is fine — it runs in its own process and does not consume orchestrator context.
 
-8. **Merge orchestration** — after all evaluations complete and verdicts are "Approved", the pipeline handles merging:
+8. **Merge orchestration** — after all evaluations complete, the pipeline handles merging. **Default is autonomous merge for the green subset** via the greenlight gate (`${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh`). The four greenlight conditions are: latest `## Evaluation` verdict is **Approved**; every `statusCheckRollup` entry has `conclusion == SUCCESS` (or the rollup is empty); `mergeable == MERGEABLE`; `mergeStateStatus == CLEAN`. Any one missing falls back to a `block-*` reason and requires manual `gh pr merge`.
 
-   **Only run this step when the user confirms they want to merge.** After evaluation agents finish, report the verdicts and ask: "Merge approved PRs? (yes / no)"
+   **Per-PR auto-merge loop.** For each PR labelled `pr-open`:
 
-   If the user confirms, first run a batch pre-validation pass to surface any PR titles that don't match the Conventional Commits format. This is informational — it lets the user batch-reword before the sequential merge loop. The per-PR gate below (sub-step 4) is the actual enforcement point.
+   1. **Already-merged short-circuit.** Check the latest `## Evaluation` PR comment body for the exact footer prefix `Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at` (written by `evaluate-issue-pr` Step 11 on the green path). If present, mark the row `Auto-merged? = yes (eval)` in the report and skip this PR — it is already merged and closed.
+   2. **Run the gate.** Source the helper and call it:
+      ```bash
+      source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
+      REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+      ```
+   3. **On `green`:** run the conventional-title pre-validation below, then merge synchronously here (NOT `--auto`):
+      ```bash
+      gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch
+      SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
+      TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      FOOTER="Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at ${TS}"
+      gh issue edit "$ISSUE" --repo "$PIPELINE_REPO" --add-label "merged" --remove-label "pr-open"
+      if [ -n "$SHA" ]; then
+        gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM} (${SHA}). ${FOOTER}"
+      else
+        gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}. ${FOOTER}"
+      fi
+      ```
+      Mark the row `Auto-merged? = yes (step8)`.
+   4. **On any `block-*` reason:** mark the row `Auto-merged? = no (${REASON})` and leave the PR for manual merge by the user. Do NOT flip labels. Do NOT close the issue.
+
+   Release-please PRs are out of scope here — they continue to flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b above, unchanged. The opt-outs are: `FULL SEND --manual-merge`, `/pipeline:evaluate-issue-pr N --manual-merge`, or the `manual-merge` label on the issue.
+
+   The conventional-title pre-validation runs before any merge call regardless of the auto/manual path. It is informational at the batch level and enforced per-PR in sub-step 4 below.
 
    ```bash
    # Uses canonical regex from scripts/check-conventional-title.sh — see Issue #45.
