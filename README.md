@@ -26,13 +26,15 @@ The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime 
 
 ### Installing the dev channel
 
+**The dev channel requires a SEPARATE clone of this repo, kept on `main`.** It cannot be installed from your working `staging` checkout — RCs only ever land on `main`, and the marketplace path must resolve to a `main`-tracking clone. Installing from a `staging` clone silently pins you to the last stable version that was on `main` at the time of cloning.
+
 Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace that carries release candidates of the same plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
 
-The dev marketplace must be added via a **local filesystem path to the manifest file** inside a clone of this repo (see Pitfalls below for why). One-time setup:
+**One-command setup** (idempotent — works for first install and for every RC refresh):
 
 ```bash
-git clone https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
-cd ~/claude-pipeline-main && git checkout main
+git -C ~/claude-pipeline-main pull --ff-only origin main 2>/dev/null \
+  || git clone --branch main https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
 ```
 
 Then in Claude Code:
@@ -49,19 +51,15 @@ Pick the **local** scope at the install prompt. Then reload so the new plugin co
 /plugin install   pipeline@claude-pipeline-dev
 ```
 
-RC-refresh ritual — run on each RC cut to pick up the new version:
-
-```bash
-cd ~/claude-pipeline-main && git pull origin main
-```
-
-Then re-run `/plugin install pipeline@claude-pipeline-dev` (uninstall + reinstall if the cache doesn't refresh).
+Re-run the one-command setup block above on each RC cut to pick up the new version; uninstall + reinstall if the cache doesn't refresh.
 
 **Pitfalls:**
 - The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git clone` / `git pull`.
 - Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref. The local-path form is the only reliable one.
 - Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the manifest's `"source": "./"` resolves relative to the manifest file's location, so the loader can't find the plugin tree.
 - Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
+
+**Troubleshooting — installed dev version older than expected?** Run `/pipeline:doctor` — the `dev_marketplace_on_main` check warns when the registered dev marketplace path is in a non-`main` clone. Re-run the one-command setup above to refresh.
 
 See `CLAUDE.md` → "Dev/prerelease channel" for the publishing side (how RCs are cut).
 
