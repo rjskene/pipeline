@@ -632,6 +632,107 @@ else
   fail_msg "patch-mx: spurious functionally-empty warning OR report missing"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "settings patch: no-manifest" — consumer removed .claude-pipeline/ but
+# settings.json still has path-fragment refs. Patch must still be emitted.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings patch: no-manifest, path-fragment-only injection traces still produces patch'"
+
+PROJ_PATCH_NM="$WORKDIR/proj-patch-nm"
+mkdir -p "$PROJ_PATCH_NM/.claude"
+cat > "$PROJ_PATCH_NM/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/log-tool-use.sh"}]}
+    ]
+  }
+}
+EOF
+(cd "$PROJ_PATCH_NM" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m init)
+
+NM_SHA_BEFORE=$(sha256sum "$PROJ_PATCH_NM/.claude/settings.json" | awk '{print $1}')
+STDERR_LOG="$WORKDIR/patch-nm.stderr"
+STDOUT_LOG="$WORKDIR/patch-nm.stdout"
+(cd "$PROJ_PATCH_NM" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || true
+
+PATCH_NM="$PROJ_PATCH_NM/.claude/migration-cleanup-settings.patch"
+
+inc
+if [ -f "$PATCH_NM" ]; then pass_msg "patch-nm: patch file created"; else fail_msg "patch-nm: patch file missing"; fi
+
+inc
+if [ -f "$PATCH_NM" ] && (cd "$PROJ_PATCH_NM" && git apply --check .claude/migration-cleanup-settings.patch) 2>/dev/null; then
+  pass_msg "patch-nm: git apply --check clean"
+else
+  fail_msg "patch-nm: git apply --check failed"
+fi
+
+inc
+if [ -f "$PATCH_NM" ]; then
+  NM_COPY="$WORKDIR/nm-copy"
+  cp -r "$PROJ_PATCH_NM" "$NM_COPY"
+  if (cd "$NM_COPY" && git apply .claude/migration-cleanup-settings.patch) 2>/dev/null; then
+    if [ ! -f "$NM_COPY/.claude/settings.json" ]; then
+      pass_msg "patch-nm: post-patch file removed (functionally empty)"
+    elif jq -e . "$NM_COPY/.claude/settings.json" >/dev/null 2>&1; then
+      pass_msg "patch-nm: post-patch JSON valid"
+    else
+      fail_msg "patch-nm: post-patch JSON invalid"
+    fi
+  else
+    fail_msg "patch-nm: post-patch apply failed in copy"
+  fi
+else
+  fail_msg "patch-nm: cannot validate post-patch (no patch)"
+fi
+
+inc
+NM_SHA_AFTER=$(sha256sum "$PROJ_PATCH_NM/.claude/settings.json" 2>/dev/null | awk '{print $1}')
+if [ "$NM_SHA_BEFORE" = "$NM_SHA_AFTER" ]; then
+  pass_msg "patch-nm: source settings.json byte-identical pre/post"
+else
+  fail_msg "patch-nm: source settings.json was modified"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "settings patch: clean" — settings.json has no pipeline refs and the
+# .claude-pipeline/ manifest exists (mutation phase still runs). Patch must
+# NOT be emitted; report must NOT be emitted.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings patch: clean settings.json produces no patch'"
+
+PROJ_PATCH_CL="$WORKDIR/proj-patch-cl"
+mkdir -p "$PROJ_PATCH_CL/.claude-pipeline/hooks" "$PROJ_PATCH_CL/.claude"
+touch "$PROJ_PATCH_CL/.claude-pipeline/hooks/log-tool-use.sh"
+cat > "$PROJ_PATCH_CL/.claude/settings.json" <<'EOF'
+{"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "scripts/my-custom-hook.sh"}]}]}}
+EOF
+
+STDERR_LOG="$WORKDIR/patch-cl.stderr"
+STDOUT_LOG="$WORKDIR/patch-cl.stdout"
+(cd "$PROJ_PATCH_CL" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG")
+CL_EXIT=$?
+
+inc
+if [ "$CL_EXIT" -eq 0 ]; then pass_msg "patch-cl: exit 0"; else fail_msg "patch-cl: exit $CL_EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_PATCH_CL/.claude/migration-cleanup-settings.patch" ]; then
+  pass_msg "patch-cl: no patch file (clean settings)"
+else
+  fail_msg "patch-cl: spurious patch emitted"
+fi
+
+inc
+if [ ! -f "$PROJ_PATCH_CL/.claude/settings.json.pipeline-migration-report.txt" ]; then
+  pass_msg "patch-cl: no advisory report (clean settings)"
+else
+  fail_msg "patch-cl: spurious report emitted"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
