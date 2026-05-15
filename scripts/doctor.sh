@@ -204,6 +204,37 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# Check: dev_marketplace_on_main — warn when the registered dev marketplace
+# points at a clone whose HEAD is NOT on `main`. Informational, never fails.
+# DOCTOR_KNOWN_MARKETPLACES_FILE is a test seam; not advertised in user docs.
+# --------------------------------------------------------------------------
+KM_FILE="${DOCTOR_KNOWN_MARKETPLACES_FILE:-$HOME/.claude/plugins/known_marketplaces.json}"
+if [ ! -f "$KM_FILE" ]; then
+  record dev_marketplace_on_main pass "dev marketplace not registered"
+else
+  MARKETPLACE_PATH="$(python3 -c 'import json,sys
+try:
+  d=json.load(open(sys.argv[1]))
+  print(d.get("claude-pipeline-dev",{}).get("source",{}).get("path",""))
+except Exception:
+  pass' "$KM_FILE" 2>/dev/null)"
+  if [ -z "$MARKETPLACE_PATH" ]; then
+    record dev_marketplace_on_main pass "dev marketplace not registered"
+  else
+    CLONE_ROOT="$(dirname "$(dirname "$MARKETPLACE_PATH")")"
+    if [ ! -d "$CLONE_ROOT" ]; then
+      record dev_marketplace_on_main warn "marketplace path does not exist: $MARKETPLACE_PATH"
+    elif ! HEAD_BRANCH="$(git -C "$CLONE_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
+      record dev_marketplace_on_main warn "marketplace path is not a git clone: $CLONE_ROOT"
+    elif [ "$HEAD_BRANCH" = "main" ]; then
+      record dev_marketplace_on_main pass "clone on main"
+    else
+      record dev_marketplace_on_main warn "dev marketplace clone is on $HEAD_BRANCH, not main — installed version may lag main"
+    fi
+  fi
+fi
+
+# --------------------------------------------------------------------------
 # Summary table + exit code.
 # --------------------------------------------------------------------------
 echo
