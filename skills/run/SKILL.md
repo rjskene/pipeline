@@ -212,6 +212,13 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    Report what was cleaned up, then proceed.
 
+   Then, auto-close any tracker issue whose Rollout-sequence children are all closed. This is cheap (one `gh issue list` + one `gh issue view` per open tracker) and fail-soft — a non-zero exit from the helper is logged but never aborts the run:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/auto-close-trackers.sh" --apply || \
+     echo "[run] WARN: auto-close-trackers.sh exited non-zero (continuing)"
+   ```
+
 1. **Check for agent session logs** — if any logs exist in `.claude/logs/`, run the summary:
    ```bash
    bash .claude/scripts/review-logs.sh
