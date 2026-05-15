@@ -133,6 +133,10 @@ The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks
 
 Everything else under consumer `.claude/` is consumer-owned. CI enforces this via `scripts/check-no-consumer-claude-writes.sh` — adding any new source reference to `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` requires an explicit entry in `tests/no-consumer-claude-writes.allow` with a justification comment. Allow-list entries are the audit trail for legacy code waiting to be retired.
 
+## Tracker lifecycle
+
+Tracker issues (label: `tracker`) are coordination artifacts that roll up child issues under a `## Rollout sequence` checklist. The orchestrator excludes them from the action queue and never proposes them for plan/execute. `/pipeline:run` housekeeping auto-closes any open issue labelled `tracker` whose `## Rollout sequence` children are all in state `CLOSED`, posting the comment `Auto-closed: all children merged.` and leaving the issue history preserved. This depends on the `tracker` label introduced by #31 — without that label the housekeeping pass has nothing to scan. Entrypoint: `scripts/auto-close-trackers.sh`. Contract / test substrate: `tests/test-auto-close-trackers.sh`.
+
 ## Design Principles
 
 1. **Issues are the unit of work.** All planned work lives in GitHub issues. Specs, brainstorm notes, and design docs are transient — they get converted to issues and deleted.
