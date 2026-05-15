@@ -23,8 +23,6 @@ EXPECTED = [
     ("PreToolUse",  "Edit",  "enforce-path-c-delegation.py"),
     ("PreToolUse",  "Write", "enforce-path-c-delegation.py"),
     ("PreToolUse",  "*",     "restrict_paths.py"),
-    ("PostToolUse", "*",     "log-tool-use.sh"),
-    ("PostToolUse", "Agent", "log_subagent.py"),
     ("Stop",        "*",     "enforce-ci-wait.py"),
 ]
 

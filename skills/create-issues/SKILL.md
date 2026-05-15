@@ -56,6 +56,43 @@ You are in **brainstorming / issue-creation mode**. Your job is to help the user
 5. When an actionable item (or set of items, post-scope-check) crystallizes, you propose creating a GitHub issue.
 6. On user confirmation, you create the issue(s).
 
+### Grouping detection — before proposal
+
+After scope-check decides on N≥1 issue(s) to propose, but before printing the proposal compact list, query existing open issues for grouping candidates so the proposal can surface relationships the user might otherwise miss. The check is deterministic (conventional-commit `<scope>` matching) and read-only.
+
+**Invocation.** Call the helper once per proposal batch, passing every proposed title:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/find-grouping-candidates.sh" \
+  --title "<proposed-title-1>" \
+  --title "<proposed-title-2>"
+```
+
+The helper prints one recommendation line per input in the shape `INPUT="<title>" REC=<TRACKER #N | GROUP #A,#B,... | STANDALONE> REASON=<short>`.
+
+**Recommendation shapes.**
+- `TRACKER #N` — the proposed issue's scope matches an existing tracker. Surface: "This issue overlaps with tracker #N — propose adding as a child of #N."
+- `GROUP #A,#B` — the proposed issue plus standalones #A and #B share a scope. Surface: "This issue overlaps with standalones #A, #B — propose a new tracker rolling up all three."
+- `STANDALONE` — no candidate found. Surface nothing; proceed silently to the proposal gate.
+
+**User gate.** When a TRACKER or GROUP recommendation surfaces, append it to the proposal list as an annotation under the relevant `(pending)` line, and include the option in the confirmation prompt — **the default action is to accept the recommendation**. Example prompt: "Create these N issues? (y/n, or list numbers to keep; default accepts tracker grouping)". The user may type `standalone` to override and create the issue without grouping.
+
+**Post-confirmation auto-append (TRACKER case).** After the new sub-issue is created and its number is known, splice a new checklist line into the tracker's `## Rollout sequence` section in place:
+
+```bash
+gh issue view <tracker> --repo $PIPELINE_REPO --json body -q .body > /tmp/tracker-body.md
+# append `- [ ] **#<new> — <title>** (<one-line summary>)` to the Rollout sequence checklist
+gh issue edit <tracker> --repo $PIPELINE_REPO --body-file /tmp/tracker-body.md
+```
+
+If the tracker body has no `## Rollout sequence` section, fall back to printing a manual-action notice (`Manual: append #<new> to tracker #<N> Rollout sequence`) and continue.
+
+**Post-confirmation auto-create (GROUP case).** Falls through to the existing multi-issue tracker creation flow documented below — the helper's `GROUP` recommendation is what promotes a single-issue proposal into a multi-issue + tracker proposal. The tracker is created last and references the existing standalones + the new issue.
+
+**Read-only on dry-run.** The helper itself never edits issues. The auto-append happens only after the user confirms creation.
+
+**Opt-out.** Disable with `PIPELINE_GROUPING_DETECTION_ENABLED=false` in `pipeline.config` to skip this step entirely (the proposal proceeds as if all recommendations were STANDALONE).
+
 ### Issue proposal format
 
 When one or more actionable items have crystallized and you are ready to propose issues, show them as a **compact list only**:

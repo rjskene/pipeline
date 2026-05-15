@@ -27,9 +27,21 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 | Execution | `/pipeline:execute-issue-plan` | `subagent-driven-development` |
 | PR review | `/pipeline:evaluate-issue-pr` | `subagent-driven-development` |
 
+For autonomous end-to-end runs across many issues, `/pipeline:fullsend` is the canonical entry point — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations. The legacy `"full send"` magic-string passed to `/pipeline:run` is preserved as a back-compat delegator.
+
+### Dispatch model (hybrid)
+
+Pipeline stages dispatch in one of two ways, keyed off the path label written by `/pipeline:classify-issue`:
+
+- **PATH A** (`docs-only`) — execute-issue-plan and evaluate-issue-pr run inline via `Agent(subagent_type='general-purpose', ...)` from the orchestrator session. No `spawn-claude.sh`, no `claude -p`, no tmux. The worktree is still created by `setup-worktree.sh`; only the agent launch is inline. Routing logic lives in `skills/run/SKILL.md` Step 6 and Step 7.
+- **PATH B / PATH C** — execute-issue-plan and evaluate-issue-pr continue to dispatch through `scripts/spawn-claude.sh` (which invokes `claude -p`) and, for multi-issue runs, `scripts/run-queue.sh` + tmux. PATH B uses spawn-claude.sh; PATH C uses spawn-claude.sh. This is unchanged from the previous behavior and remains the indefinite default for B/C until external pressure (deprecation or quota signals on `-p`) forces broader migration.
+- **Other stages** (classify-issue, plan-issue, evaluate-issue-plan, create-issues) are already invoked inline as `Agent(...)` from the orchestrator regardless of path; nothing changes for them.
+
+Broader PATH B/C inline migration is intentionally deferred (see issue #80 rationale: subagent context budget, turn budget, permission inheritance, TDD discipline drift, and crash recovery risks are accepted at PATH A scope but not at B/C scope).
+
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
-**Full Send wave model.** When the user invokes `/pipeline:run` in "full send" mode, the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
+**Full Send wave model.** When the user invokes `/pipeline:fullsend` (or the back-compat `"full send"` magic-string in `/pipeline:run`, which delegates to the same skill), the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
 
 ## Key Handoffs
 
@@ -60,9 +72,9 @@ The implementation lives in `scripts/auto-merge-gate.sh` (helper exposing `auto_
 
 ## Observability
 
-`.claude/hooks/log_subagent.py` is a PostToolUse hook that logs every Agent tool invocation. It writes per-agent JSON files to `.claude/logs/subagents/`, a consolidated TSV to `.claude/logs/subagents.log`, and errors to `.claude/logs/subagent-hook-errors.log`. All logs are gitignored and the hook uses fail-open semantics (errors are swallowed so they never block tool use).
+**HTS-dogfood-only.** `.claude/hooks/log_subagent.py` is a PostToolUse hook that logs every Agent tool invocation. It writes per-agent JSON files to `.claude/logs/subagents/`, a consolidated TSV to `.claude/logs/subagents.log`, and errors to `.claude/logs/subagent-hook-errors.log`. All logs are gitignored and the hook uses fail-open semantics (errors are swallowed so they never block tool use). This hook is registered in this repo's `.claude/settings.json` only; the published `pipeline@claude-pipeline` plugin manifest does NOT register it, so consumer installs produce no `.claude/logs/subagents/` files.
 
-`.claude/logs/tool-use.log` is a tab-separated per-tool-call log (timestamp, tool, session, summary) written by `.claude/hooks/log-tool-use.sh` (PostToolUse `*`). Correlate with `subagents.log` via the `session` field to reconstruct the tool sequence inside each subagent — useful for verifying TDD order (Write test → Bash pytest fail → Write impl → Bash pytest pass). Log rotation is not automated; `cleanup-worktree.sh` copies per-issue logs to the root `.claude/logs/tool-use-issue-<N>.log` on worktree teardown.
+**HTS-dogfood-only.** `.claude/logs/tool-use.log` is a tab-separated per-tool-call log (timestamp, tool, session, summary) written by `.claude/hooks/log-tool-use.sh` (PostToolUse `*`). Correlate with `subagents.log` via the `session` field to reconstruct the tool sequence inside each subagent — useful for verifying TDD order (Write test → Bash pytest fail → Write impl → Bash pytest pass). Log rotation is not automated; `cleanup-worktree.sh` copies per-issue logs to the root `.claude/logs/tool-use-issue-<N>.log` on worktree teardown. This hook is registered in this repo's `.claude/settings.json` only; the published `pipeline@claude-pipeline` plugin manifest does NOT register it, so consumer installs produce no `.claude/logs/tool-use.log` files.
 
 `.claude/logs/runs.log` is a tab-separated per-spawn marker written by `spawn-claude.sh` at session launch (one line per spawn). Columns: timestamp, `session=<uuid>`, `issue=<N>`, `path=<A|B|C>`, `skill=<name>`, `worktree=<path>`. The session UUID matches `--session-id` passed to the claude CLI, so it joins 1:1 with `tool-use.log` and `subagents.log` rows for that session. Use `bash .claude/scripts/review-audits.sh [--last N | --path X | --deviations | --issue N | --since DATE]` to inspect runs — the script derives signals (skill sequence vs expected, subagent dispatches, TDD commit pattern) on the fly from the raw substrate, so there's no derived-audit JSON to stale. Log rotation is not automated; at steady state (~50 spawns/week) growth is negligible.
 
@@ -98,11 +110,13 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
 
 1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
 2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, and `.release-please-manifest.json` atomically via `extra-files`.
-3. **Dev install.** The dev marketplace must be added via a **local filesystem path to the manifest file** inside a clone of this repo — the `owner/repo@ref <manifest-path>` shorthand does not work for the dev marketplace (see Pitfalls below). One-time setup on the consumer machine:
+3. **Dev install.** The dev marketplace MUST be added from a SEPARATE local clone of this repo that tracks `main` — RCs only ever land on `main`, so installing from a `staging` checkout (including this working tree) silently pins you to the last stable version that was on `main`. Verified 2026-05-15 on a private-repo consumer that received `v0.4.0-rc.1` from a `staging` clone after `v0.4.0-rc.2` had shipped to `main`.
+
+   One-command setup (idempotent — works for first install and for every RC refresh):
 
    ```bash
-   git clone https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
-   cd ~/claude-pipeline-main && git checkout main
+   git -C ~/claude-pipeline-main pull --ff-only origin main 2>/dev/null \
+     || git clone --branch main https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
    ```
 
    Then in Claude Code:
@@ -119,19 +133,14 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
    /plugin install   pipeline@claude-pipeline-dev
    ```
 
-   RC-refresh ritual (run on each RC cut to pick up the new version):
-
-   ```bash
-   cd ~/claude-pipeline-main && git pull origin main
-   ```
-
-   Then re-run `/plugin install pipeline@claude-pipeline-dev`. If the cache doesn't refresh, uninstall + reinstall as shown above.
+   Re-run the one-command setup block above on each RC cut to pick up the new version. If the cache doesn't refresh, uninstall + reinstall as shown.
 
    **Pitfalls** (verified 2026-05-15 on a private-repo consumer with `pipeline@claude-pipeline-dev v0.4.0-rc.1`):
    - The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git clone` / `git pull`.
    - Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref, and `raw.githubusercontent.com` 404s without auth anyway. The local-path form is the only reliable one.
    - Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the `"source": "./"` field in the manifest resolves relative to the manifest file's location, so the loader can't find the plugin tree if the manifest sits in a tmp dir.
    - Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
+   - Run `/pipeline:doctor` after install — the `dev_marketplace_on_main` check warns if the registered marketplace path resolves to a non-`main` clone.
 4. **Revert to stable.**
    ```
    /plugin uninstall pipeline@claude-pipeline-dev
@@ -155,6 +164,8 @@ The consumer project owns exactly one pipeline file: `pipeline.config` at the pr
 All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:run`, …). Unprefixed command names like `plan-issue` are intentionally not registered so the plugin coexists with other plugins that might claim those names.
 
 > Legacy install (`install.sh`, the `.claude-pipeline/` subtree, and the subtree-drift tooling) has been retired. Existing subtree consumers run `scripts/migrate-from-subtree.sh` once and then install the plugin.
+
+Observability hooks (`log-tool-use.sh`, `log_subagent.py`) are HTS-dogfood-only and registered via this repo's `.claude/settings.json`; they are not part of the published manifest. See Observability.
 
 ## Namespace discipline
 
