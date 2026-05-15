@@ -12,12 +12,14 @@ REPORT=".claude/migration-cleanup-report-claudemd.txt"
 HEADER_FINDINGS=()
 HEADER_CORROBORATION=()
 PATHS_FINDINGS=()
+CMDS_FINDINGS=()
 
 # Track section spans as "<file>|<start>|<end>"
 SECTION_SPANS=()
 
 REGEX_HEADER='^## (Pipeline|Claude Pipeline|Pipeline Setup)( |$)'
 REGEX_PATHS='\.claude-pipeline/|subtree pull|(^|[[:space:]/])install\.sh'
+REGEX_CMDS='(^|[^[:alnum:]:_/])/(plan-issue|evaluate-issue-plan|execute-issue-plan|evaluate-issue-pr|create-issues|classify-issue|worktree-sync)([^[:alnum:]_-]|$)'
 
 # Is line $2 inside any flagged section span for file $1?
 in_section() {
@@ -79,6 +81,14 @@ scan_file() {
     in_section "$file" "$lno" && continue
     PATHS_FINDINGS+=("$file:$m")
   done < <(grep -nE "$REGEX_PATHS" "$file" || true)
+
+  # Pass 3: deprecated unprefixed slash commands, deduped against section spans.
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    local lno="${m%%:*}"
+    in_section "$file" "$lno" && continue
+    CMDS_FINDINGS+=("$file:$m")
+  done < <(grep -nE "$REGEX_CMDS" "$file" || true)
 }
 
 mkdir -p .claude
@@ -87,7 +97,9 @@ if [ -f CLAUDE.md ]; then
   scan_file CLAUDE.md
 fi
 
-if [ ${#HEADER_FINDINGS[@]} -eq 0 ] && [ ${#PATHS_FINDINGS[@]} -eq 0 ]; then
+if [ ${#HEADER_FINDINGS[@]} -eq 0 ] \
+   && [ ${#PATHS_FINDINGS[@]} -eq 0 ] \
+   && [ ${#CMDS_FINDINGS[@]} -eq 0 ]; then
   exit 0
 fi
 
@@ -110,6 +122,12 @@ fi
     echo "Legacy paths"
     echo "------------"
     for f in "${PATHS_FINDINGS[@]}"; do echo "$f"; done
+    echo ""
+  fi
+  if [ ${#CMDS_FINDINGS[@]} -gt 0 ]; then
+    echo "Deprecated slash commands"
+    echo "-------------------------"
+    for f in "${CMDS_FINDINGS[@]}"; do echo "$f"; done
     echo ""
   fi
 } > "$REPORT"

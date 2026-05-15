@@ -108,6 +108,65 @@ printf 'Run `bash install.sh` after cloning.\n' > "$PROJ_PATHS_C/CLAUDE.md"
 (cd "$PROJ_PATHS_C" && bash "$SCANNER_SH") >/dev/null 2>&1
 assert_paths_finding "paths-C" "$PROJ_PATHS_C" "install.sh"
 
+# ---------------------------------------------------------------------------
+# Task 3: detect deprecated unprefixed slash commands.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'detect: deprecated unprefixed slash commands'"
+
+run_cmd_fixture() {
+  local projdir="$1" content="$2"
+  mkdir -p "$projdir"
+  printf '%s\n' "$content" > "$projdir/CLAUDE.md"
+  (cd "$projdir" && bash "$SCANNER_SH") >/dev/null 2>&1
+}
+
+PROJ_CMD_A="$WORKDIR/proj-cmd-a"
+run_cmd_fixture "$PROJ_CMD_A" 'Run `/plan-issue 42` to plan an issue.'
+REPORT_A="$PROJ_CMD_A/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ -f "$REPORT_A" ] && grep -qF 'Deprecated slash commands' "$REPORT_A" \
+   && grep -qF '/plan-issue' "$REPORT_A"; then
+  pass_msg "cmd-A: /plan-issue flagged"
+else
+  fail_msg "cmd-A: /plan-issue NOT flagged"
+fi
+
+PROJ_CMD_B="$WORKDIR/proj-cmd-b"
+run_cmd_fixture "$PROJ_CMD_B" 'Run `/pipeline:plan-issue 42` to plan an issue.'
+REPORT_B="$PROJ_CMD_B/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ ! -f "$REPORT_B" ]; then
+  pass_msg "cmd-B: namespaced form not flagged"
+else
+  fail_msg "cmd-B: namespaced form WAS flagged"
+  sed 's/^/    /' "$REPORT_B"
+fi
+
+PROJ_CMD_C="$WORKDIR/proj-cmd-c"
+run_cmd_fixture "$PROJ_CMD_C" 'See `/run` and `/doctor` for status checks.'
+REPORT_C="$PROJ_CMD_C/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ ! -f "$REPORT_C" ]; then
+  pass_msg "cmd-C: /run and /doctor not flagged"
+else
+  fail_msg "cmd-C: /run or /doctor incorrectly flagged"
+  sed 's/^/    /' "$REPORT_C"
+fi
+
+PROJ_CMD_D="$WORKDIR/proj-cmd-d"
+run_cmd_fixture "$PROJ_CMD_D" 'Use `/evaluate-issue-plan 5`, `/execute-issue-plan 5`, and `/worktree-sync`.'
+REPORT_D="$PROJ_CMD_D/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ -f "$REPORT_D" ] && grep -qF '/evaluate-issue-plan' "$REPORT_D" \
+   && grep -qF '/execute-issue-plan' "$REPORT_D" \
+   && grep -qF '/worktree-sync' "$REPORT_D"; then
+  pass_msg "cmd-D: all three hyphenated commands flagged"
+else
+  fail_msg "cmd-D: missing one or more hyphenated commands"
+  [ -f "$REPORT_D" ] && sed 's/^/    /' "$REPORT_D"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
