@@ -15,11 +15,11 @@ SKILL="execute-issue-plan"
 MANUAL_MERGE_ARG=""
 # Loop-based parser: --manual-merge may appear anywhere before the
 # positional <worktree-path> argument. When present, MANUAL_MERGE=1 is
-# exported to the child claude process AND appended to the skill-args
-# directive injected via system prompt so the skill's prose-level parser
-# sees it too. The case-arm explicitly consumes --manual-merge before any
-# unknown-arg fallback, so stale installs that don't know the flag
-# degrade safely.
+# exported to the child claude process; the skill's prose-level parser
+# in evaluate-issue-pr Step 11 honors that env var as equivalent to the
+# --manual-merge flag. The case-arm explicitly consumes --manual-merge
+# before any unknown-arg fallback, so stale installs that don't know the
+# flag degrade safely.
 while [ $# -gt 0 ]; do
   case "$1" in
     --dangerously-skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
