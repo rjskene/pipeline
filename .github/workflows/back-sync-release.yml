@@ -10,7 +10,7 @@ permissions:
 jobs:
   back-sync:
     runs-on: ubuntu-latest
-    if: startsWith(github.event.head_commit.message, 'chore(main): release ')
+    if: "${{ startsWith(github.event.head_commit.message, 'chore(main): release ') }}"
     steps:
       - uses: actions/checkout@v4
         with:
