@@ -3,10 +3,12 @@
 A reusable automation layer for Claude Code projects. Manages the full GitHub issue lifecycle — planning, evaluation, execution, PR creation, and cleanup — through slash commands.
 
 ```
-(new issue) → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
+(new issue) → /pipeline:classify-issue → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
 ```
 
-Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
+Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`. `/pipeline:classify-issue` additionally applies a path label (`docs-only` for trivial doc-only edits, `multi-task` for issues that need parallel sub-task execution) that steers downstream dispatch.
+
+For autonomous end-to-end runs across many issues, use `/pipeline:fullsend` — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations.
 
 ---
 
@@ -26,21 +28,20 @@ The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime 
 
 ### Installing the dev channel
 
-**The dev channel requires a SEPARATE clone of this repo, kept on `main`.** It cannot be installed from your working `staging` checkout — RCs only ever land on `main`, and the marketplace path must resolve to a `main`-tracking clone. Installing from a `staging` clone silently pins you to the last stable version that was on `main` at the time of cloning.
-
 Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace that carries release candidates of the same plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
 
-**One-command setup** (idempotent — works for first install and for every RC refresh):
+**Install from your existing `staging` clone** — auto-back-sync (see `CLAUDE.md` → Release cadence step 5) cherry-picks every release commit from `main` onto `staging` automatically, so `staging` carries the same `version` fields as `main`. No separate `~/claude-pipeline-main` clone is required.
+
+In your existing staging clone:
 
 ```bash
-git -C ~/claude-pipeline-main pull --ff-only origin main 2>/dev/null \
-  || git clone --branch main https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
+git pull --ff-only origin staging
 ```
 
-Then in Claude Code:
+Then in Claude Code (substitute the path to your staging clone):
 
 ```
-/plugin marketplace add ~/claude-pipeline-main/.claude-plugin/marketplace-dev.json
+/plugin marketplace add <path-to-your-staging-clone>/.claude-plugin/marketplace-dev.json
 /plugin install pipeline@claude-pipeline-dev
 ```
 
@@ -51,15 +52,15 @@ Pick the **local** scope at the install prompt. Then reload so the new plugin co
 /plugin install   pipeline@claude-pipeline-dev
 ```
 
-Re-run the one-command setup block above on each RC cut to pick up the new version; uninstall + reinstall if the cache doesn't refresh.
+On each RC cut, `git pull --ff-only origin staging` in the same clone, then uninstall + reinstall above to pick up the new version.
 
 **Pitfalls:**
-- The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git clone` / `git pull`.
+- The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git pull`.
 - Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref. The local-path form is the only reliable one.
 - Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the manifest's `"source": "./"` resolves relative to the manifest file's location, so the loader can't find the plugin tree.
 - Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
 
-**Troubleshooting — installed dev version older than expected?** Run `/pipeline:doctor` — the `dev_marketplace_on_main` check warns when the registered dev marketplace path is in a non-`main` clone. Re-run the one-command setup above to refresh.
+**Troubleshooting — installed dev version older than expected?** Run `/pipeline:doctor` — the `dev_marketplace_on_main` check remains as defense-in-depth and warns if the registered marketplace path resolves to a non-`main` clone (legacy setups).
 
 See `CLAUDE.md` → "Dev/prerelease channel" for the publishing side (how RCs are cut).
 
@@ -149,18 +150,19 @@ The discovery helper requires `jq` (already a pipeline prerequisite) and `gh`. I
 | Command | What it does |
 |---|---|
 | `/pipeline:run` | Check pipeline status, see what's ready, advance the next stage |
+| `/pipeline:fullsend [N N ...]` | Autonomous end-to-end run for one or many issues (classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge) without intermediate confirmations |
+| `/pipeline:classify-issue 42` | Triage issue #42 and apply a path label (`docs-only` / `multi-task` / none) for downstream dispatch |
 | `/pipeline:plan-issue 42` | Generate an implementation plan for issue #42 and post it as a comment |
 | `/pipeline:evaluate-issue-plan 42` | Independently review the plan on issue #42 |
 | `/pipeline:execute-issue-plan 42` | Implement the approved plan (run from inside the feature worktree) |
 | `/pipeline:evaluate-issue-pr 42` | Review the PR against its plan (run from inside the feature worktree) |
 | `/pipeline:create-issues` | Brainstorm mode — discuss changes, then push as GitHub issues |
 | `/pipeline:worktree-sync` | Sync `.claude/` files to all active worktrees |
+| `/pipeline:doctor` | Read-only audit of `pipeline.config`, `gh` auth, plugin registration, labels, residual subtree artifacts, and base branch (run `/pipeline:doctor --fix labels` to seed the canonical labels) |
 
 ---
 
-## Migrating from a subtree install
-
-If you previously installed the pipeline via the legacy `.claude-pipeline/` subtree path, there is a one-shot migration script that removes the legacy files and leaves your project ready for the plugin install. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md) for the full sequence. The script also scans your CLAUDE.md(s) and `.claude/settings.json` for legacy pipeline references and emits advisory reports + reviewable patches; see steps 3 and 3a in the migration guide for the review flows.
+> **Migrating from a subtree install?** The legacy `.claude-pipeline/` subtree path is retired. Existing subtree consumers run the one-shot migration once — see [docs/migration-from-subtree.md](docs/migration-from-subtree.md).
 
 ---
 

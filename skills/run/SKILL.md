@@ -28,6 +28,7 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 | Shortcut | Meaning |
 |----------|---------|
 | **full send** | Back-compat alias for `/pipeline:fullsend`. Delegates to that skill with the same argv. |
+| `--analyze` | Read-only hygiene pass over the open-issue set. Surfaces likely duplicates and standalones that fit existing trackers. No mutations. See [Analyze mode (--analyze)](#analyze-mode---analyze) below. |
 
 ### Full Send — autonomous end-to-end execution
 
@@ -38,6 +39,63 @@ For back-compat, when the user prompt to `/pipeline:run` contains the token `ful
 `Skill(skill: "pipeline:fullsend", args: "<original argv: issue numbers + --manual-merge if present>")`
 
 and then STOP. Do not duplicate the autonomous flow inline — the delegation is the only supported back-compat path.
+
+## Analyze mode (--analyze)
+
+Read-only hygiene pass over the open-issue set. Surfaces likely duplicates and standalones that fit existing trackers so the user can decide whether to close, merge, or re-bucket before the next full send. **No mutations.** Decision-support only — the user reads the digest and runs the suggested `gh` commands manually.
+
+**Trigger.** Parse `--analyze` from any argv position (same pattern as `--manual-merge`). The token must not collide with bare issue numbers, so any token starting with `--` is filtered out of the issue-number list. Parser sketch:
+
+```bash
+ANALYZE=0
+for arg in "$@"; do
+  case "$arg" in
+    --analyze) ANALYZE=1 ;;
+  esac
+done
+```
+
+**Branch behavior.** When `ANALYZE=1`, this skill SKIPS classify / plan / execute / eval entirely and exits cleanly after printing the digest. No labels are applied, no comments are posted, no PRs are opened, no worktrees are created. The session is fully read-only.
+
+**Stage 1 — heuristic shortlist.** Run the deterministic shell helper and capture its single-line stdout as the shortlist path:
+
+```bash
+SHORTLIST_PATH=$(bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/analyze-issues.sh")
+```
+
+The helper writes JSON to `.claude/logs/analyze-shortlist-<ISO>.json` with two keys, `duplicate_pairs` and `tracker_fits`, each capped at 20 entries. The path is the only stdout line.
+
+**Stage 2 — subagent dispatch.** Hand the shortlist to a general-purpose subagent which confirms / denies each candidate and synthesizes the suggested `gh` command. Verbatim block:
+
+```
+Agent(subagent_type='general-purpose',
+      description='analyze open-issue hygiene shortlist',
+      prompt='Read shortlist at <SHORTLIST_PATH>. For each duplicate-pair row,
+              run gh issue view <a> --json title,body and gh issue view <b>
+              --json title,body; confirm/deny duplication, assign confidence
+              (high|medium|low), write a one-line rationale, and synthesize the
+              gh command. For each tracker-fits row, run gh issue view <issue>
+              and gh issue view <tracker>; confirm/deny fit, same fields.
+              Output ONLY the two markdown tables defined in skills/run/SKILL.md
+              analyze-mode section. Omit a table entirely if it has zero
+              high|medium findings. No mutations.')
+```
+
+Substitute `<SHORTLIST_PATH>` with the path captured in Stage 1.
+
+**Stage 3 — output contract.** The subagent prints two markdown tables to the orchestrator conversation. If a category has zero high|medium findings, its table is omitted (no empty noise).
+
+```
+## Duplicate candidates
+| Pair | Confidence | Reason | Suggested action |
+|------|------------|--------|-------------------|
+
+## Standalones that fit an existing tracker
+| Issue | Tracker | Confidence | Reason | Suggested action |
+|-------|---------|------------|--------|-------------------|
+```
+
+**Constraints.** No mutations. No auto-close, no auto-label, no auto-comment. The pipeline does not run `gh issue close`, `gh issue edit`, or `gh issue comment` from this branch. The user reads the digest and decides what to act on.
 
 ## Issue discovery
 
