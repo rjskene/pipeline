@@ -3,10 +3,12 @@
 A reusable automation layer for Claude Code projects. Manages the full GitHub issue lifecycle — planning, evaluation, execution, PR creation, and cleanup — through slash commands.
 
 ```
-(new issue) → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
+(new issue) → /pipeline:classify-issue → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
 ```
 
-Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
+Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`. `/pipeline:classify-issue` additionally applies a path label (`docs-only` for trivial doc-only edits, `multi-task` for issues that need parallel sub-task execution) that steers downstream dispatch.
+
+For autonomous end-to-end runs across many issues, use `/pipeline:fullsend` — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations.
 
 ---
 
@@ -148,18 +150,19 @@ The discovery helper requires `jq` (already a pipeline prerequisite) and `gh`. I
 | Command | What it does |
 |---|---|
 | `/pipeline:run` | Check pipeline status, see what's ready, advance the next stage |
+| `/pipeline:fullsend [N N ...]` | Autonomous end-to-end run for one or many issues (classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge) without intermediate confirmations |
+| `/pipeline:classify-issue 42` | Triage issue #42 and apply a path label (`docs-only` / `multi-task` / none) for downstream dispatch |
 | `/pipeline:plan-issue 42` | Generate an implementation plan for issue #42 and post it as a comment |
 | `/pipeline:evaluate-issue-plan 42` | Independently review the plan on issue #42 |
 | `/pipeline:execute-issue-plan 42` | Implement the approved plan (run from inside the feature worktree) |
 | `/pipeline:evaluate-issue-pr 42` | Review the PR against its plan (run from inside the feature worktree) |
 | `/pipeline:create-issues` | Brainstorm mode — discuss changes, then push as GitHub issues |
 | `/pipeline:worktree-sync` | Sync `.claude/` files to all active worktrees |
+| `/pipeline:doctor` | Read-only audit of `pipeline.config`, `gh` auth, plugin registration, labels, residual subtree artifacts, and base branch (run `/pipeline:doctor --fix labels` to seed the canonical labels) |
 
 ---
 
-## Migrating from a subtree install
-
-If you previously installed the pipeline via the legacy `.claude-pipeline/` subtree path, there is a one-shot migration script that removes the legacy files and leaves your project ready for the plugin install. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md) for the full sequence. The script also scans your CLAUDE.md(s) and `.claude/settings.json` for legacy pipeline references and emits advisory reports + reviewable patches; see steps 3 and 3a in the migration guide for the review flows.
+> **Migrating from a subtree install?** The legacy `.claude-pipeline/` subtree path is retired. Existing subtree consumers run the one-shot migration once — see [docs/migration-from-subtree.md](docs/migration-from-subtree.md).
 
 ---
 
