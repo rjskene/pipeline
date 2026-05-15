@@ -295,22 +295,79 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a status table** for all discovered pipeline issues. Include a **Tags** column showing non-pipeline labels (i.e., labels that are NOT pipeline stage labels like `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, `docs-only`, `multi-task`, `PIPELINE_LABELS_LATER`, `PIPELINE_LABELS_HUMAN`, `PIPELINE_LABELS_BRAINSTORM`, or `PIPELINE_LABELS_EXCLUDED`). These are category/domain tags like `ui`, `feature`, `bug`, `email`, `redline-agent`, `redline-ux`, `redline-output`, `infra`, etc. Include a **Target Base** column showing which base each worktree will cut from: `next` if the issue's labels contain `next-major-release`, otherwise `PIPELINE_BASE_BRANCH`. Keep this column to ≤10 chars — no truncation logic needed. Include a **Path** column:
-   - Path = `A` if the issue is labeled `docs-only`, `C` if labeled `multi-task`, else `B` (default). If both `docs-only` and `multi-task` are present, show `A!` (collision — PATH A wins, but flag it).
-   - classify-issue writes labels directly, so the label and the recommendation always match after a classify run. The audit-only `⚠ mismatch` flag (see step 2) lives in the final report, not this column.
+4. **Print a grouped status table** for all discovered pipeline issues — epics (tracker issues) at the top with their open children indented underneath, and orphans (non-tracker issues not listed under any tracker) at the bottom, bucketed by conventional-commit scope. The per-row line carries only priority + type prefix + title + stage; any non-default Target Base / Path / Blocked-by metadata is surfaced in a separate **NOTES** footer table.
+
+   **Inputs.** This step consumes `TRACKER_ISSUES` and `READY_ISSUES` from the tracker-filter block in step 2, plus the open-issue label/title map fetched in step 1. For each tracker, run the shared parser to extract its checklist children:
+
+   ```bash
+   body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
+   children=$(printf '%s\n' "$body" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/parse-tracker-children.sh" -)
+   ```
+
+   Intersect `children` with the set of open issues to get **open children**; closed children are omitted. Children referenced under any tracker's checklist are removed from the orphan candidate set; whatever remains in the non-tracker open set is an orphan.
+
+   **Per-row metadata** (used by the renderer and the NOTES footer):
+   - **Priority badge** from the `priority/P*` label (fallback `[--]`).
+   - **Type prefix** parsed from the issue title via the regex `^(feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)\(([^)]+)\):` — group 2 is the **scope** used for orphan bucketing. Titles that don't match (or use `type:` without parens) land in the `(none / generic)` bucket.
+   - **Stage** = current pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, or `ready`). Trackers render with `Stage=tracker`.
+   - **Tags** = non-pipeline labels (i.e., NOT in `{plan-pending, plan-reviewed, plan-approved, in-progress, pr-open, merged, docs-only, multi-task, tracker, PIPELINE_LABELS_LATER, PIPELINE_LABELS_HUMAN, PIPELINE_LABELS_BRAINSTORM, PIPELINE_LABELS_EXCLUDED, priority/P*, next-major-release}`). Inline tags `(brainstorm)` / `(human-in-loop)` / `(later)` render alongside the title for issues carrying those labels.
+   - **Target Base** = `next` if labels contain `next-major-release`, else `PIPELINE_BASE_BRANCH`. ≤10 chars, no truncation.
+   - **Path** = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`. If both are present, show `A!` (PATH A wins, flag the collision). classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 2) lives in the final report, not this column.
+   - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
+
+   **Grouped layout (epics on top, orphans below).** Trackers appear first with their priority badge and conventional-title; each open child renders on its own line, indented eight spaces, with stage right-aligned in parentheses. A tracker with zero open children collapses to a single `(all children closed — pending auto-close)` line:
+
    ```
    PIPELINE STATUS — <today's date>
    ================================================================
-    Issue  Title          Stage    Tags           Target Base  Path   Blocked?
-   ----------------------------------------------------------------
-    #N     <title>        ready    feature, ui    pipeline     B      no
-    #N     <title>        ready    next-major     next         A      no
-    #N     <title>        tracker  tracker        —            —      —
-    ...
+   EPICS
+   ================================================================
+    [P1] #120 — feat(install): consumer install hardening
+            #144 — feat(doctor): label seeding              (plan-approved)
+            #145 — feat(install): CLAUDE.md cleanup         (in-progress)
+            #146 — feat(install): settings.json patch       (plan-pending)
+    [P2] #131 — feat(observability): self-improve loop
+            (all children closed — pending auto-close)
+   ================================================================
+   ORPHANS
+   ================================================================
+    (run)
+       [P1] #133 — feat(run): canonical status table grouped by tracker + scope   (plan-pending)
+       [P2]  #34 — feat(run): sort status table by scope                           (ready)
+    (doctor)
+       [P2] #150 — feat(doctor): settings cleanup patch                            (merged)
+    (none / generic)
+       [P2] #999 — chore: bump tooling                                             (ready)
    ================================================================
    ```
 
-   Tracker issues (from `TRACKER_ISSUES`) appear in the table with `Stage=tracker` and are never proposed for plan/execute. Their child-issue rollup is visible in the issue body on GitHub.
+   Orphan bucketing rules:
+   - Bucket key is the conventional-commit `<scope>` token from the title regex above.
+   - Scope buckets render in alphabetical order; `(none / generic)` always last.
+   - Within a bucket, rows sort by priority tier (`P0` < `P1` < `P2` < `P3` < no-priority).
+
+   **NOTES footer (non-default metadata only).** Surface Target Base / Path / Blocked-by only for issues whose values differ from the defaults (`Target Base = $PIPELINE_BASE_BRANCH`, `Path = B`, `Blocked by = none`). If every issue carries defaults, omit the entire block:
+
+   ```
+   NOTES (non-default)
+   ================================================================
+    Issue  | Target Base | Path | Blocked by
+   ----------------------------------------------------------------
+    #150   | next        | A    | --
+    #133   | pipeline    | B    | #132
+   ================================================================
+   ```
+
+   **Counts footer (always rendered).** A single trailing line of the form `N epics + N children + N orphans = N open`:
+
+   ```
+   5 epics + 19 children + 5 orphans = 29 open
+   ```
+
+   - `children` counts open children that appear under any tracker, deduplicated. If the same `#N` appears under two trackers, emit a `WARN: #N listed under multiple trackers: #A, #B` line above the counts and still count once.
+   - `open` is the sum `epics + children + orphans` and must equal the open-issue total; a mismatch indicates a parser bug or a malformed tracker body.
+
+   Tracker issues (from `TRACKER_ISSUES`) are rendered in the EPICS section with `Stage=tracker` and are never proposed for plan/execute. Their child-issue rollup is parsed from the body's `## Rollout sequence` checklist and rendered inline.
 
    **Release PRs row group.** If `RELEASE_PRS` (from step 0) is non-empty, render an additional table ABOVE the pipeline-issue table. Parse each line (`pr=<num> ci=<pass|fail|pending> title=<title>`) into a row:
 
