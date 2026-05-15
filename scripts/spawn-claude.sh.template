@@ -11,15 +11,25 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 #         "remote-control"     — remote-control server (control from mobile app / claude.ai/code)
 
 SKIP_PERMS=""
-if [ "${1:-}" = "--dangerously-skip-permissions" ]; then
-  SKIP_PERMS="--dangerously-skip-permissions"
-  shift
-fi
-
 SKILL="execute-issue-plan"
-if [ "${1:-}" = "--skill" ]; then
-  SKILL="$2"
-  shift 2
+MANUAL_MERGE_ARG=""
+# Loop-based parser: --manual-merge may appear anywhere before the
+# positional <worktree-path> argument. When present, MANUAL_MERGE=1 is
+# exported to the child claude process AND appended to the skill-args
+# directive injected via system prompt so the skill's prose-level parser
+# sees it too. The case-arm explicitly consumes --manual-merge before any
+# unknown-arg fallback, so stale installs that don't know the flag
+# degrade safely.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dangerously-skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
+    --skill) SKILL="$2"; shift 2 ;;
+    --manual-merge) MANUAL_MERGE_ARG="--manual-merge"; shift ;;
+    *) break ;;
+  esac
+done
+if [ -n "$MANUAL_MERGE_ARG" ]; then
+  export MANUAL_MERGE=1
 fi
 
 WORKTREE_PATH="$(realpath "$1" 2>/dev/null || echo "$1")"

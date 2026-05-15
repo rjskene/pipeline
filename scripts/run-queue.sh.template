@@ -70,16 +70,23 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 # Queue log is written to .claude/logs/queue-YYYYMMDD-HHMMSS.log
 
 SKIP_PERMS=""
-if [ "${1:-}" = "--skip-permissions" ]; then
-  SKIP_PERMS="--dangerously-skip-permissions"
-  shift
-fi
-
 SKILL_FLAG=""
-if [ "${1:-}" = "--skill" ]; then
-  SKILL_FLAG="--skill $2"
-  shift 2
-fi
+MANUAL_MERGE_FLAG=""
+# Loop-based parser: each flag may appear anywhere before/among the issue
+# numbers. --manual-merge in particular must be consumable from any argv
+# position (`FULL SEND --manual-merge 1 2`, `FULL SEND 1 2 --manual-merge`,
+# `FULL SEND 1 --manual-merge 2`) — bare integers are issue numbers and
+# remain in $@.
+NEW_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
+    --skill)            SKILL_FLAG="--skill $2"; shift 2 ;;
+    --manual-merge)     MANUAL_MERGE_FLAG="--manual-merge"; shift ;;
+    *)                  NEW_ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${NEW_ARGS[@]}"
 
 MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
@@ -120,7 +127,7 @@ if [ ${#QUEUE[@]} -eq 1 ]; then
   SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//")
   log "Single issue — launching directly (no queue)."
   log "Queue log: ${QUEUE_LOG}"
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
   exit 0
 fi
 
@@ -184,7 +191,7 @@ launch_agent() {
 
   log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug})..."
   log "EVENT: agent-launched issue=${issue} slug=${slug} worktree=${wt_path}"
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$wt_path" "$issue" "$slug" tmux
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"
   RESULTS[$issue]="running"
