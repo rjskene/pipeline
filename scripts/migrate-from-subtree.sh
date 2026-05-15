@@ -108,6 +108,9 @@ done
 
 # --- Settings.json injection report (advisory only; never mutates) ---
 
+SETTINGS_PATCH=".claude/migration-cleanup-settings.patch"
+SETTINGS_WOULD_BE_EMPTY=false
+
 if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
   {
     printf '%s\n' "Pipeline-injected hook references detected in $SETTINGS_FILE:"
@@ -118,6 +121,107 @@ if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
     printf '\n%s\n' "Review and remove these entries manually."
   } > "$SETTINGS_REPORT"
   echo "Pipeline-injected entries detected in settings.json — see report."
+
+  # Patch generation (jq-driven structural transform; never mutates source).
+  if command -v jq >/dev/null 2>&1; then
+    if [ ${#PIPELINE_HOOK_NAMES[@]} -gt 0 ]; then
+      BASENAMES_JSON=$(printf '%s\n' "${PIPELINE_HOOK_NAMES[@]}" | jq -R . | jq -s .)
+    else
+      BASENAMES_JSON='[]'
+    fi
+
+    JQ_FILTER='
+      def base($p): $p | sub("^.*/"; "");
+      def is_pipeline_cmd($cmd):
+        ($cmd | type == "string") and (
+          if ($PIPELINE_BASENAMES | length) > 0 then
+            $PIPELINE_BASENAMES | any(. as $b | base($cmd) == $b)
+          else
+            ($cmd | contains(".claude/hooks/"))
+          end
+        );
+      if (type == "object") and ((.hooks | type) == "object") then
+        .hooks |= (
+          with_entries(
+            if (.value | type) == "array" then
+              .value |= (
+                map(
+                  if (.hooks | type) == "array" then
+                    .hooks |= map(select(is_pipeline_cmd(.command) | not))
+                  else . end
+                )
+                | map(select((.hooks // []) | length > 0))
+              )
+            else . end
+          )
+          | with_entries(select((.value | type != "array") or ((.value | length) > 0)))
+        )
+      else . end
+    '
+
+    TRANSFORMED=$(mktemp)
+    if ! jq --argjson PIPELINE_BASENAMES "$BASENAMES_JSON" "$JQ_FILTER" "$SETTINGS_FILE" > "$TRANSFORMED" 2>/dev/null; then
+      cp "$SETTINGS_FILE" "$TRANSFORMED"
+    fi
+
+    if jq -e '
+      (. == {})
+      or ((. | keys) == ["hooks"] and (.hooks == {}))
+      or ((. | keys) == ["hooks"] and (.hooks | to_entries | length == 0))
+      or ((. | keys) == ["hooks"] and (.hooks | to_entries | all((.value | type) == "array" and (.value | length) == 0)))
+    ' "$TRANSFORMED" >/dev/null 2>&1; then
+      SETTINGS_WOULD_BE_EMPTY=true
+    fi
+
+    EMIT_PATCH=false
+    if [ "$SETTINGS_WOULD_BE_EMPTY" = true ]; then
+      EMIT_PATCH=true
+    elif ! diff -q "$SETTINGS_FILE" "$TRANSFORMED" >/dev/null 2>&1; then
+      EMIT_PATCH=true
+    fi
+
+    if [ "$EMIT_PATCH" = true ]; then
+      {
+        if [ "$SETTINGS_WOULD_BE_EMPTY" = true ]; then
+          printf 'diff --git a/%s b/%s\n' "$SETTINGS_FILE" "$SETTINGS_FILE"
+          printf 'deleted file mode 100644\n'
+          printf -- '--- a/%s\n' "$SETTINGS_FILE"
+          printf -- '+++ /dev/null\n'
+          diff -u "$SETTINGS_FILE" /dev/null 2>/dev/null | tail -n +3 || true
+        else
+          printf 'diff --git a/%s b/%s\n' "$SETTINGS_FILE" "$SETTINGS_FILE"
+          printf -- '--- a/%s\n' "$SETTINGS_FILE"
+          printf -- '+++ b/%s\n' "$SETTINGS_FILE"
+          diff -u "$SETTINGS_FILE" "$TRANSFORMED" 2>/dev/null | tail -n +3 || true
+        fi
+      } > "$SETTINGS_PATCH"
+
+      # Rewrite the trailing "Review and remove these entries manually." line
+      # with patch-application guidance (and loud warning when applicable).
+      TMP_REPORT=$(mktemp)
+      awk '!/^Review and remove these entries manually\.$/' "$SETTINGS_REPORT" > "$TMP_REPORT"
+      {
+        cat "$TMP_REPORT"
+        if [ "$SETTINGS_WOULD_BE_EMPTY" = true ]; then
+          printf '\n%s\n' "WARNING: applying this patch will leave .claude/settings.json functionally empty"
+          printf '%s\n'   "(or remove the file entirely). Review the patch carefully — if you have any"
+          printf '%s\n'   "non-pipeline customizations the detector missed, edit settings.json by hand"
+          printf '%s\n\n' "instead of applying the patch."
+        fi
+        printf '%s\n' "A reviewable patch is at .claude/migration-cleanup-settings.patch."
+        printf '%s\n' "Apply with: git apply .claude/migration-cleanup-settings.patch"
+        printf '%s\n' "After applying, delete the artifacts:"
+        printf '%s\n' "  rm -f .claude/migration-cleanup-settings.patch .claude/settings.json.pipeline-migration-report.txt"
+      } > "$SETTINGS_REPORT"
+      rm -f "$TMP_REPORT"
+
+      if [ "$SETTINGS_WOULD_BE_EMPTY" = true ]; then
+        echo "WARNING: applying the settings.json patch will leave .claude/settings.json functionally empty — review carefully."
+      fi
+    fi
+
+    rm -f "$TRANSFORMED"
+  fi
 fi
 
 # --- CLAUDE.md cleanup (advisory only; never edits source files) ---

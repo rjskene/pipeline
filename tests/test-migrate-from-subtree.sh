@@ -327,10 +327,10 @@ else
 fi
 
 inc
-if [ -f "$REPORT" ] && grep -qF 'Review and remove these entries manually.' "$REPORT"; then
-  pass_msg "inj: report includes advisory line"
+if [ -f "$REPORT" ] && grep -qF 'git apply .claude/migration-cleanup-settings.patch' "$REPORT"; then
+  pass_msg "inj: report includes patch-apply guidance"
 else
-  fail_msg "inj: report missing advisory line"
+  fail_msg "inj: report missing patch-apply guidance"
 fi
 
 inc
