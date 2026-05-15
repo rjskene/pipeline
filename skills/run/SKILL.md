@@ -494,6 +494,17 @@ active feature work, but it should come BEFORE pulling in new ready work
    If a re-run also fails to post the comment, flag the issue in the status report as "Plan failed — no comment posted" and do not advance it to evaluate-plan.
 
    **For PR evaluation (pr-open → evaluated):** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
+
+   **Dispatch routing by path tier.** Read each PR-open issue's labels:
+   - **PATH A** (`docs-only` label present): dispatch inline from this orchestrator session — no `spawn-claude.sh`, no `claude -p`, no tmux. Worktree was already created during execute-issue-plan, so reuse `<worktree-path>`:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='evaluate-issue-pr #<N> (PATH A inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1> (set to 1 if --manual-merge flag is in argv or the issue carries the manual-merge label).')
+     ```
+     Thread the `MANUAL_MERGE=1` token into the prompt verbatim when applicable; the evaluate-issue-pr skill treats the inline token identically to the `MANUAL_MERGE=1` env var that `spawn-claude.sh --manual-merge` sets.
+   - **PATH B / PATH C** (no `docs-only` label): unchanged — proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` below.
+
    1. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
    2. Launch via spawn-claude.sh with `--skill evaluate-issue-pr`:
       ```bash
@@ -506,6 +517,16 @@ active feature work, but it should come BEFORE pulling in new ready work
    4. The evaluate-issue-pr skill reviews the PR diff against the plan, makes minimal fixes if needed, and posts a verdict (Approved or Flagged). It does NOT merge — merge orchestration is handled by the pipeline (see step 8 below).
 
    **For execution (plan-approved → worktree setup):** For each approved issue's branch (deduplicated — issues sharing a branch get one worktree):
+
+   **Dispatch routing by path tier.** After the worktree is set up (step 1 below), read each approved issue's labels:
+   - **PATH A** (`docs-only` label present): dispatch inline from this orchestrator session — no `spawn-claude.sh`, no `claude -p`, no tmux. The worktree was created by `setup-worktree.sh`; only the agent launch is inline:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='execute-issue-plan #<N> (PATH A inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
+     ```
+   - **PATH B / PATH C** (no `docs-only` label): unchanged — proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` below.
+
    1. Run the setup script with the issue number:
       ```bash
       bash .claude/scripts/setup-worktree.sh <branch> <issue_number>
