@@ -3,10 +3,12 @@
 A reusable automation layer for Claude Code projects. Manages the full GitHub issue lifecycle — planning, evaluation, execution, PR creation, and cleanup — through slash commands.
 
 ```
-(new issue) → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
+(new issue) → /pipeline:classify-issue → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
 ```
 
-Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
+Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`. `/pipeline:classify-issue` additionally applies a path label (`docs-only` for trivial doc-only edits, `multi-task` for issues that need parallel sub-task execution) that steers downstream dispatch.
+
+For autonomous end-to-end runs across many issues, use `/pipeline:fullsend` — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations.
 
 ---
 
