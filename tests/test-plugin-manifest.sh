@@ -19,7 +19,7 @@ assert "agents[0] points at an existing file under plugin root" "python3 -c 'imp
 assert "referenced agent file has name: tdd-implementer" "python3 -c 'import json,os,sys,re; m=json.load(open(\"$MANIFEST\")); p=m.get(\"agents\",[None])[0]; t=open(os.path.join(\"$REPO_ROOT\",p)).read() if p else \"\"; sys.exit(0 if re.search(r\"(?m)^name:\\s*tdd-implementer\\s*\$\", t) else 1)' 2>/dev/null"
 assert "hooks is an object" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\"); sys.exit(0 if isinstance(h,dict) else 1)' 2>/dev/null"
 assert "hooks.PreToolUse is a non-empty array" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}).get(\"PreToolUse\"); sys.exit(0 if isinstance(h,list) and h else 1)' 2>/dev/null"
-assert "hooks.PostToolUse is a non-empty array" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}).get(\"PostToolUse\"); sys.exit(0 if isinstance(h,list) and h else 1)' 2>/dev/null"
+assert "hooks.PostToolUse is absent (consumer install ships no log-* hooks)" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}); sys.exit(0 if \"PostToolUse\" not in h else 1)' 2>/dev/null"
 # Skills are auto-discovered from ${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md;
 # the manifest must NOT enumerate them (presence of a top-level `skills` field
 # would indicate explicit registration — wrong path).
