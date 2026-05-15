@@ -415,6 +415,44 @@ else
   fail_msg "noman: stdout warning missing"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "claudemd integration": migrate-from-subtree.sh invokes the CLAUDE.md
+# scanner and the resulting advisory report appears.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'claudemd integration': scanner is invoked from migrate-from-subtree.sh"
+
+PROJ_INTG="$WORKDIR/proj-intg"
+mkdir -p "$PROJ_INTG/.claude-pipeline/hooks"
+touch "$PROJ_INTG/.claude-pipeline/install.sh"
+touch "$PROJ_INTG/.claude-pipeline/hooks/log-tool-use.sh"
+printf 'Run `bash .claude-pipeline/install.sh` to begin.\n' > "$PROJ_INTG/CLAUDE.md"
+
+STDERR_LOG="$WORKDIR/intg.stderr"
+STDOUT_LOG="$WORKDIR/intg.stdout"
+(cd "$PROJ_INTG" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "intg: exit 0"; else fail_msg "intg: exit $EXIT"; fi
+
+REPORT_INTG="$PROJ_INTG/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ -f "$REPORT_INTG" ]; then
+  pass_msg "intg: claudemd report exists"
+else
+  fail_msg "intg: claudemd report missing"
+fi
+
+inc
+if [ -f "$REPORT_INTG" ] && grep -qF 'CLAUDE.md:' "$REPORT_INTG" \
+   && grep -qF 'install.sh' "$REPORT_INTG"; then
+  pass_msg "intg: report mentions CLAUDE.md path and install.sh"
+else
+  fail_msg "intg: report missing expected content"
+  [ -f "$REPORT_INTG" ] && sed 's/^/    /' "$REPORT_INTG"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

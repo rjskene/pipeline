@@ -120,6 +120,14 @@ if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
   echo "Pipeline-injected entries detected in settings.json — see report."
 fi
 
+# --- CLAUDE.md cleanup (advisory only; never edits source files) ---
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/migration-cleanup-claudemd.sh" ]; then
+  bash "$SCRIPT_DIR/migration-cleanup-claudemd.sh" || \
+    echo "[migrate-from-subtree] WARN: claudemd cleanup helper failed (advisory only)" >&2
+fi
+
 # --- Report phase ---
 
 cat <<'EOF'
