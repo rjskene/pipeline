@@ -244,6 +244,123 @@ else
   fail_msg "nested: src/CLAUDE.md unexpectedly in report"
 fi
 
+# ---------------------------------------------------------------------------
+# Task 6: unified-diff patch (section-scope rule).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'patch: unified diff is git-apply-clean'"
+
+# Fixture S: section-header → delete whole section.
+PROJ_PATCH_S="$WORKDIR/proj-patch-s"
+mkdir -p "$PROJ_PATCH_S"
+cat > "$PROJ_PATCH_S/CLAUDE.md" <<'EOF'
+# Top
+
+## Pipeline
+
+Run `bash .claude-pipeline/install.sh` first.
+Then run /plan-issue 1.
+
+## Keep me
+
+I survive.
+EOF
+(
+  cd "$PROJ_PATCH_S"
+  git init -q
+  git config user.email "test@example.com"
+  git config user.name "Test"
+  git add CLAUDE.md
+  git commit -q -m "init"
+)
+(cd "$PROJ_PATCH_S" && bash "$SCANNER_SH") >/dev/null 2>&1
+PATCH_S="$PROJ_PATCH_S/.claude/migration-cleanup-claudemd.patch"
+
+inc
+if [ -f "$PATCH_S" ]; then pass_msg "patch-S: patch file exists"; else fail_msg "patch-S: patch file missing"; fi
+
+inc
+if [ -f "$PATCH_S" ] && (cd "$PROJ_PATCH_S" && git apply --check .claude/migration-cleanup-claudemd.patch) >/dev/null 2>&1; then
+  pass_msg "patch-S: git apply --check clean"
+else
+  fail_msg "patch-S: git apply --check failed"
+  [ -f "$PATCH_S" ] && sed 's/^/    /' "$PATCH_S"
+fi
+
+if [ -f "$PATCH_S" ]; then
+  (cd "$PROJ_PATCH_S" && git apply .claude/migration-cleanup-claudemd.patch) >/dev/null 2>&1 || true
+fi
+
+inc
+if ! grep -qF '## Pipeline' "$PROJ_PATCH_S/CLAUDE.md" \
+   && ! grep -qF '.claude-pipeline/install.sh' "$PROJ_PATCH_S/CLAUDE.md" \
+   && ! grep -qF '/plan-issue' "$PROJ_PATCH_S/CLAUDE.md"; then
+  pass_msg "patch-S: entire section removed"
+else
+  fail_msg "patch-S: section content still present"
+  sed 's/^/    /' "$PROJ_PATCH_S/CLAUDE.md"
+fi
+
+inc
+if grep -qF '## Keep me' "$PROJ_PATCH_S/CLAUDE.md" \
+   && grep -qF 'I survive.' "$PROJ_PATCH_S/CLAUDE.md"; then
+  pass_msg "patch-S: ## Keep me section preserved"
+else
+  fail_msg "patch-S: ## Keep me section damaged"
+fi
+
+# Fixture O: outside-section → delete only the matched line.
+PROJ_PATCH_O="$WORKDIR/proj-patch-o"
+mkdir -p "$PROJ_PATCH_O"
+cat > "$PROJ_PATCH_O/CLAUDE.md" <<'EOF'
+# Top
+
+Run `bash .claude-pipeline/install.sh` once.
+
+Then continue with `/pipeline:run`.
+EOF
+(
+  cd "$PROJ_PATCH_O"
+  git init -q
+  git config user.email "test@example.com"
+  git config user.name "Test"
+  git add CLAUDE.md
+  git commit -q -m "init"
+)
+(cd "$PROJ_PATCH_O" && bash "$SCANNER_SH") >/dev/null 2>&1
+PATCH_O="$PROJ_PATCH_O/.claude/migration-cleanup-claudemd.patch"
+
+inc
+if [ -f "$PATCH_O" ]; then pass_msg "patch-O: patch file exists"; else fail_msg "patch-O: patch file missing"; fi
+
+inc
+if [ -f "$PATCH_O" ] && (cd "$PROJ_PATCH_O" && git apply --check .claude/migration-cleanup-claudemd.patch) >/dev/null 2>&1; then
+  pass_msg "patch-O: git apply --check clean"
+else
+  fail_msg "patch-O: git apply --check failed"
+  [ -f "$PATCH_O" ] && sed 's/^/    /' "$PATCH_O"
+fi
+
+if [ -f "$PATCH_O" ]; then
+  (cd "$PROJ_PATCH_O" && git apply .claude/migration-cleanup-claudemd.patch) >/dev/null 2>&1 || true
+fi
+
+inc
+if ! grep -qF '.claude-pipeline/install.sh' "$PROJ_PATCH_O/CLAUDE.md"; then
+  pass_msg "patch-O: legacy-path line removed"
+else
+  fail_msg "patch-O: legacy-path line still present"
+fi
+
+inc
+if grep -qF '# Top' "$PROJ_PATCH_O/CLAUDE.md" \
+   && grep -qF '/pipeline:run' "$PROJ_PATCH_O/CLAUDE.md"; then
+  pass_msg "patch-O: surrounding context preserved"
+else
+  fail_msg "patch-O: surrounding context damaged"
+  sed 's/^/    /' "$PROJ_PATCH_O/CLAUDE.md"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

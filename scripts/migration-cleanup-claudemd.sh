@@ -6,6 +6,7 @@ set -uo pipefail
 
 PROJECT_ROOT="$(pwd)"
 REPORT=".claude/migration-cleanup-report-claudemd.txt"
+PATCH=".claude/migration-cleanup-claudemd.patch"
 
 [ -f pipeline.config ] && source ./pipeline.config 2>/dev/null || true
 
@@ -13,6 +14,10 @@ HEADER_FINDINGS=()
 HEADER_CORROBORATION=()
 PATHS_FINDINGS=()
 CMDS_FINDINGS=()
+
+# Per-file delete-line set + file-tracking for patch generation.
+declare -A DELETE_LINES=()
+declare -A FILES_WITH_FINDINGS=()
 
 # Track section spans as "<file>|<start>|<end>"
 SECTION_SPANS=()
@@ -70,6 +75,11 @@ scan_file() {
       indented=$(printf '%s\n' "$corroboration" | sed 's/^/    /')
       HEADER_CORROBORATION+=("$indented")
       SECTION_SPANS+=("$file|$lineno|$end")
+      FILES_WITH_FINDINGS["$file"]=1
+      local n
+      for ((n=lineno; n<=end; n++)); do
+        DELETE_LINES["$file|$n"]=1
+      done
     fi
   done < <(grep -nE "$REGEX_HEADER" "$file" || true)
 
@@ -80,6 +90,8 @@ scan_file() {
     local lno="${m%%:*}"
     in_section "$file" "$lno" && continue
     PATHS_FINDINGS+=("$file:$m")
+    FILES_WITH_FINDINGS["$file"]=1
+    DELETE_LINES["$file|$lno"]=1
   done < <(grep -nE "$REGEX_PATHS" "$file" || true)
 
   # Pass 3: deprecated unprefixed slash commands, deduped against section spans.
@@ -88,6 +100,8 @@ scan_file() {
     local lno="${m%%:*}"
     in_section "$file" "$lno" && continue
     CMDS_FINDINGS+=("$file:$m")
+    FILES_WITH_FINDINGS["$file"]=1
+    DELETE_LINES["$file|$lno"]=1
   done < <(grep -nE "$REGEX_CMDS" "$file" || true)
 }
 
@@ -141,5 +155,33 @@ fi
     echo ""
   fi
 } > "$REPORT"
+
+# --- Patch generation ---
+: > "$PATCH"
+for file in "${!FILES_WITH_FINDINGS[@]}"; do
+  dels=()
+  for key in "${!DELETE_LINES[@]}"; do
+    f="${key%|*}"
+    n="${key#*|}"
+    [ "$f" = "$file" ] && dels+=("$n")
+  done
+  [ ${#dels[@]} -eq 0 ] && continue
+  csv=$(printf '%s\n' "${dels[@]}" | sort -n -u | paste -sd, -)
+  cleaned=$(awk -v dels="$csv" 'BEGIN{n=split(dels,a,","); for(i=1;i<=n;i++)d[a[i]]=1} !(NR in d)' "$file")
+  # Preserve trailing-newline behaviour: if cleaned is non-empty, append a newline.
+  if [ -n "$cleaned" ]; then
+    diff_out=$(diff -u "$file" <(printf '%s\n' "$cleaned") 2>/dev/null || true)
+  else
+    diff_out=$(diff -u "$file" /dev/null 2>/dev/null || true)
+  fi
+  [ -z "$diff_out" ] && continue
+  rewritten=$(printf '%s\n' "$diff_out" | sed -e "1s|^--- .*|--- a/$file|" -e "2s|^+++ .*|+++ b/$file|")
+  {
+    echo "diff --git a/$file b/$file"
+    printf '%s\n' "$rewritten"
+  } >> "$PATCH"
+done
+
+[ -s "$PATCH" ] || rm -f "$PATCH"
 
 exit 0
