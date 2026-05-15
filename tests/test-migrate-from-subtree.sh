@@ -557,6 +557,81 @@ else
   fail_msg "patch-po: cannot test idempotency (no patch)"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "settings patch: mixed" — settings.json mixes pipeline + consumer hooks
+# plus a top-level env block. Patch must preserve consumer entries and the
+# env block; only the pipeline hook reference is removed.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings patch: mixed pipeline + consumer hooks preserved'"
+
+PROJ_PATCH_MX="$WORKDIR/proj-patch-mx"
+mkdir -p "$PROJ_PATCH_MX/.claude-pipeline/hooks" "$PROJ_PATCH_MX/.claude"
+touch "$PROJ_PATCH_MX/.claude-pipeline/hooks/log-tool-use.sh"
+cat > "$PROJ_PATCH_MX/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/log-tool-use.sh"}]},
+      {"hooks": [{"type": "command", "command": ".claude/hooks/my-custom-hook.sh"}]}
+    ]
+  },
+  "env": {"MY_VAR": "foo"}
+}
+EOF
+(cd "$PROJ_PATCH_MX" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m init)
+
+MX_SHA_BEFORE=$(sha256sum "$PROJ_PATCH_MX/.claude/settings.json" | awk '{print $1}')
+STDERR_LOG="$WORKDIR/patch-mx.stderr"
+STDOUT_LOG="$WORKDIR/patch-mx.stdout"
+(cd "$PROJ_PATCH_MX" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || true
+
+PATCH_MX="$PROJ_PATCH_MX/.claude/migration-cleanup-settings.patch"
+REPORT_MX="$PROJ_PATCH_MX/.claude/settings.json.pipeline-migration-report.txt"
+
+inc
+if [ -f "$PATCH_MX" ]; then pass_msg "patch-mx: patch file created"; else fail_msg "patch-mx: patch file missing"; fi
+
+inc
+if [ -f "$PATCH_MX" ] && (cd "$PROJ_PATCH_MX" && git apply --check .claude/migration-cleanup-settings.patch) 2>/dev/null; then
+  pass_msg "patch-mx: git apply --check clean"
+else
+  fail_msg "patch-mx: git apply --check failed"
+fi
+
+inc
+MX_SHA_AFTER=$(sha256sum "$PROJ_PATCH_MX/.claude/settings.json" 2>/dev/null | awk '{print $1}')
+if [ "$MX_SHA_BEFORE" = "$MX_SHA_AFTER" ]; then
+  pass_msg "patch-mx: source settings.json byte-identical pre/post"
+else
+  fail_msg "patch-mx: source settings.json was modified"
+fi
+
+inc
+if [ -f "$PATCH_MX" ]; then
+  MX_COPY="$WORKDIR/mx-copy"
+  cp -r "$PROJ_PATCH_MX" "$MX_COPY"
+  if (cd "$MX_COPY" && git apply .claude/migration-cleanup-settings.patch) 2>/dev/null \
+     && jq -e . "$MX_COPY/.claude/settings.json" >/dev/null 2>&1 \
+     && jq -e '.env.MY_VAR == "foo"' "$MX_COPY/.claude/settings.json" >/dev/null \
+     && jq -e '[..|.command? // empty] | any(. == ".claude/hooks/my-custom-hook.sh")' "$MX_COPY/.claude/settings.json" >/dev/null \
+     && ! grep -qF 'log-tool-use.sh' "$MX_COPY/.claude/settings.json"; then
+    pass_msg "patch-mx: post-patch JSON valid, consumer hook + env preserved, pipeline hook removed"
+  else
+    fail_msg "patch-mx: post-patch JSON did not match expected shape"
+    [ -f "$MX_COPY/.claude/settings.json" ] && sed 's/^/      /' "$MX_COPY/.claude/settings.json"
+  fi
+else
+  fail_msg "patch-mx: cannot validate post-patch (no patch)"
+fi
+
+inc
+if [ -f "$REPORT_MX" ] && ! grep -qiF 'functionally empty' "$REPORT_MX"; then
+  pass_msg "patch-mx: no spurious functionally-empty warning"
+else
+  fail_msg "patch-mx: spurious functionally-empty warning OR report missing"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
