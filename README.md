@@ -129,13 +129,13 @@ RELEASE PRs
 
 `release-pending` is a display-only Stage value — it is NOT a GitHub label. The PR already carries `autorelease: pending` (release-please convention); writing a second label would force consumer repos to define it.
 
-In **interactive mode**, a green release PR is proposed for merge once feature work in flight is done (priority slots between `plan-approved` execution and `ready` planning). In **full send**, step 7b auto-merges green release PRs between PR evaluation (step 7) and report (step 8) — gated on the opt-in flag below.
+In **interactive mode**, a green release PR is proposed for merge once feature work in flight is done (priority slots between `plan-approved` execution and `ready` planning). In **`/pipeline:fullsend`** (also reachable via the back-compat `"full send"` shortcut in `/pipeline:run`), step 7b auto-merges green release PRs between PR evaluation (step 7) and report (step 8) — gated on the opt-in flag below.
 
 Two config flags control behavior (defaults shown):
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `PIPELINE_RELEASE_PR_AUTO_MERGE` | `"false"` | Opt-in auto-merge of green release PRs during full send. Default off so manual-review release flows aren't surprised on upgrade. |
+| `PIPELINE_RELEASE_PR_AUTO_MERGE` | `"false"` | Opt-in auto-merge of green release PRs during `/pipeline:fullsend` (or back-compat `"full send"` in `/pipeline:run`). Default off so manual-review release flows aren't surprised on upgrade. |
 | `PIPELINE_RELEASE_PR_LABEL` | `"autorelease: pending"` | Label used to discover release-bot PRs. Override for non-release-please bots (e.g. `please-release`). |
 
 PRs with `ci=fail` or `ci=pending` are surfaced in the table but never proposed/merged — wait for CI to settle (or fix it) first.

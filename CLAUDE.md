@@ -27,6 +27,8 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 | Execution | `/pipeline:execute-issue-plan` | `subagent-driven-development` |
 | PR review | `/pipeline:evaluate-issue-pr` | `subagent-driven-development` |
 
+For autonomous end-to-end runs across many issues, `/pipeline:fullsend` is the canonical entry point — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations. The legacy `"full send"` magic-string passed to `/pipeline:run` is preserved as a back-compat delegator.
+
 ### Dispatch model (hybrid)
 
 Pipeline stages dispatch in one of two ways, keyed off the path label written by `/pipeline:classify-issue`:
@@ -39,7 +41,7 @@ Broader PATH B/C inline migration is intentionally deferred (see issue #80 ratio
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
-**Full Send wave model.** When the user invokes `/pipeline:run` in "full send" mode, the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
+**Full Send wave model.** When the user invokes `/pipeline:fullsend` (or the back-compat `"full send"` magic-string in `/pipeline:run`, which delegates to the same skill), the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
 
 ## Key Handoffs
 
