@@ -798,6 +798,36 @@ else
   fail_msg "patch-fe: cannot validate post-patch (no patch)"
 fi
 
+# ---------------------------------------------------------------------------
+# Doc-smoke: migration-from-subtree.md and README.md must mention the patch.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'doc smoke: migration guide + README reference the settings patch'"
+
+DOC_GUIDE="$SCRIPT_DIR/../docs/migration-from-subtree.md"
+DOC_README="$SCRIPT_DIR/../README.md"
+
+inc
+if grep -qF 'migration-cleanup-settings.patch' "$DOC_GUIDE"; then
+  pass_msg "doc: migration guide mentions migration-cleanup-settings.patch"
+else
+  fail_msg "doc: migration guide missing migration-cleanup-settings.patch"
+fi
+
+inc
+if grep -qF 'git apply .claude/migration-cleanup-settings.patch' "$DOC_GUIDE"; then
+  pass_msg "doc: migration guide shows the git apply command"
+else
+  fail_msg "doc: migration guide missing git apply command"
+fi
+
+inc
+if grep -qF 'settings.json' "$DOC_README"; then
+  pass_msg "doc: README references settings.json patch"
+else
+  fail_msg "doc: README missing settings.json reference"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
