@@ -42,18 +42,10 @@ trackers=$(gh issue list --repo "$REPO" --label tracker --state open \
 for tracker in $trackers; do
   body=$(gh issue view "$tracker" --repo "$REPO" --json body --jq .body) || body=""
 
-  # Parse children from the `## Rollout sequence` section.
-  # Capture lines matching: `- [ ] **#<N> [-—]` (ASCII hyphen or en-dash)
-  # within that section only.
-  children=$(printf '%s\n' "$body" | awk '
-    /^## Rollout sequence[[:space:]]*$/ { inrs=1; next }
-    /^## / { inrs=0 }
-    inrs {
-      if (match($0, /^- \[[ x]\] \*\*#([0-9]+)[[:space:]]*[-—]/, m)) {
-        print m[1]
-      }
-    }
-  ')
+  # Parse children from the `## Rollout sequence` section via the shared
+  # helper so the run-skill grouped status renderer and this script share
+  # one parser implementation.
+  children=$(printf '%s\n' "$body" | bash "$(dirname "$0")/parse-tracker-children.sh" -)
 
   if [ -z "$children" ]; then
     echo "STATUS: no-children tracker=$tracker"
