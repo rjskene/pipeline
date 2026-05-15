@@ -158,7 +158,6 @@ else
   if [ "${#missing[@]}" = "0" ]; then
     record labels_exist pass "$total/$total"
   else
-    IFS=', ' missing_csv="${missing[*]}"
     missing_csv="$(IFS=', '; echo "${missing[*]}")"
     record labels_exist fail "missing: $missing_csv"
   fi
