@@ -733,6 +733,71 @@ else
   fail_msg "patch-cl: spurious report emitted"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "settings patch: functionally-empty" — settings.json contains ONLY the
+# pipeline hook entry. After patch, the file becomes functionally empty so
+# the script must emit a loud WARNING in the report and on stdout.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'settings patch: functionally-empty result emits loud warning'"
+
+PROJ_PATCH_FE="$WORKDIR/proj-patch-fe"
+mkdir -p "$PROJ_PATCH_FE/.claude-pipeline/hooks" "$PROJ_PATCH_FE/.claude"
+touch "$PROJ_PATCH_FE/.claude-pipeline/hooks/log-tool-use.sh"
+cat > "$PROJ_PATCH_FE/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": ".claude/hooks/log-tool-use.sh"}]}
+    ]
+  }
+}
+EOF
+(cd "$PROJ_PATCH_FE" && git init -q && git add -A && git -c user.email=t@t -c user.name=t commit -q -m init)
+
+STDERR_LOG="$WORKDIR/patch-fe.stderr"
+STDOUT_LOG="$WORKDIR/patch-fe.stdout"
+(cd "$PROJ_PATCH_FE" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || true
+
+PATCH_FE="$PROJ_PATCH_FE/.claude/migration-cleanup-settings.patch"
+REPORT_FE="$PROJ_PATCH_FE/.claude/settings.json.pipeline-migration-report.txt"
+
+inc
+if [ -f "$PATCH_FE" ]; then pass_msg "patch-fe: patch file created"; else fail_msg "patch-fe: patch file missing"; fi
+
+inc
+if [ -f "$REPORT_FE" ] && grep -qF 'WARNING: applying this patch will leave .claude/settings.json functionally empty' "$REPORT_FE"; then
+  pass_msg "patch-fe: report contains loud functionally-empty warning"
+else
+  fail_msg "patch-fe: loud warning missing from report"
+fi
+
+inc
+if grep -qE '^WARNING:.*functionally empty' "$STDOUT_LOG"; then
+  pass_msg "patch-fe: stdout warning printed"
+else
+  fail_msg "patch-fe: loud warning missing from stdout"
+fi
+
+inc
+if [ -f "$PATCH_FE" ]; then
+  FE_COPY="$WORKDIR/fe-copy"
+  cp -r "$PROJ_PATCH_FE" "$FE_COPY"
+  if (cd "$FE_COPY" && git apply .claude/migration-cleanup-settings.patch) 2>/dev/null; then
+    if [ ! -f "$FE_COPY/.claude/settings.json" ]; then
+      pass_msg "patch-fe: post-patch removes file (deletion form)"
+    elif jq -e '. == {}' "$FE_COPY/.claude/settings.json" >/dev/null 2>&1; then
+      pass_msg "patch-fe: post-patch leaves empty object"
+    else
+      fail_msg "patch-fe: post-patch unexpected shape"
+    fi
+  else
+    fail_msg "patch-fe: post-patch apply failed"
+  fi
+else
+  fail_msg "patch-fe: cannot validate post-patch (no patch)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
