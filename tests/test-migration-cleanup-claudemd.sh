@@ -167,6 +167,45 @@ else
   [ -f "$REPORT_D" ] && sed 's/^/    /' "$REPORT_D"
 fi
 
+# ---------------------------------------------------------------------------
+# Task 4: false-positive gate — bare ## Pipeline section preserved byte-for-byte.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'fp-gate: bare ## Pipeline section is not flagged AND not mutated'"
+
+PROJ_FP="$WORKDIR/proj-fp"
+mkdir -p "$PROJ_FP"
+cat > "$PROJ_FP/CLAUDE.md" <<'EOF'
+## Pipeline
+
+This section describes our ETL data pipeline. Records flow from Kafka into BigQuery, then to Snowflake nightly.
+
+## Other section
+EOF
+
+BEFORE_SHA=$(sha256sum "$PROJ_FP/CLAUDE.md" | awk '{print $1}')
+(cd "$PROJ_FP" && bash "$SCANNER_SH") >/dev/null 2>&1
+EXIT=$?
+AFTER_SHA=$(sha256sum "$PROJ_FP/CLAUDE.md" | awk '{print $1}')
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "fp: exit 0"; else fail_msg "fp: exit $EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_FP/.claude/migration-cleanup-report-claudemd.txt" ]; then
+  pass_msg "fp: no report file created"
+else
+  fail_msg "fp: report file unexpectedly created"
+  sed 's/^/    /' "$PROJ_FP/.claude/migration-cleanup-report-claudemd.txt"
+fi
+
+inc
+if [ "$BEFORE_SHA" = "$AFTER_SHA" ]; then
+  pass_msg "fp: CLAUDE.md sha256 byte-identical"
+else
+  fail_msg "fp: CLAUDE.md sha256 changed"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
