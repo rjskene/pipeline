@@ -385,6 +385,51 @@ grep -qE '^no_residual_subtree[[:space:]]+fail' <<<"$out" \
   && pass_msg "mixed: summary row for no_residual_subtree fail" \
   || { fail_msg "mixed: summary row missing"; echo "$out" | sed 's/^/    /'; }
 
+# ---------------------------------------------------------------------------
+# Case 11: claude_plugin_root — three statuses (pass / warn / fail).
+# Pins HOME to hermetic dirs so the developer's real cache doesn't pollute the
+# assertion. Status conditions:
+#   pass — CLAUDE_PLUGIN_ROOT was pre-set; resolver no-ops.
+#   warn — CLAUDE_PLUGIN_ROOT was empty; resolver self-resolved from cache.
+#   fail — CLAUDE_PLUGIN_ROOT was empty AND no plugin cache exists under HOME.
+# ---------------------------------------------------------------------------
+echo "Case 11: claude_plugin_root status check"
+
+# Sub-case A: env pre-set → pass.
+FX=$(fresh_fx fx-cpr-pass)
+FAKE_HOME="$TMP/fake-home-empty-A"; mkdir -p "$FAKE_HOME"
+run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON" \
+  HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT="/some/preset/path"
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: claude_plugin_root status=pass' <<<"$out" \
+  && pass_msg "cpr-pass: pre-set env → status=pass" \
+  || { fail_msg "cpr-pass: did not emit pass"; echo "$out" | sed 's/^/    /'; }
+
+# Sub-case B: env empty + cache present → warn (resolved path appears in detail).
+FX=$(fresh_fx fx-cpr-warn)
+FAKE_HOME="$TMP/fake-home-with-cache"
+mkdir -p "$FAKE_HOME/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+RESOLVED="$FAKE_HOME/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON" \
+  HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT=""
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: claude_plugin_root status=warn' <<<"$out" \
+  && pass_msg "cpr-warn: empty env + cache → status=warn" \
+  || { fail_msg "cpr-warn: did not emit warn"; echo "$out" | sed 's/^/    /'; }
+grep -qF "$RESOLVED" <<<"$out" \
+  && pass_msg "cpr-warn: detail names resolved path" \
+  || { fail_msg "cpr-warn: detail missing resolved path $RESOLVED"; echo "$out" | sed 's/^/    /'; }
+
+# Sub-case C: env empty + no cache → fail.
+FX=$(fresh_fx fx-cpr-fail)
+FAKE_HOME="$TMP/fake-home-empty-C"; mkdir -p "$FAKE_HOME"
+run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON" \
+  HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT=""
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: claude_plugin_root status=fail' <<<"$out" \
+  && pass_msg "cpr-fail: empty env + no cache → status=fail" \
+  || { fail_msg "cpr-fail: did not emit fail"; echo "$out" | sed 's/^/    /'; }
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
