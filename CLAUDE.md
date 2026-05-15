@@ -29,6 +29,8 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 
 For autonomous end-to-end runs across many issues, `/pipeline:fullsend` is the canonical entry point — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations. The legacy `"full send"` magic-string passed to `/pipeline:run` is preserved as a back-compat delegator.
 
+For pre-prioritization hygiene over the open-issue set, `/pipeline:run --analyze` runs a read-only pass that flags likely duplicates and standalones that fit existing trackers — decision-support only, no mutations. See `skills/run/SKILL.md` analyze mode.
+
 ### Dispatch model (hybrid)
 
 Pipeline stages dispatch in one of two ways, keyed off the path label written by `/pipeline:classify-issue`:
