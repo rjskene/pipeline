@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.claude/settings-schema.json",
+  "_comment": "HTS-dogfood-only. UserPromptSubmit hook for the repo-only self-audit system (issue #134). Plugin manifest is NOT touched. See CLAUDE.md > 'Self-improvement loop (HTS-only)'.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR:-.}/dev/hooks/audit-on-pipeline-run.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
