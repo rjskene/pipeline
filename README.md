@@ -162,9 +162,7 @@ The discovery helper requires `jq` (already a pipeline prerequisite) and `gh`. I
 
 ---
 
-## Migrating from a subtree install
-
-If you previously installed the pipeline via the legacy `.claude-pipeline/` subtree path, there is a one-shot migration script that removes the legacy files and leaves your project ready for the plugin install. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md) for the full sequence. The script also scans your CLAUDE.md(s) and `.claude/settings.json` for legacy pipeline references and emits advisory reports + reviewable patches; see steps 3 and 3a in the migration guide for the review flows.
+> **Migrating from a subtree install?** The legacy `.claude-pipeline/` subtree path is retired. Existing subtree consumers run the one-shot migration once — see [docs/migration-from-subtree.md](docs/migration-from-subtree.md).
 
 ---
 
