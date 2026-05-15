@@ -27,6 +27,16 @@ create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-i
 | Execution | `/pipeline:execute-issue-plan` | `subagent-driven-development` |
 | PR review | `/pipeline:evaluate-issue-pr` | `subagent-driven-development` |
 
+### Dispatch model (hybrid)
+
+Pipeline stages dispatch in one of two ways, keyed off the path label written by `/pipeline:classify-issue`:
+
+- **PATH A** (`docs-only`) — execute-issue-plan and evaluate-issue-pr run inline via `Agent(subagent_type='general-purpose', ...)` from the orchestrator session. No `spawn-claude.sh`, no `claude -p`, no tmux. The worktree is still created by `setup-worktree.sh`; only the agent launch is inline. Routing logic lives in `skills/run/SKILL.md` Step 6 and Step 7.
+- **PATH B / PATH C** — execute-issue-plan and evaluate-issue-pr continue to dispatch through `scripts/spawn-claude.sh` (which invokes `claude -p`) and, for multi-issue runs, `scripts/run-queue.sh` + tmux. PATH B uses spawn-claude.sh; PATH C uses spawn-claude.sh. This is unchanged from the previous behavior and remains the indefinite default for B/C until external pressure (deprecation or quota signals on `-p`) forces broader migration.
+- **Other stages** (classify-issue, plan-issue, evaluate-issue-plan, create-issues) are already invoked inline as `Agent(...)` from the orchestrator regardless of path; nothing changes for them.
+
+Broader PATH B/C inline migration is intentionally deferred (see issue #80 rationale: subagent context budget, turn budget, permission inheritance, TDD discipline drift, and crash recovery risks are accepted at PATH A scope but not at B/C scope).
+
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
 **Full Send wave model.** When the user invokes `/pipeline:run` in "full send" mode, the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
