@@ -5,24 +5,30 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKILL="${ROOT}/skills/run/SKILL.md"
+# Issue #143: full-send-specific contract markers moved from skills/run/SKILL.md
+# to skills/fullsend/SKILL.md. Markers that live on the merge-orchestration
+# step (Step 8 of the run skill, still active in interactive mode) stay on the
+# run skill.
+RUN_SKILL="${ROOT}/skills/run/SKILL.md"
+FS_SKILL="${ROOT}/skills/fullsend/SKILL.md"
 FAILED=0
 
-want() {
-  local name="$1" pat="$2"
-  if grep -qE -- "$pat" "$SKILL"; then
+want_in() {
+  local skill="$1" name="$2" pat="$3"
+  if grep -qE -- "$pat" "$skill"; then
     echo "  PASS: $name"
   else
-    echo "  FAIL: $name (pattern not found: $pat)"
+    echo "  FAIL: $name (pattern not found in $skill: $pat)"
     FAILED=$((FAILED+1))
   fi
 }
 
-want "Step 8 references helper or four conditions" 'scripts/auto-merge-gate.sh'
-want "FULL SEND header documents argv position"    'manual-merge.* anywhere in argv'
-want "Step 8 greps auto-merged footer prefix"      'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
-want "Step 9 prose is conditional, not absolute"   'do NOT merge unless'
-want "report table has Auto-merged column"         'Auto-merged\?'
+want_in "$RUN_SKILL" "run skill Step 8 references helper or four conditions" 'scripts/auto-merge-gate.sh'
+want_in "$FS_SKILL"  "fullsend FULL SEND header documents argv position"    'manual-merge.* anywhere in argv'
+want_in "$RUN_SKILL" "run skill Step 8 greps auto-merged footer prefix"     'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
+want_in "$FS_SKILL"  "fullsend Step 9 prose is conditional, not absolute"   'do NOT merge unless'
+want_in "$RUN_SKILL" "run skill report table has Auto-merged column"        'Auto-merged\?'
+want_in "$FS_SKILL"  "fullsend report table has Auto-merged column"         'Auto-merged\?'
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
