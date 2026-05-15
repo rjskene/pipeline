@@ -39,6 +39,25 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 **Plans → Execution:** After a plan is reviewed (`/pipeline:evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/pipeline:execute-issue-plan` implements it in an isolated worktree.
 
+## Auto-merge default
+
+When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, the pipeline auto-squash-merges the PR (with branch delete), flips the issue to `merged`, and closes it — no manual confirmation. The interesting gate is the eval verdict, not the merge button.
+
+**Four greenlight conditions** (all must hold; otherwise the PR is left for manual merge with a `block-*` reason):
+
+1. Latest `## Evaluation` comment contains `**Verdict:** Approved`.
+2. Every entry in the PR's `statusCheckRollup` has `conclusion == SUCCESS` (or the rollup is empty for repos with no CI configured).
+3. `mergeable == MERGEABLE`.
+4. `mergeStateStatus == CLEAN` (not BLOCKED/BEHIND/DIRTY/UNSTABLE).
+
+**Three opt-outs** restore today's stop-before-merge behavior:
+
+- `FULL SEND --manual-merge` (token may appear anywhere in argv — before, between, or after issue numbers).
+- `/pipeline:evaluate-issue-pr <N> --manual-merge` for one-off evaluations.
+- A `manual-merge` label on the issue, for per-issue control without re-typing the flag.
+
+The implementation lives in `scripts/auto-merge-gate.sh` (helper exposing `auto_merge_should_fire`), the evaluate-issue-pr skill (Step 11), and the run skill (Step 8). **Release-please PRs are out of scope** — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of the run skill, unchanged.
+
 ## Observability
 
 `.claude/hooks/log_subagent.py` is a PostToolUse hook that logs every Agent tool invocation. It writes per-agent JSON files to `.claude/logs/subagents/`, a consolidated TSV to `.claude/logs/subagents.log`, and errors to `.claude/logs/subagent-hook-errors.log`. All logs are gitignored and the hook uses fail-open semantics (errors are swallowed so they never block tool use).

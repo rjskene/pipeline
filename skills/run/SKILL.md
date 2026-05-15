@@ -31,7 +31,9 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 
 ### Full Send — autonomous end-to-end execution
 
-When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages:
+When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages.
+
+**Flag parsing.** `--manual-merge` may appear anywhere in argv (before, between, or after issue numbers; e.g. `FULL SEND --manual-merge 1 2 3`, `FULL SEND 1 2 3 --manual-merge`, `FULL SEND 1 --manual-merge 2 3`). The token cannot collide with issue numbers because those are bare integers. When present, set `MANUAL_MERGE=1` for all spawned `evaluate-issue-pr` agents (passed via `run-queue.sh --manual-merge` → `spawn-claude.sh --manual-merge`) and skip the greenlight auto-merge path in Step 8 below.
 
 **0a. Wave plan (pre-think).** Before dispatching any classify/plan agents, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh <ready-issue-numbers>` and capture stdout as the wave plan. Process the rest of step 1 (classify, then plan) wave by wave: dispatch all issues in Wave K in parallel, await completion, then advance to Wave K+1. In interactive mode, print the wave plan once before launching; in autonomous full send mode, log it and proceed. The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default true) — when `false`, fall back to the legacy single-blast parallel dispatch.
 
@@ -85,14 +87,14 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```
    FULL SEND COMPLETE
    ================================================================
-   Issue  Title                    Classification mismatch   Result
-   ----------------------------------------------------------------
-   #N     <title>                  B / C (med)               PR approved / Flagged / Skipped (plan failed)
-   #N     <title>                                            PR approved
+   Issue  Title                    Classification mismatch   Auto-merged?   Result
+   --------------------------------------------------------------------------------
+   #N     <title>                  B / C (med)               no (block-ci)  PR approved / Flagged / Skipped (plan failed)
+   #N     <title>                                            yes (step8)    PR merged
    ================================================================
-   MERGING IS NOT AUTOMATIC — review the table above and confirm merges manually.
+   The `Auto-merged?` column reflects Step 8's outcome per PR: `yes (eval)` — the evaluator's Step 11 already merged it; `yes (step8)` — Step 8 merged it on the greenlight path; `no (<block-reason>)` — manual merge required.
    ```
-9. **Stop** — do NOT merge. Wait for explicit user confirmation before any merge.
+9. **Stop** — do NOT merge unless the greenlight matrix held in Step 8. Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
 
 **Constraints during full send:**
 - Housekeeping (step 0) and log review (step 1) still run at the start, but do not pause for user input — auto-skip log review and proceed.
@@ -524,11 +526,35 @@ active feature work, but it should come BEFORE pulling in new ready work
 
 **Do not poll for queue completion with `while ... sleep ... grep` inside Bash tool calls.** This pattern burns context tokens on every poll cycle and ties up the orchestrator for the duration. Use `Bash run_in_background: true` for one-shot completion waits, or `Monitor` for streaming per-event notifications. The queue runner's internal `sleep` polling (inside `run-queue.sh`) is fine — it runs in its own process and does not consume orchestrator context.
 
-8. **Merge orchestration** — after all evaluations complete and verdicts are "Approved", the pipeline handles merging:
+8. **Merge orchestration** — after all evaluations complete, the pipeline handles merging. **Default is autonomous merge for the green subset** via the greenlight gate (`${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh`). The four greenlight conditions are: latest `## Evaluation` verdict is **Approved**; every `statusCheckRollup` entry has `conclusion == SUCCESS` (or the rollup is empty); `mergeable == MERGEABLE`; `mergeStateStatus == CLEAN`. Any one missing falls back to a `block-*` reason and requires manual `gh pr merge`.
 
-   **Only run this step when the user confirms they want to merge.** After evaluation agents finish, report the verdicts and ask: "Merge approved PRs? (yes / no)"
+   **Per-PR auto-merge loop.** For each PR labelled `pr-open`:
 
-   If the user confirms, first run a batch pre-validation pass to surface any PR titles that don't match the Conventional Commits format. This is informational — it lets the user batch-reword before the sequential merge loop. The per-PR gate below (sub-step 4) is the actual enforcement point.
+   1. **Already-merged short-circuit.** Check the latest `## Evaluation` PR comment body for the exact footer prefix `Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at` (written by `evaluate-issue-pr` Step 11 on the green path). If present, mark the row `Auto-merged? = yes (eval)` in the report and skip this PR — it is already merged and closed.
+   2. **Run the gate.** Source the helper and call it:
+      ```bash
+      source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
+      REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+      ```
+   3. **On `green`:** run the conventional-title pre-validation below, then merge synchronously here (NOT `--auto`):
+      ```bash
+      gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch
+      SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
+      TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      FOOTER="Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at ${TS}"
+      gh issue edit "$ISSUE" --repo "$PIPELINE_REPO" --add-label "merged" --remove-label "pr-open"
+      if [ -n "$SHA" ]; then
+        gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM} (${SHA}). ${FOOTER}"
+      else
+        gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}. ${FOOTER}"
+      fi
+      ```
+      Mark the row `Auto-merged? = yes (step8)`.
+   4. **On any `block-*` reason:** mark the row `Auto-merged? = no (${REASON})` and leave the PR for manual merge by the user. Do NOT flip labels. Do NOT close the issue.
+
+   Release-please PRs are out of scope here — they continue to flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b above, unchanged. The opt-outs are: `FULL SEND --manual-merge`, `/pipeline:evaluate-issue-pr N --manual-merge`, or the `manual-merge` label on the issue.
+
+   The conventional-title pre-validation runs before any merge call regardless of the auto/manual path. It is informational at the batch level and enforced per-PR in sub-step 4 below.
 
    ```bash
    # Uses canonical regex from scripts/check-conventional-title.sh — see Issue #45.
