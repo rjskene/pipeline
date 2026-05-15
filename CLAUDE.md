@@ -150,3 +150,29 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 
 - **`gh issue view` fails** (offline/auth): logs `[spawn-claude] WARN: gh issue view failed ...` to stderr and falls back to **PATH B** (the standard path). The session still launches.
 - **Skill args file configured but missing on disk**: logs `WARNING: args file not found for <skill>: <path>` to stderr and emits the `Skill()` line **without** an `args=` field. The skill still fires; it just runs without its project-specific directive. Fix the typo or restore the file to remove the warning.
+
+## Self-improvement loop (HTS-only)
+
+This repo dogfoods a **repo-only audit system** that observes pipeline behavior to surface improvement candidates. The audit is **not part of the plugin** — nothing in `.claude-plugin/` references it, no consumer sees it.
+
+**Trigger.** This repo's `.claude/settings.json` registers a `UserPromptSubmit` hook that runs `dev/hooks/audit-on-pipeline-run.sh`. When the submitted prompt starts with `/pipeline:run`, the hook backgrounds `dev/self-audit/inner-loop.sh` and returns in <200ms. The user's prompt is not blocked.
+
+**Inner loop (`dev/self-audit/inner-loop.sh`).** Reads `dev/audits/index.jsonl` for the last audit timestamp, queries `gh` for merged feature/* PRs since then, reads observability logs (`.claude/logs/subagents/*.json`, `.claude/logs/tool-use*.log`, `.claude/logs/runs.log`) plus the orchestrator transcript at `${AUDIT_CLAUDE_PROJECTS_DIR:-~/.claude/projects}/<project-hash>/<session-uuid>.jsonl`, and emits `dev/audits/inner-<ISO>.md`. Every digest contains five sections: **Compliance**, **Interaction**, **Pattern → defaults** (per-run noise), **Efficiency**, and **Data quality** (which inputs were present/missing — blind spots are a first-class finding). After every third new entry, it backgrounds `outer-loop.sh`.
+
+**Outer loop (`dev/self-audit/outer-loop.sh`).** Reads the last 3 inner entries from `index.jsonl` and surfaces signals consistent across ALL of them. For each pattern, it names a **codification target** on a plugin surface: skill prose, `pipeline.config.example`, hooks, or scripts. **Never local-machine personal state** — that does not propagate. The outer loop is read-only: it files no issues, modifies no surfaces. A human reads the digest and files the issue when ready.
+
+**Four lenses.**
+1. **Compliance** — did orchestrator and subagents follow declared instructions (TDD pattern, wave-prioritization, PATH-tier dispatch, hook trip counts)?
+2. **Interaction** — where is friction high (turn count, user corrections, unnecessary confirmations)?
+3. **Pattern → defaults** — outer-loop only; cross-run repetition of user requests, opt-out flags, manual overrides.
+4. **Efficiency** — tokens, wall clock, re-plan loops, eval-Revise verdicts vs prior trend.
+
+**Redaction discipline (load-bearing).** Every transcript quote passes through `dev/self-audit/redact.sh::redact()`, which hard-denies token-shaped strings (regex `[A-Za-z0-9]{32,}`), the case-insensitive keywords `password|token|secret|api[_-]?key|bearer|Authorization`, and URLs containing `?key=|?token=|?auth=`; caps line length at 200 chars with a `...[truncated; original N chars]` suffix; and strips triple-backtick code-block contents entirely (only surrounding prose survives). Verified by `dev/tests/test-redaction.sh`.
+
+**Output location.** All digests and `index.jsonl` live in `dev/audits/`, which is gitignored — digests may contain redacted excerpts and stay on-disk locally only.
+
+**Plugin manifest is untouched.** `dev/`, `.claude/settings.json`, and the allow-list entry in `tests/no-consumer-claude-writes.allow` are the only surfaces this system writes to in this repo. `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, `skills/`, `scripts/`, `hooks/`, `agents/` are not modified by this system.
+
+**Internal-path dependency.** The orchestrator transcript path `~/.claude/projects/<project-hash>/<session-uuid>.jsonl` is a Claude Code internal. If Anthropic changes it, set `AUDIT_CLAUDE_PROJECTS_DIR` in the environment to point at the new location.
+
+**Tests live at `dev/tests/test-*.sh`** and are run by `dev/tests/run-all.sh` (which CI invokes alongside `tests/test*.sh`).
