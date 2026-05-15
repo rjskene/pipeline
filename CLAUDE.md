@@ -98,11 +98,13 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
 
 1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
 2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, and `.release-please-manifest.json` atomically via `extra-files`.
-3. **Dev install.** The dev marketplace must be added via a **local filesystem path to the manifest file** inside a clone of this repo — the `owner/repo@ref <manifest-path>` shorthand does not work for the dev marketplace (see Pitfalls below). One-time setup on the consumer machine:
+3. **Dev install.** The dev marketplace MUST be added from a SEPARATE local clone of this repo that tracks `main` — RCs only ever land on `main`, so installing from a `staging` checkout (including this working tree) silently pins you to the last stable version that was on `main`. Verified 2026-05-15 on a private-repo consumer that received `v0.4.0-rc.1` from a `staging` clone after `v0.4.0-rc.2` had shipped to `main`.
+
+   One-command setup (idempotent — works for first install and for every RC refresh):
 
    ```bash
-   git clone https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
-   cd ~/claude-pipeline-main && git checkout main
+   git -C ~/claude-pipeline-main pull --ff-only origin main 2>/dev/null \
+     || git clone --branch main https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
    ```
 
    Then in Claude Code:
@@ -119,19 +121,14 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
    /plugin install   pipeline@claude-pipeline-dev
    ```
 
-   RC-refresh ritual (run on each RC cut to pick up the new version):
-
-   ```bash
-   cd ~/claude-pipeline-main && git pull origin main
-   ```
-
-   Then re-run `/plugin install pipeline@claude-pipeline-dev`. If the cache doesn't refresh, uninstall + reinstall as shown above.
+   Re-run the one-command setup block above on each RC cut to pick up the new version. If the cache doesn't refresh, uninstall + reinstall as shown.
 
    **Pitfalls** (verified 2026-05-15 on a private-repo consumer with `pipeline@claude-pipeline-dev v0.4.0-rc.1`):
    - The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git clone` / `git pull`.
    - Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref, and `raw.githubusercontent.com` 404s without auth anyway. The local-path form is the only reliable one.
    - Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the `"source": "./"` field in the manifest resolves relative to the manifest file's location, so the loader can't find the plugin tree if the manifest sits in a tmp dir.
    - Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
+   - Run `/pipeline:doctor` after install — the `dev_marketplace_on_main` check warns if the registered marketplace path resolves to a non-`main` clone.
 4. **Revert to stable.**
    ```
    /plugin uninstall pipeline@claude-pipeline-dev
