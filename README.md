@@ -24,6 +24,47 @@ The pipeline is distributed as a Claude Code plugin. Install it from the marketp
 
 The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`) and registers all slash commands, hooks, skills, and the `tdd-implementer` subagent automatically. Nothing is copied into your project tree.
 
+### Installing the dev channel
+
+Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace that carries release candidates of the same plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
+
+The dev marketplace must be added via a **local filesystem path to the manifest file** inside a clone of this repo (see Pitfalls below for why). One-time setup:
+
+```bash
+git clone https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
+cd ~/claude-pipeline-main && git checkout main
+```
+
+Then in Claude Code:
+
+```
+/plugin marketplace add ~/claude-pipeline-main/.claude-plugin/marketplace-dev.json
+/plugin install pipeline@claude-pipeline-dev
+```
+
+Pick the **local** scope at the install prompt. Then reload so the new plugin code is active:
+
+```
+/plugin uninstall pipeline@claude-pipeline-dev
+/plugin install   pipeline@claude-pipeline-dev
+```
+
+RC-refresh ritual — run on each RC cut to pick up the new version:
+
+```bash
+cd ~/claude-pipeline-main && git pull origin main
+```
+
+Then re-run `/plugin install pipeline@claude-pipeline-dev` (uninstall + reinstall if the cache doesn't refresh).
+
+**Pitfalls:**
+- The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git clone` / `git pull`.
+- Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref. The local-path form is the only reliable one.
+- Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the manifest's `"source": "./"` resolves relative to the manifest file's location, so the loader can't find the plugin tree.
+- Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
+
+See `CLAUDE.md` → "Dev/prerelease channel" for the publishing side (how RCs are cut).
+
 ---
 
 ## Configure your project
@@ -56,21 +97,21 @@ Then create the GitHub labels the pipeline uses to track issue progress:
 | `excluded` | Issue excluded from pipeline (configurable via `PIPELINE_LABELS_EXCLUDED`) |
 | `later` | Deferred — shown in status but not processed (configurable via `PIPELINE_LABELS_LATER`) |
 | `human` | Needs human in the loop — never processed by autonomous runs (configurable via `PIPELINE_LABELS_HUMAN`) |
+| `brainstorm` | Non-actionable discussion or exploration — surfaced in status but never auto-planned (configurable via `PIPELINE_LABELS_BRAINSTORM`) |
 
-You can create them quickly with `gh`:
+After installing the plugin, validate your setup:
 
-```bash
-REPO="your-org/your-repo"
-gh label create plan-pending   --repo $REPO --color "C2E0C6" --description "Plan posted, awaiting review"
-gh label create plan-reviewed  --repo $REPO --color "BFD4F2" --description "Plan evaluated"
-gh label create plan-approved  --repo $REPO --color "0E8A16" --description "Approved, ready for execution"
-gh label create in-progress    --repo $REPO --color "FBCA04" --description "Currently being implemented"
-gh label create pr-open        --repo $REPO --color "1D76DB" --description "PR open, awaiting review"
-gh label create merged         --repo $REPO --color "6F42C1" --description "PR merged, ready for cleanup"
-gh label create excluded       --repo $REPO --color "E4E669" --description "Excluded from pipeline"
-gh label create later          --repo $REPO --color "D4C5F9" --description "Deferred"
-gh label create human          --repo $REPO --color "F9D0C4" --description "Needs human in the loop"
 ```
+/pipeline:doctor
+```
+
+This is a read-only audit — it reports any gaps in `pipeline.config`, `gh` auth, plugin registration, residual subtree artifacts, the base branch, and label setup. To seed the GitHub labels listed above in one shot, run:
+
+```
+/pipeline:doctor --fix labels
+```
+
+`--fix labels` is idempotent (uses `gh label create --force`) and honors `PIPELINE_LABELS_*` overrides from `pipeline.config`.
 
 Hooks are registered by the plugin manifest at install time — you do not need to touch `.claude/settings.json` yourself.
 
@@ -121,7 +162,7 @@ The discovery helper requires `jq` (already a pipeline prerequisite) and `gh`. I
 
 ## Migrating from a subtree install
 
-If you previously installed the pipeline via the legacy `.claude-pipeline/` subtree path, there is a one-shot migration script that removes the legacy files and leaves your project ready for the plugin install. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md) for the full sequence.
+If you previously installed the pipeline via the legacy `.claude-pipeline/` subtree path, there is a one-shot migration script that removes the legacy files and leaves your project ready for the plugin install. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md) for the full sequence. The script also scans your CLAUDE.md(s) and `.claude/settings.json` for legacy pipeline references and emits advisory reports + reviewable patches; see steps 3 and 3a in the migration guide for the review flows.
 
 ---
 

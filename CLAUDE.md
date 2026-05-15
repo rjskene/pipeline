@@ -98,11 +98,40 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
 
 1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
 2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, and `.release-please-manifest.json` atomically via `extra-files`.
-3. **Dev install.** Consumers add the dev marketplace and install the dev-channel plugin:
+3. **Dev install.** The dev marketplace must be added via a **local filesystem path to the manifest file** inside a clone of this repo — the `owner/repo@ref <manifest-path>` shorthand does not work for the dev marketplace (see Pitfalls below). One-time setup on the consumer machine:
+
+   ```bash
+   git clone https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
+   cd ~/claude-pipeline-main && git checkout main
    ```
-   /plugin marketplace add HTS-COLLAB-ORG/claude-pipeline@main .claude-plugin/marketplace-dev.json
+
+   Then in Claude Code:
+
+   ```
+   /plugin marketplace add ~/claude-pipeline-main/.claude-plugin/marketplace-dev.json
    /plugin install pipeline@claude-pipeline-dev
    ```
+
+   Pick the **local** scope at the install prompt. Then reload so the new plugin code is active:
+
+   ```
+   /plugin uninstall pipeline@claude-pipeline-dev
+   /plugin install   pipeline@claude-pipeline-dev
+   ```
+
+   RC-refresh ritual (run on each RC cut to pick up the new version):
+
+   ```bash
+   cd ~/claude-pipeline-main && git pull origin main
+   ```
+
+   Then re-run `/plugin install pipeline@claude-pipeline-dev`. If the cache doesn't refresh, uninstall + reinstall as shown above.
+
+   **Pitfalls** (verified 2026-05-15 on a private-repo consumer with `pipeline@claude-pipeline-dev v0.4.0-rc.1`):
+   - The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git clone` / `git pull`.
+   - Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref, and `raw.githubusercontent.com` 404s without auth anyway. The local-path form is the only reliable one.
+   - Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the `"source": "./"` field in the manifest resolves relative to the manifest file's location, so the loader can't find the plugin tree if the manifest sits in a tmp dir.
+   - Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
 4. **Revert to stable.**
    ```
    /plugin uninstall pipeline@claude-pipeline-dev
@@ -112,6 +141,10 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
 5. **Graduation.** Prereleases do NOT auto-graduate. The next normal `staging → main` cut WITHOUT a `Release-As:` footer produces the stable `X.Y.Z` bump. RC and stable are mutually exclusive per `staging → main` PR.
 6. **No back-sync for RCs.** Stable releases require cherry-picking the version bump back to `staging` because the squash-merge on `main` is SHA-disconnected. **For RC cuts, no back-sync is required** (cherry-pick is not required for RC) — `staging` is already the prerelease source and the next stable cut will overwrite the version. The cherry-pick back-sync remains mandatory only for stable releases.
 7. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
+
+## Doctor
+
+`/pipeline:doctor` is a non-mutating validator consumers run after install. It audits `pipeline.config`, `gh` auth, plugin registration, the pipeline-stage labels on the GitHub repo, residual subtree artifacts, and the base branch's local presence + remote tracking — emitting structured `CHECK: <name> status=<pass|fail|warn> detail=<msg>` lines and a final summary table. Non-zero exit signals any `fail`. The `--fix labels` flag is the one write path: it seeds the canonical pipeline labels via `gh label create --force` (idempotent upsert) and honors `PIPELINE_LABELS_*` overrides. Entrypoint: `scripts/doctor.sh`. Skill: `skills/doctor/SKILL.md`.
 
 ## Plugin architecture
 
@@ -150,3 +183,29 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 
 - **`gh issue view` fails** (offline/auth): logs `[spawn-claude] WARN: gh issue view failed ...` to stderr and falls back to **PATH B** (the standard path). The session still launches.
 - **Skill args file configured but missing on disk**: logs `WARNING: args file not found for <skill>: <path>` to stderr and emits the `Skill()` line **without** an `args=` field. The skill still fires; it just runs without its project-specific directive. Fix the typo or restore the file to remove the warning.
+
+## Self-improvement loop (HTS-only)
+
+This repo dogfoods a **repo-only audit system** that observes pipeline behavior to surface improvement candidates. The audit is **not part of the plugin** — nothing in `.claude-plugin/` references it, no consumer sees it.
+
+**Trigger.** This repo's `.claude/settings.json` registers a `UserPromptSubmit` hook that runs `dev/hooks/audit-on-pipeline-run.sh`. When the submitted prompt starts with `/pipeline:run`, the hook backgrounds `dev/self-audit/inner-loop.sh` and returns in <200ms. The user's prompt is not blocked.
+
+**Inner loop (`dev/self-audit/inner-loop.sh`).** Reads `dev/audits/index.jsonl` for the last audit timestamp, queries `gh` for merged feature/* PRs since then, reads observability logs (`.claude/logs/subagents/*.json`, `.claude/logs/tool-use*.log`, `.claude/logs/runs.log`) plus the orchestrator transcript at `${AUDIT_CLAUDE_PROJECTS_DIR:-~/.claude/projects}/<project-hash>/<session-uuid>.jsonl`, and emits `dev/audits/inner-<ISO>.md`. Every digest contains five sections: **Compliance**, **Interaction**, **Pattern → defaults** (per-run noise), **Efficiency**, and **Data quality** (which inputs were present/missing — blind spots are a first-class finding). After every third new entry, it backgrounds `outer-loop.sh`.
+
+**Outer loop (`dev/self-audit/outer-loop.sh`).** Reads the last 3 inner entries from `index.jsonl` and surfaces signals consistent across ALL of them. For each pattern, it names a **codification target** on a plugin surface: skill prose, `pipeline.config.example`, hooks, or scripts. **Never local-machine personal state** — that does not propagate. The outer loop is read-only: it files no issues, modifies no surfaces. A human reads the digest and files the issue when ready.
+
+**Four lenses.**
+1. **Compliance** — did orchestrator and subagents follow declared instructions (TDD pattern, wave-prioritization, PATH-tier dispatch, hook trip counts)?
+2. **Interaction** — where is friction high (turn count, user corrections, unnecessary confirmations)?
+3. **Pattern → defaults** — outer-loop only; cross-run repetition of user requests, opt-out flags, manual overrides.
+4. **Efficiency** — tokens, wall clock, re-plan loops, eval-Revise verdicts vs prior trend.
+
+**Redaction discipline (load-bearing).** Every transcript quote passes through `dev/self-audit/redact.sh::redact()`, which hard-denies token-shaped strings (regex `[A-Za-z0-9]{32,}`), the case-insensitive keywords `password|token|secret|api[_-]?key|bearer|Authorization`, and URLs containing `?key=|?token=|?auth=`; caps line length at 200 chars with a `...[truncated; original N chars]` suffix; and strips triple-backtick code-block contents entirely (only surrounding prose survives). Verified by `dev/tests/test-redaction.sh`.
+
+**Output location.** All digests and `index.jsonl` live in `dev/audits/`, which is gitignored — digests may contain redacted excerpts and stay on-disk locally only.
+
+**Plugin manifest is untouched.** `dev/`, `.claude/settings.json`, and the allow-list entry in `tests/no-consumer-claude-writes.allow` are the only surfaces this system writes to in this repo. `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, `skills/`, `scripts/`, `hooks/`, `agents/` are not modified by this system.
+
+**Internal-path dependency.** The orchestrator transcript path `~/.claude/projects/<project-hash>/<session-uuid>.jsonl` is a Claude Code internal. If Anthropic changes it, set `AUDIT_CLAUDE_PROJECTS_DIR` in the environment to point at the new location.
+
+**Tests live at `dev/tests/test-*.sh`** and are run by `dev/tests/run-all.sh` (which CI invokes alongside `tests/test*.sh`).

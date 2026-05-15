@@ -28,3 +28,5 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+      - name: dev/ self-audit tests
+        run: bash dev/tests/run-all.sh

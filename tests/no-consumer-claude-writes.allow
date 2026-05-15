@@ -33,3 +33,15 @@ scripts/review-logs.sh
 scripts/check-server.sh
 scripts/create-checkpoint-tag.sh
 scripts/prune-checkpoints.sh
+
+# HTS-dogfood-only repo audit hook on UserPromptSubmit. Not part of the
+# plugin manifest; see issue #134 and the "Self-improvement loop (HTS-only)"
+# section in CLAUDE.md. The .claude/settings.json file is excluded from the
+# current lint scan but this entry is recorded defensively so any future
+# tightening of the scan keeps this file exempt.
+.claude/settings.json
+
+# Doctor's no_residual_subtree check matches the legacy-installer marker path
+# .claude/skills/*/.pipeline-managed as a STRING to detect it on consumer
+# machines — references are inherent to the check's purpose (issue #144).
+scripts/doctor.sh
