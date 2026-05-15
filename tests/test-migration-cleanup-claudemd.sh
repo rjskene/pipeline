@@ -361,6 +361,63 @@ else
   sed 's/^/    /' "$PROJ_PATCH_O/CLAUDE.md"
 fi
 
+# ---------------------------------------------------------------------------
+# Task 7: idempotency — second run on clean tree is byte-identical no-op.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'idempotent: rerun on clean tree is byte-identical no-op'"
+
+PROJ_IDEM="$WORKDIR/proj-idem"
+mkdir -p "$PROJ_IDEM"
+echo "# My project" > "$PROJ_IDEM/CLAUDE.md"
+
+BEFORE=$(cd "$PROJ_IDEM" && find . -type f -exec sha256sum {} \; | sort)
+(cd "$PROJ_IDEM" && bash "$SCANNER_SH") >/dev/null 2>&1
+EXIT1=$?
+(cd "$PROJ_IDEM" && bash "$SCANNER_SH") >/dev/null 2>&1
+EXIT2=$?
+AFTER=$(cd "$PROJ_IDEM" && find . -type f -exec sha256sum {} \; | sort)
+
+inc
+if [ "$EXIT1" -eq 0 ] && [ "$EXIT2" -eq 0 ]; then
+  pass_msg "idem: both runs exit 0"
+else
+  fail_msg "idem: run1=$EXIT1 run2=$EXIT2"
+fi
+
+inc
+if [ "$BEFORE" = "$AFTER" ]; then
+  pass_msg "idem: filesystem sha256 byte-identical"
+else
+  fail_msg "idem: filesystem changed"
+  diff <(echo "$BEFORE") <(echo "$AFTER") | sed 's/^/    /'
+fi
+
+inc
+if [ ! -f "$PROJ_IDEM/.claude/migration-cleanup-report-claudemd.txt" ] \
+   && [ ! -f "$PROJ_IDEM/.claude/migration-cleanup-claudemd.patch" ]; then
+  pass_msg "idem: no artifacts in .claude/"
+else
+  fail_msg "idem: stale artifacts present"
+fi
+
+# Stale-clear: stale artifacts from a prior dirty run are removed on a subsequent clean run.
+PROJ_STALE="$WORKDIR/proj-stale"
+mkdir -p "$PROJ_STALE/.claude"
+# Simulate stale artifacts.
+echo "stale report" > "$PROJ_STALE/.claude/migration-cleanup-report-claudemd.txt"
+echo "stale patch" > "$PROJ_STALE/.claude/migration-cleanup-claudemd.patch"
+echo "# Clean project" > "$PROJ_STALE/CLAUDE.md"
+(cd "$PROJ_STALE" && bash "$SCANNER_SH") >/dev/null 2>&1
+
+inc
+if [ ! -f "$PROJ_STALE/.claude/migration-cleanup-report-claudemd.txt" ] \
+   && [ ! -f "$PROJ_STALE/.claude/migration-cleanup-claudemd.patch" ]; then
+  pass_msg "idem: stale artifacts cleared on clean run"
+else
+  fail_msg "idem: stale artifacts NOT cleared"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

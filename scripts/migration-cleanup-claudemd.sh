@@ -106,6 +106,8 @@ scan_file() {
 }
 
 mkdir -p .claude
+# Clear stale artifacts at top of every run (idempotency contract).
+rm -f "$REPORT" "$PATCH"
 
 FILES_TO_SCAN=()
 [ -f CLAUDE.md ] && FILES_TO_SCAN+=("CLAUDE.md")
