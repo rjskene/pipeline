@@ -11,9 +11,30 @@ REPORT=".claude/migration-cleanup-report-claudemd.txt"
 
 HEADER_FINDINGS=()
 HEADER_CORROBORATION=()
+PATHS_FINDINGS=()
+
+# Track section spans as "<file>|<start>|<end>"
+SECTION_SPANS=()
 
 REGEX_HEADER='^## (Pipeline|Claude Pipeline|Pipeline Setup)( |$)'
 REGEX_PATHS='\.claude-pipeline/|subtree pull|(^|[[:space:]/])install\.sh'
+
+# Is line $2 inside any flagged section span for file $1?
+in_section() {
+  local f="$1" n="$2"
+  local span
+  for span in "${SECTION_SPANS[@]:-}"; do
+    [ -n "$span" ] || continue
+    local sf="${span%%|*}"
+    local rest="${span#*|}"
+    local ss="${rest%%|*}"
+    local se="${rest#*|}"
+    if [ "$sf" = "$f" ] && [ "$n" -ge "$ss" ] && [ "$n" -le "$se" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 section_end_line() {
   local start="$1" file="$2"
@@ -46,8 +67,18 @@ scan_file() {
       local indented
       indented=$(printf '%s\n' "$corroboration" | sed 's/^/    /')
       HEADER_CORROBORATION+=("$indented")
+      SECTION_SPANS+=("$file|$lineno|$end")
     fi
   done < <(grep -nE "$REGEX_HEADER" "$file" || true)
+
+  # Pass 2: legacy paths anywhere, deduped against section spans.
+  local m
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    local lno="${m%%:*}"
+    in_section "$file" "$lno" && continue
+    PATHS_FINDINGS+=("$file:$m")
+  done < <(grep -nE "$REGEX_PATHS" "$file" || true)
 }
 
 mkdir -p .claude
@@ -56,23 +87,31 @@ if [ -f CLAUDE.md ]; then
   scan_file CLAUDE.md
 fi
 
-if [ ${#HEADER_FINDINGS[@]} -eq 0 ]; then
+if [ ${#HEADER_FINDINGS[@]} -eq 0 ] && [ ${#PATHS_FINDINGS[@]} -eq 0 ]; then
   exit 0
 fi
 
 {
   echo "CLAUDE.md pipeline-legacy cleanup advisory"
   echo ""
-  echo "Section headers"
-  echo "---------------"
-  i=0
-  while [ "$i" -lt "${#HEADER_FINDINGS[@]}" ]; do
-    echo "${HEADER_FINDINGS[$i]}"
-    echo "  corroborated by:"
-    printf '%s\n' "${HEADER_CORROBORATION[$i]}"
-    i=$((i + 1))
-  done
-  echo ""
+  if [ ${#HEADER_FINDINGS[@]} -gt 0 ]; then
+    echo "Section headers"
+    echo "---------------"
+    i=0
+    while [ "$i" -lt "${#HEADER_FINDINGS[@]}" ]; do
+      echo "${HEADER_FINDINGS[$i]}"
+      echo "  corroborated by:"
+      printf '%s\n' "${HEADER_CORROBORATION[$i]}"
+      i=$((i + 1))
+    done
+    echo ""
+  fi
+  if [ ${#PATHS_FINDINGS[@]} -gt 0 ]; then
+    echo "Legacy paths"
+    echo "------------"
+    for f in "${PATHS_FINDINGS[@]}"; do echo "$f"; done
+    echo ""
+  fi
 } > "$REPORT"
 
 exit 0
