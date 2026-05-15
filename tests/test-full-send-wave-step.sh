@@ -8,7 +8,10 @@ set -euo pipefail
 # does not conflict with #31 / #122.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_PATH="$SCRIPT_DIR/../skills/run/SKILL.md"
+# Issue #143: the autonomous full-send flow was extracted from skills/run/SKILL.md
+# into its own skill at skills/fullsend/SKILL.md. The Step 0a wave-plan content
+# lives there now; skills/run/SKILL.md retains only a delegator stub.
+SKILL_PATH="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -23,11 +26,11 @@ if [ ! -f "$SKILL_PATH" ]; then
   exit 1
 fi
 
-FS_START_LINE=$(grep -n '^### Full Send' "$SKILL_PATH" | head -1 | cut -d: -f1)
+FS_START_LINE=$(grep -nE '^(#+ )?Full Send' "$SKILL_PATH" | head -1 | cut -d: -f1)
 STEP1_LINE=$(awk 'NR>=fs && /^1\. \*\*Plan\*\*/ {print NR; exit}' fs="$FS_START_LINE" "$SKILL_PATH")
 
 if [ -z "$FS_START_LINE" ]; then
-  fail_msg "could not find '### Full Send' heading"
+  fail_msg "could not find 'Full Send' heading"
   echo "  $TESTS tests: $PASS passed, $FAIL failed"; exit 1
 fi
 if [ -z "$STEP1_LINE" ]; then
