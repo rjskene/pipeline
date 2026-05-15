@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0-rc.4](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.4.0-rc.3...v0.4.0-rc.4) (2026-05-15)
+
+
+### Miscellaneous Chores
+
+* **release:** cut 0.4.0-rc.4 ([56e3c94](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/56e3c940987d566f5808e6ca1c346ed36cdc4bda))
+
 ## [0.4.0-rc.3](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.4.0-rc.2...v0.4.0-rc.3) (2026-05-15)
 
 
