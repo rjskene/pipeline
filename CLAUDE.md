@@ -56,7 +56,7 @@ When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, the pipelin
 - `/pipeline:evaluate-issue-pr <N> --manual-merge` for one-off evaluations.
 - A `manual-merge` label on the issue, for per-issue control without re-typing the flag.
 
-The implementation lives in `scripts/auto-merge-gate.sh` (helper exposing `auto_merge_should_fire`), `skills/evaluate-issue-pr/SKILL.md` Step 11, and `skills/run/SKILL.md` Step 8. **Release-please PRs are out of scope** — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of the run skill, unchanged.
+The implementation lives in `scripts/auto-merge-gate.sh` (helper exposing `auto_merge_should_fire`), the evaluate-issue-pr skill (Step 11), and the run skill (Step 8). **Release-please PRs are out of scope** — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of the run skill, unchanged.
 
 ## Observability
 
