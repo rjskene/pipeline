@@ -1,0 +1,26 @@
+name: back-sync-release
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  back-sync:
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.head_commit.message, 'chore(main): release ')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+      - name: Configure git author
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Back-sync release commit onto staging
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/back-sync-release.sh "${{ github.sha }}"

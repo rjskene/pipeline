@@ -94,7 +94,7 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
 2. When ready to release, open a PR `staging` → `main` and fast-forward or squash-merge it.
 3. On every push to `main`, the `release-please` workflow (`.github/workflows/release-please.yml`) opens — or updates — a Release PR titled `chore(main): release X.Y.Z`. The Release PR bumps `version` in `.claude-plugin/plugin.json` and both `metadata.version` and `plugins[0].version` in `.claude-plugin/marketplace.json` (synced via `extra-files` in `release-please-config.json`), and appends to `CHANGELOG.md`.
 4. Squash-merge the Release PR. release-please then creates the `vX.Y.Z` git tag and a corresponding GitHub Release automatically.
-5. Cherry-pick the Release commit back to `staging` (`git checkout staging && git cherry-pick <sha> && git push`) so subsequent `staging → main` fast-forwards stay clean. This is mandatory because the squash-merge in step 4 creates a SHA-disconnected commit on `main`.
+5. Back-sync to staging happens automatically — the back-sync-release workflow (`.github/workflows/back-sync-release.yml`) cherry-picks the release commit onto staging on every push to `main` matching `chore(main): release …`. On the rare cherry-pick conflict it opens a draft PR `release-back-sync/<sha>` against staging for human resolution instead of failing the workflow.
 6. **Reload the plugin** so subsequent dogfood sessions pick up the new code:
    ```
    /plugin uninstall pipeline@claude-pipeline
@@ -102,7 +102,7 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
    ```
    (If installed via a local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
 
-The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. The mandatory cherry-pick back-sync survives but is now a single `git cherry-pick`.
+The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. Back-sync is now fully automated via the back-sync-release workflow; the cherry-pick to staging happens without human intervention on the clean path.
 
 ### Dev/prerelease channel
 
@@ -110,19 +110,18 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
 
 1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
 2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, and `.release-please-manifest.json` atomically via `extra-files`.
-3. **Dev install.** The dev marketplace MUST be added from a SEPARATE local clone of this repo that tracks `main` — RCs only ever land on `main`, so installing from a `staging` checkout (including this working tree) silently pins you to the last stable version that was on `main`. Verified 2026-05-15 on a private-repo consumer that received `v0.4.0-rc.1` from a `staging` clone after `v0.4.0-rc.2` had shipped to `main`.
+3. **Dev install.** Install the dev marketplace directly from your existing `staging` clone — auto-back-sync (see Release cadence step 5) keeps `staging` in lock-step with `main` for release commits, so a `staging` checkout now carries the same `version` fields as `main`. No separate `~/claude-pipeline-main` clone is required.
 
-   One-command setup (idempotent — works for first install and for every RC refresh):
+   In your existing staging clone, ensure it is up to date:
 
    ```bash
-   git -C ~/claude-pipeline-main pull --ff-only origin main 2>/dev/null \
-     || git clone --branch main https://github.com/HTS-COLLAB-ORG/claude-pipeline.git ~/claude-pipeline-main
+   git pull --ff-only origin staging
    ```
 
-   Then in Claude Code:
+   Then in Claude Code (substitute the path to your staging clone):
 
    ```
-   /plugin marketplace add ~/claude-pipeline-main/.claude-plugin/marketplace-dev.json
+   /plugin marketplace add <path-to-your-staging-clone>/.claude-plugin/marketplace-dev.json
    /plugin install pipeline@claude-pipeline-dev
    ```
 
@@ -133,14 +132,14 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
    /plugin install   pipeline@claude-pipeline-dev
    ```
 
-   Re-run the one-command setup block above on each RC cut to pick up the new version. If the cache doesn't refresh, uninstall + reinstall as shown.
+   On each RC cut, `git pull --ff-only origin staging` in the same clone, then uninstall + reinstall above to pick up the new version. If the cache doesn't refresh, uninstall + reinstall as shown.
 
-   **Pitfalls** (verified 2026-05-15 on a private-repo consumer with `pipeline@claude-pipeline-dev v0.4.0-rc.1`):
-   - The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git clone` / `git pull`.
+   **Pitfalls:**
+   - The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git pull`.
    - Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref, and `raw.githubusercontent.com` 404s without auth anyway. The local-path form is the only reliable one.
    - Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the `"source": "./"` field in the manifest resolves relative to the manifest file's location, so the loader can't find the plugin tree if the manifest sits in a tmp dir.
    - Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
-   - Run `/pipeline:doctor` after install — the `dev_marketplace_on_main` check warns if the registered marketplace path resolves to a non-`main` clone.
+   - Run `/pipeline:doctor` after install — the `dev_marketplace_on_main` check remains as defense-in-depth and warns if the registered marketplace path resolves to a non-`main` clone (legacy setups).
 4. **Revert to stable.**
    ```
    /plugin uninstall pipeline@claude-pipeline-dev
@@ -148,8 +147,7 @@ Alongside the stable `claude-pipeline` marketplace, this repo publishes a siblin
    /plugin install pipeline@claude-pipeline
    ```
 5. **Graduation.** Prereleases do NOT auto-graduate. The next normal `staging → main` cut WITHOUT a `Release-As:` footer produces the stable `X.Y.Z` bump. RC and stable are mutually exclusive per `staging → main` PR.
-6. **No back-sync for RCs.** Stable releases require cherry-picking the version bump back to `staging` because the squash-merge on `main` is SHA-disconnected. **For RC cuts, no back-sync is required** (cherry-pick is not required for RC) — `staging` is already the prerelease source and the next stable cut will overwrite the version. The cherry-pick back-sync remains mandatory only for stable releases.
-7. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
+6. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
 
 ## Doctor
 
