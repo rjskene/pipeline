@@ -112,5 +112,91 @@ else
   echo "    got:"; echo "$scan_files" | sed 's/^/      /'
 fi
 
+# ---------------------------------------------------------------------------
+# Case 4: active-wiring — settings.json reference, non-C drift.
+# ---------------------------------------------------------------------------
+echo "Case 4: active-wiring (settings.json)"
+ROOT=$(fresh_fx fx-active)
+printf '#!/bin/bash\necho block\n' > "$ROOT/plugin/hooks/block.py"
+cp "$ROOT/plugin/hooks/block.py" "$ROOT/proj/.claude/hooks/block.py"
+cat > "$ROOT/proj/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":".claude/hooks/block.py"}]}]}}
+JSON
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^REF	\.claude/hooks/block\.py	\.claude/settings\.json:[0-9]+	active-wiring	"; then
+  pass_msg "active-wiring REF row emitted"
+else
+  fail_msg "no active-wiring row"
+  echo "$out" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Case 5: falls-away — SKILL.md ref AND plugin ships skill <name>.
+# ---------------------------------------------------------------------------
+echo "Case 5: falls-away (plugin-shipped SKILL.md)"
+ROOT=$(fresh_fx fx-falls)
+printf '#!/bin/bash\necho review\n' > "$ROOT/plugin/scripts/review-logs.sh"
+cp "$ROOT/plugin/scripts/review-logs.sh" "$ROOT/proj/.claude/scripts/review-logs.sh"
+# plugin/skills/pipeline already created by fresh_fx → falls-away applies.
+echo "See .claude/scripts/review-logs.sh for details." > "$ROOT/proj/.claude/skills/pipeline/SKILL.md"
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^REF	\.claude/scripts/review-logs\.sh	\.claude/skills/pipeline/SKILL\.md:[0-9]+	falls-away	"; then
+  pass_msg "falls-away REF row emitted"
+else
+  fail_msg "no falls-away row"
+  echo "$out" | sed 's/^/    /'
+fi
+# Negative: must NOT bucket as active-wiring.
+if echo "$out" | grep -qE "active-wiring"; then
+  fail_msg "spurious active-wiring on SKILL.md ref"
+else
+  pass_msg "no spurious active-wiring"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 6: self-only — only reference is inside the file itself.
+# ---------------------------------------------------------------------------
+echo "Case 6: self-only"
+ROOT=$(fresh_fx fx-self)
+printf '#!/bin/bash\necho prune\n' > "$ROOT/plugin/scripts/prune.sh"
+cat > "$ROOT/proj/.claude/scripts/prune.sh" <<'SH'
+#!/bin/bash
+# Usage: .claude/scripts/prune.sh --help
+echo prune
+SH
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^REF	\.claude/scripts/prune\.sh	\.claude/scripts/prune\.sh:[0-9]+	self-only	"; then
+  pass_msg "self-only REF row emitted"
+else
+  fail_msg "no self-only row"
+  echo "$out" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Case 7: fork — settings.json ref AND drift bucket = C.
+# ---------------------------------------------------------------------------
+echo "Case 7: fork (settings.json ref + bucket-C divergence)"
+ROOT=$(fresh_fx fx-fork)
+cat > "$ROOT/plugin/scripts/run-queue.sh" <<'SH'
+#!/bin/bash
+echo plugin-version
+SH
+cat > "$ROOT/proj/.claude/scripts/run-queue.sh" <<'SH'
+#!/bin/bash
+case "${1:-}" in
+  --runs) echo "fork-only feature"; exit 0;;
+esac
+SH
+cat > "$ROOT/proj/.claude/settings.json" <<'JSON'
+{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":".claude/scripts/run-queue.sh"}]}]}}
+JSON
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^REF	\.claude/scripts/run-queue\.sh	\.claude/settings\.json:[0-9]+	fork	"; then
+  pass_msg "fork REF row emitted"
+else
+  fail_msg "no fork row"
+  echo "$out" | sed 's/^/    /'
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]
