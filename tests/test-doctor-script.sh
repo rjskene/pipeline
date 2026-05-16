@@ -247,7 +247,7 @@ FX=$(fresh_fx fx-plugin-warn)
 rm -f "$TMP/bin/claude"
 (
   cd "$FX"
-  PATH="$TMP/bin:/usr/bin:/bin" LABELS_JSON="$ALL_LABELS_JSON" bash "$HELPER"
+  PATH="$TMP/bin:/usr/bin:/bin" CLAUDE_PLUGIN_ROOT="$FX" LABELS_JSON="$ALL_LABELS_JSON" bash "$HELPER"
 ) > "$FX/out" 2>&1
 echo "$?" > "$FX/rc"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
