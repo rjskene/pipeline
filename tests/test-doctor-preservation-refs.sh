@@ -395,6 +395,28 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 15b: tab-indented settings.json — embedded tabs in the snippet field
+# must be sanitized so downstream TSV parsing (doctor + migrate) doesn't
+# shift field boundaries and misclassify the bucket column.
+# ---------------------------------------------------------------------------
+echo "Case 15b: tab-indented settings.json snippet does not corrupt TSV"
+ROOT=$(fresh_fx fx-tab-snippet)
+printf '#!/bin/bash\necho tabby\n' > "$ROOT/plugin/hooks/tabby.py"
+cp "$ROOT/plugin/hooks/tabby.py" "$ROOT/proj/.claude/hooks/tabby.py"
+# Tab-indented JSON — realistic for editor-formatted settings.json files.
+printf '{\n\t"hooks": {\n\t\t"PreToolUse": [\n\t\t\t{"matcher":"Bash","hooks":[{"type":"command","command":".claude/hooks/tabby.py"}]}\n\t\t]\n\t}\n}\n' > "$ROOT/proj/.claude/settings.json"
+out="$(run_helper "$ROOT")"
+# The REF row must parse cleanly: column 4 (bucket) must be "active-wiring",
+# not a fragment of the snippet shifted in by an embedded tab.
+bucket="$(echo "$out" | awk -F'\t' '$1=="REF" && $2==".claude/hooks/tabby.py" {print $4; exit}')"
+if [ "$bucket" = "active-wiring" ]; then
+  pass_msg "tab-indented snippet keeps bucket column intact"
+else
+  fail_msg "bucket column corrupted by embedded tab (got '$bucket', expected 'active-wiring')"
+  echo "$out" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Case 16: consumer-skill-ref — SKILL.md ref BUT skill is consumer-authored
 # (plugin does NOT ship this skill). Must classify as consumer-skill-ref,
 # NOT falls-away. Verdict: KEEP.
