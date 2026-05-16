@@ -198,5 +198,79 @@ else
   echo "$out" | sed 's/^/    /'
 fi
 
+# ---------------------------------------------------------------------------
+# Case 8: VERDICT DELETE — all references non-concerning (self-only + falls-away).
+# ---------------------------------------------------------------------------
+echo "Case 8: VERDICT DELETE (all non-concerning)"
+ROOT=$(fresh_fx fx-delete)
+printf '#!/bin/bash\n# Usage: .claude/scripts/foo.sh\n' > "$ROOT/plugin/scripts/foo.sh"
+cp "$ROOT/plugin/scripts/foo.sh" "$ROOT/proj/.claude/scripts/foo.sh"
+echo "See .claude/scripts/foo.sh" > "$ROOT/proj/.claude/skills/pipeline/SKILL.md"
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^VERDICT	\.claude/scripts/foo\.sh	DELETE	"; then
+  pass_msg "VERDICT DELETE emitted"
+else
+  fail_msg "expected DELETE verdict"
+  echo "$out" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Case 9: VERDICT KEEP — at least one active-wiring reference.
+# ---------------------------------------------------------------------------
+echo "Case 9: VERDICT KEEP (active-wiring present)"
+ROOT=$(fresh_fx fx-keep)
+printf '#!/bin/bash\necho wire\n' > "$ROOT/plugin/hooks/wire.py"
+cp "$ROOT/plugin/hooks/wire.py" "$ROOT/proj/.claude/hooks/wire.py"
+cat > "$ROOT/proj/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":".claude/hooks/wire.py"}]}]}}
+JSON
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^VERDICT	\.claude/hooks/wire\.py	KEEP	"; then
+  pass_msg "VERDICT KEEP emitted"
+else
+  fail_msg "expected KEEP verdict"
+  echo "$out" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Case 10: mixed refs (active-wiring + falls-away) → KEEP.
+# ---------------------------------------------------------------------------
+echo "Case 10: mixed refs → KEEP"
+ROOT=$(fresh_fx fx-mixed)
+printf '#!/bin/bash\necho mixed\n' > "$ROOT/plugin/hooks/mixed.py"
+cp "$ROOT/plugin/hooks/mixed.py" "$ROOT/proj/.claude/hooks/mixed.py"
+cat > "$ROOT/proj/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":".claude/hooks/mixed.py"}]}]}}
+JSON
+echo "doc ref: .claude/hooks/mixed.py" > "$ROOT/proj/.claude/skills/pipeline/SKILL.md"
+out="$(run_helper "$ROOT")"
+ref_count="$(echo "$out" | awk -F'\t' '$1=="REF" && $2==".claude/hooks/mixed.py"' | wc -l | tr -d ' ')"
+if [ "$ref_count" = "2" ]; then
+  pass_msg "two REF rows for mixed file"
+else
+  fail_msg "expected 2 REF rows, got $ref_count"
+  echo "$out" | sed 's/^/    /'
+fi
+if echo "$out" | grep -qE "^VERDICT	\.claude/hooks/mixed\.py	KEEP	"; then
+  pass_msg "KEEP wins with one concerning ref"
+else
+  fail_msg "expected KEEP on mixed"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 11: no references anywhere → DELETE with 'no references' hint.
+# ---------------------------------------------------------------------------
+echo "Case 11: no refs → DELETE"
+ROOT=$(fresh_fx fx-noref)
+printf '#!/bin/bash\necho lonely-plugin\n' > "$ROOT/plugin/scripts/lonely.sh"
+printf '#!/bin/bash\necho lonely-local\n' > "$ROOT/proj/.claude/scripts/lonely.sh"
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^VERDICT	\.claude/scripts/lonely\.sh	DELETE	no references"; then
+  pass_msg "DELETE on zero refs"
+else
+  fail_msg "expected DELETE w/ 'no references' hint"
+  echo "$out" | sed 's/^/    /'
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]

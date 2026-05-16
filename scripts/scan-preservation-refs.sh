@@ -104,9 +104,12 @@ classify_ref() {
   echo "doc-ref"
 }
 
+# Accumulator: REF_BUCKETS[<consumer_path>] = "<bucket1> <bucket2> ..."
+declare -A REF_BUCKETS=()
+
 # scan_refs_for <consumer_path> — emit REF rows on stdout for each external
-# reference to the file's consumer-form path. self-comments inside the file
-# itself classify as self-only.
+# reference to the file's consumer-form path AND populate REF_BUCKETS so
+# verdict_for can resolve KEEP vs DELETE per-file.
 scan_refs_for() {
   local consumer_path="$1"
   local bn; bn="$(basename "$consumer_path")"
@@ -132,12 +135,35 @@ scan_refs_for() {
     [ "${#snippet}" -gt 160 ] && snippet="${snippet:0:160}..."
     local bucket
     bucket="$(classify_ref "$consumer_path" "$ref_file")"
+    REF_BUCKETS["$consumer_path"]+=" $bucket"
     printf 'REF\t%s\t%s:%s\t%s\t%s\n' "$consumer_path" "$ref_file" "$lineno" "$bucket" "$snippet"
   done <<<"$hits"
 }
 
-# Walk consumer .claude/{scripts,hooks}/ and emit REF rows + placeholder
-# VERDICT rows per file. Real verdict logic lands in Task 4.
+# verdict_for <consumer_path> — emit a single VERDICT row. KEEP wins over
+# DELETE the moment a concerning bucket appears
+# ({active-wiring, fork, consumer-skill-ref, doc-ref}); otherwise DELETE.
+verdict_for() {
+  local consumer_path="$1"
+  local buckets="${REF_BUCKETS[$consumer_path]:-}"
+  if [ -z "$buckets" ]; then
+    printf 'VERDICT\t%s\tDELETE\tno references\n' "$consumer_path"; return
+  fi
+  case " $buckets " in
+    *" active-wiring "*)      printf 'VERDICT\t%s\tKEEP\tactive wiring — rewire settings then delete\n' "$consumer_path"; return ;;
+    *" fork "*)               printf 'VERDICT\t%s\tKEEP\tintentional fork\n' "$consumer_path"; return ;;
+    *" consumer-skill-ref "*) printf 'VERDICT\t%s\tKEEP\theld by consumer-authored skill; resolve manually\n' "$consumer_path"; return ;;
+    *" doc-ref "*)            printf 'VERDICT\t%s\tKEEP\tdocumentation reference; resolve manually post-migration\n' "$consumer_path"; return ;;
+  esac
+  case " $buckets " in
+    *" falls-away "*) printf 'VERDICT\t%s\tDELETE\tonly plugin-shipped SKILL.md ref(s); falls away after migration\n' "$consumer_path"; return ;;
+    *" self-only "*)  printf 'VERDICT\t%s\tDELETE\tself-comment(s) only; --keep-referenced false-positive\n' "$consumer_path"; return ;;
+  esac
+  printf 'VERDICT\t%s\tKEEP\tunclassified\n' "$consumer_path"
+}
+
+# Walk consumer .claude/{scripts,hooks}/ and emit REF rows followed by a
+# single VERDICT row per file.
 for sub in scripts hooks; do
   [ -d ".claude/$sub" ] || continue
   while IFS= read -r -d '' local_path; do
@@ -145,7 +171,7 @@ for sub in scripts hooks; do
     bn="$(basename "$local_path")"
     has_counterpart "$bn" || continue
     scan_refs_for "$local_path"
-    printf 'VERDICT\t%s\tKEEP\tpending classification\n' "$local_path"
+    verdict_for "$local_path"
   done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
 done
 
