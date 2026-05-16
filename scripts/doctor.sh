@@ -18,6 +18,9 @@ RESOLVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 [ -f "$RESOLVER_DIR/_resolve-plugin-root.sh" ] \
   && source "$RESOLVER_DIR/_resolve-plugin-root.sh" 2>/dev/null || true
+# shellcheck disable=SC1091
+[ -f "$RESOLVER_DIR/_advisory-text.sh" ] \
+  && source "$RESOLVER_DIR/_advisory-text.sh" 2>/dev/null || true
 
 # Canonical label table — single source of truth.
 # Each row: <key>|<default-name>|<color>|<description>
@@ -68,6 +71,151 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "labels" ]; then
     gh label create "$name" --repo "$PIPELINE_REPO" --color "$color" --description "$desc" --force
   done
   echo "Seeded ${#LABEL_TABLE[@]} labels on $PIPELINE_REPO (idempotent — safe to re-run)."
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
+# --fix residual: re-run the three residual-state detectors in remediate
+# mode, prompting [y/N] per finding. Honors DOCTOR_FIX_NONINTERACTIVE=1
+# (auto-N for every prompt; used by tests to assert the prompt-and-skip path
+# without a TTY).
+# --------------------------------------------------------------------------
+if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  PLUGIN_ROOT_FIX="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+  # Helper: prompt [y/N]. Honors DOCTOR_FIX_NONINTERACTIVE=1 (auto-N).
+  # Returns 1 on EOF/empty-read (caller decides exit code).
+  _FIX_EOF=0
+  prompt_yn() {
+    local msg="$1"
+    printf '%s [y/N] ' "$msg"
+    if [ "${DOCTOR_FIX_NONINTERACTIVE:-0}" = "1" ]; then
+      echo "n"
+      REPLY="n"
+      return 0
+    fi
+    if ! IFS= read -r REPLY; then
+      _FIX_EOF=1
+      REPLY=""
+      printf '\n' >&2
+      return 1
+    fi
+    return 0
+  }
+
+  any_prompt_eof=0
+
+  # --- skill_files_residual remediation ---
+  fix_allow_tmp="$(mktemp)"
+  for sub in skills hooks scripts agents; do
+    if [ -d "$PLUGIN_ROOT_FIX/$sub" ]; then
+      find "$PLUGIN_ROOT_FIX/$sub" -type f -printf '%f\n' 2>/dev/null
+    fi
+  done | sort -u > "$fix_allow_tmp"
+
+  fix_dup_paths=()
+  for sub in skills hooks scripts agents; do
+    if [ -d ".claude/$sub" ]; then
+      while IFS= read -r -d '' f; do
+        bn="$(basename "$f")"
+        if grep -Fxq "$bn" "$fix_allow_tmp"; then
+          if [ "$sub" = "skills" ]; then
+            sd="$(dirname "$f")"
+            already=0
+            for existing in "${fix_dup_paths[@]:-}"; do
+              [ "$existing" = "$sd" ] && already=1 && break
+            done
+            [ "$already" = "0" ] && fix_dup_paths+=("$sd")
+          else
+            fix_dup_paths+=("$f")
+          fi
+        fi
+      done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+    fi
+  done
+  rm -f "$fix_allow_tmp"
+
+  for path in "${fix_dup_paths[@]:-}"; do
+    [ -z "$path" ] && continue
+    if prompt_yn "Remove duplicate of plugin-shipped file: $path?"; then
+      case "$REPLY" in
+        y|Y|yes|YES)
+          rm -rf "$path"
+          echo "  removed: $path"
+          ;;
+        *)
+          echo "  skipped: $path"
+          ;;
+      esac
+    else
+      any_prompt_eof=1
+      echo "  skipped (no input): $path"
+    fi
+  done
+
+  # --- settings_residual remediation: ONE prompt for the whole batch. ---
+  _sr_settings=".claude/settings.json"
+  has_settings_findings=0
+  if [ -f "$_sr_settings" ] && command -v jq >/dev/null 2>&1; then
+    _sr_known_tmp="$(mktemp)"
+    if command -v list_pipeline_hook_basenames >/dev/null 2>&1; then
+      list_pipeline_hook_basenames > "$_sr_known_tmp" 2>/dev/null || true
+    fi
+    while IFS= read -r _sr_cmd; do
+      [ -z "$_sr_cmd" ] && continue
+      _sr_last_tok="${_sr_cmd##* }"
+      _sr_bn="$(basename "$_sr_last_tok")"
+      if grep -Fxq "$_sr_bn" "$_sr_known_tmp" 2>/dev/null; then
+        has_settings_findings=1
+        break
+      fi
+    done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null || true)
+    rm -f "$_sr_known_tmp"
+  fi
+
+  if [ "$has_settings_findings" = "1" ]; then
+    if prompt_yn "Patch .claude/settings.json (delegate to migrate-from-subtree.sh --patch settings)?"; then
+      case "$REPLY" in
+        y|Y|yes|YES)
+          bash "$PLUGIN_ROOT_FIX/scripts/migrate-from-subtree.sh" --patch settings
+          ;;
+        *)
+          echo "  skipped: settings.json patch"
+          ;;
+      esac
+    else
+      any_prompt_eof=1
+      echo "  skipped (no input): settings.json patch"
+    fi
+  fi
+
+  # --- claude_md_residual remediation: surface the report path. ---
+  CMD_REPORT=".claude/migration-cleanup-report-claudemd.txt"
+  SCANNER="$SCRIPT_DIR/migration-cleanup-claudemd.sh"
+  if [ -f "$SCANNER" ]; then
+    bash "$SCANNER" >/dev/null 2>&1 || true
+  fi
+  if [ -s "$CMD_REPORT" ]; then
+    if prompt_yn "CLAUDE.md has residual pipeline references — surface the report path for manual review?"; then
+      case "$REPLY" in
+        y|Y|yes|YES)
+          echo "  review manually: $CMD_REPORT"
+          echo "  (CLAUDE.md is user-authored prose; no in-place edit will be performed.)"
+          ;;
+        *)
+          echo "  skipped: CLAUDE.md report"
+          ;;
+      esac
+    else
+      any_prompt_eof=1
+      echo "  skipped (no input): CLAUDE.md report"
+    fi
+  fi
+
+  if [ "$any_prompt_eof" = "1" ] && [ "$_FIX_EOF" = "1" ]; then
+    exit 2
+  fi
   exit 0
 fi
 
@@ -196,6 +344,186 @@ if [ -n "$residual" ]; then
 else
   record no_residual_subtree pass "no legacy subtree artifacts"
 fi
+
+
+# --------------------------------------------------------------------------
+# Check: claude_md_residual — delegate to the migration-cleanup-claudemd scanner;
+# parse its report file to surface findings as a warn (never a fail).
+# --------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCANNER="$SCRIPT_DIR/migration-cleanup-claudemd.sh"
+if [ ! -f "$SCANNER" ]; then
+  record claude_md_residual warn "migration-cleanup-claudemd.sh not found at $SCANNER"
+else
+  bash "$SCANNER" >/dev/null 2>&1 || true
+  CMD_REPORT=".claude/migration-cleanup-report-claudemd.txt"
+  if [ ! -s "$CMD_REPORT" ]; then
+    record claude_md_residual pass "no residual pipeline state in CLAUDE.md"
+  else
+    # Count findings: non-empty content lines that look like a finding row.
+    # Finding rows are either "<path>:<lineno>:..." entries (paths/cmds passes)
+    # or 4-space-indented corroboration lines under section headers.
+    finding_count=$(awk '
+      /^CLAUDE\.md pipeline-legacy/ { next }
+      /^Section headers$/ || /^Legacy paths$/ || /^Deprecated slash commands$/ { next }
+      /^-+$/ { next }
+      /^[[:space:]]*$/ { next }
+      /^  corroborated by:$/ { next }
+      /^[^[:space:]].*:[0-9]+:/ { count++; next }
+      /^    .+/ { count++; next }
+      END { print count + 0 }
+    ' "$CMD_REPORT")
+    record claude_md_residual warn "$finding_count residual reference(s) in CLAUDE.md (see .claude/migration-cleanup-report-claudemd.txt)"
+  fi
+fi
+
+# BEGIN settings_residual
+# --------------------------------------------------------------------------
+# Check: settings_residual — scan $PROJECT_ROOT/.claude/settings.json for
+# pipeline-owned hook command basenames (sourced from _advisory-text.sh) and
+# emit one annotated line per finding plus a single migrate-from-subtree
+# summary line. Never a fail — warn or pass only. Falls back to warn when
+# jq is not installed (the check is not fatal to the doctor run).
+# --------------------------------------------------------------------------
+_sr_settings=".claude/settings.json"
+if [ ! -f "$_sr_settings" ]; then
+  record settings_residual pass "no settings.json"
+elif ! command -v jq >/dev/null 2>&1; then
+  record settings_residual warn "jq required for settings_residual check"
+else
+  # Enumerate every command across all hook sections (forward-compatible with
+  # future hook types beyond PreToolUse/PostToolUse/Stop).
+  _sr_known_tmp="$(mktemp)"
+  list_pipeline_hook_basenames > "$_sr_known_tmp" 2>/dev/null || true
+  _sr_findings=()
+  while IFS= read -r _sr_cmd; do
+    [ -z "$_sr_cmd" ] && continue
+    # basename of the command's first token (handles "python3 path/to/x.py" by
+    # taking the last whitespace-separated token, then basename).
+    _sr_last_tok="${_sr_cmd##* }"
+    _sr_bn="$(basename "$_sr_last_tok")"
+    if grep -Fxq "$_sr_bn" "$_sr_known_tmp"; then
+      _sr_findings+=("$_sr_bn")
+    fi
+  done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null || true)
+  rm -f "$_sr_known_tmp"
+
+  _sr_n="${#_sr_findings[@]}"
+  if [ "$_sr_n" = "0" ]; then
+    record settings_residual pass "no pipeline hook entries"
+  else
+    if [ "$_sr_n" = "1" ]; then
+      _sr_word="entry"
+    else
+      _sr_word="entries"
+    fi
+    record settings_residual warn "$_sr_n pipeline hook $_sr_word in .claude/settings.json"
+    for _sr_bn in "${_sr_findings[@]}"; do
+      echo "  - .claude/hooks/$_sr_bn"
+      _sr_adv="$(advisory_for_hook "$_sr_bn" || true)"
+      echo "      $_sr_adv"
+    done
+    echo "  → run: bash \${CLAUDE_PLUGIN_ROOT}/scripts/migrate-from-subtree.sh --patch settings"
+  fi
+fi
+# END settings_residual
+
+# BEGIN skill_files_residual
+# --------------------------------------------------------------------------
+# Check: skill_files_residual — detect legacy-install residual under consumer
+# .claude/{skills,hooks,scripts,agents}/. Builds the plugin-shipped basename
+# allow-list at runtime, classifies each consumer file as DUPLICATE or
+# CONSUMER_OWNED, and elevates to fail if any duplicate SKILL.md/.sh/.py
+# references a stale <owner>/<repo> token near PIPELINE_REPO.
+# --------------------------------------------------------------------------
+sfr_plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
+if [ -z "$sfr_plugin_root" ] || [ ! -d "$sfr_plugin_root" ]; then
+  _sfr_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  sfr_plugin_root="$(cd "$_sfr_here/.." && pwd)"
+fi
+
+sfr_allow_tmp="$(mktemp)"
+for sub in skills hooks scripts agents; do
+  if [ -d "$sfr_plugin_root/$sub" ]; then
+    find "$sfr_plugin_root/$sub" -type f -printf '%f\n' 2>/dev/null
+  fi
+done | sort -u > "$sfr_allow_tmp"
+
+sfr_dup_files=()
+sfr_consumer_files=()
+for sub in skills hooks scripts agents; do
+  if [ -d ".claude/$sub" ]; then
+    while IFS= read -r -d '' f; do
+      bn="$(basename "$f")"
+      if grep -Fxq "$bn" "$sfr_allow_tmp"; then
+        sfr_dup_files+=("$f")
+      else
+        sfr_consumer_files+=("$f")
+      fi
+    done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+  fi
+done
+
+sfr_stale_findings=()
+for f in "${sfr_dup_files[@]:-}"; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    *.md|*.sh|*.py) ;;
+    *) continue ;;
+  esac
+  while IFS= read -r tok; do
+    [ -z "$tok" ] && continue
+    [ "$tok" = "\$PIPELINE_REPO" ] && continue
+    if [ "$tok" != "$PIPELINE_REPO" ]; then
+      sfr_stale_findings+=("$f|$tok")
+    fi
+  done < <(
+    grep -hoE -- '--repo +[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
+      | sed -E 's/^--repo +//'
+    grep -hoE '"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"' "$f" 2>/dev/null \
+      | sed -E 's/^"//; s/"$//'
+    grep -hoE "'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'" "$f" 2>/dev/null \
+      | sed -E "s/^'//; s/'$//"
+  )
+done
+
+rm -f "$sfr_allow_tmp"
+
+sfr_dup_count="${#sfr_dup_files[@]}"
+sfr_stale_count="${#sfr_stale_findings[@]}"
+
+if [ "$sfr_stale_count" -gt 0 ]; then
+  record skill_files_residual fail "$sfr_stale_count stale-repo reference(s) in legacy install"
+elif [ "$sfr_dup_count" -gt 0 ]; then
+  record skill_files_residual warn "$sfr_dup_count duplicate(s) of plugin-shipped files"
+else
+  record skill_files_residual pass "no plugin-basename duplicates"
+fi
+
+if [ "$sfr_stale_count" -gt 0 ]; then
+  echo "  Critical: stale legacy-install references:"
+  for entry in "${sfr_stale_findings[@]}"; do
+    f="${entry%%|*}"
+    tok="${entry#*|}"
+    echo "  - $f: targets $tok (current PIPELINE_REPO=$PIPELINE_REPO)"
+  done
+fi
+if [ "$sfr_dup_count" -gt 0 ]; then
+  echo "  Duplicates of plugin-owned files (run scripts/migrate-from-subtree.sh):"
+  for f in "${sfr_dup_files[@]}"; do
+    echo "  - $f"
+  done
+fi
+if [ "${#sfr_consumer_files[@]}" -gt 0 ]; then
+  echo "  Preserved — consumer-owned:"
+  for f in "${sfr_consumer_files[@]}"; do
+    echo "  - $f"
+  done
+fi
+if [ "$sfr_dup_count" -gt 0 ] || [ "$sfr_stale_count" -gt 0 ]; then
+  echo "  → run: bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/migrate-from-subtree.sh"
+fi
+# END skill_files_residual
 
 # --------------------------------------------------------------------------
 # Check: base_branch_local — local branch exists; warn if no upstream tracking.

@@ -22,7 +22,7 @@ declare -A FILES_WITH_FINDINGS=()
 # Track section spans as "<file>|<start>|<end>"
 SECTION_SPANS=()
 
-REGEX_HEADER='^## (Pipeline|Claude Pipeline|Pipeline Setup)( |$)'
+REGEX_HEADER='^## (Pipeline|Claude Pipeline|Worktrees|Pipeline Setup)( |$)'
 REGEX_PATHS='\.claude-pipeline/|subtree pull|(^|[[:space:]/])install\.sh'
 REGEX_CMDS='(^|[^[:alnum:]:_/])/(plan-issue|evaluate-issue-plan|execute-issue-plan|evaluate-issue-pr|create-issues|classify-issue|worktree-sync)([^[:alnum:]_-]|$)'
 
