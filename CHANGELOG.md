@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.6.0-rc.1...v0.6.0) (2026-05-16)
+
+
+### release
+
+* cut v0.6.0 (stable graduation from rc.1) ([#191](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/191)) ([ffba3dd](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/ffba3ddea9514734314bf0fd47a643cca9eefb3b))
+
 ## [0.6.0-rc.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.5.0...v0.6.0-rc.1) (2026-05-16)
 
 
