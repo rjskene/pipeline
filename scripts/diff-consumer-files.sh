@@ -59,8 +59,26 @@ for sub in scripts hooks agents; do
       else
         diff_lines="$(diff --unified=0 "$local_path" "$shipped_path" 2>/dev/null \
           | grep -cE '^[+-][^+-]' || true)"
-        printf '%s\t?\t%s\t%s\t%s\tneeds-classification\n' \
-          "$local_path" "$local_loc" "$plugin_loc" "$diff_lines"
+        bucket="?"
+        action="needs-classification"
+        # Bucket B heuristic: plugin counterpart reads pipeline.config (any of three
+        # idioms) AND local does not — plugin is strictly more capable.
+        plugin_reads_config=0
+        local_reads_config=0
+        if grep -qE 'source.*pipeline\.config|_resolve-plugin-root\.sh|_pipeline_config' \
+             "$shipped_path" 2>/dev/null; then
+          plugin_reads_config=1
+        fi
+        if grep -qE 'source.*pipeline\.config|_resolve-plugin-root\.sh|_pipeline_config' \
+             "$local_path" 2>/dev/null; then
+          local_reads_config=1
+        fi
+        if [ "$plugin_reads_config" = "1" ] && [ "$local_reads_config" = "0" ]; then
+          bucket="B"
+          action="delete-local"
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$local_path" "$bucket" "$local_loc" "$plugin_loc" "$diff_lines" "$action"
       fi
       continue
     fi

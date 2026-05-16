@@ -138,6 +138,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 5: Bucket B — plugin sources pipeline.config; local has hardcoded value.
+# Local's hardcoded literal matches the runtime PIPELINE_REPO (no B.bug subcase).
+# ---------------------------------------------------------------------------
+echo "Case 5: Bucket B (plugin more capable)"
+ROOT=$(fresh_fx fx-b)
+cat > "$ROOT/plugin/hooks/enforce-path-c-delegation.py" <<'F'
+#!/usr/bin/env python3
+# plugin reads PIPELINE_REPO from pipeline.config via shared helper
+from _pipeline_config import PIPELINE_REPO
+print(PIPELINE_REPO)
+F
+cat > "$ROOT/proj/.claude/hooks/enforce-path-c-delegation.py" <<'F'
+#!/usr/bin/env python3
+# stale local copy with hardcoded literal that matches the runtime config
+PIPELINE_REPO = "owner/repo-correct"
+print(PIPELINE_REPO)
+F
+
+out="$(run_helper "$ROOT")"
+echo "$out" | grep -qE '^\.claude/hooks/enforce-path-c-delegation\.py	B	' \
+  && pass_msg "bucket B: row emitted when plugin sources config and local doesn't" \
+  || { fail_msg "bucket B: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
