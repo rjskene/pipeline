@@ -525,6 +525,59 @@ if [ "$sfr_dup_count" -gt 0 ] || [ "$sfr_stale_count" -gt 0 ]; then
 fi
 # END skill_files_residual
 
+# BEGIN consumer_drift
+# --------------------------------------------------------------------------
+# Check: consumer_drift — for every consumer .claude/{scripts,hooks,agents}/
+# file whose basename collides with a plugin-shipped file, classify drift into
+# one of six buckets (A/B/B.bug/C/D/E/F) using scripts/diff-consumer-files.sh.
+# B.bug rows (hardcoded literal disagrees with pipeline.config) escalate to
+# fail; A/B/C/E rows warn; pass when only D/F/no rows.
+# --------------------------------------------------------------------------
+CD_HELPER="$SCRIPT_DIR/diff-consumer-files.sh"
+if [ ! -x "$CD_HELPER" ] && [ ! -f "$CD_HELPER" ]; then
+  record consumer_drift warn "diff-consumer-files.sh not found at $CD_HELPER"
+else
+  cd_rows="$(bash "$CD_HELPER" 2>/dev/null || true)"
+  cd_total=0
+  cd_bug=0
+  cd_a=0; cd_b=0; cd_c=0; cd_d=0; cd_e=0; cd_f=0
+  if [ -n "$cd_rows" ]; then
+    while IFS=$'\t' read -r _path bucket _llc _plc _diff _action; do
+      [ -z "$bucket" ] && continue
+      cd_total=$((cd_total + 1))
+      case "$bucket" in
+        A)     cd_a=$((cd_a + 1)) ;;
+        B)     cd_b=$((cd_b + 1)) ;;
+        B.bug) cd_bug=$((cd_bug + 1)) ;;
+        C)     cd_c=$((cd_c + 1)) ;;
+        D)     cd_d=$((cd_d + 1)) ;;
+        E)     cd_e=$((cd_e + 1)) ;;
+        F)     cd_f=$((cd_f + 1)) ;;
+      esac
+    done <<< "$cd_rows"
+  fi
+
+  if [ "$cd_bug" -gt 0 ]; then
+    record consumer_drift fail "$cd_bug active bug(s) (B.bug): hardcoded literal disagrees with pipeline.config"
+  elif [ $((cd_a + cd_b + cd_c + cd_e)) -gt 0 ]; then
+    record consumer_drift warn "$cd_total file(s) drifted (A=$cd_a B=$cd_b C=$cd_c E=$cd_e)"
+  else
+    record consumer_drift pass "no drifted consumer files"
+  fi
+
+  if [ "$cd_total" -gt 0 ]; then
+    echo "  === consumer_drift summary ==="
+    echo "  bucket  path                                                       local  plugin  diff  action"
+    echo "  ------  ----                                                       -----  ------  ----  ------"
+    while IFS=$'\t' read -r path bucket llc plc diff action; do
+      [ -z "$bucket" ] && continue
+      printf '  %-6s  %-58s  %5s  %6s  %4s  %s\n' \
+        "$bucket" "$path" "$llc" "$plc" "$diff" "$action"
+    done <<< "$cd_rows"
+  fi
+fi
+# END consumer_drift
+
 # --------------------------------------------------------------------------
 # Check: base_branch_local — local branch exists; warn if no upstream tracking.
 # --------------------------------------------------------------------------
