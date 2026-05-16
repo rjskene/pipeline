@@ -105,7 +105,7 @@ run_helper() {
   local fx="$1"; shift
   (
     cd "$fx"
-    PATH="$TMP/bin:$PATH" env "$@" bash "$HELPER"
+    PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$fx" "$@" bash "$HELPER"
   ) > "$fx/out" 2>&1
   echo "$?" > "$fx/rc"
 }
