@@ -184,6 +184,33 @@ echo "$out" | grep -qE '^\.claude/hooks/enforce-path-c-delegation\.py	B\.bug	.*f
   || { fail_msg "B.bug: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 7: Bucket C — local references a flag the plugin no longer ships.
+# Plugin counterpart exists but is missing functionality the local copy has.
+# ---------------------------------------------------------------------------
+echo "Case 7: Bucket C (plugin dropped feature)"
+ROOT=$(fresh_fx fx-c)
+cat > "$ROOT/plugin/scripts/review-logs.sh" <<'F'
+#!/bin/bash
+# trimmed plugin version
+case "$1" in
+  --tail) tail -n 20 file ;;
+esac
+F
+cat > "$ROOT/proj/.claude/scripts/review-logs.sh" <<'F'
+#!/bin/bash
+# local copy retains a --runs-mode-foo flag the plugin no longer supports
+case "$1" in
+  --tail) tail -n 20 file ;;
+  --runs-mode-foo) echo extra mode ;;
+esac
+F
+
+out="$(run_helper "$ROOT")"
+echo "$out" | grep -qE '^\.claude/scripts/review-logs\.sh	C	' \
+  && pass_msg "bucket C: row emitted when local has token absent from plugin" \
+  || { fail_msg "bucket C: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo

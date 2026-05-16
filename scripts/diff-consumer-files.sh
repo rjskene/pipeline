@@ -69,37 +69,62 @@ for sub in scripts hooks agents; do
           | grep -cE '^[+-][^+-]' || true)"
         bucket="?"
         action="needs-classification"
-        # Bucket B heuristic: plugin counterpart reads pipeline.config (any of three
-        # idioms) AND local does not — plugin is strictly more capable.
-        plugin_reads_config=0
-        local_reads_config=0
-        if grep -qE 'source.*pipeline\.config|_resolve-plugin-root\.sh|_pipeline_config' \
-             "$shipped_path" 2>/dev/null; then
-          plugin_reads_config=1
-        fi
-        if grep -qE 'source.*pipeline\.config|_resolve-plugin-root\.sh|_pipeline_config' \
-             "$local_path" 2>/dev/null; then
-          local_reads_config=1
-        fi
-        if [ "$plugin_reads_config" = "1" ] && [ "$local_reads_config" = "0" ]; then
-          bucket="B"
-          action="delete-local"
-          # Escalate to B.bug if any hardcoded PIPELINE_* literal in the local
-          # file disagrees with the runtime value sourced from pipeline.config.
-          for var in PIPELINE_REPO PIPELINE_WORKTREE_PREFIX PIPELINE_TMUX_SESSION; do
-            runtime_val="$(eval "printf '%s' \"\${$var:-}\"")"
-            [ -z "$runtime_val" ] && continue
-            # Match shell-style (VAR="x") and Python-style (VAR = "x") assignments.
-            literal="$(grep -oE "${var}[[:space:]]*=[[:space:]]*[\"'][^\"']+[\"']" \
-                       "$local_path" 2>/dev/null \
-                       | head -1 \
-                       | sed -E "s/.*[\"']([^\"']+)[\"'].*/\1/")"
-            if [ -n "$literal" ] && [ "$literal" != "$runtime_val" ]; then
-              bucket="B.bug"
-              action="fail-active-bug"
+
+        # Bucket C heuristic (checked FIRST per tie-break: prefer C over B):
+        # local references any function name or --flag token that grep cannot
+        # find in the plugin counterpart. Conservative — flagged for human.
+        c_tokens="$(
+          { grep -oE '^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)' "$local_path" 2>/dev/null \
+              | sed -E 's/[[:space:]]*\(\).*//; s/^[[:space:]]+//';
+            grep -oE -- '--[a-zA-Z][a-zA-Z0-9_-]+' "$local_path" 2>/dev/null;
+          } | sort -u
+        )"
+        c_missing=0
+        if [ -n "$c_tokens" ]; then
+          while IFS= read -r tok; do
+            [ -z "$tok" ] && continue
+            if ! grep -qF -- "$tok" "$shipped_path" 2>/dev/null; then
+              c_missing=1
               break
             fi
-          done
+          done <<< "$c_tokens"
+        fi
+
+        if [ "$c_missing" = "1" ]; then
+          bucket="C"
+          action="leave-flag-as-fork"
+        else
+          # Bucket B heuristic: plugin counterpart reads pipeline.config (any of
+          # three idioms) AND local does not — plugin is strictly more capable.
+          plugin_reads_config=0
+          local_reads_config=0
+          if grep -qE 'source.*pipeline\.config|_resolve-plugin-root\.sh|_pipeline_config' \
+               "$shipped_path" 2>/dev/null; then
+            plugin_reads_config=1
+          fi
+          if grep -qE 'source.*pipeline\.config|_resolve-plugin-root\.sh|_pipeline_config' \
+               "$local_path" 2>/dev/null; then
+            local_reads_config=1
+          fi
+          if [ "$plugin_reads_config" = "1" ] && [ "$local_reads_config" = "0" ]; then
+            bucket="B"
+            action="delete-local"
+            # Escalate to B.bug if any hardcoded PIPELINE_* literal in the local
+            # file disagrees with the runtime value sourced from pipeline.config.
+            for var in PIPELINE_REPO PIPELINE_WORKTREE_PREFIX PIPELINE_TMUX_SESSION; do
+              runtime_val="$(eval "printf '%s' \"\${$var:-}\"")"
+              [ -z "$runtime_val" ] && continue
+              literal="$(grep -oE "${var}[[:space:]]*=[[:space:]]*[\"'][^\"']+[\"']" \
+                         "$local_path" 2>/dev/null \
+                         | head -1 \
+                         | sed -E "s/.*[\"']([^\"']+)[\"'].*/\1/")"
+              if [ -n "$literal" ] && [ "$literal" != "$runtime_val" ]; then
+                bucket="B.bug"
+                action="fail-active-bug"
+                break
+              fi
+            done
+          fi
         fi
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
           "$local_path" "$bucket" "$local_loc" "$plugin_loc" "$diff_lines" "$action"
