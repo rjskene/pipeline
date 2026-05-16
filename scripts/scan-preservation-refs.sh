@@ -21,42 +21,66 @@
 set -uo pipefail
 
 plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
-if [ -z "$plugin_root" ] || [ ! -d "$plugin_root" ]; then
-  echo "scan-preservation-refs: CLAUDE_PLUGIN_ROOT empty or not a directory" >&2
+HAS_PLUGIN=false
+HAS_SUBTREE=false
+[ -n "$plugin_root" ] && [ -d "$plugin_root" ] && HAS_PLUGIN=true
+[ -d .claude-pipeline ] && HAS_SUBTREE=true
+if [ "$HAS_PLUGIN" = false ] && [ "$HAS_SUBTREE" = false ]; then
+  echo "scan-preservation-refs: no CLAUDE_PLUGIN_ROOT and no .claude-pipeline/ — nothing to scan" >&2
   exit 1
 fi
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Build a basename lookup of plugin-shipped scripts/hooks. A consumer file
-# enters the report only when its basename appears in this set (parity with
-# diff-consumer-files.sh's basename-collision rule).
+# Build a basename lookup of "files the consumer's local copy could be a
+# duplicate of": union of $plugin_root/{scripts,hooks}/ basenames (current
+# plugin counterparts, for doctor) and .claude-pipeline/{scripts,hooks}/
+# basenames stripped of .template suffix (legacy subtree marker, for
+# migrate). A consumer file enters the report when its basename matches
+# either source.
 shipped_tmp="$(mktemp)"
 trap 'rm -f "$shipped_tmp"' EXIT
-for sub in scripts hooks; do
-  if [ -d "$plugin_root/$sub" ]; then
-    find "$plugin_root/$sub" -type f -printf '%f\n' 2>/dev/null
+{
+  if [ "$HAS_PLUGIN" = true ]; then
+    for sub in scripts hooks; do
+      [ -d "$plugin_root/$sub" ] && find "$plugin_root/$sub" -type f -printf '%f\n' 2>/dev/null
+    done
   fi
-done | sort -u > "$shipped_tmp"
+  if [ "$HAS_SUBTREE" = true ]; then
+    for sub in scripts hooks; do
+      [ -d ".claude-pipeline/$sub" ] || continue
+      find ".claude-pipeline/$sub" -type f -printf '%f\n' 2>/dev/null \
+        | sed 's/\.template$//'
+    done
+  fi
+} | sort -u > "$shipped_tmp"
 
 has_counterpart() { grep -qxF "$1" "$shipped_tmp"; }
 
 # --------------------------------------------------------------------------
 # Cache diff-consumer-files.sh output ONCE per helper invocation. Per-path
 # drift bucket lookup powers the active-wiring vs fork distinction without
-# re-running the classifier for every settings.json hit (Blocker 4).
+# re-running the classifier for every settings.json hit (Blocker 4). Only
+# meaningful when a plugin root is available; in migrate-from-subtree mode
+# the bucket map stays empty and settings.json hits classify as active-
+# wiring (the conservative default).
 # --------------------------------------------------------------------------
 declare -A DRIFT_BUCKET=()
-_diff_out="$(bash "$SELF_DIR/diff-consumer-files.sh" 2>/dev/null || true)"
-while IFS=$'\t' read -r _p _bucket _rest; do
-  [ -n "$_p" ] || continue
-  DRIFT_BUCKET["$_p"]="$_bucket"
-done <<<"$_diff_out"
+if [ "$HAS_PLUGIN" = true ]; then
+  _diff_out="$(bash "$SELF_DIR/diff-consumer-files.sh" 2>/dev/null || true)"
+  while IFS=$'\t' read -r _p _bucket _rest; do
+    [ -n "$_p" ] || continue
+    DRIFT_BUCKET["$_p"]="$_bucket"
+  done <<<"$_diff_out"
+fi
 
 # Plugin-shipped skill set — for falls-away vs consumer-skill-ref distinction
-# (Blocker 3). Mirrors migrate-from-subtree.sh's basename-match logic.
+# (Blocker 3). Mirrors migrate-from-subtree.sh's basename-match logic. Empty
+# when CLAUDE_PLUGIN_ROOT is unresolved; in that case every SKILL.md ref
+# falls into the consumer-skill-ref bucket (conservative — see SKILL.md
+# Risks section).
 declare -A PLUGIN_SKILL_SET=()
-if [ -d "$plugin_root/skills" ]; then
+if [ "$HAS_PLUGIN" = true ] && [ -d "$plugin_root/skills" ]; then
   for d in "$plugin_root"/skills/*/; do
     [ -d "$d" ] || continue
     PLUGIN_SKILL_SET["$(basename "$d")"]=1

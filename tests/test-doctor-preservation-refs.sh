@@ -272,5 +272,39 @@ else
   echo "$out" | sed 's/^/    /'
 fi
 
+# ---------------------------------------------------------------------------
+# Case 12: migrate-from-subtree.sh --keep-referenced regression.
+#
+# Provisions all three sources of preserved.sh that exist in a realistic
+# pre-migration consumer install:
+#   1. .claude-pipeline/scripts/preserved.sh — subtree marker (migrate
+#      enumerates from here, lines 114-127, to populate TO_REMOVE_SCRIPTS).
+#   2. .claude/scripts/preserved.sh — consumer copy installed by the legacy
+#      subtree script; the file migrate is about to delete.
+#   3. $plugin/scripts/preserved.sh — current plugin counterpart (so the
+#      scan-preservation-refs helper enumerates the basename and emits REF
+#      rows that the refactored migrate iterates over).
+# ---------------------------------------------------------------------------
+echo "Case 12: migrate --keep-referenced still preserves referenced file"
+ROOT=$(fresh_fx fx-migrate)
+MIGRATE="$SCRIPT_DIR/../scripts/migrate-from-subtree.sh"
+mkdir -p "$ROOT/proj/.claude-pipeline/scripts"
+printf '#!/bin/bash\necho preserved\n' > "$ROOT/proj/.claude-pipeline/scripts/preserved.sh"
+printf '#!/bin/bash\necho preserved\n' > "$ROOT/proj/.claude/scripts/preserved.sh"
+printf '#!/bin/bash\necho preserved\n' > "$ROOT/plugin/scripts/preserved.sh"
+echo "See .claude/scripts/preserved.sh" > "$ROOT/proj/.claude/skills/pipeline/SKILL.md"
+out=$(
+  cd "$ROOT/proj"
+  # shellcheck disable=SC1091
+  source ./pipeline.config
+  CLAUDE_PLUGIN_ROOT="$ROOT/plugin" bash "$MIGRATE" --keep-referenced --dry-run --assume-yes 2>&1 || true
+)
+if echo "$out" | grep -q "Preserved due to --keep-referenced:.*preserved.sh"; then
+  pass_msg "migrate --keep-referenced preserves on plugin-SKILL.md ref"
+else
+  fail_msg "migrate regression: file not preserved"
+  echo "$out" | sed 's/^/    /'
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]
