@@ -394,5 +394,75 @@ else
   fail_msg "SKILL.md missing doc-ref"
 fi
 
+# ---------------------------------------------------------------------------
+# Case 16: consumer-skill-ref — SKILL.md ref BUT skill is consumer-authored
+# (plugin does NOT ship this skill). Must classify as consumer-skill-ref,
+# NOT falls-away. Verdict: KEEP.
+# ---------------------------------------------------------------------------
+echo "Case 16: consumer-skill-ref (consumer-authored SKILL.md)"
+ROOT=$(fresh_fx fx-consumer-skill)
+printf '#!/bin/bash\necho needed\n' > "$ROOT/plugin/scripts/needed.sh"
+cp "$ROOT/plugin/scripts/needed.sh" "$ROOT/proj/.claude/scripts/needed.sh"
+mkdir -p "$ROOT/proj/.claude/skills/my-custom"
+echo "Calls .claude/scripts/needed.sh from my custom skill." \
+  > "$ROOT/proj/.claude/skills/my-custom/SKILL.md"
+# fresh_fx only ships 'pipeline'; ensure my-custom is NOT plugin-shipped.
+rm -rf "$ROOT/plugin/skills/my-custom" 2>/dev/null || true
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^REF	\.claude/scripts/needed\.sh	\.claude/skills/my-custom/SKILL\.md:[0-9]+	consumer-skill-ref	"; then
+  pass_msg "consumer-skill-ref REF row emitted"
+else
+  fail_msg "expected consumer-skill-ref bucket"
+  echo "$out" | sed 's/^/    /'
+fi
+if echo "$out" | grep -q "falls-away"; then
+  fail_msg "spurious falls-away on consumer-authored skill"
+else
+  pass_msg "no spurious falls-away"
+fi
+if echo "$out" | grep -qE "^VERDICT	\.claude/scripts/needed\.sh	KEEP	held by consumer-authored skill"; then
+  pass_msg "consumer-skill-ref → KEEP with correct hint"
+else
+  fail_msg "expected KEEP w/ consumer-authored hint"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 17: doc-ref — reference in arbitrary project doc (CLAUDE.md /
+# README.md) outside .claude/skills/*/SKILL.md and outside settings.json.
+# Verdict: KEEP. Critical: must NOT be misclassified as active-wiring.
+# ---------------------------------------------------------------------------
+echo "Case 17: doc-ref (CLAUDE.md / README.md)"
+ROOT=$(fresh_fx fx-doc-ref)
+printf '#!/bin/bash\necho logged\n' > "$ROOT/plugin/scripts/logged.sh"
+cp "$ROOT/plugin/scripts/logged.sh" "$ROOT/proj/.claude/scripts/logged.sh"
+cat > "$ROOT/proj/CLAUDE.md" <<'MD'
+See .claude/scripts/logged.sh for the observability log writer.
+MD
+cat > "$ROOT/proj/README.md" <<'MD'
+Run .claude/scripts/logged.sh after install.
+MD
+out="$(run_helper "$ROOT")"
+if echo "$out" | grep -qE "^REF	\.claude/scripts/logged\.sh	CLAUDE\.md:[0-9]+	doc-ref	"; then
+  pass_msg "doc-ref REF row (CLAUDE.md) emitted"
+else
+  fail_msg "expected doc-ref for CLAUDE.md"
+  echo "$out" | sed 's/^/    /'
+fi
+if echo "$out" | grep -qE "^REF	\.claude/scripts/logged\.sh	README\.md:[0-9]+	doc-ref	"; then
+  pass_msg "doc-ref REF row (README.md) emitted"
+else
+  fail_msg "expected doc-ref for README.md"
+fi
+if echo "$out" | grep -q "active-wiring"; then
+  fail_msg "doc-ref incorrectly classified as active-wiring"
+else
+  pass_msg "no spurious active-wiring on doc-ref"
+fi
+if echo "$out" | grep -qE "^VERDICT	\.claude/scripts/logged\.sh	KEEP	documentation reference"; then
+  pass_msg "doc-ref → KEEP w/ 'documentation reference' hint"
+else
+  fail_msg "expected KEEP w/ documentation hint"
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]
