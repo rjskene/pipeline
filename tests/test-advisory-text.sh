@@ -124,5 +124,33 @@ for b in "${DOGFOOD_HOOKS[@]}"; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# advisory_for_ref_source — six buckets emitted by scan-preservation-refs.sh.
+# Every known bucket maps to a non-empty annotation string; unknown buckets
+# return rc=1.
+# ---------------------------------------------------------------------------
+REF_BUCKETS=(
+  active-wiring
+  falls-away
+  consumer-skill-ref
+  self-only
+  fork
+  doc-ref
+)
+for b in "${REF_BUCKETS[@]}"; do
+  out="$(advisory_for_ref_source "$b" 2>/dev/null || true)"
+  if [ -n "$out" ]; then
+    pass_msg "advisory_for_ref_source $b returns non-empty"
+  else
+    fail_msg "advisory_for_ref_source $b returns empty"
+  fi
+done
+
+if advisory_for_ref_source "bogus-bucket" >/dev/null 2>&1; then
+  fail_msg "advisory_for_ref_source bogus-bucket rc=1"
+else
+  pass_msg "advisory_for_ref_source bogus-bucket rc=1"
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]
