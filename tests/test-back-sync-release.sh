@@ -125,7 +125,7 @@ if [ -x "$SCRIPT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Group 3: conflict path
+# Group 3: true conflict (delete/modify) -> draft PR fallback
 # ---------------------------------------------------------------------------
 if [ -x "$SCRIPT" ]; then
   FIX="$TMP/conflict"
@@ -134,11 +134,12 @@ if [ -x "$SCRIPT" ]; then
   install_shims "$SHIM"
   (
     cd "$FIX"
-    # Pre-stage a conflicting edit on staging to CHANGELOG.md
+    # Pre-stage staging by deleting the same file the release commit modifies.
+    # delete/modify conflicts cannot be auto-resolved by -X ours, so the helper
+    # must fall through to the draft-PR fallback.
     git checkout -q staging
-    echo "staging-local-change" > CHANGELOG.md
-    git add CHANGELOG.md
-    git commit -q -m "chore: staging-local edit that conflicts"
+    git rm -q CHANGELOG.md
+    git commit -q -m "staging: delete file release-please will touch"
     git push -q origin staging
     git checkout -q main
     SHA=$(git rev-parse main)
@@ -146,7 +147,7 @@ if [ -x "$SCRIPT" ]; then
     PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/conflict.out" 2>&1
     echo "$?" > "$TMP/conflict.rc"
   )
-  assert "conflict: script still exits 0 (fail-soft)" "[ \"\$(cat '$TMP/conflict.rc')\" = '0' ]"
+  assert "conflict: script exits 0 (fail-soft)" "[ \"\$(cat '$TMP/conflict.rc')\" = '0' ]"
   assert "conflict: did NOT push directly to origin staging" "! grep -qE 'push.*origin.*staging( |\$)' '$SHIM/git-push.log' || grep -qE 'release-back-sync/' '$SHIM/git-push.log'"
   assert "conflict: opened a draft PR via gh pr create" "grep -qE 'pr create.*--draft' '$SHIM/gh.log'"
   assert "conflict: draft PR base is staging" "grep -qE 'pr create.*--base staging' '$SHIM/gh.log'"
