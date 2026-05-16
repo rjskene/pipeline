@@ -17,6 +17,15 @@
 
 set -uo pipefail
 
+# Retired-tooling deny-list — basenames the plugin used to ship but has
+# explicitly retired. Update when ripping out a script/hook for good so
+# stragglers in consumer trees get classified as E (delete) rather than F
+# (genuine consumer-owned, leave alone).
+RETIRED_BASENAMES=(
+  "check-subtree-drift.sh"
+  "drift-report.sh"
+)
+
 # Source pipeline.config (if present) so PIPELINE_REPO / PIPELINE_WORKTREE_PREFIX
 # / PIPELINE_TMUX_SESSION are available to the B.bug runtime-mismatch check.
 # Missing config is non-fatal — buckets that don't need it still classify.
@@ -58,6 +67,19 @@ for sub in scripts hooks agents; do
   while IFS= read -r -d '' local_path; do
     bn="$(basename "$local_path")"
     local_loc="$(wc -l < "$local_path" | tr -d ' ')"
+
+    # Bucket E (retired tooling) — basename deny-list, wins over A/B/C/D/F.
+    is_retired=0
+    for retired_bn in "${RETIRED_BASENAMES[@]}"; do
+      if [ "$bn" = "$retired_bn" ]; then
+        is_retired=1
+        break
+      fi
+    done
+    if [ "$is_retired" = "1" ]; then
+      printf '%s\tE\t%s\t0\t0\tdelete-local\n' "$local_path" "$local_loc"
+      continue
+    fi
 
     shipped_path="$(lookup_path "$bn" "$shipped_tmp")"
     if [ -n "$shipped_path" ]; then

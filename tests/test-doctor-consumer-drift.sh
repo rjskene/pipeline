@@ -211,6 +211,21 @@ echo "$out" | grep -qE '^\.claude/scripts/review-logs\.sh	C	' \
   || { fail_msg "bucket C: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 8: Bucket E — retired-tooling deny-list overrides F (no-plugin-counterpart).
+# ---------------------------------------------------------------------------
+echo "Case 8: Bucket E (retired tooling)"
+ROOT=$(fresh_fx fx-e)
+cat > "$ROOT/proj/.claude/scripts/check-subtree-drift.sh" <<'F'
+#!/bin/bash
+# legacy script from the subtree era — plugin no longer ships it
+F
+
+out="$(run_helper "$ROOT")"
+echo "$out" | grep -qE '^\.claude/scripts/check-subtree-drift\.sh	E	' \
+  && pass_msg "bucket E: row emitted for retired basename" \
+  || { fail_msg "bucket E: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
