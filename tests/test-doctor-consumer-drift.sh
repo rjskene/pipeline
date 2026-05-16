@@ -286,6 +286,22 @@ echo "$out" | grep -qE '^CHECK: consumer_drift status=pass' \
   || { fail_msg "doctor: missing consumer_drift pass"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 10: skills/doctor/SKILL.md documents the six buckets.
+# ---------------------------------------------------------------------------
+echo "Case 10: skill documents bucket taxonomy"
+SKILL_DOC="$SCRIPT_DIR/../skills/doctor/SKILL.md"
+if [ ! -f "$SKILL_DOC" ]; then
+  fail_msg "skill doc not found at $SKILL_DOC"
+else
+  bucket_rows="$(grep -cE '^\| \*\*[A-F]' "$SKILL_DOC")"
+  if [ "$bucket_rows" -ge 6 ]; then
+    pass_msg "skill doc: $bucket_rows bucket row(s) in taxonomy table (>=6)"
+  else
+    fail_msg "skill doc: expected >=6 bucket rows, got $bucket_rows"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
