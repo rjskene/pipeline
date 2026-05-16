@@ -226,6 +226,66 @@ echo "$out" | grep -qE '^\.claude/scripts/check-subtree-drift\.sh	E	' \
   || { fail_msg "bucket E: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 9: doctor.sh emits a `consumer_drift` CHECK line + summary table.
+# Fail when any B.bug row exists; warn when any A/B/C/E exists; pass otherwise.
+# Uses PATH-shimmed gh/claude/git so the rest of doctor.sh stays sane.
+# ---------------------------------------------------------------------------
+echo "Case 9: doctor.sh wires consumer_drift check"
+
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<'GH'
+#!/bin/bash
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "repo view")   exit 0 ;;
+  "label list")  echo '[]' ;;
+  *)             exit 0 ;;
+esac
+GH
+chmod +x "$TMP/bin/gh"
+
+# Sub-case 9a: bug row → fail, table present.
+ROOT=$(fresh_fx fx-doctor-bug)
+( cd "$ROOT/proj" && git init -q && git config user.email t@t && git config user.name t \
+    && git commit --allow-empty -q -m init \
+    && (git branch -q staging 2>/dev/null || git checkout -q -b staging) ) >/dev/null 2>&1
+cat > "$ROOT/plugin/hooks/enforce-path-c-delegation.py" <<'F'
+from _pipeline_config import PIPELINE_REPO
+F
+cat > "$ROOT/proj/.claude/hooks/enforce-path-c-delegation.py" <<'F'
+PIPELINE_REPO = "stale-owner/stale-repo"
+F
+
+(
+  cd "$ROOT/proj"
+  PATH="$TMP/bin:$PATH" CLAUDE_PLUGIN_ROOT="$ROOT/plugin" bash "$DOCTOR"
+) > "$ROOT/out" 2>&1
+rc=$?
+out="$(cat "$ROOT/out")"
+echo "$out" | grep -qE '^CHECK: consumer_drift status=fail' \
+  && pass_msg "doctor: consumer_drift status=fail on B.bug row" \
+  || { fail_msg "doctor: missing consumer_drift fail"; echo "$out" | sed 's/^/    /'; }
+echo "$out" | grep -qE '=== consumer_drift summary ===' \
+  && pass_msg "doctor: consumer_drift summary header present" \
+  || { fail_msg "doctor: missing summary header"; echo "$out" | sed 's/^/    /'; }
+[ "$rc" != "0" ] && pass_msg "doctor: non-zero exit on B.bug" \
+  || fail_msg "doctor: expected non-zero exit, got $rc"
+
+# Sub-case 9b: no consumer files → pass.
+ROOT=$(fresh_fx fx-doctor-clean)
+( cd "$ROOT/proj" && git init -q && git config user.email t@t && git config user.name t \
+    && git commit --allow-empty -q -m init \
+    && (git branch -q staging 2>/dev/null || git checkout -q -b staging) ) >/dev/null 2>&1
+(
+  cd "$ROOT/proj"
+  PATH="$TMP/bin:$PATH" CLAUDE_PLUGIN_ROOT="$ROOT/plugin" bash "$DOCTOR"
+) > "$ROOT/out" 2>&1
+out="$(cat "$ROOT/out")"
+echo "$out" | grep -qE '^CHECK: consumer_drift status=pass' \
+  && pass_msg "doctor: consumer_drift status=pass on clean tree" \
+  || { fail_msg "doctor: missing consumer_drift pass"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
