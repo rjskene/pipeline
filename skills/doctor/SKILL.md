@@ -18,7 +18,9 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 Run the doctor script with the user-supplied flags (forward `$@` verbatim so both `/pipeline:doctor` and `/pipeline:doctor --fix labels` work):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/doctor.sh" "$@"
+[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
+  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh" "$@"
 ```
 
 Report the full stdout (CHECK lines + summary table) to the user. If the exit code was non-zero, finish with "One or more checks failed — see the summary above." If zero, finish with "All checks passed."

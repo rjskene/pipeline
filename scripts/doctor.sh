@@ -11,6 +11,14 @@
 
 set -uo pipefail
 
+# Snapshot CLAUDE_PLUGIN_ROOT BEFORE sourcing the resolver so the
+# claude_plugin_root check can tell pre-set (pass) from self-resolved (warn).
+_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE="${CLAUDE_PLUGIN_ROOT:-}"
+RESOLVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+[ -f "$RESOLVER_DIR/_resolve-plugin-root.sh" ] \
+  && source "$RESOLVER_DIR/_resolve-plugin-root.sh" 2>/dev/null || true
+
 # Canonical label table — single source of truth.
 # Each row: <key>|<default-name>|<color>|<description>
 # `key` is the stage label name OR the env-override variable suffix (EXCLUDED/LATER/HUMAN/BRAINSTORM).
@@ -232,6 +240,19 @@ except Exception:
       record dev_marketplace_on_main warn "dev marketplace clone is on $HEAD_BRANCH, not main — installed version may lag main"
     fi
   fi
+fi
+
+# --------------------------------------------------------------------------
+# Check: claude_plugin_root — env was already set (pass), self-resolved from
+# the plugin cache (warn), or empty with no cache (fail). Snapshot captured
+# at the top of this script before the resolver source.
+# --------------------------------------------------------------------------
+if [ -n "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE:-}" ]; then
+  record claude_plugin_root pass "env pre-set to ${CLAUDE_PLUGIN_ROOT}"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  record claude_plugin_root warn "env was empty; self-resolved to ${CLAUDE_PLUGIN_ROOT}"
+else
+  record claude_plugin_root fail "CLAUDE_PLUGIN_ROOT empty and no plugin cache found at ~/.claude/plugins/cache/claude-pipeline/pipeline/"
 fi
 
 # --------------------------------------------------------------------------
