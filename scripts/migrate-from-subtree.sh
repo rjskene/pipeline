@@ -7,7 +7,16 @@ shopt -s nullglob
 # pipeline-managed file we can identify, leaves user-authored files alone.
 #
 # Run from the consumer project root:
-#   bash scripts/migrate-from-subtree.sh
+#   bash scripts/migrate-from-subtree.sh [--keep-referenced] [--dry-run] \
+#                                        [--assume-yes|--assume-no] \
+#                                        [--patch settings]
+#
+# --keep-referenced: before deleting under .claude/scripts/ or .claude/hooks/,
+#   scan the project tree (*.md, *.sh, *.py, *.json) for references to those
+#   basenames in their .claude/{scripts,hooks}/<name> form and preserve any
+#   that are still referenced. Default behavior (no flag) still deletes on
+#   match but emits a NOTE block listing the dangling references so the
+#   consumer knows to update their docs.
 #
 # Idempotent: re-running on an already-migrated project is a no-op.
 # Fails closed: detection runs to completion before any rm, so a glob error
@@ -23,6 +32,7 @@ source "$SCRIPT_DIR/_advisory-text.sh"
 MODE=full
 DRY_RUN=false
 ASSUME=""   # ""|yes|no — overrides interactive prompt when set
+KEEP_REFERENCED=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --patch)
@@ -37,9 +47,13 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=true; shift ;;
     --assume-yes) ASSUME=yes; shift ;;
     --assume-no)  ASSUME=no;  shift ;;
+    --keep-referenced) KEEP_REFERENCED=true; shift ;;
     --help|-h)
       cat <<'USAGE'
-Usage: migrate-from-subtree.sh [--dry-run] [--assume-yes|--assume-no] [--patch settings]
+Usage: migrate-from-subtree.sh [--keep-referenced] [--dry-run] [--assume-yes|--assume-no] [--patch settings]
+  --keep-referenced Preserve .claude/scripts/ and .claude/hooks/ files that are
+                    still referenced from the project tree (advisory NOTE block
+                    is always emitted; this flag turns it into protection).
   --dry-run        Print what would be deleted and why; no filesystem mutations.
   --assume-yes     Auto-answer "y" to every interactive prompt (CI/scripted use).
   --assume-no      Auto-answer "n" to every interactive prompt (preserve everything).
@@ -178,6 +192,102 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ]; then
     [ -f ".claude/agents/.${name}.pipeline-managed" ] && continue
     TO_PROMPT_AGENTS+=("$f")
   done
+fi
+
+# --- Dangling-reference scan (scripts/hooks removals only) ---
+# Before deleting anything under .claude/scripts/ or .claude/hooks/, grep the
+# project tree for references to those paths in their consumer-form
+# (.claude/scripts/<name> or .claude/hooks/<name>). Emit an advisory NOTE
+# block to stdout listing dangling refs. With --keep-referenced, also drop
+# the referenced entries from the removal arrays so the files survive.
+#
+# Read-only against the project tree. Never mutates .claude/.
+REFERENCED_BASENAMES=()
+declare -A REFERENCED_HITS=()
+if [ ${#TO_REMOVE_SCRIPTS[@]} -gt 0 ] || [ ${#TO_REMOVE_HOOKS[@]} -gt 0 ]; then
+  declare -A _scan_seen=()
+  _scan_basenames=()
+  for _p in "${TO_REMOVE_SCRIPTS[@]:-}" "${TO_REMOVE_HOOKS[@]:-}"; do
+    [ -n "$_p" ] || continue
+    _b="$(basename "$_p")"
+    [ -n "${_scan_seen[$_b]:-}" ] && continue
+    _scan_seen["$_b"]=1
+    _scan_basenames+=("$_b")
+  done
+  for _b in "${_scan_basenames[@]:-}"; do
+    [ -n "$_b" ] || continue
+    _hits="$(grep -rn -F \
+        --include='*.md' --include='*.sh' --include='*.py' --include='*.json' \
+        --exclude-dir=.git --exclude-dir=node_modules \
+        --exclude-dir=.claude-pipeline \
+        "$_b" . 2>/dev/null \
+      | grep -v '^\./\.claude/worktrees/' \
+      | grep -E "\.claude/(scripts|hooks)/" \
+      || true)"
+    [ -n "$_hits" ] || continue
+    _formatted=""
+    while IFS= read -r _line; do
+      [ -n "$_line" ] || continue
+      # Strip leading "./" from the path
+      _line="${_line#./}"
+      # Split file:lineno:rest at the first two ':' separators
+      _file="${_line%%:*}"
+      _rest="${_line#*:}"
+      _lineno="${_rest%%:*}"
+      _snippet="${_rest#*:}"
+      # Truncate snippet to 160 bytes for readability
+      if [ "${#_snippet}" -gt 160 ]; then
+        _snippet="${_snippet:0:160}..."
+      fi
+      _formatted+="  ${_file}:${_lineno} — ${_snippet}"$'\n'
+    done <<<"$_hits"
+    REFERENCED_HITS["$_b"]="$_formatted"
+    REFERENCED_BASENAMES+=("$_b")
+  done
+  if [ ${#REFERENCED_BASENAMES[@]} -gt 0 ]; then
+    for _b in "${REFERENCED_BASENAMES[@]}"; do
+      # Use .claude/scripts/ form in the heading when the basename appeared in
+      # TO_REMOVE_SCRIPTS, else .claude/hooks/. (A basename can only appear in
+      # one of the two arrays.)
+      _heading_dir="scripts"
+      for _q in "${TO_REMOVE_HOOKS[@]:-}"; do
+        [ "$(basename "${_q:-}")" = "$_b" ] && _heading_dir="hooks" && break
+      done
+      printf 'NOTE: removing .claude/%s/%s — references found in:\n' "$_heading_dir" "$_b"
+      printf '%s' "${REFERENCED_HITS[$_b]}"
+    done
+    printf 'Run with --keep-referenced to preserve these, or update references manually post-migration.\n'
+  fi
+fi
+
+# --- Apply --keep-referenced filter to removal arrays ---
+if [ "$KEEP_REFERENCED" = true ] && [ ${#REFERENCED_BASENAMES[@]} -gt 0 ]; then
+  _filter_array() {
+    local arr_name="$1"
+    local -n _src="$arr_name"
+    local kept=()
+    local removed=()
+    for _p in "${_src[@]:-}"; do
+      [ -n "$_p" ] || continue
+      local _b="$(basename "$_p")"
+      local _is_ref=false
+      for _r in "${REFERENCED_BASENAMES[@]}"; do
+        [ "$_r" = "$_b" ] && _is_ref=true && break
+      done
+      if [ "$_is_ref" = true ]; then
+        removed+=("$_p")
+      else
+        kept+=("$_p")
+      fi
+    done
+    _src=("${kept[@]:-}")
+    for _p in "${removed[@]:-}"; do
+      [ -n "$_p" ] || continue
+      printf 'Preserved due to --keep-referenced: %s\n' "$_p"
+    done
+  }
+  _filter_array TO_REMOVE_SCRIPTS
+  _filter_array TO_REMOVE_HOOKS
 fi
 
 # --- Validation phase ---
