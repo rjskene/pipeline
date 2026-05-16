@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0-rc.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.5.0...v0.6.0-rc.1) (2026-05-16)
+
+
+### release
+
+* cut v0.6.0-rc.1 (consumer_drift drift report for [#187](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/187)) ([#189](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/189)) ([fc8ac85](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/fc8ac854a06655dcf9d69bd5e63ce604f873a22d))
+
 ## [0.5.0](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.5.0-rc.1...v0.5.0) (2026-05-16)
 
 
