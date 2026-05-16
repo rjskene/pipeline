@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0-rc.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.4.0...v0.5.0-rc.1) (2026-05-16)
+
+
+### release
+
+* cut v0.5.0-rc.1 (consumer-install hardening tracker [#178](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/178)) ([#183](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/183)) ([a30f0e8](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/a30f0e83e6598e2966f5721ec5d1671604153bad))
+
 ## [0.4.0](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.4.0-rc.4...v0.4.0) (2026-05-15)
 
 
