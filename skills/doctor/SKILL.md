@@ -18,7 +18,9 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 Run the doctor script with the user-supplied flags (forward `$@` verbatim so both `/pipeline:doctor` and `/pipeline:doctor --fix labels` work):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/doctor.sh" "$@"
+[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
+  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh" "$@"
 ```
 
 Report the full stdout (CHECK lines + summary table) to the user. If the exit code was non-zero, finish with "One or more checks failed — see the summary above." If zero, finish with "All checks passed."
@@ -31,9 +33,22 @@ Report the full stdout (CHECK lines + summary table) to the user. If the exit co
 - `gh_repo_reachable` — `gh repo view $PIPELINE_REPO` succeeds.
 - `labels_exist` — all 10 pipeline labels are present on the GitHub repo (with `PIPELINE_LABELS_*` overrides honored).
 - `plugin_loaded` — `claude plugin list` includes `claude-pipeline` (warn if the `claude` CLI is not on `PATH`).
-- `no_residual_subtree` — no `.claude-pipeline/` directory or `.claude/skills/*/.pipeline-managed` markers left over from the retired subtree installer.
+- `no_residual_subtree` — no `.claude-pipeline/` directory or `.claude/skills/*/.pipeline-managed` markers left over from the retired subtree installer. Remediation companion: `scripts/migrate-from-subtree.sh` (recent versions also detect unmarkered duplicates by basename-matching consumer `.claude/skills/<name>/` and `.claude/agents/<name>.md` against the plugin's shipped content; supports `--dry-run` / `--assume-yes` / `--assume-no`).
+- `claude_md_residual` — delegates to scripts/migration-cleanup-claudemd.sh; surfaces legacy pipeline section headers (Pipeline, Claude Pipeline, Worktrees, Pipeline Setup), legacy .claude-pipeline/ paths, dangling .claude/scripts/*.sh or .claude/hooks/*.py refs, and unprefixed slash commands. Warn-not-fail. Prevention: re-run `bash scripts/migrate-from-subtree.sh --keep-referenced` to preserve any `.claude/scripts/` or `.claude/hooks/` file that is still referenced from `CLAUDE.md` or other tracked surfaces — the flag turns the default advisory NOTE block into protection.
+- `settings_residual` — scans .claude/settings.json for pipeline-owned hook entries and annotates each with a capability-impact note (sourced from scripts/_advisory-text.sh). Warns "jq required" if jq is missing. Warn-not-fail otherwise.
+- `skill_files_residual` — enumerates files under consumer .claude/{skills,hooks,scripts,agents}/ whose basename collides with a plugin-shipped file, distinguishing duplicates from consumer-owned. Critical FAIL if any duplicate contains a hardcoded <owner>/<repo> reference that does not match $PIPELINE_REPO (stale legacy install).
 - `base_branch_local` — local branch named `$PIPELINE_BASE_BRANCH` exists (warn if it has no upstream).
 
-## The `--fix labels` action
+The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — the same helper is sourced by `migrate-from-subtree.sh`, so the wording in doctor's warnings matches the wording in the migration tool's advisories.
 
-`/pipeline:doctor --fix labels` is the one mutating path. It seeds the 10 canonical pipeline labels on `$PIPELINE_REPO` via `gh label create --force`, which is an idempotent upsert — safe to re-run as many times as you like. The four configurable label rows (`excluded`, `later`, `human`, `brainstorm`) honor `PIPELINE_LABELS_*` overrides from `pipeline.config`.
+## Mutating actions
+
+### `--fix labels`
+
+`/pipeline:doctor --fix labels` seeds the 10 canonical pipeline labels on `$PIPELINE_REPO` via `gh label create --force`, which is an idempotent upsert — safe to re-run as many times as you like. The four configurable label rows (`excluded`, `later`, `human`, `brainstorm`) honor `PIPELINE_LABELS_*` overrides from `pipeline.config`.
+
+### `--fix residual`
+
+`/pipeline:doctor --fix residual` is an interactive remediation flag. It runs the three residual checks (`claude_md_residual`, `settings_residual`, `skill_files_residual`) and, for each finding, presents a `y/N` prompt before taking any action. Set `DOCTOR_FIX_NONINTERACTIVE=1` to auto-skip prompts (everything defaults to No) — useful for CI smoke runs that want to surface findings without mutating state.
+
+For `settings_residual`, the actual patching of `.claude/settings.json` is deferred to `migrate-from-subtree.sh --patch settings` so both surfaces share the same JSON-rewrite logic. For `claude_md_residual`, doctor surfaces the report file produced by `migration-cleanup-claudemd.sh` and does NOT edit `CLAUDE.md` directly — `CLAUDE.md` is user-authored prose and any cleanup is a human decision informed by the report.

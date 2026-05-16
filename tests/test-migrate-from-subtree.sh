@@ -828,6 +828,558 @@ else
   fail_msg "doc: README missing settings.json reference"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "plugin-root self-resolve": when CLAUDE_PLUGIN_ROOT is unset, the
+# script must self-resolve to the highest-version dir under
+# $HOME/.claude/plugins/cache/claude-pipeline/pipeline/ and log the resolution
+# to stderr. Project has only an unmarkered .claude/skills/run/SKILL.md so no
+# removal happens; we are validating resolution + preservation only.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'plugin-root self-resolve': resolves from fake HOME cache when env var unset"
+
+PROJ_RESOLVE="$WORKDIR/proj-resolve"
+mkdir -p "$PROJ_RESOLVE/.claude/skills/run"
+echo "consumer skill" > "$PROJ_RESOLVE/.claude/skills/run/SKILL.md"
+
+FAKE_HOME="$WORKDIR/fake-home"
+FAKE_CACHE="$FAKE_HOME/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$FAKE_CACHE/skills/run" "$FAKE_CACHE/agents"
+echo "plugin skill" > "$FAKE_CACHE/skills/run/SKILL.md"
+echo "plugin agent" > "$FAKE_CACHE/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/resolve.stderr"
+STDOUT_LOG="$WORKDIR/resolve.stdout"
+(cd "$PROJ_RESOLVE" && env -u CLAUDE_PLUGIN_ROOT HOME="$FAKE_HOME" bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || true
+
+inc
+if grep -qF '[migrate] resolved CLAUDE_PLUGIN_ROOT=' "$STDERR_LOG"; then
+  pass_msg "resolve: stderr logs resolved CLAUDE_PLUGIN_ROOT path"
+else
+  fail_msg "resolve: stderr missing [migrate] resolved CLAUDE_PLUGIN_ROOT= line"
+  sed 's/^/      /' "$STDERR_LOG"
+fi
+
+inc
+if [ -f "$PROJ_RESOLVE/.claude/skills/run/SKILL.md" ]; then
+  pass_msg "resolve: consumer skill preserved (no mutation in resolve-only test)"
+else
+  fail_msg "resolve: consumer skill was deleted"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "argv flags": --dry-run / --assume-yes / --assume-no are accepted and
+# do not error out the script. --dry-run must not delete anything that a
+# normal run would delete.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'argv flags: --dry-run / --assume-yes / --assume-no accepted'"
+
+PROJ_FLAGS="$WORKDIR/proj-flags"
+mkdir -p "$PROJ_FLAGS/.claude/agents"
+echo "managed agent" > "$PROJ_FLAGS/.claude/agents/tdd-implementer.md"
+touch "$PROJ_FLAGS/.claude/agents/.tdd-implementer.pipeline-managed"
+
+# Snapshot for --dry-run preservation assertion
+cp -r "$PROJ_FLAGS" "$WORKDIR/proj-flags-snap"
+
+STDERR_LOG="$WORKDIR/flags.stderr"
+STDOUT_LOG="$WORKDIR/flags.stdout"
+(cd "$PROJ_FLAGS" && bash "$MIGRATE_SH" --dry-run >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "flags: --dry-run exit 0"; else fail_msg "flags: --dry-run exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_FLAGS/.claude/agents/tdd-implementer.md" ] && \
+   [ -f "$PROJ_FLAGS/.claude/agents/.tdd-implementer.pipeline-managed" ]; then
+  pass_msg "flags: --dry-run did not mutate filesystem"
+else
+  fail_msg "flags: --dry-run unexpectedly deleted managed agent or marker"
+fi
+
+# --assume-yes (no basename-match candidates here; just argv acceptance)
+PROJ_AY_NOOP="$WORKDIR/proj-ay-noop"
+mkdir -p "$PROJ_AY_NOOP"
+(cd "$PROJ_AY_NOOP" && bash "$MIGRATE_SH" --assume-yes >/dev/null 2>"$WORKDIR/ay-noop.stderr")
+EXIT=$?
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "flags: --assume-yes exit 0"; else fail_msg "flags: --assume-yes exit $EXIT"; fi
+
+# --assume-no
+PROJ_AN_NOOP="$WORKDIR/proj-an-noop"
+mkdir -p "$PROJ_AN_NOOP"
+(cd "$PROJ_AN_NOOP" && bash "$MIGRATE_SH" --assume-no >/dev/null 2>"$WORKDIR/an-noop.stderr")
+EXIT=$?
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "flags: --assume-no exit 0"; else fail_msg "flags: --assume-no exit $EXIT"; fi
+
+# Unknown flag should exit non-zero
+PROJ_BAD="$WORKDIR/proj-bad"
+mkdir -p "$PROJ_BAD"
+(cd "$PROJ_BAD" && bash "$MIGRATE_SH" --no-such-flag >/dev/null 2>"$WORKDIR/bad.stderr") && EXIT=0 || EXIT=$?
+inc
+if [ "$EXIT" -ne 0 ]; then pass_msg "flags: unknown flag rejected (exit $EXIT)"; else fail_msg "flags: unknown flag accepted"; fi
+
+# ---------------------------------------------------------------------------
+# Test "basename-match: skills" — consumer .claude/skills/<name>/SKILL.md
+# whose <name> matches a plugin-shipped skill is flagged as a basename-match
+# candidate in --dry-run. Skills NOT in the plugin manifest are preserved
+# (never flagged).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'basename-match: skill duplicates flagged, consumer-authored preserved'"
+
+PROJ_BNM_SKILLS="$WORKDIR/proj-bnm-skills"
+mkdir -p "$PROJ_BNM_SKILLS/.claude/skills/run" \
+         "$PROJ_BNM_SKILLS/.claude/skills/plan-issue" \
+         "$PROJ_BNM_SKILLS/.claude/skills/myteam-helper" \
+         "$PROJ_BNM_SKILLS/.claude/skills/userwritten"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/run/SKILL.md"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/plan-issue/SKILL.md"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/myteam-helper/SKILL.md"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/userwritten/SKILL.md"
+
+# Stage a plugin cache with skills "run" and "plan-issue" (and "classify-issue"
+# as an unused plugin skill to prove we don't false-positive on it).
+BNM_CACHE="$WORKDIR/bnm-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$BNM_CACHE/skills/run" "$BNM_CACHE/skills/plan-issue" "$BNM_CACHE/skills/classify-issue"
+touch "$BNM_CACHE/skills/run/SKILL.md" "$BNM_CACHE/skills/plan-issue/SKILL.md" "$BNM_CACHE/skills/classify-issue/SKILL.md"
+
+STDERR_LOG="$WORKDIR/bnm-skills.stderr"
+STDOUT_LOG="$WORKDIR/bnm-skills.stdout"
+(cd "$PROJ_BNM_SKILLS" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/bnm-home" \
+   bash "$MIGRATE_SH" --dry-run >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "bnm-skills: exit 0"; else fail_msg "bnm-skills: exit $EXIT"; fi
+
+inc
+if grep -qF '[dry-run] would-remove (basename-match): .claude/skills/run' "$STDOUT_LOG"; then
+  pass_msg "bnm-skills: 'run' flagged as basename-match"
+else
+  fail_msg "bnm-skills: 'run' not flagged"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if grep -qF '[dry-run] would-remove (basename-match): .claude/skills/plan-issue' "$STDOUT_LOG"; then
+  pass_msg "bnm-skills: 'plan-issue' flagged as basename-match"
+else
+  fail_msg "bnm-skills: 'plan-issue' not flagged"
+fi
+
+inc
+if ! grep -qF 'myteam-helper' "$STDOUT_LOG" && ! grep -qF 'userwritten' "$STDOUT_LOG"; then
+  pass_msg "bnm-skills: consumer-authored skills not flagged"
+else
+  fail_msg "bnm-skills: consumer-authored skill incorrectly flagged"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if [ -f "$PROJ_BNM_SKILLS/.claude/skills/run/SKILL.md" ]; then
+  pass_msg "bnm-skills: dry-run preserved files"
+else
+  fail_msg "bnm-skills: dry-run mutated filesystem"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "basename-match: agents" — same logic for .claude/agents/<name>.md
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'basename-match: agent duplicate flagged'"
+
+PROJ_BNM_AGENTS="$WORKDIR/proj-bnm-agents"
+mkdir -p "$PROJ_BNM_AGENTS/.claude/agents"
+echo "x" > "$PROJ_BNM_AGENTS/.claude/agents/tdd-implementer.md"
+echo "x" > "$PROJ_BNM_AGENTS/.claude/agents/handwritten.md"
+
+BNM_AGENT_CACHE="$WORKDIR/bnm-agent-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$BNM_AGENT_CACHE/skills" "$BNM_AGENT_CACHE/agents"
+touch "$BNM_AGENT_CACHE/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/bnm-agents.stderr"
+STDOUT_LOG="$WORKDIR/bnm-agents.stdout"
+(cd "$PROJ_BNM_AGENTS" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/bnm-agent-home" \
+   bash "$MIGRATE_SH" --dry-run >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "bnm-agents: exit 0"; else fail_msg "bnm-agents: exit $EXIT"; fi
+
+inc
+if grep -qF '[dry-run] would-remove (basename-match): .claude/agents/tdd-implementer.md' "$STDOUT_LOG"; then
+  pass_msg "bnm-agents: 'tdd-implementer.md' flagged"
+else
+  fail_msg "bnm-agents: 'tdd-implementer.md' not flagged"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if ! grep -qF 'handwritten' "$STDOUT_LOG"; then
+  pass_msg "bnm-agents: consumer-authored agent not flagged"
+else
+  fail_msg "bnm-agents: consumer-authored agent incorrectly flagged"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "interactive prompt: y deletes, n preserves" — without --assume-*, the
+# script asks the operator per candidate. "y" removes the directory; "n"
+# preserves it.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'interactive prompt: y deletes, n preserves'"
+
+PROJ_PROMPT_Y="$WORKDIR/proj-prompt-y"
+mkdir -p "$PROJ_PROMPT_Y/.claude/skills/run"
+echo "x" > "$PROJ_PROMPT_Y/.claude/skills/run/SKILL.md"
+
+PROMPT_CACHE="$WORKDIR/prompt-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$PROMPT_CACHE/skills/run"
+touch "$PROMPT_CACHE/skills/run/SKILL.md"
+
+STDERR_LOG="$WORKDIR/prompt-y.stderr"
+STDOUT_LOG="$WORKDIR/prompt-y.stdout"
+(cd "$PROJ_PROMPT_Y" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/prompt-home" \
+   bash "$MIGRATE_SH" <<<'y' >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "prompt-y: exit 0"; else fail_msg "prompt-y: exit $EXIT"; fi
+
+inc
+if [ ! -d "$PROJ_PROMPT_Y/.claude/skills/run" ]; then
+  pass_msg "prompt-y: 'y' answer removed the skill dir"
+else
+  fail_msg "prompt-y: skill dir still present after 'y' answer"
+fi
+
+PROJ_PROMPT_N="$WORKDIR/proj-prompt-n"
+mkdir -p "$PROJ_PROMPT_N/.claude/skills/run"
+echo "x" > "$PROJ_PROMPT_N/.claude/skills/run/SKILL.md"
+
+STDERR_LOG="$WORKDIR/prompt-n.stderr"
+STDOUT_LOG="$WORKDIR/prompt-n.stdout"
+(cd "$PROJ_PROMPT_N" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/prompt-home" \
+   bash "$MIGRATE_SH" <<<'n' >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "prompt-n: exit 0"; else fail_msg "prompt-n: exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_PROMPT_N/.claude/skills/run/SKILL.md" ]; then
+  pass_msg "prompt-n: 'n' answer preserved the skill"
+else
+  fail_msg "prompt-n: skill was deleted despite 'n' answer"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "--assume-yes: removes every basename-match without prompting"
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test '--assume-yes: removes every basename-match without prompting'"
+
+PROJ_AY="$WORKDIR/proj-ay"
+mkdir -p "$PROJ_AY/.claude/skills/run" \
+         "$PROJ_AY/.claude/skills/plan-issue" \
+         "$PROJ_AY/.claude/skills/myteam-helper" \
+         "$PROJ_AY/.claude/agents"
+echo "x" > "$PROJ_AY/.claude/skills/run/SKILL.md"
+echo "x" > "$PROJ_AY/.claude/skills/plan-issue/SKILL.md"
+echo "x" > "$PROJ_AY/.claude/skills/myteam-helper/SKILL.md"
+echo "x" > "$PROJ_AY/.claude/agents/tdd-implementer.md"
+echo "x" > "$PROJ_AY/.claude/agents/handwritten.md"
+
+AY_CACHE="$WORKDIR/ay-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$AY_CACHE/skills/run" "$AY_CACHE/skills/plan-issue" "$AY_CACHE/agents"
+touch "$AY_CACHE/skills/run/SKILL.md" "$AY_CACHE/skills/plan-issue/SKILL.md" \
+      "$AY_CACHE/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/ay.stderr"
+STDOUT_LOG="$WORKDIR/ay.stdout"
+(cd "$PROJ_AY" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/ay-home" \
+   bash "$MIGRATE_SH" --assume-yes </dev/null >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "ay: exit 0"; else fail_msg "ay: exit $EXIT"; fi
+
+inc
+if [ ! -d "$PROJ_AY/.claude/skills/run" ] && [ ! -d "$PROJ_AY/.claude/skills/plan-issue" ]; then
+  pass_msg "ay: plugin-shipped skills removed"
+else
+  fail_msg "ay: plugin-shipped skills still present"
+fi
+
+inc
+if [ ! -f "$PROJ_AY/.claude/agents/tdd-implementer.md" ]; then
+  pass_msg "ay: plugin-shipped agent removed"
+else
+  fail_msg "ay: plugin-shipped agent still present"
+fi
+
+inc
+if [ -f "$PROJ_AY/.claude/skills/myteam-helper/SKILL.md" ] && \
+   [ -f "$PROJ_AY/.claude/agents/handwritten.md" ]; then
+  pass_msg "ay: consumer-authored skill + agent preserved"
+else
+  fail_msg "ay: consumer-authored files were deleted"
+fi
+
+inc
+if ! grep -qF 'remove unmarkered duplicate' "$STDOUT_LOG" \
+   && ! grep -qF 'remove unmarkered duplicate' "$STDERR_LOG"; then
+  pass_msg "ay: no interactive prompt printed"
+else
+  fail_msg "ay: prompt text leaked despite --assume-yes"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "--assume-no: preserves every basename-match"
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test '--assume-no: preserves every basename-match (recovery for unsure operator)'"
+
+PROJ_AN="$WORKDIR/proj-an"
+mkdir -p "$PROJ_AN/.claude/skills/run" \
+         "$PROJ_AN/.claude/skills/plan-issue" \
+         "$PROJ_AN/.claude/agents"
+echo "x" > "$PROJ_AN/.claude/skills/run/SKILL.md"
+echo "x" > "$PROJ_AN/.claude/skills/plan-issue/SKILL.md"
+echo "x" > "$PROJ_AN/.claude/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/an.stderr"
+STDOUT_LOG="$WORKDIR/an.stdout"
+(cd "$PROJ_AN" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/ay-home" \
+   bash "$MIGRATE_SH" --assume-no </dev/null >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "an: exit 0"; else fail_msg "an: exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_AN/.claude/skills/run/SKILL.md" ] \
+   && [ -f "$PROJ_AN/.claude/skills/plan-issue/SKILL.md" ] \
+   && [ -f "$PROJ_AN/.claude/agents/tdd-implementer.md" ]; then
+  pass_msg "an: every basename-match preserved"
+else
+  fail_msg "an: some basename-match files were deleted"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "consumer-authored skill never flagged" — guarantee that a skill name
+# absent from the plugin manifest is never proposed for removal.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'consumer-authored skill never flagged'"
+
+PROJ_CA="$WORKDIR/proj-ca"
+mkdir -p "$PROJ_CA/.claude/skills/myteam-helper"
+echo "x" > "$PROJ_CA/.claude/skills/myteam-helper/SKILL.md"
+
+STDERR_LOG="$WORKDIR/ca.stderr"
+STDOUT_LOG="$WORKDIR/ca.stdout"
+(cd "$PROJ_CA" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/ay-home" \
+   bash "$MIGRATE_SH" </dev/null >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "ca: exit 0"; else fail_msg "ca: exit $EXIT"; fi
+
+inc
+if grep -qiF 'nothing to migrate' "$STDERR_LOG"; then
+  pass_msg "ca: 'nothing to migrate' (consumer-authored skill ignored)"
+else
+  fail_msg "ca: script did not short-circuit on consumer-authored-only project"
+  sed 's/^/      stderr: /' "$STDERR_LOG"
+  sed 's/^/      stdout: /' "$STDOUT_LOG"
+fi
+
+inc
+if [ -f "$PROJ_CA/.claude/skills/myteam-helper/SKILL.md" ]; then
+  pass_msg "ca: consumer-authored skill preserved"
+else
+  fail_msg "ca: consumer-authored skill was deleted"
+fi
+
+# ---------------------------------------------------------------------------
+# Doc-smoke: doctor SKILL.md and migration guide cross-reference the new
+# basename-match recovery flow.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'doc smoke: doctor + migration guide cross-reference basename-match recovery'"
+
+DOCTOR_SKILL="$SCRIPT_DIR/../skills/doctor/SKILL.md"
+
+inc
+if grep -qF -- '--dry-run' "$DOCTOR_SKILL"; then
+  pass_msg "doc: doctor SKILL.md cross-references migrate --dry-run"
+else
+  fail_msg "doc: doctor SKILL.md missing migrate --dry-run cross-reference"
+fi
+
+inc
+if grep -qF 'basename-match' "$DOC_GUIDE"; then
+  pass_msg "doc: migration guide describes basename-match recovery"
+else
+  fail_msg "doc: migration guide missing basename-match recovery section"
+fi
+
+inc
+if grep -qF -- '--dry-run' "$DOC_GUIDE"; then
+  pass_msg "doc: migration guide mentions --dry-run"
+else
+  fail_msg "doc: migration guide missing --dry-run mention"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "ref-scan: advisory listing referenced removed scripts" — when a
+# consumer's CLAUDE.md references a managed script that the migration is
+# about to delete, the script emits a NOTE block listing the dangling refs
+# before performing the deletion. Default behavior (delete-on-match) is
+# unchanged.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'ref-scan: advisory listing referenced removed scripts'"
+
+PROJ_REF="$WORKDIR/proj-ref"
+mkdir -p "$PROJ_REF/.claude-pipeline/scripts" "$PROJ_REF/.claude/scripts"
+touch "$PROJ_REF/.claude-pipeline/scripts/spawn-claude.sh.template"
+echo "managed" > "$PROJ_REF/.claude/scripts/spawn-claude.sh"
+cat > "$PROJ_REF/CLAUDE.md" <<'EOF'
+# Project
+
+bash .claude/scripts/spawn-claude.sh --web-eval --skill evaluate-issue-pr <worktree> <issue>
+EOF
+echo "no managed refs here" > "$PROJ_REF/README.md"
+
+STDERR_LOG="$WORKDIR/refscan.stderr"
+STDOUT_LOG="$WORKDIR/refscan.stdout"
+EXIT=0
+(cd "$PROJ_REF" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "refscan: exit 0"; else fail_msg "refscan: exit $EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_REF/.claude/scripts/spawn-claude.sh" ]; then
+  pass_msg "refscan: managed script removed (default delete-on-match unchanged)"
+else
+  fail_msg "refscan: managed script still present (default behavior broken)"
+fi
+
+inc
+COUNT=$(grep -cF 'NOTE: removing .claude/scripts/spawn-claude.sh — references found in:' "$STDOUT_LOG" || true)
+if [ "$COUNT" = "1" ]; then
+  pass_msg "refscan: NOTE block emitted exactly once"
+else
+  fail_msg "refscan: NOTE block count=$COUNT (expected 1)"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if grep -F 'CLAUDE.md:' "$STDOUT_LOG" | grep -qF 'bash .claude/scripts/spawn-claude.sh'; then
+  pass_msg "refscan: CLAUDE.md:<line> snippet includes referencing command"
+else
+  fail_msg "refscan: missing CLAUDE.md path + snippet"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if grep -qF 'Run with --keep-referenced to preserve these, or update references manually post-migration.' "$STDOUT_LOG"; then
+  pass_msg "refscan: closing --keep-referenced advisory line emitted"
+else
+  fail_msg "refscan: closing --keep-referenced advisory line missing"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "ref-scan: --keep-referenced preserves referenced scripts" — same
+# fixture as the previous test, but with --keep-referenced. The managed
+# script must survive; the manifest cleanup still runs.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'ref-scan: --keep-referenced preserves referenced scripts'"
+
+PROJ_KEEP="$WORKDIR/proj-keep"
+mkdir -p "$PROJ_KEEP/.claude-pipeline/scripts" "$PROJ_KEEP/.claude/scripts"
+touch "$PROJ_KEEP/.claude-pipeline/scripts/spawn-claude.sh.template"
+echo "managed" > "$PROJ_KEEP/.claude/scripts/spawn-claude.sh"
+cat > "$PROJ_KEEP/CLAUDE.md" <<'EOF'
+# Project
+
+bash .claude/scripts/spawn-claude.sh --web-eval --skill evaluate-issue-pr <worktree> <issue>
+EOF
+
+STDERR_LOG="$WORKDIR/keep.stderr"
+STDOUT_LOG="$WORKDIR/keep.stdout"
+EXIT=0
+(cd "$PROJ_KEEP" && bash "$MIGRATE_SH" --keep-referenced >"$STDOUT_LOG" 2>"$STDERR_LOG") || EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "keep: exit 0"; else fail_msg "keep: exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_KEEP/.claude/scripts/spawn-claude.sh" ]; then
+  pass_msg "keep: referenced managed script preserved"
+else
+  fail_msg "keep: referenced managed script was deleted"
+fi
+
+inc
+if grep -qF 'Preserved due to --keep-referenced: .claude/scripts/spawn-claude.sh' "$STDOUT_LOG"; then
+  pass_msg "keep: stdout announces preserved path"
+else
+  fail_msg "keep: missing 'Preserved due to --keep-referenced' line"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if [ ! -d "$PROJ_KEEP/.claude-pipeline" ]; then
+  pass_msg "keep: .claude-pipeline/ manifest still removed"
+else
+  fail_msg "keep: .claude-pipeline/ unexpectedly preserved"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "ref-scan: --keep-referenced is a no-op when nothing referenced" —
+# the flag is opt-in protection; when scan finds zero hits, behavior is
+# identical to a normal run.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'ref-scan: --keep-referenced is a no-op when nothing referenced'"
+
+PROJ_KEEPN="$WORKDIR/proj-keepn"
+mkdir -p "$PROJ_KEEPN/.claude-pipeline/scripts" "$PROJ_KEEPN/.claude/scripts"
+touch "$PROJ_KEEPN/.claude-pipeline/scripts/spawn-claude.sh.template"
+echo "managed" > "$PROJ_KEEPN/.claude/scripts/spawn-claude.sh"
+echo "# Project with no managed refs" > "$PROJ_KEEPN/CLAUDE.md"
+
+STDERR_LOG="$WORKDIR/keepn.stderr"
+STDOUT_LOG="$WORKDIR/keepn.stdout"
+EXIT=0
+(cd "$PROJ_KEEPN" && bash "$MIGRATE_SH" --keep-referenced >"$STDOUT_LOG" 2>"$STDERR_LOG") || EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "keepn: exit 0"; else fail_msg "keepn: exit $EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_KEEPN/.claude/scripts/spawn-claude.sh" ]; then
+  pass_msg "keepn: managed script removed normally (flag is a no-op without hits)"
+else
+  fail_msg "keepn: managed script preserved despite no scan hits"
+fi
+
+inc
+if ! grep -qF 'Preserved due to --keep-referenced' "$STDOUT_LOG"; then
+  pass_msg "keepn: no spurious 'Preserved' line emitted"
+else
+  fail_msg "keepn: 'Preserved' line emitted without scan hits"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

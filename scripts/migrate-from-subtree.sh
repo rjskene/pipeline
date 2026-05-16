@@ -7,7 +7,16 @@ shopt -s nullglob
 # pipeline-managed file we can identify, leaves user-authored files alone.
 #
 # Run from the consumer project root:
-#   bash scripts/migrate-from-subtree.sh
+#   bash scripts/migrate-from-subtree.sh [--keep-referenced] [--dry-run] \
+#                                        [--assume-yes|--assume-no] \
+#                                        [--patch settings]
+#
+# --keep-referenced: before deleting under .claude/scripts/ or .claude/hooks/,
+#   scan the project tree (*.md, *.sh, *.py, *.json) for references to those
+#   basenames in their .claude/{scripts,hooks}/<name> form and preserve any
+#   that are still referenced. Default behavior (no flag) still deletes on
+#   match but emits a NOTE block listing the dangling references so the
+#   consumer knows to update their docs.
 #
 # Idempotent: re-running on an already-migrated project is a no-op.
 # Fails closed: detection runs to completion before any rm, so a glob error
@@ -15,6 +24,66 @@ shopt -s nullglob
 
 PROJECT_ROOT="$(pwd)"
 cd "$PROJECT_ROOT"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/_advisory-text.sh"
+
+MODE=full
+DRY_RUN=false
+ASSUME=""   # ""|yes|no — overrides interactive prompt when set
+KEEP_REFERENCED=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --patch)
+      if [ "${2:-}" = "settings" ]; then
+        MODE=patch_settings
+        shift 2
+        continue
+      fi
+      echo "migrate-from-subtree: --patch requires 'settings' argument" >&2
+      exit 2
+      ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --assume-yes) ASSUME=yes; shift ;;
+    --assume-no)  ASSUME=no;  shift ;;
+    --keep-referenced) KEEP_REFERENCED=true; shift ;;
+    --help|-h)
+      cat <<'USAGE'
+Usage: migrate-from-subtree.sh [--keep-referenced] [--dry-run] [--assume-yes|--assume-no] [--patch settings]
+  --keep-referenced Preserve .claude/scripts/ and .claude/hooks/ files that are
+                    still referenced from the project tree (advisory NOTE block
+                    is always emitted; this flag turns it into protection).
+  --dry-run        Print what would be deleted and why; no filesystem mutations.
+  --assume-yes     Auto-answer "y" to every interactive prompt (CI/scripted use).
+  --assume-no      Auto-answer "n" to every interactive prompt (preserve everything).
+USAGE
+      exit 0
+      ;;
+    *)
+      echo "migrate-from-subtree: unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# --- Plugin-root self-resolve (defensive fallback for #174) ---
+# When CLAUDE_PLUGIN_ROOT is not exported into the Bash subshell, fall back to
+# the highest-version directory under the user's plugin cache. Fail-open: if
+# resolution fails, basename-match detection (added below) silently skips.
+resolve_plugin_root() {
+  [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ] && return 0
+  local cache_root="$HOME/.claude/plugins/cache/claude-pipeline/pipeline"
+  [ -d "$cache_root" ] || return 1
+  local latest
+  latest=$(ls -1 "$cache_root" 2>/dev/null | sort -V | tail -n 1)
+  [ -n "$latest" ] || return 1
+  [ -d "$cache_root/$latest/skills" ] || return 1
+  export CLAUDE_PLUGIN_ROOT="$cache_root/$latest"
+  echo "[migrate] resolved CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT" >&2
+  return 0
+}
+resolve_plugin_root || true
 
 # --- Detection phase: build removal arrays without mutating anything ---
 
@@ -84,27 +153,217 @@ if [ -f "$SETTINGS_FILE" ]; then
   fi
 fi
 
-# --- Validation phase ---
+# --- Basename-match detection (gap-filling the marker-only gate) ---
+# Markers cover skill dirs created since #98, but earlier consumer installs
+# of plugin-managed skills/agents have no marker. Cross-reference consumer
+# .claude/skills/ and .claude/agents/ basenames against the plugin's
+# shipped basenames. Silently skip when CLAUDE_PLUGIN_ROOT is unresolved.
 
-if [ ! -d .claude-pipeline ] \
-   && [ ${#TO_REMOVE_SKILLS[@]} -eq 0 ] \
-   && [ ${#TO_REMOVE_AGENTS[@]} -eq 0 ] \
-   && [ ${#TO_REMOVE_SCRIPTS[@]} -eq 0 ] \
-   && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ] \
-   && [ "$SETTINGS_HAS_INJECTIONS" = false ]; then
-  echo "migrate-from-subtree: nothing to migrate." >&2
-  exit 0
+TO_PROMPT_SKILLS=()
+TO_PROMPT_AGENTS=()
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ]; then
+  declare -A PLUGIN_SKILL_SET=()
+  for d in "$CLAUDE_PLUGIN_ROOT"/skills/*/; do
+    [ -d "$d" ] || continue
+    PLUGIN_SKILL_SET["$(basename "$d")"]=1
+  done
+  declare -A PLUGIN_AGENT_SET=()
+  if [ -d "$CLAUDE_PLUGIN_ROOT/agents" ]; then
+    for f in "$CLAUDE_PLUGIN_ROOT"/agents/*.md; do
+      [ -f "$f" ] || continue
+      PLUGIN_AGENT_SET["$(basename "$f" .md)"]=1
+    done
+  fi
+  for d in .claude/skills/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"
+    [ "${PLUGIN_SKILL_SET[$name]:-}" = 1 ] || continue
+    already=false
+    for q in "${TO_REMOVE_SKILLS[@]}"; do
+      [ "$q" = "${d%/}" ] && already=true && break
+    done
+    [ "$already" = true ] && continue
+    TO_PROMPT_SKILLS+=("${d%/}")
+  done
+  for f in .claude/agents/*.md; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .md)"
+    [ "${PLUGIN_AGENT_SET[$name]:-}" = 1 ] || continue
+    [ -f ".claude/agents/.${name}.pipeline-managed" ] && continue
+    TO_PROMPT_AGENTS+=("$f")
+  done
 fi
 
-# --- Mutation phase ---
+# --- Dangling-reference scan (scripts/hooks removals only) ---
+# Before deleting anything under .claude/scripts/ or .claude/hooks/, grep the
+# project tree for references to those paths in their consumer-form
+# (.claude/scripts/<name> or .claude/hooks/<name>). Emit an advisory NOTE
+# block to stdout listing dangling refs. With --keep-referenced, also drop
+# the referenced entries from the removal arrays so the files survive.
+#
+# Read-only against the project tree. Never mutates .claude/.
+REFERENCED_BASENAMES=()
+declare -A REFERENCED_HITS=()
+if [ ${#TO_REMOVE_SCRIPTS[@]} -gt 0 ] || [ ${#TO_REMOVE_HOOKS[@]} -gt 0 ]; then
+  declare -A _scan_seen=()
+  _scan_basenames=()
+  for _p in "${TO_REMOVE_SCRIPTS[@]:-}" "${TO_REMOVE_HOOKS[@]:-}"; do
+    [ -n "$_p" ] || continue
+    _b="$(basename "$_p")"
+    [ -n "${_scan_seen[$_b]:-}" ] && continue
+    _scan_seen["$_b"]=1
+    _scan_basenames+=("$_b")
+  done
+  for _b in "${_scan_basenames[@]:-}"; do
+    [ -n "$_b" ] || continue
+    _hits="$(grep -rn -F \
+        --include='*.md' --include='*.sh' --include='*.py' --include='*.json' \
+        --exclude-dir=.git --exclude-dir=node_modules \
+        --exclude-dir=.claude-pipeline \
+        "$_b" . 2>/dev/null \
+      | grep -v '^\./\.claude/worktrees/' \
+      | grep -E "\.claude/(scripts|hooks)/" \
+      || true)"
+    [ -n "$_hits" ] || continue
+    _formatted=""
+    while IFS= read -r _line; do
+      [ -n "$_line" ] || continue
+      # Strip leading "./" from the path
+      _line="${_line#./}"
+      # Split file:lineno:rest at the first two ':' separators
+      _file="${_line%%:*}"
+      _rest="${_line#*:}"
+      _lineno="${_rest%%:*}"
+      _snippet="${_rest#*:}"
+      # Truncate snippet to 160 bytes for readability
+      if [ "${#_snippet}" -gt 160 ]; then
+        _snippet="${_snippet:0:160}..."
+      fi
+      _formatted+="  ${_file}:${_lineno} — ${_snippet}"$'\n'
+    done <<<"$_hits"
+    REFERENCED_HITS["$_b"]="$_formatted"
+    REFERENCED_BASENAMES+=("$_b")
+  done
+  if [ ${#REFERENCED_BASENAMES[@]} -gt 0 ]; then
+    for _b in "${REFERENCED_BASENAMES[@]}"; do
+      # Use .claude/scripts/ form in the heading when the basename appeared in
+      # TO_REMOVE_SCRIPTS, else .claude/hooks/. (A basename can only appear in
+      # one of the two arrays.)
+      _heading_dir="scripts"
+      for _q in "${TO_REMOVE_HOOKS[@]:-}"; do
+        [ "$(basename "${_q:-}")" = "$_b" ] && _heading_dir="hooks" && break
+      done
+      printf 'NOTE: removing .claude/%s/%s — references found in:\n' "$_heading_dir" "$_b"
+      printf '%s' "${REFERENCED_HITS[$_b]}"
+    done
+    printf 'Run with --keep-referenced to preserve these, or update references manually post-migration.\n'
+  fi
+fi
 
-for d in "${TO_REMOVE_SKILLS[@]}"; do
-  rm -rf "$d"
-done
-for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
-  rm -f "$f"
-done
-[ -d .claude-pipeline ] && rm -rf .claude-pipeline
+# --- Apply --keep-referenced filter to removal arrays ---
+if [ "$KEEP_REFERENCED" = true ] && [ ${#REFERENCED_BASENAMES[@]} -gt 0 ]; then
+  _filter_array() {
+    local arr_name="$1"
+    local -n _src="$arr_name"
+    local kept=()
+    local removed=()
+    for _p in "${_src[@]:-}"; do
+      [ -n "$_p" ] || continue
+      local _b="$(basename "$_p")"
+      local _is_ref=false
+      for _r in "${REFERENCED_BASENAMES[@]}"; do
+        [ "$_r" = "$_b" ] && _is_ref=true && break
+      done
+      if [ "$_is_ref" = true ]; then
+        removed+=("$_p")
+      else
+        kept+=("$_p")
+      fi
+    done
+    _src=("${kept[@]:-}")
+    for _p in "${removed[@]:-}"; do
+      [ -n "$_p" ] || continue
+      printf 'Preserved due to --keep-referenced: %s\n' "$_p"
+    done
+  }
+  _filter_array TO_REMOVE_SCRIPTS
+  _filter_array TO_REMOVE_HOOKS
+fi
+
+# --- Validation phase ---
+
+if [ "$MODE" = full ]; then
+  if [ ! -d .claude-pipeline ] \
+     && [ ${#TO_REMOVE_SKILLS[@]} -eq 0 ] \
+     && [ ${#TO_REMOVE_AGENTS[@]} -eq 0 ] \
+     && [ ${#TO_REMOVE_SCRIPTS[@]} -eq 0 ] \
+     && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ] \
+     && [ ${#TO_PROMPT_SKILLS[@]} -eq 0 ] \
+     && [ ${#TO_PROMPT_AGENTS[@]} -eq 0 ] \
+     && [ "$SETTINGS_HAS_INJECTIONS" = false ]; then
+    echo "migrate-from-subtree: nothing to migrate." >&2
+    exit 0
+  fi
+
+  # --- Mutation phase ---
+
+  # --- Prompt loop for basename-match candidates ---
+  EXTRA_REMOVE=()
+  if [ "$DRY_RUN" = false ] \
+     && { [ ${#TO_PROMPT_SKILLS[@]} -gt 0 ] || [ ${#TO_PROMPT_AGENTS[@]} -gt 0 ]; }; then
+    prompt_one() {
+      local target="$1" answer=""
+      if [ -n "$ASSUME" ]; then
+        answer="$ASSUME"
+      else
+        printf 'migrate-from-subtree: remove unmarkered duplicate %s? [y/N] ' "$target" >&2
+        read -r answer || answer=""
+      fi
+      case "$answer" in
+        y|Y|yes|YES) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    for d in "${TO_PROMPT_SKILLS[@]:-}"; do
+      [ -n "$d" ] || continue
+      if prompt_one "$d (skill, basename-match)"; then EXTRA_REMOVE+=("$d"); fi
+    done
+    for f in "${TO_PROMPT_AGENTS[@]:-}"; do
+      [ -n "$f" ] || continue
+      if prompt_one "$f (agent, basename-match)"; then EXTRA_REMOVE+=("$f"); fi
+    done
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    for d in "${TO_REMOVE_SKILLS[@]}"; do
+      echo "[dry-run] would-remove (marker): $d"
+    done
+    for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
+      echo "[dry-run] would-remove (marker): $f"
+    done
+    for d in "${TO_PROMPT_SKILLS[@]:-}"; do
+      [ -n "$d" ] || continue
+      echo "[dry-run] would-remove (basename-match): $d"
+    done
+    for f in "${TO_PROMPT_AGENTS[@]:-}"; do
+      [ -n "$f" ] || continue
+      echo "[dry-run] would-remove (basename-match): $f"
+    done
+    [ -d .claude-pipeline ] && echo "[dry-run] would-remove (manifest): .claude-pipeline/"
+  else
+    for d in "${TO_REMOVE_SKILLS[@]}"; do
+      rm -rf "$d"
+    done
+    for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
+      rm -f "$f"
+    done
+    for x in "${EXTRA_REMOVE[@]:-}"; do
+      [ -n "$x" ] || continue
+      rm -rf "$x"
+    done
+    [ -d .claude-pipeline ] && rm -rf .claude-pipeline
+  fi
+fi
 
 # --- Settings.json injection report (advisory only; never mutates) ---
 
@@ -118,7 +377,22 @@ if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
     for line in "${!SETTINGS_MATCH_LINES[@]}"; do
       printf '%s\n' "$line"
     done | sort -t: -k1,1n
-    printf '\n%s\n' "Review and remove these entries manually."
+    printf '\n'
+    # Per-basename advisory annotations, sourced from _advisory-text.sh.
+    # Iterate the canonical basename list (NOT PIPELINE_HOOK_NAMES, which is
+    # empty when .claude-pipeline/ has already been removed); annotate only
+    # those basenames that appear in at least one SETTINGS_MATCH_LINES key.
+    while IFS= read -r __b; do
+      [ -z "$__b" ] && continue
+      __matched=false
+      for __line in "${!SETTINGS_MATCH_LINES[@]}"; do
+        case "$__line" in *"$__b"*) __matched=true; break;; esac
+      done
+      if [ "$__matched" = true ]; then
+        printf '  - .claude/hooks/%s\n' "$__b"
+        printf '      %s\n' "$(advisory_for_hook "$__b")"
+      fi
+    done < <(list_pipeline_hook_basenames)
   } > "$SETTINGS_REPORT"
   echo "Pipeline-injected entries detected in settings.json — see report."
 
@@ -224,9 +498,12 @@ if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
   fi
 fi
 
+if [ "$MODE" = patch_settings ]; then
+  exit 0
+fi
+
 # --- CLAUDE.md cleanup (advisory only; never edits source files) ---
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/migration-cleanup-claudemd.sh" ]; then
   bash "$SCRIPT_DIR/migration-cleanup-claudemd.sh" || \
     echo "[migrate-from-subtree] WARN: claudemd cleanup helper failed (advisory only)" >&2
