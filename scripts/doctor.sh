@@ -197,6 +197,103 @@ else
   record no_residual_subtree pass "no legacy subtree artifacts"
 fi
 
+# BEGIN skill_files_residual
+# --------------------------------------------------------------------------
+# Check: skill_files_residual — detect legacy-install residual under consumer
+# .claude/{skills,hooks,scripts,agents}/. Builds the plugin-shipped basename
+# allow-list at runtime, classifies each consumer file as DUPLICATE or
+# CONSUMER_OWNED, and elevates to fail if any duplicate SKILL.md/.sh/.py
+# references a stale <owner>/<repo> token near PIPELINE_REPO.
+# --------------------------------------------------------------------------
+sfr_plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
+if [ -z "$sfr_plugin_root" ] || [ ! -d "$sfr_plugin_root" ]; then
+  _sfr_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  sfr_plugin_root="$(cd "$_sfr_here/.." && pwd)"
+fi
+
+sfr_allow_tmp="$(mktemp)"
+for sub in skills hooks scripts agents; do
+  if [ -d "$sfr_plugin_root/$sub" ]; then
+    find "$sfr_plugin_root/$sub" -type f -printf '%f\n' 2>/dev/null
+  fi
+done | sort -u > "$sfr_allow_tmp"
+
+sfr_dup_files=()
+sfr_consumer_files=()
+for sub in skills hooks scripts agents; do
+  if [ -d ".claude/$sub" ]; then
+    while IFS= read -r -d '' f; do
+      bn="$(basename "$f")"
+      if grep -Fxq "$bn" "$sfr_allow_tmp"; then
+        sfr_dup_files+=("$f")
+      else
+        sfr_consumer_files+=("$f")
+      fi
+    done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+  fi
+done
+
+sfr_stale_findings=()
+for f in "${sfr_dup_files[@]:-}"; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    *.md|*.sh|*.py) ;;
+    *) continue ;;
+  esac
+  while IFS= read -r tok; do
+    [ -z "$tok" ] && continue
+    [ "$tok" = "\$PIPELINE_REPO" ] && continue
+    if [ "$tok" != "$PIPELINE_REPO" ]; then
+      sfr_stale_findings+=("$f|$tok")
+    fi
+  done < <(
+    grep -hoE -- '--repo +[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
+      | sed -E 's/^--repo +//'
+    grep -hoE '"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"' "$f" 2>/dev/null \
+      | sed -E 's/^"//; s/"$//'
+    grep -hoE "'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'" "$f" 2>/dev/null \
+      | sed -E "s/^'//; s/'$//"
+  )
+done
+
+rm -f "$sfr_allow_tmp"
+
+sfr_dup_count="${#sfr_dup_files[@]}"
+sfr_stale_count="${#sfr_stale_findings[@]}"
+
+if [ "$sfr_stale_count" -gt 0 ]; then
+  record skill_files_residual fail "$sfr_stale_count stale-repo reference(s) in legacy install"
+elif [ "$sfr_dup_count" -gt 0 ]; then
+  record skill_files_residual warn "$sfr_dup_count duplicate(s) of plugin-shipped files"
+else
+  record skill_files_residual pass "no plugin-basename duplicates"
+fi
+
+if [ "$sfr_stale_count" -gt 0 ]; then
+  echo "  Critical: stale legacy-install references:"
+  for entry in "${sfr_stale_findings[@]}"; do
+    f="${entry%%|*}"
+    tok="${entry#*|}"
+    echo "  - $f: targets $tok (current PIPELINE_REPO=$PIPELINE_REPO)"
+  done
+fi
+if [ "$sfr_dup_count" -gt 0 ]; then
+  echo "  Duplicates of plugin-owned files (run scripts/migrate-from-subtree.sh):"
+  for f in "${sfr_dup_files[@]}"; do
+    echo "  - $f"
+  done
+fi
+if [ "${#sfr_consumer_files[@]}" -gt 0 ]; then
+  echo "  Preserved — consumer-owned:"
+  for f in "${sfr_consumer_files[@]}"; do
+    echo "  - $f"
+  done
+fi
+if [ "$sfr_dup_count" -gt 0 ] || [ "$sfr_stale_count" -gt 0 ]; then
+  echo "  → run: bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/migrate-from-subtree.sh"
+fi
+# END skill_files_residual
+
 # --------------------------------------------------------------------------
 # Check: claude_md_residual — delegate to the migration-cleanup-claudemd scanner;
 # parse its report file to surface findings as a warn (never a fail).
