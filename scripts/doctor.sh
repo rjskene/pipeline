@@ -75,6 +75,151 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "labels" ]; then
 fi
 
 # --------------------------------------------------------------------------
+# --fix residual: re-run the three residual-state detectors in remediate
+# mode, prompting [y/N] per finding. Honors DOCTOR_FIX_NONINTERACTIVE=1
+# (auto-N for every prompt; used by tests to assert the prompt-and-skip path
+# without a TTY).
+# --------------------------------------------------------------------------
+if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  PLUGIN_ROOT_FIX="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+  # Helper: prompt [y/N]. Honors DOCTOR_FIX_NONINTERACTIVE=1 (auto-N).
+  # Returns 1 on EOF/empty-read (caller decides exit code).
+  _FIX_EOF=0
+  prompt_yn() {
+    local msg="$1"
+    printf '%s [y/N] ' "$msg"
+    if [ "${DOCTOR_FIX_NONINTERACTIVE:-0}" = "1" ]; then
+      echo "n"
+      REPLY="n"
+      return 0
+    fi
+    if ! IFS= read -r REPLY; then
+      _FIX_EOF=1
+      REPLY=""
+      printf '\n' >&2
+      return 1
+    fi
+    return 0
+  }
+
+  any_prompt_eof=0
+
+  # --- skill_files_residual remediation ---
+  fix_allow_tmp="$(mktemp)"
+  for sub in skills hooks scripts agents; do
+    if [ -d "$PLUGIN_ROOT_FIX/$sub" ]; then
+      find "$PLUGIN_ROOT_FIX/$sub" -type f -printf '%f\n' 2>/dev/null
+    fi
+  done | sort -u > "$fix_allow_tmp"
+
+  fix_dup_paths=()
+  for sub in skills hooks scripts agents; do
+    if [ -d ".claude/$sub" ]; then
+      while IFS= read -r -d '' f; do
+        bn="$(basename "$f")"
+        if grep -Fxq "$bn" "$fix_allow_tmp"; then
+          if [ "$sub" = "skills" ]; then
+            sd="$(dirname "$f")"
+            already=0
+            for existing in "${fix_dup_paths[@]:-}"; do
+              [ "$existing" = "$sd" ] && already=1 && break
+            done
+            [ "$already" = "0" ] && fix_dup_paths+=("$sd")
+          else
+            fix_dup_paths+=("$f")
+          fi
+        fi
+      done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+    fi
+  done
+  rm -f "$fix_allow_tmp"
+
+  for path in "${fix_dup_paths[@]:-}"; do
+    [ -z "$path" ] && continue
+    if prompt_yn "Remove duplicate of plugin-shipped file: $path?"; then
+      case "$REPLY" in
+        y|Y|yes|YES)
+          rm -rf "$path"
+          echo "  removed: $path"
+          ;;
+        *)
+          echo "  skipped: $path"
+          ;;
+      esac
+    else
+      any_prompt_eof=1
+      echo "  skipped (no input): $path"
+    fi
+  done
+
+  # --- settings_residual remediation: ONE prompt for the whole batch. ---
+  _sr_settings=".claude/settings.json"
+  has_settings_findings=0
+  if [ -f "$_sr_settings" ] && command -v jq >/dev/null 2>&1; then
+    _sr_known_tmp="$(mktemp)"
+    if command -v list_pipeline_hook_basenames >/dev/null 2>&1; then
+      list_pipeline_hook_basenames > "$_sr_known_tmp" 2>/dev/null || true
+    fi
+    while IFS= read -r _sr_cmd; do
+      [ -z "$_sr_cmd" ] && continue
+      _sr_last_tok="${_sr_cmd##* }"
+      _sr_bn="$(basename "$_sr_last_tok")"
+      if grep -Fxq "$_sr_bn" "$_sr_known_tmp" 2>/dev/null; then
+        has_settings_findings=1
+        break
+      fi
+    done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null || true)
+    rm -f "$_sr_known_tmp"
+  fi
+
+  if [ "$has_settings_findings" = "1" ]; then
+    if prompt_yn "Patch .claude/settings.json (delegate to migrate-from-subtree.sh --patch settings)?"; then
+      case "$REPLY" in
+        y|Y|yes|YES)
+          bash "$PLUGIN_ROOT_FIX/scripts/migrate-from-subtree.sh" --patch settings
+          ;;
+        *)
+          echo "  skipped: settings.json patch"
+          ;;
+      esac
+    else
+      any_prompt_eof=1
+      echo "  skipped (no input): settings.json patch"
+    fi
+  fi
+
+  # --- claude_md_residual remediation: surface the report path. ---
+  CMD_REPORT=".claude/migration-cleanup-report-claudemd.txt"
+  SCANNER="$SCRIPT_DIR/migration-cleanup-claudemd.sh"
+  if [ -f "$SCANNER" ]; then
+    bash "$SCANNER" >/dev/null 2>&1 || true
+  fi
+  if [ -s "$CMD_REPORT" ]; then
+    if prompt_yn "CLAUDE.md has residual pipeline references — surface the report path for manual review?"; then
+      case "$REPLY" in
+        y|Y|yes|YES)
+          echo "  review manually: $CMD_REPORT"
+          echo "  (CLAUDE.md is user-authored prose; no in-place edit will be performed.)"
+          ;;
+        *)
+          echo "  skipped: CLAUDE.md report"
+          ;;
+      esac
+    else
+      any_prompt_eof=1
+      echo "  skipped (no input): CLAUDE.md report"
+    fi
+  fi
+
+  if [ "$any_prompt_eof" = "1" ] && [ "$_FIX_EOF" = "1" ]; then
+    exit 2
+  fi
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
 # Check accumulation. Each `record name status detail` appends one CHECK line
 # to stdout AND stores the row for the summary table at the end.
 # --------------------------------------------------------------------------
