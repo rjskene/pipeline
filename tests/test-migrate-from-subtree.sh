@@ -1236,6 +1236,150 @@ else
   fail_msg "doc: migration guide missing --dry-run mention"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "ref-scan: advisory listing referenced removed scripts" — when a
+# consumer's CLAUDE.md references a managed script that the migration is
+# about to delete, the script emits a NOTE block listing the dangling refs
+# before performing the deletion. Default behavior (delete-on-match) is
+# unchanged.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'ref-scan: advisory listing referenced removed scripts'"
+
+PROJ_REF="$WORKDIR/proj-ref"
+mkdir -p "$PROJ_REF/.claude-pipeline/scripts" "$PROJ_REF/.claude/scripts"
+touch "$PROJ_REF/.claude-pipeline/scripts/spawn-claude.sh.template"
+echo "managed" > "$PROJ_REF/.claude/scripts/spawn-claude.sh"
+cat > "$PROJ_REF/CLAUDE.md" <<'EOF'
+# Project
+
+bash .claude/scripts/spawn-claude.sh --web-eval --skill evaluate-issue-pr <worktree> <issue>
+EOF
+echo "no managed refs here" > "$PROJ_REF/README.md"
+
+STDERR_LOG="$WORKDIR/refscan.stderr"
+STDOUT_LOG="$WORKDIR/refscan.stdout"
+EXIT=0
+(cd "$PROJ_REF" && bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "refscan: exit 0"; else fail_msg "refscan: exit $EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_REF/.claude/scripts/spawn-claude.sh" ]; then
+  pass_msg "refscan: managed script removed (default delete-on-match unchanged)"
+else
+  fail_msg "refscan: managed script still present (default behavior broken)"
+fi
+
+inc
+COUNT=$(grep -cF 'NOTE: removing .claude/scripts/spawn-claude.sh — references found in:' "$STDOUT_LOG" || true)
+if [ "$COUNT" = "1" ]; then
+  pass_msg "refscan: NOTE block emitted exactly once"
+else
+  fail_msg "refscan: NOTE block count=$COUNT (expected 1)"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if grep -F 'CLAUDE.md:' "$STDOUT_LOG" | grep -qF 'bash .claude/scripts/spawn-claude.sh'; then
+  pass_msg "refscan: CLAUDE.md:<line> snippet includes referencing command"
+else
+  fail_msg "refscan: missing CLAUDE.md path + snippet"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if grep -qF 'Run with --keep-referenced to preserve these, or update references manually post-migration.' "$STDOUT_LOG"; then
+  pass_msg "refscan: closing --keep-referenced advisory line emitted"
+else
+  fail_msg "refscan: closing --keep-referenced advisory line missing"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "ref-scan: --keep-referenced preserves referenced scripts" — same
+# fixture as the previous test, but with --keep-referenced. The managed
+# script must survive; the manifest cleanup still runs.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'ref-scan: --keep-referenced preserves referenced scripts'"
+
+PROJ_KEEP="$WORKDIR/proj-keep"
+mkdir -p "$PROJ_KEEP/.claude-pipeline/scripts" "$PROJ_KEEP/.claude/scripts"
+touch "$PROJ_KEEP/.claude-pipeline/scripts/spawn-claude.sh.template"
+echo "managed" > "$PROJ_KEEP/.claude/scripts/spawn-claude.sh"
+cat > "$PROJ_KEEP/CLAUDE.md" <<'EOF'
+# Project
+
+bash .claude/scripts/spawn-claude.sh --web-eval --skill evaluate-issue-pr <worktree> <issue>
+EOF
+
+STDERR_LOG="$WORKDIR/keep.stderr"
+STDOUT_LOG="$WORKDIR/keep.stdout"
+EXIT=0
+(cd "$PROJ_KEEP" && bash "$MIGRATE_SH" --keep-referenced >"$STDOUT_LOG" 2>"$STDERR_LOG") || EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "keep: exit 0"; else fail_msg "keep: exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_KEEP/.claude/scripts/spawn-claude.sh" ]; then
+  pass_msg "keep: referenced managed script preserved"
+else
+  fail_msg "keep: referenced managed script was deleted"
+fi
+
+inc
+if grep -qF 'Preserved due to --keep-referenced: .claude/scripts/spawn-claude.sh' "$STDOUT_LOG"; then
+  pass_msg "keep: stdout announces preserved path"
+else
+  fail_msg "keep: missing 'Preserved due to --keep-referenced' line"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if [ ! -d "$PROJ_KEEP/.claude-pipeline" ]; then
+  pass_msg "keep: .claude-pipeline/ manifest still removed"
+else
+  fail_msg "keep: .claude-pipeline/ unexpectedly preserved"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "ref-scan: --keep-referenced is a no-op when nothing referenced" —
+# the flag is opt-in protection; when scan finds zero hits, behavior is
+# identical to a normal run.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'ref-scan: --keep-referenced is a no-op when nothing referenced'"
+
+PROJ_KEEPN="$WORKDIR/proj-keepn"
+mkdir -p "$PROJ_KEEPN/.claude-pipeline/scripts" "$PROJ_KEEPN/.claude/scripts"
+touch "$PROJ_KEEPN/.claude-pipeline/scripts/spawn-claude.sh.template"
+echo "managed" > "$PROJ_KEEPN/.claude/scripts/spawn-claude.sh"
+echo "# Project with no managed refs" > "$PROJ_KEEPN/CLAUDE.md"
+
+STDERR_LOG="$WORKDIR/keepn.stderr"
+STDOUT_LOG="$WORKDIR/keepn.stdout"
+EXIT=0
+(cd "$PROJ_KEEPN" && bash "$MIGRATE_SH" --keep-referenced >"$STDOUT_LOG" 2>"$STDERR_LOG") || EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "keepn: exit 0"; else fail_msg "keepn: exit $EXIT"; fi
+
+inc
+if [ ! -f "$PROJ_KEEPN/.claude/scripts/spawn-claude.sh" ]; then
+  pass_msg "keepn: managed script removed normally (flag is a no-op without hits)"
+else
+  fail_msg "keepn: managed script preserved despite no scan hits"
+fi
+
+inc
+if ! grep -qF 'Preserved due to --keep-referenced' "$STDOUT_LOG"; then
+  pass_msg "keepn: no spurious 'Preserved' line emitted"
+else
+  fail_msg "keepn: 'Preserved' line emitted without scan hits"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
