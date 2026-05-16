@@ -23,6 +23,24 @@ The script removes every pipeline-managed file it can identify (skills, agents, 
 - `pipeline.config` at the project root stays put — it is owned by your project, and the plugin reads it at runtime via `${CLAUDE_PLUGIN_ROOT}/scripts/...` shims.
 - Any non-pipeline files under `.claude/` (skills, agents, hooks, or settings you authored yourself) are untouched. Pipeline files are identified by `.pipeline-managed` markers and by basename enumeration against `.claude-pipeline/`.
 
+### 2a. Recovering installs that bypassed the legacy installer
+
+If your install came from a subtree-pull, hand-copy, or `git fetch <fork>` import (i.e., never went through `bash .claude-pipeline/install.sh`), the `.pipeline-managed` marker files will be absent and the marker-only detection pass will skip your duplicates. Use the basename-match recovery flow:
+
+```bash
+bash scripts/migrate-from-subtree.sh --dry-run
+```
+
+The script lists every `.claude/skills/*/` directory and `.claude/agents/*.md` file whose basename matches a plugin-shipped skill or agent. Review the list — anything you authored yourself with a same-named skill is preserved because it doesn't match a plugin basename, and consumer-authored skills with novel names never appear.
+
+Then re-run interactively:
+
+```bash
+bash scripts/migrate-from-subtree.sh
+```
+
+You'll be prompted `[y/N]` per candidate. For non-interactive removal (e.g., CI cleanup), use `--assume-yes`. To preview without any chance of mutation, use `--assume-no`.
+
 ## 3. Review the settings.json advisory report
 
 If the migration script detected pipeline hook entries in `.claude/settings.json`, it writes an advisory report to:

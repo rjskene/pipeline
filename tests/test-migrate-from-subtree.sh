@@ -1206,6 +1206,36 @@ else
   fail_msg "ca: consumer-authored skill was deleted"
 fi
 
+# ---------------------------------------------------------------------------
+# Doc-smoke: doctor SKILL.md and migration guide cross-reference the new
+# basename-match recovery flow.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'doc smoke: doctor + migration guide cross-reference basename-match recovery'"
+
+DOCTOR_SKILL="$SCRIPT_DIR/../skills/doctor/SKILL.md"
+
+inc
+if grep -qF -- '--dry-run' "$DOCTOR_SKILL"; then
+  pass_msg "doc: doctor SKILL.md cross-references migrate --dry-run"
+else
+  fail_msg "doc: doctor SKILL.md missing migrate --dry-run cross-reference"
+fi
+
+inc
+if grep -qF 'basename-match' "$DOC_GUIDE"; then
+  pass_msg "doc: migration guide describes basename-match recovery"
+else
+  fail_msg "doc: migration guide missing basename-match recovery section"
+fi
+
+inc
+if grep -qF -- '--dry-run' "$DOC_GUIDE"; then
+  pass_msg "doc: migration guide mentions --dry-run"
+else
+  fail_msg "doc: migration guide missing --dry-run mention"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
