@@ -306,5 +306,93 @@ else
   echo "$out" | sed 's/^/    /'
 fi
 
+# ---------------------------------------------------------------------------
+# Case 13: doctor preservation_refs check emits per-file blocks.
+# ---------------------------------------------------------------------------
+echo "Case 13: doctor preservation_refs block output"
+ROOT=$(fresh_fx fx-doctor)
+printf '#!/bin/bash\necho enforced\n' > "$ROOT/plugin/hooks/enforced.py"
+cp "$ROOT/plugin/hooks/enforced.py" "$ROOT/proj/.claude/hooks/enforced.py"
+cat > "$ROOT/proj/.claude/settings.json" <<'JSON'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":".claude/hooks/enforced.py"}]}]}}
+JSON
+out=$(
+  cd "$ROOT/proj"
+  # shellcheck disable=SC1091
+  source ./pipeline.config
+  CLAUDE_PLUGIN_ROOT="$ROOT/plugin" bash "$DOCTOR" 2>&1 || true
+)
+if echo "$out" | grep -q "CHECK: preservation_refs"; then
+  pass_msg "preservation_refs CHECK line emitted"
+else
+  fail_msg "no preservation_refs CHECK line"
+fi
+if echo "$out" | grep -q "\.claude/hooks/enforced\.py"; then
+  pass_msg "file path appears in doctor output"
+else
+  fail_msg "file path missing"
+fi
+if echo "$out" | grep -qE "Verdict: KEEP"; then
+  pass_msg "KEEP verdict surfaced"
+else
+  fail_msg "KEEP verdict missing"
+fi
+if echo "$out" | grep -q "active-wiring"; then
+  pass_msg "active-wiring annotation surfaced"
+else
+  fail_msg "active-wiring annotation missing"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 14: pure-DELETE doctor run records pass, not warn.
+# ---------------------------------------------------------------------------
+echo "Case 14: pure-DELETE → record pass"
+ROOT=$(fresh_fx fx-doctor-clean)
+printf '#!/bin/bash\necho lonely\n' > "$ROOT/plugin/scripts/lonely.sh"
+printf '#!/bin/bash\necho lonely\n' > "$ROOT/proj/.claude/scripts/lonely.sh"
+out=$(
+  cd "$ROOT/proj"
+  # shellcheck disable=SC1091
+  source ./pipeline.config
+  CLAUDE_PLUGIN_ROOT="$ROOT/plugin" bash "$DOCTOR" 2>&1 || true
+)
+if echo "$out" | grep -qE "CHECK: preservation_refs status=pass"; then
+  pass_msg "pure-DELETE → pass status"
+else
+  fail_msg "expected pass, got something else"
+  echo "$out" | grep preservation_refs | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Case 15: SKILL.md documents the preservation_refs check + its taxonomy.
+# ---------------------------------------------------------------------------
+echo "Case 15: SKILL.md documents preservation_refs"
+SKILL_MD="$SCRIPT_DIR/../skills/doctor/SKILL.md"
+if grep -q "preservation_refs" "$SKILL_MD"; then
+  pass_msg "SKILL.md mentions preservation_refs"
+else
+  fail_msg "SKILL.md missing preservation_refs section"
+fi
+if grep -qE "DELETE\s*/\s*KEEP|DELETE.*KEEP|KEEP.*DELETE" "$SKILL_MD"; then
+  pass_msg "SKILL.md documents DELETE/KEEP verdict"
+else
+  fail_msg "SKILL.md missing verdict rule"
+fi
+if grep -q "active-wiring" "$SKILL_MD"; then
+  pass_msg "SKILL.md lists active-wiring bucket"
+else
+  fail_msg "SKILL.md missing reference-bucket list"
+fi
+if grep -q "consumer-skill-ref" "$SKILL_MD"; then
+  pass_msg "SKILL.md lists consumer-skill-ref bucket"
+else
+  fail_msg "SKILL.md missing consumer-skill-ref"
+fi
+if grep -q "doc-ref" "$SKILL_MD"; then
+  pass_msg "SKILL.md lists doc-ref bucket"
+else
+  fail_msg "SKILL.md missing doc-ref"
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]

@@ -579,6 +579,74 @@ fi
 # END consumer_drift
 
 # --------------------------------------------------------------------------
+# Check: preservation_refs — per-file reference report. For every consumer
+# .claude/{scripts,hooks}/ file whose basename collides with a plugin-shipped
+# file, list each external reference (settings.json / SKILL.md / doc) holding
+# the file in place and emit a DELETE / KEEP verdict. Informational only;
+# pass when zero files OR every verdict is DELETE; warn when ≥1 KEEP.
+# --------------------------------------------------------------------------
+PR_HELPER="$SCRIPT_DIR/scan-preservation-refs.sh"
+if [ ! -f "$PR_HELPER" ]; then
+  record preservation_refs warn "scan-preservation-refs.sh not found at $PR_HELPER"
+else
+  pr_rows="$(bash "$PR_HELPER" 2>/dev/null || true)"
+  pr_files=0; pr_keeps=0; pr_deletes=0
+  if [ -n "$pr_rows" ]; then
+    while IFS=$'\t' read -r _type _path _verdict _hint _ignore; do
+      [ "$_type" = "VERDICT" ] || continue
+      pr_files=$((pr_files + 1))
+      case "$_verdict" in
+        KEEP)   pr_keeps=$((pr_keeps + 1)) ;;
+        DELETE) pr_deletes=$((pr_deletes + 1)) ;;
+      esac
+    done <<<"$pr_rows"
+  fi
+  if [ "$pr_files" -eq 0 ]; then
+    record preservation_refs pass "no preserved consumer files with plugin counterparts"
+  elif [ "$pr_keeps" -eq 0 ]; then
+    record preservation_refs pass "$pr_files file(s) classified: 0 KEEP, $pr_deletes DELETE"
+  else
+    record preservation_refs warn "$pr_files file(s): $pr_keeps KEEP, $pr_deletes DELETE — review report"
+  fi
+  if [ "$pr_files" -gt 0 ]; then
+    echo "  === preservation_refs report ==="
+    declare -A _seen_path=()
+    _paths=()
+    while IFS=$'\t' read -r _type _path _r1 _r2 _r3; do
+      [ -z "$_type" ] && continue
+      [ -z "$_path" ] && continue
+      [ -n "${_seen_path[$_path]:-}" ] && continue
+      _seen_path["$_path"]=1
+      _paths+=("$_path")
+    done <<<"$pr_rows"
+    for _p in "${_paths[@]:-}"; do
+      [ -n "$_p" ] || continue
+      echo "  $_p"
+      echo "    References:"
+      while IFS=$'\t' read -r _type _path _ref _bucket _snippet; do
+        [ "$_type" = "REF" ] || continue
+        [ "$_path" = "$_p" ] || continue
+        _annot=""
+        if command -v advisory_for_ref_source >/dev/null 2>&1; then
+          _annot="$(advisory_for_ref_source "$_bucket" 2>/dev/null || true)"
+        fi
+        if [ -n "$_annot" ]; then
+          printf '      - %s  → %s (%s)\n' "$_ref" "$_annot" "$_bucket"
+        else
+          printf '      - %s  → %s\n' "$_ref" "$_bucket"
+        fi
+      done <<<"$pr_rows"
+      while IFS=$'\t' read -r _type _path _verdict _hint _ignore; do
+        [ "$_type" = "VERDICT" ] || continue
+        [ "$_path" = "$_p" ] || continue
+        printf '    Verdict: %s — %s\n' "$_verdict" "$_hint"
+      done <<<"$pr_rows"
+      echo
+    done
+  fi
+fi
+
+# --------------------------------------------------------------------------
 # Check: base_branch_local — local branch exists; warn if no upstream tracking.
 # --------------------------------------------------------------------------
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
