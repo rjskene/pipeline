@@ -57,6 +57,20 @@ if git merge --ff-only "$SHA"; then
 fi
 
 # ---------------------------------------------------------------------------
+# Real merge path: FF was not possible (staging has commits ahead of $SHA).
+# Favor staging on file collisions (staging is strictly newer for any file
+# already shipped to main in the release commit). Use a clear back-sync
+# subject so the workflow can identify its own commits idempotently on rerun.
+# ---------------------------------------------------------------------------
+MERGE_MSG="chore(back-sync): merge release commit $SHORT_SHA from main"
+if git merge --no-edit -X ours -m "$MERGE_MSG" "$SHA"; then
+  git push origin staging
+  echo "back-sync: merged $SHA into staging with -X ours"
+  exit 0
+fi
+git merge --abort 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # Conflict path: abort, branch off staging, redo cherry-pick leaving conflict
 # markers in the tree, commit WIP, push branch, open draft PR.
 # ---------------------------------------------------------------------------
