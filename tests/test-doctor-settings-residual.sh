@@ -228,26 +228,25 @@ cat > "$FX/.claude/settings.json" <<'JSON'
 JSON
 # Build an isolated PATH dir containing only the shims (no jq).
 NOJQ_BIN="$TMP/nojq-bin"
+rm -rf "$NOJQ_BIN"
 mkdir -p "$NOJQ_BIN"
 cp "$TMP/bin/gh" "$NOJQ_BIN/gh"
 cp "$TMP/bin/claude" "$NOJQ_BIN/claude"
-# Provide minimal coreutils: rely on /usr/bin and /bin only, plus shims.
-# Put a stub `jq` that is non-executable in the way (and ensure PATH does not contain real jq).
-# Strategy: Use a tightly constrained PATH that intentionally omits any jq location.
+# Symlink every binary from /usr/bin and /bin EXCEPT jq, so PATH=$NOJQ_BIN has
+# every coreutil doctor.sh needs but `command -v jq` returns false.
+for src_dir in /usr/bin /bin; do
+  [ -d "$src_dir" ] || continue
+  for f in "$src_dir"/*; do
+    bn="$(basename "$f")"
+    [ "$bn" = "jq" ] && continue
+    [ -e "$NOJQ_BIN/$bn" ] && continue
+    ln -s "$f" "$NOJQ_BIN/$bn" 2>/dev/null || true
+  done
+done
 (
   cd "$FX"
-  PATH="$NOJQ_BIN:/usr/bin:/bin" env "CLAUDE_PLUGIN_ROOT=$FX" LABELS_JSON="$ALL_LABELS_JSON" \
-    bash -c '
-      # Verify our PATH lacks jq before running.
-      if command -v jq >/dev/null 2>&1; then
-        # Shadow jq with a non-executable stub in a fresh dir prepended to PATH.
-        STUB_DIR="$(mktemp -d)"
-        : > "$STUB_DIR/jq"
-        chmod 644 "$STUB_DIR/jq"
-        export PATH="$STUB_DIR:$PATH"
-      fi
-      bash "'"$HELPER"'"
-    '
+  PATH="$NOJQ_BIN" env "CLAUDE_PLUGIN_ROOT=$FX" LABELS_JSON="$ALL_LABELS_JSON" \
+    bash "$HELPER"
 ) > "$FX/out" 2>&1
 echo "$?" > "$FX/rc"
 out="$(cat "$FX/out")"

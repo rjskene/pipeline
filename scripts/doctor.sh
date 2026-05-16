@@ -18,6 +18,9 @@ RESOLVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 [ -f "$RESOLVER_DIR/_resolve-plugin-root.sh" ] \
   && source "$RESOLVER_DIR/_resolve-plugin-root.sh" 2>/dev/null || true
+# shellcheck disable=SC1091
+[ -f "$RESOLVER_DIR/_advisory-text.sh" ] \
+  && source "$RESOLVER_DIR/_advisory-text.sh" 2>/dev/null || true
 
 # Canonical label table — single source of truth.
 # Each row: <key>|<default-name>|<color>|<description>
@@ -197,6 +200,89 @@ else
   record no_residual_subtree pass "no legacy subtree artifacts"
 fi
 
+
+# --------------------------------------------------------------------------
+# Check: claude_md_residual — delegate to the migration-cleanup-claudemd scanner;
+# parse its report file to surface findings as a warn (never a fail).
+# --------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCANNER="$SCRIPT_DIR/migration-cleanup-claudemd.sh"
+if [ ! -f "$SCANNER" ]; then
+  record claude_md_residual warn "migration-cleanup-claudemd.sh not found at $SCANNER"
+else
+  bash "$SCANNER" >/dev/null 2>&1 || true
+  CMD_REPORT=".claude/migration-cleanup-report-claudemd.txt"
+  if [ ! -s "$CMD_REPORT" ]; then
+    record claude_md_residual pass "no residual pipeline state in CLAUDE.md"
+  else
+    # Count findings: non-empty content lines that look like a finding row.
+    # Finding rows are either "<path>:<lineno>:..." entries (paths/cmds passes)
+    # or 4-space-indented corroboration lines under section headers.
+    finding_count=$(awk '
+      /^CLAUDE\.md pipeline-legacy/ { next }
+      /^Section headers$/ || /^Legacy paths$/ || /^Deprecated slash commands$/ { next }
+      /^-+$/ { next }
+      /^[[:space:]]*$/ { next }
+      /^  corroborated by:$/ { next }
+      /^[^[:space:]].*:[0-9]+:/ { count++; next }
+      /^    .+/ { count++; next }
+      END { print count + 0 }
+    ' "$CMD_REPORT")
+    record claude_md_residual warn "$finding_count residual reference(s) in CLAUDE.md (see .claude/migration-cleanup-report-claudemd.txt)"
+  fi
+fi
+
+# BEGIN settings_residual
+# --------------------------------------------------------------------------
+# Check: settings_residual — scan $PROJECT_ROOT/.claude/settings.json for
+# pipeline-owned hook command basenames (sourced from _advisory-text.sh) and
+# emit one annotated line per finding plus a single migrate-from-subtree
+# summary line. Never a fail — warn or pass only. Falls back to warn when
+# jq is not installed (the check is not fatal to the doctor run).
+# --------------------------------------------------------------------------
+_sr_settings=".claude/settings.json"
+if [ ! -f "$_sr_settings" ]; then
+  record settings_residual pass "no settings.json"
+elif ! command -v jq >/dev/null 2>&1; then
+  record settings_residual warn "jq required for settings_residual check"
+else
+  # Enumerate every command across all hook sections (forward-compatible with
+  # future hook types beyond PreToolUse/PostToolUse/Stop).
+  _sr_known_tmp="$(mktemp)"
+  list_pipeline_hook_basenames > "$_sr_known_tmp" 2>/dev/null || true
+  _sr_findings=()
+  while IFS= read -r _sr_cmd; do
+    [ -z "$_sr_cmd" ] && continue
+    # basename of the command's first token (handles "python3 path/to/x.py" by
+    # taking the last whitespace-separated token, then basename).
+    _sr_last_tok="${_sr_cmd##* }"
+    _sr_bn="$(basename "$_sr_last_tok")"
+    if grep -Fxq "$_sr_bn" "$_sr_known_tmp"; then
+      _sr_findings+=("$_sr_bn")
+    fi
+  done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null || true)
+  rm -f "$_sr_known_tmp"
+
+  _sr_n="${#_sr_findings[@]}"
+  if [ "$_sr_n" = "0" ]; then
+    record settings_residual pass "no pipeline hook entries"
+  else
+    if [ "$_sr_n" = "1" ]; then
+      _sr_word="entry"
+    else
+      _sr_word="entries"
+    fi
+    record settings_residual warn "$_sr_n pipeline hook $_sr_word in .claude/settings.json"
+    for _sr_bn in "${_sr_findings[@]}"; do
+      echo "  - .claude/hooks/$_sr_bn"
+      _sr_adv="$(advisory_for_hook "$_sr_bn" || true)"
+      echo "      $_sr_adv"
+    done
+    echo "  → run: bash \${CLAUDE_PLUGIN_ROOT}/scripts/migrate-from-subtree.sh --patch settings"
+  fi
+fi
+# END settings_residual
+
 # BEGIN skill_files_residual
 # --------------------------------------------------------------------------
 # Check: skill_files_residual — detect legacy-install residual under consumer
@@ -293,37 +379,6 @@ if [ "$sfr_dup_count" -gt 0 ] || [ "$sfr_stale_count" -gt 0 ]; then
   echo "  → run: bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/migrate-from-subtree.sh"
 fi
 # END skill_files_residual
-
-# --------------------------------------------------------------------------
-# Check: claude_md_residual — delegate to the migration-cleanup-claudemd scanner;
-# parse its report file to surface findings as a warn (never a fail).
-# --------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCANNER="$SCRIPT_DIR/migration-cleanup-claudemd.sh"
-if [ ! -f "$SCANNER" ]; then
-  record claude_md_residual warn "migration-cleanup-claudemd.sh not found at $SCANNER"
-else
-  bash "$SCANNER" >/dev/null 2>&1 || true
-  CMD_REPORT=".claude/migration-cleanup-report-claudemd.txt"
-  if [ ! -s "$CMD_REPORT" ]; then
-    record claude_md_residual pass "no residual pipeline state in CLAUDE.md"
-  else
-    # Count findings: non-empty content lines that look like a finding row.
-    # Finding rows are either "<path>:<lineno>:..." entries (paths/cmds passes)
-    # or 4-space-indented corroboration lines under section headers.
-    finding_count=$(awk '
-      /^CLAUDE\.md pipeline-legacy/ { next }
-      /^Section headers$/ || /^Legacy paths$/ || /^Deprecated slash commands$/ { next }
-      /^-+$/ { next }
-      /^[[:space:]]*$/ { next }
-      /^  corroborated by:$/ { next }
-      /^[^[:space:]].*:[0-9]+:/ { count++; next }
-      /^    .+/ { count++; next }
-      END { print count + 0 }
-    ' "$CMD_REPORT")
-    record claude_md_residual warn "$finding_count residual reference(s) in CLAUDE.md (see .claude/migration-cleanup-report-claudemd.txt)"
-  fi
-fi
 
 # --------------------------------------------------------------------------
 # Check: base_branch_local — local branch exists; warn if no upstream tracking.
