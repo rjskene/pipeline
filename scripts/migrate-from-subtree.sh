@@ -197,6 +197,33 @@ if [ "$MODE" = full ]; then
 
   # --- Mutation phase ---
 
+  # --- Prompt loop for basename-match candidates ---
+  EXTRA_REMOVE=()
+  if [ "$DRY_RUN" = false ] \
+     && { [ ${#TO_PROMPT_SKILLS[@]} -gt 0 ] || [ ${#TO_PROMPT_AGENTS[@]} -gt 0 ]; }; then
+    prompt_one() {
+      local target="$1" answer=""
+      if [ -n "$ASSUME" ]; then
+        answer="$ASSUME"
+      else
+        printf 'migrate-from-subtree: remove unmarkered duplicate %s? [y/N] ' "$target" >&2
+        read -r answer || answer=""
+      fi
+      case "$answer" in
+        y|Y|yes|YES) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    for d in "${TO_PROMPT_SKILLS[@]:-}"; do
+      [ -n "$d" ] || continue
+      if prompt_one "$d (skill, basename-match)"; then EXTRA_REMOVE+=("$d"); fi
+    done
+    for f in "${TO_PROMPT_AGENTS[@]:-}"; do
+      [ -n "$f" ] || continue
+      if prompt_one "$f (agent, basename-match)"; then EXTRA_REMOVE+=("$f"); fi
+    done
+  fi
+
   if [ "$DRY_RUN" = true ]; then
     for d in "${TO_REMOVE_SKILLS[@]}"; do
       echo "[dry-run] would-remove (marker): $d"
@@ -219,6 +246,10 @@ if [ "$MODE" = full ]; then
     done
     for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
       rm -f "$f"
+    done
+    for x in "${EXTRA_REMOVE[@]:-}"; do
+      [ -n "$x" ] || continue
+      rm -rf "$x"
     done
     [ -d .claude-pipeline ] && rm -rf .claude-pipeline
   fi

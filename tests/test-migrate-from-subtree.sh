@@ -1025,6 +1025,58 @@ else
   fail_msg "bnm-agents: consumer-authored agent incorrectly flagged"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "interactive prompt: y deletes, n preserves" — without --assume-*, the
+# script asks the operator per candidate. "y" removes the directory; "n"
+# preserves it.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'interactive prompt: y deletes, n preserves'"
+
+PROJ_PROMPT_Y="$WORKDIR/proj-prompt-y"
+mkdir -p "$PROJ_PROMPT_Y/.claude/skills/run"
+echo "x" > "$PROJ_PROMPT_Y/.claude/skills/run/SKILL.md"
+
+PROMPT_CACHE="$WORKDIR/prompt-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$PROMPT_CACHE/skills/run"
+touch "$PROMPT_CACHE/skills/run/SKILL.md"
+
+STDERR_LOG="$WORKDIR/prompt-y.stderr"
+STDOUT_LOG="$WORKDIR/prompt-y.stdout"
+(cd "$PROJ_PROMPT_Y" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/prompt-home" \
+   bash "$MIGRATE_SH" <<<'y' >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "prompt-y: exit 0"; else fail_msg "prompt-y: exit $EXIT"; fi
+
+inc
+if [ ! -d "$PROJ_PROMPT_Y/.claude/skills/run" ]; then
+  pass_msg "prompt-y: 'y' answer removed the skill dir"
+else
+  fail_msg "prompt-y: skill dir still present after 'y' answer"
+fi
+
+PROJ_PROMPT_N="$WORKDIR/proj-prompt-n"
+mkdir -p "$PROJ_PROMPT_N/.claude/skills/run"
+echo "x" > "$PROJ_PROMPT_N/.claude/skills/run/SKILL.md"
+
+STDERR_LOG="$WORKDIR/prompt-n.stderr"
+STDOUT_LOG="$WORKDIR/prompt-n.stdout"
+(cd "$PROJ_PROMPT_N" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/prompt-home" \
+   bash "$MIGRATE_SH" <<<'n' >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "prompt-n: exit 0"; else fail_msg "prompt-n: exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_PROMPT_N/.claude/skills/run/SKILL.md" ]; then
+  pass_msg "prompt-n: 'n' answer preserved the skill"
+else
+  fail_msg "prompt-n: skill was deleted despite 'n' answer"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
