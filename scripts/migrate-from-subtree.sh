@@ -205,45 +205,39 @@ fi
 REFERENCED_BASENAMES=()
 declare -A REFERENCED_HITS=()
 if [ ${#TO_REMOVE_SCRIPTS[@]} -gt 0 ] || [ ${#TO_REMOVE_HOOKS[@]} -gt 0 ]; then
-  declare -A _scan_seen=()
-  _scan_basenames=()
-  for _p in "${TO_REMOVE_SCRIPTS[@]:-}" "${TO_REMOVE_HOOKS[@]:-}"; do
-    [ -n "$_p" ] || continue
-    _b="$(basename "$_p")"
-    [ -n "${_scan_seen[$_b]:-}" ] && continue
-    _scan_seen["$_b"]=1
-    _scan_basenames+=("$_b")
-  done
-  for _b in "${_scan_basenames[@]:-}"; do
-    [ -n "$_b" ] || continue
-    _hits="$(grep -rn -F \
-        --include='*.md' --include='*.sh' --include='*.py' --include='*.json' \
-        --exclude-dir=.git --exclude-dir=node_modules \
-        --exclude-dir=.claude-pipeline \
-        "$_b" . 2>/dev/null \
-      | grep -v '^\./\.claude/worktrees/' \
-      | grep -E "\.claude/(scripts|hooks)/" \
-      || true)"
-    [ -n "$_hits" ] || continue
-    _formatted=""
-    while IFS= read -r _line; do
-      [ -n "$_line" ] || continue
-      # Strip leading "./" from the path
-      _line="${_line#./}"
-      # Split file:lineno:rest at the first two ':' separators
-      _file="${_line%%:*}"
-      _rest="${_line#*:}"
-      _lineno="${_rest%%:*}"
-      _snippet="${_rest#*:}"
-      # Truncate snippet to 160 bytes for readability
-      if [ "${#_snippet}" -gt 160 ]; then
-        _snippet="${_snippet:0:160}..."
-      fi
-      _formatted+="  ${_file}:${_lineno} — ${_snippet}"$'\n'
-    done <<<"$_hits"
-    REFERENCED_HITS["$_b"]="$_formatted"
-    REFERENCED_BASENAMES+=("$_b")
-  done
+  # Delegate to scan-preservation-refs.sh — the single source of truth for
+  # "which references hold which preserved file" (shared with doctor's
+  # preservation_refs check). Filter the helper's REF rows down to basenames
+  # in TO_REMOVE_*; preserve behavioral parity with the prior inline scan
+  # (any REF row, regardless of bucket, marks the basename as referenced).
+  _scan_out="$(bash "$SCRIPT_DIR/scan-preservation-refs.sh" 2>/dev/null || true)"
+  if [ -n "$_scan_out" ]; then
+    declare -A _hits_by_bn=()
+    declare -A _hits_seen=()
+    while IFS=$'\t' read -r _type _path _ref _bucket _snippet; do
+      [ "$_type" = "REF" ] || continue
+      _b="$(basename "$_path")"
+      _in_removal=false
+      for _q in "${TO_REMOVE_SCRIPTS[@]:-}" "${TO_REMOVE_HOOKS[@]:-}"; do
+        [ -n "${_q:-}" ] || continue
+        if [ "$(basename "$_q")" = "$_b" ]; then
+          _in_removal=true
+          break
+        fi
+      done
+      [ "$_in_removal" = true ] || continue
+      _ref_file="${_ref%:*}"
+      _lineno="${_ref##*:}"
+      _dedup_key="${_b}|${_ref_file}:${_lineno}"
+      [ -n "${_hits_seen[$_dedup_key]:-}" ] && continue
+      _hits_seen["$_dedup_key"]=1
+      _hits_by_bn["$_b"]+="  ${_ref_file}:${_lineno} — ${_snippet}"$'\n'
+    done <<<"$_scan_out"
+    for _b in "${!_hits_by_bn[@]}"; do
+      REFERENCED_HITS["$_b"]="${_hits_by_bn[$_b]}"
+      REFERENCED_BASENAMES+=("$_b")
+    done
+  fi
   if [ ${#REFERENCED_BASENAMES[@]} -gt 0 ]; then
     for _b in "${REFERENCED_BASENAMES[@]}"; do
       # Use .claude/scripts/ form in the heading when the basename appeared in

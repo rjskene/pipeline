@@ -38,6 +38,7 @@ Report the full stdout (CHECK lines + summary table) to the user. If the exit co
 - `settings_residual` — scans .claude/settings.json for pipeline-owned hook entries and annotates each with a capability-impact note (sourced from scripts/_advisory-text.sh). Warns "jq required" if jq is missing. Warn-not-fail otherwise.
 - `skill_files_residual` — enumerates files under consumer .claude/{skills,hooks,scripts,agents}/ whose basename collides with a plugin-shipped file, distinguishing duplicates from consumer-owned. Critical FAIL if any duplicate contains a hardcoded <owner>/<repo> reference that does not match $PIPELINE_REPO (stale legacy install).
 - `consumer_drift` — per-file drift classification for consumer `.claude/{scripts,hooks,agents}/` (see `## consumer_drift check` below).
+- `preservation_refs` — for every consumer `.claude/{scripts,hooks}/` file with a plugin-shipped counterpart, lists each reference holding it in place and emits a `DELETE` / `KEEP` verdict (see `## preservation_refs check` below).
 - `base_branch_local` — local branch named `$PIPELINE_BASE_BRANCH` exists (warn if it has no upstream).
 
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — the same helper is sourced by `migrate-from-subtree.sh`, so the wording in doctor's warnings matches the wording in the migration tool's advisories.
@@ -66,6 +67,41 @@ The shared `scripts/_advisory-text.sh` helper is the single source of truth for 
 **Worked example.** On a real consumer install (`rjskene/bomon-train`) the manual classification surfaced ~20 preserved files: 7 × A (safe to delete), 4 × B (one of which was a `B.bug` because `enforce-path-c-delegation.py` hardcoded the wrong `PIPELINE_REPO`), 1 × C (plugin had dropped a `--runs` mode), 6 × D (dogfood-only hooks), 2 × E (subtree-drift scripts), with the rest F (project-specific autoresearch hooks). ~9 of 20 were safely deletable; 1 was an active bug masked by silent preservation.
 
 This check is intentionally **textual-diff-only** — no behavioral comparison. Interactive remediation (`--fix drift`) is out of scope; surface findings via the summary table and let humans decide.
+
+## preservation_refs check
+
+`consumer_drift` flags **drift** of duplicates; `preservation_refs` answers a different question: **why is each duplicate still here, and should the consumer delete it?** For every consumer `.claude/{scripts,hooks}/` file whose basename collides with a plugin-shipped file, the check delegates to `scripts/scan-preservation-refs.sh` (the same helper `migrate-from-subtree.sh --keep-referenced` uses) and emits one per-file block.
+
+Worked example:
+
+```
+.claude/hooks/enforce-path-c-delegation.py
+  References:
+    - .claude/settings.json:29  → live hook entry in .claude/settings.json; deletion breaks the hook chain (active-wiring)
+    - .claude/settings.json:38  → live hook entry in .claude/settings.json; deletion breaks the hook chain (active-wiring)
+  Verdict: KEEP — active wiring — rewire settings then delete
+```
+
+**Reference-source buckets** (six total, classified per hit; copy from `scripts/_advisory-text.sh::advisory_for_ref_source`):
+
+| Bucket | Definition | Verdict mapping |
+|--------|-----------|-----------------|
+| `active-wiring`      | Reference in `.claude/settings.json`; the file is wired into a live hook chain. | KEEP |
+| `falls-away`         | Reference in `.claude/skills/<name>/SKILL.md` AND `<name>` is plugin-shipped (the migration removes the skill, so the ref disappears). | DELETE (when this is the only kind of holding ref) |
+| `consumer-skill-ref` | Reference in `.claude/skills/<name>/SKILL.md` AND `<name>` is consumer-authored (the migration does NOT remove the skill). | KEEP |
+| `self-only`          | Reference is inside the file itself (a usage string or docstring); no external consumer. | DELETE (when this is the only kind of holding ref) |
+| `fork`               | Reference in `.claude/settings.json` AND the file's `consumer_drift` bucket is `C` (consumer maintains a divergent copy). | KEEP |
+| `doc-ref`            | Reference in any other `.md` / `.txt` source — `CLAUDE.md`, `README.md`, `dev/audits/*.md`, etc. | KEEP (resolve manually post-migration) |
+
+**Verdict rule.**
+- **DELETE** when every reference is in `{self-only, falls-away}` OR no references found.
+- **KEEP** when at least one reference is in `{active-wiring, fork, consumer-skill-ref, doc-ref}`. An inline hint after the verdict conveys the dominant classification — decorative, not structured.
+
+**Doctor stays read-only.** No `--fix preservation-refs` mode. Acting on the report — deleting `DELETE` rows, rewiring `settings.json` then deleting on `KEEP/active-wiring` rows — is a human (or downstream agent) decision.
+
+**Status mapping.** `preservation_refs` records `pass` when zero files are enumerated OR every verdict is `DELETE`. It records `warn` only when at least one verdict is `KEEP` — i.e. there is something the consumer might need to act on. The check never escalates to `fail`; the only fail-grade signal in this domain is `consumer_drift::B.bug`.
+
+**Cache + plugin-skill match.** `scan-preservation-refs.sh` calls `diff-consumer-files.sh` exactly once at start and caches the per-path bucket so settings.json hits resolve to `active-wiring` vs `fork` without re-running the classifier. The `falls-away` vs `consumer-skill-ref` distinction requires `${CLAUDE_PLUGIN_ROOT}/skills/<name>/` to exist (basename match against the plugin's shipped skill set). When `CLAUDE_PLUGIN_ROOT` is unresolved, every SKILL.md ref defaults to `consumer-skill-ref` — conservatively correct, but the report will under-report safe-to-delete cases.
 
 ## Mutating actions
 

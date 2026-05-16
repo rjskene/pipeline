@@ -59,3 +59,19 @@ list_pipeline_hook_basenames() {
     printf "%s\n" "$k"
   done
 }
+
+# Per-bucket annotation copy for the six reference-source buckets emitted by
+# scripts/scan-preservation-refs.sh. Doctor's preservation_refs check uses
+# these to annotate REF rows so the operator can see, per hit, why the file
+# is still being preserved.
+advisory_for_ref_source() {
+  case "${1:-}" in
+    active-wiring)      printf "%s\n" "live hook entry in .claude/settings.json; deletion breaks the hook chain";;
+    falls-away)         printf "%s\n" "referenced only from a plugin-shipped SKILL.md slated for removal in this migration";;
+    consumer-skill-ref) printf "%s\n" "held by consumer-authored skill; resolve manually";;
+    self-only)          printf "%s\n" "referenced only from inside the file itself (--keep-referenced false-positive)";;
+    fork)               printf "%s\n" "intentional consumer-maintained fork; plugin no longer ships an equivalent";;
+    doc-ref)            printf "%s\n" "documentation reference; resolve manually post-migration";;
+    *)                  return 1;;
+  esac
+}

@@ -45,3 +45,14 @@ scripts/prune-checkpoints.sh
 # .claude/skills/*/.pipeline-managed as a STRING to detect it on consumer
 # machines — references are inherent to the check's purpose (issue #144).
 scripts/doctor.sh
+
+# preservation_refs helper scans consumer .claude/{scripts,hooks}/ files and
+# classifies references found in .claude/settings.json or .claude/skills/*/
+# SKILL.md — every .claude/... literal here is a path pattern used by the
+# scanner, never a write target (issue #193).
+scripts/scan-preservation-refs.sh
+
+# advisory_for_ref_source returns annotation copy for preservation_refs
+# buckets; the active-wiring string mentions .claude/settings.json by name so
+# the operator knows which file holds the wiring (issue #193).
+scripts/_advisory-text.sh
