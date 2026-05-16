@@ -16,6 +16,20 @@ shopt -s nullglob
 PROJECT_ROOT="$(pwd)"
 cd "$PROJECT_ROOT"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/_advisory-text.sh"
+
+MODE=full
+case "${1:-}" in
+  --patch)
+    if [ "${2:-}" = "settings" ]; then
+      MODE=patch_settings
+      shift 2
+    fi
+    ;;
+esac
+
 # --- Detection phase: build removal arrays without mutating anything ---
 
 TO_REMOVE_SKILLS=()
@@ -86,25 +100,27 @@ fi
 
 # --- Validation phase ---
 
-if [ ! -d .claude-pipeline ] \
-   && [ ${#TO_REMOVE_SKILLS[@]} -eq 0 ] \
-   && [ ${#TO_REMOVE_AGENTS[@]} -eq 0 ] \
-   && [ ${#TO_REMOVE_SCRIPTS[@]} -eq 0 ] \
-   && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ] \
-   && [ "$SETTINGS_HAS_INJECTIONS" = false ]; then
-  echo "migrate-from-subtree: nothing to migrate." >&2
-  exit 0
+if [ "$MODE" = full ]; then
+  if [ ! -d .claude-pipeline ] \
+     && [ ${#TO_REMOVE_SKILLS[@]} -eq 0 ] \
+     && [ ${#TO_REMOVE_AGENTS[@]} -eq 0 ] \
+     && [ ${#TO_REMOVE_SCRIPTS[@]} -eq 0 ] \
+     && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ] \
+     && [ "$SETTINGS_HAS_INJECTIONS" = false ]; then
+    echo "migrate-from-subtree: nothing to migrate." >&2
+    exit 0
+  fi
+
+  # --- Mutation phase ---
+
+  for d in "${TO_REMOVE_SKILLS[@]}"; do
+    rm -rf "$d"
+  done
+  for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
+    rm -f "$f"
+  done
+  [ -d .claude-pipeline ] && rm -rf .claude-pipeline
 fi
-
-# --- Mutation phase ---
-
-for d in "${TO_REMOVE_SKILLS[@]}"; do
-  rm -rf "$d"
-done
-for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
-  rm -f "$f"
-done
-[ -d .claude-pipeline ] && rm -rf .claude-pipeline
 
 # --- Settings.json injection report (advisory only; never mutates) ---
 
@@ -118,7 +134,22 @@ if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
     for line in "${!SETTINGS_MATCH_LINES[@]}"; do
       printf '%s\n' "$line"
     done | sort -t: -k1,1n
-    printf '\n%s\n' "Review and remove these entries manually."
+    printf '\n'
+    # Per-basename advisory annotations, sourced from _advisory-text.sh.
+    # Iterate the canonical basename list (NOT PIPELINE_HOOK_NAMES, which is
+    # empty when .claude-pipeline/ has already been removed); annotate only
+    # those basenames that appear in at least one SETTINGS_MATCH_LINES key.
+    while IFS= read -r __b; do
+      [ -z "$__b" ] && continue
+      __matched=false
+      for __line in "${!SETTINGS_MATCH_LINES[@]}"; do
+        case "$__line" in *"$__b"*) __matched=true; break;; esac
+      done
+      if [ "$__matched" = true ]; then
+        printf '  - .claude/hooks/%s\n' "$__b"
+        printf '      %s\n' "$(advisory_for_hook "$__b")"
+      fi
+    done < <(list_pipeline_hook_basenames)
   } > "$SETTINGS_REPORT"
   echo "Pipeline-injected entries detected in settings.json — see report."
 
@@ -224,9 +255,12 @@ if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
   fi
 fi
 
+if [ "$MODE" = patch_settings ]; then
+  exit 0
+fi
+
 # --- CLAUDE.md cleanup (advisory only; never edits source files) ---
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/migration-cleanup-claudemd.sh" ]; then
   bash "$SCRIPT_DIR/migration-cleanup-claudemd.sh" || \
     echo "[migrate-from-subtree] WARN: claudemd cleanup helper failed (advisory only)" >&2
