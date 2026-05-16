@@ -20,24 +20,23 @@ fi
 SHORT_SHA="$(git rev-parse --short=8 "$SHA" 2>/dev/null || echo "${SHA:0:8}")"
 
 # ---------------------------------------------------------------------------
-# Idempotency guard: check FIRST, before any state mutation. If staging
-# already contains the cherry-pick -x trailer for this SHA, exit 0 fast.
-# Probe both origin/staging (after a fresh fetch) and local staging — fetch
-# can silently fall through on some CI runners, leaving the remote-tracking
-# ref stale even though the push from the prior run landed in origin.
+# Idempotency guard: if $SHA is already an ancestor of staging (or
+# origin/staging), the back-sync already landed. This works for both FF
+# (staging IS $SHA) and real-merge (staging is a descendant of $SHA via a
+# back-sync merge commit). It is also robust against subsequent commits
+# landing on staging AFTER a successful back-sync.
 # ---------------------------------------------------------------------------
 # Force-update the remote-tracking ref. `git fetch origin staging` (refspec
 # without a colon) only writes FETCH_HEAD on older gits; the explicit refspec
 # below writes refs/remotes/origin/staging unconditionally.
 git fetch -q origin "+refs/heads/staging:refs/remotes/origin/staging" 2>/dev/null \
   || git fetch -q origin || true
-TRAILER="(cherry picked from commit $SHA)"
-_synced() {
-  local REF="$1"
-  git log "$REF" --format=%B 2>/dev/null | grep -qF "$TRAILER"
+git fetch -q origin "$SHA" 2>/dev/null || true
+_is_ancestor() {
+  git merge-base --is-ancestor "$SHA" "$1" 2>/dev/null
 }
-if _synced "origin/staging" || _synced "staging" || _synced "refs/remotes/origin/staging"; then
-  echo "already synced: $SHA is present on staging"
+if _is_ancestor "origin/staging" || _is_ancestor "refs/heads/staging" || _is_ancestor "refs/remotes/origin/staging"; then
+  echo "already synced: $SHA is already an ancestor of staging"
   exit 0
 fi
 
