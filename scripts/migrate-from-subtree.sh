@@ -21,14 +21,37 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/_advisory-text.sh"
 
 MODE=full
-case "${1:-}" in
-  --patch)
-    if [ "${2:-}" = "settings" ]; then
-      MODE=patch_settings
-      shift 2
-    fi
-    ;;
-esac
+DRY_RUN=false
+ASSUME=""   # ""|yes|no — overrides interactive prompt when set
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --patch)
+      if [ "${2:-}" = "settings" ]; then
+        MODE=patch_settings
+        shift 2
+        continue
+      fi
+      echo "migrate-from-subtree: --patch requires 'settings' argument" >&2
+      exit 2
+      ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --assume-yes) ASSUME=yes; shift ;;
+    --assume-no)  ASSUME=no;  shift ;;
+    --help|-h)
+      cat <<'USAGE'
+Usage: migrate-from-subtree.sh [--dry-run] [--assume-yes|--assume-no] [--patch settings]
+  --dry-run        Print what would be deleted and why; no filesystem mutations.
+  --assume-yes     Auto-answer "y" to every interactive prompt (CI/scripted use).
+  --assume-no      Auto-answer "n" to every interactive prompt (preserve everything).
+USAGE
+      exit 0
+      ;;
+    *)
+      echo "migrate-from-subtree: unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 # --- Plugin-root self-resolve (defensive fallback for #174) ---
 # When CLAUDE_PLUGIN_ROOT is not exported into the Bash subshell, fall back to
@@ -131,13 +154,23 @@ if [ "$MODE" = full ]; then
 
   # --- Mutation phase ---
 
-  for d in "${TO_REMOVE_SKILLS[@]}"; do
-    rm -rf "$d"
-  done
-  for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
-    rm -f "$f"
-  done
-  [ -d .claude-pipeline ] && rm -rf .claude-pipeline
+  if [ "$DRY_RUN" = true ]; then
+    for d in "${TO_REMOVE_SKILLS[@]}"; do
+      echo "[dry-run] would-remove (marker): $d"
+    done
+    for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
+      echo "[dry-run] would-remove (marker): $f"
+    done
+    [ -d .claude-pipeline ] && echo "[dry-run] would-remove (manifest): .claude-pipeline/"
+  else
+    for d in "${TO_REMOVE_SKILLS[@]}"; do
+      rm -rf "$d"
+    done
+    for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
+      rm -f "$f"
+    done
+    [ -d .claude-pipeline ] && rm -rf .claude-pipeline
+  fi
 fi
 
 # --- Settings.json injection report (advisory only; never mutates) ---

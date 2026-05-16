@@ -867,6 +867,61 @@ else
   fail_msg "resolve: consumer skill was deleted"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "argv flags": --dry-run / --assume-yes / --assume-no are accepted and
+# do not error out the script. --dry-run must not delete anything that a
+# normal run would delete.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'argv flags: --dry-run / --assume-yes / --assume-no accepted'"
+
+PROJ_FLAGS="$WORKDIR/proj-flags"
+mkdir -p "$PROJ_FLAGS/.claude/agents"
+echo "managed agent" > "$PROJ_FLAGS/.claude/agents/tdd-implementer.md"
+touch "$PROJ_FLAGS/.claude/agents/.tdd-implementer.pipeline-managed"
+
+# Snapshot for --dry-run preservation assertion
+cp -r "$PROJ_FLAGS" "$WORKDIR/proj-flags-snap"
+
+STDERR_LOG="$WORKDIR/flags.stderr"
+STDOUT_LOG="$WORKDIR/flags.stdout"
+(cd "$PROJ_FLAGS" && bash "$MIGRATE_SH" --dry-run >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "flags: --dry-run exit 0"; else fail_msg "flags: --dry-run exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_FLAGS/.claude/agents/tdd-implementer.md" ] && \
+   [ -f "$PROJ_FLAGS/.claude/agents/.tdd-implementer.pipeline-managed" ]; then
+  pass_msg "flags: --dry-run did not mutate filesystem"
+else
+  fail_msg "flags: --dry-run unexpectedly deleted managed agent or marker"
+fi
+
+# --assume-yes (no basename-match candidates here; just argv acceptance)
+PROJ_AY_NOOP="$WORKDIR/proj-ay-noop"
+mkdir -p "$PROJ_AY_NOOP"
+(cd "$PROJ_AY_NOOP" && bash "$MIGRATE_SH" --assume-yes >/dev/null 2>"$WORKDIR/ay-noop.stderr")
+EXIT=$?
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "flags: --assume-yes exit 0"; else fail_msg "flags: --assume-yes exit $EXIT"; fi
+
+# --assume-no
+PROJ_AN_NOOP="$WORKDIR/proj-an-noop"
+mkdir -p "$PROJ_AN_NOOP"
+(cd "$PROJ_AN_NOOP" && bash "$MIGRATE_SH" --assume-no >/dev/null 2>"$WORKDIR/an-noop.stderr")
+EXIT=$?
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "flags: --assume-no exit 0"; else fail_msg "flags: --assume-no exit $EXIT"; fi
+
+# Unknown flag should exit non-zero
+PROJ_BAD="$WORKDIR/proj-bad"
+mkdir -p "$PROJ_BAD"
+(cd "$PROJ_BAD" && bash "$MIGRATE_SH" --no-such-flag >/dev/null 2>"$WORKDIR/bad.stderr") && EXIT=0 || EXIT=$?
+inc
+if [ "$EXIT" -ne 0 ]; then pass_msg "flags: unknown flag rejected (exit $EXIT)"; else fail_msg "flags: unknown flag accepted"; fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
