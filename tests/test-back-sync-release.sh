@@ -80,7 +80,7 @@ GIT
 }
 
 # ---------------------------------------------------------------------------
-# Group 2: clean cherry-pick path
+# Group 2: clean fast-forward path
 # ---------------------------------------------------------------------------
 TMP=$(mktemp -d)
 trap "rm -rf '$TMP'" EXIT
@@ -93,16 +93,18 @@ if [ -x "$SCRIPT" ]; then
   (
     cd "$FIX"
     SHA=$(git rev-parse main)
+    echo "$SHA" > "$TMP/clean.main-sha"
     export SHIM_DIR="$SHIM"
     PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/clean.out" 2>&1
     echo "$?" > "$TMP/clean.rc"
     git fetch -q origin staging 2>/dev/null || true
     git log staging --grep "release 0.0.0-test" --oneline > "$TMP/clean.staging-log"
+    git rev-parse staging > "$TMP/clean.staging-sha"
   )
   assert "clean: script exits 0" "[ \"\$(cat '$TMP/clean.rc')\" = '0' ]"
-  assert "clean: release commit cherry-picked onto staging" "[ -s '$TMP/clean.staging-log' ]"
+  assert "clean: release commit's TREE is present on staging via merge or FF" "[ -s '$TMP/clean.staging-log' ]"
   assert "clean: no draft PR opened (gh shim not invoked for pr create)" "! grep -q 'pr create' '$SHIM/gh.log'"
-  assert "clean: cherry-pick uses -x trailer for idempotency" "(cd '$FIX' && git log staging --format=%B | grep -qE '^\\(cherry picked from commit ')"
+  assert "clean: staging fast-forwarded to the release SHA" "[ \"\$(cat '$TMP/clean.staging-sha')\" = \"\$(cat '$TMP/clean.main-sha')\" ]"
   assert "clean: 'git push origin staging' was invoked" "grep -qE 'push.*origin.*staging' '$SHIM/git-push.log'"
 
   # -----------------------------------------------------------------------
@@ -120,10 +122,30 @@ if [ -x "$SCRIPT" ]; then
   assert "idempotent: re-run exits 0" "[ \"\$(cat '$TMP/idem.rc')\" = '0' ]"
   assert "idempotent: re-run reports 'already synced'" "grep -qi 'already synced' '$TMP/idem.out'"
   assert "idempotent: re-run did NOT invoke git push" "! grep -qE 'push' '$SHIM/git-push.log'"
+
+  # -----------------------------------------------------------------------
+  # Group 4b: re-run with staging ahead of $SHA is also a no-op
+  # -----------------------------------------------------------------------
+  : > "$SHIM/gh.log"
+  : > "$SHIM/git-push.log"
+  (
+    cd "$FIX"
+    git checkout -q staging
+    git pull -q --ff-only origin staging 2>/dev/null || true
+    echo "staging-ahead" > NEW_FILE.md
+    git add NEW_FILE.md
+    git commit -q -m "chore: staging-ahead change after back-sync"
+    git push -q origin staging
+    SHA=$(cat "$TMP/clean.main-sha")
+    export SHIM_DIR="$SHIM"
+    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/idem-ahead.out" 2>&1
+    echo "$?" > "$TMP/idem-ahead.rc"
+  )
+  assert "idempotent: re-run with staging ahead of \$SHA is also a no-op" "[ \"\$(cat '$TMP/idem-ahead.rc')\" = '0' ] && grep -qi 'already synced' '$TMP/idem-ahead.out' && ! grep -qE 'push' '$SHIM/git-push.log'"
 fi
 
 # ---------------------------------------------------------------------------
-# Group 3: conflict path
+# Group 3: true conflict (delete/modify) -> draft PR fallback
 # ---------------------------------------------------------------------------
 if [ -x "$SCRIPT" ]; then
   FIX="$TMP/conflict"
@@ -132,11 +154,12 @@ if [ -x "$SCRIPT" ]; then
   install_shims "$SHIM"
   (
     cd "$FIX"
-    # Pre-stage a conflicting edit on staging to CHANGELOG.md
+    # Pre-stage staging by deleting the same file the release commit modifies.
+    # delete/modify conflicts cannot be auto-resolved by -X ours, so the helper
+    # must fall through to the draft-PR fallback.
     git checkout -q staging
-    echo "staging-local-change" > CHANGELOG.md
-    git add CHANGELOG.md
-    git commit -q -m "chore: staging-local edit that conflicts"
+    git rm -q CHANGELOG.md
+    git commit -q -m "staging: delete file release-please will touch"
     git push -q origin staging
     git checkout -q main
     SHA=$(git rev-parse main)
@@ -144,11 +167,51 @@ if [ -x "$SCRIPT" ]; then
     PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/conflict.out" 2>&1
     echo "$?" > "$TMP/conflict.rc"
   )
-  assert "conflict: script still exits 0 (fail-soft)" "[ \"\$(cat '$TMP/conflict.rc')\" = '0' ]"
+  assert "conflict: script exits 0 (fail-soft)" "[ \"\$(cat '$TMP/conflict.rc')\" = '0' ]"
   assert "conflict: did NOT push directly to origin staging" "! grep -qE 'push.*origin.*staging( |\$)' '$SHIM/git-push.log' || grep -qE 'release-back-sync/' '$SHIM/git-push.log'"
   assert "conflict: opened a draft PR via gh pr create" "grep -qE 'pr create.*--draft' '$SHIM/gh.log'"
   assert "conflict: draft PR base is staging" "grep -qE 'pr create.*--base staging' '$SHIM/gh.log'"
   assert "conflict: branch name uses release-back-sync/ prefix" "grep -qE 'release-back-sync/' '$SHIM/gh.log'"
+fi
+
+# ---------------------------------------------------------------------------
+# Group 6: -X ours real-merge path (overlapping files, staging wins)
+# ---------------------------------------------------------------------------
+if [ -x "$SCRIPT" ]; then
+  FIX="$TMP/xours"
+  make_fixture "$FIX"
+  SHIM="$TMP/shim-xours"
+  install_shims "$SHIM"
+  (
+    cd "$FIX"
+    # Pre-stage staging with a newer edit to CHANGELOG.md (the same file the
+    # release commit touched on main) so FF is not possible and the merge has
+    # a real overlapping file conflict.
+    git checkout -q staging
+    echo "staging-newer" > CHANGELOG.md
+    git add CHANGELOG.md
+    git commit -q -m "chore: staging-ahead change on shared file"
+    git push -q origin staging
+    git checkout -q main
+    SHA=$(git rev-parse main)
+    echo "$SHA" > "$TMP/xours.main-sha"
+    export SHIM_DIR="$SHIM"
+    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/xours.out" 2>&1
+    echo "$?" > "$TMP/xours.rc"
+    git fetch -q origin staging 2>/dev/null || true
+    git checkout -q staging
+    git pull -q --ff-only origin staging 2>/dev/null || true
+    cat CHANGELOG.md > "$TMP/xours.changelog"
+    git rev-parse staging > "$TMP/xours.staging-sha"
+    git log -1 staging --format=%P > "$TMP/xours.parents"
+    git log -1 staging --format=%s > "$TMP/xours.subject"
+  )
+  assert "xours: script exits 0" "[ \"\$(cat '$TMP/xours.rc')\" = '0' ]"
+  assert "xours: staging-version of CHANGELOG.md wins (content is 'staging-newer')" "[ \"\$(cat '$TMP/xours.changelog')\" = 'staging-newer' ]"
+  assert "xours: a merge commit was created (not FF)" "[ \"\$(cat '$TMP/xours.staging-sha')\" != \"\$(cat '$TMP/xours.main-sha')\" ] && [ \"\$(wc -w < '$TMP/xours.parents')\" = '2' ]"
+  assert "xours: merge commit subject starts with 'chore(back-sync):'" "grep -qE '^chore\\(back-sync\\):' '$TMP/xours.subject'"
+  assert "xours: 'git push origin staging' was invoked" "grep -qE 'push.*origin.*staging' '$SHIM/git-push.log'"
+  assert "xours: NO draft PR opened" "! grep -q 'pr create' '$SHIM/gh.log'"
 fi
 
 # ---------------------------------------------------------------------------
