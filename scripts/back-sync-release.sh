@@ -48,11 +48,11 @@ git checkout -B staging "origin/staging" 2>/dev/null || git checkout staging
 git fetch -q origin "$SHA" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Clean path: plain cherry-pick -x, push to origin/staging.
+# Clean path: fast-forward staging to the release SHA, push to origin/staging.
 # ---------------------------------------------------------------------------
-if git cherry-pick -x "$SHA"; then
+if git merge --ff-only "$SHA"; then
   git push origin staging
-  echo "back-sync: cherry-picked $SHA onto staging"
+  echo "back-sync: fast-forwarded staging to $SHA"
   exit 0
 fi
 
