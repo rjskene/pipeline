@@ -198,6 +198,37 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# Check: claude_md_residual — delegate to the migration-cleanup-claudemd scanner;
+# parse its report file to surface findings as a warn (never a fail).
+# --------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCANNER="$SCRIPT_DIR/migration-cleanup-claudemd.sh"
+if [ ! -f "$SCANNER" ]; then
+  record claude_md_residual warn "migration-cleanup-claudemd.sh not found at $SCANNER"
+else
+  bash "$SCANNER" >/dev/null 2>&1 || true
+  CMD_REPORT=".claude/migration-cleanup-report-claudemd.txt"
+  if [ ! -s "$CMD_REPORT" ]; then
+    record claude_md_residual pass "no residual pipeline state in CLAUDE.md"
+  else
+    # Count findings: non-empty content lines that look like a finding row.
+    # Finding rows are either "<path>:<lineno>:..." entries (paths/cmds passes)
+    # or 4-space-indented corroboration lines under section headers.
+    finding_count=$(awk '
+      /^CLAUDE\.md pipeline-legacy/ { next }
+      /^Section headers$/ || /^Legacy paths$/ || /^Deprecated slash commands$/ { next }
+      /^-+$/ { next }
+      /^[[:space:]]*$/ { next }
+      /^  corroborated by:$/ { next }
+      /^[^[:space:]].*:[0-9]+:/ { count++; next }
+      /^    .+/ { count++; next }
+      END { print count + 0 }
+    ' "$CMD_REPORT")
+    record claude_md_residual warn "$finding_count residual reference(s) in CLAUDE.md (see .claude/migration-cleanup-report-claudemd.txt)"
+  fi
+fi
+
+# --------------------------------------------------------------------------
 # Check: base_branch_local — local branch exists; warn if no upstream tracking.
 # --------------------------------------------------------------------------
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
