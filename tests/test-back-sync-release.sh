@@ -154,6 +154,46 @@ if [ -x "$SCRIPT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Group 6: -X ours real-merge path (overlapping files, staging wins)
+# ---------------------------------------------------------------------------
+if [ -x "$SCRIPT" ]; then
+  FIX="$TMP/xours"
+  make_fixture "$FIX"
+  SHIM="$TMP/shim-xours"
+  install_shims "$SHIM"
+  (
+    cd "$FIX"
+    # Pre-stage staging with a newer edit to CHANGELOG.md (the same file the
+    # release commit touched on main) so FF is not possible and the merge has
+    # a real overlapping file conflict.
+    git checkout -q staging
+    echo "staging-newer" > CHANGELOG.md
+    git add CHANGELOG.md
+    git commit -q -m "chore: staging-ahead change on shared file"
+    git push -q origin staging
+    git checkout -q main
+    SHA=$(git rev-parse main)
+    echo "$SHA" > "$TMP/xours.main-sha"
+    export SHIM_DIR="$SHIM"
+    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/xours.out" 2>&1
+    echo "$?" > "$TMP/xours.rc"
+    git fetch -q origin staging 2>/dev/null || true
+    git checkout -q staging
+    git pull -q --ff-only origin staging 2>/dev/null || true
+    cat CHANGELOG.md > "$TMP/xours.changelog"
+    git rev-parse staging > "$TMP/xours.staging-sha"
+    git log -1 staging --format=%P > "$TMP/xours.parents"
+    git log -1 staging --format=%s > "$TMP/xours.subject"
+  )
+  assert "xours: script exits 0" "[ \"\$(cat '$TMP/xours.rc')\" = '0' ]"
+  assert "xours: staging-version of CHANGELOG.md wins (content is 'staging-newer')" "[ \"\$(cat '$TMP/xours.changelog')\" = 'staging-newer' ]"
+  assert "xours: a merge commit was created (not FF)" "[ \"\$(cat '$TMP/xours.staging-sha')\" != \"\$(cat '$TMP/xours.main-sha')\" ] && [ \"\$(wc -w < '$TMP/xours.parents')\" = '2' ]"
+  assert "xours: merge commit subject starts with 'chore(back-sync):'" "grep -qE '^chore\\(back-sync\\):' '$TMP/xours.subject'"
+  assert "xours: 'git push origin staging' was invoked" "grep -qE 'push.*origin.*staging' '$SHIM/git-push.log'"
+  assert "xours: NO draft PR opened" "! grep -q 'pr create' '$SHIM/gh.log'"
+fi
+
+# ---------------------------------------------------------------------------
 # Group 5: workflow YAML
 # ---------------------------------------------------------------------------
 assert "workflow file exists" "[ -f '$WORKFLOW' ]"
