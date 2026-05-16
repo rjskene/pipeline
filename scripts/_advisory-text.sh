@@ -38,6 +38,21 @@ advisory_for_hook() {
   return 1
 }
 
+# Per-bucket recommendation copy surfaced by doctor's consumer_drift summary
+# table. Keep wording short — the SKILL.md taxonomy table carries the long form.
+advisory_for_bucket() {
+  case "${1:-}" in
+    A)     printf "%s\n" "delete-local: byte-identical to plugin counterpart, safe to remove";;
+    B)     printf "%s\n" "delete-local: plugin counterpart reads pipeline.config, local does not";;
+    B.bug) printf "%s\n" "fail-active-bug: hardcoded literal in local disagrees with pipeline.config";;
+    C)     printf "%s\n" "leave-flag-as-fork: local has functionality plugin no longer ships";;
+    D)     printf "%s\n" "no-op: plugin-author dogfood only, not part of published manifest";;
+    E)     printf "%s\n" "delete-local: retired tooling from a prior plugin version";;
+    F)     printf "%s\n" "no-op: genuine consumer-owned file, no plugin counterpart";;
+    *)     return 1;;
+  esac
+}
+
 list_pipeline_hook_basenames() {
   local k
   for k in "${!__ADVISORY_TABLE[@]}"; do
