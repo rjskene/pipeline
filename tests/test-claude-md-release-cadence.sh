@@ -11,7 +11,7 @@ assert "mentions release-please" "grep -qiE 'release-please' '$DOC'"
 assert "documents auto Release PR on push to main" "grep -qE 'Release PR.*main|main.*Release PR' '$DOC'"
 assert "documents plugin reload note retained" "grep -qE '/plugin (un)?install pipeline@claude-pipeline' '$DOC'"
 assert "describes staging as dev trunk" "grep -qiE 'staging[^\\n]*dev trunk|dev trunk[^\\n]*staging' '$DOC'"
-assert "mentions cherry-pick back-sync to staging" "grep -qiE 'cherry-pick.*staging|cherry-pick' '$DOC'"
+assert "mentions merge-based back-sync to staging" "grep -qiE 'merges the release commit onto staging' '$DOC'"
 assert "Branches section mentions staging" "grep -qE '\`staging\`' '$DOC'"
 assert "Branches section mentions main" "grep -qE '\`main\`' '$DOC'"
 

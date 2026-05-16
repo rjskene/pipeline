@@ -1,13 +1,18 @@
 #!/bin/bash
-# Cherry-picks a release-please release commit from main onto staging.
+# Merges a release-please release commit from main onto staging.
 #
 # Usage: scripts/back-sync-release.sh <release-sha>
 #
-# Clean path:    git cherry-pick -x <sha>  &&  git push origin staging
-# Conflict path: opens a draft PR release-back-sync/<short-sha> against staging
+# Clean path:    git merge --ff-only <sha>          &&  git push origin staging
+# Overlap path:  git merge -X ours -m "chore(back-sync): ..." <sha>
+#                                                   &&  git push origin staging
+#                (staging is "ours" because the workflow checks out staging;
+#                 staging is strictly newer for any file already shipped to main.)
+# Conflict path: true delete/modify conflicts (which -X ours cannot resolve)
+#                open a draft PR release-back-sync/<short-sha> against staging
 #                with conflict markers preserved for human resolution.
-# Idempotent:    detects (cherry picked from commit <sha>) trailer on staging
-#                and returns early with "already synced".
+# Idempotent:    if <sha> is already an ancestor of staging, returns early
+#                with "already synced".
 
 set -uo pipefail
 
