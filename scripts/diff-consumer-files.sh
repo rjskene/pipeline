@@ -17,6 +17,14 @@
 
 set -uo pipefail
 
+# Source pipeline.config (if present) so PIPELINE_REPO / PIPELINE_WORKTREE_PREFIX
+# / PIPELINE_TMUX_SESSION are available to the B.bug runtime-mismatch check.
+# Missing config is non-fatal — buckets that don't need it still classify.
+if [ -f ./pipeline.config ]; then
+  # shellcheck disable=SC1091
+  source ./pipeline.config 2>/dev/null || true
+fi
+
 plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$plugin_root" ] || [ ! -d "$plugin_root" ]; then
   echo "diff-consumer-files: CLAUDE_PLUGIN_ROOT empty or not a directory" >&2
@@ -76,6 +84,22 @@ for sub in scripts hooks agents; do
         if [ "$plugin_reads_config" = "1" ] && [ "$local_reads_config" = "0" ]; then
           bucket="B"
           action="delete-local"
+          # Escalate to B.bug if any hardcoded PIPELINE_* literal in the local
+          # file disagrees with the runtime value sourced from pipeline.config.
+          for var in PIPELINE_REPO PIPELINE_WORKTREE_PREFIX PIPELINE_TMUX_SESSION; do
+            runtime_val="$(eval "printf '%s' \"\${$var:-}\"")"
+            [ -z "$runtime_val" ] && continue
+            # Match shell-style (VAR="x") and Python-style (VAR = "x") assignments.
+            literal="$(grep -oE "${var}[[:space:]]*=[[:space:]]*[\"'][^\"']+[\"']" \
+                       "$local_path" 2>/dev/null \
+                       | head -1 \
+                       | sed -E "s/.*[\"']([^\"']+)[\"'].*/\1/")"
+            if [ -n "$literal" ] && [ "$literal" != "$runtime_val" ]; then
+              bucket="B.bug"
+              action="fail-active-bug"
+              break
+            fi
+          done
         fi
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
           "$local_path" "$bucket" "$local_loc" "$plugin_loc" "$diff_lines" "$action"

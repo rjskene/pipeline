@@ -162,6 +162,28 @@ echo "$out" | grep -qE '^\.claude/hooks/enforce-path-c-delegation\.py	B	' \
   || { fail_msg "bucket B: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 6: B.bug — local hardcoded literal disagrees with runtime pipeline.config.
+# This is the bomon-train escalation: silent active bug, must FAIL not WARN.
+# ---------------------------------------------------------------------------
+echo "Case 6: Bucket B.bug (repo mismatch)"
+ROOT=$(fresh_fx fx-bbug)
+cat > "$ROOT/plugin/hooks/enforce-path-c-delegation.py" <<'F'
+#!/usr/bin/env python3
+from _pipeline_config import PIPELINE_REPO
+print(PIPELINE_REPO)
+F
+cat > "$ROOT/proj/.claude/hooks/enforce-path-c-delegation.py" <<'F'
+#!/usr/bin/env python3
+PIPELINE_REPO = "stale-owner/stale-repo"
+print(PIPELINE_REPO)
+F
+
+out="$(run_helper "$ROOT")"
+echo "$out" | grep -qE '^\.claude/hooks/enforce-path-c-delegation\.py	B\.bug	.*fail-active-bug$' \
+  && pass_msg "B.bug: row emitted with action=fail-active-bug" \
+  || { fail_msg "B.bug: missing/wrong row"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
