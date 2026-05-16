@@ -107,6 +107,37 @@ echo "$out" | grep -qE '^\.claude/hooks/log-tool-use\.sh	D	' \
   || { fail_msg "bucket D: missing row"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 4: diff line count emitted for files that differ from plugin.
+# Tests the wiring of diff_lines; bucket assignment for non-A/D/F covered later.
+# ---------------------------------------------------------------------------
+echo "Case 4: diff line count emitted"
+ROOT=$(fresh_fx fx-diff-count)
+cat > "$ROOT/plugin/scripts/varies.sh" <<'F'
+#!/bin/bash
+echo a
+echo b
+echo c
+F
+cat > "$ROOT/proj/.claude/scripts/varies.sh" <<'F'
+#!/bin/bash
+echo a
+echo X
+echo Y
+F
+# diff -u0 across these files emits 2 changed lines on each side (b,c -> X,Y).
+
+out="$(run_helper "$ROOT")"
+# diff_lines is the 5th tab-separated field. Must be > 0 for a drifted file.
+row="$(echo "$out" | grep -E '^\.claude/scripts/varies\.sh	')"
+diff_lines="$(echo "$row" | awk -F'\t' '{print $5}')"
+if [ -n "$diff_lines" ] && [ "$diff_lines" -gt 0 ] 2>/dev/null; then
+  pass_msg "diff line count: emitted >0 ($diff_lines) for drifted file"
+else
+  fail_msg "diff line count: expected >0, got '$diff_lines'"
+  echo "    row: $row"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo

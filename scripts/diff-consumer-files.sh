@@ -56,6 +56,11 @@ for sub in scripts hooks agents; do
       plugin_loc="$(wc -l < "$shipped_path" | tr -d ' ')"
       if cmp -s "$local_path" "$shipped_path"; then
         printf '%s\tA\t%s\t%s\t0\tdelete-local\n' "$local_path" "$local_loc" "$plugin_loc"
+      else
+        diff_lines="$(diff --unified=0 "$local_path" "$shipped_path" 2>/dev/null \
+          | grep -cE '^[+-][^+-]' || true)"
+        printf '%s\t?\t%s\t%s\t%s\tneeds-classification\n' \
+          "$local_path" "$local_loc" "$plugin_loc" "$diff_lines"
       fi
       continue
     fi
