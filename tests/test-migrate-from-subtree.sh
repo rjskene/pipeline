@@ -1077,6 +1077,135 @@ else
   fail_msg "prompt-n: skill was deleted despite 'n' answer"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "--assume-yes: removes every basename-match without prompting"
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test '--assume-yes: removes every basename-match without prompting'"
+
+PROJ_AY="$WORKDIR/proj-ay"
+mkdir -p "$PROJ_AY/.claude/skills/run" \
+         "$PROJ_AY/.claude/skills/plan-issue" \
+         "$PROJ_AY/.claude/skills/myteam-helper" \
+         "$PROJ_AY/.claude/agents"
+echo "x" > "$PROJ_AY/.claude/skills/run/SKILL.md"
+echo "x" > "$PROJ_AY/.claude/skills/plan-issue/SKILL.md"
+echo "x" > "$PROJ_AY/.claude/skills/myteam-helper/SKILL.md"
+echo "x" > "$PROJ_AY/.claude/agents/tdd-implementer.md"
+echo "x" > "$PROJ_AY/.claude/agents/handwritten.md"
+
+AY_CACHE="$WORKDIR/ay-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$AY_CACHE/skills/run" "$AY_CACHE/skills/plan-issue" "$AY_CACHE/agents"
+touch "$AY_CACHE/skills/run/SKILL.md" "$AY_CACHE/skills/plan-issue/SKILL.md" \
+      "$AY_CACHE/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/ay.stderr"
+STDOUT_LOG="$WORKDIR/ay.stdout"
+(cd "$PROJ_AY" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/ay-home" \
+   bash "$MIGRATE_SH" --assume-yes </dev/null >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "ay: exit 0"; else fail_msg "ay: exit $EXIT"; fi
+
+inc
+if [ ! -d "$PROJ_AY/.claude/skills/run" ] && [ ! -d "$PROJ_AY/.claude/skills/plan-issue" ]; then
+  pass_msg "ay: plugin-shipped skills removed"
+else
+  fail_msg "ay: plugin-shipped skills still present"
+fi
+
+inc
+if [ ! -f "$PROJ_AY/.claude/agents/tdd-implementer.md" ]; then
+  pass_msg "ay: plugin-shipped agent removed"
+else
+  fail_msg "ay: plugin-shipped agent still present"
+fi
+
+inc
+if [ -f "$PROJ_AY/.claude/skills/myteam-helper/SKILL.md" ] && \
+   [ -f "$PROJ_AY/.claude/agents/handwritten.md" ]; then
+  pass_msg "ay: consumer-authored skill + agent preserved"
+else
+  fail_msg "ay: consumer-authored files were deleted"
+fi
+
+inc
+if ! grep -qF 'remove unmarkered duplicate' "$STDOUT_LOG" \
+   && ! grep -qF 'remove unmarkered duplicate' "$STDERR_LOG"; then
+  pass_msg "ay: no interactive prompt printed"
+else
+  fail_msg "ay: prompt text leaked despite --assume-yes"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "--assume-no: preserves every basename-match"
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test '--assume-no: preserves every basename-match (recovery for unsure operator)'"
+
+PROJ_AN="$WORKDIR/proj-an"
+mkdir -p "$PROJ_AN/.claude/skills/run" \
+         "$PROJ_AN/.claude/skills/plan-issue" \
+         "$PROJ_AN/.claude/agents"
+echo "x" > "$PROJ_AN/.claude/skills/run/SKILL.md"
+echo "x" > "$PROJ_AN/.claude/skills/plan-issue/SKILL.md"
+echo "x" > "$PROJ_AN/.claude/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/an.stderr"
+STDOUT_LOG="$WORKDIR/an.stdout"
+(cd "$PROJ_AN" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/ay-home" \
+   bash "$MIGRATE_SH" --assume-no </dev/null >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "an: exit 0"; else fail_msg "an: exit $EXIT"; fi
+
+inc
+if [ -f "$PROJ_AN/.claude/skills/run/SKILL.md" ] \
+   && [ -f "$PROJ_AN/.claude/skills/plan-issue/SKILL.md" ] \
+   && [ -f "$PROJ_AN/.claude/agents/tdd-implementer.md" ]; then
+  pass_msg "an: every basename-match preserved"
+else
+  fail_msg "an: some basename-match files were deleted"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "consumer-authored skill never flagged" — guarantee that a skill name
+# absent from the plugin manifest is never proposed for removal.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'consumer-authored skill never flagged'"
+
+PROJ_CA="$WORKDIR/proj-ca"
+mkdir -p "$PROJ_CA/.claude/skills/myteam-helper"
+echo "x" > "$PROJ_CA/.claude/skills/myteam-helper/SKILL.md"
+
+STDERR_LOG="$WORKDIR/ca.stderr"
+STDOUT_LOG="$WORKDIR/ca.stdout"
+(cd "$PROJ_CA" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/ay-home" \
+   bash "$MIGRATE_SH" </dev/null >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "ca: exit 0"; else fail_msg "ca: exit $EXIT"; fi
+
+inc
+if grep -qiF 'nothing to migrate' "$STDERR_LOG"; then
+  pass_msg "ca: 'nothing to migrate' (consumer-authored skill ignored)"
+else
+  fail_msg "ca: script did not short-circuit on consumer-authored-only project"
+  sed 's/^/      stderr: /' "$STDERR_LOG"
+  sed 's/^/      stdout: /' "$STDOUT_LOG"
+fi
+
+inc
+if [ -f "$PROJ_CA/.claude/skills/myteam-helper/SKILL.md" ]; then
+  pass_msg "ca: consumer-authored skill preserved"
+else
+  fail_msg "ca: consumer-authored skill was deleted"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
