@@ -21,14 +21,55 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/_advisory-text.sh"
 
 MODE=full
-case "${1:-}" in
-  --patch)
-    if [ "${2:-}" = "settings" ]; then
-      MODE=patch_settings
-      shift 2
-    fi
-    ;;
-esac
+DRY_RUN=false
+ASSUME=""   # ""|yes|no — overrides interactive prompt when set
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --patch)
+      if [ "${2:-}" = "settings" ]; then
+        MODE=patch_settings
+        shift 2
+        continue
+      fi
+      echo "migrate-from-subtree: --patch requires 'settings' argument" >&2
+      exit 2
+      ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --assume-yes) ASSUME=yes; shift ;;
+    --assume-no)  ASSUME=no;  shift ;;
+    --help|-h)
+      cat <<'USAGE'
+Usage: migrate-from-subtree.sh [--dry-run] [--assume-yes|--assume-no] [--patch settings]
+  --dry-run        Print what would be deleted and why; no filesystem mutations.
+  --assume-yes     Auto-answer "y" to every interactive prompt (CI/scripted use).
+  --assume-no      Auto-answer "n" to every interactive prompt (preserve everything).
+USAGE
+      exit 0
+      ;;
+    *)
+      echo "migrate-from-subtree: unknown flag: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# --- Plugin-root self-resolve (defensive fallback for #174) ---
+# When CLAUDE_PLUGIN_ROOT is not exported into the Bash subshell, fall back to
+# the highest-version directory under the user's plugin cache. Fail-open: if
+# resolution fails, basename-match detection (added below) silently skips.
+resolve_plugin_root() {
+  [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ] && return 0
+  local cache_root="$HOME/.claude/plugins/cache/claude-pipeline/pipeline"
+  [ -d "$cache_root" ] || return 1
+  local latest
+  latest=$(ls -1 "$cache_root" 2>/dev/null | sort -V | tail -n 1)
+  [ -n "$latest" ] || return 1
+  [ -d "$cache_root/$latest/skills" ] || return 1
+  export CLAUDE_PLUGIN_ROOT="$cache_root/$latest"
+  echo "[migrate] resolved CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT" >&2
+  return 0
+}
+resolve_plugin_root || true
 
 # --- Detection phase: build removal arrays without mutating anything ---
 
@@ -98,6 +139,47 @@ if [ -f "$SETTINGS_FILE" ]; then
   fi
 fi
 
+# --- Basename-match detection (gap-filling the marker-only gate) ---
+# Markers cover skill dirs created since #98, but earlier consumer installs
+# of plugin-managed skills/agents have no marker. Cross-reference consumer
+# .claude/skills/ and .claude/agents/ basenames against the plugin's
+# shipped basenames. Silently skip when CLAUDE_PLUGIN_ROOT is unresolved.
+
+TO_PROMPT_SKILLS=()
+TO_PROMPT_AGENTS=()
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ]; then
+  declare -A PLUGIN_SKILL_SET=()
+  for d in "$CLAUDE_PLUGIN_ROOT"/skills/*/; do
+    [ -d "$d" ] || continue
+    PLUGIN_SKILL_SET["$(basename "$d")"]=1
+  done
+  declare -A PLUGIN_AGENT_SET=()
+  if [ -d "$CLAUDE_PLUGIN_ROOT/agents" ]; then
+    for f in "$CLAUDE_PLUGIN_ROOT"/agents/*.md; do
+      [ -f "$f" ] || continue
+      PLUGIN_AGENT_SET["$(basename "$f" .md)"]=1
+    done
+  fi
+  for d in .claude/skills/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"
+    [ "${PLUGIN_SKILL_SET[$name]:-}" = 1 ] || continue
+    already=false
+    for q in "${TO_REMOVE_SKILLS[@]}"; do
+      [ "$q" = "${d%/}" ] && already=true && break
+    done
+    [ "$already" = true ] && continue
+    TO_PROMPT_SKILLS+=("${d%/}")
+  done
+  for f in .claude/agents/*.md; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .md)"
+    [ "${PLUGIN_AGENT_SET[$name]:-}" = 1 ] || continue
+    [ -f ".claude/agents/.${name}.pipeline-managed" ] && continue
+    TO_PROMPT_AGENTS+=("$f")
+  done
+fi
+
 # --- Validation phase ---
 
 if [ "$MODE" = full ]; then
@@ -106,6 +188,8 @@ if [ "$MODE" = full ]; then
      && [ ${#TO_REMOVE_AGENTS[@]} -eq 0 ] \
      && [ ${#TO_REMOVE_SCRIPTS[@]} -eq 0 ] \
      && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ] \
+     && [ ${#TO_PROMPT_SKILLS[@]} -eq 0 ] \
+     && [ ${#TO_PROMPT_AGENTS[@]} -eq 0 ] \
      && [ "$SETTINGS_HAS_INJECTIONS" = false ]; then
     echo "migrate-from-subtree: nothing to migrate." >&2
     exit 0
@@ -113,13 +197,62 @@ if [ "$MODE" = full ]; then
 
   # --- Mutation phase ---
 
-  for d in "${TO_REMOVE_SKILLS[@]}"; do
-    rm -rf "$d"
-  done
-  for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
-    rm -f "$f"
-  done
-  [ -d .claude-pipeline ] && rm -rf .claude-pipeline
+  # --- Prompt loop for basename-match candidates ---
+  EXTRA_REMOVE=()
+  if [ "$DRY_RUN" = false ] \
+     && { [ ${#TO_PROMPT_SKILLS[@]} -gt 0 ] || [ ${#TO_PROMPT_AGENTS[@]} -gt 0 ]; }; then
+    prompt_one() {
+      local target="$1" answer=""
+      if [ -n "$ASSUME" ]; then
+        answer="$ASSUME"
+      else
+        printf 'migrate-from-subtree: remove unmarkered duplicate %s? [y/N] ' "$target" >&2
+        read -r answer || answer=""
+      fi
+      case "$answer" in
+        y|Y|yes|YES) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    for d in "${TO_PROMPT_SKILLS[@]:-}"; do
+      [ -n "$d" ] || continue
+      if prompt_one "$d (skill, basename-match)"; then EXTRA_REMOVE+=("$d"); fi
+    done
+    for f in "${TO_PROMPT_AGENTS[@]:-}"; do
+      [ -n "$f" ] || continue
+      if prompt_one "$f (agent, basename-match)"; then EXTRA_REMOVE+=("$f"); fi
+    done
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    for d in "${TO_REMOVE_SKILLS[@]}"; do
+      echo "[dry-run] would-remove (marker): $d"
+    done
+    for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
+      echo "[dry-run] would-remove (marker): $f"
+    done
+    for d in "${TO_PROMPT_SKILLS[@]:-}"; do
+      [ -n "$d" ] || continue
+      echo "[dry-run] would-remove (basename-match): $d"
+    done
+    for f in "${TO_PROMPT_AGENTS[@]:-}"; do
+      [ -n "$f" ] || continue
+      echo "[dry-run] would-remove (basename-match): $f"
+    done
+    [ -d .claude-pipeline ] && echo "[dry-run] would-remove (manifest): .claude-pipeline/"
+  else
+    for d in "${TO_REMOVE_SKILLS[@]}"; do
+      rm -rf "$d"
+    done
+    for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
+      rm -f "$f"
+    done
+    for x in "${EXTRA_REMOVE[@]:-}"; do
+      [ -n "$x" ] || continue
+      rm -rf "$x"
+    done
+    [ -d .claude-pipeline ] && rm -rf .claude-pipeline
+  fi
 fi
 
 # --- Settings.json injection report (advisory only; never mutates) ---
