@@ -139,6 +139,47 @@ if [ -f "$SETTINGS_FILE" ]; then
   fi
 fi
 
+# --- Basename-match detection (gap-filling the marker-only gate) ---
+# Markers cover skill dirs created since #98, but earlier consumer installs
+# of plugin-managed skills/agents have no marker. Cross-reference consumer
+# .claude/skills/ and .claude/agents/ basenames against the plugin's
+# shipped basenames. Silently skip when CLAUDE_PLUGIN_ROOT is unresolved.
+
+TO_PROMPT_SKILLS=()
+TO_PROMPT_AGENTS=()
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ]; then
+  declare -A PLUGIN_SKILL_SET=()
+  for d in "$CLAUDE_PLUGIN_ROOT"/skills/*/; do
+    [ -d "$d" ] || continue
+    PLUGIN_SKILL_SET["$(basename "$d")"]=1
+  done
+  declare -A PLUGIN_AGENT_SET=()
+  if [ -d "$CLAUDE_PLUGIN_ROOT/agents" ]; then
+    for f in "$CLAUDE_PLUGIN_ROOT"/agents/*.md; do
+      [ -f "$f" ] || continue
+      PLUGIN_AGENT_SET["$(basename "$f" .md)"]=1
+    done
+  fi
+  for d in .claude/skills/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"
+    [ "${PLUGIN_SKILL_SET[$name]:-}" = 1 ] || continue
+    already=false
+    for q in "${TO_REMOVE_SKILLS[@]}"; do
+      [ "$q" = "${d%/}" ] && already=true && break
+    done
+    [ "$already" = true ] && continue
+    TO_PROMPT_SKILLS+=("${d%/}")
+  done
+  for f in .claude/agents/*.md; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .md)"
+    [ "${PLUGIN_AGENT_SET[$name]:-}" = 1 ] || continue
+    [ -f ".claude/agents/.${name}.pipeline-managed" ] && continue
+    TO_PROMPT_AGENTS+=("$f")
+  done
+fi
+
 # --- Validation phase ---
 
 if [ "$MODE" = full ]; then
@@ -147,6 +188,8 @@ if [ "$MODE" = full ]; then
      && [ ${#TO_REMOVE_AGENTS[@]} -eq 0 ] \
      && [ ${#TO_REMOVE_SCRIPTS[@]} -eq 0 ] \
      && [ ${#TO_REMOVE_HOOKS[@]} -eq 0 ] \
+     && [ ${#TO_PROMPT_SKILLS[@]} -eq 0 ] \
+     && [ ${#TO_PROMPT_AGENTS[@]} -eq 0 ] \
      && [ "$SETTINGS_HAS_INJECTIONS" = false ]; then
     echo "migrate-from-subtree: nothing to migrate." >&2
     exit 0
@@ -160,6 +203,14 @@ if [ "$MODE" = full ]; then
     done
     for f in "${TO_REMOVE_AGENTS[@]}" "${TO_REMOVE_SCRIPTS[@]}" "${TO_REMOVE_HOOKS[@]}"; do
       echo "[dry-run] would-remove (marker): $f"
+    done
+    for d in "${TO_PROMPT_SKILLS[@]:-}"; do
+      [ -n "$d" ] || continue
+      echo "[dry-run] would-remove (basename-match): $d"
+    done
+    for f in "${TO_PROMPT_AGENTS[@]:-}"; do
+      [ -n "$f" ] || continue
+      echo "[dry-run] would-remove (basename-match): $f"
     done
     [ -d .claude-pipeline ] && echo "[dry-run] would-remove (manifest): .claude-pipeline/"
   else

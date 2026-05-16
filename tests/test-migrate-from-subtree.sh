@@ -922,6 +922,109 @@ mkdir -p "$PROJ_BAD"
 inc
 if [ "$EXIT" -ne 0 ]; then pass_msg "flags: unknown flag rejected (exit $EXIT)"; else fail_msg "flags: unknown flag accepted"; fi
 
+# ---------------------------------------------------------------------------
+# Test "basename-match: skills" — consumer .claude/skills/<name>/SKILL.md
+# whose <name> matches a plugin-shipped skill is flagged as a basename-match
+# candidate in --dry-run. Skills NOT in the plugin manifest are preserved
+# (never flagged).
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'basename-match: skill duplicates flagged, consumer-authored preserved'"
+
+PROJ_BNM_SKILLS="$WORKDIR/proj-bnm-skills"
+mkdir -p "$PROJ_BNM_SKILLS/.claude/skills/run" \
+         "$PROJ_BNM_SKILLS/.claude/skills/plan-issue" \
+         "$PROJ_BNM_SKILLS/.claude/skills/myteam-helper" \
+         "$PROJ_BNM_SKILLS/.claude/skills/userwritten"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/run/SKILL.md"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/plan-issue/SKILL.md"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/myteam-helper/SKILL.md"
+echo "x" > "$PROJ_BNM_SKILLS/.claude/skills/userwritten/SKILL.md"
+
+# Stage a plugin cache with skills "run" and "plan-issue" (and "classify-issue"
+# as an unused plugin skill to prove we don't false-positive on it).
+BNM_CACHE="$WORKDIR/bnm-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$BNM_CACHE/skills/run" "$BNM_CACHE/skills/plan-issue" "$BNM_CACHE/skills/classify-issue"
+touch "$BNM_CACHE/skills/run/SKILL.md" "$BNM_CACHE/skills/plan-issue/SKILL.md" "$BNM_CACHE/skills/classify-issue/SKILL.md"
+
+STDERR_LOG="$WORKDIR/bnm-skills.stderr"
+STDOUT_LOG="$WORKDIR/bnm-skills.stdout"
+(cd "$PROJ_BNM_SKILLS" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/bnm-home" \
+   bash "$MIGRATE_SH" --dry-run >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "bnm-skills: exit 0"; else fail_msg "bnm-skills: exit $EXIT"; fi
+
+inc
+if grep -qF '[dry-run] would-remove (basename-match): .claude/skills/run' "$STDOUT_LOG"; then
+  pass_msg "bnm-skills: 'run' flagged as basename-match"
+else
+  fail_msg "bnm-skills: 'run' not flagged"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if grep -qF '[dry-run] would-remove (basename-match): .claude/skills/plan-issue' "$STDOUT_LOG"; then
+  pass_msg "bnm-skills: 'plan-issue' flagged as basename-match"
+else
+  fail_msg "bnm-skills: 'plan-issue' not flagged"
+fi
+
+inc
+if ! grep -qF 'myteam-helper' "$STDOUT_LOG" && ! grep -qF 'userwritten' "$STDOUT_LOG"; then
+  pass_msg "bnm-skills: consumer-authored skills not flagged"
+else
+  fail_msg "bnm-skills: consumer-authored skill incorrectly flagged"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if [ -f "$PROJ_BNM_SKILLS/.claude/skills/run/SKILL.md" ]; then
+  pass_msg "bnm-skills: dry-run preserved files"
+else
+  fail_msg "bnm-skills: dry-run mutated filesystem"
+fi
+
+# ---------------------------------------------------------------------------
+# Test "basename-match: agents" — same logic for .claude/agents/<name>.md
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'basename-match: agent duplicate flagged'"
+
+PROJ_BNM_AGENTS="$WORKDIR/proj-bnm-agents"
+mkdir -p "$PROJ_BNM_AGENTS/.claude/agents"
+echo "x" > "$PROJ_BNM_AGENTS/.claude/agents/tdd-implementer.md"
+echo "x" > "$PROJ_BNM_AGENTS/.claude/agents/handwritten.md"
+
+BNM_AGENT_CACHE="$WORKDIR/bnm-agent-home/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$BNM_AGENT_CACHE/skills" "$BNM_AGENT_CACHE/agents"
+touch "$BNM_AGENT_CACHE/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/bnm-agents.stderr"
+STDOUT_LOG="$WORKDIR/bnm-agents.stdout"
+(cd "$PROJ_BNM_AGENTS" && env -u CLAUDE_PLUGIN_ROOT HOME="$WORKDIR/bnm-agent-home" \
+   bash "$MIGRATE_SH" --dry-run >"$STDOUT_LOG" 2>"$STDERR_LOG")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "bnm-agents: exit 0"; else fail_msg "bnm-agents: exit $EXIT"; fi
+
+inc
+if grep -qF '[dry-run] would-remove (basename-match): .claude/agents/tdd-implementer.md' "$STDOUT_LOG"; then
+  pass_msg "bnm-agents: 'tdd-implementer.md' flagged"
+else
+  fail_msg "bnm-agents: 'tdd-implementer.md' not flagged"
+  sed 's/^/      /' "$STDOUT_LOG"
+fi
+
+inc
+if ! grep -qF 'handwritten' "$STDOUT_LOG"; then
+  pass_msg "bnm-agents: consumer-authored agent not flagged"
+else
+  fail_msg "bnm-agents: consumer-authored agent incorrectly flagged"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
