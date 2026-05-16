@@ -30,6 +30,24 @@ case "${1:-}" in
     ;;
 esac
 
+# --- Plugin-root self-resolve (defensive fallback for #174) ---
+# When CLAUDE_PLUGIN_ROOT is not exported into the Bash subshell, fall back to
+# the highest-version directory under the user's plugin cache. Fail-open: if
+# resolution fails, basename-match detection (added below) silently skips.
+resolve_plugin_root() {
+  [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT/skills" ] && return 0
+  local cache_root="$HOME/.claude/plugins/cache/claude-pipeline/pipeline"
+  [ -d "$cache_root" ] || return 1
+  local latest
+  latest=$(ls -1 "$cache_root" 2>/dev/null | sort -V | tail -n 1)
+  [ -n "$latest" ] || return 1
+  [ -d "$cache_root/$latest/skills" ] || return 1
+  export CLAUDE_PLUGIN_ROOT="$cache_root/$latest"
+  echo "[migrate] resolved CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT" >&2
+  return 0
+}
+resolve_plugin_root || true
+
 # --- Detection phase: build removal arrays without mutating anything ---
 
 TO_REMOVE_SKILLS=()

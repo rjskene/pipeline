@@ -828,6 +828,45 @@ else
   fail_msg "doc: README missing settings.json reference"
 fi
 
+# ---------------------------------------------------------------------------
+# Test "plugin-root self-resolve": when CLAUDE_PLUGIN_ROOT is unset, the
+# script must self-resolve to the highest-version dir under
+# $HOME/.claude/plugins/cache/claude-pipeline/pipeline/ and log the resolution
+# to stderr. Project has only an unmarkered .claude/skills/run/SKILL.md so no
+# removal happens; we are validating resolution + preservation only.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'plugin-root self-resolve': resolves from fake HOME cache when env var unset"
+
+PROJ_RESOLVE="$WORKDIR/proj-resolve"
+mkdir -p "$PROJ_RESOLVE/.claude/skills/run"
+echo "consumer skill" > "$PROJ_RESOLVE/.claude/skills/run/SKILL.md"
+
+FAKE_HOME="$WORKDIR/fake-home"
+FAKE_CACHE="$FAKE_HOME/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
+mkdir -p "$FAKE_CACHE/skills/run" "$FAKE_CACHE/agents"
+echo "plugin skill" > "$FAKE_CACHE/skills/run/SKILL.md"
+echo "plugin agent" > "$FAKE_CACHE/agents/tdd-implementer.md"
+
+STDERR_LOG="$WORKDIR/resolve.stderr"
+STDOUT_LOG="$WORKDIR/resolve.stdout"
+(cd "$PROJ_RESOLVE" && env -u CLAUDE_PLUGIN_ROOT HOME="$FAKE_HOME" bash "$MIGRATE_SH" >"$STDOUT_LOG" 2>"$STDERR_LOG") || true
+
+inc
+if grep -qF '[migrate] resolved CLAUDE_PLUGIN_ROOT=' "$STDERR_LOG"; then
+  pass_msg "resolve: stderr logs resolved CLAUDE_PLUGIN_ROOT path"
+else
+  fail_msg "resolve: stderr missing [migrate] resolved CLAUDE_PLUGIN_ROOT= line"
+  sed 's/^/      /' "$STDERR_LOG"
+fi
+
+inc
+if [ -f "$PROJ_RESOLVE/.claude/skills/run/SKILL.md" ]; then
+  pass_msg "resolve: consumer skill preserved (no mutation in resolve-only test)"
+else
+  fail_msg "resolve: consumer skill was deleted"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
