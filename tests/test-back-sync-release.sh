@@ -122,6 +122,26 @@ if [ -x "$SCRIPT" ]; then
   assert "idempotent: re-run exits 0" "[ \"\$(cat '$TMP/idem.rc')\" = '0' ]"
   assert "idempotent: re-run reports 'already synced'" "grep -qi 'already synced' '$TMP/idem.out'"
   assert "idempotent: re-run did NOT invoke git push" "! grep -qE 'push' '$SHIM/git-push.log'"
+
+  # -----------------------------------------------------------------------
+  # Group 4b: re-run with staging ahead of $SHA is also a no-op
+  # -----------------------------------------------------------------------
+  : > "$SHIM/gh.log"
+  : > "$SHIM/git-push.log"
+  (
+    cd "$FIX"
+    git checkout -q staging
+    git pull -q --ff-only origin staging 2>/dev/null || true
+    echo "staging-ahead" > NEW_FILE.md
+    git add NEW_FILE.md
+    git commit -q -m "chore: staging-ahead change after back-sync"
+    git push -q origin staging
+    SHA=$(cat "$TMP/clean.main-sha")
+    export SHIM_DIR="$SHIM"
+    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/idem-ahead.out" 2>&1
+    echo "$?" > "$TMP/idem-ahead.rc"
+  )
+  assert "idempotent: re-run with staging ahead of \$SHA is also a no-op" "[ \"\$(cat '$TMP/idem-ahead.rc')\" = '0' ] && grep -qi 'already synced' '$TMP/idem-ahead.out' && ! grep -qE 'push' '$SHIM/git-push.log'"
 fi
 
 # ---------------------------------------------------------------------------
