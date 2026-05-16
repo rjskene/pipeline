@@ -73,6 +73,40 @@ echo "$out" | grep -qE '^\.claude/scripts/foo\.sh	A	' \
   || { fail_msg "bucket A: missing row"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 2: Bucket F — local file with no plugin counterpart anywhere.
+# ---------------------------------------------------------------------------
+echo "Case 2: Bucket F (no plugin counterpart)"
+ROOT=$(fresh_fx fx-f)
+cat > "$ROOT/proj/.claude/hooks/project-specific-hook.py" <<'F'
+print("consumer-owned only")
+F
+
+out="$(run_helper "$ROOT")"
+echo "$out" | grep -qE '^\.claude/hooks/project-specific-hook\.py	F	' \
+  && pass_msg "bucket F: row emitted for consumer-only file" \
+  || { fail_msg "bucket F: missing row"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
+# Case 3: Bucket D — basename only under plugin's $CLAUDE_PLUGIN_ROOT/.claude/ dogfood.
+# Local placement is correct; not a duplicate of any shipped file.
+# ---------------------------------------------------------------------------
+echo "Case 3: Bucket D (plugin-dogfood-only)"
+ROOT=$(fresh_fx fx-d)
+cat > "$ROOT/plugin/.claude/hooks/log-tool-use.sh" <<'F'
+#!/bin/bash
+# plugin-author dogfood, not shipped
+F
+cat > "$ROOT/proj/.claude/hooks/log-tool-use.sh" <<'F'
+#!/bin/bash
+# consumer copy of dogfood hook
+F
+
+out="$(run_helper "$ROOT")"
+echo "$out" | grep -qE '^\.claude/hooks/log-tool-use\.sh	D	' \
+  && pass_msg "bucket D: row emitted for dogfood-only basename" \
+  || { fail_msg "bucket D: missing row"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo

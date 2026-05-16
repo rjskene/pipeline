@@ -9,7 +9,9 @@
 #            <path>\t<bucket>\t<local_loc>\t<plugin_loc>\t<diff_lines>\t<action>
 #          Buckets:
 #            A      byte-identical                          -> delete-local
-#            (more buckets added in later tasks)
+#            D      plugin-dogfood-only basename            -> no-op
+#            F      no plugin counterpart                   -> no-op
+#          (B/B.bug/C/E added in later tasks.)
 #
 # Stateless: emits stdout, never mutates.
 
@@ -21,28 +23,50 @@ if [ -z "$plugin_root" ] || [ ! -d "$plugin_root" ]; then
   exit 1
 fi
 
-# Build plugin-shipped basename allow-list (top-level scripts/, hooks/, agents/ ONLY —
-# files under $plugin_root/.claude/ are plugin-author dogfood and not "shipped").
-allow_tmp="$(mktemp)"
-trap 'rm -f "$allow_tmp"' EXIT
+# Build two basename lookup tables:
+#   shipped_tmp:  basename\tpath   (plugin's top-level scripts|hooks|agents)
+#   dogfood_tmp:  basename\tpath   (plugin's $CLAUDE_PLUGIN_ROOT/.claude/* — author dogfood)
+shipped_tmp="$(mktemp)"
+dogfood_tmp="$(mktemp)"
+trap 'rm -f "$shipped_tmp" "$dogfood_tmp"' EXIT
+
 for sub in scripts hooks agents; do
   if [ -d "$plugin_root/$sub" ]; then
     find "$plugin_root/$sub" -type f -printf '%f\t%p\n' 2>/dev/null
   fi
-done > "$allow_tmp"
+done > "$shipped_tmp"
 
-# Walk consumer .claude/{scripts,hooks,agents}/ — for every file whose basename
-# matches a plugin-shipped basename, classify and emit a row.
+if [ -d "$plugin_root/.claude" ]; then
+  find "$plugin_root/.claude" -type f -printf '%f\t%p\n' 2>/dev/null > "$dogfood_tmp"
+fi
+
+lookup_path() {
+  awk -F'\t' -v b="$1" '$1==b{print $2; exit}' "$2"
+}
+
+# Walk consumer .claude/{scripts,hooks,agents}/ and classify each file.
 for sub in scripts hooks agents; do
   [ -d ".claude/$sub" ] || continue
   while IFS= read -r -d '' local_path; do
     bn="$(basename "$local_path")"
-    plugin_path="$(awk -F'\t' -v b="$bn" '$1==b{print $2; exit}' "$allow_tmp")"
-    [ -z "$plugin_path" ] && continue
-    if cmp -s "$local_path" "$plugin_path"; then
-      local_loc="$(wc -l < "$local_path" | tr -d ' ')"
-      plugin_loc="$(wc -l < "$plugin_path" | tr -d ' ')"
-      printf '%s\tA\t%s\t%s\t0\tdelete-local\n' "$local_path" "$local_loc" "$plugin_loc"
+    local_loc="$(wc -l < "$local_path" | tr -d ' ')"
+
+    shipped_path="$(lookup_path "$bn" "$shipped_tmp")"
+    if [ -n "$shipped_path" ]; then
+      plugin_loc="$(wc -l < "$shipped_path" | tr -d ' ')"
+      if cmp -s "$local_path" "$shipped_path"; then
+        printf '%s\tA\t%s\t%s\t0\tdelete-local\n' "$local_path" "$local_loc" "$plugin_loc"
+      fi
+      continue
     fi
+
+    dogfood_path="$(lookup_path "$bn" "$dogfood_tmp")"
+    if [ -n "$dogfood_path" ]; then
+      plugin_loc="$(wc -l < "$dogfood_path" | tr -d ' ')"
+      printf '%s\tD\t%s\t%s\t0\tno-op\n' "$local_path" "$local_loc" "$plugin_loc"
+      continue
+    fi
+
+    printf '%s\tF\t%s\t0\t0\tno-op\n' "$local_path" "$local_loc"
   done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
 done
