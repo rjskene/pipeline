@@ -80,7 +80,7 @@ GIT
 }
 
 # ---------------------------------------------------------------------------
-# Group 2: clean cherry-pick path
+# Group 2: clean fast-forward path
 # ---------------------------------------------------------------------------
 TMP=$(mktemp -d)
 trap "rm -rf '$TMP'" EXIT
@@ -93,16 +93,18 @@ if [ -x "$SCRIPT" ]; then
   (
     cd "$FIX"
     SHA=$(git rev-parse main)
+    echo "$SHA" > "$TMP/clean.main-sha"
     export SHIM_DIR="$SHIM"
     PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/clean.out" 2>&1
     echo "$?" > "$TMP/clean.rc"
     git fetch -q origin staging 2>/dev/null || true
     git log staging --grep "release 0.0.0-test" --oneline > "$TMP/clean.staging-log"
+    git rev-parse staging > "$TMP/clean.staging-sha"
   )
   assert "clean: script exits 0" "[ \"\$(cat '$TMP/clean.rc')\" = '0' ]"
-  assert "clean: release commit cherry-picked onto staging" "[ -s '$TMP/clean.staging-log' ]"
+  assert "clean: release commit's TREE is present on staging via merge or FF" "[ -s '$TMP/clean.staging-log' ]"
   assert "clean: no draft PR opened (gh shim not invoked for pr create)" "! grep -q 'pr create' '$SHIM/gh.log'"
-  assert "clean: cherry-pick uses -x trailer for idempotency" "(cd '$FIX' && git log staging --format=%B | grep -qE '^\\(cherry picked from commit ')"
+  assert "clean: staging fast-forwarded to the release SHA" "[ \"\$(cat '$TMP/clean.staging-sha')\" = \"\$(cat '$TMP/clean.main-sha')\" ]"
   assert "clean: 'git push origin staging' was invoked" "grep -qE 'push.*origin.*staging' '$SHIM/git-push.log'"
 
   # -----------------------------------------------------------------------
