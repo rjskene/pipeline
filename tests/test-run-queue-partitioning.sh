@@ -2,7 +2,7 @@
 set -uo pipefail
 
 # Tests for queue partitioning by pre-spawn classifier output in
-# scripts/run-queue.sh.template (issue #218).
+# scripts/run-queue.sh (issue #218).
 #
 # Uses PIPELINE_QUEUE_DRY_RUN=1 to short-circuit the poll loop after
 # initial classification + first fill_slots. Stubs:
@@ -13,7 +13,7 @@ set -uo pipefail
 #   - eval-classifier-invoke.sh: emits --container-mode=<x> for issues in a set
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/run-queue.sh.template"
+SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/run-queue.sh"
 
 PASS=0
 FAIL=0
@@ -147,6 +147,7 @@ run_dryrun() {
       SPAWN_LOG="$spawn_log" \
       GH_INVOCATIONS="$gh_log" \
       PIPELINE_QUEUE_DRY_RUN=1 \
+      CLAUDE_PLUGIN_ROOT="$proj/.claude" \
       bash .claude/scripts/run-queue.sh "$@" 2>&1
   )
 }

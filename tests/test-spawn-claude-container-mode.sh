@@ -1,13 +1,13 @@
 #!/bin/bash
 set -uo pipefail
 
-# Tests for the --container-mode dispatch added to spawn-claude.sh.template
+# Tests for the --container-mode dispatch added to spawn-claude.sh
 # (issue #218). Runs spawn-claude.sh with PIPELINE_SPAWN_DRY_RUN=1 in a temp
 # project tree, with `gh` stubbed so no network is required. Follows the
 # pattern of test-spawn-claude-runs-log.sh.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh.template"
+SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh"
 
 PASS=0
 FAIL=0

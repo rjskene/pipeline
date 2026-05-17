@@ -12,8 +12,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUN_QUEUE_SRC="$ROOT/scripts/run-queue.sh.template"
-SPAWN_SRC="$ROOT/scripts/spawn-claude.sh.template"
+RUN_QUEUE_SRC="$ROOT/scripts/run-queue.sh"
+SPAWN_SRC="$ROOT/scripts/spawn-claude.sh"
 HELPER_SRC="$ROOT/scripts/eval-classifier-invoke.sh"
 
 PASS=0
@@ -114,6 +114,7 @@ run_queue_dryrun() {
       TMUX="fake" \
       SPAWN_LOG="$spawn_log" \
       PIPELINE_QUEUE_DRY_RUN=1 \
+      CLAUDE_PLUGIN_ROOT="$proj/.claude" \
       bash .claude/scripts/run-queue.sh "$@" 2>&1
   )
 }
