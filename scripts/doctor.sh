@@ -12,7 +12,7 @@
 set -uo pipefail
 
 # Snapshot CLAUDE_PLUGIN_ROOT BEFORE sourcing the resolver so the
-# claude_plugin_root check can tell pre-set (pass) from self-resolved (warn).
+# claude_plugin_root check can tell pre-set (pass or warn-if-invalid) from self-resolved (pass).
 _CLAUDE_PLUGIN_ROOT_PRE_RESOLVE="${CLAUDE_PLUGIN_ROOT:-}"
 RESOLVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -737,14 +737,21 @@ except Exception:
 fi
 
 # --------------------------------------------------------------------------
-# Check: claude_plugin_root — env was already set (pass), self-resolved from
-# the plugin cache (warn), or empty with no cache (fail). Snapshot captured
-# at the top of this script before the resolver source.
+# Check: claude_plugin_root — four states based on the pre-resolve snapshot:
+#   * env pre-set + valid dir            → pass
+#   * env pre-set + path missing/invalid → warn (likely stale config)
+#   * env empty   + self-resolved OK     → pass (self-resolve is recommended)
+#   * env empty   + no plugin cache      → fail
+# Snapshot captured at the top of this script before the resolver source.
 # --------------------------------------------------------------------------
 if [ -n "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE:-}" ]; then
-  record claude_plugin_root pass "env pre-set to ${CLAUDE_PLUGIN_ROOT}"
+  if [ -d "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE}" ]; then
+    record claude_plugin_root pass "env pre-set to ${CLAUDE_PLUGIN_ROOT}"
+  else
+    record claude_plugin_root warn "env points to non-existent path: ${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE}"
+  fi
 elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  record claude_plugin_root warn "env was empty; self-resolved to ${CLAUDE_PLUGIN_ROOT}"
+  record claude_plugin_root pass "self-resolved from plugin cache: ${CLAUDE_PLUGIN_ROOT}"
 else
   record claude_plugin_root fail "CLAUDE_PLUGIN_ROOT empty and no plugin cache found at ~/.claude/plugins/cache/claude-pipeline/pipeline/"
 fi

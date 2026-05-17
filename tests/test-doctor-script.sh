@@ -386,39 +386,43 @@ grep -qE '^no_residual_subtree[[:space:]]+fail' <<<"$out" \
   || { fail_msg "mixed: summary row missing"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
-# Case 11: claude_plugin_root — three statuses (pass / warn / fail).
+# Case 11: claude_plugin_root — four statuses (pass / pass / warn / fail).
 # Pins HOME to hermetic dirs so the developer's real cache doesn't pollute the
 # assertion. Status conditions:
-#   pass — CLAUDE_PLUGIN_ROOT was pre-set; resolver no-ops.
-#   warn — CLAUDE_PLUGIN_ROOT was empty; resolver self-resolved from cache.
+#   pass — CLAUDE_PLUGIN_ROOT was pre-set AND points to a valid directory.
+#   pass — CLAUDE_PLUGIN_ROOT was empty; resolver self-resolved from cache
+#          (self-resolution is the recommended path).
+#   warn — CLAUDE_PLUGIN_ROOT was pre-set BUT the path does not exist /
+#          is not a directory (likely stale config).
 #   fail — CLAUDE_PLUGIN_ROOT was empty AND no plugin cache exists under HOME.
 # ---------------------------------------------------------------------------
 echo "Case 11: claude_plugin_root status check"
 
-# Sub-case A: env pre-set → pass.
+# Sub-case A: env pre-set to a valid directory → pass.
 FX=$(fresh_fx fx-cpr-pass)
 FAKE_HOME="$TMP/fake-home-empty-A"; mkdir -p "$FAKE_HOME"
+PRESET_DIR="$TMP/preset-valid-A"; mkdir -p "$PRESET_DIR"
 run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON" \
-  HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT="/some/preset/path"
+  HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT="$PRESET_DIR"
 out="$(cat "$FX/out")"
 grep -qE '^CHECK: claude_plugin_root status=pass' <<<"$out" \
   && pass_msg "cpr-pass: pre-set env → status=pass" \
   || { fail_msg "cpr-pass: did not emit pass"; echo "$out" | sed 's/^/    /'; }
 
-# Sub-case B: env empty + cache present → warn (resolved path appears in detail).
-FX=$(fresh_fx fx-cpr-warn)
+# Sub-case B: env empty + cache present → pass (resolved path appears in detail).
+FX=$(fresh_fx fx-cpr-selfresolve)
 FAKE_HOME="$TMP/fake-home-with-cache"
 mkdir -p "$FAKE_HOME/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
 RESOLVED="$FAKE_HOME/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0"
 run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON" \
   HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT=""
 out="$(cat "$FX/out")"
-grep -qE '^CHECK: claude_plugin_root status=warn' <<<"$out" \
-  && pass_msg "cpr-warn: empty env + cache → status=warn" \
-  || { fail_msg "cpr-warn: did not emit warn"; echo "$out" | sed 's/^/    /'; }
+grep -qE '^CHECK: claude_plugin_root status=pass detail=self-resolved from plugin cache:' <<<"$out" \
+  && pass_msg "cpr-selfresolve: empty env + cache → status=pass with self-resolve detail" \
+  || { fail_msg "cpr-selfresolve: did not emit pass+self-resolve detail"; echo "$out" | sed 's/^/    /'; }
 grep -qF "$RESOLVED" <<<"$out" \
-  && pass_msg "cpr-warn: detail names resolved path" \
-  || { fail_msg "cpr-warn: detail missing resolved path $RESOLVED"; echo "$out" | sed 's/^/    /'; }
+  && pass_msg "cpr-selfresolve: detail names resolved path" \
+  || { fail_msg "cpr-selfresolve: detail missing resolved path $RESOLVED"; echo "$out" | sed 's/^/    /'; }
 
 # Sub-case C: env empty + no cache → fail.
 FX=$(fresh_fx fx-cpr-fail)
@@ -429,6 +433,20 @@ out="$(cat "$FX/out")"
 grep -qE '^CHECK: claude_plugin_root status=fail' <<<"$out" \
   && pass_msg "cpr-fail: empty env + no cache → status=fail" \
   || { fail_msg "cpr-fail: did not emit fail"; echo "$out" | sed 's/^/    /'; }
+
+# Sub-case D: env set to a non-existent path → warn (stale config).
+FX=$(fresh_fx fx-cpr-stale)
+FAKE_HOME="$TMP/fake-home-empty-D"; mkdir -p "$FAKE_HOME"
+STALE_PATH="$TMP/does/not/exist/plugin"
+run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON" \
+  HOME="$FAKE_HOME" CLAUDE_PLUGIN_ROOT="$STALE_PATH"
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: claude_plugin_root status=warn detail=env points to non-existent path:' <<<"$out" \
+  && pass_msg "cpr-stale: env set to non-existent path → status=warn" \
+  || { fail_msg "cpr-stale: did not emit warn for non-existent path"; echo "$out" | sed 's/^/    /'; }
+grep -qF "$STALE_PATH" <<<"$out" \
+  && pass_msg "cpr-stale: detail names stale path" \
+  || { fail_msg "cpr-stale: detail missing stale path $STALE_PATH"; echo "$out" | sed 's/^/    /'; }
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

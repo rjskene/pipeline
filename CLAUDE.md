@@ -169,7 +169,7 @@ All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/p
 
 Observability hooks (`log-tool-use.sh`, `log_subagent.py`) are HTS-dogfood-only and registered via this repo's `.claude/settings.json`; they are not part of the published manifest. See Observability.
 
-**Bash subshells.** `CLAUDE_PLUGIN_ROOT` is not guaranteed to be exported into the Bash tool's subshell — Claude Code does not consistently propagate it. Every consumer-facing skill sources `scripts/_resolve-plugin-root.sh` in its `## Boot` block, which (when the env var is empty) picks the highest-version directory under `~/.claude/plugins/cache/claude-pipeline/pipeline/` and exports it. Doctor's `claude_plugin_root` check surfaces the resolution state: `pass` (env was pre-set), `warn` (env was empty, self-resolved to `<path>`), `fail` (env is empty and no plugin cache exists).
+**Bash subshells.** `CLAUDE_PLUGIN_ROOT` is not guaranteed to be exported into the Bash tool's subshell — Claude Code does not consistently propagate it. Every consumer-facing skill sources `scripts/_resolve-plugin-root.sh` in its `## Boot` block, which (when the env var is empty) picks the highest-version directory under `~/.claude/plugins/cache/claude-pipeline/pipeline/` and exports it. Doctor's `claude_plugin_root` check surfaces the resolution state across four cases: `pass` (env pre-set + valid dir), `pass` (env empty, self-resolved from the plugin cache), `warn` (env set but path missing/invalid — likely a stale config), `fail` (env empty and no plugin cache exists).
 
 ## Namespace discipline
 
