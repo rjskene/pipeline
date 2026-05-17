@@ -255,6 +255,30 @@ if [ -f "$shortlist8" ]; then
   fi
 fi
 
+# --- Scenario 9: already-in-rollout issue NOT re-flagged as tracker_fit (fixture B) ---
+inc_scenario "Scenario 9: already-in-rollout excluded from tracker_fits (fixture B)"
+FIX9="$TMP/fix9"; mkdir -p "$FIX9"
+cat > "$FIX9/issues.json" <<'J'
+[
+  {"number":80,"title":"epic(redline): rollout","body":"## Rollout sequence\n- [ ] **#81 — first child\n","labels":[{"name":"tracker"}]},
+  {"number":81,"title":"feat(redline): first child","body":"Child of #80 — references parent tracker #80 for context.","labels":[]}
+]
+J
+cat > "$FIX9/issue-80.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#81 — first child\n"}
+J
+out9=$(run_helper "$FIX9" 2>&1)
+shortlist9=$(echo "$out9" | tail -n 1)
+if [ -f "$shortlist9" ]; then
+  fit_81_80=$(jq -r '[.tracker_fits[] | select(.issue == 81 and .tracker == 80)] | length' "$shortlist9")
+  if [ "$fit_81_80" = "0" ]; then
+    pass_msg "scenario 9: (81,80) NOT in tracker_fits (already in rollout)"
+  else
+    fail_msg "scenario 9: (81,80) NOT in tracker_fits (got $fit_81_80)"
+    jq '.tracker_fits' "$shortlist9" | sed 's/^/      /'
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
