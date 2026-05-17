@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2-rc.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.7.1...v0.7.2-rc.1) (2026-05-17)
+
+
+### release
+
+* cut v0.7.2-rc.1 (back-sync regression fix) ([#207](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/207)) ([df3246e](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/df3246ed6ba44437d0c2b3ccd849c729eea0f4de))
+
 ## [0.7.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.7.0...v0.7.1) (2026-05-17)
 
 
