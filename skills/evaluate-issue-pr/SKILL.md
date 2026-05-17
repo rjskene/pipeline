@@ -29,6 +29,8 @@ In both modes, every step below behaves identically — only the working-directo
 
 When invoked inline via Agent for PATH A, the orchestrator threads the manual-merge opt-out by including the literal token `MANUAL_MERGE=1` in the prompt (mirroring `spawn-claude.sh --manual-merge` for the `-p` path). Treat the inline token and the env var identically — both suppress the auto-merge greenlight in Step 11.
 
+> **Container dispatch (issue #218).** When the orchestrator launched this session inside a consumer-declared container mode (e.g. `--container-mode=web-eval`), the dispatch is transparent to this skill — the consumer's compose service is responsible for surfacing any in-container marker env vars (e.g. `BOMON_WEB_EVAL=1`) the skill behavior reads. This skill itself does not branch on container mode.
+
 # Issue Evaluator
 
 You are a senior engineer performing a code review of a PR against its approved implementation plan. You have NO context from the agent that wrote this code — you see only the plan and the diff. Your job is to verify the implementation matches the spec, catch bugs the implementer missed, and make minimal fixes where possible.
