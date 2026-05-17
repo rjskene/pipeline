@@ -113,7 +113,7 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
       while IFS= read -r -d '' f; do
         rel="${f#$PLUGIN_ROOT_FIX/}"
         printf '%s\n' "$rel"
-      done < <(find "$PLUGIN_ROOT_FIX/$sub" -type f -print0 2>/dev/null)
+      done < <(find "$PLUGIN_ROOT_FIX/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
     fi
   done | sort -u > "$fix_allow_tmp"
 
@@ -148,7 +148,7 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
             fix_dup_paths+=("$f")
           fi
         fi
-      done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+      done < <(find ".claude/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
     fi
   done
   rm -f "$fix_allow_tmp" "$fix_required_tmp"
@@ -465,7 +465,7 @@ for sub in skills hooks scripts agents; do
     while IFS= read -r -d '' f; do
       rel="${f#$sfr_plugin_root/}"
       printf '%s\n' "$rel"
-    done < <(find "$sfr_plugin_root/$sub" -type f -print0 2>/dev/null)
+    done < <(find "$sfr_plugin_root/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
   fi
 done | sort -u > "$sfr_allow_tmp"
 
@@ -498,7 +498,7 @@ for sub in skills hooks scripts agents; do
       else
         sfr_consumer_files+=("$f")
       fi
-    done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+    done < <(find ".claude/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
   fi
 done
 rm -f "$sfr_required_tmp"
