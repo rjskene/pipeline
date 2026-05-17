@@ -23,7 +23,7 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 This skill is invoked in one of two ways:
 
 1. **Inline `Agent(...)` dispatch (PATH A, docs-only).** The orchestrator passes the worktree absolute path and issue number in the prompt. You are NOT already in the worktree CWD — `cd <worktree-absolute-path>` before any step below. The prompt also names the slug. No `spawn-claude.sh`, no `claude -p`, no tmux.
-2. **`spawn-claude.sh` / `claude -p` dispatch (PATH B, PATH C, and any path when explicitly requested).** You are already inside the feature worktree at session start; CWD is correct; no `cd` needed.
+2. **`${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch (PATH B, PATH C, and any path when explicitly requested).** You are already inside the feature worktree at session start; CWD is correct; no `cd` needed.
 
 In both modes, every step below behaves identically — only the working-directory setup differs.
 
