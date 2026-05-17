@@ -348,6 +348,28 @@ if [ -f "$shortlist12" ]; then
   fi
 fi
 
+# --- Scenario 13: zero-findings corpus emits an empty missing_label_candidates array ---
+inc_scenario "Scenario 13: zero findings emits empty missing_label_candidates array"
+FIX13="$TMP/fix13"; mkdir -p "$FIX13"
+cat > "$FIX13/issues.json" <<J
+[
+  {"number":207,"title":"feat(a): one","body":"x","labels":[{"name":"priority/P2"},{"name":"docs-only"}],"createdAt":"$CREATED_48H"},
+  {"number":208,"title":"feat(b): two","body":"x","labels":[{"name":"priority/P1"},{"name":"multi-task"}],"createdAt":"$CREATED_48H"},
+  {"number":209,"title":"feat(c): three","body":"x","labels":[{"name":"priority/P0"},{"name":"docs-only"}],"createdAt":"$CREATED_48H"}
+]
+J
+out13=$(run_helper "$FIX13" 2>&1)
+shortlist13=$(echo "$out13" | tail -n 1)
+if [ -f "$shortlist13" ]; then
+  has_key=$(jq 'has("missing_label_candidates")' "$shortlist13" 2>/dev/null || echo "false")
+  miss13_len=$(jq '.missing_label_candidates | length' "$shortlist13" 2>/dev/null || echo "999")
+  if [ "$has_key" = "true" ] && [ "$miss13_len" = "0" ]; then
+    pass_msg "scenario 13: missing_label_candidates key present and empty"
+  else
+    fail_msg "scenario 13: key present + empty (has_key=$has_key, len=$miss13_len)"
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
