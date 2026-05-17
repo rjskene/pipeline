@@ -48,6 +48,10 @@ MD
     i=$((i+1))
     grep -E '^- (SIGNAL|signal|turn_count|tdd_|wave_)' "$OUT_DIR/$d" \
       | sort -u > "$TMP/sig-$i.txt" 2>/dev/null || true
+    # Per-digest list of Suggested default text (one per line, trimmed).
+    grep -E '^- \*\*Suggested default:\*\*' "$OUT_DIR/$d" 2>/dev/null \
+      | sed 's/^- \*\*Suggested default:\*\* *//' \
+      | sort -u > "$TMP/def-$i.txt" || true
   done <<< "$DIGESTS"
 
   INTERSECT="$TMP/intersect.txt"
@@ -83,6 +87,27 @@ MD
     done < "$INTERSECT"
   else
     echo "No consistent cross-run patterns detected in this window."
+  fi
+
+  # 2-of-3 Suggested-default detector (MVP: exact-string match).
+  # Future upgrade per issue #135: token-set Jaccard >= 0.7.
+  DEFAULT_HITS="$TMP/default-hits.txt"; : > "$DEFAULT_HITS"
+  if [ "$i" -ge 2 ]; then
+    cat "$TMP"/def-*.txt 2>/dev/null | sort | uniq -c | awk '$1 >= 2 {
+      $1=""; sub(/^[ \t]+/, ""); print
+    }' > "$DEFAULT_HITS"
+  fi
+  if [ -s "$DEFAULT_HITS" ]; then
+    cat <<'MD'
+
+**Repeating Suggested defaults (codification candidates):**
+
+MD
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      echo "- $d"
+      echo "  - **Codification target:** Claude memory (\`feedback_*.md\` under \`MEMORY.md\`) OR skill prose (\`skills/<name>/SKILL.md\`) — user choice."
+    done < "$DEFAULT_HITS"
   fi
 
   cat <<'MD'
