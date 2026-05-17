@@ -262,6 +262,28 @@ if [ -f "$shortlist8" ]; then
   fi
 fi
 
+# --- Scenario 9: missing both priority + path (regression-protect ordering) ---
+inc_scenario "Scenario 9: missing-both surfaces with priority before path"
+FIX9="$TMP/fix9"; mkdir -p "$FIX9"
+cat > "$FIX9/issues.json" <<J
+[
+  {"number":201,"title":"feat(spawn): plain feature","body":"x","labels":[],"createdAt":"$CREATED_48H"}
+]
+J
+out9=$(run_helper "$FIX9" 2>&1)
+shortlist9=$(echo "$out9" | tail -n 1)
+if [ -f "$shortlist9" ]; then
+  miss9=$(jq -c '.missing_label_candidates[] | select(.issue == 201) | .missing' "$shortlist9" 2>/dev/null || echo "[]")
+  # The state token is also expected because no pipeline-stage/classification
+  # labels are present AND the issue is older than the 24h cutoff. Ordering
+  # priority,path,state is pinned by the impl to keep this assertion stable.
+  if [ "$miss9" = '["priority","path","state"]' ]; then
+    pass_msg "scenario 9: row .missing == [priority,path,state] in deterministic order"
+  else
+    fail_msg "scenario 9: row .missing ordering (got '$miss9')"
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
