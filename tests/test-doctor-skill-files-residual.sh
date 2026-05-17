@@ -70,6 +70,14 @@ mk_plugin_root() {
   touch "$root/agents/tdd-implementer.md"
 }
 
+mk_plugin_root_with_templates() {
+  local root="$1"
+  mk_plugin_root "$root"
+  # Class 2 fixture: plugin ships <name>.sh.template files under scripts/
+  touch "$root/scripts/spawn-claude.sh.template"
+  touch "$root/scripts/cleanup-worktree.sh.template"
+}
+
 fresh_fx() {
   local name="$1"
   local fx="$TMP/$name"
@@ -207,6 +215,97 @@ grep -qE 'targets rjskene/bomon' <<<"$out" \
   && pass_msg "stale-repo: captured token + actual repo in detail" \
   || { fail_msg "stale-repo: missing token/actual"; echo "$out" | sed 's/^/    /'; }
 [ "$rc" != "0" ] && pass_msg "stale-repo: non-zero exit ($rc)" || fail_msg "stale-repo: exit was 0"
+
+# ---------------------------------------------------------------------------
+# Case 6: consumer skills/todo/SKILL.md must NOT be flagged as duplicate,
+#          but consumer skills/classify-issue/SKILL.md MUST be flagged.
+# ---------------------------------------------------------------------------
+echo "Case 6: relative-path skill matching"
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-relpath-skill)
+mkdir -p "$FX/.claude/skills/todo" "$FX/.claude/skills/classify-issue"
+echo "consumer-authored todo skill" > "$FX/.claude/skills/todo/SKILL.md"
+echo "stale copy of plugin skill"   > "$FX/.claude/skills/classify-issue/SKILL.md"
+run_helper "$FX" "$PLUGIN_ROOT"
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: skill_files_residual status=warn detail=1 duplicate' <<<"$out" \
+  && pass_msg "relpath-skill: warn detail=1 (only classify-issue is dup)" \
+  || { fail_msg "relpath-skill: wrong detail"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'classify-issue/SKILL\.md' <<<"$out" \
+  && pass_msg "relpath-skill: classify-issue listed as duplicate" \
+  || fail_msg "relpath-skill: classify-issue not flagged"
+awk '/Duplicates of plugin-owned files/{flag=1; next} /Required — rendered from plugin templates:|Preserved — consumer-owned:/{flag=0} flag' <<<"$out" \
+  | grep -qE 'todo/SKILL\.md' \
+  && fail_msg "relpath-skill: todo/SKILL.md WRONGLY flagged as duplicate" \
+  || pass_msg "relpath-skill: todo/SKILL.md NOT flagged (preserved)"
+awk '/Preserved — consumer-owned:/{flag=1; next} flag' <<<"$out" \
+  | grep -qE 'todo/SKILL\.md' \
+  && pass_msg "relpath-skill: todo/SKILL.md appears under Preserved" \
+  || { fail_msg "relpath-skill: todo/SKILL.md missing from Preserved"; echo "$out" | sed 's/^/    /'; }
+
+# ---------------------------------------------------------------------------
+# Case 7: --fix residual respects relative-path matching
+# ---------------------------------------------------------------------------
+echo "Case 7: --fix residual relative-path matching"
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-fix-relpath)
+mkdir -p "$FX/.claude/skills/todo" "$FX/.claude/skills/classify-issue"
+echo "consumer todo" > "$FX/.claude/skills/todo/SKILL.md"
+echo "stale classify" > "$FX/.claude/skills/classify-issue/SKILL.md"
+(
+  cd "$FX"
+  PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT" \
+    LABELS_JSON="$ALL_LABELS_JSON" DOCTOR_FIX_NONINTERACTIVE=1 \
+    bash "$HELPER" --fix residual
+) > "$FX/out" 2>&1
+out="$(cat "$FX/out")"
+grep -qE 'Remove duplicate of plugin-shipped file: \.claude/skills/classify-issue\?' <<<"$out" \
+  && pass_msg "fix-relpath: classify-issue prompted for removal" \
+  || { fail_msg "fix-relpath: classify-issue not prompted"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'Remove duplicate of plugin-shipped file: \.claude/skills/todo' <<<"$out" \
+  && fail_msg "fix-relpath: todo WRONGLY prompted for removal" \
+  || pass_msg "fix-relpath: todo NOT prompted (preserved)"
+[ -d "$FX/.claude/skills/todo" ] && pass_msg "fix-relpath: todo dir survives" \
+  || fail_msg "fix-relpath: todo dir was deleted"
+
+# ---------------------------------------------------------------------------
+# Case 8: consumer .claude/scripts/spawn-claude.sh is classified as
+# consumer-required (plugin ships scripts/spawn-claude.sh.template). It
+# must NOT be flagged as duplicate and must NOT appear in --fix residual.
+# ---------------------------------------------------------------------------
+echo "Case 8: consumer-required from .template"
+PLUGIN_ROOT_T="$TMP/plugin-root-templates"
+mk_plugin_root_with_templates "$PLUGIN_ROOT_T"
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-consumer-required)
+mkdir -p "$FX/.claude/scripts"
+echo "rendered spawn"   > "$FX/.claude/scripts/spawn-claude.sh"
+echo "rendered cleanup" > "$FX/.claude/scripts/cleanup-worktree.sh"
+echo "consumer-only"    > "$FX/.claude/scripts/my-custom.sh"
+run_helper "$FX" "$PLUGIN_ROOT_T"
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: skill_files_residual status=pass' <<<"$out" \
+  && pass_msg "consumer-required: status=pass (no duplicates)" \
+  || { fail_msg "consumer-required: wrong status"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'Required — rendered from plugin templates:' <<<"$out" \
+  && grep -qE 'spawn-claude\.sh' <<<"$out" \
+  && grep -qE 'cleanup-worktree\.sh' <<<"$out" \
+  && pass_msg "consumer-required: section lists both rendered scripts" \
+  || { fail_msg "consumer-required: missing section"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'Preserved — consumer-owned:' <<<"$out" \
+  && grep -qE 'my-custom\.sh' <<<"$out" \
+  && pass_msg "consumer-required: my-custom.sh appears under Preserved" \
+  || fail_msg "consumer-required: my-custom.sh missing from Preserved"
+# Verify --fix residual does NOT propose deleting the rendered scripts.
+(
+  cd "$FX"
+  PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT_T" \
+    LABELS_JSON="$ALL_LABELS_JSON" DOCTOR_FIX_NONINTERACTIVE=1 \
+    bash "$HELPER" --fix residual
+) > "$FX/fix-out" 2>&1
+fix_out="$(cat "$FX/fix-out")"
+grep -qE 'Remove duplicate of plugin-shipped file: \.claude/scripts/spawn-claude\.sh' <<<"$fix_out" \
+  && fail_msg "consumer-required: spawn-claude.sh WRONGLY prompted for removal" \
+  || pass_msg "consumer-required: spawn-claude.sh NOT prompted"
+[ -f "$FX/.claude/scripts/spawn-claude.sh" ] && pass_msg "consumer-required: spawn-claude.sh survives" \
+  || fail_msg "consumer-required: spawn-claude.sh was deleted"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
