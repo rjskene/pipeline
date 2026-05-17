@@ -50,6 +50,19 @@ assert "style.css on has background"       "grep -A2 '\.indicator\.on' '$CSS' | 
 GI="$REPO_ROOT/.gitignore"
 assert ".gitignore excludes mock-web/.env.mock-web-eval" "grep -qE '^/?mock-web/\.env\.mock-web-eval\$' '$GI'"
 
+# Group 6 — Dockerfile.mock-web-eval structure (deterministic pins)
+DF="$REPO_ROOT/Dockerfile.mock-web-eval"
+assert "Dockerfile uses Node LTS base"          "grep -qE '^FROM node:[0-9]+(\.[0-9]+)*(-[a-z]+)?\$|^FROM node:lts' '$DF'"
+assert "Dockerfile pins @anthropic-ai/claude-code@2.1.143" "grep -qF '@anthropic-ai/claude-code@2.1.143' '$DF'"
+assert "Dockerfile pins @playwright/mcp@0.0.75"           "grep -qF '@playwright/mcp@0.0.75' '$DF'"
+assert "Dockerfile pins serve@14.2.6"                     "grep -qF 'serve@14.2.6' '$DF'"
+assert "Dockerfile installs Chromium with deps" "grep -qE 'playwright install --with-deps chromium' '$DF'"
+assert "Dockerfile installs gh CLI"             "grep -qE 'apt-get install.*gh|cli\.github\.com' '$DF'"
+assert "Dockerfile declares UID build arg"      "grep -qE '^ARG HOST_UID' '$DF'"
+assert "Dockerfile declares GID build arg"      "grep -qE '^ARG HOST_GID' '$DF'"
+assert "Dockerfile creates non-root user"       "grep -qE 'useradd|adduser' '$DF' && grep -qE 'USER ' '$DF'"
+assert "Dockerfile WORKDIR is /workspace"       "grep -qE '^WORKDIR /workspace' '$DF'"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
