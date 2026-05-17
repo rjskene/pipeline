@@ -233,7 +233,7 @@ grep -qE '^CHECK: skill_files_residual status=warn detail=1 duplicate' <<<"$out"
 grep -qE 'classify-issue/SKILL\.md' <<<"$out" \
   && pass_msg "relpath-skill: classify-issue listed as duplicate" \
   || fail_msg "relpath-skill: classify-issue not flagged"
-awk '/Duplicates of plugin-owned files/{flag=1; next} /Preserved — consumer-owned:/{flag=0} flag' <<<"$out" \
+awk '/Duplicates of plugin-owned files/{flag=1; next} /Required — rendered from plugin templates:|Preserved — consumer-owned:/{flag=0} flag' <<<"$out" \
   | grep -qE 'todo/SKILL\.md' \
   && fail_msg "relpath-skill: todo/SKILL.md WRONGLY flagged as duplicate" \
   || pass_msg "relpath-skill: todo/SKILL.md NOT flagged (preserved)"
