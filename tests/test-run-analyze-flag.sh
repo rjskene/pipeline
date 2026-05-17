@@ -27,6 +27,8 @@ want "dispatches general-purpose subagent"        "Agent\\(subagent_type='genera
 want "references shortlist path placeholder"      'SHORTLIST_PATH'
 want "duplicate-candidates output table column"   '## Duplicate candidates'
 want "tracker-fits output table column"           'Standalones that fit an existing tracker'
+want "documents missing-label table heading"      '## Issues missing labels'
+want "documents missing_label_candidates JSON"    'missing_label_candidates'
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"

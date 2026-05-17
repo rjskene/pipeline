@@ -18,6 +18,9 @@ set -uo pipefail
 #     "tracker_fits": [
 #       {"issue": <int>, "tracker": <int>,
 #        "reason": "scope-match"|"body-reference"}
+#     ],
+#     "missing_label_candidates": [
+#       {"issue": <int>, "missing": ["priority"|"path"|"state", ...]}
 #     ]
 #   }
 #
@@ -25,7 +28,13 @@ set -uo pipefail
 #   bash scripts/analyze-issues.sh                   # live (calls gh)
 #   bash scripts/analyze-issues.sh --fixture <dir>   # fixture mode (no gh)
 #
-# Caps at top 20 duplicate pairs + top 20 tracker fits.
+# Caps at top 20 duplicate pairs + top 20 tracker fits + top 20 missing-label
+# candidates.
+#
+# The missing-label signal has a configurable age gate
+# (PIPELINE_ANALYZE_MIN_AGE_HOURS, default 24h) — issues younger than the
+# cutoff are silently suppressed so newly-filed issues are not flagged
+# before classify-issue has a chance to run.
 
 # --- locate and source pipeline.config (best-effort; fixture mode tolerates absence) ---
 find_config() {
@@ -66,7 +75,8 @@ ISSUES_FILE=$(mktemp)
 NT_TSV=$(mktemp)
 TR_INDEX_FILE=$(mktemp)
 FITS_RAW=$(mktemp)
-trap 'rm -f "$ISSUES_FILE" "$NT_TSV" "$TR_INDEX_FILE" "$FITS_RAW"' EXIT
+CHILD_INDEX_FILE=$(mktemp)
+trap 'rm -f "$ISSUES_FILE" "$NT_TSV" "$TR_INDEX_FILE" "$FITS_RAW" "$CHILD_INDEX_FILE"' EXIT
 
 # --- source issues JSON ---
 if [ -n "$FIXTURE_DIR" ]; then
@@ -84,7 +94,7 @@ else
     --repo "$PIPELINE_REPO" \
     --state open \
     --limit 200 \
-    --json number,title,body,labels \
+    --json number,title,body,labels,createdAt \
     > "$ISSUES_FILE"
 fi
 
@@ -143,7 +153,45 @@ printf '%s' "$NONTRACKERS" | jq -r '
   | @tsv
 ' > "$NT_TSV"
 
-PAIRS_RAW=$(awk -F'\t' '
+# --- trackers + children index ---
+# Built before duplicate-pairs awk so CHILD_INDEX_FILE is available to both
+# the awk's same-tracker-siblings filter and the tracker-fits loop below.
+TRACKERS=$(printf '%s' "$ENRICHED" | jq '[.[] | select(.is_tracker == true)]')
+
+while IFS= read -r tline; do
+  [ -z "$tline" ] && continue
+  tnum=$(printf '%s' "$tline" | jq -r '.number')
+  tscope=$(printf '%s' "$tline" | jq -r '.scope')
+  tbody=$(fetch_tracker_body "$tnum")
+  children=$(printf '%s\n' "$tbody" | bash "$PARSE_CHILDREN_SCRIPT" - | paste -sd, -)
+  printf '%s\t%s\t%s\n' "$tnum" "$tscope" "$children"
+done < <(printf '%s' "$TRACKERS" | jq -c '.[]') > "$TR_INDEX_FILE"
+
+# Derive child→tracker index from TR_INDEX_FILE — one row per (child, tracker)
+# pair (a child mapped under two trackers, which signals a config bug, produces
+# two rows; the two consumers below disagree on which wins — duplicate-pairs awk
+# overwrites in ct[], lookup_child_tracker returns the first match — but for the
+# well-formed case of one tracker per child, both yield the same answer).
+awk -F'\t' '
+  {
+    tnum = $1
+    n = split($3, ch, ",")
+    for (i = 1; i <= n; i++) {
+      if (ch[i] != "") print ch[i] "\t" tnum
+    }
+  }
+' "$TR_INDEX_FILE" > "$CHILD_INDEX_FILE"
+
+PAIRS_RAW=$(awk -F'\t' -v cif="$CHILD_INDEX_FILE" '
+  BEGIN {
+    if (cif != "") {
+      while ((getline line < cif) > 0) {
+        nf = split(line, p, "\t")
+        if (nf == 2 && p[1] != "" && p[2] != "") ct[p[1]] = p[2]
+      }
+      close(cif)
+    }
+  }
   function lcs_len(a, b,    na, nb, i, j, prev, cur, mx, ca, cb, k) {
     na = length(a); nb = length(b)
     if (na > 4096) { a = substr(a, 1, 4096); na = 4096 }
@@ -196,6 +244,8 @@ PAIRS_RAW=$(awk -F'\t' '
   END {
     for (i = 1; i <= cnt; i++) {
       for (j = i+1; j <= cnt; j++) {
+        # Same-tracker-siblings exclusion: both numbers indexed in ct[] AND map to same tracker.
+        if ((n[i] in ct) && (n[j] in ct) && ct[n[i]] == ct[n[j]]) continue
         ja = jaccard(t[i], t[j])
         shared = (s[i] != "" && s[i] == s[j]) ? s[i] : ""
         keep = 0
@@ -228,34 +278,31 @@ PAIRS_JSON=$(
   fi
 )
 
-# --- trackers + children index ---
-TRACKERS=$(printf '%s' "$ENRICHED" | jq '[.[] | select(.is_tracker == true)]')
-
-while IFS= read -r tline; do
-  [ -z "$tline" ] && continue
-  tnum=$(printf '%s' "$tline" | jq -r '.number')
-  tscope=$(printf '%s' "$tline" | jq -r '.scope')
-  tbody=$(fetch_tracker_body "$tnum")
-  children=$(printf '%s\n' "$tbody" | bash "$PARSE_CHILDREN_SCRIPT" - | paste -sd, -)
-  printf '%s\t%s\t%s\n' "$tnum" "$tscope" "$children"
-done < <(printf '%s' "$TRACKERS" | jq -c '.[]') > "$TR_INDEX_FILE"
-
 # --- tracker fits ---
+# Lookup child→tracker via the unified CHILD_INDEX_FILE built earlier.
+# Returns the parent tracker number on stdout (exit 0) or nothing (exit 1).
+lookup_child_tracker() {
+  local child="$1"
+  [ ! -s "$CHILD_INDEX_FILE" ] && return 1
+  awk -F'\t' -v c="$child" '$1 == c { print $2; found=1; exit } END { exit (found ? 0 : 1) }' "$CHILD_INDEX_FILE"
+}
+
 while IFS= read -r iline; do
   [ -z "$iline" ] && continue
   inum=$(printf '%s' "$iline" | jq -r '.number')
   iscope=$(printf '%s' "$iline" | jq -r '.scope')
   ibody=$(printf '%s' "$iline" | jq -r '.body // ""')
+  # Already-in-rollout: skip every (inum, parent_tracker) pair regardless of which
+  # tracker we're scoring against. Equivalent to the previous per-tracker is_child
+  # check, expressed via the unified child→tracker index.
+  iparent=$(lookup_child_tracker "$inum" || true)
+  # tchildren is unused in this loop body — the per-tracker is_child check it
+  # used to drive now lives in the unified CHILD_INDEX_FILE lookup above. The
+  # field is retained in TR_INDEX_FILE's schema so the file remains the single
+  # source of tracker/children info for any downstream consumer.
   while IFS=$'\t' read -r tnum tscope tchildren; do
     [ -z "$tnum" ] && continue
-    is_child=0
-    if [ -n "$tchildren" ]; then
-      IFS=',' read -ra carr <<< "$tchildren"
-      for c in "${carr[@]}"; do
-        if [ "$c" = "$inum" ]; then is_child=1; break; fi
-      done
-    fi
-    [ "$is_child" = "1" ] && continue
+    if [ -n "$iparent" ] && [ "$iparent" = "$tnum" ]; then continue; fi
     reason=""
     if [ -n "$iscope" ] && [ "$iscope" = "$tscope" ]; then
       reason="scope-match"
@@ -293,13 +340,63 @@ FITS_JSON=$(
   fi
 )
 
+# --- missing-label candidates ---
+# Detect issues lacking any of:
+#   - priority/P[0-9] label                     (always required)
+#   - docs-only or multi-task path label        (required unless brainstorm/later/human/tracker)
+#   - any pipeline-stage or classification label (state: surfaced only when nothing
+#                                                 else is present; redundant flag,
+#                                                 sorted after priority/path)
+# Age gate: PIPELINE_ANALYZE_MIN_AGE_HOURS (default 24h). Issues newer than the
+# cutoff are silently suppressed so classify-issue gets a chance to run. Issues
+# without a createdAt field are treated as age-unknown → suppressed.
+MIN_AGE_HOURS="${PIPELINE_ANALYZE_MIN_AGE_HOURS:-24}"
+NOW_EPOCH=$(date -u +%s)
+CUTOFF_EPOCH=$(( NOW_EPOCH - MIN_AGE_HOURS * 3600 ))
+MISSING_JSON=$(jq --argjson cutoff "$CUTOFF_EPOCH" '
+  def has_priority(labels): any(labels[]?; .name | test("^priority/P[0-9]$"));
+  def has_path(labels):     any(labels[]?; .name == "docs-only" or .name == "multi-task");
+  def has_state(labels):    any(labels[]?; .name == "brainstorm" or .name == "tracker" or .name == "later" or .name == "human");
+  def is_tracker(labels):   any(labels[]?; .name == "tracker");
+  def is_exempt(labels):    any(labels[]?; .name == "brainstorm" or .name == "later" or .name == "human");
+  def age_ok($cdt):
+    # Suppress on uncertainty: missing or unparseable createdAt yields false
+    # (no row emitted). The try/catch around fromdateiso8601 ensures one
+    # malformed date in upstream data does not abort the whole jq pipeline
+    # and silently zero missing_label_candidates for the entire repo.
+    ($cdt // "") as $c
+    | if $c == "" then false
+      else (try (($c | fromdateiso8601) < $cutoff) catch false)
+      end;
+  [ .[]
+    | select(is_tracker(.labels) | not)
+    | select(is_exempt(.labels) | not)
+    | select(age_ok(.createdAt))
+    | . as $i
+    | {
+        number,
+        missing: (
+          [ (if has_priority($i.labels) | not then "priority" else empty end),
+            (if has_path($i.labels)     | not then "path"     else empty end) ]
+          + (if (has_priority($i.labels) | not)
+               and (has_path($i.labels) | not)
+               and (has_state($i.labels) | not)
+             then ["state"] else [] end)
+        )
+      }
+    | select(.missing | length > 0)
+    | {issue: .number, missing: .missing}
+  ] | .[0:20]
+' "$ISSUES_FILE")
+
 # --- assemble + emit ---
 mkdir -p .claude/logs
 OUT=".claude/logs/analyze-shortlist-$(date -u +%Y%m%dT%H%M%S%NZ).json"
 jq -n \
-  --argjson pairs "${PAIRS_JSON:-[]}" \
-  --argjson fits  "${FITS_JSON:-[]}" \
-  '{duplicate_pairs: $pairs, tracker_fits: $fits}' > "$OUT"
+  --argjson pairs   "${PAIRS_JSON:-[]}" \
+  --argjson fits    "${FITS_JSON:-[]}" \
+  --argjson missing "${MISSING_JSON:-[]}" \
+  '{duplicate_pairs: $pairs, tracker_fits: $fits, missing_label_candidates: $missing}' > "$OUT"
 
 ABS_OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 printf '%s\n' "$ABS_OUT"

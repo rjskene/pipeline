@@ -66,9 +66,25 @@ MD
 - Hook trip counts: TODO (depends on per-hook log files).
 
 ## Interaction
-- Turn count per issue: TODO (parse orchestrator transcript JSONL).
-- User-correction frequency: TODO (regex `\b(no|stop|wait|redo|actually|instead)\b` in user turns; quotes redacted).
-- Confirmations Claude asked for: TODO (assistant turns containing "?" and "should I").
+MD
+
+  # Derive prior session UUID + one-liner from runs.log (most recent row).
+  # The subagent classifier (dispatched from /pipeline:run step 1c) finds the
+  # placeholder line via exact-string match and replaces it via Edit.
+  PRIOR_LINE=$(tail -n 1 "$LOGS_DIR/runs.log" 2>/dev/null || true)
+  if [ -n "$PRIOR_LINE" ]; then
+    PRIOR_UUID=$(printf '%s' "$PRIOR_LINE" | grep -oE 'session=[a-zA-Z0-9_-]+' | head -1 | cut -d= -f2)
+    PRIOR_PATH=$(printf '%s' "$PRIOR_LINE" | grep -oE 'path=[ABC]' | head -1 | cut -d= -f2)
+    PRIOR_SKILL=$(printf '%s' "$PRIOR_LINE" | grep -oE 'skill=[a-zA-Z0-9_-]+' | head -1 | cut -d= -f2)
+    PRIOR_ISSUE=$(printf '%s' "$PRIOR_LINE" | grep -oE 'issue=[0-9]+' | head -1 | cut -d= -f2)
+    echo "- prior session: issue=#${PRIOR_ISSUE:-?} path=${PRIOR_PATH:-?} skill=${PRIOR_SKILL:-?} (session ${PRIOR_UUID:-unknown})"
+    echo "- _pending subagent classification — session ${PRIOR_UUID:-unknown}_"
+  else
+    echo "- prior session: (runs.log empty)"
+    echo "- _pending subagent classification — session unknown_"
+  fi
+
+  cat <<'MD'
 
 ## Pattern → defaults
 - Cross-session signal detection lives in outer-loop.sh; this inner digest reports per-run noise.

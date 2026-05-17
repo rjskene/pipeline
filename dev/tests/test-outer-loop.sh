@@ -46,5 +46,63 @@ assert "outer digest names a codification target (plugin surface, not memory)" \
 assert "outer digest does NOT recommend Claude memory" \
   "! grep -qi 'claude memory\\|user memory\\|MEMORY\\.md' \"\$DIGEST\""
 
+# --- Scenario E: Suggested default lines repeat across 2 of 3 runs -> flagged
+TMP2=$(mktemp -d); trap 'rm -rf "$TMP" "$TMP2"' EXIT
+OUT2="$TMP2/audits"; mkdir -p "$OUT2"
+for i in 1 2 3; do
+  D="$OUT2/inner-2026-05-16T0${i}0000Z.md"
+  cat > "$D" <<MD
+# Inner audit — 2026-05-16T0${i}:00:00Z
+
+## Interaction
+### Event 1
+- **Trigger:** assistant proposed cleanup of three worktrees
+- **Correction:** the user said skip those
+- **Suggested default:** Confirm cleanup once per batch not per worktree.
+MD
+  # 3rd run carries a DIFFERENT suggested default to confirm 2-of-3 still fires
+  if [ "$i" = "3" ]; then
+    sed -i 's|Confirm cleanup once per batch not per worktree.|Some unrelated default.|' "$D"
+  fi
+  printf '{"timestamp":"2026-05-16T0%d:00:00Z","digest":"inner-2026-05-16T0%d0000Z.md","merged_prs":0}\n' "$i" "$i" >> "$OUT2/index.jsonl"
+done
+AUDIT_OUT_DIR="$OUT2" bash "$OUTER"
+OUTER_DIGEST=$(ls "$OUT2"/outer-*.md | head -1)
+assert "outer-loop flags repeating Suggested default (2-of-3)" \
+  "grep -qF 'Confirm cleanup once per batch not per worktree.' \"\$OUTER_DIGEST\""
+assert "outer-loop tags Suggested-default codification target" \
+  "grep -qiE 'codification candidate|repeating suggested default' \"\$OUTER_DIGEST\""
+assert "outer-loop emits ## Suggested issues section when patterns exist" \
+  "grep -qE '^## Suggested issues' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row has conventional-commit title shape" \
+  "grep -qE '^- \\*\\*Title:\\*\\* (feat|fix|chore)\\([a-z0-9-]+\\): ' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row includes a Body field" \
+  "grep -qE '^  - \\*\\*Body:\\*\\* ' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row includes a Label hint field" \
+  "grep -qE '^  - \\*\\*Label hint:\\*\\* (brainstorm|none)$' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row references the originating Suggested default" \
+  "grep -qE '^  - \\*\\*From Suggested default:\\*\\* ' \"\$OUTER_DIGEST\""
+
+# --- Scenario F: no repeating Suggested defaults -> ## Suggested issues section is OMITTED
+TMP3=$(mktemp -d); trap 'rm -rf "$TMP" "$TMP2" "$TMP3"' EXIT
+OUT3="$TMP3/audits"; mkdir -p "$OUT3"
+for i in 1 2 3; do
+  D="$OUT3/inner-2026-05-18T0${i}0000Z.md"
+  cat > "$D" <<MD
+# Inner audit — 2026-05-18T0${i}:00:00Z
+
+## Interaction
+### Event 1
+- **Trigger:** unique trigger ${i}
+- **Correction:** unique correction ${i}
+- **Suggested default:** Unique default text number ${i}.
+MD
+  printf '{"timestamp":"2026-05-18T0%d:00:00Z","digest":"inner-2026-05-18T0%d0000Z.md","merged_prs":0}\n' "$i" "$i" >> "$OUT3/index.jsonl"
+done
+AUDIT_OUT_DIR="$OUT3" bash "$OUTER"
+OUTER_DIGEST3=$(ls "$OUT3"/outer-*.md | head -1)
+assert "outer-loop OMITS ## Suggested issues section when no patterns" \
+  "! grep -qE '^## Suggested issues' \"\$OUTER_DIGEST3\""
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

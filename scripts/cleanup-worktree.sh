@@ -1,24 +1,25 @@
 #!/bin/bash
 set -euo pipefail
 
-# Source project config
-source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+# Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
+# export PIPELINE_PROJECT_ROOT to override the lookup directory.
+source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 # Clean up a worktree after its PR has been merged/closed.
 # Verifies PR is closed, closes the issue, consolidates logs,
 # removes worktree, and deletes the branch.
 #
-# Usage: bash .claude/scripts/cleanup-worktree.sh <issue-number> [--force]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-worktree.sh <issue-number> [--force]
 #   --force  Skip the PR-closed check (for manual cleanup of abandoned worktrees)
 
 if [ $# -lt 1 ]; then
-  echo "Usage: bash .claude/scripts/cleanup-worktree.sh <issue-number> [--force]"
+  echo "Usage: bash \${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-worktree.sh <issue-number> [--force]"
   exit 1
 fi
 
 ISSUE_NUM="$1"
 FORCE="${2:-}"
-MAIN_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 
 # --- Discover worktree path from git worktree list ---
 WORKTREE_PATH=""

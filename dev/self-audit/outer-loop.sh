@@ -48,6 +48,10 @@ MD
     i=$((i+1))
     grep -E '^- (SIGNAL|signal|turn_count|tdd_|wave_)' "$OUT_DIR/$d" \
       | sort -u > "$TMP/sig-$i.txt" 2>/dev/null || true
+    # Per-digest list of Suggested default text (one per line, trimmed).
+    grep -E '^- \*\*Suggested default:\*\*' "$OUT_DIR/$d" 2>/dev/null \
+      | sed 's/^- \*\*Suggested default:\*\* *//' \
+      | sort -u > "$TMP/def-$i.txt" || true
   done <<< "$DIGESTS"
 
   INTERSECT="$TMP/intersect.txt"
@@ -83,6 +87,73 @@ MD
     done < "$INTERSECT"
   else
     echo "No consistent cross-run patterns detected in this window."
+  fi
+
+  # 2-of-3 Suggested-default detector (MVP: exact-string match).
+  # Future upgrade per issue #135: token-set Jaccard >= 0.7.
+  DEFAULT_HITS="$TMP/default-hits.txt"; : > "$DEFAULT_HITS"
+  if [ "$i" -ge 2 ]; then
+    cat "$TMP"/def-*.txt 2>/dev/null | sort | uniq -c | awk '$1 >= 2 {
+      $1=""; sub(/^[ \t]+/, ""); print
+    }' > "$DEFAULT_HITS"
+  fi
+  if [ -s "$DEFAULT_HITS" ]; then
+    cat <<'MD'
+
+**Repeating Suggested defaults (codification candidates):**
+
+MD
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      echo "- $d"
+      echo "  - **Codification target:** Claude memory (\`feedback_*.md\` under \`MEMORY.md\`) OR skill prose (\`skills/<name>/SKILL.md\`) — user choice."
+    done < "$DEFAULT_HITS"
+  fi
+
+  if [ -s "$DEFAULT_HITS" ]; then
+    cat <<'MD'
+
+## Suggested issues
+
+Candidate issues drafted from the repeating Suggested defaults above. **Read-only**: the user copies these into `/pipeline:create-issues` for Socratic refinement and filing. Do NOT auto-file.
+
+MD
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      lower=$(printf '%s' "$d" | tr '[:upper:]' '[:lower:]')
+      scope="self-improve"
+      case "$lower" in
+        *skills/run/*|*pipeline:run*) scope="run" ;;
+        *classify-issue*)             scope="classify-issue" ;;
+        *evaluate-issue-pr*|*evaluate-issue-plan*) scope="evaluate" ;;
+        *execute-issue-plan*)         scope="execute" ;;
+        *create-issues*)              scope="create-issues" ;;
+        *plan-issue*)                 scope="plan-issue" ;;
+        *pipeline.config*)            scope="config" ;;
+        *hooks/*|*hook*)              scope="hooks" ;;
+        *scripts/*)                   scope="scripts" ;;
+      esac
+      ctype="feat"
+      case "$lower" in
+        *prevent*|*skip*|*avoid*|*stop*|*block*) ctype="fix" ;;
+        *cleanup*|*hygiene*|*refactor*)          ctype="chore" ;;
+      esac
+      summary=$(printf '%s' "$d" | sed 's/\.$//')
+      first=$(printf '%s' "$summary" | cut -c1 | tr '[:upper:]' '[:lower:]')
+      rest=$(printf '%s' "$summary" | cut -c2-)
+      summary="$first$rest"
+      if [ "${#summary}" -gt 72 ]; then
+        summary=$(printf '%s' "$summary" | cut -c1-72 | sed 's/ [^ ]*$//')
+      fi
+      label="none"
+      case "$lower" in
+        *explore*|*consider*|*"should we"*|*maybe*|*\?*) label="brainstorm" ;;
+      esac
+      echo "- **Title:** ${ctype}(${scope}): ${summary}"
+      echo "  - **Body:** Observed across the audit window — outer-loop detected this Suggested default repeating in 2 of the last ${WINDOW} inner digests. Codification target: ${scope}."
+      echo "  - **Label hint:** ${label}"
+      echo "  - **From Suggested default:** ${d}"
+    done < "$DEFAULT_HITS"
   fi
 
   cat <<'MD'

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Tests for the base-branch defaulting logic in setup-worktree.sh.template.
+# Tests for the base-branch defaulting logic in setup-worktree.sh.
 # Covers four branches of the selection algorithm:
 #   1. --base explicit -> always wins regardless of current branch
 #   2. current branch non-default (e.g. 'next'), no --base -> current branch
@@ -12,7 +12,7 @@ set -euo pipefail
 # does not require network access.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TEMPLATE="$SCRIPT_DIR/../scripts/setup-worktree.sh.template"
+TEMPLATE="$SCRIPT_DIR/../scripts/setup-worktree.sh"
 
 PASS=0
 FAIL=0
@@ -111,12 +111,15 @@ assert_base_branch() {
 }
 
 # --- Case 1: explicit --base wins over current branch ---
+# setup-worktree.sh now sources pipeline.config from $(pwd) (or
+# $PIPELINE_PROJECT_ROOT); invoke each case from inside $PROJ so the
+# config resolves correctly.
 echo "Case 1: --base custom-branch wins over current branch 'next'"
 inc
 PROJ=$(setup_project next)
 git -C "$PROJ" branch -q custom-branch
 git -C "$PROJ" push -q origin custom-branch
-if ! bash "$PROJ/.claude/scripts/setup-worktree.sh" --base custom-branch feature/foo 99 \
+if ! ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh --base custom-branch feature/foo 99 ) \
         >"$WORKDIR/case1.log" 2>&1; then
   fail_msg "Case 1: setup-worktree.sh exited non-zero"
   sed 's/^/    /' "$WORKDIR/case1.log"
@@ -129,7 +132,7 @@ fi
 echo "Case 2: current branch 'next' inferred as base"
 inc
 PROJ=$(setup_project next)
-if ! bash "$PROJ/.claude/scripts/setup-worktree.sh" feature/bar 100 \
+if ! ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh feature/bar 100 ) \
         >"$WORKDIR/case2.log" 2>&1; then
   fail_msg "Case 2: setup-worktree.sh exited non-zero"
   sed 's/^/    /' "$WORKDIR/case2.log"
@@ -142,7 +145,7 @@ fi
 echo "Case 3: current branch 'main' falls back to PIPELINE_BASE_BRANCH"
 inc
 PROJ=$(setup_project main)
-if ! bash "$PROJ/.claude/scripts/setup-worktree.sh" feature/baz 101 \
+if ! ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh feature/baz 101 ) \
         >"$WORKDIR/case3.log" 2>&1; then
   fail_msg "Case 3: setup-worktree.sh exited non-zero"
   sed 's/^/    /' "$WORKDIR/case3.log"
@@ -155,7 +158,7 @@ fi
 echo "Case 4: detached HEAD falls back to PIPELINE_BASE_BRANCH"
 inc
 PROJ=$(setup_project DETACHED)
-if ! bash "$PROJ/.claude/scripts/setup-worktree.sh" feature/qux 102 \
+if ! ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh feature/qux 102 ) \
         >"$WORKDIR/case4.log" 2>&1; then
   fail_msg "Case 4: setup-worktree.sh exited non-zero"
   sed 's/^/    /' "$WORKDIR/case4.log"

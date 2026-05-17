@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Tests for the --append-system-prompt payload builder in spawn-claude.sh.template.
+# Tests for the --append-system-prompt payload builder in spawn-claude.sh.
 #
 # Scenarios:
 #   - PATH B / EXECUTE with two required skills + args files + reviewer
@@ -17,7 +17,7 @@ set -euo pipefail
 #   - Empty skills + empty reviewer -> no payload file (absent/empty hook output).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh.template"
+SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh"
 
 PASS=0
 FAIL=0
