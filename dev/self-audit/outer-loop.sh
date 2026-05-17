@@ -110,6 +110,52 @@ MD
     done < "$DEFAULT_HITS"
   fi
 
+  if [ -s "$DEFAULT_HITS" ]; then
+    cat <<'MD'
+
+## Suggested issues
+
+Candidate issues drafted from the repeating Suggested defaults above. **Read-only**: the user copies these into `/pipeline:create-issues` for Socratic refinement and filing. Do NOT auto-file.
+
+MD
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      lower=$(printf '%s' "$d" | tr '[:upper:]' '[:lower:]')
+      scope="self-improve"
+      case "$lower" in
+        *skills/run/*|*pipeline:run*) scope="run" ;;
+        *classify-issue*)             scope="classify-issue" ;;
+        *evaluate-issue-pr*|*evaluate-issue-plan*) scope="evaluate" ;;
+        *execute-issue-plan*)         scope="execute" ;;
+        *create-issues*)              scope="create-issues" ;;
+        *plan-issue*)                 scope="plan-issue" ;;
+        *pipeline.config*)            scope="config" ;;
+        *hooks/*|*hook*)              scope="hooks" ;;
+        *scripts/*)                   scope="scripts" ;;
+      esac
+      ctype="feat"
+      case "$lower" in
+        *prevent*|*skip*|*avoid*|*stop*|*block*) ctype="fix" ;;
+        *cleanup*|*hygiene*|*refactor*)          ctype="chore" ;;
+      esac
+      summary=$(printf '%s' "$d" | sed 's/\.$//')
+      first=$(printf '%s' "$summary" | cut -c1 | tr '[:upper:]' '[:lower:]')
+      rest=$(printf '%s' "$summary" | cut -c2-)
+      summary="$first$rest"
+      if [ "${#summary}" -gt 72 ]; then
+        summary=$(printf '%s' "$summary" | cut -c1-72 | sed 's/ [^ ]*$//')
+      fi
+      label="none"
+      case "$lower" in
+        *explore*|*consider*|*"should we"*|*maybe*|*\?*) label="brainstorm" ;;
+      esac
+      echo "- **Title:** ${ctype}(${scope}): ${summary}"
+      echo "  - **Body:** Observed across the audit window — outer-loop detected this Suggested default repeating in 2 of the last ${WINDOW} inner digests. Codification target: ${scope}."
+      echo "  - **Label hint:** ${label}"
+      echo "  - **From Suggested default:** ${d}"
+    done < "$DEFAULT_HITS"
+  fi
+
   cat <<'MD'
 
 ## Read-only
