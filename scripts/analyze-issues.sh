@@ -75,7 +75,8 @@ ISSUES_FILE=$(mktemp)
 NT_TSV=$(mktemp)
 TR_INDEX_FILE=$(mktemp)
 FITS_RAW=$(mktemp)
-trap 'rm -f "$ISSUES_FILE" "$NT_TSV" "$TR_INDEX_FILE" "$FITS_RAW"' EXIT
+CHILD_INDEX_FILE=$(mktemp)
+trap 'rm -f "$ISSUES_FILE" "$NT_TSV" "$TR_INDEX_FILE" "$FITS_RAW" "$CHILD_INDEX_FILE"' EXIT
 
 # --- source issues JSON ---
 if [ -n "$FIXTURE_DIR" ]; then
@@ -152,7 +153,45 @@ printf '%s' "$NONTRACKERS" | jq -r '
   | @tsv
 ' > "$NT_TSV"
 
-PAIRS_RAW=$(awk -F'\t' '
+# --- trackers + children index ---
+# Built before duplicate-pairs awk so CHILD_INDEX_FILE is available to both
+# the awk's same-tracker-siblings filter and the tracker-fits loop below.
+TRACKERS=$(printf '%s' "$ENRICHED" | jq '[.[] | select(.is_tracker == true)]')
+
+while IFS= read -r tline; do
+  [ -z "$tline" ] && continue
+  tnum=$(printf '%s' "$tline" | jq -r '.number')
+  tscope=$(printf '%s' "$tline" | jq -r '.scope')
+  tbody=$(fetch_tracker_body "$tnum")
+  children=$(printf '%s\n' "$tbody" | bash "$PARSE_CHILDREN_SCRIPT" - | paste -sd, -)
+  printf '%s\t%s\t%s\n' "$tnum" "$tscope" "$children"
+done < <(printf '%s' "$TRACKERS" | jq -c '.[]') > "$TR_INDEX_FILE"
+
+# Derive child→tracker index from TR_INDEX_FILE — one row per (child, tracker)
+# pair (a child mapped under two trackers, which signals a config bug, produces
+# two rows; the two consumers below disagree on which wins — duplicate-pairs awk
+# overwrites in ct[], lookup_child_tracker returns the first match — but for the
+# well-formed case of one tracker per child, both yield the same answer).
+awk -F'\t' '
+  {
+    tnum = $1
+    n = split($3, ch, ",")
+    for (i = 1; i <= n; i++) {
+      if (ch[i] != "") print ch[i] "\t" tnum
+    }
+  }
+' "$TR_INDEX_FILE" > "$CHILD_INDEX_FILE"
+
+PAIRS_RAW=$(awk -F'\t' -v cif="$CHILD_INDEX_FILE" '
+  BEGIN {
+    if (cif != "") {
+      while ((getline line < cif) > 0) {
+        nf = split(line, p, "\t")
+        if (nf == 2 && p[1] != "" && p[2] != "") ct[p[1]] = p[2]
+      }
+      close(cif)
+    }
+  }
   function lcs_len(a, b,    na, nb, i, j, prev, cur, mx, ca, cb, k) {
     na = length(a); nb = length(b)
     if (na > 4096) { a = substr(a, 1, 4096); na = 4096 }
@@ -205,6 +244,8 @@ PAIRS_RAW=$(awk -F'\t' '
   END {
     for (i = 1; i <= cnt; i++) {
       for (j = i+1; j <= cnt; j++) {
+        # Same-tracker-siblings exclusion: both numbers indexed in ct[] AND map to same tracker.
+        if ((n[i] in ct) && (n[j] in ct) && ct[n[i]] == ct[n[j]]) continue
         ja = jaccard(t[i], t[j])
         shared = (s[i] != "" && s[i] == s[j]) ? s[i] : ""
         keep = 0
@@ -237,34 +278,31 @@ PAIRS_JSON=$(
   fi
 )
 
-# --- trackers + children index ---
-TRACKERS=$(printf '%s' "$ENRICHED" | jq '[.[] | select(.is_tracker == true)]')
-
-while IFS= read -r tline; do
-  [ -z "$tline" ] && continue
-  tnum=$(printf '%s' "$tline" | jq -r '.number')
-  tscope=$(printf '%s' "$tline" | jq -r '.scope')
-  tbody=$(fetch_tracker_body "$tnum")
-  children=$(printf '%s\n' "$tbody" | bash "$PARSE_CHILDREN_SCRIPT" - | paste -sd, -)
-  printf '%s\t%s\t%s\n' "$tnum" "$tscope" "$children"
-done < <(printf '%s' "$TRACKERS" | jq -c '.[]') > "$TR_INDEX_FILE"
-
 # --- tracker fits ---
+# Lookup child→tracker via the unified CHILD_INDEX_FILE built earlier.
+# Returns the parent tracker number on stdout (exit 0) or nothing (exit 1).
+lookup_child_tracker() {
+  local child="$1"
+  [ ! -s "$CHILD_INDEX_FILE" ] && return 1
+  awk -F'\t' -v c="$child" '$1 == c { print $2; found=1; exit } END { exit (found ? 0 : 1) }' "$CHILD_INDEX_FILE"
+}
+
 while IFS= read -r iline; do
   [ -z "$iline" ] && continue
   inum=$(printf '%s' "$iline" | jq -r '.number')
   iscope=$(printf '%s' "$iline" | jq -r '.scope')
   ibody=$(printf '%s' "$iline" | jq -r '.body // ""')
+  # Already-in-rollout: skip every (inum, parent_tracker) pair regardless of which
+  # tracker we're scoring against. Equivalent to the previous per-tracker is_child
+  # check, expressed via the unified child→tracker index.
+  iparent=$(lookup_child_tracker "$inum" || true)
+  # tchildren is unused in this loop body — the per-tracker is_child check it
+  # used to drive now lives in the unified CHILD_INDEX_FILE lookup above. The
+  # field is retained in TR_INDEX_FILE's schema so the file remains the single
+  # source of tracker/children info for any downstream consumer.
   while IFS=$'\t' read -r tnum tscope tchildren; do
     [ -z "$tnum" ] && continue
-    is_child=0
-    if [ -n "$tchildren" ]; then
-      IFS=',' read -ra carr <<< "$tchildren"
-      for c in "${carr[@]}"; do
-        if [ "$c" = "$inum" ]; then is_child=1; break; fi
-      done
-    fi
-    [ "$is_child" = "1" ] && continue
+    if [ -n "$iparent" ] && [ "$iparent" = "$tnum" ]; then continue; fi
     reason=""
     if [ -n "$iscope" ] && [ "$iscope" = "$tscope" ]; then
       reason="scope-match"

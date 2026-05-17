@@ -23,11 +23,13 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 This skill is invoked in one of two ways:
 
 1. **Inline `Agent(...)` dispatch (PATH A, docs-only).** The orchestrator passes the worktree absolute path and issue number in the prompt. You are NOT already in the worktree CWD — `cd <worktree-absolute-path>` before any step below. The prompt also names the slug. No `spawn-claude.sh`, no `claude -p`, no tmux.
-2. **`spawn-claude.sh` / `claude -p` dispatch (PATH B, PATH C, and any path when explicitly requested).** You are already inside the feature worktree at session start; CWD is correct; no `cd` needed.
+2. **`${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch (PATH B, PATH C, and any path when explicitly requested).** You are already inside the feature worktree at session start; CWD is correct; no `cd` needed.
 
 In both modes, every step below behaves identically — only the working-directory setup differs.
 
 When invoked inline via Agent for PATH A, the orchestrator threads the manual-merge opt-out by including the literal token `MANUAL_MERGE=1` in the prompt (mirroring `spawn-claude.sh --manual-merge` for the `-p` path). Treat the inline token and the env var identically — both suppress the auto-merge greenlight in Step 11.
+
+> **Container dispatch (issue #218).** When the orchestrator launched this session inside a consumer-declared container mode (e.g. `--container-mode=web-eval`), the dispatch is transparent to this skill — the consumer's compose service is responsible for surfacing any in-container marker env vars (e.g. `BOMON_WEB_EVAL=1`) the skill behavior reads. This skill itself does not branch on container mode.
 
 # Issue Evaluator
 

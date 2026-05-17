@@ -24,7 +24,7 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 
 | Script | Description |
 |--------|-------------|
-| `.claude/scripts/retarget-pr.sh <pr> <base>` | Retarget a PR's base branch with verify-retry-fail pattern (gh pr edit then REST API fallback) |
+| `${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh <pr> <base>` | Retarget a PR's base branch with verify-retry-fail pattern (gh pr edit then REST API fallback) |
 
 ## Shortcuts
 
@@ -198,7 +198,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    Then, if any worktrees exist, run the sync script to ensure all active worktrees have up-to-date CLAUDE.md files, `.claude/` settings, and hooks:
    ```bash
-   bash .claude/scripts/sync-worktrees.sh
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-worktrees.sh
    ```
    Report any fixes briefly.
 
@@ -236,10 +236,10 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 1. **Check for agent session logs** — if any logs exist in `.claude/logs/`, run the summary:
    ```bash
-   bash .claude/scripts/review-logs.sh
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh
    ```
    If there are logs, show the summary table and ask: **"Review any session logs before continuing? (issue number / all / skip)"**
-   - If the user gives an issue number, run `bash .claude/scripts/review-logs.sh <N>` and display the output.
+   - If the user gives an issue number, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh <N>` and display the output.
    - If "all", run the detail view for each issue with errors > 0.
    - If "skip", proceed to the next step.
 
@@ -247,10 +247,10 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    **"Review audits before continuing? (last / path / deviations / issue / skip)"**
 
-   - `last N`   — run `bash .claude/scripts/review-audits.sh --last N` (prompt for N, default 5).
-   - `path X`   — run `bash .claude/scripts/review-audits.sh --path X` (prompt for A/B/C).
-   - `deviations` — run `bash .claude/scripts/review-audits.sh --deviations`.
-   - `issue N`  — run `bash .claude/scripts/review-audits.sh --issue N` (prompt for N).
+   - `last N`   — run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --last N` (prompt for N, default 5).
+   - `path X`   — run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --path X` (prompt for A/B/C).
+   - `deviations` — run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --deviations`.
+   - `issue N`  — run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --issue N` (prompt for N).
    - `skip`     — proceed to step 2.
 
    Display the script output and continue to step 2.
@@ -493,7 +493,7 @@ active feature work, but it should come BEFORE pulling in new ready work
    ```bash
    mkdir -p /tmp/pipeline-cleanup
    OUT_LOG=$(mktemp /tmp/pipeline-cleanup/issue-<issue_number>-XXXX.log)
-   bash .claude/scripts/cleanup-worktree.sh <issue_number> | tee "$OUT_LOG"
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-worktree.sh <issue_number> | tee "$OUT_LOG"
    ```
    This script (in order): verifies the PR is merged/closed, closes the GitHub issue with the `merged` label, consolidates tool-use logs, removes the git worktree, and deletes the remote+local branch. Its final line is machine-readable: `CLEANUP-SUMMARY: issue=<N> pr=<PR|none> branch=<branch>`.
 
@@ -506,7 +506,7 @@ active feature work, but it should come BEFORE pulling in new ready work
    PRS=$(grep -h '^CLEANUP-SUMMARY:' /tmp/pipeline-cleanup/*.log \
      | sed -n 's/.*pr=\([0-9][0-9]*\).*/\1/p' | paste -sd ',' -)
    if [ -n "$ISSUES" ]; then
-     bash .claude/scripts/create-checkpoint-tag.sh --issues "$ISSUES" --prs "$PRS"
+     bash ${CLAUDE_PLUGIN_ROOT}/scripts/create-checkpoint-tag.sh --issues "$ISSUES" --prs "$PRS"
    fi
    rm -f /tmp/pipeline-cleanup/*.log
    ```
@@ -541,6 +541,8 @@ active feature work, but it should come BEFORE pulling in new ready work
 
    **For PR evaluation (pr-open → evaluated):** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
 
+   **Pre-spawn classifier (issue #218).** Before dispatching the PR evaluator, the orchestrator runs `bash scripts/eval-classifier-invoke.sh <issue> <pr>` if `PIPELINE_EVAL_CLASSIFIER` is set. The classifier's stdout is parsed token-by-token; a `--container-mode=<name>` token causes the dispatch to fall through to `spawn-claude.sh --container-mode=<name>` regardless of PATH letter — container mode overrides PATH A inline subagent dispatch because container isolation cannot be honored inside an inline `Agent()` call. Any other `--flag=value` tokens are forwarded to `spawn-claude.sh` via `--classifier-passthrough=<token>`. If the classifier exit non-zero, the issue is skipped with the classifier's first stderr line surfaced as the reason; the orchestrator continues with the remaining issues. When `PIPELINE_EVAL_CLASSIFIER` is unset (default), this step is a no-op and PATH A / B / C routing below is unchanged.
+
    **Dispatch routing by path tier.** Read each PR-open issue's labels:
    - **PATH A** (`docs-only` label present): dispatch inline from this orchestrator session — no `spawn-claude.sh`, no `claude -p`, no tmux. Worktree was already created during execute-issue-plan, so reuse `<worktree-path>`:
      ```
@@ -554,11 +556,11 @@ active feature work, but it should come BEFORE pulling in new ready work
    1. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
    2. Launch via spawn-claude.sh with `--skill evaluate-issue-pr`:
       ```bash
-      bash .claude/scripts/spawn-claude.sh [--dangerously-skip-permissions] --skill evaluate-issue-pr <worktree-path> <issue> <slug> <mode>
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh [--dangerously-skip-permissions] --skill evaluate-issue-pr <worktree-path> <issue> <slug> <mode>
       ```
    3. For multiple issues, use the queue runner:
       ```bash
-      bash .claude/scripts/run-queue.sh [--skip-permissions] --skill evaluate-issue-pr <issue1> <issue2> ...
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] --skill evaluate-issue-pr <issue1> <issue2> ...
       ```
    4. The evaluate-issue-pr skill reviews the PR diff against the plan, makes minimal fixes if needed, and posts a verdict (Approved or Flagged). It does NOT merge — merge orchestration is handled by the pipeline (see step 8 below).
 
@@ -575,7 +577,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
    1. Run the setup script with the issue number:
       ```bash
-      bash .claude/scripts/setup-worktree.sh <branch> <issue_number>
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh <branch> <issue_number>
       ```
       This creates the worktree at `.claude/worktrees/$PIPELINE_WORKTREE_PREFIX-<issue_number>-<slug>`, copies `.claude/settings.local.json`, installs dependencies, and seeds the dev database.
 
@@ -599,7 +601,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
    4. **If user says tmux and there are 2+ issues** — use the queue runner to manage concurrency (max 3 at a time):
       ```bash
-      bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
       ```
       Only pass `--skip-permissions` if the user opted in at step 3. The queue runner must be executed from inside a tmux session. If no tmux session exists, create one first:
       ```bash
@@ -607,7 +609,7 @@ active feature work, but it should come BEFORE pulling in new ready work
       ```
       Then launch the queue runner in a tmux window:
       ```bash
-      tmux send-keys -t $PIPELINE_TMUX_SESSION "bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ..." Enter
+      tmux send-keys -t $PIPELINE_TMUX_SESSION "bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ..." Enter
       ```
       The queue runner launches up to 3 agents at a time, polls for completion every 60s, and fills slots as agents finish. Override with `MAX_AGENTS=N` or `POLL_SECONDS=N` env vars.
 
@@ -641,7 +643,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
    5. **If user says tmux/terminal/remote-control and there is only 1 issue** — spawn directly:
       ```bash
-      bash .claude/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue_number> <slug> <mode>
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue_number> <slug> <mode>
       ```
       Where `<mode>` is `terminal`, `tmux`, or `remote-control`. Only pass `--dangerously-skip-permissions` if the user opted in at step 3.
 
@@ -651,7 +653,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
       Interactive: cd <worktree-path> && claude [--dangerously-skip-permissions] "/pipeline:execute-issue-plan N"
       Remote:      cd <worktree-path> && claude [--dangerously-skip-permissions] remote-control --name "issue-N-<slug>"
-      Queue:       bash .claude/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
+      Queue:       bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] <issue1> <issue2> ...
       ```
 
 ### Anti-patterns
@@ -712,7 +714,7 @@ active feature work, but it should come BEFORE pulling in new ready work
       EXPECTED_BASE=$(cat <worktree-path>/.claude/base-branch 2>/dev/null || echo "$PIPELINE_BASE_BRANCH")
       ACTUAL_BASE=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json baseRefName --jq '.baseRefName')
       if [ "$ACTUAL_BASE" != "$EXPECTED_BASE" ]; then
-        bash .claude/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE
+        bash ${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE
       fi
       ```
       If `retarget-pr.sh` exits non-zero, stop the merge sequence and report the failure.

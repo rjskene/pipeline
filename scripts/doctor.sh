@@ -12,7 +12,7 @@
 set -uo pipefail
 
 # Snapshot CLAUDE_PLUGIN_ROOT BEFORE sourcing the resolver so the
-# claude_plugin_root check can tell pre-set (pass) from self-resolved (warn).
+# claude_plugin_root check can tell pre-set (pass or warn-if-invalid) from self-resolved (pass).
 _CLAUDE_PLUGIN_ROOT_PRE_RESOLVE="${CLAUDE_PLUGIN_ROOT:-}"
 RESOLVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -110,16 +110,33 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
   fix_allow_tmp="$(mktemp)"
   for sub in skills hooks scripts agents; do
     if [ -d "$PLUGIN_ROOT_FIX/$sub" ]; then
-      find "$PLUGIN_ROOT_FIX/$sub" -type f -printf '%f\n' 2>/dev/null
+      while IFS= read -r -d '' f; do
+        rel="${f#$PLUGIN_ROOT_FIX/}"
+        printf '%s\n' "$rel"
+      done < <(find "$PLUGIN_ROOT_FIX/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
     fi
   done | sort -u > "$fix_allow_tmp"
+
+  # Class 2 consumer-required short-circuit — mirror skill_files_residual logic.
+  # SUNSETS with #215 (see scripts/doctor.sh skill_files_residual block).
+  fix_required_tmp="$(mktemp)"
+  while IFS= read -r rel; do
+    case "$rel" in
+      *.template) printf '%s\n' "${rel%.template}" >> "$fix_required_tmp" ;;
+    esac
+  done < "$fix_allow_tmp"
+  sort -u -o "$fix_required_tmp" "$fix_required_tmp"
 
   fix_dup_paths=()
   for sub in skills hooks scripts agents; do
     if [ -d ".claude/$sub" ]; then
       while IFS= read -r -d '' f; do
-        bn="$(basename "$f")"
-        if grep -Fxq "$bn" "$fix_allow_tmp"; then
+        rel="${f#.claude/}"
+        # Class 2: skip consumer-required rendered scripts entirely.
+        if grep -Fxq "$rel" "$fix_required_tmp"; then
+          continue
+        fi
+        if grep -Fxq "$rel" "$fix_allow_tmp"; then
           if [ "$sub" = "skills" ]; then
             sd="$(dirname "$f")"
             already=0
@@ -131,10 +148,10 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
             fix_dup_paths+=("$f")
           fi
         fi
-      done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+      done < <(find ".claude/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
     fi
   done
-  rm -f "$fix_allow_tmp"
+  rm -f "$fix_allow_tmp" "$fix_required_tmp"
 
   for path in "${fix_dup_paths[@]:-}"; do
     [ -z "$path" ] && continue
@@ -445,24 +462,46 @@ fi
 sfr_allow_tmp="$(mktemp)"
 for sub in skills hooks scripts agents; do
   if [ -d "$sfr_plugin_root/$sub" ]; then
-    find "$sfr_plugin_root/$sub" -type f -printf '%f\n' 2>/dev/null
+    while IFS= read -r -d '' f; do
+      rel="${f#$sfr_plugin_root/}"
+      printf '%s\n' "$rel"
+    done < <(find "$sfr_plugin_root/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
   fi
 done | sort -u > "$sfr_allow_tmp"
 
+# Class 2 (consumer-required): for every plugin file ending in `.template`,
+# also recognize the rendered path (with `.template` stripped) as a path
+# the consumer is REQUIRED to keep. Plugin skills invoke these as
+# `bash .claude/scripts/<name>.sh`, so they are load-bearing in the
+# consumer's working tree even though the plugin only ships the template.
+# NOTE: this Class 2 workaround will SUNSET once #215 renames plugin
+# scripts/*.template → plugin scripts/* (the install-time render gap).
+sfr_required_tmp="$(mktemp)"
+while IFS= read -r rel; do
+  case "$rel" in
+    *.template) printf '%s\n' "${rel%.template}" >> "$sfr_required_tmp" ;;
+  esac
+done < "$sfr_allow_tmp"
+sort -u -o "$sfr_required_tmp" "$sfr_required_tmp"
+
 sfr_dup_files=()
+sfr_required_files=()
 sfr_consumer_files=()
 for sub in skills hooks scripts agents; do
   if [ -d ".claude/$sub" ]; then
     while IFS= read -r -d '' f; do
-      bn="$(basename "$f")"
-      if grep -Fxq "$bn" "$sfr_allow_tmp"; then
+      rel="${f#.claude/}"
+      if grep -Fxq "$rel" "$sfr_allow_tmp"; then
         sfr_dup_files+=("$f")
+      elif grep -Fxq "$rel" "$sfr_required_tmp"; then
+        sfr_required_files+=("$f")
       else
         sfr_consumer_files+=("$f")
       fi
-    done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+    done < <(find ".claude/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
   fi
 done
+rm -f "$sfr_required_tmp"
 
 sfr_stale_findings=()
 for f in "${sfr_dup_files[@]:-}"; do
@@ -511,6 +550,12 @@ fi
 if [ "$sfr_dup_count" -gt 0 ]; then
   echo "  Duplicates of plugin-owned files (run scripts/migrate-from-subtree.sh):"
   for f in "${sfr_dup_files[@]}"; do
+    echo "  - $f"
+  done
+fi
+if [ "${#sfr_required_files[@]}" -gt 0 ]; then
+  echo "  Required — rendered from plugin templates:"
+  for f in "${sfr_required_files[@]}"; do
     echo "  - $f"
   done
 fi
@@ -692,14 +737,21 @@ except Exception:
 fi
 
 # --------------------------------------------------------------------------
-# Check: claude_plugin_root — env was already set (pass), self-resolved from
-# the plugin cache (warn), or empty with no cache (fail). Snapshot captured
-# at the top of this script before the resolver source.
+# Check: claude_plugin_root — four states based on the pre-resolve snapshot:
+#   * env pre-set + valid dir            → pass
+#   * env pre-set + path missing/invalid → warn (likely stale config)
+#   * env empty   + self-resolved OK     → pass (self-resolve is recommended)
+#   * env empty   + no plugin cache      → fail
+# Snapshot captured at the top of this script before the resolver source.
 # --------------------------------------------------------------------------
 if [ -n "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE:-}" ]; then
-  record claude_plugin_root pass "env pre-set to ${CLAUDE_PLUGIN_ROOT}"
+  if [ -d "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE}" ]; then
+    record claude_plugin_root pass "env pre-set to ${CLAUDE_PLUGIN_ROOT}"
+  else
+    record claude_plugin_root warn "env points to non-existent path: ${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE}"
+  fi
 elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-  record claude_plugin_root warn "env was empty; self-resolved to ${CLAUDE_PLUGIN_ROOT}"
+  record claude_plugin_root pass "self-resolved from plugin cache: ${CLAUDE_PLUGIN_ROOT}"
 else
   record claude_plugin_root fail "CLAUDE_PLUGIN_ROOT empty and no plugin cache found at ~/.claude/plugins/cache/claude-pipeline/pipeline/"
 fi

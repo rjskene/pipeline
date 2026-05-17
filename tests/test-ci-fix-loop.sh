@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/check-ci-fix-loop.sh decision logic, plus
-# end-to-end glue through scripts/run-queue.sh.template --ci-fix.
+# end-to-end glue through scripts/run-queue.sh --ci-fix.
 #
 # The `gh` CLI is PATH-shimmed by a temporary fake that reads canned
 # responses from a fixture directory. The shim also records every
@@ -202,7 +202,7 @@ PIPELINE_REPO="fake/repo"
 PIPELINE_WORKTREE_PREFIX="wt"
 CFG
 
-cp "$REPO_ROOT/scripts/run-queue.sh.template" "$fe/.claude/scripts/run-queue.sh.template"
+cp "$REPO_ROOT/scripts/run-queue.sh" "$fe/.claude/scripts/run-queue.sh"
 
 # Fake `git worktree list` to advertise the fake worktree directory.
 cat > "$fe/git" <<GIT
@@ -220,9 +220,14 @@ chmod +x "$fe/git"
 RECORDER_LOG="$fe/recorder.log"
 : > "$RECORDER_LOG"
 
+# run-queue.sh now resolves its sibling spawn-claude.sh via
+# ${CLAUDE_PLUGIN_ROOT}/scripts/. The fixture's recorder script lives at
+# $fe/.claude/scripts/spawn-claude.sh, so point CLAUDE_PLUGIN_ROOT at
+# $fe/.claude so the guard passes and dispatch resolves there.
 set +e
 ( cd "$fe" && PATH="$fe:$PATH" RECORDER_LOG="$RECORDER_LOG" \
-  bash .claude/scripts/run-queue.sh.template --ci-fix 42 /tmp/some.log >"$fe/dispatch.out" 2>&1 )
+  CLAUDE_PLUGIN_ROOT="$fe/.claude" \
+  bash .claude/scripts/run-queue.sh --ci-fix 42 /tmp/some.log >"$fe/dispatch.out" 2>&1 )
 disp_rc=$?
 set -e
 
@@ -243,7 +248,7 @@ inc
 ff=$(mktemp -d)
 PROJ_F="$ff/proj"
 mkdir -p "$PROJ_F/.claude/scripts" "$PROJ_F/worktree"
-cp "$REPO_ROOT/scripts/spawn-claude.sh.template" "$PROJ_F/.claude/scripts/spawn-claude.sh"
+cp "$REPO_ROOT/scripts/spawn-claude.sh" "$PROJ_F/.claude/scripts/spawn-claude.sh"
 chmod +x "$PROJ_F/.claude/scripts/spawn-claude.sh"
 
 cat > "$PROJ_F/pipeline.config" <<'CFG'
@@ -297,7 +302,7 @@ echo "retries=0"         >> "$fg/stub/gh-state"
 echo "fail_log=boom"     >> "$fg/stub/gh-state"
 
 cp "$REPO_ROOT/scripts/check-ci-fix-loop.sh" "$fg/.claude/scripts/"
-cp "$REPO_ROOT/scripts/run-queue.sh.template" "$fg/.claude/scripts/"
+cp "$REPO_ROOT/scripts/run-queue.sh" "$fg/.claude/scripts/"
 cat > "$fg/.claude/scripts/spawn-claude.sh" <<'REC'
 #!/usr/bin/env bash
 echo "ARGS=$*" >> "$RECORDER_LOG"
@@ -345,7 +350,8 @@ else
     RECORDER_LOG="$fg/recorder.log"; : > "$RECORDER_LOG"
     set +e
     ( cd "$fg" && PATH="$fg/stub:$PATH" RECORDER_LOG="$RECORDER_LOG" \
-      bash .claude/scripts/run-queue.sh.template --ci-fix 42 "$LOG_PATH" >"$fg/dispatch.out" 2>&1 )
+      CLAUDE_PLUGIN_ROOT="$fg/.claude" \
+      bash .claude/scripts/run-queue.sh --ci-fix 42 "$LOG_PATH" >"$fg/dispatch.out" 2>&1 )
     drc=$?
     set -e
     if [ "$drc" -eq 0 ] && grep -q "PIPELINE_CI_FIX_CONTEXT=$LOG_PATH" "$RECORDER_LOG"; then

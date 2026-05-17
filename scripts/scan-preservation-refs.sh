@@ -42,11 +42,14 @@ shipped_tmp="$(mktemp)"
 trap 'rm -f "$shipped_tmp"' EXIT
 {
   if [ "$HAS_PLUGIN" = true ]; then
+    # Plugin-shipped basenames are plain `.sh` since #215 (no `.template` strip needed).
     for sub in scripts hooks; do
       [ -d "$plugin_root/$sub" ] && find "$plugin_root/$sub" -type f -printf '%f\n' 2>/dev/null
     done
   fi
   if [ "$HAS_SUBTREE" = true ]; then
+    # Legacy subtree layout shipped scripts as `<name>.sh.template`; strip the suffix
+    # so basenames compare apples-to-apples with consumer `.claude/scripts/<name>.sh`.
     for sub in scripts hooks; do
       [ -d ".claude-pipeline/$sub" ] || continue
       find ".claude-pipeline/$sub" -type f -printf '%f\n' 2>/dev/null \

@@ -36,12 +36,23 @@ Report the full stdout (CHECK lines + summary table) to the user. If the exit co
 - `no_residual_subtree` — no `.claude-pipeline/` directory or `.claude/skills/*/.pipeline-managed` markers left over from the retired subtree installer. Remediation companion: `scripts/migrate-from-subtree.sh` (recent versions also detect unmarkered duplicates by basename-matching consumer `.claude/skills/<name>/` and `.claude/agents/<name>.md` against the plugin's shipped content; supports `--dry-run` / `--assume-yes` / `--assume-no`).
 - `claude_md_residual` — delegates to scripts/migration-cleanup-claudemd.sh; surfaces legacy pipeline section headers (Pipeline, Claude Pipeline, Worktrees, Pipeline Setup), legacy .claude-pipeline/ paths, dangling .claude/scripts/*.sh or .claude/hooks/*.py refs, and unprefixed slash commands. Warn-not-fail. Prevention: re-run `bash scripts/migrate-from-subtree.sh --keep-referenced` to preserve any `.claude/scripts/` or `.claude/hooks/` file that is still referenced from `CLAUDE.md` or other tracked surfaces — the flag turns the default advisory NOTE block into protection.
 - `settings_residual` — scans .claude/settings.json for pipeline-owned hook entries and annotates each with a capability-impact note (sourced from scripts/_advisory-text.sh). Warns "jq required" if jq is missing. Warn-not-fail otherwise.
-- `skill_files_residual` — enumerates files under consumer .claude/{skills,hooks,scripts,agents}/ whose basename collides with a plugin-shipped file, distinguishing duplicates from consumer-owned. Critical FAIL if any duplicate contains a hardcoded <owner>/<repo> reference that does not match $PIPELINE_REPO (stale legacy install).
+- `skill_files_residual` — enumerates files under consumer .claude/{skills,hooks,scripts,agents}/ whose basename collides with a plugin-shipped file, distinguishing duplicates from consumer-owned. Critical FAIL if any duplicate contains a hardcoded <owner>/<repo> reference that does not match $PIPELINE_REPO (stale legacy install). Now uses **relative-path comparison** (`skills/<name>/SKILL.md`, `scripts/<name>.py`, etc.) instead of basename-only, so consumer-authored skills like `skills/todo/SKILL.md` are correctly preserved even though the plugin ships `SKILL.md` files at other paths. Plugin files ending in `.template` (e.g. `scripts/spawn-claude.sh.template`) imply the rendered consumer path (consumer's `scripts/spawn-claude.sh` under `.claude/`) is `consumer-required` — load-bearing for the plugin's own skills to function — and is reported in a separate "Required — rendered from plugin templates" section rather than as a duplicate. (Interim correctness while #215 resolves the plugin-script delivery model; the `.template` branch becomes deletable once #215 lands.)
 - `consumer_drift` — per-file drift classification for consumer `.claude/{scripts,hooks,agents}/` (see `## consumer_drift check` below).
 - `preservation_refs` — for every consumer `.claude/{scripts,hooks}/` file with a plugin-shipped counterpart, lists each reference holding it in place and emits a `DELETE` / `KEEP` verdict (see `## preservation_refs check` below).
 - `base_branch_local` — local branch named `$PIPELINE_BASE_BRANCH` exists (warn if it has no upstream).
 
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — the same helper is sourced by `migrate-from-subtree.sh`, so the wording in doctor's warnings matches the wording in the migration tool's advisories.
+
+## claude_plugin_root check
+
+Validates that `CLAUDE_PLUGIN_ROOT` resolves to a real plugin install directory. The check captures a pre-resolve snapshot of the env var so it can distinguish four states:
+
+| Env state | Path valid? | Status | Rationale |
+|-----------|-------------|--------|-----------|
+| Set in env | Yes | `pass` | Operator opted in to a specific plugin version; doctor stays out of the way. |
+| Empty | Self-resolution from `~/.claude/plugins/cache/claude-pipeline/pipeline/<latest>/` succeeded | `pass` | env empty + self-resolved from the plugin cache IS the recommended path — it picks the highest-version directory automatically and survives upgrades. Surfacing `warn` here misled v0.7.1 consumers into hardcoding `CLAUDE_PLUGIN_ROOT` and pinning themselves to a stale version. |
+| Set in env | No (path missing or not a directory) | `warn` | Likely a stale config — the operator pinned a version path that no longer exists after a plugin upgrade. Either unset the env var (recommended) or update it. |
+| Empty | No plugin cache present | `fail` | The plugin isn't installed. Run `/plugin install pipeline@claude-pipeline`. |
 
 ## consumer_drift check
 
@@ -114,3 +125,5 @@ Worked example:
 `/pipeline:doctor --fix residual` is an interactive remediation flag. It runs the three residual checks (`claude_md_residual`, `settings_residual`, `skill_files_residual`) and, for each finding, presents a `y/N` prompt before taking any action. Set `DOCTOR_FIX_NONINTERACTIVE=1` to auto-skip prompts (everything defaults to No) — useful for CI smoke runs that want to surface findings without mutating state.
 
 For `settings_residual`, the actual patching of `.claude/settings.json` is deferred to `migrate-from-subtree.sh --patch settings` so both surfaces share the same JSON-rewrite logic. For `claude_md_residual`, doctor surfaces the report file produced by `migration-cleanup-claudemd.sh` and does NOT edit `CLAUDE.md` directly — `CLAUDE.md` is user-authored prose and any cleanup is a human decision informed by the report.
+
+Consumer-required paths (rendered from plugin `scripts/*.template` / `hooks/*.template`) are **never** proposed for deletion by `--fix residual` — they are load-bearing for the plugin's own skills. After #215 lands, the `.template`-branch of this exclusion becomes obsolete and may be removed.

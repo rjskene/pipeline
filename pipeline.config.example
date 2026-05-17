@@ -84,3 +84,47 @@ PIPELINE_GROUPING_DETECTION_ENABLED="true"
 PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true; further gated by PIPELINE_CI_CHECK_ENABLED
 PIPELINE_CI_FIX_RETRY_BUDGET="2"      # max re-dispatches per PR before applying the human label
 PIPELINE_CI_FIX_LOG_LINES="200"       # tail size when injecting CI failure log into executor context
+
+# --- Pre-spawn classifier hook (issue #218) ---
+#
+# The pipeline invokes this script once per issue in the PR-evaluation
+# dispatch path (run-queue.sh and the single-issue short-circuit). Contract:
+#   bash <classifier> <issue-number> <pr-number>
+#     stdout: zero or more lines, each "FLAG=value" or "--flag" token
+#     stderr: human-readable diagnostics
+#     exit 0  -> ok
+#     exit !0 -> skip this issue; stderr first line is surfaced as the skip reason
+#
+# The plugin merges stdout tokens into the spawn invocation. The canonical
+# mode token is `--container-mode=<name>` (mapping to a PIPELINE_EVAL_CONTAINERS
+# entry); any other token is forwarded to spawn-claude.sh via
+# `--classifier-passthrough=<token>` so it survives argv-passing without
+# colliding with spawn-claude's own parser.
+#
+# PIPELINE_EVAL_CLASSIFIER=".claude/scripts/eval-classifier.sh"
+PIPELINE_EVAL_CLASSIFIER=""
+
+# --- Container-mode dispatch (issue #218) ---
+#
+# Space-separated list of container mode names the classifier may emit.
+# For each declared mode <m>, set the following (where <m_norm> is <m>
+# with hyphens replaced by underscores):
+#
+#   PIPELINE_EVAL_CONTAINER_<m_norm>_COMPOSE_FILE   (required) compose.yml path
+#   PIPELINE_EVAL_CONTAINER_<m_norm>_SERVICE        (required) service name in compose
+#   PIPELINE_EVAL_CONTAINER_<m_norm>_ENV_FILE       (optional) --env-file path
+#   PIPELINE_EVAL_CONTAINER_<m_norm>_PREFLIGHT_CMD  (optional) preflight; non-zero aborts spawn
+#   PIPELINE_EVAL_CONTAINER_<m_norm>_MAX_CONCURRENT (optional) queue cap; default 1
+#
+# Container mode is only honored with --skill=evaluate-issue-pr; other
+# skills reject the flag at spawn time. CI-fix re-dispatches are mode-
+# agnostic (re-label the PR to re-trigger a fresh containerized eval).
+#
+# Example (web-eval container — uncomment + adjust):
+PIPELINE_EVAL_CONTAINERS=""
+# PIPELINE_EVAL_CONTAINERS="web-eval"
+# PIPELINE_EVAL_CONTAINER_web_eval_COMPOSE_FILE="compose.web-eval.yml"
+# PIPELINE_EVAL_CONTAINER_web_eval_ENV_FILE=".env.web-eval"
+# PIPELINE_EVAL_CONTAINER_web_eval_SERVICE="claude-web-eval"
+# PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash scripts/web-eval.sh --preflight"
+# PIPELINE_EVAL_CONTAINER_web_eval_MAX_CONCURRENT="1"

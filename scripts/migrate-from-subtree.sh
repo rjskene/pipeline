@@ -111,6 +111,14 @@ done
 # present. If .claude-pipeline/ has already been removed, skip script/hook
 # enumeration entirely (consumer-owned files in .claude/scripts and
 # .claude/hooks are preserved by default in that case).
+#
+# Note: the `${name%.template}` strip on lines 118/124 is correct ONLY for
+# the subtree-migrated install path (when .claude-pipeline/ exists). Fresh
+# `/plugin install` consumers without subtree history rely on doctor.sh's
+# `consumer-required` classification (skill_files_residual + --fix residual)
+# to recognize rendered scripts from plugin scripts/*.template files. The
+# architectural resolution (rendering at install time or rewriting plugin
+# skills to invoke ${CLAUDE_PLUGIN_ROOT}/scripts/) is tracked in #215.
 if [ -d .claude-pipeline ]; then
   for src in .claude-pipeline/scripts/*; do
     [ -f "$src" ] || continue
@@ -124,6 +132,28 @@ if [ -d .claude-pipeline ]; then
     name="${name%.template}"
     PIPELINE_HOOK_NAMES+=("$name")
     [ -f ".claude/hooks/$name" ] && TO_REMOVE_HOOKS+=(".claude/hooks/$name")
+  done
+fi
+
+# Plugin-only consumers (#215): when .claude-pipeline/ is absent but the
+# consumer still carries stale .claude/scripts/<name>.sh copies preserved
+# across the move to the plugin install model, enumerate basenames from
+# $CLAUDE_PLUGIN_ROOT/scripts/*.sh (plain only — exclude any leftover
+# .template) and queue any matching consumer copy for removal. Silently
+# skips when CLAUDE_PLUGIN_ROOT did not resolve.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] \
+   && [ -d "$CLAUDE_PLUGIN_ROOT/scripts" ] \
+   && [ -d .claude/scripts ]; then
+  for src in "$CLAUDE_PLUGIN_ROOT"/scripts/*.sh; do
+    [ -f "$src" ] || continue
+    name="$(basename "$src")"
+    # Skip if we already queued this basename via the .claude-pipeline/ pass.
+    already=false
+    for q in "${TO_REMOVE_SCRIPTS[@]:-}"; do
+      [ "${q:-}" = ".claude/scripts/$name" ] && already=true && break
+    done
+    [ "$already" = true ] && continue
+    [ -f ".claude/scripts/$name" ] && TO_REMOVE_SCRIPTS+=(".claude/scripts/$name")
   done
 fi
 
