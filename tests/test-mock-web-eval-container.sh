@@ -37,7 +37,46 @@ bash "$PROBE" >/dev/null
 
 cd "$REPO_ROOT"
 
-# Build the image (cached on subsequent runs).
+# Fixtures for issue #237: build under two host UID/GID layouts.
+#   A — collision path: HOST_UID=HOST_GID=1000 matches the base image's
+#       `node` user/group, which is the most-common Linux host layout.
+#   B — no-collision path: HOST_UID=HOST_GID=1500 exercises the fresh
+#       create branch as a regression check that the rename path didn't
+#       break the create path.
+# Each fixture asserts the build exits 0 AND that `id -u`/`id -g` inside
+# the running container match the requested UID/GID (the bind-mount
+# ownership contract).
+echo "  -- Fixture A: HOST_UID=1000 HOST_GID=1000 (collision path) --"
+if ! docker compose -f "$COMPOSE" --env-file "$ENV_FILE" build \
+       --build-arg HOST_UID=1000 --build-arg HOST_GID=1000 mock-web-eval >/dev/null 2>&1; then
+  fail_msg "fixture A — build with HOST_UID=1000 HOST_GID=1000"
+else
+  A_UID=$(docker compose -f "$COMPOSE" --env-file "$ENV_FILE" run --rm --no-deps mock-web-eval id -u 2>/dev/null | tr -d '\r\n')
+  A_GID=$(docker compose -f "$COMPOSE" --env-file "$ENV_FILE" run --rm --no-deps mock-web-eval id -g 2>/dev/null | tr -d '\r\n')
+  if [ "$A_UID" = "1000" ] && [ "$A_GID" = "1000" ]; then
+    pass_msg "fixture A — build + id check at HOST_UID=1000 HOST_GID=1000"
+  else
+    fail_msg "fixture A — id mismatch: uid='$A_UID' gid='$A_GID' (expected 1000/1000)"
+  fi
+fi
+
+echo "  -- Fixture B: HOST_UID=1500 HOST_GID=1500 (no-collision path) --"
+if ! docker compose -f "$COMPOSE" --env-file "$ENV_FILE" build \
+       --build-arg HOST_UID=1500 --build-arg HOST_GID=1500 mock-web-eval >/dev/null 2>&1; then
+  fail_msg "fixture B — build with HOST_UID=1500 HOST_GID=1500"
+else
+  B_UID=$(docker compose -f "$COMPOSE" --env-file "$ENV_FILE" run --rm --no-deps mock-web-eval id -u 2>/dev/null | tr -d '\r\n')
+  B_GID=$(docker compose -f "$COMPOSE" --env-file "$ENV_FILE" run --rm --no-deps mock-web-eval id -g 2>/dev/null | tr -d '\r\n')
+  if [ "$B_UID" = "1500" ] && [ "$B_GID" = "1500" ]; then
+    pass_msg "fixture B — build + id check at HOST_UID=1500 HOST_GID=1500"
+  else
+    fail_msg "fixture B — id mismatch: uid='$B_UID' gid='$B_GID' (expected 1500/1500)"
+  fi
+fi
+
+# Build the image (cached on subsequent runs). The probe-seeded env file
+# drives HOST_UID/HOST_GID for the default build that follows; the two
+# fixtures above already exercised the collision and no-collision paths.
 if ! docker compose -f "$COMPOSE" --env-file "$ENV_FILE" build mock-web-eval >/dev/null 2>&1; then
   fail_msg "docker compose build failed"
   exit 1

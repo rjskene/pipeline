@@ -29,8 +29,21 @@ RUN npm install -g \
 RUN npx --yes playwright install --with-deps chromium
 
 # Non-root user matching host UID/GID so bind-mount writes aren't root-owned.
-RUN groupadd -g "${HOST_GID}" runner \
-    && useradd  -u "${HOST_UID}" -g "${HOST_GID}" -m -s /bin/bash runner
+# On node:20-bookworm the base image already provisions a `node` user+group at
+# UID/GID 1000; rename it to `runner` when the host's UID/GID collides, else
+# create fresh. This keeps the contract "user runner at $HOST_UID/$HOST_GID"
+# while tolerating the most-common Linux host layout.
+RUN set -eux; \
+    if getent group  "${HOST_GID}" >/dev/null; then \
+      groupmod -n runner "$(getent group  "${HOST_GID}" | cut -d: -f1)"; \
+    else \
+      groupadd -g "${HOST_GID}" runner; \
+    fi; \
+    if getent passwd "${HOST_UID}" >/dev/null; then \
+      usermod -l runner -d /home/runner -m -g "${HOST_GID}" "$(getent passwd "${HOST_UID}" | cut -d: -f1)"; \
+    else \
+      useradd -u "${HOST_UID}" -g "${HOST_GID}" -m -s /bin/bash runner; \
+    fi
 
 # Read-only bind-mount targets (the compose file does the bind; we just
 # make the directories exist with the right owner).
