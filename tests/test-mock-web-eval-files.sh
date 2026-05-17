@@ -27,6 +27,18 @@ assert "index has list add button"      "grep -q 'id=\"item-add\"' '$IDX'"
 assert "index loads app.js"             "grep -q 'src=\"app.js\"' '$IDX'"
 assert "index loads style.css"          "grep -q 'href=\"style.css\"' '$IDX'"
 
+# Group 3 — app.js wires the three interactions
+APP="$REPO_ROOT/mock-web/app.js"
+assert "app.js binds toggle-btn click"   "grep -qE 'toggle-btn.*addEventListener|getElementById..toggle-btn..\..*addEventListener' '$APP'"
+assert "app.js flips toggle-panel hidden" "grep -q 'toggle-panel' '$APP' && grep -q 'hidden' '$APP'"
+assert "app.js flips indicator class"     "grep -q 'toggle-indicator' '$APP' && grep -qE 'classList\.(toggle|add|remove)' '$APP'"
+assert "app.js binds echo-form submit"    "grep -q 'echo-form' '$APP' && grep -q 'submit' '$APP'"
+assert "app.js writes to echo-output"     "grep -q 'echo-output' '$APP'"
+assert "app.js binds item-add"            "grep -q 'item-add' '$APP'"
+assert "app.js mutates item-list"         "grep -q 'item-list' '$APP' && grep -qE 'appendChild|insertAdjacentHTML' '$APP'"
+assert "app.js supports list item remove" "grep -qE 'removeChild|\.remove\(' '$APP'"
+assert "app.js <= 100 lines"              "[ \"\$(wc -l < '$APP')\" -le 100 ]"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
