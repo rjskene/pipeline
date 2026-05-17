@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Claude Pipeline marketplace — a CI workflow for automating code updates through GitHub issues.",
-    "version": "0.7.2-rc.1"
+    "version": "0.7.2"
   },
   "plugins": [
     {
       "name": "pipeline",
       "source": "./",
       "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
-      "version": "0.7.2-rc.1",
+      "version": "0.7.2",
       "homepage": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
       "license": "MIT",
       "category": "workflow",
