@@ -111,6 +111,14 @@ done
 # present. If .claude-pipeline/ has already been removed, skip script/hook
 # enumeration entirely (consumer-owned files in .claude/scripts and
 # .claude/hooks are preserved by default in that case).
+#
+# Note: the `${name%.template}` strip on lines 118/124 is correct ONLY for
+# the subtree-migrated install path (when .claude-pipeline/ exists). Fresh
+# `/plugin install` consumers without subtree history rely on doctor.sh's
+# `consumer-required` classification (skill_files_residual + --fix residual)
+# to recognize rendered scripts from plugin scripts/*.template files. The
+# architectural resolution (rendering at install time or rewriting plugin
+# skills to invoke ${CLAUDE_PLUGIN_ROOT}/scripts/) is tracked in #215.
 if [ -d .claude-pipeline ]; then
   for src in .claude-pipeline/scripts/*; do
     [ -f "$src" ] || continue
