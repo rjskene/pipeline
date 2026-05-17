@@ -305,6 +305,28 @@ if [ -f "$shortlist10" ]; then
   fi
 fi
 
+# --- Scenario 11: tracker is exempt from missing-priority/path signal ---
+inc_scenario "Scenario 11: trackers are exempt from missing-label signal"
+FIX11="$TMP/fix11"; mkdir -p "$FIX11"
+cat > "$FIX11/issues.json" <<J
+[
+  {"number":203,"title":"epic(pipeline): rollout","body":"## Rollout sequence\n","labels":[{"name":"tracker"}],"createdAt":"$CREATED_48H"}
+]
+J
+cat > "$FIX11/issue-203.json" <<'J'
+{"body":"## Rollout sequence\n"}
+J
+out11=$(run_helper "$FIX11" 2>&1)
+shortlist11=$(echo "$out11" | tail -n 1)
+if [ -f "$shortlist11" ]; then
+  miss11_len=$(jq '.missing_label_candidates | length' "$shortlist11" 2>/dev/null || echo "999")
+  if [ "$miss11_len" = "0" ]; then
+    pass_msg "scenario 11: tracker not surfaced in missing_label_candidates"
+  else
+    fail_msg "scenario 11: tracker not surfaced (got $miss11_len rows)"
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
