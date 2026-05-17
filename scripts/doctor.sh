@@ -117,11 +117,25 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
     fi
   done | sort -u > "$fix_allow_tmp"
 
+  # Class 2 consumer-required short-circuit — mirror skill_files_residual logic.
+  # SUNSETS with #215 (see scripts/doctor.sh skill_files_residual block).
+  fix_required_tmp="$(mktemp)"
+  while IFS= read -r rel; do
+    case "$rel" in
+      *.template) printf '%s\n' "${rel%.template}" >> "$fix_required_tmp" ;;
+    esac
+  done < "$fix_allow_tmp"
+  sort -u -o "$fix_required_tmp" "$fix_required_tmp"
+
   fix_dup_paths=()
   for sub in skills hooks scripts agents; do
     if [ -d ".claude/$sub" ]; then
       while IFS= read -r -d '' f; do
         rel="${f#.claude/}"
+        # Class 2: skip consumer-required rendered scripts entirely.
+        if grep -Fxq "$rel" "$fix_required_tmp"; then
+          continue
+        fi
         if grep -Fxq "$rel" "$fix_allow_tmp"; then
           if [ "$sub" = "skills" ]; then
             sd="$(dirname "$f")"
@@ -137,7 +151,7 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
       done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
     fi
   done
-  rm -f "$fix_allow_tmp"
+  rm -f "$fix_allow_tmp" "$fix_required_tmp"
 
   for path in "${fix_dup_paths[@]:-}"; do
     [ -z "$path" ] && continue
