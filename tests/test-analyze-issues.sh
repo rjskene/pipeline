@@ -327,6 +327,27 @@ if [ -f "$shortlist11" ]; then
   fi
 fi
 
+# --- Scenario 12: brainstorm / later / human labels suppress the signal ---
+inc_scenario "Scenario 12: brainstorm/later/human labels suppress missing-label signal"
+FIX12="$TMP/fix12"; mkdir -p "$FIX12"
+cat > "$FIX12/issues.json" <<J
+[
+  {"number":204,"title":"chore(x): brainstorm only","body":"x","labels":[{"name":"brainstorm"}],"createdAt":"$CREATED_48H"},
+  {"number":205,"title":"chore(x): later only","body":"x","labels":[{"name":"later"}],"createdAt":"$CREATED_48H"},
+  {"number":206,"title":"chore(x): human only","body":"x","labels":[{"name":"human"}],"createdAt":"$CREATED_48H"}
+]
+J
+out12=$(run_helper "$FIX12" 2>&1)
+shortlist12=$(echo "$out12" | tail -n 1)
+if [ -f "$shortlist12" ]; then
+  miss12_len=$(jq '.missing_label_candidates | length' "$shortlist12" 2>/dev/null || echo "999")
+  if [ "$miss12_len" = "0" ]; then
+    pass_msg "scenario 12: brainstorm/later/human labels all exempt"
+  else
+    fail_msg "scenario 12: brainstorm/later/human exemption (got $miss12_len rows)"
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
