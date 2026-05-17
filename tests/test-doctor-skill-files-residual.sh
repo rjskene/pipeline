@@ -307,6 +307,44 @@ grep -qE 'Remove duplicate of plugin-shipped file: \.claude/scripts/spawn-claude
 [ -f "$FX/.claude/scripts/spawn-claude.sh" ] && pass_msg "consumer-required: spawn-claude.sh survives" \
   || fail_msg "consumer-required: spawn-claude.sh was deleted"
 
+# ---------------------------------------------------------------------------
+# Case 9: pyc/__pycache__ in consumer .claude/ → filtered out of all output
+# ---------------------------------------------------------------------------
+echo "Case 9: pyc/__pycache__ in consumer .claude/ → filtered out of all output"
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-pyc-filter)
+mkdir -p "$FX/.claude/scripts/__pycache__" "$FX/.claude/hooks/__pycache__"
+echo "binary" > "$FX/.claude/scripts/__pycache__/foo.cpython-312.pyc"
+echo "binary" > "$FX/.claude/hooks/__pycache__/bar.cpython-312.pyc"
+# Also drop a consumer-owned .sh so the Preserved section actually renders.
+echo "echo hi" > "$FX/.claude/scripts/my-script.sh"
+run_helper "$FX" "$PLUGIN_ROOT"
+out="$(cat "$FX/out")"
+if ! grep -qE '__pycache__|\.pyc' <<<"$out"; then
+  pass_msg "pyc-filter: no pyc/__pycache__ tokens anywhere in doctor output"
+else
+  fail_msg "pyc-filter: pyc/__pycache__ leaked into output"
+  echo "$out" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Case 7: docs — SKILL.md and CLAUDE.md both document the four-state
+# claude_plugin_root model. Locks the doc contract on both surfaces so a
+# future refactor that drifts either back to the old three-state wording
+# (pass / warn-on-self-resolve / fail) trips this guard.
+# ---------------------------------------------------------------------------
+echo "Case 7: docs — four-state claude_plugin_root model on SKILL.md and CLAUDE.md"
+SKILL_MD="$SCRIPT_DIR/../skills/doctor/SKILL.md"
+CLAUDE_MD="$SCRIPT_DIR/../CLAUDE.md"
+grep -qE 'env empty.*self-resolv' "$SKILL_MD" \
+  && pass_msg "skill-doc: documents self-resolve = pass" \
+  || fail_msg "skill-doc: missing self-resolve doc"
+grep -qE 'env set.*invalid|non-existent.*path|path missing' "$SKILL_MD" \
+  && pass_msg "skill-doc: documents env-set-invalid = warn" \
+  || fail_msg "skill-doc: missing env-invalid doc"
+grep -qE 'four cases|pass.*env empty.*self-resolv' "$CLAUDE_MD" \
+  && pass_msg "claude-md: documents four-state model" \
+  || fail_msg "claude-md: missing four-state doc"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

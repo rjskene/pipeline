@@ -162,5 +162,5 @@ for sub in scripts hooks agents; do
     fi
 
     printf '%s\tF\t%s\t0\t0\tno-op\n' "$local_path" "$local_loc"
-  done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
+  done < <(find ".claude/$sub" -type f -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
 done
