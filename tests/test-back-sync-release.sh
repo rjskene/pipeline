@@ -175,18 +175,18 @@ if [ -x "$SCRIPT" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Group 6: -X ours real-merge path (overlapping files, staging wins)
+# Group 6: -X theirs real-merge path (overlapping files, main wins)
 # ---------------------------------------------------------------------------
 if [ -x "$SCRIPT" ]; then
-  FIX="$TMP/xours"
+  FIX="$TMP/xtheirs"
   make_fixture "$FIX"
-  SHIM="$TMP/shim-xours"
+  SHIM="$TMP/shim-xtheirs"
   install_shims "$SHIM"
   (
     cd "$FIX"
-    # Pre-stage staging with a newer edit to CHANGELOG.md (the same file the
-    # release commit touched on main) so FF is not possible and the merge has
-    # a real overlapping file conflict.
+    # Pre-stage staging with an edit to CHANGELOG.md (the same file the release
+    # commit touched on main) so FF is not possible and the merge has a real
+    # overlapping file conflict. Under -X theirs main wins.
     git checkout -q staging
     echo "staging-newer" > CHANGELOG.md
     git add CHANGELOG.md
@@ -194,24 +194,145 @@ if [ -x "$SCRIPT" ]; then
     git push -q origin staging
     git checkout -q main
     SHA=$(git rev-parse main)
-    echo "$SHA" > "$TMP/xours.main-sha"
+    echo "$SHA" > "$TMP/xtheirs.main-sha"
     export SHIM_DIR="$SHIM"
-    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/xours.out" 2>&1
-    echo "$?" > "$TMP/xours.rc"
+    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/xtheirs.out" 2>&1
+    echo "$?" > "$TMP/xtheirs.rc"
     git fetch -q origin staging 2>/dev/null || true
     git checkout -q staging
     git pull -q --ff-only origin staging 2>/dev/null || true
-    cat CHANGELOG.md > "$TMP/xours.changelog"
-    git rev-parse staging > "$TMP/xours.staging-sha"
-    git log -1 staging --format=%P > "$TMP/xours.parents"
-    git log -1 staging --format=%s > "$TMP/xours.subject"
+    cat CHANGELOG.md > "$TMP/xtheirs.changelog"
+    git rev-parse staging > "$TMP/xtheirs.staging-sha"
+    git log -1 staging --format=%P > "$TMP/xtheirs.parents"
+    git log -1 staging --format=%s > "$TMP/xtheirs.subject"
   )
-  assert "xours: script exits 0" "[ \"\$(cat '$TMP/xours.rc')\" = '0' ]"
-  assert "xours: staging-version of CHANGELOG.md wins (content is 'staging-newer')" "[ \"\$(cat '$TMP/xours.changelog')\" = 'staging-newer' ]"
-  assert "xours: a merge commit was created (not FF)" "[ \"\$(cat '$TMP/xours.staging-sha')\" != \"\$(cat '$TMP/xours.main-sha')\" ] && [ \"\$(wc -w < '$TMP/xours.parents')\" = '2' ]"
-  assert "xours: merge commit subject starts with 'chore(back-sync):'" "grep -qE '^chore\\(back-sync\\):' '$TMP/xours.subject'"
-  assert "xours: 'git push origin staging' was invoked" "grep -qE 'push.*origin.*staging' '$SHIM/git-push.log'"
-  assert "xours: NO draft PR opened" "! grep -q 'pr create' '$SHIM/gh.log'"
+  assert "xtheirs: script exits 0" "[ \"\$(cat '$TMP/xtheirs.rc')\" = '0' ]"
+  assert "xtheirs: main-version of CHANGELOG.md wins (content is 'v0.0.0-test')" "[ \"\$(cat '$TMP/xtheirs.changelog')\" = 'v0.0.0-test' ]"
+  assert "xtheirs: a merge commit was created (not FF)" "[ \"\$(cat '$TMP/xtheirs.staging-sha')\" != \"\$(cat '$TMP/xtheirs.main-sha')\" ] && [ \"\$(wc -w < '$TMP/xtheirs.parents')\" = '2' ]"
+  assert "xtheirs: merge commit subject starts with 'chore(back-sync):'" "grep -qE '^chore\\(back-sync\\):' '$TMP/xtheirs.subject'"
+  assert "xtheirs: 'git push origin staging' was invoked" "grep -qE 'push.*origin.*staging' '$SHIM/git-push.log'"
+  assert "xtheirs: NO draft PR opened" "! grep -q 'pr create' '$SHIM/gh.log'"
+fi
+
+# ---------------------------------------------------------------------------
+# Group 7: version-manifest collision (main wins under -X theirs)
+#
+# Mirrors the v0.7.1 regression. Staging carries an older snapshot of the
+# version-manifest files; main carries release-please's bumped versions. The
+# back-sync MUST favor main on every collision so the bumps survive on staging.
+# ---------------------------------------------------------------------------
+if [ -x "$SCRIPT" ]; then
+  FIX="$TMP/vmanifest"
+  make_fixture "$FIX"
+  SHIM="$TMP/shim-vmanifest"
+  install_shims "$SHIM"
+  (
+    cd "$FIX"
+    # Stage staging with older version-manifest content so FF is impossible.
+    git checkout -q staging
+    mkdir -p .claude-plugin
+    echo '{"version": "0.7.0"}'           > .claude-plugin/plugin.json
+    echo '{"version": "0.7.0"}'           > .claude-plugin/marketplace.json
+    echo '{"version": "0.7.0-rc.0"}'      > .claude-plugin/marketplace-dev.json
+    echo '{".":"0.7.0"}'                  > .release-please-manifest.json
+    git add .claude-plugin .release-please-manifest.json
+    git commit -q -m "chore: staging carries pre-release manifest snapshot"
+    git push -q origin staging
+
+    # Build a release-please-style commit on main that bumps every manifest +
+    # the CHANGELOG. This overwrites the same paths staging just touched.
+    git checkout -q main
+    mkdir -p .claude-plugin
+    echo '{"version": "0.7.1"}'           > .claude-plugin/plugin.json
+    echo '{"version": "0.7.1"}'           > .claude-plugin/marketplace.json
+    echo '{"version": "0.7.1-rc.1"}'      > .claude-plugin/marketplace-dev.json
+    echo '{".":"0.7.1"}'                  > .release-please-manifest.json
+    echo "## 0.7.1" >> CHANGELOG.md
+    git add .claude-plugin .release-please-manifest.json CHANGELOG.md
+    git commit -q -m "chore(main): release 0.7.1"
+    git push -q origin main
+
+    SHA=$(git rev-parse main)
+    echo "$SHA" > "$TMP/vmanifest.main-sha"
+    export SHIM_DIR="$SHIM"
+    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/vmanifest.out" 2>&1
+    echo "$?" > "$TMP/vmanifest.rc"
+
+    git fetch -q origin staging 2>/dev/null || true
+    git checkout -q staging
+    git pull -q --ff-only origin staging 2>/dev/null || true
+    cat .claude-plugin/plugin.json          > "$TMP/vmanifest.plugin"
+    cat .claude-plugin/marketplace.json     > "$TMP/vmanifest.marketplace"
+    cat .claude-plugin/marketplace-dev.json > "$TMP/vmanifest.marketplace-dev"
+    cat .release-please-manifest.json       > "$TMP/vmanifest.rp-manifest"
+    cat CHANGELOG.md                        > "$TMP/vmanifest.changelog"
+    git log -1 staging --format=%s          > "$TMP/vmanifest.subject"
+  )
+  assert "vmanifest: script exits 0" "[ \"\$(cat '$TMP/vmanifest.rc')\" = '0' ]"
+  assert "vmanifest: staging's .claude-plugin/plugin.json contains \"0.7.1\"" "grep -q '\"0.7.1\"' '$TMP/vmanifest.plugin'"
+  assert "vmanifest: staging's .claude-plugin/marketplace.json contains \"0.7.1\"" "grep -q '\"0.7.1\"' '$TMP/vmanifest.marketplace'"
+  assert "vmanifest: staging's .claude-plugin/marketplace-dev.json contains \"0.7.1-rc.1\"" "grep -q '\"0.7.1-rc.1\"' '$TMP/vmanifest.marketplace-dev'"
+  assert "vmanifest: staging's .release-please-manifest.json contains \"0.7.1\"" "grep -q '\"0.7.1\"' '$TMP/vmanifest.rp-manifest'"
+  assert "vmanifest: staging's CHANGELOG.md contains '## 0.7.1'" "grep -q '## 0.7.1' '$TMP/vmanifest.changelog'"
+  assert "vmanifest: merge commit subject starts with 'chore(back-sync):'" "grep -qE '^chore\\(back-sync\\):' '$TMP/vmanifest.subject'"
+  assert "vmanifest: no draft PR opened" "! grep -q 'pr create' '$SHIM/gh.log'"
+fi
+
+# ---------------------------------------------------------------------------
+# Group 8: asymmetric-collision regression (mixed vintage in one back-sync)
+#
+# Proves a single back-sync correctly handles both vintages in one merge:
+#   - staging-only file (STAGING_FEATURE.md) — survives unchanged
+#   - both-sides-touched manifest (.claude-plugin/plugin.json) — main wins
+# Guards against any future "global strategy flip" reintroducing a regression
+# in the opposite direction.
+# ---------------------------------------------------------------------------
+if [ -x "$SCRIPT" ]; then
+  FIX="$TMP/asym"
+  make_fixture "$FIX"
+  SHIM="$TMP/shim-asym"
+  install_shims "$SHIM"
+  (
+    cd "$FIX"
+    # Staging carries (a) a new file main never touches and (b) an older
+    # snapshot of .claude-plugin/plugin.json — only the latter overlaps main.
+    git checkout -q staging
+    echo "post-release feature work" > STAGING_FEATURE.md
+    mkdir -p .claude-plugin
+    echo '{"version": "0.7.0"}'      > .claude-plugin/plugin.json
+    git add STAGING_FEATURE.md .claude-plugin/plugin.json
+    git commit -q -m "chore: staging-only feature + older manifest snapshot"
+    git push -q origin staging
+
+    # Main carries release-please's bump — only touches .claude-plugin/plugin.json.
+    git checkout -q main
+    mkdir -p .claude-plugin
+    echo '{"version": "0.7.1"}'      > .claude-plugin/plugin.json
+    git add .claude-plugin/plugin.json
+    git commit -q -m "chore(main): release 0.7.1"
+    git push -q origin main
+
+    SHA=$(git rev-parse main)
+    echo "$SHA" > "$TMP/asym.main-sha"
+    export SHIM_DIR="$SHIM"
+    PATH="$SHIM:$PATH" bash "$SCRIPT" "$SHA" >"$TMP/asym.out" 2>&1
+    echo "$?" > "$TMP/asym.rc"
+
+    git fetch -q origin staging 2>/dev/null || true
+    git checkout -q staging
+    git pull -q --ff-only origin staging 2>/dev/null || true
+    cat STAGING_FEATURE.md            > "$TMP/asym.staging-feature"
+    cat .claude-plugin/plugin.json    > "$TMP/asym.plugin"
+    git rev-parse staging             > "$TMP/asym.staging-sha"
+    git log -1 staging --format=%P    > "$TMP/asym.parents"
+    git log -1 staging --format=%s    > "$TMP/asym.subject"
+  )
+  assert "asym: script exits 0" "[ \"\$(cat '$TMP/asym.rc')\" = '0' ]"
+  assert "asym: staging's STAGING_FEATURE.md survives unchanged" "[ \"\$(cat '$TMP/asym.staging-feature')\" = 'post-release feature work' ]"
+  assert "asym: staging's .claude-plugin/plugin.json contains \"0.7.1\"" "grep -q '\"0.7.1\"' '$TMP/asym.plugin'"
+  assert "asym: a single merge commit was created" "[ \"\$(cat '$TMP/asym.staging-sha')\" != \"\$(cat '$TMP/asym.main-sha')\" ]"
+  assert "asym: merge commit has 2 parents" "[ \"\$(wc -w < '$TMP/asym.parents')\" = '2' ]"
+  assert "asym: merge commit subject starts with 'chore(back-sync):'" "grep -qE '^chore\\(back-sync\\):' '$TMP/asym.subject'"
 fi
 
 # ---------------------------------------------------------------------------
