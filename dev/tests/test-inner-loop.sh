@@ -17,6 +17,10 @@ mkdir -p "$LOGS/subagents"
 : > "$LOGS/runs.log"
 : > "$LOGS/tool-use.log"
 
+# Seed a runs.log row so the inner-loop's prior-session one-liner has data.
+printf '2026-05-15T00:00:00Z\tsession=test-uuid-0001\tissue=99\tpath=B\tskill=execute-issue-plan\tworktree=/tmp/wt\n' \
+  > "$LOGS/runs.log"
+
 # Stub gh CLI: returns one fake merged feature PR.
 STUB_BIN="$TMP/bin"
 mkdir -p "$STUB_BIN"
@@ -42,6 +46,12 @@ DIGEST=$(ls "$OUT"/inner-*.md 2>/dev/null | head -1 || true)
 assert "inner-*.md digest created" "[ -n \"\$DIGEST\" ] && [ -f \"\$DIGEST\" ]"
 assert "digest has ## Compliance section"  "grep -q '^## Compliance' \"\$DIGEST\""
 assert "digest has ## Interaction section" "grep -q '^## Interaction' \"\$DIGEST\""
+assert "Interaction section has subagent-pending placeholder" \
+  "grep -qE '_pending subagent classification — session [a-zA-Z0-9_-]+_' \"\$DIGEST\""
+assert "Interaction section has runs.log one-liner (prior session summary)" \
+  "grep -qE '^- prior session:' \"\$DIGEST\""
+assert "Interaction section does NOT contain legacy TODO lines" \
+  "! grep -qE 'Turn count per issue: TODO|User-correction frequency: TODO|Confirmations Claude asked for: TODO' \"\$DIGEST\""
 assert "digest has ## Pattern section"     "grep -qE '^## Pattern' \"\$DIGEST\""
 assert "digest has ## Efficiency section"  "grep -q '^## Efficiency' \"\$DIGEST\""
 assert "digest has ## Data quality section" "grep -q '^## Data quality' \"\$DIGEST\""
