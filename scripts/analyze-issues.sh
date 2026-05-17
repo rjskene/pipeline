@@ -18,6 +18,9 @@ set -uo pipefail
 #     "tracker_fits": [
 #       {"issue": <int>, "tracker": <int>,
 #        "reason": "scope-match"|"body-reference"}
+#     ],
+#     "missing_label_candidates": [
+#       {"issue": <int>, "missing": ["priority"|"path"|"state", ...]}
 #     ]
 #   }
 #
@@ -25,7 +28,13 @@ set -uo pipefail
 #   bash scripts/analyze-issues.sh                   # live (calls gh)
 #   bash scripts/analyze-issues.sh --fixture <dir>   # fixture mode (no gh)
 #
-# Caps at top 20 duplicate pairs + top 20 tracker fits.
+# Caps at top 20 duplicate pairs + top 20 tracker fits + top 20 missing-label
+# candidates.
+#
+# The missing-label signal has a configurable age gate
+# (PIPELINE_ANALYZE_MIN_AGE_HOURS, default 24h) — issues younger than the
+# cutoff are silently suppressed so newly-filed issues are not flagged
+# before classify-issue has a chance to run.
 
 # --- locate and source pipeline.config (best-effort; fixture mode tolerates absence) ---
 find_config() {
@@ -85,7 +94,7 @@ else
     --repo "$PIPELINE_REPO" \
     --state open \
     --limit 200 \
-    --json number,title,body,labels \
+    --json number,title,body,labels,createdAt \
     > "$ISSUES_FILE"
 fi
 
@@ -331,13 +340,63 @@ FITS_JSON=$(
   fi
 )
 
+# --- missing-label candidates ---
+# Detect issues lacking any of:
+#   - priority/P[0-9] label                     (always required)
+#   - docs-only or multi-task path label        (required unless brainstorm/later/human/tracker)
+#   - any pipeline-stage or classification label (state: surfaced only when nothing
+#                                                 else is present; redundant flag,
+#                                                 sorted after priority/path)
+# Age gate: PIPELINE_ANALYZE_MIN_AGE_HOURS (default 24h). Issues newer than the
+# cutoff are silently suppressed so classify-issue gets a chance to run. Issues
+# without a createdAt field are treated as age-unknown → suppressed.
+MIN_AGE_HOURS="${PIPELINE_ANALYZE_MIN_AGE_HOURS:-24}"
+NOW_EPOCH=$(date -u +%s)
+CUTOFF_EPOCH=$(( NOW_EPOCH - MIN_AGE_HOURS * 3600 ))
+MISSING_JSON=$(jq --argjson cutoff "$CUTOFF_EPOCH" '
+  def has_priority(labels): any(labels[]?; .name | test("^priority/P[0-9]$"));
+  def has_path(labels):     any(labels[]?; .name == "docs-only" or .name == "multi-task");
+  def has_state(labels):    any(labels[]?; .name == "brainstorm" or .name == "tracker" or .name == "later" or .name == "human");
+  def is_tracker(labels):   any(labels[]?; .name == "tracker");
+  def is_exempt(labels):    any(labels[]?; .name == "brainstorm" or .name == "later" or .name == "human");
+  def age_ok($cdt):
+    # Suppress on uncertainty: missing or unparseable createdAt yields false
+    # (no row emitted). The try/catch around fromdateiso8601 ensures one
+    # malformed date in upstream data does not abort the whole jq pipeline
+    # and silently zero missing_label_candidates for the entire repo.
+    ($cdt // "") as $c
+    | if $c == "" then false
+      else (try (($c | fromdateiso8601) < $cutoff) catch false)
+      end;
+  [ .[]
+    | select(is_tracker(.labels) | not)
+    | select(is_exempt(.labels) | not)
+    | select(age_ok(.createdAt))
+    | . as $i
+    | {
+        number,
+        missing: (
+          [ (if has_priority($i.labels) | not then "priority" else empty end),
+            (if has_path($i.labels)     | not then "path"     else empty end) ]
+          + (if (has_priority($i.labels) | not)
+               and (has_path($i.labels) | not)
+               and (has_state($i.labels) | not)
+             then ["state"] else [] end)
+        )
+      }
+    | select(.missing | length > 0)
+    | {issue: .number, missing: .missing}
+  ] | .[0:20]
+' "$ISSUES_FILE")
+
 # --- assemble + emit ---
 mkdir -p .claude/logs
 OUT=".claude/logs/analyze-shortlist-$(date -u +%Y%m%dT%H%M%S%NZ).json"
 jq -n \
-  --argjson pairs "${PAIRS_JSON:-[]}" \
-  --argjson fits  "${FITS_JSON:-[]}" \
-  '{duplicate_pairs: $pairs, tracker_fits: $fits}' > "$OUT"
+  --argjson pairs   "${PAIRS_JSON:-[]}" \
+  --argjson fits    "${FITS_JSON:-[]}" \
+  --argjson missing "${MISSING_JSON:-[]}" \
+  '{duplicate_pairs: $pairs, tracker_fits: $fits, missing_label_candidates: $missing}' > "$OUT"
 
 ABS_OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 printf '%s\n' "$ABS_OUT"

@@ -199,8 +199,8 @@ if [ -f "$shortlist1" ]; then
       ;;
   esac
   keys=$(jq -r 'keys | join(",")' "$shortlist1")
-  if [ "$keys" = "duplicate_pairs,tracker_fits" ]; then
-    pass_msg "scenario 6: output keys are duplicate_pairs,tracker_fits"
+  if [ "$keys" = "duplicate_pairs,missing_label_candidates,tracker_fits" ]; then
+    pass_msg "scenario 6: output keys are duplicate_pairs,missing_label_candidates,tracker_fits"
   else
     fail_msg "scenario 6: output keys (got '$keys')"
   fi
@@ -330,6 +330,178 @@ if [ -f "$shortlist11" ]; then
   else
     fail_msg "scenario 11: (112,110) IS in tracker_fits (got $fit_112_110)"
     jq '.tracker_fits' "$shortlist11" | sed 's/^/      /'
+  fi
+fi
+
+# Helper for deterministic createdAt timestamps in fixtures (ISO 8601, hours-ago).
+# date(1) on GNU/BSD diverges; this wraps the GNU form used in CI.
+hours_ago_iso() {
+  date -u -d "$1 hours ago" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# --- Scenario 12: missing priority — issue with docs-only path label, no priority/* ---
+inc_scenario "Scenario 12: missing-priority signal surfaces issue lacking priority/P*"
+FIX12="$TMP/fix12"; mkdir -p "$FIX12"
+CREATED_48H=$(hours_ago_iso 48)
+cat > "$FIX12/issues.json" <<J
+[
+  {"number":200,"title":"feat(spawn): docs touch-up","body":"x","labels":[{"name":"docs-only"}],"createdAt":"$CREATED_48H"}
+]
+J
+out12=$(run_helper "$FIX12" 2>&1)
+shortlist12=$(echo "$out12" | tail -n 1)
+if [ -f "$shortlist12" ]; then
+  missing_len=$(jq '.missing_label_candidates | length' "$shortlist12" 2>/dev/null || echo "0")
+  if [ "$missing_len" = "1" ]; then
+    pass_msg "scenario 12: missing_label_candidates has exactly 1 row"
+  else
+    fail_msg "scenario 12: missing_label_candidates has 1 row (got $missing_len)"
+  fi
+  row=$(jq -c '.missing_label_candidates[0]' "$shortlist12" 2>/dev/null || echo "{}")
+  if [ "$row" = '{"issue":200,"missing":["priority"]}' ]; then
+    pass_msg "scenario 12: row == {\"issue\":200,\"missing\":[\"priority\"]}"
+  else
+    fail_msg "scenario 12: row content (got '$row')"
+  fi
+fi
+
+# --- Scenario 13: missing both priority + path (regression-protect ordering) ---
+inc_scenario "Scenario 13: missing-both surfaces with priority before path"
+FIX13="$TMP/fix13"; mkdir -p "$FIX13"
+cat > "$FIX13/issues.json" <<J
+[
+  {"number":201,"title":"feat(spawn): plain feature","body":"x","labels":[],"createdAt":"$CREATED_48H"}
+]
+J
+out13=$(run_helper "$FIX13" 2>&1)
+shortlist13=$(echo "$out13" | tail -n 1)
+if [ -f "$shortlist13" ]; then
+  miss13=$(jq -c '.missing_label_candidates[] | select(.issue == 201) | .missing' "$shortlist13" 2>/dev/null || echo "[]")
+  # The state token is also expected because no pipeline-stage/classification
+  # labels are present AND the issue is older than the 24h cutoff. Ordering
+  # priority,path,state is pinned by the impl to keep this assertion stable.
+  if [ "$miss13" = '["priority","path","state"]' ]; then
+    pass_msg "scenario 13: row .missing == [priority,path,state] in deterministic order"
+  else
+    fail_msg "scenario 13: row .missing ordering (got '$miss13')"
+  fi
+fi
+
+# --- Scenario 14: age gate — just-filed issue (2h ago) is suppressed ---
+inc_scenario "Scenario 14: age-gate suppresses just-filed issues (< 24h)"
+FIX14="$TMP/fix14"; mkdir -p "$FIX14"
+CREATED_2H=$(hours_ago_iso 2)
+cat > "$FIX14/issues.json" <<J
+[
+  {"number":202,"title":"feat(spawn): just filed","body":"x","labels":[],"createdAt":"$CREATED_2H"}
+]
+J
+# Use the default cutoff (24h) — issue at 2h is too fresh.
+out14=$(PIPELINE_ANALYZE_MIN_AGE_HOURS=24 run_helper "$FIX14" 2>&1)
+shortlist14=$(echo "$out14" | tail -n 1)
+if [ -f "$shortlist14" ]; then
+  miss14_len=$(jq '.missing_label_candidates | length' "$shortlist14" 2>/dev/null || echo "999")
+  if [ "$miss14_len" = "0" ]; then
+    pass_msg "scenario 14: just-filed issue suppressed by 24h age gate"
+  else
+    fail_msg "scenario 14: just-filed issue suppressed (got $miss14_len rows)"
+  fi
+fi
+
+# --- Scenario 15: tracker is exempt from missing-priority/path signal ---
+inc_scenario "Scenario 15: trackers are exempt from missing-label signal"
+FIX15="$TMP/fix15"; mkdir -p "$FIX15"
+cat > "$FIX15/issues.json" <<J
+[
+  {"number":203,"title":"epic(pipeline): rollout","body":"## Rollout sequence\n","labels":[{"name":"tracker"}],"createdAt":"$CREATED_48H"}
+]
+J
+cat > "$FIX15/issue-203.json" <<'J'
+{"body":"## Rollout sequence\n"}
+J
+out15=$(run_helper "$FIX15" 2>&1)
+shortlist15=$(echo "$out15" | tail -n 1)
+if [ -f "$shortlist15" ]; then
+  miss15_len=$(jq '.missing_label_candidates | length' "$shortlist15" 2>/dev/null || echo "999")
+  if [ "$miss15_len" = "0" ]; then
+    pass_msg "scenario 15: tracker not surfaced in missing_label_candidates"
+  else
+    fail_msg "scenario 15: tracker not surfaced (got $miss15_len rows)"
+  fi
+fi
+
+# --- Scenario 16: brainstorm / later / human labels suppress the signal ---
+inc_scenario "Scenario 16: brainstorm/later/human labels suppress missing-label signal"
+FIX16="$TMP/fix16"; mkdir -p "$FIX16"
+cat > "$FIX16/issues.json" <<J
+[
+  {"number":204,"title":"chore(x): brainstorm only","body":"x","labels":[{"name":"brainstorm"}],"createdAt":"$CREATED_48H"},
+  {"number":205,"title":"chore(x): later only","body":"x","labels":[{"name":"later"}],"createdAt":"$CREATED_48H"},
+  {"number":206,"title":"chore(x): human only","body":"x","labels":[{"name":"human"}],"createdAt":"$CREATED_48H"}
+]
+J
+out16=$(run_helper "$FIX16" 2>&1)
+shortlist16=$(echo "$out16" | tail -n 1)
+if [ -f "$shortlist16" ]; then
+  miss16_len=$(jq '.missing_label_candidates | length' "$shortlist16" 2>/dev/null || echo "999")
+  if [ "$miss16_len" = "0" ]; then
+    pass_msg "scenario 16: brainstorm/later/human labels all exempt"
+  else
+    fail_msg "scenario 16: brainstorm/later/human exemption (got $miss16_len rows)"
+  fi
+fi
+
+# --- Scenario 17: zero-findings corpus emits an empty missing_label_candidates array ---
+inc_scenario "Scenario 17: zero findings emits empty missing_label_candidates array"
+FIX17="$TMP/fix17"; mkdir -p "$FIX17"
+cat > "$FIX17/issues.json" <<J
+[
+  {"number":207,"title":"feat(a): one","body":"x","labels":[{"name":"priority/P2"},{"name":"docs-only"}],"createdAt":"$CREATED_48H"},
+  {"number":208,"title":"feat(b): two","body":"x","labels":[{"name":"priority/P1"},{"name":"multi-task"}],"createdAt":"$CREATED_48H"},
+  {"number":209,"title":"feat(c): three","body":"x","labels":[{"name":"priority/P0"},{"name":"docs-only"}],"createdAt":"$CREATED_48H"}
+]
+J
+out17=$(run_helper "$FIX17" 2>&1)
+shortlist17=$(echo "$out17" | tail -n 1)
+if [ -f "$shortlist17" ]; then
+  has_key=$(jq 'has("missing_label_candidates")' "$shortlist17" 2>/dev/null || echo "false")
+  miss17_len=$(jq '.missing_label_candidates | length' "$shortlist17" 2>/dev/null || echo "999")
+  if [ "$has_key" = "true" ] && [ "$miss17_len" = "0" ]; then
+    pass_msg "scenario 17: missing_label_candidates key present and empty"
+  else
+    fail_msg "scenario 17: key present + empty (has_key=$has_key, len=$miss17_len)"
+  fi
+fi
+
+# --- Scenario 18: malformed createdAt does not contaminate other rows ---
+# Regression guard for review finding C1 — fromdateiso8601 aborts the whole
+# jq pipeline on a non-ISO string, silently zeroing the entire array via the
+# `${MISSING_JSON:-[]}` fallback at the final emit. Asserts that one rogue
+# date in upstream data does NOT mask valid findings in the same payload.
+inc_scenario "Scenario 18: malformed createdAt suppresses only its own row, not siblings"
+FIX18="$TMP/fix18"; mkdir -p "$FIX18"
+cat > "$FIX18/issues.json" <<J
+[
+  {"number":300,"title":"feat(x): valid missing","body":"x","labels":[{"name":"docs-only"}],"createdAt":"$CREATED_48H"},
+  {"number":301,"title":"feat(x): malformed date","body":"x","labels":[],"createdAt":"not-a-date"}
+]
+J
+out18=$(run_helper "$FIX18" 2>&1)
+shortlist18=$(echo "$out18" | tail -n 1)
+if [ -f "$shortlist18" ]; then
+  # The valid issue (300) must still surface as a missing-priority candidate.
+  valid_row=$(jq -c '.missing_label_candidates[] | select(.issue == 300)' "$shortlist18" 2>/dev/null || echo "{}")
+  if [ "$valid_row" = '{"issue":300,"missing":["priority"]}' ]; then
+    pass_msg "scenario 18: valid sibling row surfaces despite malformed peer"
+  else
+    fail_msg "scenario 18: valid sibling row (got '$valid_row')"
+  fi
+  # The malformed-date row (301) must be suppressed (age-unknown → suppress).
+  bad_row=$(jq -c '.missing_label_candidates[] | select(.issue == 301)' "$shortlist18" 2>/dev/null || echo "")
+  if [ -z "$bad_row" ]; then
+    pass_msg "scenario 18: malformed-date row suppressed (age-unknown)"
+  else
+    fail_msg "scenario 18: malformed-date row should be suppressed (got '$bad_row')"
   fi
 fi
 
