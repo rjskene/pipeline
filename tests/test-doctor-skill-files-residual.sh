@@ -234,6 +234,30 @@ awk '/Preserved — consumer-owned:/{flag=1; next} flag' <<<"$out" \
   && pass_msg "relpath-skill: todo/SKILL.md appears under Preserved" \
   || { fail_msg "relpath-skill: todo/SKILL.md missing from Preserved"; echo "$out" | sed 's/^/    /'; }
 
+# ---------------------------------------------------------------------------
+# Case 7: --fix residual respects relative-path matching
+# ---------------------------------------------------------------------------
+echo "Case 7: --fix residual relative-path matching"
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-fix-relpath)
+mkdir -p "$FX/.claude/skills/todo" "$FX/.claude/skills/classify-issue"
+echo "consumer todo" > "$FX/.claude/skills/todo/SKILL.md"
+echo "stale classify" > "$FX/.claude/skills/classify-issue/SKILL.md"
+(
+  cd "$FX"
+  PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT" \
+    LABELS_JSON="$ALL_LABELS_JSON" DOCTOR_FIX_NONINTERACTIVE=1 \
+    bash "$HELPER" --fix residual
+) > "$FX/out" 2>&1
+out="$(cat "$FX/out")"
+grep -qE 'Remove duplicate of plugin-shipped file: \.claude/skills/classify-issue\?' <<<"$out" \
+  && pass_msg "fix-relpath: classify-issue prompted for removal" \
+  || { fail_msg "fix-relpath: classify-issue not prompted"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'Remove duplicate of plugin-shipped file: \.claude/skills/todo' <<<"$out" \
+  && fail_msg "fix-relpath: todo WRONGLY prompted for removal" \
+  || pass_msg "fix-relpath: todo NOT prompted (preserved)"
+[ -d "$FX/.claude/skills/todo" ] && pass_msg "fix-relpath: todo dir survives" \
+  || fail_msg "fix-relpath: todo dir was deleted"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

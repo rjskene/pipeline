@@ -110,7 +110,10 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
   fix_allow_tmp="$(mktemp)"
   for sub in skills hooks scripts agents; do
     if [ -d "$PLUGIN_ROOT_FIX/$sub" ]; then
-      find "$PLUGIN_ROOT_FIX/$sub" -type f -printf '%f\n' 2>/dev/null
+      while IFS= read -r -d '' f; do
+        rel="${f#$PLUGIN_ROOT_FIX/}"
+        printf '%s\n' "$rel"
+      done < <(find "$PLUGIN_ROOT_FIX/$sub" -type f -print0 2>/dev/null)
     fi
   done | sort -u > "$fix_allow_tmp"
 
@@ -118,8 +121,8 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
   for sub in skills hooks scripts agents; do
     if [ -d ".claude/$sub" ]; then
       while IFS= read -r -d '' f; do
-        bn="$(basename "$f")"
-        if grep -Fxq "$bn" "$fix_allow_tmp"; then
+        rel="${f#.claude/}"
+        if grep -Fxq "$rel" "$fix_allow_tmp"; then
           if [ "$sub" = "skills" ]; then
             sd="$(dirname "$f")"
             already=0
