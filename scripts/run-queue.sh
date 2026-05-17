@@ -9,7 +9,7 @@ fi
 # --add mode: append issues to a running queue's pending file
 if [ "${1:-}" = "--add" ]; then
   shift
-  REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
   PENDING_FILE="${REPO_ROOT}/.claude/logs/queue-pending.txt"
   if [ $# -eq 0 ]; then
     echo "Usage: bash $0 --add <issue1> <issue2> ..."
@@ -33,7 +33,7 @@ if [ "${1:-}" = "--ci-fix" ]; then
     exit 1
   fi
   CI_FIX_ISSUE="$1"; CI_FIX_LOG="$2"
-  REPO_ROOT_CI_FIX="$(cd "$(dirname "$0")/../.." && pwd)"
+  REPO_ROOT_CI_FIX="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
   # shellcheck disable=SC1091
   source "${REPO_ROOT_CI_FIX}/pipeline.config"
   WT_PATH=$(git worktree list --porcelain \
@@ -45,22 +45,24 @@ if [ "${1:-}" = "--ci-fix" ]; then
   fi
   SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-//")
   export PIPELINE_CI_FIX_CONTEXT="$CI_FIX_LOG"
-  exec bash "$(dirname "$0")/spawn-claude.sh" \
+  : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling spawn-claude.sh}"
+  exec bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh" \
     --dangerously-skip-permissions \
     --skill execute-issue-plan \
     "$WT_PATH" "$CI_FIX_ISSUE" "$SLUG" tmux
 fi
 
-# Source project config
-source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+# Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
+# export PIPELINE_PROJECT_ROOT to override the lookup directory.
+source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 # Orchestrate multiple agent sessions with concurrency limits.
 # Launches up to MAX_CONCURRENT agents at a time, polls for completion,
 # and launches the next queued issue when a slot opens.
 #
 # Usage:
-#   bash .claude/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
-#   bash .claude/scripts/run-queue.sh --add <issue1> <issue2> ...
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --add <issue1> <issue2> ...
 #
 # The --add flag appends issues to a running queue via a watch file.
 #
@@ -91,8 +93,9 @@ set -- "${NEW_ARGS[@]}"
 MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
+REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+: "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT}/scripts"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
 QUEUE_LOG="${LOG_DIR}/queue-$(date +%Y%m%d-%H%M%S).log"
 PENDING_FILE="${LOG_DIR}/queue-pending.txt"
@@ -314,4 +317,4 @@ for issue in "${QUEUE[@]}"; do
 done
 log "========================================"
 log ""
-log "Review details: bash .claude/scripts/review-logs.sh"
+log "Review details: bash \${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh"

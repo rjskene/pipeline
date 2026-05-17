@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Tests for the label -> PATH picker in spawn-claude.sh.template:
+# Tests for the label -> PATH picker in spawn-claude.sh:
 #   - no labels           -> B (default)
 #   - unrelated label     -> B
 #   - docs-only           -> A
@@ -13,7 +13,7 @@ set -euo pipefail
 # launching claude). A stub `gh` on PATH returns labels from STUB_LABELS.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh.template"
+SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh"
 
 PASS=0
 FAIL=0

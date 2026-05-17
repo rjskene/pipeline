@@ -127,6 +127,28 @@ if [ -d .claude-pipeline ]; then
   done
 fi
 
+# Plugin-only consumers (#215): when .claude-pipeline/ is absent but the
+# consumer still carries stale .claude/scripts/<name>.sh copies preserved
+# across the move to the plugin install model, enumerate basenames from
+# $CLAUDE_PLUGIN_ROOT/scripts/*.sh (plain only — exclude any leftover
+# .template) and queue any matching consumer copy for removal. Silently
+# skips when CLAUDE_PLUGIN_ROOT did not resolve.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] \
+   && [ -d "$CLAUDE_PLUGIN_ROOT/scripts" ] \
+   && [ -d .claude/scripts ]; then
+  for src in "$CLAUDE_PLUGIN_ROOT"/scripts/*.sh; do
+    [ -f "$src" ] || continue
+    name="$(basename "$src")"
+    # Skip if we already queued this basename via the .claude-pipeline/ pass.
+    already=false
+    for q in "${TO_REMOVE_SCRIPTS[@]:-}"; do
+      [ "${q:-}" = ".claude/scripts/$name" ] && already=true && break
+    done
+    [ "$already" = true ] && continue
+    [ -f ".claude/scripts/$name" ] && TO_REMOVE_SCRIPTS+=(".claude/scripts/$name")
+  done
+fi
+
 # Detect pipeline-hook references in .claude/settings.json. Two signals:
 #   1. Hook basenames enumerated from .claude-pipeline/hooks/ (when present).
 #   2. Path-fragment match on ".claude/hooks/" — catches consumers who have

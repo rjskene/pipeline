@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Tests for runs.log emission + --session-id propagation in spawn-claude.sh.template:
+# Tests for runs.log emission + --session-id propagation in spawn-claude.sh:
 #   - UUID generated and echoed in dry-run output
 #   - runs.log line appended with correct TSV columns
 #   - PIPELINE_RUNS_LOG_OVERRIDE respected so the real log is not touched
@@ -11,7 +11,7 @@ set -euo pipefail
 # network is required. Follows the pattern of test-path-picker.sh.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh.template"
+SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh"
 
 PASS=0
 FAIL=0

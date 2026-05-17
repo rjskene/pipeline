@@ -1,17 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
-# Source project config
-source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+# Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
+# export PIPELINE_PROJECT_ROOT to override the lookup directory.
+source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 # Retarget a PR's base branch with verify-retry-fail pattern.
 # Tries gh pr edit first, falls back to REST API if that fails.
 #
-# Usage: bash .claude/scripts/retarget-pr.sh <pr_number> <target_base_branch>
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh <pr_number> <target_base_branch>
 # Exit codes: 0 = success (already correct or retargeted), 1 = failure
 
 if [ $# -lt 2 ]; then
-  echo "Usage: bash .claude/scripts/retarget-pr.sh <pr_number> <target_base_branch>"
+  echo "Usage: bash \${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh <pr_number> <target_base_branch>"
   exit 1
 fi
 
