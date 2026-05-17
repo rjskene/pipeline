@@ -37,6 +37,25 @@ Before invoking the demo, the host must satisfy:
 
 `dev/mock-web-eval/replay.sh` runs these checks automatically and prints actionable remediation for any failure.
 
+## Plugin discoverability inside the container
+
+The container's `working_dir` MUST match a `projectPath` entry in `~/.claude/plugins/installed_plugins.json` — otherwise `claude` boots in "no project" mode and every `/pipeline:*` slash command resolves to `Unknown command`. The compose file therefore binds the host project root at the same absolute path inside the container (`${PIPELINE_PROJECT_ROOT}:${PIPELINE_PROJECT_ROOT}`) and pins `working_dir` to the worktree (which lives under `${PIPELINE_PROJECT_ROOT}/.claude/worktrees/`).
+
+Both env vars are seeded automatically:
+
+- by `scripts/mock-web-eval-probe-port.sh` (writes `PIPELINE_PROJECT_ROOT` + `PIPELINE_WORKTREE_PATH` into `mock-web/.env.mock-web-eval`), and
+- by `scripts/spawn-claude.sh` when `--container-mode=mock-web-eval` is passed (forwards both via `-e ...` into `docker compose run`).
+
+If you see `Unknown command: /pipeline:...` inside the container, verify the registration:
+
+```bash
+grep -E 'projectPath|installPath' ~/.claude/plugins/installed_plugins.json
+```
+
+The `projectPath` value for `pipeline@claude-pipeline-dev` (or `pipeline@claude-pipeline`) must equal the absolute path your host knows the repo as. If it doesn't, re-run `/plugin install pipeline@claude-pipeline-dev` from the project root in Claude Code so the registration picks up the right path.
+
+See #241 for the root-cause walkthrough.
+
 ## Reproducing the demo
 
 Use `dev/mock-web-eval/replay.sh`. Two modes:

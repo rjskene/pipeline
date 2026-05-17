@@ -75,6 +75,9 @@ assert "compose binds .claude settings RO"      "grep -qE '\.claude/settings\.js
 assert "compose binds .claude plugins RO"       "grep -qE '\.claude/plugins.*:ro' '$CF'"
 assert "compose binds .gitconfig RO"            "grep -qE '\.gitconfig.*:ro' '$CF'"
 assert "compose binds .config/gh RO"            "grep -qE '\.config/gh.*:ro' '$CF'"
+assert "compose binds project root via PIPELINE_PROJECT_ROOT" "grep -qE '\\\$\\{PIPELINE_PROJECT_ROOT\\}:\\\$\\{PIPELINE_PROJECT_ROOT\\}' '$CF'"
+assert "compose working_dir uses PIPELINE_WORKTREE_PATH"      "grep -qE 'working_dir:.*\\\$\\{PIPELINE_WORKTREE_PATH' '$CF'"
+assert "compose no longer pins \${PWD}:\${PWD} bind"          "! grep -qE '\\\$\\{PWD\\}:\\\$\\{PWD\\}' '$CF'"
 assert "compose maps HOST_PORT to 3000"         "grep -qE '\\\$\\{HOST_PORT\\}:3000' '$CF'"
 assert "compose uses HOST_UID build-arg"        "grep -qE 'HOST_UID' '$CF'"
 assert "compose uses HOST_GID build-arg"        "grep -qE 'HOST_GID' '$CF'"
@@ -87,6 +90,7 @@ assert "probe scans 8080..8089"       "grep -qE '8080.*8089|seq 8080 8089|\\{808
 assert "probe writes HOST_PORT="      "grep -qE 'HOST_PORT=' '$PROBE'"
 assert "probe writes to env file"     "grep -q 'mock-web/.env.mock-web-eval' '$PROBE'"
 assert "probe writes HOST_UID/GID seed" "grep -qE 'HOST_UID=' '$PROBE' && grep -qE 'HOST_GID=' '$PROBE'"
+assert "probe writes PIPELINE_PROJECT_ROOT="  "grep -qE 'PIPELINE_PROJECT_ROOT=' '$PROBE'"
 
 echo ""
 echo "================================"
