@@ -224,6 +224,33 @@ else
   echo "$BUILD_BLOCK" | sed 's/^/    /'
 fi
 
+# -------------------------------------------------------------------------
+# Test 7: --container-mode with --skill=execute-issue-plan -> rejected
+# Container mode is only meaningful for PR evaluation; gate the flag
+# explicitly so misuse fails loudly instead of silently spawning a
+# containerized executor (which has unbounded blast radius and is not
+# what consumers asked for).
+# -------------------------------------------------------------------------
+echo "Test 7: --container-mode rejected for non-evaluate-issue-pr skills"
+inc
+GATE_OUT=$(cd "$PROJ" && \
+  PATH="$STUB_DIR:$PATH" \
+  STUB_LABELS="" \
+  PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  bash .claude/scripts/spawn-claude.sh \
+    --skill execute-issue-plan --container-mode=web-eval \
+    "$PROJ/worktree" 106 slug tmux 2>&1 ; echo "RC=$?") || true
+GATE_RC=$(echo "$GATE_OUT" | grep -E '^RC=' | tail -1 | sed 's/RC=//')
+if [ "$GATE_RC" = "0" ]; then
+  fail_msg "expected non-zero exit when --container-mode used with execute-issue-plan; got 0"
+elif ! echo "$GATE_OUT" | grep -q "container-mode is only supported with --skill=evaluate-issue-pr"; then
+  fail_msg "missing expected stderr 'container-mode is only supported with --skill=evaluate-issue-pr'"
+  echo "$GATE_OUT" | tail -10 | sed 's/^/    /'
+else
+  pass_msg "non-zero exit ($GATE_RC) + correct gate-error stderr"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"

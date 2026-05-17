@@ -250,6 +250,13 @@ fi
 # LAUNCH_CMD bash array, which each launcher mode uses in place of the
 # bare `claude` executable when emitting the final CMD.
 DOCKER_PREFIX=()
+if [ -n "$CONTAINER_MODE" ] && [ "$SKILL" != "evaluate-issue-pr" ]; then
+  # Container mode is only meaningful when evaluating PRs; rejecting
+  # other skills early prevents a containerized executor from being
+  # spawned by mistake (unbounded blast radius, not what consumers ask).
+  echo "[spawn-claude] ERROR: container-mode is only supported with --skill=evaluate-issue-pr (got --skill=$SKILL)" >&2
+  exit 4
+fi
 if [ -n "$CONTAINER_MODE" ]; then
   if ! printf '%s\n' ${PIPELINE_EVAL_CONTAINERS:-} | tr ' ' '\n' | grep -qx "$CONTAINER_MODE"; then
     echo "[spawn-claude] ERROR: container-mode '$CONTAINER_MODE' not declared in PIPELINE_EVAL_CONTAINERS" >&2
