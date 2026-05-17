@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>mock-web-eval</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>mock-web-eval</h1>
+
+  <section id="toggle-section">
+    <button id="toggle-btn" type="button">Toggle</button>
+    <span id="toggle-indicator" class="indicator off">off</span>
+    <div id="toggle-panel" hidden>Panel content visible.</div>
+  </section>
+
+  <section id="echo-section">
+    <form id="echo-form">
+      <label for="echo-input">Echo:</label>
+      <input id="echo-input" name="echo-input" type="text" required>
+      <button type="submit">Submit</button>
+    </form>
+    <p id="echo-output" aria-live="polite"></p>
+  </section>
+
+  <section id="list-section">
+    <button id="item-add" type="button">Add item</button>
+    <ul id="item-list"></ul>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
