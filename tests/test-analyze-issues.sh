@@ -370,6 +370,38 @@ if [ -f "$shortlist13" ]; then
   fi
 fi
 
+# --- Scenario 14: malformed createdAt does not contaminate other rows ---
+# Regression guard for review finding C1 — fromdateiso8601 aborts the whole
+# jq pipeline on a non-ISO string, silently zeroing the entire array via the
+# `${MISSING_JSON:-[]}` fallback at the final emit. Asserts that one rogue
+# date in upstream data does NOT mask valid findings in the same payload.
+inc_scenario "Scenario 14: malformed createdAt suppresses only its own row, not siblings"
+FIX14="$TMP/fix14"; mkdir -p "$FIX14"
+cat > "$FIX14/issues.json" <<J
+[
+  {"number":300,"title":"feat(x): valid missing","body":"x","labels":[{"name":"docs-only"}],"createdAt":"$CREATED_48H"},
+  {"number":301,"title":"feat(x): malformed date","body":"x","labels":[],"createdAt":"not-a-date"}
+]
+J
+out14=$(run_helper "$FIX14" 2>&1)
+shortlist14=$(echo "$out14" | tail -n 1)
+if [ -f "$shortlist14" ]; then
+  # The valid issue (300) must still surface as a missing-priority candidate.
+  valid_row=$(jq -c '.missing_label_candidates[] | select(.issue == 300)' "$shortlist14" 2>/dev/null || echo "{}")
+  if [ "$valid_row" = '{"issue":300,"missing":["priority"]}' ]; then
+    pass_msg "scenario 14: valid sibling row surfaces despite malformed peer"
+  else
+    fail_msg "scenario 14: valid sibling row (got '$valid_row')"
+  fi
+  # The malformed-date row (301) must be suppressed (age-unknown → suppress).
+  bad_row=$(jq -c '.missing_label_candidates[] | select(.issue == 301)' "$shortlist14" 2>/dev/null || echo "")
+  if [ -z "$bad_row" ]; then
+    pass_msg "scenario 14: malformed-date row suppressed (age-unknown)"
+  else
+    fail_msg "scenario 14: malformed-date row should be suppressed (got '$bad_row')"
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -322,9 +322,13 @@ MISSING_JSON=$(jq --argjson cutoff "$CUTOFF_EPOCH" '
   def is_tracker(labels):   any(labels[]?; .name == "tracker");
   def is_exempt(labels):    any(labels[]?; .name == "brainstorm" or .name == "later" or .name == "human");
   def age_ok($cdt):
+    # Suppress on uncertainty: missing or unparseable createdAt yields false
+    # (no row emitted). The try/catch around fromdateiso8601 ensures one
+    # malformed date in upstream data does not abort the whole jq pipeline
+    # and silently zero missing_label_candidates for the entire repo.
     ($cdt // "") as $c
     | if $c == "" then false
-      else (($c | fromdateiso8601) < $cutoff)
+      else (try (($c | fromdateiso8601) < $cutoff) catch false)
       end;
   [ .[]
     | select(is_tracker(.labels) | not)
