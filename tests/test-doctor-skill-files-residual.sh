@@ -70,6 +70,14 @@ mk_plugin_root() {
   touch "$root/agents/tdd-implementer.md"
 }
 
+mk_plugin_root_with_templates() {
+  local root="$1"
+  mk_plugin_root "$root"
+  # Class 2 fixture: plugin ships <name>.sh.template files under scripts/
+  touch "$root/scripts/spawn-claude.sh.template"
+  touch "$root/scripts/cleanup-worktree.sh.template"
+}
+
 fresh_fx() {
   local name="$1"
   local fx="$TMP/$name"
@@ -257,6 +265,47 @@ grep -qE 'Remove duplicate of plugin-shipped file: \.claude/skills/todo' <<<"$ou
   || pass_msg "fix-relpath: todo NOT prompted (preserved)"
 [ -d "$FX/.claude/skills/todo" ] && pass_msg "fix-relpath: todo dir survives" \
   || fail_msg "fix-relpath: todo dir was deleted"
+
+# ---------------------------------------------------------------------------
+# Case 8: consumer .claude/scripts/spawn-claude.sh is classified as
+# consumer-required (plugin ships scripts/spawn-claude.sh.template). It
+# must NOT be flagged as duplicate and must NOT appear in --fix residual.
+# ---------------------------------------------------------------------------
+echo "Case 8: consumer-required from .template"
+PLUGIN_ROOT_T="$TMP/plugin-root-templates"
+mk_plugin_root_with_templates "$PLUGIN_ROOT_T"
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-consumer-required)
+mkdir -p "$FX/.claude/scripts"
+echo "rendered spawn"   > "$FX/.claude/scripts/spawn-claude.sh"
+echo "rendered cleanup" > "$FX/.claude/scripts/cleanup-worktree.sh"
+echo "consumer-only"    > "$FX/.claude/scripts/my-custom.sh"
+run_helper "$FX" "$PLUGIN_ROOT_T"
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: skill_files_residual status=pass' <<<"$out" \
+  && pass_msg "consumer-required: status=pass (no duplicates)" \
+  || { fail_msg "consumer-required: wrong status"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'Required — rendered from plugin templates:' <<<"$out" \
+  && grep -qE 'spawn-claude\.sh' <<<"$out" \
+  && grep -qE 'cleanup-worktree\.sh' <<<"$out" \
+  && pass_msg "consumer-required: section lists both rendered scripts" \
+  || { fail_msg "consumer-required: missing section"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'Preserved — consumer-owned:' <<<"$out" \
+  && grep -qE 'my-custom\.sh' <<<"$out" \
+  && pass_msg "consumer-required: my-custom.sh appears under Preserved" \
+  || fail_msg "consumer-required: my-custom.sh missing from Preserved"
+# Verify --fix residual does NOT propose deleting the rendered scripts.
+(
+  cd "$FX"
+  PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT_T" \
+    LABELS_JSON="$ALL_LABELS_JSON" DOCTOR_FIX_NONINTERACTIVE=1 \
+    bash "$HELPER" --fix residual
+) > "$FX/fix-out" 2>&1
+fix_out="$(cat "$FX/fix-out")"
+grep -qE 'Remove duplicate of plugin-shipped file: \.claude/scripts/spawn-claude\.sh' <<<"$fix_out" \
+  && fail_msg "consumer-required: spawn-claude.sh WRONGLY prompted for removal" \
+  || pass_msg "consumer-required: spawn-claude.sh NOT prompted"
+[ -f "$FX/.claude/scripts/spawn-claude.sh" ] && pass_msg "consumer-required: spawn-claude.sh survives" \
+  || fail_msg "consumer-required: spawn-claude.sh was deleted"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
