@@ -284,6 +284,27 @@ if [ -f "$shortlist9" ]; then
   fi
 fi
 
+# --- Scenario 10: age gate — just-filed issue (2h ago) is suppressed ---
+inc_scenario "Scenario 10: age-gate suppresses just-filed issues (< 24h)"
+FIX10="$TMP/fix10"; mkdir -p "$FIX10"
+CREATED_2H=$(hours_ago_iso 2)
+cat > "$FIX10/issues.json" <<J
+[
+  {"number":202,"title":"feat(spawn): just filed","body":"x","labels":[],"createdAt":"$CREATED_2H"}
+]
+J
+# Use the default cutoff (24h) — issue at 2h is too fresh.
+out10=$(PIPELINE_ANALYZE_MIN_AGE_HOURS=24 run_helper "$FIX10" 2>&1)
+shortlist10=$(echo "$out10" | tail -n 1)
+if [ -f "$shortlist10" ]; then
+  miss10_len=$(jq '.missing_label_candidates | length' "$shortlist10" 2>/dev/null || echo "999")
+  if [ "$miss10_len" = "0" ]; then
+    pass_msg "scenario 10: just-filed issue suppressed by 24h age gate"
+  else
+    fail_msg "scenario 10: just-filed issue suppressed (got $miss10_len rows)"
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
