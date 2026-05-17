@@ -251,6 +251,33 @@ else
   pass_msg "non-zero exit ($GATE_RC) + correct gate-error stderr"
 fi
 
+# -------------------------------------------------------------------------
+# Test 8: --container-mode injects -e PIPELINE_PROJECT_ROOT=<proj> and
+#         -e PIPELINE_WORKTREE_PATH=<worktree> into DOCKER_PREFIX, so the
+#         compose file's same-path project-root bind + working_dir math
+#         resolves correctly. Fixes #241 (plugin slash commands
+#         not discoverable inside container).
+# -------------------------------------------------------------------------
+echo "Test 8: --container-mode injects PIPELINE_PROJECT_ROOT + PIPELINE_WORKTREE_PATH"
+inc
+PR_OUT=$(cd "$PROJ" && \
+  PATH="$STUB_DIR:$PATH" \
+  STUB_LABELS="" \
+  PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  bash .claude/scripts/spawn-claude.sh \
+    --skill evaluate-issue-pr --container-mode=web-eval \
+    "$PROJ/worktree" 107 slug tmux 2>&1 || true)
+DOCKER_LINE=$(echo "$PR_OUT" | grep -E '^DOCKER_PREFIX=' || true)
+if [ -z "$DOCKER_LINE" ]; then
+  fail_msg "Test 8: no DOCKER_PREFIX= line"
+else
+  ok=1
+  echo "$DOCKER_LINE" | grep -q "PIPELINE_PROJECT_ROOT=$PROJ"           || { fail_msg "Test 8: DOCKER_PREFIX missing -e PIPELINE_PROJECT_ROOT=$PROJ"; ok=0; }
+  [ "$ok" = "1" ] && (echo "$DOCKER_LINE" | grep -q "PIPELINE_WORKTREE_PATH=$PROJ/worktree" || { fail_msg "Test 8: DOCKER_PREFIX missing -e PIPELINE_WORKTREE_PATH=$PROJ/worktree"; ok=0; })
+  [ "$ok" = "1" ] && pass_msg "Test 8: DOCKER_PREFIX carries -e PIPELINE_PROJECT_ROOT and -e PIPELINE_WORKTREE_PATH"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
