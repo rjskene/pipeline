@@ -1,11 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# Source project config
-source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+# Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
+# export PIPELINE_PROJECT_ROOT to override the lookup directory.
+source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 # Launch a claude CLI session for a worktree.
-# Usage: bash .claude/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue-number> [slug] [mode]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue-number> [slug] [mode]
 #   mode: "terminal" (default) — new Terminal.app window with /pipeline:execute-issue-plan
 #         "tmux"               — tmux window with auto-fire /pipeline:execute-issue-plan
 #         "remote-control"     — remote-control server (control from mobile app / claude.ai/code)
@@ -40,7 +41,7 @@ SESSION_NAME="issue-${ISSUE_NUM}-${SLUG}"
 TMUX_WINDOW="issue-${ISSUE_NUM}"
 
 # Set up logging
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)

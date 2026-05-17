@@ -1,12 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# Source project config
-source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+# Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
+# export PIPELINE_PROJECT_ROOT to override the lookup directory.
+source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 # Atomic worktree setup for the pipeline.
-# Usage: bash .claude/scripts/setup-worktree.sh [--base <base-branch>] <branch-name> [issue-number]
-# Example: bash .claude/scripts/setup-worktree.sh --base remove-user-switching feature/rating-system 5
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh [--base <base-branch>] <branch-name> [issue-number]
+# Example: bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh --base remove-user-switching feature/rating-system 5
 
 # Parse optional --base flag
 BASE_BRANCH=""
@@ -16,15 +17,15 @@ if [ "${1:-}" = "--base" ]; then
 fi
 
 if [ $# -lt 1 ]; then
-  echo "Usage: bash .claude/scripts/setup-worktree.sh [--base <base-branch>] <branch-name> [issue-number]"
-  echo "Example: bash .claude/scripts/setup-worktree.sh --base remove-user-switching feature/rating-system 5"
+  echo "Usage: bash \${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh [--base <base-branch>] <branch-name> [issue-number]"
+  echo "Example: bash \${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh --base remove-user-switching feature/rating-system 5"
   exit 1
 fi
 
 BRANCH="$1"
 ISSUE_NUM="${2:-}"
 SUFFIX="${BRANCH#feature/}"
-MAIN_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 WORKTREE_DIR="$MAIN_REPO/.claude/worktrees"
 if [ -n "$ISSUE_NUM" ]; then
   WORKTREE_PATH="$WORKTREE_DIR/${PIPELINE_WORKTREE_PREFIX}-${ISSUE_NUM}-${SUFFIX}"
