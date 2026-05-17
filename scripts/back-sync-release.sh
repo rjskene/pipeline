@@ -4,11 +4,14 @@
 # Usage: scripts/back-sync-release.sh <release-sha>
 #
 # Clean path:    git merge --ff-only <sha>          &&  git push origin staging
-# Overlap path:  git merge -X ours -m "chore(back-sync): ..." <sha>
+# Overlap path:  git merge -X theirs -m "chore(back-sync): ..." <sha>
 #                                                   &&  git push origin staging
-#                (staging is "ours" because the workflow checks out staging;
-#                 staging is strictly newer for any file already shipped to main.)
-# Conflict path: true delete/modify conflicts (which -X ours cannot resolve)
+#                (main is "theirs" because the workflow checks out staging;
+#                 main is strictly NEWER for any file touched by the release
+#                 commit — release-please bumps the version manifests
+#                 (.claude-plugin/*.json, .release-please-manifest.json) and
+#                 CHANGELOG.md, and those bumps must survive on staging.)
+# Conflict path: true delete/modify conflicts (which -X theirs cannot resolve)
 #                open a draft PR release-back-sync/<short-sha> against staging
 #                with conflict markers preserved for human resolution.
 # Idempotent:    if <sha> is already an ancestor of staging, returns early
@@ -62,14 +65,17 @@ fi
 
 # ---------------------------------------------------------------------------
 # Real merge path: FF was not possible (staging has commits ahead of $SHA).
-# Favor staging on file collisions (staging is strictly newer for any file
-# already shipped to main in the release commit). Use a clear back-sync
-# subject so the workflow can identify its own commits idempotently on rerun.
+# Favor MAIN on file collisions — release-please bumps the version manifests
+# (.claude-plugin/*.json, .release-please-manifest.json) and CHANGELOG.md on
+# main, and main is strictly NEWER on every file the release commit touched.
+# Use -X theirs so main's content wins; staging-only files are unaffected.
+# Use a clear back-sync subject so the workflow can identify its own commits
+# idempotently on rerun.
 # ---------------------------------------------------------------------------
 MERGE_MSG="chore(back-sync): merge release commit $SHORT_SHA from main"
-if git merge --no-edit -X ours -m "$MERGE_MSG" "$SHA"; then
+if git merge --no-edit -X theirs -m "$MERGE_MSG" "$SHA"; then
   git push origin staging
-  echo "back-sync: merged $SHA into staging with -X ours"
+  echo "back-sync: merged $SHA into staging with -X theirs"
   exit 0
 fi
 git merge --abort 2>/dev/null || true
