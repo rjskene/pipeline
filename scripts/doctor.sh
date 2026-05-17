@@ -455,7 +455,23 @@ for sub in skills hooks scripts agents; do
   fi
 done | sort -u > "$sfr_allow_tmp"
 
+# Class 2 (consumer-required): for every plugin file ending in `.template`,
+# also recognize the rendered path (with `.template` stripped) as a path
+# the consumer is REQUIRED to keep. Plugin skills invoke these as
+# `bash .claude/scripts/<name>.sh`, so they are load-bearing in the
+# consumer's working tree even though the plugin only ships the template.
+# NOTE: this Class 2 workaround will SUNSET once #215 renames plugin
+# scripts/*.template → plugin scripts/* (the install-time render gap).
+sfr_required_tmp="$(mktemp)"
+while IFS= read -r rel; do
+  case "$rel" in
+    *.template) printf '%s\n' "${rel%.template}" >> "$sfr_required_tmp" ;;
+  esac
+done < "$sfr_allow_tmp"
+sort -u -o "$sfr_required_tmp" "$sfr_required_tmp"
+
 sfr_dup_files=()
+sfr_required_files=()
 sfr_consumer_files=()
 for sub in skills hooks scripts agents; do
   if [ -d ".claude/$sub" ]; then
@@ -463,12 +479,15 @@ for sub in skills hooks scripts agents; do
       rel="${f#.claude/}"
       if grep -Fxq "$rel" "$sfr_allow_tmp"; then
         sfr_dup_files+=("$f")
+      elif grep -Fxq "$rel" "$sfr_required_tmp"; then
+        sfr_required_files+=("$f")
       else
         sfr_consumer_files+=("$f")
       fi
     done < <(find ".claude/$sub" -type f -print0 2>/dev/null)
   fi
 done
+rm -f "$sfr_required_tmp"
 
 sfr_stale_findings=()
 for f in "${sfr_dup_files[@]:-}"; do
@@ -517,6 +536,12 @@ fi
 if [ "$sfr_dup_count" -gt 0 ]; then
   echo "  Duplicates of plugin-owned files (run scripts/migrate-from-subtree.sh):"
   for f in "${sfr_dup_files[@]}"; do
+    echo "  - $f"
+  done
+fi
+if [ "${#sfr_required_files[@]}" -gt 0 ]; then
+  echo "  Required — rendered from plugin templates:"
+  for f in "${sfr_required_files[@]}"; do
     echo "  - $f"
   done
 fi
