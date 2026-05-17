@@ -1,12 +1,5 @@
 # Changelog
 
-## [0.7.1-rc.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.7.0...v0.7.1-rc.1) (2026-05-17)
-
-
-### release
-
-* cut v0.7.1-rc.1 (back-sync workflow fix) ([#201](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/201)) ([a3dd742](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/a3dd7427035031c90aa61ba5eef3fd7fb18efbbd))
-
 ## [0.7.0](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.7.0-rc.1...v0.7.0) (2026-05-16)
 
 
