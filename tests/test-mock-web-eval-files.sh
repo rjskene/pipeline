@@ -46,6 +46,10 @@ assert "style.css defines .indicator.on"   "grep -qE '\.indicator\.on' '$CSS'"
 assert "style.css off has background"      "grep -A2 '\.indicator\.off' '$CSS' | grep -qE 'background(-color)?'"
 assert "style.css on has background"       "grep -A2 '\.indicator\.on' '$CSS' | grep -qE 'background(-color)?'"
 
+# Group 5 — gitignore excludes host UID/GID env file
+GI="$REPO_ROOT/.gitignore"
+assert ".gitignore excludes mock-web/.env.mock-web-eval" "grep -qE '^/?mock-web/\.env\.mock-web-eval\$' '$GI'"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
