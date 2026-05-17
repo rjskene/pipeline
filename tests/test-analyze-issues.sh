@@ -230,6 +230,38 @@ if [ "$rc7" -eq 0 ] && [ -f "$shortlist7" ]; then
   fi
 fi
 
+# Helper for deterministic createdAt timestamps in fixtures (ISO 8601, hours-ago).
+# date(1) on GNU/BSD diverges; this wraps the GNU form used in CI.
+hours_ago_iso() {
+  date -u -d "$1 hours ago" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# --- Scenario 8: missing priority — issue with docs-only path label, no priority/* ---
+inc_scenario "Scenario 8: missing-priority signal surfaces issue lacking priority/P*"
+FIX8="$TMP/fix8"; mkdir -p "$FIX8"
+CREATED_48H=$(hours_ago_iso 48)
+cat > "$FIX8/issues.json" <<J
+[
+  {"number":200,"title":"feat(spawn): docs touch-up","body":"x","labels":[{"name":"docs-only"}],"createdAt":"$CREATED_48H"}
+]
+J
+out8=$(run_helper "$FIX8" 2>&1)
+shortlist8=$(echo "$out8" | tail -n 1)
+if [ -f "$shortlist8" ]; then
+  missing_len=$(jq '.missing_label_candidates | length' "$shortlist8" 2>/dev/null || echo "0")
+  if [ "$missing_len" = "1" ]; then
+    pass_msg "scenario 8: missing_label_candidates has exactly 1 row"
+  else
+    fail_msg "scenario 8: missing_label_candidates has 1 row (got $missing_len)"
+  fi
+  row=$(jq -c '.missing_label_candidates[0]' "$shortlist8" 2>/dev/null || echo "{}")
+  if [ "$row" = '{"issue":200,"missing":["priority"]}' ]; then
+    pass_msg "scenario 8: row == {\"issue\":200,\"missing\":[\"priority\"]}"
+  else
+    fail_msg "scenario 8: row content (got '$row')"
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
