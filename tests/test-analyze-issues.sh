@@ -279,6 +279,60 @@ if [ -f "$shortlist9" ]; then
   fi
 fi
 
+# --- Scenario 10: cross-tracker siblings still surfaced in duplicate_pairs (fixture C) ---
+inc_scenario "Scenario 10: cross-tracker siblings still surfaced (fixture C)"
+FIX10="$TMP/fix10"; mkdir -p "$FIX10"
+cat > "$FIX10/issues.json" <<'J'
+[
+  {"number":90,"title":"epic(spawn): rollout one","body":"## Rollout sequence\n- [ ] **#91 — refactor argv parsing\n","labels":[{"name":"tracker"}]},
+  {"number":92,"title":"epic(spawn): rollout two","body":"## Rollout sequence\n- [ ] **#93 — argv parser flakiness fix\n","labels":[{"name":"tracker"}]},
+  {"number":91,"title":"feat(spawn): refactor argv parsing","body":"Refactor the argv parsing for spawn-claude.","labels":[]},
+  {"number":93,"title":"fix(spawn): argv parser flakiness","body":"argv parser is flaky during spawn-claude invocations.","labels":[]}
+]
+J
+cat > "$FIX10/issue-90.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#91 — refactor argv parsing\n"}
+J
+cat > "$FIX10/issue-92.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#93 — argv parser flakiness fix\n"}
+J
+out10=$(run_helper "$FIX10" 2>&1)
+shortlist10=$(echo "$out10" | tail -n 1)
+if [ -f "$shortlist10" ]; then
+  pair_91_93=$(jq -r '[.duplicate_pairs[] | select((.a == 91 and .b == 93) or (.a == 93 and .b == 91))] | length' "$shortlist10")
+  if [ "$pair_91_93" = "1" ]; then
+    pass_msg "scenario 10: (91,93) IS in duplicate_pairs (different trackers)"
+  else
+    fail_msg "scenario 10: (91,93) IS in duplicate_pairs (got $pair_91_93)"
+    jq '.duplicate_pairs' "$shortlist10" | sed 's/^/      /'
+  fi
+fi
+
+# --- Scenario 11: orphan body-references tracker → fits tracker (fixture D) ---
+inc_scenario "Scenario 11: orphan correctly fits tracker (fixture D)"
+FIX11="$TMP/fix11"; mkdir -p "$FIX11"
+cat > "$FIX11/issues.json" <<'J'
+[
+  {"number":110,"title":"epic(redline): rollout","body":"## Rollout sequence\n- [ ] **#111 — first child\n","labels":[{"name":"tracker"}]},
+  {"number":111,"title":"feat(redline): first child","body":"x","labels":[]},
+  {"number":112,"title":"feat(other): standalone task","body":"Related to #110 — needs grouping under that tracker.","labels":[]}
+]
+J
+cat > "$FIX11/issue-110.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#111 — first child\n"}
+J
+out11=$(run_helper "$FIX11" 2>&1)
+shortlist11=$(echo "$out11" | tail -n 1)
+if [ -f "$shortlist11" ]; then
+  fit_112_110=$(jq -r '[.tracker_fits[] | select(.issue == 112 and .tracker == 110 and .reason == "body-reference")] | length' "$shortlist11")
+  if [ "$fit_112_110" = "1" ]; then
+    pass_msg "scenario 11: (112,110) IS in tracker_fits (orphan body-reference)"
+  else
+    fail_msg "scenario 11: (112,110) IS in tracker_fits (got $fit_112_110)"
+    jq '.tracker_fits' "$shortlist11" | sed 's/^/      /'
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
