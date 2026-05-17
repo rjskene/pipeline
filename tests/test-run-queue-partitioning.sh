@@ -69,10 +69,12 @@ esac
 EOF
   chmod +x "$stub_dir/tmux"
 
-  # gh: returns mock labels / PR number list.
+  # gh: returns mock labels / PR number list, and logs argv to GH_INVOCATIONS.
   cat > "$stub_dir/gh" <<'EOF'
 #!/bin/bash
-# We don't need rich behavior in dry-run; return empty.
+if [ -n "${GH_INVOCATIONS:-}" ]; then
+  printf '%s\n' "$*" >> "$GH_INVOCATIONS"
+fi
 echo ""
 EOF
   chmod +x "$stub_dir/gh"
@@ -130,7 +132,8 @@ run_dryrun() {
   local proj="$1"; shift
   local stub_dir="$1"; shift
   local spawn_log="$proj/spawn-invocations.log"
-  : > "$spawn_log"
+  local gh_log="$proj/gh-invocations.log"
+  : > "$spawn_log"; : > "$gh_log"
   # Materialize the stubbed worktree directories so `[ -d $wt_path ]` passes.
   for entry in ${STUB_WORKTREES:-}; do
     issue="${entry%%:*}"
@@ -142,6 +145,7 @@ run_dryrun() {
     PATH="$stub_dir:$PATH" \
       TMUX="fakesession" \
       SPAWN_LOG="$spawn_log" \
+      GH_INVOCATIONS="$gh_log" \
       PIPELINE_QUEUE_DRY_RUN=1 \
       bash .claude/scripts/run-queue.sh "$@" 2>&1
   )
@@ -349,6 +353,98 @@ if echo "$INVOCATION_100" | grep -q -- "--container-mode=web-eval" \
 else
   fail_msg "issue 100 spawn missing one of: --container-mode=web-eval, --classifier-passthrough=--foo=bar"
   echo "    invocation: $INVOCATION_100"
+fi
+
+# -------------------------------------------------------------------------
+# Test 7: classify_issue resolves PR via `gh pr list --search linked:<issue>`
+# The plan documents the classifier receives an issue and a PR number; the
+# existing pattern in this repo (check-ci-fix-loop.sh, review-audits.sh) is
+# `linked:<issue>` which works on real GitHub repos. `head:<prefix>` does
+# not — it requires an exact ref. This test asserts the right qualifier is
+# used so the consumer classifier actually receives a usable PR number.
+# -------------------------------------------------------------------------
+echo "Test 7: classify_issue uses gh pr list --search linked:<issue>"
+inc
+PROJ="$WORKDIR/p7"
+setup_proj "$PROJ"
+STUB_DIR=$(make_stubs "$PROJ")
+write_classifier "$PROJ/.claude/scripts/classifier.sh"
+cat > "$PROJ/pipeline.config" <<EOF
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="pipeline"
+PIPELINE_WORKTREE_PREFIX="wt"
+PIPELINE_TMUX_SESSION="fake"
+PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
+PIPELINE_EVAL_CONTAINERS="web-eval"
+EOF
+OUT=$(STUB_WORKTREES="500:a 501:b" \
+      CLASSIFIER_WEB_ISSUES="" \
+      run_dryrun "$PROJ" "$STUB_DIR" 500 501)
+GH_LOG="$PROJ/gh-invocations.log"
+if grep -q 'pr list .*--search linked:500' "$GH_LOG" \
+   && grep -q 'pr list .*--search linked:501' "$GH_LOG"; then
+  pass_msg "classify_issue invokes gh pr list with --search linked:<issue>"
+else
+  fail_msg "expected --search linked:<issue> in gh invocations; got:"
+  cat "$GH_LOG" | sed 's/^/    /'
+fi
+
+# -------------------------------------------------------------------------
+# Test 8: EVENT: agent-skipped line emitted for classifier-rejected issues
+# Observability: skipped issues should be discoverable in queue logs the
+# same way agent-launched / agent-finished are.
+# -------------------------------------------------------------------------
+echo "Test 8: skipped issues emit EVENT: agent-skipped line"
+inc
+PROJ="$WORKDIR/p8"
+setup_proj "$PROJ"
+STUB_DIR=$(make_stubs "$PROJ")
+write_classifier "$PROJ/.claude/scripts/classifier.sh"
+cat > "$PROJ/pipeline.config" <<EOF
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="pipeline"
+PIPELINE_WORKTREE_PREFIX="wt"
+PIPELINE_TMUX_SESSION="fake"
+PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
+PIPELINE_EVAL_CONTAINERS="web-eval"
+EOF
+OUT=$(STUB_WORKTREES="600:a 601:b" \
+      CLASSIFIER_FAIL_ISSUES="600" \
+      run_dryrun "$PROJ" "$STUB_DIR" 600 601)
+if echo "$OUT" | grep -qE 'EVENT: agent-skipped issue=600 reason='; then
+  pass_msg "skipped issue 600 emitted EVENT: agent-skipped line"
+else
+  fail_msg "missing 'EVENT: agent-skipped issue=600 reason=...' line"
+  echo "$OUT" | sed 's/^/    /'
+fi
+
+# -------------------------------------------------------------------------
+# Test 9: classifier unset -> NO gh pr list call (short-circuit)
+# When PIPELINE_EVAL_CLASSIFIER is empty, the helper exits early without
+# the consumer's classifier running. The pre-classify gh lookup is wasted
+# work in that case — short-circuit it.
+# -------------------------------------------------------------------------
+echo "Test 9: classifier unset short-circuits pre-classify gh pr list call"
+inc
+PROJ="$WORKDIR/p9"
+setup_proj "$PROJ"
+STUB_DIR=$(make_stubs "$PROJ")
+cat > "$PROJ/pipeline.config" <<EOF
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="pipeline"
+PIPELINE_WORKTREE_PREFIX="wt"
+PIPELINE_TMUX_SESSION="fake"
+PIPELINE_EVAL_CLASSIFIER=""
+PIPELINE_EVAL_CONTAINERS=""
+EOF
+OUT=$(STUB_WORKTREES="700:a 701:b 702:c" \
+      run_dryrun "$PROJ" "$STUB_DIR" 700 701 702)
+GH_LOG="$PROJ/gh-invocations.log"
+if grep -q 'pr list' "$GH_LOG"; then
+  fail_msg "expected zero 'gh pr list' calls when classifier unset; got:"
+  cat "$GH_LOG" | sed 's/^/    /'
+else
+  pass_msg "no 'gh pr list' calls when PIPELINE_EVAL_CLASSIFIER is empty"
 fi
 
 echo ""

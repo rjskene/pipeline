@@ -135,8 +135,18 @@ fi
 # mode-agnostic; consumers wanting containerized CI-fix re-label the PR.
 classify_issue() {
   local issue="$1"
+  # Short-circuit when no classifier is configured — skip the gh pr list call
+  # entirely. The helper would still return mode=bare in this case, but the
+  # wasted gh round-trip is a real cost at multi-issue slate sizes.
+  if [ -z "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
+    printf '%s\n' "bare" "" "0" ""
+    return
+  fi
   local pr=""
-  pr=$(gh pr list --repo "$PIPELINE_REPO" --search "head:${PIPELINE_WORKTREE_PREFIX}-${issue}-" --json number --jq '.[0].number' 2>/dev/null || echo "")
+  # `linked:<issue>` is the proven qualifier in this repo for issue->PR lookup
+  # (mirrors scripts/check-ci-fix-loop.sh). `head:<prefix>` does NOT work
+  # because GitHub search requires an exact branch ref.
+  pr=$(gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" --json number --jq '.[0].number' 2>/dev/null || echo "")
   local out err rc
   local tmp_out tmp_err
   tmp_out=$(mktemp); tmp_err=$(mktemp)
@@ -241,6 +251,7 @@ route_issue() {
   { read -r mode; read -r extras; read -r rc; read -r err; } < <(classify_issue "$issue")
   if [ "$rc" -ne 0 ]; then
     log "SKIPPED issue=${issue} reason=${err}"
+    log "EVENT: agent-skipped issue=${issue} reason=${err}"
     RESULTS[$issue]="skipped-by-classifier"
     return 1
   fi
