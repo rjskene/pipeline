@@ -83,5 +83,26 @@ assert "outer-loop Suggested-issues row includes a Label hint field" \
 assert "outer-loop Suggested-issues row references the originating Suggested default" \
   "grep -qE '^  - \\*\\*From Suggested default:\\*\\* ' \"\$OUTER_DIGEST\""
 
+# --- Scenario F: no repeating Suggested defaults -> ## Suggested issues section is OMITTED
+TMP3=$(mktemp -d); trap 'rm -rf "$TMP" "$TMP2" "$TMP3"' EXIT
+OUT3="$TMP3/audits"; mkdir -p "$OUT3"
+for i in 1 2 3; do
+  D="$OUT3/inner-2026-05-18T0${i}0000Z.md"
+  cat > "$D" <<MD
+# Inner audit — 2026-05-18T0${i}:00:00Z
+
+## Interaction
+### Event 1
+- **Trigger:** unique trigger ${i}
+- **Correction:** unique correction ${i}
+- **Suggested default:** Unique default text number ${i}.
+MD
+  printf '{"timestamp":"2026-05-18T0%d:00:00Z","digest":"inner-2026-05-18T0%d0000Z.md","merged_prs":0}\n' "$i" "$i" >> "$OUT3/index.jsonl"
+done
+AUDIT_OUT_DIR="$OUT3" bash "$OUTER"
+OUTER_DIGEST3=$(ls "$OUT3"/outer-*.md | head -1)
+assert "outer-loop OMITS ## Suggested issues section when no patterns" \
+  "! grep -qE '^## Suggested issues' \"\$OUTER_DIGEST3\""
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
