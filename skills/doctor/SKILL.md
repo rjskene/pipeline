@@ -43,6 +43,17 @@ Report the full stdout (CHECK lines + summary table) to the user. If the exit co
 
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — the same helper is sourced by `migrate-from-subtree.sh`, so the wording in doctor's warnings matches the wording in the migration tool's advisories.
 
+## claude_plugin_root check
+
+Validates that `CLAUDE_PLUGIN_ROOT` resolves to a real plugin install directory. The check captures a pre-resolve snapshot of the env var so it can distinguish four states:
+
+| Env state | Path valid? | Status | Rationale |
+|-----------|-------------|--------|-----------|
+| Set in env | Yes | `pass` | Operator opted in to a specific plugin version; doctor stays out of the way. |
+| Empty | Self-resolution from `~/.claude/plugins/cache/claude-pipeline/pipeline/<latest>/` succeeded | `pass` | env empty + self-resolved from the plugin cache IS the recommended path — it picks the highest-version directory automatically and survives upgrades. Surfacing `warn` here misled v0.7.1 consumers into hardcoding `CLAUDE_PLUGIN_ROOT` and pinning themselves to a stale version. |
+| Set in env | No (path missing or not a directory) | `warn` | Likely a stale config — the operator pinned a version path that no longer exists after a plugin upgrade. Either unset the env var (recommended) or update it. |
+| Empty | No plugin cache present | `fail` | The plugin isn't installed. Run `/plugin install pipeline@claude-pipeline`. |
+
 ## consumer_drift check
 
 `skill_files_residual` flags **presence** of duplicates; `consumer_drift` adds **per-file drift classification**. For every consumer `.claude/{scripts,hooks,agents}/` file, the check delegates to `scripts/diff-consumer-files.sh` (a stateless helper that's also reusable from `migrate-from-subtree.sh`) and assigns one of six buckets:
