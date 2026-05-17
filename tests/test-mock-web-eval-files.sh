@@ -63,6 +63,22 @@ assert "Dockerfile declares GID build arg"      "grep -qE '^ARG HOST_GID' '$DF'"
 assert "Dockerfile creates non-root user"       "grep -qE 'useradd|adduser' '$DF' && grep -qE 'USER ' '$DF'"
 assert "Dockerfile WORKDIR is /workspace"       "grep -qE '^WORKDIR /workspace' '$DF'"
 
+# Group 7 — compose.mock-web-eval.yml structure
+CF="$REPO_ROOT/compose.mock-web-eval.yml"
+assert "compose defines service mock-web-eval"  "grep -qE '^[[:space:]]+mock-web-eval:' '$CF'"
+SERVICE_COUNT=$(grep -cE '^[[:space:]]{2}[a-z][a-z0-9-]*:' "$CF" 2>/dev/null || echo 0)
+assert "compose has exactly one service"        "[ \"$SERVICE_COUNT\" -eq 1 ]"
+assert "compose uses Dockerfile.mock-web-eval"  "grep -q 'Dockerfile.mock-web-eval' '$CF'"
+assert "compose sources .env.mock-web-eval"     "grep -q 'mock-web/.env.mock-web-eval' '$CF'"
+assert "compose binds .claude credentials RO"   "grep -qE '\.claude/\.credentials\.json.*:ro' '$CF'"
+assert "compose binds .claude settings RO"      "grep -qE '\.claude/settings\.json.*:ro' '$CF'"
+assert "compose binds .claude plugins RO"       "grep -qE '\.claude/plugins.*:ro' '$CF'"
+assert "compose binds .gitconfig RO"            "grep -qE '\.gitconfig.*:ro' '$CF'"
+assert "compose binds .config/gh RO"            "grep -qE '\.config/gh.*:ro' '$CF'"
+assert "compose maps HOST_PORT to 3000"         "grep -qE '\\\$\\{HOST_PORT\\}:3000' '$CF'"
+assert "compose uses HOST_UID build-arg"        "grep -qE 'HOST_UID' '$CF'"
+assert "compose uses HOST_GID build-arg"        "grep -qE 'HOST_GID' '$CF'"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
