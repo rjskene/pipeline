@@ -445,7 +445,10 @@ fi
 sfr_allow_tmp="$(mktemp)"
 for sub in skills hooks scripts agents; do
   if [ -d "$sfr_plugin_root/$sub" ]; then
-    find "$sfr_plugin_root/$sub" -type f -printf '%f\n' 2>/dev/null
+    while IFS= read -r -d '' f; do
+      rel="${f#$sfr_plugin_root/}"
+      printf '%s\n' "$rel"
+    done < <(find "$sfr_plugin_root/$sub" -type f -print0 2>/dev/null)
   fi
 done | sort -u > "$sfr_allow_tmp"
 
@@ -454,8 +457,8 @@ sfr_consumer_files=()
 for sub in skills hooks scripts agents; do
   if [ -d ".claude/$sub" ]; then
     while IFS= read -r -d '' f; do
-      bn="$(basename "$f")"
-      if grep -Fxq "$bn" "$sfr_allow_tmp"; then
+      rel="${f#.claude/}"
+      if grep -Fxq "$rel" "$sfr_allow_tmp"; then
         sfr_dup_files+=("$f")
       else
         sfr_consumer_files+=("$f")
