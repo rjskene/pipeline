@@ -39,6 +39,13 @@ assert "app.js mutates item-list"         "grep -q 'item-list' '$APP' && grep -q
 assert "app.js supports list item remove" "grep -qE 'removeChild|\.remove\(' '$APP'"
 assert "app.js <= 100 lines"              "[ \"\$(wc -l < '$APP')\" -le 100 ]"
 
+# Group 4 — style.css indicator states
+CSS="$REPO_ROOT/mock-web/style.css"
+assert "style.css defines .indicator.off"  "grep -qE '\.indicator\.off' '$CSS'"
+assert "style.css defines .indicator.on"   "grep -qE '\.indicator\.on' '$CSS'"
+assert "style.css off has background"      "grep -A2 '\.indicator\.off' '$CSS' | grep -qE 'background(-color)?'"
+assert "style.css on has background"       "grep -A2 '\.indicator\.on' '$CSS' | grep -qE 'background(-color)?'"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
