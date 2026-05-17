@@ -230,6 +230,31 @@ if [ "$rc7" -eq 0 ] && [ -f "$shortlist7" ]; then
   fi
 fi
 
+# --- Scenario 8: same-tracker siblings excluded from duplicate_pairs ---
+inc_scenario "Scenario 8: same-tracker siblings excluded from duplicate_pairs (fixture A)"
+FIX8="$TMP/fix8"; mkdir -p "$FIX8"
+cat > "$FIX8/issues.json" <<'J'
+[
+  {"number":70,"title":"epic(spawn): rollout","body":"## Rollout sequence\n- [ ] **#71 — refactor argv\n- [ ] **#72 — argv parser tidy\n","labels":[{"name":"tracker"}]},
+  {"number":71,"title":"feat(spawn): refactor argv parsing","body":"Refactor the argv parsing for spawn-claude.","labels":[]},
+  {"number":72,"title":"fix(spawn): argv parser flakiness","body":"argv parser is flaky during spawn-claude invocations.","labels":[]}
+]
+J
+cat > "$FIX8/issue-70.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#71 — refactor argv\n- [ ] **#72 — argv parser tidy\n"}
+J
+out8=$(run_helper "$FIX8" 2>&1)
+shortlist8=$(echo "$out8" | tail -n 1)
+if [ -f "$shortlist8" ]; then
+  pair_71_72=$(jq -r '[.duplicate_pairs[] | select((.a == 71 and .b == 72) or (.a == 72 and .b == 71))] | length' "$shortlist8")
+  if [ "$pair_71_72" = "0" ]; then
+    pass_msg "scenario 8: (71,72) NOT in duplicate_pairs (same-tracker siblings)"
+  else
+    fail_msg "scenario 8: (71,72) NOT in duplicate_pairs (got $pair_71_72)"
+    jq '.duplicate_pairs' "$shortlist8" | sed 's/^/      /'
+  fi
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
