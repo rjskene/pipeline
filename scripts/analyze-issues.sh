@@ -158,9 +158,11 @@ while IFS= read -r tline; do
   printf '%s\t%s\t%s\n' "$tnum" "$tscope" "$children"
 done < <(printf '%s' "$TRACKERS" | jq -c '.[]') > "$TR_INDEX_FILE"
 
-# Derive child→tracker index (one row per child) from TR_INDEX_FILE.
-# A child mapped under two trackers (rare; signals a config bug) — last write wins,
-# mirroring the original per-tracker `is_child` behavior which stopped at the first match.
+# Derive child→tracker index from TR_INDEX_FILE — one row per (child, tracker)
+# pair (a child mapped under two trackers, which signals a config bug, produces
+# two rows; the two consumers below disagree on which wins — duplicate-pairs awk
+# overwrites in ct[], lookup_child_tracker returns the first match — but for the
+# well-formed case of one tracker per child, both yield the same answer).
 awk -F'\t' '
   {
     tnum = $1
@@ -285,6 +287,10 @@ while IFS= read -r iline; do
   # tracker we're scoring against. Equivalent to the previous per-tracker is_child
   # check, expressed via the unified child→tracker index.
   iparent=$(lookup_child_tracker "$inum" || true)
+  # tchildren is unused in this loop body — the per-tracker is_child check it
+  # used to drive now lives in the unified CHILD_INDEX_FILE lookup above. The
+  # field is retained in TR_INDEX_FILE's schema so the file remains the single
+  # source of tracker/children info for any downstream consumer.
   while IFS=$'\t' read -r tnum tscope tchildren; do
     [ -z "$tnum" ] && continue
     if [ -n "$iparent" ] && [ "$iparent" = "$tnum" ]; then continue; fi
