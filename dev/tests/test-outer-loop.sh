@@ -72,6 +72,16 @@ assert "outer-loop flags repeating Suggested default (2-of-3)" \
   "grep -qF 'Confirm cleanup once per batch not per worktree.' \"\$OUTER_DIGEST\""
 assert "outer-loop tags Suggested-default codification target" \
   "grep -qiE 'codification candidate|repeating suggested default' \"\$OUTER_DIGEST\""
+assert "outer-loop emits ## Suggested issues section when patterns exist" \
+  "grep -qE '^## Suggested issues' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row has conventional-commit title shape" \
+  "grep -qE '^- \\*\\*Title:\\*\\* (feat|fix|chore)\\([a-z0-9-]+\\): ' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row includes a Body field" \
+  "grep -qE '^  - \\*\\*Body:\\*\\* ' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row includes a Label hint field" \
+  "grep -qE '^  - \\*\\*Label hint:\\*\\* (brainstorm|none)$' \"\$OUTER_DIGEST\""
+assert "outer-loop Suggested-issues row references the originating Suggested default" \
+  "grep -qE '^  - \\*\\*From Suggested default:\\*\\* ' \"\$OUTER_DIGEST\""
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
