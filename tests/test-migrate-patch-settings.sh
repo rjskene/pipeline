@@ -99,6 +99,102 @@ else
   fail_msg "full: .claude-pipeline/ still present after full migration"
 fi
 
+# ---------------------------------------------------------------------------
+# Test 'patch-settings-mixed': pipeline hooks removed, consumer hooks intact,
+# backup written, filtered JSON valid + sorted-key.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'patch-settings-mixed': rewrite removes pipeline hooks, preserves consumer hooks"
+
+PROJ3="$WORKDIR/proj-mixed"
+mkdir -p "$PROJ3/.claude"
+cat > "$PROJ3/.claude/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [
+        {"type": "command", "command": ".claude/hooks/log-tool-use.sh"},
+        {"type": "command", "command": "./my/consumer-hook.sh"}
+      ]}
+    ],
+    "PreToolUse": [
+      {"hooks": [
+        {"type": "command", "command": "python3 .claude/hooks/restrict_paths.py"},
+        {"type": "command", "command": ".claude/hooks/enforce-base-branch.py"},
+        {"type": "command", "command": "/usr/local/bin/my-other-consumer.py"}
+      ]}
+    ]
+  },
+  "permissions": {"allow": ["Bash(ls)"]}
+}
+EOF
+ORIG_BYTES="$(wc -c < "$PROJ3/.claude/settings.json")"
+cp "$PROJ3/.claude/settings.json" "$WORKDIR/proj-mixed.orig.json"
+
+(cd "$PROJ3" && bash "$MIGRATE_SH" --patch settings --assume-yes >"$WORKDIR/mixed.stdout" 2>"$WORKDIR/mixed.stderr")
+EXIT=$?
+
+inc
+if [ "$EXIT" -eq 0 ]; then pass_msg "mixed: exit 0"; else fail_msg "mixed: exit $EXIT (stderr: $(cat "$WORKDIR/mixed.stderr"))"; fi
+
+inc
+if [ -f "$PROJ3/.claude/settings.json.bak" ]; then
+  pass_msg "mixed: backup .bak written"
+else
+  fail_msg "mixed: backup .bak missing"
+fi
+
+inc
+if cmp -s "$PROJ3/.claude/settings.json.bak" "$WORKDIR/proj-mixed.orig.json"; then
+  pass_msg "mixed: backup matches original byte-for-byte"
+else
+  fail_msg "mixed: backup diverges from original"
+fi
+
+inc
+if jq -e . "$PROJ3/.claude/settings.json" >/dev/null 2>&1; then
+  pass_msg "mixed: filtered JSON is valid"
+else
+  fail_msg "mixed: filtered JSON is invalid"
+fi
+
+inc
+# Stable key order: re-running `jq -S .` on the file must be byte-identical to its current state.
+if diff -q <(jq -S . "$PROJ3/.claude/settings.json") "$PROJ3/.claude/settings.json" >/dev/null 2>&1; then
+  pass_msg "mixed: filtered JSON has stable (sorted) key ordering"
+else
+  fail_msg "mixed: filtered JSON keys not in sorted order"
+fi
+
+inc
+if jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$PROJ3/.claude/settings.json" | grep -qE '(log-tool-use\.sh|restrict_paths\.py|enforce-base-branch\.py)$'; then
+  fail_msg "mixed: pipeline hook still present after rewrite"
+else
+  pass_msg "mixed: pipeline hooks removed"
+fi
+
+inc
+if jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$PROJ3/.claude/settings.json" | grep -q 'consumer-hook\.sh' \
+   && jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$PROJ3/.claude/settings.json" | grep -q 'my-other-consumer\.py'; then
+  pass_msg "mixed: consumer hooks intact"
+else
+  fail_msg "mixed: consumer hooks lost in rewrite"
+fi
+
+inc
+if jq -e '.permissions.allow == ["Bash(ls)"]' "$PROJ3/.claude/settings.json" >/dev/null 2>&1; then
+  pass_msg "mixed: unrelated top-level keys preserved"
+else
+  fail_msg "mixed: unrelated top-level keys mutated"
+fi
+
+inc
+if grep -q 'removed 3 pipeline hook' "$WORKDIR/mixed.stdout"; then
+  pass_msg "mixed: summary line reports 3 removals"
+else
+  fail_msg "mixed: summary line missing or wrong count (stdout: $(cat "$WORKDIR/mixed.stdout"))"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

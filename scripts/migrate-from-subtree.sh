@@ -523,6 +523,126 @@ if [ "$SETTINGS_HAS_INJECTIONS" = true ]; then
 fi
 
 if [ "$MODE" = patch_settings ]; then
+  _ps_settings=".claude/settings.json"
+  # Step 2: missing or invalid JSON → no-op, exit 0.
+  if [ ! -f "$_ps_settings" ]; then
+    echo "migrate-from-subtree: no .claude/settings.json present; nothing to patch."
+    exit 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "migrate-from-subtree: jq required for --patch settings; install jq and retry." >&2
+    exit 2
+  fi
+  if ! jq -e . "$_ps_settings" >/dev/null 2>&1; then
+    echo "migrate-from-subtree: .claude/settings.json is not valid JSON; nothing to patch."
+    exit 0
+  fi
+
+  # Step 3: build the basename allow-list (same source-of-truth as doctor's settings_residual).
+  _ps_known_tmp="$(mktemp)"
+  list_pipeline_hook_basenames > "$_ps_known_tmp" 2>/dev/null || true
+
+  # Step 4: walk every hook command, classify by final-token-basename.
+  # Mirrors scripts/doctor.sh:165-173 (${_sr_cmd##* } → basename → grep -Fxq).
+  _ps_removed_tmp="$(mktemp)"   # one removed-command per line, for the diff print + count.
+  while IFS= read -r _ps_cmd; do
+    [ -z "$_ps_cmd" ] && continue
+    _ps_last_tok="${_ps_cmd##* }"
+    _ps_bn="$(basename "$_ps_last_tok")"
+    if grep -Fxq "$_ps_bn" "$_ps_known_tmp" 2>/dev/null; then
+      printf '%s\n' "$_ps_cmd" >> "$_ps_removed_tmp"
+    fi
+  done < <(jq -r '.hooks // {} | to_entries[]? | .value[]? | .hooks[]? | .command // empty' "$_ps_settings" 2>/dev/null || true)
+
+  _ps_n=$(wc -l < "$_ps_removed_tmp" | tr -d '[:space:]')
+  _ps_n="${_ps_n:-0}"
+
+  if [ "$_ps_n" = "0" ]; then
+    echo "migrate-from-subtree: nothing to remove — .claude/settings.json has no pipeline hook entries."
+    rm -f "$_ps_known_tmp" "$_ps_removed_tmp"
+    exit 0
+  fi
+
+  # Step 5: print the per-entry diff (which hook entries would be removed) BEFORE writing.
+  echo "migrate-from-subtree: the following pipeline hook entries will be removed from .claude/settings.json:"
+  while IFS= read -r _ps_line; do
+    printf '  - %s\n' "$_ps_line"
+  done < "$_ps_removed_tmp"
+
+  # Step 8 / 9: dry-run short-circuits before any write or prompt.
+  if [ "$DRY_RUN" = true ]; then
+    echo "migrate-from-subtree: --dry-run set; no changes written."
+    rm -f "$_ps_known_tmp" "$_ps_removed_tmp"
+    exit 0
+  fi
+
+  # Step 9: --assume-yes / --assume-no honoring; default-no when no flag and no TTY.
+  _ps_answer=""
+  if [ "$ASSUME" = "yes" ]; then
+    _ps_answer="y"
+  elif [ "$ASSUME" = "no" ]; then
+    _ps_answer="n"
+  else
+    printf 'migrate-from-subtree: proceed with rewrite? [y/N] ' >&2
+    read -r _ps_answer || _ps_answer=""
+  fi
+  case "$_ps_answer" in
+    y|Y|yes|YES) ;;
+    *)
+      echo "migrate-from-subtree: aborted; no changes written."
+      rm -f "$_ps_known_tmp" "$_ps_removed_tmp"
+      exit 0
+      ;;
+  esac
+
+  # Step 6: backup. Collision → suffix with ISO timestamp (basic ISO-8601: YYYYMMDDTHHMMSSZ).
+  _ps_backup=".claude/settings.json.bak"
+  if [ -e "$_ps_backup" ]; then
+    _ps_backup=".claude/settings.json.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+  fi
+  cp "$_ps_settings" "$_ps_backup"
+
+  # Step 4 (continued) + Step 7: jq filter, then write with stable key ordering via -S.
+  # Pass the allow-list as a JSON array argument. The filter rejects any hook entry whose
+  # command's final whitespace-separated token's basename matches an allow-list entry.
+  _ps_basenames_json=$(jq -R . < "$_ps_known_tmp" | jq -s .)
+  _ps_filter='
+    def last_tok($s): ($s | split(" ") | .[-1] // "");
+    def bn($s): (last_tok($s) | sub("^.*/"; ""));
+    def is_pipeline_cmd($cmd):
+      ($cmd | type == "string")
+      and ($cmd | length > 0)
+      and ($BN | any(. == bn($cmd)));
+    if (type == "object") and ((.hooks | type) == "object") then
+      .hooks |= (
+        with_entries(
+          if (.value | type) == "array" then
+            .value |= (
+              map(
+                if (.hooks | type) == "array" then
+                  .hooks |= map(select(is_pipeline_cmd(.command // "") | not))
+                else . end
+              )
+            )
+          else . end
+        )
+      )
+    else . end
+  '
+  _ps_transformed="$(mktemp)"
+  if ! jq -S --argjson BN "$_ps_basenames_json" "$_ps_filter" "$_ps_settings" > "$_ps_transformed" 2>/dev/null; then
+    echo "migrate-from-subtree: jq filter failed; restoring from backup." >&2
+    rm -f "$_ps_transformed" "$_ps_known_tmp" "$_ps_removed_tmp"
+    exit 2
+  fi
+  mv "$_ps_transformed" "$_ps_settings"
+
+  # Step 10: one-line summary.
+  _ps_word="hook"
+  [ "$_ps_n" -ne 1 ] && _ps_word="hooks"
+  echo "migrate-from-subtree: removed $_ps_n pipeline $_ps_word from .claude/settings.json (backup: $_ps_backup)"
+
+  rm -f "$_ps_known_tmp" "$_ps_removed_tmp"
   exit 0
 fi
 
