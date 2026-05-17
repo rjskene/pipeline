@@ -208,6 +208,32 @@ grep -qE 'targets rjskene/bomon' <<<"$out" \
   || { fail_msg "stale-repo: missing token/actual"; echo "$out" | sed 's/^/    /'; }
 [ "$rc" != "0" ] && pass_msg "stale-repo: non-zero exit ($rc)" || fail_msg "stale-repo: exit was 0"
 
+# ---------------------------------------------------------------------------
+# Case 6: consumer skills/todo/SKILL.md must NOT be flagged as duplicate,
+#          but consumer skills/classify-issue/SKILL.md MUST be flagged.
+# ---------------------------------------------------------------------------
+echo "Case 6: relative-path skill matching"
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-relpath-skill)
+mkdir -p "$FX/.claude/skills/todo" "$FX/.claude/skills/classify-issue"
+echo "consumer-authored todo skill" > "$FX/.claude/skills/todo/SKILL.md"
+echo "stale copy of plugin skill"   > "$FX/.claude/skills/classify-issue/SKILL.md"
+run_helper "$FX" "$PLUGIN_ROOT"
+out="$(cat "$FX/out")"
+grep -qE '^CHECK: skill_files_residual status=warn detail=1 duplicate' <<<"$out" \
+  && pass_msg "relpath-skill: warn detail=1 (only classify-issue is dup)" \
+  || { fail_msg "relpath-skill: wrong detail"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'classify-issue/SKILL\.md' <<<"$out" \
+  && pass_msg "relpath-skill: classify-issue listed as duplicate" \
+  || fail_msg "relpath-skill: classify-issue not flagged"
+awk '/Duplicates of plugin-owned files/{flag=1; next} /Preserved — consumer-owned:/{flag=0} flag' <<<"$out" \
+  | grep -qE 'todo/SKILL\.md' \
+  && fail_msg "relpath-skill: todo/SKILL.md WRONGLY flagged as duplicate" \
+  || pass_msg "relpath-skill: todo/SKILL.md NOT flagged (preserved)"
+awk '/Preserved — consumer-owned:/{flag=1; next} flag' <<<"$out" \
+  | grep -qE 'todo/SKILL\.md' \
+  && pass_msg "relpath-skill: todo/SKILL.md appears under Preserved" \
+  || { fail_msg "relpath-skill: todo/SKILL.md missing from Preserved"; echo "$out" | sed 's/^/    /'; }
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
