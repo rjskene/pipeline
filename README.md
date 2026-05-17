@@ -30,7 +30,7 @@ The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime 
 
 Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace that carries release candidates of the same plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
 
-**Install from your existing `staging` clone** — auto-back-sync (see `CLAUDE.md` → Release cadence step 5) cherry-picks every release commit from `main` onto `staging` automatically, so `staging` carries the same `version` fields as `main`. No separate `~/claude-pipeline-main` clone is required.
+**Install from your existing `staging` clone** — auto-back-sync (see `CLAUDE.md` → Release cadence step 5) merges every release commit from `main` onto `staging` automatically (`--ff-only` when possible; `-X ours` when staging is ahead), so `staging` carries the same `version` fields as `main`. No separate `~/claude-pipeline-main` clone is required.
 
 In your existing staging clone:
 

@@ -1,13 +1,18 @@
 #!/bin/bash
-# Cherry-picks a release-please release commit from main onto staging.
+# Merges a release-please release commit from main onto staging.
 #
 # Usage: scripts/back-sync-release.sh <release-sha>
 #
-# Clean path:    git cherry-pick -x <sha>  &&  git push origin staging
-# Conflict path: opens a draft PR release-back-sync/<short-sha> against staging
+# Clean path:    git merge --ff-only <sha>          &&  git push origin staging
+# Overlap path:  git merge -X ours -m "chore(back-sync): ..." <sha>
+#                                                   &&  git push origin staging
+#                (staging is "ours" because the workflow checks out staging;
+#                 staging is strictly newer for any file already shipped to main.)
+# Conflict path: true delete/modify conflicts (which -X ours cannot resolve)
+#                open a draft PR release-back-sync/<short-sha> against staging
 #                with conflict markers preserved for human resolution.
-# Idempotent:    detects (cherry picked from commit <sha>) trailer on staging
-#                and returns early with "already synced".
+# Idempotent:    if <sha> is already an ancestor of staging, returns early
+#                with "already synced".
 
 set -uo pipefail
 
@@ -20,24 +25,23 @@ fi
 SHORT_SHA="$(git rev-parse --short=8 "$SHA" 2>/dev/null || echo "${SHA:0:8}")"
 
 # ---------------------------------------------------------------------------
-# Idempotency guard: check FIRST, before any state mutation. If staging
-# already contains the cherry-pick -x trailer for this SHA, exit 0 fast.
-# Probe both origin/staging (after a fresh fetch) and local staging — fetch
-# can silently fall through on some CI runners, leaving the remote-tracking
-# ref stale even though the push from the prior run landed in origin.
+# Idempotency guard: if $SHA is already an ancestor of staging (or
+# origin/staging), the back-sync already landed. This works for both FF
+# (staging IS $SHA) and real-merge (staging is a descendant of $SHA via a
+# back-sync merge commit). It is also robust against subsequent commits
+# landing on staging AFTER a successful back-sync.
 # ---------------------------------------------------------------------------
 # Force-update the remote-tracking ref. `git fetch origin staging` (refspec
 # without a colon) only writes FETCH_HEAD on older gits; the explicit refspec
 # below writes refs/remotes/origin/staging unconditionally.
 git fetch -q origin "+refs/heads/staging:refs/remotes/origin/staging" 2>/dev/null \
   || git fetch -q origin || true
-TRAILER="(cherry picked from commit $SHA)"
-_synced() {
-  local REF="$1"
-  git log "$REF" --format=%B 2>/dev/null | grep -qF "$TRAILER"
+git fetch -q origin "$SHA" 2>/dev/null || true
+_is_ancestor() {
+  git merge-base --is-ancestor "$SHA" "$1" 2>/dev/null
 }
-if _synced "origin/staging" || _synced "staging" || _synced "refs/remotes/origin/staging"; then
-  echo "already synced: $SHA is present on staging"
+if _is_ancestor "origin/staging" || _is_ancestor "refs/heads/staging" || _is_ancestor "refs/remotes/origin/staging"; then
+  echo "already synced: $SHA is already an ancestor of staging"
   exit 0
 fi
 
@@ -48,13 +52,27 @@ git checkout -B staging "origin/staging" 2>/dev/null || git checkout staging
 git fetch -q origin "$SHA" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Clean path: plain cherry-pick -x, push to origin/staging.
+# Clean path: fast-forward staging to the release SHA, push to origin/staging.
 # ---------------------------------------------------------------------------
-if git cherry-pick -x "$SHA"; then
+if git merge --ff-only "$SHA"; then
   git push origin staging
-  echo "back-sync: cherry-picked $SHA onto staging"
+  echo "back-sync: fast-forwarded staging to $SHA"
   exit 0
 fi
+
+# ---------------------------------------------------------------------------
+# Real merge path: FF was not possible (staging has commits ahead of $SHA).
+# Favor staging on file collisions (staging is strictly newer for any file
+# already shipped to main in the release commit). Use a clear back-sync
+# subject so the workflow can identify its own commits idempotently on rerun.
+# ---------------------------------------------------------------------------
+MERGE_MSG="chore(back-sync): merge release commit $SHORT_SHA from main"
+if git merge --no-edit -X ours -m "$MERGE_MSG" "$SHA"; then
+  git push origin staging
+  echo "back-sync: merged $SHA into staging with -X ours"
+  exit 0
+fi
+git merge --abort 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Conflict path: abort, branch off staging, redo cherry-pick leaving conflict

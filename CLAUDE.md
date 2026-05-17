@@ -96,7 +96,7 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
 2. When ready to release, open a PR `staging` → `main` and fast-forward or squash-merge it.
 3. On every push to `main`, the `release-please` workflow (`.github/workflows/release-please.yml`) opens — or updates — a Release PR titled `chore(main): release X.Y.Z`. The Release PR bumps `version` in `.claude-plugin/plugin.json` and both `metadata.version` and `plugins[0].version` in `.claude-plugin/marketplace.json` (synced via `extra-files` in `release-please-config.json`), and appends to `CHANGELOG.md`.
 4. Squash-merge the Release PR. release-please then creates the `vX.Y.Z` git tag and a corresponding GitHub Release automatically.
-5. Back-sync to staging happens automatically — the back-sync-release workflow (`.github/workflows/back-sync-release.yml`) cherry-picks the release commit onto staging on every push to `main` matching `chore(main): release …`. On the rare cherry-pick conflict it opens a draft PR `release-back-sync/<sha>` against staging for human resolution instead of failing the workflow.
+5. Back-sync to staging happens automatically — the back-sync-release workflow (`.github/workflows/back-sync-release.yml`) merges the release commit onto staging (`--ff-only` when possible; `-X ours` strategy-option when staging has overlapping work, since staging is strictly newer for any file already shipped) on every push to `main` matching `chore(main): release …`. On a true delete/modify conflict that `-X ours` cannot resolve, it opens a draft PR `release-back-sync/<sha>` against staging for human resolution instead of failing the workflow.
 6. **Reload the plugin** so subsequent dogfood sessions pick up the new code:
    ```
    /plugin uninstall pipeline@claude-pipeline
@@ -104,7 +104,7 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
    ```
    (If installed via a local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
 
-The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. Back-sync is now fully automated via the back-sync-release workflow; the cherry-pick to staging happens without human intervention on the clean path.
+The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. Back-sync is now fully automated via the back-sync-release workflow; the merge to staging happens without human intervention on the clean path, and only true delete/modify conflicts open a draft fallback PR.
 
 ### Dev/prerelease channel
 
