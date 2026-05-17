@@ -79,6 +79,15 @@ assert "compose maps HOST_PORT to 3000"         "grep -qE '\\\$\\{HOST_PORT\\}:3
 assert "compose uses HOST_UID build-arg"        "grep -qE 'HOST_UID' '$CF'"
 assert "compose uses HOST_GID build-arg"        "grep -qE 'HOST_GID' '$CF'"
 
+# Group 8 — port probe helper
+PROBE="$REPO_ROOT/scripts/mock-web-eval-probe-port.sh"
+assert "probe script exists"          "[ -f '$PROBE' ]"
+assert "probe script is executable"   "[ -x '$PROBE' ]"
+assert "probe scans 8080..8089"       "grep -qE '8080.*8089|seq 8080 8089|\\{8080\\.\\.8089\\}' '$PROBE'"
+assert "probe writes HOST_PORT="      "grep -qE 'HOST_PORT=' '$PROBE'"
+assert "probe writes to env file"     "grep -q 'mock-web/.env.mock-web-eval' '$PROBE'"
+assert "probe writes HOST_UID/GID seed" "grep -qE 'HOST_UID=' '$PROBE' && grep -qE 'HOST_GID=' '$PROBE'"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
