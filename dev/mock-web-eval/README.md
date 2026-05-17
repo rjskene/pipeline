@@ -55,4 +55,4 @@ bash dev/mock-web-eval/replay.sh --full --pr 232 # re-trigger against PR #232
 
 ## Known follow-ups
 
-- (none yet — populated by follow-up commits if the eval-pr stage surfaces container-mode dispatch bugs worth tracking)
+- **Issue #238 mitigation (b) shipped.** `scripts/spawn-claude.sh` now exits 5 when `PIPELINE_EVAL_CLASSIFIER` would emit `--container-mode=<name>` but the operator did not pass the flag. The orthogonal mitigations from the issue body — (a) stale-consumer-copy detection and (c) tmux-window-kill process-group cleanup — remain open as separate follow-ups; file them as new issues if dogfooding surfaces another silent-bypass instance.
