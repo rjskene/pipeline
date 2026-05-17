@@ -66,27 +66,44 @@ done
 SHORTLIST_PATH=$(bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/analyze-issues.sh")
 ```
 
-The helper writes JSON to `.claude/logs/analyze-shortlist-<ISO>.json` with two keys, `duplicate_pairs` and `tracker_fits`, each capped at 20 entries. The path is the only stdout line.
+The helper writes JSON to `.claude/logs/analyze-shortlist-<ISO>.json` with three keys, `duplicate_pairs`, `tracker_fits`, and `missing_label_candidates`, each capped at 20 entries. The path is the only stdout line.
 
-**Stage 2 — subagent dispatch.** Hand the shortlist to a general-purpose subagent which confirms / denies each candidate and synthesizes the suggested `gh` command. Verbatim block:
+The `missing_label_candidates` entries are produced purely mechanically — they flag issues lacking a `priority/P*` label, a `docs-only`/`multi-task` path label, or any pipeline-stage/classification label (with a 24h age gate to skip just-filed issues; configurable via `PIPELINE_ANALYZE_MIN_AGE_HOURS`). No subagent confirmation is needed for these — the suggested `gh issue edit` command is rendered directly from the JSON row.
+
+**Stage 2 — subagent dispatch.** Hand the shortlist to a general-purpose subagent which confirms / denies each LLM-required candidate and synthesizes the suggested `gh` command. Verbatim block:
 
 ```
 Agent(subagent_type='general-purpose',
       description='analyze open-issue hygiene shortlist',
-      prompt='Read shortlist at <SHORTLIST_PATH>. For each duplicate-pair row,
-              run gh issue view <a> --json title,body and gh issue view <b>
-              --json title,body; confirm/deny duplication, assign confidence
-              (high|medium|low), write a one-line rationale, and synthesize the
-              gh command. For each tracker-fits row, run gh issue view <issue>
-              and gh issue view <tracker>; confirm/deny fit, same fields.
-              Output ONLY the two markdown tables defined in skills/run/SKILL.md
-              analyze-mode section. Omit a table entirely if it has zero
-              high|medium findings. No mutations.')
+      prompt='Read shortlist at <SHORTLIST_PATH>. The JSON has three keys:
+              duplicate_pairs, tracker_fits, missing_label_candidates.
+
+              For each duplicate-pair row, run gh issue view <a> --json
+              title,body and gh issue view <b> --json title,body;
+              confirm/deny duplication, assign confidence (high|medium|low),
+              write a one-line rationale, and synthesize the gh command.
+
+              For each tracker-fits row, run gh issue view <issue> and
+              gh issue view <tracker>; confirm/deny fit, same fields.
+
+              For each missing_label_candidates row, NO per-issue
+              gh issue view confirmation is required — the signal is
+              purely label-presence-based. Pass the row straight through
+              to the rendered table and synthesize the suggested
+              gh issue edit command from the .missing array (e.g.
+              `gh issue edit <N> --add-label priority/P2` when "priority"
+              appears in .missing).
+
+              Output ONLY the three markdown tables defined in
+              skills/run/SKILL.md analyze-mode section. Omit a table
+              entirely if it has zero high|medium findings (for the LLM-
+              classified categories) or zero rows (for missing-label).
+              No mutations.')
 ```
 
 Substitute `<SHORTLIST_PATH>` with the path captured in Stage 1.
 
-**Stage 3 — output contract.** The subagent prints two markdown tables to the orchestrator conversation. If a category has zero high|medium findings, its table is omitted (no empty noise).
+**Stage 3 — output contract.** The subagent prints up to three markdown tables to the orchestrator conversation. If a category has zero high|medium findings (LLM-classified) or zero rows (missing-label), its table is omitted (no empty noise).
 
 ```
 ## Duplicate candidates
@@ -96,7 +113,13 @@ Substitute `<SHORTLIST_PATH>` with the path captured in Stage 1.
 ## Standalones that fit an existing tracker
 | Issue | Tracker | Confidence | Reason | Suggested action |
 |-------|---------|------------|--------|-------------------|
+
+## Issues missing labels
+| Issue | Missing | Suggested action |
+|-------|---------|-------------------|
 ```
+
+Omit the `## Issues missing labels` section entirely if `missing_label_candidates` is empty — same convention as the other two tables.
 
 **Constraints.** No mutations. No auto-close, no auto-label, no auto-comment. The pipeline does not run `gh issue close`, `gh issue edit`, or `gh issue comment` from this branch. The user reads the digest and decides what to act on.
 
