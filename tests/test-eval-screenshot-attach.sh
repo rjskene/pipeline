@@ -52,8 +52,11 @@ sealed_e2e() {
   # shellcheck disable=SC2064
   trap "rm -rf '$TMP'" RETURN
 
-  # Bare remote + working clone.
-  git init --bare -q "$TMP/remote.git"
+  # Bare remote + working clone. `-b main` pins the bare repo's symbolic
+  # HEAD to `refs/heads/main` so the later `git ls-tree -r HEAD` resolves
+  # against the branch the helper pushes to. Without it, CI runners whose
+  # git defaults `HEAD` to `master` see an empty tree.
+  git init --bare -q -b main "$TMP/remote.git"
   git -c init.defaultBranch=main init -q "$TMP/work"
   (
     cd "$TMP/work" || exit 99
