@@ -7,7 +7,33 @@ set -euo pipefail
 #   With issue number: show details for that issue's latest log
 #   --subagents: show subagent activity (optional filter fragment to grep)
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+_find_main_repo() {
+  # Prefer explicit override (matches every other pipeline script's convention).
+  if [ -n "${PIPELINE_PROJECT_ROOT:-}" ]; then
+    if [ -f "$PIPELINE_PROJECT_ROOT/pipeline.config" ] && { [ -d "$PIPELINE_PROJECT_ROOT/.git" ] || [ -f "$PIPELINE_PROJECT_ROOT/.git" ]; }; then
+      printf '%s' "$PIPELINE_PROJECT_ROOT"
+      return 0
+    fi
+    echo "ERROR: PIPELINE_PROJECT_ROOT=$PIPELINE_PROJECT_ROOT does not contain both pipeline.config and a .git/ entry" >&2
+    return 1
+  fi
+  # Fallback: walk up from the script location looking for a directory that
+  # holds BOTH pipeline.config AND a .git/ entry (file or dir — git worktrees
+  # use a regular file). The combined check rejects the plugin tree's own
+  # pipeline.config (which lives outside any git checkout the script cares about).
+  local dir
+  dir="$(cd "$(dirname "$0")" && pwd)"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/pipeline.config" ] && { [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; }; then
+      printf '%s' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  echo "ERROR: could not locate consumer repo (need both pipeline.config and .git/) walking up from $(dirname "$0") to /; set PIPELINE_PROJECT_ROOT to override" >&2
+  return 1
+}
+REPO_ROOT="$(_find_main_repo)" || exit 1
 LOG_DIR="${REPO_ROOT}/.claude/logs"
 
 if [ ! -d "$LOG_DIR" ] || [ -z "$(ls -A "$LOG_DIR" 2>/dev/null)" ]; then
