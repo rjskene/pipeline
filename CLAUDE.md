@@ -108,48 +108,13 @@ The previous five-step manual ritual (release branch, manual version bumps, hand
 
 ### Dev/prerelease channel
 
-Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace (`.claude-plugin/marketplace-dev.json`) that carries release candidates of the same `pipeline` plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
+The `Release-As:` footer mechanism for cutting prereleases is preserved — it correctly marks the GitHub Release as a prerelease and applies the `-rc.N` tag suffix via release-please. The dev marketplace (`claude-pipeline-dev`) has been **retired**: opt-in to a new version already lives at the `/plugin install` layer (a stable consumer only picks up a new version when they explicitly run `/plugin uninstall` + `/plugin install`), so the dual-marketplace gate added no real protection beyond what the install action itself provides. Mental model: **if you don't want an RC, don't reinstall.**
 
 1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
-2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, and `.release-please-manifest.json` atomically via `extra-files`.
-3. **Dev install.** Install the dev marketplace directly from your existing `staging` clone — auto-back-sync (see Release cadence step 5) keeps `staging` in lock-step with `main` for release commits, so a `staging` checkout now carries the same `version` fields as `main`. No separate `~/claude-pipeline-main` clone is required.
-
-   In your existing staging clone, ensure it is up to date:
-
-   ```bash
-   git pull --ff-only origin staging
-   ```
-
-   Then in Claude Code (substitute the path to your staging clone):
-
-   ```
-   /plugin marketplace add <path-to-your-staging-clone>/.claude-plugin/marketplace-dev.json
-   /plugin install pipeline@claude-pipeline-dev
-   ```
-
-   Pick the **local** scope at the install prompt. Then reload so the new plugin code is active:
-
-   ```
-   /plugin uninstall pipeline@claude-pipeline-dev
-   /plugin install   pipeline@claude-pipeline-dev
-   ```
-
-   On each RC cut, `git pull --ff-only origin staging` in the same clone, then uninstall + reinstall above to pick up the new version. If the cache doesn't refresh, uninstall + reinstall as shown.
-
-   **Pitfalls:**
-   - The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git pull`.
-   - Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref, and `raw.githubusercontent.com` 404s without auth anyway. The local-path form is the only reliable one.
-   - Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the `"source": "./"` field in the manifest resolves relative to the manifest file's location, so the loader can't find the plugin tree if the manifest sits in a tmp dir.
-   - Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
-   - Run `/pipeline:doctor` after install — the `dev_marketplace_on_main` check remains as defense-in-depth and warns if the registered marketplace path resolves to a non-`main` clone (legacy setups).
-4. **Revert to stable.**
-   ```
-   /plugin uninstall pipeline@claude-pipeline-dev
-   /plugin marketplace remove claude-pipeline-dev
-   /plugin install pipeline@claude-pipeline
-   ```
-5. **Graduation.** Prereleases do NOT auto-graduate. The next normal `staging → main` cut WITHOUT a `Release-As:` footer produces the stable `X.Y.Z` bump. RC and stable are mutually exclusive per `staging → main` PR.
-6. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
+2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and `.release-please-manifest.json` atomically via `extra-files`.
+3. **Graduation.** Prereleases do NOT auto-graduate. The next normal `staging → main` cut WITHOUT a `Release-As:` footer produces the stable `X.Y.Z` bump. RC and stable are mutually exclusive per `staging → main` PR.
+4. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
+5. **Consumer cleanup (one-time).** Anyone who previously installed via the dev channel should run `/plugin uninstall pipeline@claude-pipeline-dev` followed by `/plugin marketplace remove claude-pipeline-dev` to unregister the now-orphaned manifest. The next `/plugin install pipeline@claude-pipeline` picks up the stable channel.
 
 ## Doctor
 
@@ -227,7 +192,7 @@ This repo dogfoods a **repo-only audit system** that observes pipeline behavior 
 
 **Output location.** All digests and `index.jsonl` live in `dev/audits/`, which is gitignored — digests may contain redacted excerpts and stay on-disk locally only.
 
-**Plugin manifest is untouched.** `dev/`, `.claude/settings.json`, and the allow-list entry in `tests/no-consumer-claude-writes.allow` are the only surfaces this system writes to in this repo. `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude-plugin/marketplace-dev.json`, `skills/`, `scripts/`, `hooks/`, `agents/` are not modified by this system.
+**Plugin manifest is untouched.** `dev/`, `.claude/settings.json`, and the allow-list entry in `tests/no-consumer-claude-writes.allow` are the only surfaces this system writes to in this repo. `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `skills/`, `scripts/`, `hooks/`, `agents/` are not modified by this system.
 
 **Internal-path dependency.** The orchestrator transcript path `~/.claude/projects/<project-hash>/<session-uuid>.jsonl` is a Claude Code internal. If Anthropic changes it, set `AUDIT_CLAUDE_PROJECTS_DIR` in the environment to point at the new location.
 
