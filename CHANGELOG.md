@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0-rc.2](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.1...v0.8.0-rc.2) (2026-05-18)
+
+
+### Miscellaneous Chores
+
+* cut v0.8.0-rc.2 — mock-web-eval demonstrator wave + dogfood fixes ([#246](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/246)) ([8d87332](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/8d8733238b16e1a85d7574344e8c57d65f4e1cb1))
+
 ## [0.8.0-rc.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.7.2...v0.8.0-rc.1) (2026-05-17)
 
 
