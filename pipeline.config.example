@@ -13,7 +13,7 @@ PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLA
 PIPELINE_SYNC_ENVS=""                              # Space-separated .env files to sync to worktrees
 PIPELINE_SYNC_VENVS=""                             # Space-separated venv dirs to symlink to worktrees
 PIPELINE_SYNC_DOCS="CLAUDE.md"                     # Space-separated doc files to sync across worktrees
-PIPELINE_SYNC_FILES=""                             # Space-separated other files to sync (e.g., .mcp.json)
+PIPELINE_SYNC_FILES=".mcp.json"                    # Space-separated other files to sync (e.g., .mcp.json)
 PIPELINE_FRONTEND_PORT_OFFSET=4000                 # Frontend port = offset + issue number
 PIPELINE_LABELS_EXCLUDED="excluded"                # Label to exclude issues from pipeline
 PIPELINE_LABELS_LATER="later"                      # Label for deferred issues

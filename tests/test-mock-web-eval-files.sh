@@ -123,6 +123,21 @@ assert "style.css styles #page-footer"   "grep -qE '#page-footer[[:space:]]*\\{'
 assert "footer has top border"            "grep -A4 '#page-footer' '$CSS' | grep -qE 'border-top'"
 assert "footer has muted color"           "grep -A6 '#page-footer' '$CSS' | grep -qE 'color:[[:space:]]*#[0-9a-fA-F]{3,6}|color:[[:space:]]*(gray|grey|dimgray)'"
 
+# Group 11 — .mcp.json Playwright MCP wiring
+MCP="$REPO_ROOT/.mcp.json"
+assert ".mcp.json exists at repo root"           "[ -f \"$MCP\" ]"
+assert ".mcp.json is valid JSON"                  "jq empty <\"$MCP\" 2>/dev/null"
+assert ".mcp.json registers playwright server"    "jq -e .mcpServers.playwright <\"$MCP\" >/dev/null"
+assert ".mcp.json playwright command is npx"      "jq -er .mcpServers.playwright.command <\"$MCP\" | grep -qx npx"
+assert ".mcp.json playwright args include @playwright/mcp" \
+  "jq -r .mcpServers.playwright.args[] <\"$MCP\" | grep -q @playwright/mcp"
+assert ".mcp.json pins @playwright/mcp to 0.0.75 (matches Dockerfile)" \
+  "jq -r .mcpServers.playwright.args[] <\"$MCP\" | grep -q @playwright/mcp@0.0.75"
+PCFG="$REPO_ROOT/pipeline.config.example"
+assert "pipeline.config.example exists"                   "[ -f \"$PCFG\" ]"
+assert "pipeline.config.example PIPELINE_SYNC_FILES contains .mcp.json" \
+  "grep -E '^PIPELINE_SYNC_FILES=\"[^\"]*\.mcp\.json' \"$PCFG\""
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
