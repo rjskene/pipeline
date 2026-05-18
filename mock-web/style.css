@@ -13,3 +13,4 @@ button { padding: 0.4rem 0.8rem; cursor: pointer; }
 #counter-value { font-weight: bold; min-width: 2ch; text-align: center; }
 #item-add { background-color: #16a34a; color: #fff; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
 #item-add:hover { background-color: #15803d; }
+#page-footer { margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #ddd; color: #888; font-size: 0.85rem; }
