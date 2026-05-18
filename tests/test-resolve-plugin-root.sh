@@ -109,5 +109,56 @@ STDOUT=$(
 )
 assert_eq "Case 7: helper produces no stdout on success" "" "$STDOUT"
 
+# ---------------- Case 8: cross-MMP — newer prerelease beats older stable ----------------
+# Regression: previously the resolver globally partitioned stable vs prerelease, so 0.7.2
+# (stable) beat 0.8.0-rc.5 (prerelease) even though 0.8.0-rc.5 is the newer version.
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  HOME="$TMP/h8"; make_home "$HOME" 0.7.2 0.8.0-rc.5
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 8: 0.8.0-rc.5 beats 0.7.2 (newer M.m.p wins across stable/pre)" \
+  "$TMP/h8/.claude/plugins/cache/claude-pipeline/pipeline/0.8.0-rc.5" "$ACTUAL"
+
+# ---------------- Case 9: full dogfood-machine reproducer ----------------
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  HOME="$TMP/h9"
+  make_home "$HOME" 0.2.0 0.3.1 0.4.0 0.4.0-rc.1 0.4.0-rc.2 0.5.0 0.5.0-rc.1 \
+                    0.7.2 0.8.0-rc.2 0.8.0-rc.3 0.8.0-rc.4 0.8.0-rc.5
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 9: full reproducer set → picks 0.8.0-rc.5" \
+  "$TMP/h9/.claude/plugins/cache/claude-pipeline/pipeline/0.8.0-rc.5" "$ACTUAL"
+
+# ---------------- Case 10: stable still wins within same M.m.p ----------------
+# Case 4 already covers 0.4.0 vs 0.4.0-rc.1/rc.2 alongside 0.3.1; this tightens to the
+# pure same-M.m.p invariant so a regression that flipped the stable-beats-pre tie-break
+# inside a single M.m.p line is caught in isolation.
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  HOME="$TMP/h10"; make_home "$HOME" 0.4.0 0.4.0-rc.2
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 10: same-M.m.p — stable 0.4.0 beats 0.4.0-rc.2" \
+  "$TMP/h10/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0" "$ACTUAL"
+
+# ---------------- Case 11: rc number ordering is numeric, not lexical ----------------
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  HOME="$TMP/h11"; make_home "$HOME" 0.8.0-rc.2 0.8.0-rc.10
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 11: 0.8.0-rc.10 beats 0.8.0-rc.2 (numeric rc ordering)" \
+  "$TMP/h11/.claude/plugins/cache/claude-pipeline/pipeline/0.8.0-rc.10" "$ACTUAL"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
