@@ -9,7 +9,7 @@ fi
 # --add mode: append issues to a running queue's pending file
 if [ "${1:-}" = "--add" ]; then
   shift
-  REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
   PENDING_FILE="${REPO_ROOT}/.claude/logs/queue-pending.txt"
   if [ $# -eq 0 ]; then
     echo "Usage: bash $0 --add <issue1> <issue2> ..."
@@ -23,16 +23,46 @@ if [ "${1:-}" = "--add" ]; then
   exit 0
 fi
 
-# Source project config
-source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+# --ci-fix mode: re-dispatch execute-issue-plan inside an existing
+# feature worktree to fix a red CI run. Does NOT open a new PR; the
+# executor pushes a follow-up commit to the existing branch.
+if [ "${1:-}" = "--ci-fix" ]; then
+  shift
+  if [ $# -lt 2 ]; then
+    echo "Usage: $0 --ci-fix <issue> <log-path>" >&2
+    exit 1
+  fi
+  CI_FIX_ISSUE="$1"; CI_FIX_LOG="$2"
+  REPO_ROOT_CI_FIX="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT_CI_FIX}/pipeline.config"
+  WT_PATH=$(git worktree list --porcelain \
+    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-" \
+        '/^worktree / { wt=$2 } wt ~ p { print wt; exit }')
+  if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
+    echo "ERROR: No worktree for issue #${CI_FIX_ISSUE} (prefix ${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-*)" >&2
+    exit 1
+  fi
+  SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-//")
+  export PIPELINE_CI_FIX_CONTEXT="$CI_FIX_LOG"
+  : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling spawn-claude.sh}"
+  exec bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh" \
+    --dangerously-skip-permissions \
+    --skill execute-issue-plan \
+    "$WT_PATH" "$CI_FIX_ISSUE" "$SLUG" tmux
+fi
+
+# Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
+# export PIPELINE_PROJECT_ROOT to override the lookup directory.
+source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 # Orchestrate multiple agent sessions with concurrency limits.
 # Launches up to MAX_CONCURRENT agents at a time, polls for completion,
 # and launches the next queued issue when a slot opens.
 #
 # Usage:
-#   bash .claude/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
-#   bash .claude/scripts/run-queue.sh --add <issue1> <issue2> ...
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --add <issue1> <issue2> ...
 #
 # The --add flag appends issues to a running queue via a watch file.
 #
@@ -42,22 +72,30 @@ source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
 # Queue log is written to .claude/logs/queue-YYYYMMDD-HHMMSS.log
 
 SKIP_PERMS=""
-if [ "${1:-}" = "--skip-permissions" ]; then
-  SKIP_PERMS="--dangerously-skip-permissions"
-  shift
-fi
-
 SKILL_FLAG=""
-if [ "${1:-}" = "--skill" ]; then
-  SKILL_FLAG="--skill $2"
-  shift 2
-fi
+MANUAL_MERGE_FLAG=""
+# Loop-based parser: each flag may appear anywhere before/among the issue
+# numbers. --manual-merge in particular must be consumable from any argv
+# position (`FULL SEND --manual-merge 1 2`, `FULL SEND 1 2 --manual-merge`,
+# `FULL SEND 1 --manual-merge 2`) — bare integers are issue numbers and
+# remain in $@.
+NEW_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
+    --skill)            SKILL_FLAG="--skill $2"; shift 2 ;;
+    --manual-merge)     MANUAL_MERGE_FLAG="--manual-merge"; shift ;;
+    *)                  NEW_ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${NEW_ARGS[@]}"
 
 MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SCRIPT_DIR="${REPO_ROOT}/.claude/scripts"
+REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+: "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
+SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT}/scripts"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
 QUEUE_LOG="${LOG_DIR}/queue-$(date +%Y%m%d-%H%M%S).log"
 PENDING_FILE="${LOG_DIR}/queue-pending.txt"
@@ -81,6 +119,74 @@ if [ -z "${TMUX:-}" ]; then
   exit 1
 fi
 
+# --- Pre-spawn classifier (issue #218) ---
+#
+# classify_issue <issue> resolves the issue's current PR number (or empty
+# if no PR has opened yet) and invokes scripts/eval-classifier-invoke.sh.
+# It echoes a single tab-separated line on stdout:
+#   <mode>\t<extra-tokens>\t<rc>\t<stderr-first-line>
+# where <mode> is `bare` when no --container-mode token was emitted, or
+# the value of the --container-mode=<value> token otherwise. Extra tokens
+# (any non-`--container-mode=` tokens from the classifier) are joined by
+# spaces. Callers MUST tolerate empty <extra-tokens>. rc != 0 means the
+# issue should be skipped; <stderr-first-line> carries the reason.
+#
+# --ci-fix re-dispatch is intentionally NOT re-classified — recovery is
+# mode-agnostic; consumers wanting containerized CI-fix re-label the PR.
+classify_issue() {
+  local issue="$1"
+  # Short-circuit when no classifier is configured — skip the gh pr list call
+  # entirely. The helper would still return mode=bare in this case, but the
+  # wasted gh round-trip is a real cost at multi-issue slate sizes.
+  if [ -z "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
+    printf '%s\n' "bare" "" "0" ""
+    return
+  fi
+  local pr=""
+  # `linked:<issue>` is the proven qualifier in this repo for issue->PR lookup
+  # (mirrors scripts/check-ci-fix-loop.sh). `head:<prefix>` does NOT work
+  # because GitHub search requires an exact branch ref.
+  pr=$(gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" --json number --jq '.[0].number' 2>/dev/null || echo "")
+  local out err rc
+  local tmp_out tmp_err
+  tmp_out=$(mktemp); tmp_err=$(mktemp)
+  # PIPELINE_EVAL_CLASSIFIER is sourced into this shell but not auto-exported;
+  # pass it inline so the child bash sees it. Use `&& rc=0 || rc=$?` to
+  # capture a non-zero exit instead of letting `set -e` kill the function.
+  PIPELINE_EVAL_CLASSIFIER="${PIPELINE_EVAL_CLASSIFIER:-}" \
+    bash "${REPO_ROOT}/scripts/eval-classifier-invoke.sh" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
+      && rc=0 || rc=$?
+  out=$(cat "$tmp_out"); err=$(head -1 "$tmp_err")
+  rm -f "$tmp_out" "$tmp_err"
+
+  local mode="bare"
+  local extras=""
+  while IFS= read -r tok; do
+    [ -z "$tok" ] && continue
+    case "$tok" in
+      --container-mode=*) mode="${tok#--container-mode=}" ;;
+      *)                  extras="${extras:+$extras }$tok" ;;
+    esac
+  done <<< "$out"
+  # Emit one field per line so empty `extras` doesn't get collapsed by IFS
+  # whitespace-merging on the consumer side.
+  printf '%s\n' "$mode" "$extras" "$rc" "$err"
+}
+
+# bucket_max <mode> -> echoes the configured max concurrency for that mode.
+# Default 1 for non-bare modes (exclusive-resource assumption); bare uses
+# the global MAX_CONCURRENT.
+bucket_max() {
+  local mode="$1"
+  if [ "$mode" = "bare" ]; then
+    echo "$MAX_CONCURRENT"
+    return
+  fi
+  local norm; norm="$(echo "$mode" | tr '-' '_')"
+  local var="PIPELINE_EVAL_CONTAINER_${norm}_MAX_CONCURRENT"
+  echo "${!var:-1}"
+}
+
 # Single issue — launch directly, no queue overhead
 if [ ${#QUEUE[@]} -eq 1 ]; then
   ISSUE="${QUEUE[0]}"
@@ -92,7 +198,26 @@ if [ ${#QUEUE[@]} -eq 1 ]; then
   SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//")
   log "Single issue — launching directly (no queue)."
   log "Queue log: ${QUEUE_LOG}"
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
+
+  # Apply classifier even on the short-circuit path so container mode is honored.
+  { read -r SINGLE_MODE; read -r SINGLE_EXTRAS; read -r SINGLE_RC; read -r SINGLE_ERR; } < <(classify_issue "$ISSUE")
+  if [ "$SINGLE_RC" -ne 0 ]; then
+    log "SKIPPED issue=${ISSUE} reason=${SINGLE_ERR}"
+    exit 0
+  fi
+  SINGLE_FLAGS=""
+  if [ "$SINGLE_MODE" != "bare" ]; then
+    SINGLE_FLAGS="--container-mode=${SINGLE_MODE}"
+  fi
+  for tok in $SINGLE_EXTRAS; do
+    SINGLE_FLAGS="${SINGLE_FLAGS:+$SINGLE_FLAGS }--classifier-passthrough=${tok}"
+  done
+
+  if [ "${PIPELINE_QUEUE_DRY_RUN:-}" = "1" ]; then
+    SINGLE_MAX=$(bucket_max "$SINGLE_MODE")
+    echo "BUCKET: mode=${SINGLE_MODE} issues=${ISSUE} max=${SINGLE_MAX}"
+  fi
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG $SINGLE_FLAGS "$WT_PATH" "$ISSUE" "$SLUG" tmux
   exit 0
 fi
 
@@ -103,6 +228,43 @@ declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
+
+# --- Bucket state (issue #218) ---
+# Per-mode partitioning of the queue. The classifier output for each issue
+# routes it into BUCKET_QUEUE[$mode]; fill_slots respects per-mode caps from
+# BUCKET_MAX[$mode]. Classifier failures populate SKIPPED so the issue is
+# logged but not dispatched. ISSUE_MODE/ISSUE_EXTRAS retain per-issue state
+# so finished agents can decrement the right bucket counter.
+declare -A BUCKET_QUEUE=()   # mode -> space-separated issue list
+declare -A BUCKET_INDEX=()   # mode -> next-issue index in BUCKET_QUEUE
+declare -A BUCKET_MAX=()     # mode -> max concurrent for this bucket
+declare -A BUCKET_ACTIVE=()  # mode -> currently-active count
+declare -A ISSUE_MODE=()     # issue -> mode (or 'bare')
+declare -A ISSUE_EXTRAS=()   # issue -> space-separated passthrough tokens
+
+# Route a single issue into the correct bucket. Returns 0 on success, 1 if
+# the classifier rejected the issue (in which case a SKIPPED log line is
+# emitted and the issue is recorded in RESULTS as 'skipped-by-classifier').
+route_issue() {
+  local issue="$1"
+  local mode extras rc err
+  { read -r mode; read -r extras; read -r rc; read -r err; } < <(classify_issue "$issue")
+  if [ "$rc" -ne 0 ]; then
+    log "SKIPPED issue=${issue} reason=${err}"
+    log "EVENT: agent-skipped issue=${issue} reason=${err}"
+    RESULTS[$issue]="skipped-by-classifier"
+    return 1
+  fi
+  ISSUE_MODE[$issue]="$mode"
+  ISSUE_EXTRAS[$issue]="$extras"
+  BUCKET_QUEUE[$mode]="${BUCKET_QUEUE[$mode]:+${BUCKET_QUEUE[$mode]} }${issue}"
+  if [ -z "${BUCKET_MAX[$mode]:-}" ]; then
+    BUCKET_MAX[$mode]=$(bucket_max "$mode")
+    BUCKET_INDEX[$mode]=0
+    BUCKET_ACTIVE[$mode]=0
+  fi
+  return 0
+}
 
 STATUS_INTERVAL_SECS=$((STATUS_INTERVAL * POLL_INTERVAL))
 log "========================================"
@@ -139,7 +301,8 @@ is_agent_running() {
   tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
 }
 
-# Launch an agent for an issue
+# Launch an agent for an issue. Threads classifier-derived flags (mode +
+# passthrough tokens) into the spawn-claude invocation.
 launch_agent() {
   local issue="$1"
   local wt_path
@@ -154,12 +317,23 @@ launch_agent() {
   local slug
   slug=$(slug_from_path "$wt_path")
 
-  log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug})..."
-  log "EVENT: agent-launched issue=${issue} slug=${slug} worktree=${wt_path}"
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG "$wt_path" "$issue" "$slug" tmux
+  local mode="${ISSUE_MODE[$issue]:-bare}"
+  local extras="${ISSUE_EXTRAS[$issue]:-}"
+  local mode_flags=""
+  if [ "$mode" != "bare" ]; then
+    mode_flags="--container-mode=${mode}"
+  fi
+  for tok in $extras; do
+    mode_flags="${mode_flags:+$mode_flags }--classifier-passthrough=${tok}"
+  done
+
+  log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug}, mode=${mode})..."
+  log "EVENT: agent-launched issue=${issue} mode=${mode} slug=${slug} worktree=${wt_path}"
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG $mode_flags "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"
   RESULTS[$issue]="running"
+  BUCKET_ACTIVE[$mode]=$(( ${BUCKET_ACTIVE[$mode]:-0} + 1 ))
 }
 
 # Check GitHub for issue outcome (PR created? merged?)
@@ -185,7 +359,8 @@ pending_file_has_items() {
   grep -q '[^[:space:]]' "$PENDING_FILE" 2>/dev/null
 }
 
-# Atomically drain the pending file and add new issues to the queue
+# Atomically drain the pending file and add new issues to the queue.
+# Each new issue is classified and routed into the appropriate bucket.
 drain_pending_file() {
   [ -f "$PENDING_FILE" ] || return 0
   # Atomically move to a temp file on the same filesystem
@@ -202,18 +377,45 @@ drain_pending_file() {
     log "[$(date +%H:%M:%S)] Picked up new issue #${line} from pending file."
     QUEUE+=("$line")
     RESULTS[$line]=""  # mark as known
+    route_issue "$line" || true
   done < "$tmp"
   rm -f "$tmp"
 }
 
-# Fill available slots from the queue
+# Fill available slots from per-bucket queues, respecting each bucket's cap.
 fill_slots() {
-  while [ ${#ACTIVE[@]} -lt $MAX_CONCURRENT ] && [ $QUEUE_INDEX -lt ${#QUEUE[@]} ]; do
-    local next_issue="${QUEUE[$QUEUE_INDEX]}"
-    QUEUE_INDEX=$((QUEUE_INDEX + 1))
-    launch_agent "$next_issue" || true
+  local mode
+  for mode in "${!BUCKET_QUEUE[@]}"; do
+    local -a bq
+    # shellcheck disable=SC2206
+    bq=( ${BUCKET_QUEUE[$mode]} )
+    while [ "${BUCKET_ACTIVE[$mode]:-0}" -lt "${BUCKET_MAX[$mode]:-1}" ] \
+          && [ "${BUCKET_INDEX[$mode]:-0}" -lt "${#bq[@]}" ]; do
+      local idx="${BUCKET_INDEX[$mode]:-0}"
+      local next_issue="${bq[$idx]}"
+      BUCKET_INDEX[$mode]=$((idx + 1))
+      launch_agent "$next_issue" || true
+    done
   done
 }
+
+# Classify the initial queue and partition into per-mode buckets.
+for _issue in "${QUEUE[@]}"; do
+  RESULTS[$_issue]=""
+  route_issue "$_issue" || true
+done
+
+# Dry-run hook: short-circuit after initial classification + first fill,
+# emitting one `BUCKET: mode=... issues=... max=N` line per bucket so tests
+# can assert partitioning + concurrency caps without entering the poll loop.
+if [ "${PIPELINE_QUEUE_DRY_RUN:-}" = "1" ]; then
+  for _m in "${!BUCKET_QUEUE[@]}"; do
+    _list=$(echo "${BUCKET_QUEUE[$_m]}" | tr ' ' ',')
+    echo "BUCKET: mode=${_m} issues=${_list} max=${BUCKET_MAX[$_m]}"
+  done
+  fill_slots
+  exit 0
+fi
 
 # Initial launch
 fill_slots
@@ -222,8 +424,20 @@ log ""
 log "[$(date +%H:%M:%S)] Monitoring... (polling every ${POLL_INTERVAL}s)"
 log ""
 
+# True iff any bucket still has un-launched issues queued.
+buckets_have_pending() {
+  local m bq_count
+  for m in "${!BUCKET_QUEUE[@]}"; do
+    bq_count=$(echo "${BUCKET_QUEUE[$m]}" | wc -w)
+    if [ "${BUCKET_INDEX[$m]:-0}" -lt "$bq_count" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Poll loop — continues while agents are active, items are queued, or pending file has items
-while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_file_has_items; do
+while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items; do
   sleep "$POLL_INTERVAL"
   POLL_COUNT=$((POLL_COUNT + 1))
 
@@ -237,9 +451,11 @@ while [ ${#ACTIVE[@]} -gt 0 ] || [ $QUEUE_INDEX -lt ${#QUEUE[@]} ] || pending_fi
       # Agent finished — check outcome
       outcome=$(check_issue_outcome "$issue")
       RESULTS[$issue]="$outcome"
+      _finished_mode="${ISSUE_MODE[$issue]:-bare}"
+      BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
-      log "EVENT: agent-finished issue=${issue} outcome=${outcome}"
+      log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
 
       # Fill the open slot
       fill_slots
@@ -279,4 +495,4 @@ for issue in "${QUEUE[@]}"; do
 done
 log "========================================"
 log ""
-log "Review details: bash .claude/scripts/review-logs.sh"
+log "Review details: bash \${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh"
