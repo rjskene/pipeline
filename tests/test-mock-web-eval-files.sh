@@ -114,6 +114,15 @@ assert "app.js writes counter-value"    "grep -q 'counter-value' '$APP'"
 assert "style.css defines #counter-section flex" "grep -A3 '#counter-section' '$CSS' | grep -qE 'display:\s*flex'"
 assert "style.css styles #counter-value"          "grep -qE '#counter-value' '$CSS'"
 
+# Group 10 — footer
+assert "index has page-footer"            "grep -q 'id=\"page-footer\"' '$IDX'"
+assert "index has build-timestamp span"   "grep -q 'id=\"build-timestamp\"' '$IDX'"
+assert "app.js sets build-timestamp"      "grep -q 'build-timestamp' '$APP' && grep -qE 'toLocaleString|toISOString' '$APP'"
+assert "app.js prefixes Built:"           "grep -qE \"Built:\" '$APP'"
+assert "style.css styles #page-footer"   "grep -qE '#page-footer[[:space:]]*\\{' '$CSS'"
+assert "footer has top border"            "grep -A4 '#page-footer' '$CSS' | grep -qE 'border-top'"
+assert "footer has muted color"           "grep -A6 '#page-footer' '$CSS' | grep -qE 'color:[[:space:]]*#[0-9a-fA-F]{3,6}|color:[[:space:]]*(gray|grey|dimgray)'"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
