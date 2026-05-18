@@ -262,6 +262,22 @@ fi
 record gh_installed pass "gh CLI on PATH"
 
 # --------------------------------------------------------------------------
+# Check: jq_installed (pre-flight — fail-fast like gh_installed).
+# jq is a hard runtime dependency for auto-merge-gate.sh, list-release-prs.sh,
+# parse-tracker-children.sh, and any check that parses `gh ... --jq` output.
+# One clean fail line here is more actionable than five downstream cascades.
+# --------------------------------------------------------------------------
+if ! command -v jq >/dev/null 2>&1; then
+  record jq_installed fail "jq not found on PATH (required by auto-merge-gate.sh, list-release-prs.sh)"
+  echo
+  echo "=== Summary ==="
+  printf '%-28s %s\n' "gh_installed" "pass"
+  printf '%-28s %s\n' "jq_installed" "fail"
+  exit 1
+fi
+record jq_installed pass "jq on PATH"
+
+# --------------------------------------------------------------------------
 # Check: pipeline_config — file present and PIPELINE_REPO non-empty.
 # --------------------------------------------------------------------------
 if [ ! -f pipeline.config ]; then

@@ -211,8 +211,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 5: jq absent → warn with detail="jq required for settings_residual check"
-# Override PATH to exclude jq by putting a directory-only PATH ahead.
+# Case 5: jq absent → doctor fails-fast at jq_installed pre-flight.
+# Since #270, jq is enforced as a hard pre-flight dependency alongside gh,
+# so settings_residual is never reached when jq is missing. The contract
+# verified here is the new fail-fast behavior, not the old per-check warn.
 # ---------------------------------------------------------------------------
 echo "Case 5: jq absent"
 FX=$(fresh_fx fx-no-jq)
@@ -251,16 +253,12 @@ done
 echo "$?" > "$FX/rc"
 out="$(cat "$FX/out")"
 rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: settings_residual status=warn detail=jq required for settings_residual check$' <<<"$out" \
-  && pass_msg "no-jq: warn with jq-required detail" \
-  || { fail_msg "no-jq: missing jq-required warn line"; echo "$out" | sed 's/^/    /'; }
-# rc from the overall doctor.sh run: settings_residual must not contribute to non-zero exit.
-# Other checks (gh_auth etc.) should pass with our shims, so rc=0 expected unless something
-# else fails. The contract here is that settings_residual returned rc=0 (warn != fail).
-# Verify by checking summary table that settings_residual is "warn" (not "fail").
-grep -qE '^settings_residual *warn' <<<"$out" \
-  && pass_msg "no-jq: summary records warn (not fail)" \
-  || { fail_msg "no-jq: summary did not record warn"; echo "$out" | sed 's/^/    /'; }
+grep -qE '^CHECK: jq_installed status=fail' <<<"$out" \
+  && pass_msg "no-jq: emits CHECK: jq_installed status=fail (fail-fast pre-flight)" \
+  || { fail_msg "no-jq: missing jq_installed fail line"; echo "$out" | sed 's/^/    /'; }
+[ "$rc" != "0" ] \
+  && pass_msg "no-jq: non-zero exit (got $rc) — fail-fast on missing jq" \
+  || fail_msg "no-jq: exit was 0; doctor must fail-fast on missing jq"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
