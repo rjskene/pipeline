@@ -101,6 +101,8 @@ assert "counter value has aria-live=polite" "grep -E 'id=\"counter-value\"[^>]*a
 assert "app.js binds counter-inc click" "grep -q 'counter-inc' '$APP' && grep -qE 'counter-inc.*addEventListener|getElementById..counter-inc..\..*addEventListener' '$APP'"
 assert "app.js binds counter-dec click" "grep -q 'counter-dec' '$APP' && grep -qE 'counter-dec.*addEventListener|getElementById..counter-dec..\..*addEventListener' '$APP'"
 assert "app.js writes counter-value"    "grep -q 'counter-value' '$APP'"
+assert "style.css defines #counter-section flex" "grep -A3 '#counter-section' '$CSS' | grep -qE 'display:\s*flex'"
+assert "style.css styles #counter-value"          "grep -qE '#counter-value' '$CSS'"
 
 echo ""
 echo "================================"
