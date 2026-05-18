@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0-rc.6](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.5...v0.8.0-rc.6) (2026-05-18)
+
+
+### Miscellaneous Chores
+
+* cut v0.8.0-rc.6 — bundle three staging PRs ([#296](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/296)) ([21d883d](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/21d883d296bfb0a14df60e3d21134f03eb4bd244))
+
 ## [0.8.0-rc.5](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.4...v0.8.0-rc.5) (2026-05-18)
 
 
