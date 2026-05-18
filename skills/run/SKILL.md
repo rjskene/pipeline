@@ -506,7 +506,7 @@ active feature work, but it should come BEFORE pulling in new ready work
    PRS=$(grep -h '^CLEANUP-SUMMARY:' /tmp/pipeline-cleanup/*.log \
      | sed -n 's/.*pr=\([0-9][0-9]*\).*/\1/p' | paste -sd ',' -)
    if [ -n "$ISSUES" ]; then
-     bash ${CLAUDE_PLUGIN_ROOT}/scripts/create-checkpoint-tag.sh --issues "$ISSUES" --prs "$PRS"
+     PIPELINE_PROJECT_ROOT="$(pwd)" bash ${CLAUDE_PLUGIN_ROOT}/scripts/create-checkpoint-tag.sh --issues "$ISSUES" --prs "$PRS"
    fi
    rm -f /tmp/pipeline-cleanup/*.log
    ```
