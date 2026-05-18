@@ -32,13 +32,13 @@ trap "rm -rf $TMP" EXIT
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'GH'
 #!/bin/bash
-case "$1 $2" in
-  "auth status") exit 0 ;;
-  "repo view")   exit 0 ;;
-  "label list")  echo '[]' ;;
-  "version")     echo "gh version 2.40.0 (2024-01-01)"; echo "https://github.com/cli/cli/releases/tag/v2.40.0" ;;
-  *)             exit 0 ;;
+case "$1" in
+  auth)    [ "$2" = "status" ] && exit 0 ;;
+  repo)    [ "$2" = "view" ] && exit 0 ;;
+  label)   [ "$2" = "list" ] && { echo '[]'; exit 0; } ;;
+  version) echo "gh version 2.40.0 (2024-01-01)"; echo "https://github.com/cli/cli/releases/tag/v2.40.0"; exit 0 ;;
 esac
+exit 0
 GH
 chmod +x "$TMP/bin/gh"
 
@@ -260,13 +260,13 @@ echo "# enforce-base-branch.py" > "$ROOT/plugin/hooks/enforce-base-branch.py"
 mkdir -p "$TMP/bin-oldgh"
 cat > "$TMP/bin-oldgh/gh" <<'GH'
 #!/bin/bash
-case "$1 $2" in
-  "auth status") exit 0 ;;
-  "repo view")   exit 0 ;;
-  "label list")  echo '[]' ;;
-  "version")     echo "gh version 1.14.0 (2021-08-22)"; echo "https://github.com/cli/cli/releases/tag/v1.14.0" ;;
-  *)             exit 0 ;;
+case "$1" in
+  auth)    [ "$2" = "status" ] && exit 0 ;;
+  repo)    [ "$2" = "view" ] && exit 0 ;;
+  label)   [ "$2" = "list" ] && { echo '[]'; exit 0; } ;;
+  version) echo "gh version 1.14.0 (2021-08-22)"; echo "https://github.com/cli/cli/releases/tag/v1.14.0"; exit 0 ;;
 esac
+exit 0
 GH
 chmod +x "$TMP/bin-oldgh/gh"
 
