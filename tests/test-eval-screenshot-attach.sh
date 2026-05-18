@@ -11,10 +11,20 @@ HELPER="$REPO_ROOT/scripts/eval-screenshot-attach.sh"
 
 assert "eval-screenshot-attach.sh exists"      "[ -f '$HELPER' ]"
 assert "eval-screenshot-attach.sh executable"  "[ -x '$HELPER' ]"
-assert "uses gh release upload"                "grep -q 'gh release upload' '$HELPER'"
-assert "uses --clobber (idempotent re-upload)" "grep -q '\\-\\-clobber' '$HELPER'"
-assert "creates release via gh release create" "grep -q 'gh release create' '$HELPER'"
-assert "uses canonical eval-evidence- tag prefix" "grep -q 'eval-evidence-' '$HELPER'"
+
+# In-branch commit mechanism contract (issue #271).
+assert "uses git add .eval-screenshots"        "grep -q 'git add .*\\.eval-screenshots' '$HELPER'"
+assert "uses git commit"                       "grep -q 'git commit' '$HELPER'"
+assert "uses git push"                         "grep -q 'git push' '$HELPER'"
+assert "uses git rev-parse HEAD"               "grep -q 'git rev-parse HEAD' '$HELPER'"
+
+# Negative: must NOT use the legacy release-asset flow.
+assert "does NOT use gh release"               "! grep -q 'gh release' '$HELPER'"
+
+# SHA-pinned URL shape — literal or interpolated form of
+# https://github.com/<owner>/<repo>/raw/<sha>/.eval-screenshots/<name>.png
+assert "emits SHA-pinned raw URL" \
+  "grep -qE 'github\\.com/.*(/raw/|\\\$\\{[A-Za-z_]+\\}/raw/)' '$HELPER'"
 
 # Usage check: with no args, must exit non-zero AND print a 'usage:' line.
 if [ -x "$HELPER" ]; then
@@ -26,6 +36,126 @@ if [ -x "$HELPER" ]; then
   fi
 else
   fail_msg "no-args invocation prints usage and exits non-zero (helper not executable)"
+fi
+
+# -----------------------------------------------------------------------------
+# Sealed end-to-end test: real git, local bare remote.
+# Verifies that running the helper:
+#   (a) prints a URL containing /raw/<40-hex>/.eval-screenshots/<name>.png
+#   (b) creates a commit on the local branch
+#   (c) pushes that commit to the bare remote so its HEAD's tree contains
+#       .eval-screenshots/<name>.png
+# -----------------------------------------------------------------------------
+sealed_e2e() {
+  local TMP
+  TMP="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$TMP'" RETURN
+
+  # Bare remote + working clone.
+  git init --bare -q "$TMP/remote.git"
+  git -c init.defaultBranch=main init -q "$TMP/work"
+  (
+    cd "$TMP/work" || exit 99
+    git config user.email "eval@test.local"
+    git config user.name  "eval test"
+    git remote add origin "$TMP/remote.git"
+    # Seed an initial commit so HEAD exists.
+    echo seed > seed.txt
+    git add seed.txt
+    git commit -q -m "seed"
+    git push -q -u origin HEAD:main
+  )
+
+  # PNG to attach. Tiny content; we only check tree membership.
+  local PNG="$TMP/probe.png"
+  printf '\x89PNG\r\n\x1a\n' > "$PNG"   # PNG magic only; not a valid image but fine for the test
+
+  # Run the helper from the working clone.
+  local URL_OUT RC
+  URL_OUT="$(cd "$TMP/work" && PIPELINE_REPO="test/repo" bash "$HELPER" 271 "$PNG" 2>/dev/null)"
+  RC=$?
+
+  if [ "$RC" -ne 0 ]; then
+    fail_msg "sealed e2e: helper exited 0 (rc=$RC, out=$URL_OUT)"
+    return
+  fi
+
+  # (a) URL shape: github.com/test/repo/raw/<40-hex>/.eval-screenshots/probe.png
+  if echo "$URL_OUT" | grep -qE 'https://github\.com/test/repo/raw/[0-9a-f]{40}/\.eval-screenshots/probe\.png'; then
+    pass_msg "sealed e2e: helper printed SHA-pinned raw URL"
+  else
+    fail_msg "sealed e2e: helper printed SHA-pinned raw URL (got: $URL_OUT)"
+  fi
+
+  # (b) A commit exists locally with .eval-screenshots/probe.png in HEAD's tree.
+  if (cd "$TMP/work" && git ls-tree -r HEAD --name-only) | grep -q '^\.eval-screenshots/probe\.png$'; then
+    pass_msg "sealed e2e: local HEAD tree contains .eval-screenshots/probe.png"
+  else
+    fail_msg "sealed e2e: local HEAD tree contains .eval-screenshots/probe.png"
+  fi
+
+  # (c) The bare remote received the push — its HEAD tree contains the file.
+  if (cd "$TMP/remote.git" && git ls-tree -r HEAD --name-only 2>/dev/null) | grep -q '^\.eval-screenshots/probe\.png$'; then
+    pass_msg "sealed e2e: bare remote received the screenshot commit"
+  else
+    fail_msg "sealed e2e: bare remote received the screenshot commit"
+  fi
+}
+
+if [ -x "$HELPER" ]; then
+  sealed_e2e
+else
+  fail_msg "sealed e2e: helper not executable"
+fi
+
+# -----------------------------------------------------------------------------
+# Fail-soft test: broken remote. Helper must NOT exit non-zero even when
+# `git push` fails. It must print a warning to stderr and continue.
+# -----------------------------------------------------------------------------
+fail_soft() {
+  local TMP
+  TMP="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$TMP'" RETURN
+
+  git -c init.defaultBranch=main init -q "$TMP/work"
+  (
+    cd "$TMP/work" || exit 99
+    git config user.email "eval@test.local"
+    git config user.name  "eval test"
+    # Origin points at a path that does not exist — `git push` will fail.
+    git remote add origin "$TMP/nonexistent.git"
+    echo seed > seed.txt
+    git add seed.txt
+    git commit -q -m "seed"
+  )
+
+  local PNG="$TMP/probe.png"
+  printf '\x89PNG\r\n\x1a\n' > "$PNG"
+
+  local OUT RC ERR
+  ERR="$(cd "$TMP/work" && PIPELINE_REPO="test/repo" bash "$HELPER" 271 "$PNG" 2>&1 >/dev/null)"
+  OUT="$(cd "$TMP/work" && PIPELINE_REPO="test/repo" bash "$HELPER" 271 "$PNG" 2>/dev/null)"
+  RC=$?
+
+  if [ "$RC" -eq 0 ]; then
+    pass_msg "fail-soft: helper exits 0 on push failure"
+  else
+    fail_msg "fail-soft: helper exits 0 on push failure (rc=$RC)"
+  fi
+
+  if echo "$ERR" | grep -qi 'push'; then
+    pass_msg "fail-soft: helper prints a push-failure warning to stderr"
+  else
+    fail_msg "fail-soft: helper prints a push-failure warning to stderr (stderr=$ERR)"
+  fi
+}
+
+if [ -x "$HELPER" ]; then
+  fail_soft
+else
+  fail_msg "fail-soft: helper not executable"
 fi
 
 echo ""
