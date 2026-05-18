@@ -25,16 +25,6 @@
           "type": "json",
           "path": ".claude-plugin/marketplace.json",
           "jsonpath": "$.plugins[0].version"
-        },
-        {
-          "type": "json",
-          "path": ".claude-plugin/marketplace-dev.json",
-          "jsonpath": "$.metadata.version"
-        },
-        {
-          "type": "json",
-          "path": ".claude-plugin/marketplace-dev.json",
-          "jsonpath": "$.plugins[0].version"
         }
       ]
     }
