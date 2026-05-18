@@ -7,10 +7,12 @@ set -uo pipefail
 #
 # Behaviors under test:
 #   (a) A relative ENV_FILE configured via PIPELINE_EVAL_CONTAINER_*_ENV_FILE
-#       must be resolved to absolute against REPO_ROOT BEFORE DOCKER_PREFIX
-#       is assembled, so the post-`cd $WORKTREE_PATH` exec finds the file.
+#       must be resolved to absolute against WORKTREE_PATH BEFORE DOCKER_PREFIX
+#       is assembled, so the resolved path matches where the probe wrote the
+#       file (probe writes under PIPELINE_WORKTREE_PATH). See #269 — supersedes
+#       the REPO_ROOT-rooted choice from #257.
 #   (b) An already-absolute ENV_FILE must be passed through unchanged
-#       (no double-prefix like <proj>/tmp/abs.env).
+#       (no double-prefix like <wt>/tmp/abs.env).
 #   (c) The PREFLIGHT subprocess must inherit PIPELINE_PROJECT_ROOT and
 #       PIPELINE_WORKTREE_PATH so probe scripts can resolve the per-worktree
 #       env-file path.
@@ -77,7 +79,7 @@ RUNS_LOG="$WORKDIR/runs.log"
 # -------------------------------------------------------------------------
 # Test (a): relative ENV_FILE -> resolved to <PROJ>/.env.web-eval (absolute)
 # -------------------------------------------------------------------------
-echo "Test (a): relative ENV_FILE resolved to absolute against REPO_ROOT"
+echo "Test (a): relative ENV_FILE resolved to absolute against WORKTREE_PATH"
 inc
 OUT_A=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
@@ -91,11 +93,11 @@ DOCKER_LINE_A=$(echo "$OUT_A" | grep -E '^DOCKER_PREFIX=' || true)
 if [ -z "$DOCKER_LINE_A" ]; then
   fail_msg "Test (a): no DOCKER_PREFIX= line in dry-run output"
   echo "$OUT_A" | tail -10 | sed 's/^/    /'
-elif ! echo "$DOCKER_LINE_A" | grep -q -- "--env-file $PROJ/.env.web-eval"; then
-  fail_msg "Test (a): DOCKER_PREFIX missing absolute '--env-file $PROJ/.env.web-eval'"
+elif ! echo "$DOCKER_LINE_A" | grep -q -- "--env-file $PROJ/worktree/.env.web-eval"; then
+  fail_msg "Test (a): DOCKER_PREFIX missing absolute '--env-file $PROJ/worktree/.env.web-eval'"
   echo "  Got: $DOCKER_LINE_A"
 else
-  pass_msg "Test (a): DOCKER_PREFIX contains --env-file $PROJ/.env.web-eval"
+  pass_msg "Test (a): DOCKER_PREFIX contains --env-file $PROJ/worktree/.env.web-eval"
 fi
 
 # -------------------------------------------------------------------------

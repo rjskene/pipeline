@@ -46,7 +46,7 @@ if [ "$TURNS" -lt "$THRESHOLD" ]; then
 fi
 
 # Extract sessionId from first turn that carries it (fallback: filename stem).
-UUID=$(grep -oE '"sessionId":"[^"]+"' "$TRANSCRIPT" | head -1 | cut -d'"' -f4)
+UUID=$(grep -m1 -oE '"sessionId":"[^"]+"' "$TRANSCRIPT" | cut -d'"' -f4)
 [ -n "${UUID:-}" ] || UUID=$(basename "$TRANSCRIPT" .jsonl)
 
 echo "dispatch:${TRANSCRIPT}:${UUID}"

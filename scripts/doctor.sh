@@ -262,6 +262,22 @@ fi
 record gh_installed pass "gh CLI on PATH"
 
 # --------------------------------------------------------------------------
+# Check: jq_installed (pre-flight — fail-fast like gh_installed).
+# jq is a hard runtime dependency for auto-merge-gate.sh, list-release-prs.sh,
+# parse-tracker-children.sh, and any check that parses `gh ... --jq` output.
+# One clean fail line here is more actionable than five downstream cascades.
+# --------------------------------------------------------------------------
+if ! command -v jq >/dev/null 2>&1; then
+  record jq_installed fail "jq not found on PATH (required by auto-merge-gate.sh, list-release-prs.sh)"
+  echo
+  echo "=== Summary ==="
+  printf '%-28s %s\n' "gh_installed" "pass"
+  printf '%-28s %s\n' "jq_installed" "fail"
+  exit 1
+fi
+record jq_installed pass "jq on PATH"
+
+# --------------------------------------------------------------------------
 # Check: pipeline_config — file present and PIPELINE_REPO non-empty.
 # --------------------------------------------------------------------------
 if [ ! -f pipeline.config ]; then
@@ -722,37 +738,6 @@ elif ! git rev-parse --abbrev-ref "$PIPELINE_BASE_BRANCH@{upstream}" >/dev/null 
 else
   upstream="$(git rev-parse --abbrev-ref "$PIPELINE_BASE_BRANCH@{upstream}" 2>/dev/null)"
   record base_branch_local pass "$PIPELINE_BASE_BRANCH tracks $upstream"
-fi
-
-# --------------------------------------------------------------------------
-# Check: dev_marketplace_on_main — warn when the registered dev marketplace
-# points at a clone whose HEAD is NOT on `main`. Informational, never fails.
-# DOCTOR_KNOWN_MARKETPLACES_FILE is a test seam; not advertised in user docs.
-# --------------------------------------------------------------------------
-KM_FILE="${DOCTOR_KNOWN_MARKETPLACES_FILE:-$HOME/.claude/plugins/known_marketplaces.json}"
-if [ ! -f "$KM_FILE" ]; then
-  record dev_marketplace_on_main pass "dev marketplace not registered"
-else
-  MARKETPLACE_PATH="$(python3 -c 'import json,sys
-try:
-  d=json.load(open(sys.argv[1]))
-  print(d.get("claude-pipeline-dev",{}).get("source",{}).get("path",""))
-except Exception:
-  pass' "$KM_FILE" 2>/dev/null)"
-  if [ -z "$MARKETPLACE_PATH" ]; then
-    record dev_marketplace_on_main pass "dev marketplace not registered"
-  else
-    CLONE_ROOT="$(dirname "$(dirname "$MARKETPLACE_PATH")")"
-    if [ ! -d "$CLONE_ROOT" ]; then
-      record dev_marketplace_on_main warn "marketplace path does not exist: $MARKETPLACE_PATH"
-    elif ! HEAD_BRANCH="$(git -C "$CLONE_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"; then
-      record dev_marketplace_on_main warn "marketplace path is not a git clone: $CLONE_ROOT"
-    elif [ "$HEAD_BRANCH" = "main" ]; then
-      record dev_marketplace_on_main pass "clone on main"
-    else
-      record dev_marketplace_on_main warn "dev marketplace clone is on $HEAD_BRANCH, not main — installed version may lag main"
-    fi
-  fi
 fi
 
 # --------------------------------------------------------------------------

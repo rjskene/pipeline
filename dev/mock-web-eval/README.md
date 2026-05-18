@@ -52,7 +52,7 @@ If you see `Unknown command: /pipeline:...` inside the container, verify the reg
 grep -E 'projectPath|installPath' ~/.claude/plugins/installed_plugins.json
 ```
 
-The `projectPath` value for `pipeline@claude-pipeline-dev` (or `pipeline@claude-pipeline`) must equal the absolute path your host knows the repo as. If it doesn't, re-run `/plugin install pipeline@claude-pipeline-dev` from the project root in Claude Code so the registration picks up the right path.
+The `projectPath` value for `pipeline@claude-pipeline` (or, for legacy installs that still have it registered, `pipeline@claude-pipeline-dev`) must equal the absolute path your host knows the repo as. If it doesn't, re-run `/plugin install pipeline@claude-pipeline` from the project root in Claude Code so the registration picks up the right path.
 
 See #241 for the root-cause walkthrough.
 
