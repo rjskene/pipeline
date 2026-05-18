@@ -26,43 +26,7 @@ The pipeline is distributed as a Claude Code plugin. Install it from the marketp
 
 The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`) and registers all slash commands, hooks, skills, and the `tdd-implementer` subagent automatically. Nothing is copied into your project tree.
 
-### Installing the dev channel
-
-Alongside the stable `claude-pipeline` marketplace, this repo publishes a sibling `claude-pipeline-dev` marketplace that carries release candidates of the same plugin at versions like `X.Y.Z-rc.N`. RCs are opt-in only; consumers on the stable channel are unaffected.
-
-**Install from your existing `staging` clone** — auto-back-sync (see `CLAUDE.md` → Release cadence step 5) merges every release commit from `main` onto `staging` automatically (`--ff-only` when possible; `-X ours` when staging is ahead), so `staging` carries the same `version` fields as `main`. No separate `~/claude-pipeline-main` clone is required.
-
-In your existing staging clone:
-
-```bash
-git pull --ff-only origin staging
-```
-
-Then in Claude Code (substitute the path to your staging clone):
-
-```
-/plugin marketplace add <path-to-your-staging-clone>/.claude-plugin/marketplace-dev.json
-/plugin install pipeline@claude-pipeline-dev
-```
-
-Pick the **local** scope at the install prompt. Then reload so the new plugin code is active:
-
-```
-/plugin uninstall pipeline@claude-pipeline-dev
-/plugin install   pipeline@claude-pipeline-dev
-```
-
-On each RC cut, `git pull --ff-only origin staging` in the same clone, then uninstall + reinstall above to pick up the new version.
-
-**Pitfalls:**
-- The repo is private, so an SSH key registered with GitHub (or HTTPS via `gh` token rewrite) is mandatory for the `git pull`.
-- Do NOT use the `owner/repo@ref <manifest-path>` shorthand for the dev marketplace — Claude Code's CLI joins the manifest path into the ref. The local-path form is the only reliable one.
-- Do NOT add the marketplace from a copy of `marketplace-dev.json` placed outside the repo tree — the manifest's `"source": "./"` resolves relative to the manifest file's location, so the loader can't find the plugin tree.
-- Pick the **local** scope at the install prompt. The **user** scope works too, but its hooks fire in every Claude Code session on the machine.
-
-**Troubleshooting — installed dev version older than expected?** Run `/pipeline:doctor` — the `dev_marketplace_on_main` check remains as defense-in-depth and warns if the registered marketplace path resolves to a non-`main` clone (legacy setups).
-
-See `CLAUDE.md` → "Dev/prerelease channel" for the publishing side (how RCs are cut).
+For prerelease / RC publishing details, see [CLAUDE.md → Dev/prerelease channel](./CLAUDE.md#devprerelease-channel).
 
 ---
 
