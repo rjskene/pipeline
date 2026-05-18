@@ -300,13 +300,13 @@ if [ -n "$CONTAINER_MODE" ]; then
   ENV_FILE="${!env_var:-}"
   SERVICE="${!svc_var:-}"
   PREFLIGHT="${!pre_var:-}"
-  # Resolve a relative ENV_FILE to absolute against REPO_ROOT BEFORE
-  # DOCKER_PREFIX is assembled. The launcher does `cd $WORKTREE_PATH` before
-  # exec, so a relative --env-file value would otherwise resolve under the
-  # worktree (not the project root where the file lives). Absolute paths are
-  # passed through verbatim. (#257)
+  # Resolve a relative ENV_FILE to absolute against WORKTREE_PATH BEFORE
+  # DOCKER_PREFIX is assembled. The probe (mock-web-eval-probe-port.sh)
+  # writes the env file under PIPELINE_WORKTREE_PATH so concurrent worktrees
+  # don't race on a shared file; the reader here must agree. Absolute paths
+  # are passed through verbatim. (#269; supersedes the REPO_ROOT base from #257.)
   if [ -n "$ENV_FILE" ] && [[ "$ENV_FILE" != /* ]]; then
-    ENV_FILE="$REPO_ROOT/$ENV_FILE"
+    ENV_FILE="$WORKTREE_PATH/$ENV_FILE"
   fi
   if [ -z "$COMPOSE_FILE" ]; then
     echo "[spawn-claude] ERROR: COMPOSE_FILE required for mode=$CONTAINER_MODE (set $compose_var)" >&2
