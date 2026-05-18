@@ -68,19 +68,21 @@ bash dev/mock-web-eval/replay.sh                 # dry-run, verification
 bash dev/mock-web-eval/replay.sh --full --pr 232 # re-trigger against PR #232
 ```
 
-## Attachment mechanism — release assets
+## Attachment mechanism — in-branch git commits
 
-Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are uploaded as GitHub release assets on a per-PR tag `eval-evidence-<PR>` via `scripts/eval-screenshot-attach.sh`. The helper:
+Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are committed to `<worktree>/.eval-screenshots/` on the PR branch via `scripts/eval-screenshot-attach.sh`. The helper:
 
-1. Creates the release if absent (`gh release create eval-evidence-<PR> --target main`).
-2. Uploads the PNG with `gh release upload --clobber` (idempotent on re-eval).
-3. Prints the canonical download URL `https://github.com/<owner>/<repo>/releases/download/eval-evidence-<PR>/<filename>` on stdout.
+1. Writes the PNG to `<worktree>/.eval-screenshots/<name>.png`.
+2. Runs `git add .eval-screenshots/<name>.png` + `git commit -m "chore(eval): screenshot evidence for PR #<N>"` (idempotent on re-eval — an empty commit is suppressed and the prior SHA is reused).
+3. Runs `git push origin HEAD` to publish the screenshot commit to the PR branch. Fail-soft: a push failure prints a stderr warning and continues; the helper still emits the local-SHA URL and exits 0.
+4. Captures `SHA=$(git rev-parse HEAD)` after the push.
+5. Prints the SHA-pinned URL `https://github.com/<owner>/<repo>/raw/<sha>/.eval-screenshots/<name>.png` on stdout.
 
-The eval skill embeds the URL in the `## Evaluation` comment as `![screenshot](url)`, which renders inline on the PR for any reader with repo access.
+The eval skill embeds the URL in the `## Evaluation` comment as `![screenshot](url)`, which renders inline on the PR for any reader with repo access. The `github.com/.../raw/<sha>/...` form (not `raw.githubusercontent.com/...`) is required so private repos render via GitHub's session redirect.
 
-**Why release assets, not inline base64 or `dev/eval-evidence/<PR>/` commits.** GitHub strips `data:` URIs from comment HTML, so inline base64 won't render. Committing PNGs to `dev/eval-evidence/<PR>/` would propagate through `.github/workflows/back-sync-release.yml` into staging and into the published marketplace tarball at the next release-please cut. Release assets are tag-based, not commit-based — they are NOT touched by back-sync (which only merges commits) and are NOT in the marketplace tarball (release-please's `extra-files` enumerate the version manifests only).
+**Why in-branch, not release-assets.** The prior release-asset approach (per-PR tag `eval-evidence-<PR>` with cleanup after the merge gate fired `green`) was fundamentally incompatible with auto-merge: the cleanup ran immediately after the squash-merge, which made the inline `![](url)` markdown 404 the moment the merge landed. Anyone reviewing the merged PR saw a broken-image icon. In-branch commits avoid this because the squash-merge collapses the screenshot commit into the merge commit on `$PIPELINE_BASE_BRANCH` — the PNG blob is now part of base-branch history, so the SHA-pinned URL resolves indefinitely. See #271 for the full rationale.
 
-**Cleanup.** When `/pipeline:evaluate-issue-pr`'s auto-merge gate fires `green`, it invokes `scripts/eval-screenshot-cleanup.sh` after the PR merges, which deletes the release and its tag (`gh release delete --yes --cleanup-tag`). On manual-merge opt-out, the release persists until manually cleaned. The cleanup is fail-soft — missing-release is success, so it never blocks the merge gate.
+**Cleanup.** No cleanup needed. The squash-merge collapses the screenshot commit into the base branch; the PNG blob is now permanent base-branch history. PNGs are ~20KB each at a pipeline rate of ~10/month (~2MB/year of git growth), so a retention/GC policy is deferred until it becomes a real problem.
 
 ## Known follow-ups
 
