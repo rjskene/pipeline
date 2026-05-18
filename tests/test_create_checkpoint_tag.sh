@@ -272,6 +272,54 @@ else
   echo "$OUT6" | sed 's/^/    /'
 fi
 
+# --- Test 7: git failure inside the script propagates non-zero exit ---
+echo "Test 7: git checkout failure propagates a non-zero exit to the caller"
+
+PROJ3="$WORKDIR/proj3"
+mkdir -p "$PROJ3/scripts"
+cp "$SCRIPT_UNDER_TEST" "$PROJ3/scripts/create-checkpoint-tag.sh"
+chmod +x "$PROJ3/scripts/create-checkpoint-tag.sh"
+
+cat > "$PROJ3/pipeline.config" <<EOF
+PIPELINE_REPO="fake/repo3"
+PIPELINE_BASE_BRANCH="proj3-base"
+PIPELINE_WORKTREE_PREFIX="ct"
+EOF
+
+(
+  cd "$PROJ3"
+  git init -q -b proj3-base
+  git config user.email "test@test"
+  git config user.name "test"
+  echo "hello3" > README
+  git add README
+  git commit -qm "init3"
+)
+
+# Force a checkout to a branch that does not exist. HEAD is on
+# proj3-base, --branch overrides to a missing ref → git checkout fails
+# → set -euo pipefail must propagate the non-zero exit.
+set +e
+OUT7=$(cd "$PROJ3" && bash scripts/create-checkpoint-tag.sh --issues "1" --prs "2" --branch "this-branch-does-not-exist" 2>&1)
+RC7=$?
+set -e
+
+inc
+if [ "$RC7" -ne 0 ]; then
+  pass_msg "git checkout failure propagated non-zero exit (rc=$RC7)"
+else
+  fail_msg "git checkout failure did NOT propagate; output was:"
+  echo "$OUT7" | sed 's/^/    /'
+fi
+
+inc
+# And no tag should have been created on the dud branch attempt.
+if ! (cd "$PROJ3" && git tag --list "checkpoint/${DATE}-*" | grep -q .); then
+  pass_msg "no checkpoint tag created when checkout fails"
+else
+  fail_msg "tag was created despite checkout failure"
+fi
+
 # --- Summary ---
 echo ""
 echo "================================"
