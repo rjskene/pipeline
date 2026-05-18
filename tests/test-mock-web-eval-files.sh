@@ -46,6 +46,16 @@ assert "style.css defines .indicator.on"   "grep -qE '\.indicator\.on' '$CSS'"
 assert "style.css off has background"      "grep -A2 '\.indicator\.off' '$CSS' | grep -qE 'background(-color)?'"
 assert "style.css on has background"       "grep -A2 '\.indicator\.on' '$CSS' | grep -qE 'background(-color)?'"
 
+# Group 4b — style.css #item-add button restyle (#254)
+assert "style.css defines #item-add selector"     "grep -qE '#item-add[[:space:]]*\\{' '$CSS'"
+assert "style.css #item-add has green background" "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qiE 'background(-color)?:[[:space:]]*#16a34a'"
+assert "style.css #item-add has white color"      "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qiE 'color:[[:space:]]*(#fff|#ffffff|white)'"
+assert "style.css #item-add has border-radius 8px" "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qE 'border-radius:[[:space:]]*8px'"
+assert "style.css #item-add has padding"          "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qE 'padding:[[:space:]]*8px[[:space:]]+16px'"
+assert "style.css #item-add has border:none/0"    "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qE 'border:[[:space:]]*(none|0)'"
+assert "style.css defines #item-add:hover"        "grep -qE '#item-add:hover[[:space:]]*\\{' '$CSS'"
+assert "style.css #item-add:hover has darker green" "awk '/#item-add:hover[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qiE 'background(-color)?:[[:space:]]*#15803d'"
+
 # Group 5 — gitignore excludes host UID/GID env file
 GI="$REPO_ROOT/.gitignore"
 assert ".gitignore excludes mock-web/.env.mock-web-eval" "grep -qE '^/?mock-web/\.env\.mock-web-eval\$' '$GI'"

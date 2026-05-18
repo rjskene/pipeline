@@ -1,13 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Source project config
-source "$(cd "$(dirname "$0")/../.." && pwd)/pipeline.config"
+# Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
+# export PIPELINE_PROJECT_ROOT to override the lookup directory.
+source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 # Sync untracked .claude/ files to all active worktrees and verify setup health.
-# Usage: bash .claude/scripts/sync-worktrees.sh
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-worktrees.sh
 
-MAIN_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 ISSUES=0
 
 # ---------------------------------------------------------------------------
