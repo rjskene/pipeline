@@ -40,7 +40,7 @@ except Exception:
     sys.exit(0)
 pwd = os.environ.get("PIPELINE_RPR_PWD", "")
 plugins = data.get("plugins") or {}
-matches = []
+stable, pre = [], []
 for key, entries in plugins.items():
     if not key.startswith("pipeline@"):
         continue
@@ -50,10 +50,11 @@ for key, entries in plugins.items():
         if not isinstance(e, dict):
             continue
         if e.get("projectPath") == pwd and e.get("installPath"):
-            matches.append((e.get("version", ""), e["installPath"]))
-if not matches:
-    sys.exit(0)
-# Defensive tie-break: highest-version among matches wins.
+            v = e.get("version", "")
+            (pre if "-" in v else stable).append((v, e["installPath"]))
+# Defensive tie-break across degenerate same-projectPath entries:
+# stable releases beat prereleases (matches existing cache-scan semantics);
+# within each group, highest version wins.
 def vkey(s):
     parts = []
     for tok in s.replace("-", ".").split("."):
@@ -62,8 +63,11 @@ def vkey(s):
         except ValueError:
             parts.append((1, tok))
     return parts
-matches.sort(key=lambda t: vkey(t[0]))
-print(matches[-1][1])
+pool = stable or pre
+if not pool:
+    sys.exit(0)
+pool.sort(key=lambda t: vkey(t[0]))
+print(pool[-1][1])
 ' 2>/dev/null
     )"
     if [ -n "$_rpr_active" ] && [ -d "$_rpr_active" ]; then

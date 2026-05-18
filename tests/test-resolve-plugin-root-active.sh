@@ -136,6 +136,57 @@ else
   fail_msg "active-project fallback expected $CACHE_DEFAULT/0.7.2, got '$out_root'"
 fi
 
+# --------------------------------------------------------------------------
+# Case 5: degenerate state — same projectPath under stable + prerelease.
+# Defensive tie-break: stable beats prerelease (matches existing
+# cache-scan semantics in default mode).
+# --------------------------------------------------------------------------
+echo "Case 5: tie-break — stable beats prerelease on same projectPath"
+STABLE_INSTALL="$TMP/stable-install"
+PRERELEASE_INSTALL="$TMP/prerelease-install"
+mkdir -p "$STABLE_INSTALL" "$PRERELEASE_INSTALL"
+
+TIE_PROJ="$TMP/tie-proj"
+mkdir -p "$TIE_PROJ"
+
+TIE_FILE="$TMP/installed_plugins_tie.json"
+cat > "$TIE_FILE" <<JSON
+{
+  "version": 2,
+  "plugins": {
+    "pipeline@claude-pipeline-dev": [
+      {
+        "scope": "local",
+        "projectPath": "$TIE_PROJ",
+        "installPath": "$PRERELEASE_INSTALL",
+        "version": "0.9.0-rc.1"
+      }
+    ],
+    "pipeline@claude-pipeline": [
+      {
+        "scope": "local",
+        "projectPath": "$TIE_PROJ",
+        "installPath": "$STABLE_INSTALL",
+        "version": "0.8.0"
+      }
+    ]
+  }
+}
+JSON
+
+out_root="$(
+  cd "$TIE_PROJ"
+  unset CLAUDE_PLUGIN_ROOT
+  PIPELINE_RESOLVE_MODE=active-project \
+  PIPELINE_INSTALLED_PLUGINS_FILE="$TIE_FILE" \
+    bash -c "source \"$RESOLVER\"; echo \"\${CLAUDE_PLUGIN_ROOT:-}\""
+)"
+if [ "$out_root" = "$STABLE_INSTALL" ]; then
+  pass_msg "tie-break: stable beat prerelease on same projectPath"
+else
+  fail_msg "tie-break: expected $STABLE_INSTALL, got '$out_root'"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
