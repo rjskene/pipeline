@@ -139,9 +139,22 @@ You are a senior engineer performing a code review of a PR against its approved 
    cat .mcp.json 2>/dev/null
    ```
    If available and the platform supports it (Linux):
-   - Navigate to affected views, take screenshots
+   - Navigate to affected views, take screenshots (saved to `<worktree>/.claude/scratch/*.png`)
    - Check browser console for JS errors
    - Verify the UI matches the plan's description
+
+   **Attach screenshots to the eval comment.** For each PNG captured in
+   `.claude/scratch/` during this step, invoke the attach helper and capture the
+   returned download URL — embed each URL in Step 9's `**Screenshots:**` row.
+
+   ```bash
+   SCREENSHOT_URLS=()
+   for png in .claude/scratch/*.png; do
+     [ -f "$png" ] || continue
+     url=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/eval-screenshot-attach.sh" "$PR_NUM" "$(realpath "$png")")
+     [ -n "$url" ] && SCREENSHOT_URLS+=("$url")
+   done
+   ```
 
    If unavailable, note: "Visual validation skipped — Playwright MCP not available."
 
@@ -180,6 +193,9 @@ You are a senior engineer performing a code review of a PR against its approved 
    **Code quality:** <findings or "No issues found">
 
    **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out (checks still in progress)
+
+   **Screenshots:** (one `![](url)` row per entry in `$SCREENSHOT_URLS` from Step 6; emit `None` if the array is empty)
+   - ![screenshot 1](https://github.com/owner/repo/releases/download/eval-evidence-<PR>/<filename>.png)
 
    **Fixes applied:**
    - `<commit hash>` — <description>
@@ -229,6 +245,12 @@ You are a senior engineer performing a code review of a PR against its approved 
          else
            gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}. ${FOOTER}"
          fi
+         ```
+       - Best-effort: delete the `eval-evidence-<PR>` release that hosted the
+         Step 6 screenshots. Fail-soft — exit code is ignored so a transient
+         API error never reverts the merge that already happened.
+         ```bash
+         bash "${CLAUDE_PLUGIN_ROOT}/scripts/eval-screenshot-cleanup.sh" "$PR_NUM" || true
          ```
 
     4. **On any `block-*` reason:** post a single comment to the PR explaining why auto-merge was skipped, then return Approved-but-not-merged. Do not flip labels. Do not close the issue.
