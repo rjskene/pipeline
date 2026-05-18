@@ -179,6 +179,15 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    Also print a reminder: *"PRs created by spawned agents will target `${EXPECTED_BASE}`. The enforce-base-branch hook blocks any `gh pr create` without `--base ${EXPECTED_BASE}`."*
 
+   Then run the **base-branch hook wiring advisory**. This is defense-in-depth visibility: the `enforce-base-branch.py` PreToolUse hook is what makes the reminder above actually enforceable, and that hook must be registered in *either* the plugin manifest (`.claude-plugin/plugin.json`) *or* the consumer's local `.claude/settings.json`. If both surfaces silently drop the registration (e.g. a stale install, a hand-edited settings file, or a partial migration), `gh pr create` from spawned agents can escape `PIPELINE_BASE_BRANCH` and target the repo's default branch. The helper scans both files and prints a single `WARN:` line on stdout when neither wires the hook — otherwise it stays silent. The check is **advisory only and never aborts the run**; `/pipeline:run` cannot rewrite a consumer's `.claude/settings.json` (#215 tracks render-on-install). Surface the WARN to the user and continue.
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-base-branch-hook-wiring.sh" \
+     --plugin-manifest "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" \
+     --consumer-settings ".claude/settings.json" \
+     --expected-base "${EXPECTED_BASE}" || true
+   ```
+
    Then, check for `next-major-release` issues in the open pipeline set. These should be processed from the `next` branch by convention:
 
    ```bash
