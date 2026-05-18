@@ -582,7 +582,22 @@ CD_HELPER="$SCRIPT_DIR/diff-consumer-files.sh"
 if [ ! -x "$CD_HELPER" ] && [ ! -f "$CD_HELPER" ]; then
   record consumer_drift warn "diff-consumer-files.sh not found at $CD_HELPER"
 else
-  cd_rows="$(bash "$CD_HELPER" 2>/dev/null || true)"
+  # Resolve the active-project plugin root (when available) so the helper
+  # diffs against the plugin Claude Code is actually loading for this
+  # project — not the highest-version entry in the stable-marketplace cache.
+  cd_rows="$(PIPELINE_DIFF_PLUGIN_ROOT_MODE=active-project bash "$CD_HELPER" 2>/dev/null || true)"
+  # Mirror the helper's resolution in a subshell so the detail line can
+  # self-document which plugin root the rows were classified against.
+  cd_active_root="$(
+    unset CLAUDE_PLUGIN_ROOT
+    # shellcheck disable=SC1091
+    PIPELINE_RESOLVE_MODE=active-project \
+      source "$SCRIPT_DIR/_resolve-plugin-root.sh" 2>/dev/null || true
+    printf '%s' "${CLAUDE_PLUGIN_ROOT:-}"
+  )"
+  if [ -z "$cd_active_root" ]; then
+    cd_active_root="${CLAUDE_PLUGIN_ROOT:-}"
+  fi
   cd_total=0
   cd_bug=0
   cd_a=0; cd_b=0; cd_c=0; cd_d=0; cd_e=0; cd_f=0
@@ -602,12 +617,16 @@ else
     done <<< "$cd_rows"
   fi
 
+  cd_against=""
+  if [ -n "$cd_active_root" ]; then
+    cd_against=" (against $cd_active_root)"
+  fi
   if [ "$cd_bug" -gt 0 ]; then
-    record consumer_drift fail "$cd_bug active bug(s) (B.bug): hardcoded literal disagrees with pipeline.config"
+    record consumer_drift fail "$cd_bug active bug(s) (B.bug): hardcoded literal disagrees with pipeline.config$cd_against"
   elif [ $((cd_a + cd_b + cd_c + cd_e)) -gt 0 ]; then
-    record consumer_drift warn "$cd_total file(s) drifted (A=$cd_a B=$cd_b C=$cd_c E=$cd_e)"
+    record consumer_drift warn "$cd_total file(s) drifted (A=$cd_a B=$cd_b C=$cd_c E=$cd_e)$cd_against"
   else
-    record consumer_drift pass "no drifted consumer files"
+    record consumer_drift pass "no drifted consumer files$cd_against"
   fi
 
   if [ "$cd_total" -gt 0 ]; then
