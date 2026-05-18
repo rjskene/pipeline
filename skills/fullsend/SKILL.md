@@ -33,7 +33,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 
 **Flag parsing.** `--manual-merge` may appear anywhere in argv (before, between, or after issue numbers; e.g. `FULL SEND --manual-merge 1 2 3`, `FULL SEND 1 2 3 --manual-merge`, `FULL SEND 1 --manual-merge 2 3`). The token cannot collide with issue numbers because those are bare integers. When present, set `MANUAL_MERGE=1` for all spawned `evaluate-issue-pr` agents (passed via `run-queue.sh --manual-merge` → `spawn-claude.sh --manual-merge`) and skip the greenlight auto-merge path in Step 8 below.
 
-**0a. Wave plan (pre-think).** Before dispatching any classify/plan agents, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh <ready-issue-numbers>` and capture stdout as the wave plan. Process the rest of step 1 (classify, then plan) wave by wave: dispatch all issues in Wave K in parallel, await completion, then advance to Wave K+1. In interactive mode, print the wave plan once before launching; in autonomous full send mode, log it and proceed. The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default true) — when `false`, fall back to the legacy single-blast parallel dispatch.
+**0a. Wave plan (pre-think).** Before dispatching any classify/plan agents, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh <ready-issue-numbers>` and capture stdout as the wave plan. Process the rest of step 1 (classify, then plan) wave by wave: dispatch all issues in Wave K in parallel, await completion, then advance to Wave K+1. In interactive mode, print the wave plan once before launching; in autonomous full send mode, log it and proceed. The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default true) — when `false`, fall back to the legacy single-blast parallel dispatch.
 
 1. **Plan** — Process wave by wave per Step 0a — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
@@ -50,13 +50,13 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```
 5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
-6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parse the emitted `ACTION=` line. Act per the table:
+6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parse the emitted `ACTION=` line. Act per the table:
 
    | ACTION | Behavior |
    |--------|----------|
    | `green` | leave the issue for step 7 (Evaluate PRs). |
    | `pending` | defer; in single-pass full send, treat as green so step 7 still runs. |
-   | `red-retry` | autonomous mode: fire `bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --ci-fix <N> <LOG>` in the background. Interactive mode: propose "re-dispatch executor on #N (CI red, retry budget <NEXT>/<BUDGET>)" as a candidate action. |
+   | `red-retry` | autonomous mode: fire `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --ci-fix <N> <LOG>` in the background. Interactive mode: propose "re-dispatch executor on #N (CI red, retry budget <NEXT>/<BUDGET>)" as a candidate action. |
    | `red-budget-exhausted` | issue is already labelled `human` by the helper; mark "Flagged (CI persistent failure)" in the final report and skip evaluate-issue-pr for that issue. |
 
    The helper writes a tail-truncated failure log to `.claude/logs/ci-fix-<N>-attempt-<n>.log` and posts a `pipeline.ci-retries: <n>` issue comment to track the retry counter. Step 4's status table should source the `CI` column (`green` / `red` / `pending` / `—`) from the same helper invocation for `pr-open` rows.
@@ -76,7 +76,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
        else
          echo "SKIP: release PR #$PR_NUM ci=$CI (auto-merge only on green)"
        fi
-     done <<< "$(bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)"
+     done <<< "$(PIPELINE_REPO="$PIPELINE_REPO" bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)"
    fi
    ```
 
