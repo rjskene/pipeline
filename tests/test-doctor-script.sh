@@ -96,6 +96,28 @@ fresh_fx() {
 PIPELINE_REPO="owner/repo"
 PIPELINE_BASE_BRANCH="staging"
 CFG
+  # Materialise a plugin-shaped CLAUDE_PLUGIN_ROOT so the
+  # base_branch_enforcement check (#295) finds the load-bearing hook and
+  # its plugin-manifest registration. Tests that override CLAUDE_PLUGIN_ROOT
+  # are free to skip this — fresh_fx always provides a default that passes.
+  mkdir -p "$fx/hooks" "$fx/.claude-plugin"
+  : > "$fx/hooks/enforce-base-branch.py"
+  cat > "$fx/.claude-plugin/plugin.json" <<'JSON'
+{
+  "name": "pipeline",
+  "version": "0.0.0-test",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py"}
+        ]
+      }
+    ]
+  }
+}
+JSON
   echo "$fx"
 }
 

@@ -27,7 +27,7 @@ Report the full stdout (CHECK lines + summary table) to the user. If the exit co
 
 ## What it checks
 
-- `gh_installed` — `gh` CLI is on `PATH`.
+- `gh_installed` — `gh` CLI is on `PATH` AND `gh version` reports major >= 2. The 2.0 floor is required for `--json baseRefName` and related JSON flags that the pipeline depends on; the check parses `gh version`'s first line, extracts the `MAJOR.MINOR.PATCH` token, and fails with an actionable detail (`gh version <X.Y.Z> below the 2.0 floor required for --json baseRefName; upgrade via your package manager`) when major < 2. Pre-2.0 gh silently degrades at runtime — the doctor surfaces this at install/audit time.
 - `pipeline_config` — `pipeline.config` exists at the project root and `PIPELINE_REPO` is non-empty.
 - `gh_auth` — `gh auth status` succeeds.
 - `gh_repo_reachable` — `gh repo view $PIPELINE_REPO` succeeds.
@@ -40,6 +40,7 @@ Report the full stdout (CHECK lines + summary table) to the user. If the exit co
 - `consumer_drift` — per-file drift classification for consumer `.claude/{scripts,hooks,agents}/` (see `## consumer_drift check` below).
 - `preservation_refs` — for every consumer `.claude/{scripts,hooks}/` file with a plugin-shipped counterpart, lists each reference holding it in place and emits a `DELETE` / `KEEP` verdict (see `## preservation_refs check` below).
 - `base_branch_local` — local branch named `$PIPELINE_BASE_BRANCH` exists (warn if it has no upstream).
+- `base_branch_enforcement` — defense-in-depth audit (#295) for the `enforce-base-branch.py` PreToolUse hook. **Pass** when the hook file exists at `${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py` AND at least one PreToolUse Bash matcher (in the plugin manifest OR in the consumer's `.claude/settings.json`) invokes it. **Fail** in two cases: (a) hook file absent from disk (detail mentions `enforce-base-branch.py not present on disk`), (b) hook file present but unregistered — no PreToolUse Bash matcher references it (detail mentions `exists but no PreToolUse Bash matcher invokes it`). The detection scans both surfaces via `jq -r '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[].command'` and pattern-matches the basename, so manifest variations (`python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py`, `python3 .claude/hooks/enforce-base-branch.py`, absolute paths, etc.) all resolve correctly.
 
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — the same helper is sourced by `migrate-from-subtree.sh`, so the wording in doctor's warnings matches the wording in the migration tool's advisories.
 
@@ -72,7 +73,8 @@ Validates that `CLAUDE_PLUGIN_ROOT` resolves to a real plugin install directory.
 
 **Check verdict.**
 - Any **B.bug** row → `fail` (active bug — stale local overrides correct plugin behavior).
-- Any **A / B / C / E** row → `warn` (drift exists but not breaking).
+- Any **A / B / C / E** row whose basename is in `LOAD_BEARING_HOOKS` → `fail` (#295: load-bearing escalation). The `LOAD_BEARING_HOOKS` array in `scripts/doctor.sh` names hooks the pipeline depends on for defense-in-depth — currently `enforce-base-branch.py`, `enforce-path-c-delegation.py`, and `block_deletions.py`. A stale local copy of any of these silently defeats the guardrail, so drift on those basenames promotes from warn to fail. The detail line names the affected basenames (`<n> load-bearing hook(s) drifted (<csv>) — defense-in-depth at risk`). Add to the list when a new hook becomes load-bearing.
+- Any other **A / B / C / E** row → `warn` (drift exists but not breaking).
 - Only **D / F** rows (or no rows) → `pass`.
 
 **Worked example.** On a real consumer install (`rjskene/bomon-train`) the manual classification surfaced ~20 preserved files: 7 × A (safe to delete), 4 × B (one of which was a `B.bug` because `enforce-path-c-delegation.py` hardcoded the wrong `PIPELINE_REPO`), 1 × C (plugin had dropped a `--runs` mode), 6 × D (dogfood-only hooks), 2 × E (subtree-drift scripts), with the rest F (project-specific autoresearch hooks). ~9 of 20 were safely deletable; 1 was an active bug masked by silent preservation.

@@ -216,6 +216,8 @@ You are a senior engineer performing a code review of a PR against its approved 
 
 11. **Auto-merge gate.**
 
+    **Dual-defense doctrine (issue #295).** Base-branch enforcement runs as defense-in-depth across four layers: (i) the eval-time `baseRefName == $PIPELINE_BASE_BRANCH` assertion inside `auto-merge-gate.sh` (Step 11.2 — surfaces as the `block-base-mismatch` token); (ii) a TOCTOU re-read of `baseRefName` immediately before `gh pr merge` in Step 11.3 (closes the window between the gate decision and the merge call); (iii) the skill-level quoted `--base "$PIPELINE_BASE_BRANCH"` in `execute-issue-plan` Step 9b at PR creation time; (iv) the `enforce-base-branch.py` PreToolUse hook over `gh pr create` and `gh pr edit --base`. The hook alone is **insufficient** — it has bypassed in production (#295) when consumer `.claude/settings.json` layout shadowed the plugin-registered matcher and when stale rendered `spawn-claude.sh` emitted an unnamespaced slash command that loaded no plugin hooks at all (see `dev/audits/295-root-cause.md`). The eval-time gate is the load-bearing zero-data-loss layer that catches a divergent base regardless of upstream hook state.
+
     1. **Flag parsing.** `--manual-merge` may appear anywhere in argv — before or after the issue number; the parser is loop-based, not positional. The flag is also honored via the environment: if `MANUAL_MERGE=1` is exported (set by `spawn-claude.sh` when the spawn carried `--manual-merge`), treat it as if the flag were present. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
 
     2. **Source the helper and run the gate.**
@@ -223,9 +225,18 @@ You are a senior engineer performing a code review of a PR against its approved 
        source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
        REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
        ```
-       The helper checks, in order: `MANUAL_MERGE` env, `manual-merge` issue label, `**Verdict:** Approved` in the latest `## Evaluation` comment, `statusCheckRollup` all SUCCESS (or empty), `mergeable == MERGEABLE`, `mergeStateStatus == CLEAN`. It prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-ci`, `block-mergeable`, or `block-mergestate`.
+       The helper checks, in order: `MANUAL_MERGE` env, `manual-merge` issue label, `**Verdict:** Approved` in the latest `## Evaluation` comment, `baseRefName == $PIPELINE_BASE_BRANCH`, `statusCheckRollup` all SUCCESS (or empty), `mergeable == MERGEABLE`, `mergeStateStatus == CLEAN`. It prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`. The `block-base-mismatch` token is emitted by `scripts/auto-merge-gate.sh` and is the eval-time half of the dual-defense base-branch model.
 
     3. **On `green`:**
+       - **TOCTOU re-check (issue #295).** Immediately before the merge, re-read `baseRefName` one more time. The helper's check in Step 11.2 fired earlier in the gate; a malicious or buggy actor could retarget the PR between that check and the merge call. Refuse the merge on divergence and post the same `block-base-mismatch` comment as Step 11.4.
+         ```bash
+         BASE_RECHECK=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json baseRefName --jq .baseRefName 2>/dev/null)
+         if [ -z "$BASE_RECHECK" ] || [ "$BASE_RECHECK" != "$PIPELINE_BASE_BRANCH" ]; then
+           REASON="block-base-mismatch"
+           # Fall through to Step 11.4: post the block comment and skip merge.
+         fi
+         ```
+         If `REASON` is now `block-base-mismatch`, jump to Step 11.4. Do not invoke `gh pr merge`.
        - Merge synchronously (NOT `--auto`):
          ```bash
          gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch
@@ -259,6 +270,14 @@ You are a senior engineer performing a code review of a PR against its approved 
        ```bash
        gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" \
          --body "Auto-merge skipped: ${REASON}. Run \`gh pr merge\` manually."
+       ```
+
+       **`block-base-mismatch` extension.** When `REASON == block-base-mismatch` (either from Step 11.2's gate or from Step 11.3's TOCTOU re-check), the comment body MUST also include a retarget suggestion so the operator can fix the base in one step:
+       ```bash
+       gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" \
+         --body "Auto-merge skipped: block-base-mismatch — PR baseRefName diverges from \$PIPELINE_BASE_BRANCH ($PIPELINE_BASE_BRANCH).
+
+Run \`\$CLAUDE_PLUGIN_ROOT/scripts/retarget-pr.sh $PR_NUM $PIPELINE_BASE_BRANCH\` to retarget (or \`gh pr edit $PR_NUM --base $PIPELINE_BASE_BRANCH\` if retarget-pr.sh is unavailable)."
        ```
 
     Release-please PRs are out of scope for this gate — they continue to flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of `run/SKILL.md`.
