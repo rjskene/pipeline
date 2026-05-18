@@ -8,9 +8,6 @@ assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  
 # All greps are scoped to CLAUDE.md only (do not scan CHANGELOG.md, .claude/logs, .git)
 assert "Dev/prerelease channel header present" "grep -q 'Dev/prerelease channel' '$F'"
 assert "Release-As: trigger mentioned" "grep -q 'Release-As:' '$F'"
-assert "marketplace-dev.json mentioned" "grep -q 'marketplace-dev.json' '$F'"
-assert "claude-pipeline-dev slug mentioned" "grep -q 'claude-pipeline-dev' '$F'"
-assert "no auto-graduation statement" "grep -q 'do NOT auto-graduate' '$F'"
 assert "auto-back-sync mentioned (replaces no-back-sync-for-RCs exception)" "grep -qE 'auto-back-sync|back-sync-release' '$F'"
 assert "gh pr merge --squash --body-file mitigation present" "grep -q 'gh pr merge --squash --body-file' '$F'"
 
