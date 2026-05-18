@@ -332,8 +332,16 @@ if [ -n "$CONTAINER_MODE" ]; then
     -e "CLAUDE_PIPELINE_ISSUE_NUMBER=$ISSUE_NUM" \
     -e "CLAUDE_PIPELINE_SKILL=$SKILL" \
     -e "PIPELINE_PROJECT_ROOT=$REPO_ROOT" \
-    -e "PIPELINE_WORKTREE_PATH=$WORKTREE_PATH" \
-    "$SERVICE")
+    -e "PIPELINE_WORKTREE_PATH=$WORKTREE_PATH")
+  # Bug 2 (#257): propagate --manual-merge into the containerized evaluator.
+  # The host export at line 43 only affects this script's env, not the
+  # in-container claude process; docker compose run isolates env unless we
+  # pass -e explicitly. Insert BEFORE "$SERVICE" so compose treats it as a
+  # per-run env var, not a positional arg to the service.
+  if [ -n "$MANUAL_MERGE_ARG" ]; then
+    DOCKER_PREFIX+=(-e "MANUAL_MERGE=1")
+  fi
+  DOCKER_PREFIX+=("$SERVICE")
 fi
 
 # Build-claude-argv snippet injected into each mode's launcher. Using bash
