@@ -1,8 +1,14 @@
 #!/bin/bash
-# Idempotently uploads a screenshot PNG as a release asset on the
-# eval-evidence-<PR> tag, then prints the download URL on stdout.
+# Commits a screenshot PNG to .eval-screenshots/ in the current worktree,
+# pushes the commit to origin (the PR branch), and prints a SHA-pinned
+# GitHub raw URL on stdout. The URL survives squash-merge because the PNG
+# blob collapses into the merge commit on the base branch.
 #
 # Usage: scripts/eval-screenshot-attach.sh <pr-number> <abs-png-path>
+#
+# Fail-soft on `git push`: if push fails (network blip, missing creds),
+# the helper prints a warning to stderr, still emits the local-SHA URL,
+# and exits 0. The URL will 404 until the operator pushes manually.
 set -uo pipefail
 
 PR="${1:-}"; PNG="${2:-}"
@@ -16,23 +22,20 @@ if [ ! -f "$PNG" ]; then
 fi
 : "${PIPELINE_REPO:?PIPELINE_REPO must be set}"
 
-TAG="eval-evidence-${PR}"
 FILENAME="$(basename "$PNG")"
 
-# Idempotent create — succeed-or-already-exists. The release is created
-# against the default branch (main) but assets are tag-pinned; the target
-# commit is irrelevant for asset rendering.
-if ! gh release view "$TAG" --repo "$PIPELINE_REPO" >/dev/null 2>&1; then
-  gh release create "$TAG" \
-    --repo "$PIPELINE_REPO" \
-    --title "Eval evidence for PR #${PR}" \
-    --notes "Automated screenshot capture from /pipeline:evaluate-issue-pr. Deleted on PR merge." \
-    --target main \
-    >/dev/null
+mkdir -p .eval-screenshots
+cp -- "$PNG" ".eval-screenshots/${FILENAME}"
+
+git add -- ".eval-screenshots/${FILENAME}"
+
+# Idempotent re-eval: if the file is unchanged, `git commit` fails with
+# "nothing to commit" — that's fine, we'll reuse the existing HEAD SHA.
+git commit -m "chore(eval): screenshot evidence for PR #${PR}" >/dev/null 2>&1 || true
+
+if ! git push origin HEAD >/dev/null 2>&1; then
+  echo "eval-screenshot-attach: WARN: git push failed — screenshot committed locally but not pushed; URL may 404 until pushed" >&2
 fi
 
-gh release upload "$TAG" "$PNG" --repo "$PIPELINE_REPO" --clobber >/dev/null
-
-# Canonical asset download URL. Works for public + private repos
-# (private requires reader auth on the underlying repo).
-echo "https://github.com/${PIPELINE_REPO}/releases/download/${TAG}/${FILENAME}"
+SHA="$(git rev-parse HEAD)"
+echo "https://github.com/${PIPELINE_REPO}/raw/${SHA}/.eval-screenshots/${FILENAME}"
