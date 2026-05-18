@@ -275,9 +275,9 @@ You are a senior engineer performing a code review of a PR against its approved 
        **`block-base-mismatch` extension.** When `REASON == block-base-mismatch` (either from Step 11.2's gate or from Step 11.3's TOCTOU re-check), the comment body MUST also include a retarget suggestion so the operator can fix the base in one step:
        ```bash
        gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" \
-         --body "Auto-merge skipped: block-base-mismatch — PR baseRefName diverges from \$PIPELINE_BASE_BRANCH (${PIPELINE_BASE_BRANCH}).
+         --body "Auto-merge skipped: block-base-mismatch — PR baseRefName diverges from \$PIPELINE_BASE_BRANCH ($PIPELINE_BASE_BRANCH).
 
-Run \`\${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh ${PR_NUM} ${PIPELINE_BASE_BRANCH}\` to retarget (or \`gh pr edit ${PR_NUM} --base ${PIPELINE_BASE_BRANCH}\` if retarget-pr.sh is unavailable)."
+Run \`\$CLAUDE_PLUGIN_ROOT/scripts/retarget-pr.sh $PR_NUM $PIPELINE_BASE_BRANCH\` to retarget (or \`gh pr edit $PR_NUM --base $PIPELINE_BASE_BRANCH\` if retarget-pr.sh is unavailable)."
        ```
 
     Release-please PRs are out of scope for this gate — they continue to flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of `run/SKILL.md`.
