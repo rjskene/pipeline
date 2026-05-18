@@ -11,3 +11,5 @@ button { padding: 0.4rem 0.8rem; cursor: pointer; }
 #item-list li { margin: 0.25rem 0; }
 #counter-section { display: flex; align-items: center; gap: 0.5rem; }
 #counter-value { font-weight: bold; min-width: 2ch; text-align: center; }
+#item-add { background-color: #16a34a; color: #fff; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+#item-add:hover { background-color: #15803d; }
