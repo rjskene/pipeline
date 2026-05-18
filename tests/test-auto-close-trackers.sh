@@ -276,6 +276,30 @@ else
   fail_msg "--apply on no-children: helper exited $rc"
 fi
 
+# ---- Case H: missing PIPELINE_REPO and no --repo → documented error ----
+# Regression-guard for the script's `PIPELINE_REPO (or --repo) is required` exit
+# path. Protects against silently changing this contract (e.g., adding a
+# pipeline.config self-source inside the helper, "option 2" in #288).
+echo "Case H: missing PIPELINE_REPO and no --repo → required-error"
+inc
+H="$TMP/case-h"; reset_case "$H"
+# env -i wipes the environment; we restore PATH to reach the gh stub but
+# deliberately omit PIPELINE_REPO. Helper must exit non-zero with the
+# documented stderr message.
+if env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$HOME" \
+     bash "$HELPER" --apply >"$H/stdout" 2>"$H/stderr"; then
+  fail_msg "missing PIPELINE_REPO: helper exited 0 — expected non-zero"
+  echo "    stderr:"; sed 's/^/      /' "$H/stderr"
+else
+  rc=$?
+  if [ "$rc" -ne 0 ] && grep -qF 'PIPELINE_REPO (or --repo) is required' "$H/stderr"; then
+    pass_msg "missing PIPELINE_REPO: helper exited $rc with documented error"
+  else
+    fail_msg "missing PIPELINE_REPO: exit=$rc but stderr lacks the documented error"
+    echo "    stderr:"; sed 's/^/      /' "$H/stderr"
+  fi
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
