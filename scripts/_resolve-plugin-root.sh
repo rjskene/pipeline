@@ -4,8 +4,9 @@
 # Default mode: when CLAUDE_PLUGIN_ROOT is empty/unset (which can happen
 # because Claude Code does not consistently export it into the Bash tool's
 # subshell), scan ~/.claude/plugins/cache/claude-pipeline/pipeline/*/ and
-# export the highest-version directory. Stable releases beat prereleases
-# (-rc.N); within each group, `sort -V` picks the top.
+# export the highest-version directory. Highest `MAJOR.MINOR.PATCH` wins
+# across the whole cache; within the same `M.m.p`, stable beats prerelease
+# (`-rc.N`), and rc numbers sort numerically.
 #
 # Active-project mode (PIPELINE_RESOLVE_MODE=active-project): read
 # ~/.claude/plugins/installed_plugins.json (override via
@@ -89,21 +90,37 @@ if [ ! -d "$_rpr_cache" ]; then
 fi
 
 _rpr_pick() {
-  local d base
-  local stable=() pre=()
+  # Emit `<sort-key>\t<basename>` for each cache entry, sort numerically on the
+  # 5-field key, then strip the key and pick the tail. Skip dirnames that do not
+  # match the expected MAJOR.MINOR.PATCH[-rc.N] shape so a stray dir never wins.
+  local d base major minor patch pre_rank pre_num
+  local -a rows=()
   for d in "$_rpr_cache"/*/; do
     [ -d "$d" ] || continue
     base="$(basename "$d")"
-    case "$base" in
-      *-*) pre+=("$base") ;;
-      *)   stable+=("$base") ;;
-    esac
+    if [[ "$base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-rc\.([0-9]+))?$ ]]; then
+      major="${BASH_REMATCH[1]}"
+      minor="${BASH_REMATCH[2]}"
+      patch="${BASH_REMATCH[3]}"
+      if [ -n "${BASH_REMATCH[4]}" ]; then
+        # Prerelease: rank=0 so it sorts BELOW stable (rank=1) at the same MMP
+        # under ascending sort + `tail -n 1`. Rank field comes BEFORE the numeric
+        # rc index so 0.4.0 (stable, rank=1) outranks 0.4.0-rc.99 (rank=0, num=99)
+        # at the same MMP.
+        pre_rank=0
+        pre_num="${BASH_REMATCH[5]}"
+      else
+        pre_rank=1
+        pre_num=0
+      fi
+      rows+=("${major}.${minor}.${patch}.${pre_rank}.${pre_num}	${base}")
+    fi
   done
-  if [ "${#stable[@]}" -gt 0 ]; then
-    printf '%s\n' "${stable[@]}" | sort -V | tail -n 1
-  elif [ "${#pre[@]}" -gt 0 ]; then
-    printf '%s\n' "${pre[@]}" | sort -V | tail -n 1
-  fi
+  [ "${#rows[@]}" -gt 0 ] || return 0
+  printf '%s\n' "${rows[@]}" \
+    | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n \
+    | tail -n 1 \
+    | cut -f2
 }
 
 _rpr_latest="$(_rpr_pick)"
