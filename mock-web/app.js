@@ -46,4 +46,16 @@
     li.appendChild(removeBtn);
     list.appendChild(li);
   });
+
+  // 4. Counter buttons increment/decrement a running total (no bounds).
+  const counterValue = document.getElementById('counter-value');
+  let count = 0;
+  document.getElementById('counter-inc').addEventListener('click', function () {
+    count += 1;
+    counterValue.textContent = String(count);
+  });
+  document.getElementById('counter-dec').addEventListener('click', function () {
+    count -= 1;
+    counterValue.textContent = String(count);
+  });
 })();
