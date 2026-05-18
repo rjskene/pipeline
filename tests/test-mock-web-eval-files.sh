@@ -46,6 +46,16 @@ assert "style.css defines .indicator.on"   "grep -qE '\.indicator\.on' '$CSS'"
 assert "style.css off has background"      "grep -A2 '\.indicator\.off' '$CSS' | grep -qE 'background(-color)?'"
 assert "style.css on has background"       "grep -A2 '\.indicator\.on' '$CSS' | grep -qE 'background(-color)?'"
 
+# Group 4b — style.css #item-add button restyle (#254)
+assert "style.css defines #item-add selector"     "grep -qE '#item-add[[:space:]]*\\{' '$CSS'"
+assert "style.css #item-add has green background" "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qiE 'background(-color)?:[[:space:]]*#16a34a'"
+assert "style.css #item-add has white color"      "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qiE 'color:[[:space:]]*(#fff|#ffffff|white)'"
+assert "style.css #item-add has border-radius 8px" "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qE 'border-radius:[[:space:]]*8px'"
+assert "style.css #item-add has padding"          "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qE 'padding:[[:space:]]*8px[[:space:]]+16px'"
+assert "style.css #item-add has border:none/0"    "awk '/#item-add[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qE 'border:[[:space:]]*(none|0)'"
+assert "style.css defines #item-add:hover"        "grep -qE '#item-add:hover[[:space:]]*\\{' '$CSS'"
+assert "style.css #item-add:hover has darker green" "awk '/#item-add:hover[[:space:]]*\\{/,/\\}/' '$CSS' | grep -qiE 'background(-color)?:[[:space:]]*#15803d'"
+
 # Group 5 — gitignore excludes host UID/GID env file
 GI="$REPO_ROOT/.gitignore"
 assert ".gitignore excludes mock-web/.env.mock-web-eval" "grep -qE '^/?mock-web/\.env\.mock-web-eval\$' '$GI'"
@@ -91,6 +101,42 @@ assert "probe writes HOST_PORT="      "grep -qE 'HOST_PORT=' '$PROBE'"
 assert "probe writes to env file"     "grep -q 'mock-web/.env.mock-web-eval' '$PROBE'"
 assert "probe writes HOST_UID/GID seed" "grep -qE 'HOST_UID=' '$PROBE' && grep -qE 'HOST_GID=' '$PROBE'"
 assert "probe writes PIPELINE_PROJECT_ROOT="  "grep -qE 'PIPELINE_PROJECT_ROOT=' '$PROBE'"
+
+# Group 9 — counter section
+assert "index has counter section"      "grep -q 'id=\"counter-section\"' '$IDX'"
+assert "index has counter inc button"   "grep -q 'id=\"counter-inc\"' '$IDX'"
+assert "index has counter dec button"   "grep -q 'id=\"counter-dec\"' '$IDX'"
+assert "index has counter value span"   "grep -q 'id=\"counter-value\"' '$IDX'"
+assert "counter value has aria-live=polite" "grep -E 'id=\"counter-value\"[^>]*aria-live=\"polite\"|aria-live=\"polite\"[^>]*id=\"counter-value\"' '$IDX' >/dev/null"
+assert "app.js binds counter-inc click" "grep -q 'counter-inc' '$APP' && grep -qE 'counter-inc.*addEventListener|getElementById..counter-inc..\..*addEventListener' '$APP'"
+assert "app.js binds counter-dec click" "grep -q 'counter-dec' '$APP' && grep -qE 'counter-dec.*addEventListener|getElementById..counter-dec..\..*addEventListener' '$APP'"
+assert "app.js writes counter-value"    "grep -q 'counter-value' '$APP'"
+assert "style.css defines #counter-section flex" "grep -A3 '#counter-section' '$CSS' | grep -qE 'display:\s*flex'"
+assert "style.css styles #counter-value"          "grep -qE '#counter-value' '$CSS'"
+
+# Group 10 — footer
+assert "index has page-footer"            "grep -q 'id=\"page-footer\"' '$IDX'"
+assert "index has build-timestamp span"   "grep -q 'id=\"build-timestamp\"' '$IDX'"
+assert "app.js sets build-timestamp"      "grep -q 'build-timestamp' '$APP' && grep -qE 'toLocaleString|toISOString' '$APP'"
+assert "app.js prefixes Built:"           "grep -qE \"Built:\" '$APP'"
+assert "style.css styles #page-footer"   "grep -qE '#page-footer[[:space:]]*\\{' '$CSS'"
+assert "footer has top border"            "grep -A4 '#page-footer' '$CSS' | grep -qE 'border-top'"
+assert "footer has muted color"           "grep -A6 '#page-footer' '$CSS' | grep -qE 'color:[[:space:]]*#[0-9a-fA-F]{3,6}|color:[[:space:]]*(gray|grey|dimgray)'"
+
+# Group 11 — .mcp.json Playwright MCP wiring
+MCP="$REPO_ROOT/.mcp.json"
+assert ".mcp.json exists at repo root"           "[ -f \"$MCP\" ]"
+assert ".mcp.json is valid JSON"                  "jq empty <\"$MCP\" 2>/dev/null"
+assert ".mcp.json registers playwright server"    "jq -e .mcpServers.playwright <\"$MCP\" >/dev/null"
+assert ".mcp.json playwright command is npx"      "jq -er .mcpServers.playwright.command <\"$MCP\" | grep -qx npx"
+assert ".mcp.json playwright args include @playwright/mcp" \
+  "jq -r .mcpServers.playwright.args[] <\"$MCP\" | grep -q @playwright/mcp"
+assert ".mcp.json pins @playwright/mcp to 0.0.75 (matches Dockerfile)" \
+  "jq -r .mcpServers.playwright.args[] <\"$MCP\" | grep -q @playwright/mcp@0.0.75"
+PCFG="$REPO_ROOT/pipeline.config.example"
+assert "pipeline.config.example exists"                   "[ -f \"$PCFG\" ]"
+assert "pipeline.config.example PIPELINE_SYNC_FILES contains .mcp.json" \
+  "grep -E '^PIPELINE_SYNC_FILES=\"[^\"]*\.mcp\.json' \"$PCFG\""
 
 echo ""
 echo "================================"

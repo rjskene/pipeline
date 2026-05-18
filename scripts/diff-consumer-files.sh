@@ -34,6 +34,27 @@ if [ -f ./pipeline.config ]; then
   source ./pipeline.config 2>/dev/null || true
 fi
 
+# When PIPELINE_DIFF_PLUGIN_ROOT_MODE=active-project, re-resolve plugin_root
+# against the per-project entry in installed_plugins.json (instead of the
+# stable-marketplace cache). Only doctor.sh's consumer_drift check opts in;
+# all other callers see the default behavior (use CLAUDE_PLUGIN_ROOT as-is).
+if [ "${PIPELINE_DIFF_PLUGIN_ROOT_MODE:-cache}" = "active-project" ]; then
+  _dcf_resolver_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$_dcf_resolver_dir/_resolve-plugin-root.sh" ]; then
+    _dcf_saved_root="${CLAUDE_PLUGIN_ROOT:-}"
+    unset CLAUDE_PLUGIN_ROOT
+    # shellcheck disable=SC1091
+    PIPELINE_RESOLVE_MODE=active-project \
+      source "$_dcf_resolver_dir/_resolve-plugin-root.sh" 2>/dev/null || true
+    if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -n "$_dcf_saved_root" ]; then
+      # active-project lookup yielded nothing — restore prior value.
+      export CLAUDE_PLUGIN_ROOT="$_dcf_saved_root"
+    fi
+    unset _dcf_saved_root
+  fi
+  unset _dcf_resolver_dir
+fi
+
 plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$plugin_root" ] || [ ! -d "$plugin_root" ]; then
   echo "diff-consumer-files: CLAUDE_PLUGIN_ROOT empty or not a directory" >&2

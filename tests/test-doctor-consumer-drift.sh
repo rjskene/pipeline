@@ -286,6 +286,91 @@ echo "$out" | grep -qE '^CHECK: consumer_drift status=pass' \
   || { fail_msg "doctor: missing consumer_drift pass"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
+# Case 9c: consumer_drift uses active-project plugin root, not stable cache.
+#
+# Setup: two fake plugin install dirs. plugin-stable/scripts/foo.sh is what
+# the cache fallback would resolve to (no installed_plugins.json hit).
+# plugin-active/scripts/foo.sh is what the active-project resolver should
+# pick (its projectPath==$PWD). The consumer .claude/scripts/foo.sh is
+# byte-identical to plugin-stable (would classify A under OLD fallback) but
+# byte-different from plugin-active (and plugin-active reads pipeline.config
+# while consumer doesn't, so the helper classifies it as bucket B under
+# active-project mode).
+#
+# Pre-fix: doctor uses CLAUDE_PLUGIN_ROOT=plugin-stable, helper sees A row,
+# drift is invisibly "harmless." Post-fix: doctor opts into active-project,
+# helper sees B row, real drift surfaces.
+# ---------------------------------------------------------------------------
+echo "Case 9c: doctor consumer_drift uses active-project plugin root"
+ROOT=$(fresh_fx fx-doctor-active)
+( cd "$ROOT/proj" && git init -q && git config user.email t@t && git config user.name t \
+    && git commit --allow-empty -q -m init \
+    && (git branch -q staging 2>/dev/null || git checkout -q -b staging) ) >/dev/null 2>&1
+
+# Build a parallel plugin-active dir (separate from $ROOT/plugin which is plugin-stable).
+PLUGIN_STABLE="$ROOT/plugin"
+PLUGIN_ACTIVE="$ROOT/plugin-active"
+mkdir -p "$PLUGIN_ACTIVE/scripts" "$PLUGIN_ACTIVE/hooks" "$PLUGIN_ACTIVE/agents"
+
+cat > "$PLUGIN_STABLE/scripts/foo.sh" <<'F'
+#!/bin/bash
+echo stable
+F
+cat > "$PLUGIN_ACTIVE/scripts/foo.sh" <<'F'
+#!/bin/bash
+# active-project version reads pipeline.config via the shared helper
+source "$(dirname "$0")/_resolve-plugin-root.sh"
+echo active
+F
+# consumer copy is byte-identical to plugin-stable
+cp "$PLUGIN_STABLE/scripts/foo.sh" "$ROOT/proj/.claude/scripts/foo.sh"
+
+# Fake installed_plugins.json mapping $ROOT/proj → plugin-active.
+PROJ_ABS="$(cd "$ROOT/proj" && pwd)"
+cat > "$ROOT/installed_plugins.json" <<JSON
+{
+  "version": 2,
+  "plugins": {
+    "pipeline@claude-pipeline-dev": [
+      {
+        "scope": "local",
+        "projectPath": "$PROJ_ABS",
+        "installPath": "$PLUGIN_ACTIVE",
+        "version": "0.8.0-rc.2"
+      }
+    ]
+  }
+}
+JSON
+
+(
+  cd "$ROOT/proj"
+  PATH="$TMP/bin:$PATH" \
+  CLAUDE_PLUGIN_ROOT="$PLUGIN_STABLE" \
+  PIPELINE_INSTALLED_PLUGINS_FILE="$ROOT/installed_plugins.json" \
+    bash "$DOCTOR"
+) > "$ROOT/out" 2>&1
+out="$(cat "$ROOT/out")"
+
+# Post-fix expectation: the foo.sh row resolves against plugin-active and
+# classifies as B (plugin reads config, local doesn't), NOT A.
+foo_row="$(echo "$out" | grep -E '^[[:space:]]*B[[:space:]]+\.claude/scripts/foo\.sh' || true)"
+if [ -n "$foo_row" ]; then
+  pass_msg "doctor: foo.sh classified B against active-project plugin"
+else
+  fail_msg "doctor: foo.sh not classified B (active-project resolution missing)"
+  echo "$out" | grep -E 'consumer_drift|foo\.sh' | sed 's/^/    /'
+fi
+
+# Post-fix expectation: detail line surfaces the active-project root.
+if echo "$out" | grep -qE 'consumer_drift.*against.*'"$(basename "$PLUGIN_ACTIVE")"; then
+  pass_msg "doctor: consumer_drift detail surfaces active plugin root"
+else
+  fail_msg "doctor: consumer_drift detail missing 'against <active-root>'"
+  echo "$out" | grep -E '^CHECK: consumer_drift' | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Case 10: skills/doctor/SKILL.md documents the six buckets.
 # ---------------------------------------------------------------------------
 echo "Case 10: skill documents bucket taxonomy"

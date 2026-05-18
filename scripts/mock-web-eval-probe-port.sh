@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="$REPO_ROOT/mock-web/.env.mock-web-eval"
+ENV_FILE="${PIPELINE_WORKTREE_PATH:-${PIPELINE_PROJECT_ROOT:-$REPO_ROOT}}/mock-web/.env.mock-web-eval"
 mkdir -p "$(dirname "$ENV_FILE")"
 
 port_in_use() {
@@ -35,8 +35,8 @@ cat > "$ENV_FILE" <<EOF
 HOST_PORT=${CHOSEN}
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
-PIPELINE_PROJECT_ROOT=${REPO_ROOT}
-PIPELINE_WORKTREE_PATH=${REPO_ROOT}
+PIPELINE_PROJECT_ROOT=${PIPELINE_PROJECT_ROOT:-$REPO_ROOT}
+PIPELINE_WORKTREE_PATH=${PIPELINE_WORKTREE_PATH:-${PIPELINE_PROJECT_ROOT:-$REPO_ROOT}}
 EOF
 
 echo "[mock-web-eval] wrote ${ENV_FILE} (HOST_PORT=${CHOSEN})"
