@@ -52,3 +52,9 @@ scripts/scan-preservation-refs.sh
 # buckets; the active-wiring string mentions .claude/settings.json by name so
 # the operator knows which file holds the wiring (issue #193).
 scripts/_advisory-text.sh
+
+# Housekeeping advisory that scans BOTH .claude-plugin/plugin.json AND the
+# consumer's .claude/settings.json for the enforce-base-branch.py PreToolUse
+# wiring — every .claude/settings.json mention here is a path pattern the
+# scanner reads, never a write target (issue #295).
+scripts/check-base-branch-hook-wiring.sh

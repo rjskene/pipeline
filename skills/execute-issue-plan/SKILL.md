@@ -178,11 +178,14 @@ You will receive an issue number as the argument (or from context). You should b
 
    **9b. Open the PR:**
 
+   Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered (see `dev/audits/295-root-cause.md`), the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the defense-in-depth pair — the PreToolUse hook is the first line, this guard is the second, and the eval-time check is the third.
+
    ```bash
+   if [ -z "$PIPELINE_BASE_BRANCH" ]; then echo "FATAL: PIPELINE_BASE_BRANCH unset; refusing to call gh pr create" >&2; exit 1; fi
    gh pr create \
      --repo $PIPELINE_REPO \
      --title "$PR_TITLE" \
-     --base $PIPELINE_BASE_BRANCH \
+     --base "$PIPELINE_BASE_BRANCH" \
      --body "$(cat <<'EOF'
    Closes #<N>
 
@@ -218,7 +221,7 @@ Pass the evaluation comment as context. It will guide you through verifying each
 ## Constraints
 - Implement ONLY what the approved plan says.
 - Never commit to main.
-- All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base $PIPELINE_BASE_BRANCH` to `gh pr create`.
+- All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base "$PIPELINE_BASE_BRANCH"` (quoted) to `gh pr create`.
 - Never use `--no-verify` or `--force`.
 - Never skip build verification (`PIPELINE_TEST_CMD` from the sourced config).
 - Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.

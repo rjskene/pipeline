@@ -86,6 +86,8 @@ The implementation lives in `scripts/auto-merge-gate.sh` (helper exposing `auto_
 - **`main`** — the release branch. release-please tracks `main` and cuts releases from it; see [Release cadence](#release-cadence-this-repo-only) below.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 
+Base-branch enforcement is defense-in-depth across three layers: (i) eval-time `baseRefName == $PIPELINE_BASE_BRANCH` assertion in `auto-merge-gate.sh` with a TOCTOU re-check immediately before `gh pr merge` (load-bearing zero-data-loss gate, #295); (ii) skill-level quoted `--base "$PIPELINE_BASE_BRANCH"` in `execute-issue-plan` Step 9b at PR creation time; (iii) `enforce-base-branch.py` PreToolUse hook covering both `gh pr create` and `gh pr edit --base` retargets. The hook alone is not sufficient — it has bypassed (#295) when the consumer settings.json layout shadowed the plugin-registered matcher, or when a stale rendered spawn-claude.sh emitted an unnamespaced slash command that never loaded plugin hooks at all (see dev/audits/295-root-cause.md).
+
 ### Release cadence (this repo only)
 
 This repo uses a **two-branch model** with [release-please](https://github.com/googleapis/release-please): `staging` is the dev trunk where feature PRs land; `main` is the release branch that release-please tracks.
