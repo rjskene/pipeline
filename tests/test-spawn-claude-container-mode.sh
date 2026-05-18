@@ -124,7 +124,7 @@ if [ -z "$DOCKER_LINE" ]; then
 else
   ok=1
   echo "$DOCKER_LINE" | grep -q "docker compose"               || { fail_msg "DOCKER_PREFIX missing 'docker compose'"; ok=0; }
-  [ "$ok" = "1" ] && (echo "$DOCKER_LINE" | grep -q -- "--env-file .env.web-eval"  || { fail_msg "DOCKER_PREFIX missing --env-file .env.web-eval"; ok=0; })
+  [ "$ok" = "1" ] && (echo "$DOCKER_LINE" | grep -qE -- "--env-file ($PROJ/)?\\.env\\.web-eval"  || { fail_msg "DOCKER_PREFIX missing --env-file [\$PROJ/].env.web-eval"; ok=0; })
   [ "$ok" = "1" ] && (echo "$DOCKER_LINE" | grep -q -- "-f compose.web-eval.yml"   || { fail_msg "DOCKER_PREFIX missing '-f compose.web-eval.yml'"; ok=0; })
   [ "$ok" = "1" ] && (echo "$DOCKER_LINE" | grep -q "run --rm"                     || { fail_msg "DOCKER_PREFIX missing 'run --rm'"; ok=0; })
   [ "$ok" = "1" ] && (echo "$DOCKER_LINE" | grep -q "CLAUDE_PIPELINE_ISSUE_NUMBER=101" || { fail_msg "DOCKER_PREFIX missing -e CLAUDE_PIPELINE_ISSUE_NUMBER=101"; ok=0; })
