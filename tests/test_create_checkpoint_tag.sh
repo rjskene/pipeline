@@ -159,6 +159,83 @@ else
   echo "$OUT4" | sed 's/^/    /'
 fi
 
+# --- Test 5: PIPELINE_PROJECT_ROOT override wins over $(dirname "$0") walk ---
+echo "Test 5: PIPELINE_PROJECT_ROOT override resolves a second project, not the one holding the script"
+
+PROJ2="$WORKDIR/proj2"
+REMOTE_BARE2="$WORKDIR/remote2.git"
+
+git init --bare -q "$REMOTE_BARE2"
+mkdir -p "$PROJ2/scripts"
+cp "$SCRIPT_UNDER_TEST" "$PROJ2/scripts/create-checkpoint-tag.sh"
+chmod +x "$PROJ2/scripts/create-checkpoint-tag.sh"
+
+cat > "$PROJ2/pipeline.config" <<EOF
+PIPELINE_REPO="fake/repo2"
+PIPELINE_BASE_BRANCH="proj2-base"
+PIPELINE_WORKTREE_PREFIX="ct"
+EOF
+
+(
+  cd "$PROJ2"
+  git init -q -b proj2-base
+  git config user.email "test@test"
+  git config user.name "test"
+  echo "hello2" > README
+  git add README
+  git commit -qm "init2"
+  git remote add origin "$REMOTE_BARE2"
+  git push -q origin proj2-base
+)
+
+# Invoke from $PROJ (where cwd points at the FIRST project) but override
+# PIPELINE_PROJECT_ROOT so the resolved repo MUST be proj2. Use the script
+# living inside proj2 to make it obvious that the walk-up from $0 would also
+# land on proj2 — what we are testing here is the override behavior, so pass
+# the script that lives in the OTHER project (proj) to ensure the resolver is
+# choosing based on the env var, not on $(dirname "$0").
+set +e
+OUT5=$(cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ2" bash "$PROJ/scripts/create-checkpoint-tag.sh" --issues "800" --prs "600" --dry-run 2>&1)
+RC5=$?
+set -e
+
+inc
+if [ "$RC5" -eq 0 ]; then
+  pass_msg "PIPELINE_PROJECT_ROOT override exit 0"
+else
+  fail_msg "PIPELINE_PROJECT_ROOT override expected exit 0, got $RC5; output was:"
+  echo "$OUT5" | sed 's/^/    /'
+fi
+
+inc
+if echo "$OUT5" | grep -Eq "DRY RUN: would create tag checkpoint/${DATE}-[0-9]{2}"; then
+  pass_msg "PIPELINE_PROJECT_ROOT dry-run output has expected shape"
+else
+  fail_msg "PIPELINE_PROJECT_ROOT dry-run output missing 'DRY RUN: would create tag checkpoint/${DATE}-NN'; output was:"
+  echo "$OUT5" | sed 's/^/    /'
+fi
+
+inc
+# The resolved project's base branch is 'proj2-base'. The annotation body
+# must reflect that, proving the script switched to proj2's git repo and not
+# proj's 'pipeline' branch.
+if echo "$OUT5" | grep -q "Base branch: proj2-base"; then
+  pass_msg "PIPELINE_PROJECT_ROOT resolved repo is proj2 (annotation lists proj2-base)"
+else
+  fail_msg "PIPELINE_PROJECT_ROOT did not resolve to proj2; output was:"
+  echo "$OUT5" | sed 's/^/    /'
+fi
+
+inc
+# proj2 must have created no tag (dry run); also proj must have no new tag
+# from this invocation. We assert specifically on proj2 since that's the
+# resolved root.
+if ! (cd "$PROJ2" && git tag --list "checkpoint/${DATE}-*" | grep -q .); then
+  pass_msg "PIPELINE_PROJECT_ROOT dry-run did not create a tag in proj2"
+else
+  fail_msg "PIPELINE_PROJECT_ROOT dry-run unexpectedly created a tag in proj2"
+fi
+
 # --- Summary ---
 echo ""
 echo "================================"
