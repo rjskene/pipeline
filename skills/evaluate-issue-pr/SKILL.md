@@ -139,9 +139,26 @@ You are a senior engineer performing a code review of a PR against its approved 
    cat .mcp.json 2>/dev/null
    ```
    If available and the platform supports it (Linux):
-   - Navigate to affected views, take screenshots
+   - Navigate to affected views, take screenshots (saved to `<worktree>/.claude/scratch/*.png`)
    - Check browser console for JS errors
    - Verify the UI matches the plan's description
+
+   **Attach screenshots to the eval comment.** For each PNG captured in
+   `.claude/scratch/` during this step, invoke the attach helper and capture the
+   returned URL — embed each URL in Step 9's `**Screenshots:**` row. The helper
+   commits the PNG to `<worktree>/.eval-screenshots/`, pushes to the PR branch,
+   and returns a SHA-pinned `github.com/<owner>/<repo>/raw/<sha>/.eval-screenshots/<name>.png`
+   URL that survives squash-merge (the screenshot commit collapses into the
+   merge commit on `$PIPELINE_BASE_BRANCH`).
+
+   ```bash
+   SCREENSHOT_URLS=()
+   for png in .claude/scratch/*.png; do
+     [ -f "$png" ] || continue
+     url=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/eval-screenshot-attach.sh" "$PR_NUM" "$(realpath "$png")")
+     [ -n "$url" ] && SCREENSHOT_URLS+=("$url")
+   done
+   ```
 
    If unavailable, note: "Visual validation skipped — Playwright MCP not available."
 
@@ -180,6 +197,9 @@ You are a senior engineer performing a code review of a PR against its approved 
    **Code quality:** <findings or "No issues found">
 
    **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out (checks still in progress)
+
+   **Screenshots:** (one `![](url)` row per entry in `$SCREENSHOT_URLS` from Step 6; emit `None` if the array is empty)
+   - ![screenshot 1](https://github.com/owner/repo/raw/<sha>/.eval-screenshots/<filename>.png)
 
    **Fixes applied:**
    - `<commit hash>` — <description>
@@ -230,6 +250,10 @@ You are a senior engineer performing a code review of a PR against its approved 
            gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}. ${FOOTER}"
          fi
          ```
+       - Screenshots: no cleanup needed — the screenshot commit from Step 6
+         collapses into the squash-merge on `$PIPELINE_BASE_BRANCH`, so the
+         SHA-pinned `raw/<sha>/.eval-screenshots/<name>.png` URLs continue to
+         resolve via base-branch history indefinitely.
 
     4. **On any `block-*` reason:** post a single comment to the PR explaining why auto-merge was skipped, then return Approved-but-not-merged. Do not flip labels. Do not close the issue.
        ```bash

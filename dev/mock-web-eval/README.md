@@ -68,9 +68,21 @@ bash dev/mock-web-eval/replay.sh                 # dry-run, verification
 bash dev/mock-web-eval/replay.sh --full --pr 232 # re-trigger against PR #232
 ```
 
-## Attachment mechanism — STUB / DEFERRED
+## Attachment mechanism — in-branch git commits
 
-> Decision pending: the screenshot-attachment mechanism (inline base64 vs commit-to-`dev/eval-evidence/<PR>/`) is settled by the eval-pr trial that runs AFTER this executor exits. This section will be filled in by a follow-up commit (or a follow-up issue) once the trial produces a binding result. See the parent issue #232 for the two candidate mechanisms.
+Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are committed to `<worktree>/.eval-screenshots/` on the PR branch via `scripts/eval-screenshot-attach.sh`. The helper:
+
+1. Writes the PNG to `<worktree>/.eval-screenshots/<name>.png`.
+2. Runs `git add .eval-screenshots/<name>.png` + `git commit -m "chore(eval): screenshot evidence for PR #<N>"` (idempotent on re-eval — an empty commit is suppressed and the prior SHA is reused).
+3. Runs `git push origin HEAD` to publish the screenshot commit to the PR branch. Fail-soft: a push failure prints a stderr warning and continues; the helper still emits the local-SHA URL and exits 0.
+4. Captures `SHA=$(git rev-parse HEAD)` after the push.
+5. Prints the SHA-pinned URL `https://github.com/<owner>/<repo>/raw/<sha>/.eval-screenshots/<name>.png` on stdout.
+
+The eval skill embeds the URL in the `## Evaluation` comment as `![screenshot](url)`, which renders inline on the PR for any reader with repo access. The `github.com/.../raw/<sha>/...` form (not `raw.githubusercontent.com/...`) is required so private repos render via GitHub's session redirect.
+
+**Why in-branch, not release-assets.** The prior release-asset approach (per-PR tag `eval-evidence-<PR>` with cleanup after the merge gate fired `green`) was fundamentally incompatible with auto-merge: the cleanup ran immediately after the squash-merge, which made the inline `![](url)` markdown 404 the moment the merge landed. Anyone reviewing the merged PR saw a broken-image icon. In-branch commits avoid this because the squash-merge collapses the screenshot commit into the merge commit on `$PIPELINE_BASE_BRANCH` — the PNG blob is now part of base-branch history, so the SHA-pinned URL resolves indefinitely. See #271 for the full rationale.
+
+**Cleanup.** No cleanup needed. The squash-merge collapses the screenshot commit into the base branch; the PNG blob is now permanent base-branch history. PNGs are ~20KB each at a pipeline rate of ~10/month (~2MB/year of git growth), so a retention/GC policy is deferred until it becomes a real problem.
 
 ## Known follow-ups
 
