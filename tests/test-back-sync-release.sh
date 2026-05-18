@@ -233,7 +233,6 @@ if [ -x "$SCRIPT" ]; then
     mkdir -p .claude-plugin
     echo '{"version": "0.7.0"}'           > .claude-plugin/plugin.json
     echo '{"version": "0.7.0"}'           > .claude-plugin/marketplace.json
-    echo '{"version": "0.7.0-rc.0"}'      > .claude-plugin/marketplace-dev.json
     echo '{".":"0.7.0"}'                  > .release-please-manifest.json
     git add .claude-plugin .release-please-manifest.json
     git commit -q -m "chore: staging carries pre-release manifest snapshot"
@@ -245,7 +244,6 @@ if [ -x "$SCRIPT" ]; then
     mkdir -p .claude-plugin
     echo '{"version": "0.7.1"}'           > .claude-plugin/plugin.json
     echo '{"version": "0.7.1"}'           > .claude-plugin/marketplace.json
-    echo '{"version": "0.7.1-rc.1"}'      > .claude-plugin/marketplace-dev.json
     echo '{".":"0.7.1"}'                  > .release-please-manifest.json
     echo "## 0.7.1" >> CHANGELOG.md
     git add .claude-plugin .release-please-manifest.json CHANGELOG.md
@@ -263,7 +261,6 @@ if [ -x "$SCRIPT" ]; then
     git pull -q --ff-only origin staging 2>/dev/null || true
     cat .claude-plugin/plugin.json          > "$TMP/vmanifest.plugin"
     cat .claude-plugin/marketplace.json     > "$TMP/vmanifest.marketplace"
-    cat .claude-plugin/marketplace-dev.json > "$TMP/vmanifest.marketplace-dev"
     cat .release-please-manifest.json       > "$TMP/vmanifest.rp-manifest"
     cat CHANGELOG.md                        > "$TMP/vmanifest.changelog"
     git log -1 staging --format=%s          > "$TMP/vmanifest.subject"
@@ -271,7 +268,6 @@ if [ -x "$SCRIPT" ]; then
   assert "vmanifest: script exits 0" "[ \"\$(cat '$TMP/vmanifest.rc')\" = '0' ]"
   assert "vmanifest: staging's .claude-plugin/plugin.json contains \"0.7.1\"" "grep -q '\"0.7.1\"' '$TMP/vmanifest.plugin'"
   assert "vmanifest: staging's .claude-plugin/marketplace.json contains \"0.7.1\"" "grep -q '\"0.7.1\"' '$TMP/vmanifest.marketplace'"
-  assert "vmanifest: staging's .claude-plugin/marketplace-dev.json contains \"0.7.1-rc.1\"" "grep -q '\"0.7.1-rc.1\"' '$TMP/vmanifest.marketplace-dev'"
   assert "vmanifest: staging's .release-please-manifest.json contains \"0.7.1\"" "grep -q '\"0.7.1\"' '$TMP/vmanifest.rp-manifest'"
   assert "vmanifest: staging's CHANGELOG.md contains '## 0.7.1'" "grep -q '## 0.7.1' '$TMP/vmanifest.changelog'"
   assert "vmanifest: merge commit subject starts with 'chore(back-sync):'" "grep -qE '^chore\\(back-sync\\):' '$TMP/vmanifest.subject'"
