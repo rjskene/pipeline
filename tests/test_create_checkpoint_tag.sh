@@ -132,6 +132,33 @@ else
   echo "$OUT" | sed 's/^/    /'
 fi
 
+# --- Test 4: invocation from working-tree scripts/ resolves the same project root as .claude/scripts/ ---
+echo "Test 4: invocation from working-tree scripts/ resolves the same project root"
+mkdir -p "$PROJ/scripts"
+cp "$SCRIPT_UNDER_TEST" "$PROJ/scripts/create-checkpoint-tag.sh"
+chmod +x "$PROJ/scripts/create-checkpoint-tag.sh"
+
+set +e
+OUT4=$(bash scripts/create-checkpoint-tag.sh --issues "777" --prs "555" --dry-run 2>&1)
+RC4=$?
+set -e
+
+inc
+if [ "$RC4" -eq 0 ]; then
+  pass_msg "scripts/ invocation exit 0"
+else
+  fail_msg "scripts/ invocation expected exit 0, got $RC4; output was:"
+  echo "$OUT4" | sed 's/^/    /'
+fi
+
+inc
+if echo "$OUT4" | grep -Eq "DRY RUN: would create tag checkpoint/${DATE}-[0-9]{2}"; then
+  pass_msg "scripts/ dry-run output has expected shape"
+else
+  fail_msg "scripts/ dry-run output missing 'DRY RUN: would create tag checkpoint/${DATE}-NN'; output was:"
+  echo "$OUT4" | sed 's/^/    /'
+fi
+
 # --- Summary ---
 echo ""
 echo "================================"

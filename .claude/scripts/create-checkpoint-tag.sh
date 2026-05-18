@@ -14,7 +14,20 @@ set -euo pipefail
 # Tag name: checkpoint/YYYY-MM-DD-NN (NN auto-increments within a day).
 # The tag is NEVER pushed to origin — it is a local-only rollback point.
 
-MAIN_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+_find_main_repo() {
+  local dir
+  dir="$(cd "$(dirname "$0")" && pwd)"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/pipeline.config" ]; then
+      printf '%s' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  echo "ERROR: pipeline.config not found walking up from $(dirname "$0") to /" >&2
+  return 1
+}
+MAIN_REPO="$(_find_main_repo)" || exit 1
 CONFIG_FILE="$MAIN_REPO/pipeline.config"
 
 if [ ! -f "$CONFIG_FILE" ]; then
