@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0...v0.8.1) (2026-05-18)
+
+
+### Miscellaneous Chores
+
+* cut v0.8.1 stable patch — hotfix [#295](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/295) enforce-base-branch defense-in-depth ([#301](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/301)) ([e2034d9](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/e2034d947b122e0796962520eeee12eb018e84e8))
+
 ## [0.8.0](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.6...v0.8.0) (2026-05-18)
 
 
