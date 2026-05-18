@@ -236,6 +236,42 @@ else
   fail_msg "PIPELINE_PROJECT_ROOT dry-run unexpectedly created a tag in proj2"
 fi
 
+# --- Test 6: stray pipeline.config without a sibling .git/ is rejected ---
+echo "Test 6: walk rejects a pipeline.config sitting next to no .git/ entry"
+
+# Isolate from $WORKDIR so no ancestor of the stray dir has its own pipeline.config.
+STRAY_PARENT=$(mktemp -d)
+mkdir -p "$STRAY_PARENT/stray/inner"
+cat > "$STRAY_PARENT/stray/pipeline.config" <<EOF
+PIPELINE_REPO="stray/fake"
+PIPELINE_BASE_BRANCH="never-resolved"
+EOF
+cp "$SCRIPT_UNDER_TEST" "$STRAY_PARENT/stray/inner/script.sh"
+chmod +x "$STRAY_PARENT/stray/inner/script.sh"
+
+set +e
+OUT6=$(env -u PIPELINE_PROJECT_ROOT bash "$STRAY_PARENT/stray/inner/script.sh" --issues "1" --prs "2" --dry-run 2>&1)
+RC6=$?
+set -e
+
+rm -rf "$STRAY_PARENT"
+
+inc
+if [ "$RC6" -ne 0 ]; then
+  pass_msg "stray pipeline.config (no sibling .git/) rejected with non-zero exit (rc=$RC6)"
+else
+  fail_msg "stray pipeline.config was accepted (expected non-zero exit); output was:"
+  echo "$OUT6" | sed 's/^/    /'
+fi
+
+inc
+if echo "$OUT6" | grep -q "could not locate consumer repo"; then
+  pass_msg "error message names the missing consumer repo"
+else
+  fail_msg "expected stderr to contain 'could not locate consumer repo'; output was:"
+  echo "$OUT6" | sed 's/^/    /'
+fi
+
 # --- Summary ---
 echo ""
 echo "================================"
