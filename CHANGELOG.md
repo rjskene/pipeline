@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.6...v0.8.0) (2026-05-18)
+
+
+### Miscellaneous Chores
+
+* graduate v0.8.0-rc.6 to v0.8.0 stable ([#298](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/298)) ([f669109](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/f66910918241ee84f08e4bcf139432b96ff0b784))
+
 ## [0.8.0-rc.6](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.5...v0.8.0-rc.6) (2026-05-18)
 
 
