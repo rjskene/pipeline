@@ -58,4 +58,10 @@
     count -= 1;
     counterValue.textContent = String(count);
   });
+
+  // 5. Footer build-timestamp set at page load.
+  const stamp = document.getElementById('build-timestamp');
+  if (stamp) {
+    stamp.textContent = 'Built: ' + new Date().toLocaleString();
+  }
 })();
