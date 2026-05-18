@@ -27,6 +27,9 @@ case "$ALL_ARGS" in
   *"issue view"*"--json labels"*)
     printf '%s\n' ${GH_LABELS:-}
     ;;
+  *"pr view"*"--json baseRefName"*)
+    printf '%s\n' "${GH_BASE_REF:-staging}"
+    ;;
   *"pr view"*"--json comments"*"Evaluation"*)
     printf '%s' "${GH_EVAL_BODY:-}"
     ;;
@@ -43,6 +46,7 @@ chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
 export CALL_LOG="$TMP/calls.log"
 export PIPELINE_REPO="test/repo"
+export PIPELINE_BASE_BRANCH="staging"
 
 # shellcheck disable=SC1090
 source "$HELPER"
