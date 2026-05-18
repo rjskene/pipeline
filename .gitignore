@@ -8,3 +8,4 @@
 hooks/__pycache__/
 
 /dev/audits/
+mock-web/.env.mock-web-eval

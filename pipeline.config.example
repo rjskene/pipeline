@@ -128,3 +128,11 @@ PIPELINE_EVAL_CONTAINERS=""
 # PIPELINE_EVAL_CONTAINER_web_eval_SERVICE="claude-web-eval"
 # PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash scripts/web-eval.sh --preflight"
 # PIPELINE_EVAL_CONTAINER_web_eval_MAX_CONCURRENT="1"
+
+# Example — mock-web-eval container (dogfood demo; see dev/mock-web-eval/README.md):
+# PIPELINE_EVAL_CLASSIFIER="scripts/mock-web-eval-classifier.sh"
+# PIPELINE_EVAL_CONTAINERS="mock-web-eval"
+# PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="compose.mock-web-eval.yml"
+# PIPELINE_EVAL_CONTAINER_mock_web_eval_SERVICE="mock-web-eval"
+# PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web/.env.mock-web-eval"
+# PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="bash scripts/mock-web-eval-probe-port.sh"
