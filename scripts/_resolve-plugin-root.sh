@@ -1,11 +1,20 @@
 #!/bin/bash
 # _resolve-plugin-root.sh — sourceable helper.
 #
-# When CLAUDE_PLUGIN_ROOT is empty/unset (which can happen because Claude Code
-# does not consistently export it into the Bash tool's subshell), scan
-# ~/.claude/plugins/cache/claude-pipeline/pipeline/*/ and export the highest
-# version directory. Stable releases beat prereleases (-rc.N); within each
-# group, `sort -V` picks the top.
+# Default mode: when CLAUDE_PLUGIN_ROOT is empty/unset (which can happen
+# because Claude Code does not consistently export it into the Bash tool's
+# subshell), scan ~/.claude/plugins/cache/claude-pipeline/pipeline/*/ and
+# export the highest-version directory. Stable releases beat prereleases
+# (-rc.N); within each group, `sort -V` picks the top.
+#
+# Active-project mode (PIPELINE_RESOLVE_MODE=active-project): read
+# ~/.claude/plugins/installed_plugins.json (override via
+# PIPELINE_INSTALLED_PLUGINS_FILE) and pick the installPath of the pipeline@*
+# entry whose projectPath matches $PWD. Falls through to the default cache
+# scan when no entry matches, when python3 is unavailable, or when the file
+# is missing/malformed. This mode is opt-in and only used by callers that
+# need the per-project active plugin (notably doctor.sh's consumer_drift
+# check), so the default mode's behavior is byte-stable.
 #
 # Idempotent. Silent on success. No-op when already set or when no cache exists.
 #
@@ -14,6 +23,58 @@
 
 if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   return 0 2>/dev/null || exit 0
+fi
+
+if [ "${PIPELINE_RESOLVE_MODE:-}" = "active-project" ]; then
+  _rpr_plugins_file="${PIPELINE_INSTALLED_PLUGINS_FILE:-${HOME}/.claude/plugins/installed_plugins.json}"
+  if [ -f "$_rpr_plugins_file" ] && command -v python3 >/dev/null 2>&1; then
+    _rpr_active="$(
+      PIPELINE_RPR_PWD="$PWD" \
+      PIPELINE_RPR_FILE="$_rpr_plugins_file" \
+      python3 -c '
+import json, os, sys
+try:
+    with open(os.environ["PIPELINE_RPR_FILE"]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+pwd = os.environ.get("PIPELINE_RPR_PWD", "")
+plugins = data.get("plugins") or {}
+matches = []
+for key, entries in plugins.items():
+    if not key.startswith("pipeline@"):
+        continue
+    if not isinstance(entries, list):
+        continue
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        if e.get("projectPath") == pwd and e.get("installPath"):
+            matches.append((e.get("version", ""), e["installPath"]))
+if not matches:
+    sys.exit(0)
+# Defensive tie-break: highest-version among matches wins.
+def vkey(s):
+    parts = []
+    for tok in s.replace("-", ".").split("."):
+        try:
+            parts.append((0, int(tok)))
+        except ValueError:
+            parts.append((1, tok))
+    return parts
+matches.sort(key=lambda t: vkey(t[0]))
+print(matches[-1][1])
+' 2>/dev/null
+    )"
+    if [ -n "$_rpr_active" ] && [ -d "$_rpr_active" ]; then
+      export CLAUDE_PLUGIN_ROOT="$_rpr_active"
+      unset _rpr_plugins_file _rpr_active
+      return 0 2>/dev/null || exit 0
+    fi
+    unset _rpr_active
+  fi
+  unset _rpr_plugins_file
+  # Fall through to cache scan when active-project lookup yields nothing.
 fi
 
 _rpr_cache="${PIPELINE_PLUGIN_CACHE_DIR:-${HOME}/.claude/plugins/cache/claude-pipeline/pipeline}"
