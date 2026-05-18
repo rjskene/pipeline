@@ -68,9 +68,19 @@ bash dev/mock-web-eval/replay.sh                 # dry-run, verification
 bash dev/mock-web-eval/replay.sh --full --pr 232 # re-trigger against PR #232
 ```
 
-## Attachment mechanism — STUB / DEFERRED
+## Attachment mechanism — release assets
 
-> Decision pending: the screenshot-attachment mechanism (inline base64 vs commit-to-`dev/eval-evidence/<PR>/`) is settled by the eval-pr trial that runs AFTER this executor exits. This section will be filled in by a follow-up commit (or a follow-up issue) once the trial produces a binding result. See the parent issue #232 for the two candidate mechanisms.
+Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are uploaded as GitHub release assets on a per-PR tag `eval-evidence-<PR>` via `scripts/eval-screenshot-attach.sh`. The helper:
+
+1. Creates the release if absent (`gh release create eval-evidence-<PR> --target main`).
+2. Uploads the PNG with `gh release upload --clobber` (idempotent on re-eval).
+3. Prints the canonical download URL `https://github.com/<owner>/<repo>/releases/download/eval-evidence-<PR>/<filename>` on stdout.
+
+The eval skill embeds the URL in the `## Evaluation` comment as `![screenshot](url)`, which renders inline on the PR for any reader with repo access.
+
+**Why release assets, not inline base64 or `dev/eval-evidence/<PR>/` commits.** GitHub strips `data:` URIs from comment HTML, so inline base64 won't render. Committing PNGs to `dev/eval-evidence/<PR>/` would propagate through `.github/workflows/back-sync-release.yml` into staging and into the published marketplace tarball at the next release-please cut. Release assets are tag-based, not commit-based — they are NOT touched by back-sync (which only merges commits) and are NOT in the marketplace tarball (release-please's `extra-files` enumerate the version manifests only).
+
+**Cleanup.** When `/pipeline:evaluate-issue-pr`'s auto-merge gate fires `green`, it invokes `scripts/eval-screenshot-cleanup.sh` after the PR merges, which deletes the release and its tag (`gh release delete --yes --cleanup-tag`). On manual-merge opt-out, the release persists until manually cleaned. The cleanup is fail-soft — missing-release is success, so it never blocks the merge gate.
 
 ## Known follow-ups
 
