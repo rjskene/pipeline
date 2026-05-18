@@ -300,6 +300,14 @@ if [ -n "$CONTAINER_MODE" ]; then
   ENV_FILE="${!env_var:-}"
   SERVICE="${!svc_var:-}"
   PREFLIGHT="${!pre_var:-}"
+  # Resolve a relative ENV_FILE to absolute against REPO_ROOT BEFORE
+  # DOCKER_PREFIX is assembled. The launcher does `cd $WORKTREE_PATH` before
+  # exec, so a relative --env-file value would otherwise resolve under the
+  # worktree (not the project root where the file lives). Absolute paths are
+  # passed through verbatim. (#257)
+  if [ -n "$ENV_FILE" ] && [[ "$ENV_FILE" != /* ]]; then
+    ENV_FILE="$REPO_ROOT/$ENV_FILE"
+  fi
   if [ -z "$COMPOSE_FILE" ]; then
     echo "[spawn-claude] ERROR: COMPOSE_FILE required for mode=$CONTAINER_MODE (set $compose_var)" >&2
     exit 4
@@ -310,7 +318,7 @@ if [ -n "$CONTAINER_MODE" ]; then
   fi
   if [ -n "$PREFLIGHT" ]; then
     echo "PREFLIGHT: running ($PREFLIGHT)" >&2
-    if bash -c "$PREFLIGHT"; then
+    if PIPELINE_PROJECT_ROOT="$REPO_ROOT" PIPELINE_WORKTREE_PATH="$WORKTREE_PATH" bash -c "$PREFLIGHT"; then
       echo "PREFLIGHT: pass" >&2
     else
       rc=$?
@@ -324,8 +332,16 @@ if [ -n "$CONTAINER_MODE" ]; then
     -e "CLAUDE_PIPELINE_ISSUE_NUMBER=$ISSUE_NUM" \
     -e "CLAUDE_PIPELINE_SKILL=$SKILL" \
     -e "PIPELINE_PROJECT_ROOT=$REPO_ROOT" \
-    -e "PIPELINE_WORKTREE_PATH=$WORKTREE_PATH" \
-    "$SERVICE")
+    -e "PIPELINE_WORKTREE_PATH=$WORKTREE_PATH")
+  # Bug 2 (#257): propagate --manual-merge into the containerized evaluator.
+  # The host export at line 43 only affects this script's env, not the
+  # in-container claude process; docker compose run isolates env unless we
+  # pass -e explicitly. Insert BEFORE "$SERVICE" so compose treats it as a
+  # per-run env var, not a positional arg to the service.
+  if [ -n "$MANUAL_MERGE_ARG" ]; then
+    DOCKER_PREFIX+=(-e "MANUAL_MERGE=1")
+  fi
+  DOCKER_PREFIX+=("$SERVICE")
 fi
 
 # Build-claude-argv snippet injected into each mode's launcher. Using bash
