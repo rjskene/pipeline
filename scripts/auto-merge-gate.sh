@@ -17,6 +17,11 @@
 auto_merge_should_fire() {
   local issue="$1" pr="$2"
 
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "[auto-merge-gate] ERROR: jq is required but not on PATH" >&2
+    return 2
+  fi
+
   if [ "${MANUAL_MERGE:-0}" = "1" ]; then
     echo block-flag
     return 1
