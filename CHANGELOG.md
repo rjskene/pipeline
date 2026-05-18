@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0-rc.3](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.2...v0.8.0-rc.3) (2026-05-18)
+
+
+### Miscellaneous Chores
+
+* cut v0.8.0-rc.3 — mock-web-eval smoke-test wave + doctor/wiring fixes ([#262](https://github.com/HTS-COLLAB-ORG/claude-pipeline/issues/262)) ([5542995](https://github.com/HTS-COLLAB-ORG/claude-pipeline/commit/5542995eb8784f55251b0fbc013edc25580f43c3))
+
 ## [0.8.0-rc.2](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0-rc.1...v0.8.0-rc.2) (2026-05-18)
 
 
