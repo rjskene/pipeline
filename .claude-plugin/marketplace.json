@@ -1,8 +1,8 @@
 {
   "name": "claude-pipeline",
   "owner": {
-    "name": "HTS Collab Org",
-    "url": "https://github.com/HTS-COLLAB-ORG"
+    "name": "rjskene",
+    "url": "https://github.com/rjskene"
   },
   "metadata": {
     "description": "Claude Pipeline marketplace — a CI workflow for automating code updates through GitHub issues.",
@@ -14,7 +14,7 @@
       "source": "./",
       "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
       "version": "0.8.1",
-      "homepage": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
+      "homepage": "https://github.com/rjskene/pipeline",
       "license": "MIT",
       "category": "workflow",
       "tags": [
@@ -25,8 +25,8 @@
         "claude-code"
       ],
       "author": {
-        "name": "HTS Collab Org",
-        "url": "https://github.com/HTS-COLLAB-ORG"
+        "name": "rjskene",
+        "url": "https://github.com/rjskene"
       }
     }
   ]

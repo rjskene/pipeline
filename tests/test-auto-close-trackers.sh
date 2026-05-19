@@ -93,7 +93,7 @@ esac
 GH
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
-export PIPELINE_REPO="HTS-COLLAB-ORG/claude-pipeline"
+export PIPELINE_REPO="rjskene/pipeline"
 
 # Synthetic tracker body with `## Rollout sequence` block and three children.
 BODY="$TMP/body.md"

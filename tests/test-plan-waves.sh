@@ -45,7 +45,7 @@ exit 2
 GH
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
-export PIPELINE_REPO="HTS-COLLAB-ORG/claude-pipeline"
+export PIPELINE_REPO="rjskene/pipeline"
 
 # Helper: write a canned issue JSON. Args: dir, number, priority_label, body
 write_issue() {
