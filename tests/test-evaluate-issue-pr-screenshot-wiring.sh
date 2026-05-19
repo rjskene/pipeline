@@ -25,7 +25,7 @@ assert "cleanup call ABSENT from Step 11 green path" \
 # markdown row matching the new SHA-pinned URL shape.
 assert "Step 9 template mentions Screenshot row"        "grep -q 'Screenshot' '$SKILL'"
 assert "Step 9 template includes SHA-pinned raw image row" \
-  "grep -qE '!\\[.*\\]\\(https://github\\.com/.*/raw/.*/\\.eval-screenshots/.*\\.png\\)' '$SKILL'"
+  "grep -qE '!\\[.*\\]\\(https://github\\.com/.*/raw/.*/mock-web-eval/screenshots/.*\\.png\\)' '$SKILL'"
 
 echo ""
 echo "================================"

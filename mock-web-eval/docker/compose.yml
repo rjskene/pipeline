@@ -1,27 +1,27 @@
-# compose.mock-web-eval.yml
+# mock-web-eval/docker/compose.yml
 # Single service for the mock-web-eval container demonstrator (#230).
 # Service NAME must be `mock-web-eval` — matches the --container-mode token
 # validated by scripts/spawn-claude.sh against PIPELINE_EVAL_CONTAINERS.
 #
-# OPERATOR NOTE — run `scripts/mock-web-eval-probe-port.sh` BEFORE invoking
+# OPERATOR NOTE — run `mock-web-eval/scripts/mock-web-eval-probe-port.sh` BEFORE invoking
 # `docker compose up` / `docker compose run`. The probe writes HOST_PORT,
-# HOST_UID, and HOST_GID into mock-web/.env.mock-web-eval. There are no
+# HOST_UID, and HOST_GID into mock-web-eval/target/.env.mock-web-eval. There are no
 # default values in this file; if you skip the probe and don't pass
 # --env-file, compose will error with "HOST_PORT not set" (loud failure
 # by design — better than silently binding port 8080 you didn't ask for).
 # The smoke test (tests/test-mock-web-eval-container.sh) invokes the probe
 # automatically before building.
-# Operators invoking compose directly must export PIPELINE_PROJECT_ROOT=<absolute-project-root> (and optionally PIPELINE_WORKTREE_PATH=<absolute-worktree>); the probe seeds both into mock-web/.env.mock-web-eval.
+# Operators invoking compose directly must export PIPELINE_PROJECT_ROOT=<absolute-project-root> (and optionally PIPELINE_WORKTREE_PATH=<absolute-worktree>); the probe seeds both into mock-web-eval/target/.env.mock-web-eval.
 services:
   mock-web-eval:
     build:
-      context: .
-      dockerfile: Dockerfile.mock-web-eval
+      context: ../..
+      dockerfile: mock-web-eval/docker/Dockerfile
       args:
         HOST_UID: "${HOST_UID}"
         HOST_GID: "${HOST_GID}"
     env_file:
-      - mock-web/.env.mock-web-eval
+      - ../target/.env.mock-web-eval
     ports:
       - "${HOST_PORT}:3000"
     volumes:

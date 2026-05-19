@@ -4,9 +4,10 @@ set -uo pipefail
 # mock-web-eval-classifier.sh (issue #231)
 #
 # Pre-spawn classifier wired via PIPELINE_EVAL_CLASSIFIER in pipeline.config
-# and invoked through scripts/eval-classifier-invoke.sh. Emits
-# `--container-mode=mock-web-eval` on stdout when the PR touches mock-web/**
-# or carries the `web-eval` label; otherwise emits nothing. Non-zero exit on
+# and invoked through mock-web-eval/scripts/eval-classifier-invoke.sh. Emits
+# `--container-mode=mock-web-eval` on stdout when the PR touches
+# mock-web-eval/target/** or carries the `web-eval` label; otherwise emits
+# nothing. Non-zero exit on
 # gh failure with a stderr diagnostic identifying the failing subcommand.
 #
 # Usage: mock-web-eval-classifier.sh <issue-number> [<pr-number>]
@@ -42,8 +43,8 @@ if [ "$LABELS_RC" -ne 0 ]; then
   exit "$LABELS_RC"
 fi
 
-# 4. Match: path regex ^mock-web/.+ (case-sensitive) OR exact label `web-eval`.
-if printf '%s\n' "$DIFF"   | grep -qE '^mock-web/.+'  \
+# 4. Match: path regex ^mock-web-eval/target/.+ (case-sensitive) OR exact label `web-eval`.
+if printf '%s\n' "$DIFF"   | grep -qE '^mock-web-eval/target/.+'  \
 || printf '%s\n' "$LABELS" | grep -qx 'web-eval'; then
   echo "--container-mode=mock-web-eval"
 fi

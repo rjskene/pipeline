@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_QUEUE_SRC="$ROOT/scripts/run-queue.sh"
 SPAWN_SRC="$ROOT/scripts/spawn-claude.sh"
-HELPER_SRC="$ROOT/scripts/eval-classifier-invoke.sh"
+HELPER_SRC="$ROOT/mock-web-eval/scripts/eval-classifier-invoke.sh"
 
 PASS=0
 FAIL=0
@@ -37,7 +37,7 @@ trap 'rm -rf "$WORKDIR"' EXIT
 setup_proj() {
   local proj="$1" classifier_path="$2"
   rm -rf "$proj"
-  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/scripts"
+  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/scripts" "$proj/mock-web-eval/scripts"
   cp "$RUN_QUEUE_SRC" "$proj/.claude/scripts/run-queue.sh"
   # Stub spawn-claude.sh in .claude/scripts: log argv and exit 0.
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<EOF
@@ -46,8 +46,8 @@ printf '%s\n' "\$*" >> "\$SPAWN_LOG"
 exit 0
 EOF
   chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/.claude/scripts/spawn-claude.sh"
-  cp "$HELPER_SRC" "$proj/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/scripts/eval-classifier-invoke.sh"
+  cp "$HELPER_SRC" "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
   if [ -n "$classifier_path" ]; then
     # Write a real classifier script that emits --container-mode=web-eval for
     # issues in CLASSIFIER_WEB_ISSUES (space-separated env).

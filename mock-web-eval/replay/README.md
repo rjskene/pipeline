@@ -9,12 +9,12 @@ Demonstrator that exercises the full web-eval chain end-to-end (classifier match
 **CRITICAL.** `pipeline.config` is gitignored (`.gitignore:7`), so the wiring this demo depends on cannot ship through this PR — it is per-host operator state. Before merging this PR (or any time after, but the demo will not dispatch into a container until this is done) the operator must append the following six lines to the live `pipeline.config` at the repo root:
 
 ```
-PIPELINE_EVAL_CLASSIFIER="scripts/mock-web-eval-classifier.sh"
+PIPELINE_EVAL_CLASSIFIER="mock-web-eval/scripts/mock-web-eval-classifier.sh"
 PIPELINE_EVAL_CONTAINERS="mock-web-eval"
-PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="compose.mock-web-eval.yml"
+PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="mock-web-eval/docker/compose.yml"
 PIPELINE_EVAL_CONTAINER_mock_web_eval_SERVICE="mock-web-eval"
-PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web/.env.mock-web-eval"
-PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="bash scripts/mock-web-eval-probe-port.sh"
+PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web-eval/target/.env.mock-web-eval"
+PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="bash mock-web-eval/scripts/mock-web-eval-probe-port.sh"
 ```
 
 These mirror the commented `mock-web-eval` block in `pipeline.config.example`. Verify after editing:
@@ -33,9 +33,9 @@ Before invoking the demo, the host must satisfy:
 - Claude credentials present: `[ -f ~/.claude/.credentials.json ]`
 - GitHub CLI authenticated: `gh auth status`
 - Plugin installed: `ls ~/.claude/plugins/cache/claude-pipeline/`
-- Free host TCP port in the 8080–8089 range (seeded by `scripts/mock-web-eval-probe-port.sh`)
+- Free host TCP port in the 8080–8089 range (seeded by `mock-web-eval/scripts/mock-web-eval-probe-port.sh`)
 
-`dev/mock-web-eval/replay.sh` runs these checks automatically and prints actionable remediation for any failure.
+`mock-web-eval/replay/replay.sh` runs these checks automatically and prints actionable remediation for any failure.
 
 ## Plugin discoverability inside the container
 
@@ -43,7 +43,7 @@ The container's `working_dir` MUST match a `projectPath` entry in `~/.claude/plu
 
 Both env vars are seeded automatically:
 
-- by `scripts/mock-web-eval-probe-port.sh` (writes `PIPELINE_PROJECT_ROOT` + `PIPELINE_WORKTREE_PATH` into `mock-web/.env.mock-web-eval`), and
+- by `mock-web-eval/scripts/mock-web-eval-probe-port.sh` (writes `PIPELINE_PROJECT_ROOT` + `PIPELINE_WORKTREE_PATH` into `mock-web-eval/target/.env.mock-web-eval`), and
 - by `scripts/spawn-claude.sh` when `--container-mode=mock-web-eval` is passed (forwards both via `-e ...` into `docker compose run`).
 
 If you see `Unknown command: /pipeline:...` inside the container, verify the registration:
@@ -58,25 +58,25 @@ See #241 for the root-cause walkthrough.
 
 ## Reproducing the demo
 
-Use `dev/mock-web-eval/replay.sh`. Two modes:
+Use `mock-web-eval/replay/replay.sh`. Two modes:
 
 - `--dry-run` (default) — runs every pre-flight check and prints `dry-run: would …` markers for each downstream step without invoking compose or the classifier. Safe to run anywhere; used by the smoke test.
 - `--full --pr <N>` — re-runs the classifier + spawn-claude.sh end-to-end against an existing PR. Requires the operator setup above plus a real PR number. Not idempotent — it actually fires the dispatch chain.
 
 ```bash
-bash dev/mock-web-eval/replay.sh                 # dry-run, verification
-bash dev/mock-web-eval/replay.sh --full --pr 232 # re-trigger against PR #232
+bash mock-web-eval/replay/replay.sh             # dry-run, verification
+bash mock-web-eval/replay/replay.sh --full --pr 232 # re-trigger against PR #232
 ```
 
 ## Attachment mechanism — in-branch git commits
 
-Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are committed to `<worktree>/.eval-screenshots/` on the PR branch via `scripts/eval-screenshot-attach.sh`. The helper:
+Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are committed to `<worktree>/mock-web-eval/screenshots/` on the PR branch via `mock-web-eval/scripts/eval-screenshot-attach.sh`. The helper:
 
-1. Writes the PNG to `<worktree>/.eval-screenshots/<name>.png`.
-2. Runs `git add .eval-screenshots/<name>.png` + `git commit -m "chore(eval): screenshot evidence for PR #<N>"` (idempotent on re-eval — an empty commit is suppressed and the prior SHA is reused).
+1. Writes the PNG to `<worktree>/mock-web-eval/screenshots/<name>.png`.
+2. Runs `git add mock-web-eval/screenshots/<name>.png` + `git commit -m "chore(eval): screenshot evidence for PR #<N>"` (idempotent on re-eval — an empty commit is suppressed and the prior SHA is reused).
 3. Runs `git push origin HEAD` to publish the screenshot commit to the PR branch. Fail-soft: a push failure prints a stderr warning and continues; the helper still emits the local-SHA URL and exits 0.
 4. Captures `SHA=$(git rev-parse HEAD)` after the push.
-5. Prints the SHA-pinned URL `https://github.com/<owner>/<repo>/raw/<sha>/.eval-screenshots/<name>.png` on stdout.
+5. Prints the SHA-pinned URL `https://github.com/<owner>/<repo>/raw/<sha>/mock-web-eval/screenshots/<name>.png` on stdout.
 
 The eval skill embeds the URL in the `## Evaluation` comment as `![screenshot](url)`, which renders inline on the PR for any reader with repo access. The `github.com/.../raw/<sha>/...` form (not `raw.githubusercontent.com/...`) is required so private repos render via GitHub's session redirect.
 

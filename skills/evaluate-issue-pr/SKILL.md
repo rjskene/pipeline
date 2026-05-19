@@ -146,8 +146,8 @@ You are a senior engineer performing a code review of a PR against its approved 
    **Attach screenshots to the eval comment.** For each PNG captured in
    `.claude/scratch/` during this step, invoke the attach helper and capture the
    returned URL — embed each URL in Step 9's `**Screenshots:**` row. The helper
-   commits the PNG to `<worktree>/.eval-screenshots/`, pushes to the PR branch,
-   and returns a SHA-pinned `github.com/<owner>/<repo>/raw/<sha>/.eval-screenshots/<name>.png`
+   commits the PNG to `<worktree>/mock-web-eval/screenshots/`, pushes to the PR branch,
+   and returns a SHA-pinned `github.com/<owner>/<repo>/raw/<sha>/mock-web-eval/screenshots/<name>.png`
    URL that survives squash-merge (the screenshot commit collapses into the
    merge commit on `$PIPELINE_BASE_BRANCH`).
 
@@ -155,7 +155,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    SCREENSHOT_URLS=()
    for png in .claude/scratch/*.png; do
      [ -f "$png" ] || continue
-     url=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/eval-screenshot-attach.sh" "$PR_NUM" "$(realpath "$png")")
+     url=$(bash "${CLAUDE_PLUGIN_ROOT}/mock-web-eval/scripts/eval-screenshot-attach.sh" "$PR_NUM" "$(realpath "$png")")
      [ -n "$url" ] && SCREENSHOT_URLS+=("$url")
    done
    ```
@@ -199,7 +199,7 @@ You are a senior engineer performing a code review of a PR against its approved 
    **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out (checks still in progress)
 
    **Screenshots:** (one `![](url)` row per entry in `$SCREENSHOT_URLS` from Step 6; emit `None` if the array is empty)
-   - ![screenshot 1](https://github.com/owner/repo/raw/<sha>/.eval-screenshots/<filename>.png)
+   - ![screenshot 1](https://github.com/owner/repo/raw/<sha>/mock-web-eval/screenshots/<filename>.png)
 
    **Fixes applied:**
    - `<commit hash>` — <description>
@@ -263,7 +263,7 @@ You are a senior engineer performing a code review of a PR against its approved 
          ```
        - Screenshots: no cleanup needed — the screenshot commit from Step 6
          collapses into the squash-merge on `$PIPELINE_BASE_BRANCH`, so the
-         SHA-pinned `raw/<sha>/.eval-screenshots/<name>.png` URLs continue to
+         SHA-pinned `raw/<sha>/mock-web-eval/screenshots/<name>.png` URLs continue to
          resolve via base-branch history indefinitely.
 
     4. **On any `block-*` reason:** post a single comment to the PR explaining why auto-merge was skipped, then return Approved-but-not-merged. Do not flip labels. Do not close the issue.

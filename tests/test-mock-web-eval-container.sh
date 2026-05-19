@@ -3,9 +3,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-COMPOSE="$REPO_ROOT/compose.mock-web-eval.yml"
-ENV_FILE="$REPO_ROOT/mock-web/.env.mock-web-eval"
-PROBE="$REPO_ROOT/scripts/mock-web-eval-probe-port.sh"
+COMPOSE="$REPO_ROOT/mock-web-eval/docker/compose.yml"
+ENV_FILE="$REPO_ROOT/mock-web-eval/target/.env.mock-web-eval"
+PROBE="$REPO_ROOT/mock-web-eval/scripts/mock-web-eval-probe-port.sh"
 
 PASS=0; FAIL=0; SKIP=0
 pass_msg(){ echo "  PASS: $1"; PASS=$((PASS+1)); }

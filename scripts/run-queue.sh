@@ -122,7 +122,7 @@ fi
 # --- Pre-spawn classifier (issue #218) ---
 #
 # classify_issue <issue> resolves the issue's current PR number (or empty
-# if no PR has opened yet) and invokes scripts/eval-classifier-invoke.sh.
+# if no PR has opened yet) and invokes mock-web-eval/scripts/eval-classifier-invoke.sh.
 # It echoes a single tab-separated line on stdout:
 #   <mode>\t<extra-tokens>\t<rc>\t<stderr-first-line>
 # where <mode> is `bare` when no --container-mode token was emitted, or
@@ -154,7 +154,7 @@ classify_issue() {
   # pass it inline so the child bash sees it. Use `&& rc=0 || rc=$?` to
   # capture a non-zero exit instead of letting `set -e` kill the function.
   PIPELINE_EVAL_CLASSIFIER="${PIPELINE_EVAL_CLASSIFIER:-}" \
-    bash "${REPO_ROOT}/scripts/eval-classifier-invoke.sh" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
+    bash "${REPO_ROOT}/mock-web-eval/scripts/eval-classifier-invoke.sh" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
       && rc=0 || rc=$?
   out=$(cat "$tmp_out"); err=$(head -1 "$tmp_err")
   rm -f "$tmp_out" "$tmp_err"
