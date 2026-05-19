@@ -243,61 +243,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      echo "[run] WARN: auto-close-trackers.sh exited non-zero (continuing)"
    ```
 
-1. **Check for agent session logs** — if any logs exist in `.claude/logs/`, run the summary:
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh
-   ```
-   If there are logs, show the summary table and ask: **"Review any session logs before continuing? (issue number / all / skip)"**
-   - If the user gives an issue number, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh <N>` and display the output.
-   - If "all", run the detail view for each issue with errors > 0.
-   - If "skip", proceed to the next step.
-
-1b. **Check audit data.** If `.claude/logs/runs.log` exists and has at least one row, ask:
-
-   **"Review audits before continuing? (last / path / deviations / issue / skip)"**
-
-   - `last N`   — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --last N` (prompt for N, default 5).
-   - `path X`   — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --path X` (prompt for A/B/C).
-   - `deviations` — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --deviations`.
-   - `issue N`  — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --issue N` (prompt for N).
-   - `skip`     — proceed to step 2.
-
-   Display the script output and continue to step 2.
-
-   **During full send:** auto-skip audit review (same behavior as log review in step 1).
-
-1c. **Dispatch audit subagent if prior transcript unaudited.** This runs inside housekeeping (alongside auto-close-trackers and the classify-issue cache check), at a moment the user is already waiting on `/pipeline:run` before any other action. Adding ~30-60s of synchronous subagent work to that window is acceptable. The dispatch is **synchronous in wall-clock** but **zero-cost in orchestrator context** — `Agent(subagent_type='general-purpose', ...)` runs the audit prompt + transcript in an isolated context window; only the one-line summary returns to the orchestrator.
-
-   Run the dispatch-gate helper to decide whether the prior orchestrator session needs the Interaction-lens classifier:
-
-   ```bash
-   GATE=$(bash "${CLAUDE_PLUGIN_ROOT:-.}/dev/self-audit/should-dispatch-audit.sh" 2>/dev/null || echo "skip:helper-error")
-   case "$GATE" in
-     dispatch:*)
-       TRANSCRIPT_PATH=$(echo "$GATE" | cut -d: -f2)
-       SESSION_UUID=$(echo "$GATE" | cut -d: -f3-)
-       DIGEST_PATH=$(ls -t dev/audits/inner-*.md 2>/dev/null | head -1)
-       REDACT_SH="$(pwd)/dev/self-audit/redact.sh"
-       PROMPT_FILE="$(pwd)/dev/self-audit/dispatch-audit-subagent.md"
-       # Proceed to Agent dispatch below.
-       ;;
-     skip:*) echo "[run] audit-dispatch: $GATE" ;;
-   esac
-   ```
-
-   On a `dispatch:*` hit, dispatch the audit subagent **synchronously**, loading the prompt verbatim from `dev/self-audit/dispatch-audit-subagent.md` and substituting `TRANSCRIPT_PATH`, `DIGEST_PATH`, `SESSION_UUID`, and `REDACT_SH`:
-
-   ```
-   Agent(subagent_type='general-purpose',
-         description='audit Interaction lens for session <SESSION_UUID>',
-         prompt: '<contents of dev/self-audit/dispatch-audit-subagent.md, with the four vars substituted>')
-   ```
-
-   **Wait for completion before proceeding to step 2.** The Agent dispatch returns when the subagent finishes (success: one-line `audit: appended N events to <digest-basename>` summary; failure: visible error). The orchestrator's own context window receives only that summary, not the transcript or per-event detail. Idempotency: once the subagent replaces the placeholder line, the next `/pipeline:run` invocation finds no placeholder matching this session UUID — re-dispatching against the same transcript is harmless (the subagent's `Edit` call no-ops because `old_string` won't match).
-
-   **During full send:** auto-skip — full send pipelines are bots-only sessions; their transcripts contain no human correction events worth classifying.
-
-2. **Discover pipeline issues** — fetch all open AND recently closed issues, and classify by label:
+1. **Discover pipeline issues** — fetch all open AND recently closed issues, and classify by label:
    ```bash
    gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --limit 100
    gh issue list --repo $PIPELINE_REPO --state closed --json number,title,labels --limit 20
