@@ -78,6 +78,7 @@ run_dryrun() {
   PATH="$STUB_DIR:$PATH" \
     STUB_LABELS="" \
     PIPELINE_SPAWN_DRY_RUN=1 \
+    PIPELINE_LOGS_ENABLED=true \
     PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
     bash .claude/scripts/spawn-claude.sh \
       --skill "$skill" "$@" "$PROJ/worktree" "$issue" slug tmux \
@@ -142,6 +143,7 @@ PREFLIGHT_OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash -c 'exit 0'" \
   bash .claude/scripts/spawn-claude.sh \
@@ -163,6 +165,7 @@ PREFLIGHT_FAIL_OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash -c 'exit 7'" \
   bash .claude/scripts/spawn-claude.sh \
@@ -187,6 +190,7 @@ UNDECLARED_OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=ghost-mode \
@@ -210,6 +214,7 @@ PASSTHRU_OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
@@ -237,6 +242,7 @@ GATE_OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill execute-issue-plan --container-mode=web-eval \
@@ -264,6 +270,7 @@ PR_OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \

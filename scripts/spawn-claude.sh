@@ -5,6 +5,18 @@ set -euo pipefail
 # export PIPELINE_PROJECT_ROOT to override the lookup directory.
 source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
+# Observability logging helper: defines pipeline_logging_enabled() which
+# returns rc=0 only when PIPELINE_LOGS_ENABLED=true (strict lowercase).
+# Used to gate dogfood-only writes under .claude/logs/. Fall back to an
+# inline definition when the helper is missing (e.g. partial install or
+# tests copying spawn-claude.sh in isolation) so we never hard-fail.
+_spawn_claude_dir="$(dirname "${BASH_SOURCE[0]}")"
+if [ -f "${_spawn_claude_dir}/_logging.sh" ]; then
+  source "${_spawn_claude_dir}/_logging.sh"
+else
+  pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
+fi
+
 # Launch a claude CLI session for a worktree.
 # Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue-number> [slug] [mode]
 #   mode: "terminal" (default) — new Terminal.app window with /pipeline:execute-issue-plan
@@ -53,9 +65,11 @@ TMUX_WINDOW="issue-${ISSUE_NUM}"
 # Set up logging
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
-mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="${LOG_DIR}/issue-${ISSUE_NUM}-${TIMESTAMP}.log"
+if pipeline_logging_enabled; then
+  mkdir -p "$LOG_DIR"
+fi
 
 if [ ! -d "$WORKTREE_PATH" ]; then
   echo "ERROR: Worktree not found at $WORKTREE_PATH"
@@ -136,9 +150,12 @@ fi
 
 RUNS_LOG="${PIPELINE_RUNS_LOG_OVERRIDE:-${LOG_DIR}/runs.log}"
 RUNS_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '%s\tsession=%s\tissue=%s\tpath=%s\tskill=%s\tworktree=%s\n' \
-  "$RUNS_TS" "$GENERATED_SESSION_ID" "$ISSUE_NUM" "$PATH_LETTER" "$SKILL" "$WORKTREE_PATH" \
-  >> "$RUNS_LOG"
+if pipeline_logging_enabled; then
+  mkdir -p "$(dirname "$RUNS_LOG")"
+  printf '%s\tsession=%s\tissue=%s\tpath=%s\tskill=%s\tworktree=%s\n' \
+    "$RUNS_TS" "$GENERATED_SESSION_ID" "$ISSUE_NUM" "$PATH_LETTER" "$SKILL" "$WORKTREE_PATH" \
+    >> "$RUNS_LOG"
+fi
 
 # Deferred temp-file cleanup.
 #

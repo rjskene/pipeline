@@ -91,6 +91,7 @@ OUT_A=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="$PRE_SNIPPET" \
   bash .claude/scripts/spawn-claude.sh \
@@ -147,6 +148,7 @@ OUT_B=$(cd "$PROJ_B" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=mock-web-eval \
