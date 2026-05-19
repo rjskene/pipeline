@@ -266,11 +266,11 @@ fi
 # lacks --container-mode parsing would otherwise pre-empt the operator's
 # container-path re-dispatch. Fail-open when the classifier is unset, the
 # skill is not evaluate-issue-pr, the flag is already set, or the
-# eval-classifier-invoke.sh shim is missing / exits non-zero.
+# mock-web-eval/scripts/eval-classifier-invoke.sh shim is missing / exits non-zero.
 if [ -z "$CONTAINER_MODE" ] \
    && [ "$SKILL" = "evaluate-issue-pr" ] \
    && [ -n "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
-  _classifier_invoke="${REPO_ROOT}/scripts/eval-classifier-invoke.sh"
+  _classifier_invoke="${REPO_ROOT}/mock-web-eval/scripts/eval-classifier-invoke.sh"
   if [ -f "$_classifier_invoke" ]; then
     set +e
     _classifier_out="$(PIPELINE_EVAL_CLASSIFIER="$PIPELINE_EVAL_CLASSIFIER" PIPELINE_REPO="${PIPELINE_REPO:-}" bash "$_classifier_invoke" "$ISSUE_NUM" 2>/dev/null)"
@@ -281,7 +281,7 @@ if [ -z "$CONTAINER_MODE" ] \
       _wanted_mode="$(printf '%s\n' "$_classifier_out" | grep '^--container-mode=' | head -1)"
       echo "[spawn-claude] ERROR: classifier wants container dispatch but --container-mode not passed" >&2
       echo "  classifier emitted: ${_wanted_mode}" >&2
-      echo "  Re-run by piping the classifier output (bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh ${ISSUE_NUM}) into the spawn-claude.sh invocation as a leading argument before --skill evaluate-issue-pr" >&2
+      echo "  Re-run by piping the classifier output (bash \${CLAUDE_PLUGIN_ROOT:-.}/mock-web-eval/scripts/eval-classifier-invoke.sh ${ISSUE_NUM}) into the spawn-claude.sh invocation as a leading argument before --skill evaluate-issue-pr" >&2
       exit 5
     fi
   fi
@@ -301,7 +301,7 @@ if [ -n "$CONTAINER_MODE" ]; then
   SERVICE="${!svc_var:-}"
   PREFLIGHT="${!pre_var:-}"
   # Resolve a relative ENV_FILE to absolute against WORKTREE_PATH BEFORE
-  # DOCKER_PREFIX is assembled. The probe (mock-web-eval-probe-port.sh)
+  # DOCKER_PREFIX is assembled. The probe (mock-web-eval/scripts/mock-web-eval-probe-port.sh)
   # writes the env file under PIPELINE_WORKTREE_PATH so concurrent worktrees
   # don't race on a shared file; the reader here must agree. Absolute paths
   # are passed through verbatim. (#269; supersedes the REPO_ROOT base from #257.)

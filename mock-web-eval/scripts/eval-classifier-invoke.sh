@@ -16,8 +16,8 @@ set -euo pipefail
 #   $PIPELINE_EVAL_CLASSIFIER set but file
 #     missing on disk at REPO_ROOT/<path>     -> exit 3, stderr "classifier-not-found: <abs>"
 #
-# REPO_ROOT is resolved as `realpath ../../scripts/eval-classifier-invoke.sh`'s
-# grandparent — i.e. the project root, which is where pipeline.config sits and
+# REPO_ROOT is resolved as `realpath ../../../mock-web-eval/scripts/eval-classifier-invoke.sh`'s
+# three-levels-up dir — i.e. the project root, which is where pipeline.config sits and
 # where consumer-configured PIPELINE_EVAL_CLASSIFIER paths are anchored.
 
 ISSUE="${1:-}"
@@ -30,7 +30,7 @@ if [ -z "$PIPELINE_EVAL_CLASSIFIER" ]; then
   exit 0
 fi
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_PATH="${REPO_ROOT}/${PIPELINE_EVAL_CLASSIFIER}"
 
 if [ ! -f "$SCRIPT_PATH" ]; then

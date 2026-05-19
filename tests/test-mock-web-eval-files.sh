@@ -8,14 +8,14 @@ fail_msg(){ echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 assert(){ if eval "$2"; then pass_msg "$1"; else fail_msg "$1"; fi; }
 
 # Group 1 — file existence
-assert "mock-web/index.html exists"     "[ -f '$REPO_ROOT/mock-web/index.html' ]"
-assert "mock-web/app.js exists"         "[ -f '$REPO_ROOT/mock-web/app.js' ]"
-assert "mock-web/style.css exists"      "[ -f '$REPO_ROOT/mock-web/style.css' ]"
-assert "Dockerfile.mock-web-eval exists" "[ -f '$REPO_ROOT/Dockerfile.mock-web-eval' ]"
-assert "compose.mock-web-eval.yml exists" "[ -f '$REPO_ROOT/compose.mock-web-eval.yml' ]"
+assert "mock-web-eval/target/index.html exists"     "[ -f '$REPO_ROOT/mock-web-eval/target/index.html' ]"
+assert "mock-web-eval/target/app.js exists"         "[ -f '$REPO_ROOT/mock-web-eval/target/app.js' ]"
+assert "mock-web-eval/target/style.css exists"      "[ -f '$REPO_ROOT/mock-web-eval/target/style.css' ]"
+assert "mock-web-eval/docker/Dockerfile exists" "[ -f '$REPO_ROOT/mock-web-eval/docker/Dockerfile' ]"
+assert "mock-web-eval/docker/compose.yml exists" "[ -f '$REPO_ROOT/mock-web-eval/docker/compose.yml' ]"
 
 # Group 2 — index.html declares the three interaction regions
-IDX="$REPO_ROOT/mock-web/index.html"
+IDX="$REPO_ROOT/mock-web-eval/target/index.html"
 assert "index has toggle button"        "grep -q 'id=\"toggle-btn\"' '$IDX'"
 assert "index has toggle panel"         "grep -q 'id=\"toggle-panel\"' '$IDX'"
 assert "index has toggle indicator"     "grep -q 'id=\"toggle-indicator\"' '$IDX'"
@@ -28,7 +28,7 @@ assert "index loads app.js"             "grep -q 'src=\"app.js\"' '$IDX'"
 assert "index loads style.css"          "grep -q 'href=\"style.css\"' '$IDX'"
 
 # Group 3 — app.js wires the three interactions
-APP="$REPO_ROOT/mock-web/app.js"
+APP="$REPO_ROOT/mock-web-eval/target/app.js"
 assert "app.js binds toggle-btn click"   "grep -qE 'toggle-btn.*addEventListener|getElementById..toggle-btn..\..*addEventListener' '$APP'"
 assert "app.js flips toggle-panel hidden" "grep -q 'toggle-panel' '$APP' && grep -q 'hidden' '$APP'"
 assert "app.js flips indicator class"     "grep -q 'toggle-indicator' '$APP' && grep -qE 'classList\.(toggle|add|remove)' '$APP'"
@@ -40,7 +40,7 @@ assert "app.js supports list item remove" "grep -qE 'removeChild|\.remove\(' '$A
 assert "app.js <= 100 lines"              "[ \"\$(wc -l < '$APP')\" -le 100 ]"
 
 # Group 4 — style.css indicator states
-CSS="$REPO_ROOT/mock-web/style.css"
+CSS="$REPO_ROOT/mock-web-eval/target/style.css"
 assert "style.css defines .indicator.off"  "grep -qE '\.indicator\.off' '$CSS'"
 assert "style.css defines .indicator.on"   "grep -qE '\.indicator\.on' '$CSS'"
 assert "style.css off has background"      "grep -A2 '\.indicator\.off' '$CSS' | grep -qE 'background(-color)?'"
@@ -58,10 +58,10 @@ assert "style.css #item-add:hover has darker green" "awk '/#item-add:hover[[:spa
 
 # Group 5 — gitignore excludes host UID/GID env file
 GI="$REPO_ROOT/.gitignore"
-assert ".gitignore excludes mock-web/.env.mock-web-eval" "grep -qE '^/?mock-web/\.env\.mock-web-eval\$' '$GI'"
+assert ".gitignore excludes mock-web-eval/target/.env.mock-web-eval" "grep -qE '^/?mock-web-eval/target/\.env\.mock-web-eval\$' '$GI'"
 
-# Group 6 — Dockerfile.mock-web-eval structure (deterministic pins)
-DF="$REPO_ROOT/Dockerfile.mock-web-eval"
+# Group 6 — mock-web-eval/docker/Dockerfile structure (deterministic pins)
+DF="$REPO_ROOT/mock-web-eval/docker/Dockerfile"
 assert "Dockerfile uses Node LTS base"          "grep -qE '^FROM node:[0-9]+(\.[0-9]+)*(-[a-z]+)?\$|^FROM node:lts' '$DF'"
 assert "Dockerfile pins @anthropic-ai/claude-code@2.1.143" "grep -qF '@anthropic-ai/claude-code@2.1.143' '$DF'"
 assert "Dockerfile pins @playwright/mcp@0.0.75"           "grep -qF '@playwright/mcp@0.0.75' '$DF'"
@@ -73,13 +73,13 @@ assert "Dockerfile declares GID build arg"      "grep -qE '^ARG HOST_GID' '$DF'"
 assert "Dockerfile creates non-root user"       "grep -qE 'useradd|adduser' '$DF' && grep -qE 'USER ' '$DF'"
 assert "Dockerfile WORKDIR is /workspace"       "grep -qE '^WORKDIR /workspace' '$DF'"
 
-# Group 7 — compose.mock-web-eval.yml structure
-CF="$REPO_ROOT/compose.mock-web-eval.yml"
+# Group 7 — mock-web-eval/docker/compose.yml structure
+CF="$REPO_ROOT/mock-web-eval/docker/compose.yml"
 assert "compose defines service mock-web-eval"  "grep -qE '^[[:space:]]+mock-web-eval:' '$CF'"
 SERVICE_COUNT=$(grep -cE '^[[:space:]]{2}[a-z][a-z0-9-]*:' "$CF" 2>/dev/null || echo 0)
 assert "compose has exactly one service"        "[ \"$SERVICE_COUNT\" -eq 1 ]"
-assert "compose uses Dockerfile.mock-web-eval"  "grep -q 'Dockerfile.mock-web-eval' '$CF'"
-assert "compose sources .env.mock-web-eval"     "grep -q 'mock-web/.env.mock-web-eval' '$CF'"
+assert "compose uses mock-web-eval/docker/Dockerfile"  "grep -q 'mock-web-eval/docker/Dockerfile' '$CF'"
+assert "compose sources .env.mock-web-eval"     "grep -q 'mock-web-eval/target/.env.mock-web-eval' '$CF'"
 assert "compose binds .claude credentials RO"   "grep -qE '\.claude/\.credentials\.json.*:ro' '$CF'"
 assert "compose binds .claude settings RO"      "grep -qE '\.claude/settings\.json.*:ro' '$CF'"
 assert "compose binds .claude plugins RO"       "grep -qE '\.claude/plugins.*:ro' '$CF'"
@@ -93,12 +93,12 @@ assert "compose uses HOST_UID build-arg"        "grep -qE 'HOST_UID' '$CF'"
 assert "compose uses HOST_GID build-arg"        "grep -qE 'HOST_GID' '$CF'"
 
 # Group 8 — port probe helper
-PROBE="$REPO_ROOT/scripts/mock-web-eval-probe-port.sh"
+PROBE="$REPO_ROOT/mock-web-eval/scripts/mock-web-eval-probe-port.sh"
 assert "probe script exists"          "[ -f '$PROBE' ]"
 assert "probe script is executable"   "[ -x '$PROBE' ]"
 assert "probe scans 8080..8089"       "grep -qE '8080.*8089|seq 8080 8089|\\{8080\\.\\.8089\\}' '$PROBE'"
 assert "probe writes HOST_PORT="      "grep -qE 'HOST_PORT=' '$PROBE'"
-assert "probe writes to env file"     "grep -q 'mock-web/.env.mock-web-eval' '$PROBE'"
+assert "probe writes to env file"     "grep -q 'mock-web-eval/target/.env.mock-web-eval' '$PROBE'"
 assert "probe writes HOST_UID/GID seed" "grep -qE 'HOST_UID=' '$PROBE' && grep -qE 'HOST_GID=' '$PROBE'"
 assert "probe writes PIPELINE_PROJECT_ROOT="  "grep -qE 'PIPELINE_PROJECT_ROOT=' '$PROBE'"
 

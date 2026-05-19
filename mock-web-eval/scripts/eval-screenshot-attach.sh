@@ -1,10 +1,10 @@
 #!/bin/bash
-# Commits a screenshot PNG to .eval-screenshots/ in the current worktree,
-# pushes the commit to origin (the PR branch), and prints a SHA-pinned
-# GitHub raw URL on stdout. The URL survives squash-merge because the PNG
-# blob collapses into the merge commit on the base branch.
+# Commits a screenshot PNG to mock-web-eval/screenshots/ in the current
+# worktree, pushes the commit to origin (the PR branch), and prints a
+# SHA-pinned GitHub raw URL on stdout. The URL survives squash-merge because
+# the PNG blob collapses into the merge commit on the base branch.
 #
-# Usage: scripts/eval-screenshot-attach.sh <pr-number> <abs-png-path>
+# Usage: mock-web-eval/scripts/eval-screenshot-attach.sh <pr-number> <abs-png-path>
 #
 # Fail-soft on `git push`: if push fails (network blip, missing creds),
 # the helper prints a warning to stderr, still emits the local-SHA URL,
@@ -24,10 +24,10 @@ fi
 
 FILENAME="$(basename "$PNG")"
 
-mkdir -p .eval-screenshots
-cp -- "$PNG" ".eval-screenshots/${FILENAME}"
+mkdir -p mock-web-eval/screenshots
+cp -- "$PNG" "mock-web-eval/screenshots/${FILENAME}"
 
-git add -- ".eval-screenshots/${FILENAME}"
+git add -- "mock-web-eval/screenshots/${FILENAME}"
 
 # Idempotent re-eval: if the file is unchanged, `git commit` fails with
 # "nothing to commit" — that's fine, we'll reuse the existing HEAD SHA.
@@ -38,4 +38,4 @@ if ! git push origin HEAD >/dev/null 2>&1; then
 fi
 
 SHA="$(git rev-parse HEAD)"
-echo "https://github.com/${PIPELINE_REPO}/raw/${SHA}/.eval-screenshots/${FILENAME}"
+echo "https://github.com/${PIPELINE_REPO}/raw/${SHA}/mock-web-eval/screenshots/${FILENAME}"

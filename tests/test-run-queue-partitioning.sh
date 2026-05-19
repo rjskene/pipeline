@@ -34,15 +34,12 @@ trap 'rm -rf "$WORKDIR"' EXIT
 setup_proj() {
   local proj="$1"
   rm -rf "$proj"
-  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs"
+  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/mock-web-eval/scripts"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   chmod +x "$proj/.claude/scripts/run-queue.sh"
-  # Real helper from scripts/ (already in repo)
-  cp "$SCRIPT_DIR/../scripts/eval-classifier-invoke.sh" "$proj/scripts/eval-classifier-invoke.sh" 2>/dev/null || {
-    mkdir -p "$proj/scripts"
-    cp "$SCRIPT_DIR/../scripts/eval-classifier-invoke.sh" "$proj/scripts/eval-classifier-invoke.sh"
-  }
-  chmod +x "$proj/scripts/eval-classifier-invoke.sh"
+  # Real helper from mock-web-eval/scripts/ (already in repo)
+  cp "$SCRIPT_DIR/../mock-web-eval/scripts/eval-classifier-invoke.sh" "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
   # Stub spawn-claude.sh: logs argv and exits 0
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<'EOF'
 #!/bin/bash

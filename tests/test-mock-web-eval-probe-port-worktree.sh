@@ -8,7 +8,7 @@ set -uo pipefail
 # REPO_ROOT.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/mock-web-eval-probe-port.sh"
+SCRIPT_UNDER_TEST="$SCRIPT_DIR/../mock-web-eval/scripts/mock-web-eval-probe-port.sh"
 
 PASS=0
 FAIL=0
@@ -27,9 +27,9 @@ WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
 PROJ="$WORKDIR/proj"
-mkdir -p "$PROJ/.git" "$PROJ/scripts"
-cp "$SCRIPT_UNDER_TEST" "$PROJ/scripts/mock-web-eval-probe-port.sh"
-chmod +x "$PROJ/scripts/mock-web-eval-probe-port.sh"
+mkdir -p "$PROJ/.git" "$PROJ/scripts" "$PROJ/mock-web-eval/scripts"
+cp "$SCRIPT_UNDER_TEST" "$PROJ/mock-web-eval/scripts/mock-web-eval-probe-port.sh"
+chmod +x "$PROJ/mock-web-eval/scripts/mock-web-eval-probe-port.sh"
 
 WT="$PROJ/.claude/worktrees/wt-test"
 mkdir -p "$WT"
@@ -38,17 +38,17 @@ mkdir -p "$WT"
 echo "Case A: PIPELINE_WORKTREE_PATH + PIPELINE_PROJECT_ROOT both set"
 inc
 # Clean any prior copies that may pre-exist from earlier failed runs.
-rm -f "$WT/mock-web/.env.mock-web-eval" "$PROJ/mock-web/.env.mock-web-eval"
+rm -f "$WT/mock-web-eval/target/.env.mock-web-eval" "$PROJ/mock-web-eval/target/.env.mock-web-eval"
 PIPELINE_PROJECT_ROOT="$PROJ" PIPELINE_WORKTREE_PATH="$WT" \
-  bash "$PROJ/scripts/mock-web-eval-probe-port.sh" >/dev/null 2>&1
+  bash "$PROJ/mock-web-eval/scripts/mock-web-eval-probe-port.sh" >/dev/null 2>&1
 caseA_rc=$?
-expected_a="$WT/mock-web/.env.mock-web-eval"
+expected_a="$WT/mock-web-eval/target/.env.mock-web-eval"
 if [ "$caseA_rc" -ne 0 ]; then
   fail_msg "Case A: probe exited rc=$caseA_rc"
 elif [ ! -f "$expected_a" ]; then
   fail_msg "Case A: expected env file at $expected_a, not present"
-  echo "    PROJ env file present? $( [ -f "$PROJ/mock-web/.env.mock-web-eval" ] && echo yes || echo no)"
-elif [ -f "$PROJ/mock-web/.env.mock-web-eval" ]; then
+  echo "    PROJ env file present? $( [ -f "$PROJ/mock-web-eval/target/.env.mock-web-eval" ] && echo yes || echo no)"
+elif [ -f "$PROJ/mock-web-eval/target/.env.mock-web-eval" ]; then
   fail_msg "Case A: env file unexpectedly also written to PROJ root"
 else
   body_wt="$(grep '^PIPELINE_WORKTREE_PATH=' "$expected_a" | head -1 | sed 's/^PIPELINE_WORKTREE_PATH=//')"
@@ -65,16 +65,16 @@ fi
 # --- Case B: only PROJECT_ROOT set -> env file under PROJ ---------------
 echo "Case B: only PIPELINE_PROJECT_ROOT set"
 inc
-rm -f "$WT/mock-web/.env.mock-web-eval" "$PROJ/mock-web/.env.mock-web-eval"
+rm -f "$WT/mock-web-eval/target/.env.mock-web-eval" "$PROJ/mock-web-eval/target/.env.mock-web-eval"
 env -u PIPELINE_WORKTREE_PATH PIPELINE_PROJECT_ROOT="$PROJ" \
-  bash "$PROJ/scripts/mock-web-eval-probe-port.sh" >/dev/null 2>&1
+  bash "$PROJ/mock-web-eval/scripts/mock-web-eval-probe-port.sh" >/dev/null 2>&1
 caseB_rc=$?
-expected_b="$PROJ/mock-web/.env.mock-web-eval"
+expected_b="$PROJ/mock-web-eval/target/.env.mock-web-eval"
 if [ "$caseB_rc" -ne 0 ]; then
   fail_msg "Case B: probe exited rc=$caseB_rc"
 elif [ ! -f "$expected_b" ]; then
   fail_msg "Case B: expected env file at $expected_b, not present"
-elif [ -f "$WT/mock-web/.env.mock-web-eval" ]; then
+elif [ -f "$WT/mock-web-eval/target/.env.mock-web-eval" ]; then
   fail_msg "Case B: env file unexpectedly also written to WT path"
 else
   body_pr="$(grep '^PIPELINE_PROJECT_ROOT='  "$expected_b" | head -1 | sed 's/^PIPELINE_PROJECT_ROOT=//')"
@@ -86,14 +86,14 @@ else
 fi
 
 # --- Case C: neither set -> env file at script-derived REPO_ROOT --------
-# Since the script lives at $PROJ/scripts/, its derived REPO_ROOT is $PROJ.
+# Since the script lives at $PROJ/mock-web-eval/scripts/, its derived REPO_ROOT is $PROJ.
 echo "Case C: neither env var set -> script-derived REPO_ROOT"
 inc
-rm -f "$WT/mock-web/.env.mock-web-eval" "$PROJ/mock-web/.env.mock-web-eval"
+rm -f "$WT/mock-web-eval/target/.env.mock-web-eval" "$PROJ/mock-web-eval/target/.env.mock-web-eval"
 env -u PIPELINE_WORKTREE_PATH -u PIPELINE_PROJECT_ROOT \
-  bash "$PROJ/scripts/mock-web-eval-probe-port.sh" >/dev/null 2>&1
+  bash "$PROJ/mock-web-eval/scripts/mock-web-eval-probe-port.sh" >/dev/null 2>&1
 caseC_rc=$?
-expected_c="$PROJ/mock-web/.env.mock-web-eval"
+expected_c="$PROJ/mock-web-eval/target/.env.mock-web-eval"
 if [ "$caseC_rc" -ne 0 ]; then
   fail_msg "Case C: probe exited rc=$caseC_rc"
 elif [ ! -f "$expected_c" ]; then

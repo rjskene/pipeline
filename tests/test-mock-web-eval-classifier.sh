@@ -1,18 +1,18 @@
 #!/bin/bash
 set -uo pipefail
 
-# Tests for scripts/mock-web-eval-classifier.sh (issue #231).
+# Tests for mock-web-eval/scripts/mock-web-eval-classifier.sh (issue #231).
 # The classifier emits `--container-mode=mock-web-eval` on stdout when the
-# PR touches `mock-web/**` or carries the `web-eval` label; otherwise it
+# PR touches `mock-web-eval/target/**` or carries the `web-eval` label; otherwise it
 # emits nothing. It exits non-zero with a stderr diagnostic on gh failure.
 #
-# Test 5 covers the classifier-not-found contract of scripts/eval-classifier-invoke.sh
+# Test 5 covers the classifier-not-found contract of mock-web-eval/scripts/eval-classifier-invoke.sh
 # end-to-end through the routing seam.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SCRIPT_UNDER_TEST="$REPO_ROOT/scripts/mock-web-eval-classifier.sh"
-INVOKE_WRAPPER="$REPO_ROOT/scripts/eval-classifier-invoke.sh"
+SCRIPT_UNDER_TEST="$REPO_ROOT/mock-web-eval/scripts/mock-web-eval-classifier.sh"
+INVOKE_WRAPPER="$REPO_ROOT/mock-web-eval/scripts/eval-classifier-invoke.sh"
 
 PASS=0
 FAIL=0
@@ -35,11 +35,11 @@ WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
 PROJ="$WORKDIR/proj"
-mkdir -p "$PROJ/scripts" "$WORKDIR/bin"
-cp "$SCRIPT_UNDER_TEST" "$PROJ/scripts/mock-web-eval-classifier.sh"
-chmod +x "$PROJ/scripts/mock-web-eval-classifier.sh"
-cp "$INVOKE_WRAPPER" "$PROJ/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ/scripts/eval-classifier-invoke.sh"
+mkdir -p "$PROJ/scripts" "$PROJ/mock-web-eval/scripts" "$WORKDIR/bin"
+cp "$SCRIPT_UNDER_TEST" "$PROJ/mock-web-eval/scripts/mock-web-eval-classifier.sh"
+chmod +x "$PROJ/mock-web-eval/scripts/mock-web-eval-classifier.sh"
+cp "$INVOKE_WRAPPER" "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
+chmod +x "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
 
 # gh stub — dispatches on $GH_STUB_MODE and the first two args.
 # Returns post-jq-shape output (one filename or label per line) to match
@@ -49,7 +49,7 @@ cat > "$WORKDIR/bin/gh" <<'STUB'
 case "$GH_STUB_MODE" in
   path-match)
     case "$1 $2" in
-      "pr diff") echo "mock-web/index.html"; echo "mock-web/app.js" ;;
+      "pr diff") echo "mock-web-eval/target/index.html"; echo "mock-web-eval/target/app.js" ;;
       "pr view") : ;;  # no labels
       "pr list") echo "999" ;;
     esac
@@ -79,11 +79,11 @@ chmod +x "$WORKDIR/bin/gh"
 
 run_classifier() {
   # Run classifier with the gh stub on PATH. Args forwarded.
-  PATH="$WORKDIR/bin:$PATH" bash "$PROJ/scripts/mock-web-eval-classifier.sh" "$@"
+  PATH="$WORKDIR/bin:$PATH" bash "$PROJ/mock-web-eval/scripts/mock-web-eval-classifier.sh" "$@"
 }
 
 # -------------------------------------------------------------------------
-# Test 1: PR touches mock-web/** -> stdout "--container-mode=mock-web-eval"
+# Test 1: PR touches mock-web-eval/target/** -> stdout "--container-mode=mock-web-eval"
 # -------------------------------------------------------------------------
 echo "Test 1: path match fires"
 inc
@@ -164,7 +164,7 @@ inc
 OUT_FILE="$WORKDIR/out5.txt"
 ERR_FILE="$WORKDIR/err5.txt"
 PIPELINE_EVAL_CLASSIFIER="scripts/does-not-exist.sh" \
-  bash "$PROJ/scripts/eval-classifier-invoke.sh" 999 999 \
+  bash "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh" 999 999 \
   > "$OUT_FILE" 2> "$ERR_FILE"
 rc=$?
 if [ "$rc" -ne 3 ]; then

@@ -7,7 +7,7 @@
 #                        without invoking compose or the classifier. Safe.
 #   --full --pr <N>      Re-runs the classifier + dispatch end-to-end against
 #                        an existing PR. Requires the operator setup from
-#                        dev/mock-web-eval/README.md Section 2.
+#                        mock-web-eval/replay/README.md Section 2.
 #
 # Idempotent in --dry-run mode. See README.md for operator setup and
 # pre-flight requirements.
@@ -28,7 +28,7 @@ Usage: $0 [--dry-run | --full --pr <N>]
   --dry-run         (default) pre-flight checks + print downstream markers.
   --full --pr <N>   re-run classifier + dispatch against existing PR <N>.
 
-See dev/mock-web-eval/README.md for operator setup.
+See mock-web-eval/replay/README.md for operator setup.
 EOF
 }
 
@@ -71,11 +71,11 @@ cd "$REPO_ROOT"
 if [ ! -f pipeline.config ]; then
   if [ "$DRY_RUN" = "true" ]; then
     echo "WARN: pipeline.config not found at repo root."
-    echo "      See pipeline.config.example and dev/mock-web-eval/README.md Section 2."
+    echo "      See pipeline.config.example and mock-web-eval/replay/README.md Section 2."
     echo "      (dry-run continues; --full would abort here.)"
   else
     echo "ERROR: pipeline.config not found at repo root." >&2
-    echo "       See pipeline.config.example and dev/mock-web-eval/README.md Section 2." >&2
+    echo "       See pipeline.config.example and mock-web-eval/replay/README.md Section 2." >&2
     exit 1
   fi
 else
@@ -100,11 +100,11 @@ done
 if [ "${#MISSING[@]}" -gt 0 ]; then
   if [ "$DRY_RUN" = "true" ]; then
     echo "WARN: pipeline.config missing required PIPELINE_EVAL_* vars: ${MISSING[*]}"
-    echo "      See pipeline.config.example and dev/mock-web-eval/README.md Section 2."
+    echo "      See pipeline.config.example and mock-web-eval/replay/README.md Section 2."
     echo "      (dry-run continues; --full would abort here.)"
   else
     echo "ERROR: pipeline.config missing required PIPELINE_EVAL_* vars: ${MISSING[*]}" >&2
-    echo "       See pipeline.config.example and dev/mock-web-eval/README.md Section 2." >&2
+    echo "       See pipeline.config.example and mock-web-eval/replay/README.md Section 2." >&2
     exit 1
   fi
 fi
@@ -129,14 +129,14 @@ check_one() {
 check_one "docker group membership" "add user to docker group: sudo usermod -aG docker \$USER" "groups | grep -qw docker"
 check_one "claude credentials present" "log in via Claude Code or copy ~/.claude/.credentials.json" "[ -f \"\$HOME/.claude/.credentials.json\" ]"
 check_one "gh auth status" "run: gh auth login" "gh auth status"
-check_one "mock-web-eval classifier executable" "ensure scripts/mock-web-eval-classifier.sh exists and is +x" "[ -x \"$REPO_ROOT/scripts/mock-web-eval-classifier.sh\" ]"
+check_one "mock-web-eval classifier executable" "ensure mock-web-eval/scripts/mock-web-eval-classifier.sh exists and is +x" "[ -x \"$REPO_ROOT/mock-web-eval/scripts/mock-web-eval-classifier.sh\" ]"
 echo "preflight: OK"
 
 # Step 3: probe-port
 if [ "$DRY_RUN" = "true" ]; then
   echo "dry-run: would run probe-port"
 else
-  bash "$REPO_ROOT/scripts/mock-web-eval-probe-port.sh"
+  bash "$REPO_ROOT/mock-web-eval/scripts/mock-web-eval-probe-port.sh"
 fi
 
 # Step 4: compose smoke
@@ -144,7 +144,7 @@ if [ "$DRY_RUN" = "true" ]; then
   echo "dry-run: would run compose smoke"
 else
   if [ "$FULL_MODE" = "true" ]; then
-    docker compose -f "$REPO_ROOT/compose.mock-web-eval.yml" run --rm mock-web-eval claude --version
+    docker compose -f "$REPO_ROOT/mock-web-eval/docker/compose.yml" run --rm mock-web-eval claude --version
   fi
 fi
 
@@ -153,7 +153,7 @@ if [ "$DRY_RUN" = "true" ]; then
   echo "dry-run: would invoke classifier"
 else
   if [ "$FULL_MODE" = "true" ]; then
-    bash "$REPO_ROOT/scripts/eval-classifier-invoke.sh" "$PR_NUM"
+    bash "$REPO_ROOT/mock-web-eval/scripts/eval-classifier-invoke.sh" "$PR_NUM"
   fi
 fi
 

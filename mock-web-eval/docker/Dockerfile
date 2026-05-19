@@ -56,4 +56,4 @@ USER runner
 # Default to the static-host listener so `docker compose up` serves the
 # mock app; the smoke test overrides this with `npx playwright --version`.
 EXPOSE 3000
-CMD ["serve", "-l", "3000", "mock-web"]
+CMD ["serve", "-l", "3000", "mock-web-eval/target"]

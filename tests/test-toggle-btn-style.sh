@@ -7,7 +7,7 @@ pass_msg(){ echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail_msg(){ echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 assert(){ if eval "$2"; then pass_msg "$1"; else fail_msg "$1"; fi; }
 
-CSS="$REPO_ROOT/mock-web/style.css"
+CSS="$REPO_ROOT/mock-web-eval/target/style.css"
 
 assert "style.css defines #toggle-btn selector"      "grep -qE '#toggle-btn[[:space:]]*\\{' '$CSS'"
 BASE_BLOCK="$(awk '/^#toggle-btn[[:space:]]*\{/{flag=1} flag{print} /\}/{if(flag){flag=0; exit}}' "$CSS")"

@@ -7,13 +7,13 @@ pass_msg(){ echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail_msg(){ echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 assert(){ if eval "$2"; then pass_msg "$1"; else fail_msg "$1"; fi; }
 
-HELPER="$REPO_ROOT/scripts/eval-screenshot-attach.sh"
+HELPER="$REPO_ROOT/mock-web-eval/scripts/eval-screenshot-attach.sh"
 
 assert "eval-screenshot-attach.sh exists"      "[ -f '$HELPER' ]"
 assert "eval-screenshot-attach.sh executable"  "[ -x '$HELPER' ]"
 
 # In-branch commit mechanism contract (issue #271).
-assert "uses git add .eval-screenshots"        "grep -q 'git add .*\\.eval-screenshots' '$HELPER'"
+assert "uses git add mock-web-eval/screenshots"        "grep -q 'git add .*mock-web-eval/screenshots' '$HELPER'"
 assert "uses git commit"                       "grep -q 'git commit' '$HELPER'"
 assert "uses git push"                         "grep -q 'git push' '$HELPER'"
 assert "uses git rev-parse HEAD"               "grep -q 'git rev-parse HEAD' '$HELPER'"
@@ -22,7 +22,7 @@ assert "uses git rev-parse HEAD"               "grep -q 'git rev-parse HEAD' '$H
 assert "does NOT use gh release"               "! grep -q 'gh release' '$HELPER'"
 
 # SHA-pinned URL shape — literal or interpolated form of
-# https://github.com/<owner>/<repo>/raw/<sha>/.eval-screenshots/<name>.png
+# https://github.com/<owner>/<repo>/raw/<sha>/mock-web-eval/screenshots/<name>.png
 assert "emits SHA-pinned raw URL" \
   "grep -qE 'github\\.com/.*(/raw/|\\\$\\{[A-Za-z_]+\\}/raw/)' '$HELPER'"
 
@@ -41,10 +41,10 @@ fi
 # -----------------------------------------------------------------------------
 # Sealed end-to-end test: real git, local bare remote.
 # Verifies that running the helper:
-#   (a) prints a URL containing /raw/<40-hex>/.eval-screenshots/<name>.png
+#   (a) prints a URL containing /raw/<40-hex>/mock-web-eval/screenshots/<name>.png
 #   (b) creates a commit on the local branch
 #   (c) pushes that commit to the bare remote so its HEAD's tree contains
-#       .eval-screenshots/<name>.png
+#       mock-web-eval/screenshots/<name>.png
 # -----------------------------------------------------------------------------
 sealed_e2e() {
   local TMP
@@ -84,22 +84,22 @@ sealed_e2e() {
     return
   fi
 
-  # (a) URL shape: github.com/test/repo/raw/<40-hex>/.eval-screenshots/probe.png
-  if echo "$URL_OUT" | grep -qE 'https://github\.com/test/repo/raw/[0-9a-f]{40}/\.eval-screenshots/probe\.png'; then
+  # (a) URL shape: github.com/test/repo/raw/<40-hex>/mock-web-eval/screenshots/probe.png
+  if echo "$URL_OUT" | grep -qE 'https://github\.com/test/repo/raw/[0-9a-f]{40}/mock-web-eval/screenshots/probe\.png'; then
     pass_msg "sealed e2e: helper printed SHA-pinned raw URL"
   else
     fail_msg "sealed e2e: helper printed SHA-pinned raw URL (got: $URL_OUT)"
   fi
 
-  # (b) A commit exists locally with .eval-screenshots/probe.png in HEAD's tree.
-  if (cd "$TMP/work" && git ls-tree -r HEAD --name-only) | grep -q '^\.eval-screenshots/probe\.png$'; then
-    pass_msg "sealed e2e: local HEAD tree contains .eval-screenshots/probe.png"
+  # (b) A commit exists locally with mock-web-eval/screenshots/probe.png in HEAD's tree.
+  if (cd "$TMP/work" && git ls-tree -r HEAD --name-only) | grep -q '^mock-web-eval/screenshots/probe\.png$'; then
+    pass_msg "sealed e2e: local HEAD tree contains mock-web-eval/screenshots/probe.png"
   else
-    fail_msg "sealed e2e: local HEAD tree contains .eval-screenshots/probe.png"
+    fail_msg "sealed e2e: local HEAD tree contains mock-web-eval/screenshots/probe.png"
   fi
 
   # (c) The bare remote received the push — its HEAD tree contains the file.
-  if (cd "$TMP/remote.git" && git ls-tree -r HEAD --name-only 2>/dev/null) | grep -q '^\.eval-screenshots/probe\.png$'; then
+  if (cd "$TMP/remote.git" && git ls-tree -r HEAD --name-only 2>/dev/null) | grep -q '^mock-web-eval/screenshots/probe\.png$'; then
     pass_msg "sealed e2e: bare remote received the screenshot commit"
   else
     fail_msg "sealed e2e: bare remote received the screenshot commit"
