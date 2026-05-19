@@ -95,8 +95,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 9. **Stop** — do NOT merge unless the greenlight matrix held in Step 8. Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
 
 **Constraints during full send:**
-- Housekeeping (step 0) and log review (step 1) still run at the start, but do not pause for user input — auto-skip log review and proceed.
-- Audit review (step 1b) also auto-skips during full send.
+- Housekeeping (step 0) still runs at the start, but does not pause for user input.
 - If a worktree cleanup is pending at the start, run cleanup first (still auto, no confirmation needed), then continue with the full send stages.
 - Issues labeled `PIPELINE_LABELS_EXCLUDED` are always skipped.
 - Issues labeled `PIPELINE_LABELS_LATER` are shown in the final report (stage = `PIPELINE_LABELS_LATER`) but not processed.
