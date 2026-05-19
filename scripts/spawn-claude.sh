@@ -427,21 +427,43 @@ fi
 LAUNCHER=$(mktemp /tmp/claude-launch-XXXXXX.sh)
 chmod +x "$LAUNCHER"
 
+# Precompute the launcher's session-start banner and exec line based on the
+# logging gate in the spawning shell. When PIPELINE_LOGS_ENABLED is false, the
+# launcher must NOT touch $LOG_FILE (its parent dir was never created at line
+# 70-72) and must NOT wrap the claude invocation in `script -a $LOG_FILE`
+# (would error out trying to open a file under a missing directory). Bake the
+# decision into the heredoc rather than re-sourcing _logging.sh in the launcher.
+if pipeline_logging_enabled; then
+  LAUNCHER_BANNER_TERMINAL="echo \"=== Session started: \$(date) ===\" >> ${LOG_FILE}
+echo \"=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${WORKTREE_PATH} ===\" >> ${LOG_FILE}"
+  LAUNCHER_BANNER_REMOTECTL="echo \"=== Session started: \$(date) ===\" >> ${LOG_FILE}
+echo \"=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: remote-control | Worktree: ${WORKTREE_PATH} ===\" >> ${LOG_FILE}"
+  LAUNCHER_BANNER_TMUX="echo \"=== Session started: \$(date) ===\" >> ${LOG_FILE}
+echo \"=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORKTREE_PATH} ===\" >> ${LOG_FILE}"
+  LAUNCHER_EXEC_DARWIN="exec script -a ${LOG_FILE} bash -c \"\$CMD\""
+  LAUNCHER_EXEC_LINUX="SHELL=/bin/bash exec script -a ${LOG_FILE} -c \"\$CMD\""
+else
+  LAUNCHER_BANNER_TERMINAL="# session-start banner suppressed (PIPELINE_LOGS_ENABLED=false)"
+  LAUNCHER_BANNER_REMOTECTL="# session-start banner suppressed (PIPELINE_LOGS_ENABLED=false)"
+  LAUNCHER_BANNER_TMUX="# session-start banner suppressed (PIPELINE_LOGS_ENABLED=false)"
+  LAUNCHER_EXEC_DARWIN="exec bash -c \"\$CMD\""
+  LAUNCHER_EXEC_LINUX="SHELL=/bin/bash exec bash -c \"\$CMD\""
+fi
+
 if [ "$MODE" = "terminal" ]; then
   cat > "$LAUNCHER" <<SCRIPT
 #!/bin/bash
 cd ${WORKTREE_PATH}
-echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
-echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
+${LAUNCHER_BANNER_TERMINAL}
 ${BUILD_ARGV}
 CLAUDE_ARGV+=('/pipeline:${SKILL} ${ISSUE_NUM}')
 CMD=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
 CMD="\${CMD# }"
 if [ "\$(uname -s)" = "Darwin" ]; then
-  exec script -a ${LOG_FILE} bash -c "\$CMD"
+  ${LAUNCHER_EXEC_DARWIN}
 else
   # printf %q emits \$'...' ANSI-C quoting, so force script to use bash (not dash)
-  SHELL=/bin/bash exec script -a ${LOG_FILE} -c "\$CMD"
+  ${LAUNCHER_EXEC_LINUX}
 fi
 SCRIPT
 
@@ -473,17 +495,16 @@ elif [ "$MODE" = "remote-control" ]; then
   cat > "$LAUNCHER" <<SCRIPT
 #!/bin/bash
 cd ${WORKTREE_PATH}
-echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
-echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: remote-control | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
+${LAUNCHER_BANNER_REMOTECTL}
 ${BUILD_ARGV}
 CLAUDE_ARGV+=(remote-control --name '${SESSION_NAME}' --spawn same-dir)
 CMD=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
 CMD="\${CMD# }"
 if [ "\$(uname -s)" = "Darwin" ]; then
-  exec script -a ${LOG_FILE} bash -c "\$CMD"
+  ${LAUNCHER_EXEC_DARWIN}
 else
   # printf %q emits \$'...' ANSI-C quoting, so force script to use bash (not dash)
-  SHELL=/bin/bash exec script -a ${LOG_FILE} -c "\$CMD"
+  ${LAUNCHER_EXEC_LINUX}
 fi
 SCRIPT
 
@@ -508,8 +529,7 @@ elif [ "$MODE" = "tmux" ]; then
   cat > "$LAUNCHER" <<SCRIPT
 #!/bin/bash
 cd ${WORKTREE_PATH}
-echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
-echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
+${LAUNCHER_BANNER_TMUX}
 ${BUILD_ARGV}
 CLAUDE_ARGV+=(-p '/pipeline:${SKILL} ${ISSUE_NUM}')
 INNER=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
@@ -518,10 +538,10 @@ INNER="\${INNER# }"
 # timeout safety net: 90 min with 30s grace before SIGKILL.
 CMD="timeout --foreground --signal=TERM --kill-after=30 5400 \$INNER"
 if [ "\$(uname -s)" = "Darwin" ]; then
-  exec script -a ${LOG_FILE} bash -c "\$CMD"
+  ${LAUNCHER_EXEC_DARWIN}
 else
   # printf %q emits \$'...' ANSI-C quoting, so force script to use bash (not dash)
-  SHELL=/bin/bash exec script -a ${LOG_FILE} -c "\$CMD"
+  ${LAUNCHER_EXEC_LINUX}
 fi
 SCRIPT
 
