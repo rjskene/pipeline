@@ -201,8 +201,8 @@ grep -qE '^CHECK: settings_residual status=warn detail=1 pipeline hook entry in 
   && pass_msg "single-entry: warn singular" \
   || { fail_msg "single-entry: missing singular warn line"; echo "$out" | sed 's/^/    /'; }
 grep -qF "      $ADV_LOG_SUBAGENT" <<<"$out" \
-  && pass_msg "single-entry: HTS-dogfood advisory rendered" \
-  || fail_msg "single-entry: missing HTS-dogfood advisory"
+  && pass_msg "single-entry: dogfood advisory rendered" \
+  || fail_msg "single-entry: missing dogfood advisory"
 # Ensure no other annotations leaked in.
 if grep -qF "      $ADV_RESTRICT_PATHS" <<<"$out"; then
   fail_msg "single-entry: stray restrict_paths advisory rendered"

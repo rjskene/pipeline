@@ -92,7 +92,7 @@ fresh_fx() {
     git branch -q staging 2>/dev/null || git checkout -q -b staging
   ) >/dev/null 2>&1
   cat > "$fx/pipeline.config" <<CFG
-PIPELINE_REPO="${PIPELINE_REPO_OVERRIDE:-rjskene/bomon-train}"
+PIPELINE_REPO="${PIPELINE_REPO_OVERRIDE:-rjskene/example-consumer}"
 PIPELINE_BASE_BRANCH="staging"
 CFG
   echo "$fx"
@@ -116,7 +116,7 @@ mk_plugin_root "$PLUGIN_ROOT"
 # Case 1: consumer .claude/ absent → pass
 # ---------------------------------------------------------------------------
 echo "Case 1: no consumer .claude/ → pass"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-noclaude)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-noclaude)
 run_helper "$FX" "$PLUGIN_ROOT"
 out="$(cat "$FX/out")"
 grep -qE '^CHECK: skill_files_residual status=pass detail=no plugin-basename duplicates' <<<"$out" \
@@ -127,7 +127,7 @@ grep -qE '^CHECK: skill_files_residual status=pass detail=no plugin-basename dup
 # Case 2: only consumer-authored skills (basenames not in plugin) → pass + Preserved list
 # ---------------------------------------------------------------------------
 echo "Case 2: consumer-authored only → pass with Preserved list"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-consumer-only)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-consumer-only)
 mkdir -p "$FX/.claude/skills/my-custom-skill"
 echo "consumer skill body" > "$FX/.claude/skills/my-custom-skill/SKILL.md"
 mkdir -p "$FX/.claude/scripts"
@@ -154,7 +154,7 @@ grep -qE 'Preserved — consumer-owned:' <<<"$out" \
 # Case 3: consumer .claude/skills/classify-issue/SKILL.md present → warn (1 dup)
 # ---------------------------------------------------------------------------
 echo "Case 3: 1 duplicate SKILL.md → warn"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-dup-skill)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-dup-skill)
 mkdir -p "$FX/.claude/skills/classify-issue"
 echo "stale copy" > "$FX/.claude/skills/classify-issue/SKILL.md"
 run_helper "$FX" "$PLUGIN_ROOT"
@@ -174,7 +174,7 @@ grep -qE 'migrate-from-subtree\.sh' <<<"$out" \
 # Case 4: tdd-implementer.md + restrict_paths.py duplicates → warn (2 dups)
 # ---------------------------------------------------------------------------
 echo "Case 4: 2 duplicates (agent + hook) → warn"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-dup-2)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-dup-2)
 mkdir -p "$FX/.claude/agents" "$FX/.claude/hooks"
 echo "stale agent" > "$FX/.claude/agents/tdd-implementer.md"
 echo "stale hook" > "$FX/.claude/hooks/restrict_paths.py"
@@ -189,18 +189,18 @@ grep -qE 'tdd-implementer\.md' <<<"$out" \
   || { fail_msg "dup-2: missing files"; echo "$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
-# Case 5: duplicate SKILL.md contains `--repo rjskene/bomon` but
-#          $PIPELINE_REPO=rjskene/bomon-train → fail with critical line + exit non-zero
+# Case 5: duplicate SKILL.md contains `--repo rjskene/example` but
+#          $PIPELINE_REPO=rjskene/example-consumer → fail with critical line + exit non-zero
 # ---------------------------------------------------------------------------
 echo "Case 5: stale-repo critical fail"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-stale-repo)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-stale-repo)
 mkdir -p "$FX/.claude/skills/classify-issue"
 cat > "$FX/.claude/skills/classify-issue/SKILL.md" <<'SK'
 # classify-issue (stale)
 
-Run: gh issue list --repo rjskene/bomon --state open
+Run: gh issue list --repo rjskene/example --state open
 
-PIPELINE_REPO context: "rjskene/bomon"
+PIPELINE_REPO context: "rjskene/example"
 SK
 run_helper "$FX" "$PLUGIN_ROOT"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
@@ -210,8 +210,8 @@ grep -qE '^CHECK: skill_files_residual status=fail detail=.*stale-repo' <<<"$out
 grep -qE 'Critical: stale legacy-install references' <<<"$out" \
   && pass_msg "stale-repo: critical header present" \
   || { fail_msg "stale-repo: missing critical header"; echo "$out" | sed 's/^/    /'; }
-grep -qE 'targets rjskene/bomon' <<<"$out" \
-  && grep -qE 'current PIPELINE_REPO=rjskene/bomon-train' <<<"$out" \
+grep -qE 'targets rjskene/example' <<<"$out" \
+  && grep -qE 'current PIPELINE_REPO=rjskene/example-consumer' <<<"$out" \
   && pass_msg "stale-repo: captured token + actual repo in detail" \
   || { fail_msg "stale-repo: missing token/actual"; echo "$out" | sed 's/^/    /'; }
 [ "$rc" != "0" ] && pass_msg "stale-repo: non-zero exit ($rc)" || fail_msg "stale-repo: exit was 0"
@@ -221,7 +221,7 @@ grep -qE 'targets rjskene/bomon' <<<"$out" \
 #          but consumer skills/classify-issue/SKILL.md MUST be flagged.
 # ---------------------------------------------------------------------------
 echo "Case 6: relative-path skill matching"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-relpath-skill)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-relpath-skill)
 mkdir -p "$FX/.claude/skills/todo" "$FX/.claude/skills/classify-issue"
 echo "consumer-authored todo skill" > "$FX/.claude/skills/todo/SKILL.md"
 echo "stale copy of plugin skill"   > "$FX/.claude/skills/classify-issue/SKILL.md"
@@ -246,7 +246,7 @@ awk '/Preserved — consumer-owned:/{flag=1; next} flag' <<<"$out" \
 # Case 7: --fix residual respects relative-path matching
 # ---------------------------------------------------------------------------
 echo "Case 7: --fix residual relative-path matching"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-fix-relpath)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-fix-relpath)
 mkdir -p "$FX/.claude/skills/todo" "$FX/.claude/skills/classify-issue"
 echo "consumer todo" > "$FX/.claude/skills/todo/SKILL.md"
 echo "stale classify" > "$FX/.claude/skills/classify-issue/SKILL.md"
@@ -274,7 +274,7 @@ grep -qE 'Remove duplicate of plugin-shipped file: \.claude/skills/todo' <<<"$ou
 echo "Case 8: consumer-required from .template"
 PLUGIN_ROOT_T="$TMP/plugin-root-templates"
 mk_plugin_root_with_templates "$PLUGIN_ROOT_T"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-consumer-required)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-consumer-required)
 mkdir -p "$FX/.claude/scripts"
 echo "rendered spawn"   > "$FX/.claude/scripts/spawn-claude.sh"
 echo "rendered cleanup" > "$FX/.claude/scripts/cleanup-worktree.sh"
@@ -311,7 +311,7 @@ grep -qE 'Remove duplicate of plugin-shipped file: \.claude/scripts/spawn-claude
 # Case 9: pyc/__pycache__ in consumer .claude/ → filtered out of all output
 # ---------------------------------------------------------------------------
 echo "Case 9: pyc/__pycache__ in consumer .claude/ → filtered out of all output"
-FX=$(PIPELINE_REPO_OVERRIDE="rjskene/bomon-train" fresh_fx fx-pyc-filter)
+FX=$(PIPELINE_REPO_OVERRIDE="rjskene/example-consumer" fresh_fx fx-pyc-filter)
 mkdir -p "$FX/.claude/scripts/__pycache__" "$FX/.claude/hooks/__pycache__"
 echo "binary" > "$FX/.claude/scripts/__pycache__/foo.cpython-312.pyc"
 echo "binary" > "$FX/.claude/hooks/__pycache__/bar.cpython-312.pyc"

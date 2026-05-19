@@ -596,10 +596,10 @@ active feature work, but it should come BEFORE pulling in new ready work
       ================================================================
       Issue  Frontend URL                        Worktree Path
       ----------------------------------------------------------------
-      #N     http://<droplet-ip>:<$PIPELINE_FRONTEND_PORT_OFFSET+N>        .claude/worktrees/$PIPELINE_WORKTREE_PREFIX-N-<slug>
+      #N     http://<server-ip>:<$PIPELINE_FRONTEND_PORT_OFFSET+N>        .claude/worktrees/$PIPELINE_WORKTREE_PREFIX-N-<slug>
       ================================================================
       ```
-      To get the droplet IP, run: `curl -s ifconfig.me`
+      To get your server's public IP, run: `curl -s ifconfig.me`
 
    3. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
       If the user opts in to skip permissions, pass `--dangerously-skip-permissions` to the spawn script. This lets agents run without any permission prompts (all tool calls auto-approved).
