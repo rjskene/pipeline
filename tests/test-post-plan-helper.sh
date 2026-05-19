@@ -34,7 +34,7 @@ exit "$rc"
 GH
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
-export PIPELINE_REPO="HTS-COLLAB-ORG/claude-pipeline"
+export PIPELINE_REPO="rjskene/pipeline"
 DRAFT="$TMP/draft.md"
 printf '## Implementation Plan\n\nbody\n' > "$DRAFT"
 

@@ -15,7 +15,7 @@ assert "plugins[0].name matches plugin.json name" "python3 -c 'import json,sys; 
 assert "plugins[0].source is set" "python3 -c 'import json,sys; s=json.load(open(\"$MARKETPLACE\"))[\"plugins\"][0].get(\"source\"); sys.exit(0 if s else 1)' 2>/dev/null"
 assert "plugins[0].description is set" "python3 -c 'import json,sys; d=json.load(open(\"$MARKETPLACE\"))[\"plugins\"][0].get(\"description\"); sys.exit(0 if d else 1)' 2>/dev/null"
 assert "plugins[0].version matches plugin.json version" "python3 -c 'import json,sys; mp=json.load(open(\"$MARKETPLACE\")); pj=json.load(open(\"$PLUGIN\")); sys.exit(0 if mp[\"plugins\"][0].get(\"version\")==pj.get(\"version\") else 1)' 2>/dev/null"
-assert "plugins[0].homepage references this repo" "python3 -c 'import json,sys; h=json.load(open(\"$MARKETPLACE\"))[\"plugins\"][0].get(\"homepage\",\"\"); sys.exit(0 if \"HTS-COLLAB-ORG/claude-pipeline\" in h else 1)' 2>/dev/null"
+assert "plugins[0].homepage references this repo" "python3 -c 'import json,sys; h=json.load(open(\"$MARKETPLACE\"))[\"plugins\"][0].get(\"homepage\",\"\"); sys.exit(0 if \"rjskene/pipeline\" in h else 1)' 2>/dev/null"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

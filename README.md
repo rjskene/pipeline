@@ -17,7 +17,7 @@ For autonomous end-to-end runs across many issues, use `/pipeline:fullsend` — 
 The pipeline is distributed as a Claude Code plugin. Install it from the marketplace:
 
 ```
-/plugin marketplace add HTS-COLLAB-ORG/claude-pipeline
+/plugin marketplace add rjskene/pipeline
 ```
 
 ```
