@@ -3,6 +3,8 @@
 # Mirrors the test shape of tests/test_create_checkpoint_tag.sh (#277 / PR #282).
 set -uo pipefail
 
+export PIPELINE_LOGS_ENABLED=true
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$REPO_ROOT/scripts/review-logs.sh"
 

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
+export PIPELINE_LOGS_ENABLED=true
+
 # Tests for queue partitioning by pre-spawn classifier output in
 # scripts/run-queue.sh (issue #218).
 #
@@ -36,6 +38,7 @@ setup_proj() {
   rm -rf "$proj"
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/mock-web-eval/scripts"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
+  cp "$SCRIPT_DIR/../scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
   chmod +x "$proj/.claude/scripts/run-queue.sh"
   # Real helper from mock-web-eval/scripts/ (already in repo)
   cp "$SCRIPT_DIR/../mock-web-eval/scripts/eval-classifier-invoke.sh" "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"

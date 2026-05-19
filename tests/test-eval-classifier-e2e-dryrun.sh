@@ -1,6 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
+export PIPELINE_LOGS_ENABLED=true
+
 # End-to-end dry-run wiring test for the classifier + container-mode
 # dispatch path (issue #218). Composes the real helper + the real
 # run-queue.sh template + the real spawn-claude.sh template into a single
@@ -39,6 +41,7 @@ setup_proj() {
   rm -rf "$proj"
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/scripts" "$proj/mock-web-eval/scripts"
   cp "$RUN_QUEUE_SRC" "$proj/.claude/scripts/run-queue.sh"
+  cp "$ROOT/scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
   # Stub spawn-claude.sh in .claude/scripts: log argv and exit 0.
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<EOF
 #!/bin/bash
