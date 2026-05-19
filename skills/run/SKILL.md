@@ -273,7 +273,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    # END-TRACKER-FILTER
    ```
 
-   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 5. `TRACKER_ISSUES` feeds the status-table render in step 4 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
+   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 4. `TRACKER_ISSUES` feeds the status-table render in step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
 
    **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human/brainstorm-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
 
@@ -298,7 +298,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 3. **Print a grouped status table** for all discovered pipeline issues — epics (tracker issues) at the top with their open children indented underneath, and orphans (non-tracker issues not listed under any tracker) at the bottom, bucketed by conventional-commit scope. The per-row line carries only priority + type prefix + title + stage; any non-default Target Base / Path / Blocked-by metadata is surfaced in a separate **NOTES** footer table.
 
-   **Inputs.** This step consumes `TRACKER_ISSUES` and `READY_ISSUES` from the tracker-filter block in step 2, plus the open-issue label/title map fetched in step 1. For each tracker, run the shared parser to extract its checklist children:
+   **Inputs.** This step consumes `TRACKER_ISSUES` and `READY_ISSUES` from the tracker-filter block in step 1, plus the open-issue label/title map fetched in step 1. For each tracker, run the shared parser to extract its checklist children:
 
    ```bash
    body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
@@ -313,7 +313,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    - **Stage** = current pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, or `ready`). Trackers render with `Stage=tracker`.
    - **Tags** = non-pipeline labels (i.e., NOT in `{plan-pending, plan-reviewed, plan-approved, in-progress, pr-open, merged, docs-only, multi-task, tracker, PIPELINE_LABELS_LATER, PIPELINE_LABELS_HUMAN, PIPELINE_LABELS_BRAINSTORM, PIPELINE_LABELS_EXCLUDED, priority/P*, next-major-release}`). Inline tags `(brainstorm)` / `(human-in-loop)` / `(later)` render alongside the title for issues carrying those labels.
    - **Target Base** = `next` if labels contain `next-major-release`, else `PIPELINE_BASE_BRANCH`. ≤10 chars, no truncation.
-   - **Path** = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`. If both are present, show `A!` (PATH A wins, flag the collision). classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 2) lives in the final report, not this column.
+   - **Path** = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`. If both are present, show `A!` (PATH A wins, flag the collision). classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
    - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
 
    **Grouped layout (epics on top, orphans below).** Trackers appear first with their priority badge and conventional-title; each open child renders on its own line, indented eight spaces, with stage right-aligned in parentheses. A tracker with zero open children collapses to a single `(all children closed — pending auto-close)` line:
@@ -417,7 +417,7 @@ active feature work, but it should come BEFORE pulling in new ready work
    - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
    - Issues labeled `tracker` are shown in the table (stage=`tracker`) but never proposed for plan/execute — they are coordination rollups, not implementation work.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM`:
-     - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
+     - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 1 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
      - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)" or "(brainstorm, manual)".
    - If all issues are merged/done → congratulate and exit.
 
@@ -517,7 +517,7 @@ active feature work, but it should come BEFORE pulling in new ready work
       ```bash
       PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] --skill evaluate-issue-pr <issue1> <issue2> ...
       ```
-   4. The evaluate-issue-pr skill reviews the PR diff against the plan, makes minimal fixes if needed, and posts a verdict (Approved or Flagged). It does NOT merge — merge orchestration is handled by the pipeline (see step 8 below).
+   4. The evaluate-issue-pr skill reviews the PR diff against the plan, makes minimal fixes if needed, and posts a verdict (Approved or Flagged). It does NOT merge — merge orchestration is handled by the pipeline (see step 7 below).
 
    **For execution (plan-approved → worktree setup):** For each approved issue's branch (deduplicated — issues sharing a branch get one worktree):
 
