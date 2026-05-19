@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment": "HTS-dogfood-only. Registers (1) the UserPromptSubmit self-audit hook (issue #134) and (2) the PostToolUse tool-use/subagent logging hooks (issue #95) — neither is part of the published plugin manifest. See CLAUDE.md > 'Observability' and 'Self-improvement loop (HTS-only)'.",
+  "_comment": "dogfood-only. Registers (1) the UserPromptSubmit self-audit hook (issue #134) and (2) the PostToolUse tool-use/subagent logging hooks (issue #95) — neither is part of the published plugin manifest. See CLAUDE.md > 'Observability' and 'Self-improvement loop (dogfood-only)'.",
   "hooks": {
     "UserPromptSubmit": [
       {

@@ -77,7 +77,7 @@ Validates that `CLAUDE_PLUGIN_ROOT` resolves to a real plugin install directory.
 - Any other **A / B / C / E** row → `warn` (drift exists but not breaking).
 - Only **D / F** rows (or no rows) → `pass`.
 
-**Worked example.** On a real consumer install (`rjskene/bomon-train`) the manual classification surfaced ~20 preserved files: 7 × A (safe to delete), 4 × B (one of which was a `B.bug` because `enforce-path-c-delegation.py` hardcoded the wrong `PIPELINE_REPO`), 1 × C (plugin had dropped a `--runs` mode), 6 × D (dogfood-only hooks), 2 × E (subtree-drift scripts), with the rest F (project-specific autoresearch hooks). ~9 of 20 were safely deletable; 1 was an active bug masked by silent preservation.
+**Worked example.** On a real consumer install (`rjskene/example-consumer`) the manual classification surfaced ~20 preserved files: 7 × A (safe to delete), 4 × B (one of which was a `B.bug` because `enforce-path-c-delegation.py` hardcoded the wrong `PIPELINE_REPO`), 1 × C (plugin had dropped a `--runs` mode), 6 × D (dogfood-only hooks), 2 × E (subtree-drift scripts), with the rest F (project-specific autoresearch hooks). ~9 of 20 were safely deletable; 1 was an active bug masked by silent preservation.
 
 This check is intentionally **textual-diff-only** — no behavioral comparison. Interactive remediation (`--fix drift`) is out of scope; surface findings via the summary table and let humans decide.
 

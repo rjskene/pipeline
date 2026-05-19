@@ -57,13 +57,13 @@ for b in "${MANIFEST_HOOKS[@]}"; do
   fi
 done
 
-# Dogfood hooks must say "HTS-dogfood-only"
+# Dogfood hooks must say "dogfood-only"
 for b in "${DOGFOOD_HOOKS[@]}"; do
   out="$(advisory_for_hook "$b" || true)"
-  if [[ "$out" == *"HTS-dogfood-only"* ]]; then
-    pass_msg "$b annotation mentions HTS-dogfood-only"
+  if [[ "$out" == *"dogfood-only"* ]]; then
+    pass_msg "$b annotation mentions dogfood-only"
   else
-    fail_msg "$b annotation mentions HTS-dogfood-only (got: $out)"
+    fail_msg "$b annotation mentions dogfood-only (got: $out)"
   fi
 done
 
@@ -115,12 +115,12 @@ for b in "${MANIFEST_HOOKS[@]}"; do
   fi
 done
 
-# Every "HTS-dogfood-only" basename must NOT appear in the manifest.
+# Every "dogfood-only" basename must NOT appear in the manifest.
 for b in "${DOGFOOD_HOOKS[@]}"; do
   if echo "$manifest_basenames" | grep -qx "$b"; then
-    fail_msg "manifest does NOT contain $b (HTS-dogfood-only)"
+    fail_msg "manifest does NOT contain $b (dogfood-only)"
   else
-    pass_msg "manifest does NOT contain $b (HTS-dogfood-only)"
+    pass_msg "manifest does NOT contain $b (dogfood-only)"
   fi
 done
 
