@@ -163,7 +163,7 @@ echo "$out" | grep -qE '^\.claude/hooks/enforce-path-c-delegation\.py	B	' \
 
 # ---------------------------------------------------------------------------
 # Case 6: B.bug — local hardcoded literal disagrees with runtime pipeline.config.
-# This is the bomon-train escalation: silent active bug, must FAIL not WARN.
+# This is the example-consumer escalation: silent active bug, must FAIL not WARN.
 # ---------------------------------------------------------------------------
 echo "Case 6: Bucket B.bug (repo mismatch)"
 ROOT=$(fresh_fx fx-bbug)

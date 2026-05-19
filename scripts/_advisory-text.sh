@@ -23,8 +23,8 @@ check-ci-skip-markers.py|capability preserved: plugin manifest registers ${CLAUD
 enforce-path-c-delegation.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py
 restrict_paths.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/restrict_paths.py
 enforce-ci-wait.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py
-log-tool-use.sh|HTS-dogfood-only, not part of the published plugin manifest — no functional change
-log_subagent.py|HTS-dogfood-only, not part of the published plugin manifest — no functional change
+log-tool-use.sh|dogfood-only, not part of the published plugin manifest — no functional change
+log_subagent.py|dogfood-only, not part of the published plugin manifest — no functional change
 TABLE
   unset __k __v
 fi

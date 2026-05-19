@@ -30,8 +30,8 @@ scripts/check-server.sh
 scripts/create-checkpoint-tag.sh
 scripts/prune-checkpoints.sh
 
-# HTS-dogfood-only repo audit hook on UserPromptSubmit. Not part of the
-# plugin manifest; see issue #134 and the "Self-improvement loop (HTS-only)"
+# dogfood-only repo audit hook on UserPromptSubmit. Not part of the
+# plugin manifest; see issue #134 and the "Self-improvement loop (dogfood-only)"
 # section in CLAUDE.md. The .claude/settings.json file is excluded from the
 # current lint scan but this entry is recorded defensively so any future
 # tightening of the scan keeps this file exempt.
