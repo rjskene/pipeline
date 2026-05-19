@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+export PIPELINE_LOGS_ENABLED=true
+
 # Tests for .claude-pipeline/scripts/review-audits.sh.
 #
 # Uses synthetic runs.log + tool-use.log + subagents.log under a temp dir

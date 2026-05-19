@@ -1,6 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
+export PIPELINE_LOGS_ENABLED=true
+
 # Tests for queue partitioning by pre-spawn classifier output in
 # scripts/run-queue.sh (issue #218).
 #
