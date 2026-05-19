@@ -72,7 +72,7 @@ After cleanup, delete the artifacts with `rm -f .claude/migration-cleanup-report
 ## 4. Add the plugin marketplace
 
 ```bash
-/plugin marketplace add HTS-COLLAB-ORG/claude-pipeline
+/plugin marketplace add rjskene/pipeline
 ```
 
 Run this inside Claude Code. It registers the claude-pipeline marketplace with the local plugin client.

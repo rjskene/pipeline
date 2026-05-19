@@ -4,11 +4,11 @@
   "version": "0.8.1",
   "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
   "author": {
-    "name": "HTS Collab Org",
-    "url": "https://github.com/HTS-COLLAB-ORG/claude-pipeline"
+    "name": "rjskene",
+    "url": "https://github.com/rjskene/pipeline"
   },
-  "homepage": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
-  "repository": "https://github.com/HTS-COLLAB-ORG/claude-pipeline",
+  "homepage": "https://github.com/rjskene/pipeline",
+  "repository": "https://github.com/rjskene/pipeline",
   "license": "MIT",
   "keywords": [
     "pipeline",
