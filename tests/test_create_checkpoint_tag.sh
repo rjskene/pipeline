@@ -33,9 +33,9 @@ REMOTE_BARE="$WORKDIR/remote.git"
 
 git init --bare -q "$REMOTE_BARE"
 
-mkdir -p "$PROJ/.claude/scripts"
-cp "$SCRIPT_UNDER_TEST" "$PROJ/.claude/scripts/create-checkpoint-tag.sh"
-chmod +x "$PROJ/.claude/scripts/create-checkpoint-tag.sh"
+mkdir -p "$PROJ/scripts"
+cp "$SCRIPT_UNDER_TEST" "$PROJ/scripts/create-checkpoint-tag.sh"
+chmod +x "$PROJ/scripts/create-checkpoint-tag.sh"
 
 cat > "$PROJ/pipeline.config" <<EOF
 PIPELINE_REPO="fake/repo"
@@ -57,7 +57,7 @@ DATE=$(date +%Y-%m-%d)
 
 # --- Test 1: basic tag creation ---
 echo "Test 1: creates an annotated tag with issues + PRs"
-bash .claude/scripts/create-checkpoint-tag.sh --issues "310,311" --prs "450,451" >/dev/null
+bash scripts/create-checkpoint-tag.sh --issues "310,311" --prs "450,451" >/dev/null
 TAG1="checkpoint/${DATE}-01"
 
 inc
@@ -102,7 +102,7 @@ fi
 
 # --- Test 2: re-run within same day bumps NN ---
 echo "Test 2: re-run within same day bumps NN to 02"
-bash .claude/scripts/create-checkpoint-tag.sh --issues "312" --prs "452" >/dev/null
+bash scripts/create-checkpoint-tag.sh --issues "312" --prs "452" >/dev/null
 TAG2="checkpoint/${DATE}-02"
 
 inc
@@ -114,7 +114,7 @@ fi
 
 # --- Test 3: --dry-run prints but does not create a tag ---
 echo "Test 3: --dry-run prints intended tag but creates nothing"
-OUT=$(bash .claude/scripts/create-checkpoint-tag.sh --issues "999" --prs "888" --dry-run)
+OUT=$(bash scripts/create-checkpoint-tag.sh --issues "999" --prs "888" --dry-run)
 TAG3="checkpoint/${DATE}-03"
 
 inc
@@ -132,11 +132,8 @@ else
   echo "$OUT" | sed 's/^/    /'
 fi
 
-# --- Test 4: invocation from working-tree scripts/ resolves the same project root as .claude/scripts/ ---
-echo "Test 4: invocation from working-tree scripts/ resolves the same project root"
-mkdir -p "$PROJ/scripts"
-cp "$SCRIPT_UNDER_TEST" "$PROJ/scripts/create-checkpoint-tag.sh"
-chmod +x "$PROJ/scripts/create-checkpoint-tag.sh"
+# --- Test 4: invocation from working-tree scripts/ resolves the project root ---
+echo "Test 4: invocation from working-tree scripts/ resolves the project root"
 
 set +e
 OUT4=$(bash scripts/create-checkpoint-tag.sh --issues "777" --prs "555" --dry-run 2>&1)
