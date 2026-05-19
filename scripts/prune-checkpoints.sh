@@ -4,7 +4,7 @@ set -euo pipefail
 # prune-checkpoints.sh — Delete local checkpoint/* tags older than a threshold.
 #
 # Usage:
-#   bash .claude/scripts/prune-checkpoints.sh --older-than <Nd> [--dry-run]
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/prune-checkpoints.sh --older-than <Nd> [--dry-run]
 #
 # Only touches tags matching refs/tags/checkpoint/* — semver and other tags
 # are left alone. Never touches remote tags.

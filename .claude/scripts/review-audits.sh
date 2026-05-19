@@ -6,7 +6,7 @@ set -euo pipefail
 # Reads raw substrate (runs.log, tool-use.log, subagents.log, git, gh) and
 # computes signals on the fly. No derived JSON is maintained.
 #
-# Usage: bash .claude/scripts/review-audits.sh [flags]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh [flags]
 #   --last N        Limit to last N rows of runs.log (applied after other filters).
 #   --path A|B|C    Filter to rows where path=X.
 #   --deviations    Filter to rows where deviation count > 0.

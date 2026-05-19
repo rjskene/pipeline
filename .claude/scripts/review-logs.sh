@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Review agent session logs for errors and key events.
-# Usage: bash .claude/scripts/review-logs.sh [issue-number|--subagents [filter]]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh [issue-number|--subagents [filter]]
 #   No args: summarize all logs
 #   With issue number: show details for that issue's latest log
 #   --subagents: show subagent activity (optional filter fragment to grep)
@@ -113,7 +113,7 @@ else
   done
   echo "======================================================================="
   echo ""
-  echo "View details: bash .claude/scripts/review-logs.sh <issue-number>"
+  echo "View details: bash \${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh <issue-number>"
 
   # Subagent activity summary
   SUBAGENT_LOG="${REPO_ROOT}/.claude/logs/subagents.log"

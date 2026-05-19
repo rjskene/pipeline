@@ -1,6 +1,6 @@
 #!/bin/bash
 # queue-status.sh — emit a pipeline status snapshot for the queue runner and manual checks.
-# Usage: bash .claude/scripts/queue-status.sh [--queue-log <path>]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/queue-status.sh [--queue-log <path>]
 # Outputs a pipeline status snapshot for the queue runner and manual checks.
 
 set -uo pipefail

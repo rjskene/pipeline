@@ -5,7 +5,7 @@ set -euo pipefail
 # state of the base branch after a pipeline cleanup batch.
 #
 # Usage:
-#   bash .claude/scripts/create-checkpoint-tag.sh \
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/create-checkpoint-tag.sh \
 #       --issues "N1,N2,..." \
 #       --prs "P1,P2,..." \
 #       [--branch <branch>] \

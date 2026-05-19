@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # Check if the backend and frontend are responding on their expected ports.
-# Usage: bash .claude/scripts/check-server.sh [backend-port] [frontend-port]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-server.sh [backend-port] [frontend-port]
 #
 # Examples:
-#   bash .claude/scripts/check-server.sh                # default ports 3001, 5173
-#   bash .claude/scripts/check-server.sh 3000 4025      # custom ports
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-server.sh                # default ports 3001, 5173
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-server.sh 3000 4025      # custom ports
 #
 # Exit codes:
 #   0 = healthy
