@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/rjskene/pipeline/compare/v0.8.2...v0.8.3) (2026-05-19)
+
+
+### Miscellaneous Chores
+
+* cut v0.8.3 stable patch — pre-public legacy-identity scrub ([#307](https://github.com/rjskene/pipeline/issues/307)) ([968909e](https://github.com/rjskene/pipeline/commit/968909e114fde5c3d01542c06e98d17f7ee73b87))
+
 ## [0.8.2](https://github.com/rjskene/pipeline/compare/v0.8.1...v0.8.2) (2026-05-19)
 
 
