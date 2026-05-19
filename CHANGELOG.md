@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/rjskene/pipeline/compare/v0.8.1...v0.8.2) (2026-05-19)
+
+
+### Miscellaneous Chores
+
+* cut v0.8.2 stable patch — repo-transfer URL retarget ([#304](https://github.com/rjskene/pipeline/issues/304)) ([55c7afe](https://github.com/rjskene/pipeline/commit/55c7afe97a33b4136a965a1788427467bbb434af))
+
 ## [0.8.1](https://github.com/HTS-COLLAB-ORG/claude-pipeline/compare/v0.8.0...v0.8.1) (2026-05-18)
 
 
