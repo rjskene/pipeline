@@ -72,6 +72,14 @@ You will receive an issue number as the argument. Perform:
    | Body mentions schema + API + frontend changes in a single issue | C | low |
    | Otherwise | B | medium |
 
+4a. **Read any ingested attachments.** Before composing the classification output, list and `Read` every file present in `.claude/scratch/issue-<N>/`. These were populated upstream by `/pipeline:fullsend` step 1a (autonomous mode) or `/pipeline:plan-issue` step 3b (interactive mode). If the directory is empty or absent, skip — this step does NOT itself re-fetch attachments.
+
+   ```bash
+   ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
+   ```
+
+   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before composing the output.** Mandatory for issues labeled `bug` or `user-submitted`; recommended for others. Placement after step 2's cache short-circuit guarantees zero token cost on cache-hit runs.
+
 5. **Compose the classification output:**
 
    ```markdown
