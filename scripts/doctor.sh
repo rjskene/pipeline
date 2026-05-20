@@ -702,6 +702,49 @@ else
 fi
 # END consumer_drift
 
+# BEGIN container_assets_unwired
+# --------------------------------------------------------------------------
+# Check: container_assets_unwired — detect compose.<mode>.{yml,yaml} files at
+# the project root whose mode is not declared in PIPELINE_EVAL_CONTAINERS but
+# whose intent IS witnessed by a .claude/hooks/*.py reading an env var the
+# compose file sets (the "marker-env triangle"). Helper:
+# scripts/check-container-assets.sh — see ## container_assets_unwired check
+# in skills/doctor/SKILL.md for the verdict table.
+#   pass — declared OR `# pipeline:manual-only` opt-out in first 5 lines
+#   warn — assets present but no marker-triangle / yaml-parse-skipped
+#   fail — full triangle: compose sets MARKER, hook reads MARKER, undeclared
+# Mirrors the dispatch-layer drift detected by consumer_drift, applied to a
+# different surface.
+# --------------------------------------------------------------------------
+CA_HELPER="$SCRIPT_DIR/check-container-assets.sh"
+if [ ! -f "$CA_HELPER" ]; then
+  record container_assets_unwired warn "check-container-assets.sh not found at $CA_HELPER"
+else
+  ca_out="$(bash "$CA_HELPER" 2>&1)"
+  ca_rc=$?
+  # Final status line shape: `status=<pass|warn|fail> detail=<msg>`. Pick the
+  # last status= line (the helper emits exactly one, at the end).
+  ca_status_line="$(printf '%s\n' "$ca_out" | grep -E '^status=' | tail -1)"
+  ca_status="$(printf '%s' "$ca_status_line" | sed -E 's/^status=([a-z]+).*/\1/')"
+  ca_detail="$(printf '%s' "$ca_status_line" | sed -E 's/^status=[a-z]+ detail=//')"
+  case "$ca_status" in
+    pass|warn|fail)
+      record container_assets_unwired "$ca_status" "$ca_detail"
+      ;;
+    *)
+      record container_assets_unwired warn "helper produced no status line (rc=$ca_rc)"
+      ;;
+  esac
+  # Replay per-asset diagnostic lines under the CHECK line (everything but the
+  # trailing status= line). Mirrors the consumer_drift summary-table shape.
+  ca_diag="$(printf '%s\n' "$ca_out" | grep -vE '^status=' || true)"
+  if [ -n "$ca_diag" ]; then
+    echo "  === container_assets_unwired report ==="
+    printf '%s\n' "$ca_diag"
+  fi
+fi
+# END container_assets_unwired
+
 # --------------------------------------------------------------------------
 # Check: preservation_refs — per-file reference report. For every consumer
 # .claude/{scripts,hooks}/ file whose basename collides with a plugin-shipped
