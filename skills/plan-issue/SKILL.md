@@ -61,6 +61,16 @@ You will receive an issue number as the argument (or from context). Perform thes
    echo "Planning issue #<N> as PATH $PATH_LETTER"
    ```
 
+3b. **Ingest and read attachments.** In interactive single-issue planning (when `/pipeline:fullsend` is not the caller), run `fetch-issue-attachments.sh` for this issue, then list and `Read` every file. The helper is idempotent — if `/pipeline:fullsend` step 1a already ran, this is a no-op fetch.
+
+   ```bash
+   PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh" <N> 2>/dev/null | head -1
+   ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
+   ```
+
+   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before drafting.** Mandatory for issues labeled `bug`, `user-submitted`, or `regression`; recommended for others. Screenshots steer the codebase exploration in step 4 toward the right files.
+
 4. **Explore the codebase** — use Glob, Grep, and Read to find all files relevant to this issue. Look at:
    - Schema files if the issue touches data
    - Route files if the issue touches API

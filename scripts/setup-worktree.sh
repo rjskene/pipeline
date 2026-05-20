@@ -40,9 +40,9 @@ echo ""
 
 # Step 1: Create worktree (skip if exists)
 if git -C "$MAIN_REPO" worktree list | grep -q "$WORKTREE_PATH"; then
-  echo "[1/5] Worktree already exists — skipping creation"
+  echo "[1/6] Worktree already exists — skipping creation"
 else
-  echo "[1/5] Creating worktree..."
+  echo "[1/6] Creating worktree..."
   if git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" "$BRANCH"
   else
@@ -51,7 +51,7 @@ else
 fi
 
 # Step 2: Sync untracked .claude/ files (settings.local.json, untracked hooks, .env files, venvs)
-echo "[2/5] Syncing untracked files (.claude/, .env)..."
+echo "[2/6] Syncing untracked files (.claude/, .env)..."
 mkdir -p "$WORKTREE_PATH/.claude/hooks"
 if [ -f "$MAIN_REPO/.claude/settings.local.json" ]; then
   cp "$MAIN_REPO/.claude/settings.local.json" "$WORKTREE_PATH/.claude/settings.local.json"
@@ -82,19 +82,29 @@ for hook in "$MAIN_REPO/.claude/hooks/"*; do
   fi
 done
 
-# Step 3: Install dependencies
-echo "[3/5] Installing dependencies..."
-(cd "$WORKTREE_PATH" && eval "$PIPELINE_INSTALL_CMD")
-
-# Step 4: Seed database (if configured)
-if [ -n "$PIPELINE_SEED_CMD" ]; then
-  echo "[4/5] Seeding database..."
-  (cd "$WORKTREE_PATH" && eval "$PIPELINE_SEED_CMD")
+# Step 3: Mirror per-issue scratch attachments into the worktree
+if [ -n "${ISSUE_NUM:-}" ] && [ -d "$MAIN_REPO/.claude/scratch/issue-${ISSUE_NUM}" ]; then
+  echo "[3/6] Mirroring .claude/scratch/issue-${ISSUE_NUM}/ into worktree..."
+  mkdir -p "$WORKTREE_PATH/.claude/scratch"
+  cp -R "$MAIN_REPO/.claude/scratch/issue-${ISSUE_NUM}" "$WORKTREE_PATH/.claude/scratch/"
+  echo "  Copied issue-${ISSUE_NUM} attachments into worktree scratch"
 else
-  echo "[4/5] No seed command configured — skipping"
+  echo "[3/6] No .claude/scratch/issue-${ISSUE_NUM:-} dir to mirror — skipping"
 fi
 
-# Step 5: Determine base branch (if not explicitly provided) and write metadata file
+# Step 4: Install dependencies
+echo "[4/6] Installing dependencies..."
+(cd "$WORKTREE_PATH" && eval "$PIPELINE_INSTALL_CMD")
+
+# Step 5: Seed database (if configured)
+if [ -n "$PIPELINE_SEED_CMD" ]; then
+  echo "[5/6] Seeding database..."
+  (cd "$WORKTREE_PATH" && eval "$PIPELINE_SEED_CMD")
+else
+  echo "[5/6] No seed command configured — skipping"
+fi
+
+# Step 6: Determine base branch (if not explicitly provided) and write metadata file
 if [ -z "$BASE_BRANCH" ]; then
   CURRENT_BRANCH=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
   if [ "$CURRENT_BRANCH" = "HEAD" ] || [ "$CURRENT_BRANCH" = "main" ]; then
@@ -107,12 +117,12 @@ if [ -z "$BASE_BRANCH" ]; then
 fi
 # Verify base branch exists on remote; push if needed
 if ! git -C "$MAIN_REPO" ls-remote --heads origin "$BASE_BRANCH" | grep -q "$BASE_BRANCH"; then
-  echo "[5/5] Base branch '$BASE_BRANCH' not on remote — pushing..."
+  echo "[6/6] Base branch '$BASE_BRANCH' not on remote — pushing..."
   git -C "$MAIN_REPO" push -u origin "$BASE_BRANCH"
 fi
 mkdir -p "$WORKTREE_PATH/.claude"
 echo "$BASE_BRANCH" > "$WORKTREE_PATH/.claude/base-branch"
-echo "[5/5] Wrote base branch metadata: $BASE_BRANCH"
+echo "[6/6] Wrote base branch metadata: $BASE_BRANCH"
 
 echo ""
 echo "=== Setup complete ==="

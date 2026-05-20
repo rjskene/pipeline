@@ -35,7 +35,21 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 
 **0a. Wave plan (pre-think).** Before dispatching any classify/plan agents, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh <ready-issue-numbers>` and capture stdout as the wave plan. Process the rest of step 1 (classify, then plan) wave by wave: dispatch all issues in Wave K in parallel, await completion, then advance to Wave K+1. In interactive mode, print the wave plan once before launching; in autonomous full send mode, log it and proceed. The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default true) — when `false`, fall back to the legacy single-blast parallel dispatch.
 
-1. **Plan** — Process wave by wave per Step 0a — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
+1. **Plan**
+
+   **1a. Ingest attachments for the slate.** For each issue in the slate (the ready-issue set being processed this wave), run `fetch-issue-attachments.sh` so downstream classify/plan/execute/evaluate-pr agents have screenshots and binary evidence available locally:
+
+   ```bash
+   for N in <slate-issue-numbers>; do
+     PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
+       bash "${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh" "$N" 2>/dev/null \
+       | head -1
+   done
+   ```
+
+   The helper is idempotent — repeat invocations cost zero `gh api` calls. The `head -1` cap keeps wave-log output to one line per issue. This is the autonomous-mode ingestion site; `/pipeline:run` step 0 does NOT fetch attachments. Interactive single-issue planning fetches at `/pipeline:plan-issue` step 3b instead.
+
+   **1b. Dispatch classify and plan.** Process wave by wave per Step 0a — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
      ```bash
      PLAN_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \

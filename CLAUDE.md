@@ -77,6 +77,7 @@ The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks
 **Runtime allow-list (consumer-owned, pipeline may read/write):**
 - `.claude/logs/` — observability artifacts (tool-use, subagents, runs). Plugin writes here are opt-in via `PIPELINE_LOGS_ENABLED` (default `false`); the allow-list permission is unchanged, but the plugin's default behavior is now no-write.
 - `.claude/worktrees/` — pipeline-managed worktree checkouts.
+- `.claude/scratch/` — ephemeral evidence ingested from issue/comment attachments by `scripts/fetch-issue-attachments.sh` (slate-gated by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; never run from worktrees). Gitignored by default; auto-pruning is a follow-up.
 
 Everything else under consumer `.claude/` is consumer-owned. CI enforces this via `scripts/check-no-consumer-claude-writes.sh` — adding any new source reference to `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` requires an explicit entry in `tests/no-consumer-claude-writes.allow` with a justification comment. Allow-list entries are the audit trail for legacy code waiting to be retired.
 
