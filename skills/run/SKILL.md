@@ -315,6 +315,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    - **Target Base** = `next` if labels contain `next-major-release`, else `PIPELINE_BASE_BRANCH`. ≤10 chars, no truncation.
    - **Path** = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`. If both are present, show `A!` (PATH A wins, flag the collision). classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
    - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
+   - **Attachments (`att=N`)** = count of files present at `${PIPELINE_PROJECT_ROOT}/.claude/scratch/issue-<N>/` at table-render time, computed as `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null | wc -l`. Surfaced in the NOTES footer only when N>0 for at least one issue (consistent with other non-default columns). Sourced from on-disk state populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; the run skill itself does NOT re-fetch attachments at discovery time.
 
    **Grouped layout (epics on top, orphans below).** Trackers appear first with their priority badge and conventional-title; each open child renders on its own line, indented eight spaces, with stage right-aligned in parentheses. A tracker with zero open children collapses to a single `(all children closed — pending auto-close)` line:
 
@@ -352,12 +353,14 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    NOTES (non-default)
    ================================================================
-    Issue  | Target Base | Path | Blocked by
+    Issue  | Target Base | Path | Blocked by | att
    ----------------------------------------------------------------
-    #150   | next        | A    | --
-    #133   | pipeline    | B    | #132
+    #150   | next        | A    | --         | 0
+    #133   | pipeline    | B    | #132       | 3
    ================================================================
    ```
+
+   The `att` column is rendered only when at least one row has `att>0`; if every issue has zero on-disk attachments the column is suppressed (same convention as Target Base / Path / Blocked-by defaults). When the column is rendered, `att=0` rows still appear so the table stays rectangular.
 
    **Counts footer (always rendered).** A single trailing line of the form `N epics + N children + N orphans = N open`:
 
