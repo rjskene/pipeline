@@ -213,6 +213,21 @@ for wt in "${WORKTREES[@]}"; do
     fi
   done
 
+  # 6. Mirror per-issue scratch attachments. Parse the issue number from the
+  # worktree basename suffix (PIPELINE_WORKTREE_PREFIX-<N>-<slug>); copy any
+  # files from MAIN_REPO/.claude/scratch/issue-<N>/ that aren't already in the
+  # worktree. cp -Rn preserves the portable idiom (no rsync dependency).
+  wt_base="$(basename "$wt")"
+  scratch_n=""
+  if [[ "$wt_base" =~ ^${PIPELINE_WORKTREE_PREFIX}-([0-9]+)- ]]; then
+    scratch_n="${BASH_REMATCH[1]}"
+  fi
+  if [ -n "$scratch_n" ] && [ -d "$MAIN_REPO/.claude/scratch/issue-${scratch_n}" ]; then
+    mkdir -p "$wt/.claude/scratch"
+    cp -Rn "$MAIN_REPO/.claude/scratch/issue-${scratch_n}" "$wt/.claude/scratch/" 2>/dev/null || true
+    echo "  [ok] scratch/issue-${scratch_n} mirrored"
+  fi
+
   echo ""
 done
 
