@@ -95,7 +95,9 @@ parse_env_keys() {
 
 # --------------------------------------------------------------------------
 # Extract the first services.<name>: key. Best-effort; empty when the file
-# uses non-standard indentation or no `services:` block at all.
+# uses non-standard indentation or no `services:` block at all. Uses 2-arg
+# match() + substr() so the helper is portable to mawk / BWK awk / busybox
+# awk (the 3-arg array-capture form is a GNU awk extension).
 # --------------------------------------------------------------------------
 parse_first_service() {
   local cf="$1"
@@ -103,8 +105,11 @@ parse_first_service() {
     /^services:[[:space:]]*$/ { inservices = 1; next }
     inservices == 1 {
       if ($0 ~ /^[^[:space:]]/) { inservices = 0; next }
-      if (match($0, /^[[:space:]]+([A-Za-z0-9_-]+):/, m)) {
-        print m[1]
+      if (match($0, /^[[:space:]]+[A-Za-z0-9_-]+:/)) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/^[[:space:]]+/, "", s)
+        sub(/:$/, "", s)
+        print s
         exit
       }
     }
