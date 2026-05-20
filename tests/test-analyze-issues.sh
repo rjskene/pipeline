@@ -1,5 +1,7 @@
 #!/bin/bash
 set -uo pipefail
+
+export PIPELINE_LOGS_ENABLED=true
 #
 # Tests for scripts/analyze-issues.sh — the Stage 1 deterministic shortlist
 # generator backing /pipeline:run --analyze (issue #138).

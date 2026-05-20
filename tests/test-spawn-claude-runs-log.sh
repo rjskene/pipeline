@@ -69,6 +69,7 @@ run_dryrun() {
   PATH="$STUB_DIR:$PATH" \
     STUB_LABELS="$labels" \
     PIPELINE_SPAWN_DRY_RUN=1 \
+    PIPELINE_LOGS_ENABLED=true \
     PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
     bash .claude/scripts/spawn-claude.sh "$PROJ/worktree" "$issue" slug tmux 2>/dev/null
   cd - >/dev/null

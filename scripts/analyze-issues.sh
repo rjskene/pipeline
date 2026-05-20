@@ -1,5 +1,16 @@
 #!/bin/bash
 set -uo pipefail
+
+# Source logging gate helper (best-effort; absence is non-fatal so callers
+# that vendor this script standalone still work - gate defaults to off).
+_ANALYZE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_ANALYZE_SCRIPT_DIR/_logging.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_ANALYZE_SCRIPT_DIR/_logging.sh"
+fi
+if ! declare -F pipeline_logging_enabled >/dev/null 2>&1; then
+  pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
+fi
 #
 # analyze-issues.sh — Stage 1 deterministic shortlist generator backing
 # /pipeline:run --analyze (issue #138).
@@ -390,8 +401,16 @@ MISSING_JSON=$(jq --argjson cutoff "$CUTOFF_EPOCH" '
 ' "$ISSUES_FILE")
 
 # --- assemble + emit ---
-mkdir -p .claude/logs
-OUT=".claude/logs/analyze-shortlist-$(date -u +%Y%m%dT%H%M%S%NZ).json"
+# Gate the shortlist output path on PIPELINE_LOGS_ENABLED. When logging is
+# off (the consumer default), route to mktemp so we do not leave artifacts
+# under .claude/logs/ in consumer repos. The stdout absolute-path contract
+# is unchanged; only the source of the path flips.
+if pipeline_logging_enabled; then
+  mkdir -p .claude/logs
+  OUT=".claude/logs/analyze-shortlist-$(date -u +%Y%m%dT%H%M%S%NZ).json"
+else
+  OUT="$(mktemp -t pipeline-analyze-shortlist-XXXX.json)"
+fi
 jq -n \
   --argjson pairs   "${PAIRS_JSON:-[]}" \
   --argjson fits    "${FITS_JSON:-[]}" \

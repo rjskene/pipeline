@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Review agent session logs for errors and key events.
-# Usage: bash .claude/scripts/review-logs.sh [issue-number|--subagents [filter]]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh [issue-number|--subagents [filter]]
 #   No args: summarize all logs
 #   With issue number: show details for that issue's latest log
 #   --subagents: show subagent activity (optional filter fragment to grep)
@@ -36,8 +36,12 @@ _find_main_repo() {
 REPO_ROOT="$(_find_main_repo)" || exit 1
 LOG_DIR="${REPO_ROOT}/.claude/logs"
 
-if [ ! -d "$LOG_DIR" ] || [ -z "$(ls -A "$LOG_DIR" 2>/dev/null)" ]; then
-  echo "No logs found in $LOG_DIR"
+# shellcheck disable=SC1091
+_logging_helper="$(cd "$(dirname "$0")" && pwd)/_logging.sh"
+[ -f "$_logging_helper" ] && source "$_logging_helper"
+command -v pipeline_logging_enabled >/dev/null 2>&1 || pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
+if ! pipeline_logging_enabled || [ ! -d "$LOG_DIR" ] || [ -z "$(ls -A "$LOG_DIR" 2>/dev/null)" ]; then
+  echo "Pipeline logging is disabled. To enable, set PIPELINE_LOGS_ENABLED=true in pipeline.config."
   exit 0
 fi
 
@@ -113,7 +117,7 @@ else
   done
   echo "======================================================================="
   echo ""
-  echo "View details: bash .claude/scripts/review-logs.sh <issue-number>"
+  echo "View details: bash \${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh <issue-number>"
 
   # Subagent activity summary
   SUBAGENT_LOG="${REPO_ROOT}/.claude/logs/subagents.log"

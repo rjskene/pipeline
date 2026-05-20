@@ -3,9 +3,11 @@
 # Only runtime outputs and per-instance config are ignored:
 /.claude/logs/
 /.claude/worktrees/
+/.claude/scratch/
 /.claude/settings.local.json
 /pipeline.config
 hooks/__pycache__/
 
 /dev/audits/
-mock-web/.env.mock-web-eval
+mock-web-eval/target/.env.mock-web-eval
+mock-web-eval/screenshots/

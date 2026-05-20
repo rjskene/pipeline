@@ -76,6 +76,7 @@ run_spawn() {
   PATH="$STUB_DIR:$PATH" \
     STUB_LABELS="" \
     PIPELINE_SPAWN_DRY_RUN=1 \
+    PIPELINE_LOGS_ENABLED=true \
     PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
     bash .claude/scripts/spawn-claude.sh \
       --skill evaluate-issue-pr --container-mode=web-eval "$@" \

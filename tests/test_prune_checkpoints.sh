@@ -27,9 +27,9 @@ fi
 PROJ=$(mktemp -d)
 trap 'rm -rf "$PROJ"' EXIT
 
-mkdir -p "$PROJ/.claude/scripts"
-cp "$SCRIPT_UNDER_TEST" "$PROJ/.claude/scripts/prune-checkpoints.sh"
-chmod +x "$PROJ/.claude/scripts/prune-checkpoints.sh"
+mkdir -p "$PROJ/scripts"
+cp "$SCRIPT_UNDER_TEST" "$PROJ/scripts/prune-checkpoints.sh"
+chmod +x "$PROJ/scripts/prune-checkpoints.sh"
 
 cat > "$PROJ/pipeline.config" <<EOF
 PIPELINE_BASE_BRANCH="pipeline"
@@ -53,7 +53,7 @@ git tag -a -m "release" v1.2.3
 
 # --- Test 1: prune tags older than 7d ---
 echo "Test 1: --older-than 7d deletes old tags, keeps recent + semver"
-bash .claude/scripts/prune-checkpoints.sh --older-than 7d >/dev/null
+bash scripts/prune-checkpoints.sh --older-than 7d >/dev/null
 
 inc
 if git rev-parse --verify checkpoint/2000-01-01-01 >/dev/null 2>&1; then
@@ -81,7 +81,7 @@ echo "Test 2: --dry-run prints planned deletions, deletes nothing"
 OLD_DATE2=$(date -d '-20 days' '+%Y-%m-%dT%H:%M:%S +0000')
 GIT_COMMITTER_DATE="$OLD_DATE2" git tag -a -m "old2" checkpoint/2000-01-03-01
 
-OUT=$(bash .claude/scripts/prune-checkpoints.sh --older-than 7d --dry-run)
+OUT=$(bash scripts/prune-checkpoints.sh --older-than 7d --dry-run)
 
 inc
 if git rev-parse --verify checkpoint/2000-01-03-01 >/dev/null 2>&1; then

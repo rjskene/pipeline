@@ -1,0 +1,29 @@
+# Release cadence (this repo only)
+
+This repo uses a **two-branch model** with [release-please](https://github.com/googleapis/release-please): `staging` is the dev trunk where feature PRs land; `main` is the release branch that release-please tracks.
+
+## How a release happens
+
+1. Feature PRs merge to `staging` using Conventional Commits (`feat:`, `fix:`, `chore:`, etc.). CI runs on every push to `staging` and on PRs.
+2. When ready to release, open a PR `staging` → `main` and fast-forward or squash-merge it.
+3. On every push to `main`, the `release-please` workflow (`.github/workflows/release-please.yml`) opens — or updates — a Release PR titled `chore(main): release X.Y.Z`. The Release PR bumps `version` in `.claude-plugin/plugin.json` and both `metadata.version` and `plugins[0].version` in `.claude-plugin/marketplace.json` (synced via `extra-files` in `release-please-config.json`), and appends to `CHANGELOG.md`.
+4. Squash-merge the Release PR. release-please then creates the `vX.Y.Z` git tag and a corresponding GitHub Release automatically.
+5. Back-sync to staging happens automatically — the back-sync-release workflow (`.github/workflows/back-sync-release.yml`) merges the release commit onto staging (`--ff-only` when possible; `-X theirs` strategy-option when staging has overlapping work, so main wins on collisions — release-please's version-manifest bumps on main are strictly newer than staging for the files they touch) on every push to `main` matching `chore(main): release …`. On a true delete/modify conflict that `-X theirs` cannot resolve, it opens a draft PR `release-back-sync/<sha>` against staging for human resolution instead of failing the workflow.
+6. **Reload the plugin** so subsequent dogfood sessions pick up the new code:
+   ```
+   /plugin uninstall pipeline@claude-pipeline
+   /plugin install   pipeline@claude-pipeline
+   ```
+   (If installed via a local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
+
+The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. Back-sync is now fully automated via the back-sync-release workflow; the merge to staging happens without human intervention on the clean path, and only true delete/modify conflicts open a draft fallback PR. The merge strategy is asymmetric between directions: `staging → main` uses `-X ours` (staging is strictly newer in that direction); `main → staging` uses `-X theirs` (main is strictly newer on every file the release commit touched). #205 fixed the regression where #200 had naively used `-X ours` for both directions.
+
+## Dev/prerelease channel
+
+The `Release-As:` footer mechanism for cutting prereleases is preserved — it correctly marks the GitHub Release as a prerelease and applies the `-rc.N` tag suffix via release-please. The dev marketplace (`claude-pipeline-dev`) has been **retired**: opt-in to a new version already lives at the `/plugin install` layer (a stable consumer only picks up a new version when they explicitly run `/plugin uninstall` + `/plugin install`), so the dual-marketplace gate added no real protection beyond what the install action itself provides. Mental model: **if you don't want an RC, don't reinstall.**
+
+1. **Trigger (LOCKED).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --squash --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). **Using the GitHub web squash UI is FORBIDDEN for RC cuts** because it can silently drop commit trailers; `gh pr merge --squash --body-file` (or a non-squash merge) preserves the `Release-As:` footer reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
+2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and `.release-please-manifest.json` atomically via `extra-files`.
+3. **Graduation.** Prereleases do NOT auto-graduate. The next normal `staging → main` cut WITHOUT a `Release-As:` footer produces the stable `X.Y.Z` bump. RC and stable are mutually exclusive per `staging → main` PR.
+4. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
+5. **Consumer cleanup (one-time).** Anyone who previously installed via the dev channel should run `/plugin uninstall pipeline@claude-pipeline-dev` followed by `/plugin marketplace remove claude-pipeline-dev` to unregister the now-orphaned manifest. The next `/plugin install pipeline@claude-pipeline` picks up the stable channel.

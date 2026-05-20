@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+export PIPELINE_LOGS_ENABLED=true
+
 # Tests for .claude-pipeline/scripts/review-audits.sh.
 #
 # Uses synthetic runs.log + tool-use.log + subagents.log under a temp dir
@@ -158,9 +160,10 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# Test 7: empty runs.log prints the 'No runs logged yet' message
+# Test 7: empty/missing runs.log collapses into the disabled-logging message
+# (post-#318: review-audits.sh treats disabled-or-empty as one exit-0 state).
 # -------------------------------------------------------------------------
-echo "Test 7: empty runs.log -> 'No runs logged yet'"
+echo "Test 7: empty runs.log -> disabled-logging message"
 inc
 EMPTY_TMP=$(mktemp -d)
 mkdir -p "$EMPTY_TMP/.claude/logs" "$EMPTY_TMP/.claude/scripts"
@@ -169,10 +172,10 @@ cp "$SCRIPT_UNDER_TEST" "$EMPTY_TMP/.claude/scripts/review-audits.sh"
 chmod +x "$EMPTY_TMP/.claude/scripts/review-audits.sh"
 OUT=$(cd "$EMPTY_TMP" && bash .claude/scripts/review-audits.sh 2>&1 || true)
 rm -rf "$EMPTY_TMP"
-if echo "$OUT" | grep -qi 'no runs logged yet'; then
-  pass_msg "empty-runs.log message shown"
+if echo "$OUT" | grep -qi 'Pipeline logging is disabled'; then
+  pass_msg "disabled-logging message shown for empty/missing runs.log"
 else
-  fail_msg "expected 'No runs logged yet'; got:"
+  fail_msg "expected 'Pipeline logging is disabled'; got:"
   echo "$OUT" | sed 's/^/    /'
 fi
 

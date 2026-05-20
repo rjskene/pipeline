@@ -1,6 +1,6 @@
 #!/bin/bash
 # queue-status.sh — emit a pipeline status snapshot for the queue runner and manual checks.
-# Usage: bash .claude/scripts/queue-status.sh [--queue-log <path>]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/queue-status.sh [--queue-log <path>]
 # Outputs a pipeline status snapshot for the queue runner and manual checks.
 
 set -uo pipefail
@@ -22,6 +22,19 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "${REPO_ROOT}/pipeline.config"
+# shellcheck disable=SC1091
+_logging_helper="$(cd "$(dirname "$0")" && pwd)/_logging.sh"
+[ -f "$_logging_helper" ] && source "$_logging_helper"
+command -v pipeline_logging_enabled >/dev/null 2>&1 || pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
+
+# Disabled-logging short-circuit: when logging is gated off or no queue logs
+# exist on disk, emit a stable line and exit 0 rather than rendering an empty
+# system snapshot. The queue runner polls this script in a tight loop and
+# must not be confused by transient absence.
+if ! pipeline_logging_enabled || ! ls "${REPO_ROOT}/.claude/logs"/queue-*.log >/dev/null 2>&1; then
+  echo "No queue runs found. (PIPELINE_LOGS_ENABLED=false)"
+  exit 0
+fi
 
 # Memory stats
 TOTAL_MEM_MB=$(free -m | awk '/^Mem:/{print $2}')

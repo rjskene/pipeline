@@ -4,12 +4,33 @@ set -euo pipefail
 # prune-checkpoints.sh — Delete local checkpoint/* tags older than a threshold.
 #
 # Usage:
-#   bash .claude/scripts/prune-checkpoints.sh --older-than <Nd> [--dry-run]
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/prune-checkpoints.sh --older-than <Nd> [--dry-run]
 #
 # Only touches tags matching refs/tags/checkpoint/* — semver and other tags
 # are left alone. Never touches remote tags.
 
-MAIN_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+_find_main_repo() {
+  if [ -n "${PIPELINE_PROJECT_ROOT:-}" ]; then
+    if [ -f "$PIPELINE_PROJECT_ROOT/pipeline.config" ] && { [ -d "$PIPELINE_PROJECT_ROOT/.git" ] || [ -f "$PIPELINE_PROJECT_ROOT/.git" ]; }; then
+      printf '%s' "$PIPELINE_PROJECT_ROOT"
+      return 0
+    fi
+    echo "ERROR: PIPELINE_PROJECT_ROOT=$PIPELINE_PROJECT_ROOT does not contain both pipeline.config and a .git/ entry" >&2
+    return 1
+  fi
+  local dir
+  dir="$(cd "$(dirname "$0")" && pwd)"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/pipeline.config" ] && { [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; }; then
+      printf '%s' "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  echo "ERROR: could not locate consumer repo (need both pipeline.config and .git/) walking up from $(dirname "$0") to /; set PIPELINE_PROJECT_ROOT to override" >&2
+  return 1
+}
+MAIN_REPO="$(_find_main_repo)" || exit 1
 
 OLDER_THAN=""
 DRY_RUN=false

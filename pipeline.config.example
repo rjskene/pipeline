@@ -30,6 +30,22 @@ PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED="true"
 # Grouping detection in /pipeline:create-issues. When "true", the skill calls scripts/find-grouping-candidates.sh before printing the proposal list to recommend TRACKER / GROUP / STANDALONE per proposed title. Set to "false" to skip the heuristic entirely (the proposal proceeds as if every recommendation were STANDALONE).
 PIPELINE_GROUPING_DETECTION_ENABLED="true"
 
+# --- Plugin observability logs (issue #318) ---
+#
+# PIPELINE_LOGS_ENABLED gates plugin writes to .claude/logs/ — specifically
+# runs.log, queue-*.log, queue-pending.txt, per-issue tool-use copies
+# emitted by cleanup-worktree.sh, the analyze-mode shortlist JSON, and the
+# ci-fix attempt logs.
+#
+# Default is "false" so installing the plugin does not impose logging on a
+# consumer project. Trade-off: you lose the crash-diagnosis substrate by
+# default — flip to "true" to enable end-to-end observability.
+#
+# Carve-out: hooks/enforce-path-c-delegation.py and hooks/enforce-ci-wait.py
+# still write .claude/logs/enforce-*-errors.log on hook fail-open paths.
+# That emergency-diagnosis stream is intentionally ungated.
+PIPELINE_LOGS_ENABLED=false
+
 # --- Label-driven 3-path execution (optional) ---
 #
 # spawn-claude.sh reads the issue's labels and injects a path-specific
@@ -116,10 +132,43 @@ PIPELINE_EVAL_CLASSIFIER=""
 #   PIPELINE_EVAL_CONTAINER_<m_norm>_PREFLIGHT_CMD  (optional) preflight; non-zero aborts spawn
 #   PIPELINE_EVAL_CONTAINER_<m_norm>_MAX_CONCURRENT (optional) queue cap; default 1
 #
-# Container mode is only honored with --skill=evaluate-issue-pr; other
-# skills reject the flag at spawn time. CI-fix re-dispatches are mode-
-# agnostic (re-label the PR to re-trigger a fresh containerized eval).
+# Container mode is only honored with --skill=evaluate-issue-pr by default;
+# the PIPELINE_CONTAINER_SKILLS allowlist below opts additional skills in.
+# CI-fix re-dispatches are mode-agnostic (re-label the PR to re-trigger a
+# fresh containerized eval).
 #
+# --- Container-mode skill allowlist (issue #321) ---
+#
+# PIPELINE_CONTAINER_SKILLS is a space-separated list of skill names that
+# may be dispatched via --container-mode=<name>. Default (when UNSET) is
+# "evaluate-issue-pr" — only PR evaluation is container-eligible, matching
+# the original #218 behavior.
+#
+# To route additional skills through the container (e.g. execute-issue-plan
+# if your container ships test dependencies the bare host lacks), opt them
+# in here:
+#
+#   PIPELINE_CONTAINER_SKILLS="evaluate-issue-pr execute-issue-plan"
+#
+# UNSET vs EMPTY semantics:
+#   - UNSET           -> default allowlist = "evaluate-issue-pr"
+#   - PIPELINE_CONTAINER_SKILLS=""  -> DISABLED for ALL skills (--container-mode rejected)
+#
+# Asymmetry with #238: the classifier-required guard (spawn-claude.sh ~line
+# 287-305) only enforces the classifier check for --skill=evaluate-issue-pr.
+# If you opt other skills into PIPELINE_CONTAINER_SKILLS, the classifier
+# will NOT be re-invoked for those skills on bare-host launches — only the
+# explicit --container-mode=<name> token routes them through the container.
+#
+# Scope (issue #321 narrowing): this knob controls WHICH SKILLS can use the
+# container; it does not introduce a parallel dispatch path. The issue body
+# originally proposed PIPELINE_CONTAINER_CMD and PIPELINE_CONTAINER_ENV;
+# those are intentionally NOT added — consumer container shape is owned by
+# PIPELINE_EVAL_CONTAINER_<MODE>_{COMPOSE_FILE,SERVICE,ENV_FILE,...} from
+# #218. To inject extra env into the container, use
+# PIPELINE_EVAL_CONTAINER_<MODE>_ENV_FILE.
+PIPELINE_CONTAINER_SKILLS="evaluate-issue-pr"
+
 # Example (web-eval container — uncomment + adjust):
 PIPELINE_EVAL_CONTAINERS=""
 # PIPELINE_EVAL_CONTAINERS="web-eval"
@@ -129,10 +178,10 @@ PIPELINE_EVAL_CONTAINERS=""
 # PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash scripts/web-eval.sh --preflight"
 # PIPELINE_EVAL_CONTAINER_web_eval_MAX_CONCURRENT="1"
 
-# Example — mock-web-eval container (dogfood demo; see dev/mock-web-eval/README.md):
-# PIPELINE_EVAL_CLASSIFIER="scripts/mock-web-eval-classifier.sh"
+# Example — mock-web-eval container (dogfood demo; see mock-web-eval/replay/README.md):
+# PIPELINE_EVAL_CLASSIFIER="mock-web-eval/scripts/mock-web-eval-classifier.sh"
 # PIPELINE_EVAL_CONTAINERS="mock-web-eval"
-# PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="compose.mock-web-eval.yml"
+# PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="mock-web-eval/docker/compose.yml"
 # PIPELINE_EVAL_CONTAINER_mock_web_eval_SERVICE="mock-web-eval"
-# PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web/.env.mock-web-eval"
-# PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="bash scripts/mock-web-eval-probe-port.sh"
+# PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web-eval/target/.env.mock-web-eval"
+# PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="bash mock-web-eval/scripts/mock-web-eval-probe-port.sh"

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -uo pipefail
 
-# Smoke test for dev/mock-web-eval/replay.sh (issue #232).
+# Smoke test for mock-web-eval/replay/replay.sh (issue #232).
 # Asserts the replay helper exists, is executable, parses --dry-run, prints
 # expected dry-run markers, and rejects unknown flags. The full end-to-end
 # `--full --pr <N>` mode is intentionally NOT exercised here — it requires
@@ -9,7 +9,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SCRIPT_UNDER_TEST="$REPO_ROOT/dev/mock-web-eval/replay.sh"
+SCRIPT_UNDER_TEST="$REPO_ROOT/mock-web-eval/replay/replay.sh"
 
 PASS=0
 FAIL=0

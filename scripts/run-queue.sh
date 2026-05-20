@@ -11,15 +11,23 @@ if [ "${1:-}" = "--add" ]; then
   shift
   REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
   PENDING_FILE="${REPO_ROOT}/.claude/logs/queue-pending.txt"
+  # Resolve plugin root so we can source _logging.sh for the gate predicate.
+  : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve _logging.sh}"
+  # shellcheck disable=SC1091
+  source "${CLAUDE_PLUGIN_ROOT}/scripts/_logging.sh"
   if [ $# -eq 0 ]; then
     echo "Usage: bash $0 --add <issue1> <issue2> ..."
     exit 1
   fi
-  for issue in "$@"; do
-    echo "$issue" >> "$PENDING_FILE"
-  done
-  echo "Added $# issue(s) to pending queue: $*"
-  echo "Pending file: ${PENDING_FILE}"
+  if pipeline_logging_enabled; then
+    for issue in "$@"; do
+      echo "$issue" >> "$PENDING_FILE"
+    done
+    echo "Added $# issue(s) to pending queue: $*"
+    echo "Pending file: ${PENDING_FILE}"
+  else
+    echo "Added $# issue(s) to pending queue (logging disabled; not persisted): $*"
+  fi
   exit 0
 fi
 
@@ -96,13 +104,26 @@ STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
 SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT}/scripts"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/_logging.sh"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
 QUEUE_LOG="${LOG_DIR}/queue-$(date +%Y%m%d-%H%M%S).log"
 PENDING_FILE="${LOG_DIR}/queue-pending.txt"
 
-# Log to both stdout and queue log file
+if pipeline_logging_enabled; then
+  mkdir -p "$LOG_DIR"
+  : > "$QUEUE_LOG"
+  : > "$PENDING_FILE"
+fi
+
+# Log to stdout, and tee to the queue log only when observability is enabled.
+# stdout progress is always preserved so operators see queue activity.
 log() {
-  echo "$@" | tee -a "$QUEUE_LOG"
+  if pipeline_logging_enabled; then
+    echo "$@" | tee -a "$QUEUE_LOG"
+  else
+    echo "$@"
+  fi
 }
 
 # Collect issue queue from args
@@ -122,7 +143,7 @@ fi
 # --- Pre-spawn classifier (issue #218) ---
 #
 # classify_issue <issue> resolves the issue's current PR number (or empty
-# if no PR has opened yet) and invokes scripts/eval-classifier-invoke.sh.
+# if no PR has opened yet) and invokes mock-web-eval/scripts/eval-classifier-invoke.sh.
 # It echoes a single tab-separated line on stdout:
 #   <mode>\t<extra-tokens>\t<rc>\t<stderr-first-line>
 # where <mode> is `bare` when no --container-mode token was emitted, or
@@ -154,7 +175,7 @@ classify_issue() {
   # pass it inline so the child bash sees it. Use `&& rc=0 || rc=$?` to
   # capture a non-zero exit instead of letting `set -e` kill the function.
   PIPELINE_EVAL_CLASSIFIER="${PIPELINE_EVAL_CLASSIFIER:-}" \
-    bash "${REPO_ROOT}/scripts/eval-classifier-invoke.sh" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
+    bash "${REPO_ROOT}/mock-web-eval/scripts/eval-classifier-invoke.sh" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
       && rc=0 || rc=$?
   out=$(cat "$tmp_out"); err=$(head -1 "$tmp_err")
   rm -f "$tmp_out" "$tmp_err"

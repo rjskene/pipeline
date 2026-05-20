@@ -5,6 +5,18 @@ set -euo pipefail
 # export PIPELINE_PROJECT_ROOT to override the lookup directory.
 source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
+# Observability logging helper: defines pipeline_logging_enabled() which
+# returns rc=0 only when PIPELINE_LOGS_ENABLED=true (strict lowercase).
+# Used to gate dogfood-only writes under .claude/logs/. Fall back to an
+# inline definition when the helper is missing (e.g. partial install or
+# tests copying spawn-claude.sh in isolation) so we never hard-fail.
+_spawn_claude_dir="$(dirname "${BASH_SOURCE[0]}")"
+if [ -f "${_spawn_claude_dir}/_logging.sh" ]; then
+  source "${_spawn_claude_dir}/_logging.sh"
+else
+  pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
+fi
+
 # Launch a claude CLI session for a worktree.
 # Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue-number> [slug] [mode]
 #   mode: "terminal" (default) — new Terminal.app window with /pipeline:execute-issue-plan
@@ -53,9 +65,11 @@ TMUX_WINDOW="issue-${ISSUE_NUM}"
 # Set up logging
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
-mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="${LOG_DIR}/issue-${ISSUE_NUM}-${TIMESTAMP}.log"
+if pipeline_logging_enabled; then
+  mkdir -p "$LOG_DIR"
+fi
 
 if [ ! -d "$WORKTREE_PATH" ]; then
   echo "ERROR: Worktree not found at $WORKTREE_PATH"
@@ -136,9 +150,12 @@ fi
 
 RUNS_LOG="${PIPELINE_RUNS_LOG_OVERRIDE:-${LOG_DIR}/runs.log}"
 RUNS_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '%s\tsession=%s\tissue=%s\tpath=%s\tskill=%s\tworktree=%s\n' \
-  "$RUNS_TS" "$GENERATED_SESSION_ID" "$ISSUE_NUM" "$PATH_LETTER" "$SKILL" "$WORKTREE_PATH" \
-  >> "$RUNS_LOG"
+if pipeline_logging_enabled; then
+  mkdir -p "$(dirname "$RUNS_LOG")"
+  printf '%s\tsession=%s\tissue=%s\tpath=%s\tskill=%s\tworktree=%s\n' \
+    "$RUNS_TS" "$GENERATED_SESSION_ID" "$ISSUE_NUM" "$PATH_LETTER" "$SKILL" "$WORKTREE_PATH" \
+    >> "$RUNS_LOG"
+fi
 
 # Deferred temp-file cleanup.
 #
@@ -250,12 +267,25 @@ fi
 # LAUNCH_CMD bash array, which each launcher mode uses in place of the
 # bare `claude` executable when emitting the final CMD.
 DOCKER_PREFIX=()
-if [ -n "$CONTAINER_MODE" ] && [ "$SKILL" != "evaluate-issue-pr" ]; then
-  # Container mode is only meaningful when evaluating PRs; rejecting
-  # other skills early prevents a containerized executor from being
-  # spawned by mistake (unbounded blast radius, not what consumers ask).
-  echo "[spawn-claude] ERROR: container-mode is only supported with --skill=evaluate-issue-pr (got --skill=$SKILL)" >&2
-  exit 4
+# --- container-mode skill allowlist (issue #321) ---
+# PIPELINE_CONTAINER_SKILLS is a space-separated list of skill names that
+# may be dispatched via --container-mode=<name>. Default (when the var is
+# UNSET) is "evaluate-issue-pr" — preserves the #218 behavior so existing
+# consumers see zero behavior change. EMPTY string ("") is distinct from
+# unset: it disables container dispatch for ALL skills. Consumers opt
+# additional skills in by listing them in pipeline.config — see
+# pipeline.config.example.
+#
+# Use the ${VAR-default} expansion (NO colon) so empty stays empty.
+# ${VAR:-default} would silently rebind empty -> default and break the
+# operator's intent to disable.
+if [ -n "$CONTAINER_MODE" ]; then
+  _container_skills_allowlist="${PIPELINE_CONTAINER_SKILLS-evaluate-issue-pr}"
+  # empty allowlist == disable; do not "simplify" — empty-line grep gives the correct rejection.
+  if ! printf '%s\n' $_container_skills_allowlist | tr ' ' '\n' | grep -qx "$SKILL"; then
+    echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
+    exit 4
+  fi
 fi
 # --- container-mode-required enforcement (issue #238) ---
 # When PIPELINE_EVAL_CLASSIFIER is set and the operator launched
@@ -266,11 +296,11 @@ fi
 # lacks --container-mode parsing would otherwise pre-empt the operator's
 # container-path re-dispatch. Fail-open when the classifier is unset, the
 # skill is not evaluate-issue-pr, the flag is already set, or the
-# eval-classifier-invoke.sh shim is missing / exits non-zero.
+# mock-web-eval/scripts/eval-classifier-invoke.sh shim is missing / exits non-zero.
 if [ -z "$CONTAINER_MODE" ] \
    && [ "$SKILL" = "evaluate-issue-pr" ] \
    && [ -n "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
-  _classifier_invoke="${REPO_ROOT}/scripts/eval-classifier-invoke.sh"
+  _classifier_invoke="${REPO_ROOT}/mock-web-eval/scripts/eval-classifier-invoke.sh"
   if [ -f "$_classifier_invoke" ]; then
     set +e
     _classifier_out="$(PIPELINE_EVAL_CLASSIFIER="$PIPELINE_EVAL_CLASSIFIER" PIPELINE_REPO="${PIPELINE_REPO:-}" bash "$_classifier_invoke" "$ISSUE_NUM" 2>/dev/null)"
@@ -281,7 +311,7 @@ if [ -z "$CONTAINER_MODE" ] \
       _wanted_mode="$(printf '%s\n' "$_classifier_out" | grep '^--container-mode=' | head -1)"
       echo "[spawn-claude] ERROR: classifier wants container dispatch but --container-mode not passed" >&2
       echo "  classifier emitted: ${_wanted_mode}" >&2
-      echo "  Re-run by piping the classifier output (bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh ${ISSUE_NUM}) into the spawn-claude.sh invocation as a leading argument before --skill evaluate-issue-pr" >&2
+      echo "  Re-run by piping the classifier output (bash \${CLAUDE_PLUGIN_ROOT:-.}/mock-web-eval/scripts/eval-classifier-invoke.sh ${ISSUE_NUM}) into the spawn-claude.sh invocation as a leading argument before --skill evaluate-issue-pr" >&2
       exit 5
     fi
   fi
@@ -301,7 +331,7 @@ if [ -n "$CONTAINER_MODE" ]; then
   SERVICE="${!svc_var:-}"
   PREFLIGHT="${!pre_var:-}"
   # Resolve a relative ENV_FILE to absolute against WORKTREE_PATH BEFORE
-  # DOCKER_PREFIX is assembled. The probe (mock-web-eval-probe-port.sh)
+  # DOCKER_PREFIX is assembled. The probe (mock-web-eval/scripts/mock-web-eval-probe-port.sh)
   # writes the env file under PIPELINE_WORKTREE_PATH so concurrent worktrees
   # don't race on a shared file; the reader here must agree. Absolute paths
   # are passed through verbatim. (#269; supersedes the REPO_ROOT base from #257.)
@@ -410,21 +440,43 @@ fi
 LAUNCHER=$(mktemp /tmp/claude-launch-XXXXXX.sh)
 chmod +x "$LAUNCHER"
 
+# Precompute the launcher's session-start banner and exec line based on the
+# logging gate in the spawning shell. When PIPELINE_LOGS_ENABLED is false, the
+# launcher must NOT touch $LOG_FILE (its parent dir was never created at line
+# 70-72) and must NOT wrap the claude invocation in `script -a $LOG_FILE`
+# (would error out trying to open a file under a missing directory). Bake the
+# decision into the heredoc rather than re-sourcing _logging.sh in the launcher.
+if pipeline_logging_enabled; then
+  LAUNCHER_BANNER_TERMINAL="echo \"=== Session started: \$(date) ===\" >> ${LOG_FILE}
+echo \"=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${WORKTREE_PATH} ===\" >> ${LOG_FILE}"
+  LAUNCHER_BANNER_REMOTECTL="echo \"=== Session started: \$(date) ===\" >> ${LOG_FILE}
+echo \"=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: remote-control | Worktree: ${WORKTREE_PATH} ===\" >> ${LOG_FILE}"
+  LAUNCHER_BANNER_TMUX="echo \"=== Session started: \$(date) ===\" >> ${LOG_FILE}
+echo \"=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORKTREE_PATH} ===\" >> ${LOG_FILE}"
+  LAUNCHER_EXEC_DARWIN="exec script -a ${LOG_FILE} bash -c \"\$CMD\""
+  LAUNCHER_EXEC_LINUX="SHELL=/bin/bash exec script -a ${LOG_FILE} -c \"\$CMD\""
+else
+  LAUNCHER_BANNER_TERMINAL="# session-start banner suppressed (PIPELINE_LOGS_ENABLED=false)"
+  LAUNCHER_BANNER_REMOTECTL="# session-start banner suppressed (PIPELINE_LOGS_ENABLED=false)"
+  LAUNCHER_BANNER_TMUX="# session-start banner suppressed (PIPELINE_LOGS_ENABLED=false)"
+  LAUNCHER_EXEC_DARWIN="exec bash -c \"\$CMD\""
+  LAUNCHER_EXEC_LINUX="SHELL=/bin/bash exec bash -c \"\$CMD\""
+fi
+
 if [ "$MODE" = "terminal" ]; then
   cat > "$LAUNCHER" <<SCRIPT
 #!/bin/bash
 cd ${WORKTREE_PATH}
-echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
-echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: terminal | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
+${LAUNCHER_BANNER_TERMINAL}
 ${BUILD_ARGV}
 CLAUDE_ARGV+=('/pipeline:${SKILL} ${ISSUE_NUM}')
 CMD=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
 CMD="\${CMD# }"
 if [ "\$(uname -s)" = "Darwin" ]; then
-  exec script -a ${LOG_FILE} bash -c "\$CMD"
+  ${LAUNCHER_EXEC_DARWIN}
 else
   # printf %q emits \$'...' ANSI-C quoting, so force script to use bash (not dash)
-  SHELL=/bin/bash exec script -a ${LOG_FILE} -c "\$CMD"
+  ${LAUNCHER_EXEC_LINUX}
 fi
 SCRIPT
 
@@ -456,17 +508,16 @@ elif [ "$MODE" = "remote-control" ]; then
   cat > "$LAUNCHER" <<SCRIPT
 #!/bin/bash
 cd ${WORKTREE_PATH}
-echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
-echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: remote-control | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
+${LAUNCHER_BANNER_REMOTECTL}
 ${BUILD_ARGV}
 CLAUDE_ARGV+=(remote-control --name '${SESSION_NAME}' --spawn same-dir)
 CMD=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
 CMD="\${CMD# }"
 if [ "\$(uname -s)" = "Darwin" ]; then
-  exec script -a ${LOG_FILE} bash -c "\$CMD"
+  ${LAUNCHER_EXEC_DARWIN}
 else
   # printf %q emits \$'...' ANSI-C quoting, so force script to use bash (not dash)
-  SHELL=/bin/bash exec script -a ${LOG_FILE} -c "\$CMD"
+  ${LAUNCHER_EXEC_LINUX}
 fi
 SCRIPT
 
@@ -491,8 +542,7 @@ elif [ "$MODE" = "tmux" ]; then
   cat > "$LAUNCHER" <<SCRIPT
 #!/bin/bash
 cd ${WORKTREE_PATH}
-echo "=== Session started: \$(date) ===" >> ${LOG_FILE}
-echo "=== Issue: #${ISSUE_NUM} | Skill: ${SKILL} | Mode: tmux | Worktree: ${WORKTREE_PATH} ===" >> ${LOG_FILE}
+${LAUNCHER_BANNER_TMUX}
 ${BUILD_ARGV}
 CLAUDE_ARGV+=(-p '/pipeline:${SKILL} ${ISSUE_NUM}')
 INNER=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
@@ -501,10 +551,10 @@ INNER="\${INNER# }"
 # timeout safety net: 90 min with 30s grace before SIGKILL.
 CMD="timeout --foreground --signal=TERM --kill-after=30 5400 \$INNER"
 if [ "\$(uname -s)" = "Darwin" ]; then
-  exec script -a ${LOG_FILE} bash -c "\$CMD"
+  ${LAUNCHER_EXEC_DARWIN}
 else
   # printf %q emits \$'...' ANSI-C quoting, so force script to use bash (not dash)
-  SHELL=/bin/bash exec script -a ${LOG_FILE} -c "\$CMD"
+  ${LAUNCHER_EXEC_LINUX}
 fi
 SCRIPT
 

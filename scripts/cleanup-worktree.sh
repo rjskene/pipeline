@@ -5,6 +5,9 @@ set -euo pipefail
 # export PIPELINE_PROJECT_ROOT to override the lookup directory.
 source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
+# Logging gate helper (pipeline_logging_enabled).
+source "$(dirname "${BASH_SOURCE[0]}")/_logging.sh"
+
 # Clean up a worktree after its PR has been merged/closed.
 # Verifies PR is closed, closes the issue, consolidates logs,
 # removes worktree, and deletes the branch.
@@ -89,14 +92,18 @@ fi
 
 # --- Step 3: Consolidate tool-use logs ---
 echo "[3/5] Consolidating tool-use logs..."
-WORKTREE_LOG="$WORKTREE_PATH/.claude/logs/tool-use.log"
-ROOT_LOG_DIR="$MAIN_REPO/.claude/logs"
-mkdir -p "$ROOT_LOG_DIR"
-if [ -f "$WORKTREE_LOG" ]; then
-  cp "$WORKTREE_LOG" "$ROOT_LOG_DIR/tool-use-issue-${ISSUE_NUM}.log"
-  echo "  Copied to $ROOT_LOG_DIR/tool-use-issue-${ISSUE_NUM}.log"
+if pipeline_logging_enabled; then
+  WORKTREE_LOG="$WORKTREE_PATH/.claude/logs/tool-use.log"
+  ROOT_LOG_DIR="$MAIN_REPO/.claude/logs"
+  mkdir -p "$ROOT_LOG_DIR"
+  if [ -f "$WORKTREE_LOG" ]; then
+    cp "$WORKTREE_LOG" "$ROOT_LOG_DIR/tool-use-issue-${ISSUE_NUM}.log"
+    echo "  Copied to $ROOT_LOG_DIR/tool-use-issue-${ISSUE_NUM}.log"
+  else
+    echo "  No tool-use log found in worktree"
+  fi
 else
-  echo "  No tool-use log found in worktree"
+  echo "  Skipping tool-use log copy (PIPELINE_LOGS_ENABLED=false)"
 fi
 
 # --- Step 4: Remove the git worktree ---

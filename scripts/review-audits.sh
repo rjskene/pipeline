@@ -6,7 +6,7 @@ set -euo pipefail
 # Reads raw substrate (runs.log, tool-use.log, subagents.log, git, gh) and
 # computes signals on the fly. No derived JSON is maintained.
 #
-# Usage: bash .claude/scripts/review-audits.sh [flags]
+# Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh [flags]
 #   --last N        Limit to last N rows of runs.log (applied after other filters).
 #   --path A|B|C    Filter to rows where path=X.
 #   --deviations    Filter to rows where deviation count > 0.
@@ -18,6 +18,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck disable=SC1091
 [ -f "${REPO_ROOT}/pipeline.config" ] && source "${REPO_ROOT}/pipeline.config"
+# shellcheck disable=SC1091
+_logging_helper="$(cd "$(dirname "$0")" && pwd)/_logging.sh"
+[ -f "$_logging_helper" ] && source "$_logging_helper"
+command -v pipeline_logging_enabled >/dev/null 2>&1 || pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
 
 RUNS_LOG="${REPO_ROOT}/.claude/logs/runs.log"
 # tool-use.log, subagents.log, and the subagents/ dir are per-worktree:
@@ -100,8 +104,8 @@ if [ -n "$FLAG_SINCE" ]; then
 fi
 
 # -------------------- pre-flight --------------------
-if [ ! -f "$RUNS_LOG" ] || [ ! -s "$RUNS_LOG" ]; then
-  echo "No runs logged yet. (Expected: $RUNS_LOG)"
+if ! pipeline_logging_enabled || [ ! -f "$RUNS_LOG" ] || [ ! -s "$RUNS_LOG" ]; then
+  echo "Pipeline logging is disabled. To enable, set PIPELINE_LOGS_ENABLED=true in pipeline.config."
   exit 0
 fi
 

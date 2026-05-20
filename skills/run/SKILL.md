@@ -243,61 +243,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      echo "[run] WARN: auto-close-trackers.sh exited non-zero (continuing)"
    ```
 
-1. **Check for agent session logs** — if any logs exist in `.claude/logs/`, run the summary:
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh
-   ```
-   If there are logs, show the summary table and ask: **"Review any session logs before continuing? (issue number / all / skip)"**
-   - If the user gives an issue number, run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-logs.sh <N>` and display the output.
-   - If "all", run the detail view for each issue with errors > 0.
-   - If "skip", proceed to the next step.
-
-1b. **Check audit data.** If `.claude/logs/runs.log` exists and has at least one row, ask:
-
-   **"Review audits before continuing? (last / path / deviations / issue / skip)"**
-
-   - `last N`   — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --last N` (prompt for N, default 5).
-   - `path X`   — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --path X` (prompt for A/B/C).
-   - `deviations` — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --deviations`.
-   - `issue N`  — run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh --issue N` (prompt for N).
-   - `skip`     — proceed to step 2.
-
-   Display the script output and continue to step 2.
-
-   **During full send:** auto-skip audit review (same behavior as log review in step 1).
-
-1c. **Dispatch audit subagent if prior transcript unaudited.** This runs inside housekeeping (alongside auto-close-trackers and the classify-issue cache check), at a moment the user is already waiting on `/pipeline:run` before any other action. Adding ~30-60s of synchronous subagent work to that window is acceptable. The dispatch is **synchronous in wall-clock** but **zero-cost in orchestrator context** — `Agent(subagent_type='general-purpose', ...)` runs the audit prompt + transcript in an isolated context window; only the one-line summary returns to the orchestrator.
-
-   Run the dispatch-gate helper to decide whether the prior orchestrator session needs the Interaction-lens classifier:
-
-   ```bash
-   GATE=$(bash "${CLAUDE_PLUGIN_ROOT:-.}/dev/self-audit/should-dispatch-audit.sh" 2>/dev/null || echo "skip:helper-error")
-   case "$GATE" in
-     dispatch:*)
-       TRANSCRIPT_PATH=$(echo "$GATE" | cut -d: -f2)
-       SESSION_UUID=$(echo "$GATE" | cut -d: -f3-)
-       DIGEST_PATH=$(ls -t dev/audits/inner-*.md 2>/dev/null | head -1)
-       REDACT_SH="$(pwd)/dev/self-audit/redact.sh"
-       PROMPT_FILE="$(pwd)/dev/self-audit/dispatch-audit-subagent.md"
-       # Proceed to Agent dispatch below.
-       ;;
-     skip:*) echo "[run] audit-dispatch: $GATE" ;;
-   esac
-   ```
-
-   On a `dispatch:*` hit, dispatch the audit subagent **synchronously**, loading the prompt verbatim from `dev/self-audit/dispatch-audit-subagent.md` and substituting `TRANSCRIPT_PATH`, `DIGEST_PATH`, `SESSION_UUID`, and `REDACT_SH`:
-
-   ```
-   Agent(subagent_type='general-purpose',
-         description='audit Interaction lens for session <SESSION_UUID>',
-         prompt: '<contents of dev/self-audit/dispatch-audit-subagent.md, with the four vars substituted>')
-   ```
-
-   **Wait for completion before proceeding to step 2.** The Agent dispatch returns when the subagent finishes (success: one-line `audit: appended N events to <digest-basename>` summary; failure: visible error). The orchestrator's own context window receives only that summary, not the transcript or per-event detail. Idempotency: once the subagent replaces the placeholder line, the next `/pipeline:run` invocation finds no placeholder matching this session UUID — re-dispatching against the same transcript is harmless (the subagent's `Edit` call no-ops because `old_string` won't match).
-
-   **During full send:** auto-skip — full send pipelines are bots-only sessions; their transcripts contain no human correction events worth classifying.
-
-2. **Discover pipeline issues** — fetch all open AND recently closed issues, and classify by label:
+1. **Discover pipeline issues** — fetch all open AND recently closed issues, and classify by label:
    ```bash
    gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --limit 100
    gh issue list --repo $PIPELINE_REPO --state closed --json number,title,labels --limit 20
@@ -327,7 +273,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    # END-TRACKER-FILTER
    ```
 
-   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 5. `TRACKER_ISSUES` feeds the status-table render in step 4 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
+   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 4. `TRACKER_ISSUES` feeds the status-table render in step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
 
    **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human/brainstorm-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
 
@@ -348,11 +294,11 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    **Detect cleanup candidates:** Cross-reference active worktrees (from `git worktree list`) with merged PRs. A worktree whose branch appears in the merged PR list is a cleanup candidate. Also check for `pr-open` issues whose PR has been merged (state = MERGED) — these need cleanup too.
 
-3. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
+2. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-4. **Print a grouped status table** for all discovered pipeline issues — epics (tracker issues) at the top with their open children indented underneath, and orphans (non-tracker issues not listed under any tracker) at the bottom, bucketed by conventional-commit scope. The per-row line carries only priority + type prefix + title + stage; any non-default Target Base / Path / Blocked-by metadata is surfaced in a separate **NOTES** footer table.
+3. **Print a grouped status table** for all discovered pipeline issues — epics (tracker issues) at the top with their open children indented underneath, and orphans (non-tracker issues not listed under any tracker) at the bottom, bucketed by conventional-commit scope. The per-row line carries only priority + type prefix + title + stage; any non-default Target Base / Path / Blocked-by metadata is surfaced in a separate **NOTES** footer table.
 
-   **Inputs.** This step consumes `TRACKER_ISSUES` and `READY_ISSUES` from the tracker-filter block in step 2, plus the open-issue label/title map fetched in step 1. For each tracker, run the shared parser to extract its checklist children:
+   **Inputs.** This step consumes `TRACKER_ISSUES` and `READY_ISSUES` from the tracker-filter block in step 1, plus the open-issue label/title map fetched in step 1. For each tracker, run the shared parser to extract its checklist children:
 
    ```bash
    body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
@@ -367,8 +313,9 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    - **Stage** = current pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, or `ready`). Trackers render with `Stage=tracker`.
    - **Tags** = non-pipeline labels (i.e., NOT in `{plan-pending, plan-reviewed, plan-approved, in-progress, pr-open, merged, docs-only, multi-task, tracker, PIPELINE_LABELS_LATER, PIPELINE_LABELS_HUMAN, PIPELINE_LABELS_BRAINSTORM, PIPELINE_LABELS_EXCLUDED, priority/P*, next-major-release}`). Inline tags `(brainstorm)` / `(human-in-loop)` / `(later)` render alongside the title for issues carrying those labels.
    - **Target Base** = `next` if labels contain `next-major-release`, else `PIPELINE_BASE_BRANCH`. ≤10 chars, no truncation.
-   - **Path** = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`. If both are present, show `A!` (PATH A wins, flag the collision). classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 2) lives in the final report, not this column.
+   - **Path** = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`. If both are present, show `A!` (PATH A wins, flag the collision). classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
    - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
+   - **Attachments (`att=N`)** = count of files present at `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` at table-render time, computed as `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null | wc -l`. Surfaced in the NOTES footer only when N>0 for at least one issue (consistent with other non-default columns). Sourced from on-disk state populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; the run skill itself does NOT re-fetch attachments at discovery time.
 
    **Grouped layout (epics on top, orphans below).** Trackers appear first with their priority badge and conventional-title; each open child renders on its own line, indented eight spaces, with stage right-aligned in parentheses. A tracker with zero open children collapses to a single `(all children closed — pending auto-close)` line:
 
@@ -406,12 +353,14 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```
    NOTES (non-default)
    ================================================================
-    Issue  | Target Base | Path | Blocked by
+    Issue  | Target Base | Path | Blocked by | att
    ----------------------------------------------------------------
-    #150   | next        | A    | --
-    #133   | pipeline    | B    | #132
+    #150   | next        | A    | --         | 0
+    #133   | pipeline    | B    | #132       | 3
    ================================================================
    ```
+
+   The `att` column is rendered only when at least one row has `att>0`; if every issue has zero on-disk attachments the column is suppressed (same convention as Target Base / Path / Blocked-by defaults). When the column is rendered, `att=0` rows still appear so the table stays rectangular.
 
    **Counts footer (always rendered).** A single trailing line of the form `N epics + N children + N orphans = N open`:
 
@@ -447,7 +396,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 (no point planning new issues if a release is queued and ready to merge).
 -->
 
-5. **Propose ONE action** based on state priority:
+4. **Propose ONE action** based on state priority:
    - If any worktrees are cleanup candidates (merged PR with active worktree) → propose cleanup. List each candidate with its issue number and worktree path.
    - Else if any issues have `in-progress` → print which ones and note agents are working. Do not propose anything else.
    - Else if any issues have `pr-open`:
@@ -471,13 +420,13 @@ active feature work, but it should come BEFORE pulling in new ready work
    - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
    - Issues labeled `tracker` are shown in the table (stage=`tracker`) but never proposed for plan/execute — they are coordination rollups, not implementation work.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM`:
-     - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 2 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
+     - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 1 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
      - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)" or "(brainstorm, manual)".
    - If all issues are merged/done → congratulate and exit.
 
-6. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
+5. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
 
-7. **On confirmation:**
+6. **On confirmation:**
 
    **IMPORTANT: All spawned `claude` agent processes MUST run in foreground (never `run_in_background`).** Background agents lose tool permissions and the user cannot monitor progress. The **queue runner script** (`run-queue.sh`) is a plain bash process that manages tmux windows — it does NOT need tool permissions. The orchestrator should launch the queue runner via `Bash` with `run_in_background: true` to receive a single completion notification instead of blocking (see sub-step 4 below for details).
 
@@ -550,7 +499,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
    **For PR evaluation (pr-open → evaluated):** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
 
-   **Pre-spawn classifier (issue #218).** Before dispatching the PR evaluator, the orchestrator runs `bash scripts/eval-classifier-invoke.sh <issue> <pr>` if `PIPELINE_EVAL_CLASSIFIER` is set. The classifier's stdout is parsed token-by-token; a `--container-mode=<name>` token causes the dispatch to fall through to `spawn-claude.sh --container-mode=<name>` regardless of PATH letter — container mode overrides PATH A inline subagent dispatch because container isolation cannot be honored inside an inline `Agent()` call. Any other `--flag=value` tokens are forwarded to `spawn-claude.sh` via `--classifier-passthrough=<token>`. If the classifier exit non-zero, the issue is skipped with the classifier's first stderr line surfaced as the reason; the orchestrator continues with the remaining issues. When `PIPELINE_EVAL_CLASSIFIER` is unset (default), this step is a no-op and PATH A / B / C routing below is unchanged.
+   **Pre-spawn classifier (issue #218).** Before dispatching the PR evaluator, the orchestrator runs `bash mock-web-eval/scripts/eval-classifier-invoke.sh <issue> <pr>` if `PIPELINE_EVAL_CLASSIFIER` is set. The classifier's stdout is parsed token-by-token; a `--container-mode=<name>` token causes the dispatch to fall through to `spawn-claude.sh --container-mode=<name>` regardless of PATH letter — container mode overrides PATH A inline subagent dispatch because container isolation cannot be honored inside an inline `Agent()` call. Any other `--flag=value` tokens are forwarded to `spawn-claude.sh` via `--classifier-passthrough=<token>`. If the classifier exit non-zero, the issue is skipped with the classifier's first stderr line surfaced as the reason; the orchestrator continues with the remaining issues. When `PIPELINE_EVAL_CLASSIFIER` is unset (default), this step is a no-op and PATH A / B / C routing below is unchanged.
 
    **Dispatch routing by path tier.** Read each PR-open issue's labels:
    - **PATH A** (`docs-only` label present): dispatch inline from this orchestrator session — no `spawn-claude.sh`, no `claude -p`, no tmux. Worktree was already created during execute-issue-plan, so reuse `<worktree-path>`:
@@ -571,7 +520,7 @@ active feature work, but it should come BEFORE pulling in new ready work
       ```bash
       PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] --skill evaluate-issue-pr <issue1> <issue2> ...
       ```
-   4. The evaluate-issue-pr skill reviews the PR diff against the plan, makes minimal fixes if needed, and posts a verdict (Approved or Flagged). It does NOT merge — merge orchestration is handled by the pipeline (see step 8 below).
+   4. The evaluate-issue-pr skill reviews the PR diff against the plan, makes minimal fixes if needed, and posts a verdict (Approved or Flagged). It does NOT merge — merge orchestration is handled by the pipeline (see step 7 below).
 
    **For execution (plan-approved → worktree setup):** For each approved issue's branch (deduplicated — issues sharing a branch get one worktree):
 
@@ -669,7 +618,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
 **Do not poll for queue completion with `while ... sleep ... grep` inside Bash tool calls.** This pattern burns context tokens on every poll cycle and ties up the orchestrator for the duration. Use `Bash run_in_background: true` for one-shot completion waits, or `Monitor` for streaming per-event notifications. The queue runner's internal `sleep` polling (inside `run-queue.sh`) is fine — it runs in its own process and does not consume orchestrator context.
 
-8. **Merge orchestration** — after all evaluations complete, the pipeline handles merging. **Default is autonomous merge for the green subset** via the greenlight gate (`${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh`). The four greenlight conditions are: latest `## Evaluation` verdict is **Approved**; every `statusCheckRollup` entry has `conclusion == SUCCESS` (or the rollup is empty); `mergeable == MERGEABLE`; `mergeStateStatus == CLEAN`. Any one missing falls back to a `block-*` reason and requires manual `gh pr merge`.
+7. **Merge orchestration** — after all evaluations complete, the pipeline handles merging. **Default is autonomous merge for the green subset** via the greenlight gate (`${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh`). The four greenlight conditions are: latest `## Evaluation` verdict is **Approved**; every `statusCheckRollup` entry has `conclusion == SUCCESS` (or the rollup is empty); `mergeable == MERGEABLE`; `mergeStateStatus == CLEAN`. Any one missing falls back to a `block-*` reason and requires manual `gh pr merge`.
 
    **Per-PR auto-merge loop.** For each PR labelled `pr-open`:
 
@@ -766,4 +715,4 @@ active feature work, but it should come BEFORE pulling in new ready work
       ```
    5. If a merge fails, stop and report the failure. Do not continue merging remaining PRs (they may depend on the failed one).
 
-9. **After agents complete** (or after merge orchestration), report results and tell the user what to do next (review plans on GitHub, merge PRs, etc).
+8. **After agents complete** (or after merge orchestration), report results and tell the user what to do next (review plans on GitHub, merge PRs, etc).

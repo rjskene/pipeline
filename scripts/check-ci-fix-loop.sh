@@ -19,6 +19,14 @@
 
 set -euo pipefail
 
+_LOGGING_SH="$(dirname "$0")/_logging.sh"
+if [ -f "$_LOGGING_SH" ]; then
+  # shellcheck source=./_logging.sh
+  . "$_LOGGING_SH"
+else
+  pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
+fi
+
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <issue-number>" >&2
   exit 2
@@ -59,9 +67,13 @@ PRIOR=$(gh issue view "$ISSUE" --repo "$PIPELINE_REPO" --json comments --jq \
 PRIOR="${PRIOR:-0}"
 NEXT=$((PRIOR + 1))
 
-LOG_DIR="$(pwd)/.claude/logs"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/ci-fix-${ISSUE}-attempt-${NEXT}.log"
+if pipeline_logging_enabled; then
+  LOG_DIR="$(pwd)/.claude/logs"
+  mkdir -p "$LOG_DIR"
+  LOG_FILE="$LOG_DIR/ci-fix-${ISSUE}-attempt-${NEXT}.log"
+else
+  LOG_FILE="$(mktemp -t "pipeline-ci-fix-${ISSUE}-attempt-${NEXT}-XXXX.log")"
+fi
 
 RUN_LINK=$(gh pr checks "$PR_NUM" --repo "$PIPELINE_REPO" \
   --json link --jq '[.[] | .link // empty] | .[0]' || true)

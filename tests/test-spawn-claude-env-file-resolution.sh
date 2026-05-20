@@ -50,8 +50,8 @@ PIPELINE_PATH_A_REVIEWER_EXECUTE=""
 PIPELINE_PATH_B_REVIEWER_EXECUTE=""
 PIPELINE_PATH_C_REVIEWER_EXECUTE=""
 PIPELINE_EVAL_CONTAINERS="mock-web-eval"
-PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="mock-web/compose.mock-web-eval.yml"
-PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web/.env.mock-web-eval"
+PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="mock-web-eval/docker/compose.yml"
+PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web-eval/target/.env.mock-web-eval"
 PIPELINE_EVAL_CONTAINER_mock_web_eval_SERVICE="claude-mock-web-eval"
 EOF
 
@@ -86,18 +86,19 @@ RUNS_LOG="$WORKDIR/runs.log"
 # -------------------------------------------------------------------------
 echo "Test (a): probe writes under WORKTREE_PATH; spawn-claude resolves --env-file there"
 inc
-PRE_SNIPPET='mkdir -p "$PIPELINE_WORKTREE_PATH/mock-web" && touch "$PIPELINE_WORKTREE_PATH/mock-web/.env.mock-web-eval"'
+PRE_SNIPPET='mkdir -p "$PIPELINE_WORKTREE_PATH/mock-web-eval/target" && touch "$PIPELINE_WORKTREE_PATH/mock-web-eval/target/.env.mock-web-eval"'
 OUT_A=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="$PRE_SNIPPET" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=mock-web-eval \
     "$PROJ/worktree" 269 slug tmux 2>&1 || true)
 DOCKER_LINE_A=$(echo "$OUT_A" | grep -E '^DOCKER_PREFIX=' || true)
-EXPECTED_A="$PROJ/worktree/mock-web/.env.mock-web-eval"
+EXPECTED_A="$PROJ/worktree/mock-web-eval/target/.env.mock-web-eval"
 if [ -z "$DOCKER_LINE_A" ]; then
   fail_msg "Test (a): no DOCKER_PREFIX= line in dry-run output"
   echo "$OUT_A" | tail -10 | sed 's/^/    /'
@@ -139,7 +140,7 @@ PIPELINE_PATH_A_REVIEWER_EXECUTE=""
 PIPELINE_PATH_B_REVIEWER_EXECUTE=""
 PIPELINE_PATH_C_REVIEWER_EXECUTE=""
 PIPELINE_EVAL_CONTAINERS="mock-web-eval"
-PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="mock-web/compose.mock-web-eval.yml"
+PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="mock-web-eval/docker/compose.yml"
 PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="/tmp/abs.env"
 PIPELINE_EVAL_CONTAINER_mock_web_eval_SERVICE="claude-mock-web-eval"
 EOF
@@ -147,6 +148,7 @@ OUT_B=$(cd "$PROJ_B" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=mock-web-eval \

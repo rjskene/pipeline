@@ -13,7 +13,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh"
-INVOKE_UNDER_TEST="$SCRIPT_DIR/../scripts/eval-classifier-invoke.sh"
+INVOKE_UNDER_TEST="$SCRIPT_DIR/../mock-web-eval/scripts/eval-classifier-invoke.sh"
 
 PASS=0
 FAIL=0
@@ -37,11 +37,11 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 # ---- Build a "baseline" project tree: classifier present and emits container-mode ----
 PROJ="$WORKDIR/proj"
-mkdir -p "$PROJ/.claude/scripts" "$PROJ/scripts" "$PROJ/worktree"
+mkdir -p "$PROJ/.claude/scripts" "$PROJ/scripts" "$PROJ/mock-web-eval/scripts" "$PROJ/worktree"
 cp "$SCRIPT_UNDER_TEST" "$PROJ/.claude/scripts/spawn-claude.sh"
 chmod +x "$PROJ/.claude/scripts/spawn-claude.sh"
-cp "$INVOKE_UNDER_TEST" "$PROJ/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ/scripts/eval-classifier-invoke.sh"
+cp "$INVOKE_UNDER_TEST" "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
+chmod +x "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
 
 cat > "$PROJ/scripts/stub-classifier.sh" <<'EOF'
 #!/bin/bash
@@ -90,6 +90,7 @@ OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
@@ -115,6 +116,7 @@ OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
@@ -133,11 +135,11 @@ fi
 echo "Test 3: classifier emits nothing -> normal dispatch (no enforcement)"
 inc
 PROJ3="$WORKDIR/proj3"
-mkdir -p "$PROJ3/.claude/scripts" "$PROJ3/scripts" "$PROJ3/worktree"
+mkdir -p "$PROJ3/.claude/scripts" "$PROJ3/scripts" "$PROJ3/mock-web-eval/scripts" "$PROJ3/worktree"
 cp "$SCRIPT_UNDER_TEST" "$PROJ3/.claude/scripts/spawn-claude.sh"
 chmod +x "$PROJ3/.claude/scripts/spawn-claude.sh"
-cp "$INVOKE_UNDER_TEST" "$PROJ3/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ3/scripts/eval-classifier-invoke.sh"
+cp "$INVOKE_UNDER_TEST" "$PROJ3/mock-web-eval/scripts/eval-classifier-invoke.sh"
+chmod +x "$PROJ3/mock-web-eval/scripts/eval-classifier-invoke.sh"
 cat > "$PROJ3/scripts/stub-classifier-empty.sh" <<'EOF'
 #!/bin/bash
 exit 0
@@ -149,6 +151,7 @@ OUT=$(cd "$PROJ3" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
@@ -167,16 +170,17 @@ fi
 echo "Test 4: PIPELINE_EVAL_CLASSIFIER unset -> normal dispatch (no enforcement)"
 inc
 PROJ4="$WORKDIR/proj4"
-mkdir -p "$PROJ4/.claude/scripts" "$PROJ4/scripts" "$PROJ4/worktree"
+mkdir -p "$PROJ4/.claude/scripts" "$PROJ4/scripts" "$PROJ4/mock-web-eval/scripts" "$PROJ4/worktree"
 cp "$SCRIPT_UNDER_TEST" "$PROJ4/.claude/scripts/spawn-claude.sh"
 chmod +x "$PROJ4/.claude/scripts/spawn-claude.sh"
-cp "$INVOKE_UNDER_TEST" "$PROJ4/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ4/scripts/eval-classifier-invoke.sh"
+cp "$INVOKE_UNDER_TEST" "$PROJ4/mock-web-eval/scripts/eval-classifier-invoke.sh"
+chmod +x "$PROJ4/mock-web-eval/scripts/eval-classifier-invoke.sh"
 grep -v "PIPELINE_EVAL_CLASSIFIER" "$PROJ/pipeline.config" > "$PROJ4/pipeline.config"
 OUT=$(cd "$PROJ4" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
@@ -198,6 +202,7 @@ OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill execute-issue-plan \
@@ -227,6 +232,7 @@ OUT=$(cd "$PROJ6" && \
   PATH="$STUB_DIR:$PATH" \
   STUB_LABELS="" \
   PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
