@@ -267,12 +267,25 @@ fi
 # LAUNCH_CMD bash array, which each launcher mode uses in place of the
 # bare `claude` executable when emitting the final CMD.
 DOCKER_PREFIX=()
-if [ -n "$CONTAINER_MODE" ] && [ "$SKILL" != "evaluate-issue-pr" ]; then
-  # Container mode is only meaningful when evaluating PRs; rejecting
-  # other skills early prevents a containerized executor from being
-  # spawned by mistake (unbounded blast radius, not what consumers ask).
-  echo "[spawn-claude] ERROR: container-mode is only supported with --skill=evaluate-issue-pr (got --skill=$SKILL)" >&2
-  exit 4
+# --- container-mode skill allowlist (issue #321) ---
+# PIPELINE_CONTAINER_SKILLS is a space-separated list of skill names that
+# may be dispatched via --container-mode=<name>. Default (when the var is
+# UNSET) is "evaluate-issue-pr" — preserves the #218 behavior so existing
+# consumers see zero behavior change. EMPTY string ("") is distinct from
+# unset: it disables container dispatch for ALL skills. Consumers opt
+# additional skills in by listing them in pipeline.config — see
+# pipeline.config.example.
+#
+# Use the ${VAR-default} expansion (NO colon) so empty stays empty.
+# ${VAR:-default} would silently rebind empty -> default and break the
+# operator's intent to disable.
+if [ -n "$CONTAINER_MODE" ]; then
+  _container_skills_allowlist="${PIPELINE_CONTAINER_SKILLS-evaluate-issue-pr}"
+  # empty allowlist == disable; do not "simplify" — empty-line grep gives the correct rejection.
+  if ! printf '%s\n' $_container_skills_allowlist | tr ' ' '\n' | grep -qx "$SKILL"; then
+    echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
+    exit 4
+  fi
 fi
 # --- container-mode-required enforcement (issue #238) ---
 # When PIPELINE_EVAL_CLASSIFIER is set and the operator launched

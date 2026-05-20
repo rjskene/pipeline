@@ -230,13 +230,13 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# Test 7: --container-mode with --skill=execute-issue-plan -> rejected
-# Container mode is only meaningful for PR evaluation; gate the flag
-# explicitly so misuse fails loudly instead of silently spawning a
-# containerized executor (which has unbounded blast radius and is not
-# what consumers asked for).
+# Test 7: --container-mode with a skill NOT in PIPELINE_CONTAINER_SKILLS
+# allowlist -> rejected. The default allowlist (when the env var is unset)
+# is "evaluate-issue-pr", so --skill=execute-issue-plan should still fail —
+# but the stderr wording is now the allowlist-based form introduced by #321,
+# not the legacy "only supported with --skill=evaluate-issue-pr" string.
 # -------------------------------------------------------------------------
-echo "Test 7: --container-mode rejected for non-evaluate-issue-pr skills"
+echo "Test 7: --container-mode rejected for skills outside PIPELINE_CONTAINER_SKILLS"
 inc
 GATE_OUT=$(cd "$PROJ" && \
   PATH="$STUB_DIR:$PATH" \
@@ -250,11 +250,11 @@ GATE_OUT=$(cd "$PROJ" && \
 GATE_RC=$(echo "$GATE_OUT" | grep -E '^RC=' | tail -1 | sed 's/RC=//')
 if [ "$GATE_RC" = "0" ]; then
   fail_msg "expected non-zero exit when --container-mode used with execute-issue-plan; got 0"
-elif ! echo "$GATE_OUT" | grep -q "container-mode is only supported with --skill=evaluate-issue-pr"; then
-  fail_msg "missing expected stderr 'container-mode is only supported with --skill=evaluate-issue-pr'"
+elif ! echo "$GATE_OUT" | grep -q "container-mode rejected: skill 'execute-issue-plan' not in PIPELINE_CONTAINER_SKILLS allowlist"; then
+  fail_msg "missing expected stderr 'container-mode rejected: skill execute-issue-plan not in PIPELINE_CONTAINER_SKILLS allowlist'"
   echo "$GATE_OUT" | tail -10 | sed 's/^/    /'
 else
-  pass_msg "non-zero exit ($GATE_RC) + correct gate-error stderr"
+  pass_msg "non-zero exit ($GATE_RC) + correct allowlist-error stderr"
 fi
 
 # -------------------------------------------------------------------------
