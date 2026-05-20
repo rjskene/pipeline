@@ -311,9 +311,18 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    - **Priority badge** from the `priority/P*` label (fallback `[--]`).
    - **Type prefix** parsed from the issue title via the regex `^(feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)\(([^)]+)\):` — group 2 is the **scope** used for orphan bucketing. Titles that don't match (or use `type:` without parens) land in the `(none / generic)` bucket.
    - **Stage** = current pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, or `ready`). Trackers render with `Stage=tracker`.
-   - **Tags** = non-pipeline labels (i.e., NOT in `{plan-pending, plan-reviewed, plan-approved, in-progress, pr-open, merged, docs-only, multi-task, tracker, PIPELINE_LABELS_LATER, PIPELINE_LABELS_HUMAN, PIPELINE_LABELS_BRAINSTORM, PIPELINE_LABELS_EXCLUDED, priority/P*, next-major-release}`). Inline tags `(brainstorm)` / `(human-in-loop)` / `(later)` render alongside the title for issues carrying those labels.
+   - **Tags** = non-pipeline labels (i.e., NOT in `{plan-pending, plan-reviewed, plan-approved, in-progress, pr-open, merged, docs-only, multi-task, quick-fix, tracker, PIPELINE_LABELS_LATER, PIPELINE_LABELS_HUMAN, PIPELINE_LABELS_BRAINSTORM, PIPELINE_LABELS_EXCLUDED, priority/P*, next-major-release}`). Inline tags `(brainstorm)` / `(human-in-loop)` / `(later)` render alongside the title for issues carrying those labels.
    - **Target Base** = `next` if labels contain `next-major-release`, else `PIPELINE_BASE_BRANCH`. ≤10 chars, no truncation.
-   - **Path** = `A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`. If both are present, show `A!` (PATH A wins, flag the collision). classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
+   - **Path** = winning letter under precedence A > D > C > B applied to the issue labels (`docs-only` → A, `quick-fix` → D, `multi-task` → C, else B). When two or more path labels coexist, suffix the winning letter with `!` to flag the collision. Specific glyphs by collision set:
+     - `A` alone → `A`
+     - `D` alone → `D`
+     - `C` alone → `C`
+     - `B` (no path label) → `B`
+     - `A`+`D` → `A!` (A wins)
+     - `A`+`C` → `A!` (existing rule preserved)
+     - `D`+`C` → `D!` (D wins)
+     - `A`+`D`+`C` → `A!` (A always wins)
+     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
    - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
    - **Attachments (`att=N`)** = count of files present at `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` at table-render time, computed as `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null | wc -l`. Surfaced in the NOTES footer only when N>0 for at least one issue (consistent with other non-default columns). Sourced from on-disk state populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; the run skill itself does NOT re-fetch attachments at discovery time.
 
@@ -408,6 +417,11 @@ active feature work, but it should come BEFORE pulling in new ready work
      - If any `pr-open` issues have NO evaluation comment → propose running `/pipeline:evaluate-issue-pr` for those issues (in their existing worktrees).
      - If all `pr-open` issues HAVE evaluation comments → remind user to review flagged PRs or note they're ready to merge.
    - Else if any issues have `plan-pending`:
+     - **PATH D auto-flip (quick-fix bypass).** For each plan-pending issue labelled quick-fix, immediately emit gh issue edit $N --add-label plan-approved --remove-label plan-pending in this orchestrator turn:
+       ```bash
+       gh issue edit $N --repo $PIPELINE_REPO --add-label plan-approved --remove-label plan-pending
+       ```
+       Do NOT propose `/pipeline:evaluate-issue-plan` for PATH D issues; the evaluate-issue-plan stage is bypassed for D. After the flip, the issue advances to the `plan-approved` branch on the same or next ladder traversal. This is a discovery-driven flip — the run skill emits it whenever it observes a `plan-pending`+`quick-fix` issue, so it is idempotent across re-runs and works for both fresh plans and re-plans.
      - For each, check if the issue has a plan evaluation comment:
        ```bash
        gh issue view $N --repo $PIPELINE_REPO --json comments --jq '[.comments[] | select(.body | contains("## Plan Evaluation"))] | length'
@@ -510,6 +524,7 @@ active feature work, but it should come BEFORE pulling in new ready work
      ```
      Thread the `MANUAL_MERGE=1` token into the prompt verbatim when applicable; the evaluate-issue-pr skill treats the inline token identically to the `MANUAL_MERGE=1` env var that `spawn-claude.sh --manual-merge` sets.
    - **PATH B / PATH C** (no `docs-only` label): unchanged — proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` below.
+   - **PATH D**: PR evaluation stays `general-purpose` (NOT `tdd-implementer`) — inline dispatch shape identical to PATH A. Asymmetric by design: the evaluator role differs from the leaf-executor role; reusing `tdd-implementer` for eval would force red→green discipline on a workflow that does not need it.
 
    1. Ask: "Launch mode? (terminal / tmux / remote-control / manual) | Skip permissions? (y/n)"
    2. Launch via spawn-claude.sh with `--skill evaluate-issue-pr`:
@@ -532,6 +547,7 @@ active feature work, but it should come BEFORE pulling in new ready work
            prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
      ```
    - **PATH B / PATH C** (no `docs-only` label): unchanged — proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` below.
+   - **PATH D** (quick-fix label present): dispatch inline from this orchestrator session via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. Multiple D issues fan out as parallel inline Agent calls in a single tool-call batch. Note: the subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a `pipeline:` namespaced form.
 
    1. Run the setup script with the issue number:
       ```bash

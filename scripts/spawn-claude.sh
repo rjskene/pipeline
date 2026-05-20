@@ -78,13 +78,16 @@ fi
 
 # --- Build --append-system-prompt payload: label-driven 3-path selection ---
 #
-# spawn-claude.sh reads the issue's GitHub labels and picks one of three
+# spawn-claude.sh reads the issue's GitHub labels and picks one of four
 # execution paths:
 #   docs-only  -> PATH A (trivial; verification-only, no TDD gate)
+#   quick-fix  -> PATH D (lightweight inline TDD; single red-green-refactor)
 #   multi-task -> PATH C (SDD wiring: one implementer subagent per task)
 #   else       -> PATH B (standard; TDD mandatory)
-# If both docs-only and multi-task are set, PATH A wins (narrower; safer to
-# over-apply) and a stderr warning is logged so the collision is visible.
+# Precedence on label collision is A > D > C > B (A is narrowest; D is a
+# lightweight TDD path that beats the multi-task SDD wiring; C beats default).
+# Any collision (two or more of docs-only/quick-fix/multi-task) emits a stderr
+# warning that names the chosen letter and the colliding labels.
 # If `gh issue view` fails (offline/auth), a stderr warning is logged and
 # PATH B is used as the safe default.
 #
@@ -112,18 +115,35 @@ PATH_LETTER="B"
 if [ -n "$SKILL_ALIAS" ] && [ -n "$ISSUE_NUM" ]; then
   if LABELS="$(gh issue view "$ISSUE_NUM" --repo "$PIPELINE_REPO" --json labels --jq '.labels[].name' 2>/dev/null)"; then
     HAS_DOCS=0
+    HAS_QUICK=0
     HAS_MULTI=0
     while IFS= read -r lbl; do
       [ "$lbl" = "docs-only" ] && HAS_DOCS=1
+      [ "$lbl" = "quick-fix" ] && HAS_QUICK=1
       [ "$lbl" = "multi-task" ] && HAS_MULTI=1
     done <<< "$LABELS"
-    if [ "$HAS_DOCS" = "1" ] && [ "$HAS_MULTI" = "1" ]; then
-      echo "WARNING: issue #$ISSUE_NUM has both docs-only and multi-task labels; picking PATH A" >&2
+    # Apply precedence A > D > C > B.
+    if [ "$HAS_DOCS" = "1" ]; then
       PATH_LETTER="A"
-    elif [ "$HAS_DOCS" = "1" ]; then
-      PATH_LETTER="A"
+    elif [ "$HAS_QUICK" = "1" ]; then
+      PATH_LETTER="D"
     elif [ "$HAS_MULTI" = "1" ]; then
       PATH_LETTER="C"
+    fi
+    # Collision warning: two or more of docs-only/quick-fix/multi-task set.
+    _collision_count=$((HAS_DOCS + HAS_QUICK + HAS_MULTI))
+    if [ "$_collision_count" -ge 2 ]; then
+      _collision_labels=""
+      [ "$HAS_DOCS" = "1" ] && _collision_labels="${_collision_labels:+$_collision_labels, }docs-only"
+      [ "$HAS_QUICK" = "1" ] && _collision_labels="${_collision_labels:+$_collision_labels, }quick-fix"
+      [ "$HAS_MULTI" = "1" ] && _collision_labels="${_collision_labels:+$_collision_labels, }multi-task"
+      # Preserve the legacy "both docs-only and multi-task" phrasing for the
+      # pure docs+multi case so existing tests / log greppers still match.
+      if [ "$HAS_DOCS" = "1" ] && [ "$HAS_MULTI" = "1" ] && [ "$HAS_QUICK" = "0" ]; then
+        echo "WARNING: issue #$ISSUE_NUM has both docs-only and multi-task labels; picking PATH A" >&2
+      else
+        echo "WARNING: issue #$ISSUE_NUM has colliding path labels (${_collision_labels}); picking PATH $PATH_LETTER" >&2
+      fi
     fi
   else
     echo "[spawn-claude] WARN: gh issue view failed for issue #$ISSUE_NUM, defaulting to PATH B" >&2

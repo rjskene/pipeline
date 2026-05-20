@@ -44,6 +44,8 @@ You will receive an issue number as the argument (or from context). Perform thes
    LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
    if echo "$LABELS" | grep -qx "docs-only"; then
      PATH_LETTER=A
+   elif echo "$LABELS" | grep -qx "quick-fix"; then
+     PATH_LETTER=D
    elif echo "$LABELS" | grep -qx "multi-task"; then
      PATH_LETTER=C
    else
@@ -55,8 +57,8 @@ You will receive an issue number as the argument (or from context). Perform thes
    if [ -z "$PATH_LETTER" ]; then
      CACHED=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
        --jq '[.comments[] | select(.body | contains("## Classification"))] | last | .body' \
-       | grep -oE 'recommended_path:\*\* [ABC]' | awk '{print $2}' | head -1)
-     case "$CACHED" in A|B|C) PATH_LETTER="$CACHED" ;; *) PATH_LETTER=B ;; esac
+       | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | head -1)
+     case "$CACHED" in A|B|C|D) PATH_LETTER="$CACHED" ;; *) PATH_LETTER=B ;; esac
    fi
    echo "Planning issue #<N> as PATH $PATH_LETTER"
    ```
@@ -143,6 +145,12 @@ You will receive an issue number as the argument (or from context). Perform thes
    `Task 0: dispatch Agent(subagent_type='tdd-implementer', description='target=<first-dir>/ ...', prompt='target=<first-dir>/ implement <first-task>') — one tdd-implementer dispatch per distinct target directory. The orchestrator must NOT Write/Edit impl files directly; the enforce-path-c-delegation hook will block unauthorized edits.`
 
    Code-task format for PATH C: every code task is a single `tdd-implementer` dispatch. Each dispatch includes a `target=<dir>/` sentinel (must be a real subdirectory — `target=.`, `target=./`, or `target=/` are rejected by the delegation hook) and a prompt detailed enough for the subagent to execute autonomously (what file, what behavior, what test, what commit message). Multiple dispatches may run in parallel when their targets don't overlap.
+
+#### Task 0 — PATH D (quick-fix)
+
+   Task 0: you ARE tdd-implementer (single-instance inline). Apply red→green→commit discipline directly in this session: write one failing test → run $PIPELINE_TEST_CMD → watch it fail for the RIGHT reason → write minimum impl → run $PIPELINE_TEST_CMD → watch it pass → commit. No subagent dispatch. No spawn-claude. No tmux. The evaluate-issue-pr stage is the sole review gate.
+
+   Code-task format for PATH D: each impl task is a single bullet listing test file path, exact test command, expected FAIL output, impl sketch, expected PASS output, and commit message — same five steps as PATH B but executed inline without the `superpowers:test-driven-development` bookend.
 
 6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool to create the draft file at the path below; YOU MUST NOT return the plan body in your final message and ask the caller to write the file.
    ```bash

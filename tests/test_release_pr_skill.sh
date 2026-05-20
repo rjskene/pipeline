@@ -26,5 +26,8 @@ echo "PASS test_release_pr_skill (task4)"
 
 # Task 5 markers — interactive propose-action entry for release PRs (in run skill)
 grep -qE 'merge release PR|merge the release PR' "$SKILL" || { echo "FAIL: interactive mode must propose merging release PRs"; exit 1; }
-awk '/Propose ONE action/,/Wait for user confirmation/' "$SKILL" | grep -q 'release PR' || { echo "FAIL: release PR proposal missing from propose-action block"; exit 1; }
+# Capture awk output to a variable first to avoid pipefail+SIGPIPE race
+# (grep -q exits on first match; awk still writing → SIGPIPE → exit 141 under pipefail).
+_block=$(awk '/Propose ONE action/,/Wait for user confirmation/' "$SKILL")
+printf '%s\n' "$_block" | grep -q 'release PR' || { echo "FAIL: release PR proposal missing from propose-action block"; exit 1; }
 echo "PASS test_release_pr_skill (task5)"

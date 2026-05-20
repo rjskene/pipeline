@@ -354,7 +354,7 @@ FITS_JSON=$(
 # --- missing-label candidates ---
 # Detect issues lacking any of:
 #   - priority/P[0-9] label                     (always required)
-#   - docs-only or multi-task path label        (required unless brainstorm/later/human/tracker)
+#   - docs-only, multi-task, or quick-fix path label (required unless brainstorm/later/human/tracker)
 #   - any pipeline-stage or classification label (state: surfaced only when nothing
 #                                                 else is present; redundant flag,
 #                                                 sorted after priority/path)
@@ -366,7 +366,7 @@ NOW_EPOCH=$(date -u +%s)
 CUTOFF_EPOCH=$(( NOW_EPOCH - MIN_AGE_HOURS * 3600 ))
 MISSING_JSON=$(jq --argjson cutoff "$CUTOFF_EPOCH" '
   def has_priority(labels): any(labels[]?; .name | test("^priority/P[0-9]$"));
-  def has_path(labels):     any(labels[]?; .name == "docs-only" or .name == "multi-task");
+  def has_path(labels):     any(labels[]?; .name == "docs-only" or .name == "multi-task" or .name == "quick-fix");
   def has_state(labels):    any(labels[]?; .name == "brainstorm" or .name == "tracker" or .name == "later" or .name == "human");
   def is_tracker(labels):   any(labels[]?; .name == "tracker");
   def is_exempt(labels):    any(labels[]?; .name == "brainstorm" or .name == "later" or .name == "human");

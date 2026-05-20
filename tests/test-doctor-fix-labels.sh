@@ -63,15 +63,15 @@ run_fix() {
 }
 
 # ---------------------------------------------------------------------------
-# Case A: all 10 canonical labels are seeded with exact color/description.
+# Case A: all 13 canonical labels are seeded with exact color/description.
 # ---------------------------------------------------------------------------
-echo "Case A: seeds all 10 labels"
+echo "Case A: seeds all 13 labels"
 FX=$(mk_fixture fx-a)
 run_fix "$FX"
 rc="$(cat "$FX/rc")"
 [ "$rc" = "0" ] && pass_msg "A: exit 0" || { fail_msg "A: exit $rc"; cat "$FX/out" | sed 's/^/    /'; }
 count=$(wc -l < "$FX/shim.log" | tr -d ' ')
-[ "$count" = "10" ] && pass_msg "A: 10 label create calls" || fail_msg "A: got $count label create calls"
+[ "$count" = "13" ] && pass_msg "A: 13 label create calls" || fail_msg "A: got $count label create calls"
 
 # Canonical (name, color, description) — must match doctor.sh LABEL_TABLE and README.
 expected=(
@@ -81,6 +81,9 @@ expected=(
   "in-progress|FBCA04|Currently being implemented"
   "pr-open|1D76DB|PR open, awaiting review"
   "merged|6F42C1|PR merged, ready for cleanup"
+  "docs-only|D4C5F9|Documentation-only change — no implementation"
+  "multi-task|5319e7|Issue too large for one PR; requires decomposition into sub-issues"
+  "quick-fix|0E8A16|Quick-fix path — inline TDD, single failing test"
   "excluded|E4E669|Excluded from pipeline"
   "later|D4C5F9|Deferred"
   "human|F9D0C4|Needs human in the loop"

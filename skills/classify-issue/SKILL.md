@@ -40,14 +40,15 @@ You will receive an issue number as the argument. Perform:
        # Pull recommended_path from the cached comment.
        CACHED_PATH=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
          --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .body' \
-         | grep -oE 'recommended_path:\*\* [ABC]' | awk '{print $2}' | head -1)
+         | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | head -1)
        CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
-       current_a=0; current_c=0
+       current_a=0; current_c=0; current_d=0
        printf '%s\n' "$CURRENT_LABELS" | grep -qx docs-only  && current_a=1
        printf '%s\n' "$CURRENT_LABELS" | grep -qx multi-task && current_c=1
-       desired_a=0; desired_c=0
-       case "$CACHED_PATH" in A) desired_a=1 ;; C) desired_c=1 ;; esac
-       if [ "$current_a" = "$desired_a" ] && [ "$current_c" = "$desired_c" ]; then
+       printf '%s\n' "$CURRENT_LABELS" | grep -qx quick-fix  && current_d=1
+       desired_a=0; desired_c=0; desired_d=0
+       case "$CACHED_PATH" in A) desired_a=1 ;; C) desired_c=1 ;; D) desired_d=1 ;; esac
+       if [ "$current_a" = "$desired_a" ] && [ "$current_c" = "$desired_c" ] && [ "$current_d" = "$desired_d" ]; then
            echo "Cached classification reused for issue #<N> (last classified at $LATEST_CLASS_TS)."
            exit 0
        fi
@@ -67,7 +68,9 @@ You will receive an issue number as the argument. Perform:
    |--------|------|-----------|
    | Labels include `docs-only` | A | high |
    | Labels include `multi-task` | C | high |
+   | Labels include `quick-fix` | D | high |
    | Body/title contains `docs-only`, `update README`, `update CLAUDE.md`, "no logic", "documentation only", "rename", "typo" | A | medium |
+   | Body/title contains "one-line", "rename", "typo", "add guard", "small bug", "tweak", or labels include quick-fix → D, medium-or-high confidence | D | medium |
    | Body has a numbered/bulleted list of 3+ independent tasks OR phrases "for each of", "multiple", "parallel", "batch", "one per" | C | medium |
    | Body mentions schema + API + frontend changes in a single issue | C | low |
    | Otherwise | B | medium |
@@ -85,33 +88,34 @@ You will receive an issue number as the argument. Perform:
    ```markdown
    ## Classification
 
-   - **recommended_path:** A | B | C
+   - **recommended_path:** A | B | C | D
    - **confidence:** high | medium | low
    - **rationale:** <one or two sentences citing the signal(s)>
 
    _Label applied by classify-issue. Override by editing the label directly — the label always wins over the comment recommendation on next classification._
    ```
 
-5a. **Apply the path label.** Set `ISSUE_N=<N>`, `RECOMMENDED_PATH=<A|B|C>`, and `CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')`, then run this block directly. It is bounded by sentinel comments that the pipeline test suite extracts.
+5a. **Apply the path label.** Set `ISSUE_N=<N>`, `RECOMMENDED_PATH=<A|B|C|D>`, and `CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')`, then run this block directly. It is bounded by sentinel comments that the pipeline test suite extracts.
 
    ```bash
    # BEGIN-LABEL-APPLY
-   # Required env: ISSUE_N (issue number), RECOMMENDED_PATH (A|B|C),
+   # Required env: ISSUE_N (issue number), RECOMMENDED_PATH (A|B|C|D),
    #   CURRENT_LABELS (newline-separated label names), REPO (owner/name).
    REPO="${REPO:-$PIPELINE_REPO}"
    _has_label() { printf '%s\n' "$CURRENT_LABELS" | grep -qx "$1"; }
    _safe_label() {
-     # Guardrail: this skill may only edit the two path labels.
+     # Guardrail: this skill may only edit the three path labels.
      case "$1" in
-       docs-only|multi-task) return 0 ;;
-       *) echo "REFUSED: label '$1' not in allow-set {docs-only|multi-task}" >&2; return 1 ;;
+       docs-only|multi-task|quick-fix) return 0 ;;
+       *) echo "REFUSED: label '$1' not in allow-set {docs-only|multi-task|quick-fix}" >&2; return 1 ;;
      esac
    }
-   current_a=0; current_c=0
+   current_a=0; current_c=0; current_d=0
    _has_label docs-only  && current_a=1
    _has_label multi-task && current_c=1
-   desired_a=0; desired_c=0
-   case "$RECOMMENDED_PATH" in A) desired_a=1 ;; C) desired_c=1 ;; esac
+   _has_label quick-fix  && current_d=1
+   desired_a=0; desired_c=0; desired_d=0
+   case "$RECOMMENDED_PATH" in A) desired_a=1 ;; C) desired_c=1 ;; D) desired_d=1 ;; esac
    # Remove first, add second — avoids any momentary both-labels-present state
    # that could trip a hook checking label invariants.
    if [ "$current_a" -eq 1 ] && [ "$desired_a" -eq 0 ]; then
@@ -120,11 +124,17 @@ You will receive an issue number as the argument. Perform:
    if [ "$current_c" -eq 1 ] && [ "$desired_c" -eq 0 ]; then
      _safe_label multi-task && gh issue edit "$ISSUE_N" --repo "$REPO" --remove-label multi-task
    fi
+   if [ "$current_d" -eq 1 ] && [ "$desired_d" -eq 0 ]; then
+     _safe_label quick-fix  && gh issue edit "$ISSUE_N" --repo "$REPO" --remove-label quick-fix
+   fi
    if [ "$desired_a" -eq 1 ] && [ "$current_a" -eq 0 ]; then
      _safe_label docs-only  && gh issue edit "$ISSUE_N" --repo "$REPO" --add-label    docs-only
    fi
    if [ "$desired_c" -eq 1 ] && [ "$current_c" -eq 0 ]; then
      _safe_label multi-task && gh issue edit "$ISSUE_N" --repo "$REPO" --add-label    multi-task
+   fi
+   if [ "$desired_d" -eq 1 ] && [ "$current_d" -eq 0 ]; then
+     _safe_label quick-fix  && gh issue edit "$ISSUE_N" --repo "$REPO" --add-label    quick-fix
    fi
    # END-LABEL-APPLY
    ```
@@ -142,7 +152,7 @@ You will receive an issue number as the argument. Perform:
      --jq '[.comments[] | select(.body | contains("## Classification"))] | length')
    ```
 
-8. **Report:** "Classification posted to issue #N: <path> (<confidence>). Label applied: <docs-only | multi-task | none>."
+8. **Report:** "Classification posted to issue #N: <path> (<confidence>). Label applied: <docs-only | multi-task | quick-fix | none>."
 
 ## Prompt strategy
 
@@ -152,5 +162,5 @@ You will receive an issue number as the argument. Perform:
 - If an explicit user label contradicts the content (e.g., `docs-only` on a refactor), still recommend the user-labeled path but set confidence=low and note the conflict in rationale.
 
 ## Constraints
-- MAY call `gh issue edit` to add/remove ONLY the `docs-only` and `multi-task` labels. Never touch any other label. Never modify code.
+- MAY call `gh issue edit` to add/remove ONLY the `docs-only`, `multi-task`, and `quick-fix` labels. Never touch any other label. Never modify code.
 - Bullet points only. No prose padding.
