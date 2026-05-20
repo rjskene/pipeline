@@ -27,6 +27,8 @@ This skill is invoked in one of two ways:
 
 Argv shape: `[issue_numbers...] [--manual-merge]`, position-independent (the flag-parsing rule below preserves the prior behavior).
 
+PATH D (quick-fix) is path-agnostic to fullsend: the slate dispatcher does not branch on D. PATH-D-specific behavior (auto-flip plan-pending → plan-approved, inline tdd-implementer execute dispatch, Step 8 skip) is owned entirely by /pipeline:run (skills/run/SKILL.md Step 4 and Step 6) and /pipeline:execute-issue-plan (skills/execute-issue-plan/SKILL.md Step 8 early-return). No fullsend code change is required.
+
 ### Full Send — autonomous end-to-end execution
 
 When the user says **"full send"** (case-insensitive, also accepted: "full-send", "fullsend"), execute all pipeline stages in sequence without pausing for confirmation between stages.
