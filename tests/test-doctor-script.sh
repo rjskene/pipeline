@@ -62,7 +62,7 @@ CLAUDE
   chmod +x "$TMP/bin/claude"
 }
 
-# canonical all-10-labels payload (used as default by passing cases)
+# canonical all-13-labels payload (used as default by passing cases)
 ALL_LABELS_JSON='[
   {"name":"plan-pending","color":"C2E0C6","description":"Plan posted, awaiting review"},
   {"name":"plan-reviewed","color":"BFD4F2","description":"Plan evaluated"},
@@ -73,7 +73,10 @@ ALL_LABELS_JSON='[
   {"name":"excluded","color":"E4E669","description":"Excluded from pipeline"},
   {"name":"later","color":"D4C5F9","description":"Deferred"},
   {"name":"human","color":"F9D0C4","description":"Needs human in the loop"},
-  {"name":"brainstorm","color":"FEF2C0","description":"Non-actionable discussion/exploration"}
+  {"name":"brainstorm","color":"FEF2C0","description":"Non-actionable discussion/exploration"},
+  {"name":"docs-only","color":"D4C5F9","description":"Documentation-only change — no implementation"},
+  {"name":"multi-task","color":"5319e7","description":"Issue too large for one PR; requires decomposition into sub-issues"},
+  {"name":"quick-fix","color":"0E8A16","description":"Quick-fix path — inline TDD, single failing test"}
 ]'
 
 # Build a fresh fixture project dir. Initializes git and creates a local
@@ -204,12 +207,12 @@ grep -qE '^CHECK: gh_repo_reachable status=fail.*not reachable' <<<"$out" \
 # ---------------------------------------------------------------------------
 # Case 5: labels_exist
 # ---------------------------------------------------------------------------
-echo "Case 5a: all 10 labels present"
+echo "Case 5a: all 13 labels present"
 FX=$(fresh_fx fx-labels-pass)
 run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: labels_exist status=pass detail=10/10' <<<"$out" \
-  && pass_msg "labels-pass: 10/10 detail" \
+grep -qE '^CHECK: labels_exist status=pass detail=13/13' <<<"$out" \
+  && pass_msg "labels-pass: 13/13 detail" \
   || { fail_msg "labels-pass: wrong detail"; echo "$out" | sed 's/^/    /'; }
 
 echo "Case 5b: two labels missing"
@@ -236,11 +239,12 @@ CFG
 OVERRIDE_JSON='[
   {"name":"plan-pending"},{"name":"plan-reviewed"},{"name":"plan-approved"},
   {"name":"in-progress"},{"name":"pr-open"},{"name":"merged"},
-  {"name":"skip"},{"name":"later"},{"name":"human"},{"name":"brainstorm"}
+  {"name":"skip"},{"name":"later"},{"name":"human"},{"name":"brainstorm"},
+  {"name":"docs-only"},{"name":"multi-task"},{"name":"quick-fix"}
 ]'
 run_helper "$FX" LABELS_JSON="$OVERRIDE_JSON"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: labels_exist status=pass detail=10/10' <<<"$out" \
+grep -qE '^CHECK: labels_exist status=pass detail=13/13' <<<"$out" \
   && pass_msg "labels-override: pass when PIPELINE_LABELS_EXCLUDED=skip" \
   || { fail_msg "labels-override: failed"; echo "$out" | sed 's/^/    /'; }
 
