@@ -50,3 +50,8 @@ scripts/check-base-branch-hook-wiring.sh
 # target. Flagged for follow-up: replace literal with ${CLAUDE_PLUGIN_ROOT}/
 # agents/tdd-implementer.md once worktree-resolution rules are clarified.
 scripts/review-audits.sh
+
+# container_assets_unwired helper scans consumer .claude/hooks/*.py for
+# quoted-literal env-var marker reads — `.claude/hooks/` literals here are
+# scan-target path patterns, never write targets (issue #310).
+scripts/check-container-assets.sh
