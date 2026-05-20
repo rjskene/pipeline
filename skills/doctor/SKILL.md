@@ -38,6 +38,7 @@ Report the full stdout (CHECK lines + summary table) to the user. If the exit co
 - `settings_residual` — scans .claude/settings.json for pipeline-owned hook entries and annotates each with a capability-impact note (sourced from scripts/_advisory-text.sh). Warns "jq required" if jq is missing. Warn-not-fail otherwise.
 - `skill_files_residual` — enumerates files under consumer .claude/{skills,hooks,scripts,agents}/ whose basename collides with a plugin-shipped file, distinguishing duplicates from consumer-owned. Critical FAIL if any duplicate contains a hardcoded <owner>/<repo> reference that does not match $PIPELINE_REPO (stale legacy install). Now uses **relative-path comparison** (`skills/<name>/SKILL.md`, `scripts/<name>.py`, etc.) instead of basename-only, so consumer-authored skills like `skills/todo/SKILL.md` are correctly preserved even though the plugin ships `SKILL.md` files at other paths. Plugin files ending in `.template` (e.g. `scripts/spawn-claude.sh.template`) imply the rendered consumer path (consumer's `scripts/spawn-claude.sh` under `.claude/`) is `consumer-required` — load-bearing for the plugin's own skills to function — and is reported in a separate "Required — rendered from plugin templates" section rather than as a duplicate. (Interim correctness while #215 resolves the plugin-script delivery model; the `.template` branch becomes deletable once #215 lands.)
 - `consumer_drift` — per-file drift classification for consumer `.claude/{scripts,hooks,agents}/` (see `## consumer_drift check` below).
+- `container_assets_unwired` — detect `compose.<mode>.{yml,yaml}` files at the project root whose mode is not declared in `PIPELINE_EVAL_CONTAINERS` (see `## container_assets_unwired check` below). Conditional FAIL via marker-env triangle; mirrors the `LOAD_BEARING_HOOKS` escalation pattern in `consumer_drift` applied to the dispatch-asset surface.
 - `preservation_refs` — for every consumer `.claude/{scripts,hooks}/` file with a plugin-shipped counterpart, lists each reference holding it in place and emits a `DELETE` / `KEEP` verdict (see `## preservation_refs check` below).
 - `base_branch_local` — local branch named `$PIPELINE_BASE_BRANCH` exists (warn if it has no upstream).
 - `base_branch_enforcement` — defense-in-depth audit (#295) for the `enforce-base-branch.py` PreToolUse hook. **Pass** when the hook file exists at `${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py` AND at least one PreToolUse Bash matcher (in the plugin manifest OR in the consumer's `.claude/settings.json`) invokes it. **Fail** in two cases: (a) hook file absent from disk (detail mentions `enforce-base-branch.py not present on disk`), (b) hook file present but unregistered — no PreToolUse Bash matcher references it (detail mentions `exists but no PreToolUse Bash matcher invokes it`). The detection scans both surfaces via `jq -r '.hooks.PreToolUse[] | select(.matcher=="Bash") | .hooks[].command'` and pattern-matches the basename, so manifest variations (`python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py`, `python3 .claude/hooks/enforce-base-branch.py`, absolute paths, etc.) all resolve correctly.
@@ -81,6 +82,41 @@ Validates that `CLAUDE_PLUGIN_ROOT` resolves to a real plugin install directory.
 **Worked example.** On a real consumer install (`rjskene/example-consumer`) the manual classification surfaced ~20 preserved files: 7 × A (safe to delete), 4 × B (one of which was a `B.bug` because `enforce-path-c-delegation.py` hardcoded the wrong `PIPELINE_REPO`), 1 × C (plugin had dropped a `--runs` mode), 6 × D (dogfood-only hooks), 2 × E (subtree-drift scripts), with the rest F (project-specific autoresearch hooks). ~9 of 20 were safely deletable; 1 was an active bug masked by silent preservation.
 
 This check is intentionally **textual-diff-only** — no behavioral comparison. Interactive remediation (`--fix drift`) is out of scope; surface findings via the summary table and let humans decide.
+
+## container_assets_unwired check
+
+Detects a misconfiguration class that #218 left invisible to doctor: **the consumer repo has container assets but they are not declared in `PIPELINE_EVAL_CONTAINERS`**. When intent-evidence is present (a `.claude/hooks/*.py` reads an env var the compose file sets), the dispatch path is broken — `spawn-claude.sh` never invokes `docker compose run`, the marker never gets set, and any hook depending on it silently degrades. This is the same shape as the dispatch-layer drift `consumer_drift` catches; the marker-triangle is its container-surface analogue. Helper: `scripts/check-container-assets.sh`.
+
+**Marker-env triangle (all three required for FAIL):**
+
+1. A `compose.<mode>.yml` or `compose.<mode>.yaml` file at the project root.
+2. The compose file sets a non-`PIPELINE_*` env var via `services.*.environment:`.
+3. A `.claude/hooks/*.py` file reads that exact env var via a quoted-literal string (`'MARKER'` or `"MARKER"`).
+
+**Verdict matrix:**
+
+| Signal | Verdict |
+|--------|---------|
+| Mode declared in `PIPELINE_EVAL_CONTAINERS` | **PASS** |
+| First 5 lines of compose contain `# pipeline:manual-only` | **PASS** (explicit opt-out) |
+| Undeclared compose, no marker-reader hook found | **WARN** (could be manual-use) |
+| Undeclared compose, full triangle (compose sets MARKER, hook reads MARKER) | **FAIL** (intent-evidence — undeclared dispatch breaks a wired hook) |
+| Undeclared compose, marker set but hook reads a DIFFERENT marker | **WARN** (no overlap, no triangle) |
+| YAML environment block unparseable (yq + awk fallback both fail) | **WARN** with `note=yaml-parse-skipped` — never escalate to FAIL without confirmed marker-set evidence |
+
+**YAML parsing.** The helper probes for `yq` first (best path; handles nested anchors and merge keys). Falls back to a flat-`environment:`-block awk scanner that handles the 90% case (single-service compose files with an inline env map). When neither resolves the keys on a file that does contain an `environment:` token, the check emits `note=yaml-parse-skipped` and stays at WARN — the load-bearing invariant is that we **never escalate to FAIL without confirmed evidence**.
+
+**Marker filter.** Env-var names matching `PIPELINE_*` are filtered out before the marker-reader scan (they're plugin-internal noise, not consumer intent — a hook reading `PIPELINE_REPO` is not a triangle signal).
+
+**Hook-reader detection.** `grep -E "['\"]<MARKER>['\"]"` against `.claude/hooks/*.py`. False-negatives possible for dynamic env-var name construction (vanishingly rare in practice); false-positives are suppressed by requiring the marker to also appear as a compose-set key (the triangle constraint).
+
+**Suggested snippet emission.** When the triangle fires FAIL, the helper emits a copy-paste-ready `pipeline.config` snippet derived from the discovered values: the compose filename, the first `services.<name>:` entry as `SERVICE`, and sibling `Dockerfile.<mode>` / `.env.<mode>` files if they exist. Mode-name normalization in env-var suffixes is `tr '[:lower:]-' '[:upper:]_'` (so `web-eval` → `WEB_EVAL`).
+
+**Opt-out.** Operators who maintain a compose file for manual use only (no plugin dispatch ever) annotate the first 5 lines with `# pipeline:manual-only`. The check honors this explicit declaration and emits PASS. The window is line-1-through-line-5 — a marker on line 6 is ignored (defense against the marker showing up deep in long files for unrelated reasons).
+
+**LOAD_BEARING_HOOKS-mirror precedent.** `consumer_drift` escalates A/B/C/E rows to FAIL on basenames in the `LOAD_BEARING_HOOKS` list because drift on those defense-in-depth hooks silently defeats a guardrail (#295). `container_assets_unwired` applies the same escalation pattern to a different surface: the dispatch layer. An undeclared compose asset that a hook is reading is *the same shape of breakage* — a wired hook that silently degrades because the dispatch path doesn't fire. Both checks surface this class at audit time, before any runtime dispatch is attempted.
+
+**Out of scope (deferred).** Consumers using `docker-compose.yml` (no `.<mode>` infix) — file a follow-up issue if a real consumer needs that. Misconfigured `PIPELINE_EVAL_CONTAINER_<MODE>_COMPOSE_FILE` paths (typo in `pipeline.config`) — that's existing `pipeline_config` check territory.
 
 ## preservation_refs check
 
