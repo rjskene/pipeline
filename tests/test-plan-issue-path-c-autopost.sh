@@ -138,19 +138,19 @@ for phrase in \
   fi
 done
 
-# "return as terminal" — permissive sense only. The legitimate occurrence is
-# the negative directive "Returning the plan as terminal agent output is a
-# skill failure". Allowlist by checking that "failure" appears within 30
-# chars after each match.
-TERMINAL_MATCHES=$(grep -niE "return(ing)? .*(as )?terminal" "$SKILL_FILE" || true)
+# "return ... as terminal" — permissive sense only. The legitimate occurrence
+# is the negative directive "Returning the plan as terminal agent output is a
+# skill failure". The pattern requires "as terminal" (not just "terminal")
+# within one sentence of a "return" word — otherwise the phrase "acceptable
+# terminal states" in the dispatch contract paragraph would false-positive.
+# Allowlist by checking "failure" appears within ~40 chars after the match.
+TERMINAL_MATCHES=$(grep -niE "return(ing|ed|s)? [^.]{0,80}as terminal" "$SKILL_FILE" || true)
 TERMINAL_BAD=0
 if [ -n "$TERMINAL_MATCHES" ]; then
   while IFS= read -r line; do
-    # Strip leading "N:" line-number prefix from grep -n output.
     body=$(echo "$line" | sed -E 's/^[0-9]+://')
-    # Look at the 30 chars *after* the match (or end of line).
-    if ! echo "$body" | grep -qiE "return(ing)? .{0,80}terminal.{0,30}failure"; then
-      fail_msg "non-allowlisted 'return ... terminal' phrase: $body"
+    if ! echo "$body" | grep -qiE "as terminal[^.]{0,60}failure"; then
+      fail_msg "non-allowlisted 'return ... as terminal' phrase: $body"
       TERMINAL_BAD=1
     fi
   done <<< "$TERMINAL_MATCHES"
