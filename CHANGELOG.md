@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/rjskene/pipeline/compare/v0.9.0-rc.1...v0.9.0) (2026-05-20)
+
+
+### Miscellaneous Chores
+
+* graduate v0.9.0 stable ([#334](https://github.com/rjskene/pipeline/issues/334)) ([a0d2761](https://github.com/rjskene/pipeline/commit/a0d2761c9e018c18f8a4cf475f7dcefae74cfea6))
+
 ## [0.9.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.8.3...v0.9.0-rc.1) (2026-05-20)
 
 
