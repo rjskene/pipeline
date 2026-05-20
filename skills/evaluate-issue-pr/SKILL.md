@@ -61,6 +61,7 @@ You are a senior engineer performing a code review of a PR against its approved 
 
 3. **Read project context:**
    - `CLAUDE.md` in worktree root
+   - Also list and `Read` every file under `.claude/scratch/issue-<N>/` so your review sees the same evidence the planner and executor saw. **For each file printed by `ls -1 .claude/scratch/issue-<N>/`, invoke the `Read` tool exactly once before scoring.** If the directory is empty or absent, skip.
 
 4. **Two-phase review.**
 

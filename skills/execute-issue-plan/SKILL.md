@@ -44,6 +44,14 @@ You will receive an issue number as the argument (or from context). You should b
    If the output is empty or `null`, **STOP** and report: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
    Read the plan carefully before proceeding.
 
+   After fetching the plan, also list and `Read` every file under `.claude/scratch/issue-<N>/` — these are screenshots and binary evidence the planner saw. The directory was mirrored into this worktree by `setup-worktree.sh` / `sync-worktrees.sh`; this skill does NOT re-fetch (the helper's `PIPELINE_PROJECT_ROOT` guard would refuse a worktree-side invocation anyway).
+
+   ```bash
+   ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
+   ```
+
+   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before implementing.** If the directory is empty or absent, continue.
+
 2. **Read project conventions:**
    Read `CLAUDE.md` in the current working directory (worktree root).
 
