@@ -70,7 +70,9 @@ You will receive an issue number as the argument (or from context). Perform thes
 
 5. **Generate the implementation plan.**
 
-   > **CRITICAL — DO NOT return the plan as your final message.** The plan body MUST be written to a draft file under `.claude/logs/plan-drafts/` and posted by `scripts/post-plan.sh`. Returning the plan as terminal agent output is a skill failure — the orchestrator will see no comment and no `plan-pending` label.
+   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/logs/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it. This applies whether you were invoked by the orchestrator directly or dispatched as a subagent — the post step is always your responsibility, never the caller's. Returning the plan as terminal agent output is a skill failure — the orchestrator will see no comment and no `plan-pending` label, and will have to redo the work that was already inside your turn.
+
+   > **Subagent dispatch contract.** This skill is end-to-end. Regardless of how you were invoked (top-level `/pipeline:plan-issue` or `Agent(subagent_type=...)` dispatch from `/pipeline:fullsend` or `/pipeline:run`), YOU own every step from issue fetch through `post-plan.sh` success. You do NOT return the plan text for the caller to post. You do NOT save the plan to `docs/` for the caller to read. The only acceptable terminal states are: (a) `post-plan.sh` exited 0 and you report the success line from Step 8, or (b) `post-plan.sh` exited non-zero and you report the FAILED line from Step 7. There is no third option.
 
    Invoke `superpowers:writing-plans` to structure the plan:
    ```
@@ -132,7 +134,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
    Code-task format for PATH C: every code task is a single `tdd-implementer` dispatch. Each dispatch includes a `target=<dir>/` sentinel (must be a real subdirectory — `target=.`, `target=./`, or `target=/` are rejected by the delegation hook) and a prompt detailed enough for the subagent to execute autonomously (what file, what behavior, what test, what commit message). Multiple dispatches may run in parallel when their targets don't overlap.
 
-6. **Write the plan to a draft file.**
+6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool to create the draft file at the path below; YOU MUST NOT return the plan body in your final message and ask the caller to write the file.
    ```bash
    mkdir -p .claude/logs/plan-drafts
    DRAFT=".claude/logs/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
@@ -140,7 +142,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    ```
    Use the `Write` tool (not heredoc, not `echo`) so the full plan body is preserved verbatim and the file path is logged.
 
-7. **Post atomically via helper — this is the only post path.**
+7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke the command below from within your own turn. Do not stop, return, or summarize before the helper exits.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
    ```
@@ -148,7 +150,7 @@ You will receive an issue number as the argument (or from context). Perform thes
 
    If the helper exits non-zero, surface its stderr AND the `$DRAFT` path verbatim, then STOP with: `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`. The draft is on disk and the operator can re-run the helper manually.
 
-8. **Report back:** "Plan posted to issue #N (PATH $PATH_LETTER)."
+8. **Report back, but only AFTER `post-plan.sh` exits 0:** "Plan posted to issue #N (PATH $PATH_LETTER)." If the helper exited non-zero, do not report this success line; report the FAILED line from Step 7 instead. Your final message MUST follow either the success template above or the FAILED template from Step 7 — never the raw plan body, never a summary, never a hand-off note to the caller.
 
 ## Revision handling
 

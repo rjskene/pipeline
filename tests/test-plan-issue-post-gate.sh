@@ -63,6 +63,41 @@ else
   pass_msg "old direct gh issue comment call removed"
 fi
 
+echo "Test 6: imperative ownership on the post step (YOU MUST .* post-plan.sh)"
+inc
+if grep -qE "YOU MUST .*post-plan\.sh" "$SKILL_FILE"; then
+  pass_msg "imperative 'YOU MUST .* post-plan.sh' present on the post step"
+else
+  fail_msg "post step lacks 'YOU MUST .* post-plan.sh' imperative ownership"
+fi
+
+echo "Test 7: no posting language inside any #### Task 0 — PATH X block"
+inc
+# Same extract_section helper pattern as test-plan-issue-path-tasks.sh, but
+# also terminates at "^### ", "^## ", or a top-level numbered Step so PATH C
+# (which is followed directly by Step 6, not another "#### ") does not
+# over-capture Steps 6-8.
+extract_path_block_strict() {
+  local letter="$1"
+  awk -v start="^#### Task 0 — PATH ${letter}" '
+    $0 ~ start                                { inblock = 1; print; next }
+    inblock && (/^#### / || /^### / || /^## / || /^[0-9]+\. \*\*/) { inblock = 0 }
+    inblock                                   { print }
+  ' "$SKILL_FILE"
+}
+
+POSTING_LEAK=0
+for L in A B C; do
+  BLK=$(extract_path_block_strict "$L")
+  if echo "$BLK" | grep -qE "gh issue comment|post-plan\.sh"; then
+    fail_msg "PATH ${L} Task 0 block contains posting language (post-plan.sh or 'gh issue comment') — must live in shared Steps 6-7 only"
+    POSTING_LEAK=1
+  fi
+done
+if [ "$POSTING_LEAK" -eq 0 ]; then
+  pass_msg "no per-path block contains posting language"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
