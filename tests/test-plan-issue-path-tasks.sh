@@ -42,6 +42,7 @@ extract_section() {
 BLOCK_A=$(extract_section "A")
 BLOCK_B=$(extract_section "B")
 BLOCK_C=$(extract_section "C")
+BLOCK_D=$(extract_section "D")
 
 # --- Test 1: PATH detection step exists ---
 echo "Test 1: plan-issue has a PATH-detection step"
@@ -124,6 +125,39 @@ if echo "$BLOCK_C" | grep -qE "enforce-path-c-delegation|orchestrator .* (NOT|mu
   pass_msg "PATH C Task 0 notes the delegation hook / orchestrator edit restriction"
 else
   fail_msg "PATH C Task 0 missing orchestrator-edit restriction notice"
+fi
+
+# --- Test 9: PATH D block emits the single-instance inline Task 0 ---
+echo "Test 9: PATH D Task 0 declares 'you ARE tdd-implementer (single-instance inline)'"
+inc
+if [ -z "$BLOCK_D" ]; then
+  fail_msg "no '#### Task 0 — PATH D' section found"
+elif echo "$BLOCK_D" | grep -qF "Task 0: you ARE tdd-implementer (single-instance inline)"; then
+  pass_msg "PATH D Task 0 contains the single-instance inline directive"
+else
+  fail_msg "PATH D Task 0 missing the literal 'Task 0: you ARE tdd-implementer (single-instance inline)' string"
+fi
+
+# --- Test 10: PATH D block does NOT dispatch a subagent ---
+echo "Test 10: PATH D Task 0 does NOT dispatch Agent(subagent_type=..."
+inc
+if [ -z "$BLOCK_D" ]; then
+  fail_msg "no '#### Task 0 — PATH D' section found"
+elif echo "$BLOCK_D" | grep -qF "dispatch Agent(subagent_type="; then
+  fail_msg "PATH D Task 0 should be inline — must not contain 'dispatch Agent(subagent_type=' (PATH C wording)"
+else
+  pass_msg "PATH D Task 0 omits subagent dispatch — runs inline"
+fi
+
+# --- Test 11: PATH_LETTER detection branch for quick-fix exists ---
+echo "Test 11: PATH_LETTER=D branch is reachable from quick-fix label"
+inc
+if grep -qE "PATH_LETTER=D" "$RENDERED" \
+   && grep -qE "quick-fix" "$RENDERED" \
+   && grep -qE 'A\|B\|C\|D' "$RENDERED"; then
+  pass_msg "PATH D detected from quick-fix label; cached-comment fallback widened to A|B|C|D"
+else
+  fail_msg "rendered skill missing PATH_LETTER=D branch / quick-fix label / A|B|C|D fallback"
 fi
 
 echo ""

@@ -125,6 +125,65 @@ else
   echo "$ERR" | sed 's/^/    /'
 fi
 
+echo "Test 6a: quick-fix -> D (no warning)"
+inc
+OUT=$(run_picker "quick-fix")
+if [ "$OUT" = "D" ]; then pass_msg "quick-fix -> D"; else fail_msg "quick-fix -> got '$OUT' (expected D)"; fi
+
+inc
+ERR=$(run_picker_stderr "quick-fix")
+if echo "$ERR" | grep -qi "warning"; then
+  fail_msg "quick-fix alone should NOT emit a collision warning; got:"
+  echo "$ERR" | sed 's/^/    /'
+else
+  pass_msg "quick-fix alone emits no collision warning"
+fi
+
+echo "Test 6b: docs-only + quick-fix -> A (collision, A wins)"
+inc
+OUT=$(run_picker "$(printf 'docs-only\nquick-fix')")
+if [ "$OUT" = "A" ]; then pass_msg "docs-only+quick-fix -> A"; else fail_msg "docs-only+quick-fix -> got '$OUT' (expected A)"; fi
+
+inc
+ERR=$(run_picker_stderr "$(printf 'docs-only\nquick-fix')")
+if echo "$ERR" | grep -qi "warning" && echo "$ERR" | grep -q "docs-only" && echo "$ERR" | grep -q "quick-fix"; then
+  pass_msg "stderr warning mentions docs-only and quick-fix"
+else
+  fail_msg "expected warning mentioning docs-only and quick-fix; got:"
+  echo "$ERR" | sed 's/^/    /'
+fi
+
+echo "Test 6c: quick-fix + multi-task -> D (collision, D wins over C)"
+inc
+OUT=$(run_picker "$(printf 'quick-fix\nmulti-task')")
+if [ "$OUT" = "D" ]; then pass_msg "quick-fix+multi-task -> D"; else fail_msg "quick-fix+multi-task -> got '$OUT' (expected D)"; fi
+
+inc
+ERR=$(run_picker_stderr "$(printf 'quick-fix\nmulti-task')")
+if echo "$ERR" | grep -qi "warning" && echo "$ERR" | grep -q "quick-fix" && echo "$ERR" | grep -q "multi-task"; then
+  pass_msg "stderr warning mentions quick-fix and multi-task"
+else
+  fail_msg "expected warning mentioning quick-fix and multi-task; got:"
+  echo "$ERR" | sed 's/^/    /'
+fi
+
+echo "Test 6d: docs-only + quick-fix + multi-task -> A (A always wins)"
+inc
+OUT=$(run_picker "$(printf 'docs-only\nquick-fix\nmulti-task')")
+if [ "$OUT" = "A" ]; then pass_msg "all three -> A"; else fail_msg "all three -> got '$OUT' (expected A)"; fi
+
+inc
+ERR=$(run_picker_stderr "$(printf 'docs-only\nquick-fix\nmulti-task')")
+if echo "$ERR" | grep -qi "warning" \
+   && echo "$ERR" | grep -q "docs-only" \
+   && echo "$ERR" | grep -q "quick-fix" \
+   && echo "$ERR" | grep -q "multi-task"; then
+  pass_msg "stderr warning mentions all three labels"
+else
+  fail_msg "expected warning mentioning all three labels; got:"
+  echo "$ERR" | sed 's/^/    /'
+fi
+
 echo "Test 7: gh failure falls back to B (no hard error)"
 inc
 OUT=$(run_picker "" 1)

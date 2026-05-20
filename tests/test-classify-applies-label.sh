@@ -216,6 +216,65 @@ else
   fail_msg "constraints still READ ONLY or missing scope statement"
 fi
 
+# --- Test 13: signal table maps "one-line fix" wording to quick-fix / PATH D ---
+echo "Test 13: signal table covers quick-fix heuristics (one-line, rename, typo, tweak, ...)"
+inc
+# The step-4 signal table row added for PATH D must reference the trigger
+# phrases including "one-line" and the quick-fix label, so an issue body
+# containing the literal phrase "one-line fix" routes to PATH D / quick-fix.
+if grep -qE 'one-line.*rename.*typo.*add guard.*small bug.*tweak.*quick-fix.*\| D \|' "$RENDERED" \
+   || grep -qE '\| .*one-line.*quick-fix.* \| D \|' "$RENDERED"; then
+  pass_msg "signal table row maps quick-fix heuristics to PATH D"
+else
+  fail_msg "no PATH D signal-table row covering 'one-line'/'quick-fix' heuristics"
+fi
+
+# --- Test 14: explicit quick-fix label -> PATH D, confidence=high ---
+echo "Test 14: explicit quick-fix label yields recommended_path=D / confidence=high"
+inc
+# The step-4 table already maps explicit `docs-only` / `multi-task` labels
+# to PATH A/C with confidence=high. The new PATH D row must give the same
+# treatment to an explicit `quick-fix` label.
+if grep -qE 'Labels include .?quick-fix.?\s*\| D \| high' "$RENDERED"; then
+  pass_msg "explicit quick-fix label -> PATH D high confidence row present"
+else
+  fail_msg "no signal-table row mapping 'Labels include quick-fix' -> D/high"
+fi
+
+# --- Test 15: _safe_label allow-set includes quick-fix ---
+echo "Test 15: _safe_label allow-set substring contains quick-fix"
+inc
+if grep -qE 'docs-only\|multi-task\|quick-fix' "$RENDERED"; then
+  pass_msg "_safe_label allow-set extended to include quick-fix"
+else
+  fail_msg "_safe_label allow-set does not include quick-fix"
+fi
+
+# --- Test 16: D -> B reclassification removes quick-fix ---
+echo "Test 16: rec B + currently quick-fix -> remove quick-fix"
+inc
+run_apply B "quick-fix" 1616
+if log_contains 'issue edit 1616 --repo fake/repo --remove-label quick-fix' \
+   && ! log_contains 'add-label' \
+   && [ "$(log_count)" = "1" ]; then
+  pass_msg "removed quick-fix when downgrading from D to B"
+else
+  fail_msg "unexpected gh calls for rec B + quick-fix: $(cat "$GH_LOG")"
+fi
+
+# --- Test 17: PATH D, no current labels -> add quick-fix only ---
+echo "Test 17: PATH D + no labels -> add quick-fix"
+inc
+run_apply D "" 1717
+if log_contains 'issue edit 1717 --repo fake/repo --add-label quick-fix' \
+   && ! log_contains 'docs-only' \
+   && ! log_contains 'multi-task' \
+   && [ "$(log_count)" = "1" ]; then
+  pass_msg "added quick-fix (1 call, no docs-only/multi-task)"
+else
+  fail_msg "unexpected gh calls for PATH D + empty labels: $(cat "$GH_LOG")"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
