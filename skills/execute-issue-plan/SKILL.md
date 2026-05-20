@@ -24,6 +24,7 @@ This skill is invoked in one of two ways:
 
 1. **Inline `Agent(...)` dispatch (PATH A, docs-only).** The orchestrator passes the worktree absolute path and issue number in the prompt. You are NOT already in the worktree CWD — `cd <worktree-absolute-path>` before any step below. The prompt also names the slug. No `spawn-claude.sh`, no `claude -p`, no tmux.
 2. **`${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch (PATH B, PATH C, and any path when explicitly requested).** You are already inside the feature worktree at session start; CWD is correct; no `cd` needed.
+3. **PATH D inline tdd-implementer dispatch — same CWD-setup-then-run shape as PATH A; orchestrator passes worktree absolute path + issue number in the prompt.**
 
 In both modes, every step below behaves identically — only the working-directory setup differs.
 
@@ -71,6 +72,8 @@ You will receive an issue number as the argument (or from context). You should b
 
    The plan's `**Tasks (ordered):**` section tells you the path-specific Task 0 directive (PATH A: flat edits, PATH B: invoke `superpowers:test-driven-development`, PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). Follow it exactly.
 
+   On PATH D (label quick-fix), you ARE tdd-implementer — apply red→green→commit directly. No subagent dispatch, no skill invocations beyond this one. Single failing test → impl → pass → commit.
+
    The pipeline orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*`) may also inject path-specific skill invocations. Earlier versions additionally used `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` to dispatch `code-reviewer` as the FINAL tool call of the session. This skill now owns the review flow explicitly (step 8 below, BEFORE `gh pr create`). Leaving `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` unset in `pipeline.config` is the recommended configuration; if it is set, the system prompt's end-of-session dispatch becomes a belt-and-suspenders redundancy, which is harmless.
 
    In all cases:
@@ -115,6 +118,8 @@ You will receive an issue number as the argument (or from context). You should b
 
 8. **Pre-PR code review loop.**
 
+   If labels contain quick-fix (PATH D), SKIP Step 8 in its entirety (8a, 8b, 8c, 8d, 8e). The evaluate-issue-pr stage is the sole review gate for PATH D issues. Proceed to Step 9.
+
    This step runs BEFORE `gh pr create`. The goal is to catch plan-compliance gaps and real bugs while the branch is still local-only, so the first external reviewer (pipeline `evaluate-issue-pr` or a human) sees a polished PR.
 
    **8a. Author self-check.** Invoke `superpowers:requesting-code-review` as the author self-check:
@@ -146,6 +151,7 @@ You will receive an issue number as the argument (or from context). You should b
    - **PATH C (`multi-task`):** any must-fix that touches impl code MUST go through a NEW `tdd-implementer` dispatch. The orchestrator cannot `Edit`/`Write` impl files directly — the `enforce-path-c-delegation` hook will block it.
    - **PATH B (standard):** must-fix code edits must still follow red→green→commit discipline (write a test for the missed behavior, watch fail, fix, watch pass, commit).
    - **PATH A (`docs-only`):** must-fix edits are direct.
+   - **PATH D (quick-fix):** must-fix edits are direct (same as PATH A) — but step 8 is skipped entirely on PATH D, so this row only applies if the orchestrator forces a re-entry.
 
    **8d. Commit fixes.** Commit each must-fix as its own `fix(review): ...` commit so the PR history shows the review loop. If zero must-fixes were applied, skip this sub-step.
 
