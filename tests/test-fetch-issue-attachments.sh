@@ -99,13 +99,24 @@ case "$sub1 $sub2" in
       cur=$(cat "$SHIM_API_COUNT" 2>/dev/null || echo 0)
       echo $((cur + 1)) > "$SHIM_API_COUNT"
     fi
-    # Emit HTTP-shaped output.
-    printf 'HTTP/2.0 200 OK\r\n'
-    printf 'Content-Type: %s\r\n' "$CT"
-    printf 'Content-Length: %s\r\n' "${SHIM_BODY_BYTES:-16}"
-    printf '\r\n'
-    # Body: a fixed-length blob (deterministic so size-based idempotency works).
-    head -c "${SHIM_BODY_BYTES:-16}" /dev/zero | tr '\0' 'X'
+    # Emit HTTP-shaped output. If $SHIM_BODY_FILE is set, stream that file
+    # verbatim as the body (used by the binary-safety regression case).
+    # Otherwise emit a fixed-length ASCII blob (deterministic so size-based
+    # idempotency works).
+    if [ -n "${SHIM_BODY_FILE:-}" ] && [ -f "${SHIM_BODY_FILE}" ]; then
+      blen=$(LC_ALL=C wc -c < "$SHIM_BODY_FILE" | tr -d ' ')
+      printf 'HTTP/2.0 200 OK\r\n'
+      printf 'Content-Type: %s\r\n' "$CT"
+      printf 'Content-Length: %s\r\n' "$blen"
+      printf '\r\n'
+      cat "$SHIM_BODY_FILE"
+    else
+      printf 'HTTP/2.0 200 OK\r\n'
+      printf 'Content-Type: %s\r\n' "$CT"
+      printf 'Content-Length: %s\r\n' "${SHIM_BODY_BYTES:-16}"
+      printf '\r\n'
+      head -c "${SHIM_BODY_BYTES:-16}" /dev/zero | tr '\0' 'X'
+    fi
     ;;
   *)
     echo "shim: unhandled gh invocation: $*" >&2
@@ -125,7 +136,7 @@ run_helper() {
 
 # Reset case-scoped env between cases.
 reset_shim_env() {
-  unset SHIM_BODY SHIM_CT_DEFAULT SHIM_CT_BY_URL SHIM_API_FAIL_URLS SHIM_BODY_BYTES SHIM_LOG SHIM_API_COUNT
+  unset SHIM_BODY SHIM_CT_DEFAULT SHIM_CT_BY_URL SHIM_API_FAIL_URLS SHIM_BODY_BYTES SHIM_LOG SHIM_API_COUNT SHIM_BODY_FILE
 }
 
 # ---------------------------------------------------------------------------
@@ -378,6 +389,43 @@ if grep -q "^Found 1 attachments for issue #999:" <<<"$OUT"; then
   pass_msg "manifest reflects only successfully-downloaded assets (N=1)"
 else
   fail_msg "manifest count wrong; got: $OUT"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 9: binary safety — embedded NUL bytes preserved byte-for-byte
+# ---------------------------------------------------------------------------
+echo "=== Case 9: binary safety (NUL bytes + full byte range preserved) ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 9)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+# Build a synthetic "binary" body: every byte 0x00..0xff. This exercises NUL,
+# CR, LF, and high-bit bytes — the modes most likely to be corrupted by
+# bash command substitution or text-mode awk pipelines.
+BIN_BODY="$PIPELINE_PROJECT_ROOT/bin-body.bin"
+python3 -c "import sys; sys.stdout.buffer.write(bytes(range(256)))" > "$BIN_BODY"
+EXPECTED_SIZE=$(LC_ALL=C wc -c < "$BIN_BODY" | tr -d ' ')
+
+UUID_BIN="bin-uuid-case9"
+URL_BIN="https://github.com/user-attachments/assets/${UUID_BIN}"
+SHIM_BODY="Look at this asset: $URL_BIN"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="application/octet-stream"   # expected to fall back to .bin
+SHIM_BODY_FILE="$BIN_BODY"
+export SHIM_BODY SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_FILE
+run_helper 999 >/dev/null
+
+TARGET="$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999/${UUID_BIN}.bin"
+if [ -f "$TARGET" ]; then
+  ACTUAL_SIZE=$(LC_ALL=C wc -c < "$TARGET" | tr -d ' ')
+  if [ "$ACTUAL_SIZE" = "$EXPECTED_SIZE" ] && cmp -s "$BIN_BODY" "$TARGET"; then
+    pass_msg "binary body preserved byte-for-byte (size $ACTUAL_SIZE)"
+  else
+    fail_msg "binary corruption: expected size $EXPECTED_SIZE got $ACTUAL_SIZE; cmp=$(cmp "$BIN_BODY" "$TARGET" 2>&1)"
+  fi
+else
+  fail_msg "binary attachment file missing at $TARGET"
 fi
 
 echo ""

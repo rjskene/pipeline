@@ -152,43 +152,69 @@ while IFS= read -r url; do
     continue
   fi
 
-  # Issue gh api -i once and capture both stream and exit status.
+  # Stream `gh api -i` to a tempfile so the HTTP body is binary-safe
+  # (bash command substitution strips NUL bytes; piping through awk/printf
+  # appends a stray newline — both corrupt real PNG/JPG/PDF downloads).
+  raw_tmp="$SCRATCH_DIR/.raw.$$.$RANDOM"
+  body_tmp="$raw_tmp.body"
   set +e
-  raw=$(gh api -i "$url" 2>/dev/null)
+  gh api -i "$url" > "$raw_tmp" 2>/dev/null
   rc=$?
   set -e
   if [ "$rc" -ne 0 ]; then
+    rm -f "$raw_tmp"
     echo "WARN: failed to download $url (gh api exit $rc)" >&2
     continue
   fi
 
-  # Split headers from body at the first CRLF/LF blank line.
-  headers=$(printf '%s' "$raw" | awk 'BEGIN{RS=""; ORS=""} NR==1 {print; exit}')
-  # Body = everything after the first blank line.
-  body=$(printf '%s' "$raw" | awk 'found{print; next} /^\r?$/ {found=1}')
-
-  # Parse Content-Type (strip any "; charset=…" suffix). Case-insensitive header name.
-  ct=$(printf '%s\n' "$headers" | awk -F': *' 'tolower($1)=="content-type"{print $2; exit}')
-  # Strip CR and charset suffix.
-  ct="${ct%$'\r'}"
-  ct="${ct%%;*}"
-  ct="${ct%"${ct##*[![:space:]]}"}"  # rtrim
-  ct="${ct#"${ct%%[![:space:]]*}"}"  # ltrim
+  # Split headers from body and parse Content-Type in one python3 pass.
+  # `grep -F` on a multi-byte pattern across newlines is unreliable on GNU
+  # grep (line-oriented even under -a), so we do the split in python where
+  # binary-safe re.search and `wb` writes are guaranteed. python3 is already
+  # a runtime dep (see hooks/restrict_paths.py).
+  set +e
+  ct=$(PIPELINE_BODY_OUT="$body_tmp" python3 - "$raw_tmp" <<'PY'
+import os, re, sys
+with open(sys.argv[1], 'rb') as f:
+    data = f.read()
+m = re.search(rb'\r?\n\r?\n', data)
+if m is None:
+    sys.stderr.write("NOSEP\n")
+    sys.exit(1)
+hdr = data[:m.start()].decode('latin-1', errors='replace')
+ct = ""
+for line in hdr.splitlines():
+    if line.lower().startswith('content-type:'):
+        ct = line.split(':', 1)[1].strip().split(';')[0].strip()
+        break
+with open(os.environ['PIPELINE_BODY_OUT'], 'wb') as out:
+    out.write(data[m.end():])
+print(ct)
+PY
+  )
+  py_rc=$?
+  set -e
+  if [ "$py_rc" -ne 0 ] || [ ! -f "$body_tmp" ]; then
+    rm -f "$raw_tmp" "$body_tmp"
+    echo "WARN: malformed HTTP response for $url" >&2
+    continue
+  fi
 
   filename=$(derive_filename "$url" "$ct")
   target="$SCRATCH_DIR/$filename"
 
   # Idempotency — skip if a non-empty file with this name already exists.
   if [ -s "$target" ]; then
+    rm -f "$raw_tmp" "$body_tmp"
     echo "[skip] $target already present" >&2
     MANIFEST+=("$target")
     continue
   fi
 
-  # Atomic write.
-  tmp="$target.tmp"
-  printf '%s' "$body" > "$tmp"
-  mv "$tmp" "$target"
+  # Atomic rename — body_tmp was written by python in binary mode, so NUL
+  # bytes and CRLF sequences are byte-for-byte preserved.
+  mv "$body_tmp" "$target"
+  rm -f "$raw_tmp"
   MANIFEST+=("$target")
 done <<< "$URLS"
 
