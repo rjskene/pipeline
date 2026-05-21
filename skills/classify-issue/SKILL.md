@@ -92,6 +92,14 @@ You will receive an issue number as the argument. Perform:
    # END-PATH-MARKER-PARSE
    ```
 
+   **Authoring guide for PATH D candidates.** If you are authoring a PATH D candidate, include the marker — these are the shapes that consistently miss the phrase heuristic in step 4 despite being unambiguous one-line fixes:
+
+   - Precedent-mirror fixes (`same shape as merged PR #X`, `same path-math family as #277`).
+   - One-line config flips (flip a flag in `pipeline.config`, repoint a path constant).
+   - Dogfood-mirror byte-identical edits (copy a fix from one settings file to a sibling).
+   - Guard-test additions to an existing test file (one new assertion, no new file).
+   - One-bullet bug reports with a quoted error message and an obvious one-line fix.
+
 4. **Score against rule set** (first match wins):
 
    | Signal | Path | Confidence |
