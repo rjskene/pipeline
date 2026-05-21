@@ -373,6 +373,27 @@ fi
 rm -rf "$CLEAN_TMP"
 [ "$ok" = "1" ] && pass_msg "Test 17: cleaned-worktree row renders without error"
 
+# -------------------------------------------------------------------------
+# Test 18: TDD_IMPLEMENTER_MARKER must reference the plugin-rooted path
+# (${CLAUDE_PLUGIN_ROOT}/agents/tdd-implementer.md), NOT the legacy
+# consumer-rooted `.claude/agents/tdd-implementer.md`. Source-level invariant
+# from issue #316 — post-#215 the plugin ships the agent and consumer .claude/
+# never receives it, so the marker check at line 294 must point at the plugin
+# tree to fire the "MISSING (enforcement required since #327)" branch.
+# -------------------------------------------------------------------------
+echo "Test 18: TDD_IMPLEMENTER_MARKER points at plugin root, not consumer .claude/"
+inc
+ok=1
+if ! grep -qE '^TDD_IMPLEMENTER_MARKER="\$\{CLAUDE_PLUGIN_ROOT:-\.\}/agents/tdd-implementer\.md"$' "$SCRIPT_UNDER_TEST"; then
+  fail_msg "Test 18: expected TDD_IMPLEMENTER_MARKER to use \${CLAUDE_PLUGIN_ROOT:-.}/agents/tdd-implementer.md"
+  ok=0
+fi
+if [ "$ok" = "1" ] && grep -qE '^TDD_IMPLEMENTER_MARKER=.*\.claude/agents/tdd-implementer\.md' "$SCRIPT_UNDER_TEST"; then
+  fail_msg "Test 18: TDD_IMPLEMENTER_MARKER must reference plugin-rooted path, not .claude/agents/"
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "Test 18: TDD_IMPLEMENTER_MARKER is plugin-rooted"
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
