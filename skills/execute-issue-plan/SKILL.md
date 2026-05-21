@@ -213,7 +213,7 @@ You will receive an issue number as the argument (or from context). You should b
    )"
    ```
 
-   The `$PR_TITLE` value is already normalized by `scripts/derive-pr-title.sh` (see Task 2 of issue #361): any literal `../` substring in the source issue title is rewritten to `..⁄` (U+2044, FRACTION SLASH) so the title body cannot trip the `restrict_paths.py` PreToolUse hook when it scans the `gh pr create` command line for path-escape patterns. No additional argv shielding is needed at this site.
+   The `$PR_TITLE` value is already normalized by `scripts/derive-pr-title.sh` (see Task 2 of issue #361): any literal `../` substring in the source issue title is rewritten to `..⁄` (U+2044, FRACTION SLASH) before it reaches this site. This is defense-in-depth against any PreToolUse hook (now or future) that scans the `gh pr create` command line for path-escape substrings — today's `hooks/restrict_paths.py` scans for absolute paths rather than `../`, but the helper guarantees neither shape can appear in the title body regardless. No additional argv shielding is needed at this site.
 
    Both `--title` and `--body` values are scanned by the `check-ci-skip-markers` hook before this command runs. If you need to *describe* a marker in the PR body, wrap it in backticks (e.g. `` `[skip ci]` ``) so GH Actions does not honor it.
 
