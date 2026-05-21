@@ -35,6 +35,14 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 For the dispatch model (PATH A/B/C), wave planner, spawn-claude degradation, and base-branch enforcement layers, see [docs/architecture.md](docs/architecture.md).
 
+### Hotfix (emergency lane)
+
+`/pipeline:hotfix` is an opt-out lane that bypasses the standard lifecycle. It files (or uses) an issue as an audit anchor, creates a worktree, runs the test/fix loop **in-session** in the current orchestrator, and opens a PR against `PIPELINE_BASE_BRANCH`. **no pipeline labels** are applied (`plan-pending`/`plan-reviewed`/`plan-approved`/`in-progress`/`pr-open`); no `evaluate-issue-plan` or `evaluate-issue-pr` runs; no auto-merge gate fires — the user merges manually.
+
+Distinct from **PATH D (`quick-fix`)**: PATH D runs the same `tdd-implementer` artifact but inside a spawned worker session via `/pipeline:execute-issue-plan` and goes through `evaluate-issue-pr`. Hotfix preserves the in-session experience — the user observes the test/fix loop live and reacts in real time. If you want the greenlight auto-merge gate, use PATH D instead.
+
+See `skills/hotfix/SKILL.md`.
+
 ## Key Handoffs
 
 **Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/pipeline:create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/pipeline:plan-issue`.
