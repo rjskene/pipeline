@@ -174,7 +174,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    If `CURRENT_BRANCH` does not equal `EXPECTED_BASE`:
    - Warn the user: **"Orchestrator is on `<CURRENT_BRANCH>` but the configured pipeline base is `<EXPECTED_BASE>`. Switch to `<EXPECTED_BASE>`? (yes / no)"**
-   - If yes: `git checkout "${EXPECTED_BASE}" && git pull origin "${EXPECTED_BASE}"`
+   - If yes: `git checkout "${EXPECTED_BASE}" && git pull --quiet origin "${EXPECTED_BASE}"`
    - If no: abort the pipeline run — running on the wrong branch will cause PRs to target the wrong base and create orphan worktrees.
 
    Also print a reminder: *"PRs created by spawned agents will target `${EXPECTED_BASE}`. The enforce-base-branch hook blocks any `gh pr create` without `--base ${EXPECTED_BASE}`."*
