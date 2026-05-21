@@ -33,6 +33,26 @@ Doctor's `claude_plugin_root` check surfaces the resolution state across four ca
 - `warn` — env set but path missing/invalid (likely a stale config).
 - `fail` — env empty and no plugin cache exists.
 
+### Boot-block resolver pattern
+
+Every consumer-facing `SKILL.md` opens with a `## Boot` block that pairs a `pipeline.config` source with a `_resolve-plugin-root.sh` source. The canonical two-line form is:
+
+```bash
+source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+# Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
+[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
+  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+```
+
+Why every skill needs it: `CLAUDE_PLUGIN_ROOT` only lives for the Bash tool's subshell. Each subsequent Bash tool call spawns a fresh subshell with no inherited env — so the orchestrator's session-start export does not propagate. Without the in-skill resolver, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh"` collapses to `bash "/scripts/foo.sh"` or `bash "./scripts/foo.sh"`, 404'ing the plugin helper. The resolver is idempotent: a no-op when `CLAUDE_PLUGIN_ROOT` is already a valid path.
+
+Two contract tests enforce this invariant:
+
+- `tests/test-skills-source-resolver.sh` — line-positional: every consumer-facing `SKILL.md` MUST source the resolver in its first 30 lines.
+- `tests/test-skill-bash-blocks-self-resolve.sh` — usage-anchored: every `SKILL.md` that invokes a plugin script via `bash ${CLAUDE_PLUGIN_ROOT}/...` or `python3 ${CLAUDE_PLUGIN_ROOT}/...` anywhere in its body MUST also have the Boot resolver. Catches the regression where a skill adds a new plugin-script invocation but forgets the Boot block.
+
+Adding a new consumer-facing skill? Copy the two-line form verbatim from `skills/create-issues/SKILL.md` into your `## Boot` block, then add the new skill to the `SKILLS` arrays in both tests.
+
 ## Doctor
 
 `/pipeline:doctor` is a non-mutating validator consumers run after install. It audits `pipeline.config`, `gh` auth, plugin registration, the pipeline-stage labels on the GitHub repo, residual subtree artifacts, and the base branch's local presence + remote tracking — emitting structured `CHECK: <name> status=<pass|fail|warn> detail=<msg>` lines and a final summary table. Non-zero exit signals any `fail`. The `--fix labels` flag is the one write path: it seeds the canonical pipeline labels via `gh label create --force` (idempotent upsert) and honors `PIPELINE_LABELS_*` overrides. Entrypoint: `scripts/doctor.sh`. Skill: `skills/doctor/SKILL.md`.

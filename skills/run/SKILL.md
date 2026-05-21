@@ -174,7 +174,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    If `CURRENT_BRANCH` does not equal `EXPECTED_BASE`:
    - Warn the user: **"Orchestrator is on `<CURRENT_BRANCH>` but the configured pipeline base is `<EXPECTED_BASE>`. Switch to `<EXPECTED_BASE>`? (yes / no)"**
-   - If yes: `git checkout "${EXPECTED_BASE}" && git pull origin "${EXPECTED_BASE}"`
+   - If yes: `git checkout "${EXPECTED_BASE}" && git pull --quiet origin "${EXPECTED_BASE}"`
    - If no: abort the pipeline run — running on the wrong branch will cause PRs to target the wrong base and create orphan worktrees.
 
    Also print a reminder: *"PRs created by spawned agents will target `${EXPECTED_BASE}`. The enforce-base-branch hook blocks any `gh pr create` without `--base ${EXPECTED_BASE}`."*
@@ -247,7 +247,9 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    ```bash
    gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --limit 100
    gh issue list --repo $PIPELINE_REPO --state closed --json number,title,labels --limit 20
-   gh pr list --repo $PIPELINE_REPO --state merged --json headRefName,number --jq '[.[] | {branch: .headRefName, pr: .number}]'
+   for wt in $(git worktree list --porcelain | awk '/^branch refs/{sub("refs/heads/","",$2); print $2}'); do
+     gh pr list --repo $PIPELINE_REPO --head "$wt" --state merged --json number,headRefName --jq '.[] | {branch: .headRefName, pr: .number}'
+   done
    git worktree list
    ```
    Classify each issue by its pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`). Issues with no pipeline label are in the `ready` stage. Skip issues labeled `PIPELINE_LABELS_EXCLUDED`. Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed by full send (treat them like `PIPELINE_LABELS_LATER`).
