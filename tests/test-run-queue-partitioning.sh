@@ -36,13 +36,15 @@ trap 'rm -rf "$WORKDIR"' EXIT
 setup_proj() {
   local proj="$1"
   rm -rf "$proj"
-  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/mock-web-eval/scripts"
+  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$SCRIPT_DIR/../scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
   chmod +x "$proj/.claude/scripts/run-queue.sh"
-  # Real helper from mock-web-eval/scripts/ (already in repo)
-  cp "$SCRIPT_DIR/../mock-web-eval/scripts/eval-classifier-invoke.sh" "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
+  # Stage the plugin-shipped helper at the same dir as run-queue.sh + _logging.sh,
+  # so ${CLAUDE_PLUGIN_ROOT}/scripts/ resolution in classify_issue finds it under
+  # the same plugin-root prefix that CLAUDE_PLUGIN_ROOT points at in run_dryrun.
+  cp "$SCRIPT_DIR/../scripts/eval-classifier-invoke.sh" "$proj/.claude/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/.claude/scripts/eval-classifier-invoke.sh"
   # Stub spawn-claude.sh: logs argv and exits 0
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<'EOF'
 #!/bin/bash
