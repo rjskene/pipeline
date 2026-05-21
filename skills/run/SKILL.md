@@ -45,83 +45,7 @@ and then STOP. Do not duplicate the autonomous flow inline — the delegation is
 
 ## Analyze mode (--analyze)
 
-Read-only hygiene pass over the open-issue set. Surfaces likely duplicates and standalones that fit existing trackers so the user can decide whether to close, merge, or re-bucket before the next full send. **No mutations.** Decision-support only — the user reads the digest and runs the suggested `gh` commands manually.
-
-**Trigger.** Parse `--analyze` from any argv position (same pattern as `--manual-merge`). The token must not collide with bare issue numbers, so any token starting with `--` is filtered out of the issue-number list. Parser sketch:
-
-```bash
-ANALYZE=0
-for arg in "$@"; do
-  case "$arg" in
-    --analyze) ANALYZE=1 ;;
-  esac
-done
-```
-
-**Branch behavior.** When `ANALYZE=1`, this skill SKIPS classify / plan / execute / eval entirely and exits cleanly after printing the digest. No labels are applied, no comments are posted, no PRs are opened, no worktrees are created. The session is fully read-only.
-
-**Stage 1 — heuristic shortlist.** Run the deterministic shell helper and capture its single-line stdout as the shortlist path:
-
-```bash
-SHORTLIST_PATH=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/analyze-issues.sh")
-```
-
-The helper writes JSON to `.claude/logs/analyze-shortlist-<ISO>.json` with three keys, `duplicate_pairs`, `tracker_fits`, and `missing_label_candidates`, each capped at 20 entries. The path is the only stdout line.
-
-The `missing_label_candidates` entries are produced purely mechanically — they flag issues lacking a `priority/P*` label, a `docs-only`/`multi-task` path label, or any pipeline-stage/classification label (with a 24h age gate to skip just-filed issues; configurable via `PIPELINE_ANALYZE_MIN_AGE_HOURS`). No subagent confirmation is needed for these — the suggested `gh issue edit` command is rendered directly from the JSON row.
-
-**Stage 2 — subagent dispatch.** Hand the shortlist to a general-purpose subagent which confirms / denies each LLM-required candidate and synthesizes the suggested `gh` command. Verbatim block:
-
-```
-Agent(subagent_type='general-purpose',
-      description='analyze open-issue hygiene shortlist',
-      prompt='Read shortlist at <SHORTLIST_PATH>. The JSON has three keys:
-              duplicate_pairs, tracker_fits, missing_label_candidates.
-
-              For each duplicate-pair row, run gh issue view <a> --json
-              title,body and gh issue view <b> --json title,body;
-              confirm/deny duplication, assign confidence (high|medium|low),
-              write a one-line rationale, and synthesize the gh command.
-
-              For each tracker-fits row, run gh issue view <issue> and
-              gh issue view <tracker>; confirm/deny fit, same fields.
-
-              For each missing_label_candidates row, NO per-issue
-              gh issue view confirmation is required — the signal is
-              purely label-presence-based. Pass the row straight through
-              to the rendered table and synthesize the suggested
-              gh issue edit command from the .missing array (e.g.
-              `gh issue edit <N> --add-label priority/P2` when "priority"
-              appears in .missing).
-
-              Output ONLY the three markdown tables defined in
-              skills/run/SKILL.md analyze-mode section. Omit a table
-              entirely if it has zero high|medium findings (for the LLM-
-              classified categories) or zero rows (for missing-label).
-              No mutations.')
-```
-
-Substitute `<SHORTLIST_PATH>` with the path captured in Stage 1.
-
-**Stage 3 — output contract.** The subagent prints up to three markdown tables to the orchestrator conversation. If a category has zero high|medium findings (LLM-classified) or zero rows (missing-label), its table is omitted (no empty noise).
-
-```
-## Duplicate candidates
-| Pair | Confidence | Reason | Suggested action |
-|------|------------|--------|-------------------|
-
-## Standalones that fit an existing tracker
-| Issue | Tracker | Confidence | Reason | Suggested action |
-|-------|---------|------------|--------|-------------------|
-
-## Issues missing labels
-| Issue | Missing | Suggested action |
-|-------|---------|-------------------|
-```
-
-Omit the `## Issues missing labels` section entirely if `missing_label_candidates` is empty — same convention as the other two tables.
-
-**Constraints.** No mutations. No auto-close, no auto-label, no auto-comment. The pipeline does not run `gh issue close`, `gh issue edit`, or `gh issue comment` from this branch. The user reads the digest and decides what to act on.
+Read-only hygiene pass over the open-issue set; no mutations. Full spec, helper invocation, subagent dispatch contract, and output tables in [references/analyze-mode.md](references/analyze-mode.md).
 
 ## Issue discovery
 
@@ -330,29 +254,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    **Grouped layout (epics on top, orphans below).** Trackers appear first with their priority badge and conventional-title; each open child renders on its own line, indented eight spaces, with stage right-aligned in parentheses. A tracker with zero open children collapses to a single `(all children closed — pending auto-close)` line:
 
-   ```
-   PIPELINE STATUS — <today's date>
-   ================================================================
-   EPICS
-   ================================================================
-    [P1] #120 — feat(install): consumer install hardening
-            #144 — feat(doctor): label seeding              (plan-approved)
-            #145 — feat(install): CLAUDE.md cleanup         (in-progress)
-            #146 — feat(install): settings.json patch       (plan-pending)
-    [P2] #131 — feat(observability): self-improve loop
-            (all children closed — pending auto-close)
-   ================================================================
-   ORPHANS
-   ================================================================
-    (run)
-       [P1] #133 — feat(run): canonical status table grouped by tracker + scope   (plan-pending)
-       [P2]  #34 — feat(run): sort status table by scope                           (ready)
-    (doctor)
-       [P2] #150 — feat(doctor): settings cleanup patch                            (merged)
-    (none / generic)
-       [P2] #999 — chore: bump tooling                                             (ready)
-   ================================================================
-   ```
+   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
 
    Orphan bucketing rules:
    - Bucket key is the conventional-commit `<scope>` token from the title regex above.
@@ -361,23 +263,13 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    **NOTES footer (non-default metadata only).** Surface Target Base / Path / Blocked-by only for issues whose values differ from the defaults (`Target Base = $PIPELINE_BASE_BRANCH`, `Path = B`, `Blocked by = none`). If every issue carries defaults, omit the entire block:
 
-   ```
-   NOTES (non-default)
-   ================================================================
-    Issue  | Target Base | Path | Blocked by | att
-   ----------------------------------------------------------------
-    #150   | next        | A    | --         | 0
-    #133   | pipeline    | B    | #132       | 3
-   ================================================================
-   ```
+   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
 
    The `att` column is rendered only when at least one row has `att>0`; if every issue has zero on-disk attachments the column is suppressed (same convention as Target Base / Path / Blocked-by defaults). When the column is rendered, `att=0` rows still appear so the table stays rectangular.
 
    **Counts footer (always rendered).** A single trailing line of the form `N epics + N children + N orphans = N open`:
 
-   ```
-   5 epics + 19 children + 5 orphans = 29 open
-   ```
+   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
 
    - `children` counts open children that appear under any tracker, deduplicated. If the same `#N` appears under two trackers, emit a `WARN: #N listed under multiple trackers: #A, #B` line above the counts and still count once.
    - `open` is the sum `epics + children + orphans` and must equal the open-issue total; a mismatch indicates a parser bug or a malformed tracker body.
@@ -634,7 +526,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
 ### Anti-patterns
 
-**Do not poll for queue completion with `while ... sleep ... grep` inside Bash tool calls.** This pattern burns context tokens on every poll cycle and ties up the orchestrator for the duration. Use `Bash run_in_background: true` for one-shot completion waits, or `Monitor` for streaming per-event notifications. The queue runner's internal `sleep` polling (inside `run-queue.sh`) is fine — it runs in its own process and does not consume orchestrator context.
+See [references/anti-patterns.md](references/anti-patterns.md) for the list of patterns to avoid when orchestrating the run loop.
 
 7. **Merge orchestration** — after all evaluations complete, the pipeline handles merging. **Default is autonomous merge for the green subset** via the greenlight gate (`${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh`). The four greenlight conditions are: latest `## Evaluation` verdict is **Approved**; every `statusCheckRollup` entry has `conclusion == SUCCESS` (or the rollup is empty); `mergeable == MERGEABLE`; `mergeStateStatus == CLEAN`. Any one missing falls back to a `block-*` reason and requires manual `gh pr merge`.
 
