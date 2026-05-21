@@ -277,18 +277,18 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 4. `TRACKER_ISSUES` feeds the status-table render in step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
 
-   **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human/brainstorm-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
+   **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human/brainstorm-labeled, probe freshness with a single batched call rather than per-issue `gh issue view`s. The helper makes one `gh issue list --json number,updatedAt,comments` round-trip, filters to the supplied numbers, and emits one TSV row per issue with a `fresh|stale` verdict:
 
    ```bash
-   for N in <ready_issue_numbers>; do
-     LATEST_CLASS_TS=$(gh issue view $N --repo $PIPELINE_REPO --json comments \
-       --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .createdAt // empty')
-     ISSUE_TS=$(gh issue view $N --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
-     # If LATEST_CLASS_TS is empty OR LATEST_CLASS_TS < ISSUE_TS, queue for classification
-   done
+   # One round-trip; emits TSV: number, updatedAt, latest-class-createdAt, fresh|stale.
+   # Pipe through awk to extract the numbers that need classification.
+   STALE_NUMBERS=$(
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/classification-freshness.sh" $READY_ISSUES \
+     | awk -F '\t' '$4 == "stale" { print $1 }'
+   )
    ```
 
-   Dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel** (single tool-call batch, one Agent per issue), each invoking `/pipeline:classify-issue N`. Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. No user reconciliation step is needed — labels are now authoritative.
+   Dispatch one `Agent(subagent_type='general-purpose')` per number in `STALE_NUMBERS` **in parallel** (single tool-call batch, one Agent per issue), each invoking `/pipeline:classify-issue N`. Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. No user reconciliation step is needed — labels are now authoritative.
 
    **Caching semantics:** A classification is fresh when the latest `## Classification` comment's `createdAt > issue.updatedAt`. GitHub's `updatedAt` bumps on body edits AND label changes, so the cache auto-invalidates. Forced reclassification: delete the classification comment OR edit the issue body/labels. Both `/pipeline:run` (this step) and the `classify-issue` skill itself perform the same cache check so the skill can be re-invoked directly without duplicating work.
 
