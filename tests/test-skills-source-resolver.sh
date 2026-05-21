@@ -15,6 +15,9 @@ SKILLS=(
   "skills/execute-issue-plan/SKILL.md"
   "skills/evaluate-issue-pr/SKILL.md"
   "skills/plan-issue/SKILL.md"
+  "skills/classify-issue/SKILL.md"
+  "skills/evaluate-issue-plan/SKILL.md"
+  "skills/doctor/SKILL.md"
 )
 
 PASS=0
