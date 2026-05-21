@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_QUEUE_SRC="$ROOT/scripts/run-queue.sh"
 SPAWN_SRC="$ROOT/scripts/spawn-claude.sh"
-HELPER_SRC="$ROOT/mock-web-eval/scripts/eval-classifier-invoke.sh"
+HELPER_SRC="$ROOT/scripts/eval-classifier-invoke.sh"
 
 PASS=0
 FAIL=0
@@ -39,18 +39,23 @@ trap 'rm -rf "$WORKDIR"' EXIT
 setup_proj() {
   local proj="$1" classifier_path="$2"
   rm -rf "$proj"
-  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/scripts" "$proj/mock-web-eval/scripts"
-  cp "$RUN_QUEUE_SRC" "$proj/.claude/scripts/run-queue.sh"
-  cp "$ROOT/scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
-  # Stub spawn-claude.sh in .claude/scripts: log argv and exit 0.
-  cat > "$proj/.claude/scripts/spawn-claude.sh" <<EOF
+  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/scripts" "$proj/plugin-root/scripts"
+  # Stage plugin-shipped artifacts at $proj/plugin-root/scripts/ so
+  # ${CLAUDE_PLUGIN_ROOT}/scripts/ resolution (run-queue.sh's _logging.sh
+  # source, eval-classifier-invoke.sh invocation, and spawn-claude.sh
+  # dispatch) all find their files under the same plugin-root prefix.
+  # CLAUDE_PLUGIN_ROOT is set by run_queue_dryrun below.
+  cp "$RUN_QUEUE_SRC" "$proj/plugin-root/scripts/run-queue.sh"
+  cp "$ROOT/scripts/_logging.sh" "$proj/plugin-root/scripts/_logging.sh"
+  # Stub spawn-claude.sh: log argv and exit 0.
+  cat > "$proj/plugin-root/scripts/spawn-claude.sh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "\$SPAWN_LOG"
 exit 0
 EOF
-  chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/.claude/scripts/spawn-claude.sh"
-  cp "$HELPER_SRC" "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/plugin-root/scripts/run-queue.sh" "$proj/plugin-root/scripts/spawn-claude.sh"
+  cp "$HELPER_SRC" "$proj/plugin-root/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/plugin-root/scripts/eval-classifier-invoke.sh"
   if [ -n "$classifier_path" ]; then
     # Write a real classifier script that emits --container-mode=web-eval for
     # issues in CLASSIFIER_WEB_ISSUES (space-separated env).
@@ -117,8 +122,8 @@ run_queue_dryrun() {
       TMUX="fake" \
       SPAWN_LOG="$spawn_log" \
       PIPELINE_QUEUE_DRY_RUN=1 \
-      CLAUDE_PLUGIN_ROOT="$proj/.claude" \
-      bash .claude/scripts/run-queue.sh "$@" 2>&1
+      CLAUDE_PLUGIN_ROOT="$proj/plugin-root" \
+      bash plugin-root/scripts/run-queue.sh "$@" 2>&1
   )
 }
 

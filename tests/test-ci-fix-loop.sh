@@ -10,10 +10,22 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=_lib/env-hygiene.sh
+. "$SCRIPT_DIR/_lib/env-hygiene.sh"
+pipeline_test_reset_env
+
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HELPER="$REPO_ROOT/scripts/check-ci-fix-loop.sh"
 
 PASS=0; FAIL=0; TESTS=0
+PIPELINE_TEST_TMPDIRS=()
+cleanup_tmpdirs() {
+  local d
+  for d in "${PIPELINE_TEST_TMPDIRS[@]:-}"; do
+    [ -n "$d" ] && [ -d "$d" ] && rm -rf "$d"
+  done
+}
+trap cleanup_tmpdirs EXIT
 pass_msg() { echo "  PASS: $1"; PASS=$((PASS+1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 inc()      { TESTS=$((TESTS+1)); }
@@ -131,13 +143,18 @@ run_fixture() {
     echo "$kv" >> "$state_file"
   done
   # Run helper with stubbed PATH and env. Capture stdout.
+  # cd into $fix_dir so any .claude/logs/ side-effects land in tmpdir
+  # rather than REPO_ROOT (see #362). PIPELINE_LOGS_ENABLED="" is
+  # belt-and-braces against any future mid-fixture re-export.
+  PIPELINE_TEST_TMPDIRS+=("$fix_dir")
   local out
-  out=$( PATH="$fix_dir:$PATH" \
+  out=$( cd "$fix_dir" && PATH="$fix_dir:$PATH" \
          GH_FAKE_LOG="$log_file" \
          GH_FAKE_STATE="$state_file" \
          PIPELINE_REPO="fake/repo" \
          PIPELINE_CI_FIX_RETRY_BUDGET="2" \
          PIPELINE_CI_FIX_LOG_LINES="200" \
+         PIPELINE_LOGS_ENABLED="" \
          bash "$HELPER" "$issue" 2>&1 )
   local rc=$?
   echo "$out" > "$fix_dir/helper.out"
@@ -145,28 +162,31 @@ run_fixture() {
   echo "$fix_dir"
 }
 
+# Unique per-fixture issue numbers prevent cross-fixture collisions in
+# any shared .claude/logs/ci-fix-<issue>-attempt-*.log namespace (#362).
+
 # ---- Fixture A: success -------------------------------------------------
 echo "Fixture A: CI success -> ACTION=green"
-fa=$(run_fixture A 42 \
+fa=$(run_fixture A 4201 \
   "conclusion=success" "pr=42" "run_id=0" "retries=0")
 out_a=$(cat "$fa/helper.out")
-if echo "$out_a" | grep -q "^ACTION=green ISSUE=42"; then pass_msg "A green"; else fail_msg "A green: $out_a"; fi
+if echo "$out_a" | grep -q "^ACTION=green ISSUE=4201"; then pass_msg "A green"; else fail_msg "A green: $out_a"; fi
 
 # ---- Fixture B: pending -------------------------------------------------
 echo "Fixture B: CI pending -> ACTION=pending"
-fb=$(run_fixture B 42 \
+fb=$(run_fixture B 4202 \
   "conclusion=pending" "pr=42" "run_id=0" "retries=0")
 out_b=$(cat "$fb/helper.out")
-if echo "$out_b" | grep -q "^ACTION=pending ISSUE=42"; then pass_msg "B pending"; else fail_msg "B pending: $out_b"; fi
+if echo "$out_b" | grep -q "^ACTION=pending ISSUE=4202"; then pass_msg "B pending"; else fail_msg "B pending: $out_b"; fi
 
 # ---- Fixture C: failure, no prior retries -> red-retry RETRIES=1 -------
 echo "Fixture C: CI failure, no prior retry -> ACTION=red-retry RETRIES=1"
-fc=$(run_fixture C 42 \
+fc=$(run_fixture C 4203 \
   "conclusion=failure" "pr=42" "run_id=999" "retries=0" "fail_log=boom")
 out_c=$(cat "$fc/helper.out")
 if echo "$out_c" | grep -q "ACTION=red-retry "; then pass_msg "C action"; else fail_msg "C action: $out_c"; fi
 if echo "$out_c" | grep -q "RETRIES=1 BUDGET=2"; then pass_msg "C retries=1 budget=2"; else fail_msg "C retries: $out_c"; fi
-if grep -q "issue comment 42" "$fc/gh.log" && grep -q "pipeline.ci-retries" "$fc/gh.log"; then
+if grep -q "issue comment 4203" "$fc/gh.log" && grep -q "pipeline.ci-retries" "$fc/gh.log"; then
   pass_msg "C retry comment posted"
 else
   fail_msg "C no retry comment in: $(cat "$fc/gh.log")"
@@ -174,11 +194,11 @@ fi
 
 # ---- Fixture D: failure with prior retries=2, budget exhausted ---------
 echo "Fixture D: budget exhausted -> ACTION=red-budget-exhausted + human label"
-fd=$(run_fixture D 42 \
+fd=$(run_fixture D 4204 \
   "conclusion=failure" "pr=42" "run_id=999" "retries=2" "fail_log=boom")
 out_d=$(cat "$fd/helper.out")
 if echo "$out_d" | grep -q "ACTION=red-budget-exhausted "; then pass_msg "D action"; else fail_msg "D action: $out_d"; fi
-if grep -q "issue edit 42" "$fd/gh.log" && grep -q -- "--add-label human" "$fd/gh.log"; then
+if grep -q "issue edit 4204" "$fd/gh.log" && grep -q -- "--add-label human" "$fd/gh.log"; then
   pass_msg "D human label applied"
 else
   fail_msg "D no human label in: $(cat "$fd/gh.log")"
@@ -188,6 +208,7 @@ fi
 echo "Fixture E: run-queue.sh --ci-fix dispatches spawn-claude with PIPELINE_CI_FIX_CONTEXT"
 inc
 fe=$(mktemp -d)
+PIPELINE_TEST_TMPDIRS+=("$fe")
 WT_FAKE="$fe/.claude/worktrees/wt-42-fake"
 mkdir -p "$WT_FAKE" "$fe/.claude/scripts"
 cat > "$fe/.claude/scripts/spawn-claude.sh" <<'REC'
@@ -246,6 +267,7 @@ fi
 echo "Fixture F: spawn-claude.sh dry-run payload contains CI-FIX MODE when PIPELINE_CI_FIX_CONTEXT is set"
 inc
 ff=$(mktemp -d)
+PIPELINE_TEST_TMPDIRS+=("$ff")
 PROJ_F="$ff/proj"
 mkdir -p "$PROJ_F/.claude/scripts" "$PROJ_F/worktree"
 cp "$REPO_ROOT/scripts/spawn-claude.sh" "$PROJ_F/.claude/scripts/spawn-claude.sh"
@@ -270,7 +292,7 @@ set +e
 OUT=$( cd "$PROJ_F" && PATH="$ff/stub:$PATH" \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_CI_FIX_CONTEXT=/tmp/fake.log \
-  bash .claude/scripts/spawn-claude.sh "$PROJ_F/worktree" 42 slug tmux 2>/dev/null )
+  bash .claude/scripts/spawn-claude.sh "$PROJ_F/worktree" 4206 slug tmux 2>/dev/null )
 set -e
 
 PAYLOAD_F=$(echo "$OUT" | sed -n '/^=== PAYLOAD ===/,/^=== END PAYLOAD ===/p' | sed '1d;$d')
@@ -293,7 +315,8 @@ fi
 echo "Fixture G: helper red-retry -> run-queue --ci-fix dispatch with parsed LOG path"
 inc
 fg=$(mktemp -d)
-mkdir -p "$fg/.claude/scripts" "$fg/.claude/worktrees/wt-42-fake" "$fg/stub"
+PIPELINE_TEST_TMPDIRS+=("$fg")
+mkdir -p "$fg/.claude/scripts" "$fg/.claude/worktrees/wt-4207-fake" "$fg/stub"
 make_shim "$fg/stub"
 echo "conclusion=failure" >  "$fg/stub/gh-state"
 echo "pr=42"             >> "$fg/stub/gh-state"
@@ -319,9 +342,9 @@ CFG
 cat > "$fg/stub/git" <<GIT
 #!/usr/bin/env bash
 if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
-  echo "worktree $fg/.claude/worktrees/wt-42-fake"
+  echo "worktree $fg/.claude/worktrees/wt-4207-fake"
   echo "HEAD deadbeef"
-  echo "branch refs/heads/feature/42-fake"
+  echo "branch refs/heads/feature/4207-fake"
   exit 0
 fi
 exec /usr/bin/git "\$@"
@@ -335,7 +358,7 @@ HELPER_OUT=$( cd "$fg" && PATH="$fg/stub:$PATH" \
   PIPELINE_REPO="fake/repo" \
   PIPELINE_CI_FIX_RETRY_BUDGET="2" \
   PIPELINE_CI_FIX_LOG_LINES="200" \
-  bash .claude/scripts/check-ci-fix-loop.sh 42 2>&1 )
+  bash .claude/scripts/check-ci-fix-loop.sh 4207 2>&1 )
 helper_rc=$?
 set -e
 
@@ -351,7 +374,7 @@ else
     set +e
     ( cd "$fg" && PATH="$fg/stub:$PATH" RECORDER_LOG="$RECORDER_LOG" \
       CLAUDE_PLUGIN_ROOT="$fg/.claude" \
-      bash .claude/scripts/run-queue.sh --ci-fix 42 "$LOG_PATH" >"$fg/dispatch.out" 2>&1 )
+      bash .claude/scripts/run-queue.sh --ci-fix 4207 "$LOG_PATH" >"$fg/dispatch.out" 2>&1 )
     drc=$?
     set -e
     if [ "$drc" -eq 0 ] && grep -q "PIPELINE_CI_FIX_CONTEXT=$LOG_PATH" "$RECORDER_LOG"; then

@@ -17,6 +17,17 @@ else
   pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
 fi
 
+# Self-resolve CLAUDE_PLUGIN_ROOT when callers don't export it (e.g. direct
+# operator invocation from the consumer project root). Idempotent; no-op
+# when CLAUDE_PLUGIN_ROOT is already set. The shim's resolution is the
+# single source of truth that classify_issue() in run-queue.sh and the
+# fail-closed re-classification block below both rely on for the
+# ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh path (#325).
+if [ -f "${_spawn_claude_dir}/_resolve-plugin-root.sh" ]; then
+  # shellcheck disable=SC1091
+  source "${_spawn_claude_dir}/_resolve-plugin-root.sh"
+fi
+
 # Launch a claude CLI session for a worktree.
 # Usage: bash ${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh [--dangerously-skip-permissions] <worktree-path> <issue-number> [slug] [mode]
 #   mode: "terminal" (default) — new Terminal.app window with /pipeline:execute-issue-plan
@@ -316,14 +327,14 @@ fi
 # lacks --container-mode parsing would otherwise pre-empt the operator's
 # container-path re-dispatch. Fail-open when the classifier is unset, the
 # skill is not evaluate-issue-pr, the flag is already set, or the
-# mock-web-eval/scripts/eval-classifier-invoke.sh shim is missing / exits non-zero.
+# ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh helper is missing / exits non-zero.
 if [ -z "$CONTAINER_MODE" ] \
    && [ "$SKILL" = "evaluate-issue-pr" ] \
    && [ -n "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
-  _classifier_invoke="${REPO_ROOT}/mock-web-eval/scripts/eval-classifier-invoke.sh"
+  _classifier_invoke="${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh"
   if [ -f "$_classifier_invoke" ]; then
     set +e
-    _classifier_out="$(PIPELINE_EVAL_CLASSIFIER="$PIPELINE_EVAL_CLASSIFIER" PIPELINE_REPO="${PIPELINE_REPO:-}" bash "$_classifier_invoke" "$ISSUE_NUM" 2>/dev/null)"
+    _classifier_out="$(PIPELINE_EVAL_CLASSIFIER="$PIPELINE_EVAL_CLASSIFIER" PIPELINE_PROJECT_ROOT="$REPO_ROOT" PIPELINE_REPO="${PIPELINE_REPO:-}" bash "$_classifier_invoke" "$ISSUE_NUM" 2>/dev/null)"
     _classifier_rc=$?
     set -e
     if [ "$_classifier_rc" -eq 0 ] && \
@@ -331,7 +342,7 @@ if [ -z "$CONTAINER_MODE" ] \
       _wanted_mode="$(printf '%s\n' "$_classifier_out" | grep '^--container-mode=' | head -1)"
       echo "[spawn-claude] ERROR: classifier wants container dispatch but --container-mode not passed" >&2
       echo "  classifier emitted: ${_wanted_mode}" >&2
-      echo "  Re-run by piping the classifier output (bash \${CLAUDE_PLUGIN_ROOT:-.}/mock-web-eval/scripts/eval-classifier-invoke.sh ${ISSUE_NUM}) into the spawn-claude.sh invocation as a leading argument before --skill evaluate-issue-pr" >&2
+      echo "  Re-run after cd-ing to the project root: cd <project-root> && PIPELINE_PROJECT_ROOT=\"\$PWD\" bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh ${ISSUE_NUM} | xargs bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/spawn-claude.sh --skill evaluate-issue-pr ..." >&2
       exit 5
     fi
   fi

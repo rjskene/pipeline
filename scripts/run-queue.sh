@@ -143,7 +143,7 @@ fi
 # --- Pre-spawn classifier (issue #218) ---
 #
 # classify_issue <issue> resolves the issue's current PR number (or empty
-# if no PR has opened yet) and invokes mock-web-eval/scripts/eval-classifier-invoke.sh.
+# if no PR has opened yet) and invokes ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh.
 # It echoes a single tab-separated line on stdout:
 #   <mode>\t<extra-tokens>\t<rc>\t<stderr-first-line>
 # where <mode> is `bare` when no --container-mode token was emitted, or
@@ -168,17 +168,32 @@ classify_issue() {
   # (mirrors scripts/check-ci-fix-loop.sh). `head:<prefix>` does NOT work
   # because GitHub search requires an exact branch ref.
   pr=$(gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" --json number --jq '.[0].number' 2>/dev/null || echo "")
+  local _classifier_invoke="${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh"
   local out err rc
-  local tmp_out tmp_err
-  tmp_out=$(mktemp); tmp_err=$(mktemp)
-  # PIPELINE_EVAL_CLASSIFIER is sourced into this shell but not auto-exported;
-  # pass it inline so the child bash sees it. Use `&& rc=0 || rc=$?` to
-  # capture a non-zero exit instead of letting `set -e` kill the function.
-  PIPELINE_EVAL_CLASSIFIER="${PIPELINE_EVAL_CLASSIFIER:-}" \
-    bash "${REPO_ROOT}/mock-web-eval/scripts/eval-classifier-invoke.sh" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
-      && rc=0 || rc=$?
-  out=$(cat "$tmp_out"); err=$(head -1 "$tmp_err")
-  rm -f "$tmp_out" "$tmp_err"
+  # Fail-OPEN: when the plugin-shipped helper is missing (e.g. a partial
+  # upgrade, a stale install, or a worktree without CLAUDE_PLUGIN_ROOT
+  # resolution), surface mode=bare with a diagnostic stderr token rather
+  # than blocking the entire queue dispatch. Reconciles run-queue.sh with
+  # spawn-claude.sh's pre-existing fail-OPEN shape (#325).
+  if [ -f "$_classifier_invoke" ]; then
+    local tmp_out tmp_err
+    tmp_out=$(mktemp); tmp_err=$(mktemp)
+    # PIPELINE_EVAL_CLASSIFIER is sourced into this shell but not auto-exported;
+    # pass it inline so the child bash sees it. PIPELINE_PROJECT_ROOT anchors
+    # consumer-relative classifier paths at the project root rather than the
+    # plugin install dir. Use `&& rc=0 || rc=$?` to capture a non-zero exit
+    # instead of letting `set -e` kill the function.
+    PIPELINE_EVAL_CLASSIFIER="${PIPELINE_EVAL_CLASSIFIER:-}" \
+      PIPELINE_PROJECT_ROOT="$REPO_ROOT" \
+      PIPELINE_REPO="${PIPELINE_REPO:-}" \
+      bash "$_classifier_invoke" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
+        && rc=0 || rc=$?
+    out=$(cat "$tmp_out"); err=$(head -1 "$tmp_err")
+    rm -f "$tmp_out" "$tmp_err"
+  else
+    printf '%s\n' "bare" "" "0" "classifier-helper-missing: $_classifier_invoke"
+    return
+  fi
 
   local mode="bare"
   local extras=""
