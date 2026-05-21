@@ -162,6 +162,8 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 ## Steps
 
+> **Invariant — prioritization first.** `/pipeline:run` MUST render the prioritization+grouping status table before any classify dispatch. Classification on the full ready set at startup is forbidden — classify runs only on the user-committed slate at step 6. This carries forward the `feedback_pipeline_run_prioritization_first` direction from auto-memory and is asserted by `tests/test-pipeline-run-no-upfront-classify.sh`. Do not regress.
+
 0. **Housekeeping — branch check + sync worktrees + kill stale sessions**
 
    **First, confirm the orchestrator is on the configured base branch.** The base branch for all PRs is read from `pipeline.config` (`PIPELINE_BASE_BRANCH=$PIPELINE_BASE_BRANCH`). The orchestrator session should be on that branch so spawned worktrees inherit from it and PRs target it.
