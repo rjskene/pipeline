@@ -211,74 +211,48 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 2. **Check for dependency information** — read issue bodies for "blocked by #N" or similar dependency notes. An issue is blocked if the blocking issue's branch has not appeared in the merged PR list.
 
-3. **Print a grouped status table** for all discovered pipeline issues — epics (tracker issues) at the top with their open children indented underneath, and orphans (non-tracker issues not listed under any tracker) at the bottom, bucketed by conventional-commit scope. The per-row line carries only priority + type prefix + title + stage; any non-default Target Base / Path / Blocked-by metadata is surfaced in a separate **NOTES** footer table.
+3. **Print a grouped status table** for all discovered pipeline issues. Rendering is delegated to `scripts/render-status-table.sh`; the orchestrator's job is to assemble the three input files and print the renderer's stdout verbatim. The renderer is the single source of truth for column widths, ordering, header lines, and footer formats — future tweaks ship as script changes plus golden-file updates, not prompt edits.
 
-   **Inputs.** This step consumes `TRACKER_ISSUES` and `READY_ISSUES` from the tracker-filter block in step 1, plus the open-issue label/title map fetched in step 1. For each tracker, run the shared parser to extract its checklist children:
+   **Inputs.** This step consumes `TRACKER_ISSUES` from the tracker-filter block in step 1 (rendered as tracker rows with their open children indented underneath), plus the full open-issue list from step 1, plus the `RELEASE_PRS` line block from step 0. The renderer expects three files — capture all three before invoking it:
 
    ```bash
-   body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
-   children=$(printf '%s\n' "$body" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/parse-tracker-children.sh" -)
+   # 1) issues.json — verbatim gh issue list payload. Re-fetch here so the
+   #    renderer reads .body (used by NOTES blocked-by parsing and att lookup);
+   #    step 1's ISSUE_LIST_JSON is partition-scoped (--json number,title,labels)
+   #    and does not carry .body.
+   ISSUES_JSON=$(mktemp)
+   gh issue list --repo "$PIPELINE_REPO" --state open \
+     --json number,title,labels,body,updatedAt --limit 100 > "$ISSUES_JSON"
+
+   # 2) trackers.json — JSON object {"<tracker_number>": "<body string>", ...}.
+   #    For each tracker in TRACKER_ISSUES, fetch the body and assemble the map.
+   TRACKERS_JSON=$(mktemp); echo '{}' > "$TRACKERS_JSON"
+   for tracker in $TRACKER_ISSUES; do
+     body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
+     TRACKERS_JSON_NEXT=$(jq --arg k "$tracker" --arg v "$body" '. + {($k): $v}' "$TRACKERS_JSON")
+     printf '%s' "$TRACKERS_JSON_NEXT" > "$TRACKERS_JSON"
+   done
    ```
 
-   Intersect `children` with the set of open issues to get **open children**; closed children are omitted. Children referenced under any tracker's checklist are removed from the orphan candidate set; whatever remains in the non-tracker open set is an orphan.
+   The renderer pipes each tracker body through `${CLAUDE_PLUGIN_ROOT}/scripts/parse-tracker-children.sh` to extract checklist children and intersect them with the open-issue set. Closed children are omitted; children referenced under any tracker are removed from the orphan candidate set.
 
-   **Per-row metadata** (used by the renderer and the NOTES footer):
-   - **Priority badge** from the `priority/P*` label (fallback `[--]`).
-   - **Type prefix** parsed from the issue title via the regex `^(feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)\(([^)]+)\):` — group 2 is the **scope** used for orphan bucketing. Titles that don't match (or use `type:` without parens) land in the `(none / generic)` bucket.
-   - **Stage** = current pipeline label (`plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, `pr-open`, `merged`, or `ready`). Trackers render with `Stage=tracker`.
-   - **Tags** = non-pipeline labels (i.e., NOT in `{plan-pending, plan-reviewed, plan-approved, in-progress, pr-open, merged, docs-only, multi-task, quick-fix, tracker, PIPELINE_LABELS_LATER, PIPELINE_LABELS_HUMAN, PIPELINE_LABELS_BRAINSTORM, PIPELINE_LABELS_EXCLUDED, priority/P*, next-major-release}`). Inline tags `(brainstorm)` / `(human-in-loop)` / `(later)` render alongside the title for issues carrying those labels.
-   - **Target Base** = `next` if labels contain `next-major-release`, else `PIPELINE_BASE_BRANCH`. ≤10 chars, no truncation.
-   - **Path** = winning letter under precedence A > D > C > B applied to the issue labels (`docs-only` → A, `quick-fix` → D, `multi-task` → C, else B). When two or more path labels coexist, suffix the winning letter with `!` to flag the collision. Specific glyphs by collision set:
-     - `A` alone → `A`
-     - `D` alone → `D`
-     - `C` alone → `C`
-     - `B` (no path label) → `B`
-     - `A`+`D` → `A!` (A wins)
-     - `A`+`C` → `A!` (existing rule preserved)
-     - `D`+`C` → `D!` (D wins)
-     - `A`+`D`+`C` → `A!` (A always wins)
-     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column. If a ready issue has no path label AND no fresh `## Classification` comment, render the Path column as `?` (unknown) — classify will run on demand when the user commits to a slate.
-   - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
-   - **Attachments (`att=N`)** = count of files present at `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` at table-render time, computed as `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null | wc -l`. Surfaced in the NOTES footer only when N>0 for at least one issue (consistent with other non-default columns). Sourced from on-disk state populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; the run skill itself does NOT re-fetch attachments at discovery time.
+   The third input — `release-prs.txt` — is the verbatim line block emitted by `scripts/list-release-prs.sh` (already captured into `$RELEASE_PRS` in step 0; one line per release PR: `pr=<num> ci=<pass|fail|pending> title=<title>`). Feed it via bash process substitution; the renderer reads `--release-prs` with `[ -r ]` so a `/dev/fd/N` path works.
 
-   **Grouped layout (epics on top, orphans below).** Trackers appear first with their priority badge and conventional-title; each open child renders on its own line, indented eight spaces, with stage right-aligned in parentheses. A tracker with zero open children collapses to a single `(all children closed — pending auto-close)` line:
+   **Invocation.** Print the renderer's stdout verbatim:
 
-   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
-
-   Path column shows `?` for ready issues not yet classified. Classification runs on demand when you commit to a slate.
-
-   Orphan bucketing rules:
-   - Bucket key is the conventional-commit `<scope>` token from the title regex above.
-   - Scope buckets render in alphabetical order; `(none / generic)` always last.
-   - Within a bucket, rows sort by priority tier (`P0` < `P1` < `P2` < `P3` < no-priority).
-
-   **NOTES footer (non-default metadata only).** Surface Target Base / Path / Blocked-by only for issues whose values differ from the defaults (`Target Base = $PIPELINE_BASE_BRANCH`, `Path = B`, `Blocked by = none`). If every issue carries defaults, omit the entire block:
-
-   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
-
-   The `att` column is rendered only when at least one row has `att>0`; if every issue has zero on-disk attachments the column is suppressed (same convention as Target Base / Path / Blocked-by defaults). When the column is rendered, `att=0` rows still appear so the table stays rectangular.
-
-   **Counts footer (always rendered).** A single trailing line of the form `N epics + N children + N orphans = N open`:
-
-   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
-
-   - `children` counts open children that appear under any tracker, deduplicated. If the same `#N` appears under two trackers, emit a `WARN: #N listed under multiple trackers: #A, #B` line above the counts and still count once.
-   - `open` is the sum `epics + children + orphans` and must equal the open-issue total; a mismatch indicates a parser bug or a malformed tracker body.
-
-   Tracker issues (from `TRACKER_ISSUES`) are rendered in the EPICS section with `Stage=tracker` and are never proposed for plan/execute. Their child-issue rollup is parsed from the body's `## Rollout sequence` checklist and rendered inline.
-
-   **Release PRs row group.** If `RELEASE_PRS` (from step 0) is non-empty, render an additional table ABOVE the pipeline-issue table. Parse each line (`pr=<num> ci=<pass|fail|pending> title=<title>`) into a row:
-
+   ```bash
+   PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_BASE_BRANCH="$PIPELINE_BASE_BRANCH" \
+     PIPELINE_PROJECT_ROOT="$(pwd)" \
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/render-status-table.sh" \
+       --issues "$ISSUES_JSON" \
+       --trackers "$TRACKERS_JSON" \
+       --release-prs <(printf '%s\n' "$RELEASE_PRS")
+   rm -f "$ISSUES_JSON" "$TRACKERS_JSON"
    ```
-   RELEASE PRs
-   ================================================================
-    PR     Title                              Stage             CI
-   ----------------------------------------------------------------
-    #201   chore(main): release 1.2.3         release-pending   pass
-    #202   chore(main): release 1.3.0         release-pending   fail
-   ================================================================
-   ```
-   `release-pending` is a **display-only** Stage value — it is NOT a GitHub label. The PR already carries `autorelease: pending` (release-please convention) and writing a second label would force consumer repos to define it. The Stage column is purely a rendering concern.
+
+   The renderer emits the canonical status table to stdout: a release-PR block (only when the release-prs file is non-empty; Stage column renders as the display-only literal `release-pending`, NOT a real GitHub label), then the dated status header, then a tracker section (with each open child indented, or a placeholder for trackers whose children are all closed), then an orphan section bucketed by conventional-commit scope, then a non-default-metadata block (Target Base / Path / Blocked by / on-disk attachments), then any multi-tracker WARN lines, then a counts footer (`N epics + N children + N orphans = T open`). See `scripts/render-status-table.sh` and `tests/test-render-status-table.sh` for the canonical format and per-rule contract; `att` is sourced from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` and is populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch attachments at discovery time.
+
+   Path column shows `?` for ready issues not yet classified — classification runs on demand when the user commits to a slate (see step 4), not upfront on the full ready set.
 
 <!--
 Priority order for "Propose ONE action" (highest → lowest):

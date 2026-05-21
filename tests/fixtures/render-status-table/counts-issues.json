@@ -1,0 +1,51 @@
+[
+  {
+    "number": 10,
+    "title": "feat(install): epic alpha",
+    "labels": [{"name": "tracker"}, {"name": "priority/P1"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 20,
+    "title": "feat(install): epic beta",
+    "labels": [{"name": "tracker"}, {"name": "priority/P2"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 51,
+    "title": "feat(install): child of alpha A",
+    "labels": [{"name": "plan-pending"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 52,
+    "title": "feat(install): child of alpha B",
+    "labels": [{"name": "plan-pending"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 53,
+    "title": "feat(install): child of beta",
+    "labels": [{"name": "plan-pending"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 100,
+    "title": "feat(run): orphan A",
+    "labels": [{"name": "priority/P2"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 101,
+    "title": "feat(run): orphan B",
+    "labels": [{"name": "priority/P3"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  }
+]
