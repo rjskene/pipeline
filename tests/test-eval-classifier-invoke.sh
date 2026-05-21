@@ -1,9 +1,9 @@
 #!/bin/bash
 set -uo pipefail
 
-# Tests for mock-web-eval/scripts/eval-classifier-invoke.sh (issue #218).
-# The helper is the single source of truth for invoking the consumer-provided
-# pre-spawn classifier. Contract:
+# Tests for scripts/eval-classifier-invoke.sh (issue #218; repointed to
+# the plugin-shipped helper by #325). The helper is the single source of
+# truth for invoking the consumer-provided pre-spawn classifier. Contract:
 #   PIPELINE_EVAL_CLASSIFIER unset           -> exit 0, stderr `classifier-unset`
 #   classifier rc=0 stdout='line1\nline2\n'  -> exit 0, stdout forwards verbatim
 #   classifier rc=N stderr=<msg>             -> exit N, stderr forwards <msg>
@@ -11,7 +11,7 @@ set -uo pipefail
 #     missing on disk                        -> exit 3, stderr `classifier-not-found:`
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_UNDER_TEST="$SCRIPT_DIR/../mock-web-eval/scripts/eval-classifier-invoke.sh"
+SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/eval-classifier-invoke.sh"
 
 PASS=0
 FAIL=0
@@ -29,12 +29,19 @@ fi
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-# Mirror the layout the helper expects: REPO_ROOT/mock-web-eval/scripts/eval-classifier-invoke.sh
-# and a classifier script also resolved relative to REPO_ROOT.
+# Stage the helper at PLUGIN_ROOT/scripts/eval-classifier-invoke.sh and
+# provide REPO_ROOT via PIPELINE_PROJECT_ROOT, matching the new contract
+# (the plugin-shipped helper resolves REPO_ROOT from PIPELINE_PROJECT_ROOT
+# rather than its own dirname). The classifier script is staged under
+# REPO_ROOT/.claude/scripts/ so consumer-relative PIPELINE_EVAL_CLASSIFIER
+# paths still resolve.
 PROJ="$WORKDIR/proj"
-mkdir -p "$PROJ/mock-web-eval/scripts"
-cp "$SCRIPT_UNDER_TEST" "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
+PLUGIN_ROOT="$WORKDIR/plugin"
+mkdir -p "$PROJ/.claude/scripts" "$PLUGIN_ROOT/scripts"
+cp "$SCRIPT_UNDER_TEST" "$PLUGIN_ROOT/scripts/eval-classifier-invoke.sh"
+chmod +x "$PLUGIN_ROOT/scripts/eval-classifier-invoke.sh"
+# Helper now reads REPO_ROOT from PIPELINE_PROJECT_ROOT, not from its own dirname.
+export PIPELINE_PROJECT_ROOT="$PROJ"
 
 # Stub classifier — happy path
 mkdir -p "$PROJ/.claude/scripts"
@@ -62,7 +69,7 @@ inc
 OUT_FILE="$WORKDIR/out1.txt"
 ERR_FILE="$WORKDIR/err1.txt"
 unset PIPELINE_EVAL_CLASSIFIER
-bash "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh" 100 200 \
+bash "$PLUGIN_ROOT/scripts/eval-classifier-invoke.sh" 100 200 \
   > "$OUT_FILE" 2> "$ERR_FILE"
 rc=$?
 if [ "$rc" -ne 0 ]; then
@@ -83,7 +90,7 @@ inc
 OUT_FILE="$WORKDIR/out2.txt"
 ERR_FILE="$WORKDIR/err2.txt"
 PIPELINE_EVAL_CLASSIFIER=".claude/scripts/stub-classifier-ok.sh" \
-  bash "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh" 100 200 \
+  bash "$PLUGIN_ROOT/scripts/eval-classifier-invoke.sh" 100 200 \
   > "$OUT_FILE" 2> "$ERR_FILE"
 rc=$?
 EXPECTED=$'--container-mode=web-eval\n--foo=bar'
@@ -104,7 +111,7 @@ inc
 OUT_FILE="$WORKDIR/out3.txt"
 ERR_FILE="$WORKDIR/err3.txt"
 PIPELINE_EVAL_CLASSIFIER=".claude/scripts/stub-classifier-fail.sh" \
-  bash "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh" 100 200 \
+  bash "$PLUGIN_ROOT/scripts/eval-classifier-invoke.sh" 100 200 \
   > "$OUT_FILE" 2> "$ERR_FILE"
 rc=$?
 if [ "$rc" -ne 2 ]; then
@@ -123,7 +130,7 @@ inc
 OUT_FILE="$WORKDIR/out4.txt"
 ERR_FILE="$WORKDIR/err4.txt"
 PIPELINE_EVAL_CLASSIFIER=".claude/scripts/does-not-exist.sh" \
-  bash "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh" 100 200 \
+  bash "$PLUGIN_ROOT/scripts/eval-classifier-invoke.sh" 100 200 \
   > "$OUT_FILE" 2> "$ERR_FILE"
 rc=$?
 if [ "$rc" -ne 3 ]; then

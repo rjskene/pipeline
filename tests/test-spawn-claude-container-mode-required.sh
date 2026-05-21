@@ -13,7 +13,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/spawn-claude.sh"
-INVOKE_UNDER_TEST="$SCRIPT_DIR/../mock-web-eval/scripts/eval-classifier-invoke.sh"
+INVOKE_UNDER_TEST="$SCRIPT_DIR/../scripts/eval-classifier-invoke.sh"
 
 PASS=0
 FAIL=0
@@ -36,12 +36,17 @@ WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
 # ---- Build a "baseline" project tree: classifier present and emits container-mode ----
+# Stage the plugin-shipped helper at $PROJ/.claude/scripts/ alongside spawn-claude.sh
+# so the #325 ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh resolution
+# in spawn-claude.sh finds it (each test below exports CLAUDE_PLUGIN_ROOT=$PROJ/.claude
+# to anchor the lookup; Test 6 below intentionally drops the helper to exercise
+# the degrade-open branch).
 PROJ="$WORKDIR/proj"
-mkdir -p "$PROJ/.claude/scripts" "$PROJ/scripts" "$PROJ/mock-web-eval/scripts" "$PROJ/worktree"
+mkdir -p "$PROJ/.claude/scripts" "$PROJ/scripts" "$PROJ/worktree"
 cp "$SCRIPT_UNDER_TEST" "$PROJ/.claude/scripts/spawn-claude.sh"
 chmod +x "$PROJ/.claude/scripts/spawn-claude.sh"
-cp "$INVOKE_UNDER_TEST" "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ/mock-web-eval/scripts/eval-classifier-invoke.sh"
+cp "$INVOKE_UNDER_TEST" "$PROJ/.claude/scripts/eval-classifier-invoke.sh"
+chmod +x "$PROJ/.claude/scripts/eval-classifier-invoke.sh"
 
 cat > "$PROJ/scripts/stub-classifier.sh" <<'EOF'
 #!/bin/bash
@@ -92,6 +97,7 @@ OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  CLAUDE_PLUGIN_ROOT="$PROJ/.claude" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
     "$PROJ/worktree" 200 slug tmux 2>&1 ; echo "RC=$?") || true
@@ -118,6 +124,7 @@ OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  CLAUDE_PLUGIN_ROOT="$PROJ/.claude" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
     "$PROJ/worktree" 201 slug tmux 2>&1 ; echo "RC=$?") || true
@@ -135,11 +142,11 @@ fi
 echo "Test 3: classifier emits nothing -> normal dispatch (no enforcement)"
 inc
 PROJ3="$WORKDIR/proj3"
-mkdir -p "$PROJ3/.claude/scripts" "$PROJ3/scripts" "$PROJ3/mock-web-eval/scripts" "$PROJ3/worktree"
+mkdir -p "$PROJ3/.claude/scripts" "$PROJ3/scripts" "$PROJ3/worktree"
 cp "$SCRIPT_UNDER_TEST" "$PROJ3/.claude/scripts/spawn-claude.sh"
 chmod +x "$PROJ3/.claude/scripts/spawn-claude.sh"
-cp "$INVOKE_UNDER_TEST" "$PROJ3/mock-web-eval/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ3/mock-web-eval/scripts/eval-classifier-invoke.sh"
+cp "$INVOKE_UNDER_TEST" "$PROJ3/.claude/scripts/eval-classifier-invoke.sh"
+chmod +x "$PROJ3/.claude/scripts/eval-classifier-invoke.sh"
 cat > "$PROJ3/scripts/stub-classifier-empty.sh" <<'EOF'
 #!/bin/bash
 exit 0
@@ -153,6 +160,7 @@ OUT=$(cd "$PROJ3" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  CLAUDE_PLUGIN_ROOT="$PROJ3/.claude" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
     "$PROJ3/worktree" 202 slug tmux 2>&1 ; echo "RC=$?") || true
@@ -170,11 +178,11 @@ fi
 echo "Test 4: PIPELINE_EVAL_CLASSIFIER unset -> normal dispatch (no enforcement)"
 inc
 PROJ4="$WORKDIR/proj4"
-mkdir -p "$PROJ4/.claude/scripts" "$PROJ4/scripts" "$PROJ4/mock-web-eval/scripts" "$PROJ4/worktree"
+mkdir -p "$PROJ4/.claude/scripts" "$PROJ4/scripts" "$PROJ4/worktree"
 cp "$SCRIPT_UNDER_TEST" "$PROJ4/.claude/scripts/spawn-claude.sh"
 chmod +x "$PROJ4/.claude/scripts/spawn-claude.sh"
-cp "$INVOKE_UNDER_TEST" "$PROJ4/mock-web-eval/scripts/eval-classifier-invoke.sh"
-chmod +x "$PROJ4/mock-web-eval/scripts/eval-classifier-invoke.sh"
+cp "$INVOKE_UNDER_TEST" "$PROJ4/.claude/scripts/eval-classifier-invoke.sh"
+chmod +x "$PROJ4/.claude/scripts/eval-classifier-invoke.sh"
 grep -v "PIPELINE_EVAL_CLASSIFIER" "$PROJ/pipeline.config" > "$PROJ4/pipeline.config"
 OUT=$(cd "$PROJ4" && \
   PATH="$STUB_DIR:$PATH" \
@@ -182,6 +190,7 @@ OUT=$(cd "$PROJ4" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  CLAUDE_PLUGIN_ROOT="$PROJ4/.claude" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
     "$PROJ4/worktree" 203 slug tmux 2>&1 ; echo "RC=$?") || true
@@ -204,6 +213,7 @@ OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  CLAUDE_PLUGIN_ROOT="$PROJ/.claude" \
   bash .claude/scripts/spawn-claude.sh \
     --skill execute-issue-plan \
     "$PROJ/worktree" 204 slug tmux 2>&1 ; echo "RC=$?") || true
@@ -234,6 +244,7 @@ OUT=$(cd "$PROJ6" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  CLAUDE_PLUGIN_ROOT="$PROJ6/.claude" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
     "$PROJ6/worktree" 205 slug tmux 2>&1 ; echo "RC=$?") || true
