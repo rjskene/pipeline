@@ -45,83 +45,7 @@ and then STOP. Do not duplicate the autonomous flow inline — the delegation is
 
 ## Analyze mode (--analyze)
 
-Read-only hygiene pass over the open-issue set. Surfaces likely duplicates and standalones that fit existing trackers so the user can decide whether to close, merge, or re-bucket before the next full send. **No mutations.** Decision-support only — the user reads the digest and runs the suggested `gh` commands manually.
-
-**Trigger.** Parse `--analyze` from any argv position (same pattern as `--manual-merge`). The token must not collide with bare issue numbers, so any token starting with `--` is filtered out of the issue-number list. Parser sketch:
-
-```bash
-ANALYZE=0
-for arg in "$@"; do
-  case "$arg" in
-    --analyze) ANALYZE=1 ;;
-  esac
-done
-```
-
-**Branch behavior.** When `ANALYZE=1`, this skill SKIPS classify / plan / execute / eval entirely and exits cleanly after printing the digest. No labels are applied, no comments are posted, no PRs are opened, no worktrees are created. The session is fully read-only.
-
-**Stage 1 — heuristic shortlist.** Run the deterministic shell helper and capture its single-line stdout as the shortlist path:
-
-```bash
-SHORTLIST_PATH=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/analyze-issues.sh")
-```
-
-The helper writes JSON to `.claude/logs/analyze-shortlist-<ISO>.json` with three keys, `duplicate_pairs`, `tracker_fits`, and `missing_label_candidates`, each capped at 20 entries. The path is the only stdout line.
-
-The `missing_label_candidates` entries are produced purely mechanically — they flag issues lacking a `priority/P*` label, a `docs-only`/`multi-task` path label, or any pipeline-stage/classification label (with a 24h age gate to skip just-filed issues; configurable via `PIPELINE_ANALYZE_MIN_AGE_HOURS`). No subagent confirmation is needed for these — the suggested `gh issue edit` command is rendered directly from the JSON row.
-
-**Stage 2 — subagent dispatch.** Hand the shortlist to a general-purpose subagent which confirms / denies each LLM-required candidate and synthesizes the suggested `gh` command. Verbatim block:
-
-```
-Agent(subagent_type='general-purpose',
-      description='analyze open-issue hygiene shortlist',
-      prompt='Read shortlist at <SHORTLIST_PATH>. The JSON has three keys:
-              duplicate_pairs, tracker_fits, missing_label_candidates.
-
-              For each duplicate-pair row, run gh issue view <a> --json
-              title,body and gh issue view <b> --json title,body;
-              confirm/deny duplication, assign confidence (high|medium|low),
-              write a one-line rationale, and synthesize the gh command.
-
-              For each tracker-fits row, run gh issue view <issue> and
-              gh issue view <tracker>; confirm/deny fit, same fields.
-
-              For each missing_label_candidates row, NO per-issue
-              gh issue view confirmation is required — the signal is
-              purely label-presence-based. Pass the row straight through
-              to the rendered table and synthesize the suggested
-              gh issue edit command from the .missing array (e.g.
-              `gh issue edit <N> --add-label priority/P2` when "priority"
-              appears in .missing).
-
-              Output ONLY the three markdown tables defined in
-              skills/run/SKILL.md analyze-mode section. Omit a table
-              entirely if it has zero high|medium findings (for the LLM-
-              classified categories) or zero rows (for missing-label).
-              No mutations.')
-```
-
-Substitute `<SHORTLIST_PATH>` with the path captured in Stage 1.
-
-**Stage 3 — output contract.** The subagent prints up to three markdown tables to the orchestrator conversation. If a category has zero high|medium findings (LLM-classified) or zero rows (missing-label), its table is omitted (no empty noise).
-
-```
-## Duplicate candidates
-| Pair | Confidence | Reason | Suggested action |
-|------|------------|--------|-------------------|
-
-## Standalones that fit an existing tracker
-| Issue | Tracker | Confidence | Reason | Suggested action |
-|-------|---------|------------|--------|-------------------|
-
-## Issues missing labels
-| Issue | Missing | Suggested action |
-|-------|---------|-------------------|
-```
-
-Omit the `## Issues missing labels` section entirely if `missing_label_candidates` is empty — same convention as the other two tables.
-
-**Constraints.** No mutations. No auto-close, no auto-label, no auto-comment. The pipeline does not run `gh issue close`, `gh issue edit`, or `gh issue comment` from this branch. The user reads the digest and decides what to act on.
+Read-only hygiene pass over the open-issue set; no mutations. Full spec, helper invocation, subagent dispatch contract, and output tables in [references/analyze-mode.md](references/analyze-mode.md).
 
 ## Issue discovery
 
@@ -161,6 +85,8 @@ gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --li
 If the user asks to "just fix" an issue or work on it directly, remind them that pipeline issues require a worktree and propose setting one up.
 
 ## Steps
+
+> **Invariant — prioritization first.** `/pipeline:run` MUST render the prioritization+grouping status table before any classify dispatch. Classification on the full ready set at startup is forbidden — classify runs only on the user-committed slate at step 6. This carries forward the `feedback_pipeline_run_prioritization_first` direction from auto-memory and is asserted by `tests/test-pipeline-run-no-upfront-classify.sh`. Do not regress.
 
 0. **Housekeeping — branch check + sync worktrees + kill stale sessions**
 
@@ -275,22 +201,9 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    # END-TRACKER-FILTER
    ```
 
-   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 4. `TRACKER_ISSUES` feeds the status-table render in step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
+   `READY_ISSUES` feeds the planning proposal in step 4. `TRACKER_ISSUES` feeds the status-table render in step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
 
-   **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human/brainstorm-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
-
-   ```bash
-   for N in <ready_issue_numbers>; do
-     LATEST_CLASS_TS=$(gh issue view $N --repo $PIPELINE_REPO --json comments \
-       --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .createdAt // empty')
-     ISSUE_TS=$(gh issue view $N --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
-     # If LATEST_CLASS_TS is empty OR LATEST_CLASS_TS < ISSUE_TS, queue for classification
-   done
-   ```
-
-   Dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel** (single tool-call batch, one Agent per issue), each invoking `/pipeline:classify-issue N`. Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. No user reconciliation step is needed — labels are now authoritative.
-
-   **Caching semantics:** A classification is fresh when the latest `## Classification` comment's `createdAt > issue.updatedAt`. GitHub's `updatedAt` bumps on body edits AND label changes, so the cache auto-invalidates. Forced reclassification: delete the classification comment OR edit the issue body/labels. Both `/pipeline:run` (this step) and the `classify-issue` skill itself perform the same cache check so the skill can be re-invoked directly without duplicating work.
+   Classification is deferred — see step 6 (Propose ONE action → planning branch) for the cache-checked dispatch that runs only on the user-committed slate.
 
    **Detect residual mismatch (audit only):** For each `ready` issue with a fresh classification, compare the cached comment's `recommended_path` against the current label-derived path (`A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`). They should match — classify-issue writes them together. If they diverge, it means a user hand-edited a label after the last classify run; flag as `⚠ mismatch` and include in the final report column. Do NOT block planning on a mismatch: the label is authoritative, the comment is history.
 
@@ -324,35 +237,15 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      - `A`+`C` → `A!` (existing rule preserved)
      - `D`+`C` → `D!` (D wins)
      - `A`+`D`+`C` → `A!` (A always wins)
-     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
+     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column. If a ready issue has no path label AND no fresh `## Classification` comment, render the Path column as `?` (unknown) — classify will run on demand when the user commits to a slate.
    - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
    - **Attachments (`att=N`)** = count of files present at `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` at table-render time, computed as `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null | wc -l`. Surfaced in the NOTES footer only when N>0 for at least one issue (consistent with other non-default columns). Sourced from on-disk state populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; the run skill itself does NOT re-fetch attachments at discovery time.
 
    **Grouped layout (epics on top, orphans below).** Trackers appear first with their priority badge and conventional-title; each open child renders on its own line, indented eight spaces, with stage right-aligned in parentheses. A tracker with zero open children collapses to a single `(all children closed — pending auto-close)` line:
 
-   ```
-   PIPELINE STATUS — <today's date>
-   ================================================================
-   EPICS
-   ================================================================
-    [P1] #120 — feat(install): consumer install hardening
-            #144 — feat(doctor): label seeding              (plan-approved)
-            #145 — feat(install): CLAUDE.md cleanup         (in-progress)
-            #146 — feat(install): settings.json patch       (plan-pending)
-    [P2] #131 — feat(observability): self-improve loop
-            (all children closed — pending auto-close)
-   ================================================================
-   ORPHANS
-   ================================================================
-    (run)
-       [P1] #133 — feat(run): canonical status table grouped by tracker + scope   (plan-pending)
-       [P2]  #34 — feat(run): sort status table by scope                           (ready)
-    (doctor)
-       [P2] #150 — feat(doctor): settings cleanup patch                            (merged)
-    (none / generic)
-       [P2] #999 — chore: bump tooling                                             (ready)
-   ================================================================
-   ```
+   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
+
+   Path column shows `?` for ready issues not yet classified. Classification runs on demand when you commit to a slate.
 
    Orphan bucketing rules:
    - Bucket key is the conventional-commit `<scope>` token from the title regex above.
@@ -361,23 +254,13 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    **NOTES footer (non-default metadata only).** Surface Target Base / Path / Blocked-by only for issues whose values differ from the defaults (`Target Base = $PIPELINE_BASE_BRANCH`, `Path = B`, `Blocked by = none`). If every issue carries defaults, omit the entire block:
 
-   ```
-   NOTES (non-default)
-   ================================================================
-    Issue  | Target Base | Path | Blocked by | att
-   ----------------------------------------------------------------
-    #150   | next        | A    | --         | 0
-    #133   | pipeline    | B    | #132       | 3
-   ================================================================
-   ```
+   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
 
    The `att` column is rendered only when at least one row has `att>0`; if every issue has zero on-disk attachments the column is suppressed (same convention as Target Base / Path / Blocked-by defaults). When the column is rendered, `att=0` rows still appear so the table stays rectangular.
 
    **Counts footer (always rendered).** A single trailing line of the form `N epics + N children + N orphans = N open`:
 
-   ```
-   5 epics + 19 children + 5 orphans = 29 open
-   ```
+   _Example layout: see [references/status-table-layout.md](references/status-table-layout.md)._
 
    - `children` counts open children that appear under any tracker, deduplicated. If the same `#N` appears under two trackers, emit a `WARN: #N listed under multiple trackers: #A, #B` line above the counts and still count once.
    - `open` is the sum `epics + children + orphans` and must equal the open-issue total; a mismatch indicates a parser bug or a malformed tracker body.
@@ -436,8 +319,7 @@ active feature work, but it should come BEFORE pulling in new ready work
    - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
    - Issues labeled `tracker` are shown in the table (stage=`tracker`) but never proposed for plan/execute — they are coordination rollups, not implementation work.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM`:
-     - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 1 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
-     - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)" or "(brainstorm, manual)".
+     - Before proposing planning: identify the unclassified subset of the proposed slate (ready issues lacking a fresh `## Classification` comment per the cache check below). The proposal MUST name the slate AND surface the unclassified subset by issue number — for example: "Propose planning for #292, #309, #316. Of these, #292 and #316 lack classification — `/pipeline:classify-issue` will run on those first." Classification only runs on user confirmation (step 6), not at proposal time. Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)" or "(brainstorm, manual)".
    - If all issues are merged/done → congratulate and exit.
 
 5. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
@@ -498,7 +380,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
    **For plan evaluation (plan-pending → plan-reviewed):** Run `/pipeline:evaluate-issue-plan N` for each issue needing evaluation. If multiple issues need evaluation, spawn one Agent per issue in parallel (foreground), each invoking `/pipeline:evaluate-issue-plan N`. The evaluate-issue-plan skill is read-only — it reads the plan comment and codebase, posts an evaluation comment, and updates labels. If the verdict is "Approve," the label changes to `plan-reviewed`. If "Revise," the label stays `plan-pending` and the evaluation comment explains what needs to change.
 
-   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Run `/pipeline:plan-issue N` for each issue. If multiple issues need planning, spawn one Agent per issue in parallel (foreground), each invoking `/pipeline:plan-issue N`. If multiple issues share a branch (discovered from issue body/comments or matching branch names), plan them together in a single agent call. The plan-issue skill reads prior comments (including user feedback) and produces a revised plan when feedback exists.
+   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** **Classify the user-committed subset first.** For each issue in the committed slate, check whether a fresh `## Classification` comment exists (the comment's `createdAt > issue.updatedAt`). If any lack a fresh classification, dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel** (single tool-call batch, one Agent per issue), each invoking `/pipeline:classify-issue N`. Each classify run writes the Classification comment AND applies the path label. Cached issues skip dispatch. Wait for all classify agents to complete before dispatching plan-issue. Caching semantics: GitHub's `updatedAt` bumps on body edits AND label changes, so the cache auto-invalidates. This is the same cache check that previously lived in step 1 discovery, relocated to fire only on the user-committed subset rather than the full ready set. Then: Run `/pipeline:plan-issue N` for each issue. If multiple issues need planning, spawn one Agent per issue in parallel (foreground), each invoking `/pipeline:plan-issue N`. If multiple issues share a branch (discovered from issue body/comments or matching branch names), plan them together in a single agent call. The plan-issue skill reads prior comments (including user feedback) and produces a revised plan when feedback exists.
 
    After all planning agents complete, verify each targeted issue has a plan comment:
    ```bash
@@ -634,7 +516,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
 ### Anti-patterns
 
-**Do not poll for queue completion with `while ... sleep ... grep` inside Bash tool calls.** This pattern burns context tokens on every poll cycle and ties up the orchestrator for the duration. Use `Bash run_in_background: true` for one-shot completion waits, or `Monitor` for streaming per-event notifications. The queue runner's internal `sleep` polling (inside `run-queue.sh`) is fine — it runs in its own process and does not consume orchestrator context.
+See [references/anti-patterns.md](references/anti-patterns.md) for the list of patterns to avoid when orchestrating the run loop.
 
 7. **Merge orchestration** — after all evaluations complete, the pipeline handles merging. **Default is autonomous merge for the green subset** via the greenlight gate (`${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh`). The four greenlight conditions are: latest `## Evaluation` verdict is **Approved**; every `statusCheckRollup` entry has `conclusion == SUCCESS` (or the rollup is empty); `mergeable == MERGEABLE`; `mergeStateStatus == CLEAN`. Any one missing falls back to a `block-*` reason and requires manual `gh pr merge`.
 

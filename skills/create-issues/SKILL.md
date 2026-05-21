@@ -192,6 +192,19 @@ Every tracker body MUST include these sections in this order: **Context**, **Rol
 - Tracker issues (multi-issue case, created via the tracker body template) automatically receive the `tracker` label so the pipeline orchestrator excludes them from the action queue.
 - If the user's framing is architectural critique, open-ended exploration, or "should we / could we" without a commit-to-act, propose creating the issue with `--label brainstorm`. The label parks the issue in the pipeline's discussion bucket — visible in `/pipeline:run` status (stage = `brainstorm`) but never auto-planned or auto-executed. The user promotes it later by removing the label.
 
+### PATH D body marker (advisory)
+
+If the issue you are drafting describes a precedent-mirror fix, one-line config flip, dogfood-mirror edit, or guard-test addition, include `<!-- pipeline:path=D -->` in the body at filing time. This is the authoritative route to PATH D — phrase heuristics in `skills/classify-issue/SKILL.md` will not reliably flip a structured body to D. See `skills/classify-issue/SKILL.md` ("Authoring guide for PATH D candidates") for the full list of shapes.
+
+Example:
+
+```
+## Context
+Same path-math family as #277 — fix one path constant in `scripts/foo.sh`.
+
+<!-- pipeline:path=D -->
+```
+
 ### Session summary
 When the user ends the session (says "done", "that's all", etc.), print a summary:
 
