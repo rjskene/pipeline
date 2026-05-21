@@ -200,6 +200,34 @@ else
   echo "$out" | sed 's/^/    /'
 fi
 
+# ---------------------------------------------------------------------------
+# Case 6: dangling .claude/scripts/spawn-claude.sh reference (the #309 worked example)
+# → warn with finding count >= 1.
+# Proves doctor.sh's awk finding-counter parses the new Dangling section's
+# <file>:<lineno>:<snippet> rows just like the other passes.
+# ---------------------------------------------------------------------------
+echo "Case 6: dangling .claude/scripts/spawn-claude.sh reference"
+FX=$(fresh_fx fx-dangling-script)
+cat > "$FX/CLAUDE.md" <<'MD'
+# Project
+
+bash .claude/scripts/spawn-claude.sh --web-eval --skill evaluate-issue-pr <worktree> <issue>
+MD
+run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON" CLAUDE_PLUGIN_LIST="claude-pipeline 0.4.0"
+out="$(cat "$FX/out")"
+line="$(grep -E '^CHECK: claude_md_residual ' <<<"$out" || true)"
+if grep -qE '^CHECK: claude_md_residual status=warn detail=[0-9]+ residual reference' <<<"$line"; then
+  n="$(echo "$line" | sed -E 's/.*detail=([0-9]+).*/\1/')"
+  if [ "$n" -ge 1 ]; then
+    pass_msg "dangling-script: warn with finding count $n >= 1"
+  else
+    fail_msg "dangling-script: count $n < 1"
+  fi
+else
+  fail_msg "dangling-script: missing warn line"
+  echo "$out" | sed 's/^/    /'
+fi
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
