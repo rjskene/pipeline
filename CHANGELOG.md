@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0-rc.4](https://github.com/rjskene/pipeline/compare/v0.10.0-rc.3...v0.10.0-rc.4) (2026-05-21)
+
+
+### Miscellaneous Chores
+
+* **release:** v0.10.0-rc.4 — docs polish + path-A fullsend hardening ([#378](https://github.com/rjskene/pipeline/issues/378)) ([5448a1c](https://github.com/rjskene/pipeline/commit/5448a1c4f55e5651d0b68c132dbbb8c1fe30503b))
+
 ## [0.10.0-rc.3](https://github.com/rjskene/pipeline/compare/v0.10.0-rc.2...v0.10.0-rc.3) (2026-05-21)
 
 
