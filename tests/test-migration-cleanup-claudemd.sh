@@ -418,6 +418,63 @@ else
   fail_msg "idem: stale artifacts NOT cleared"
 fi
 
+# ---------------------------------------------------------------------------
+# Task 8: detect dangling .claude/{scripts,hooks,skills}/ references whose
+# target does NOT exist on disk.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Test 'detect: dangling .claude/{scripts,hooks,skills}/ refs'"
+
+# Case 8a: CLAUDE.md references .claude/scripts/foo.sh that does not exist.
+PROJ_DANGLE_A="$WORKDIR/proj-dangle-a"
+mkdir -p "$PROJ_DANGLE_A"
+cat > "$PROJ_DANGLE_A/CLAUDE.md" <<'EOF'
+Run `bash .claude/scripts/foo.sh` to launch.
+EOF
+(cd "$PROJ_DANGLE_A" && bash "$SCANNER_SH") >/dev/null 2>&1
+REPORT_DA="$PROJ_DANGLE_A/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ -f "$REPORT_DA" ] && grep -qF 'Dangling .claude/{scripts,hooks,skills}/ references' "$REPORT_DA" \
+   && grep -qF '.claude/scripts/foo.sh' "$REPORT_DA"; then
+  pass_msg "dangle-A: missing .claude/scripts/foo.sh flagged"
+else
+  fail_msg "dangle-A: missing .claude/scripts/foo.sh NOT flagged"
+  [ -f "$REPORT_DA" ] && sed 's/^/    /' "$REPORT_DA"
+fi
+
+# Case 8b: CLAUDE.md references .claude/skills/evaluate-issue-pr that does not exist.
+PROJ_DANGLE_B="$WORKDIR/proj-dangle-b"
+mkdir -p "$PROJ_DANGLE_B"
+cat > "$PROJ_DANGLE_B/CLAUDE.md" <<'EOF'
+Under that marker, .claude/skills/evaluate-issue-pr flips Playwright MCP from optional to REQUIRED.
+EOF
+(cd "$PROJ_DANGLE_B" && bash "$SCANNER_SH") >/dev/null 2>&1
+REPORT_DB="$PROJ_DANGLE_B/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ -f "$REPORT_DB" ] && grep -qF '.claude/skills/evaluate-issue-pr' "$REPORT_DB"; then
+  pass_msg "dangle-B: missing .claude/skills/evaluate-issue-pr flagged"
+else
+  fail_msg "dangle-B: missing .claude/skills/evaluate-issue-pr NOT flagged"
+  [ -f "$REPORT_DB" ] && sed 's/^/    /' "$REPORT_DB"
+fi
+
+# Case 8c: CLAUDE.md references .claude/scripts/foo.sh AND the file actually exists → must NOT flag.
+PROJ_DANGLE_C="$WORKDIR/proj-dangle-c"
+mkdir -p "$PROJ_DANGLE_C/.claude/scripts"
+: > "$PROJ_DANGLE_C/.claude/scripts/foo.sh"
+cat > "$PROJ_DANGLE_C/CLAUDE.md" <<'EOF'
+Run `bash .claude/scripts/foo.sh` to launch.
+EOF
+(cd "$PROJ_DANGLE_C" && bash "$SCANNER_SH") >/dev/null 2>&1
+REPORT_DC="$PROJ_DANGLE_C/.claude/migration-cleanup-report-claudemd.txt"
+inc
+if [ ! -f "$REPORT_DC" ]; then
+  pass_msg "dangle-C: existing .claude/scripts/foo.sh not flagged"
+else
+  fail_msg "dangle-C: existing .claude/scripts/foo.sh incorrectly flagged"
+  sed 's/^/    /' "$REPORT_DC"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
