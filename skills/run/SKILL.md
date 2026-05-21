@@ -311,7 +311,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      - `A`+`C` → `A!` (existing rule preserved)
      - `D`+`C` → `D!` (D wins)
      - `A`+`D`+`C` → `A!` (A always wins)
-     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
+     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column. If a ready issue has no path label AND no fresh `## Classification` comment, render the Path column as `?` (unknown) — classify will run on demand when the user commits to a slate.
    - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
    - **Attachments (`att=N`)** = count of files present at `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` at table-render time, computed as `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null | wc -l`. Surfaced in the NOTES footer only when N>0 for at least one issue (consistent with other non-default columns). Sourced from on-disk state populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; the run skill itself does NOT re-fetch attachments at discovery time.
 
@@ -340,6 +340,8 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
        [P2] #999 — chore: bump tooling                                             (ready)
    ================================================================
    ```
+
+   Path column shows `?` for ready issues not yet classified. Classification runs on demand when you commit to a slate.
 
    Orphan bucketing rules:
    - Bucket key is the conventional-commit `<scope>` token from the title regex above.
