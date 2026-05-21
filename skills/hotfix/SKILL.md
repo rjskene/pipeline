@@ -84,7 +84,7 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh" \
      --base "$PIPELINE_BASE_BRANCH" "feature/hotfix-$N" "$N"
-   WT_PATH="$(pwd)/.claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-${N}-hotfix-${N}"
+   WT_PATH="$(pwd)/.claude/worktrees/$PIPELINE_WORKTREE_PREFIX-${N}-hotfix-${N}"
    cd "$WT_PATH"
    ```
 
