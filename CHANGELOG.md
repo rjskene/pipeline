@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0-rc.2](https://github.com/rjskene/pipeline/compare/v0.10.0-rc.1...v0.10.0-rc.2) (2026-05-21)
+
+
+### release
+
+* v0.10.0-rc.2 ([#366](https://github.com/rjskene/pipeline/issues/366)) ([724254a](https://github.com/rjskene/pipeline/commit/724254a81d0629636f92b5381a508b3b8d298c82))
+
 ## [0.10.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.9.0...v0.10.0-rc.1) (2026-05-20)
 
 
