@@ -100,6 +100,12 @@ You will receive an issue number as the argument. Perform:
    - Guard-test additions to an existing test file (one new assertion, no new file).
    - One-bullet bug reports with a quoted error message and an obvious one-line fix.
 
+   > **Why not broader phrase lists.**
+   >
+   > - Empirical result from issue #356: broadening the PATH D phrase list (#354/#355) produced no observable classifier movement on five real `fix(...)` issues whose bodies had any structure (a `## Scope` section with 3+ bullets dominates trigger words). The body marker was the only reliable lever.
+   > - Further phrase-list broadening has **poor ROI** and should not be the first proposed fix when a PATH D miss is reported. Default response to a D miss: ask the author to add the body marker.
+   > - Future improvements to PATH D's gate should be **structural** — deterministic regex over body shape (e.g. count of bullets under `## Scope`), sibling-PR diff-size lookup, body-vs-change-size mismatch detection — not more trigger phrases in the rule table.
+
 4. **Score against rule set** (first match wins):
 
    | Signal | Path | Confidence |
