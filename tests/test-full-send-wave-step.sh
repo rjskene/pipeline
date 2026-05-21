@@ -56,10 +56,13 @@ else
   fail_msg "Step 0a section does not reference plan-waves.sh"
 fi
 
-# 3. Existing step 1 anchor sentence is preserved verbatim (no rewrites).
-# This guards merge surface with #31 / #122 — see plan.
+# 3. Step 1 anchor sentence is preserved (rewritten for #342 to point at the
+# batched scripts/classification-freshness.sh helper instead of the legacy
+# per-issue `gh issue view` loop). This guards merge surface with #31 / #122
+# and pins the new wording to keep classify-dispatch semantics aligned with
+# the run skill's step 1 rewrite.
 inc
-ANCHOR='before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment'
+ANCHOR='before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue marked `stale` by `scripts/classification-freshness.sh`'
 if grep -qF "$ANCHOR" "$SKILL_PATH"; then
   pass_msg "step 1 anchor sentence preserved verbatim"
 else

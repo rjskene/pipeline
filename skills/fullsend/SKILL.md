@@ -51,7 +51,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 
    The helper is idempotent — repeat invocations cost zero `gh api` calls. The `head -1` cap keeps wave-log output to one line per issue. This is the autonomous-mode ingestion site; `/pipeline:run` step 0 does NOT fetch attachments. Interactive single-issue planning fetches at `/pipeline:plan-issue` step 3b instead.
 
-   **1b. Dispatch classify and plan.** Process wave by wave per Step 0a — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
+   **1b. Dispatch classify and plan.** Process wave by wave per Step 0a — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue marked `stale` by `scripts/classification-freshness.sh` (one batched probe, then dispatch one Agent per stale issue in parallel). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
      ```bash
      PLAN_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
