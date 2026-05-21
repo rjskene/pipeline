@@ -240,6 +240,26 @@ BUCKETS=$(printf '%s' "$ORPHAN_ROWS_JSON" \
   | jq -r '[.[].scope] | unique | .[]' \
   | awk 'NF { print "named:" $0 } !NF { has_empty=1 } END { if (has_empty) print "generic:" }')
 
+# ----- RELEASE PRs section (rendered ABOVE PIPELINE STATUS) ----------
+#
+# Parse one line at a time from --release-prs (already in the format emitted
+# by scripts/list-release-prs.sh: `pr=<num> ci=<status> title=<title>`).
+# Title may contain `=` or spaces, so capture everything after `title=`.
+if [ -n "$RELEASE_PRS_FILE" ] && [ -s "$RELEASE_PRS_FILE" ]; then
+  echo "RELEASE PRs"
+  echo "================================================================"
+  echo " PR     Title                              Stage             CI"
+  echo "----------------------------------------------------------------"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    pr_num=$(printf '%s' "$line" | sed -n 's/^pr=\([0-9][0-9]*\).*/\1/p')
+    ci_status=$(printf '%s' "$line" | sed -n 's/.*ci=\([^ ]*\).*/\1/p')
+    title=$(printf '%s' "$line" | sed -n 's/.*title=\(.*\)$/\1/p')
+    printf ' #%-5s %-34s %-17s %s\n' "$pr_num" "$title" "release-pending" "$ci_status"
+  done < "$RELEASE_PRS_FILE"
+  echo "================================================================"
+fi
+
 # Emit table header
 echo "PIPELINE STATUS — $TODAY"
 echo "================================================================"

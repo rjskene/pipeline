@@ -388,6 +388,64 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Task 6: RELEASE PRs table above pipeline status
+# ----------------------------------------------------------------------
+
+# Scenario 6.1 — release-prs.txt with two rows renders ABOVE
+# `PIPELINE STATUS — <date>`, with the canonical columns.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/all-defaults-issues.json" \
+  --release-prs "$FIXTURES/release-prs.txt" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "release-prs render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  pass_msg "release-prs render exits 0"
+
+  inc
+  rel_line=$(grep -n '^RELEASE PRs' "$TMP/out" | head -1 | cut -d: -f1)
+  pipe_line=$(grep -n '^PIPELINE STATUS' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$rel_line" ] && [ -n "$pipe_line" ] && [ "$rel_line" -lt "$pipe_line" ]; then
+    pass_msg "RELEASE PRs section appears above PIPELINE STATUS"
+  else
+    fail_msg "RELEASE PRs section appears above PIPELINE STATUS" "rel=$rel_line pipe=$pipe_line"
+  fi
+
+  inc
+  if grep -qE '#201.*release 1\.2\.3.*release-pending.*pass' "$TMP/out"; then
+    pass_msg "release PR #201 row: title, stage, ci=pass"
+  else
+    fail_msg "release PR #201 row: title, stage, ci=pass" "$(grep '#201' "$TMP/out")"
+  fi
+
+  inc
+  if grep -qE '#202.*release 1\.3\.0.*release-pending.*fail' "$TMP/out"; then
+    pass_msg "release PR #202 row: title, stage, ci=fail"
+  else
+    fail_msg "release PR #202 row: title, stage, ci=fail" "$(grep '#202' "$TMP/out")"
+  fi
+fi
+
+# Scenario 6.2 — empty release-prs.txt → NO RELEASE PRs section rendered.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/all-defaults-issues.json" \
+  --release-prs "$FIXTURES/release-prs-empty.txt" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "empty release-prs render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+elif grep -q '^RELEASE PRs' "$TMP/out"; then
+  fail_msg "empty release-prs render OMITS RELEASE PRs section" "$(cat "$TMP/out")"
+else
+  pass_msg "empty release-prs render OMITS RELEASE PRs section"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""
