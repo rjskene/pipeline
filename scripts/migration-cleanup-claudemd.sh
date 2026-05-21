@@ -14,6 +14,7 @@ HEADER_FINDINGS=()
 HEADER_CORROBORATION=()
 PATHS_FINDINGS=()
 CMDS_FINDINGS=()
+DANGLING_FINDINGS=()
 
 # Per-file delete-line set + file-tracking for patch generation.
 declare -A DELETE_LINES=()
@@ -25,6 +26,7 @@ SECTION_SPANS=()
 REGEX_HEADER='^## (Pipeline|Claude Pipeline|Worktrees|Pipeline Setup)( |$)'
 REGEX_PATHS='\.claude-pipeline/|subtree pull|(^|[[:space:]/])install\.sh'
 REGEX_CMDS='(^|[^[:alnum:]:_/])/(plan-issue|evaluate-issue-plan|execute-issue-plan|evaluate-issue-pr|create-issues|classify-issue|worktree-sync)([^[:alnum:]_-]|$)'
+REGEX_DANGLING='\.claude/(scripts|hooks)/[A-Za-z0-9_.-]+\.(sh|py)|\.claude/skills/[A-Za-z0-9_-]+'
 
 # Is line $2 inside any flagged section span for file $1?
 in_section() {
@@ -103,6 +105,29 @@ scan_file() {
     FILES_WITH_FINDINGS["$file"]=1
     DELETE_LINES["$file|$lno"]=1
   done < <(grep -nE "$REGEX_CMDS" "$file" || true)
+
+  # Pass 4: dangling .claude/{scripts,hooks,skills}/ references — flag each
+  # match whose target does NOT exist on disk. Deduped against section spans
+  # so already-flagged section blocks aren't double-reported.
+  local lno path snippet
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    lno="${m%%:*}"
+    in_section "$file" "$lno" && continue
+    snippet="${m#*:}"
+    # Extract every path on this line individually; one finding per missing path.
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      # Strip any trailing slash from the captured skill dir form.
+      path="${path%/}"
+      if [ ! -e "$path" ]; then
+        DANGLING_FINDINGS+=("$file:$lno:$snippet")
+        FILES_WITH_FINDINGS["$file"]=1
+        DELETE_LINES["$file|$lno"]=1
+        break  # one finding per line is enough; we already captured the snippet
+      fi
+    done < <(printf '%s\n' "$snippet" | grep -oE "$REGEX_DANGLING" || true)
+  done < <(grep -nE "$REGEX_DANGLING" "$file" || true)
 }
 
 mkdir -p .claude
@@ -125,7 +150,8 @@ done
 
 if [ ${#HEADER_FINDINGS[@]} -eq 0 ] \
    && [ ${#PATHS_FINDINGS[@]} -eq 0 ] \
-   && [ ${#CMDS_FINDINGS[@]} -eq 0 ]; then
+   && [ ${#CMDS_FINDINGS[@]} -eq 0 ] \
+   && [ ${#DANGLING_FINDINGS[@]} -eq 0 ]; then
   exit 0
 fi
 
@@ -154,6 +180,12 @@ fi
     echo "Deprecated slash commands"
     echo "-------------------------"
     for f in "${CMDS_FINDINGS[@]}"; do echo "$f"; done
+    echo ""
+  fi
+  if [ ${#DANGLING_FINDINGS[@]} -gt 0 ]; then
+    echo "Dangling .claude/{scripts,hooks,skills}/ references (path missing on disk)"
+    echo "--------------------------------------------------------------------------"
+    for f in "${DANGLING_FINDINGS[@]}"; do echo "$f"; done
     echo ""
   fi
 } > "$REPORT"
