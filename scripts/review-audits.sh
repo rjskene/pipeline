@@ -23,6 +23,12 @@ _logging_helper="$(cd "$(dirname "$0")" && pwd)/_logging.sh"
 [ -f "$_logging_helper" ] && source "$_logging_helper"
 command -v pipeline_logging_enabled >/dev/null 2>&1 || pipeline_logging_enabled() { [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; }
 
+# Resolve CLAUDE_PLUGIN_ROOT for subshells that do not inherit it from Claude
+# Code. Idempotent: the shim returns early when the env var is already set.
+# shellcheck disable=SC1091
+[ -f "$(dirname "$0")/_resolve-plugin-root.sh" ] && \
+  source "$(dirname "$0")/_resolve-plugin-root.sh" 2>/dev/null || true
+
 RUNS_LOG="${REPO_ROOT}/.claude/logs/runs.log"
 # tool-use.log, subagents.log, and the subagents/ dir are per-worktree:
 # spawn-claude.sh launches the CLI with cwd=<worktree>, so CLAUDE_PROJECT_DIR
@@ -30,7 +36,7 @@ RUNS_LOG="${REPO_ROOT}/.claude/logs/runs.log"
 # under <worktree>/.claude/logs/. Per-run paths are derived from the
 # worktree=<path> column in runs.log via worktree_tool_log /
 # worktree_subagents_log / worktree_subagents_dir helpers below.
-TDD_IMPLEMENTER_MARKER="${REPO_ROOT}/.claude/agents/tdd-implementer.md"
+TDD_IMPLEMENTER_MARKER="${CLAUDE_PLUGIN_ROOT:-.}/agents/tdd-implementer.md"
 
 usage() {
   cat <<EOF >&2
