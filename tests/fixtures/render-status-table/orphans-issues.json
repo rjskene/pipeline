@@ -1,0 +1,30 @@
+[
+  {
+    "number": 133,
+    "title": "feat(run): canonical status table grouped by tracker + scope",
+    "labels": [{"name": "priority/P1"}, {"name": "plan-pending"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 34,
+    "title": "feat(run): sort status table by scope",
+    "labels": [{"name": "priority/P2"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 150,
+    "title": "feat(doctor): settings cleanup patch",
+    "labels": [{"name": "priority/P2"}, {"name": "merged"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 999,
+    "title": "chore: bump tooling",
+    "labels": [{"name": "priority/P2"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  }
+]

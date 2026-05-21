@@ -56,6 +56,89 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Task 2: ORPHANS section — scope buckets + priority sort + stage
+# ----------------------------------------------------------------------
+
+# Scenario 2.1: 4 orphans across 3 scope buckets render in alphabetical
+# bucket order with (none / generic) last; rows within a bucket sort by
+# priority tier; each row uses `[Pn] #N — <title>  (stage)`.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/orphans-issues.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+out=$(cat "$TMP/out")
+if [ "$rc" -ne 0 ]; then
+  fail_msg "orphans render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  # ORPHANS header exists
+  if grep -q '^ORPHANS' "$TMP/out"; then
+    pass_msg "orphans render emits ORPHANS header"
+  else
+    fail_msg "orphans render emits ORPHANS header" "$out"
+  fi
+
+  inc
+  # bucket order: (doctor) before (run) before (none / generic)
+  doctor_line=$(grep -n '^ (doctor)' "$TMP/out" | head -1 | cut -d: -f1)
+  run_line=$(grep -n '^ (run)' "$TMP/out" | head -1 | cut -d: -f1)
+  none_line=$(grep -n '^ (none / generic)' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$doctor_line" ] && [ -n "$run_line" ] && [ -n "$none_line" ] \
+     && [ "$doctor_line" -lt "$run_line" ] && [ "$run_line" -lt "$none_line" ]; then
+    pass_msg "bucket order: (doctor) < (run) < (none / generic)"
+  else
+    fail_msg "bucket order: (doctor) < (run) < (none / generic)" \
+      "doctor=$doctor_line run=$run_line none=$none_line"
+  fi
+
+  inc
+  # within (run): P1 issue #133 appears before P2 issue #34
+  p133_line=$(grep -n '#133' "$TMP/out" | head -1 | cut -d: -f1)
+  p34_line=$(grep -n '#34 ' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$p133_line" ] && [ -n "$p34_line" ] && [ "$p133_line" -lt "$p34_line" ]; then
+    pass_msg "within (run): P1 #133 before P2 #34"
+  else
+    fail_msg "within (run): P1 #133 before P2 #34" "p133=$p133_line p34=$p34_line"
+  fi
+
+  inc
+  # row format: `[P1] #133 — feat(run): ... (plan-pending)` with stage
+  if grep -qE '^[[:space:]]+\[P1\][[:space:]]+#133[[:space:]]+—.*\(plan-pending\)' "$TMP/out"; then
+    pass_msg "row format includes [Pn], em-dash, and (stage)"
+  else
+    fail_msg "row format includes [Pn], em-dash, and (stage)" "$(grep '#133' "$TMP/out")"
+  fi
+
+  inc
+  # #150 stage resolves to (merged) from the merged label
+  if grep -qE '#150.*\(merged\)' "$TMP/out"; then
+    pass_msg "stage label resolves merged label for #150"
+  else
+    fail_msg "stage label resolves merged label for #150" "$(grep '#150' "$TMP/out")"
+  fi
+
+  inc
+  # #34 has no pipeline-stage label, so renders as (ready)
+  if grep -qE '#34[[:space:]].*\(ready\)' "$TMP/out"; then
+    pass_msg "no-stage-label issue #34 renders as (ready)"
+  else
+    fail_msg "no-stage-label issue #34 renders as (ready)" "$(grep '#34 ' "$TMP/out")"
+  fi
+
+  inc
+  # #999 (chore: bump tooling — no scope parens) lands in (none / generic)
+  none_anchor=$(grep -n '^ (none / generic)' "$TMP/out" | head -1 | cut -d: -f1)
+  p999_anchor=$(grep -n '#999' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$none_anchor" ] && [ -n "$p999_anchor" ] && [ "$p999_anchor" -gt "$none_anchor" ]; then
+    pass_msg "#999 (no-scope title) lands under (none / generic)"
+  else
+    fail_msg "#999 (no-scope title) lands under (none / generic)" \
+      "none=$none_anchor p999=$p999_anchor"
+  fi
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""
