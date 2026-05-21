@@ -104,7 +104,8 @@ fi
 ROWS_JSON=$(jq -c \
   --arg later     "$PIPELINE_LABELS_LATER" \
   --arg human     "$PIPELINE_LABELS_HUMAN" \
-  --arg brainst   "$PIPELINE_LABELS_BRAINSTORM" '
+  --arg brainst   "$PIPELINE_LABELS_BRAINSTORM" \
+  --arg base      "$PIPELINE_BASE_BRANCH" '
   def labelnames: [.labels[].name];
   def has_label(n): labelnames | any(. == n);
   def priority_tier:
@@ -130,14 +131,30 @@ ROWS_JSON=$(jq -c \
         | capture("^(?<t>feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)\\((?<s>[^)]+)\\):").s
       ] | first)
     | if . == null then "" else . end;
+  def target_base:
+    if has_label("next-major-release") then "next" else $base end;
+  def path_letter:
+    ([has_label("docs-only"), has_label("quick-fix"), has_label("multi-task")]) as $p |
+    ($p | map(if . then 1 else 0 end) | add) as $count |
+    (if $p[0] then "A"
+     elif $p[1] then "D"
+     elif $p[2] then "C"
+     else "B" end) as $letter |
+    if $count > 1 then "\($letter)!" else $letter end;
+  def blocked_by:
+    ([.body // "" | scan("(?i)(?:blocked by|depends on) +#([0-9]+)")] | flatten | map("#" + .) | join(", "));
   [ .[] | {
       number,
       title,
+      body: (.body // ""),
       scope: scope,
       priority_tier: priority_tier,
       priority_badge: priority_badge,
       stage: stage,
-      is_tracker: has_label("tracker")
+      is_tracker: has_label("tracker"),
+      target_base: target_base,
+      path_letter: path_letter,
+      blocked_by: blocked_by
     }
   ]
 ' "$ISSUES_FILE")
@@ -289,6 +306,72 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
           | sort_by(.priority_tier, .number)
           | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
         '
+  fi
+  echo "================================================================"
+fi
+
+# ----- NOTES footer (non-default metadata only) ----------------------
+#
+# Per-issue overrides surface here: Target Base != $PIPELINE_BASE_BRANCH,
+# Path != B, Blocked by != "" (parsed from body), att = count of files in
+# $PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/.
+#
+# A row appears only when at least one field is non-default. The `att`
+# column is suppressed entirely when no row has att>0.
+NOTES_PROJECT_ROOT="${PIPELINE_PROJECT_ROOT:-$_PROJECT_ROOT}"
+
+# Augment every row with att count (computed on-disk, not from JSON).
+NOTES_ROWS_TMP=$(mktemp)
+trap 'rm -f "$NOTES_ROWS_TMP"' EXIT INT TERM
+printf '%s' "$ROWS_JSON" | jq -c '.[]' | while IFS= read -r row; do
+  n=$(printf '%s' "$row" | jq -r '.number')
+  att=0
+  if [ -d "$NOTES_PROJECT_ROOT/.claude/scratch/issue-$n" ]; then
+    att=$(find "$NOTES_PROJECT_ROOT/.claude/scratch/issue-$n" -maxdepth 1 -type f 2>/dev/null | wc -l)
+  fi
+  printf '%s\n' "$row" | jq -c --argjson a "$att" '. + {att: $a}'
+done > "$NOTES_ROWS_TMP"
+
+NOTES_ROWS_JSON=$(jq -s '.' < "$NOTES_ROWS_TMP")
+
+# Decide whether NOTES block + att column render.
+HAS_NONDEFAULT=$(printf '%s' "$NOTES_ROWS_JSON" | jq --arg base "$PIPELINE_BASE_BRANCH" '
+  any(.[];
+    (.target_base != $base)
+    or (.path_letter != "B")
+    or (.blocked_by != "")
+    or (.att > 0)
+  )
+')
+HAS_ATT=$(printf '%s' "$NOTES_ROWS_JSON" | jq 'any(.[]; .att > 0)')
+
+if [ "$HAS_NONDEFAULT" = "true" ]; then
+  echo "NOTES (non-default)"
+  echo "================================================================"
+  if [ "$HAS_ATT" = "true" ]; then
+    echo " Issue  | Target Base | Path | Blocked by | att"
+  else
+    echo " Issue  | Target Base | Path | Blocked by"
+  fi
+  echo "----------------------------------------------------------------"
+  # Sort by issue number for stable output.
+  if [ "$HAS_ATT" = "true" ]; then
+    printf '%s' "$NOTES_ROWS_JSON" | jq -r --arg base "$PIPELINE_BASE_BRANCH" '
+      [.[] | select(
+        (.target_base != $base) or (.path_letter != "B")
+        or (.blocked_by != "") or (.att > 0)
+      )]
+      | sort_by(.number)
+      | .[] | " #\(.number) | \(.target_base) | \(.path_letter) | \(if .blocked_by == "" then "--" else .blocked_by end) | \(.att)"
+    '
+  else
+    printf '%s' "$NOTES_ROWS_JSON" | jq -r --arg base "$PIPELINE_BASE_BRANCH" '
+      [.[] | select(
+        (.target_base != $base) or (.path_letter != "B") or (.blocked_by != "")
+      )]
+      | sort_by(.number)
+      | .[] | " #\(.number) | \(.target_base) | \(.path_letter) | \(if .blocked_by == "" then "--" else .blocked_by end)"
+    '
   fi
   echo "================================================================"
 fi

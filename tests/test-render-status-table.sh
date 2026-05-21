@@ -217,6 +217,113 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Task 4: NOTES footer + conditional att column
+# ----------------------------------------------------------------------
+
+# Scenario 4.1 — non-default metadata renders, att column present (one
+# issue has scratch attachments, others do not).
+inc
+PROJ_ROOT=$(mktemp -d)
+# Issue 133 has 3 attachments; #150 and #34 have none.
+mkdir -p "$PROJ_ROOT/.claude/scratch/issue-133"
+touch "$PROJ_ROOT/.claude/scratch/issue-133/a.png" \
+      "$PROJ_ROOT/.claude/scratch/issue-133/b.png" \
+      "$PROJ_ROOT/.claude/scratch/issue-133/c.txt"
+
+PIPELINE_PROJECT_ROOT="$PROJ_ROOT" bash "$HELPER" \
+  --issues "$FIXTURES/notes-issues.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "notes render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  pass_msg "notes render exits 0"
+
+  inc
+  if grep -qE '^NOTES \(non-default\)' "$TMP/out"; then
+    pass_msg "NOTES section header rendered"
+  else
+    fail_msg "NOTES section header rendered" "$(cat "$TMP/out")"
+  fi
+
+  inc
+  # #150 row: Target Base = next (non-default), Path = A (non-default)
+  if grep -qE '#150[[:space:]]*\|[[:space:]]*next[[:space:]]*\|[[:space:]]*A' "$TMP/out"; then
+    pass_msg "#150 NOTES row: Target Base=next, Path=A"
+  else
+    fail_msg "#150 NOTES row: Target Base=next, Path=A" "$(grep '#150' "$TMP/out")"
+  fi
+
+  inc
+  # #133 row: Blocked by = #99 from body
+  if grep -qE '#133.*#99' "$TMP/out"; then
+    pass_msg "#133 NOTES row: Blocked by = #99"
+  else
+    fail_msg "#133 NOTES row: Blocked by = #99" "$(grep '#133' "$TMP/out")"
+  fi
+
+  inc
+  # att column present (header includes "att")
+  if grep -qE '\|[[:space:]]*att[[:space:]]*$' "$TMP/out" \
+     || grep -qE 'Blocked by[[:space:]]*\|[[:space:]]*att' "$TMP/out"; then
+    pass_msg "att column rendered when at least one row has att>0"
+  else
+    fail_msg "att column rendered when at least one row has att>0" "$(grep -A1 'NOTES' "$TMP/out")"
+  fi
+
+  inc
+  # #133 row: att=3
+  if grep -qE '#133.*\|[[:space:]]*3' "$TMP/out"; then
+    pass_msg "#133 NOTES row: att=3"
+  else
+    fail_msg "#133 NOTES row: att=3" "$(grep '#133' "$TMP/out")"
+  fi
+
+  inc
+  # #34 NOT in NOTES table (defaults only and att=0)
+  notes_anchor=$(grep -n '^NOTES' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$notes_anchor" ]; then
+    # tail from NOTES section and check #34 NOT in it
+    notes_section=$(awk -v start="$notes_anchor" 'NR >= start' "$TMP/out")
+    if ! echo "$notes_section" | grep -qE '#34[[:space:]]*\|'; then
+      pass_msg "#34 (all defaults) NOT in NOTES table"
+    else
+      fail_msg "#34 (all defaults) NOT in NOTES table" "$(echo "$notes_section" | grep '#34')"
+    fi
+  else
+    fail_msg "#34 (all defaults) NOT in NOTES table" "no NOTES section to scan"
+  fi
+fi
+rm -rf "$PROJ_ROOT"
+
+# Scenario 4.2 — all-defaults fixture: NOTES section MUST NOT render at all.
+inc
+PROJ_ROOT2=$(mktemp -d)
+PIPELINE_PROJECT_ROOT="$PROJ_ROOT2" bash "$HELPER" \
+  --issues "$FIXTURES/all-defaults-issues.json" \
+  --today 2026-05-21 \
+  >"$TMP/out2" 2>"$TMP/err2"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "all-defaults render exits 0" "rc=$rc, stderr=$(cat "$TMP/err2")"
+elif grep -q '^NOTES' "$TMP/out2"; then
+  fail_msg "all-defaults render OMITS NOTES section" "$(cat "$TMP/out2")"
+else
+  pass_msg "all-defaults render OMITS NOTES section"
+fi
+
+inc
+# Same scenario: att column must NOT be rendered when all rows have att=0
+# (also covered by the omission above, but call it out explicitly for clarity).
+if grep -qE 'att' "$TMP/out2"; then
+  fail_msg "att column SUPPRESSED when no row has att>0" "$(cat "$TMP/out2")"
+else
+  pass_msg "att column SUPPRESSED when no row has att>0"
+fi
+rm -rf "$PROJ_ROOT2"
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""

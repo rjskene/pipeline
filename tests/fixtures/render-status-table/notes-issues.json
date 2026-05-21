@@ -1,0 +1,23 @@
+[
+  {
+    "number": 150,
+    "title": "feat(doctor): settings cleanup patch",
+    "labels": [{"name": "priority/P2"}, {"name": "next-major-release"}, {"name": "docs-only"}, {"name": "merged"}],
+    "body": "irrelevant body",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 133,
+    "title": "feat(run): canonical status table grouped by tracker + scope",
+    "labels": [{"name": "priority/P1"}, {"name": "plan-pending"}],
+    "body": "this issue is blocked by #99 — wait for that to ship first",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 34,
+    "title": "feat(run): sort status table by scope",
+    "labels": [{"name": "priority/P2"}],
+    "body": "vanilla issue, no overrides",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  }
+]
