@@ -65,7 +65,9 @@ You will receive an issue number as the argument. Perform:
 
 3. **Read first-level comments only** — ignore quoted/nested text. Consider only top-level comments.
 
-3c. **Body-marker override (evaluated before the rule table).** If the issue body contains an HTML comment of the form `<!--\s*pipeline:path=[A-Da-d]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->`), that claim is authoritative. Path = the marker letter normalized to uppercase (one of A/B/C/D); confidence = high; rationale = "user-claimed path via body marker". If multiple markers appear, the FIRST one (document order) wins. If the marker letter is not one of A/B/C/D, the marker is malformed and ignored — fall through to step 4 keyword scoring (the rule table below). Run the parser block below; if `MARKER_PATH` is non-empty, set `RECOMMENDED_PATH=$MARKER_PATH` and skip directly to step 5 (compose) and 5a (apply label). The B-marker case still runs step 5a so that any prior `docs-only`/`multi-task`/`quick-fix` label is removed (B is the unlabeled default).
+3c. **Body marker — documented primary route for PATH D (and the other paths) (evaluated before the rule table).** When you know an issue is PATH D (precedent-mirror fix, one-line flip, dogfood mirror, guard-test addition, etc.), put `<!-- pipeline:path=D -->` in the body at filing time. This is the authoritative, deterministic route to PATH D. The phrase heuristics in the rule table below are a best-effort fallback for unmarked issues — they will not reliably flip a B-shaped body to D no matter how many trigger words are present.
+
+   If the issue body contains an HTML comment of the form `<!--\s*pipeline:path=[A-Da-d]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->`), that claim is authoritative. Path = the marker letter normalized to uppercase (one of A/B/C/D); confidence = high; rationale = "user-claimed path via body marker". If multiple markers appear, the FIRST one (document order) wins. If the marker letter is not one of A/B/C/D, the marker is malformed and ignored — fall through to step 4 keyword scoring (the rule table below). Run the parser block below; if `MARKER_PATH` is non-empty, set `RECOMMENDED_PATH=$MARKER_PATH` and skip directly to step 5 (compose) and 5a (apply label). The B-marker case still runs step 5a so that any prior `docs-only`/`multi-task`/`quick-fix` label is removed (B is the unlabeled default).
 
    ```bash
    # BEGIN-PATH-MARKER-PARSE
@@ -89,6 +91,20 @@ You will receive an issue number as the argument. Perform:
    fi
    # END-PATH-MARKER-PARSE
    ```
+
+   **Authoring guide for PATH D candidates.** If you are authoring a PATH D candidate, include the marker — these are the shapes that consistently miss the phrase heuristic in step 4 despite being unambiguous one-line fixes:
+
+   - Precedent-mirror fixes (`same shape as merged PR #X`, `same path-math family as #277`).
+   - One-line config flips (flip a flag in `pipeline.config`, repoint a path constant).
+   - Dogfood-mirror byte-identical edits (copy a fix from one settings file to a sibling).
+   - Guard-test additions to an existing test file (one new assertion, no new file).
+   - One-bullet bug reports with a quoted error message and an obvious one-line fix.
+
+   > **Why not broader phrase lists.**
+   >
+   > - Empirical result from issue #356: broadening the PATH D phrase list (#354/#355) produced no observable classifier movement on five real `fix(...)` issues whose bodies had any structure (a `## Scope` section with 3+ bullets dominates trigger words). The body marker was the only reliable lever.
+   > - Further phrase-list broadening has **poor ROI** and should not be the first proposed fix when a PATH D miss is reported. Default response to a D miss: ask the author to add the body marker.
+   > - Future improvements to PATH D's gate should be **structural** — deterministic regex over body shape (e.g. count of bullets under `## Scope`), sibling-PR diff-size lookup, body-vs-change-size mismatch detection — not more trigger phrases in the rule table.
 
 4. **Score against rule set** (first match wins):
 
