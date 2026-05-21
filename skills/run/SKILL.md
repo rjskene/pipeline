@@ -162,6 +162,8 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 ## Steps
 
+> **Invariant — prioritization first.** `/pipeline:run` MUST render the prioritization+grouping status table before any classify dispatch. Classification on the full ready set at startup is forbidden — classify runs only on the user-committed slate at step 6. This carries forward the `feedback_pipeline_run_prioritization_first` direction from auto-memory and is asserted by `tests/test-pipeline-run-no-upfront-classify.sh`. Do not regress.
+
 0. **Housekeeping — branch check + sync worktrees + kill stale sessions**
 
    **First, confirm the orchestrator is on the configured base branch.** The base branch for all PRs is read from `pipeline.config` (`PIPELINE_BASE_BRANCH=$PIPELINE_BASE_BRANCH`). The orchestrator session should be on that branch so spawned worktrees inherit from it and PRs target it.
@@ -275,22 +277,9 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
    # END-TRACKER-FILTER
    ```
 
-   `READY_ISSUES` feeds the parallel classify dispatch (below) and the planning proposal in step 4. `TRACKER_ISSUES` feeds the status-table render in step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
+   `READY_ISSUES` feeds the planning proposal in step 4. `TRACKER_ISSUES` feeds the status-table render in step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
 
-   **Classify `ready` issues in parallel.** For each issue in the `ready` stage (no pipeline stage label) AND not excluded/later/human/brainstorm-labeled, check whether a `## Classification` comment already exists that is newer than the issue's `updatedAt`:
-
-   ```bash
-   for N in <ready_issue_numbers>; do
-     LATEST_CLASS_TS=$(gh issue view $N --repo $PIPELINE_REPO --json comments \
-       --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .createdAt // empty')
-     ISSUE_TS=$(gh issue view $N --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
-     # If LATEST_CLASS_TS is empty OR LATEST_CLASS_TS < ISSUE_TS, queue for classification
-   done
-   ```
-
-   Dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel** (single tool-call batch, one Agent per issue), each invoking `/pipeline:classify-issue N`. Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. No user reconciliation step is needed — labels are now authoritative.
-
-   **Caching semantics:** A classification is fresh when the latest `## Classification` comment's `createdAt > issue.updatedAt`. GitHub's `updatedAt` bumps on body edits AND label changes, so the cache auto-invalidates. Forced reclassification: delete the classification comment OR edit the issue body/labels. Both `/pipeline:run` (this step) and the `classify-issue` skill itself perform the same cache check so the skill can be re-invoked directly without duplicating work.
+   Classification is deferred — see step 6 (Propose ONE action → planning branch) for the cache-checked dispatch that runs only on the user-committed slate.
 
    **Detect residual mismatch (audit only):** For each `ready` issue with a fresh classification, compare the cached comment's `recommended_path` against the current label-derived path (`A` if labeled `docs-only`, `C` if labeled `multi-task`, else `B`). They should match — classify-issue writes them together. If they diverge, it means a user hand-edited a label after the last classify run; flag as `⚠ mismatch` and include in the final report column. Do NOT block planning on a mismatch: the label is authoritative, the comment is history.
 
@@ -324,7 +313,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
      - `A`+`C` → `A!` (existing rule preserved)
      - `D`+`C` → `D!` (D wins)
      - `A`+`D`+`C` → `A!` (A always wins)
-     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column.
+     classify-issue writes labels directly, so label and recommendation always match after a classify run; the audit-only `⚠ mismatch` flag (see step 1) lives in the final report, not this column. If a ready issue has no path label AND no fresh `## Classification` comment, render the Path column as `?` (unknown) — classify will run on demand when the user commits to a slate.
    - **Blocked by** = `#N` references parsed from `blocked by #N` / `depends on #N` annotations in the issue body, when present.
    - **Attachments (`att=N`)** = count of files present at `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` at table-render time, computed as `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null | wc -l`. Surfaced in the NOTES footer only when N>0 for at least one issue (consistent with other non-default columns). Sourced from on-disk state populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; the run skill itself does NOT re-fetch attachments at discovery time.
 
@@ -353,6 +342,8 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
        [P2] #999 — chore: bump tooling                                             (ready)
    ================================================================
    ```
+
+   Path column shows `?` for ready issues not yet classified. Classification runs on demand when you commit to a slate.
 
    Orphan bucketing rules:
    - Bucket key is the conventional-commit `<scope>` token from the title regex above.
@@ -436,8 +427,7 @@ active feature work, but it should come BEFORE pulling in new ready work
    - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
    - Issues labeled `tracker` are shown in the table (stage=`tracker`) but never proposed for plan/execute — they are coordination rollups, not implementation work.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM`:
-     - **Before proposing planning:** verify every ready issue has a fresh `## Classification` comment (the cache check from step 1 considers a comment fresh when its `createdAt > issue.updatedAt`). If any ready issue lacks a fresh classification, propose running `/pipeline:classify-issue N` for those issues first. Do NOT advance to planning until all ready issues are classified — classify-issue writes both the comment and the path label together.
-     - Then propose planning for the ready issues (in parallel). Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)" or "(brainstorm, manual)".
+     - Before proposing planning: identify the unclassified subset of the proposed slate (ready issues lacking a fresh `## Classification` comment per the cache check below). The proposal MUST name the slate AND surface the unclassified subset by issue number — for example: "Propose planning for #292, #309, #316. Of these, #292 and #316 lack classification — `/pipeline:classify-issue` will run on those first." Classification only runs on user confirmation (step 6), not at proposal time. Issues labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM` are shown in the table but never proposed for autonomous action; surface them in the report with a note like "(human-in-loop, manual)" or "(brainstorm, manual)".
    - If all issues are merged/done → congratulate and exit.
 
 5. **Wait for user confirmation** before taking any action. Never spawn agents without explicit user approval.
@@ -498,7 +488,7 @@ active feature work, but it should come BEFORE pulling in new ready work
 
    **For plan evaluation (plan-pending → plan-reviewed):** Run `/pipeline:evaluate-issue-plan N` for each issue needing evaluation. If multiple issues need evaluation, spawn one Agent per issue in parallel (foreground), each invoking `/pipeline:evaluate-issue-plan N`. The evaluate-issue-plan skill is read-only — it reads the plan comment and codebase, posts an evaluation comment, and updates labels. If the verdict is "Approve," the label changes to `plan-reviewed`. If "Revise," the label stays `plan-pending` and the evaluation comment explains what needs to change.
 
-   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Run `/pipeline:plan-issue N` for each issue. If multiple issues need planning, spawn one Agent per issue in parallel (foreground), each invoking `/pipeline:plan-issue N`. If multiple issues share a branch (discovered from issue body/comments or matching branch names), plan them together in a single agent call. The plan-issue skill reads prior comments (including user feedback) and produces a revised plan when feedback exists.
+   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** **Classify the user-committed subset first.** For each issue in the committed slate, check whether a fresh `## Classification` comment exists (the comment's `createdAt > issue.updatedAt`). If any lack a fresh classification, dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel** (single tool-call batch, one Agent per issue), each invoking `/pipeline:classify-issue N`. Each classify run writes the Classification comment AND applies the path label. Cached issues skip dispatch. Wait for all classify agents to complete before dispatching plan-issue. Caching semantics: GitHub's `updatedAt` bumps on body edits AND label changes, so the cache auto-invalidates. This is the same cache check that previously lived in step 1 discovery, relocated to fire only on the user-committed subset rather than the full ready set. Then: Run `/pipeline:plan-issue N` for each issue. If multiple issues need planning, spawn one Agent per issue in parallel (foreground), each invoking `/pipeline:plan-issue N`. If multiple issues share a branch (discovered from issue body/comments or matching branch names), plan them together in a single agent call. The plan-issue skill reads prior comments (including user feedback) and produces a revised plan when feedback exists.
 
    After all planning agents complete, verify each targeted issue has a plan comment:
    ```bash
