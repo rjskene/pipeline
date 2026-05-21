@@ -28,7 +28,9 @@ MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 WORKTREE_PATH=""
 while IFS= read -r line; do
   wt_path="$(echo "$line" | awk '{print $1}')"
-  if [[ "$(basename "$wt_path")" == ${PIPELINE_WORKTREE_PREFIX}-${ISSUE_NUM}-* ]]; then
+  wt_base="$(basename "$wt_path")"
+  if [[ "$wt_base" == "${PIPELINE_WORKTREE_PREFIX}-${ISSUE_NUM}" \
+     || "$wt_base" == "${PIPELINE_WORKTREE_PREFIX}-${ISSUE_NUM}-"* ]]; then
     WORKTREE_PATH="$wt_path"
     break
   fi
