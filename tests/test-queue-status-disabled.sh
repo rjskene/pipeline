@@ -22,7 +22,7 @@ trap 'rm -rf "$WORKDIR"' EXIT
 setup_proj() {
   local proj="$1"
   rm -rf "$proj"
-  mkdir -p "$proj/.claude/logs" "$proj/plugin/scripts"
+  mkdir -p "$proj/.claude/logs" "$proj/plugin/scripts" "$proj/.git"
   cat > "$proj/pipeline.config" <<'EOF'
 PIPELINE_REPO="fake/repo"
 PIPELINE_BASE_BRANCH="staging"
