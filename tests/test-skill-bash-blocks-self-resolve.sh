@@ -51,9 +51,11 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 # first 30 lines source _resolve-plugin-root.sh.
 skill_invokes_plugin_script() {
   local file="$1"
+  # Match indented fences too: SKILL.md numbered-list items embed ```bash blocks
+  # under their list indent. A column-0-only match would silently exempt those.
   awk '
-    /^```bash[[:space:]]*$/ { in_block = 1; next }
-    /^```[[:space:]]*$/     { in_block = 0; next }
+    /^[[:space:]]*```bash[[:space:]]*$/ { in_block = 1; next }
+    /^[[:space:]]*```[[:space:]]*$/     { in_block = 0; next }
     in_block && /\$\{CLAUDE_PLUGIN_ROOT(:-[^}]*)?\}/ && /(bash |python3 )/ { found = 1; exit }
     END { exit (found ? 0 : 1) }
   ' "$file"
