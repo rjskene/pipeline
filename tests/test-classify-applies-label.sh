@@ -275,6 +275,58 @@ else
   fail_msg "unexpected gh calls for PATH D + empty labels: $(cat "$GH_LOG")"
 fi
 
+# --- Test 18: broadened D-row keyword sample (one per semantic cluster) ---
+echo "Test 18: D-row keywords include representative sample (single-line, flip, narrow fix)"
+inc
+# Slice step 4 (from `^4. ` to `^4a.`).
+STEP4_TMP="$WORKDIR/step4-slice.md"
+awk '
+  /^4\. / { inblock = 1 }
+  /^4a\./ { inblock = 0 }
+  inblock { print }
+' "$RENDERED" > "$STEP4_TMP"
+missing=""
+for kw in "single-line" "flip" "narrow fix"; do
+  if ! grep -qF -- "$kw" "$STEP4_TMP"; then
+    missing="${missing}${kw}; "
+  fi
+done
+if [ -z "$missing" ]; then
+  pass_msg "step 4 D-row includes single-line / flip / narrow fix"
+else
+  fail_msg "step 4 D-row missing keyword(s): $missing"
+fi
+
+# --- Test 19: loosened C-row + alternative/options prose in step 4 ---
+echo "Test 19: C-row keeps 'independent' and step 4 mentions alternative + options"
+inc
+# C-row line in the table contains `| C |`. Find a `| C |` row with "independent".
+if grep -qiE '\| C \|' "$STEP4_TMP" \
+   && awk '/\| C \|/ && tolower($0) ~ /independent/ { found = 1 } END { exit (found ? 0 : 1) }' "$STEP4_TMP"; then
+  c_row_ok=1
+else
+  c_row_ok=0
+fi
+if grep -qi 'alternative' "$STEP4_TMP" && grep -qi 'options' "$STEP4_TMP"; then
+  alt_ok=1
+else
+  alt_ok=0
+fi
+if [ "$c_row_ok" = "1" ] && [ "$alt_ok" = "1" ]; then
+  pass_msg "C-row keeps 'independent' and step 4 prose mentions alternative + options"
+else
+  fail_msg "C-row/alternative-prose check failed (c_row_ok=$c_row_ok alt_ok=$alt_ok)"
+fi
+
+# --- Test 20: acceptance-criteria skip rule ---
+echo "Test 20: acceptance-criteria skip rule in step 4"
+inc
+if grep -qi 'Acceptance' "$STEP4_TMP" && grep -qiE 'skip|do not count' "$STEP4_TMP"; then
+  pass_msg "step 4 documents Acceptance + skip/do not count"
+else
+  fail_msg "step 4 missing Acceptance + skip/do not count rule"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

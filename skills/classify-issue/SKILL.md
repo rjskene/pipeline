@@ -62,6 +62,31 @@ You will receive an issue number as the argument. Perform:
 
 3. **Read first-level comments only** — ignore quoted/nested text. Consider only top-level comments.
 
+3c. **Body-marker override (evaluated before the rule table).** If the issue body contains an HTML comment of the form `<!--\s*pipeline:path=[A-Da-d]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->`), that claim is authoritative. Path = the marker letter normalized to uppercase (one of A/B/C/D); confidence = high; rationale = "user-claimed path via body marker". If multiple markers appear, the FIRST one (document order) wins. If the marker letter is not one of A/B/C/D, the marker is malformed and ignored — fall through to step 4 keyword scoring (the rule table below). Run the parser block below; if `MARKER_PATH` is non-empty, set `RECOMMENDED_PATH=$MARKER_PATH` and skip directly to step 5 (compose) and 5a (apply label). The B-marker case still runs step 5a so that any prior `docs-only`/`multi-task`/`quick-fix` label is removed (B is the unlabeled default).
+
+   ```bash
+   # BEGIN-PATH-MARKER-PARSE
+   # Required env: ISSUE_BODY (issue body markdown, may be multi-line).
+   # Sets: MARKER_PATH ("A"|"B"|"C"|"D" or empty string).
+   # Regex: <!--\s*pipeline:path=[A-Da-d]\s*--> (POSIX equivalent below).
+   MARKER_PATH=""
+   _raw=$(printf '%s' "$ISSUE_BODY" \
+     | grep -oE '<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->' \
+     | head -1)
+   if [ -n "$_raw" ]; then
+     _letter=$(printf '%s' "$_raw" \
+       | grep -oE 'pipeline:path=[A-Za-z]' \
+       | head -1 \
+       | cut -d= -f2 \
+       | tr 'a-z' 'A-Z')
+     case "$_letter" in
+       A|B|C|D) MARKER_PATH="$_letter" ;;
+       *) MARKER_PATH="" ;;
+     esac
+   fi
+   # END-PATH-MARKER-PARSE
+   ```
+
 4. **Score against rule set** (first match wins):
 
    | Signal | Path | Confidence |
@@ -70,10 +95,15 @@ You will receive an issue number as the argument. Perform:
    | Labels include `multi-task` | C | high |
    | Labels include `quick-fix` | D | high |
    | Body/title contains `docs-only`, `update README`, `update CLAUDE.md`, "no logic", "documentation only", "rename", "typo" | A | medium |
-   | Body/title contains "one-line", "rename", "typo", "add guard", "small bug", "tweak", or labels include quick-fix → D, medium-or-high confidence | D | medium |
-   | Body has a numbered/bulleted list of 3+ independent tasks OR phrases "for each of", "multiple", "parallel", "batch", "one per" | C | medium |
+   | Implied patch size: one file + ≤ ~20 LOC source → lean D; ≤ 3 files + ≤ ~40 LOC → lean B (estimate from the change described, NOT the issue body length) | D or B | medium |
+   | Body/title contains `one-line`, `single-line`, `single-file`, `single-subsystem`, `narrow fix`, `minimal`, `trivial`, `obvious`, `~N LOC` (N ≤ 30), `no design choice`, `single condition`, `one regex`, `flip`, `swap`, `repoint`, `toggle`, `rename`, `typo`, `add guard`, `small bug`, `tweak`, or labels include `quick-fix` | D | medium |
+   | Body has a numbered/bulleted list of 3+ **independent** tasks (see alternative-bullet rule below) OR phrases `for each of`, `multiple`, `parallel`, `batch`, `one per` | C | medium |
    | Body mentions schema + API + frontend changes in a single issue | C | low |
    | Otherwise | B | medium |
+
+   - **Alternative-bullet rule.** A bulleted list whose items are alternatives — introduced by `options:`, `either`, `choose one`, `pick one`, `A or B or C`, etc. — counts as one work item with design ambiguity, not N tasks. Lean B (not C) when an issue presents 3+ alternatives to a single design decision.
+   - **Acceptance-criteria skip.** Bullets nested under a heading `Acceptance`, `Acceptance Criteria`, or `Out of scope` are verification scope or non-goals for a single change, not parallel tasks. Skip those lists when counting "3+ independent tasks" — do not count them as work items.
+   - **Generic-keyword tightening for D triggers.** The words `flip` and `swap` fire D only when they co-occur with a code-shaped token in the same bullet/sentence: a file path (contains `/` and an extension), a function name (camelCase or snake_case ending in parens), or a backticked `code` token. Bare "flip the wording" / "swap the diagram" does NOT trigger D. The generic words `tweak`, `obvious`, and `minimal` retain a broad match; a one-time reclassify sweep after merge is the documented mitigation for any false-D fires.
 
 4a. **Read any ingested attachments.** Before composing the classification output, list and `Read` every file present in `.claude/scratch/issue-<N>/`. These were populated upstream by `/pipeline:fullsend` step 1a (autonomous mode) or `/pipeline:plan-issue` step 3b (interactive mode). If the directory is empty or absent, skip — this step does NOT itself re-fetch attachments.
 
@@ -163,4 +193,5 @@ You will receive an issue number as the argument. Perform:
 
 ## Constraints
 - MAY call `gh issue edit` to add/remove ONLY the `docs-only`, `multi-task`, and `quick-fix` labels. Never touch any other label. Never modify code.
+- Body markers (`<!-- pipeline:path=... -->`) are honored when present and well-formed; they short-circuit the rule table but do NOT bypass step 5a label application. The B marker REMOVES any existing A/C/D label and adds nothing.
 - Bullet points only. No prose padding.
