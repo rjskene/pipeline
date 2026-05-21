@@ -41,7 +41,7 @@ assert_not_contains() {
 assert_no_label_apply() {
   local label="$1"
   inc
-  if grep -qE -- "--add-label[[:space:]]+\"?${label}\"?" "$SKILL"; then
+  if grep -qE -- "--add-label[[:space:]=]+['\"]?${label}['\"]?" "$SKILL"; then
     fail_msg "skill body does NOT add-label ${label} (unexpected --add-label ${label} present)"
   else
     pass_msg "skill body does NOT add-label ${label}"
