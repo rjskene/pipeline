@@ -375,3 +375,19 @@ if [ "$HAS_NONDEFAULT" = "true" ]; then
   fi
   echo "================================================================"
 fi
+
+# ----- WARN lines + counts footer ------------------------------------
+#
+# WARN: emitted ABOVE the counts footer, one per child referenced under
+# multiple trackers.
+for line in "${MULTI_TRACKER_LINES[@]:-}"; do
+  [ -n "$line" ] && printf '%s\n' "$line"
+done
+
+# Counts: epics = unique trackers; children = unique child numbers (deduped
+# across trackers); orphans = non-tracker, non-child rows. open = sum.
+EPICS_N=$(printf '%s' "$ROWS_JSON" | jq '[.[] | select(.is_tracker)] | length')
+CHILDREN_N="${#IS_CHILD[@]}"
+ORPHANS_N=$(printf '%s' "$ORPHAN_ROWS_JSON" | jq 'length')
+OPEN_N=$((EPICS_N + CHILDREN_N + ORPHANS_N))
+printf '%s\n' "${EPICS_N} epics + ${CHILDREN_N} children + ${ORPHANS_N} orphans = ${OPEN_N} open"

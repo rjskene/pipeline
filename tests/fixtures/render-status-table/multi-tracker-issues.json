@@ -1,0 +1,23 @@
+[
+  {
+    "number": 10,
+    "title": "feat(install): tracker A",
+    "labels": [{"name": "tracker"}, {"name": "priority/P1"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 20,
+    "title": "feat(install): tracker B",
+    "labels": [{"name": "tracker"}, {"name": "priority/P2"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 50,
+    "title": "feat(install): shared child between two trackers",
+    "labels": [{"name": "plan-pending"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  }
+]

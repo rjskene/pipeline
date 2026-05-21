@@ -324,6 +324,70 @@ fi
 rm -rf "$PROJ_ROOT2"
 
 # ----------------------------------------------------------------------
+# Task 5: counts footer + multi-tracker WARN line
+# ----------------------------------------------------------------------
+
+# Scenario 5.1 — counts footer: 2 epics + 3 children + 2 orphans = 7 open.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/counts-issues.json" \
+  --trackers "$FIXTURES/counts-trackers.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "counts render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  pass_msg "counts render exits 0"
+  inc
+  if grep -qE '^2 epics \+ 3 children \+ 2 orphans = 7 open$' "$TMP/out"; then
+    pass_msg "counts footer: 2 epics + 3 children + 2 orphans = 7 open"
+  else
+    fail_msg "counts footer: 2 epics + 3 children + 2 orphans = 7 open" \
+      "$(grep -E 'epics' "$TMP/out" || echo '<no counts line>')"
+  fi
+fi
+
+# Scenario 5.2 — multi-tracker child triggers WARN line and counts as 1.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/multi-tracker-issues.json" \
+  --trackers "$FIXTURES/multi-tracker.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "multi-tracker render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  pass_msg "multi-tracker render exits 0"
+
+  inc
+  if grep -qE '^WARN: #50 listed under multiple trackers: #10, #20$' "$TMP/out"; then
+    pass_msg "WARN line emitted for #50 under multiple trackers"
+  else
+    fail_msg "WARN line emitted for #50 under multiple trackers" \
+      "$(grep -i 'WARN' "$TMP/out" || echo '<no WARN line>')"
+  fi
+
+  inc
+  if grep -qE '^2 epics \+ 1 children \+ 0 orphans = 3 open$' "$TMP/out"; then
+    pass_msg "duplicate child #50 counted once: 2+1+0=3"
+  else
+    fail_msg "duplicate child #50 counted once: 2+1+0=3" \
+      "$(grep -E 'epics' "$TMP/out" || echo '<no counts line>')"
+  fi
+
+  inc
+  warn_line=$(grep -n '^WARN' "$TMP/out" | head -1 | cut -d: -f1)
+  counts_line=$(grep -n 'epics' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$warn_line" ] && [ -n "$counts_line" ] && [ "$warn_line" -lt "$counts_line" ]; then
+    pass_msg "WARN line appears above counts footer"
+  else
+    fail_msg "WARN line appears above counts footer" "warn=$warn_line counts=$counts_line"
+  fi
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""
