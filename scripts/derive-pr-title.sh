@@ -46,15 +46,30 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# Neutralize set -u for callers that don't source pipeline.config first
+# (e.g. the test harness, or ad-hoc invocations). The explicit guard below
+# converts the missing-config case into a controlled exit 64 instead of a
+# `line NN: PIPELINE_REPO: unbound variable` shell trap.
+: "${PIPELINE_REPO:=}"
+
+require_repo() {
+  if [ -z "$PIPELINE_REPO" ]; then
+    echo "derive-pr-title: PIPELINE_REPO is unset; pass --title-override/--labels-override or source pipeline.config" >&2
+    exit 64
+  fi
+}
+
 if [ "$TITLE_OVERRIDDEN" -eq 1 ]; then
   TITLE="$TITLE_OVERRIDE"
 else
+  require_repo
   TITLE=$(gh issue view "$N" --repo "$PIPELINE_REPO" --json title --jq '.title')
 fi
 
 if [ "$LABELS_OVERRIDDEN" -eq 1 ]; then
   LABELS_RAW="$LABELS_OVERRIDE"
 else
+  require_repo
   LABELS_RAW=$(gh issue view "$N" --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(",")')
 fi
 
