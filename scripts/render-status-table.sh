@@ -147,12 +147,76 @@ if [ -z "$ROWS_JSON" ]; then
   exit 2
 fi
 
+# ----- tracker child extraction --------------------------------------
+#
+# For each tracker body in --trackers, pipe through the shared parser to
+# get its child issue numbers, then intersect with the open-issue set to
+# get OPEN children. A child referenced under multiple trackers is
+# collected into MULTI_TRACKER_CHILDREN for the WARN line (Task 5).
+
+# Resolve parse-tracker-children.sh — prefer ${CLAUDE_PLUGIN_ROOT} when set
+# (consumer install), fall back to the dogfood checkout sibling path.
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARSE_CHILDREN="${CLAUDE_PLUGIN_ROOT:-$_SCRIPT_DIR/..}/scripts/parse-tracker-children.sh"
+[ -x "$PARSE_CHILDREN" ] || PARSE_CHILDREN="$_SCRIPT_DIR/parse-tracker-children.sh"
+
+declare -A CHILDREN_BY_TRACKER=()
+declare -A TRACKER_COUNT_FOR_CHILD=()
+declare -A FIRST_TRACKER_FOR_CHILD=()
+declare -A SECOND_TRACKER_FOR_CHILD=()
+declare -A IS_CHILD=()
+MULTI_TRACKER_LINES=()
+
+OPEN_NUMBERS=$(printf '%s' "$ROWS_JSON" | jq -r '.[].number' | sort -u)
+
+if [ -n "$TRACKERS_FILE" ]; then
+  # Iterate tracker keys in the JSON map.
+  while IFS= read -r tracker_num; do
+    [ -n "$tracker_num" ] || continue
+    body=$(jq -r --arg k "$tracker_num" '.[$k] // ""' "$TRACKERS_FILE")
+    [ -n "$body" ] || continue
+    raw_children=$(printf '%s\n' "$body" | bash "$PARSE_CHILDREN" -)
+    open_children=""
+    for c in $raw_children; do
+      if printf '%s\n' "$OPEN_NUMBERS" | grep -qx "$c"; then
+        open_children="$open_children $c"
+        # Track multi-tracker membership.
+        TRACKER_COUNT_FOR_CHILD["$c"]=$(( ${TRACKER_COUNT_FOR_CHILD["$c"]:-0} + 1 ))
+        if [ -z "${FIRST_TRACKER_FOR_CHILD["$c"]:-}" ]; then
+          FIRST_TRACKER_FOR_CHILD["$c"]="$tracker_num"
+        elif [ -z "${SECOND_TRACKER_FOR_CHILD["$c"]:-}" ]; then
+          SECOND_TRACKER_FOR_CHILD["$c"]="$tracker_num"
+        fi
+        IS_CHILD["$c"]=1
+      fi
+    done
+    # shellcheck disable=SC2086
+    CHILDREN_BY_TRACKER["$tracker_num"]=$(echo $open_children | tr ' ' '\n' | awk 'NF' | paste -sd ' ' -)
+  done < <(jq -r 'keys[]' "$TRACKERS_FILE")
+fi
+
+# Build WARN lines (one per duplicated child) — emitted by Task 5.
+for c in "${!TRACKER_COUNT_FOR_CHILD[@]}"; do
+  if [ "${TRACKER_COUNT_FOR_CHILD[$c]}" -gt 1 ]; then
+    MULTI_TRACKER_LINES+=("WARN: #$c listed under multiple trackers: #${FIRST_TRACKER_FOR_CHILD[$c]}, #${SECOND_TRACKER_FOR_CHILD[$c]}")
+  fi
+done
+
+# Build a JSON array of child numbers (for jq exclusion below).
+CHILD_NUMBERS_JSON='[]'
+if [ "${#IS_CHILD[@]}" -gt 0 ]; then
+  CHILD_NUMBERS_JSON=$(printf '%s\n' "${!IS_CHILD[@]}" \
+    | jq -R 'tonumber' | jq -s '.')
+fi
+
 # ----- ORPHANS section -----------------------------------------------
 #
-# Children-of-tracker exclusion lands in Task 3; for now, ORPHANS includes
-# every non-tracker issue. Bucket alphabetically with (none / generic) last;
-# within a bucket, sort by priority tier ("9" = no priority, comes last).
-ORPHAN_ROWS_JSON=$(printf '%s' "$ROWS_JSON" | jq -c '[.[] | select(.is_tracker | not)]')
+# Orphans = non-tracker issues NOT referenced as a child under any tracker.
+# Bucket alphabetically with (none / generic) last; within a bucket, sort
+# by priority tier ("9" = no priority, comes last).
+ORPHAN_ROWS_JSON=$(printf '%s' "$ROWS_JSON" \
+  | jq -c --argjson children "$CHILD_NUMBERS_JSON" \
+      '[.[] | select((.is_tracker | not) and ((.number as $n | $children | index($n)) == null))]')
 
 # Compute bucket names: explicit (alphabetical) scopes + a sentinel for empty
 BUCKETS=$(printf '%s' "$ORPHAN_ROWS_JSON" \
@@ -162,6 +226,43 @@ BUCKETS=$(printf '%s' "$ORPHAN_ROWS_JSON" \
 # Emit table header
 echo "PIPELINE STATUS — $TODAY"
 echo "================================================================"
+
+# ----- EPICS section -------------------------------------------------
+#
+# Tracker rows render with the [Pn] #N — title format (no stage suffix).
+# Each open child appears indented 8 spaces with the stage right-padded
+# in parens. A tracker whose checklist children are ALL closed collapses
+# to a single "(all children closed — pending auto-close)" placeholder.
+TRACKER_ROWS_JSON=$(printf '%s' "$ROWS_JSON" | jq -c '[.[] | select(.is_tracker)] | sort_by(.priority_tier, .number)')
+TRACKER_COUNT=$(printf '%s' "$TRACKER_ROWS_JSON" | jq 'length')
+if [ "$TRACKER_COUNT" -gt 0 ]; then
+  echo "EPICS"
+  echo "================================================================"
+  # Iterate tracker rows in priority order.
+  while IFS= read -r row_json; do
+    [ -n "$row_json" ] || continue
+    t_num=$(printf '%s' "$row_json" | jq -r '.number')
+    t_badge=$(printf '%s' "$row_json" | jq -r '.priority_badge')
+    t_title=$(printf '%s' "$row_json" | jq -r '.title')
+    printf '    %s #%s — %s\n' "$t_badge" "$t_num" "$t_title"
+    open_children="${CHILDREN_BY_TRACKER[$t_num]:-}"
+    if [ -z "$open_children" ]; then
+      echo "        (all children closed — pending auto-close)"
+      continue
+    fi
+    for c in $open_children; do
+      child_row=$(printf '%s' "$ROWS_JSON" \
+        | jq -c --argjson n "$c" '.[] | select(.number == $n)')
+      if [ -z "$child_row" ]; then
+        continue
+      fi
+      c_title=$(printf '%s' "$child_row" | jq -r '.title')
+      c_stage=$(printf '%s' "$child_row" | jq -r '.stage')
+      printf '        #%s — %s  (%s)\n' "$c" "$c_title" "$c_stage"
+    done
+  done < <(printf '%s' "$TRACKER_ROWS_JSON" | jq -c '.[]')
+  echo "================================================================"
+fi
 
 ORPHAN_COUNT=$(printf '%s' "$ORPHAN_ROWS_JSON" | jq 'length')
 if [ "$ORPHAN_COUNT" -gt 0 ]; then

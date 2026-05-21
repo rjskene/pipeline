@@ -139,6 +139,84 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Task 3: EPICS section + tracker child rollup + ORPHANS dedup
+# ----------------------------------------------------------------------
+
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/epics-issues.json" \
+  --trackers "$FIXTURES/epics-trackers.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "epics render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  pass_msg "epics render exits 0"
+
+  inc
+  epics_line=$(grep -n '^EPICS' "$TMP/out" | head -1 | cut -d: -f1)
+  orphans_line=$(grep -n '^ORPHANS' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$epics_line" ] && [ -n "$orphans_line" ] && [ "$epics_line" -lt "$orphans_line" ]; then
+    pass_msg "EPICS section renders above ORPHANS"
+  else
+    fail_msg "EPICS section renders above ORPHANS" "epics=$epics_line orphans=$orphans_line"
+  fi
+
+  inc
+  # tracker row uses [Pn] #N — title format (no stage in parens)
+  if grep -qE '^[[:space:]]+\[P1\][[:space:]]+#120[[:space:]]+—' "$TMP/out"; then
+    pass_msg "tracker #120 row uses [Pn] #N — title"
+  else
+    fail_msg "tracker #120 row uses [Pn] #N — title" "$(grep '#120' "$TMP/out")"
+  fi
+
+  inc
+  # children indented 8 spaces, with right-padded stage in parens
+  if grep -qE '^        #144[[:space:]]+—.*\(plan-approved\)' "$TMP/out"; then
+    pass_msg "child #144 indented 8 spaces with stage"
+  else
+    fail_msg "child #144 indented 8 spaces with stage" "$(grep '#144' "$TMP/out")"
+  fi
+
+  inc
+  # children appear in their tracker's section, BELOW the tracker line
+  t120_line=$(grep -n '#120' "$TMP/out" | head -1 | cut -d: -f1)
+  c144_line=$(grep -n '#144' "$TMP/out" | head -1 | cut -d: -f1)
+  c146_line=$(grep -n '#146' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$t120_line" ] && [ -n "$c144_line" ] && [ "$t120_line" -lt "$c144_line" ] && [ "$c144_line" -lt "$c146_line" ]; then
+    pass_msg "tracker #120 followed by children #144, #146"
+  else
+    fail_msg "tracker #120 followed by children #144, #146" "t120=$t120_line c144=$c144_line c146=$c146_line"
+  fi
+
+  inc
+  # tracker with no open children collapses to placeholder
+  if grep -qE 'all children closed' "$TMP/out"; then
+    pass_msg "tracker with no open children renders placeholder"
+  else
+    fail_msg "tracker with no open children renders placeholder" "$(grep -A1 '#131' "$TMP/out")"
+  fi
+
+  inc
+  # children NOT included in ORPHANS — count of #144 lines must equal 1
+  c144_count=$(grep -c '#144' "$TMP/out")
+  if [ "$c144_count" -eq 1 ]; then
+    pass_msg "child #144 deduplicated (only appears once, in EPICS)"
+  else
+    fail_msg "child #144 deduplicated (only appears once, in EPICS)" "count=$c144_count"
+  fi
+
+  inc
+  # orphan #999 still in (none / generic) bucket
+  if grep -qE '#999[[:space:]]+—.*\(ready\)' "$TMP/out"; then
+    pass_msg "orphan #999 still appears in ORPHANS bucket"
+  else
+    fail_msg "orphan #999 still appears in ORPHANS bucket" "$(grep '#999' "$TMP/out")"
+  fi
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""

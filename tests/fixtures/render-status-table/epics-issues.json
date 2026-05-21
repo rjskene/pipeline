@@ -1,0 +1,44 @@
+[
+  {
+    "number": 120,
+    "title": "feat(install): consumer install hardening",
+    "labels": [{"name": "priority/P1"}, {"name": "tracker"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 131,
+    "title": "feat(observability): self-improve loop",
+    "labels": [{"name": "priority/P2"}, {"name": "tracker"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 144,
+    "title": "feat(doctor): label seeding",
+    "labels": [{"name": "plan-approved"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 145,
+    "title": "feat(install): CLAUDE.md cleanup",
+    "labels": [{"name": "in-progress"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 146,
+    "title": "feat(install): settings.json patch",
+    "labels": [{"name": "plan-pending"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 999,
+    "title": "chore: standalone orphan that stays under (none / generic)",
+    "labels": [{"name": "priority/P2"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  }
+]
