@@ -252,6 +252,8 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
    The renderer emits the canonical status table to stdout: a release-PR block (only when the release-prs file is non-empty; Stage column renders as the display-only literal `release-pending`, NOT a real GitHub label), then the dated status header, then a tracker section (with each open child indented, or a placeholder for trackers whose children are all closed), then an orphan section bucketed by conventional-commit scope, then a non-default-metadata block (Target Base / Path / Blocked by / on-disk attachments), then any multi-tracker WARN lines, then a counts footer (`N epics + N children + N orphans = T open`). See `scripts/render-status-table.sh` and `tests/test-render-status-table.sh` for the canonical format and per-rule contract; `att` is sourced from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` and is populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch attachments at discovery time.
 
+   Path column shows `?` for ready issues not yet classified — classification runs on demand when the user commits to a slate (see step 4), not upfront on the full ready set.
+
 <!--
 Priority order for "Propose ONE action" (highest → lowest):
   cleanup > in-progress > pr-open eval > plan-pending eval > plan-reviewed (await user)
