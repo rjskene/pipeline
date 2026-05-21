@@ -446,6 +446,42 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Fix-review: hardening surfaced by code review of #343
+# ----------------------------------------------------------------------
+
+# 1) The canonical SKILL.md invocation feeds --release-prs via bash process
+#    substitution (e.g. <(printf '%s\n' "$RELEASE_PRS")). That resolves to
+#    /dev/fd/N which is NOT a regular file. The renderer must accept it.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/all-defaults-issues.json" \
+  --release-prs <(printf 'pr=301 ci=pass title=chore(main): release 9.9.9\n') \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q '#301' "$TMP/out"; then
+  pass_msg "process substitution accepted for --release-prs"
+else
+  fail_msg "process substitution accepted for --release-prs" \
+    "rc=$rc, stderr=$(cat "$TMP/err"), stdout=$(cat "$TMP/out")"
+fi
+
+# 2) Issues with no .labels field (null) must not crash the renderer.
+inc
+cat >"$TMP/null-labels.json" <<'JSON'
+[{"number": 555, "title": "feat(run): issue with null labels", "labels": null, "body": "", "updatedAt": "2026-05-21T00:00:00Z"}]
+JSON
+bash "$HELPER" --issues "$TMP/null-labels.json" --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q '#555' "$TMP/out"; then
+  pass_msg "null labels field tolerated"
+else
+  fail_msg "null labels field tolerated" \
+    "rc=$rc, stderr=$(cat "$TMP/err"), stdout=$(cat "$TMP/out")"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""

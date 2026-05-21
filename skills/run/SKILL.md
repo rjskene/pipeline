@@ -213,20 +213,30 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 3. **Print a grouped status table** for all discovered pipeline issues. Rendering is delegated to `scripts/render-status-table.sh`; the orchestrator's job is to assemble the three input files and print the renderer's stdout verbatim. The renderer is the single source of truth for column widths, ordering, header lines, and footer formats — future tweaks ship as script changes plus golden-file updates, not prompt edits.
 
-   **Inputs.** This step consumes `TRACKER_ISSUES` from the tracker-filter block in step 1 (rendered as tracker rows with their open children indented underneath), plus the full open-issue list from step 1, plus the `RELEASE_PRS` line block from step 0. The renderer expects three files:
+   **Inputs.** This step consumes `TRACKER_ISSUES` from the tracker-filter block in step 1 (rendered as tracker rows with their open children indented underneath), plus the full open-issue list from step 1, plus the `RELEASE_PRS` line block from step 0. The renderer expects three files — capture all three before invoking it:
 
-   - `issues.json` — verbatim output of `gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels,body,updatedAt --limit 100` (already gathered in step 1).
-   - `trackers.json` — a JSON object `{"<tracker_number>": "<body string>", ...}`. For each tracker in `TRACKER_ISSUES`, fetch the body and assemble the map:
-     ```bash
-     TRACKERS_JSON=$(mktemp); echo '{}' > "$TRACKERS_JSON"
-     for tracker in $TRACKER_ISSUES; do
-       body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
-       TRACKERS_JSON_NEXT=$(jq --arg k "$tracker" --arg v "$body" '. + {($k): $v}' "$TRACKERS_JSON")
-       printf '%s' "$TRACKERS_JSON_NEXT" > "$TRACKERS_JSON"
-     done
-     ```
-     The renderer pipes each body through `${CLAUDE_PLUGIN_ROOT}/scripts/parse-tracker-children.sh` to extract checklist children and intersect them with the open-issue set. Closed children are omitted; children referenced under any tracker are removed from the orphan candidate set.
-   - `release-prs.txt` — the verbatim output of `scripts/list-release-prs.sh` (the `RELEASE_PRS` variable from step 0). One line per release PR: `pr=<num> ci=<pass|fail|pending> title=<title>`.
+   ```bash
+   # 1) issues.json — verbatim gh issue list payload. Re-fetch here so the
+   #    renderer reads .body (used by NOTES blocked-by parsing and att lookup);
+   #    step 1's ISSUE_LIST_JSON is partition-scoped (--json number,title,labels)
+   #    and does not carry .body.
+   ISSUES_JSON=$(mktemp)
+   gh issue list --repo "$PIPELINE_REPO" --state open \
+     --json number,title,labels,body,updatedAt --limit 100 > "$ISSUES_JSON"
+
+   # 2) trackers.json — JSON object {"<tracker_number>": "<body string>", ...}.
+   #    For each tracker in TRACKER_ISSUES, fetch the body and assemble the map.
+   TRACKERS_JSON=$(mktemp); echo '{}' > "$TRACKERS_JSON"
+   for tracker in $TRACKER_ISSUES; do
+     body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
+     TRACKERS_JSON_NEXT=$(jq --arg k "$tracker" --arg v "$body" '. + {($k): $v}' "$TRACKERS_JSON")
+     printf '%s' "$TRACKERS_JSON_NEXT" > "$TRACKERS_JSON"
+   done
+   ```
+
+   The renderer pipes each tracker body through `${CLAUDE_PLUGIN_ROOT}/scripts/parse-tracker-children.sh` to extract checklist children and intersect them with the open-issue set. Closed children are omitted; children referenced under any tracker are removed from the orphan candidate set.
+
+   The third input — `release-prs.txt` — is the verbatim line block emitted by `scripts/list-release-prs.sh` (already captured into `$RELEASE_PRS` in step 0; one line per release PR: `pr=<num> ci=<pass|fail|pending> title=<title>`). Feed it via bash process substitution; the renderer reads `--release-prs` with `[ -r ]` so a `/dev/fd/N` path works.
 
    **Invocation.** Print the renderer's stdout verbatim:
 
@@ -237,6 +247,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
        --issues "$ISSUES_JSON" \
        --trackers "$TRACKERS_JSON" \
        --release-prs <(printf '%s\n' "$RELEASE_PRS")
+   rm -f "$ISSUES_JSON" "$TRACKERS_JSON"
    ```
 
    The renderer emits the canonical status table to stdout: a release-PR block (only when the release-prs file is non-empty; Stage column renders as the display-only literal `release-pending`, NOT a real GitHub label), then the dated status header, then a tracker section (with each open child indented, or a placeholder for trackers whose children are all closed), then an orphan section bucketed by conventional-commit scope, then a non-default-metadata block (Target Base / Path / Blocked by / on-disk attachments), then any multi-tracker WARN lines, then a counts footer (`N epics + N children + N orphans = T open`). See `scripts/render-status-table.sh` and `tests/test-render-status-table.sh` for the canonical format and per-rule contract; `att` is sourced from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` and is populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch attachments at discovery time.

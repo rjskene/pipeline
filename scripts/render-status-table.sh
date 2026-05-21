@@ -58,17 +58,20 @@ if [ -z "$ISSUES_FILE" ]; then
   exit 2
 fi
 
-if [ ! -f "$ISSUES_FILE" ]; then
+# Accept regular files AND bash process substitutions (/dev/fd/N) — the
+# canonical /pipeline:run invocation feeds --release-prs via <(printf ...).
+# Use `-r` (readable) instead of `-f` (regular file) so /dev/fd entries pass.
+if [ ! -r "$ISSUES_FILE" ]; then
   echo "render-status-table.sh: --issues file not found: $ISSUES_FILE" >&2
   exit 2
 fi
 
-if [ -n "$TRACKERS_FILE" ] && [ ! -f "$TRACKERS_FILE" ]; then
+if [ -n "$TRACKERS_FILE" ] && [ ! -r "$TRACKERS_FILE" ]; then
   echo "render-status-table.sh: --trackers file not found: $TRACKERS_FILE" >&2
   exit 2
 fi
 
-if [ -n "$RELEASE_PRS_FILE" ] && [ ! -f "$RELEASE_PRS_FILE" ]; then
+if [ -n "$RELEASE_PRS_FILE" ] && [ ! -r "$RELEASE_PRS_FILE" ]; then
   echo "render-status-table.sh: --release-prs file not found: $RELEASE_PRS_FILE" >&2
   exit 2
 fi
@@ -106,7 +109,7 @@ ROWS_JSON=$(jq -c \
   --arg human     "$PIPELINE_LABELS_HUMAN" \
   --arg brainst   "$PIPELINE_LABELS_BRAINSTORM" \
   --arg base      "$PIPELINE_BASE_BRANCH" '
-  def labelnames: [.labels[].name];
+  def labelnames: [(.labels // [])[].name];
   def has_label(n): labelnames | any(. == n);
   def priority_tier:
     ([labelnames[] | capture("^priority/P(?<n>[0-3])$").n] | first)
@@ -245,7 +248,15 @@ BUCKETS=$(printf '%s' "$ORPHAN_ROWS_JSON" \
 # Parse one line at a time from --release-prs (already in the format emitted
 # by scripts/list-release-prs.sh: `pr=<num> ci=<status> title=<title>`).
 # Title may contain `=` or spaces, so capture everything after `title=`.
-if [ -n "$RELEASE_PRS_FILE" ] && [ -s "$RELEASE_PRS_FILE" ]; then
+#
+# Slurp the file contents first so we can detect non-empty input even when
+# --release-prs is a process substitution (/dev/fd/N), where `[ -s file ]`
+# always returns false regardless of payload.
+RELEASE_PRS_DATA=""
+if [ -n "$RELEASE_PRS_FILE" ]; then
+  RELEASE_PRS_DATA=$(cat "$RELEASE_PRS_FILE")
+fi
+if [ -n "$RELEASE_PRS_DATA" ]; then
   echo "RELEASE PRs"
   echo "================================================================"
   echo " PR     Title                              Stage             CI"
@@ -256,7 +267,7 @@ if [ -n "$RELEASE_PRS_FILE" ] && [ -s "$RELEASE_PRS_FILE" ]; then
     ci_status=$(printf '%s' "$line" | sed -n 's/.*ci=\([^ ]*\).*/\1/p')
     title=$(printf '%s' "$line" | sed -n 's/.*title=\(.*\)$/\1/p')
     printf ' #%-5s %-34s %-17s %s\n' "$pr_num" "$title" "release-pending" "$ci_status"
-  done < "$RELEASE_PRS_FILE"
+  done <<< "$RELEASE_PRS_DATA"
   echo "================================================================"
 fi
 
