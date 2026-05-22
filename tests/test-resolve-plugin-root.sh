@@ -32,6 +32,21 @@ make_home() {
   done
 }
 
+# Build a fake git repo under $1 with a configurable origin URL ($2) and an
+# optional sentinel manifest ($3 = "sentinel" to create .claude-plugin/plugin.json).
+# Uses GIT_CONFIG_GLOBAL=/dev/null on every git call so the developer's global
+# hooks / signing config can't stall the test.
+make_repo() {
+  local dir="$1" origin="$2" sentinel="${3:-}"
+  mkdir -p "$dir"
+  GIT_CONFIG_GLOBAL=/dev/null git -C "$dir" init -q
+  GIT_CONFIG_GLOBAL=/dev/null git -C "$dir" remote add origin "$origin"
+  if [ "$sentinel" = "sentinel" ]; then
+    mkdir -p "$dir/.claude-plugin"
+    printf '{}' > "$dir/.claude-plugin/plugin.json"
+  fi
+}
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
@@ -159,6 +174,22 @@ ACTUAL=$(
 )
 assert_eq "Case 11: 0.8.0-rc.10 beats 0.8.0-rc.2 (numeric rc ordering)" \
   "$TMP/h11/.claude/plugins/cache/claude-pipeline/pipeline/0.8.0-rc.10" "$ACTUAL"
+
+# ---------------- Case 12: local-override resolves to repo toplevel ----------------
+# Opt-in set + cwd is the rjskene/pipeline repo + sentinel present →
+# CLAUDE_PLUGIN_ROOT must be the repo toplevel, NOT the cache.
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  HOME="$TMP/h12"; make_home "$HOME" 0.4.0
+  make_repo "$TMP/repo12" "https://github.com/rjskene/pipeline.git" sentinel
+  cd "$TMP/repo12"
+  export PIPELINE_USE_LOCAL_PLUGIN=true
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 12: local-override resolves to repo toplevel when opt-in set + origin matches + sentinel present" \
+  "$TMP/repo12" "$ACTUAL"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
