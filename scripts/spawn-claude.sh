@@ -352,15 +352,28 @@ if [ -n "$CONTAINER_MODE" ]; then
     echo "[spawn-claude] ERROR: container-mode '$CONTAINER_MODE' not declared in PIPELINE_EVAL_CONTAINERS" >&2
     exit 4
   fi
-  norm_mode="$(echo "$CONTAINER_MODE" | tr '-' '_')"
-  compose_var="PIPELINE_EVAL_CONTAINER_${norm_mode}_COMPOSE_FILE"
-  env_var="PIPELINE_EVAL_CONTAINER_${norm_mode}_ENV_FILE"
-  svc_var="PIPELINE_EVAL_CONTAINER_${norm_mode}_SERVICE"
-  pre_var="PIPELINE_EVAL_CONTAINER_${norm_mode}_PREFLIGHT_CMD"
-  COMPOSE_FILE="${!compose_var:-}"
-  ENV_FILE="${!env_var:-}"
-  SERVICE="${!svc_var:-}"
-  PREFLIGHT="${!pre_var:-}"
+  # Source the case-insensitive env-var resolver (#336). UPPERCASE wins,
+  # lowercase falls back. Idempotent guard: only source once per process.
+  # Path resolution mirrors the _logging.sh pattern above so test fixtures
+  # that copy spawn-claude.sh into an isolated dir (and colocate the
+  # helper) still work without CLAUDE_PLUGIN_ROOT.
+  if ! declare -f _resolve_container_var >/dev/null 2>&1; then
+    _resolver="${CLAUDE_PLUGIN_ROOT:-$_spawn_claude_dir}/scripts/_resolve-container-var.sh"
+    [ -f "$_resolver" ] || _resolver="${_spawn_claude_dir}/_resolve-container-var.sh"
+    # shellcheck source=/dev/null
+    . "$_resolver"
+  fi
+  norm_mode_upper="$(echo "$CONTAINER_MODE" | tr '-' '_' | tr '[:lower:]' '[:upper:]')"
+  COMPOSE_FILE="$(_resolve_container_var "$CONTAINER_MODE" COMPOSE_FILE)"
+  ENV_FILE="$(_resolve_container_var "$CONTAINER_MODE" ENV_FILE)"
+  SERVICE="$(_resolve_container_var "$CONTAINER_MODE" SERVICE)"
+  PREFLIGHT="$(_resolve_container_var "$CONTAINER_MODE" PREFLIGHT_CMD)"
+  # Error messages name the UPPERCASE form (the recommended/canonical idiom)
+  # so new consumers see the canonical name first. Lowercase setups still
+  # resolve via the fallback; they only see this name on a missing-var
+  # error, in which case they're steered to UPPERCASE.
+  compose_var="PIPELINE_EVAL_CONTAINER_${norm_mode_upper}_COMPOSE_FILE"
+  svc_var="PIPELINE_EVAL_CONTAINER_${norm_mode_upper}_SERVICE"
   # Resolve a relative ENV_FILE to absolute against WORKTREE_PATH BEFORE
   # DOCKER_PREFIX is assembled. The probe (mock-web-eval/scripts/mock-web-eval-probe-port.sh)
   # writes the env file under PIPELINE_WORKTREE_PATH so concurrent worktrees
