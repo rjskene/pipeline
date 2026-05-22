@@ -93,10 +93,14 @@ def extract_paths() -> list[str]:
         scrubbed = re.sub(r"\$[A-Z_][A-Z0-9_]*", "", scrubbed)
         for m in re.finditer(r'(?:"|\')?(/[^\s"\';<>|&]+)(?:"|\')?', scrubbed):
             candidate = m.group(1)
-            # Skip the jq alternative operator (// inside a filter) and any
-            # other leading-double-slash substring that isn't a real path
-            # root on Linux. See #353.
-            if candidate.startswith("//"):
+            # Skip the bare jq alternative-operator token ("//" with nothing
+            # after, captured when surrounded by whitespace as in
+            # `.bar // empty`). The candidate must be exactly "//" — broader
+            # leading-double-slash skips would mask real out-of-boundary
+            # paths like "//etc/passwd" (POSIX collapses // to /). Real
+            # boundary-bypass attempts via // are caught downstream by
+            # is_allowed → os.path.realpath. See #353.
+            if candidate == "//":
                 continue
             if candidate in ("/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"):
                 continue

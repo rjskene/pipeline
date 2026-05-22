@@ -123,6 +123,19 @@ run_hook_set \
   0 \
   --no-grep
 
+# Payload D2 (regression guard for the // skip): real out-of-boundary path
+# with a leading double-slash MUST still block. POSIX collapses // to /, so
+# //etc/passwd is equivalent to /etc/passwd and must not be allowed through
+# by a too-broad startswith("//") shortcut. Pins against the bypass that
+# review caught.
+SS="$(printf '/%s' /)"
+D2_PAYLOAD=$(printf '{"tool_name":"Bash","tool_input":{"command":"cat %setc/passwd"}}' "$SS")
+run_hook_set \
+  "regression: cat <double-slash>etc/passwd blocked (no // bypass)" \
+  "$D2_PAYLOAD" \
+  2 \
+  "BLOCKED: path outside project boundary"
+
 # ---------------------------------------------------------------------------
 # Block 3 — Baseline behavior unchanged when env is healthy and no
 # false-positive substrings appear (Task 3 of #353).
