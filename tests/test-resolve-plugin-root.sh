@@ -191,5 +191,49 @@ ACTUAL=$(
 assert_eq "Case 12: local-override resolves to repo toplevel when opt-in set + origin matches + sentinel present" \
   "$TMP/repo12" "$ACTUAL"
 
+# ---------------- Case 13: opt-in unset → falls through to cache ----------------
+# Proves opt-in is REQUIRED — identity + sentinel alone are not enough.
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT PIPELINE_USE_LOCAL_PLUGIN
+  HOME="$TMP/h13"; make_home "$HOME" 0.4.0
+  make_repo "$TMP/repo13" "https://github.com/rjskene/pipeline.git" sentinel
+  cd "$TMP/repo13"
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 13: PIPELINE_USE_LOCAL_PLUGIN unset → resolves to cache, not repo" \
+  "$TMP/h13/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0" "$ACTUAL"
+
+# ---------------- Case 14: origin mismatch → falls through to cache ----------------
+# Proves identity gate holds — opt-in alone is not enough.
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  HOME="$TMP/h14"; make_home "$HOME" 0.4.0
+  make_repo "$TMP/repo14" "https://github.com/someone-else/other.git" sentinel
+  cd "$TMP/repo14"
+  export PIPELINE_USE_LOCAL_PLUGIN=true
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 14: origin mismatch → resolves to cache, not repo (identity gate)" \
+  "$TMP/h14/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0" "$ACTUAL"
+
+# ---------------- Case 15: sentinel missing → falls through to cache ----------------
+# Proves sentinel gate holds — opt-in + matching origin alone are not enough.
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  HOME="$TMP/h15"; make_home "$HOME" 0.4.0
+  make_repo "$TMP/repo15" "https://github.com/rjskene/pipeline.git"
+  cd "$TMP/repo15"
+  export PIPELINE_USE_LOCAL_PLUGIN=true
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 15: sentinel missing → resolves to cache, not repo (sentinel gate)" \
+  "$TMP/h15/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0" "$ACTUAL"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
