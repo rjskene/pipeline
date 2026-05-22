@@ -432,7 +432,7 @@ active feature work, but it should come BEFORE pulling in new ready work
      - If any `plan-pending` issues HAVE a plan evaluation AND user feedback comments (from rjskene) posted AFTER the evaluation → propose re-running `/pipeline:plan-issue N` to revise.
      - Otherwise, note they are awaiting user review.
    - Else if any issues have `plan-reviewed` → note they are awaiting user approval. Do not propose anything.
-   - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions.
+   - Else if any issues have `plan-approved` → propose setting up worktrees via `scripts/setup-worktree.sh` and printing launch instructions. The script takes TWO positional args: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh <branch-name> <issue-number>`. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title per the "Branch and worktree naming convention" block above (line 137). Worked example: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh feature/gmail-ci-filter 81`. **Do NOT invoke with only the issue number** — the script will reject a bare integer as of #350 because it does not match the `feature/<slug>` shape.
    - Else if any release PRs were discovered in step 0 with `ci=pass` → propose **"merge release PR #N"** (one proposal per green release PR). Show the PR title and CI status. On user confirmation, run `gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch`. Release PRs with `ci=fail` or `ci=pending` are surfaced in the status table but NOT proposed — wait for CI to settle (or fix it) before merging.
    - Issues labeled `tracker` are shown in the table (stage=`tracker`) but never proposed for plan/execute — they are coordination rollups, not implementation work.
    - Else if any issues have no pipeline label and are not blocked and are not labeled `PIPELINE_LABELS_HUMAN` or `PIPELINE_LABELS_BRAINSTORM`:
@@ -551,11 +551,17 @@ active feature work, but it should come BEFORE pulling in new ready work
    - **PATH B / PATH C** (no `docs-only` label): unchanged — proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` below.
    - **PATH D** (quick-fix label present): dispatch inline from this orchestrator session via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. Multiple D issues fan out as parallel inline Agent calls in a single tool-call batch. Note: the subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a `pipeline:` namespaced form.
 
-   1. Run the setup script with the issue number:
+   1. Run the setup script with BOTH positional args — `<branch-name>` AND `<issue-number>`. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title per the "Branch and worktree naming convention" block above (line 137); `<issue-number>` is the bare integer:
       ```bash
-      bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh <branch> <issue_number>
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh feature/<slug> <issue_number>
+      ```
+      Worked example:
+      ```bash
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh feature/gmail-ci-filter 81
       ```
       This creates the worktree at `.claude/worktrees/$PIPELINE_WORKTREE_PREFIX-<issue_number>-<slug>`, copies `.claude/settings.local.json`, installs dependencies, and seeds the dev database.
+
+      **Do NOT invoke with only the issue number** — the script will reject a bare integer as of #350 because it does not match the `feature/<slug>` shape required by the branch-naming convention. A call like `setup-worktree.sh 81` fails the branch-prefix guard; without that guard, the worktree would silently land on a branch literally named `81` and every downstream stage would break.
 
    2. After ALL worktrees are set up, print a summary with the frontend URL for each issue. The frontend port is `$PIPELINE_FRONTEND_PORT_OFFSET + issue_number`:
       ```
