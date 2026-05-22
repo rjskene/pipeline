@@ -140,7 +140,15 @@ PIPELINE_EVAL_CLASSIFIER=""
 #
 # Space-separated list of container mode names the classifier may emit.
 # For each declared mode <m>, set the following (where <m_norm> is <m>
-# with hyphens replaced by underscores):
+# with hyphens converted to underscores and folded to UPPERCASE — e.g.
+# `web-eval` -> `WEB_EVAL`). Lowercase variable names are still accepted
+# as a back-compat fallback (when both cases are set, UPPERCASE wins),
+# but new configs should use UPPERCASE to match shell convention.
+#
+# NOTE: `mock-web-eval/replay/README.md` and `mock-web-eval/replay/replay.sh`
+# currently document the lowercase form. Those examples still work via
+# the back-compat fallback; migrating them is tracked as a follow-up to
+# keep this fix surgical.
 #
 #   PIPELINE_EVAL_CONTAINER_<m_norm>_COMPOSE_FILE   (required) compose.yml path
 #   PIPELINE_EVAL_CONTAINER_<m_norm>_SERVICE        (required) service name in compose
@@ -188,16 +196,16 @@ PIPELINE_CONTAINER_SKILLS="evaluate-issue-pr"
 # Example (web-eval container — uncomment + adjust):
 PIPELINE_EVAL_CONTAINERS=""
 # PIPELINE_EVAL_CONTAINERS="web-eval"
-# PIPELINE_EVAL_CONTAINER_web_eval_COMPOSE_FILE="compose.web-eval.yml"
-# PIPELINE_EVAL_CONTAINER_web_eval_ENV_FILE=".env.web-eval"
-# PIPELINE_EVAL_CONTAINER_web_eval_SERVICE="claude-web-eval"
-# PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash scripts/web-eval.sh --preflight"
-# PIPELINE_EVAL_CONTAINER_web_eval_MAX_CONCURRENT="1"
+# PIPELINE_EVAL_CONTAINER_WEB_EVAL_COMPOSE_FILE="compose.web-eval.yml"
+# PIPELINE_EVAL_CONTAINER_WEB_EVAL_ENV_FILE=".env.web-eval"
+# PIPELINE_EVAL_CONTAINER_WEB_EVAL_SERVICE="claude-web-eval"
+# PIPELINE_EVAL_CONTAINER_WEB_EVAL_PREFLIGHT_CMD="bash scripts/web-eval.sh --preflight"
+# PIPELINE_EVAL_CONTAINER_WEB_EVAL_MAX_CONCURRENT="1"
 
 # Example — mock-web-eval container (dogfood demo; see mock-web-eval/replay/README.md):
 # PIPELINE_EVAL_CLASSIFIER="mock-web-eval/scripts/mock-web-eval-classifier.sh"
 # PIPELINE_EVAL_CONTAINERS="mock-web-eval"
-# PIPELINE_EVAL_CONTAINER_mock_web_eval_COMPOSE_FILE="mock-web-eval/docker/compose.yml"
-# PIPELINE_EVAL_CONTAINER_mock_web_eval_SERVICE="mock-web-eval"
-# PIPELINE_EVAL_CONTAINER_mock_web_eval_ENV_FILE="mock-web-eval/target/.env.mock-web-eval"
-# PIPELINE_EVAL_CONTAINER_mock_web_eval_PREFLIGHT_CMD="bash mock-web-eval/scripts/mock-web-eval-probe-port.sh"
+# PIPELINE_EVAL_CONTAINER_MOCK_WEB_EVAL_COMPOSE_FILE="mock-web-eval/docker/compose.yml"
+# PIPELINE_EVAL_CONTAINER_MOCK_WEB_EVAL_SERVICE="mock-web-eval"
+# PIPELINE_EVAL_CONTAINER_MOCK_WEB_EVAL_ENV_FILE="mock-web-eval/target/.env.mock-web-eval"
+# PIPELINE_EVAL_CONTAINER_MOCK_WEB_EVAL_PREFLIGHT_CMD="bash mock-web-eval/scripts/mock-web-eval-probe-port.sh"

@@ -220,6 +220,14 @@ classify_issue() {
   printf '%s\n' "$mode" "$extras" "$rc" "$err"
 }
 
+# Source the case-insensitive env-var resolver (#336). UPPERCASE wins,
+# lowercase falls back. Idempotent guard. Sourced from SCRIPT_DIR (the
+# plugin's scripts/ dir), mirroring the _logging.sh source above.
+if ! declare -f _resolve_container_var >/dev/null 2>&1; then
+  # shellcheck source=/dev/null
+  . "${SCRIPT_DIR}/_resolve-container-var.sh"
+fi
+
 # bucket_max <mode> -> echoes the configured max concurrency for that mode.
 # Default 1 for non-bare modes (exclusive-resource assumption); bare uses
 # the global MAX_CONCURRENT.
@@ -229,9 +237,9 @@ bucket_max() {
     echo "$MAX_CONCURRENT"
     return
   fi
-  local norm; norm="$(echo "$mode" | tr '-' '_')"
-  local var="PIPELINE_EVAL_CONTAINER_${norm}_MAX_CONCURRENT"
-  echo "${!var:-1}"
+  local val
+  val="$(_resolve_container_var "$mode" MAX_CONCURRENT)"
+  echo "${val:-1}"
 }
 
 # Single issue — launch directly, no queue overhead

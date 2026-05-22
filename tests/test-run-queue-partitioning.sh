@@ -39,6 +39,9 @@ setup_proj() {
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$SCRIPT_DIR/../scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
+  # run-queue.sh sources _resolve-container-var.sh from SCRIPT_DIR (#336);
+  # colocate it next to run-queue.sh in the fixture.
+  cp "$SCRIPT_DIR/../scripts/_resolve-container-var.sh" "$proj/.claude/scripts/_resolve-container-var.sh"
   chmod +x "$proj/.claude/scripts/run-queue.sh"
   # Stage the plugin-shipped helper at the same dir as run-queue.sh + _logging.sh,
   # so ${CLAUDE_PLUGIN_ROOT}/scripts/ resolution in classify_issue finds it under
