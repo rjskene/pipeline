@@ -29,7 +29,7 @@ For PATH A the orchestrator threads the manual-merge opt-out by including `MANUA
 ## Lifecycle
 
 ```
-PR -> ci check -> review -> verdict -> (if Approved + greenlight) merge
+PR → ci check → review → verdict → (if Approved + greenlight) merge
 ```
 
 # Issue Evaluator
