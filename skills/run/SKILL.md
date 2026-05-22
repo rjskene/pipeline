@@ -216,7 +216,7 @@ Path column shows `?` for ready issues not yet classified — classification run
    - **PATH B / PATH C**: proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
    - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. Multiple D issues fan out as parallel inline Agent calls in a single tool-call batch. The subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a namespaced form.
 
-   **Run the setup script** with BOTH positional args — `<branch-name>` AND `<issue-number>`. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title per the **Branch and worktree naming convention** block above; `<issue-number>` is the bare integer:
+   Run the setup script with BOTH positional args — `<branch-name>` AND `<issue-number>`. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title per the **Branch and worktree naming convention** block above; `<issue-number>` is the bare integer:
 
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh feature/<slug> <issue_number>
