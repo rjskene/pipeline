@@ -23,6 +23,9 @@ setup_proj() {
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/mock-web-eval/scripts"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$LOGGING_HELPER" "$proj/.claude/scripts/_logging.sh"
+  # run-queue.sh sources _resolve-container-var.sh from SCRIPT_DIR (#336);
+  # colocate it next to run-queue.sh in the fixture.
+  cp "$REPO_ROOT/scripts/_resolve-container-var.sh" "$proj/.claude/scripts/_resolve-container-var.sh"
   chmod +x "$proj/.claude/scripts/run-queue.sh"
   cp "$REPO_ROOT/mock-web-eval/scripts/eval-classifier-invoke.sh" "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
   chmod +x "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"

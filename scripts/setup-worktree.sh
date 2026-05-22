@@ -24,7 +24,45 @@ fi
 
 BRANCH="$1"
 ISSUE_NUM="${2:-}"
-SUFFIX="${BRANCH#feature/}"
+
+# Reject branch names without an allowed Conventional Commits prefix.
+# Without this guard, a bare integer like `setup-worktree.sh 81` silently
+# creates a worktree on a branch literally named `81`, which breaks every
+# downstream pipeline stage (issue #350).
+case "$BRANCH" in
+  feature/*|fix/*|chore/*|docs/*|refactor/*|test/*|perf/*|ci/*|build/*|revert/*) ;;
+  *)
+    echo "ERROR: branch name must start with one of feature/, fix/, chore/, docs/, refactor/, test/, perf/, ci/, build/, revert/ — got: $BRANCH" >&2
+    echo "Usage: $0 [--base <base>] <branch-name> <issue-number>" >&2
+    echo "Example: $0 feature/gmail-ci-filter 81" >&2
+    exit 2
+    ;;
+esac
+
+# Strip everything up through the first slash so any allowed Conventional
+# Commits prefix (feature/, fix/, chore/, ...) collapses to its trailing slug.
+# Without this, `fix/foo` would leak the `fix/` prefix into the worktree dir
+# name (`wt-81-fix/foo`) and break downstream `find_worktree` matching (#350).
+SUFFIX="${BRANCH#*/}"
+# Post-strip validation: the slug must be a non-empty, single segment so the
+# worktree directory always has the shape `wt-<N>-<slug>` with no embedded
+# slashes. Empty (`feature/`) and multi-segment (`feature/foo/bar`) inputs
+# are bad-arg-shape errors in the same family as the prefix check above; use
+# the same exit code 2 so callers can treat them uniformly.
+if [ -z "$SUFFIX" ]; then
+  echo "ERROR: branch name must have a non-empty slug after the prefix — got: $BRANCH" >&2
+  echo "Usage: $0 [--base <base>] <branch-name> <issue-number>" >&2
+  echo "Example: $0 feature/gmail-ci-filter 81" >&2
+  exit 2
+fi
+case "$SUFFIX" in
+  */*)
+    echo "ERROR: branch slug must be a single segment, no embedded '/' — got: $BRANCH" >&2
+    echo "Usage: $0 [--base <base>] <branch-name> <issue-number>" >&2
+    echo "Example: $0 feature/gmail-ci-filter 81" >&2
+    exit 2
+    ;;
+esac
 MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 WORKTREE_DIR="$MAIN_REPO/.claude/worktrees"
 if [ -n "$ISSUE_NUM" ]; then

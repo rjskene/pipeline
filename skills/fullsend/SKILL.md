@@ -35,7 +35,7 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
 
 **Flag parsing.** `--manual-merge` may appear anywhere in argv (before, between, or after issue numbers; e.g. `FULL SEND --manual-merge 1 2 3`, `FULL SEND 1 2 3 --manual-merge`, `FULL SEND 1 --manual-merge 2 3`). The token cannot collide with issue numbers because those are bare integers. When present, set `MANUAL_MERGE=1` for all spawned `evaluate-issue-pr` agents (passed via `run-queue.sh --manual-merge` → `spawn-claude.sh --manual-merge`) and skip the greenlight auto-merge path in Step 8 below.
 
-**0a. Wave plan (pre-think).** Before dispatching any classify/plan agents, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh <ready-issue-numbers>` and capture stdout as the wave plan. Process the rest of step 1 (classify, then plan) wave by wave: dispatch all issues in Wave K in parallel, await completion, then advance to Wave K+1. In interactive mode, print the wave plan once before launching; in autonomous full send mode, log it and proceed. The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default true) — when `false`, fall back to the legacy single-blast parallel dispatch.
+**0a. Wave plan (pre-think).** Before dispatching any classify/plan agents, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh --stage=classify <ready-issue-numbers>` and capture stdout as the wave plan. The `--stage=classify` flag tells the planner to skip file-conflict detection for this dispatch — classify/plan agents are read-only against the repo, so cross-references in issue bodies must not over-serialize them. Process the rest of step 1 (classify, then plan) wave by wave: dispatch all issues in Wave K in parallel, await completion, then advance to Wave K+1. In interactive mode, print the wave plan once before launching; in autonomous full send mode, log it and proceed. The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default true) — when `false`, fall back to the legacy single-blast parallel dispatch.
 
 1. **Plan**
 
@@ -64,7 +64,23 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```bash
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
-5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
+5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). Full invocation signature:
+
+   ```
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh [--base <base>] <branch-name> <issue-number>
+   ```
+
+   Both positional args are required. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short) — same convention as `skills/run/SKILL.md` ("Branch and worktree naming convention"). `<issue-number>` is the bare integer.
+
+   Worked example:
+
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh feature/gmail-ci-filter 81
+   ```
+
+   The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
+
+   **Do NOT invoke with only the issue number** — the script will reject it as of #350. A bare integer like `setup-worktree.sh 81` fails the branch-prefix guard because `81` is not a `feature/<slug>` shape; without that guard, the worktree would silently land on a branch literally named `81` and every downstream stage would break.
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
 6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parse the emitted `ACTION=` line. Act per the table:
 

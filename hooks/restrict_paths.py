@@ -8,6 +8,19 @@ import re
 import sys
 from pathlib import Path
 
+PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not PLUGIN_ROOT:
+    print(
+        "restrict_paths.py: CLAUDE_PLUGIN_ROOT not set in hook env — "
+        "cannot resolve plugin paths. Likely a harness env-propagation "
+        "regression (see issue #339). Allowing this call (fail-open) so "
+        "the assistant can recover. To re-enable path restriction, ensure "
+        "CLAUDE_PLUGIN_ROOT is exported in the harness env before "
+        "invoking Claude Code.",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
 
@@ -68,10 +81,27 @@ def extract_paths() -> list[str]:
             paths.append(p)
 
     elif tool_name == "Bash":
-        # Best-effort: extract absolute paths from the command string
+        # Best-effort: extract absolute paths from the command string.
         command = tool_input.get("command", "")
-        for m in re.finditer(r'(?:"|\')?(/[^\s"\';<>|&]+)(?:"|\')?', command):
+        # Pre-scrub env-var literals so unsubstituted ${VAR} / $VAR tokens
+        # in the command text can't false-positive the path extractor. Two
+        # passes: curly form first (explicit braces), then bare form on the
+        # residue. Uppercase + underscore matches conventional env-var
+        # naming and avoids consuming shell positional/special params like
+        # $1, $?, $@ that can't be paths anyway. See #353.
+        scrubbed = re.sub(r"\$\{[A-Z_][A-Z0-9_]*\}", "", command)
+        scrubbed = re.sub(r"\$[A-Z_][A-Z0-9_]*", "", scrubbed)
+        for m in re.finditer(r'(?:"|\')?(/[^\s"\';<>|&]+)(?:"|\')?', scrubbed):
             candidate = m.group(1)
+            # Skip the bare jq alternative-operator token ("//" with nothing
+            # after, captured when surrounded by whitespace as in
+            # `.bar // empty`). The candidate must be exactly "//" — broader
+            # leading-double-slash skips would mask real out-of-boundary
+            # paths like "//etc/passwd" (POSIX collapses // to /). Real
+            # boundary-bypass attempts via // are caught downstream by
+            # is_allowed → os.path.realpath. See #353.
+            if candidate == "//":
+                continue
             if candidate in ("/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"):
                 continue
             if candidate.startswith("/tmp"):

@@ -33,8 +33,8 @@ want() {
 
 want "PIPELINE_EVAL_CLASSIFIER documented"        "PIPELINE_EVAL_CLASSIFIER="
 want "PIPELINE_EVAL_CONTAINERS documented"        "PIPELINE_EVAL_CONTAINERS="
-want "per-mode COMPOSE_FILE example"              "PIPELINE_EVAL_CONTAINER_web_eval_COMPOSE_FILE="
-want "per-mode MAX_CONCURRENT example"            "PIPELINE_EVAL_CONTAINER_web_eval_MAX_CONCURRENT="
+want "per-mode COMPOSE_FILE example"              "PIPELINE_EVAL_CONTAINER_WEB_EVAL_COMPOSE_FILE="
+want "per-mode MAX_CONCURRENT example"            "PIPELINE_EVAL_CONTAINER_WEB_EVAL_MAX_CONCURRENT="
 want "canonical token format prose"               "--container-mode="
 
 echo ""

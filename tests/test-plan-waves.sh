@@ -26,12 +26,21 @@ TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
 mkdir -p "$TMP/bin"
 
 # gh shim: parses `gh issue view <N> --repo ... --json ...` and emits
-# the canned JSON at $GH_ISSUE_DIR/<N>.json.
+# the canned JSON at $GH_ISSUE_DIR/<N>.json. Also serves
+# $GH_ISSUE_DIR/<N>.comments.json when args contain a bare `comments` token.
 cat > "$TMP/bin/gh" <<'GH'
 #!/bin/bash
 # Args look like: issue view 42 --repo owner/repo --json number,title,body,labels
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   n="$3"
+  # detect --json comments form (used by plan-comment parser)
+  for a in "$@"; do
+    if [ "$a" = "comments" ]; then
+      f="$GH_ISSUE_DIR/$n.comments.json"
+      if [ -f "$f" ]; then cat "$f"; exit 0; fi
+      echo '{"comments":[]}'; exit 0
+    fi
+  done
   f="$GH_ISSUE_DIR/$n.json"
   if [ -f "$f" ]; then
     cat "$f"
@@ -61,6 +70,14 @@ write_issue() {
     --argjson labels "$labels" \
     '{number: ($num|tonumber), title: ("issue " + $num), body: $body, labels: $labels}' \
     > "$dir/$num.json"
+}
+
+# Helper: write a canned issue comments JSON. Args: dir, number, plan_body
+write_comments() {
+  local dir="$1" num="$2" plan_body="$3"
+  jq -n --arg body "$plan_body" \
+    '{comments: [{body: $body, createdAt: "2026-05-22T00:00:00Z"}]}' \
+    > "$dir/$num.comments.json"
 }
 
 run_helper() {
@@ -171,6 +188,102 @@ else
   rc=$?
   fail_msg "Case E: helper exited $rc (dangling blocker should not deadlock)"
   echo "    stderr:"; sed 's/^/      /' "$E/stderr"
+fi
+
+# ---- Case F: --stage=classify ignores file conflicts ----
+echo "Case F: --stage=classify → all issues parallel even with shared files"
+inc
+F="$TMP/case-f"; mkdir -p "$F"; export GH_ISSUE_DIR="$F"
+write_issue "$F" 1 "priority/P2" "Touches \`shared/common.sh\` here."
+write_issue "$F" 2 "priority/P2" "Also references \`shared/common.sh\` (body mention)."
+
+if OUT=$(run_helper --stage=classify 1 2 2>"$F/stderr"); then
+  if echo "$OUT" | grep -qE "^Wave 1: classify #1, #2 in parallel$" \
+     && ! echo "$OUT" | grep -qE "^Wave 2:"; then
+    pass_msg "Case F: --stage=classify keeps cross-referencing issues in single wave"
+  else
+    fail_msg "Case F: unexpected output"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case F: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$F/stderr"
+fi
+
+# ---- Case G: --stage=execute uses plan-comment Affected areas, ignores body cross-ref ----
+echo "Case G: --stage=execute prefers plan-comment Affected areas over body mentions"
+inc
+G="$TMP/case-g"; mkdir -p "$G"; export GH_ISSUE_DIR="$G"
+# Both bodies backtick BOTH paths — the greedy body extractor would over-conflict
+# them. Plan comments narrow each issue to its real target.
+# #1 plan touches scripts/alpha.sh; body backticks both alpha.sh and beta.sh.
+write_issue "$G" 1 "priority/P2" "Implements \`scripts/alpha.sh\`. See \`scripts/beta.sh\` for the prior fix pattern."
+write_comments "$G" 1 "## Implementation Plan
+
+**Files to change:**
+- \`scripts/alpha.sh\` — new implementation
+"
+# #2 plan touches scripts/beta.sh; body backticks both beta.sh and alpha.sh.
+write_issue "$G" 2 "priority/P2" "Tweaks \`scripts/beta.sh\`. Called from \`scripts/alpha.sh\`."
+write_comments "$G" 2 "## Implementation Plan
+
+**Files to change:**
+- \`scripts/beta.sh\` — small change
+"
+
+if OUT=$(run_helper --stage=execute 1 2 2>"$G/stderr"); then
+  if echo "$OUT" | grep -qE "^Wave 1: classify #1, #2 in parallel$"; then
+    pass_msg "Case G: plan-comment exact-match supersedes body cross-references"
+  else
+    fail_msg "Case G: unexpected output (expected parallel Wave 1)"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case G: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$G/stderr"
+fi
+
+# ---- Case H: default stage (no flag) = execute (back-compat) ----
+echo "Case H: omitting --stage defaults to execute (file-conflict detection active)"
+inc
+H="$TMP/case-h"; mkdir -p "$H"; export GH_ISSUE_DIR="$H"
+write_issue "$H" 1 "priority/P2" "Touches \`shared/common.sh\`."
+write_issue "$H" 2 "priority/P2" "Also affects \`shared/common.sh\` (conflict)."
+# no .comments.json → falls back to body-derived detection
+
+if OUT=$(run_helper 1 2 2>"$H/stderr"); then
+  if echo "$OUT" | grep -qE "^Wave 1: classify #1" \
+     && echo "$OUT" | grep -qE "^Wave 2: classify #2.*shares.*shared/common.sh.*#1"; then
+    pass_msg "Case H: default stage preserves existing serialization behavior"
+  else
+    fail_msg "Case H: unexpected output"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case H: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$H/stderr"
+fi
+
+# ---- Case I: --stage=bogus exits non-zero ----
+echo "Case I: --stage with invalid value exits 1"
+inc
+I="$TMP/case-i"; mkdir -p "$I"; export GH_ISSUE_DIR="$I"
+write_issue "$I" 1 "priority/P2" "Touches \`a.sh\`."
+
+if OUT=$(run_helper --stage=bogus 1 2>"$I/stderr"); then
+  fail_msg "Case I: helper unexpectedly exited 0 for --stage=bogus"
+  echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+else
+  rc=$?
+  if [ "$rc" = "1" ] && grep -q "invalid --stage value" "$I/stderr"; then
+    pass_msg "Case I: --stage=bogus rejected with exit 1 and clear message"
+  else
+    fail_msg "Case I: expected rc=1 + 'invalid --stage value' in stderr; got rc=$rc"
+    echo "    stderr:"; sed 's/^/      /' "$I/stderr"
+  fi
 fi
 
 echo ""

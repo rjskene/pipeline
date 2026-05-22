@@ -28,6 +28,10 @@ trap 'rm -rf "$WORKDIR"' EXIT
 PROJ="$WORKDIR/proj"
 mkdir -p "$PROJ/.claude/scripts"
 cp "$SCRIPT_UNDER_TEST" "$PROJ/.claude/scripts/spawn-claude.sh"
+# spawn-claude.sh sources _resolve-container-var.sh (#336); colocate it next
+# to spawn-claude.sh so the fallback `$(dirname BASH_SOURCE[0])/_resolve-…`
+# path resolves under the test fixture.
+cp "$SCRIPT_DIR/../scripts/_resolve-container-var.sh" "$PROJ/.claude/scripts/_resolve-container-var.sh"
 chmod +x "$PROJ/.claude/scripts/spawn-claude.sh"
 
 # Minimal pipeline.config — enough for the spawn template to source without
@@ -283,6 +287,57 @@ else
   echo "$DOCKER_LINE" | grep -q "PIPELINE_PROJECT_ROOT=$PROJ"           || { fail_msg "Test 8: DOCKER_PREFIX missing -e PIPELINE_PROJECT_ROOT=$PROJ"; ok=0; }
   [ "$ok" = "1" ] && (echo "$DOCKER_LINE" | grep -q "PIPELINE_WORKTREE_PATH=$PROJ/worktree" || { fail_msg "Test 8: DOCKER_PREFIX missing -e PIPELINE_WORKTREE_PATH=$PROJ/worktree"; ok=0; })
   [ "$ok" = "1" ] && pass_msg "Test 8: DOCKER_PREFIX carries -e PIPELINE_PROJECT_ROOT and -e PIPELINE_WORKTREE_PATH"
+fi
+
+# -------------------------------------------------------------------------
+# Test 9: --container-mode=web-eval resolves UPPERCASE env vars (issue #336)
+# Lowercase fixture stays in PROJ (Tests 1-8 exercise the fallback branch);
+# this test writes a *separate* fixture project under PROJ_UC that only sets
+# the UPPERCASE form to prove the new helper resolves it.
+# -------------------------------------------------------------------------
+echo "Test 9: --container-mode=web-eval resolves UPPERCASE env vars"
+inc
+PROJ_UC="$WORKDIR/proj_uc"
+mkdir -p "$PROJ_UC/.claude/scripts" "$PROJ_UC/worktree"
+cp "$SCRIPT_UNDER_TEST" "$PROJ_UC/.claude/scripts/spawn-claude.sh"
+cp "$SCRIPT_DIR/../scripts/_resolve-container-var.sh" "$PROJ_UC/.claude/scripts/_resolve-container-var.sh"
+chmod +x "$PROJ_UC/.claude/scripts/spawn-claude.sh"
+cat > "$PROJ_UC/pipeline.config" <<'EOF'
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="pipeline"
+PIPELINE_WORKTREE_PREFIX="ct"
+PIPELINE_WIN_TEMP=""
+PIPELINE_PATH_A_SKILLS_EXECUTE=""
+PIPELINE_PATH_B_SKILLS_EXECUTE=""
+PIPELINE_PATH_C_SKILLS_EXECUTE=""
+PIPELINE_PATH_A_REVIEWER_EXECUTE=""
+PIPELINE_PATH_B_REVIEWER_EXECUTE=""
+PIPELINE_PATH_C_REVIEWER_EXECUTE=""
+PIPELINE_EVAL_CONTAINERS="web-eval"
+PIPELINE_EVAL_CONTAINER_WEB_EVAL_COMPOSE_FILE="compose.web-eval.yml"
+PIPELINE_EVAL_CONTAINER_WEB_EVAL_ENV_FILE=".env.web-eval"
+PIPELINE_EVAL_CONTAINER_WEB_EVAL_SERVICE="claude-web-eval"
+EOF
+UC_OUT=$(cd "$PROJ_UC" && \
+  PATH="$STUB_DIR:$PATH" \
+  STUB_LABELS="" \
+  PIPELINE_SPAWN_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=true \
+  PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  bash .claude/scripts/spawn-claude.sh \
+    --skill evaluate-issue-pr --container-mode=web-eval \
+    "$PROJ_UC/worktree" 109 slug tmux 2>&1 || true)
+UC_DOCKER_LINE=$(echo "$UC_OUT" | grep -E '^DOCKER_PREFIX=' || true)
+if [ -z "$UC_DOCKER_LINE" ]; then
+  fail_msg "Test 9: no DOCKER_PREFIX= line (uppercase env vars not resolved)"
+  echo "$UC_OUT" | tail -10 | sed 's/^/    /'
+else
+  ok=1
+  echo "$UC_DOCKER_LINE" | grep -q "docker compose"                              || { fail_msg "Test 9: DOCKER_PREFIX missing 'docker compose'"; ok=0; }
+  [ "$ok" = "1" ] && (echo "$UC_DOCKER_LINE" | grep -qE -- "--env-file ($PROJ_UC/)?\\.env\\.web-eval" || { fail_msg "Test 9: DOCKER_PREFIX missing --env-file [\$PROJ_UC/].env.web-eval"; ok=0; })
+  [ "$ok" = "1" ] && (echo "$UC_DOCKER_LINE" | grep -q -- "-f compose.web-eval.yml" || { fail_msg "Test 9: DOCKER_PREFIX missing '-f compose.web-eval.yml'"; ok=0; })
+  [ "$ok" = "1" ] && (echo "$UC_DOCKER_LINE" | grep -q "claude-web-eval"           || { fail_msg "Test 9: DOCKER_PREFIX missing service 'claude-web-eval'"; ok=0; })
+  [ "$ok" = "1" ] && pass_msg "Test 9: UPPERCASE env vars resolved (docker compose + env-file + compose-file + service)"
 fi
 
 echo ""
