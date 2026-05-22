@@ -253,5 +253,15 @@ ACTUAL=$(
 assert_eq "Case 16: local-override beats pre-set CLAUDE_PLUGIN_ROOT when opt-in set + identity matches" \
   "$TMP/repo16" "$ACTUAL"
 
+# ---------------- Case 17: pipeline.config.example documents the opt-in ----------------
+# Consumer installs copy from pipeline.config.example, so the var must be
+# documented there with a default of `false`.
+EXAMPLE="$SCRIPT_DIR/../pipeline.config.example"
+if [ -f "$EXAMPLE" ] && grep -qE '^PIPELINE_USE_LOCAL_PLUGIN=false$' "$EXAMPLE"; then
+  pass_msg "Case 17: pipeline.config.example documents PIPELINE_USE_LOCAL_PLUGIN=false"
+else
+  fail_msg "Case 17: pipeline.config.example must contain a line 'PIPELINE_USE_LOCAL_PLUGIN=false'"
+fi
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

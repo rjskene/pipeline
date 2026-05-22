@@ -46,6 +46,22 @@ PIPELINE_GROUPING_DETECTION_ENABLED="true"
 # That emergency-diagnosis stream is intentionally ungated.
 PIPELINE_LOGS_ENABLED=false
 
+# --- Dogfood-only: local-working-tree plugin override (issue #294) ---
+#
+# When "true" AND the cwd's `git rev-parse --show-toplevel` is the
+# rjskene/pipeline repo (origin remote matches) AND that toplevel has
+# a `.claude-plugin/plugin.json` sentinel, _resolve-plugin-root.sh
+# returns the working tree as CLAUDE_PLUGIN_ROOT instead of walking
+# the version-cache at ~/.claude/plugins/cache/claude-pipeline/pipeline/.
+#
+# Audience: the plugin author's dogfood sessions. Lets staging fixes
+# reach dogfood subshells without an RC cut + /plugin install.
+#
+# Consumer installs MUST leave this unset (default false). Origin and
+# sentinel gates make it a no-op for any other repo, but keeping it
+# off is the safest default.
+PIPELINE_USE_LOCAL_PLUGIN=false
+
 # --- Label-driven 3-path execution (optional) ---
 #
 # spawn-claude.sh reads the issue's labels and injects a path-specific
