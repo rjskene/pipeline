@@ -245,6 +245,28 @@ else
   echo "    stderr:"; sed 's/^/      /' "$G/stderr"
 fi
 
+# ---- Case H: default stage (no flag) = execute (back-compat) ----
+echo "Case H: omitting --stage defaults to execute (file-conflict detection active)"
+inc
+H="$TMP/case-h"; mkdir -p "$H"; export GH_ISSUE_DIR="$H"
+write_issue "$H" 1 "priority/P2" "Touches \`shared/common.sh\`."
+write_issue "$H" 2 "priority/P2" "Also affects \`shared/common.sh\` (conflict)."
+# no .comments.json → falls back to body-derived detection
+
+if OUT=$(run_helper 1 2 2>"$H/stderr"); then
+  if echo "$OUT" | grep -qE "^Wave 1: classify #1" \
+     && echo "$OUT" | grep -qE "^Wave 2: classify #2.*shares.*shared/common.sh.*#1"; then
+    pass_msg "Case H: default stage preserves existing serialization behavior"
+  else
+    fail_msg "Case H: unexpected output"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case H: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$H/stderr"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
