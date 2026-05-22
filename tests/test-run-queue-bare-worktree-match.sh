@@ -123,6 +123,66 @@ drive_single() {
     "$out" "$(cat "$spawn_log" 2>/dev/null || echo '')" "$rc"
 }
 
+# Drive run-queue.sh with TWO issues so we route through
+# route_issue -> fill_slots -> launch_agent -> find_worktree (site #3 —
+# the function-under-test named by the plan). The git stub still emits
+# a SINGLE worktree path; the first issue is the "matchee" and the
+# second issue exercises the "no match" path through find_worktree.
+#
+# Args: $1 proj, $2 stub_dir, $3 issue_a, $4 issue_b, $5 wt_path
+drive_multi() {
+  local proj="$1" stub_dir="$2" issue_a="$3" issue_b="$4" wt_path="$5"
+  local spawn_log="$proj/spawn-invocations.log"
+  : > "$spawn_log"
+  mkdir -p "$wt_path"
+  MATERIALIZED_WTS+=("$wt_path")
+  local out rc
+  out=$(
+    cd "$proj" && \
+    PATH="$stub_dir:$PATH" \
+      TMUX="fakesession" \
+      SPAWN_LOG="$spawn_log" \
+      PIPELINE_QUEUE_DRY_RUN=1 \
+      STUB_WT_PATH="$wt_path" \
+      CLAUDE_PLUGIN_ROOT="$proj/.claude" \
+      bash .claude/scripts/run-queue.sh "$issue_a" "$issue_b" 2>&1
+  )
+  rc=$?
+  printf '%s\n---OUT_END---\n%s\n---SPAWN_END---\n%d\n' \
+    "$out" "$(cat "$spawn_log" 2>/dev/null || echo '')" "$rc"
+}
+
+# Drive `bash run-queue.sh --ci-fix <issue> <log-path>` so we exercise
+# site #1 (the --ci-fix branch's awk matcher). The --ci-fix branch
+# `exec`s the stub spawn-claude.sh on success and prints an "ERROR: No
+# worktree for issue ..." line on failure.
+#
+# Args: $1 proj, $2 stub_dir, $3 issue, $4 wt_path
+drive_ci_fix() {
+  local proj="$1" stub_dir="$2" issue="$3" wt_path="$4"
+  local spawn_log="$proj/spawn-invocations.log"
+  : > "$spawn_log"
+  mkdir -p "$wt_path"
+  MATERIALIZED_WTS+=("$wt_path")
+  # --ci-fix requires a log-path argument; just point it at a real file.
+  local ci_log="$proj/ci-fix-context.log"
+  : > "$ci_log"
+  local out rc
+  out=$(
+    cd "$proj" && \
+    PATH="$stub_dir:$PATH" \
+      TMUX="fakesession" \
+      SPAWN_LOG="$spawn_log" \
+      STUB_WT_PATH="$wt_path" \
+      CLAUDE_PLUGIN_ROOT="$proj/.claude" \
+      PIPELINE_PROJECT_ROOT="$proj" \
+      bash .claude/scripts/run-queue.sh --ci-fix "$issue" "$ci_log" 2>&1
+  )
+  rc=$?
+  printf '%s\n---OUT_END---\n%s\n---SPAWN_END---\n%d\n' \
+    "$out" "$(cat "$spawn_log" 2>/dev/null || echo '')" "$rc"
+}
+
 write_config() {
   local proj="$1"
   cat > "$proj/pipeline.config" <<'EOF'
@@ -212,6 +272,178 @@ if [ "$ok" = "1" ] && ! echo "$OUT_BLOCK" | grep -q "No worktree found for issue
   ok=0
 fi
 [ "$ok" = "1" ] && pass_msg "case 4 (negative) refuses to match wt-42 for issue 4"
+
+# ============================================================================
+# Site #3 — find_worktree() (multi-issue queue path: route_issue -> fill_slots
+# -> launch_agent -> find_worktree). Drive with TWO issues so the dry-run
+# code path enters launch_agent (which calls find_worktree).
+# ============================================================================
+
+# ---- Case 5: find_worktree bare positive — wt-42 must resolve for issue 42 ----
+echo "Case 5: find_worktree resolves bare wt-42 for issue 42 (multi-issue path)"
+inc
+PROJ="$WORKDIR/p5"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+# Pair the matchee (42) with a sentinel (99) that the single emitted
+# worktree won't match — keeps the run focused on the find_worktree(42) path.
+OUT=$(drive_multi "$PROJ" "$STUB" 42 99 "/tmp/wt-42")
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-42'; then
+  pass_msg "case 5 (find_worktree bare positive) resolved wt-42 for issue 42"
+else
+  fail_msg "case 5 (find_worktree bare positive) expected spawn log to reference /tmp/wt-42; got:"
+  echo "$OUT" | sed 's/^/    /'
+fi
+
+# ---- Case 6: find_worktree slugged positive ----
+echo "Case 6: find_worktree resolves slugged wt-42-foo for issue 42 (multi-issue path)"
+inc
+PROJ="$WORKDIR/p6"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+OUT=$(drive_multi "$PROJ" "$STUB" 42 99 "/tmp/wt-42-foo")
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-42-foo'; then
+  pass_msg "case 6 (find_worktree slugged positive) resolved wt-42-foo for issue 42"
+else
+  fail_msg "case 6 (find_worktree slugged positive) expected spawn log to reference /tmp/wt-42-foo; got:"
+  echo "$OUT" | sed 's/^/    /'
+fi
+
+# ---- Case 7: find_worktree substring negative — wt-481 must NOT match issue 42 ----
+echo "Case 7: find_worktree refuses to match wt-481 for issue 42 (multi-issue path, negative)"
+inc
+PROJ="$WORKDIR/p7"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+# Pair 42 with 99 sentinel — the stub emits /tmp/wt-481 once, so neither
+# issue's find_worktree() call should match.
+OUT=$(drive_multi "$PROJ" "$STUB" 42 99 "/tmp/wt-481")
+OUT_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{exit}{print}')
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+ok=1
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-481'; then
+  fail_msg "case 7 (find_worktree negative) spawn log unexpectedly referenced /tmp/wt-481 when querying issue 42"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && ! echo "$OUT_BLOCK" | grep -q "No worktree found for issue #42"; then
+  fail_msg "case 7 (find_worktree negative) expected 'No worktree found for issue #42'; got:"
+  echo "$OUT_BLOCK" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 7 (find_worktree negative) refuses to match wt-481 for issue 42"
+
+# ---- Case 8: find_worktree substring negative — wt-42 must NOT match issue 4 ----
+echo "Case 8: find_worktree refuses to match wt-42 for issue 4 (multi-issue path, negative)"
+inc
+PROJ="$WORKDIR/p8"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+# Pair 4 with 99 sentinel — stub emits /tmp/wt-42, which should not match issue 4.
+OUT=$(drive_multi "$PROJ" "$STUB" 4 99 "/tmp/wt-42")
+OUT_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{exit}{print}')
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+ok=1
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-42'; then
+  fail_msg "case 8 (find_worktree negative) spawn log unexpectedly referenced /tmp/wt-42 when querying issue 4"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && ! echo "$OUT_BLOCK" | grep -q "No worktree found for issue #4"; then
+  fail_msg "case 8 (find_worktree negative) expected 'No worktree found for issue #4'; got:"
+  echo "$OUT_BLOCK" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 8 (find_worktree negative) refuses to match wt-42 for issue 4"
+
+# ============================================================================
+# Site #1 — `--ci-fix` mode awk matcher. Drive `bash run-queue.sh --ci-fix
+# <issue> <log>` so the --ci-fix branch's awk predicate is exercised.
+# ============================================================================
+
+# ---- Case 9: --ci-fix bare positive ----
+echo "Case 9: --ci-fix resolves bare wt-42 for issue 42 (positive)"
+inc
+PROJ="$WORKDIR/p9"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+OUT=$(drive_ci_fix "$PROJ" "$STUB" 42 "/tmp/wt-42")
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-42'; then
+  pass_msg "case 9 (--ci-fix bare positive) resolved wt-42 for issue 42"
+else
+  fail_msg "case 9 (--ci-fix bare positive) expected spawn log to reference /tmp/wt-42; got:"
+  echo "$OUT" | sed 's/^/    /'
+fi
+
+# ---- Case 10: --ci-fix slugged positive ----
+echo "Case 10: --ci-fix resolves slugged wt-42-foo for issue 42 (positive)"
+inc
+PROJ="$WORKDIR/p10"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+OUT=$(drive_ci_fix "$PROJ" "$STUB" 42 "/tmp/wt-42-foo")
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-42-foo'; then
+  pass_msg "case 10 (--ci-fix slugged positive) resolved wt-42-foo for issue 42"
+else
+  fail_msg "case 10 (--ci-fix slugged positive) expected spawn log to reference /tmp/wt-42-foo; got:"
+  echo "$OUT" | sed 's/^/    /'
+fi
+
+# ---- Case 11: --ci-fix substring negative (wt-481 vs issue 42) ----
+echo "Case 11: --ci-fix refuses to match wt-481 for issue 42 (negative)"
+inc
+PROJ="$WORKDIR/p11"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+OUT=$(drive_ci_fix "$PROJ" "$STUB" 42 "/tmp/wt-481")
+OUT_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{exit}{print}')
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+ok=1
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-481'; then
+  fail_msg "case 11 (--ci-fix negative) spawn log unexpectedly referenced /tmp/wt-481 when querying issue 42"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && ! echo "$OUT_BLOCK" | grep -q "ERROR: No worktree for issue #42"; then
+  fail_msg "case 11 (--ci-fix negative) expected 'ERROR: No worktree for issue #42'; got:"
+  echo "$OUT_BLOCK" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 11 (--ci-fix negative) refuses to match wt-481 for issue 42"
+
+# ---- Case 12: --ci-fix substring negative (wt-42 vs issue 4) ----
+echo "Case 12: --ci-fix refuses to match wt-42 for issue 4 (negative)"
+inc
+PROJ="$WORKDIR/p12"
+setup_proj "$PROJ"
+STUB=$(make_stubs "$PROJ")
+write_config "$PROJ"
+OUT=$(drive_ci_fix "$PROJ" "$STUB" 4 "/tmp/wt-42")
+OUT_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{exit}{print}')
+SPAWN_BLOCK=$(echo "$OUT" | awk '/---OUT_END---/{flag=1;next}/---SPAWN_END---/{flag=0}flag')
+ok=1
+if echo "$SPAWN_BLOCK" | grep -q '/tmp/wt-42'; then
+  fail_msg "case 12 (--ci-fix negative) spawn log unexpectedly referenced /tmp/wt-42 when querying issue 4"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && ! echo "$OUT_BLOCK" | grep -q "ERROR: No worktree for issue #4"; then
+  fail_msg "case 12 (--ci-fix negative) expected 'ERROR: No worktree for issue #4'; got:"
+  echo "$OUT_BLOCK" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 12 (--ci-fix negative) refuses to match wt-42 for issue 4"
 
 echo ""
 echo "================================"
