@@ -153,4 +153,5 @@ Interactive remediation for the three residual checks (`claude_md_residual`, `se
 
 - `settings_residual` patching is delegated to `migrate-from-subtree.sh --patch settings` (in-place jq rewrite with `.bak` backup; ISO-timestamp collision suffix). Honors `--dry-run`, `--assume-yes`, `--assume-no`.
 - `claude_md_residual` only surfaces the report from `migration-cleanup-claudemd.sh`; doctor does NOT edit `CLAUDE.md` directly — it's user-authored prose.
+- `skill_files_residual` lists each duplicate as a `y/N` prompt; consumer-required `.template`-rendered paths are excluded from the prompts.
 - Consumer-required paths rendered from plugin `scripts/*.template` / `hooks/*.template` are **never** proposed for deletion (load-bearing). The `.template`-branch becomes obsolete once #215 lands.

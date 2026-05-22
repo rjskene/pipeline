@@ -28,10 +28,10 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
 
 ## Invariants
 
-- **In-session.** No worker session, no `spawn-claude.sh`.
+- **In-session.** Executes directly in the calling session. No dispatch to a worker session.
 - **No pipeline labels.** None of `plan-pending`/`plan-reviewed`/`plan-approved`/`in-progress`/`pr-open` applied — the standard `pipeline:run` orchestrator does not pick it up.
-- **No evaluator gates.** No `/pipeline:classify-issue`, `/pipeline:plan-issue`, `/pipeline:evaluate-issue-plan`, `/pipeline:evaluate-issue-pr`, or `/pipeline:fullsend` dispatch.
-- **No auto-merge.** `scripts/auto-merge-gate.sh` does not fire — user merges manually.
+- **No evaluator gates.** Explicitly: no /pipeline:classify-issue, no /pipeline:plan-issue, no /pipeline:evaluate-issue-plan, no /pipeline:evaluate-issue-pr, no /pipeline:fullsend dispatch.
+- **No auto-merge.** The greenlight `scripts/auto-merge-gate.sh` does not fire — user merges manually.
 - **PR base.** Targets `PIPELINE_BASE_BRANCH` (defaults to `staging`).
 
 ## Steps
@@ -137,7 +137,7 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
 | Session | spawned worker via `/pipeline:execute-issue-plan` | current orchestrator session, in-session |
 | Plan stage | skipped (PATH D dispatch directly) | skipped (emergency lane) |
 | Evaluator | `/pipeline:evaluate-issue-pr` runs | none |
-| Auto-merge gate | fires on Approved verdict | does not fire |
+| Auto-merge gate | fires on Approved verdict | does not fire (no auto-merge) |
 | Lifecycle labels | `in-progress` → `pr-open` → `merged` | none applied |
 | Who merges | pipeline (greenlight) | user (manually) |
 
