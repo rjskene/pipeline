@@ -19,7 +19,7 @@ set -uo pipefail
 #
 # Skipped (shape-only placeholders, not real paths in this repo):
 #   - generic `.claude/scripts/eval-classifier.sh` example (line ~120)
-#   - the `web_eval` block (lines 175-179) — illustrative consumer shape
+#   - the `WEB_EVAL` block (lines 175-179) — illustrative consumer shape
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"
@@ -81,9 +81,12 @@ extract_paths() {
 }
 
 # Skip shape-only placeholders that are documentation, not real paths.
+# Both UPPERCASE (post-#336 canonical) and lowercase (pre-#336 back-compat
+# fallback, still documented in mock-web-eval/replay/*) are skipped.
 is_placeholder() {
   local var="$1" path="$2"
   case "$var" in
+    PIPELINE_EVAL_CONTAINER_WEB_EVAL_*) return 0 ;;
     PIPELINE_EVAL_CONTAINER_web_eval_*) return 0 ;;
   esac
   case "$path" in
