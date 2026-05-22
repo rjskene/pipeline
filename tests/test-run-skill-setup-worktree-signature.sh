@@ -2,8 +2,9 @@
 # Asserts that BOTH setup-worktree.sh call sites in skills/run/SKILL.md
 # document the full invocation signature: both positional args
 # (branch-name + issue-number), a worked example, a cross-link to the
-# "Branch and worktree naming convention" block (line ~137), and a
-# "Do NOT invoke with only the issue number" callout.
+# "Branch and worktree naming convention" block (heading-text reference,
+# never a hard-coded line number), and a "Do NOT invoke with only the
+# issue number" callout.
 #
 # Site A: the proposal-prose call site under the ladder (around line 435)
 #         where the orchestrator proposes setting up worktrees.
@@ -137,6 +138,31 @@ if echo "$SITE_B_WINDOW" | grep -qiE '[Dd]o NOT invoke.*only the issue number|[D
   pass_msg "Site B contains 'Do NOT invoke with only the issue number' callout"
 else
   fail_msg "Site B window lacks an explicit 'Do NOT invoke with only the issue number' callout"
+fi
+
+# -----------------------------------------------------------------------------
+# Cross-cutting assertion: the "Branch and worktree naming convention" heading
+# that both Site A and Site B point at must actually exist as a heading in
+# SKILL.md. If anyone renames or removes the block, this test fails loudly
+# rather than letting Site A/B silently point at a dead target.
+# -----------------------------------------------------------------------------
+inc
+if grep -qE '^#{1,4}[[:space:]]+Branch and worktree naming convention' "$SKILL_PATH"; then
+  pass_msg "'Branch and worktree naming convention' heading exists in SKILL.md"
+else
+  fail_msg "convention heading missing from $SKILL_PATH (Site A and Site B cross-refs would be dead)"
+fi
+
+# -----------------------------------------------------------------------------
+# Cross-cutting assertion: cross-references to the convention block must NOT
+# bake in a hard-coded line number — those drift the moment anyone adds prose
+# above the heading. Heading-text references are durable; "(line NNN)" is not.
+# -----------------------------------------------------------------------------
+inc
+if grep -nE '\(line[[:space:]]+[0-9]+\)' "$SKILL_PATH" | grep -qiE 'convention|branch'; then
+  fail_msg "found hard-coded '(line N)' annotation near a convention/branch cross-ref in $SKILL_PATH"
+else
+  pass_msg "no hard-coded '(line N)' annotations in convention/branch cross-refs"
 fi
 
 echo ""
