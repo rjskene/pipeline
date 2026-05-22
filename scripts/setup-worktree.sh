@@ -24,6 +24,21 @@ fi
 
 BRANCH="$1"
 ISSUE_NUM="${2:-}"
+
+# Reject branch names without an allowed Conventional Commits prefix.
+# Without this guard, a bare integer like `setup-worktree.sh 81` silently
+# creates a worktree on a branch literally named `81`, which breaks every
+# downstream pipeline stage (issue #350).
+case "$BRANCH" in
+  feature/*|fix/*|chore/*|docs/*|refactor/*|test/*|perf/*|ci/*|build/*|revert/*) ;;
+  *)
+    echo "ERROR: branch name must start with one of feature/, fix/, chore/, docs/, refactor/, test/, perf/, ci/, build/, revert/ — got: $BRANCH" >&2
+    echo "Usage: $0 [--base <base>] <branch-name> <issue-number>" >&2
+    echo "Example: $0 feature/gmail-ci-filter 81" >&2
+    exit 2
+    ;;
+esac
+
 SUFFIX="${BRANCH#feature/}"
 MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 WORKTREE_DIR="$MAIN_REPO/.claude/worktrees"
