@@ -47,6 +47,9 @@ setup_proj() {
   # CLAUDE_PLUGIN_ROOT is set by run_queue_dryrun below.
   cp "$RUN_QUEUE_SRC" "$proj/plugin-root/scripts/run-queue.sh"
   cp "$ROOT/scripts/_logging.sh" "$proj/plugin-root/scripts/_logging.sh"
+  # run-queue.sh sources _resolve-container-var.sh from SCRIPT_DIR (#336);
+  # colocate it next to run-queue.sh in the plugin-root fixture.
+  cp "$ROOT/scripts/_resolve-container-var.sh" "$proj/plugin-root/scripts/_resolve-container-var.sh"
   # Stub spawn-claude.sh: log argv and exit 0.
   cat > "$proj/plugin-root/scripts/spawn-claude.sh" <<EOF
 #!/bin/bash
