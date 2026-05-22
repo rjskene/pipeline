@@ -44,14 +44,25 @@ if [ "${1:-}" = "--ci-fix" ]; then
   REPO_ROOT_CI_FIX="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
   # shellcheck disable=SC1091
   source "${REPO_ROOT_CI_FIX}/pipeline.config"
+  # Accept BOTH bare `wt-<N>` and slugged `wt-<N>-<slug>` basenames (sibling
+  # of #365's cleanup-worktree.sh fix). The exact-or-prefix predicate on the
+  # basename also blocks substring collisions (issue 4 != wt-42, 42 != wt-481).
   WT_PATH=$(git worktree list --porcelain \
-    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-" \
-        '/^worktree / { wt=$2 } wt ~ p { print wt; exit }')
+    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}" \
+        '/^worktree / {
+           base = $2
+           sub(/.*\//, "", base)
+           if (base == p || base ~ "^"p"-") { print $2; exit }
+         }')
   if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
-    echo "ERROR: No worktree for issue #${CI_FIX_ISSUE} (prefix ${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-*)" >&2
+    echo "ERROR: No worktree for issue #${CI_FIX_ISSUE} (basename ${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE} or ${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-*)" >&2
     exit 1
   fi
-  SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-//")
+  # Tighten the sed (-n + p flag) so bare `wt-<N>` produces empty output
+  # instead of leaving the input unchanged; fall back to `issue-<N>` when
+  # there's no slug component, mirroring the orchestrator's default.
+  SLUG=$(basename "$WT_PATH" | sed -n "s/^${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-\(.*\)/\1/p")
+  SLUG="${SLUG:-issue-${CI_FIX_ISSUE}}"
   export PIPELINE_CI_FIX_CONTEXT="$CI_FIX_LOG"
   : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling spawn-claude.sh}"
   exec bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh" \
@@ -211,12 +222,25 @@ bucket_max() {
 # Single issue — launch directly, no queue overhead
 if [ ${#QUEUE[@]} -eq 1 ]; then
   ISSUE="${QUEUE[0]}"
-  WT_PATH=$(git worktree list --porcelain | grep -B0 "worktree.*${PIPELINE_WORKTREE_PREFIX}-${ISSUE}-" | head -1 | sed 's/worktree //')
+  # Accept BOTH bare `wt-<N>` and slugged `wt-<N>-<slug>` basenames (sibling
+  # of #365's cleanup-worktree.sh fix). The basename predicate avoids
+  # substring collisions: issue 4 must not match wt-42, 42 must not match wt-481.
+  WT_PATH=$(git worktree list --porcelain \
+    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${ISSUE}" \
+        '/^worktree / {
+           base = $2
+           sub(/.*\//, "", base)
+           if (base == p || base ~ "^"p"-") { print $2; exit }
+         }')
   if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
     log "ERROR: No worktree found for issue #${ISSUE}."
     exit 1
   fi
-  SLUG=$(basename "$WT_PATH" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//")
+  # Tighten the sed so bare `wt-<N>` yields empty (-n + p prints only on
+  # match), then fall back to `issue-<N>` so the launched agent never sees
+  # a literal `wt-<N>` slug value.
+  SLUG=$(basename "$WT_PATH" | sed -n "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9][0-9]*-\(.*\)/\1/p")
+  SLUG="${SLUG:-issue-${ISSUE}}"
   log "Single issue — launching directly (no queue)."
   log "Queue log: ${QUEUE_LOG}"
 
@@ -302,18 +326,32 @@ log "  Pending file: ${PENDING_FILE} (append issue numbers here to add mid-run)"
 log "========================================"
 log ""
 
-# Find worktree path for an issue number
+# Find worktree path for an issue number.
+# Accepts BOTH bare `wt-<N>` and slugged `wt-<N>-<slug>` basenames
+# (sibling of #365's cleanup-worktree.sh fix). The basename predicate
+# blocks substring collisions: issue 4 != wt-42, issue 42 != wt-481.
 find_worktree() {
   local issue="$1"
   local wt_path
-  wt_path=$(git worktree list --porcelain | grep -B0 "worktree.*${PIPELINE_WORKTREE_PREFIX}-${issue}-" | head -1 | sed 's/worktree //')
+  wt_path=$(git worktree list --porcelain \
+    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${issue}" \
+        '/^worktree / {
+           base = $2
+           sub(/.*\//, "", base)
+           if (base == p || base ~ "^"p"-") { print $2; exit }
+         }')
   echo "$wt_path"
 }
 
-# Extract slug from worktree path (e.g., ct-66-rating-consistency -> rating-consistency)
+# Extract slug from worktree path (e.g., ct-66-rating-consistency -> rating-consistency).
+# Bare `wt-<N>` basenames have no slug component; the `-n + p` sed prints
+# only on match, yielding an empty string that the caller falls back from.
 slug_from_path() {
   local path="$1"
-  basename "$path" | sed "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9]*-//"
+  local issue="${2:-}"
+  local slug
+  slug=$(basename "$path" | sed -n "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9][0-9]*-\(.*\)/\1/p")
+  echo "${slug:-issue-${issue}}"
 }
 
 # Check if an agent's tmux window is still alive
@@ -336,7 +374,7 @@ launch_agent() {
   fi
 
   local slug
-  slug=$(slug_from_path "$wt_path")
+  slug=$(slug_from_path "$wt_path" "$issue")
 
   local mode="${ISSUE_MODE[$issue]:-bare}"
   local extras="${ISSUE_EXTRAS[$issue]:-}"
