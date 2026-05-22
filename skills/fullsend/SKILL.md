@@ -26,10 +26,7 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 slate → wave plan → classify+plan (waves) → eval-plan → approve → execute → eval-pr → greenlight → merge
 ```
 
-This skill is invoked in one of two ways:
-
-1. **Directly as `/pipeline:fullsend [issue_numbers...] [--manual-merge]`** — the canonical entry point.
-2. **Via the back-compat magic-string delegator in `/pipeline:run`** — when a user prompt to `/pipeline:run` contains the token `full send` / `full-send` / `fullsend` (case-insensitive), `/pipeline:run` invokes this skill via `Skill(skill: "pipeline:fullsend", args: "<argv>")` with the original argv (issue numbers + `--manual-merge` if present) and stops.
+Invoked two ways: (1) directly as `/pipeline:fullsend [issue_numbers...] [--manual-merge]` — the canonical entry point; (2) via the back-compat magic-string delegator in `/pipeline:run` — when a user prompt to `/pipeline:run` contains the token `full send` / `full-send` / `fullsend` (case-insensitive), `/pipeline:run` invokes this skill via `Skill(skill: "pipeline:fullsend", args: "<argv>")` with the original argv and stops.
 
 Argv shape: `[issue_numbers...] [--manual-merge]`, position-independent (the flag-parsing rule below preserves the prior behavior).
 
@@ -37,11 +34,7 @@ PATH D (quick-fix) is path-agnostic to fullsend: the slate dispatcher does not b
 
 ## Wave plan (pre-think)
 
-Before any dispatch, fullsend pre-thinks the slate via `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh --stage=classify <ready-issue-numbers>` and captures stdout as the wave plan. Waves are processed serially; within a wave, issues dispatch in parallel.
-
-**How waves are formed.** `plan-waves.sh` groups issues into waves honoring (1) priority tiers, (2) explicit `blocked by #N` / `depends on #N` annotations in issue bodies, and (3) shared-file conflicts extracted via body-substring grep — when two issues touch the same file path, the second is deferred to a later wave. The `--stage=classify` flag skips file-conflict detection because classify/plan agents are read-only against the repo, so cross-references in issue bodies must not over-serialize them.
-
-Example wave plan output:
+Before any dispatch, fullsend pre-thinks the slate via `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh --stage=classify <ready-issue-numbers>` and captures stdout as the wave plan. Waves are processed serially; within a wave, issues dispatch in parallel. `plan-waves.sh` groups issues honoring (1) priority tiers, (2) explicit `blocked by #N` / `depends on #N` annotations in issue bodies, and (3) shared-file conflicts extracted via body-substring grep — when two issues touch the same file path, the second is deferred. The `--stage=classify` flag skips file-conflict detection because classify/plan agents are read-only, so cross-references in issue bodies must not over-serialize them.
 
 ```
 Wave 1: classify #101, #102, #103 in parallel
@@ -51,33 +44,24 @@ Wave 4: classify #106, #107 in parallel
 Wave 5: classify #108 in parallel
 ```
 
-The pre-think is gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`) — when `false`, fullsend falls back to legacy single-blast parallel dispatch of all ready issues.
-
-The same wave-by-wave discipline applies to the plan-issue dispatch in Step 1b — the wave plan is reused; the planner is not re-run for plan-issue.
+Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `false`, fullsend falls back to single-blast parallel dispatch. The same wave-by-wave discipline applies to plan-issue dispatch in Step 1b — the wave plan is reused; the planner is not re-run.
 
 ## Greenlight matrix
 
-When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend auto-squash-merges if and only if all four conditions hold; otherwise the PR is left for manual merge with a `block-*` reason token.
+When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend auto-squash-merges iff all four conditions hold; otherwise the PR is left for manual merge with a `block-*` reason token.
 
 ```
-| # | Condition                              | Source                                 |
-|---|----------------------------------------|----------------------------------------|
-| 1 | Latest `## Evaluation` comment has     | gh pr view --json comments             |
-|   | `**Verdict:** Approved`                |                                        |
-| 2 | Every statusCheckRollup entry has      | gh pr view --json statusCheckRollup    |
-|   | `conclusion == SUCCESS` (or empty)     |                                        |
-| 3 | `mergeable == MERGEABLE`               | gh pr view --json mergeable            |
-| 4 | `mergeStateStatus == CLEAN`            | gh pr view --json mergeStateStatus     |
-|   | (not BLOCKED/BEHIND/DIRTY/UNSTABLE)    |                                        |
+| # | Condition                                                | Source                              |
+|---|----------------------------------------------------------|-------------------------------------|
+| 1 | Latest `## Evaluation` has `**Verdict:** Approved`       | gh pr view --json comments          |
+| 2 | Every statusCheckRollup entry `conclusion == SUCCESS`    | gh pr view --json statusCheckRollup |
+| 3 | `mergeable == MERGEABLE`                                 | gh pr view --json mergeable         |
+| 4 | `mergeStateStatus == CLEAN` (not BLOCKED/BEHIND/DIRTY/UNSTABLE) | gh pr view --json mergeStateStatus |
 ```
 
-**block-base-mismatch** is also enforced as defense-in-depth — the PR's `baseRefName` must equal `PIPELINE_BASE_BRANCH` (see issue #295 lineage). Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge` on issue) → verdict → base-mismatch → CI rollup → mergeable → mergeStateStatus. Token vocabulary: `green`, `block-flag`, `block-label`, `block-verdict`, `block-base-mismatch`, `block-ci`, `block-mergeable`, `block-mergestate`.
+**block-base-mismatch** is enforced as defense-in-depth — PR `baseRefName` must equal `PIPELINE_BASE_BRANCH` (see #295). Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge`) → verdict → base-mismatch → CI rollup → mergeable → mergeStateStatus. Tokens: `green`, `block-flag`, `block-label`, `block-verdict`, `block-base-mismatch`, `block-ci`, `block-mergeable`, `block-mergestate`.
 
-**Three opt-outs:**
-
-- `FULL SEND --manual-merge` — the flag may appear anywhere in argv (before, between, or after issue numbers); cannot collide with issue numbers because those are bare integers.
-- `/pipeline:evaluate-issue-pr <N> --manual-merge` for one-off evaluations.
-- A `manual-merge` label on the issue for per-issue control without re-typing the flag.
+**Three opt-outs:** (1) `FULL SEND --manual-merge` — flag may appear anywhere in argv (cannot collide with issue numbers, which are bare integers); (2) `/pipeline:evaluate-issue-pr <N> --manual-merge` for one-off evaluations; (3) a `manual-merge` label on the issue for per-issue control without re-typing the flag.
 
 ## Auto-merge ownership
 
