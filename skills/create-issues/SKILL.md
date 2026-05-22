@@ -1,6 +1,6 @@
 ---
 name: create-issues
-description: "Brainstorm mode \u2014 discuss code changes freely, then push actionable items as GitHub issues instead of implementing them directly."
+description: "Brainstorm mode — discuss code changes freely, then push actionable items as GitHub issues instead of implementing them directly."
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Skill
 ---
@@ -20,50 +20,35 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 
 # Issue Creation Mode
 
-You are in **brainstorming / issue-creation mode**. Your job is to help the user discuss problems, feature ideas, refactors, bugs, or improvements — and turn actionable items into GitHub issues. You must NOT implement code changes directly.
+```
+brainstorm → scope check → grouping check → proposal → confirm → create
+```
+
+You are in **brainstorming / issue-creation mode**: help the user discuss problems, feature ideas, refactors, bugs, or improvements — and turn actionable items into GitHub issues. You must NOT implement code changes directly.
 
 ## Rules
 
 ### READ ONLY — no source modifications
-- The `allowed-tools` restriction above blocks `Write` and `Edit`. Do not attempt to use them.
-- **Bash guardrails** — NEVER run commands that modify source files:
-  - No `sed -i`, `tee`, `>`, `>>` targeting source files
-  - No `git commit`, `git add`, `npm run build`, or any build/compile commands
-  - No `patch`, `dd`, `mv`, `cp` that overwrites source files
-- Allowed Bash usage:
-  - `gh issue create`, `gh issue list`, `gh issue view`, `gh issue comment`
-  - `git log`, `git status`, `git diff`, `git show`, `git blame` (read-only git)
-  - Exploratory commands: `ls`, `wc`, `file`, `which`, `cat` (for non-source reference files)
-- If the user asks you to implement something directly, **refuse** and propose creating an issue for it instead.
+
+- `allowed-tools` blocks `Write` and `Edit`. Do not attempt them.
+- **Bash guardrails** — NEVER run commands that modify source: no `sed -i`, `tee`, `>`, `>>` against source; no `git commit`, `git add`, `npm run build`, or any build/compile; no `patch`, `dd`, `mv`, `cp` overwrites.
+- **Allowed Bash:** `gh issue create|list|view|comment`; read-only git (`log`, `status`, `diff`, `show`, `blame`); exploratory `ls` / `wc` / `file` / `which` / `cat` on reference files.
+- If the user asks for direct implementation: **refuse** and propose creating an issue instead.
 
 ### Conversation flow
-1. The user discusses problems, feature ideas, refactors, bugs, or improvements.
-2. You explore the codebase freely (Read/Glob/Grep) to understand context and validate feasibility.
-3. **Refine the idea.**
 
-   Invoke `superpowers:brainstorming` to refine the idea through Socratic questioning:
+1. The user discusses problems, ideas, refactors, bugs, or improvements; you explore the codebase freely (Read/Glob/Grep) to understand context and validate feasibility.
+2. **Refine the idea.** Invoke `superpowers:brainstorming` to refine via Socratic questioning:
    ```
    Skill(skill: "superpowers:brainstorming")
    ```
    Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /pipeline:plan-issue separately." It will ask one question at a time, multiple-choice when possible, with validation gates between sections.
-4. **Scope check — one issue vs many.**
-
-   Before proposing issues, take your own read on scope:
-   - If the refined spec is clearly **one concept** (single file area, single behavior change, single user-visible feature), proceed directly to step 5 with no ceremony. Do not surface this gate to the user.
-   - If the refined spec looks like **2+ independent pieces** (different subsystems, different ship moments, different reviewers), surface the decomposition prompt before the proposal gate:
-     - Lead with your own read (1-2 sentences): why you think this is multi-issue.
-     - Present 2-3 slicing options with trade-offs (e.g., "split by subsystem", "split by ship order", "keep as one and accept the scope").
-     - Ask the user to pick a slicing.
-   - Mirror the scope-check pattern from `superpowers:brainstorming` ("If the project is too large for a single spec, help the user decompose into sub-projects"). Keep the prompt cheap — one message, option list, no follow-ups — so small requests pay no ceremony cost.
-
-5. When an actionable item (or set of items, post-scope-check) crystallizes, you propose creating a GitHub issue.
-6. On user confirmation, you create the issue(s).
+3. **Scope check — one issue vs many.** Take your own read: if clearly one concept (single file area, single behavior change), proceed silently. If 2+ independent pieces (different subsystems, ship moments, reviewers), surface a decomposition prompt — lead with your read (1–2 sentences), present 2–3 slicing options with trade-offs, ask the user to pick. One message, option list, no follow-ups.
+4. Propose creating a GitHub issue (or set, post-scope-check); on user confirmation, create.
 
 ### Grouping detection — before proposal
 
-After scope-check decides on N≥1 issue(s) to propose, but before printing the proposal compact list, query existing open issues for grouping candidates so the proposal can surface relationships the user might otherwise miss. The check is deterministic (conventional-commit `<scope>` matching) and read-only.
-
-**Invocation.** Call the helper once per proposal batch, passing every proposed title:
+After scope-check but before printing the proposal, query open issues for grouping candidates. Deterministic conventional-commit `<scope>` matching, read-only.
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/find-grouping-candidates.sh" \
@@ -71,16 +56,16 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/find-grouping-candidates.sh" \
   --title "<proposed-title-2>"
 ```
 
-The helper prints one recommendation line per input in the shape `INPUT="<title>" REC=<TRACKER #N | GROUP #A,#B,... | STANDALONE> REASON=<short>`.
+The helper prints one recommendation line per input as `INPUT="<title>" REC=<TRACKER #N | GROUP #A,#B,... | STANDALONE> REASON=<short>`.
 
-**Recommendation shapes.**
-- `TRACKER #N` — the proposed issue's scope matches an existing tracker. Surface: "This issue overlaps with tracker #N — propose adding as a child of #N."
-- `GROUP #A,#B` — the proposed issue plus standalones #A and #B share a scope. Surface: "This issue overlaps with standalones #A, #B — propose a new tracker rolling up all three."
-- `STANDALONE` — no candidate found. Surface nothing; proceed silently to the proposal gate.
+**Recommendation shapes:**
+- `TRACKER #N` — scope matches an existing tracker. Surface: "overlaps with tracker #N — propose adding as child."
+- `GROUP #A,#B` — proposed plus standalones #A and #B share a scope. Surface: "overlaps with standalones #A, #B — propose a new tracker rolling up all three."
+- `STANDALONE` — no candidate. Surface nothing.
 
-**User gate.** When a TRACKER or GROUP recommendation surfaces, append it to the proposal list as an annotation under the relevant `(pending)` line, and include the option in the confirmation prompt — **the default action is to accept the recommendation**. Example prompt: "Create these N issues? (y/n, or list numbers to keep; default accepts tracker grouping)". The user may type `standalone` to override and create the issue without grouping.
+**User gate.** When TRACKER or GROUP fires, append the recommendation under the relevant `(pending)` line and include it in the confirmation prompt — **the default action is to accept**. Example: "Create these N issues? (y/n, or list numbers to keep; default accepts tracker grouping)". User may type `standalone` to override.
 
-**Post-confirmation auto-append (TRACKER case).** After the new sub-issue is created and its number is known, splice a new checklist line into the tracker's `## Rollout sequence` section in place:
+**Post-confirmation TRACKER auto-append.** After the new sub-issue is created and its number known, splice a new checklist line into the tracker's `## Rollout sequence`:
 
 ```bash
 gh issue view <tracker> --repo $PIPELINE_REPO --json body -q .body > /tmp/tracker-body.md
@@ -88,17 +73,13 @@ gh issue view <tracker> --repo $PIPELINE_REPO --json body -q .body > /tmp/tracke
 gh issue edit <tracker> --repo $PIPELINE_REPO --body-file /tmp/tracker-body.md
 ```
 
-If the tracker body has no `## Rollout sequence` section, fall back to printing a manual-action notice (`Manual: append #<new> to tracker #<N> Rollout sequence`) and continue.
+If no `## Rollout sequence` section, print `Manual: append #<new> to tracker #<N> Rollout sequence` and continue.
 
-**Post-confirmation auto-create (GROUP case).** Falls through to the existing multi-issue tracker creation flow documented below — the helper's `GROUP` recommendation is what promotes a single-issue proposal into a multi-issue + tracker proposal. The tracker is created last and references the existing standalones + the new issue.
-
-**Read-only on dry-run.** The helper itself never edits issues. The auto-append happens only after the user confirms creation.
-
-**Opt-out.** Disable with `PIPELINE_GROUPING_DETECTION_ENABLED=false` in `pipeline.config` to skip this step entirely (the proposal proceeds as if all recommendations were STANDALONE).
+**Post-confirmation GROUP auto-create** falls through to the multi-issue tracker creation flow below. **Read-only on dry-run** — the helper never edits; auto-append happens only post-confirmation. **Opt-out** via `PIPELINE_GROUPING_DETECTION_ENABLED=false` in `pipeline.config`.
 
 ### Issue proposal format
 
-When one or more actionable items have crystallized and you are ready to propose issues, show them as a **compact list only**:
+Show proposed issues as a **compact list only**:
 
 ```
 Proposed issues:
@@ -108,11 +89,9 @@ Proposed issues:
 
 Then ask for confirmation in a single prompt, e.g. "Create these N issues? (y/n, or list numbers to keep)".
 
-**Do NOT render the full issue body (Context / Scope / Affected areas / Notes) inline in the conversation.** The user has already seen the reasoning in the preceding discussion, and the full body will be persisted on GitHub when the issue is created. Inline rendering adds scroll noise and duplicates context.
+**Do NOT render the full issue body** (Context / Scope / Affected areas / Notes) inline. The user already saw the reasoning in discussion; the body is persisted on GitHub. You still build the body internally — just don't print it before creation.
 
-You still build the full body internally — you just do not print it to the user before creation.
-
-**Multi-issue case — default to including a tracker.** When the scope-check landed on a 2+ issue split, add a tracker issue as the last line of the compact list, marked `(pending tracker)`:
+**Multi-issue case — default to including a tracker.** When scope-check landed on 2+ issues, add a tracker as the last line marked `(pending tracker)`:
 
 ```
 Proposed issues:
@@ -121,24 +100,16 @@ Proposed issues:
 - (pending tracker) epic(tracker-lifecycle): <feature> — rolls up the sub-issues above
 ```
 
-The tracker is the **default** for multi-issue sets. The user can opt out by replying "skip tracker" (or listing only the sub-issue numbers to keep). Do not ask "do you want a tracker?" — assume yes unless the user opts out.
+Tracker is the **default** (user opts out with "skip tracker"; do not ask "do you want a tracker?"). Title convention: `epic(<scope>): <feature> — tracker for #A, #B` (example: #247 rolls up #245 and #246); fill sub-issue numbers **after** children are created.
 
-Tracker titles follow the convention `epic(<scope>): <feature> — tracker for #A, #B` (example: issue #247 rolls up #245 and #246). Fill in the sub-issue numbers **after** the children are created; the tracker is created last so its body can reference real issue numbers.
-
-**Shared scope across the set.** When proposing a multi-issue set with a tracker, derive a single `<scope>` token from the conversation topic (the same `<scope>` used in the tracker's `epic(<scope>): ...` title) and apply it as the conventional-commit scope on every sub-issue title — e.g. tracker `epic(tracker-lifecycle): …` produces children `feat(tracker-lifecycle): …`, `fix(tracker-lifecycle): …`. The `<type>` may vary per child (`feat`, `fix`, `refactor`, etc.); the `<scope>` must not. Scope is chosen once and applied uniformly so the issue list self-organizes by topic.
+**Shared scope.** Derive a single `<scope>` from the conversation topic and apply it as the conventional-commit scope on every sub-issue and the tracker — e.g. tracker `epic(tracker-lifecycle): …` produces children `feat(tracker-lifecycle): …`, `fix(tracker-lifecycle): …`. The `<type>` may vary per child; the `<scope>` must not.
 
 ### Issue creation protocol
 
-Before creating an issue, **check for duplicates**:
-```bash
-gh issue list --repo $PIPELINE_REPO --state open --json number,title --limit 100
-```
-If a similar issue exists, flag it and ask the user whether to:
-- Create a new issue anyway
-- Comment on the existing issue instead
-- Skip
+Before creating, check for duplicates via `gh issue list --repo $PIPELINE_REPO --state open --json number,title --limit 100`. If a similar issue exists, ask the user: create anyway, comment on existing, or skip.
 
-After the user confirms the compact list, create each confirmed issue in a batch (one `gh issue create` call per issue, run sequentially or in a single message). Use the same body template below for all of them. Do NOT re-render the body to the user — it is only passed to `gh`.
+After confirmation, create each issue in a batch (one `gh issue create` per issue). Use the body template below for all. Do NOT re-render the body to the user.
+
 ```bash
 gh issue create --repo $PIPELINE_REPO --title "<title>" --body "$(cat <<'EOF'
 ## Context
@@ -156,9 +127,9 @@ EOF
 )"
 ```
 
-After each issue is created, print a single line: `Created: #N — <title> — <url>`. Do not re-print the body.
+After each issue is created, print: `Created: #N — <title> — <url>`.
 
-**Tracker issue body template (multi-issue case only).** After all sub-issues are created and their numbers are known, create the tracker last. Use this body template:
+**Tracker issue body template (multi-issue case only).** Create the tracker last so its body can reference real issue numbers. The fenced template below is the canonical structure — Context / Rollout sequence (checkbox list, ship order) / Out of scope / Notes (ending with the closing-when-children-closed line). Reference #247 for a worked example of the shape.
 
 ```bash
 gh issue create --repo $PIPELINE_REPO --label tracker --title "epic(<scope>): <feature> — tracker for #A, #B" --body "$(cat <<'EOF'
@@ -184,13 +155,12 @@ EOF
 )"
 ```
 
-Every tracker body MUST include these sections in this order: **Context**, **Rollout sequence** (checkbox list of child issues in ship order), **Out of scope**, **Notes** ending with the closing line "Close this tracker when all children are closed." Reference issue #247 for a worked example of the shape — do not copy its title or content.
-
 ### Labels
-- Newly created issues get no pipeline labels by default (they enter the pipeline as `ready` stage).
-- If the user specifies a label during discussion (e.g., "this is a bug"), add it: `--label bug`.
-- Tracker issues (multi-issue case, created via the tracker body template) automatically receive the `tracker` label so the pipeline orchestrator excludes them from the action queue.
-- If the user's framing is architectural critique, open-ended exploration, or "should we / could we" without a commit-to-act, propose creating the issue with `--label brainstorm`. The label parks the issue in the pipeline's discussion bucket — visible in `/pipeline:run` status (stage = `brainstorm`) but never auto-planned or auto-executed. The user promotes it later by removing the label.
+
+- Newly created issues get no pipeline labels by default (enter as `ready`).
+- If the user specifies a label during discussion ("this is a bug"), add it: `--label bug`.
+- Tracker issues (created via the tracker body template above) automatically receive the `tracker` label so the orchestrator excludes them from the action queue.
+- If the user's framing is architectural critique, open-ended exploration, or "should we / could we" without a commit-to-act, propose creating with `--label brainstorm`. The label parks the issue in the discussion bucket — visible in `/pipeline:run` (stage = `brainstorm`) but never auto-planned or auto-executed. User promotes by removing the label.
 
 ### PATH D body marker (advisory)
 
@@ -206,7 +176,8 @@ Same path-math family as #277 — fix one path constant in `scripts/foo.sh`.
 ```
 
 ### Session summary
-When the user ends the session (says "done", "that's all", etc.), print a summary:
+
+When the user ends the session ("done", "that's all", etc.), print:
 
 ```
 ISSUES CREATED THIS SESSION
