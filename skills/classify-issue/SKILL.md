@@ -1,6 +1,6 @@
 ---
 name: classify-issue
-description: Triage a pipeline issue — reads title/body/labels/comments, recommends PATH A (docs-only), B (standard), or C (multi-task), and applies the `docs-only` / `multi-task` label directly. Posts a `## Classification` comment. Usage: /pipeline:classify-issue <issue_number>
+description: Triage a pipeline issue — reads title/body/labels/comments, recommends PATH A (docs-only), B (standard), C (multi-task), or D (quick-fix), and applies the `docs-only` / `multi-task` / `quick-fix` label directly. Posts a `## Classification` comment. Usage: /pipeline:classify-issue <issue_number>
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep
 ---
@@ -16,11 +16,34 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
   && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
-
 # Classify Issue
 
-You will receive an issue number as the argument. Perform:
+## Paths
+
+The pipeline dispatches on one of four paths; this SKILL owns their definitions.
+
+| Path | Label | Dispatcher | Discipline |
+|------|-------|------------|-----------|
+| A | `docs-only` | direct edits in worktree | flat edit → commit; no test cycle |
+| B | (no path label) | spawned worker session | red → green → commit (TDD) |
+| C | `multi-task` | `tdd-implementer` subagents per target dir | hook-enforced delegation; orchestrator may not Edit impl files |
+| D | `quick-fix` | inline `tdd-implementer` in orchestrator | red → green → commit inline; `execute-issue-plan` Step 8 skipped |
+
+### PATH D (quick-fix)
+
+PATH D is the body-marker primary route: declare `<!-- pipeline:path=D -->` in the issue body when the work is a one-line, single-precedent fix. Recurring shapes:
+
+- Precedent-mirror fix (`same shape as merged PR #X`).
+- One-line config flip (toggle a flag in `pipeline.config`; repoint a path constant).
+- Dogfood-mirror byte-identical edit (copy a fix from one settings file to a sibling).
+- Guard-test addition to an existing test file (one new assertion; no new file).
+- One-bullet bug report with a quoted error and an obvious one-liner.
+
+Execution: inline `tdd-implementer` in the orchestrator session (no spawned worker); `evaluate-issue-pr` is the sole review gate — `execute-issue-plan` Step 8 is skipped.
+
+## How classification runs
+
+The skill receives an issue number as argument. Perform:
 
 1. **Fetch issue details:**
    ```bash
@@ -28,19 +51,14 @@ You will receive an issue number as the argument. Perform:
    gh issue view <N> --repo $PIPELINE_REPO --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
    ```
 
-2. **Cache check** — if the latest `## Classification` comment's `createdAt` is newer than the issue's `updatedAt`, the classification is fresh. In that case:
-   - If the current labels already match the cached recommendation → exit 0 with "cached — no re-classification needed".
-   - If the current labels do NOT match the cached recommendation → a user may have edited labels after the comment was posted. Print `Reconciling labels for cached classification #<N>`, then skip steps 3-6 and jump straight to step 5a (label application) using `recommended_path` pulled from the cached comment. Do NOT re-post the classification comment.
+2. **Cache check.** If the latest `## Classification` comment's `createdAt` is newer than the issue's `updatedAt`, the classification is fresh. If current labels match the cached recommendation → exit 0 ("cached — no re-classification needed"). If they don't → print `Reconciling labels for cached classification #<N>` and jump to step 5a using the cached `recommended_path`. Do NOT re-post the classification comment.
 
    ```bash
    LATEST_CLASS_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .createdAt // empty')
    ISSUE_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
-   # ISO-8601 timestamps are lexicographically ordered, so bash `[[ > ]]` string
-   # comparison is equivalent to chronological comparison. Do NOT switch to `[ > ]`
-   # (redirects stdout) or `-gt` (numeric only) — both are wrong for these values.
+   # ISO-8601 sorts lexicographically; bash `[[ > ]]` is correct (not `[ > ]` or `-gt`).
    if [[ -n "$LATEST_CLASS_TS" && "$LATEST_CLASS_TS" > "$ISSUE_TS" ]]; then
-       # Pull recommended_path from the cached comment.
        CACHED_PATH=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
          --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .body' \
          | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | head -1)
@@ -56,18 +74,15 @@ You will receive an issue number as the argument. Perform:
            exit 0
        fi
        echo "Reconciling labels for cached classification #<N> (path=$CACHED_PATH)."
-       # Set vars for step 5a and skip straight there.
        ISSUE_N="<N>"
        RECOMMENDED_PATH="$CACHED_PATH"
-       # Then jump to step 5a.
+       # Jump to step 5a.
    fi
    ```
 
 3. **Read first-level comments only** — ignore quoted/nested text. Consider only top-level comments.
 
-3c. **Body marker — documented primary route for PATH D (and the other paths) (evaluated before the rule table).** When you know an issue is PATH D (precedent-mirror fix, one-line flip, dogfood mirror, guard-test addition, etc.), put `<!-- pipeline:path=D -->` in the body at filing time. This is the authoritative, deterministic route to PATH D. The phrase heuristics in the rule table below are a best-effort fallback for unmarked issues — they will not reliably flip a B-shaped body to D no matter how many trigger words are present.
-
-   If the issue body contains an HTML comment of the form `<!--\s*pipeline:path=[A-Da-d]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->`), that claim is authoritative. Path = the marker letter normalized to uppercase (one of A/B/C/D); confidence = high; rationale = "user-claimed path via body marker". If multiple markers appear, the FIRST one (document order) wins. If the marker letter is not one of A/B/C/D, the marker is malformed and ignored — fall through to step 4 keyword scoring (the rule table below). Run the parser block below; if `MARKER_PATH` is non-empty, set `RECOMMENDED_PATH=$MARKER_PATH` and skip directly to step 5 (compose) and 5a (apply label). The B-marker case still runs step 5a so that any prior `docs-only`/`multi-task`/`quick-fix` label is removed (B is the unlabeled default).
+3c. **Body marker — primary route (evaluated before the rule table).** See "## PATH D" above for when to add the marker. If the issue body contains `<!--\s*pipeline:path=[A-Da-d]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->`), the claim is authoritative: path = marker letter uppercased (A/B/C/D); confidence = high; rationale = "user-claimed path via body marker". First marker wins; malformed letters fall through to step 4. Run the parser; if `MARKER_PATH` is non-empty, set `RECOMMENDED_PATH=$MARKER_PATH` and skip to step 5. The B-marker case still runs step 5a so any prior `docs-only`/`multi-task`/`quick-fix` label is removed.
 
    ```bash
    # BEGIN-PATH-MARKER-PARSE
@@ -92,20 +107,6 @@ You will receive an issue number as the argument. Perform:
    # END-PATH-MARKER-PARSE
    ```
 
-   **Authoring guide for PATH D candidates.** If you are authoring a PATH D candidate, include the marker — these are the shapes that consistently miss the phrase heuristic in step 4 despite being unambiguous one-line fixes:
-
-   - Precedent-mirror fixes (`same shape as merged PR #X`, `same path-math family as #277`).
-   - One-line config flips (flip a flag in `pipeline.config`, repoint a path constant).
-   - Dogfood-mirror byte-identical edits (copy a fix from one settings file to a sibling).
-   - Guard-test additions to an existing test file (one new assertion, no new file).
-   - One-bullet bug reports with a quoted error message and an obvious one-line fix.
-
-   > **Why not broader phrase lists.**
-   >
-   > - Empirical result from issue #356: broadening the PATH D phrase list (#354/#355) produced no observable classifier movement on five real `fix(...)` issues whose bodies had any structure (a `## Scope` section with 3+ bullets dominates trigger words). The body marker was the only reliable lever.
-   > - Further phrase-list broadening has **poor ROI** and should not be the first proposed fix when a PATH D miss is reported. Default response to a D miss: ask the author to add the body marker.
-   > - Future improvements to PATH D's gate should be **structural** — deterministic regex over body shape (e.g. count of bullets under `## Scope`), sibling-PR diff-size lookup, body-vs-change-size mismatch detection — not more trigger phrases in the rule table.
-
 4. **Score against rule set** (first match wins):
 
    | Signal | Path | Confidence |
@@ -120,31 +121,28 @@ You will receive an issue number as the argument. Perform:
    | Body mentions schema + API + frontend changes in a single issue | C | low |
    | Otherwise | B | medium |
 
-   - **Alternative-bullet rule.** A bulleted list whose items are alternatives — introduced by `options:`, `either`, `choose one`, `pick one`, `A or B or C`, etc. — counts as one work item with design ambiguity, not N tasks. Lean B (not C) when an issue presents 3+ alternatives to a single design decision.
-   - **Acceptance-criteria skip.** Bullets nested under a heading `Acceptance`, `Acceptance Criteria`, or `Out of scope` are verification scope or non-goals for a single change, not parallel tasks. Skip those lists when counting "3+ independent tasks" — do not count them as work items.
-   - **Generic-keyword tightening for D triggers.** The words `flip` and `swap` fire D only when they co-occur with a code-shaped token in the same bullet/sentence: a file path (contains `/` and an extension), a function name (camelCase or snake_case ending in parens), or a backticked `code` token. Bare "flip the wording" / "swap the diagram" does NOT trigger D. The generic words `tweak`, `obvious`, and `minimal` retain a broad match; a one-time reclassify sweep after merge is the documented mitigation for any false-D fires.
+   - **Alternative-bullet rule.** Lists of alternatives — `options:`, `either`, `choose one`, `pick one` — count as one work item with design ambiguity, not N tasks; lean B (not C) on 3+ alternatives to one decision.
+   - **Acceptance-criteria skip.** Bullets nested under `Acceptance`, `Acceptance Criteria`, or `Out of scope` are verification scope or non-goals — skip them; do not count them as work items.
+   - **Generic-keyword tightening for D triggers.** `flip` and `swap` fire D only when they co-occur with a code-shaped token (file path with `/`+extension, function name in parens, or a backticked `code` token); bare "flip the wording" does NOT trigger D. `tweak`, `obvious`, `minimal` retain broad match.
 
-4a. **Read any ingested attachments.** Before composing the classification output, list and `Read` every file present in `.claude/scratch/issue-<N>/`. These were populated upstream by `/pipeline:fullsend` step 1a (autonomous mode) or `/pipeline:plan-issue` step 3b (interactive mode). If the directory is empty or absent, skip — this step does NOT itself re-fetch attachments.
+4a. **Read any ingested attachments.** Before composing, list and `Read` every file in `.claude/scratch/issue-<N>/` (populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b). If empty or absent, skip — this step does NOT re-fetch. Mandatory for issues labeled `bug` or `user-submitted`.
 
    ```bash
    ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
    ```
 
-   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before composing the output.** Mandatory for issues labeled `bug` or `user-submitted`; recommended for others. Placement after step 2's cache short-circuit guarantees zero token cost on cache-hit runs.
-
 5. **Compose the classification output:**
 
    ```markdown
    ## Classification
-
    - **recommended_path:** A | B | C | D
    - **confidence:** high | medium | low
    - **rationale:** <one or two sentences citing the signal(s)>
 
-   _Label applied by classify-issue. Override by editing the label directly — the label always wins over the comment recommendation on next classification._
+   _Label applied by classify-issue; override by editing the label directly — the label always wins over the comment on next classification._
    ```
 
-5a. **Apply the path label.** Set `ISSUE_N=<N>`, `RECOMMENDED_PATH=<A|B|C|D>`, and `CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')`, then run this block directly. It is bounded by sentinel comments that the pipeline test suite extracts.
+5a. **Apply the path label.** Set `ISSUE_N=<N>`, `RECOMMENDED_PATH=<A|B|C|D>`, and `CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')`, then run the sentinel-bounded block below. (Preserve byte-for-byte: pipeline tests extract it by sentinel and run it under stub `gh`.)
 
    ```bash
    # BEGIN-LABEL-APPLY
@@ -188,7 +186,7 @@ You will receive an issue number as the argument. Perform:
    # END-LABEL-APPLY
    ```
 
-   When reconciling a cached classification (from step 2), run step 5a only and stop. When classifying fresh, proceed to step 6.
+   When reconciling a cached classification (step 2), run step 5a only and stop. When classifying fresh, proceed to step 6.
 
 6. **Post the classification comment:**
    ```bash
@@ -205,10 +203,10 @@ You will receive an issue number as the argument. Perform:
 
 ## Prompt strategy
 
-- Prefer **recall over precision**: false A→B is mild (plan-issue still works with extra detail), false B→A is disruptive (skips design rigor). Default to B when unsure.
-- Existing labels are strong priors but not absolute. Explicit label → confidence=high unless content directly contradicts.
-- Keep rationale to 1-2 sentences — human reads it during reconciliation, not a downstream skill.
-- If an explicit user label contradicts the content (e.g., `docs-only` on a refactor), still recommend the user-labeled path but set confidence=low and note the conflict in rationale.
+- Prefer **recall over precision**: false A→B is mild, false B→A is disruptive — default to B when unsure.
+- Existing labels are strong priors; explicit label → confidence=high unless content directly contradicts.
+- Keep rationale to 1-2 sentences.
+- Label contradicts content (e.g., `docs-only` on a refactor): recommend the labeled path with confidence=low; note the conflict in rationale.
 
 ## Constraints
 - MAY call `gh issue edit` to add/remove ONLY the `docs-only`, `multi-task`, and `quick-fix` labels. Never touch any other label. Never modify code.
