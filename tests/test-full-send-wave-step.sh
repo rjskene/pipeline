@@ -1,11 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-# Assert that skills/run/SKILL.md's Full Send section has a "Step 0a" wave-plan
-# instruction that runs BEFORE the existing "1. **Plan**" step and references
-# scripts/plan-waves.sh. Also guard against accidental rewrites of the
-# existing step 1 prose (anchor sentence) so the #63 patch stays small and
-# does not conflict with #31 / #122.
+# Assert that skills/fullsend/SKILL.md has a wave-plan section that runs BEFORE
+# the existing "1. **Plan**" step and references scripts/plan-waves.sh. Also
+# guard against accidental rewrites of the existing step 1 prose (anchor
+# sentence) so the #63 patch stays small and does not conflict with #31 / #122.
+#
+# Issue #396 hoisted the old "Step 0a" paragraph into a dedicated
+# `## Wave plan (pre-think)` section between the H1 header and Step 1 — the
+# marker check below accepts either the legacy `Step 0a` literal or the new
+# section heading.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Issue #143: the autonomous full-send flow was extracted from skills/run/SKILL.md
@@ -40,20 +44,21 @@ fi
 
 SECTION_BETWEEN=$(sed -n "${FS_START_LINE},${STEP1_LINE}p" "$SKILL_PATH")
 
-# 1. Step 0a header/list-item between Full Send heading and step 1
+# 1. Wave-plan marker between Full Send heading and step 1.
+#    Accepts the new H2 section header (#396) OR the legacy Step 0a literal.
 inc
-if echo "$SECTION_BETWEEN" | grep -qE '(^###[[:space:]].*Step 0a|^0a\.|^\*\*0a\.)'; then
-  pass_msg "Step 0a appears between 'Full Send' heading and '1. **Plan**'"
+if echo "$SECTION_BETWEEN" | grep -qE '(^##[[:space:]]+Wave plan|^###[[:space:]].*Step 0a|^0a\.|^\*\*0a\.)'; then
+  pass_msg "wave-plan marker appears between 'Full Send' heading and '1. **Plan**'"
 else
-  fail_msg "Step 0a not found between Full Send heading (line $FS_START_LINE) and step 1 (line $STEP1_LINE)"
+  fail_msg "wave-plan marker (## Wave plan ... | Step 0a ...) not found between Full Send heading (line $FS_START_LINE) and step 1 (line $STEP1_LINE)"
 fi
 
-# 2. The Step 0a content references plan-waves.sh literally
+# 2. The wave-plan content references plan-waves.sh literally
 inc
 if echo "$SECTION_BETWEEN" | grep -qF 'plan-waves.sh'; then
-  pass_msg "Step 0a section references plan-waves.sh"
+  pass_msg "wave-plan section references plan-waves.sh"
 else
-  fail_msg "Step 0a section does not reference plan-waves.sh"
+  fail_msg "wave-plan section does not reference plan-waves.sh"
 fi
 
 # 3. Existing step 1 anchor sentence is preserved verbatim (no rewrites).
@@ -66,12 +71,12 @@ else
   fail_msg "step 1 anchor sentence missing or modified: '$ANCHOR'"
 fi
 
-# 4. Step 0a passes --stage=classify so classify/plan dispatch is not over-serialized
+# 4. wave-plan section passes --stage=classify so classify/plan dispatch is not over-serialized
 inc
 if echo "$SECTION_BETWEEN" | grep -qF 'plan-waves.sh --stage=classify'; then
-  pass_msg "Step 0a invokes plan-waves.sh with --stage=classify"
+  pass_msg "wave-plan section invokes plan-waves.sh with --stage=classify"
 else
-  fail_msg "Step 0a does not pass --stage=classify to plan-waves.sh"
+  fail_msg "wave-plan section does not pass --stage=classify to plan-waves.sh"
 fi
 
 echo ""
