@@ -8,6 +8,19 @@ import re
 import sys
 from pathlib import Path
 
+PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT")
+if not PLUGIN_ROOT:
+    print(
+        "restrict_paths.py: CLAUDE_PLUGIN_ROOT not set in hook env — "
+        "cannot resolve plugin paths. Likely a harness env-propagation "
+        "regression (see issue #339). Allowing this call (fail-open) so "
+        "the assistant can recover. To re-enable path restriction, ensure "
+        "CLAUDE_PLUGIN_ROOT is exported in the harness env before "
+        "invoking Claude Code.",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
 
