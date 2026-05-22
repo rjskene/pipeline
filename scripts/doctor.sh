@@ -838,7 +838,16 @@ fi
 #   * env empty   + no plugin cache      → fail
 # Snapshot captured at the top of this script before the resolver source.
 # --------------------------------------------------------------------------
-if [ -n "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE:-}" ]; then
+_cpr_is_local_override=0
+if [ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = "true" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] \
+    && [ -f "$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json" ] \
+    && command -v git >/dev/null 2>&1 \
+    && [ "$(git -C "$CLAUDE_PLUGIN_ROOT" rev-parse --show-toplevel 2>/dev/null)" = "$CLAUDE_PLUGIN_ROOT" ]; then
+  _cpr_is_local_override=1
+fi
+if [ "$_cpr_is_local_override" = "1" ]; then
+  record claude_plugin_root pass "local-override at ${CLAUDE_PLUGIN_ROOT}"
+elif [ -n "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE:-}" ]; then
   if [ -d "${_CLAUDE_PLUGIN_ROOT_PRE_RESOLVE}" ]; then
     record claude_plugin_root pass "env pre-set to ${CLAUDE_PLUGIN_ROOT}"
   else
@@ -854,30 +863,35 @@ fi
 # path and downgrade to warn when the effective CLAUDE_PLUGIN_ROOT disagrees.
 # Silent stale resolution (e.g., env pre-set to 0.7.2 while cache contains
 # 0.8.0-rc.5) is the worse failure mode; surface it explicitly.
-_expected_root=""
-_cache_dir="${PIPELINE_PLUGIN_CACHE_DIR:-${HOME}/.claude/plugins/cache/claude-pipeline/pipeline}"
-if [ -d "$_cache_dir" ]; then
-  _expected_root="$(
-    unset CLAUDE_PLUGIN_ROOT
-    # shellcheck disable=SC1090
-    source "$RESOLVER_DIR/_resolve-plugin-root.sh" 2>/dev/null || true
-    printf '%s' "${CLAUDE_PLUGIN_ROOT:-}"
-  )"
+# Skipped under local-override (#294) — the working-tree basename is not a
+# semver, so the basename comparison would always misfire.
+if [ "$_cpr_is_local_override" != "1" ]; then
+  _expected_root=""
+  _cache_dir="${PIPELINE_PLUGIN_CACHE_DIR:-${HOME}/.claude/plugins/cache/claude-pipeline/pipeline}"
+  if [ -d "$_cache_dir" ]; then
+    _expected_root="$(
+      unset CLAUDE_PLUGIN_ROOT
+      # shellcheck disable=SC1090
+      source "$RESOLVER_DIR/_resolve-plugin-root.sh" 2>/dev/null || true
+      printf '%s' "${CLAUDE_PLUGIN_ROOT:-}"
+    )"
+  fi
+  if [ -n "$_expected_root" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] \
+      && [ "$(basename "$CLAUDE_PLUGIN_ROOT")" != "$(basename "$_expected_root")" ]; then
+    # Override the just-recorded claude_plugin_root status in place AND emit a
+    # second CHECK line so log consumers tailing the stream see the downgrade.
+    for _i in "${!CHECK_NAMES[@]}"; do
+      if [ "${CHECK_NAMES[$_i]}" = "claude_plugin_root" ]; then
+        CHECK_STATUSES[$_i]="warn"
+      fi
+    done
+    printf 'CHECK: %s status=%s detail=%s\n' \
+      "claude_plugin_root" "warn" \
+      "stale resolution: resolved $(basename "$CLAUDE_PLUGIN_ROOT") != expected highest-semver $(basename "$_expected_root")"
+  fi
+  unset _expected_root _cache_dir _i
 fi
-if [ -n "$_expected_root" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] \
-    && [ "$(basename "$CLAUDE_PLUGIN_ROOT")" != "$(basename "$_expected_root")" ]; then
-  # Override the just-recorded claude_plugin_root status in place AND emit a
-  # second CHECK line so log consumers tailing the stream see the downgrade.
-  for _i in "${!CHECK_NAMES[@]}"; do
-    if [ "${CHECK_NAMES[$_i]}" = "claude_plugin_root" ]; then
-      CHECK_STATUSES[$_i]="warn"
-    fi
-  done
-  printf 'CHECK: %s status=%s detail=%s\n' \
-    "claude_plugin_root" "warn" \
-    "stale resolution: resolved $(basename "$CLAUDE_PLUGIN_ROOT") != expected highest-semver $(basename "$_expected_root")"
-fi
-unset _expected_root _cache_dir _i
+unset _cpr_is_local_override
 
 # --------------------------------------------------------------------------
 # Check: base_branch_enforcement — defense-in-depth (#295) for the

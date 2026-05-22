@@ -22,6 +22,20 @@
 # NOTE: the plugin cache path is a Claude Code internal. If Anthropic moves it,
 # set PIPELINE_PLUGIN_CACHE_DIR to point at the new location.
 
+if [ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = "true" ] && command -v git >/dev/null 2>&1; then
+  _rpr_top="$(git rev-parse --show-toplevel 2>/dev/null)"
+  if [ -n "$_rpr_top" ] && [ -f "$_rpr_top/.claude-plugin/plugin.json" ]; then
+    _rpr_origin="$(git -C "$_rpr_top" remote get-url origin 2>/dev/null)"
+    # Match rjskene/pipeline with optional .git suffix and either https or ssh form.
+    if printf '%s' "$_rpr_origin" | grep -Eq '(^|[:/])rjskene/pipeline(\.git)?$'; then
+      export CLAUDE_PLUGIN_ROOT="$_rpr_top"
+      unset _rpr_top _rpr_origin
+      return 0 2>/dev/null || exit 0
+    fi
+  fi
+  unset _rpr_top _rpr_origin
+fi
+
 if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   return 0 2>/dev/null || exit 0
 fi
