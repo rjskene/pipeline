@@ -173,6 +173,27 @@ else
   echo "    stderr:"; sed 's/^/      /' "$E/stderr"
 fi
 
+# ---- Case F: --stage=classify ignores file conflicts ----
+echo "Case F: --stage=classify → all issues parallel even with shared files"
+inc
+F="$TMP/case-f"; mkdir -p "$F"; export GH_ISSUE_DIR="$F"
+write_issue "$F" 1 "priority/P2" "Touches \`shared/common.sh\` here."
+write_issue "$F" 2 "priority/P2" "Also references \`shared/common.sh\` (body mention)."
+
+if OUT=$(run_helper --stage=classify 1 2 2>"$F/stderr"); then
+  if echo "$OUT" | grep -qE "^Wave 1: classify #1, #2 in parallel$" \
+     && ! echo "$OUT" | grep -qE "^Wave 2:"; then
+    pass_msg "Case F: --stage=classify keeps cross-referencing issues in single wave"
+  else
+    fail_msg "Case F: unexpected output"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case F: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$F/stderr"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

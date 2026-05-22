@@ -15,10 +15,28 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: $0 <issue-num> [<issue-num> ...]
-   or: echo "<num>\\n<num>" | $0
+Usage: $0 [--stage=classify|plan|execute] <issue-num> [<issue-num> ...]
+   or: echo "<num>\\n<num>" | $0 [--stage=classify|plan|execute]
 EOF
 }
+
+STAGE="execute"
+NEW_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --stage=classify|--stage=plan|--stage=execute)
+      STAGE="${arg#--stage=}"
+      ;;
+    --stage=*)
+      echo "plan-waves: invalid --stage value: ${arg#--stage=} (expected classify|plan|execute)" >&2
+      exit 1
+      ;;
+    *)
+      NEW_ARGS+=("$arg")
+      ;;
+  esac
+done
+set -- "${NEW_ARGS[@]+"${NEW_ARGS[@]}"}"
 
 ISSUES=()
 if [ "$#" -gt 0 ]; then
@@ -76,21 +94,27 @@ for N in "${ISSUES[@]}"; do
 
   # Files: backticked tokens that look like paths (contain "/" or end in a
   # known suffix), PLUS any non-empty line under an "## Affected areas" header.
-  FROM_BACKTICKS=$( { echo "$BODY" \
-    | grep -oE '`[^`]+`' \
-    | tr -d '`' \
-    | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'; } || true)
-  FROM_AFFECTED=$(echo "$BODY" \
-    | awk 'BEGIN{IGNORECASE=1; in_block=0}
-           /^##[[:space:]]+Affected areas/ {in_block=1; next}
-           in_block && /^##/ {in_block=0}
-           in_block && NF>0 {print}')
-  FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
-    | sed 's/[[:space:]]\+/\n/g' \
-    | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$' \
-    | sort -u \
-    | tr '\n' ' '; } || true)
-  FILES[$N]="${FLIST% }"
+  # Only the `execute` stage runs file-conflict detection; classify/plan stages
+  # skip it (the body-substring heuristic over-serializes cross-references).
+  if [ "$STAGE" = "execute" ]; then
+    FROM_BACKTICKS=$( { echo "$BODY" \
+      | grep -oE '`[^`]+`' \
+      | tr -d '`' \
+      | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'; } || true)
+    FROM_AFFECTED=$(echo "$BODY" \
+      | awk 'BEGIN{IGNORECASE=1; in_block=0}
+             /^##[[:space:]]+Affected areas/ {in_block=1; next}
+             in_block && /^##/ {in_block=0}
+             in_block && NF>0 {print}')
+    FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
+      | sed 's/[[:space:]]\+/\n/g' \
+      | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$' \
+      | sort -u \
+      | tr '\n' ' '; } || true)
+    FILES[$N]="${FLIST% }"
+  else
+    FILES[$N]=""
+  fi
 done
 
 # Build waves greedily, high priority tier first, then by issue number ascending.
