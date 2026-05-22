@@ -186,3 +186,5 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
 
 Caption: `--manual-merge` opt-out (flag or `manual-merge` label) stops short of
 the auto-merge gate even when all four greenlight conditions hold.
+
+See [docs/superpowers-integration.md](superpowers-integration.md) for the per-stage map of which superpowers each pipeline skill invokes.
