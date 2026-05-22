@@ -235,5 +235,23 @@ ACTUAL=$(
 assert_eq "Case 15: sentinel missing → resolves to cache, not repo (sentinel gate)" \
   "$TMP/h15/.claude/plugins/cache/claude-pipeline/pipeline/0.4.0" "$ACTUAL"
 
+# ---------------- Case 16: local-override beats pre-set env ----------------
+# Locks in the ordering: the override block sits ABOVE the pre-set guard so
+# a stale CLAUDE_PLUGIN_ROOT inherited from an outer shell is replaced by the
+# working tree (the whole point of the issue — see #294).
+ACTUAL=$(
+  unset CLAUDE_PLUGIN_ROOT
+  export CLAUDE_PLUGIN_ROOT="/already/set"
+  HOME="$TMP/h16"; make_home "$HOME" 0.4.0
+  make_repo "$TMP/repo16" "https://github.com/rjskene/pipeline.git" sentinel
+  cd "$TMP/repo16"
+  export PIPELINE_USE_LOCAL_PLUGIN=true
+  # shellcheck disable=SC1090
+  source "$HELPER"
+  echo "$CLAUDE_PLUGIN_ROOT"
+)
+assert_eq "Case 16: local-override beats pre-set CLAUDE_PLUGIN_ROOT when opt-in set + identity matches" \
+  "$TMP/repo16" "$ACTUAL"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
