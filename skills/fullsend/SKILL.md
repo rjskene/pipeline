@@ -173,8 +173,9 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
 9. **Stop** — do NOT merge unless the greenlight matrix held in Step 8. Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
 
 **Constraints during full send:**
-- Housekeeping (step 0) still runs at the start, but does not pause for user input.
-- If a worktree cleanup is pending at the start, run cleanup first (still auto, no confirmation needed), then continue with the full send stages.
+
+Slate-pre-hygiene (housekeeping, worktree cleanup, discovery) is owned by `/pipeline:run`; fullsend assumes a clean slate and does not re-implement that flow.
+
 - Issues labeled `PIPELINE_LABELS_EXCLUDED` are always skipped.
 - Issues labeled `PIPELINE_LABELS_LATER` are shown in the final report (stage = `PIPELINE_LABELS_LATER`) but not processed.
 - Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the final report (stage = `PIPELINE_LABELS_HUMAN`) but never processed by autonomous full send. These need a human in the loop — usually for architecture decisions, cross-platform validation, production deploy risk, or items where the planner can't make the right call without you. They must be picked up manually with `/pipeline:plan-issue` / `/pipeline:execute-issue-plan`, never via full send.
