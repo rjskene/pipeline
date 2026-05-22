@@ -7,7 +7,7 @@ allowed-tools: Read, Bash, Glob, Grep, Skill
 
 ## Boot
 
-At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+Source `pipeline.config` first so `PIPELINE_*` variables are available:
 
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
@@ -16,11 +16,15 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
   && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+## Lifecycle
+
+```
+issue → writing-plans superpower → PATH-aware Task shape → comment → label plan-pending
+```
 
 # Planning Agent
 
-You will receive an issue number as the argument (or from context). Perform these steps:
+Receive an issue number as argument (or from context).
 
 ## Steps
 
@@ -30,15 +34,11 @@ You will receive an issue number as the argument (or from context). Perform thes
    gh issue view <N> --repo $PIPELINE_REPO --json comments --jq '.comments[] | {author: .author.login, createdAt: .createdAt, body: .body}'
    ```
 
-2. **Analyze existing comments** — look for:
-   - **Prior plans**: comments containing `## Implementation Plan` (posted by the planning agent or user)
-   - **User feedback**: any comments from the repo owner (rjskene) that are NOT plans — these are revision requests
-   - If user feedback exists on an existing plan, this is a **plan revision**. The revised plan MUST address every point in the user's feedback. Call out what changed with a `**Changes from previous plan:**` section at the top.
+2. **Analyze existing comments** — look for prior plans (containing `## Implementation Plan`) and user feedback (rjskene's non-plan comments). If feedback exists on an existing plan, this is a **plan revision**: the revised plan MUST address every point and lead with a `**Changes from previous plan:**` section.
 
-3. **Read project context:**
-   - Read each file listed in the project's context files config: `PIPELINE_CONTEXT_FILES`
+3. **Read project context:** Read each file listed in `PIPELINE_CONTEXT_FILES`.
 
-3a. **Determine PATH** — the executor's discipline depends on the path label, so the plan must include a path-specific Task 0:
+3a. **Determine PATH** — the plan needs a path-specific Task 0:
 
    ```bash
    LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
@@ -63,7 +63,7 @@ You will receive an issue number as the argument (or from context). Perform thes
    echo "Planning issue #<N> as PATH $PATH_LETTER"
    ```
 
-3b. **Ingest and read attachments.** In interactive single-issue planning (when `/pipeline:fullsend` is not the caller), run `fetch-issue-attachments.sh` for this issue, then list and `Read` every file. The helper is idempotent — if `/pipeline:fullsend` step 1a already ran, this is a no-op fetch.
+3b. **Ingest and read attachments.** In interactive single-issue planning (when `/pipeline:fullsend` is not the caller), run `fetch-issue-attachments.sh`, then `Read` every file under `.claude/scratch/issue-<N>/`. Idempotent — no-op if `/pipeline:fullsend` step 1a already ran.
 
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
@@ -71,108 +71,78 @@ You will receive an issue number as the argument (or from context). Perform thes
    ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
    ```
 
-   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before drafting.** Mandatory for issues labeled `bug`, `user-submitted`, or `regression`; recommended for others. Screenshots steer the codebase exploration in step 4 toward the right files.
+   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before drafting.** Mandatory for `bug`, `user-submitted`, `regression` labels; recommended otherwise. Screenshots/binary evidence steer codebase exploration in step 4 (which symbols to grep, which routes to read, which test files to touch).
 
-4. **Explore the codebase** — use Glob, Grep, and Read to find all files relevant to this issue. Look at:
-   - Schema files if the issue touches data
-   - Route files if the issue touches API
-   - Frontend components if the issue touches UI
-   - Test files if tests need updating
-   - Scan the issue title, body, and any quoted text for GitHub Actions CI-blocking markers (the bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`). If any are present in literal form, prepend a `**Heads-up — CI-blocking markers:** the issue text quotes <marker(s)>. The executor must escape them when writing PR titles or commit subjects (e.g. backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` without brackets). The `check-ci-skip-markers` PreToolUse hook will block any unescaped occurrence.` line to the plan body, in addition to the standard `Files to change` / `Tasks (ordered)` / etc. sections.
+4. **Explore the codebase** — use Glob, Grep, and Read to find files relevant to this issue (schemas if data, routes if API, components if UI, tests if behavior changes). (See Step 3b for attachment handling.)
+
+   Scan the issue title/body/quoted text for GH Actions CI-blocking markers (bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`). If any appear in literal form, prepend a `**Heads-up — CI-blocking markers:**` line to the plan body instructing the executor to escape them in PR titles / commit subjects (backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` without brackets) — the `check-ci-skip-markers` PreToolUse hook will block any unescaped occurrence.
 
 5. **Generate the implementation plan.**
 
-   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/logs/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it. This applies whether you were invoked by the orchestrator directly or dispatched as a subagent — the post step is always your responsibility, never the caller's. Returning the plan as terminal agent output is a skill failure — the orchestrator will see no comment and no `plan-pending` label, and will have to redo the work that was already inside your turn.
+   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/logs/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it. **Subagent dispatch contract — this skill is end-to-end.** Whether invoked directly or dispatched as a subagent (from `/pipeline:fullsend` or `/pipeline:run`), YOU own every step from fetch through `post-plan.sh` success; the post step is never the caller's. Returning the plan as terminal agent output is a skill failure. The only acceptable terminal states are: (a) `post-plan.sh` exited 0 and you report the success line from Step 8, or (b) `post-plan.sh` exited non-zero and you report the FAILED line from Step 7.
 
-   > **Subagent dispatch contract.** This skill is end-to-end. Regardless of how you were invoked (top-level `/pipeline:plan-issue` or `Agent(subagent_type=...)` dispatch from `/pipeline:fullsend` or `/pipeline:run`), YOU own every step from issue fetch through `post-plan.sh` success. You do NOT return the plan text for the caller to post. You do NOT save the plan to `docs/` for the caller to read. The only acceptable terminal states are: (a) `post-plan.sh` exited 0 and you report the success line from Step 8, or (b) `post-plan.sh` exited non-zero and you report the FAILED line from Step 7. There is no third option.
-
-   Invoke `superpowers:writing-plans` to structure the plan:
-   ```
-   Skill(skill: "superpowers:writing-plans")
-   ```
-   - Pass the issue title, body, any existing plan comments, your codebase findings from step 4, AND the detected `PATH_LETTER` from step 3a.
-   - Tell it: "Do NOT save the plan to a file in `docs/`. Return the plan content directly so I can write it to the draft file under `.claude/logs/plan-drafts/`."
-   - Take the output and reformat it into the canonical structure below, inserting the `**Tasks (ordered):**` section between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording from the section further down this skill.
-
-   **In either case**, the final plan MUST use this exact format:
+   Invoke `Skill(skill: "superpowers:writing-plans")`. Pass the issue title, body, prior plan comments, codebase findings from step 4, AND `PATH_LETTER` from step 3a. Tell it: "Do NOT save the plan to a file in `docs/`. Return the plan content directly so I can write it to the draft file under `.claude/logs/plan-drafts/`." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
 
    ```markdown
    ## Implementation Plan
 
    **Changes from previous plan:** (only if revising — bullet each change and which feedback it addresses)
-
    **Files to change:**
    - `path/to/file.ts` — reason
 
    **Tasks (ordered):**
-   - Task 0: <per-path directive — see the Task 0 sections below and copy the block that matches $PATH_LETTER>
-   - Task 1..N-1: <the actual code work; structured per path — see the per-path guidance further down>
-   - Task N: invoke `superpowers:requesting-code-review` to self-verify every plan requirement is met and all tests are green before opening the PR
+   - Task 0: <per-path directive — copy the block matching $PATH_LETTER below>
+   - Task 1..N-1: <code work, structured per path>
+   - Task N: invoke `superpowers:requesting-code-review` to self-verify plan requirements are met and tests are green before opening the PR
 
    **DB schema changes:** (or "None")
    **API changes:** (or "None")
    **Frontend changes:** (or "None")
    **Test changes:** (or "None")
-   **Design decisions:** (architecture, data structures, algorithms, mode behaviors — anything a developer needs to implement without ambiguity)
+   **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
    **Risks/unknowns:** (or "None")
    **Estimated effort:** X hours
    ```
 
-   **IMPORTANT — the GitHub comment IS the plan.** The `/pipeline:execute-issue-plan` skill reads ONLY the GitHub comment when implementing in a worktree. It has no access to local `.claude/plans/` files. Therefore:
-   - Include ALL design detail directly in the comment — data structures, tier tables, formulas, mode behaviors, prompt strategies, etc.
-   - Never summarize and point to a local plan file (e.g., "see `compressed-wibbling-sutherland.md` for details").
-   - If you used Claude's plan mode internally, fold its full content into the comment before posting.
-   - The executing Claude should be able to implement the feature from the comment alone, with zero missing context.
+   **IMPORTANT — the GitHub comment IS the plan.** `/pipeline:execute-issue-plan` reads ONLY the comment; it has no access to local `.claude/plans/` files. Include ALL design detail directly (data structures, tier tables, formulas, mode behaviors). Never summarize and point to a local file. Fold Claude plan-mode content into the comment before posting.
 
-   ### Task 0 and per-path code-task guidance
-
-   Copy the Task 0 block below that matches the detected `PATH_LETTER`. For Tasks 1..N-1, structure code tasks using the same path's code-task format so the executor can follow the right discipline.
+   ### Per-path Task 0 — copy the block matching `PATH_LETTER`; structure Tasks 1..N-1 in the same path's format.
 
 #### Task 0 — PATH A (docs-only)
-
    `Task 0: (no skill required — docs-only change; go straight to Task 1).`
-
-   Code-task format for PATH A: flat edit → commit. Each task is a single bullet like `Task K: edit <file> to <change>; commit as "<type>: <summary>"`. No test cycle, no reviewer dispatch.
+   Code-task format: flat edit → commit, `Task K: edit <file> to <change>; commit as "<type>: <summary>"`. No tests, no reviewer.
 
 #### Task 0 — PATH B (standard)
-
    `Task 0: invoke superpowers:test-driven-development before any code edit. Every subsequent code task must follow the red→green→commit cycle: write a failing test → run $PIPELINE_TEST_CMD → watch it fail for the RIGHT reason → write minimum impl → run $PIPELINE_TEST_CMD → watch it pass → commit.`
-
-   Code-task format for PATH B: each task that modifies impl code includes all five steps explicitly — the test file path, the exact pytest/test command to run, the expected FAIL output, the impl code sketch, the expected PASS output, and the commit message. No step may be skipped; a task that does not follow red→green is a planning defect.
+   Code-task format: each impl task lists all five steps explicitly — test file path, exact test command, expected FAIL, impl sketch, expected PASS, commit message. Skipping red→green is a planning defect.
 
 #### Task 0 — PATH C (multi-task)
-
    `Task 0: dispatch Agent(subagent_type='tdd-implementer', description='target=<first-dir>/ ...', prompt='target=<first-dir>/ implement <first-task>') — one tdd-implementer dispatch per distinct target directory. The orchestrator must NOT Write/Edit impl files directly; the enforce-path-c-delegation hook will block unauthorized edits.`
-
-   Code-task format for PATH C: every code task is a single `tdd-implementer` dispatch. Each dispatch includes a `target=<dir>/` sentinel (must be a real subdirectory — `target=.`, `target=./`, or `target=/` are rejected by the delegation hook) and a prompt detailed enough for the subagent to execute autonomously (what file, what behavior, what test, what commit message). Multiple dispatches may run in parallel when their targets don't overlap.
+   Code-task format: every code task is a single `tdd-implementer` dispatch with a `target=<dir>/` sentinel (real subdirectory — `target=.`, `target=./`, `target=/` are rejected by the delegation hook) and a prompt detailed enough for autonomous execution. Non-overlapping targets may run in parallel.
 
 #### Task 0 — PATH D (quick-fix)
+   PATH D plans collapse to a **single inline tdd task** — no subagent dispatch, no multi-task list. The implementer IS the `tdd-implementer` (executor applies red→green→commit directly inline). This is the contract `execute-issue-plan` Step 5 expects when it sees the `quick-fix` label.
+   `Task 0: you ARE tdd-implementer (single-instance inline). Apply red→green→commit discipline directly in this session: write one failing test → run $PIPELINE_TEST_CMD → watch it fail for the RIGHT reason → write minimum impl → run $PIPELINE_TEST_CMD → watch it pass → commit. No subagent dispatch. No spawn-claude. No tmux. The evaluate-issue-pr stage is the sole review gate.`
+   Code-task format: single bullet — same five steps as PATH B but inline without the `superpowers:test-driven-development` bookend.
 
-   Task 0: you ARE tdd-implementer (single-instance inline). Apply red→green→commit discipline directly in this session: write one failing test → run $PIPELINE_TEST_CMD → watch it fail for the RIGHT reason → write minimum impl → run $PIPELINE_TEST_CMD → watch it pass → commit. No subagent dispatch. No spawn-claude. No tmux. The evaluate-issue-pr stage is the sole review gate.
-
-   Code-task format for PATH D: each impl task is a single bullet listing test file path, exact test command, expected FAIL output, impl sketch, expected PASS output, and commit message — same five steps as PATH B but executed inline without the `superpowers:test-driven-development` bookend.
-
-6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool to create the draft file at the path below; YOU MUST NOT return the plan body in your final message and ask the caller to write the file.
+6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool (not heredoc, not `echo`) to create the draft file at the path below; YOU MUST NOT return the plan body in your final message for the caller to write.
    ```bash
    mkdir -p .claude/logs/plan-drafts
    DRAFT=".claude/logs/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
    # Use the Write tool to write the canonical plan markdown to "$DRAFT".
    ```
-   Use the `Write` tool (not heredoc, not `echo`) so the full plan body is preserved verbatim and the file path is logged.
 
-7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke the command below from within your own turn. Do not stop, return, or summarize before the helper exits.
+7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke this from within your own turn. Do not stop, return, or summarize before the helper exits.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
    ```
-   The helper posts the comment, verifies it, applies `plan-pending`, and verifies the label — each sub-step retries once on failure. Do not retry from the skill; the helper already retries.
+   The helper posts the comment, verifies it, applies `plan-pending`, and verifies the label — each sub-step retries once. Do not retry from the skill. If the helper exits non-zero, surface its stderr AND the `$DRAFT` path verbatim, then STOP with: `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`. The operator can re-run the helper manually.
 
-   If the helper exits non-zero, surface its stderr AND the `$DRAFT` path verbatim, then STOP with: `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`. The draft is on disk and the operator can re-run the helper manually.
-
-8. **Report back, but only AFTER `post-plan.sh` exits 0:** "Plan posted to issue #N (PATH $PATH_LETTER)." If the helper exited non-zero, do not report this success line; report the FAILED line from Step 7 instead. Your final message MUST follow either the success template above or the FAILED template from Step 7 — never the raw plan body, never a summary, never a hand-off note to the caller.
+8. **Report back, but only AFTER `post-plan.sh` exits 0:** "Plan posted to issue #N (PATH $PATH_LETTER)." Otherwise report the FAILED line from Step 7. Your final message MUST follow one of these two templates — never the raw plan body, never a summary, never a hand-off to the caller.
 
 ## Revision handling
 
-When revising (user feedback on a prior plan exists), the `**Changes from previous plan:**` section still appears first. Re-derive `PATH_LETTER` from the current label in step 3a — do NOT copy the Task 0 block from the prior plan verbatim, since the user may have relabeled since.
+When revising (user feedback on a prior plan exists), `**Changes from previous plan:**` appears first. Re-derive `PATH_LETTER` from the current label in step 3a — do NOT copy the prior plan's Task 0 block verbatim, since the user may have relabeled.
 
 ## Constraints
 - READ ONLY — do not modify any source files.
