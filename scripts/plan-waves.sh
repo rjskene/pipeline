@@ -92,26 +92,48 @@ for N in "${ISSUES[@]}"; do
     | tr '\n' ' '; } || true)
   BLOCKERS[$N]="${BLIST% }"
 
-  # Files: backticked tokens that look like paths (contain "/" or end in a
-  # known suffix), PLUS any non-empty line under an "## Affected areas" header.
-  # Only the `execute` stage runs file-conflict detection; classify/plan stages
-  # skip it (the body-substring heuristic over-serializes cross-references).
+  # Files: only the `execute` stage runs file-conflict detection; classify/plan
+  # stages skip it (the body heuristic over-serializes cross-references).
   if [ "$STAGE" = "execute" ]; then
-    FROM_BACKTICKS=$( { echo "$BODY" \
-      | grep -oE '`[^`]+`' \
-      | tr -d '`' \
-      | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'; } || true)
-    FROM_AFFECTED=$(echo "$BODY" \
-      | awk 'BEGIN{IGNORECASE=1; in_block=0}
-             /^##[[:space:]]+Affected areas/ {in_block=1; next}
-             in_block && /^##/ {in_block=0}
-             in_block && NF>0 {print}')
-    FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
-      | sed 's/[[:space:]]\+/\n/g' \
-      | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$' \
-      | sort -u \
-      | tr '\n' ' '; } || true)
-    FILES[$N]="${FLIST% }"
+    # Prefer plan-comment "**Files to change:**" bullets (exact paths from the
+    # approved plan) over body-derived backticks (greedy + noisy). Fall back to
+    # body detection when no plan comment exists.
+    PLAN_FILES=""
+    if PLAN_JSON=$(gh issue view "$N" --repo "$REPO" --json comments 2>/dev/null); then
+      PLAN_BODY=$(echo "$PLAN_JSON" \
+        | jq -r '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body // ""')
+      if [ -n "$PLAN_BODY" ] && [ "$PLAN_BODY" != "null" ]; then
+        PLAN_FILES=$(echo "$PLAN_BODY" \
+          | awk 'BEGIN{in_block=0}
+                 /^\*\*Files to change:\*\*/ {in_block=1; next}
+                 in_block && /^\*\*/ {in_block=0}
+                 in_block && /^-/ {print}' \
+          | grep -oE '`[^`]+`' \
+          | tr -d '`' \
+          | sort -u \
+          | tr '\n' ' ')
+        PLAN_FILES="${PLAN_FILES% }"
+      fi
+    fi
+    if [ -n "$PLAN_FILES" ]; then
+      FILES[$N]="$PLAN_FILES"
+    else
+      FROM_BACKTICKS=$( { echo "$BODY" \
+        | grep -oE '`[^`]+`' \
+        | tr -d '`' \
+        | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'; } || true)
+      FROM_AFFECTED=$(echo "$BODY" \
+        | awk 'BEGIN{IGNORECASE=1; in_block=0}
+               /^##[[:space:]]+Affected areas/ {in_block=1; next}
+               in_block && /^##/ {in_block=0}
+               in_block && NF>0 {print}')
+      FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
+        | sed 's/[[:space:]]\+/\n/g' \
+        | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$' \
+        | sort -u \
+        | tr '\n' ' '; } || true)
+      FILES[$N]="${FLIST% }"
+    fi
   else
     FILES[$N]=""
   fi

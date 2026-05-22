@@ -26,12 +26,21 @@ TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
 mkdir -p "$TMP/bin"
 
 # gh shim: parses `gh issue view <N> --repo ... --json ...` and emits
-# the canned JSON at $GH_ISSUE_DIR/<N>.json.
+# the canned JSON at $GH_ISSUE_DIR/<N>.json. Also serves
+# $GH_ISSUE_DIR/<N>.comments.json when args contain a bare `comments` token.
 cat > "$TMP/bin/gh" <<'GH'
 #!/bin/bash
 # Args look like: issue view 42 --repo owner/repo --json number,title,body,labels
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   n="$3"
+  # detect --json comments form (used by plan-comment parser)
+  for a in "$@"; do
+    if [ "$a" = "comments" ]; then
+      f="$GH_ISSUE_DIR/$n.comments.json"
+      if [ -f "$f" ]; then cat "$f"; exit 0; fi
+      echo '{"comments":[]}'; exit 0
+    fi
+  done
   f="$GH_ISSUE_DIR/$n.json"
   if [ -f "$f" ]; then
     cat "$f"
@@ -61,6 +70,14 @@ write_issue() {
     --argjson labels "$labels" \
     '{number: ($num|tonumber), title: ("issue " + $num), body: $body, labels: $labels}' \
     > "$dir/$num.json"
+}
+
+# Helper: write a canned issue comments JSON. Args: dir, number, plan_body
+write_comments() {
+  local dir="$1" num="$2" plan_body="$3"
+  jq -n --arg body "$plan_body" \
+    '{comments: [{body: $body, createdAt: "2026-05-22T00:00:00Z"}]}' \
+    > "$dir/$num.comments.json"
 }
 
 run_helper() {
@@ -192,6 +209,40 @@ else
   rc=$?
   fail_msg "Case F: helper exited $rc"
   echo "    stderr:"; sed 's/^/      /' "$F/stderr"
+fi
+
+# ---- Case G: --stage=execute uses plan-comment Affected areas, ignores body cross-ref ----
+echo "Case G: --stage=execute prefers plan-comment Affected areas over body mentions"
+inc
+G="$TMP/case-g"; mkdir -p "$G"; export GH_ISSUE_DIR="$G"
+# Both bodies backtick BOTH paths — the greedy body extractor would over-conflict
+# them. Plan comments narrow each issue to its real target.
+# #1 plan touches scripts/alpha.sh; body backticks both alpha.sh and beta.sh.
+write_issue "$G" 1 "priority/P2" "Implements \`scripts/alpha.sh\`. See \`scripts/beta.sh\` for the prior fix pattern."
+write_comments "$G" 1 "## Implementation Plan
+
+**Files to change:**
+- \`scripts/alpha.sh\` — new implementation
+"
+# #2 plan touches scripts/beta.sh; body backticks both beta.sh and alpha.sh.
+write_issue "$G" 2 "priority/P2" "Tweaks \`scripts/beta.sh\`. Called from \`scripts/alpha.sh\`."
+write_comments "$G" 2 "## Implementation Plan
+
+**Files to change:**
+- \`scripts/beta.sh\` — small change
+"
+
+if OUT=$(run_helper --stage=execute 1 2 2>"$G/stderr"); then
+  if echo "$OUT" | grep -qE "^Wave 1: classify #1, #2 in parallel$"; then
+    pass_msg "Case G: plan-comment exact-match supersedes body cross-references"
+  else
+    fail_msg "Case G: unexpected output (expected parallel Wave 1)"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case G: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$G/stderr"
 fi
 
 echo ""
