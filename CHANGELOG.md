@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.11.0-rc.1...v0.12.0-rc.1) (2026-05-22)
+
+
+### Features
+
+* **docs:** system foundation — docs/process-maps.md (new) + classify-issue SKILL (PATH owner) ([#401](https://github.com/rjskene/pipeline/issues/401)) ([e7376c3](https://github.com/rjskene/pipeline/commit/e7376c3c1a1460243461145223ae3ccd0932e975))
+
 ## [0.11.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.10.0...v0.11.0-rc.1) (2026-05-22)
 
 
