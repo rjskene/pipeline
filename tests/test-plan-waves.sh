@@ -267,6 +267,25 @@ else
   echo "    stderr:"; sed 's/^/      /' "$H/stderr"
 fi
 
+# ---- Case I: --stage=bogus exits non-zero ----
+echo "Case I: --stage with invalid value exits 1"
+inc
+I="$TMP/case-i"; mkdir -p "$I"; export GH_ISSUE_DIR="$I"
+write_issue "$I" 1 "priority/P2" "Touches \`a.sh\`."
+
+if OUT=$(run_helper --stage=bogus 1 2>"$I/stderr"); then
+  fail_msg "Case I: helper unexpectedly exited 0 for --stage=bogus"
+  echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+else
+  rc=$?
+  if [ "$rc" = "1" ] && grep -q "invalid --stage value" "$I/stderr"; then
+    pass_msg "Case I: --stage=bogus rejected with exit 1 and clear message"
+  else
+    fail_msg "Case I: expected rc=1 + 'invalid --stage value' in stderr; got rc=$rc"
+    echo "    stderr:"; sed 's/^/      /' "$I/stderr"
+  fi
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
