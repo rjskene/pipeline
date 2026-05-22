@@ -66,6 +66,14 @@ else
   fail_msg "step 1 anchor sentence missing or modified: '$ANCHOR'"
 fi
 
+# 4. Step 0a passes --stage=classify so classify/plan dispatch is not over-serialized
+inc
+if echo "$SECTION_BETWEEN" | grep -qF 'plan-waves.sh --stage=classify'; then
+  pass_msg "Step 0a invokes plan-waves.sh with --stage=classify"
+else
+  fail_msg "Step 0a does not pass --stage=classify to plan-waves.sh"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
