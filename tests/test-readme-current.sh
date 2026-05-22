@@ -1,4 +1,10 @@
 #!/bin/bash
+# Lint README.md against the canonical-entry contract established by #397.
+# The README has 7 sections (hero+lifecycle strip, Canonical entry points,
+# Install + first run, Project layout, Where to look, Prerequisites) in that
+# order. Detailed lifecycle prose, the per-command Usage table, the label
+# flow line, and the subtree-migration pointer were deliberately retired by
+# the rewrite — their content lives in docs/process-maps.md or skill files.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 README="$REPO_ROOT/README.md"
@@ -6,37 +12,58 @@ PASS=0; FAIL=0
 assert_in()  { if grep -qF "$2" "$README"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
 assert_out() { if grep -qF "$2" "$README"; then echo "  FAIL: $1"; FAIL=$((FAIL+1)); else echo "  PASS: $1"; PASS=$((PASS+1)); fi; }
 
-usage_table() { awk '/^## Usage/,/^---/' "$README"; }
-assert_in_usage() {
-  if usage_table | grep -qF "$2"; then
-    echo "  PASS: $1"; PASS=$((PASS+1))
-  else
-    echo "  FAIL: $1"; FAIL=$((FAIL+1))
-  fi
-}
+# Hero + 5-line lifecycle strip at the top
+assert_in "hero line present"                       "Claude Pipeline — a CI workflow"
+assert_in "5-line lifecycle strip top-of-page"      "create → classify → plan → eval → execute → eval-pr → merge"
+assert_in "single pointer to docs/process-maps.md"  "Full process maps in docs/process-maps.md."
 
-assert_in_usage "Usage table lists /pipeline:classify-issue" "/pipeline:classify-issue"
-assert_in_usage "Usage table lists /pipeline:fullsend"       "/pipeline:fullsend"
-assert_in_usage "Usage table lists /pipeline:doctor"         "/pipeline:doctor"
+# Canonical-entry section + table
+assert_in "Canonical entry points heading"          "## Canonical entry points"
+assert_in "entry points table lists /pipeline:run"        "/pipeline:run"
+assert_in "entry points table lists /pipeline:fullsend"   "/pipeline:fullsend [N ...]"
 
-if head -20 "$README" | grep -qF "classify-issue"; then
-  echo "  PASS: lifecycle diagram contains classify-issue"; PASS=$((PASS+1))
+# Install + first run section
+assert_in "Install + first run heading"             "## Install + first run"
+assert_in "marketplace add command present"         "/plugin marketplace add rjskene/pipeline"
+assert_in "plugin install plugin@marketplace form"  "/plugin install pipeline@claude-pipeline"
+assert_in "validate via /pipeline:doctor"           "/pipeline:doctor"
+assert_in "first run command shown"                 "/pipeline:run"
+
+# Project layout section
+assert_in "Project layout heading"                  "## Project layout"
+assert_in "layout tree shows skills/"               "skills/"
+assert_in "layout tree shows agents/"               "agents/"
+assert_in "layout tree shows pipeline.config"       "pipeline.config"
+
+# Where to look + Prerequisites
+assert_in "Where to look heading"                   "## Where to look"
+assert_in "Prerequisites heading"                   "## Prerequisites"
+assert_in "prereq gh CLI"                           "gh"
+assert_in "prereq jq"                               "jq"
+assert_in "prereq bash 4+"                          "bash"
+
+# Retired content (must NOT appear — these were intentionally dropped)
+assert_out "no per-command Usage table"             "## Usage"
+assert_out "no label-flow one-liner"                "Label flow:"
+assert_out "no subtree-migration pointer"           "Migrating from a subtree install"
+assert_out "no release-PR section heading"          "Release-PR awareness"
+assert_out "no install.sh references"               "install.sh"
+assert_out "no bare check-subtree-drift in README"  "check-subtree-drift"
+
+# No anchored cross-references into any doc / SKILL file
+if grep -qE '\.md#[A-Za-z0-9_-]+' "$README"; then
+  echo "  FAIL: README contains anchored cross-references"; FAIL=$((FAIL+1))
 else
-  echo "  FAIL: lifecycle diagram contains classify-issue"; FAIL=$((FAIL+1))
+  echo "  PASS: README contains no anchored cross-references"; PASS=$((PASS+1))
 fi
 
-if head -20 "$README" | grep -qF "fullsend"; then
-  echo "  PASS: lifecycle area references fullsend"; PASS=$((PASS+1))
+# Line budget — plan target ≤150 (current rewrite is well under)
+LINES=$(wc -l < "$README")
+if [ "$LINES" -le 150 ]; then
+  echo "  PASS: README ≤150 lines (actual: $LINES)"; PASS=$((PASS+1))
 else
-  echo "  FAIL: lifecycle area references fullsend"; FAIL=$((FAIL+1))
+  echo "  FAIL: README exceeds 150 lines (actual: $LINES)"; FAIL=$((FAIL+1))
 fi
-
-assert_in  "Label flow line mentions docs-only path label"   "docs-only"
-assert_in  "Label flow line mentions multi-task path label"  "multi-task"
-assert_out "no multi-line subtree section"                   "## Migrating from a subtree install"
-assert_in  "single-line subtree pointer still links migration guide" "docs/migration-from-subtree.md"
-assert_out "no install.sh references"                        "install.sh"
-assert_in  "fullsend pointer paragraph present"              "autonomous end-to-end runs"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

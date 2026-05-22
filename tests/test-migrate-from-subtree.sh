@@ -821,12 +821,10 @@ else
   fail_msg "doc: migration guide missing git apply command"
 fi
 
-inc
-if grep -qF 'settings.json' "$DOC_README"; then
-  pass_msg "doc: README references settings.json patch"
-else
-  fail_msg "doc: README missing settings.json reference"
-fi
+# README no longer references the settings.json patch directly — the
+# subtree-migration tail was retired from README.md by #397 in favour of a
+# "Where to look" mini-index pointing readers at docs/migration-from-subtree.md
+# (which retains the patch instructions).
 
 # ---------------------------------------------------------------------------
 # Test "plugin-root self-resolve": when CLAUDE_PLUGIN_ROOT is unset, the

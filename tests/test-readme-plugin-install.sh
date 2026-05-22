@@ -8,7 +8,8 @@ assert_out() { if grep -qF "$2" "$README"; then echo "  FAIL: $1"; FAIL=$((FAIL+
 assert_in  "marketplace add command present"      "/plugin marketplace add rjskene/pipeline"
 assert_in  "plugin install uses plugin@marketplace form" "/plugin install pipeline@claude-pipeline"
 assert_out "plugin install does not use bare marketplace name" "/plugin install claude-pipeline"
-assert_in  "links migration guide"                "docs/migration-from-subtree.md"
+# Subtree-migration pointer retired from README by #397 (lives in docs/migration-from-subtree.md
+# only — README's "Where to look" mini-index points readers at docs/ for that and other refs).
 assert_out "no git subtree add"                   "git subtree add"
 assert_out "no git submodule add"                 "git submodule add"
 assert_out "no bare install.sh invocation"        "bash install.sh"
