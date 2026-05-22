@@ -354,14 +354,27 @@ if [ -n "$CONTAINER_MODE" ]; then
   fi
   # Source the case-insensitive env-var resolver (#336). UPPERCASE wins,
   # lowercase falls back. Idempotent guard: only source once per process.
-  # Path resolution mirrors the _logging.sh pattern above so test fixtures
-  # that copy spawn-claude.sh into an isolated dir (and colocate the
-  # helper) still work without CLAUDE_PLUGIN_ROOT.
+  # Fall back to an inline definition when the helper is missing (mirrors
+  # the _logging.sh pattern above) so tests that copy spawn-claude.sh in
+  # isolation never hard-fail. The fallback body MUST stay identical to
+  # scripts/_resolve-container-var.sh.
   if ! declare -f _resolve_container_var >/dev/null 2>&1; then
     _resolver="${CLAUDE_PLUGIN_ROOT:-$_spawn_claude_dir}/scripts/_resolve-container-var.sh"
     [ -f "$_resolver" ] || _resolver="${_spawn_claude_dir}/_resolve-container-var.sh"
-    # shellcheck source=/dev/null
-    . "$_resolver"
+    if [ -f "$_resolver" ]; then
+      # shellcheck source=/dev/null
+      . "$_resolver"
+    else
+      _resolve_container_var() {
+        local mode="$1" suffix="$2"
+        local norm_lower norm_upper var_upper var_lower
+        norm_lower="$(echo "$mode" | tr '-' '_')"
+        norm_upper="$(echo "$norm_lower" | tr '[:lower:]' '[:upper:]')"
+        var_upper="PIPELINE_EVAL_CONTAINER_${norm_upper}_${suffix}"
+        var_lower="PIPELINE_EVAL_CONTAINER_${norm_lower}_${suffix}"
+        printf '%s' "${!var_upper:-${!var_lower:-}}"
+      }
+    fi
   fi
   norm_mode_upper="$(echo "$CONTAINER_MODE" | tr '-' '_' | tr '[:lower:]' '[:upper:]')"
   COMPOSE_FILE="$(_resolve_container_var "$CONTAINER_MODE" COMPOSE_FILE)"
