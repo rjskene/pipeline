@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1-rc.1](https://github.com/rjskene/pipeline/compare/v0.12.0...v0.12.1-rc.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* **run:** mandate orchestrator reprint status table into assistant reply ([#424](https://github.com/rjskene/pipeline/issues/424)) ([#426](https://github.com/rjskene/pipeline/issues/426)) ([cc79f61](https://github.com/rjskene/pipeline/commit/cc79f61bc2c9de3768e4aead688ae770d518ebc5))
+
 ## [0.12.0](https://github.com/rjskene/pipeline/compare/v0.12.0-rc.1...v0.12.0) (2026-05-22)
 
 
