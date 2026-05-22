@@ -7,7 +7,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 
 ## Boot
 
-At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+Subagent invocations run in fresh shells, so source `pipeline.config` first:
 
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
@@ -16,36 +16,40 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
   && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+State (slate, base branch, repo) is inherited from `/pipeline:run` / `/pipeline:fullsend`; if these variables fail to resolve, **STOP** — preconditions live in `skills/run/SKILL.md`.
+
+## Lifecycle
+
+```
+worktree spawn → tdd-implementer (PATH C) | inline (PATH D) | direct (PATH A/B) → push → PR
+```
 
 ## Invocation mode
 
-This skill is invoked in one of two ways:
+Every step below behaves identically across modes — only the working-directory setup differs:
 
-1. **Inline `Agent(...)` dispatch (PATH A, docs-only).** The orchestrator passes the worktree absolute path and issue number in the prompt. You are NOT already in the worktree CWD — `cd <worktree-absolute-path>` before any step below. The prompt also names the slug. No `spawn-claude.sh`, no `claude -p`, no tmux.
-2. **`${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch (PATH B, PATH C, and any path when explicitly requested).** You are already inside the feature worktree at session start; CWD is correct; no `cd` needed.
-3. **PATH D inline tdd-implementer dispatch — same CWD-setup-then-run shape as PATH A; orchestrator passes worktree absolute path + issue number in the prompt.**
-
-In both modes, every step below behaves identically — only the working-directory setup differs.
+| # | Mode | CWD setup | Used by |
+|---|------|-----------|---------|
+| 1 | Inline `Agent(...)` dispatch | `cd <worktree-absolute-path>` (prompt provides it) | PATH A (docs-only) |
+| 2 | `spawn-claude.sh` / `claude -p` dispatch | already in worktree CWD | PATH B, PATH C |
+| 3 | PATH D inline tdd-implementer | `cd <worktree-absolute-path>` (same as mode 1) | PATH D (quick-fix) |
 
 # Execution Agent
 
-You will receive an issue number as the argument (or from context). You should be running inside the correct feature worktree already. Perform these steps:
+You will receive an issue number as the argument. Ensure CWD is the feature worktree (per the table above), then perform these steps:
 
 ## Steps
 
 **0b. CI-fix mode.** If `$PIPELINE_CI_FIX_CONTEXT` is non-empty, you were dispatched to fix a red CI run on an existing PR — not to implement a new plan. Skip steps 1–4 and step 9. Read the failure log at `$PIPELINE_CI_FIX_CONTEXT` and run `gh pr diff` to see the PR so far. Diagnose the failure, apply red→green→commit TDD discipline for the fix, run step 6 (Validate) once, then push the follow-up commit to the existing branch with `git push`. Do NOT call `gh pr create`. Do NOT change the `pr-open` label. Report the new commit SHA back to the orchestrator.
 
-1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan`:
+1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan` (latest wins, supports revisions):
    ```bash
    gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
    ```
-   This finds the LATEST plan comment (supports revisions — latest plan wins).
-   If the output is empty or `null`, **STOP** and report: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
-   Read the plan carefully before proceeding.
+   If empty/`null`, **STOP**: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
 
-   After fetching the plan, also list and `Read` every file under `.claude/scratch/issue-<N>/` — these are screenshots and binary evidence the planner saw. The directory was mirrored into this worktree by `setup-worktree.sh` / `sync-worktrees.sh`; this skill does NOT re-fetch (the helper's `PIPELINE_PROJECT_ROOT` guard would refuse a worktree-side invocation anyway).
+   Then list every file under `.claude/scratch/issue-<N>/` — screenshots/binary evidence the planner saw, mirrored into this worktree by `setup-worktree.sh` / `sync-worktrees.sh` (this skill does NOT re-fetch):
 
    ```bash
    ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
@@ -53,82 +57,51 @@ You will receive an issue number as the argument (or from context). You should b
 
    **For each file printed by `ls -1`, invoke the `Read` tool exactly once before implementing.** If the directory is empty or absent, continue.
 
-2. **Read project conventions:**
-   Read `CLAUDE.md` in the current working directory (worktree root).
+2. **Read project conventions:** Read `CLAUDE.md` in the worktree root.
 
-3. **Dependency check — issue #5 only:**
-   If this is issue #5 (project-numbers), verify that `feature/schema-cleanup` has been merged:
+3. **Dependency check — issue #5 only:** If this is issue #5 (project-numbers), verify `feature/schema-cleanup` has merged:
    ```bash
    gh pr list --repo $PIPELINE_REPO --state merged --json headRefName --jq '[.[].headRefName]'
    ```
-   If `feature/schema-cleanup` is NOT in the list, **STOP** and report: "Issue #5 is blocked — feature/schema-cleanup has not been merged yet."
+   If absent, **STOP**: "Issue #5 is blocked — feature/schema-cleanup has not been merged yet."
 
 4. **Mark as in-progress:**
    ```bash
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan.**
+5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline: single failing test → impl → pass → commit. No subagent dispatch, no skill invocations beyond this one.
 
-   The plan's `**Tasks (ordered):**` section tells you the path-specific Task 0 directive (PATH A: flat edits, PATH B: invoke `superpowers:test-driven-development`, PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). Follow it exactly.
+   `spawn-claude.sh`'s `--append-system-prompt` may inject path-specific skill invocations via `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*`. Step 8 below owns the review flow explicitly, so leave `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` unset; if set, the end-of-session dispatch becomes a harmless redundancy.
 
-   On PATH D (label quick-fix), you ARE tdd-implementer — apply red→green→commit directly. No subagent dispatch, no skill invocations beyond this one. Single failing test → impl → pass → commit.
+   In all cases: implement ONLY what the plan specifies (no scope creep); never commit to main; never use `--no-verify` or `--force`. If the plan/issue references a GH Actions CI-blocking marker (bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`), do NOT propagate the literal marker into any `git commit -m`, `gh pr create --title`, or `--body` — substitute a safe form: backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` (no brackets). The `check-ci-skip-markers` PreToolUse hook blocks the literal form.
 
-   The pipeline orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*`) may also inject path-specific skill invocations. Earlier versions additionally used `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` to dispatch `code-reviewer` as the FINAL tool call of the session. This skill now owns the review flow explicitly (step 8 below, BEFORE `gh pr create`). Leaving `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` unset in `pipeline.config` is the recommended configuration; if it is set, the system prompt's end-of-session dispatch becomes a belt-and-suspenders redundancy, which is harmless.
-
-   In all cases:
-   - Implement ONLY what the plan specifies. No scope creep.
-   - Never commit directly to main.
-   - Never use `--no-verify` or `--force`.
-   - When the plan or issue references a GH Actions CI-blocking marker (the bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`), do NOT propagate the literal marker into any `git commit -m`, `gh pr create --title`, or `gh pr create --body` argument. Substitute a safe form: backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` (no brackets). The `check-ci-skip-markers` PreToolUse hook blocks the literal form to prevent silent workflow skips on the very PR that is fixing CI behavior.
-
-6. **Validate — types, tests, server, and UI:**
+6. **Validate — types, tests, server, and UI.** Fix any failures at each sub-step before proceeding.
 
    **6a. Type check:**
    ```bash
    $PIPELINE_TYPECHECK_CMD
    ```
-   Fix any type errors before proceeding.
-
    **6b. Run tests:**
    ```bash
    $PIPELINE_TEST_CMD
    ```
-   Fix any failures before proceeding.
+   **6c. Visual validation with Playwright** (Linux only, UI changes only): use Playwright MCP tools (configured in `.mcp.json`) to navigate to the frontend URL, screenshot affected views, and check `browser_console_messages` for JS errors. Fix and re-validate any visual issues. Backend-only changes do not require this step.
 
-   **6c. Visual validation with Playwright** (Linux only):
-   Use the Playwright MCP tools to verify the UI renders correctly. The MCP server is configured in `.mcp.json`.
-   - Navigate to the frontend URL (e.g., `http://localhost:<frontend-port>`)
-   - Take a screenshot to verify the page loads without errors
-   - If your changes affect specific UI elements, navigate to those views and verify they render
-   - Check the browser console for JavaScript errors (use `browser_console_messages` tool)
-   - If visual issues are found, fix them and re-validate
-
-   **Important:** Do not skip visual validation for UI changes. For backend-only changes, server health check + tests are sufficient.
-
-7. **Self-review checkpoint before opening PR.**
-
-   Before opening the PR, perform a self-review:
-   - Re-read the plan from step 1 and verify every item was implemented
-   - Run `git diff --stat` to check no unintended files were modified
-   - Grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`)
-   - Verify no scope creep — nothing implemented beyond what the plan specifies
-
-   Fix any issues found before proceeding.
+7. **Self-review checkpoint before opening PR.** Re-read the plan from step 1 and verify every item was implemented; run `git diff --stat` to check no unintended files were modified; grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`); verify no scope creep. Fix any issues found before proceeding.
 
 8. **Pre-PR code review loop.**
 
-   If labels contain quick-fix (PATH D), SKIP Step 8 in its entirety (8a, 8b, 8c, 8d, 8e). The evaluate-issue-pr stage is the sole review gate for PATH D issues. Proceed to Step 9.
+   **PATH D early-return contract.** If labels contain `quick-fix` (PATH D), SKIP Step 8 in its entirety (8a–8e) and proceed to Step 9. What is skipped: the **pre-PR code review loop** — author self-check, independent reviewer dispatch, triage, fix commits, re-validate. Why: PATH D issues delegate review entirely to `evaluate-issue-pr` to keep the lane fast (one external review gate, not two). This is the contract `classify-issue` depends on when applying the `quick-fix` label — see `skills/classify-issue/SKILL.md` (PATH D row).
 
-   This step runs BEFORE `gh pr create`. The goal is to catch plan-compliance gaps and real bugs while the branch is still local-only, so the first external reviewer (pipeline `evaluate-issue-pr` or a human) sees a polished PR.
+   For all other paths, Step 8 runs BEFORE `gh pr create` to catch plan-compliance gaps and real bugs while the branch is still local-only.
 
-   **8a. Author self-check.** Invoke `superpowers:requesting-code-review` as the author self-check:
+   **8a. Author self-check.** Invoke `superpowers:requesting-code-review` with the plan comment body (from step 1) as context. The skill verifies plan requirements are met, tests pass, and CI-equivalent checks are green locally. Fix any gaps and re-run step 6 before continuing.
    ```
    Skill(skill: "superpowers:requesting-code-review")
    ```
-   Pass the plan comment body (from step 1) as context. The skill verifies plan requirements are met, tests pass, and CI-equivalent checks are green locally. If it flags a gap, fix it and re-run step 6 (validate) before continuing.
 
-   **8b. Independent reviewer dispatch.** Dispatch a separate code-reviewer subagent:
+   **8b. Independent reviewer dispatch.** Dispatch a separate code-reviewer subagent (returns a list of findings or "LGTM"):
    ```
    Agent(
      subagent_type: "superpowers:code-reviewer",
@@ -136,34 +109,25 @@ You will receive an issue number as the argument (or from context). You should b
      prompt: "<full plan comment body + git diff $PIPELINE_BASE_BRANCH..HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
    )
    ```
-   The reviewer returns a list of findings (or "LGTM").
 
-   **8c. Triage findings.** Invoke `superpowers:receiving-code-review`:
+   **8c. Triage findings.** Invoke `superpowers:receiving-code-review` with the reviewer's output. The skill classifies each finding as **must-fix** (plan-compliance gap, test gap, real bug → fix), **nice-to-have** (style, rename → skip unless trivial), or **incorrect** (reviewer misread → reject with a one-line rationale in the follow-up commit message).
    ```
    Skill(skill: "superpowers:receiving-code-review")
    ```
-   Pass the reviewer's output. The skill classifies each finding as:
-   - **must-fix** (plan-compliance gap, test gap, real bug) → fix
-   - **nice-to-have** (style, rename) → skip unless trivial
-   - **incorrect** (reviewer misread) → reject with a one-line rationale in the follow-up commit message
 
    Path-specific constraints when applying must-fixes:
-   - **PATH C (`multi-task`):** any must-fix that touches impl code MUST go through a NEW `tdd-implementer` dispatch. The orchestrator cannot `Edit`/`Write` impl files directly — the `enforce-path-c-delegation` hook will block it.
-   - **PATH B (standard):** must-fix code edits must still follow red→green→commit discipline (write a test for the missed behavior, watch fail, fix, watch pass, commit).
+   - **PATH C (`multi-task`):** any must-fix touching impl code MUST go through a NEW `tdd-implementer` dispatch — the `enforce-path-c-delegation` hook blocks direct orchestrator `Edit`/`Write` on impl files.
+   - **PATH B (standard):** must-fix code edits follow red→green→commit discipline.
    - **PATH A (`docs-only`):** must-fix edits are direct.
-   - **PATH D (quick-fix):** must-fix edits are direct (same as PATH A) — but step 8 is skipped entirely on PATH D, so this row only applies if the orchestrator forces a re-entry.
+   - **PATH D (quick-fix):** step 8 is skipped entirely (see early-return contract above); this row only applies on forced re-entry.
 
-   **8d. Commit fixes.** Commit each must-fix as its own `fix(review): ...` commit so the PR history shows the review loop. If zero must-fixes were applied, skip this sub-step.
+   **8d. Commit fixes.** Commit each must-fix as its own `fix(review): ...` commit (skip if zero must-fixes).
 
-   **8e. Re-validate.** Re-run step 6 (type check + tests + visual validation) once more to confirm the review fixes did not regress anything.
+   **8e. Re-validate.** Re-run step 6 once more to confirm the review fixes did not regress anything.
 
 9. **Open a pull request.**
 
-   **9a. Derive the PR title from the issue.** The PR title must be a strict
-   Conventional-Commits string (`feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert(<scope>)?: <summary>`)
-   so release-please can drive versioning + CHANGELOG. Issue titles are intentionally
-   expressive (`bug(...)`, `epic(...)`, `skill: ...`) and must NOT pass through verbatim.
-   Run the helper to derive it:
+   **9a. Derive the PR title from the issue.** The PR title must be a strict Conventional-Commits string (`feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert(<scope>)?: <summary>`) so release-please can drive versioning + CHANGELOG. Issue titles are intentionally expressive (`bug(...)`, `epic(...)`, `skill: ...`) and must NOT pass through verbatim. Run the helper:
 
    ```bash
    PR_TITLE=$("${CLAUDE_PLUGIN_ROOT}/scripts/derive-pr-title.sh" <N>)
@@ -178,7 +142,7 @@ You will receive an issue number as the argument (or from context). You should b
    fi
    ```
 
-   The helper applies this rule table (source of truth lives in `scripts/derive-pr-title.sh`):
+   Rule table (source of truth: `scripts/derive-pr-title.sh`):
 
    | Order | Condition | Action |
    |-------|-----------|--------|
@@ -190,9 +154,7 @@ You will receive an issue number as the argument (or from context). You should b
    | 6 | Labels include `enhancement` | `feat(<scope-or-general>): <summary>` |
    | 7 | default | `chore(general): <summary>` |
 
-   **9b. Open the PR:**
-
-   Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered (see `dev/audits/295-root-cause.md`), the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the defense-in-depth pair — the PreToolUse hook is the first line, this guard is the second, and the eval-time check is the third.
+   **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
 
    ```bash
    if [ -z "$PIPELINE_BASE_BRANCH" ]; then echo "FATAL: PIPELINE_BASE_BRANCH unset; refusing to call gh pr create" >&2; exit 1; fi
@@ -213,9 +175,7 @@ You will receive an issue number as the argument (or from context). You should b
    )"
    ```
 
-   The `$PR_TITLE` value is already normalized by `scripts/derive-pr-title.sh` (see Task 2 of issue #361): any literal `../` substring in the source issue title is rewritten to `..⁄` (U+2044, FRACTION SLASH) before it reaches this site. This is defense-in-depth against any PreToolUse hook (now or future) that scans the `gh pr create` command line for path-escape substrings — today's `hooks/restrict_paths.py` scans for absolute paths rather than `../`, but the helper guarantees neither shape can appear in the title body regardless. No additional argv shielding is needed at this site.
-
-   Both `--title` and `--body` values are scanned by the `check-ci-skip-markers` hook before this command runs. If you need to *describe* a marker in the PR body, wrap it in backticks (e.g. `` `[skip ci]` ``) so GH Actions does not honor it.
+   `$PR_TITLE` is normalized by `scripts/derive-pr-title.sh`: any literal `../` substring is rewritten to `..⁄` (U+2044) before reaching this site — defense-in-depth against any PreToolUse hook that scans for path-escape substrings. Both `--title` and `--body` are also scanned by the `check-ci-skip-markers` hook; to *describe* a marker in the PR body, wrap it in backticks (e.g. `` `[skip ci]` ``) so GH Actions does not honor it.
 
 10. **Mark as pr-open:**
     ```bash
@@ -226,13 +186,7 @@ You will receive an issue number as the argument (or from context). You should b
 
 ## Handling evaluation feedback
 
-If the evaluate-issue-pr agent flags the PR with actionable feedback and the executor session is still active:
-
-Invoke `superpowers:receiving-code-review` to handle the feedback:
-```
-Skill(skill: "superpowers:receiving-code-review")
-```
-Pass the evaluation comment as context. It will guide you through verifying each feedback item with technical rigor before implementing changes.
+If `evaluate-issue-pr` flags the PR while the executor session is still active, invoke `superpowers:receiving-code-review` with the evaluation comment as context: `Skill(skill: "superpowers:receiving-code-review")`.
 
 ## Constraints
 - Implement ONLY what the approved plan says.

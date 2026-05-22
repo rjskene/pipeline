@@ -6,69 +6,17 @@ Claude Pipeline is a **CI workflow for automating code updates** through GitHub 
 
 ## Pipeline vs Superpowers
 
-These are distinct layers:
-
-- **Pipeline** is the outer workflow — it defines *what happens* and *in what order*. Each stage is a slash command that advances an issue through the lifecycle.
-- **Superpowers** are inner tools — skills like brainstorming, writing-plans, TDD, and debugging that pipeline stages use internally to do their work well.
+Pipeline is the outer workflow — slash commands that advance an issue through the lifecycle. Superpowers are inner tools — skills like brainstorming, writing-plans, TDD, and debugging that pipeline stages use internally to do their work well.
 
 Pipeline orchestrates. Superpowers execute.
 
-## Lifecycle Stages
-
-```
-create-issues → plan-issue → evaluate-issue-plan → (approve) → execute-issue-plan → evaluate-issue-pr → (merge)
-```
-
-| Stage | Pipeline skill | Superpowers used internally |
-|-------|---------------|---------------------------|
-| Ideation | `/pipeline:create-issues` | `brainstorming` |
-| Planning | `/pipeline:plan-issue` | `writing-plans` |
-| Plan review | `/pipeline:evaluate-issue-plan` | — |
-| Execution | `/pipeline:execute-issue-plan` | `subagent-driven-development` |
-| PR review | `/pipeline:evaluate-issue-pr` | `subagent-driven-development` |
-
-For autonomous end-to-end runs across many issues, `/pipeline:fullsend` is the canonical entry point — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations. The legacy `"full send"` magic-string passed to `/pipeline:run` is preserved as a back-compat delegator.
-
-For pre-prioritization hygiene over the open-issue set, `/pipeline:run --analyze` runs a read-only pass that flags likely duplicates and standalones that fit existing trackers — decision-support only, no mutations. See `skills/run/SKILL.md` analyze mode.
+Full process maps (lifecycle, label flow, dispatch model, paths A/B/C/D, wave plan) in docs/process-maps.md.
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
 
-For the dispatch model (PATH A/B/C), wave planner, spawn-claude degradation, and base-branch enforcement layers, see [docs/architecture.md](docs/architecture.md).
+## Emergency lane
 
-### Hotfix (emergency lane)
-
-`/pipeline:hotfix` is an opt-out lane that bypasses the standard lifecycle. It files (or uses) an issue as an audit anchor, creates a worktree, runs the test/fix loop **in-session** in the current orchestrator, and opens a PR against `PIPELINE_BASE_BRANCH`. **no pipeline labels** are applied (`plan-pending`/`plan-reviewed`/`plan-approved`/`in-progress`/`pr-open`); no `evaluate-issue-plan` or `evaluate-issue-pr` runs; no auto-merge gate fires — the user merges manually.
-
-Distinct from **PATH D (`quick-fix`)**: PATH D runs the same `tdd-implementer` artifact but inside a spawned worker session via `/pipeline:execute-issue-plan` and goes through `evaluate-issue-pr`. Hotfix preserves the in-session experience — the user observes the test/fix loop live and reacts in real time. If you want the greenlight auto-merge gate, use PATH D instead.
-
-See `skills/hotfix/SKILL.md`.
-
-## Key Handoffs
-
-**Brainstorming → Issues:** The `superpowers:brainstorming` skill produces a design spec. The `/pipeline:create-issues` skill converts that spec into one or more GitHub issues and deletes the spec file — the issues become the source of truth. Brainstorming does NOT hand off to `writing-plans` directly; that happens later inside `/pipeline:plan-issue`.
-
-**Issues → Plans:** Each issue gets its own implementation plan via `/pipeline:plan-issue`, which uses `writing-plans` internally.
-
-**Plans → Execution:** After a plan is reviewed (`/pipeline:evaluate-issue-plan`) and approved (human adds `plan-approved` label), `/pipeline:execute-issue-plan` implements it in an isolated worktree.
-
-## Auto-merge default
-
-When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, the pipeline auto-squash-merges the PR (with branch delete), flips the issue to `merged`, and closes it — no manual confirmation. The interesting gate is the eval verdict, not the merge button.
-
-**Four greenlight conditions** (all must hold; otherwise the PR is left for manual merge with a `block-*` reason):
-
-1. Latest `## Evaluation` comment contains `**Verdict:** Approved`.
-2. Every entry in the PR's `statusCheckRollup` has `conclusion == SUCCESS` (or the rollup is empty for repos with no CI configured).
-3. `mergeable == MERGEABLE`.
-4. `mergeStateStatus == CLEAN` (not BLOCKED/BEHIND/DIRTY/UNSTABLE).
-
-**Three opt-outs** restore today's stop-before-merge behavior:
-
-- `FULL SEND --manual-merge` (token may appear anywhere in argv — before, between, or after issue numbers).
-- `/pipeline:evaluate-issue-pr <N> --manual-merge` for one-off evaluations.
-- A `manual-merge` label on the issue, for per-issue control without re-typing the flag.
-
-The implementation lives in `scripts/auto-merge-gate.sh` (helper exposing `auto_merge_should_fire`), the evaluate-issue-pr skill (Step 11), and the run skill (Step 8). **Release-please PRs are out of scope** — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of the run skill, unchanged.
+- **Hotfix** (`/pipeline:hotfix`) is the in-session emergency lane: bypasses lifecycle gates (no pipeline labels, no eval gates, no auto-merge). Distinct from PATH D — the user observes the test/fix loop live and merges manually. See `skills/hotfix/SKILL.md`.
 
 ## Branches
 
@@ -94,6 +42,12 @@ For plugin layout, `CLAUDE_PLUGIN_ROOT` resolution, and doctor states, see [docs
 ## Tracker lifecycle
 
 Tracker issues (label: `tracker`) are coordination artifacts that roll up child issues under a `## Rollout sequence` checklist. The orchestrator excludes them from the action queue and never proposes them for plan/execute. `/pipeline:run` housekeeping auto-closes any open issue labelled `tracker` whose `## Rollout sequence` children are all in state `CLOSED`, posting the comment `Auto-closed: all children merged.` and leaving the issue history preserved. This depends on the `tracker` label introduced by #31 — without that label the housekeeping pass has nothing to scan. Entrypoint: `scripts/auto-close-trackers.sh`. Contract / test substrate: `tests/test-auto-close-trackers.sh`.
+
+## PATH D callout
+
+- When working in a worktree on a PATH D (`quick-fix`) issue, the issue-body marker takes precedence over the heuristic detection.
+- PATH D runs the `tdd-implementer` discipline inline (no subagent dispatch, no spawn-claude) and goes through `evaluate-issue-pr` like any other path.
+- Authoritative spec lives in `skills/classify-issue/SKILL.md` and `skills/execute-issue-plan/SKILL.md`.
 
 ## Design Principles
 

@@ -20,6 +20,10 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 
 # Worktree Sync
 
+```
+prune orphaned branches → scan worktrees → diff .claude/ → copy missing/outdated → report
+```
+
 Run the sync script to check all active worktrees for missing or outdated files and fix them:
 
 ```bash

@@ -7,7 +7,7 @@ allowed-tools: Read, Bash, Glob, Grep, Skill
 
 ## Boot
 
-At session start, before running any of the steps below, source the project's `pipeline.config` so the `PIPELINE_*` variables are available for the rest of this skill:
+Source the project's `pipeline.config` so `PIPELINE_*` variables (`PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_CONTEXT_FILES`, etc.) are available to the bash blocks below:
 
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
@@ -16,20 +16,20 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
   && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
+## Lifecycle
+
+```
+plan-comment → check criteria → verdict → label plan-reviewed
+```
 
 # Plan Evaluator
 
-You are a senior engineer performing a thorough code review of an implementation plan. Your job is to **verify every factual claim** the plan makes against the actual codebase. Plans tend to be overconfident and miss dependencies — your default assumption should be skepticism, not trust.
-
-Do NOT debate whether the approach is "right." Do NOT suggest alternative architectures. Do NOT add scope. Just verify what the plan says, find what it missed, and be specific.
+You are a senior engineer reviewing an implementation plan. Your job is to **verify every factual claim** the plan makes against the actual codebase — plans tend to be overconfident and miss dependencies, so default to skepticism. Do NOT debate the approach, suggest alternatives, or add scope. Verify what the plan says, find what it missed, and be specific.
 
 **Rules:**
-- Quote file paths and line numbers when reporting discrepancies
-- If the plan says "file X has function Y," open the file and check
-- If the plan lists "Files to change," verify every file exists at that path
-- If the plan says "None" for schema/API/test changes, verify that's actually true
-- Name the gap, don't hint at it — "missing" not "might need attention"
+- Quote file paths and line numbers when reporting discrepancies.
+- For every factual claim the plan makes (a file exists, a function lives there, a section is "None"), open the file or grep to verify.
+- Name the gap, don't hint at it — "missing" not "might need attention".
 
 ## Steps
 
@@ -41,25 +41,19 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
    ```
    If no plan comment exists, STOP and report: "No implementation plan found on issue #N."
 
-2. **Read project context:**
-   - Read each file listed in: `PIPELINE_CONTEXT_FILES`
-   - Also read `redline/CLAUDE.md` if redline files are in the plan
+2. **Read project context:** every file listed in `PIPELINE_CONTEXT_FILES`, plus `redline/CLAUDE.md` if redline files are in the plan.
 
 3. **Two-phase review.**
 
    **Phase 1 — Spec compliance.** Verify the plan matches the issue:
-   - Does the plan address every requirement in the issue body?
-   - Does the plan add scope the issue didn't ask for?
-   - Are "Files to change" complete — nothing missing, nothing extraneous?
-   - Verify every file in "Files to change" exists at the stated path
-   - Read each file. Is the plan's description of what needs to change consistent with actual contents?
-   - Are there obvious imports, type definitions, or test files that should also change but aren't listed?
-   - If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed
-   - If the plan lists changes, verify they're consistent with existing patterns in the codebase
+   - Does the plan address every requirement in the issue body, without adding scope it didn't ask for?
+   - For every entry in "Files to change": confirm the path exists and the plan's description matches actual contents.
+   - Are there adjacent files (imports, type definitions, tests) that should also change but aren't listed?
+   - If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed.
+   - If the plan lists changes, verify they're consistent with existing patterns in the codebase.
 
    **Phase 2 — Implementability.** Verify the plan is executable without guessing:
-   - Are there ambiguous steps that could be interpreted multiple ways?
-   - Are data structures, algorithms, or mode behaviors specified concretely?
+   - Are data structures, algorithms, or mode behaviors specified concretely (no ambiguous steps)?
    - Would the executor need to make design decisions the plan doesn't address?
    - Could an executor implement every step from the comment alone?
 
@@ -91,17 +85,16 @@ Do NOT debate whether the approach is "right." Do NOT suggest alternative archit
    **Recommendations:** (specific, actionable changes — not vague suggestions)
    ```
 
-   If verdict is **Approve**: no blocking issues found, plan is implementable as-is.
-   If verdict is **Revise**: at least one blocking issue. List exactly what must change.
+   Pick `Approve` only when there are no blocking issues; otherwise pick `Revise` and list exactly what must change.
 
-6. **Update labels:**
+6. **Update labels** (verdict values per the template above):
 
-   If verdict is **Approve**:
+   If **Approve**:
    ```bash
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-reviewed" --remove-label "plan-pending"
    ```
 
-   If verdict is **Revise**: do NOT change labels. Leave `plan-pending` in place. The evaluation comment is posted so the user can see the feedback. The pipeline will detect the evaluation comment and await user feedback before re-planning.
+   If **Revise**: do NOT change labels. Leave `plan-pending` in place — the pipeline detects the evaluation comment and awaits user feedback before re-planning.
 
 ## Constraints
 - READ ONLY — do not modify any source files

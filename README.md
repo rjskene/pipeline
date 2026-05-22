@@ -1,138 +1,76 @@
-# Claude Pipeline Harness
+# Claude Pipeline
 
-A reusable automation layer for Claude Code projects. Manages the full GitHub issue lifecycle — planning, evaluation, execution, PR creation, and cleanup — through slash commands.
-
-```
-(new issue) → /pipeline:classify-issue → /pipeline:plan-issue → /pipeline:evaluate-issue-plan → (approve) → /pipeline:execute-issue-plan → /pipeline:evaluate-issue-pr → (merge)
-```
-
-Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`. `/pipeline:classify-issue` additionally applies a path label (`docs-only` for trivial doc-only edits, `multi-task` for issues that need parallel sub-task execution) that steers downstream dispatch.
-
-For autonomous end-to-end runs across many issues, use `/pipeline:fullsend` — it chains classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge without intermediate confirmations.
-
----
-
-## Install
-
-The pipeline is distributed as a Claude Code plugin. Install it from the marketplace:
+Claude Pipeline — a CI workflow for automating code updates through GitHub issues.
 
 ```
-/plugin marketplace add rjskene/pipeline
+create → classify → plan → eval → execute → eval-pr → merge
 ```
 
-```
-/plugin install pipeline@claude-pipeline
-```
+Full process maps in docs/process-maps.md.
 
-The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`) and registers all slash commands, hooks, skills, and the `tdd-implementer` subagent automatically. Nothing is copied into your project tree.
+## Canonical entry points
 
-For prerelease / RC publishing details, see [CLAUDE.md → Dev/prerelease channel](./CLAUDE.md#devprerelease-channel).
-
----
-
-## Configure your project
-
-Your consumer project needs exactly one pipeline file at its root: `pipeline.config`. The plugin reads it at runtime — there is no install-time template substitution.
-
-Create the file with the values for your project:
-
-```bash
-PIPELINE_REPO="your-org/your-repo"          # GitHub owner/repo
-PIPELINE_BASE_BRANCH="staging"              # Branch that PRs target (default: staging — dev trunk)
-PIPELINE_WORKTREE_PREFIX="wt"               # Worktree directory prefix
-PIPELINE_INSTALL_CMD="npm ci"               # How to install dependencies
-PIPELINE_TEST_CMD="npm test"                # How to run tests
-PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"   # How to type-check (leave empty to skip)
-PIPELINE_CONTEXT_FILES="CLAUDE.md"          # CLAUDE.md files the agents should read
-# ... see pipeline.config.example in the plugin repo for all options
-```
-
-Then create the GitHub labels the pipeline uses to track issue progress:
-
-| Label | Description |
+| Command | When to use |
 |---|---|
-| `plan-pending` | Plan has been posted, awaiting review |
-| `plan-reviewed` | Plan has been evaluated |
-| `plan-approved` | Plan approved, ready for execution |
-| `in-progress` | Currently being implemented |
-| `pr-open` | PR is open and awaiting review |
-| `merged` | PR merged, ready for cleanup |
-| `excluded` | Issue excluded from pipeline (configurable via `PIPELINE_LABELS_EXCLUDED`) |
-| `later` | Deferred — shown in status but not processed (configurable via `PIPELINE_LABELS_LATER`) |
-| `human` | Needs human in the loop — never processed by autonomous runs (configurable via `PIPELINE_LABELS_HUMAN`) |
-| `brainstorm` | Non-actionable discussion or exploration — surfaced in status but never auto-planned (configurable via `PIPELINE_LABELS_BRAINSTORM`) |
+| `/pipeline:run` | Interactive — check pipeline status, see what's ready, advance the next stage |
+| `/pipeline:fullsend [N ...]` | Autonomous end-to-end run for one or many issues (classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge) |
 
-After installing the plugin, validate your setup:
+## Install + first run
+
+- Marketplace add:
+  ```
+  /plugin marketplace add rjskene/pipeline
+  ```
+- Install:
+  ```
+  /plugin install pipeline@claude-pipeline
+  ```
+- The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`) and registers all slash commands, hooks, skills, and the `tdd-implementer` subagent automatically.
+- Configure — create `pipeline.config` at the repo root with the values for your project:
+  ```bash
+  PIPELINE_REPO="your-org/your-repo"
+  PIPELINE_BASE_BRANCH="staging"
+  PIPELINE_WORKTREE_PREFIX="wt"
+  PIPELINE_INSTALL_CMD="npm ci"
+  PIPELINE_TEST_CMD="npm test"
+  PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"
+  PIPELINE_CONTEXT_FILES="CLAUDE.md"
+  ```
+  See `pipeline.config.example` for all options.
+- Validate:
+  ```
+  /pipeline:doctor
+  ```
+  Read-only audit; `--fix labels` seeds canonical labels idempotently.
+- First run:
+  ```
+  /pipeline:run
+  ```
+
+## Project layout
 
 ```
-/pipeline:doctor
+claude-pipeline/
+├── skills/         # Pipeline slash-command skills (run, fullsend, plan-issue, ...)
+├── agents/         # Subagent definitions (tdd-implementer, ...)
+├── hooks/          # PreToolUse / PostToolUse / Stop hook scripts
+├── scripts/        # Shell helpers invoked by skills and hooks
+├── docs/           # System-reference docs (process maps, architecture, release cadence, ...)
+├── tests/          # Test substrate for scripts, hooks, and skill contracts
+├── .github/        # Workflows, issue templates, release-please config
+├── pipeline.config # Host-specific config (gitignored; copy from pipeline.config.example)
+├── CLAUDE.md       # Working instructions for agents operating in this repo
+└── README.md       # This file
 ```
 
-This is a read-only audit — it reports any gaps in `pipeline.config`, `gh` auth, plugin registration, residual subtree artifacts, the base branch, and label setup. To seed the GitHub labels listed above in one shot, run:
+## Where to look
 
-```
-/pipeline:doctor --fix labels
-```
-
-`--fix labels` is idempotent (uses `gh label create --force`) and honors `PIPELINE_LABELS_*` overrides from `pipeline.config`.
-
-Hooks are registered by the plugin manifest at install time — you do not need to touch `.claude/settings.json` yourself.
-
-### Release-PR awareness (release-please et al.)
-
-`/pipeline:run` discovers open release-bot PRs in housekeeping and surfaces them in a dedicated **Release PRs** row group above the regular pipeline-issue table:
-
-```
-RELEASE PRs
-================================================================
- PR     Title                              Stage             CI
-----------------------------------------------------------------
- #201   chore(main): release 1.2.3         release-pending   pass
- #202   chore(main): release 1.3.0         release-pending   fail
-================================================================
-```
-
-`release-pending` is a display-only Stage value — it is NOT a GitHub label. The PR already carries `autorelease: pending` (release-please convention); writing a second label would force consumer repos to define it.
-
-In **interactive mode**, a green release PR is proposed for merge once feature work in flight is done (priority slots between `plan-approved` execution and `ready` planning). In **`/pipeline:fullsend`** (also reachable via the back-compat `"full send"` shortcut in `/pipeline:run`), step 7b auto-merges green release PRs between PR evaluation (step 7) and report (step 8) — gated on the opt-in flag below.
-
-Two config flags control behavior (defaults shown):
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `PIPELINE_RELEASE_PR_AUTO_MERGE` | `"false"` | Opt-in auto-merge of green release PRs during `/pipeline:fullsend` (or back-compat `"full send"` in `/pipeline:run`). Default off so manual-review release flows aren't surprised on upgrade. |
-| `PIPELINE_RELEASE_PR_LABEL` | `"autorelease: pending"` | Label used to discover release-bot PRs. Override for non-release-please bots (e.g. `please-release`). |
-
-PRs with `ci=fail` or `ci=pending` are surfaced in the table but never proposed/merged — wait for CI to settle (or fix it) first.
-
-The discovery helper requires `jq` (already a pipeline prerequisite) and `gh`. If `gh` is unavailable or no release PRs are open, the row group is omitted silently.
-
----
-
-## Usage
-
-| Command | What it does |
-|---|---|
-| `/pipeline:run` | Check pipeline status, see what's ready, advance the next stage |
-| `/pipeline:fullsend [N N ...]` | Autonomous end-to-end run for one or many issues (classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge) without intermediate confirmations |
-| `/pipeline:classify-issue 42` | Triage issue #42 and apply a path label (`docs-only` / `multi-task` / none) for downstream dispatch |
-| `/pipeline:plan-issue 42` | Generate an implementation plan for issue #42 and post it as a comment |
-| `/pipeline:evaluate-issue-plan 42` | Independently review the plan on issue #42 |
-| `/pipeline:execute-issue-plan 42` | Implement the approved plan (run from inside the feature worktree) |
-| `/pipeline:evaluate-issue-pr 42` | Review the PR against its plan (run from inside the feature worktree) |
-| `/pipeline:create-issues` | Brainstorm mode — discuss changes, then push as GitHub issues |
-| `/pipeline:worktree-sync` | Sync `.claude/` files to all active worktrees |
-| `/pipeline:doctor` | Read-only audit of `pipeline.config`, `gh` auth, plugin registration, labels, residual subtree artifacts, and base branch (run `/pipeline:doctor --fix labels` to seed the canonical labels) |
-
----
-
-> **Migrating from a subtree install?** The legacy `.claude-pipeline/` subtree path is retired. Existing subtree consumers run the one-shot migration once — see [docs/migration-from-subtree.md](docs/migration-from-subtree.md).
-
----
+- `docs/` — system reference (process maps, architecture, release cadence, plugin architecture, observability, self-audit, migration-from-subtree).
+- `skills/<name>/SKILL.md` — authoritative behavior for each slash command.
+- `CLAUDE.md` — working instructions for this repo (branches, namespace discipline, configuration conventions).
 
 ## Prerequisites
 
-- **`gh` CLI** — for GitHub issue/PR operations
-- **`jq`** — for hook JSON parsing
-- **`bash` 4+** — queue and status scripts use associative arrays
-  - macOS ships bash 3.2; install a newer version: `brew install bash`
+- `gh` CLI — for GitHub issue/PR operations.
+- `jq` — for hook JSON parsing.
+- `bash` 4+ — queue and status scripts use associative arrays. (Note: macOS ships bash 3.2; `brew install bash`.)

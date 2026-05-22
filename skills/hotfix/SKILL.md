@@ -20,23 +20,23 @@ The bash code blocks below reference `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `P
 
 # Hotfix Agent
 
-## Overview
+```
+parse args → look up / file issue → snapshot cwd + trap → create worktree → dispatch fix (in-session) → open PR → restore cwd → summary
+```
 
-`/pipeline:hotfix` is the **emergency lane**. It exists for cases where you want to file an audit-anchor issue, run a fix end to end, and open a PR — without going through the standard classify → plan → evaluate-plan → execute → evaluate-pr → auto-merge lifecycle.
-
-It runs **in the current orchestrator session** (no out-of-session worker, no background worker session). You observe red→green→commit live and merge the PR by hand.
+`/pipeline:hotfix` is the **emergency lane**: file an audit-anchor issue, run the fix end to end, open a PR — without the standard classify → plan → evaluate-plan → execute → evaluate-pr → auto-merge lifecycle. It runs in the **current** orchestrator session (red→green→commit live); merge by hand.
 
 ## Invariants
 
-- **In-session.** The hotfix skill executes directly in the calling session. No dispatch to a worker session.
-- **No pipeline labels.** No `--add-label` invocations for `plan-pending`, `plan-reviewed`, `plan-approved`, `in-progress`, or `pr-open`. The issue stays unlabelled (modulo whatever the user added by hand) so the standard `pipeline:run` orchestrator does not pick it up.
-- **No evaluator gates.** No call to `/pipeline:classify-issue`, `/pipeline:plan-issue`, `/pipeline:evaluate-issue-plan`, `/pipeline:evaluate-issue-pr`, or `/pipeline:fullsend`. Explicitly: **no /pipeline:evaluate-issue-plan** dispatch, **no /pipeline:evaluate-issue-pr** dispatch.
-- **No auto-merge.** The greenlight `scripts/auto-merge-gate.sh` does not fire. The PR sits open until the user merges manually.
-- **PR base.** Targets `PIPELINE_BASE_BRANCH` (currently `staging` by default) — consistent with every other feature lane.
+- **In-session.** Executes directly in the calling session. No dispatch to a worker session.
+- **No pipeline labels.** None of `plan-pending`/`plan-reviewed`/`plan-approved`/`in-progress`/`pr-open` applied — the standard `pipeline:run` orchestrator does not pick it up.
+- **No evaluator gates.** Explicitly: no /pipeline:classify-issue, no /pipeline:plan-issue, no /pipeline:evaluate-issue-plan, no /pipeline:evaluate-issue-pr, no /pipeline:fullsend dispatch.
+- **No auto-merge.** The greenlight `scripts/auto-merge-gate.sh` does not fire — user merges manually.
+- **PR base.** Targets `PIPELINE_BASE_BRANCH` (defaults to `staging`).
 
 ## Steps
 
-1. **Parse arguments.** Detect whether `$1` is a numeric issue number (existing issue) or a quoted problem string (new issue to file). Parse `--inline` / `--subagent`. Default executor is `--subagent`. Reject combinations like passing both flags.
+1. **Parse arguments.** Detect whether `$1` is a numeric issue number (existing issue) or a quoted problem string (new issue to file). Parse `--inline` / `--subagent`; default is `--subagent`.
 
    ```bash
    ARGS=("$@")
@@ -54,12 +54,12 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
 
 2. **Look up or file the issue.**
 
-   - If `$ENTRY` is numeric: treat as an existing issue.
+   - If `$ENTRY` is numeric: treat as existing.
      ```bash
      N="$ENTRY"
      gh issue view "$N" --repo "$PIPELINE_REPO" --json number,title,body
      ```
-   - Otherwise: file a new issue as the audit anchor and capture the new number.
+   - Otherwise: file a new issue as the audit anchor and capture the number.
      ```bash
      URL=$(gh issue create --repo "$PIPELINE_REPO" \
        --title "hotfix: $(echo "$ENTRY" | head -c 80)" \
@@ -67,9 +67,9 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
      N="${URL##*/}"
      ```
 
-   Either path yields the issue number `$N` for later steps. No labels are added in this step.
+   Either path yields `$N` for later steps. No labels are added.
 
-3. **Snapshot original cwd and install the restoration trap.** The worktree `cd` is global to the orchestrator session. Without this trap an early-exit (subagent error, hook denial, user Ctrl-C) strands the session inside the worktree and breaks every subsequent unrelated turn.
+3. **Snapshot original cwd and install the restoration trap.** The worktree `cd` is global to the orchestrator session — without this trap an early-exit (subagent error, hook denial, Ctrl-C) strands the session inside the worktree. The trap MUST cover EXIT (normal flow), ERR (non-zero under `set -e`), and INT (user interrupt); the explicit `cd` in step 7 is the happy path.
 
    ```bash
    ORIG_PWD="$(pwd)"
@@ -77,9 +77,7 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
    trap restore_cwd EXIT ERR INT
    ```
 
-   The trap MUST cover EXIT (normal flow), ERR (any non-zero exit under `set -e`), and INT (user interrupt). The explicit `cd` in step 7 is the happy path; the trap is the safety net.
-
-4. **Create the worktree** by invoking the existing `scripts/setup-worktree.sh` helper (no changes to it). Branch naming is `feature/hotfix-<N>` so the existing branch-name parsers (e.g. `scripts/cleanup-worktree.sh`) keep working.
+4. **Create the worktree** via `scripts/setup-worktree.sh`. Branch naming is `feature/hotfix-<N>` so existing parsers (e.g. `scripts/cleanup-worktree.sh`) keep working.
 
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh" \
@@ -90,7 +88,7 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
 
 5. **Dispatch the fix in the current session.**
 
-   - **`--subagent` (default).** Dispatch the same leaf executor PATH C and PATH D use:
+   - **`--subagent` (default).** Dispatch the same leaf executor PATH C and PATH D use (runs inline; output streams live):
      ```
      Agent(
        subagent_type: "tdd-implementer",
@@ -98,13 +96,11 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
        prompt: "target=<relevant-dir>/  ...full issue body...  write failing test → minimum impl → commit"
      )
      ```
-     The subagent runs inline in the current orchestrator session; output streams to the user live.
 
-   - **`--inline`.** Drive TDD directly from the orchestrator:
+   - **`--inline`.** Drive TDD directly from the orchestrator (no subagent dispatch):
      ```
      Skill(skill: "superpowers:test-driven-development")
      ```
-     and proceed with red→green→commit by hand. No subagent dispatch.
 
 6. **Open the PR.** Targets `PIPELINE_BASE_BRANCH`; no pipeline labels.
 
@@ -120,7 +116,7 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
 
    Do NOT add `pr-open`, `in-progress`, or any other pipeline label to either the issue or the PR. The PR will not be picked up by the auto-merge gate — that's the design.
 
-7. **Restore cwd explicitly and clear the trap.** Belt-and-braces: the trap is the safety net, the explicit `cd` is the happy path.
+7. **Restore cwd explicitly and clear the trap.**
 
    ```bash
    cd "$ORIG_PWD"
@@ -133,19 +129,20 @@ It runs **in the current orchestrator session** (no out-of-session worker, no ba
 
 ## Boundary with PATH D
 
-`/pipeline:hotfix` and **PATH D (`quick-fix`)** share the same `tdd-implementer` leaf executor, but they differ in session shape and review gate:
+`/pipeline:hotfix` and **PATH D (`quick-fix`)** share the same `tdd-implementer` leaf executor but differ in session shape and review gate:
 
 | | PATH D (`quick-fix`) | `/pipeline:hotfix` |
 |---|---|---|
-| Session | Separate worker session via `/pipeline:execute-issue-plan` | Current orchestrator session, in-session |
-| Plan stage | Skipped (PATH D dispatch directly) | Skipped (emergency lane) |
-| Evaluator | `/pipeline:evaluate-issue-pr` runs; auto-merge gate decides | No evaluator, no auto-merge |
-| Labels | Standard lifecycle (`in-progress`, `pr-open`, `merged`) | No pipeline labels applied |
-
-If you want the greenlight auto-merge gate, label the issue `quick-fix` and use `/pipeline:fullsend <N>` (PATH D) instead. If you want to watch the fix happen live and merge by hand, use `/pipeline:hotfix`.
+| Invocation | `/pipeline:fullsend <N>` after `quick-fix` label | `/pipeline:hotfix "<problem>" \| <N>` directly |
+| Session | spawned worker via `/pipeline:execute-issue-plan` | current orchestrator session, in-session |
+| Plan stage | skipped (PATH D dispatch directly) | skipped (emergency lane) |
+| Evaluator | `/pipeline:evaluate-issue-pr` runs | none |
+| Auto-merge gate | fires on Approved verdict | does not fire (no auto-merge) |
+| Lifecycle labels | `in-progress` → `pr-open` → `merged` | none applied |
+| Who merges | pipeline (greenlight) | user (manually) |
 
 ## Safety notes
 
-- **Worktree path safety.** `scripts/setup-worktree.sh` writes worktrees under `.claude/worktrees/` (a sub-path of the project root), so they pass `hooks/restrict_paths.py`. Do NOT introduce code that constructs `//`-prefixed paths or relies on substring path matching — the **issue #353** hook-bug family (`//` collapsing, substring matching, `..` escape) must not be regressed.
-- **PR title sanitization.** The PR title MUST NOT contain unescaped CI-blocking markers (`[skip ci]`, `***NO_CI***`, etc.). The `hooks/check-ci-skip-markers.py` PreToolUse hook will block the `gh pr create` call if it sees them; wrap any marker in backticks (e.g. `` `[skip ci]` ``) if you need to describe one in the PR body.
-- **Base-branch guard.** The explicit `[ -z "$PIPELINE_BASE_BRANCH" ]` check in step 6 is defense-in-depth alongside `hooks/enforce-base-branch.py` and the eval-time `baseRefName` assertion used by other lanes. Same pattern as `execute-issue-plan` Step 9b.
+- **Worktree path safety.** `scripts/setup-worktree.sh` writes worktrees under `.claude/worktrees/` (a sub-path of the project root) so they pass `hooks/restrict_paths.py`. Do NOT introduce code that constructs `//`-prefixed paths or relies on substring path matching — the **issue #353** hook-bug family (`//` collapsing, substring matching, `..` escape) must not be regressed.
+- **PR title sanitization.** The PR title MUST NOT contain unescaped CI-blocking markers (`[skip ci]`, `***NO_CI***`, etc.). The `hooks/check-ci-skip-markers.py` PreToolUse hook blocks the `gh pr create` call if it sees them; wrap any marker in backticks (e.g. `` `[skip ci]` ``) in the PR body if you need to describe one.
+- **Base-branch guard.** The explicit `[ -z "$PIPELINE_BASE_BRANCH" ]` check in step 6 is defense-in-depth alongside `hooks/enforce-base-branch.py` and the eval-time `baseRefName` assertion. Same pattern as `execute-issue-plan` Step 9b.
