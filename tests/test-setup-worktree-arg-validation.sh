@@ -10,6 +10,10 @@ set -uo pipefail
 #   1. Bare integer rejection  : `setup-worktree.sh 81`        -> non-zero, no worktree dir
 #   2. Positive control        : `setup-worktree.sh feature/foo 81` -> exit 0, wt-81-foo created
 #   3. No-prefix rejection     : `setup-worktree.sh randomthing 81` -> non-zero
+#   4. fix/bar 81              : exit 0, wt-81-bar created, NO wt-81-fix/ dir
+#   5. chore/baz 81            : exit 0, wt-81-baz created
+#   6. Empty suffix rejection  : `feature/ 81` and `fix/ 81` -> non-zero
+#   7. Multi-segment guard     : `feature/foo/bar 81` -> non-zero (no silent collapse)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -157,6 +161,117 @@ if find "$PROJ/.claude/worktrees" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/nu
   ok=0
 fi
 [ "$ok" = "1" ] && pass_msg "case 3 rejects 'randomthing' (no allowed prefix)"
+
+# ---- Case 4: non-feature prefix with single segment (fix/bar 81 -> wt-81-bar) ----
+echo "Case 4: 'fix/bar 81' must succeed and create wt-81-bar (not wt-81-fix/bar)"
+inc
+PROJ="$WORKDIR/p4"
+STUB=$(setup_env "$PROJ")
+OUT=$(run_setup "$PROJ" "$STUB" fix/bar 81)
+exit_line=$(echo "$OUT" | tail -n1)
+ok=1
+if [ "$exit_line" != "EXIT=0" ]; then
+  fail_msg "case 4 expected exit 0, got $exit_line"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ ! -d "$PROJ/.claude/worktrees/wt-81-bar" ]; then
+  fail_msg "case 4 expected $PROJ/.claude/worktrees/wt-81-bar to exist"
+  ls -la "$PROJ/.claude/worktrees" 2>&1 | sed 's/^/    /'
+  ok=0
+fi
+# Critical: no nested fix/ directory should have been created (the bug).
+if [ -d "$PROJ/.claude/worktrees/wt-81-fix" ]; then
+  fail_msg "case 4 found nested 'wt-81-fix/' dir — SUFFIX strip kept the prefix"
+  ls -la "$PROJ/.claude/worktrees" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 4 creates wt-81-bar for fix/bar 81 (no nested fix/)"
+
+# ---- Case 5: non-feature prefix, another shape (chore/baz 81 -> wt-81-baz) ----
+echo "Case 5: 'chore/baz 81' must succeed and create wt-81-baz"
+inc
+PROJ="$WORKDIR/p5"
+STUB=$(setup_env "$PROJ")
+OUT=$(run_setup "$PROJ" "$STUB" chore/baz 81)
+exit_line=$(echo "$OUT" | tail -n1)
+ok=1
+if [ "$exit_line" != "EXIT=0" ]; then
+  fail_msg "case 5 expected exit 0, got $exit_line"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ ! -d "$PROJ/.claude/worktrees/wt-81-baz" ]; then
+  fail_msg "case 5 expected $PROJ/.claude/worktrees/wt-81-baz to exist"
+  ls -la "$PROJ/.claude/worktrees" 2>&1 | sed 's/^/    /'
+  ok=0
+fi
+if [ -d "$PROJ/.claude/worktrees/wt-81-chore" ]; then
+  fail_msg "case 5 found nested 'wt-81-chore/' dir — SUFFIX strip kept the prefix"
+  ls -la "$PROJ/.claude/worktrees" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 5 creates wt-81-baz for chore/baz 81"
+
+# ---- Case 6a: empty suffix rejection (feature/ 81) ----
+echo "Case 6a: 'feature/ 81' must be rejected (empty after slash)"
+inc
+PROJ="$WORKDIR/p6a"
+STUB=$(setup_env "$PROJ")
+OUT=$(run_setup "$PROJ" "$STUB" feature/ 81)
+exit_line=$(echo "$OUT" | tail -n1)
+ok=1
+if [ "$exit_line" = "EXIT=0" ]; then
+  fail_msg "case 6a expected non-zero exit, got $exit_line"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if find "$PROJ/.claude/worktrees" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+  fail_msg "case 6a expected NO worktree dir, but found one"
+  ls -la "$PROJ/.claude/worktrees" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 6a rejects 'feature/' (empty suffix)"
+
+# ---- Case 6b: empty suffix rejection (fix/ 81) ----
+echo "Case 6b: 'fix/ 81' must be rejected (empty after slash)"
+inc
+PROJ="$WORKDIR/p6b"
+STUB=$(setup_env "$PROJ")
+OUT=$(run_setup "$PROJ" "$STUB" fix/ 81)
+exit_line=$(echo "$OUT" | tail -n1)
+ok=1
+if [ "$exit_line" = "EXIT=0" ]; then
+  fail_msg "case 6b expected non-zero exit, got $exit_line"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if find "$PROJ/.claude/worktrees" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+  fail_msg "case 6b expected NO worktree dir, but found one"
+  ls -la "$PROJ/.claude/worktrees" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 6b rejects 'fix/' (empty suffix)"
+
+# ---- Case 7: multi-segment guard (feature/foo/bar 81) ----
+echo "Case 7: 'feature/foo/bar 81' must be rejected (multi-segment slug)"
+inc
+PROJ="$WORKDIR/p7"
+STUB=$(setup_env "$PROJ")
+OUT=$(run_setup "$PROJ" "$STUB" feature/foo/bar 81)
+exit_line=$(echo "$OUT" | tail -n1)
+ok=1
+if [ "$exit_line" = "EXIT=0" ]; then
+  fail_msg "case 7 expected non-zero exit, got $exit_line"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if find "$PROJ/.claude/worktrees" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+  fail_msg "case 7 expected NO worktree dir, but found one"
+  ls -la "$PROJ/.claude/worktrees" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "case 7 rejects 'feature/foo/bar' (multi-segment)"
 
 echo ""
 echo "================================"
