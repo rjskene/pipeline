@@ -16,7 +16,7 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 ## Emergency lane
 
-- `/pipeline:hotfix` bypasses lifecycle gates (no pipeline labels, no eval gates, no auto-merge). See `skills/hotfix/SKILL.md`.
+- **Hotfix** (`/pipeline:hotfix`) is the in-session emergency lane: bypasses lifecycle gates (no pipeline labels, no eval gates, no auto-merge). Distinct from PATH D — the user observes the test/fix loop live and merges manually. See `skills/hotfix/SKILL.md`.
 
 ## Branches
 
