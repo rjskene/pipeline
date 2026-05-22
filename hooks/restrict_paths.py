@@ -81,10 +81,23 @@ def extract_paths() -> list[str]:
             paths.append(p)
 
     elif tool_name == "Bash":
-        # Best-effort: extract absolute paths from the command string
+        # Best-effort: extract absolute paths from the command string.
         command = tool_input.get("command", "")
-        for m in re.finditer(r'(?:"|\')?(/[^\s"\';<>|&]+)(?:"|\')?', command):
+        # Pre-scrub env-var literals so unsubstituted ${VAR} / $VAR tokens
+        # in the command text can't false-positive the path extractor. Two
+        # passes: curly form first (explicit braces), then bare form on the
+        # residue. Uppercase + underscore matches conventional env-var
+        # naming and avoids consuming shell positional/special params like
+        # $1, $?, $@ that can't be paths anyway. See #353.
+        scrubbed = re.sub(r"\$\{[A-Z_][A-Z0-9_]*\}", "", command)
+        scrubbed = re.sub(r"\$[A-Z_][A-Z0-9_]*", "", scrubbed)
+        for m in re.finditer(r'(?:"|\')?(/[^\s"\';<>|&]+)(?:"|\')?', scrubbed):
             candidate = m.group(1)
+            # Skip the jq alternative operator (// inside a filter) and any
+            # other leading-double-slash substring that isn't a real path
+            # root on Linux. See #353.
+            if candidate.startswith("//"):
+                continue
             if candidate in ("/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"):
                 continue
             if candidate.startswith("/tmp"):
