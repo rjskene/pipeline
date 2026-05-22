@@ -70,7 +70,7 @@ Pipeline issues are fetched dynamically from GitHub — not hardcoded. At the st
 gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --limit 100
 ```
 
-**Excluded labels.** Issues with `PIPELINE_LABELS_EXCLUDED` are skipped entirely. Issues with `PIPELINE_LABELS_LATER` are shown in the status table (`stage = PIPELINE_LABELS_LATER`) but are not proposed for any action. Issues with `PIPELINE_LABELS_HUMAN` are shown (`stage = PIPELINE_LABELS_HUMAN`) and never enter autonomous full send — they require manual handling because they involve architecture decisions, cross-platform validation, production deploy risk, or other judgment the autonomous pipeline shouldn't make. The user can still pick them up manually. Issues with `PIPELINE_LABELS_BRAINSTORM` are shown (`stage = PIPELINE_LABELS_BRAINSTORM`) and treated the same — the body is not yet a commit-to-act spec.
+**Excluded labels.** Issues with `PIPELINE_LABELS_EXCLUDED` are skipped entirely. Issues with `PIPELINE_LABELS_LATER` are shown in the status table (stage = `PIPELINE_LABELS_LATER`) but are not proposed for any action. Issues with `PIPELINE_LABELS_HUMAN` are shown (stage = `PIPELINE_LABELS_HUMAN`) and never enter autonomous full send — they require manual handling because they involve architecture decisions, cross-platform validation, production deploy risk, or other judgment the autonomous pipeline shouldn't make. The user can still pick them up manually. Issues with `PIPELINE_LABELS_BRAINSTORM` are shown (stage = `PIPELINE_LABELS_BRAINSTORM`) and treated the same — the body is not yet a commit-to-act spec.
 
 ### Branch and worktree naming convention
 
@@ -108,7 +108,7 @@ Path column shows `?` for ready issues not yet classified — classification run
 
 ## Steps
 
-0. **Housekeeping** — six concerns covered before any discovery: orchestrator branch check, base-branch hook wiring advisory, `next-major-release` warning, worktree sync, release-PR discovery, stale tmux cleanup, auto-close trackers. Full detail in [references/housekeeping.md](references/housekeeping.md). The branch check must use `git pull --quiet origin "${EXPECTED_BASE}"` (quiet flag is required so the orchestrator does not pull the fast-forward file list into context). Discover release PRs with `list-release-prs.sh` and auto-close finished trackers — both wrapped with `PIPELINE_REPO=` per Issue #288:
+0. **Housekeeping** — six concerns covered before any discovery: orchestrator branch check, base-branch hook wiring advisory, `next-major-release` warning, worktree sync, release-PR discovery, stale tmux cleanup, auto-close trackers. Full detail in [references/housekeeping.md](references/housekeeping.md). The branch check must use `git pull --quiet origin "${EXPECTED_BASE}"` (quiet flag is required so the orchestrator does not pull the fast-forward file list into context). Discover release PRs with `list-release-prs.sh` (which lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL`, default `autorelease: pending`), auto-close finished trackers, and sync worktrees — all wrapped with `PIPELINE_REPO=` per Issue #288:
 
    ```bash
    RELEASE_PRS=$(PIPELINE_REPO="$PIPELINE_REPO" bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)
@@ -116,6 +116,8 @@ Path column shows `?` for ready issues not yet classified — classification run
      echo "[run] WARN: auto-close-trackers.sh exited non-zero (continuing)"
    PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-worktrees.sh
    ```
+
+   Output schema, one line per PR: `pr=<num> ci=<pass|fail|pending> title=<title>`. Empty when no release PRs are open. Release PRs are surfaced in the status table as a Release-PR block with Stage column rendering as the display-only literal `release-pending` (NOT a real GitHub label) and never enter the issue lifecycle.
 
 1. **Discover pipeline issues** — fetch all open AND recently closed issues, plus per-worktree merged PRs:
 
