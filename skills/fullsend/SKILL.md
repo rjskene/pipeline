@@ -64,7 +64,23 @@ When the user says **"full send"** (case-insensitive, also accepted: "full-send"
    ```bash
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
-5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
+5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). Full invocation signature:
+
+   ```
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh [--base <base>] <branch-name> <issue-number>
+   ```
+
+   Both positional args are required. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short) — same convention as `skills/run/SKILL.md` ("Branch and worktree naming convention"). `<issue-number>` is the bare integer.
+
+   Worked example:
+
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh feature/gmail-ci-filter 81
+   ```
+
+   The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
+
+   **Do NOT invoke with only the issue number** — the script will reject it as of #350. A bare integer like `setup-worktree.sh 81` fails the branch-prefix guard because `81` is not a `feature/<slug>` shape; without that guard, the worktree would silently land on a branch literally named `81` and every downstream stage would break.
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
 6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parse the emitted `ACTION=` line. Act per the table:
 
