@@ -128,7 +128,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
 
    **Do NOT invoke with only the issue number** — the script will reject it as of #350. A bare integer like `setup-worktree.sh 81` fails the branch-prefix guard because `81` is not a `feature/<slug>` shape; without that guard, the worktree would silently land on a branch literally named `81` and every downstream stage would break.
 6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
-6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, run `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parse the emitted `ACTION=` line. Act per the table:
+6b. **CI-fix loop** — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. Act per the table:
 
    | ACTION | Behavior |
    |--------|----------|
@@ -137,7 +137,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    | `red-retry` | autonomous mode: fire `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --ci-fix <N> <LOG>` in the background. Interactive mode: propose "re-dispatch executor on #N (CI red, retry budget <NEXT>/<BUDGET>)" as a candidate action. |
    | `red-budget-exhausted` | issue is already labelled `human` by the helper; mark "Flagged (CI persistent failure)" in the final report and skip evaluate-issue-pr for that issue. |
 
-   The helper writes a tail-truncated failure log to `.claude/logs/ci-fix-<N>-attempt-<n>.log` and posts a `pipeline.ci-retries: <n>` issue comment to track the retry counter. Step 4's status table should source the `CI` column (`green` / `red` / `pending` / `—`) from the same helper invocation for `pr-open` rows.
+   `check-ci-fix-loop.sh` is the authoritative source for retry-counter encoding (`pipeline.ci-retries: <n>` issue comment), tail-truncated failure-log path (`.claude/logs/ci-fix-<N>-attempt-<n>.log`), and `human` label application on budget-exhaust.
 
 7. **Evaluate PRs** — once all agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6.
 7b. **Auto-merge green release PRs (opt-in)** — runs after step 7 (Evaluate PRs) and before step 8 (Report). Only fires when `PIPELINE_RELEASE_PR_AUTO_MERGE=true` AND at least one release PR has `ci=pass`. Feature PRs land first; the release PR consolidates them so version bumps + CHANGELOG stay coherent.
