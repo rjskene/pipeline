@@ -270,8 +270,10 @@ emit_table() {
   local oldest newest
   oldest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | min // "?"')"
   newest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | max // "?"')"
+  # Banner uses the actual PR count, not $LIMIT, so a partial window
+  # (repo has fewer merged PRs than requested) reports accurately.
   printf 'OVER-EVAL REPORT — last %s merged PRs (window: %s to %s)\n\n' \
-    "$LIMIT" "$oldest" "$newest"
+    "$PR_COUNT" "$oldest" "$newest"
 
   echo 'PATH | N  | median diff | median plan | median plan-eval | median pr-eval | ratio pr-eval:diff | ratio plan-eval:diff'
 
