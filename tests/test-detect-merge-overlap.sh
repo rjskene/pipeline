@@ -40,6 +40,8 @@ case "$PR" in
   102) JSON='{"files":[{"path":"b.md"},{"path":"c.md"}]}' ;;
   103) JSON='{"files":[{"path":"d.md"}]}' ;;
   104) JSON='{"files":[{"path":"e.md"}]}' ;;
+  105) JSON='{"files":[{"path":"[id].tsx"},{"path":"x.md"}]}' ;;
+  106) JSON='{"files":[{"path":"[id].tsx"},{"path":"y.md"}]}' ;;
   *)
     echo "[gh shim] unhandled: $ALL_ARGS" >&2
     exit 1
@@ -97,6 +99,19 @@ if [ -z "$OUT" ]; then
 else
   check "disjoint pair 103/104 -> empty output" "no"
 fi
+
+echo "=== detect_merge_overlap: shared path with glob metacharacters printed literally ==="
+# Next.js-style dynamic-route paths (e.g. [id].tsx) are legal git paths. The
+# shared-path list must NOT glob-expand against the cwd. Run from a dir holding
+# a decoy "i.tsx" that the bracket pattern [id].tsx would match if expanded.
+GLOB_DIR="$TMP/globtest"
+mkdir -p "$GLOB_DIR"
+: > "$GLOB_DIR/i.tsx"
+OUT=$(cd "$GLOB_DIR" && detect_merge_overlap 105 106)
+case "$OUT" in
+  *"  [id].tsx"*) check "shared glob-metachar path printed literally" ok ;;
+  *) echo "    got: [$OUT]"; check "shared glob-metachar path printed literally" "no" ;;
+esac
 
 echo "=== recommend_merge_order: fewest-overlap-first, PR-number tiebreak ==="
 # 101<->102 overlap on b.md (1 each); 103, 104 disjoint (0 each).

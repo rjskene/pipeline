@@ -41,7 +41,12 @@ detect_merge_overlap() {
       if [ -n "$shared" ]; then
         count=$(printf '%s\n' "$shared" | wc -l | tr -d ' ')
         printf 'OVERLAP %s %s %s\n' "$a" "$b" "$count"
-        printf '  %s\n' $shared
+        # Print each shared path literally — no word-split or glob expansion,
+        # so paths with spaces or glob metachars (e.g. Next.js `[id].tsx`) are
+        # preserved and the displayed list stays in sync with <count>.
+        while IFS= read -r _path; do
+          printf '  %s\n' "$_path"
+        done <<< "$shared"
       fi
     done
   done
