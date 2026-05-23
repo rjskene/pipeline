@@ -1,0 +1,7 @@
+[
+  {"number":101,"title":"docs(readme): typo","additions":3,"deletions":1,"body":"Closes #201","mergedAt":"2026-05-10T10:00:00Z"},
+  {"number":102,"title":"feat(api): add endpoint","additions":120,"deletions":40,"body":"Closes #202","mergedAt":"2026-05-11T10:00:00Z"},
+  {"number":103,"title":"refactor(core): split modules","additions":500,"deletions":300,"body":"Closes #203","mergedAt":"2026-05-12T10:00:00Z"},
+  {"number":104,"title":"fix(util): tiny bug","additions":2,"deletions":1,"body":"Closes #204","mergedAt":"2026-05-13T10:00:00Z"},
+  {"number":302,"title":"feat: outlier","additions":5,"deletions":3,"body":"Closes #402","mergedAt":"2026-05-14T10:00:00Z"}
+]
