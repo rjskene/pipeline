@@ -123,6 +123,70 @@ extract_linked_issue() {
     | grep -Eo '[0-9]+'
 }
 
+# derive_path <labels-json> — map issue labels to PATH letter using the
+# precedence in CLAUDE.md / skills/classify-issue:
+#   docs-only  → A
+#   quick-fix  → D
+#   multi-task → C
+#   else       → B
+# <labels-json> is the `.labels` array from `gh issue view --json labels`.
+derive_path() {
+  local labels_json="$1"
+  if printf '%s' "$labels_json" | jq -e 'any(.[]; .name == "docs-only")' >/dev/null 2>&1; then
+    echo "A"
+  elif printf '%s' "$labels_json" | jq -e 'any(.[]; .name == "quick-fix")' >/dev/null 2>&1; then
+    echo "D"
+  elif printf '%s' "$labels_json" | jq -e 'any(.[]; .name == "multi-task")' >/dev/null 2>&1; then
+    echo "C"
+  else
+    echo "B"
+  fi
+}
+
+# count_block_lines <body> <heading> — count the lines of the markdown block
+# starting at `## <heading>` and terminating before the next top-level `## `
+# heading or EOF (heading line included). Emits an integer line count.
+# When the heading is absent from <body>, emits the empty string.
+count_block_lines() {
+  local body="$1"
+  local heading="$2"
+  printf '%s\n' "$body" | awk -v h="## $heading" '
+    BEGIN { in_block = 0; n = 0 }
+    {
+      if ($0 == h) { in_block = 1; n = 1; next }
+      if (in_block) {
+        if (substr($0, 1, 3) == "## ") { exit }
+        n++
+      }
+    }
+    END { if (in_block) print n }'
+}
+
+# latest_block_lines <comments-json> <heading>
+#   Iterate comments (newest createdAt last), find the most-recent comment
+#   whose body contains `## <heading>` at the start of a line, and emit the
+#   line count of that block. When no comment contains the heading, emits
+#   the empty string.
+latest_block_lines() {
+  local comments="$1"
+  local heading="$2"
+  # Sort by createdAt ascending so the last match wins, then pick last.
+  local latest_body
+  latest_body="$(
+    printf '%s' "$comments" \
+      | jq -r --arg h "## $heading" '
+          map(select(.body | test("(?m)^" + ($h | gsub("[.\\\\+*?^$()\\[\\]{}|]"; "\\\\\\0")))))
+          | sort_by(.createdAt // "")
+          | last
+          | if . == null then "" else .body end
+        '
+  )"
+  if [ -z "$latest_body" ]; then
+    return 0  # emit empty
+  fi
+  count_block_lines "$latest_body" "$heading"
+}
+
 # --- temp files ---
 ROWS_TSV=$(mktemp)
 trap 'rm -f "$ROWS_TSV"' EXIT
@@ -147,6 +211,9 @@ printf '%s' "$PR_LIST_JSON" \
   | while read -r pr; do
       pr_num=$(printf '%s' "$pr" | jq -r '.number')
       pr_body=$(printf '%s' "$pr" | jq -r '.body // ""')
+      pr_additions=$(printf '%s' "$pr" | jq -r '.additions // 0')
+      pr_deletions=$(printf '%s' "$pr" | jq -r '.deletions // 0')
+      loc=$((pr_additions + pr_deletions))
 
       issue_num="$(extract_linked_issue "$pr_body")"
       if [ -z "$issue_num" ]; then
@@ -154,13 +221,30 @@ printf '%s' "$PR_LIST_JSON" \
         continue
       fi
 
-      # Load full PR + issue payloads (Task 3 will mine these for metrics).
-      load_pr_view "$pr_num"   >/dev/null || continue
-      load_issue_view "$issue_num" >/dev/null || continue
+      pr_view="$(load_pr_view "$pr_num" 2>/dev/null)" || continue
+      issue_view="$(load_issue_view "$issue_num" 2>/dev/null)" || continue
 
-      # Task 2 placeholder row — Task 3 replaces with real metrics.
+      issue_labels="$(printf '%s' "$issue_view" | jq -c '.labels // []')"
+      path="$(derive_path "$issue_labels")"
+
+      issue_comments="$(printf '%s' "$issue_view" | jq -c '.comments // []')"
+      pr_comments="$(printf '%s' "$pr_view"    | jq -c '.comments // []')"
+
+      plan_lines="$(latest_block_lines "$issue_comments" "Implementation Plan")"
+      plan_eval_lines="$(latest_block_lines "$issue_comments" "Plan Evaluation")"
+      pr_eval_lines="$(latest_block_lines "$pr_comments"    "Evaluation")"
+
+      # Fallbacks: missing block → 0 lines (semantically "absent"). Plan-eval
+      # absence renders as "--" so the operator can tell "lifecycle skipped"
+      # apart from "real zero" (cf. design decision in plan).
+      [ -z "$plan_lines" ]      && plan_lines=0
+      [ -z "$plan_eval_lines" ] && plan_eval_lines="--"
+      [ -z "$pr_eval_lines" ]   && pr_eval_lines=0
+
       # Columns: path<TAB>loc<TAB>plan<TAB>plan_eval<TAB>pr_eval<TAB>pr_number
-      printf '?\t0\t0\t--\t0\t%s\n' "$pr_num" >> "$ROWS_TSV"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$path" "$loc" "$plan_lines" "$plan_eval_lines" "$pr_eval_lines" "$pr_num" \
+        >> "$ROWS_TSV"
     done
 
 # --- output ---

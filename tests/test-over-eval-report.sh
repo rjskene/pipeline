@@ -70,47 +70,58 @@ cat > "$FIX2/prs.json" <<'J'
 J
 
 # Per-PR comment fixtures (## Evaluation lives on the PR).
+# Block line counts are kept deterministic so we can assert exact values.
+#
+# PR 101 (PATH A): no PR comments     → pr_eval = 0
+# PR 102 (PATH B): 3-line ## Evaluation block
+# PR 103 (PATH C): 5-line ## Evaluation block
+# PR 104 (PATH D): 2-line ## Evaluation block
 cat > "$FIX2/pr-101.json" <<'J'
 {"number":101,"additions":3,"deletions":1,"comments":[]}
 J
 cat > "$FIX2/pr-102.json" <<'J'
 {"number":102,"additions":120,"deletions":40,"comments":[
-  {"author":{"login":"rjskene"},"body":"## Evaluation\n\n**Verdict:** Approve\n\nLooks good. Tests pass. Coverage adequate.\n","createdAt":"2026-05-11T11:00:00Z"}
+  {"author":{"login":"rjskene"},"body":"## Evaluation\nLine 1\nLine 2","createdAt":"2026-05-11T11:00:00Z"}
 ]}
 J
 cat > "$FIX2/pr-103.json" <<'J'
 {"number":103,"additions":500,"deletions":300,"comments":[
-  {"author":{"login":"rjskene"},"body":"## Evaluation\n\n**Verdict:** Approve\n\nThorough review:\n- Each task ran tdd-implementer.\n- Diff matches plan.\n- No scope creep.\n","createdAt":"2026-05-12T12:00:00Z"}
+  {"author":{"login":"rjskene"},"body":"## Evaluation\nLine 1\nLine 2\nLine 3\nLine 4","createdAt":"2026-05-12T12:00:00Z"}
 ]}
 J
 cat > "$FIX2/pr-104.json" <<'J'
 {"number":104,"additions":2,"deletions":1,"comments":[
-  {"author":{"login":"rjskene"},"body":"## Evaluation\n\nLGTM\n","createdAt":"2026-05-13T11:00:00Z"}
+  {"author":{"login":"rjskene"},"body":"## Evaluation\nLGTM","createdAt":"2026-05-13T11:00:00Z"}
 ]}
 J
 
 # Linked-issue fixtures (## Implementation Plan + optional ## Plan Evaluation
 # live on the issue; PATH label lives in the issue labels).
+#
+# Issue 201 (PATH A): plan = 2 lines, no plan-eval
+# Issue 202 (PATH B): plan = 3 lines, plan-eval = 2 lines
+# Issue 203 (PATH C): plan = 5 lines, plan-eval = 3 lines
+# Issue 204 (PATH D): plan = 2 lines, no plan-eval
 cat > "$FIX2/issue-201.json" <<'J'
 {"number":201,"labels":[{"name":"docs-only"}],"comments":[
-  {"body":"## Implementation Plan\n\n**Files to change:**\n- README.md\n**Tasks (ordered):**\n- Task 1: fix typo.\n","createdAt":"2026-05-10T09:00:00Z"}
+  {"body":"## Implementation Plan\nBody line 1","createdAt":"2026-05-10T09:00:00Z"}
 ]}
 J
 cat > "$FIX2/issue-202.json" <<'J'
 {"number":202,"labels":[],"comments":[
-  {"body":"## Implementation Plan\n\n**Files to change:**\n- src/api.ts\n- tests/test-api.ts\n\n**Tasks (ordered):**\n- Task 0: invoke superpowers:test-driven-development.\n- Task 1: scaffold endpoint test.\n- Task 2: implement endpoint.\n- Task 3: integration test.\n","createdAt":"2026-05-11T08:00:00Z"},
-  {"body":"## Plan Evaluation\n\n**Verdict:** Approve\n\n**File accuracy:** matches.\n**Risks:** none new.\n","createdAt":"2026-05-11T09:00:00Z"}
+  {"body":"## Implementation Plan\nBody 1\nBody 2","createdAt":"2026-05-11T08:00:00Z"},
+  {"body":"## Plan Evaluation\nEval 1","createdAt":"2026-05-11T09:00:00Z"}
 ]}
 J
 cat > "$FIX2/issue-203.json" <<'J'
 {"number":203,"labels":[{"name":"multi-task"}],"comments":[
-  {"body":"## Implementation Plan\n\n**Files to change:**\n- src/a.ts\n- src/b.ts\n- src/c.ts\n- tests/a.test.ts\n- tests/b.test.ts\n- tests/c.test.ts\n\n**Tasks (ordered):**\n- Task 0: invoke superpowers:test-driven-development.\n- Task 1: scaffold a.ts (target=src/a.ts).\n- Task 2: scaffold b.ts (target=src/b.ts).\n- Task 3: scaffold c.ts (target=src/c.ts).\n- Task 4: integrate.\n- Task 5: e2e.\n","createdAt":"2026-05-12T08:00:00Z"},
-  {"body":"## Plan Evaluation\n\n**Verdict:** Approve\n\n**File accuracy:** all matching.\n**Risks:** scope is wide but isolated by target= sentinels.\n","createdAt":"2026-05-12T09:00:00Z"}
+  {"body":"## Implementation Plan\nBody 1\nBody 2\nBody 3\nBody 4","createdAt":"2026-05-12T08:00:00Z"},
+  {"body":"## Plan Evaluation\nEval 1\nEval 2","createdAt":"2026-05-12T09:00:00Z"}
 ]}
 J
 cat > "$FIX2/issue-204.json" <<'J'
 {"number":204,"labels":[{"name":"quick-fix"}],"comments":[
-  {"body":"## Implementation Plan\n\n**Files to change:**\n- src/util.ts\n**Tasks (ordered):**\n- Task 1: fix off-by-one.\n","createdAt":"2026-05-13T08:00:00Z"}
+  {"body":"## Implementation Plan\nBody line 1","createdAt":"2026-05-13T08:00:00Z"}
 ]}
 J
 
@@ -128,6 +139,51 @@ if [ "$N_ROWS" = "4" ]; then
 else
   fail_msg "expected 4 PR rows, got $N_ROWS"
 fi
+
+# --- Scenario 3: per-PR metric extraction ---
+inc_scenario "Scenario 3: per-PR metrics (path, loc, plan, plan_eval, pr_eval)"
+
+assert_row_field() {
+  local pr_num="$1" field="$2" expected="$3"
+  local actual
+  actual="$(printf '%s' "$ROWS_OUT" | jq -r --argjson n "$pr_num" \
+    --arg f "$field" '.[] | select(.pr_number == $n) | .[$f] | tostring' 2>/dev/null)"
+  if [ "$actual" = "$expected" ]; then
+    pass_msg "PR #$pr_num $field=$expected"
+  else
+    fail_msg "PR #$pr_num $field expected=$expected actual=$actual"
+  fi
+}
+
+# Expected per fixture (see inline comments above):
+#   PR 101 (A): loc=4   plan=2 plan_eval=-- pr_eval=0
+#   PR 102 (B): loc=160 plan=3 plan_eval=2  pr_eval=3
+#   PR 103 (C): loc=800 plan=5 plan_eval=3  pr_eval=5
+#   PR 104 (D): loc=3   plan=2 plan_eval=-- pr_eval=2
+
+assert_row_field 101 path A
+assert_row_field 101 loc 4
+assert_row_field 101 plan 2
+assert_row_field 101 plan_eval "--"
+assert_row_field 101 pr_eval 0
+
+assert_row_field 102 path B
+assert_row_field 102 loc 160
+assert_row_field 102 plan 3
+assert_row_field 102 plan_eval 2
+assert_row_field 102 pr_eval 3
+
+assert_row_field 103 path C
+assert_row_field 103 loc 800
+assert_row_field 103 plan 5
+assert_row_field 103 plan_eval 3
+assert_row_field 103 pr_eval 5
+
+assert_row_field 104 path D
+assert_row_field 104 loc 3
+assert_row_field 104 plan 2
+assert_row_field 104 plan_eval "--"
+assert_row_field 104 pr_eval 2
 
 echo ""
 echo "== RESULTS =="
