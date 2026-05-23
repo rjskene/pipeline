@@ -102,27 +102,39 @@ make_stubs() {
 0.0
 EOF
 
-  # ps stub: `ps -o %cpu= -p <pid>`. Only pid 901xx draws from the 901
-  # sequence; any other pid always reports 0.0 (902 is gone after poll 1 so
-  # its CPU history is irrelevant).
+  # ps stub: `ps -eo pid=,ppid=,%cpu=` — emits a fake process tree per poll.
+  # Each call advances a counter and looks up the next scripted value from
+  # $CPU_SEQ; the value is assigned to a *descendant* of pane_pid 90100 (the
+  # `claude` leaf), while pane_pid itself (the `timeout` supervisor) sits at
+  # 0.0. This exercises the subtree-summing fix: a pane_pid-only read would
+  # always see 0.0 and break the assertions, but a subtree sum correctly
+  # surfaces the descendant's CPU.
   cat > "$stub_dir/ps" <<EOF
 #!/bin/bash
 CPU_COUNTER="$cpu_counter"
 CPU_SEQ="$cpu_seq"
-pid=""
-while [ \$# -gt 0 ]; do
-  case "\$1" in
-    -p) pid="\$2"; shift 2 ;;
-    *)  shift ;;
+mode=""
+for arg in "\$@"; do
+  case "\$arg" in
+    -eo) mode="eo" ;;
   esac
 done
-if [ "\$pid" = "90100" ]; then
+if [ "\$mode" = "eo" ]; then
   n=\$(cat "\$CPU_COUNTER" 2>/dev/null || echo 0)
   n=\$((n + 1))
   echo "\$n" > "\$CPU_COUNTER"
   val=\$(sed -n "\${n}p" "\$CPU_SEQ")
-  echo "\${val:-0.0}"
+  val="\${val:-0.0}"
+  # Process tree: pane_pid → claude descendant carrying the scripted %CPU.
+  # 90100 is issue 901's pane (the supervisor at 0.0).
+  # 90101 is its claude descendant (where the work lives).
+  # 90200 is issue 902's pane; gone after poll 1, so descendant value is moot.
+  echo "90100 1 0.0"
+  echo "90101 90100 \$val"
+  echo "90200 1 0.0"
+  echo "90201 90200 0.0"
 else
+  # Defensive fallback for any non-"-eo" call (e.g. queue-status.sh).
   echo "0.0"
 fi
 EOF
@@ -258,6 +270,74 @@ if [ "$ok" = "1" ]; then
 fi
 
 [ "$ok" = "1" ] && pass_msg "latched agent-stalled emitted twice (stall, recover, re-stall); fields well-formed"
+
+# ---- Test 2: get_agent_cpu_pct sums pane_pid subtree (the eval-flagged bug) ----
+#
+# Regression guard for the #437 evaluator's flag: pane_pid is the `timeout`
+# (or `script`) supervisor and always reports ~0% CPU. Reading just pane_pid
+# would mark every healthy worker stalled. This test feeds a snapshot where
+# pane_pid sits at 0.0 and its `claude` descendant carries 42.5%, then asserts
+# get_agent_cpu_pct returns 42.5 (sum of subtree) — NOT 0.0 (pane-only read).
+echo ""
+echo "Test 2: get_agent_cpu_pct sums pane_pid subtree (not pane_pid alone)"
+inc
+PROJ2="$WORKDIR/p2"
+setup_proj "$PROJ2"
+STUB_DIR2=$(make_stubs "$PROJ2")
+
+# Snapshot: pane_pid=99100 ppid=1 cpu=0.0 (timeout); descendant 99101 cpu=42.5;
+# grandchild 99102 cpu=7.5. Subtree sum = 50.0. An unrelated process 99999
+# at 99.9% must NOT contribute.
+SNAPSHOT='99100 1 0.0
+99101 99100 42.5
+99102 99101 7.5
+99999 1 99.9'
+
+# Override the tmux list-panes stub to return 99100 for issue 999. The make_stubs
+# tmux already returns issue-901/902 pids; extend it via a one-off shim.
+cat > "$STUB_DIR2/tmux" <<'EOF'
+#!/bin/bash
+case "$1" in
+  list-panes)
+    target=""
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        *)  shift ;;
+      esac
+    done
+    case "$target" in
+      *issue-999) echo "99100" ;;
+      *)          echo "" ;;
+    esac
+    ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$STUB_DIR2/tmux"
+
+RESULT=$(
+  PATH="$STUB_DIR2:$PATH" \
+  TMUX="fake" \
+  PIPELINE_TMUX_SESSION="fake" \
+  bash -c '
+    source "'"$PROJ2"'/.claude/scripts/_logging.sh" 2>/dev/null || true
+    # Pull get_agent_cpu_pct out of run-queue.sh without running its top-level
+    # poll-loop side effects. The function lives between two unique sentinels.
+    awk "/^get_agent_cpu_pct\\(\\) \\{/,/^\\}$/" "'"$PROJ2"'/.claude/scripts/run-queue.sh" > /tmp/cpu-fn-$$.sh
+    source /tmp/cpu-fn-$$.sh
+    rm -f /tmp/cpu-fn-$$.sh
+    get_agent_cpu_pct 999 "'"$SNAPSHOT"'"
+  '
+)
+
+# Expected: 0.0 + 42.5 + 7.5 = 50.0. Unrelated 99999@99.9 must be excluded.
+if [ "$RESULT" = "50.0" ]; then
+  pass_msg "subtree sum = 50.0 (pane_pid + 2 descendants, unrelated pid excluded)"
+else
+  fail_msg "expected '50.0', got '$RESULT' — subtree summing or pane-pid scoping is broken"
+fi
 
 echo ""
 echo "================================"

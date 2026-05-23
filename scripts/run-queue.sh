@@ -392,19 +392,49 @@ is_agent_running() {
   tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
 }
 
-# Echo the %CPU of an agent's tmux pane process (issue #437). Resolves the
-# pane pid from the issue's window, then reads `ps -o %cpu=`. Echoes 0.0 on any
-# lookup failure so the stall counter advances rather than masking a wedge.
+# Echo the %CPU of an agent's tmux pane process subtree (issue #437). Resolves
+# the pane pid from the issue's window, then sums `%cpu` across pane_pid and all
+# its descendants from a caller-supplied snapshot of the process table. Per-
+# process reads of pane_pid would miss the real work: spawn-claude.sh launches
+# agents as `[script→]timeout→claude`, and `timeout` blocks in `wait()` at ~0%
+# CPU, so a pane_pid-only read flags every healthy worker as stalled in the
+# logging-off path. Echoes 0.0 on any lookup failure so the stall counter
+# advances rather than masking a wedge.
+#
+# Args: $1=issue, $2=process snapshot (output of `ps -eo pid=,ppid=,%cpu=`).
+# The snapshot is captured once per poll by the caller to avoid 2N ps forks per
+# poll over N active agents.
 get_agent_cpu_pct() {
   local issue="$1"
-  local pid cpu
-  pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
-  if [ -z "$pid" ]; then
+  local snapshot="$2"
+  local pane_pid
+  pane_pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+  if [ -z "$pane_pid" ] || [ -z "$snapshot" ]; then
     echo "0.0"
     return
   fi
-  cpu=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d '[:space:]')
-  echo "${cpu:-0.0}"
+  echo "$snapshot" | awk -v root="$pane_pid" '
+    {
+      cpu[$1] = $3
+      if (kids[$2]) kids[$2] = kids[$2] " " $1
+      else          kids[$2] = $1
+    }
+    END {
+      qh = 0; qt = 0
+      queue[qt++] = root
+      total = 0.0
+      while (qh < qt) {
+        cur = queue[qh++]
+        if (visited[cur]++) continue
+        if (cpu[cur] != "") total += cpu[cur]
+        if (kids[cur]) {
+          n = split(kids[cur], children, " ")
+          for (i = 1; i <= n; i++) queue[qt++] = children[i]
+        }
+      }
+      printf "%.1f", total
+    }
+  '
 }
 
 # Launch an agent for an issue. Threads classifier-derived flags (mode +
@@ -551,11 +581,15 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
   drain_pending_file
   fill_slots
 
+  # One process-table snapshot per poll, shared across all active agents (issue
+  # #437). Captured here so each call to get_agent_cpu_pct doesn't re-fork ps.
+  PS_SNAPSHOT=$(ps -eo pid=,ppid=,%cpu= 2>/dev/null || echo "")
+
   # Check each active agent
   for issue in "${!ACTIVE[@]}"; do
     # Stall detection (issue #437): track consecutive 0%-CPU polls and emit a
     # single latched EVENT line per stall window. Observe-only — no kill.
-    cpu=$(get_agent_cpu_pct "$issue")
+    cpu=$(get_agent_cpu_pct "$issue" "$PS_SNAPSHOT")
     cpu_int=${cpu%%.*}; cpu_int=${cpu_int:-0}
     # Digit-guard: if ps returned junk, coerce to 0 so the `-eq` test below
     # never errors on a non-numeric operand (which would abort the runner).
