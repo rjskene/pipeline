@@ -105,6 +105,9 @@ TDD_DETECTED="no test files in commits"
 TDD_VERDICT="SKIP"
 if [ "$PATH_LETTER" = "A" ]; then
   EMIT_TDD_ROW=0
+elif [ "$SRC_COUNT" = "0" ]; then
+  TDD_DETECTED="n/a (no source changes)"
+  TDD_VERDICT="N/A"
 elif [ "$TEST_COMMIT_COUNT" -gt 0 ]; then
   TDD_DETECTED="test file committed before/with source"
   TDD_VERDICT="PASS"
