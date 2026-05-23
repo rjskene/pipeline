@@ -111,7 +111,24 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 
    **Do NOT invoke with only the issue number** — the script will reject it as of #350. A bare integer like `setup-worktree.sh 81` fails the branch-prefix guard because `81` is not a `feature/<slug>` shape; without that guard, the worktree would silently land on a branch literally named `81` and every downstream stage would break.
-6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for completion using: `timeout 7200 bash -c 'tail -F "$(ls -t .claude/logs/queue-*.log | head -1)" | grep -m1 "EVENT: queue-complete"'` (also via `run_in_background`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
+6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for terminal events with a single `Monitor` invocation against the queue runner's captured stdout stream — the `Bash` tool's `run_in_background: true` task captures the runner's stdout, queryable via the `BashOutput` tool. That captured stdout is the always-on wake channel because `log()` (`scripts/run-queue.sh:136-142`) emits every `EVENT:` line to stdout unconditionally, even when `PIPELINE_LOGS_ENABLED=false` (the `queue-*.log` file is gated and may not exist on consumer hosts — do NOT tail it). Invocation shape: `Monitor` on the bash task's stdout stream with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000` (preserves the existing 2h worst-case wait budget). Per Monitor's coverage rule, the filter MUST cover every terminal state (failure + completion) so a crash is never silent — `agent-finished outcome=failed` IS the per-agent failure signal (the runner does not emit a separate `agent-failed`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
+
+   ### Triage on agent-stalled wakes
+
+   **Wake-loop semantics.** Each line matching the filter wakes the orchestrator. Dispatch by event:
+   - `EVENT: queue-complete` — terminal; exit the Monitor wait and proceed to Step 6b / Step 7's next phase.
+   - `EVENT: agent-stalled issue=<N>` — runner reports worker idle at 0% CPU across `PIPELINE_STALL_POLL_THRESHOLD` polls; runner took no action. Run the four-option triage below; then re-enter `Monitor` with the SAME `timeout_ms` budget (the elapsed wait is preserved by the harness).
+   - `EVENT: agent-finished outcome=failed issue=<N>` — per-agent failure. Optional triage (capture pane, inspect PR/branch state); re-enter `Monitor` so the rest of the queue continues to be watched.
+   - `EVENT: agent-finished outcome=success issue=<N>` — no-op wake; re-enter `Monitor`.
+
+   **Triage on `agent-stalled`.** Inspect the worker first (tmux pane via `tmux capture-pane -t "$PIPELINE_TMUX_SESSION:issue-<N>" -p`; process tree via `pstree -p <pid>`). Then surface the four-option prompt to the user:
+   1. **Kill the wedged subscript only** — `kill <child-pid>` from the pstree output; executor may recover.
+   2. **Kill the whole executor** — `tmux send-keys -t "$PIPELINE_TMUX_SESSION:issue-<N>" C-c` and let the runner record `agent-finished outcome=failed`.
+   3. **Wait out the timeout** — re-enter `Monitor` with the same `timeout_ms` budget remaining.
+   4. **Skip the issue** — `tmux kill-window -t "$PIPELINE_TMUX_SESSION:issue-<N>"`; runner picks the next from the bucket.
+
+   Runner NEVER kills autonomously. The orchestrator's prompt to the user is the kill gate.
+
 6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. Act per the table:
 
    | ACTION | Behavior |
@@ -123,7 +140,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
 
    `check-ci-fix-loop.sh` is the authoritative source for retry-counter encoding (`pipeline.ci-retries: <n>` issue comment), tail-truncated failure-log path (`.claude/logs/ci-fix-<N>-attempt-<n>.log`), and `human` label application on budget-exhaust.
 
-7. **Evaluate PRs** — once all agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6.
+7. **Evaluate PRs** — once all agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6, then wait on it with the same event-driven waiter (identical to Step 6's waiter): a single `Monitor` invocation against the bash task's captured stdout stream (queried via the `BashOutput` tool — do NOT tail `queue-*.log`), with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000`. Apply the same wake-loop dispatch and "Triage on agent-stalled wakes" sub-section above — `agent-finished outcome=failed` is the per-agent failure signal (no separate `agent-failed`), `queue-complete` is terminal.
 7b. **Auto-merge green release PRs (opt-in)** — runs after step 7 (Evaluate PRs) and before step 8 (Report). Only fires when `PIPELINE_RELEASE_PR_AUTO_MERGE=true` AND at least one release PR has `ci=pass`. Feature PRs land first; the release PR consolidates them so version bumps + CHANGELOG stay coherent.
 
    ```bash

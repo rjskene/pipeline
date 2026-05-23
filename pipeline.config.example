@@ -46,6 +46,16 @@ PIPELINE_GROUPING_DETECTION_ENABLED="true"
 # That emergency-diagnosis stream is intentionally ungated.
 PIPELINE_LOGS_ENABLED=false
 
+# --- Stall detection (issue #437) ---
+#
+# PIPELINE_STALL_POLL_THRESHOLD controls when the queue runner emits
+# `EVENT: agent-stalled` for a worker idling at 0% CPU. Default 5 polls
+# (~5 minutes at the default POLL_INTERVAL=60s) — well above normal
+# model-inference pauses, well below the 50-min wedge observed on
+# 2026-05-23 that motivated this knob. Lower (3) raises false-positive
+# risk on cold-start; higher (10) approaches half the wedge window.
+PIPELINE_STALL_POLL_THRESHOLD=5
+
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
 # When "true" AND the cwd's `git rev-parse --show-toplevel` is the
