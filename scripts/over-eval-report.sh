@@ -264,6 +264,62 @@ if [ "$EMIT_ROWS_JSON" -eq 1 ]; then
   exit 0
 fi
 
-# Default: stub stdout for Task 2; Task 4 renders the real table.
-echo "over-eval-report: scaffolding stub — formatted table arrives in a later commit."
-exit 0
+# --- per-PATH aggregation + table render ---
+
+emit_table() {
+  local oldest newest
+  oldest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | min // "?"')"
+  newest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | max // "?"')"
+  printf 'OVER-EVAL REPORT — last %s merged PRs (window: %s to %s)\n\n' \
+    "$LIMIT" "$oldest" "$newest"
+
+  echo 'PATH | N  | median diff | median plan | median plan-eval | median pr-eval | ratio pr-eval:diff | ratio plan-eval:diff'
+
+  sort -k1,1 "$ROWS_TSV" | awk -F'\t' '
+    function fmt(v) {
+      # Print integers cleanly (4 not 4.0); floats with one decimal.
+      if (v == int(v)) return sprintf("%d", v)
+      return sprintf("%.1f", v)
+    }
+    function median(arr, n,    i, j, tmp, mid) {
+      for (i=1; i<n; i++) {
+        for (j=i+1; j<=n; j++) {
+          if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
+        }
+      }
+      if (n == 0) return ""
+      if (n % 2 == 1) return arr[(n+1)/2]
+      mid = (arr[n/2] + arr[n/2+1]) / 2
+      return mid
+    }
+    function emit_row(    diff_m, plan_m, plan_eval_m, pr_eval_m, r_pre, r_ple) {
+      if (cur == "") return
+      diff_m = median(locs, n)
+      plan_m = median(plans, n)
+      pr_eval_m = median(pr_evals, n)
+      if (peval_n > 0) plan_eval_m = median(peval_vals, peval_n); else plan_eval_m = ""
+
+      if (diff_m > 0) r_pre = sprintf("%.1fx", pr_eval_m / diff_m); else r_pre = "--"
+      if (diff_m > 0 && plan_eval_m != "") r_ple = sprintf("%.1fx", plan_eval_m / diff_m); else r_ple = "--"
+
+      printf "%-4s | %-2d | %-11s | %-11s | %-16s | %-14s | %-18s | %-21s\n", \
+        cur, n, fmt(diff_m), fmt(plan_m), \
+        (plan_eval_m == "" ? "--" : fmt(plan_eval_m)), \
+        fmt(pr_eval_m), r_pre, r_ple
+
+      cur=""; n=0; peval_n=0
+      delete locs; delete plans; delete pr_evals; delete peval_vals
+    }
+    {
+      path = $1
+      if (path != cur) { emit_row(); cur = path }
+      n++
+      locs[n] = $2
+      plans[n] = $3
+      if ($4 != "--") { peval_n++; peval_vals[peval_n] = $4 }
+      pr_evals[n] = $5
+    }
+    END { emit_row() }'
+}
+
+emit_table

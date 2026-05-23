@@ -185,6 +185,60 @@ assert_row_field 104 plan 2
 assert_row_field 104 plan_eval "--"
 assert_row_field 104 pr_eval 2
 
+# --- Scenario 4: per-PATH aggregation + summary table ---
+inc_scenario "Scenario 4: rendered summary table"
+
+TABLE_OUT="$(bash "$HELPER" --fixture "$FIX2" 2>/dev/null || true)"
+
+EXPECTED_HEADER="PATH | N  | median diff | median plan | median plan-eval | median pr-eval | ratio pr-eval:diff | ratio plan-eval:diff"
+if printf '%s' "$TABLE_OUT" | grep -qF "$EXPECTED_HEADER"; then
+  pass_msg "table contains exact header row"
+else
+  fail_msg "table missing exact header row (got:\n$TABLE_OUT\n)"
+fi
+
+# Banner: 'OVER-EVAL REPORT' present.
+if printf '%s' "$TABLE_OUT" | grep -q '^OVER-EVAL REPORT'; then
+  pass_msg "banner present"
+else
+  fail_msg "banner missing"
+fi
+
+# One row per PATH with >=1 PR in the fixture (all 4 PATHs are populated).
+for letter in A B C D; do
+  if printf '%s' "$TABLE_OUT" | grep -Eq "^${letter}[[:space:]]*\|"; then
+    pass_msg "row for PATH $letter present"
+  else
+    fail_msg "row for PATH $letter missing"
+  fi
+done
+
+# PATH A row uses '--' for median plan-eval (lifecycle skips evaluate-issue-plan).
+A_ROW="$(printf '%s' "$TABLE_OUT" | grep -E "^A[[:space:]]*\|" | head -1)"
+B_ROW="$(printf '%s' "$TABLE_OUT" | grep -E "^B[[:space:]]*\|" | head -1)"
+D_ROW="$(printf '%s' "$TABLE_OUT" | grep -E "^D[[:space:]]*\|" | head -1)"
+
+case "$A_ROW" in *--*) pass_msg "PATH A row has '--' in plan-eval columns" ;;
+                  *) fail_msg "PATH A row missing '--' (got: $A_ROW)" ;;
+esac
+case "$D_ROW" in *--*) pass_msg "PATH D row has '--' in plan-eval columns" ;;
+                  *) fail_msg "PATH D row missing '--' (got: $D_ROW)" ;;
+esac
+
+# PATH B row's pr-eval ratio is formatted with one decimal + 'x' (3/160=0.0x).
+if printf '%s' "$B_ROW" | grep -Eq '[0-9]+\.[0-9]x'; then
+  pass_msg "PATH B row has 1-decimal ratio formatting (e.g. 0.0x)"
+else
+  fail_msg "PATH B row missing 1-decimal ratio (got: $B_ROW)"
+fi
+
+# PATH D's pr-eval/diff is 2/3 ≈ 0.7x — sanity-check the rounding.
+if printf '%s' "$D_ROW" | grep -qF "0.7x"; then
+  pass_msg "PATH D row computes 0.7x (2/3 rounded to 1 decimal)"
+else
+  fail_msg "PATH D row missing expected 0.7x ratio (got: $D_ROW)"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
