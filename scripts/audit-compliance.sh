@@ -34,6 +34,11 @@ done
 ISSUE="${positional[0]:-}"
 PR="${positional[1]:-}"
 
+if [ -z "$ISSUE" ] || [ -z "$PR" ]; then
+  echo "Usage: audit-compliance.sh <issue> <pr> [--dry-run] [--files-json F] [--commits-json F] [--labels-json F]" >&2
+  exit 2
+fi
+
 # Source/test classification — kept as top-of-file vars so v1 (#418) can swap them.
 SRC_EXT_RE='\.(py|ts|tsx|js|jsx|sh|go|rs|rb)$'
 TEST_PATH_RE='(test|spec|^tests/|^spec/)'
