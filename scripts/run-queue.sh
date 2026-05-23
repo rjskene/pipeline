@@ -111,6 +111,10 @@ set -- "${NEW_ARGS[@]}"
 
 MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
+# Number of consecutive 0%-CPU polls before the runner emits a latched
+# `EVENT: agent-stalled` line for a worker (issue #437). Observe-only — the
+# runner takes no kill action.
+PIPELINE_STALL_POLL_THRESHOLD="${PIPELINE_STALL_POLL_THRESHOLD:-5}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
@@ -293,6 +297,11 @@ fi
 declare -A ACTIVE=()    # issue -> worktree path
 declare -A RESULTS=()   # issue -> status (running/done/failed)
 declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
+# Stall detection (issue #437): count consecutive 0%-CPU polls per issue and
+# latch a single agent-stalled emission per stall window so a wedged worker
+# logs once, not every poll. Cleared when the agent recovers or exits.
+declare -A CPU_ZERO_POLLS=()  # issue -> consecutive 0%-CPU poll count
+declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this window
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
@@ -381,6 +390,21 @@ slug_from_path() {
 is_agent_running() {
   local issue="$1"
   tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
+}
+
+# Echo the %CPU of an agent's tmux pane process (issue #437). Resolves the
+# pane pid from the issue's window, then reads `ps -o %cpu=`. Echoes 0.0 on any
+# lookup failure so the stall counter advances rather than masking a wedge.
+get_agent_cpu_pct() {
+  local issue="$1"
+  local pid cpu
+  pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+  if [ -z "$pid" ]; then
+    echo "0.0"
+    return
+  fi
+  cpu=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+  echo "${cpu:-0.0}"
 }
 
 # Launch an agent for an issue. Threads classifier-derived flags (mode +
@@ -529,6 +553,30 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
 
   # Check each active agent
   for issue in "${!ACTIVE[@]}"; do
+    # Stall detection (issue #437): track consecutive 0%-CPU polls and emit a
+    # single latched EVENT line per stall window. Observe-only — no kill.
+    cpu=$(get_agent_cpu_pct "$issue")
+    cpu_int=${cpu%%.*}; cpu_int=${cpu_int:-0}
+    # Digit-guard: if ps returned junk, coerce to 0 so the `-eq` test below
+    # never errors on a non-numeric operand (which would abort the runner).
+    case "$cpu_int" in
+      ''|*[!0-9]*) cpu_int=0 ;;
+    esac
+    if [ "$cpu_int" -eq 0 ]; then
+      CPU_ZERO_POLLS[$issue]=$(( ${CPU_ZERO_POLLS[$issue]:-0} + 1 ))
+      if [ "${CPU_ZERO_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
+         && [ "${STALL_LATCHED[$issue]:-0}" -eq 0 ]; then
+        pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+        window="issue-${issue}"
+        elapsed=$(( CPU_ZERO_POLLS[$issue] * POLL_INTERVAL / 60 ))
+        log "EVENT: agent-stalled issue=${issue} pid=${pid:-?} window=${window} elapsed=${elapsed}m"
+        STALL_LATCHED[$issue]=1
+      fi
+    else
+      CPU_ZERO_POLLS[$issue]=0
+      STALL_LATCHED[$issue]=0
+    fi
+
     if ! is_agent_running "$issue"; then
       # Agent finished — check outcome
       outcome=$(check_issue_outcome "$issue")
@@ -536,6 +584,9 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       _finished_mode="${ISSUE_MODE[$issue]:-bare}"
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
+      # Clear stall-tracking state so a re-used issue number can't inherit a
+      # stale counter/latch (issue #437).
+      unset 'CPU_ZERO_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
 
