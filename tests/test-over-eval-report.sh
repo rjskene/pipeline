@@ -348,6 +348,38 @@ else
   fail_msg "expected 5 outlier rows, got $OUTLIER_ROWS"
 fi
 
+# --- Scenario 6: live-mode smoke + repo validation ---
+inc_scenario "Scenario 6: live-mode smoke + PIPELINE_REPO validation"
+
+# 6a: no fixture + PIPELINE_REPO unset → non-zero exit + clear error.
+ERR6A="$(env -u PIPELINE_REPO bash "$HELPER" --limit 1 --dry-run 2>&1)"
+RC6A=$?
+if [ "$RC6A" -ne 0 ]; then
+  pass_msg "missing PIPELINE_REPO causes non-zero exit"
+else
+  fail_msg "expected non-zero exit when PIPELINE_REPO unset, got rc=$RC6A"
+fi
+case "$ERR6A" in
+  *PIPELINE_REPO*) pass_msg "error message mentions PIPELINE_REPO" ;;
+  *) fail_msg "error message missing PIPELINE_REPO mention: $ERR6A" ;;
+esac
+
+# 6b: live smoke — calls real `gh`. Skip under CI or when env not configured.
+if [ -n "${CI:-}" ]; then
+  pass_msg "Scenario 6b skipped under CI"
+elif [ -z "${PIPELINE_REPO:-}" ]; then
+  pass_msg "Scenario 6b skipped (PIPELINE_REPO unset locally)"
+elif ! command -v gh >/dev/null 2>&1; then
+  pass_msg "Scenario 6b skipped (gh CLI not installed)"
+else
+  OUT6B="$(bash "$HELPER" --limit 1 --dry-run 2>/dev/null || true)"
+  if printf '%s\n' "$OUT6B" | grep -Eq '^would-fetch: PR #[0-9]+'; then
+    pass_msg "live --dry-run prints 'would-fetch: PR #<N>'"
+  else
+    fail_msg "live --dry-run did not print expected line (got: $OUT6B)"
+  fi
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
