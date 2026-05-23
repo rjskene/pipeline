@@ -15,6 +15,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HELPER="$REPO_ROOT/scripts/over-eval-report.sh"
+FIXTURE_DIR="$REPO_ROOT/tests/fixtures/over-eval-report"
 
 PASS=0
 FAIL=0
@@ -54,78 +55,11 @@ if [ -f "$HELPER" ]; then
 fi
 
 # --- Scenario 2: fixture loader iterates PRs ---
-inc_scenario "Scenario 2: fixture loader walks 4 synthetic PRs (one per PATH)"
+# Uses the static fixture directory tests/fixtures/over-eval-report which
+# carries five synthetic PRs (one per PATH plus an outlier in PATH B).
+inc_scenario "Scenario 2: fixture loader walks all PRs in tests/fixtures/over-eval-report"
 
-TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
-FIX2="$TMP/fix2"; mkdir -p "$FIX2"
-
-# Four merged PRs, one per PATH (docs-only=A, default=B, multi-task=C, quick-fix=D).
-cat > "$FIX2/prs.json" <<'J'
-[
-  {"number":101,"title":"docs(readme): typo","additions":3,"deletions":1,"body":"Closes #201","mergedAt":"2026-05-10T10:00:00Z"},
-  {"number":102,"title":"feat(api): add endpoint","additions":120,"deletions":40,"body":"Closes #202","mergedAt":"2026-05-11T10:00:00Z"},
-  {"number":103,"title":"refactor(core): split modules","additions":500,"deletions":300,"body":"Closes #203","mergedAt":"2026-05-12T10:00:00Z"},
-  {"number":104,"title":"fix(util): tiny bug","additions":2,"deletions":1,"body":"Closes #204","mergedAt":"2026-05-13T10:00:00Z"}
-]
-J
-
-# Per-PR comment fixtures (## Evaluation lives on the PR).
-# Block line counts are kept deterministic so we can assert exact values.
-#
-# PR 101 (PATH A): no PR comments     → pr_eval = 0
-# PR 102 (PATH B): 3-line ## Evaluation block
-# PR 103 (PATH C): 5-line ## Evaluation block
-# PR 104 (PATH D): 2-line ## Evaluation block
-cat > "$FIX2/pr-101.json" <<'J'
-{"number":101,"additions":3,"deletions":1,"comments":[]}
-J
-cat > "$FIX2/pr-102.json" <<'J'
-{"number":102,"additions":120,"deletions":40,"comments":[
-  {"author":{"login":"rjskene"},"body":"## Evaluation\nLine 1\nLine 2","createdAt":"2026-05-11T11:00:00Z"}
-]}
-J
-cat > "$FIX2/pr-103.json" <<'J'
-{"number":103,"additions":500,"deletions":300,"comments":[
-  {"author":{"login":"rjskene"},"body":"## Evaluation\nLine 1\nLine 2\nLine 3\nLine 4","createdAt":"2026-05-12T12:00:00Z"}
-]}
-J
-cat > "$FIX2/pr-104.json" <<'J'
-{"number":104,"additions":2,"deletions":1,"comments":[
-  {"author":{"login":"rjskene"},"body":"## Evaluation\nLGTM","createdAt":"2026-05-13T11:00:00Z"}
-]}
-J
-
-# Linked-issue fixtures (## Implementation Plan + optional ## Plan Evaluation
-# live on the issue; PATH label lives in the issue labels).
-#
-# Issue 201 (PATH A): plan = 2 lines, no plan-eval
-# Issue 202 (PATH B): plan = 3 lines, plan-eval = 2 lines
-# Issue 203 (PATH C): plan = 5 lines, plan-eval = 3 lines
-# Issue 204 (PATH D): plan = 2 lines, no plan-eval
-cat > "$FIX2/issue-201.json" <<'J'
-{"number":201,"labels":[{"name":"docs-only"}],"comments":[
-  {"body":"## Implementation Plan\nBody line 1","createdAt":"2026-05-10T09:00:00Z"}
-]}
-J
-cat > "$FIX2/issue-202.json" <<'J'
-{"number":202,"labels":[],"comments":[
-  {"body":"## Implementation Plan\nBody 1\nBody 2","createdAt":"2026-05-11T08:00:00Z"},
-  {"body":"## Plan Evaluation\nEval 1","createdAt":"2026-05-11T09:00:00Z"}
-]}
-J
-cat > "$FIX2/issue-203.json" <<'J'
-{"number":203,"labels":[{"name":"multi-task"}],"comments":[
-  {"body":"## Implementation Plan\nBody 1\nBody 2\nBody 3\nBody 4","createdAt":"2026-05-12T08:00:00Z"},
-  {"body":"## Plan Evaluation\nEval 1\nEval 2","createdAt":"2026-05-12T09:00:00Z"}
-]}
-J
-cat > "$FIX2/issue-204.json" <<'J'
-{"number":204,"labels":[{"name":"quick-fix"}],"comments":[
-  {"body":"## Implementation Plan\nBody line 1","createdAt":"2026-05-13T08:00:00Z"}
-]}
-J
-
-ROWS_OUT="$(bash "$HELPER" --fixture "$FIX2" --emit-rows-json 2>/dev/null || true)"
+ROWS_OUT="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --emit-rows-json 2>/dev/null || true)"
 ROWS_RC=$?
 if [ "$ROWS_RC" -eq 0 ]; then
   pass_msg "fixture-mode run exits 0"
@@ -133,11 +67,12 @@ else
   fail_msg "fixture-mode run exited non-zero (rc=$ROWS_RC)"
 fi
 
+EXPECTED_FIXTURE_PR_COUNT="$(jq -r 'length' "$FIXTURE_DIR/prs.json")"
 N_ROWS="$(printf '%s' "$ROWS_OUT" | jq -r 'length' 2>/dev/null || echo 0)"
-if [ "$N_ROWS" = "4" ]; then
-  pass_msg "fixture-mode emits exactly 4 PR rows"
+if [ "$N_ROWS" = "$EXPECTED_FIXTURE_PR_COUNT" ]; then
+  pass_msg "fixture-mode emits one row per PR in prs.json (n=$N_ROWS)"
 else
-  fail_msg "expected 4 PR rows, got $N_ROWS"
+  fail_msg "expected $EXPECTED_FIXTURE_PR_COUNT PR rows, got $N_ROWS"
 fi
 
 # --- Scenario 3: per-PR metric extraction ---
@@ -188,7 +123,7 @@ assert_row_field 104 pr_eval 2
 # --- Scenario 4: per-PATH aggregation + summary table ---
 inc_scenario "Scenario 4: rendered summary table"
 
-TABLE_OUT="$(bash "$HELPER" --fixture "$FIX2" 2>/dev/null || true)"
+TABLE_OUT="$(bash "$HELPER" --fixture "$FIXTURE_DIR" 2>/dev/null || true)"
 
 EXPECTED_HEADER="PATH | N  | median diff | median plan | median plan-eval | median pr-eval | ratio pr-eval:diff | ratio plan-eval:diff"
 if printf '%s' "$TABLE_OUT" | grep -qF "$EXPECTED_HEADER"; then
@@ -240,42 +175,11 @@ else
 fi
 
 # --- Scenario 5: TOP-5 OVER-EVAL OUTLIERS section ---
+# The static fixture's PR 302 is the synthetic outlier (loc=8, pr_eval=240
+# → 30.0x). It must rank first in the outlier list.
 inc_scenario "Scenario 5: TOP-5 outliers (ranking, format, 5-row cap)"
 
-FIX3="$TMP/fix3"; mkdir -p "$FIX3"
-
-# Two PRs: one normal (low ratio), one outlier (loc=8, pr_eval=240 → 30.0x).
-cat > "$FIX3/prs.json" <<'J'
-[
-  {"number":301,"title":"feat: normal","additions":100,"deletions":50,"body":"Closes #401","mergedAt":"2026-05-10T10:00:00Z"},
-  {"number":302,"title":"feat: outlier","additions":5,"deletions":3,"body":"Closes #402","mergedAt":"2026-05-11T10:00:00Z"}
-]
-J
-cat > "$FIX3/pr-301.json" <<'J'
-{"number":301,"additions":100,"deletions":50,"comments":[
-  {"author":{"login":"rjskene"},"body":"## Evaluation\nLine 1\nLine 2","createdAt":"2026-05-10T11:00:00Z"}
-]}
-J
-# 240-line ## Evaluation block: heading + 239 body lines (\n-separated).
-PR_EVAL_BODY="## Evaluation"
-for i in $(seq 1 239); do
-  PR_EVAL_BODY="${PR_EVAL_BODY}
-Line ${i}"
-done
-jq -n --arg body "$PR_EVAL_BODY" '{number:302,additions:5,deletions:3,comments:[{author:{login:"rjskene"},body:$body,createdAt:"2026-05-11T11:00:00Z"}]}' > "$FIX3/pr-302.json"
-
-cat > "$FIX3/issue-401.json" <<'J'
-{"number":401,"labels":[],"comments":[
-  {"body":"## Implementation Plan\nBody 1","createdAt":"2026-05-10T08:00:00Z"}
-]}
-J
-cat > "$FIX3/issue-402.json" <<'J'
-{"number":402,"labels":[],"comments":[
-  {"body":"## Implementation Plan\nBody 1","createdAt":"2026-05-11T08:00:00Z"}
-]}
-J
-
-OUT3="$(bash "$HELPER" --fixture "$FIX3" 2>/dev/null || true)"
+OUT3="$(bash "$HELPER" --fixture "$FIXTURE_DIR" 2>/dev/null || true)"
 
 if printf '%s' "$OUT3" | grep -q '^TOP-5 OVER-EVAL OUTLIERS'; then
   pass_msg "TOP-5 OVER-EVAL OUTLIERS header present"
@@ -306,6 +210,9 @@ case "$FIRST_OUTLIER" in
 esac
 
 # --- 5-row cap test ---
+# Generated inline (six near-identical PRs) — purely a scale check; not
+# worth carving into static fixture files.
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FIX4="$TMP/fix4"; mkdir -p "$FIX4"
 
 # Six high-ratio PRs in PATH B; outlier list must cap at 5.
