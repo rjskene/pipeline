@@ -98,17 +98,23 @@ while IFS= read -r cfiles; do
   fi
 done < <(echo "$COMMITS_BODY" | jq -c '.[].files')
 
-# Decide TDD verdict + detected-string.
+# Decide TDD verdict + detected-string. PATH A (docs-only) skips the TDD
+# expectation entirely; the row is omitted from the table.
+EMIT_TDD_ROW=1
 TDD_DETECTED="no test files in commits"
 TDD_VERDICT="SKIP"
-if [ "$TEST_COMMIT_COUNT" -gt 0 ]; then
+if [ "$PATH_LETTER" = "A" ]; then
+  EMIT_TDD_ROW=0
+elif [ "$TEST_COMMIT_COUNT" -gt 0 ]; then
   TDD_DETECTED="test file committed before/with source"
   TDD_VERDICT="PASS"
 fi
 
 # Compose aggregate.
 SKIPPED=()
-[ "$TDD_VERDICT" = "SKIP" ] && SKIPPED+=("TDD")
+if [ "$EMIT_TDD_ROW" = "1" ] && [ "$TDD_VERDICT" = "SKIP" ]; then
+  SKIPPED+=("TDD")
+fi
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
   AGGREGATE="Non-compliant (skipped: $(IFS=, ; echo "${SKIPPED[*]}"))"
 else
@@ -116,13 +122,17 @@ else
 fi
 
 # Render table.
+ROWS=""
+if [ "$EMIT_TDD_ROW" = "1" ]; then
+  ROWS+="| TDD   | yes (PATH ${PATH_LETTER}) | ${TDD_DETECTED} | ${TDD_VERDICT} |"$'\n'
+fi
+
 TABLE="$(cat <<EOF
 ## Compliance Audit
 
 | Skill | Expected | Detected | Verdict |
 | ----- | -------- | -------- | ------- |
-| TDD   | yes (PATH ${PATH_LETTER}) | ${TDD_DETECTED} | ${TDD_VERDICT} |
-
+${ROWS}
 Aggregate: ${AGGREGATE}
 EOF
 )"
