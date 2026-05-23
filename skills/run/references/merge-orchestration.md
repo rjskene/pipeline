@@ -81,6 +81,26 @@ for PR_NUM in $(gh pr list --repo $PIPELINE_REPO --state open --json number --jq
 done
 ```
 
+## Pre-merge pairwise overlap scan
+
+Before entering the sequential merge loop, scan the approved-PR set for changed-file overlap. Overlapping pairs are the leading indicator of rebase-cascade conflicts (the original symptom in #48).
+
+```bash
+source "${CLAUDE_PLUGIN_ROOT}/scripts/detect-merge-overlap.sh"
+APPROVED=( $(gh pr list --repo "$PIPELINE_REPO" --label pr-open --json number --jq '.[].number') )
+if [ "${#APPROVED[@]}" -ge 2 ]; then
+  echo "=== Pre-merge pairwise overlap scan ==="
+  detect_merge_overlap "${APPROVED[@]}"
+  echo "=== Recommended merge order (fewest overlap first) ==="
+  ORDERED=( $(recommend_merge_order "${APPROVED[@]}") )
+  printf '  %s\n' "${ORDERED[@]}"
+else
+  ORDERED=( "${APPROVED[@]}" )
+fi
+```
+
+Use `${ORDERED[@]}` as the iteration order for the sequential merge loop below. The scan is **advisory** — it does NOT block merges; the auto-rebase + `--force-with-lease` retry below still handles actual conflicts. Its job is to (a) pre-empt the rebase cascade by merging the least-overlapping PRs first and (b) give the orchestrator visibility into which pairs are likely to need rebase. For PR pairs with high overlap (e.g. both editing the same skill example block), the orchestrator may also recommend pre-rebasing or merging them together as one PR before kicking off the loop.
+
 ## Sequential merge with base-branch retarget + conflict rebase
 
 1. For each approved PR, detect its base branch:
