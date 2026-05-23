@@ -1,0 +1,23 @@
+[
+  {
+    "number": 720,
+    "title": "chore(epic): stage-rank epic",
+    "labels": [{"name": "tracker"}, {"name": "priority/P1"}],
+    "body": "## Rollout sequence\n- [ ] #721\n- [ ] #722\n",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 721,
+    "title": "feat(epic): later-child",
+    "labels": [{"name": "later"}, {"name": "priority/P0"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 722,
+    "title": "feat(epic): ready-child",
+    "labels": [{"name": "priority/P3"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  }
+]

@@ -71,6 +71,18 @@ if [ -n "$TRACKERS_FILE" ] && [ ! -r "$TRACKERS_FILE" ]; then
   exit 2
 fi
 
+# Fail loud on wrong trackers.json shape — the renderer expects
+# {"<num>": "<body>", ...}. An array (gh issue list output) or any other
+# top-level type silently fell through to "all children closed" for every
+# tracker before #416.
+if [ -n "$TRACKERS_FILE" ]; then
+  _t_type=$(jq -r 'type' "$TRACKERS_FILE" 2>/dev/null)
+  if [ "$_t_type" != "object" ]; then
+    echo "render-status-table.sh: --trackers must be a JSON object {\"<num>\": \"<body>\", ...}, got ${_t_type:-unparseable}" >&2
+    exit 2
+  fi
+fi
+
 if [ -n "$RELEASE_PRS_FILE" ] && [ ! -r "$RELEASE_PRS_FILE" ]; then
   echo "render-status-table.sh: --release-prs file not found: $RELEASE_PRS_FILE" >&2
   exit 2
@@ -129,6 +141,8 @@ ROWS_JSON=$(jq -c \
     elif has_label($brainst) then $brainst
     else "ready"
     end;
+  def stage_rank:
+    if (stage | IN($later,$human,$brainst)) then 1 else 0 end;
   def scope:
     ([.title
         | capture("^(?<t>feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)\\((?<s>[^)]+)\\):").s
@@ -157,7 +171,8 @@ ROWS_JSON=$(jq -c \
       is_tracker: has_label("tracker"),
       target_base: target_base,
       path_letter: path_letter,
-      blocked_by: blocked_by
+      blocked_by: blocked_by,
+      stage_rank: stage_rank
     }
   ]
 ' "$ISSUES_FILE")
@@ -238,10 +253,17 @@ ORPHAN_ROWS_JSON=$(printf '%s' "$ROWS_JSON" \
   | jq -c --argjson children "$CHILD_NUMBERS_JSON" \
       '[.[] | select((.is_tracker | not) and ((.number as $n | $children | index($n)) == null))]')
 
-# Compute bucket names: explicit (alphabetical) scopes + a sentinel for empty
-BUCKETS=$(printf '%s' "$ORPHAN_ROWS_JSON" \
-  | jq -r '[.[].scope] | unique | .[]' \
-  | awk 'NF { print "named:" $0 } !NF { has_empty=1 } END { if (has_empty) print "generic:" }')
+# Named buckets ordered by (min stage_rank in bucket, scope_alpha).
+# The (none / generic) bucket is detected separately and rendered last.
+BUCKET_ORDER=$(printf '%s' "$ORPHAN_ROWS_JSON" \
+  | jq -r '
+      [.[] | select(.scope != "")]
+      | group_by(.scope)
+      | map({scope: .[0].scope, min_rank: (map(.stage_rank) | min)})
+      | sort_by(.min_rank, .scope)
+      | .[] | .scope')
+HAS_GENERIC=$(printf '%s' "$ORPHAN_ROWS_JSON" \
+  | jq -r 'any(.[]; .scope == "") | if . then "1" else "0" end')
 
 # ----- RELEASE PRs section (rendered ABOVE PIPELINE STATUS) ----------
 #
@@ -298,7 +320,16 @@ if [ "$TRACKER_COUNT" -gt 0 ]; then
       echo "        (all children closed — pending auto-close)"
       continue
     fi
-    for c in $open_children; do
+    # Re-sort the open_children list by (stage_rank, priority_tier, number)
+    # using the projection already in ROWS_JSON. open_children is guaranteed
+    # non-empty here (short-circuited above), so $ns is always a valid JSON
+    # array of integers.
+    sorted_children=$(printf '%s' "$ROWS_JSON" \
+      | jq -r --argjson ns "[$(echo $open_children | tr ' ' ',' | sed 's/^,//;s/,$//')]" '
+          [.[] | select(.number as $n | $ns | index($n))]
+          | sort_by(.stage_rank, .priority_tier, .number)
+          | .[].number')
+    for c in $sorted_children; do
       child_row=$(printf '%s' "$ROWS_JSON" \
         | jq -c --argjson n "$c" '.[] | select(.number == $n)')
       if [ -z "$child_row" ]; then
@@ -317,24 +348,24 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   echo "ORPHANS"
   echo "================================================================"
 
-  # Print named buckets in alphabetical order first
-  echo "$BUCKETS" | grep -E '^named:' | sort | while IFS= read -r line; do
-    bucket="${line#named:}"
+  # Print named buckets ordered by (min stage_rank in bucket, scope_alpha).
+  while IFS= read -r bucket; do
+    [ -n "$bucket" ] || continue
     echo " ($bucket)"
     printf '%s' "$ORPHAN_ROWS_JSON" \
       | jq -r --arg b "$bucket" '
           [.[] | select(.scope == $b)]
-          | sort_by(.priority_tier, .number)
+          | sort_by(.stage_rank, .priority_tier, .number)
           | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
         '
-  done
+  done <<< "$BUCKET_ORDER"
   # Then the (none / generic) bucket, if present
-  if echo "$BUCKETS" | grep -q '^generic:'; then
+  if [ "$HAS_GENERIC" = "1" ]; then
     echo " (none / generic)"
     printf '%s' "$ORPHAN_ROWS_JSON" \
       | jq -r '
           [.[] | select(.scope == "")]
-          | sort_by(.priority_tier, .number)
+          | sort_by(.stage_rank, .priority_tier, .number)
           | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
         '
   fi

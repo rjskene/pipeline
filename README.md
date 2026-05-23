@@ -71,6 +71,18 @@ claude-pipeline/
 
 ## Prerequisites
 
+### What this depends on
+
+- **superpowers** — load-bearing skill dependency. Pipeline stages invoke `writing-plans`, `test-driven-development`, `brainstorming`, `requesting-code-review`, and `receiving-code-review` from `skills/plan-issue`, `skills/execute-issue-plan`, `skills/hotfix`, and `skills/create-issues` at points-of-use.
+- Install:
+  ```
+  /plugin marketplace add obra/superpowers-marketplace
+  /plugin install superpowers@superpowers-marketplace
+  ```
+- See [docs/superpowers-integration.md](docs/superpowers-integration.md) for the mental model, per-stage usage table, and extension guide.
+
+### System binaries
+
 - `gh` CLI — for GitHub issue/PR operations.
 - `jq` — for hook JSON parsing.
 - `bash` 4+ — queue and status scripts use associative arrays. (Note: macOS ships bash 3.2; `brew install bash`.)

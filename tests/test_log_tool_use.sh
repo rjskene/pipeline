@@ -28,4 +28,43 @@ LINES=$(wc -l < "$LOG")
 grep -q 'session=s1' "$LOG" || { echo "FAIL: JSON session_id not used"; FAIL=1; }
 grep -qP 'Bash\tsession=test-sess-42' "$LOG" || { echo "FAIL: env fallback not used"; FAIL=1; }
 
+# --- jq-missing subtest (issue #412): hook must never block tool execution
+# when jq is absent from PATH; instead emit a breadcrumb to hook-errors.log
+# and skip writing the row.
+tmpdir2=$(mktemp -d)
+sandbox=$(mktemp -d)
+trap 'rm -rf "$tmpdir" "$tmpdir2" "$sandbox"' EXIT
+
+for bin in cat date mkdir tr; do
+  src=$(command -v "$bin") || { echo "FAIL: $bin not available to build sandbox"; FAIL=1; }
+  [ -n "$src" ] && ln -s "$src" "$sandbox/$bin"
+done
+
+# Sanity: jq must NOT be reachable via the sandbox PATH (precondition for the
+# whole subtest — otherwise we'd be re-asserting the happy path).
+if PATH="$sandbox" command -v jq >/dev/null 2>&1; then
+  echo "FAIL: sandbox unexpectedly has jq on PATH; subtest can't exercise the guard"
+  FAIL=1
+fi
+
+BASH_BIN=$(command -v bash)
+set +e
+CLAUDE_PROJECT_DIR="$tmpdir2" CLAUDE_SESSION_ID="test-sess-jq-missing" \
+  PATH="$sandbox" "$BASH_BIN" "$HOOK" \
+  <<<'{"tool_name":"Bash","tool_input":{"command":"echo hi"}}'
+HOOK_RC=$?
+set -e
+[ "$HOOK_RC" -eq 0 ] || { echo "FAIL: hook exited $HOOK_RC with jq missing (expected 0)"; FAIL=1; }
+
+LOG2="$tmpdir2/.claude/logs/tool-use.log"
+if [ -s "$LOG2" ]; then
+  echo "FAIL: tool-use.log was written when jq missing: $(cat "$LOG2")"
+  FAIL=1
+fi
+
+ERRLOG="$tmpdir2/.claude/logs/hook-errors.log"
+[ -f "$ERRLOG" ] || { echo "FAIL: hook-errors.log not created when jq missing"; FAIL=1; }
+grep -q 'log-tool-use.sh: jq not found on PATH' "$ERRLOG" 2>/dev/null \
+  || { echo "FAIL: hook-errors.log missing 'jq not found on PATH' breadcrumb"; FAIL=1; }
+
 [ "$FAIL" -eq 0 ] && echo "ALL PASSED" || { echo "FAILED"; exit 1; }

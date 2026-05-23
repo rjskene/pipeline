@@ -130,12 +130,22 @@ run_helper() {
   local fx="$1"; shift
   (
     cd "$fx"
+    # Scrub PIPELINE_* from the parent env so fixture-only config (and the
+    # per-case overrides in "$@") are the sole authority. Guards against #425
+    # where an orchestrator-leaked PIPELINE_REPO flipped Case 3 to false-pass.
+    unset $(compgen -v PIPELINE_ 2>/dev/null) 2>/dev/null || true
     PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$fx" "$@" bash "$HELPER"
   ) > "$fx/out" 2>&1
   echo "$?" > "$fx/rc"
 }
 
 export PATH="$TMP/bin:$PATH"
+
+# Regression guard for #425: simulate an orchestrator-style polluted parent env.
+# run_helper() must scrub PIPELINE_* before invoking the helper; if this leaks
+# through, Case 3 (and others depending on fixture-only config) will flip to
+# false-pass and the test catches it.
+export PIPELINE_REPO=leaked-from-outside
 
 # ---------------------------------------------------------------------------
 # Case 1: all-clean — every check passes
