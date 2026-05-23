@@ -159,6 +159,25 @@ Path column shows `?` for ready issues not yet classified — classification run
 
 3. **Render the status table** — invoke `scripts/render-status-table.sh` with the three input files described in [references/status-table.md](references/status-table.md). Print the renderer's stdout verbatim; the run skill is NOT the source of truth for layout. After invoking the renderer, the orchestrator MUST reprint the rendered table as plain text inside its assistant reply — bash tool stdout alone is not visible to the user without expanding the tool call. Attachments (`att` column) come from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/`, populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch.
 
+   **trackers.json build contract.** The renderer expects `--trackers` to be a JSON object `{"<num>": "<body>", ...}`, NOT an array of issue objects. As of #416 the renderer fails loud (exit 2) on wrong shape, but the operator must still build the map correctly. Use this block — lifted from [references/status-table.md](references/status-table.md) so SKILL.md can be read linearly:
+
+   ```bash
+   # issues.json — re-fetch with body so NOTES blocked-by parsing works.
+   ISSUES_JSON=$(mktemp)
+   gh issue list --repo "$PIPELINE_REPO" --state open \
+     --json number,title,labels,body,updatedAt --limit 100 > "$ISSUES_JSON"
+
+   # trackers.json — JSON OBJECT keyed by tracker number, value = body.
+   TRACKERS_JSON=$(mktemp); echo '{}' > "$TRACKERS_JSON"
+   for tracker in $TRACKER_ISSUES; do
+     body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
+     TRACKERS_JSON_NEXT=$(jq --arg k "$tracker" --arg v "$body" '. + {($k): $v}' "$TRACKERS_JSON")
+     printf '%s' "$TRACKERS_JSON_NEXT" > "$TRACKERS_JSON"
+   done
+   ```
+
+   See `references/status-table.md` for the full contract (release-prs feed, invocation block, NOTES rendering, example output).
+
 4. **Propose ONE action** based on state priority (highest → lowest): cleanup > in-progress > pr-open eval > plan-pending eval > plan-reviewed (await user) > plan-approved exec > merge release PR > ready planning. Rationale: a release PR is the end of the release loop — it must NOT preempt active feature work, but it should come BEFORE pulling in new ready work.
 
    - **cleanup**: if any worktrees are cleanup candidates (merged PR with active worktree) → propose cleanup; list each candidate with issue number and worktree path.

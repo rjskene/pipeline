@@ -67,6 +67,18 @@ else
   fi
 
   inc
+  # trackers.json build snippet is inlined in Step 3 (issue #416). The
+  # operator must be able to read SKILL.md linearly and assemble the right
+  # {"<num>": "<body>"} map — references/status-table.md remains the full
+  # contract but SKILL.md MUST carry the minimum-viable build block.
+  if grep -qF 'TRACKERS_JSON=$(mktemp)' "$SKILL_MD"; then
+    pass_msg "SKILL.md Step 3 inlines trackers.json build snippet"
+  else
+    fail_msg "SKILL.md Step 3 inlines trackers.json build snippet" \
+      "TRACKERS_JSON=\$(mktemp) marker missing from $SKILL_MD"
+  fi
+
+  inc
   # Input partitioning block (TRACKER_ISSUES / READY_ISSUES) preserved —
   # that's orchestrator behavior, not render spec.
   if grep -q 'BEGIN-TRACKER-FILTER' "$SKILL_MD"; then
