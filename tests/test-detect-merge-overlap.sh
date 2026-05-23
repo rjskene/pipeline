@@ -39,6 +39,7 @@ case "$PR" in
   101) JSON='{"files":[{"path":"a.md"},{"path":"b.md"}]}' ;;
   102) JSON='{"files":[{"path":"b.md"},{"path":"c.md"}]}' ;;
   103) JSON='{"files":[{"path":"d.md"}]}' ;;
+  104) JSON='{"files":[{"path":"e.md"}]}' ;;
   *)
     echo "[gh shim] unhandled: $ALL_ARGS" >&2
     exit 1
@@ -87,6 +88,15 @@ case "$OUT" in
   *"OVERLAP 102 103"*) check "no spurious OVERLAP 102 103" "no" ;;
   *) check "no spurious OVERLAP 102 103" ok ;;
 esac
+
+echo "=== detect_merge_overlap: disjoint pair emits nothing ==="
+# 103 (d.md) and 104 (e.md) share no files -> output must be exactly empty.
+OUT=$(detect_merge_overlap 103 104)
+if [ -z "$OUT" ]; then
+  check "disjoint pair 103/104 -> empty output" ok
+else
+  check "disjoint pair 103/104 -> empty output" "no"
+fi
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
