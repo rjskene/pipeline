@@ -37,14 +37,14 @@ PATH labels (A=docs-only, B=standard, C=multi-task, D=quick-fix) are owned by `s
 
 ## Analyze mode (--analyze)
 
-Read-only hygiene pass over the open-issue set; no mutations. Full spec, helper invocation, subagent dispatch contract, and output tables in [references/analyze-mode.md](references/analyze-mode.md).
+When `--analyze` appears anywhere in the argv to `/pipeline:run`, this skill MUST delegate by invoking `Skill(skill: "pipeline:analyze-issues")` and then STOP. Do not duplicate the analyze flow inline — the delegation is the only supported path. Full spec: [skills/analyze-issues/SKILL.md](../analyze-issues/SKILL.md).
 
 ## Shortcuts
 
 | Shortcut | Meaning |
 |----------|---------|
 | **full send** | Back-compat alias for `/pipeline:fullsend`. Delegates to that skill with the same argv. |
-| `--analyze` | Read-only hygiene pass — see [Analyze mode](#analyze-mode---analyze). |
+| `--analyze` | Read-only hygiene pass — delegates to /pipeline:analyze-issues. See [skills/analyze-issues/SKILL.md](../analyze-issues/SKILL.md). |
 
 ## Full Send — back-compat delegator
 
