@@ -53,6 +53,82 @@ if [ -f "$HELPER" ]; then
   fi
 fi
 
+# --- Scenario 2: fixture loader iterates PRs ---
+inc_scenario "Scenario 2: fixture loader walks 4 synthetic PRs (one per PATH)"
+
+TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
+FIX2="$TMP/fix2"; mkdir -p "$FIX2"
+
+# Four merged PRs, one per PATH (docs-only=A, default=B, multi-task=C, quick-fix=D).
+cat > "$FIX2/prs.json" <<'J'
+[
+  {"number":101,"title":"docs(readme): typo","additions":3,"deletions":1,"body":"Closes #201","mergedAt":"2026-05-10T10:00:00Z"},
+  {"number":102,"title":"feat(api): add endpoint","additions":120,"deletions":40,"body":"Closes #202","mergedAt":"2026-05-11T10:00:00Z"},
+  {"number":103,"title":"refactor(core): split modules","additions":500,"deletions":300,"body":"Closes #203","mergedAt":"2026-05-12T10:00:00Z"},
+  {"number":104,"title":"fix(util): tiny bug","additions":2,"deletions":1,"body":"Closes #204","mergedAt":"2026-05-13T10:00:00Z"}
+]
+J
+
+# Per-PR comment fixtures (## Evaluation lives on the PR).
+cat > "$FIX2/pr-101.json" <<'J'
+{"number":101,"additions":3,"deletions":1,"comments":[]}
+J
+cat > "$FIX2/pr-102.json" <<'J'
+{"number":102,"additions":120,"deletions":40,"comments":[
+  {"author":{"login":"rjskene"},"body":"## Evaluation\n\n**Verdict:** Approve\n\nLooks good. Tests pass. Coverage adequate.\n","createdAt":"2026-05-11T11:00:00Z"}
+]}
+J
+cat > "$FIX2/pr-103.json" <<'J'
+{"number":103,"additions":500,"deletions":300,"comments":[
+  {"author":{"login":"rjskene"},"body":"## Evaluation\n\n**Verdict:** Approve\n\nThorough review:\n- Each task ran tdd-implementer.\n- Diff matches plan.\n- No scope creep.\n","createdAt":"2026-05-12T12:00:00Z"}
+]}
+J
+cat > "$FIX2/pr-104.json" <<'J'
+{"number":104,"additions":2,"deletions":1,"comments":[
+  {"author":{"login":"rjskene"},"body":"## Evaluation\n\nLGTM\n","createdAt":"2026-05-13T11:00:00Z"}
+]}
+J
+
+# Linked-issue fixtures (## Implementation Plan + optional ## Plan Evaluation
+# live on the issue; PATH label lives in the issue labels).
+cat > "$FIX2/issue-201.json" <<'J'
+{"number":201,"labels":[{"name":"docs-only"}],"comments":[
+  {"body":"## Implementation Plan\n\n**Files to change:**\n- README.md\n**Tasks (ordered):**\n- Task 1: fix typo.\n","createdAt":"2026-05-10T09:00:00Z"}
+]}
+J
+cat > "$FIX2/issue-202.json" <<'J'
+{"number":202,"labels":[],"comments":[
+  {"body":"## Implementation Plan\n\n**Files to change:**\n- src/api.ts\n- tests/test-api.ts\n\n**Tasks (ordered):**\n- Task 0: invoke superpowers:test-driven-development.\n- Task 1: scaffold endpoint test.\n- Task 2: implement endpoint.\n- Task 3: integration test.\n","createdAt":"2026-05-11T08:00:00Z"},
+  {"body":"## Plan Evaluation\n\n**Verdict:** Approve\n\n**File accuracy:** matches.\n**Risks:** none new.\n","createdAt":"2026-05-11T09:00:00Z"}
+]}
+J
+cat > "$FIX2/issue-203.json" <<'J'
+{"number":203,"labels":[{"name":"multi-task"}],"comments":[
+  {"body":"## Implementation Plan\n\n**Files to change:**\n- src/a.ts\n- src/b.ts\n- src/c.ts\n- tests/a.test.ts\n- tests/b.test.ts\n- tests/c.test.ts\n\n**Tasks (ordered):**\n- Task 0: invoke superpowers:test-driven-development.\n- Task 1: scaffold a.ts (target=src/a.ts).\n- Task 2: scaffold b.ts (target=src/b.ts).\n- Task 3: scaffold c.ts (target=src/c.ts).\n- Task 4: integrate.\n- Task 5: e2e.\n","createdAt":"2026-05-12T08:00:00Z"},
+  {"body":"## Plan Evaluation\n\n**Verdict:** Approve\n\n**File accuracy:** all matching.\n**Risks:** scope is wide but isolated by target= sentinels.\n","createdAt":"2026-05-12T09:00:00Z"}
+]}
+J
+cat > "$FIX2/issue-204.json" <<'J'
+{"number":204,"labels":[{"name":"quick-fix"}],"comments":[
+  {"body":"## Implementation Plan\n\n**Files to change:**\n- src/util.ts\n**Tasks (ordered):**\n- Task 1: fix off-by-one.\n","createdAt":"2026-05-13T08:00:00Z"}
+]}
+J
+
+ROWS_OUT="$(bash "$HELPER" --fixture "$FIX2" --emit-rows-json 2>/dev/null || true)"
+ROWS_RC=$?
+if [ "$ROWS_RC" -eq 0 ]; then
+  pass_msg "fixture-mode run exits 0"
+else
+  fail_msg "fixture-mode run exited non-zero (rc=$ROWS_RC)"
+fi
+
+N_ROWS="$(printf '%s' "$ROWS_OUT" | jq -r 'length' 2>/dev/null || echo 0)"
+if [ "$N_ROWS" = "4" ]; then
+  pass_msg "fixture-mode emits exactly 4 PR rows"
+else
+  fail_msg "expected 4 PR rows, got $N_ROWS"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
