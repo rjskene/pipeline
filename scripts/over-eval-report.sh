@@ -323,3 +323,31 @@ emit_table() {
 }
 
 emit_table
+
+# --- TOP-5 over-eval outliers ---
+
+emit_outliers() {
+  echo ""
+  echo "TOP-5 OVER-EVAL OUTLIERS (highest pr-eval:diff ratio):"
+  # Compute ratio per row, sort desc, take top 5. Skip rows with loc=0 (would
+  # divide by zero — emit a debug note instead). Format spec from the plan:
+  #   PR #<N> (PATH <X>): <loc> LOC diff, <pr_eval> lines pr-eval → <ratio>x
+  awk -F'\t' '
+    BEGIN { skipped = 0 }
+    {
+      path = $1; loc = $2 + 0; pr_eval = $5 + 0; pr_num = $6
+      if (loc == 0) { skipped++; next }
+      ratio = pr_eval / loc
+      printf "%.6f\t%s\t%d\t%d\t%s\n", ratio, path, loc, pr_eval, pr_num
+    }
+    END {
+      if (skipped > 0) {
+        printf "over-eval-report: DEBUG: skipped %d row(s) with loc=0 from outlier ranking\n", skipped > "/dev/stderr"
+      }
+    }' "$ROWS_TSV" \
+  | sort -t "$(printf '\t')" -k1,1 -gr \
+  | head -5 \
+  | awk -F'\t' '{ printf "PR #%s (PATH %s): %s LOC diff, %s lines pr-eval → %.1fx\n", $5, $2, $3, $4, $1 }'
+}
+
+emit_outliers

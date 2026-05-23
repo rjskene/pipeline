@@ -239,6 +239,115 @@ else
   fail_msg "PATH D row missing expected 0.7x ratio (got: $D_ROW)"
 fi
 
+# --- Scenario 5: TOP-5 OVER-EVAL OUTLIERS section ---
+inc_scenario "Scenario 5: TOP-5 outliers (ranking, format, 5-row cap)"
+
+FIX3="$TMP/fix3"; mkdir -p "$FIX3"
+
+# Two PRs: one normal (low ratio), one outlier (loc=8, pr_eval=240 → 30.0x).
+cat > "$FIX3/prs.json" <<'J'
+[
+  {"number":301,"title":"feat: normal","additions":100,"deletions":50,"body":"Closes #401","mergedAt":"2026-05-10T10:00:00Z"},
+  {"number":302,"title":"feat: outlier","additions":5,"deletions":3,"body":"Closes #402","mergedAt":"2026-05-11T10:00:00Z"}
+]
+J
+cat > "$FIX3/pr-301.json" <<'J'
+{"number":301,"additions":100,"deletions":50,"comments":[
+  {"author":{"login":"rjskene"},"body":"## Evaluation\nLine 1\nLine 2","createdAt":"2026-05-10T11:00:00Z"}
+]}
+J
+# 240-line ## Evaluation block: heading + 239 body lines (\n-separated).
+PR_EVAL_BODY="## Evaluation"
+for i in $(seq 1 239); do
+  PR_EVAL_BODY="${PR_EVAL_BODY}
+Line ${i}"
+done
+jq -n --arg body "$PR_EVAL_BODY" '{number:302,additions:5,deletions:3,comments:[{author:{login:"rjskene"},body:$body,createdAt:"2026-05-11T11:00:00Z"}]}' > "$FIX3/pr-302.json"
+
+cat > "$FIX3/issue-401.json" <<'J'
+{"number":401,"labels":[],"comments":[
+  {"body":"## Implementation Plan\nBody 1","createdAt":"2026-05-10T08:00:00Z"}
+]}
+J
+cat > "$FIX3/issue-402.json" <<'J'
+{"number":402,"labels":[],"comments":[
+  {"body":"## Implementation Plan\nBody 1","createdAt":"2026-05-11T08:00:00Z"}
+]}
+J
+
+OUT3="$(bash "$HELPER" --fixture "$FIX3" 2>/dev/null || true)"
+
+if printf '%s' "$OUT3" | grep -q '^TOP-5 OVER-EVAL OUTLIERS'; then
+  pass_msg "TOP-5 OVER-EVAL OUTLIERS header present"
+else
+  fail_msg "TOP-5 OVER-EVAL OUTLIERS header missing"
+fi
+
+# Outlier section appears AFTER the table header.
+HDR_LINE="$(printf '%s\n' "$OUT3" | grep -n '^PATH | N' | head -1 | cut -d: -f1)"
+OUTLIER_LINE="$(printf '%s\n' "$OUT3" | grep -n '^TOP-5 OVER-EVAL OUTLIERS' | head -1 | cut -d: -f1)"
+if [ -n "$HDR_LINE" ] && [ -n "$OUTLIER_LINE" ] && [ "$OUTLIER_LINE" -gt "$HDR_LINE" ]; then
+  pass_msg "outlier section appears after the per-PATH table"
+else
+  fail_msg "outlier section ordering wrong (hdr=$HDR_LINE outlier=$OUTLIER_LINE)"
+fi
+
+# Outlier PR #302 appears first (highest ratio = 30.0x).
+FIRST_OUTLIER="$(printf '%s\n' "$OUT3" | awk '/^TOP-5 OVER-EVAL OUTLIERS/{flag=1; next} flag && /^PR #/{print; exit}')"
+case "$FIRST_OUTLIER" in
+  "PR #302 "*"30.0x"*) pass_msg "outlier PR #302 ranks first with 30.0x" ;;
+  *) fail_msg "first outlier row unexpected: $FIRST_OUTLIER" ;;
+esac
+
+# Format spec: 'PR #N (PATH B): <loc> LOC diff, <pr_eval> lines pr-eval → <ratio>x'
+case "$FIRST_OUTLIER" in
+  "PR #302 (PATH B): 8 LOC diff, 240 lines pr-eval → 30.0x") pass_msg "outlier row uses spec format" ;;
+  *) fail_msg "outlier row format mismatch: $FIRST_OUTLIER" ;;
+esac
+
+# --- 5-row cap test ---
+FIX4="$TMP/fix4"; mkdir -p "$FIX4"
+
+# Six high-ratio PRs in PATH B; outlier list must cap at 5.
+{
+  echo '['
+  sep=""
+  for i in 1 2 3 4 5 6; do
+    n=$((500 + i))
+    iss=$((600 + i))
+    day=$(printf "%02d" "$i")
+    printf '%s  {"number":%d,"title":"feat: hi%d","additions":1,"deletions":1,"body":"Closes #%d","mergedAt":"2026-05-%sT10:00:00Z"}\n' "$sep" "$n" "$i" "$iss" "$day"
+    sep=","
+  done
+  echo ']'
+} > "$FIX4/prs.json"
+
+PR_EVAL_BODY2="## Evaluation"
+for i in $(seq 1 50); do
+  PR_EVAL_BODY2="${PR_EVAL_BODY2}
+Line ${i}"
+done
+for i in 1 2 3 4 5 6; do
+  n=$((500 + i))
+  iss=$((600 + i))
+  jq -n --arg body "$PR_EVAL_BODY2" --argjson n "$n" \
+    '{number:$n,additions:1,deletions:1,comments:[{author:{login:"rjskene"},body:$body,createdAt:"2026-05-11T11:00:00Z"}]}' \
+    > "$FIX4/pr-${n}.json"
+  cat > "$FIX4/issue-${iss}.json" <<J
+{"number":${iss},"labels":[],"comments":[
+  {"body":"## Implementation Plan\nBody 1","createdAt":"2026-05-11T08:00:00Z"}
+]}
+J
+done
+
+OUT4="$(bash "$HELPER" --fixture "$FIX4" 2>/dev/null || true)"
+OUTLIER_ROWS="$(printf '%s\n' "$OUT4" | awk '/^TOP-5 OVER-EVAL OUTLIERS/{flag=1; next} flag && /^PR #/{count++} END{print count+0}')"
+if [ "$OUTLIER_ROWS" = "5" ]; then
+  pass_msg "outlier list capped at 5 rows even with 6 high-ratio PRs"
+else
+  fail_msg "expected 5 outlier rows, got $OUTLIER_ROWS"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
