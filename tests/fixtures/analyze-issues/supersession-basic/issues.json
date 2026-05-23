@@ -1,0 +1,3 @@
+[
+  {"number":50,"title":"fix(spawn): argv flakiness","body":"The argv parser in scripts/spawn-claude.sh is flaky. See scripts/spawn-claude-helpers.sh too.","labels":[],"createdAt":"2026-04-01T00:00:00Z"}
+]

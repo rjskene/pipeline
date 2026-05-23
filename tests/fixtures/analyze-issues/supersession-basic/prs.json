@@ -1,0 +1,5 @@
+[
+  {"number":100,"mergedAt":"2026-04-15T00:00:00Z","files":["scripts/spawn-claude.sh","scripts/spawn-claude-helpers.sh"],"title":"fix(spawn): argv parser","body":""},
+  {"number":101,"mergedAt":"2026-04-10T00:00:00Z","files":["docs/unrelated.md"],"title":"docs: update","body":""},
+  {"number":102,"mergedAt":"2026-03-01T00:00:00Z","files":["scripts/spawn-claude.sh"],"title":"fix(spawn): earlier","body":""}
+]

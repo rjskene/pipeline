@@ -187,4 +187,14 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
 Caption: `--manual-merge` opt-out (flag or `manual-merge` label) stops short of
 the auto-merge gate even when all four greenlight conditions hold.
 
+## Entrypoints
+
+Top-level slash commands that drive the maps above:
+
+- `/pipeline:run` — orchestrator session: prioritize, group, and dispatch the action queue.
+- `/pipeline:fullsend` — wave-plan flow across a slate of issues (the map above).
+- `/pipeline:analyze-issues` — read-only hygiene pass over the open-issue set; see [skills/analyze-issues/SKILL.md](../skills/analyze-issues/SKILL.md). `/pipeline:run --analyze` delegates to `/pipeline:analyze-issues` for back-compat.
+
+`analyze-issues` surfaces four detection categories (no mutations): duplicate candidates, standalones that fit an existing tracker, issues with missing labels, and merged-PR supersession candidates.
+
 See [docs/superpowers-integration.md](superpowers-integration.md) for the per-stage map of which superpowers each pipeline skill invokes.

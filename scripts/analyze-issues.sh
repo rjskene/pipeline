@@ -32,6 +32,12 @@ fi
 #     ],
 #     "missing_label_candidates": [
 #       {"issue": <int>, "missing": ["priority"|"path"|"state", ...]}
+#     ],
+#     "supersession_candidates": [
+#       {"issue": <int>,
+#        "candidate_prs": [
+#          {"pr": <int>, "files_overlap_count": <int>, "scope_match": <bool>}
+#        ]}
 #     ]
 #   }
 #
@@ -40,7 +46,7 @@ fi
 #   bash scripts/analyze-issues.sh --fixture <dir>   # fixture mode (no gh)
 #
 # Caps at top 20 duplicate pairs + top 20 tracker fits + top 20 missing-label
-# candidates.
+# candidates + top 20 supersession candidates (<= 5 candidate_prs each).
 #
 # The missing-label signal has a configurable age gate
 # (PIPELINE_ANALYZE_MIN_AGE_HOURS, default 24h) — issues younger than the
@@ -87,7 +93,8 @@ NT_TSV=$(mktemp)
 TR_INDEX_FILE=$(mktemp)
 FITS_RAW=$(mktemp)
 CHILD_INDEX_FILE=$(mktemp)
-trap 'rm -f "$ISSUES_FILE" "$NT_TSV" "$TR_INDEX_FILE" "$FITS_RAW" "$CHILD_INDEX_FILE"' EXIT
+PRS_FILE=$(mktemp)
+trap 'rm -f "$ISSUES_FILE" "$NT_TSV" "$TR_INDEX_FILE" "$FITS_RAW" "$CHILD_INDEX_FILE" "$PRS_FILE"' EXIT
 
 # --- source issues JSON ---
 if [ -n "$FIXTURE_DIR" ]; then
@@ -400,6 +407,108 @@ MISSING_JSON=$(jq --argjson cutoff "$CUTOFF_EPOCH" '
   ] | .[0:20]
 ' "$ISSUES_FILE")
 
+# --- supersession candidates ---
+# Cross-reference open non-stage issues against recently-merged PRs. A merged PR
+# is a supersession candidate for an issue when it merged AFTER the issue was
+# filed AND it either touches a file the issue body references (files_overlap)
+# or carries the issue's conventional-commit scope (scope_match).
+#
+# PR source: live mode pulls the last 200 merged PRs; fixture mode reads
+# prs.json. Fixtures predating this feature lack prs.json — when absent we skip
+# the block silently and emit an empty array (back-compat).
+#
+# gh returns each file as {"path": "..."}; fixtures may store plain strings.
+# The jq below normalizes both shapes to a path-string array.
+SUPERSESSION_JSON='[]'
+HAVE_PRS=0
+if [ -n "$FIXTURE_DIR" ]; then
+  if [ -f "$FIXTURE_DIR/prs.json" ]; then
+    cp "$FIXTURE_DIR/prs.json" "$PRS_FILE"
+    HAVE_PRS=1
+  fi
+else
+  if [ -n "${PIPELINE_REPO:-}" ]; then
+    gh pr list \
+      --repo "$PIPELINE_REPO" \
+      --state merged \
+      --json number,mergedAt,files,title,body \
+      --limit 200 \
+      > "$PRS_FILE"
+    HAVE_PRS=1
+  fi
+fi
+
+if [ "$HAVE_PRS" -eq 1 ]; then
+  # Reuse the same is_tracker/is_exempt label-state predicates as the
+  # missing-label block so "open non-stage-labelled issue" means the same thing
+  # across both signals. body file-path refs are extracted via a fixed regex
+  # over the tracked top-level dirs; scope comes from the existing scope_of
+  # filter (already materialized on each NONTRACKERS entry as .scope).
+  SUPERSESSION_JSON=$(jq -n \
+    --slurpfile issues_raw "$ISSUES_FILE" \
+    --slurpfile prs_raw "$PRS_FILE" \
+    --argjson nontrackers "$NONTRACKERS" '
+    def is_tracker(labels): any(labels[]?; .name == "tracker");
+    def is_exempt(labels):  any(labels[]?; .name == "brainstorm" or .name == "later" or .name == "human");
+    def body_paths:
+      [ . | scan("\\b(?:scripts|skills|hooks|tests|docs)/[A-Za-z0-9._/-]+\\.(?:sh|md|py|json)") ]
+      | unique;
+    # Normalize each PR: files → path-string array, plus parsed mergedAt epoch.
+    ($prs_raw[0] // []) as $prs
+    | ($prs | map({
+        pr: .number,
+        merged_epoch: (try (.mergedAt | fromdateiso8601) catch null),
+        files: (
+          if ((.files // []) | length) == 0 then []
+          elif ((.files[0] | type) == "object") then [.files[].path]
+          else .files end
+        ),
+        title: (.title // ""),
+        body: (.body // "")
+      })) as $prnorm
+    # Label-state lookup keyed by issue number, from the raw issues payload.
+    | ([ ($issues_raw[0] // [])[] | {key: (.number|tostring), value: .labels} ] | from_entries) as $labelmap
+    | [ $nontrackers[]
+        | . as $i
+        | ($labelmap[($i.number|tostring)] // []) as $labels
+        | select(is_tracker($labels) | not)
+        | select(is_exempt($labels) | not)
+        | ($i.scope // "") as $scope
+        | (($i.body // "") | body_paths) as $bpaths
+        | (try (($issues_raw[0] // [])[] | select(.number == $i.number) | .createdAt | fromdateiso8601) catch null) as $created_epoch
+        | {
+            issue: $i.number,
+            candidate_prs: (
+              [ $prnorm[]
+                | select(.merged_epoch != null and $created_epoch != null and .merged_epoch > $created_epoch)
+                | . as $pr
+                | ([ $bpaths[] | select(. as $p | $pr.files | index($p)) ] | length) as $ovl
+                | (
+                    ($scope != "")
+                    and (
+                      ($pr.title | test("^[a-z]+\\(" + $scope + "\\):"))
+                      or ($pr.body | contains("scope:" + $scope))
+                    )
+                  ) as $smatch
+                | select($ovl >= 1 or $smatch)
+                | {pr: $pr.pr, files_overlap_count: $ovl, scope_match: $smatch}
+              ]
+              # Cap candidate_prs per issue at 5, best overlap first.
+              | sort_by(-.files_overlap_count, (if .scope_match then 0 else 1 end))
+              | .[0:5]
+            )
+          }
+        | select(.candidate_prs | length >= 1)
+      ]
+      # Cap total rows at 20: max files_overlap_count desc, then scope_match desc.
+      | sort_by(
+          -([.candidate_prs[].files_overlap_count] | max // 0),
+          (if any(.candidate_prs[]; .scope_match) then 0 else 1 end)
+        )
+      | .[0:20]
+  ')
+fi
+
 # --- assemble + emit ---
 # Gate the shortlist output path on PIPELINE_LOGS_ENABLED. When logging is
 # off (the consumer default), route to mktemp so we do not leave artifacts
@@ -412,10 +521,11 @@ else
   OUT="$(mktemp -t pipeline-analyze-shortlist-XXXX.json)"
 fi
 jq -n \
-  --argjson pairs   "${PAIRS_JSON:-[]}" \
-  --argjson fits    "${FITS_JSON:-[]}" \
-  --argjson missing "${MISSING_JSON:-[]}" \
-  '{duplicate_pairs: $pairs, tracker_fits: $fits, missing_label_candidates: $missing}' > "$OUT"
+  --argjson pairs        "${PAIRS_JSON:-[]}" \
+  --argjson fits         "${FITS_JSON:-[]}" \
+  --argjson missing      "${MISSING_JSON:-[]}" \
+  --argjson supersession "${SUPERSESSION_JSON:-[]}" \
+  '{duplicate_pairs: $pairs, tracker_fits: $fits, missing_label_candidates: $missing, supersession_candidates: $supersession}' > "$OUT"
 
 ABS_OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 printf '%s\n' "$ABS_OUT"

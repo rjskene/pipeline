@@ -14,6 +14,7 @@ Full process maps in docs/process-maps.md.
 |---|---|
 | `/pipeline:run` | Interactive — check pipeline status, see what's ready, advance the next stage |
 | `/pipeline:fullsend [N ...]` | Autonomous end-to-end run for one or many issues (classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge) |
+| `/pipeline:analyze-issues` | read-only hygiene pass — duplicate / tracker-fit / missing-label / supersession detection |
 
 ## Install + first run
 
