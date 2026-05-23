@@ -501,6 +501,78 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Issue #430: stage_rank — ready issues float above later/human/brainstorm
+# (within bucket, across buckets, and inside epic children).
+# ----------------------------------------------------------------------
+
+# S.1 — row-level: in a single bucket, a `ready` low-priority row outranks
+# a `later` high-priority row.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/stage-rank-rows-issues.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "S.1 stage-rank rows render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  p701_line=$(grep -n '#701' "$TMP/out" | head -1 | cut -d: -f1)
+  p702_line=$(grep -n '#702' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$p701_line" ] && [ -n "$p702_line" ] && [ "$p702_line" -lt "$p701_line" ]; then
+    pass_msg "S.1 ready #702 sorts above later #701 within (run) bucket"
+  else
+    fail_msg "S.1 ready #702 sorts above later #701 within (run) bucket" \
+      "p702=$p702_line p701=$p701_line"
+  fi
+fi
+
+# S.2 — bucket-level: a ready-only bucket (alpha-late) floats above a
+# later-only bucket (alpha-early).
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/stage-rank-buckets-issues.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "S.2 stage-rank buckets render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  zulu_line=$(grep -n '^ (zulu)' "$TMP/out" | head -1 | cut -d: -f1)
+  alpha_line=$(grep -n '^ (alpha)' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$zulu_line" ] && [ -n "$alpha_line" ] && [ "$zulu_line" -lt "$alpha_line" ]; then
+    pass_msg "S.2 ready-only (zulu) bucket above later-only (alpha) bucket"
+  else
+    fail_msg "S.2 ready-only (zulu) bucket above later-only (alpha) bucket" \
+      "zulu=$zulu_line alpha=$alpha_line"
+  fi
+fi
+
+# S.3 — epic-child re-sort: under tracker #720, the ready child #722 must
+# print before the later child #721 even though the tracker body lists
+# #721 first.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/stage-rank-epic-issues.json" \
+  --trackers "$FIXTURES/stage-rank-epic-trackers.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "S.3 stage-rank epic render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
+else
+  t720_line=$(grep -n '#720' "$TMP/out" | head -1 | cut -d: -f1)
+  c722_line=$(grep -n '#722' "$TMP/out" | head -1 | cut -d: -f1)
+  c721_line=$(grep -n '#721' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$t720_line" ] && [ -n "$c722_line" ] && [ -n "$c721_line" ] \
+     && [ "$t720_line" -lt "$c722_line" ] && [ "$c722_line" -lt "$c721_line" ]; then
+    pass_msg "S.3 under tracker #720, ready child #722 above later child #721"
+  else
+    fail_msg "S.3 under tracker #720, ready child #722 above later child #721" \
+      "t720=$t720_line c722=$c722_line c721=$c721_line"
+  fi
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""
