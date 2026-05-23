@@ -55,6 +55,25 @@ else
   fail_msg "empty issues array → exit 0" "rc=$rc, stderr=$(cat "$TMP/err"), stdout=$(cat "$TMP/out")"
 fi
 
+# Scenario 1.4: --trackers pointing at a JSON array (wrong shape) → exit 2
+# + stderr says `--trackers must be a JSON object`. The orchestrator hit this
+# live (issue #416) when it fed `[issue, issue, ...]` instead of the
+# documented `{"<num>": "<body>", ...}` map, causing every tracker to
+# silently fall through to the "all children closed" placeholder.
+inc
+echo '[{"number":42,"body":"x"}]' > "$TMP/array-trackers.json"
+bash "$HELPER" \
+  --issues "$TMP/empty-issues.json" \
+  --trackers "$TMP/array-trackers.json" \
+  --today 2026-05-21 \
+  >"$TMP/out" 2>"$TMP/err"; rc=$?
+if [ "$rc" -eq 2 ] && grep -q -F -- '--trackers must be a JSON object' "$TMP/err"; then
+  pass_msg "wrong-shape --trackers (array) → exit 2 + error mentions JSON object"
+else
+  fail_msg "wrong-shape --trackers (array) → exit 2 + error mentions JSON object" \
+    "rc=$rc, stderr=$(cat "$TMP/err")"
+fi
+
 # ----------------------------------------------------------------------
 # Task 2: ORPHANS section — scope buckets + priority sort + stage
 # ----------------------------------------------------------------------

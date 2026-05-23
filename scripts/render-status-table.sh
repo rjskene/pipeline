@@ -71,6 +71,18 @@ if [ -n "$TRACKERS_FILE" ] && [ ! -r "$TRACKERS_FILE" ]; then
   exit 2
 fi
 
+# Fail loud on wrong trackers.json shape — the renderer expects
+# {"<num>": "<body>", ...}. An array (gh issue list output) or any other
+# top-level type silently fell through to "all children closed" for every
+# tracker before #416.
+if [ -n "$TRACKERS_FILE" ]; then
+  _t_type=$(jq -r 'type' "$TRACKERS_FILE" 2>/dev/null)
+  if [ "$_t_type" != "object" ]; then
+    echo "render-status-table.sh: --trackers must be a JSON object {\"<num>\": \"<body>\", ...}, got ${_t_type:-unparseable}" >&2
+    exit 2
+  fi
+fi
+
 if [ -n "$RELEASE_PRS_FILE" ] && [ ! -r "$RELEASE_PRS_FILE" ]; then
   echo "render-status-table.sh: --release-prs file not found: $RELEASE_PRS_FILE" >&2
   exit 2
