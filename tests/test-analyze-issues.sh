@@ -201,8 +201,8 @@ if [ -f "$shortlist1" ]; then
       ;;
   esac
   keys=$(jq -r 'keys | join(",")' "$shortlist1")
-  if [ "$keys" = "duplicate_pairs,missing_label_candidates,tracker_fits" ]; then
-    pass_msg "scenario 6: output keys are duplicate_pairs,missing_label_candidates,tracker_fits"
+  if [ "$keys" = "duplicate_pairs,missing_label_candidates,supersession_candidates,tracker_fits" ]; then
+    pass_msg "scenario 6: output keys are duplicate_pairs,missing_label_candidates,supersession_candidates,tracker_fits"
   else
     fail_msg "scenario 6: output keys (got '$keys')"
   fi
