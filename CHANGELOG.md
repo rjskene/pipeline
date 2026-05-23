@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.12.1-rc.1...v0.13.0-rc.1) (2026-05-23)
+
+
+### Miscellaneous Chores
+
+* **release:** cut v0.13.0-rc.1 ([#438](https://github.com/rjskene/pipeline/issues/438)) ([a9e72ea](https://github.com/rjskene/pipeline/commit/a9e72ea63899eadee422113cf0fc9f26ba361898))
+
 ## [0.12.1-rc.1](https://github.com/rjskene/pipeline/compare/v0.12.0...v0.12.1-rc.1) (2026-05-22)
 
 
