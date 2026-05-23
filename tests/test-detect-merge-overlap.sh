@@ -98,6 +98,18 @@ else
   check "disjoint pair 103/104 -> empty output" "no"
 fi
 
+echo "=== recommend_merge_order: fewest-overlap-first, PR-number tiebreak ==="
+# 101<->102 overlap on b.md (1 each); 103, 104 disjoint (0 each).
+# Expected: 103, 104 (0 overlaps, asc PR num), then 101, 102 (1 overlap, asc).
+ORDER=$(recommend_merge_order 101 102 103 104)
+EXPECTED_ORDER=$(printf '103\n104\n101\n102')
+if [ "$ORDER" = "$EXPECTED_ORDER" ]; then
+  check "recommend_merge_order ranks 103 104 101 102" ok
+else
+  echo "    got: [$ORDER]"
+  check "recommend_merge_order ranks 103 104 101 102" "no"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1

@@ -49,3 +49,29 @@ detect_merge_overlap() {
   unset _DMO_CACHE_DIR
   return 0
 }
+
+recommend_merge_order() {
+  _DMO_CACHE_DIR="$(mktemp -d)"
+  local prs=("$@")
+  local i j a b shared
+  local tmp; tmp=$(mktemp)
+  # Compute overlap count per PR: number of OTHER PRs this PR shares >=1 file with.
+  for ((i=0; i<${#prs[@]}; i++)); do
+    local count=0
+    a="${prs[$i]}"
+    for ((j=0; j<${#prs[@]}; j++)); do
+      [ "$i" = "$j" ] && continue
+      b="${prs[$j]}"
+      shared=$(comm -12 \
+        <(_dmo_files_for_pr "$a" | LC_ALL=C sort -u) \
+        <(_dmo_files_for_pr "$b" | LC_ALL=C sort -u))
+      [ -n "$shared" ] && count=$((count + 1))
+    done
+    printf '%d\t%s\n' "$count" "$a" >> "$tmp"
+  done
+  # Sort: primary = overlap count asc (numeric), secondary = PR number asc (numeric).
+  LC_ALL=C sort -k1,1n -k2,2n "$tmp" | awk -F'\t' '{print $2}'
+  rm -f "$tmp"
+  rm -rf "$_DMO_CACHE_DIR"
+  unset _DMO_CACHE_DIR
+}
