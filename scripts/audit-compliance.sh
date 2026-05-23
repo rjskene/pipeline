@@ -3,15 +3,21 @@ set -uo pipefail
 
 # audit-compliance.sh — dogfood-only Compliance Audit sub-block emitter.
 #
-# Reads PR commits + files + issue labels, derives PATH letter, checks for a
-# TDD red→green git signature, prints a `## Compliance Audit` table to stdout,
-# and (in non-dry-run mode) posts it to the PR via `gh pr comment`.
+# Reads PR commits + files + issue labels via injected JSON files, derives
+# the PATH letter, checks for a TDD red→green git signature, prints a
+# `## Compliance Audit` table to stdout, and (in non-dry-run mode) posts it
+# to the PR via `gh pr comment`.
+#
+# v0 status: ALL THREE injection flags (--files-json, --commits-json,
+# --labels-json) are required. The live `gh pr view` / `gh issue view`
+# fallback is deferred to v1 (#418); invoking without the injection flags
+# hard-fails with rc=3 rather than silently emitting a misleading audit.
 #
 # Squash-merge before push can hide red→green history — v0 accepts this
 # misreport. Strict commit-ordering enforcement is tracked in #418.
 #
 # Usage: audit-compliance.sh <issue> <pr> [--dry-run]
-#                            [--files-json F] [--commits-json F] [--labels-json F]
+#                            --files-json F --commits-json F --labels-json F
 
 ISSUE=""
 PR=""
@@ -37,6 +43,16 @@ PR="${positional[1]:-}"
 if [ -z "$ISSUE" ] || [ -z "$PR" ]; then
   echo "Usage: audit-compliance.sh <issue> <pr> [--dry-run] [--files-json F] [--commits-json F] [--labels-json F]" >&2
   exit 2
+fi
+
+missing=()
+[ -z "$FILES_JSON" ]   && missing+=("--files-json")
+[ -z "$COMMITS_JSON" ] && missing+=("--commits-json")
+[ -z "$LABELS_JSON" ]  && missing+=("--labels-json")
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "audit-compliance.sh: v0 requires all three injection flags; missing: ${missing[*]}" >&2
+  echo "  Live gh fallback is tracked by #418; pass JSON files for now." >&2
+  exit 3
 fi
 
 # Source/test classification — kept as top-of-file vars so v1 (#418) can swap them.
