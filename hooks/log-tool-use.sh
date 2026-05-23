@@ -1,6 +1,13 @@
 #!/bin/bash
 # PreToolUse/PostToolUse hook — logs every tool call to tool-use.log (TSV, always exits 0).
 INPUT=$(cat)
+if ! command -v jq >/dev/null 2>&1; then
+    LOG_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/logs"
+    mkdir -p "$LOG_DIR"
+    printf '%s\tlog-tool-use.sh: jq not found on PATH; skipping tool-use row\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_DIR/hook-errors.log"
+    exit 0
+fi
 TOOL=$(echo "$INPUT" | jq -r '.tool_name')
 SESSION=$(echo "$INPUT" | jq -r '.session_id // empty')
 [ -z "$SESSION" ] && SESSION="${CLAUDE_SESSION_ID:-unknown}"
