@@ -57,8 +57,8 @@ The skill receives an issue number as argument. Perform:
    LATEST_CLASS_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .createdAt // empty')
    ISSUE_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
-   # ISO-8601 sorts lexicographically; bash `[[ > ]]` is correct (not `[ > ]` or `-gt`).
-   if [[ -n "$LATEST_CLASS_TS" && "$LATEST_CLASS_TS" > "$ISSUE_TS" ]]; then
+   # ISO-8601 sorts lexicographically; `>` is strict-greater so add an OR-equality clause to treat same-second as fresh (issue #457).
+   if [[ -n "$LATEST_CLASS_TS" && ( "$LATEST_CLASS_TS" > "$ISSUE_TS" || "$LATEST_CLASS_TS" == "$ISSUE_TS" ) ]]; then
        CACHED_PATH=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
          --jq '[.comments[] | select(.body | contains("## Classification"))] | max_by(.createdAt) | .body' \
          | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | head -1)
