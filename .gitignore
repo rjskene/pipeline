@@ -10,4 +10,3 @@ hooks/__pycache__/
 
 /dev/audits/
 mock-web-eval/target/.env.mock-web-eval
-mock-web-eval/screenshots/

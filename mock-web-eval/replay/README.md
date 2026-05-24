@@ -70,19 +70,19 @@ bash mock-web-eval/replay/replay.sh --full --pr 232 # re-trigger against PR #232
 
 ## Attachment mechanism — in-branch git commits
 
-Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are committed to `<worktree>/mock-web-eval/screenshots/` on the PR branch via `mock-web-eval/scripts/eval-screenshot-attach.sh`. The helper:
+Screenshots captured during `/pipeline:evaluate-issue-pr`'s visual-validation step (Step 6) are committed to `<worktree>/.eval-screenshots/` on the PR branch via `mock-web-eval/scripts/eval-screenshot-attach.sh`. The helper:
 
-1. Writes the PNG to `<worktree>/mock-web-eval/screenshots/<name>.png`.
-2. Runs `git add mock-web-eval/screenshots/<name>.png` + `git commit -m "chore(eval): screenshot evidence for PR #<N>"` (idempotent on re-eval — an empty commit is suppressed and the prior SHA is reused).
-3. Runs `git push origin HEAD` to publish the screenshot commit to the PR branch. Fail-soft: a push failure prints a stderr warning and continues; the helper still emits the local-SHA URL and exits 0.
-4. Captures `SHA=$(git rev-parse HEAD)` after the push.
-5. Prints the SHA-pinned URL `https://github.com/<owner>/<repo>/raw/<sha>/mock-web-eval/screenshots/<name>.png` on stdout.
+1. Writes the PNG to `<worktree>/.eval-screenshots/<name>.png`.
+2. Runs `git add .eval-screenshots/<name>.png` + `git commit -m "chore(eval): screenshot evidence for PR #<N>"` (idempotent on re-eval — an empty commit is suppressed).
+3. Runs `git push origin HEAD` to publish the screenshot commit to the PR branch. Fail-soft: a push failure prints a stderr warning and continues; the helper still emits the URL and exits 0.
+4. Captures `BRANCH=$(git rev-parse --abbrev-ref HEAD)`.
+5. Prints the branch-pinned URL `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/<name>.png` on stdout.
 
-The eval skill embeds the URL in the `## Evaluation` comment as `![screenshot](url)`, which renders inline on the PR for any reader with repo access. The `github.com/.../raw/<sha>/...` form (not `raw.githubusercontent.com/...`) is required so private repos render via GitHub's session redirect.
+The eval skill verifies each PNG actually landed on `origin/<branch>` (via `git ls-remote` + `gh api repos/.../contents/.eval-screenshots/<name>?ref=<branch>`) BEFORE embedding it in the `## Evaluation` comment as `![screenshot](url)`. On verification failure it emits a `⚠️ screenshot attach failed` row instead of a broken-link image (issue #337). Relative-path image syntax does NOT render in GitHub comments — a fully-qualified raw URL on a still-existing branch is required.
 
-**Why in-branch, not release-assets.** The prior release-asset approach (per-PR tag `eval-evidence-<PR>` with cleanup after the merge gate fired `green`) was fundamentally incompatible with auto-merge: the cleanup ran immediately after the squash-merge, which made the inline `![](url)` markdown 404 the moment the merge landed. Anyone reviewing the merged PR saw a broken-image icon. In-branch commits avoid this because the squash-merge collapses the screenshot commit into the merge commit on `$PIPELINE_BASE_BRANCH` — the PNG blob is now part of base-branch history, so the SHA-pinned URL resolves indefinitely. See #271 for the full rationale.
+**Ephemeral by design (Option A, issue #337 / tracker #383).** The branch-pinned `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...` URL resolves during the PR review window and intentionally **404s once the feature branch is deleted post-merge** (`--delete-branch`). The squash-merge collapses the screenshot commit into the base branch, but the branch-pinned URL no longer resolves because the branch path component is gone. This is the accepted tradeoff: screenshots are visible during review and become invalid evidence post-merge. Reviewers who need long-lived audit artifacts should screenshot the PR comment before auto-merge fires. (Durable alternatives — a long-lived branch, S3, or `gh` user-attachment upload — are deliberately out of scope.)
 
-**Cleanup.** No cleanup needed. The squash-merge collapses the screenshot commit into the base branch; the PNG blob is now permanent base-branch history. PNGs are ~20KB each at a pipeline rate of ~10/month (~2MB/year of git growth), so a retention/GC policy is deferred until it becomes a real problem.
+**Cleanup.** No cleanup needed. The `.eval-screenshots/` commit collapses into the squash-merge and the feature branch is deleted afterwards; the review-window URLs lapse on their own. `.eval-screenshots/` is intentionally **not** gitignored so the PNG is trackable on the feature branch (the prior `mock-web-eval/screenshots/` path was gitignored, which silently dropped the `git add` and was a root cause of the broken-link bug — see #337).
 
 ## Known follow-ups
 

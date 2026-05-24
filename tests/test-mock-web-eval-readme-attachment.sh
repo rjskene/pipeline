@@ -13,8 +13,10 @@ assert "README exists"                                  "[ -f '$README' ]"
 assert "STUB header is gone"                            "! grep -q 'STUB / DEFERRED' '$README'"
 assert "placeholder 'Decision pending' is gone"         "! grep -q 'Decision pending' '$README'"
 assert "new in-branch-commits header is present"        "grep -q 'Attachment mechanism — in-branch git commits' '$README'"
-assert "documents mock-web-eval/screenshots/ in-worktree path"  "grep -q 'mock-web-eval/screenshots/' '$README'"
-assert "documents SHA-pinned raw URL shape"             "grep -qE 'github\\.com/.*/raw/.*mock-web-eval/screenshots/' '$README'"
+assert "documents .eval-screenshots/ in-worktree path"  "grep -q '\\.eval-screenshots/' '$README'"
+assert "documents branch-pinned raw URL shape"          "grep -qE 'raw\\.githubusercontent\\.com/.*\\.eval-screenshots/' '$README'"
+assert "no longer documents stale SHA-pinned mock-web-eval/screenshots URL" \
+  "! grep -qE 'github\\.com/.*/raw/.*mock-web-eval/screenshots/' '$README'"
 assert "references eval-screenshot-attach.sh helper"    "grep -q 'eval-screenshot-attach.sh' '$README'"
 
 echo ""
