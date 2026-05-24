@@ -52,6 +52,34 @@ assert_contains() {
   fi
 }
 
+# Print the body of a `## <heading>` section: lines after the heading up to the
+# next heading line (anything starting with `#`). Used so cross-reference
+# assertions are scoped to the section, not satisfied by an unrelated mention
+# elsewhere in the file.
+section_body() {
+  local file="$1" heading="$2"
+  awk -v h="$heading" '
+    $0 == h { f = 1; next }
+    f && /^#/ { f = 0 }
+    f { print }
+  ' "$ROOT/$file"
+}
+
+# Assert a named section of a file contains a literal substring.
+assert_section_contains() {
+  local label="$1" file="$2" heading="$3" needle="$4"
+  inc
+  if [ ! -f "$ROOT/$file" ]; then
+    fail_msg "$label: $file not found"
+    return
+  fi
+  if section_body "$file" "$heading" | grep -F -q "$needle"; then
+    pass_msg "$label: $file [$heading] contains \"$needle\""
+  else
+    fail_msg "$label: $file [$heading] missing \"$needle\""
+  fi
+}
+
 # 1) Each dispatch site carries every canonical contract substring.
 for site in "${DISPATCH_SITES[@]}"; do
   for needle in "${CONTRACT_SUBSTRINGS[@]}"; do
@@ -59,11 +87,15 @@ for site in "${DISPATCH_SITES[@]}"; do
   done
 done
 
-# 2) plan-issue documents the caller contract (defense-in-depth) and names both
-#    call sites so a future caller refactor cannot silently drop the directive.
-assert_contains "caller-contract" "skills/plan-issue/SKILL.md" "Caller contract"
-assert_contains "caller-contract" "skills/plan-issue/SKILL.md" "fullsend"
-assert_contains "caller-contract" "skills/plan-issue/SKILL.md" "run"
+# 2) plan-issue documents the caller contract (defense-in-depth). The
+#    cross-reference checks are scoped to the `## Caller contract` section
+#    (not the whole file) and use the specific `/pipeline:<cmd>` tokens, so a
+#    future edit that drops either call-site reference from the section is
+#    actually caught — a bare file-wide grep for "run"/"fullsend" would pass
+#    regardless and give false confidence.
+assert_contains "caller-contract" "skills/plan-issue/SKILL.md" "## Caller contract"
+assert_section_contains "caller-contract" "skills/plan-issue/SKILL.md" "## Caller contract" "/pipeline:fullsend"
+assert_section_contains "caller-contract" "skills/plan-issue/SKILL.md" "## Caller contract" "/pipeline:run"
 
 echo ""
 echo "================================"
