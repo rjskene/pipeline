@@ -128,10 +128,12 @@ if [ -n "$SKILL_ALIAS" ] && [ -n "$ISSUE_NUM" ]; then
     HAS_DOCS=0
     HAS_QUICK=0
     HAS_MULTI=0
+    HAS_NEEDS_BROWSER=0
     while IFS= read -r lbl; do
       [ "$lbl" = "docs-only" ] && HAS_DOCS=1
       [ "$lbl" = "quick-fix" ] && HAS_QUICK=1
       [ "$lbl" = "multi-task" ] && HAS_MULTI=1
+      [ "$lbl" = "needs-browser" ] && HAS_NEEDS_BROWSER=1
     done <<< "$LABELS"
     # Apply precedence A > D > C > B.
     if [ "$HAS_DOCS" = "1" ]; then
@@ -159,6 +161,26 @@ if [ -n "$SKILL_ALIAS" ] && [ -n "$ISSUE_NUM" ]; then
   else
     echo "[spawn-claude] WARN: gh issue view failed for issue #$ISSUE_NUM, defaulting to PATH B" >&2
   fi
+fi
+
+# --- Label-gated MCP attachment (issue #347) ---
+# Spawned per-issue agents default to ZERO MCP servers. Opt-in by labelling
+# the issue `needs-browser` — the agent then inherits the project `.mcp.json`
+# (current behaviour). The orchestrator session (which sources `.mcp.json`
+# directly via the working directory) is unaffected by this gating.
+#
+# Fail-safe: when `gh issue view` failed above, HAS_NEEDS_BROWSER stays 0
+# (or unset for bare/unknown-skill spawns) and we default to the empty-MCP
+# path. A transient gh outage MUST NOT silently regress to leaking Playwright
+# into every spawned agent. EMPTY_MCP_FILE is initialised here (single
+# definition point) so cleanup_temp_files and the dry-run dump can reference
+# it under `set -u` regardless of which branch is taken.
+EMPTY_MCP_FILE=""
+MCP_EXTRA_ARGV=()
+if [ "${HAS_NEEDS_BROWSER:-0}" = "0" ]; then
+  EMPTY_MCP_FILE=$(mktemp /tmp/claude-mcp-empty-XXXXXX.json)
+  printf '%s\n' '{"mcpServers": {}}' > "$EMPTY_MCP_FILE"
+  MCP_EXTRA_ARGV=(--mcp-config "$EMPTY_MCP_FILE" --strict-mcp-config)
 fi
 
 # --- Generate session id and bind to CLI via --session-id flag ---
@@ -206,6 +228,7 @@ cleanup_temp_files() {
   local files=()
   [ -n "$APPEND_PROMPT_FILE" ] && files+=("$APPEND_PROMPT_FILE")
   [ -n "$LAUNCHER" ] && files+=("$LAUNCHER")
+  [ -n "$EMPTY_MCP_FILE" ] && files+=("$EMPTY_MCP_FILE")
   [ ${#files[@]} -eq 0 ] && return 0
   # 60s is ~1000x longer than any realistic launcher cold-start.
   if command -v setsid >/dev/null 2>&1; then
@@ -452,6 +475,11 @@ _extra_argv_lines=""
 for tok in ${EXTRA_CLAUDE_ARGV[@]+"${EXTRA_CLAUDE_ARGV[@]}"}; do
   _extra_argv_lines+="CLAUDE_ARGV+=($(printf '%q' "$tok"))"$'\n'
 done
+# One `CLAUDE_ARGV+=(<tok>)` line per label-gated MCP token (issue #347).
+_mcp_argv_lines=""
+for tok in ${MCP_EXTRA_ARGV[@]+"${MCP_EXTRA_ARGV[@]}"}; do
+  _mcp_argv_lines+="CLAUDE_ARGV+=($(printf '%q' "$tok"))"$'\n'
+done
 BUILD_ARGV='
 declare -a CLAUDE_ARGV
 declare -a LAUNCH_CMD=('"$_launch_cmd_quoted"')
@@ -468,7 +496,7 @@ if [ -n "$SYSPROMPT_FILE" ] && [ -f "$SYSPROMPT_FILE" ]; then
   CLAUDE_ARGV+=(--append-system-prompt "$(cat "$SYSPROMPT_FILE")")
 fi
 CLAUDE_ARGV+=(--session-id '"'"''"$GENERATED_SESSION_ID"''"'"')
-'"$_extra_argv_lines"
+'"$_extra_argv_lines$_mcp_argv_lines"
 
 # Test hook: dump resolved state and exit before launching anything.
 if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
@@ -477,6 +505,7 @@ if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
   echo "RUNS_LOG=$RUNS_LOG"
   echo "RUNS_LOG_LINE=$(tail -1 "$RUNS_LOG")"
   echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
+  echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
   echo "CONTAINER_MODE=$CONTAINER_MODE"
   if [ ${#DOCKER_PREFIX[@]} -gt 0 ]; then
     # Flattened DOCKER_PREFIX so tests can substring-match individual tokens.
