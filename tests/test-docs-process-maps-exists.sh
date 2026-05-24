@@ -6,6 +6,10 @@ FILE="docs/process-maps.md"
 for heading in "Full lifecycle map" "PATH dispatch decision tree" "Wave-plan flow"; do
   grep -qF "$heading" "$FILE" || { echo "FAIL: $FILE missing heading '$heading'"; exit 1; }
 done
+# Cap raised 200 -> 220 (#368): the doc gained the "Visual proof sub-skill
+# (needs-browser lane)" subsection for a genuinely new pipeline lane. The new
+# section is kept tight; the bump is the proportionate alternative to gutting
+# the unrelated ASCII maps to preserve an arbitrary 200.
 LINES=$(wc -l < "$FILE")
-[ "$LINES" -le 200 ] || { echo "FAIL: $FILE has $LINES lines (cap is 200)"; exit 1; }
-echo "PASS: process-maps.md present, all headings found, ${LINES}/200 lines"
+[ "$LINES" -le 220 ] || { echo "FAIL: $FILE has $LINES lines (cap is 220)"; exit 1; }
+echo "PASS: process-maps.md present, all headings found, ${LINES}/220 lines"
