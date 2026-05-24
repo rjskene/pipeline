@@ -338,7 +338,7 @@ assert "workflow file exists" "[ -f '$WORKFLOW' ]"
 if [ -f "$WORKFLOW" ]; then
   assert "workflow named back-sync-release" "grep -qE '^name: back-sync-release' '$WORKFLOW'"
   assert "workflow triggers on push to main" "grep -qE 'branches:.*main|- main' '$WORKFLOW'"
-  assert "workflow filters by chore(main): release prefix" "grep -qE \"startsWith\\\\(github.event.head_commit.message, 'chore\\\\(main\\\\): release \" '$WORKFLOW'"
+  assert "workflow filters by chore(main): release token (contains, survives merge-commit subjects per #459)" "grep -qE \"contains\\\\(github.event.head_commit.message, 'chore\\\\(main\\\\): release \" '$WORKFLOW'"
   assert "workflow grants contents: write" "grep -qE 'contents: write' '$WORKFLOW'"
   assert "workflow grants pull-requests: write" "grep -qE 'pull-requests: write' '$WORKFLOW'"
   assert "workflow invokes back-sync-release.sh" "grep -qE 'bash scripts/back-sync-release.sh' '$WORKFLOW'"
