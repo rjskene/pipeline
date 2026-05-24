@@ -21,11 +21,27 @@ assert "attach call appears under Step 6 (visual validation)" \
 assert "cleanup call ABSENT from Step 11 green path" \
   "! awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -q 'eval-screenshot-cleanup.sh'"
 
+# Step 6 must verify each screenshot actually landed on the remote branch
+# (git ls-remote / gh api contents) BEFORE emitting an image markdown row.
+assert "Step 6 verifies screenshot reached remote before emitting image" \
+  "awk '/^6\\. \\*\\*Visual validation/,/^7\\. \\*\\*If fixable/' '$SKILL' | grep -qE 'git ls-remote|gh api repos.*/contents/\\.eval-screenshots'"
+
+# Step 6 must emit a failure-loud row when verification fails, not a broken link.
+assert "Step 6 emits failure-loud row on attach failure" \
+  "awk '/^6\\. \\*\\*Visual validation/,/^7\\. \\*\\*If fixable/' '$SKILL' | grep -q '⚠️ screenshot attach failed'"
+
 # Step 9 comment template must include a Screenshot row and an inline image
-# markdown row matching the new SHA-pinned URL shape.
+# markdown row matching the branch-pinned raw.githubusercontent.com URL shape.
 assert "Step 9 template mentions Screenshot row"        "grep -q 'Screenshot' '$SKILL'"
-assert "Step 9 template includes SHA-pinned raw image row" \
-  "grep -qE '!\\[.*\\]\\(https://github\\.com/.*/raw/.*/mock-web-eval/screenshots/.*\\.png\\)' '$SKILL'"
+assert "Step 9 template includes branch-pinned raw image row" \
+  "grep -qE '!\\[.*\\]\\(https://raw\\.githubusercontent\\.com/[^)]+/\\.eval-screenshots/[^)]+\\.png\\)' '$SKILL'"
+
+# Step 11 green-path prose must reflect Option A's ephemeral-404-after-merge
+# tradeoff, NOT the stale SHA-pinned-survives-squash-merge claim.
+assert "Step 11 prose no longer claims SHA-pinned URLs survive squash-merge" \
+  "! awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -q 'SHA-pinned'"
+assert "Step 11 prose documents ephemeral/404 tradeoff" \
+  "awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -qE 'ephemeral|404'"
 
 echo ""
 echo "================================"
