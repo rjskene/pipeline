@@ -67,13 +67,18 @@ case "$TIMEOUT" in
 esac
 
 emit_filtered() {
-  # Strip blank lines and any line containing the token; tolerate no-match.
-  grep -vE "^$|$TOKEN" -- "$FILE" || true
+  # Strip blank lines and lines that are *exactly* the sentinel token. The
+  # token is matched as a fixed whole-line string (-xF), so a real output line
+  # that merely contains the token as a substring is preserved. Tolerate the
+  # grep exit 1 that occurs when nothing survives the filter.
+  grep -vxF -- "$TOKEN" "$FILE" 2>/dev/null | grep -vE '^[[:space:]]*$' || true
 }
 
+# The token is matched as a fixed string (-F), never a regex, so a token
+# containing regex metacharacters (e.g. v1.0) can't falsely match other lines.
 elapsed=0
 while [ "$elapsed" -lt "$TIMEOUT" ]; do
-  if grep -q -- "$TOKEN" "$FILE" 2>/dev/null; then
+  if grep -qF -- "$TOKEN" "$FILE" 2>/dev/null; then
     emit_filtered
     exit 0
   fi
@@ -85,7 +90,7 @@ while [ "$elapsed" -lt "$TIMEOUT" ]; do
 done
 
 # Final check in case the token landed during the last sleep window.
-if grep -q -- "$TOKEN" "$FILE" 2>/dev/null; then
+if grep -qF -- "$TOKEN" "$FILE" 2>/dev/null; then
   emit_filtered
   exit 0
 fi

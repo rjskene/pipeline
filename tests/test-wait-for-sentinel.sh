@@ -89,6 +89,36 @@ else
   fail_msg "expected rc!=0 + usage message, got rc=$rc err=$(cat "$WORKDIR/d.err")"
 fi
 
+echo "Case E: token is matched literally, not as a regex"
+inc
+SENTINEL="$WORKDIR/e.log"
+# Content matches the regex form of the token (v1.0 -> 'v1' any '0') but not
+# the literal string 'v1.0'. A literal matcher must NOT report success here.
+printf 'building v1x0 step\n' >"$SENTINEL"
+set +e
+bash "$HELPER" "$SENTINEL" "v1.0" --timeout 1 >"$WORKDIR/e.out" 2>"$WORKDIR/e.err"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && grep -q "wait-for-sentinel: timed out after" "$WORKDIR/e.err"; then
+  pass_msg "regex-metachar token did not falsely match; timed out as expected"
+else
+  fail_msg "expected timeout (token matched literally), got rc=$rc out=$(cat "$WORKDIR/e.out")"
+fi
+
+echo "Case F: only the exact sentinel line is stripped, not substring matches"
+inc
+SENTINEL="$WORKDIR/f.log"
+printf 'building DONE-ish step\nDONE\n' >"$SENTINEL"
+set +e
+out=$(bash "$HELPER" "$SENTINEL" "DONE" --timeout 5 2>"$WORKDIR/f.err")
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q "building DONE-ish step"; then
+  pass_msg "real content line containing the token as a substring is preserved"
+else
+  fail_msg "expected rc=0 + preserved content line, got rc=$rc out=[$out]"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
