@@ -33,7 +33,7 @@ REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
 Run the conventional-title pre-validation (see below), then merge synchronously here (NOT `--auto`):
 
 ```bash
-gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch
+gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch
 SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 FOOTER="Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at ${TS}"
@@ -153,7 +153,7 @@ Use `${ORDERED[@]}` as the iteration order for the sequential merge loop below. 
 
    Once the title passes validation, run the merge:
    ```bash
-   gh pr merge $PR_NUM --repo $PIPELINE_REPO --squash --delete-branch
+   gh pr merge $PR_NUM --repo $PIPELINE_REPO --merge --delete-branch
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "merged" --remove-label "pr-open"
    gh issue close <N> --repo $PIPELINE_REPO
    ```

@@ -151,7 +151,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
        PR_NUM=$(echo "$line" | sed -n 's/^pr=\([0-9][0-9]*\).*/\1/p')
        CI=$(echo "$line" | sed -n 's/.* ci=\([a-z]*\) .*/\1/p')
        if [ "$CI" = "pass" ] && [ -n "$PR_NUM" ]; then
-         gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch \
+         gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch \
            || echo "WARN: failed to merge release PR #$PR_NUM"
        else
          echo "SKIP: release PR #$PR_NUM ci=$CI (auto-merge only on green)"
