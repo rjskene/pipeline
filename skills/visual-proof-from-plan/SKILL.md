@@ -54,7 +54,7 @@ Predicates are JavaScript expressions evaluated against the live DOM via
 truthy when the claim holds. For example:
 
 ```js
-document.querySelector("#events-table tbody tr").length > 0
+document.querySelectorAll("#events-table tbody tr").length > 0
 ```
 
 A predicate may declare a navigation precondition (a URL to visit before

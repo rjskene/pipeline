@@ -29,8 +29,8 @@ assert_contains "needs-browser" "references needs-browser label"
 assert_contains "**Predicates:**" "names the Predicates section"
 # (c) the mcp__playwright_*browser_evaluate reference appears
 assert_contains "browser_evaluate" "references browser_evaluate"
-# (d) an example predicate uses the querySelector pattern
-assert_contains "querySelector(" "includes a querySelector example predicate"
+# (d) an example predicate uses the querySelectorAll pattern (.length needs a NodeList)
+assert_contains "querySelectorAll(" "includes a querySelectorAll example predicate"
 
 echo ""
 echo "================================"
