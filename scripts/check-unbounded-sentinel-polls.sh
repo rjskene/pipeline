@@ -39,10 +39,20 @@ while IFS= read -r skill; do
   while IFS=: read -r lineno content; do
     [ -n "${lineno:-}" ] || continue
 
-    # Whitelist: timeout-wrapped or an explicit helper reference on this line.
+    # Whitelist: an explicit helper reference (pedagogical example).
     case "$content" in
-      *timeout\ *|*wait-for-sentinel.sh*) continue ;;
+      *wait-for-sentinel.sh*) continue ;;
     esac
+
+    # Whitelist: the opener is wrapped in a `timeout` command. Require a
+    # `timeout` command to appear BEFORE the until/while keyword — a bare
+    # "timeout" in a trailing comment or inside the grep search-text must NOT
+    # excuse the wedge. We isolate the prefix up to the opener keyword and look
+    # for a `timeout ` command token there.
+    prefix=$(printf '%s' "$content" | sed -E 's/(^|[[:space:]])(until|while[[:space:]]+!).*$//')
+    if printf '%s' "$prefix" | grep -qE '(^|[[:space:]]|[|;&])timeout[[:space:]]'; then
+      continue
+    fi
 
     # Build a small window (opener + next 3 lines) to catch multi-line bodies.
     end=$((lineno + 3))

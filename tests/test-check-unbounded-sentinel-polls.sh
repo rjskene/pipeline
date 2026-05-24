@@ -116,6 +116,48 @@ else
   fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/c4.err")"
 fi
 
+echo "Sub-case 5: bad shape with a trailing 'timeout' comment is still flagged"
+inc
+CMT_DIR="$WORKDIR/comment/sub"
+mkdir -p "$CMT_DIR"
+cat >"$CMT_DIR/SKILL.md" <<'EOF'
+# Bad skill with a misleading comment
+
+```bash
+until grep -q __DONE__ sentinel.log; do sleep 5; done  # add a timeout later
+```
+EOF
+set +e
+bash "$LINT" "$WORKDIR/comment" >"$WORKDIR/c5.out" 2>"$WORKDIR/c5.err"
+rc=$?
+set -e
+if [ "$rc" -eq 1 ]; then
+  pass_msg "flagged despite the word 'timeout' in a trailing comment"
+else
+  fail_msg "expected rc=1, got rc=$rc err=$(cat "$WORKDIR/c5.err")"
+fi
+
+echo "Sub-case 6: bad shape whose grep search-text contains 'timeout' is still flagged"
+inc
+TXT_DIR="$WORKDIR/searchtext/sub"
+mkdir -p "$TXT_DIR"
+cat >"$TXT_DIR/SKILL.md" <<'EOF'
+# Bad skill polling for a 'timeout' string
+
+```bash
+until grep -q "Operation timeout reached" run.log; do sleep 5; done
+```
+EOF
+set +e
+bash "$LINT" "$WORKDIR/searchtext" >"$WORKDIR/c6.out" 2>"$WORKDIR/c6.err"
+rc=$?
+set -e
+if [ "$rc" -eq 1 ]; then
+  pass_msg "flagged despite 'timeout' inside the grep search-text"
+else
+  fail_msg "expected rc=1, got rc=$rc err=$(cat "$WORKDIR/c6.err")"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
