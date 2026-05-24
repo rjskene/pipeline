@@ -110,7 +110,9 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    **Hook-enforced.** The `enforce-ci-wait` Stop hook (`hooks/enforce-ci-wait.py`) reads `.claude/logs/tool-use.log` and blocks Stop unless the `gh pr view` → `gh pr checks --watch` → `gh pr view` sequence is recorded; an Approved verdict on a red rollup is also blocked. Prose remains source of truth for HOW; the hook only verifies it happened.
 <!-- END CI_CHECK -->
 
-6. **Visual validation** (if UI changes exist in the diff). Check Playwright MCP via `cat .mcp.json 2>/dev/null`. If available and on Linux: navigate to affected views, screenshot to `<worktree>/.claude/scratch/*.png`, check console for JS errors, verify UI matches the plan. Otherwise note: "Visual validation skipped — Playwright MCP not available."
+6. **Visual validation** (if UI changes exist in the diff). Two tiers: a baseline screenshot/console pass, then a verdict layer for `needs-browser` issues.
+
+   **6a. Baseline — Playwright MCP probe + screenshot plumbing.** Check Playwright MCP via `cat .mcp.json 2>/dev/null`. If available and on Linux: navigate to affected views, screenshot to `<worktree>/.claude/scratch/*.png`, check console for JS errors, verify UI matches the plan. Otherwise note: "Visual validation skipped — Playwright MCP not available."
 
    **Attach screenshots to the eval comment.** For each PNG, invoke the attach helper and embed each returned URL in Step 9's `**Screenshots:**` row. The helper commits the PNG to `<worktree>/mock-web-eval/screenshots/`, pushes to the PR branch, and returns a SHA-pinned `github.com/<owner>/<repo>/raw/<sha>/mock-web-eval/screenshots/<name>.png` URL that survives squash-merge.
    ```bash
@@ -121,6 +123,8 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
      [ -n "$url" ] && SCREENSHOT_URLS+=("$url")
    done
    ```
+
+   **6b. Visual proof verdict (needs-browser issues only).** If the issue carries the needs-browser label, invoke `Skill(skill: "pipeline:visual-proof-from-plan")` in this clean-container session and parse its JSON output. For every entry in `unsatisfied`, the verdict MUST be Flagged for user review — record the claim and the failing artifact path/URL in the **Remaining issues** row. This is the load-bearing trust layer; `satisfied` predicates from the executor session do NOT carry over.
 
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
@@ -148,6 +152,8 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    **Screenshots:** (one `![](url)` row per entry in `$SCREENSHOT_URLS` from Step 6; `None` if empty)
    - ![screenshot 1](https://github.com/owner/repo/raw/<sha>/mock-web-eval/screenshots/<filename>.png)
 
+   **Visual proof:** satisfied=N/M; unsatisfied=[<claim>...] (or `N/A — needs-browser not applied`)
+
    **Fixes applied:** `<commit hash>` — <description> (or "None")
 
    **Remaining issues:** (if flagged) <what needs human attention and why>
@@ -158,6 +164,8 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 11. **Auto-merge gate.**
 
     **Authoritative owner of the greenlight check.**
+
+    On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the Visual proof row.
 
     **Greenlight matrix — all 4 must hold** (otherwise the PR is left for manual merge with a `block-*` reason):
     1. Latest `## Evaluation` comment contains `**Verdict:** Approved`.
