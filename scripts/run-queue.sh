@@ -304,10 +304,10 @@ fi
 declare -A ACTIVE=()    # issue -> worktree path
 declare -A RESULTS=()   # issue -> status (running/done/failed)
 declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
-# Stall detection (issue #437): count consecutive 0%-CPU polls per issue and
+# Stall detection (issue #437): count consecutive low-CPU polls per issue and
 # latch a single agent-stalled emission per stall window so a wedged worker
 # logs once, not every poll. Cleared when the agent recovers or exits.
-declare -A CPU_ZERO_POLLS=()  # issue -> consecutive 0%-CPU poll count
+declare -A CPU_IDLE_POLLS=()  # issue -> consecutive low-CPU poll count
 declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this window
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
@@ -610,17 +610,17 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       ''|*[!0-9]*) cpu_int=0 ;;
     esac
     if [ "$cpu_int" -le "$PIPELINE_STALL_CPU_THRESHOLD" ]; then
-      CPU_ZERO_POLLS[$issue]=$(( ${CPU_ZERO_POLLS[$issue]:-0} + 1 ))
-      if [ "${CPU_ZERO_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
+      CPU_IDLE_POLLS[$issue]=$(( ${CPU_IDLE_POLLS[$issue]:-0} + 1 ))
+      if [ "${CPU_IDLE_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
          && [ "${STALL_LATCHED[$issue]:-0}" -eq 0 ]; then
         pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
         window="issue-${issue}"
-        elapsed=$(( CPU_ZERO_POLLS[$issue] * POLL_INTERVAL / 60 ))
+        elapsed=$(( CPU_IDLE_POLLS[$issue] * POLL_INTERVAL / 60 ))
         log "EVENT: agent-stalled issue=${issue} pid=${pid:-?} window=${window} elapsed=${elapsed}m"
         STALL_LATCHED[$issue]=1
       fi
     else
-      CPU_ZERO_POLLS[$issue]=0
+      CPU_IDLE_POLLS[$issue]=0
       STALL_LATCHED[$issue]=0
     fi
 
@@ -633,7 +633,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       unset 'ACTIVE['"$issue"']'
       # Clear stall-tracking state so a re-used issue number can't inherit a
       # stale counter/latch (issue #437).
-      unset 'CPU_ZERO_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
 
