@@ -111,10 +111,15 @@ set -- "${NEW_ARGS[@]}"
 
 MAX_CONCURRENT="${MAX_AGENTS:-3}"
 POLL_INTERVAL="${POLL_SECONDS:-60}"
-# Number of consecutive 0%-CPU polls before the runner emits a latched
+# Number of consecutive low-CPU polls before the runner emits a latched
 # `EVENT: agent-stalled` line for a worker (issue #437). Observe-only — the
 # runner takes no kill action.
 PIPELINE_STALL_POLL_THRESHOLD="${PIPELINE_STALL_POLL_THRESHOLD:-5}"
+# Subtree-aggregate CPU at or below this percentage counts as idle and bumps the
+# consecutive-idle-polls counter (issue #464). Strict zero missed the #456 wedge
+# where the parent claude drained a stuck subprocess's pipe at ~2% CPU. Set to 0
+# to restore the old strict-zero semantics.
+PIPELINE_STALL_CPU_THRESHOLD="${PIPELINE_STALL_CPU_THRESHOLD:-5}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
@@ -403,7 +408,10 @@ is_agent_running() {
 # agents as `[script→]timeout→claude`, and `timeout` blocks in `wait()` at ~0%
 # CPU, so a pane_pid-only read flags every healthy worker as stalled in the
 # logging-off path. Echoes 0.0 on any lookup failure so the stall counter
-# advances rather than masking a wedge.
+# advances rather than masking a wedge. The caller latches on this aggregate
+# being <= PIPELINE_STALL_CPU_THRESHOLD (no longer strict zero, issue #464), so
+# a healthy worker must keep the subtree above that threshold to avoid the
+# stall counter advancing.
 #
 # Args: $1=issue, $2=process snapshot (output of `ps -eo pid=,ppid=,%cpu=`).
 # The snapshot is captured once per poll by the caller to avoid 2N ps forks per
@@ -591,16 +599,17 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
 
   # Check each active agent
   for issue in "${!ACTIVE[@]}"; do
-    # Stall detection (issue #437): track consecutive 0%-CPU polls and emit a
-    # single latched EVENT line per stall window. Observe-only — no kill.
+    # Stall detection (issue #437): track consecutive low-CPU polls (subtree
+    # aggregate <= PIPELINE_STALL_CPU_THRESHOLD) and emit a single latched EVENT
+    # line per stall window. Observe-only — no kill.
     cpu=$(get_agent_cpu_pct "$issue" "$PS_SNAPSHOT")
     cpu_int=${cpu%%.*}; cpu_int=${cpu_int:-0}
-    # Digit-guard: if ps returned junk, coerce to 0 so the `-eq` test below
+    # Digit-guard: if ps returned junk, coerce to 0 so the `-le` test below
     # never errors on a non-numeric operand (which would abort the runner).
     case "$cpu_int" in
       ''|*[!0-9]*) cpu_int=0 ;;
     esac
-    if [ "$cpu_int" -eq 0 ]; then
+    if [ "$cpu_int" -le "$PIPELINE_STALL_CPU_THRESHOLD" ]; then
       CPU_ZERO_POLLS[$issue]=$(( ${CPU_ZERO_POLLS[$issue]:-0} + 1 ))
       if [ "${CPU_ZERO_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
          && [ "${STALL_LATCHED[$issue]:-0}" -eq 0 ]; then
