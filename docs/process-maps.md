@@ -198,3 +198,28 @@ Top-level slash commands that drive the maps above:
 `analyze-issues` surfaces four detection categories (no mutations): duplicate candidates, standalones that fit an existing tracker, issues with missing labels, and merged-PR supersession candidates.
 
 See [docs/superpowers-integration.md](superpowers-integration.md) for the per-stage map of which superpowers each pipeline skill invokes.
+
+## Visual proof sub-skill (needs-browser lane)
+
+Issues labelled `needs-browser` carry a UI/visual acceptance criterion that
+cannot be verified by unit tests alone. For those issues the pipeline runs the
+visual-proof-from-plan sub-skill ([skills/visual-proof-from-plan/SKILL.md](../skills/visual-proof-from-plan/SKILL.md)),
+which emits a structured `{satisfied, unsatisfied}` result describing which
+plan-derived visual criteria are met.
+
+The sub-skill has two callers — the **two-caller pattern**:
+
+- **Executor (TDD loop)** — `execute-issue-plan` invokes visual-proof-from-plan
+  inside the red→green loop, treating an `unsatisfied` entry like a failing
+  test: keep iterating until the visual criteria are satisfied. Because the
+  proof needs a real browser, a `needs-browser` issue routes `execute-issue-plan`
+  through `--container-mode` even when the static `PIPELINE_CONTAINER_SKILLS`
+  allowlist omits it. The label gate lives in `spawn-claude.sh` (issue #368);
+  see the `PIPELINE_CONTAINER_SKILLS` section of `pipeline.config.example`.
+- **Evaluator (verdict)** — `evaluate-issue-pr` invokes the same sub-skill to
+  produce its merge verdict: any `unsatisfied` visual criterion is a blocking
+  finding, mirroring how a failing test blocks the eval gate.
+
+Both callers consume the identical `{satisfied, unsatisfied}` contract, so the
+executor's exit condition and the evaluator's verdict stay aligned on one source
+of visual truth.
