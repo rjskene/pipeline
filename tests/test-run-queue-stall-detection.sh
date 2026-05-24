@@ -339,6 +339,150 @@ else
   fail_msg "expected '50.0', got '$RESULT' — subtree summing or pane-pid scoping is broken"
 fi
 
+# ---- Test 3: low-but-nonzero subtree CPU latches when below threshold --------
+#
+# Regression guard for issue #464 (the #456 wedge). A wedged worker's parent
+# `claude` was draining a stuck bash subprocess's pipe at ~2% CPU, so the
+# subtree aggregate stayed non-zero and the strict `-eq 0` latch test reset on
+# every poll — the stall was never surfaced. This test scripts a steady 2.0%
+# subtree CPU and asserts the latch still fires (exactly once) when
+# PIPELINE_STALL_CPU_THRESHOLD=5 treats <= 5% as idle.
+#
+# Two active issues are required: run-queue.sh short-circuits a SINGLE issue to
+# a direct launch with NO poll loop (and therefore no stall detection). So 903
+# is the staller and 904 is a companion that finishes on the first poll (its
+# window never appears in list-windows), mirroring Test 1's 901/902 shape.
+# With PIPELINE_STALL_POLL_THRESHOLD=3 the latch fires on the 3rd consecutive
+# low-CPU poll; STALL_LATCHED keeps it to a single emission until recovery (the
+# window then vanishes, ending the loop). Fresh issue/pid numbers (903/904,
+# 90300+90301) avoid colliding with Test 1's 901/902 counter files.
+echo ""
+echo "Test 3: low-but-nonzero subtree CPU (2%) latches when <= PIPELINE_STALL_CPU_THRESHOLD"
+inc
+PROJ3="$WORKDIR/p3"
+setup_proj "$PROJ3"
+STUB_DIR3=$(make_stubs "$PROJ3")  # scaffolds gh/git; ps + tmux overridden below.
+
+cpu_counter3="$WORKDIR/ps-counter-903"
+cpu_seq3="$WORKDIR/ps-sequence-903"
+win_counter3="$WORKDIR/win-counter-903"
+echo 0 > "$cpu_counter3"
+echo 0 > "$win_counter3"
+
+# Steady 2.0% on 903's claude descendant across every poll — the #456 wedge.
+# Because the value is CONSTANT, the exact ps-call ordering between 903 and 904
+# (which advances this shared counter) is irrelevant: every read returns 2.0.
+cat > "$cpu_seq3" <<'EOF'
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+EOF
+
+# ps stub: 903's pane_pid 90300 (timeout supervisor) at 0.0; its claude
+# descendant 90301 carries the scripted 2.0%. Subtree sum surfaces 2.0, which
+# must latch. 904's pane 90400 sits at 0.0 but 904 exits on poll 1 so it never
+# accrues the threshold count.
+cat > "$STUB_DIR3/ps" <<EOF
+#!/bin/bash
+CPU_COUNTER="$cpu_counter3"
+CPU_SEQ="$cpu_seq3"
+mode=""
+for arg in "\$@"; do
+  case "\$arg" in
+    -eo) mode="eo" ;;
+  esac
+done
+if [ "\$mode" = "eo" ]; then
+  n=\$(cat "\$CPU_COUNTER" 2>/dev/null || echo 0)
+  n=\$((n + 1))
+  echo "\$n" > "\$CPU_COUNTER"
+  val=\$(sed -n "\${n}p" "\$CPU_SEQ")
+  val="\${val:-2.0}"
+  echo "90300 1 0.0"
+  echo "90301 90300 \$val"
+  echo "90400 1 0.0"
+else
+  echo "0.0"
+fi
+EOF
+chmod +x "$STUB_DIR3/ps"
+
+# tmux stub: issue-903 present for the first 8 list-windows calls, then vanishes
+# so the poll loop terminates. issue-904 never appears (finishes poll 1).
+# list-panes resolves issue-903 -> 90300 / issue-904 -> 90400 (the pane pids the
+# subtree walk starts from).
+cat > "$STUB_DIR3/tmux" <<EOF
+#!/bin/bash
+WIN_COUNTER="$win_counter3"
+case "\$1" in
+  list-windows)
+    n=\$(cat "\$WIN_COUNTER" 2>/dev/null || echo 0)
+    n=\$((n + 1))
+    echo "\$n" > "\$WIN_COUNTER"
+    if [ "\$n" -le 8 ]; then
+      echo "issue-903"
+    fi
+    ;;
+  list-panes)
+    target=""
+    shift
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        -t) target="\$2"; shift 2 ;;
+        *)  shift ;;
+      esac
+    done
+    case "\$target" in
+      *issue-903) echo "90300" ;;
+      *issue-904) echo "90400" ;;
+      *)          echo "90000" ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+chmod +x "$STUB_DIR3/tmux"
+
+mkdir -p "/tmp/wt-903-baz" "/tmp/wt-904-qux"
+STDOUT_CAPTURE3="$WORKDIR/queue-stdout-903.log"
+(
+  cd "$PROJ3"
+  PATH="$STUB_DIR3:$PATH" \
+    TMUX="fake" \
+    STUB_WORKTREES="903:baz 904:qux" \
+    PIPELINE_LOGS_ENABLED=true \
+    POLL_SECONDS=1 \
+    STATUS_INTERVAL=10000 \
+    PIPELINE_STALL_POLL_THRESHOLD=3 \
+    PIPELINE_STALL_CPU_THRESHOLD=5 \
+    CLAUDE_PLUGIN_ROOT="$PROJ3/.claude" \
+    bash .claude/scripts/run-queue.sh 903 904
+) > "$STDOUT_CAPTURE3" 2>&1
+
+# Exactly one latched stall event: 2% stays <= 5% the whole window, so the
+# latch arms once and STALL_LATCHED suppresses re-emission until recovery.
+# `grep -c` already prints its own 0 on no-match (and exits 1); use `|| true` so
+# the count stays single-line — a trailing `|| echo 0` would append a 2nd line.
+stall_count3=$(grep -c 'EVENT: agent-stalled issue=903' "$STDOUT_CAPTURE3" 2>/dev/null || true)
+if [ "$stall_count3" -eq 1 ]; then
+  pass_msg "2% subtree CPU latched once with PIPELINE_STALL_CPU_THRESHOLD=5"
+else
+  fail_msg "expected exactly 1 'EVENT: agent-stalled issue=903' in stdout, got $stall_count3"
+  echo "--- stdout capture ---" >&2
+  sed 's/^/    /' "$STDOUT_CAPTURE3" >&2
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
