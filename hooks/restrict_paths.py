@@ -54,6 +54,49 @@ def is_protected(path: str) -> bool:
     return False
 
 
+def _worktree_pointer_allows(real: str) -> bool:
+    """Allow git operations on a linked worktree's real git dir.
+
+    A linked git worktree's real git dir lives at <main>/.git/worktrees/<slug>/,
+    which resolves OUTSIDE the worktree's CLAUDE_PROJECT_DIR. The worktree
+    declares ownership via a regular `.git` *file* (not a dir) containing
+    `gitdir: <target>`. We allow a request under such a target iff a real
+    pointer file under an allowed root actually points there. (Issue #337.)
+
+    Defense narrowing:
+      (i)  the request must match the worktree-git-dir shape, so paths like
+           /etc/passwd never qualify (locked in by the spoofed-pointer test);
+      (ii) a real pointer file must exist under an allowed root AND its parsed
+           `gitdir:` target must be an ancestor of the request — an empty or
+           spoofed pointer cannot widen the boundary.
+    No existing protected/blocked pattern is widened.
+    """
+    m = re.search(r"/\.git/worktrees/([^/]+)(?:/|$)", real)
+    if not m:
+        return False
+    slug = m.group(1)
+    for root in ALLOWED_ROOTS:
+        # Worktree session: PROJECT_DIR itself is the worktree, pointer at
+        # <root>/.git. Orchestrator session: pointer at
+        # <root>/.claude/worktrees/<slug>/.git.
+        for pointer in (
+            os.path.join(root, ".git"),
+            os.path.join(root, ".claude", "worktrees", slug, ".git"),
+        ):
+            if not os.path.isfile(pointer):
+                continue
+            try:
+                content = open(pointer, encoding="utf-8").read().strip()
+            except OSError:
+                continue
+            if not content.startswith("gitdir:"):
+                continue
+            target = os.path.realpath(content[len("gitdir:"):].strip())
+            if real == target or real.startswith(target + os.sep):
+                return True
+    return False
+
+
 def is_allowed(path: str) -> bool:
     if not path:
         return True
@@ -62,6 +105,8 @@ def is_allowed(path: str) -> bool:
         if real == root or real.startswith(root + os.sep):
             return True
     if WORKTREE_PATTERN.match(real):
+        return True
+    if _worktree_pointer_allows(real):
         return True
     return False
 
