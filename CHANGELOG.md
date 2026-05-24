@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2-rc.1](https://github.com/rjskene/pipeline/compare/v0.14.1...v0.14.2-rc.1) (2026-05-24)
+
+
+### release
+
+* v0.14.2-rc.1 (staging → main) ([#477](https://github.com/rjskene/pipeline/issues/477)) ([727b9be](https://github.com/rjskene/pipeline/commit/727b9bec46ac2f99dae1abdad5f87bf45bad461c))
+
 ## [0.14.1](https://github.com/rjskene/pipeline/compare/v0.14.1-rc.2...v0.14.1) (2026-05-24)
 
 
