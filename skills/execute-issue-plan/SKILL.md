@@ -110,6 +110,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    )
    ```
 
+   Step 8's review flow is synchronous — `Skill(...)` and `Agent(...)` calls block until they return, so there is no poll loop to bound here. If a future revision adds background-task coordination, it MUST wait via `scripts/wait-for-sentinel.sh` (bounded timeout), never an inline `until grep ...; do sleep N; done` poll (see Constraints).
+
    **8c. Triage findings.** Invoke `superpowers:receiving-code-review` with the reviewer's output. The skill classifies each finding as **must-fix** (plan-compliance gap, test gap, real bug → fix), **nice-to-have** (style, rename → skip unless trivial), or **incorrect** (reviewer misread → reject with a one-line rationale in the follow-up commit message).
    ```
    Skill(skill: "superpowers:receiving-code-review")
@@ -194,4 +196,5 @@ If `evaluate-issue-pr` flags the PR while the executor session is still active, 
 - All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base "$PIPELINE_BASE_BRANCH"` (quoted) to `gh pr create`.
 - Never use `--no-verify` or `--force`.
 - Never skip build verification (`PIPELINE_TEST_CMD` from the sourced config).
+- Never inline unbounded sentinel-file polls (e.g. `until grep -q TOKEN file; do sleep N; done`). Use `scripts/wait-for-sentinel.sh <file> <token> [--timeout N]` (default 600s) — on timeout it exits non-zero with an actionable error so the Bash tool surfaces failure instead of wedging. The `check-unbounded-sentinel-polls` lint enforces this in CI.
 - Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.
