@@ -22,7 +22,7 @@ want "four greenlight conditions (statusCheckRollup)" 'statusCheckRollup'
 want "four greenlight conditions (mergeable)"         'mergeable'
 want "four greenlight conditions (mergeStateStatus)"  'mergeStateStatus'
 
-want "synchronous squash merge"       'gh pr merge .*--squash --delete-branch'
+want "synchronous merge-commit"       'gh pr merge .*--merge --delete-branch'
 if grep -q -- "gh pr merge.*--auto" "$SKILL"; then
   echo "  FAIL: --auto flag must not appear"
   FAILED=$((FAILED+1))
