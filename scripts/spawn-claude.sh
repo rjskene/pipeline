@@ -337,8 +337,32 @@ if [ -n "$CONTAINER_MODE" ]; then
   _container_skills_allowlist="${PIPELINE_CONTAINER_SKILLS-evaluate-issue-pr}"
   # empty allowlist == disable; do not "simplify" — empty-line grep gives the correct rejection.
   if ! printf '%s\n' $_container_skills_allowlist | tr ' ' '\n' | grep -qx "$SKILL"; then
-    echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
-    exit 4
+    # --- label-aware container-mode permit for execute-issue-plan (issue #368) ---
+    # Do NOT widen the static allowlist; instead grant a per-invocation permit
+    # when the issue carries the needs-browser label. This lets a planned
+    # browser-dependent execution run in the eval container without opening the
+    # gate to every skill. Query labels with the same fail-closed idiom used at
+    # line ~127 (if VAR="$(... 2>/dev/null)"; then ... else <reject> fi) so a
+    # non-zero gh routes to the reject branch instead of aborting under set -e.
+    # gh-failure and unset-ISSUE_NUM both FAIL CLOSED (keep the rejection).
+    if [ "$SKILL" = "execute-issue-plan" ] && [ -n "$CONTAINER_MODE" ] && [ -n "$ISSUE_NUM" ]; then
+      if _nb_labels="$(gh issue view "$ISSUE_NUM" --repo "$PIPELINE_REPO" --json labels --jq '.labels[].name' 2>/dev/null)"; then
+        if printf '%s\n' "$_nb_labels" | grep -qx "needs-browser"; then
+          echo "[spawn-claude] container-mode permitted for execute-issue-plan via needs-browser label" >&2
+          # permit: skip the rejection (do NOT exit 4)
+        else
+          echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
+          exit 4
+        fi
+      else
+        # gh failed -> FAIL CLOSED: keep the existing rejection
+        echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
+        exit 4
+      fi
+    else
+      echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
+      exit 4
+    fi
   fi
 fi
 # --- container-mode-required enforcement (issue #238) ---

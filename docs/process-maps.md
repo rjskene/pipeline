@@ -198,3 +198,19 @@ Top-level slash commands that drive the maps above:
 `analyze-issues` surfaces four detection categories (no mutations): duplicate candidates, standalones that fit an existing tracker, issues with missing labels, and merged-PR supersession candidates.
 
 See [docs/superpowers-integration.md](superpowers-integration.md) for the per-stage map of which superpowers each pipeline skill invokes.
+
+## Visual proof sub-skill (needs-browser lane)
+
+`needs-browser` issues carry a UI acceptance criterion unit tests can't cover.
+The `visual-proof-from-plan` sub-skill emits a `{satisfied, unsatisfied}` result
+and has two callers (the **two-caller pattern**):
+
+- **Executor (TDD loop)** — `execute-issue-plan` runs it inside red->green; an
+  `unsatisfied` entry behaves like a failing test (iterate until satisfied). The
+  `needs-browser` label routes the executor through `--container-mode` via the
+  gate in `spawn-claude.sh` (#368; see `pipeline.config.example`).
+- **Evaluator (verdict)** — `evaluate-issue-pr` runs the same sub-skill; any
+  `unsatisfied` entry is a blocking verdict finding.
+
+Both callers share one `{satisfied, unsatisfied}` contract. Definition lives in
+[skills/visual-proof-from-plan/SKILL.md](../skills/visual-proof-from-plan/SKILL.md).

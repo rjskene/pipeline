@@ -201,6 +201,14 @@ PIPELINE_EVAL_CLASSIFIER=""
 # PIPELINE_EVAL_CONTAINER_<MODE>_{COMPOSE_FILE,SERVICE,ENV_FILE,...} from
 # #218. To inject extra env into the container, use
 # PIPELINE_EVAL_CONTAINER_<MODE>_ENV_FILE.
+#
+# needs-browser exception (issue #368): execute-issue-plan is permitted under
+# --container-mode when the issue carries the `needs-browser` label, REGARDLESS
+# of this static allowlist. The label gate lives in spawn-claude.sh (#368): the
+# visual-proof-from-plan sub-skill needs a browser-capable container during the
+# executor TDD loop, so a needs-browser issue routes execute-issue-plan through
+# the container even when PIPELINE_CONTAINER_SKILLS omits execute-issue-plan.
+# Non-needs-browser issues still obey the allowlist above.
 PIPELINE_CONTAINER_SKILLS="evaluate-issue-pr"
 
 # Example (web-eval container — uncomment + adjust):
