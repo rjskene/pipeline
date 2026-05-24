@@ -269,7 +269,9 @@ if [ ${#QUEUE[@]} -eq 1 ]; then
   SLUG=$(basename "$WT_PATH" | sed -n "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9][0-9]*-\(.*\)/\1/p")
   SLUG="${SLUG:-issue-${ISSUE}}"
   log "Single issue — launching directly (no queue)."
-  log "Queue log: ${QUEUE_LOG}"
+  if pipeline_logging_enabled; then
+    log "Queue log: ${QUEUE_LOG}"
+  fi
 
   # Apply classifier even on the short-circuit path so container mode is honored.
   { read -r SINGLE_MODE; read -r SINGLE_EXTRAS; read -r SINGLE_RC; read -r SINGLE_ERR; } < <(classify_issue "$ISSUE")
@@ -353,7 +355,9 @@ log "  Poll interval: ${POLL_INTERVAL}s"
 log "  Status interval: every ${STATUS_INTERVAL} polls (${STATUS_INTERVAL_SECS}s)"
 log "  Skill: ${SKILL_FLAG:-execute-issue-plan (default)}"
 log "  Skip permissions: $([ -n "$SKIP_PERMS" ] && echo 'yes' || echo 'no')"
-log "  Queue log: ${QUEUE_LOG}"
+if pipeline_logging_enabled; then
+  log "  Queue log: ${QUEUE_LOG}"
+fi
 log "  Pending file: ${PENDING_FILE} (append issue numbers here to add mid-run)"
 log "========================================"
 log ""

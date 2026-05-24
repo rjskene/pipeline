@@ -559,7 +559,7 @@ BATEOF
   fi
   echo "Launched terminal window for issue #${ISSUE_NUM} (interactive)"
   echo "  Session: ${SESSION_NAME}"
-  echo "  Log: ${LOG_FILE}"
+  if pipeline_logging_enabled; then echo "  Log: ${LOG_FILE}"; fi
 
 elif [ "$MODE" = "remote-control" ]; then
   cat > "$LAUNCHER" <<SCRIPT
@@ -586,7 +586,7 @@ SCRIPT
     osascript -e "tell application \"Terminal\" to do script \"${LAUNCHER}\""
     echo "Launched remote-control session for issue #${ISSUE_NUM} (Terminal.app)"
   fi
-  echo "  Log: ${LOG_FILE}"
+  if pipeline_logging_enabled; then echo "  Log: ${LOG_FILE}"; fi
   echo "  Connect from Claude app or claude.ai/code → session: ${SESSION_NAME}"
 
 elif [ "$MODE" = "tmux" ]; then
@@ -618,7 +618,7 @@ SCRIPT
   tmux new-window -t "${PIPELINE_TMUX_SESSION:-dev}" -n "$TMUX_WINDOW" "$LAUNCHER"
   echo "Launched tmux session for issue #${ISSUE_NUM}"
   echo "  tmux window: ${PIPELINE_TMUX_SESSION:-dev}:${TMUX_WINDOW}"
-  echo "  Log: ${LOG_FILE}"
+  if pipeline_logging_enabled; then echo "  Log: ${LOG_FILE}"; fi
 
 else
   rm -f "$LAUNCHER"
