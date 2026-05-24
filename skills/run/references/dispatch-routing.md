@@ -76,6 +76,8 @@ Run `/pipeline:evaluate-issue-plan N` for each issue needing evaluation. If mult
 
 Then: Run `/pipeline:plan-issue N` for each issue. If multiple issues need planning, spawn one Agent per issue in parallel (foreground), each invoking `/pipeline:plan-issue N`. If multiple issues share a branch (discovered from issue body/comments or matching branch names), plan them together in a single agent call. The plan-issue skill reads prior comments (including user feedback) and produces a revised plan when feedback exists.
 
+**Dispatch prompt contract (mandatory):** each `/pipeline:plan-issue N` Agent prompt MUST end with a directive stating the dispatched subagent's *only* valid terminal states are: (a) `bash "${CLAUDE_PLUGIN_ROOT}/scripts/post-plan.sh" N <draft-file>` exited 0 and it reports the success line, or (b) `post-plan.sh` exited non-zero and it reports the FAILED line. Returning the plan body in chat is a failure — the plan does not exist until `post-plan.sh` has posted the `## Implementation Plan` comment and applied the `plan-pending` label. A `general-purpose` subagent may never load `skills/plan-issue/SKILL.md` (it can treat `/pipeline:plan-issue N` as content rather than a skill load), so this dispatch-site directive — not the skill body — is the binding contract. (This block is intentionally verbatim with `skills/fullsend/SKILL.md` Step 1b — the two dispatch sites are one contract in two places.)
+
 After all planning agents complete, verify each targeted issue has a plan comment:
 
 ```bash
