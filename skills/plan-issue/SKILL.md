@@ -22,6 +22,12 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 issue → writing-plans superpower → PATH-aware Task shape → comment → label plan-pending
 ```
 
+## Caller contract
+
+When a caller dispatches this skill to a subagent (the `/pipeline:fullsend` Step 1b dispatch and the `/pipeline:run` dispatch — see `skills/run/references/dispatch-routing.md`), the caller MUST embed in the dispatched Agent's prompt the directive that the subagent's only valid terminal states are `post-plan.sh` exit 0 (report the success line) or `post-plan.sh` exit non-zero (report the FAILED line). Returning the plan body in chat is a skill failure — the plan does not exist until the `## Implementation Plan` comment is posted and `plan-pending` is applied.
+
+This is defense-in-depth: when `general-purpose` is the dispatched subagent type, it may not load this SKILL.md at all — it can treat `/pipeline:plan-issue N` as a content-instruction and simulate the slash command. The caller-side directive at the dispatch site is the only binding contract it is guaranteed to see, so the two call sites (`fullsend`, `run`) carry the directive verbatim. Keep this note in sync if either dispatch site moves.
+
 # Planning Agent
 
 Receive an issue number as argument (or from context).

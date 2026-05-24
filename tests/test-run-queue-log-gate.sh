@@ -122,6 +122,11 @@ if [ "$ok" = "1" ] && ! echo "$OUT" | grep -qE 'BUCKET: mode=bare'; then
   echo "$OUT" | sed 's/^/    /'
   ok=0
 fi
+if [ "$ok" = "1" ] && echo "$OUT" | grep -qE '^[[:space:]]+Queue log: '; then
+  fail_msg "stdout should NOT contain 'Queue log:' line when PIPELINE_LOGS_ENABLED=false"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
 [ "$ok" = "1" ] && pass_msg "no log files; stdout progress preserved"
 
 # ---- Test 2: PIPELINE_LOGS_ENABLED=true -> log files created ----
@@ -141,7 +146,54 @@ if [ ! -f "$PROJ/.claude/logs/queue-pending.txt" ]; then
   fail_msg "queue-pending.txt should exist when PIPELINE_LOGS_ENABLED=true"
   ok=0
 fi
+if [ "$ok" = "1" ] && ! echo "$OUT" | grep -qE '^[[:space:]]+Queue log: .*\.claude/logs/queue-.*\.log$'; then
+  fail_msg "stdout should contain 'Queue log: <path>' line when PIPELINE_LOGS_ENABLED=true"
+  ok=0
+fi
 [ "$ok" = "1" ] && pass_msg "both log files created"
+
+# ---- Test 3: single-issue short-circuit, logs disabled -> no 'Queue log:' line ----
+# The single-issue branch (run-queue.sh L250-293) was the exact reproduction
+# case in the issue body. STUB_WORKTREES with one entry + one issue arg routes
+# through it; the spawn-claude.sh fixture stub (exit 0) satisfies the dispatch.
+echo "Test 3: single-issue short-circuit, logs disabled -> no 'Queue log:' line"
+inc
+PROJ="$WORKDIR/p3"
+setup_proj "$PROJ"
+STUB_DIR=$(make_stubs "$PROJ")
+OUT=$(STUB_WORKTREES="200:foo" run_q "$PROJ" "$STUB_DIR" "false" 200)
+ok=1
+if ! echo "$OUT" | grep -q 'Single issue — launching directly (no queue)\.'; then
+  fail_msg "did not reach single-issue short-circuit branch"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && echo "$OUT" | grep -q 'Queue log: '; then
+  fail_msg "single-issue branch should NOT emit 'Queue log:' when disabled"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "single-issue short-circuit suppresses Queue log: when disabled"
+
+# ---- Test 4: single-issue short-circuit, logs enabled -> 'Queue log:' present ----
+echo "Test 4: single-issue short-circuit, logs enabled -> 'Queue log:' present"
+inc
+PROJ="$WORKDIR/p4"
+setup_proj "$PROJ"
+STUB_DIR=$(make_stubs "$PROJ")
+OUT=$(STUB_WORKTREES="200:foo" run_q "$PROJ" "$STUB_DIR" "true" 200)
+ok=1
+if ! echo "$OUT" | grep -q 'Single issue — launching directly (no queue)\.'; then
+  fail_msg "did not reach single-issue short-circuit branch (enabled)"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && ! echo "$OUT" | grep -qE 'Queue log: .*\.claude/logs/queue-.*\.log$'; then
+  fail_msg "single-issue branch should emit 'Queue log: <path>' when enabled"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+[ "$ok" = "1" ] && pass_msg "single-issue short-circuit emits Queue log: when enabled"
 
 echo ""
 echo "================================"

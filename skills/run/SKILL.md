@@ -208,7 +208,7 @@ Path column shows `?` for ready issues not yet classified — classification run
 
    **For plan evaluation (plan-pending → plan-reviewed):** Run `/pipeline:evaluate-issue-plan N` for each issue needing evaluation; parallel Agent dispatches when multiple.
 
-   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Classify the user-committed subset first — for each issue, check whether a fresh `## Classification` comment exists (`createdAt > issue.updatedAt`). If any lack a fresh classification, dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel**, each invoking `/pipeline:classify-issue N`. Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for each issue, parallel when multiple.
+   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Classify the user-committed subset first — for each issue, check whether a fresh `## Classification` comment exists (`createdAt >= issue.updatedAt`). If any lack a fresh classification, dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel**, each invoking `/pipeline:classify-issue N`. Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for each issue, parallel when multiple.
 
    **For PR evaluation (pr-open → evaluated):** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
 

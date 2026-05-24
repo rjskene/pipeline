@@ -104,6 +104,25 @@ else
   fi
 fi
 
+# Test 3: every 'echo "  Log:"' site is wrapped in a pipeline_logging_enabled gate.
+# Source-grep rather than stdout-capture: PIPELINE_SPAWN_DRY_RUN=1 exits at
+# scripts/spawn-claude.sh:474, ABOVE all three echo sites (L562/L589/L621), so
+# no runtime path under the existing dry-run flag reaches the lines. We assert
+# the wrapping pattern exists in the script source instead.
+echo "Test 3: spawn-claude.sh wraps every 'echo \"  Log:\"' site in pipeline_logging_enabled gate"
+inc
+# Count unwrapped echo sites — must be 0 after the fix.
+UNWRAPPED=$(grep -cE '^[[:space:]]*echo "  Log: \$\{?LOG_FILE\}?"[[:space:]]*$' "$SCRIPT_UNDER_TEST" || true)
+# Count wrapped sites (single-line if-form chosen for minimum diff).
+WRAPPED=$(grep -cE '^[[:space:]]*if pipeline_logging_enabled; then echo "  Log: \$\{?LOG_FILE\}?"; fi[[:space:]]*$' "$SCRIPT_UNDER_TEST" || true)
+if [ "$UNWRAPPED" -ne 0 ]; then
+  fail_msg "expected 0 unwrapped 'echo \"  Log:\"' sites, found $UNWRAPPED"
+elif [ "$WRAPPED" -ne 3 ]; then
+  fail_msg "expected 3 wrapped 'if pipeline_logging_enabled; then echo \"  Log:\"; fi' sites, found $WRAPPED"
+else
+  pass_msg "all 3 'echo Log:' sites wrapped in pipeline_logging_enabled gate"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
