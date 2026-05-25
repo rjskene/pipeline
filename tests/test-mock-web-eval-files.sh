@@ -113,6 +113,9 @@ assert "app.js binds counter-dec click" "grep -q 'counter-dec' '$APP' && grep -q
 assert "app.js writes counter-value"    "grep -q 'counter-value' '$APP'"
 assert "style.css defines #counter-section flex" "grep -A3 '#counter-section' '$CSS' | grep -qE 'display:\s*flex'"
 assert "style.css styles #counter-value"          "grep -qE '#counter-value' '$CSS'"
+assert "index has counter reset button"  "grep -q 'id=\"counter-reset\"' '$IDX'"
+assert "index counter reset has style hook class" "grep -qE 'id=\"counter-reset\"[^>]*class=\"[^\"]*counter-reset[^\"]*\"|class=\"[^\"]*counter-reset[^\"]*\"[^>]*id=\"counter-reset\"' '$IDX'"
+assert "app.js wires counter-reset to zero" "grep -q 'counter-reset' '$APP' && grep -qE 'counterValue\.textContent\s*=\s*.0.' '$APP'"
 
 # Group 10 — footer
 assert "index has page-footer"            "grep -q 'id=\"page-footer\"' '$IDX'"
