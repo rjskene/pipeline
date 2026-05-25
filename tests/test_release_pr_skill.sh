@@ -20,7 +20,7 @@ echo "PASS test_release_pr_skill (task3)"
 
 # Task 4 markers — full-send auto-merge gate (now in fullsend skill)
 grep -q 'PIPELINE_RELEASE_PR_AUTO_MERGE' "$FS_SKILL" || { echo "FAIL: full-send must gate on PIPELINE_RELEASE_PR_AUTO_MERGE"; exit 1; }
-grep -qE 'gh pr merge .* --squash' "$FS_SKILL" || { echo "FAIL: full-send must squash-merge"; exit 1; }
+grep -qE 'gh pr merge .* --merge' "$FS_SKILL" || { echo "FAIL: full-send must merge-commit"; exit 1; }
 grep -qE 'after step 7|post-step-7|step 7b|7b\.' "$FS_SKILL" || { echo "FAIL: full-send must place merge after step 7"; exit 1; }
 echo "PASS test_release_pr_skill (task4)"
 

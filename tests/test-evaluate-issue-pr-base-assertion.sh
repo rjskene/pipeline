@@ -124,7 +124,7 @@ if [ -z "$BASE_RECHECK" ] || [ "$BASE_RECHECK" != "$PIPELINE_BASE_BRANCH" ]; the
   exit 0
 fi
 
-gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --squash --delete-branch
+gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch
 printf 'MERGED\n'
 DRIVER_BODY
 chmod +x "$DRIVER"
