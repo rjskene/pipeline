@@ -193,7 +193,9 @@ setup_proj "$PROJ_A"
 STUB_A=$(make_common_stubs "$PROJ_A" "$CASE_A")
 # gh stub: 911's labels start at `pr-open` (predicate poll 1 misses), then flip
 # to `manual-merge,pr-open` from the 2nd labels query onward (Task 2.5 applied
-# the label). The PR-comment arm returns empty so only the label arm can fire.
+# the label). The Evaluation-comment proof-of-completion is present from the
+# start (evaluator posts it before flipping the label); the `comments[-1]`
+# arm returns empty so only the label arm fires.
 cat > "$STUB_A/gh" <<EOF
 #!/bin/bash
 ARGS="\$*"
@@ -211,7 +213,13 @@ case "\$1 \$2" in
     fi
     ;;
   "pr list") echo "1911" ;;
-  "pr view") echo "" ;;
+  "pr view")
+    if [[ "\$ARGS" == *'comments[-1]'* ]]; then
+      echo ""
+    else
+      printf '## Evaluation\n\n**Verdict:** Approved\n'
+    fi
+    ;;
   *) echo "" ;;
 esac
 EOF
@@ -344,6 +352,50 @@ if [ ! -f "$CASE_C/pr-view-called" ]; then
   pass_msg "C3: predicate bails at the null PR-lookup guard (no gh pr view null call)"
 else
   fail_msg "C3: predicate issued a malformed 'gh pr view null' instead of bailing on the null lookup"
+fi
+
+# ================ Case D: pre-applied label without Evaluation comment ================
+echo ""
+echo "Case D: pre-applied manual-merge label without Evaluation comment -> NOT terminal"
+CASE_D="$ROOT/caseD"; mkdir -p "$CASE_D"
+PROJ_D="$CASE_D/proj"
+setup_proj "$PROJ_D"
+STUB_D=$(make_common_stubs "$PROJ_D" "$CASE_D")
+# gh stub: 911 carries `manual-merge,pr-open` from poll 1 (operator opt-out OR
+# residual label from a prior block-* skip that cleanup-worktree.sh never
+# removed). The linked PR exists (1911) but has NO Evaluation comment yet —
+# the worker is still running. The predicate MUST return non-terminal so the
+# still-running worker is NOT killed on poll 1.
+cat > "$STUB_D/gh" <<EOF
+#!/bin/bash
+ARGS="\$*"
+case "\$1 \$2" in
+  "issue view")
+    issue="\$3"
+    if [[ "\$ARGS" == *labels* ]]; then
+      if [ "\$issue" = "911" ]; then echo "manual-merge,pr-open"; else echo ""; fi
+    fi
+    ;;
+  "pr list") echo "1911" ;;
+  "pr view") echo "" ;;
+  *) echo "" ;;
+esac
+EOF
+chmod +x "$STUB_D/gh"
+run_case "$PROJ_D" "$CASE_D" 10
+
+inc
+if ! grep -q 'EVENT: agent-finished issue=911 outcome=approved-manual-merge' "$CASE_D/queue.log"; then
+  pass_msg "D1: no false-positive terminal for pre-applied label without Evaluation comment"
+else
+  fail_msg "D1: predicate fired terminal on pre-applied manual-merge label without Evaluation comment (the #496-review bug)"
+  sed 's/^/    /' "$CASE_D/queue.log" >&2
+fi
+inc
+if [ ! -f "$CASE_D/killed-911" ]; then
+  pass_msg "D2: runner did NOT kill 911's window — still-running worker preserved"
+else
+  fail_msg "D2: runner force-closed 911 despite still-running worker"
 fi
 
 echo ""

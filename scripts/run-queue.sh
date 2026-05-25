@@ -538,27 +538,34 @@ evaluator_finished_terminal() {
   local labels
   labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" \
     --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
-  # Arm (a): label match (cheapest path; one gh call). Comma-anchored so a
-  # hypothetical `not-manual-merge` label cannot match.
-  if echo ",$labels," | grep -q ',manual-merge,'; then
-    return 0
-  fi
-  # Arm (b): PR-comment fallback. Resolve issue->PR; bail if no PR yet
-  # (executor crashed pre-PR — must NOT kill the worker). `gh ... --jq
-  # '.[0].number'` prints the literal string `null` for an empty result set
-  # (not an empty string), so guard against both before querying the PR.
+  # Both arms require a linked PR. Bail if no PR yet (executor crashed pre-PR —
+  # must NOT kill the worker). `gh ... --jq '.[0].number'` prints the literal
+  # string `null` for an empty result set (not an empty string), so guard
+  # against both before querying the PR.
   local pr
   pr=$(resolve_issue_pr "$issue")
   [ -n "$pr" ] && [ "$pr" != "null" ] || return 1
-  local last_pr_comment eval_body
-  last_pr_comment=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
-    --json comments --jq '.comments[-1].body' 2>/dev/null) || return 1
-  echo "$last_pr_comment" | grep -q '^Auto-merge skipped:' || return 1
+  # Both arms require a `## Evaluation` comment on the linked PR as
+  # proof-of-completion. Without this guard the label arm fires on any
+  # pre-applied `manual-merge` label (operator opt-out OR a residual label
+  # from a prior block-* skip that cleanup-worktree.sh never removes),
+  # killing a still-running worker on poll 1.
+  local eval_body
   eval_body=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
     --json comments \
     --jq '[.comments[] | select(.body | contains("## Evaluation"))] | last | .body' \
     2>/dev/null) || return 1
   [ -n "$eval_body" ] || return 1
+  # Arm (a): manual-merge label present AND evaluation comment exists.
+  # Comma-anchored so a hypothetical `not-manual-merge` label cannot match.
+  if echo ",$labels," | grep -q ',manual-merge,'; then
+    return 0
+  fi
+  # Arm (b): Auto-merge skipped PR-comment fallback + Approved verdict.
+  local last_pr_comment
+  last_pr_comment=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
+    --json comments --jq '.comments[-1].body' 2>/dev/null) || return 1
+  echo "$last_pr_comment" | grep -q '^Auto-merge skipped:' || return 1
   echo "$eval_body" | grep -q '\*\*Verdict:\*\* Approved' || return 1
   return 0
 }
