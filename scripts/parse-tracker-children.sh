@@ -4,34 +4,71 @@
 #
 # Usage:
 #   bash parse-tracker-children.sh <body-file>
-#   bash parse-tracker-children.sh -          # read from stdin
+#   bash parse-tracker-children.sh -                       # read from stdin
+#   bash parse-tracker-children.sh <body-file>|- --fallback-mentions
 #
 # Prints one child issue number per line, in order of appearance, to stdout.
 # Exits 0 always (including when no `## Rollout sequence` section is present
 # or when the section contains no checklist children).
 #
-# Recognizes lines matching `- [ ] **#<N> [-—]` (ASCII hyphen or en-dash),
-# including the `[x]` checked variant. Bounded to the section starting with
-# `## Rollout sequence` and ending at the next `## ` heading.
+# Default mode recognizes lines matching `- [ ] **#<N> [-—]` (ASCII hyphen or
+# en-dash), including the `[x]` checked variant. Bounded to the section starting
+# with `## Rollout sequence` and ending at the next `## ` heading.
+#
+# `--fallback-mentions` mode (#491): ignores section bounds entirely and scans
+# the WHOLE body for `#<N>` mentions — deduped, in order of first appearance,
+# numeric only — suppressing fenced code blocks (``` … ```) and inline code
+# spans (`…`) so prose examples like `#999` are not miscounted as children.
+# This mode is additive and consumed ONLY by auto-close-trackers.sh as a soft
+# fallback; the default mode is unchanged for render-status-table.sh and
+# analyze-issues.sh, which MUST NOT broaden their orphan classification.
 set -euo pipefail
 
-if [ $# -lt 1 ]; then
-  echo "usage: parse-tracker-children.sh <body-file>|-" >&2
+FALLBACK=0
+SOURCE=""
+for arg in "$@"; do
+  case "$arg" in
+    --fallback-mentions) FALLBACK=1 ;;
+    *) SOURCE="$arg" ;;
+  esac
+done
+
+if [ -z "$SOURCE" ]; then
+  echo "usage: parse-tracker-children.sh <body-file>|- [--fallback-mentions]" >&2
   exit 2
 fi
 
-if [ "$1" = "-" ]; then
+if [ "$SOURCE" = "-" ]; then
   input=$(cat)
 else
-  input=$(cat "$1")
+  input=$(cat "$SOURCE")
 fi
 
-printf '%s\n' "$input" | awk '
-  /^## Rollout sequence[[:space:]]*$/ { inrs=1; next }
-  /^## / { inrs=0 }
-  inrs {
-    if (match($0, /^- \[[ x]\] \*\*#([0-9]+)[[:space:]]*[-—]/, m)) {
-      print m[1]
+if [ "$FALLBACK" = "1" ]; then
+  printf '%s\n' "$input" | awk '
+    /^[[:space:]]*```/ { in_code = !in_code; next }
+    in_code { next }
+    {
+      line = $0
+      gsub(/`[^`]*`/, "", line)
+      while (match(line, /#([0-9]+)/, m)) {
+        num = m[1]
+        if (!(num in seen)) {
+          seen[num] = 1
+          print num
+        }
+        line = substr(line, RSTART + RLENGTH)
+      }
     }
-  }
-'
+  '
+else
+  printf '%s\n' "$input" | awk '
+    /^## Rollout sequence[[:space:]]*$/ { inrs=1; next }
+    /^## / { inrs=0 }
+    inrs {
+      if (match($0, /^- \[[ x]\] \*\*#([0-9]+)[[:space:]]*[-—]/, m)) {
+        print m[1]
+      }
+    }
+  '
+fi
