@@ -121,6 +121,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    - `EVENT: agent-stalled issue=<N>` — runner reports worker idle at 0% CPU across `PIPELINE_STALL_POLL_THRESHOLD` polls; runner took no action. Run the four-option triage below; then re-enter `Monitor` with the SAME `timeout_ms` budget (the elapsed wait is preserved by the harness).
    - `EVENT: agent-finished outcome=failed issue=<N>` — per-agent failure. Optional triage (capture pane, inspect PR/branch state); re-enter `Monitor` so the rest of the queue continues to be watched.
    - `EVENT: agent-finished outcome=success issue=<N>` — no-op wake; re-enter `Monitor`.
+   - `EVENT: agent-finished outcome=approved-manual-merge issue=<N>` — no-op wake (issue #489); the runner freed a wedged evaluator slot whose PR is awaiting manual merge per the evaluator's Step 11.4 block-* skip. Re-enter `Monitor`. The operator merges the PR by hand (`gh pr merge <PR> --merge --delete-branch`) or via Step 8 of `run/SKILL.md`.
 
    **Triage on `agent-stalled`.** Inspect the worker first (tmux pane via `tmux capture-pane -t "$PIPELINE_TMUX_SESSION:issue-<N>" -p`; process tree via `pstree -p <pid>`). Then surface the four-option prompt to the user:
    1. **Kill the wedged subscript only** — `kill <child-pid>` from the pstree output; executor may recover.

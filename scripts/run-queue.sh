@@ -501,6 +501,75 @@ check_issue_outcome() {
   fi
 }
 
+# Resolve an issue number to its linked PR number, or empty if none exists.
+# Mirrors the `linked:<issue>` qualifier used by classify_issue_mode() at the
+# top of this file and scripts/check-ci-fix-loop.sh — the only qualifier
+# GitHub search reliably honors for issue->PR lookup here. Fails closed (empty
+# string) on any gh error so callers can treat "no PR" as "not terminal yet".
+resolve_issue_pr() {
+  local issue="$1"
+  gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" \
+    --json number --jq '.[0].number' 2>/dev/null || true
+}
+
+# Detect evaluator sessions that have completed their work but whose claude
+# child has not exited (manual-merge / block-* branch — issue #489). The
+# tmux-window-presence check in is_agent_running() is necessary but not
+# sufficient: when the evaluator skips Step 11 auto-merge (verdict recommends
+# manual merge, or any block-* reason fires), the spawned `claude -p` process
+# can sit indefinitely until the per-agent timeout fires, never closing its
+# tmux window. This predicate gives the runner a second terminal signal sourced
+# from GitHub state.
+#
+# Returns 0 (terminal) iff EITHER:
+#   (a) the issue carries the `manual-merge` label (the evaluator auto-applies
+#       this on every block-* skip per skills/evaluate-issue-pr/SKILL.md Step
+#       11.4; before that change rolls out, only operator-pre-labelled issues
+#       match this arm), OR
+#   (b) the issue's linked PR's latest comment body starts with
+#       `Auto-merge skipped:` (the block-* fallback shape from
+#       skills/evaluate-issue-pr/SKILL.md) AND the latest `## Evaluation` PR
+#       comment contains `**Verdict:** Approved`.
+# Returns 1 otherwise. Fails closed: any gh error, empty PR lookup, or missing
+# `## Evaluation` payload returns 1 so a transient API blip cannot prematurely
+# terminate a healthy worker.
+evaluator_finished_terminal() {
+  local issue="$1"
+  local labels
+  labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" \
+    --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
+  # Both arms require a linked PR. Bail if no PR yet (executor crashed pre-PR —
+  # must NOT kill the worker). `gh ... --jq '.[0].number'` prints the literal
+  # string `null` for an empty result set (not an empty string), so guard
+  # against both before querying the PR.
+  local pr
+  pr=$(resolve_issue_pr "$issue")
+  [ -n "$pr" ] && [ "$pr" != "null" ] || return 1
+  # Both arms require a `## Evaluation` comment on the linked PR as
+  # proof-of-completion. Without this guard the label arm fires on any
+  # pre-applied `manual-merge` label (operator opt-out OR a residual label
+  # from a prior block-* skip that cleanup-worktree.sh never removes),
+  # killing a still-running worker on poll 1.
+  local eval_body
+  eval_body=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
+    --json comments \
+    --jq '[.comments[] | select(.body | contains("## Evaluation"))] | last | .body' \
+    2>/dev/null) || return 1
+  [ -n "$eval_body" ] || return 1
+  # Arm (a): manual-merge label present AND evaluation comment exists.
+  # Comma-anchored so a hypothetical `not-manual-merge` label cannot match.
+  if echo ",$labels," | grep -q ',manual-merge,'; then
+    return 0
+  fi
+  # Arm (b): Auto-merge skipped PR-comment fallback + Approved verdict.
+  local last_pr_comment
+  last_pr_comment=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
+    --json comments --jq '.comments[-1].body' 2>/dev/null) || return 1
+  echo "$last_pr_comment" | grep -q '^Auto-merge skipped:' || return 1
+  echo "$eval_body" | grep -q '\*\*Verdict:\*\* Approved' || return 1
+  return 0
+}
+
 # Check if the pending file has at least one non-empty line
 pending_file_has_items() {
   [ -f "$PENDING_FILE" ] || return 1
@@ -622,6 +691,27 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
     else
       CPU_IDLE_POLLS[$issue]=0
       STALL_LATCHED[$issue]=0
+    fi
+
+    if evaluator_finished_terminal "$issue"; then
+      # Manual-merge / block-* branch (issue #489): the evaluator has finished
+      # posting its verdict but the spawned claude child is still alive, so the
+      # tmux window never closed on its own. Kill the window so the existing
+      # finish-branch invariants hold (window absent => slot free), record the
+      # specific outcome, free the bucket slot, and fill the gap. Checked BEFORE
+      # is_agent_running so this more-specific signal wins when both are true on
+      # the same poll.
+      tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
+      outcome="approved-manual-merge"
+      RESULTS[$issue]="$outcome"
+      _finished_mode="${ISSUE_MODE[$issue]:-bare}"
+      BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
+      unset 'ACTIVE['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
+      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (evaluator terminal, window force-closed)"
+      log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+      fill_slots
+      continue
     fi
 
     if ! is_agent_running "$issue"; then
