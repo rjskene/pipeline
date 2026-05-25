@@ -237,6 +237,12 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 Run \`\$CLAUDE_PLUGIN_ROOT/scripts/retarget-pr.sh $PR_NUM $PIPELINE_BASE_BRANCH\` to retarget (or \`gh pr edit $PR_NUM --base $PIPELINE_BASE_BRANCH\` if retarget-pr.sh is unavailable)."
        ```
 
+       **Auto-apply the `manual-merge` label (issue #489).** After posting the `Auto-merge skipped:` comment — for ANY `block-*` reason — add the `manual-merge` label to the issue so the wedge becomes terminal-detectable by the run-queue runner on its next poll:
+       ```bash
+       gh issue edit "$ISSUE" --repo "$PIPELINE_REPO" --add-label "manual-merge" 2>/dev/null || true
+       ```
+       The label flip is what lets the runner (`scripts/run-queue.sh` `evaluator_finished_terminal()`) free the queue slot immediately instead of waiting for the per-agent 90-min timeout. Fails OPEN on `gh` error — the worst case is the pre-#489 behaviour (queue waits for the timeout). The label is permanent post-merge (`cleanup-worktree.sh` leaves it as a historical "this PR did not auto-merge" signal).
+
     Release-please PRs are out of scope for this gate — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of `run/SKILL.md`.
 
 ## Constraints

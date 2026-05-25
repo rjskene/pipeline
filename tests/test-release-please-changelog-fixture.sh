@@ -62,6 +62,7 @@ trap cleanup EXIT
 
 FULL_LOG="$(git -C "$FIX" log main --pretty=%s)"
 FP_LOG="$(git -C "$FIX" log main --first-parent --pretty=%s)"
+SP_LOG="$(git -C "$FIX" log staging --first-parent --pretty=%s)"
 TIP_BODY="$(git -C "$FIX" log -1 --pretty=%B main)"
 
 # 1. Per-PR conventional commits reachable from main's tip via the full DAG.
@@ -76,6 +77,17 @@ assert "fix: B absent from --first-parent line"  "! printf '%s' \"\$FP_LOG\" | g
 # 3. The release merge commit carries the conventional subject + Release-As footer.
 assert "release merge commit subject present" "printf '%s' \"\$TIP_BODY\" | grep -q 'chore(main): release 0.14.2'"
 assert "Release-As: footer preserved on merge commit" "printf '%s' \"\$TIP_BODY\" | grep -q 'Release-As: 0.14.2'"
+
+# 4. Per #492: the unit of CHANGELOG entry within a single merged feature PR is
+#    the merge-commit subject (what `--first-parent` sees), not the per-sub-commit
+#    conventional subjects (which are reachable only via the full DAG). A
+#    --first-parent walker reading from a tip that includes feature merges
+#    (`staging`) sees `Merge pull request #N from feature-X` as the subject — that
+#    merge-commit subject IS the source of truth for the per-PR granularity
+#    contract, and is exactly what main's --first-parent line (asserted absent in
+#    block 2 above) does NOT carry. See
+#    docs/release-cadence.md#granularity-scope-decision-492.
+assert "staging --first-parent shows the merge-PR subject (per-PR granularity source of truth)" "printf '%s' \"\$SP_LOG\" | grep -q 'Merge pull request #1 from feature-A'"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

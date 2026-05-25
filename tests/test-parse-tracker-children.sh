@@ -130,6 +130,113 @@ else
   fail_msg "Case E: expected '$expected' got '$out'"
 fi
 
+# ============================================================================
+# --fallback-mentions mode (#491): scan the WHOLE body for `#NNN` mentions,
+# ignoring `## Rollout sequence` bounds, deduping, preserving first-appearance
+# order, and suppressing fenced code blocks and inline code spans.
+# ============================================================================
+
+# ---- Case F: --fallback-mentions ignores rollout bounds, emits ALL mentions ----
+echo "Case F: --fallback-mentions ignores rollout section bounds"
+inc
+F="$TMP/body-f.md"
+cat > "$F" <<'BODY'
+## Rollout sequence
+
+- [ ] **#101 — first**
+- [ ] **#102 — second**
+
+## Notes
+Depends on #103 and references #104.
+BODY
+
+out=$(bash "$HELPER" "$F" --fallback-mentions 2>"$TMP/err-f") \
+  || { fail_msg "Case F: exit non-zero"; cat "$TMP/err-f"; }
+expected=$'101\n102\n103\n104'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case F: all mentions emitted regardless of section"
+else
+  fail_msg "Case F: expected '$expected' got '$out'"
+fi
+
+# ---- Case G: dedup — a repeated mention is emitted once ----
+echo "Case G: --fallback-mentions dedups repeated mentions"
+inc
+G="$TMP/body-g.md"
+cat > "$G" <<'BODY'
+References #101 twice: #101 again, plus #102.
+BODY
+
+out=$(bash "$HELPER" "$G" --fallback-mentions)
+expected=$'101\n102'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case G: #101 deduped to a single line"
+else
+  fail_msg "Case G: expected '$expected' got '$out'"
+fi
+
+# ---- Case H: ordering — emitted in order of first appearance ----
+echo "Case H: --fallback-mentions preserves first-appearance order"
+inc
+H="$TMP/body-h.md"
+cat > "$H" <<'BODY'
+First #303, then #301, then #302.
+BODY
+
+out=$(bash "$HELPER" "$H" --fallback-mentions)
+expected=$'303\n301\n302'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case H: order of first appearance preserved"
+else
+  fail_msg "Case H: expected '$expected' got '$out'"
+fi
+
+# ---- Case I: fenced code blocks and inline code spans suppressed ----
+echo "Case I: --fallback-mentions suppresses code fences + inline code"
+inc
+I="$TMP/body-i.md"
+cat > "$I" <<'BODY'
+Real child #501 in prose.
+
+Inline `#999` must be ignored.
+
+```
+#998 inside a fenced block must be ignored
+```
+
+Another real child #502.
+BODY
+
+out=$(bash "$HELPER" "$I" --fallback-mentions)
+expected=$'501\n502'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case I: code-fenced and inline-code mentions suppressed"
+else
+  fail_msg "Case I: expected '$expected' got '$out'"
+fi
+
+# ---- Case J: no rollout AND no mentions → empty output, exit 0 ----
+echo "Case J: --fallback-mentions with no mentions → empty, exit 0"
+inc
+J="$TMP/body-j.md"
+cat > "$J" <<'BODY'
+## Context
+Just prose, no issue mentions at all.
+
+## Plan
+Some plan text.
+BODY
+
+if out=$(bash "$HELPER" "$J" --fallback-mentions 2>"$TMP/err-j"); then
+  if [ -z "$out" ]; then
+    pass_msg "Case J: empty output when no mentions"
+  else
+    fail_msg "Case J: expected empty output, got '$out'"
+  fi
+else
+  fail_msg "Case J: helper exited non-zero ($?), expected 0"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
