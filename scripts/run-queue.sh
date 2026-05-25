@@ -501,6 +501,66 @@ check_issue_outcome() {
   fi
 }
 
+# Resolve an issue number to its linked PR number, or empty if none exists.
+# Mirrors the `linked:<issue>` qualifier used by classify_issue_mode() at the
+# top of this file and scripts/check-ci-fix-loop.sh — the only qualifier
+# GitHub search reliably honors for issue->PR lookup here. Fails closed (empty
+# string) on any gh error so callers can treat "no PR" as "not terminal yet".
+resolve_issue_pr() {
+  local issue="$1"
+  gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" \
+    --json number --jq '.[0].number' 2>/dev/null || true
+}
+
+# Detect evaluator sessions that have completed their work but whose claude
+# child has not exited (manual-merge / block-* branch — issue #489). The
+# tmux-window-presence check in is_agent_running() is necessary but not
+# sufficient: when the evaluator skips Step 11 auto-merge (verdict recommends
+# manual merge, or any block-* reason fires), the spawned `claude -p` process
+# can sit indefinitely until the per-agent timeout fires, never closing its
+# tmux window. This predicate gives the runner a second terminal signal sourced
+# from GitHub state.
+#
+# Returns 0 (terminal) iff EITHER:
+#   (a) the issue carries the `manual-merge` label (the evaluator auto-applies
+#       this on every block-* skip per skills/evaluate-issue-pr/SKILL.md Step
+#       11.4; before that change rolls out, only operator-pre-labelled issues
+#       match this arm), OR
+#   (b) the issue's linked PR's latest comment body starts with
+#       `Auto-merge skipped:` (the block-* fallback shape from
+#       skills/evaluate-issue-pr/SKILL.md) AND the latest `## Evaluation` PR
+#       comment contains `**Verdict:** Approved`.
+# Returns 1 otherwise. Fails closed: any gh error, empty PR lookup, or missing
+# `## Evaluation` payload returns 1 so a transient API blip cannot prematurely
+# terminate a healthy worker.
+evaluator_finished_terminal() {
+  local issue="$1"
+  local labels
+  labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" \
+    --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
+  # Arm (a): label match (cheapest path; one gh call). Comma-anchored so a
+  # hypothetical `not-manual-merge` label cannot match.
+  if echo ",$labels," | grep -q ',manual-merge,'; then
+    return 0
+  fi
+  # Arm (b): PR-comment fallback. Resolve issue->PR; bail if no PR yet
+  # (executor crashed pre-PR — must NOT kill the worker).
+  local pr
+  pr=$(resolve_issue_pr "$issue")
+  [ -n "$pr" ] || return 1
+  local last_pr_comment eval_body
+  last_pr_comment=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
+    --json comments --jq '.comments[-1].body' 2>/dev/null) || return 1
+  echo "$last_pr_comment" | grep -q '^Auto-merge skipped:' || return 1
+  eval_body=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
+    --json comments \
+    --jq '[.comments[] | select(.body | contains("## Evaluation"))] | last | .body' \
+    2>/dev/null) || return 1
+  [ -n "$eval_body" ] || return 1
+  echo "$eval_body" | grep -q '\*\*Verdict:\*\* Approved' || return 1
+  return 0
+}
+
 # Check if the pending file has at least one non-empty line
 pending_file_has_items() {
   [ -f "$PENDING_FILE" ] || return 1
