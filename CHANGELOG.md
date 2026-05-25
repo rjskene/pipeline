@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.15.0-rc.1...v0.16.0-rc.1) (2026-05-25)
+
+
+### Features
+
+* **release:** switch to merge commits to preserve per-PR CHANGELOG entries ([3ccf15c](https://github.com/rjskene/pipeline/commit/3ccf15c1c7884869e05e09bfc44a823576326c1d))
+
 ## [0.15.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.14.2...v0.15.0-rc.1) (2026-05-25)
 
 
