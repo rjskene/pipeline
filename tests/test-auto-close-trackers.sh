@@ -167,13 +167,17 @@ echo "Case C: no-children"
 inc
 C="$TMP/case-c"; reset_case "$C"
 NOCHILD="$TMP/body-nochild.md"
+# #491: this fixture must contain NO `#NNN` mentions anywhere. The fallback
+# mention-scan (Case I+) would otherwise pick up an out-of-rollout `#101` and
+# flip this from no-children to pending. Default-mode section bounding is
+# already proven by parse-tracker-children Case B, so the decoy is unneeded.
 cat > "$NOCHILD" <<'BODY'
 ## Rollout sequence
 
 Just a prose blurb, no checklist.
 
 ## Notes
-- [ ] **#101 — outside rollout**
+Trailing prose with no issue references.
 BODY
 export BODY_FILE="$NOCHILD"
 export STATES=""
@@ -298,6 +302,112 @@ else
     fail_msg "missing PIPELINE_REPO: exit=$rc but stderr lacks the documented error"
     echo "    stderr:"; sed 's/^/      /' "$H/stderr"
   fi
+fi
+
+# ============================================================================
+# Fallback mention-scan path (#491): when the tracker body has no
+# `## Rollout sequence` checklist, auto-close falls back to scanning the whole
+# body for `#NNN` mentions, and surfaces an all-closed result as the distinct
+# `STATUS: all-closed-fallback` line so the operator can audit the parser path
+# used. The `pending` line shape is unchanged regardless of fallback.
+# ============================================================================
+
+# Body with NO `## Rollout sequence` section — children live only as prose
+# `#NNN` mentions, in first-appearance order 101,102,103.
+MENTIONS="$TMP/body-mentions.md"
+cat > "$MENTIONS" <<'BODY'
+## Context
+This tracker coordinates #101, #102, and #103. No rollout checklist here.
+BODY
+
+# ---- Case I: no rollout + all mentions CLOSED → all-closed-fallback ----
+echo "Case I: fallback all-closed → STATUS: all-closed-fallback"
+inc
+CI="$TMP/case-i"; reset_case "$CI"
+export BODY_FILE="$MENTIONS"
+export STATES="101=CLOSED 102=CLOSED 103=CLOSED"
+if bash "$HELPER" >"$CI/stdout" 2>"$CI/stderr"; then
+  if grep -qE '^STATUS: all-closed-fallback tracker=999 children=101,102,103' "$CI/stdout"; then
+    pass_msg "fallback all-closed: emits all-closed-fallback with csv children"
+  else
+    fail_msg "fallback all-closed: stdout missing expected line"
+    sed 's/^/    /' "$CI/stdout"
+  fi
+else
+  rc=$?
+  fail_msg "fallback all-closed: helper exited $rc; expected 0"
+  echo "    stderr:"; sed 's/^/      /' "$CI/stderr"
+fi
+
+# ---- Case J: no rollout + one mention OPEN → pending (no -fallback suffix) ----
+echo "Case J: fallback pending → STATUS: pending (shape unchanged)"
+inc
+CJ="$TMP/case-j"; reset_case "$CJ"
+export BODY_FILE="$MENTIONS"
+export STATES="101=CLOSED 102=OPEN 103=CLOSED"
+if bash "$HELPER" >"$CJ/stdout" 2>"$CJ/stderr"; then
+  if grep -qE '^STATUS: pending tracker=999 open=102' "$CJ/stdout"; then
+    pass_msg "fallback pending: emits STATUS: pending tracker=999 open=102"
+  else
+    fail_msg "fallback pending: stdout missing expected line"
+    sed 's/^/    /' "$CJ/stdout"
+  fi
+else
+  rc=$?
+  fail_msg "fallback pending: helper exited $rc; expected 0"
+  echo "    stderr:"; sed 's/^/      /' "$CJ/stderr"
+fi
+
+# ---- Case K: no rollout AND no mentions → no-children preserved ----
+echo "Case K: no rollout + no mentions → no-children preserved"
+inc
+CK="$TMP/case-k"; reset_case "$CK"
+NONE="$TMP/body-none.md"
+cat > "$NONE" <<'BODY'
+## Context
+Plain prose with no rollout checklist and no issue references at all.
+
+## Plan
+Some plan text.
+BODY
+export BODY_FILE="$NONE"
+export STATES=""
+if bash "$HELPER" >"$CK/stdout" 2>"$CK/stderr"; then
+  if grep -qE '^STATUS: no-children tracker=999' "$CK/stdout"; then
+    pass_msg "no rollout + no mentions: STATUS: no-children preserved"
+  else
+    fail_msg "no rollout + no mentions: stdout missing no-children line"
+    sed 's/^/    /' "$CK/stdout"
+  fi
+else
+  rc=$?
+  fail_msg "no rollout + no mentions: helper exited $rc; expected 0"
+  echo "    stderr:"; sed 's/^/      /' "$CK/stderr"
+fi
+
+# ---- Case L: --apply on fallback all-closed → closes tracker once ----
+echo "Case L: --apply on fallback all-closed → close 999 once, exact comment"
+inc
+CL="$TMP/case-l"; reset_case "$CL"
+export BODY_FILE="$MENTIONS"
+export STATES="101=CLOSED 102=CLOSED 103=CLOSED"
+if bash "$HELPER" --apply >"$CL/stdout" 2>"$CL/stderr"; then
+  n_close=$(grep -cE '^gh issue close 999' "$SHIM_LOG" || true)
+  if [ "$n_close" = "1" ]; then
+    if grep -qF -- '--comment Auto-closed: all children merged.' "$SHIM_LOG"; then
+      pass_msg "--apply fallback all-closed: close 999 once with exact comment"
+    else
+      fail_msg "--apply fallback all-closed: close invoked but comment text wrong"
+      sed 's/^/    /' "$SHIM_LOG"
+    fi
+  else
+    fail_msg "--apply fallback all-closed: expected 1 'gh issue close 999', saw $n_close"
+    sed 's/^/    /' "$SHIM_LOG"
+  fi
+else
+  rc=$?
+  fail_msg "--apply fallback all-closed: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$CL/stderr"
 fi
 
 echo ""
