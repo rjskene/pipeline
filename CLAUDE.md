@@ -26,6 +26,8 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 
 Base-branch enforcement is defense-in-depth across three layers (eval-time gate, skill-level `--base`, PreToolUse hook). For the full release procedure, prerelease channel, and back-sync workflow, see [docs/release-cadence.md](docs/release-cadence.md).
 
+Per #459, feature PR merges and `staging → main` merges both use merge-commits (not squash), so per-PR conventional-commit history is preserved on the trunk — release-please enumerates each `feat:`/`fix:` in the CHANGELOG. Trade-off: staging history is noisier (WIP/fixup commits land verbatim from feature branches); accepted because the pipeline's `tdd-implementer` produces clean conventional commits by construction.
+
 ## Namespace discipline
 
 The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json`. All plugin assets live under `~/.claude/plugins/claude-pipeline/` (read at runtime via `${CLAUDE_PLUGIN_ROOT}`).
