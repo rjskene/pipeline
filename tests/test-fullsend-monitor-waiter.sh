@@ -249,6 +249,16 @@ else
   fail_msg "wake-loop: agent-finished outcome=success no-op semantics not documented"
 fi
 
+# issue #489: the run-queue runner emits a new terminal token when it frees a
+# wedged evaluator slot (verdict Approved but manual-merge / block-* skip). The
+# wake-loop must document it as a no-op wake (mirrors outcome=success).
+inc
+if echo "$TRIAGE" | grep -qF 'agent-finished outcome=approved-manual-merge' && echo "$TRIAGE" | grep -qiE 'no-op'; then
+  pass_msg "wake-loop: agent-finished outcome=approved-manual-merge documented as no-op wake"
+else
+  fail_msg "wake-loop: agent-finished outcome=approved-manual-merge no-op semantics not documented"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
