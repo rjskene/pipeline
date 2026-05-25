@@ -39,3 +39,19 @@ This repo flipped from squash to merge-commits on 2026-05-24 via #459. Baseline 
   1. Re-enable the merge methods at the repo level: `gh api -X PATCH repos/rjskene/pipeline -f allow_squash_merge=true -f allow_rebase_merge=true`.
   2. Revert the source-flip commits (Tasks 2, 3, 4, 4b of #459) with `git revert <sha>...`.
   3. Inverse-or-remove the regression guards `tests/test-release-merge-strategy.sh` and `tests/test-back-sync-trigger-pattern.sh`.
+
+### Granularity scope decision (#492)
+
+**Context.** v0.16.0-rc.1 produced exactly one CHANGELOG entry for PR #484 even though that PR carried five conventional sub-commits. This is the intended behavior of the per-PR granularity contract, not a regression: the merge-commit subject is the source of truth, and PR #484's single merge-commit subject became the single CHANGELOG line.
+
+**Why sub-commits collapse.** release-please's simple-mode projection walks `--first-parent` from the release tip. On that line a merged feature PR appears as ONE commit — its merge-commit subject — while the per-sub-commit conventional subjects live only on the merge's second parent (the full DAG), unreachable to a `--first-parent` walk. So a five-commit PR yields one CHANGELOG entry, keyed on the merge-commit subject. (This is the property characterized hermetically in `tests/test-release-please-changelog-fixture.sh`.)
+
+**Rejected alternatives** — each pays a real cost for sub-commit granularity the pipeline does not need (PATH B plans already emit single-purpose commits at the merge-commit-subject level; PATH C plans can be split into multiple PRs when sub-commit granularity matters):
+
+- **`manifest mode`** — release-please does not support a per-PR config that explodes a merge commit into its sub-commits; the workaround would re-author commits post-merge and introduce a new failure mode.
+- **`custom walker`** keyed on PR number — replaces the release-please projection entirely and forfeits the version-bump atomicity that `extra-files` provides.
+- **`richer commit-message walker`** that follows all merge second-parents — not configurable in release-please v4 simple mode; adopting it would mean forking the action.
+
+**Decision:** per-PR granularity is the contract; sub-commit granularity is **out of scope**.
+
+**When the assumption breaks.** If a PATH C plan emits many distinct `feat:` sub-commits within a single PR and each deserves its own CHANGELOG line, the planning-time mitigation is to either split the work into multiple PRs (one CHANGELOG-worthy change per PR) or accept the parent merge-commit subject as the single enumerated entry. Do not reach for the rejected alternatives above without first reopening #492 and swapping the decision text here and the CLAUDE.md line-29 framing.
