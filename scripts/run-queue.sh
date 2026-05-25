@@ -646,7 +646,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
   if [ $((POLL_COUNT % STATUS_INTERVAL)) -eq 0 ]; then
     # Capture status output first, then append — avoids simultaneous read/write
     # on $QUEUE_LOG. Non-fatal: status reporting must never kill the queue runner.
-    _status_out=$(bash "${SCRIPT_DIR}/queue-status.sh" --queue-log "$QUEUE_LOG" 2>&1) || true
+    _status_out=$(PIPELINE_PROJECT_ROOT="$REPO_ROOT" bash "${SCRIPT_DIR}/queue-status.sh" --queue-log "$QUEUE_LOG" 2>&1) || true
     if [ -n "$_status_out" ]; then
       echo "$_status_out" | tee -a "$QUEUE_LOG"
     fi
