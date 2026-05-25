@@ -110,17 +110,31 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    **Hook-enforced.** The `enforce-ci-wait` Stop hook (`hooks/enforce-ci-wait.py`) reads `.claude/logs/tool-use.log` and blocks Stop unless the `gh pr view` → `gh pr checks --watch` → `gh pr view` sequence is recorded; an Approved verdict on a red rollup is also blocked. Prose remains source of truth for HOW; the hook only verifies it happened.
 <!-- END CI_CHECK -->
 
-6. **Visual validation** (if UI changes exist in the diff). Check Playwright MCP via `cat .mcp.json 2>/dev/null`. If available and on Linux: navigate to affected views, screenshot to `<worktree>/.claude/scratch/*.png`, check console for JS errors, verify UI matches the plan. Otherwise note: "Visual validation skipped — Playwright MCP not available."
+6. **Visual validation** (if UI changes exist in the diff). Two tiers: a baseline screenshot/console pass, then a verdict layer for `needs-browser` issues.
 
-   **Attach screenshots to the eval comment.** For each PNG, invoke the attach helper and embed each returned URL in Step 9's `**Screenshots:**` row. The helper commits the PNG to `<worktree>/mock-web-eval/screenshots/`, pushes to the PR branch, and returns a SHA-pinned `github.com/<owner>/<repo>/raw/<sha>/mock-web-eval/screenshots/<name>.png` URL that survives squash-merge.
+   **6a. Baseline — Playwright MCP probe + screenshot plumbing.** Check Playwright MCP via `cat .mcp.json 2>/dev/null`. If available and on Linux: navigate to affected views, screenshot to `<worktree>/.claude/scratch/*.png`, check console for JS errors, verify UI matches the plan. Otherwise note: "Visual validation skipped — Playwright MCP not available."
+
+   **Attach screenshots to the eval comment.** For each PNG, invoke the attach helper, then verify the file actually reached the remote before embedding its link in Step 9's `**Screenshots:**` row. The helper commits the PNG to `<worktree>/.eval-screenshots/`, pushes to the PR branch, and returns a branch-pinned `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/<name>.png` URL. These URLs are **ephemeral**: they resolve during the PR review window and intentionally 404 once the feature branch is deleted post-merge (Option A, tracker #383).
+
+   **Failure-loud verification.** A returned URL is not proof the blob landed on origin — `git push` can fail silently inside the sandbox. Before writing any `![](url)` row, confirm the branch exists on the remote (`git ls-remote --exit-code origin "refs/heads/$BRANCH"`) AND the specific file is present at that branch tip (`gh api repos/$PIPELINE_REPO/contents/.eval-screenshots/$name?ref=$BRANCH`). On failure, emit a `⚠️ screenshot attach failed` row instead of a broken-link image so the human reviewer gets a self-debugging trail.
    ```bash
-   SCREENSHOT_URLS=()
+   SCREENSHOT_LINES=()
+   BRANCH="$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json headRefName --jq .headRefName)"
    for png in .claude/scratch/*.png; do
      [ -f "$png" ] || continue
-     url=$(bash "${CLAUDE_PLUGIN_ROOT}/mock-web-eval/scripts/eval-screenshot-attach.sh" "$PR_NUM" "$(realpath "$png")")
-     [ -n "$url" ] && SCREENSHOT_URLS+=("$url")
+     name="$(basename "$png")"
+     url="$(bash "${CLAUDE_PLUGIN_ROOT}/mock-web-eval/scripts/eval-screenshot-attach.sh" "$PR_NUM" "$(realpath "$png")" 2>/dev/null || true)"
+     if [ -n "$url" ] \
+        && git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1 \
+        && gh api "repos/$PIPELINE_REPO/contents/.eval-screenshots/$name?ref=$BRANCH" --jq .sha >/dev/null 2>&1; then
+       SCREENSHOT_LINES+=("- ![${name%.*}](${url})")
+     else
+       SCREENSHOT_LINES+=("- ⚠️ screenshot attach failed — see .eval-screenshots/${name} in the worktree")
+     fi
    done
    ```
+
+   **6b. Visual proof verdict (needs-browser issues only).** If the issue carries the needs-browser label, invoke `Skill(skill: "pipeline:visual-proof-from-plan")` in this clean-container session and parse its JSON output. For every entry in `unsatisfied`, the verdict MUST be Flagged for user review — record the claim and the failing artifact path/URL in the **Remaining issues** row. This is the load-bearing trust layer; `satisfied` predicates from the executor session do NOT carry over.
 
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
@@ -145,8 +159,10 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out
 
-   **Screenshots:** (one `![](url)` row per entry in `$SCREENSHOT_URLS` from Step 6; `None` if empty)
-   - ![screenshot 1](https://github.com/owner/repo/raw/<sha>/mock-web-eval/screenshots/<filename>.png)
+   **Screenshots:** (one row per entry in `$SCREENSHOT_LINES` from Step 6 — already formatted as either an image row or a `⚠️` failure-loud row; `None` if empty)
+   - ![screenshot 1](https://raw.githubusercontent.com/owner/repo/<branch>/.eval-screenshots/<filename>.png)
+
+   **Visual proof:** satisfied=N/M; unsatisfied=[<claim>...] (or `N/A — needs-browser not applied`)
 
    **Fixes applied:** `<commit hash>` — <description> (or "None")
 
@@ -158,6 +174,8 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 11. **Auto-merge gate.**
 
     **Authoritative owner of the greenlight check.**
+
+    On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the Visual proof row.
 
     **Greenlight matrix — all 4 must hold** (otherwise the PR is left for manual merge with a `block-*` reason):
     1. Latest `## Evaluation` comment contains `**Verdict:** Approved`.
@@ -203,7 +221,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
          CLOSE_SUFFIX=$([ -n "$SHA" ] && echo " (${SHA})" || echo "")
          gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}${CLOSE_SUFFIX}. ${FOOTER}"
          ```
-       - Screenshots: no cleanup needed — Step 6's commit collapses into the squash-merge, so SHA-pinned `raw/<sha>/...` URLs resolve via base-branch history.
+       - Screenshots: no cleanup needed — the `.eval-screenshots/` commit collapses into the squash-merge and the feature branch is deleted by `--delete-branch`. Branch-pinned `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...` URLs in the eval comment will return 404 after merge. This is the explicit accepted tradeoff for Option A (ephemeral review-window artifacts, tracker #383): screenshots are visible during the PR review window and become invalid evidence post-merge by design. Reviewers who need long-lived audit artifacts should screenshot the PR comment before the auto-merge fires.
 
     4. **On any `block-*` reason:** post a single comment explaining why auto-merge was skipped, then return Approved-but-not-merged. Do not flip labels or close the issue.
        ```bash

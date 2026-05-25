@@ -72,6 +72,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline: single failing test → impl → pass → commit. No subagent dispatch, no skill invocations beyond this one.
 
+   On `needs-browser` issues, each `tdd-implementer` dispatch (PATH C) or inline TDD task (PATH B/D) treats the predicates section as the test specification.
+
    `spawn-claude.sh`'s `--append-system-prompt` may inject path-specific skill invocations via `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*`. Step 8 below owns the review flow explicitly, so leave `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` unset; if set, the end-of-session dispatch becomes a harmless redundancy.
 
    In all cases: implement ONLY what the plan specifies (no scope creep); never commit to main; never use `--no-verify` or `--force`. If the plan/issue references a GH Actions CI-blocking marker (bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`), do NOT propagate the literal marker into any `git commit -m`, `gh pr create --title`, or `--body` — substitute a safe form: backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` (no brackets). The `check-ci-skip-markers` PreToolUse hook blocks the literal form.
@@ -87,6 +89,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    $PIPELINE_TEST_CMD
    ```
    **6c. Visual validation with Playwright** (Linux only, UI changes only): use Playwright MCP tools (configured in `.mcp.json`) to navigate to the frontend URL, screenshot affected views, and check `browser_console_messages` for JS errors. Fix and re-validate any visual issues. Backend-only changes do not require this step.
+
+   **6d. Visual proof loop (needs-browser issues only):** If the issue carries the needs-browser label, after each plan section invoke `Skill(skill: "pipeline:visual-proof-from-plan")` passing the plan comment body. Iterate code→proof→code per section until the sub-skill reports `unsatisfied = []`. Commit the section. Proceed to the next section. This is the executor-side TDD loop with browser predicates standing in for unit tests; it does NOT replace 6a/6b which still run.
 
 7. **Self-review checkpoint before opening PR.** Re-read the plan from step 1 and verify every item was implemented; run `git diff --stat` to check no unintended files were modified; grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`); verify no scope creep. Fix any issues found before proceeding.
 
