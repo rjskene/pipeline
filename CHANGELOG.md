@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.17.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.16.0-rc.1...v0.17.0-rc.1) (2026-05-25)
+
+
+### Features
+
+* **evaluate-issue-pr:** auto-apply manual-merge label on block-* skip ([#489](https://github.com/rjskene/pipeline/issues/489)) ([6116835](https://github.com/rjskene/pipeline/commit/6116835bbc494aa92efc68e0e2a3b3d29cbb6f0c))
+* **parse-tracker-children:** add --fallback-mentions scan mode ([4280c83](https://github.com/rjskene/pipeline/commit/4280c8388c68311dd28f2706be3e3ed28adf3534))
+* **run-queue:** add evaluator_finished_terminal predicate ([#489](https://github.com/rjskene/pipeline/issues/489)) ([486fe75](https://github.com/rjskene/pipeline/commit/486fe75fc91cb1787d33ede2209b7d3eabb7f8a8))
+
+
+### Bug Fixes
+
+* **auto-close-trackers:** fall back to body #NNN scan when ## Rollout sequence missing ([4aa28d9](https://github.com/rjskene/pipeline/commit/4aa28d9b28c2660fffb3a72793501220a6db7242))
+* **auto-close-trackers:** trackers without '## Rollout sequence' checklist skipped even when all children closed ([a338f7f](https://github.com/rjskene/pipeline/commit/a338f7fb1acd9d524018a0c0f1f0e0fe391eb865))
+* **queue-status:** recurring 'could not locate consumer repo' error during queue poll ([3ce8d8d](https://github.com/rjskene/pipeline/commit/3ce8d8db76198644b6ebc0f9c9790549088ed8ff))
+* **review:** guard evaluator predicate against gh null PR lookup ([#489](https://github.com/rjskene/pipeline/issues/489)) ([d475265](https://github.com/rjskene/pipeline/commit/d4752654a405e2bfda8f24140d51cd4b45796441))
+* **run-queue:** gate evaluator_finished_terminal label arm on Evaluation comment ([cd46b13](https://github.com/rjskene/pipeline/commit/cd46b13e13d5b8ff55588251da6b29adaa16af8e))
+* **run-queue:** propagate PIPELINE_PROJECT_ROOT to queue-status poll helper ([1ad1dae](https://github.com/rjskene/pipeline/commit/1ad1daed42015f4f53ec0a3fe556755245e3eb66)), closes [#490](https://github.com/rjskene/pipeline/issues/490)
+* **run-queue:** runner hangs after evaluator completes without auto-merge (eval verdict Approved + manual-merge flag) ([dc1308e](https://github.com/rjskene/pipeline/commit/dc1308efa0f2e0b615ade6b2f6dc589b1e10bf29))
+* **run-queue:** treat evaluator verdict + manual-merge as terminal ([#489](https://github.com/rjskene/pipeline/issues/489)) ([41aecea](https://github.com/rjskene/pipeline/commit/41aecea8874ce67f19c0546493e6f6740d465c82))
+
 ## [0.16.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.15.0-rc.1...v0.16.0-rc.1) (2026-05-25)
 
 
