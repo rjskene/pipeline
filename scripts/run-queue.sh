@@ -684,6 +684,27 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       STALL_LATCHED[$issue]=0
     fi
 
+    if evaluator_finished_terminal "$issue"; then
+      # Manual-merge / block-* branch (issue #489): the evaluator has finished
+      # posting its verdict but the spawned claude child is still alive, so the
+      # tmux window never closed on its own. Kill the window so the existing
+      # finish-branch invariants hold (window absent => slot free), record the
+      # specific outcome, free the bucket slot, and fill the gap. Checked BEFORE
+      # is_agent_running so this more-specific signal wins when both are true on
+      # the same poll.
+      tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
+      outcome="approved-manual-merge"
+      RESULTS[$issue]="$outcome"
+      _finished_mode="${ISSUE_MODE[$issue]:-bare}"
+      BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
+      unset 'ACTIVE['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
+      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (evaluator terminal, window force-closed)"
+      log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+      fill_slots
+      continue
+    fi
+
     if ! is_agent_running "$issue"; then
       # Agent finished — check outcome
       outcome=$(check_issue_outcome "$issue")
