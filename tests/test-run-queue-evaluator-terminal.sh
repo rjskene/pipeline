@@ -300,22 +300,26 @@ PROJ_C="$CASE_C/proj"
 setup_proj "$PROJ_C"
 STUB_C=$(make_common_stubs "$PROJ_C" "$CASE_C")
 # gh stub: 911 carries `pr-open` only (no manual-merge); the linked-PR lookup
-# returns empty (executor crashed before opening a PR). Both predicate arms must
-# fail closed, so 911 stays alive. A short timeout bounds the runtime: several
-# polls confirm no false-positive kill; the deterministic empty PR lookup means
-# more polls add nothing.
-cat > "$STUB_C/gh" <<'EOF'
+# returns the literal string `null` — exactly what `gh pr list --json number
+# --jq '.[0].number'` prints for an empty result set (NOT an empty string).
+# Both predicate arms must fail closed, so 911 stays alive. The `pr view` branch
+# touches a marker so we can assert the predicate bails at the no-PR lookup
+# guard WITHOUT issuing a malformed `gh pr view null` call. A short timeout
+# bounds the runtime: several polls confirm no false-positive kill; the
+# deterministic lookup means more polls add nothing.
+cat > "$STUB_C/gh" <<EOF
 #!/bin/bash
-ARGS="$*"
-case "$1 $2" in
+PR_VIEW_MARKER="$CASE_C/pr-view-called"
+ARGS="\$*"
+case "\$1 \$2" in
   "issue view")
-    issue="$3"
-    if [[ "$ARGS" == *labels* ]]; then
-      if [ "$issue" = "911" ]; then echo "pr-open"; else echo ""; fi
+    issue="\$3"
+    if [[ "\$ARGS" == *labels* ]]; then
+      if [ "\$issue" = "911" ]; then echo "pr-open"; else echo ""; fi
     fi
     ;;
-  "pr list") echo "" ;;
-  "pr view") echo "" ;;
+  "pr list") echo "null" ;;
+  "pr view") : > "\$PR_VIEW_MARKER"; echo "" ;;
   *) echo "" ;;
 esac
 EOF
@@ -334,6 +338,12 @@ if [ ! -f "$CASE_C/killed-911" ]; then
   pass_msg "C2: runner did NOT kill 911's window when no PR exists"
 else
   fail_msg "C2: runner force-closed 911 despite no linked PR (false positive)"
+fi
+inc
+if [ ! -f "$CASE_C/pr-view-called" ]; then
+  pass_msg "C3: predicate bails at the null PR-lookup guard (no gh pr view null call)"
+else
+  fail_msg "C3: predicate issued a malformed 'gh pr view null' instead of bailing on the null lookup"
 fi
 
 echo ""

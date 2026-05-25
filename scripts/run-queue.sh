@@ -544,10 +544,12 @@ evaluator_finished_terminal() {
     return 0
   fi
   # Arm (b): PR-comment fallback. Resolve issue->PR; bail if no PR yet
-  # (executor crashed pre-PR — must NOT kill the worker).
+  # (executor crashed pre-PR — must NOT kill the worker). `gh ... --jq
+  # '.[0].number'` prints the literal string `null` for an empty result set
+  # (not an empty string), so guard against both before querying the PR.
   local pr
   pr=$(resolve_issue_pr "$issue")
-  [ -n "$pr" ] || return 1
+  [ -n "$pr" ] && [ "$pr" != "null" ] || return 1
   local last_pr_comment eval_body
   last_pr_comment=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
     --json comments --jq '.comments[-1].body' 2>/dev/null) || return 1
