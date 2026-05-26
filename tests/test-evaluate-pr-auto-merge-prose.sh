@@ -38,6 +38,34 @@ want "argv-position parser spec"      '--manual-merge.*may appear anywhere in ar
 
 want "front-matter usage with flag"   '\[--manual-merge\]'
 
+# --- Step 11.3 post-merge screenshot URL rewrite ordering (issue #506) ---
+# The rewrite helper must fire AFTER `gh pr merge` and AFTER the mergeCommit.oid
+# SHA capture (the SHA it pins to), but BEFORE the footer-append comment (so the
+# rewriter targets the screenshot comment, not the freshly-posted footer).
+first_line() { grep -nE -- "$1" "$SKILL" | head -1 | cut -d: -f1; }
+
+want "Step 11.3 invokes rewrite-eval-screenshot-urls.sh" 'rewrite-eval-screenshot-urls\.sh'
+want "Step 11.3 gates rewrite on PIPELINE_SCREENSHOT_REWRITE_ENABLED" 'PIPELINE_SCREENSHOT_REWRITE_ENABLED'
+
+MERGE_LINE=$(first_line 'gh pr merge .*--merge --delete-branch')
+SHA_LINE=$(first_line 'gh pr view .* --json mergeCommit --jq .mergeCommit.oid')
+REWRITE_LINE=$(first_line 'rewrite-eval-screenshot-urls\.sh')
+FOOTER_LINE=$(first_line 'Auto-merged: eval Approved')
+
+ordering_ok=1
+for v in "$MERGE_LINE" "$SHA_LINE" "$REWRITE_LINE" "$FOOTER_LINE"; do
+  [ -n "$v" ] || ordering_ok=0
+done
+if [ "$ordering_ok" -eq 1 ] \
+   && [ "$MERGE_LINE" -lt "$SHA_LINE" ] \
+   && [ "$SHA_LINE" -lt "$REWRITE_LINE" ] \
+   && [ "$REWRITE_LINE" -lt "$FOOTER_LINE" ]; then
+  echo "  PASS: rewrite ordering merge($MERGE_LINE) < sha($SHA_LINE) < rewrite($REWRITE_LINE) < footer($FOOTER_LINE)"
+else
+  echo "  FAIL: rewrite ordering merge=$MERGE_LINE sha=$SHA_LINE rewrite=$REWRITE_LINE footer=$FOOTER_LINE"
+  FAILED=$((FAILED+1))
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1
