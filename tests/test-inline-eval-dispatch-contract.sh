@@ -190,6 +190,56 @@ else
   cat "$SPAWN_LOG" | sed 's/^/    /'
 fi
 
+# ---- Test: multi-issue inline slate dispatches ALL issues in a single mode ----
+# Regression guard for the must-fix raised by code review on #517: launch_agent
+# bumped BUCKET_ACTIVE[$mode] on the inline dispatch path, but there is no
+# decrementer for inline issues in the poll loop (decrement only happens for
+# spawn-claude-tracked agents via ACTIVE[$issue]). With BUCKET_MAX defaulting to
+# 1, only the first inline issue per mode ever got dispatched; subsequent
+# issues stayed parked in BUCKET_QUEUE forever. Inline dispatches are
+# instantaneous EVENT-line emissions with no async subprocess to gate on, so
+# they should NOT count against the bucket cap.
+echo "Test: multi-issue inline slate dispatches BOTH issues (no BUCKET_ACTIVE block)"
+inc
+: > "$SPAWN_LOG"
+mkdir -p /tmp/wt-510-a /tmp/wt-512-c
+OUT=$(cd "$PROJ" && \
+  PATH="$STUB_DIR:$PATH" \
+  TMUX="fake" \
+  SPAWN_LOG="$SPAWN_LOG" \
+  PIPELINE_QUEUE_DRY_RUN=1 \
+  PIPELINE_LOGS_ENABLED=false \
+  STUB_WORKTREES="510:a 512:c" \
+  CLASSIFIER_WEB_ISSUES="510 512" \
+  STUB_PR_FOR_510="9001" \
+  STUB_PR_FOR_512="9002" \
+  CLAUDE_PLUGIN_ROOT="$PROJ/plugin-root" \
+  bash plugin-root/scripts/run-queue.sh 510 512 2>&1)
+
+DISPATCH_COUNT=$(echo "$OUT" | grep -c '^EVENT: dispatch-inline')
+if [ "$DISPATCH_COUNT" -eq 2 ]; then
+  pass_msg "both inline issues dispatched (EVENT count=2)"
+elif [ "$DISPATCH_COUNT" -eq 1 ]; then
+  fail_msg "only 1 inline EVENT line — BUCKET_ACTIVE blocked 2nd dispatch"
+  echo "$OUT" | sed 's/^/    /'
+else
+  fail_msg "unexpected EVENT: dispatch-inline count=$DISPATCH_COUNT"
+  echo "$OUT" | sed 's/^/    /'
+fi
+
+# Both inline issues must appear in the EVENT lines.
+inc
+echo "Test: both inline issue numbers present in EVENT lines"
+if echo "$OUT" | grep -q '^EVENT: dispatch-inline.* issue=510' && \
+   echo "$OUT" | grep -q '^EVENT: dispatch-inline.* issue=512'; then
+  pass_msg "EVENT lines cover issue=510 AND issue=512"
+else
+  fail_msg "EVENT lines missing one or both issues"
+  echo "$OUT" | grep '^EVENT:' | sed 's/^/    /'
+fi
+
+rm -rf /tmp/wt-512-c 2>/dev/null || true
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"

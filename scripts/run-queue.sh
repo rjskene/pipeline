@@ -530,7 +530,18 @@ launch_agent() {
       RESULTS[$issue]="dispatched-inline"
     fi
     log "EVENT: dispatch-inline issue=${issue} port=${PORT} target_dir=${TARGET_DIR} worktree=${wt_path} pr=${pr}${notes_field}"
-    BUCKET_ACTIVE[$mode]=$(( ${BUCKET_ACTIVE[$mode]:-0} + 1 ))
+    # NOTE: do NOT bump BUCKET_ACTIVE[$mode] here. Inline dispatches are
+    # instantaneous EVENT-line emissions — there is no async claude
+    # subprocess for the poll loop to gate on, and no decrementer for
+    # inline issues exists (decrement runs only for spawn-claude-tracked
+    # agents via ACTIVE[$issue] at the agent-finished/manual-merge sites
+    # below). The BUCKET_ACTIVE counter exists to throttle concurrent
+    # spawn-claude.sh subprocesses; counting inline issues against the
+    # cap would freeze the slate after the first dispatch (BUCKET_MAX
+    # defaults to 1) and defeat the slate_width mechanism the visual-
+    # proof-port-broker uses for collision-free concurrent ports. The
+    # orchestrator's in-process Agent dispatcher owns its own concurrency
+    # limit downstream of the EVENT.
     return 0
   fi
 
