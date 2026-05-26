@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.18.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.17.0-rc.1...v0.18.0-rc.1) (2026-05-26)
+
+
+### Features
+
+* **config:** add PIPELINE_EVAL_ISOLATION + visual-proof vars ([008ee62](https://github.com/rjskene/pipeline/commit/008ee62c37742e2449ca06d9884d39dc79474711))
+* **evaluate-issue-pr:** add post-merge screenshot URL rewrite helper ([56eaa66](https://github.com/rjskene/pipeline/commit/56eaa66fc4d4de9a74797c5e0fe2bd5046663b48))
+* **evaluator-dispatch:** default browser-eval evaluator to inline Agent dispatch; container path retained behind PIPELINE_EVAL_ISOLATION opt-in ([0c7a27c](https://github.com/rjskene/pipeline/commit/0c7a27c29a95091288d6b80b5a36e60dbddda503))
+* **mock-web-eval:** add counter Reset button wired to zero the counter ([62bb856](https://github.com/rjskene/pipeline/commit/62bb856a97cecc5208c910a28f0bd2a0e5315ae7))
+* **run-queue:** emit dispatch-inline event with slate-index port broker + migration warning ([36e6799](https://github.com/rjskene/pipeline/commit/36e6799bb9001ca04e02b5a0dd29038df2710461))
+* **scripts:** add visual-proof-port-broker.sh ([41da058](https://github.com/rjskene/pipeline/commit/41da058e968b2876e47460492f06416e7b00a8d2))
+* **scripts:** add visual-proof-server reaper ([2cd36a2](https://github.com/rjskene/pipeline/commit/2cd36a22d91fe7f539aa008bab6b3074f8888291))
+* **spawn-claude:** isolation-gated inline browser-eval dispatch + Playwright-MCP probe ([0a3d71d](https://github.com/rjskene/pipeline/commit/0a3d71d388372dcb4f4fbe03f5ebbbd293bd7617))
+
+
+### Bug Fixes
+
+* **derive-pr-title:** non-canonical conventional-commit types double-prefix to chore(general): instead of normalizing the type and preserving the scope ([c2cdcd7](https://github.com/rjskene/pipeline/commit/c2cdcd7da4ba8a61c41bedd46972e2bd9d670f4d))
+* **derive-pr-title:** normalize non-canonical conventional-commit types ([#507](https://github.com/rjskene/pipeline/issues/507)) ([f2288ff](https://github.com/rjskene/pipeline/commit/f2288ff058751c78ac9143f5570249439dfeed78))
+* **evaluate-issue-pr:** autonomous greenlight auto-merge collapses Option A screenshot review window — eval-comment URLs 404 before any human sees them ([c36c381](https://github.com/rjskene/pipeline/commit/c36c381b44eae720eafa11e317458eabe3424797))
+* **evaluate-issue-pr:** rewrite screenshot URLs to merge-SHA post auto-merge ([45ff742](https://github.com/rjskene/pipeline/commit/45ff742eed7fc470e6641636df8530f24e8e213d))
+* **mock-web-eval:** regression of [#241](https://github.com/rjskene/pipeline/issues/241) — /pipeline:* slash commands again not discoverable inside container ([fd30837](https://github.com/rjskene/pipeline/commit/fd30837f6b39b9e74fe812c40b1709c90540817f))
+* **mock-web-eval:** restore /pipeline:* discoverability inside container ([#505](https://github.com/rjskene/pipeline/issues/505)) ([ed7e6d3](https://github.com/rjskene/pipeline/commit/ed7e6d3927a1ac7646b5e965199e88ce5b8d2544))
+* **review:** cross-reference [#505](https://github.com/rjskene/pipeline/issues/505) in the [#241](https://github.com/rjskene/pipeline/issues/241) root-cause comment block ([#505](https://github.com/rjskene/pipeline/issues/505)) ([32e447a](https://github.com/rjskene/pipeline/commit/32e447a76751d664dca2d688b9d08681e709b0c4))
+* **review:** set exec bit on test-rewrite-eval-screenshot-urls.sh for consistency ([a8a8929](https://github.com/rjskene/pipeline/commit/a8a8929dd26dd874b414a92ef4f044635e3adde8))
+* **run-queue:** classify_issue uses gh 'linked:&lt;N&gt;' qualifier which returns unrelated PRs, blocking execute dispatch with container-mode rejection ([2ddd2c6](https://github.com/rjskene/pipeline/commit/2ddd2c61f709010809d26490f7aa48c1a0179d25))
+* **run-queue:** do not bump BUCKET_ACTIVE on inline dispatch (allow multi-issue slates) ([6a7170b](https://github.com/rjskene/pipeline/commit/6a7170b08e6d787b845d2c8810a668913730d082))
+* **spawn-claude:** empty-MCP file at /tmp/ collides with container mode — host path unreachable inside container, evaluator exits in &lt;1s ([4137c32](https://github.com/rjskene/pipeline/commit/4137c32ffaf5365dca9d2a51cac620406d448506))
+* **spawn-claude:** exit 0 early on inline branch instead of falling through ([01f8424](https://github.com/rjskene/pipeline/commit/01f84246ee882d0a74ad7ff827ed7855cfc3175c))
+* **spawn-claude:** skip empty-MCP branch under container mode ([#516](https://github.com/rjskene/pipeline/issues/516)) ([ad6c9ce](https://github.com/rjskene/pipeline/commit/ad6c9ce228edd31f135d214361b37547b3415f76))
+
 ## [0.17.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.16.0-rc.1...v0.17.0-rc.1) (2026-05-25)
 
 
