@@ -177,7 +177,7 @@ fi
 # it under `set -u` regardless of which branch is taken.
 EMPTY_MCP_FILE=""
 MCP_EXTRA_ARGV=()
-if [ "${HAS_NEEDS_BROWSER:-0}" = "0" ]; then
+if [ "${HAS_NEEDS_BROWSER:-0}" = "0" ] && [ -z "${CONTAINER_MODE:-}" ]; then
   EMPTY_MCP_FILE=$(mktemp /tmp/claude-mcp-empty-XXXXXX.json)
   printf '%s\n' '{"mcpServers": {}}' > "$EMPTY_MCP_FILE"
   MCP_EXTRA_ARGV=(--mcp-config "$EMPTY_MCP_FILE" --strict-mcp-config)
