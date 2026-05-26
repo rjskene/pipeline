@@ -350,6 +350,29 @@ if [ -n "$CONTAINER_MODE" ] && [ "${PIPELINE_EVAL_ISOLATION:-}" != "container" ]
   INLINE_BROWSER_EVAL=1
   export INLINE_BROWSER_EVAL
   echo "[spawn-claude] inline browser-eval dispatch for issue #$ISSUE_NUM (CONTAINER_MODE=$CONTAINER_MODE, PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-})" >&2
+  # --- Inline-branch fail-fast exit (issue #517 must-fix 1) ---
+  # The inline browser-eval path is owned by run-queue.sh: it emits the
+  # `EVENT: dispatch-inline` line and the in-process Agent dispatcher picks
+  # up the slate. spawn-claude.sh has nothing to do on this branch — we
+  # must NOT fall through to DOCKER_PREFIX assembly, BUILD_ARGV, or a bare-
+  # host claude launch (the latter would silently regress the contract for
+  # any direct operator invocation that has ISOLATION unset and lands here).
+  # Emit the dry-run dump when requested (so Test (b) and any future
+  # observability still sees the resolved state), then exit 0.
+  if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
+    echo "PATH_LETTER=$PATH_LETTER"
+    echo "GENERATED_SESSION_ID=$GENERATED_SESSION_ID"
+    echo "RUNS_LOG=$RUNS_LOG"
+    echo "RUNS_LOG_LINE=$(tail -1 "$RUNS_LOG")"
+    echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
+    echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
+    echo "CONTAINER_MODE=$CONTAINER_MODE"
+    echo "INLINE_BROWSER_EVAL=$INLINE_BROWSER_EVAL"
+    echo "PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-}"
+    # NOTE: no DOCKER_PREFIX line — inline branch never assembled one.
+    # NOTE: no BUILD_ARGV banner — inline branch never assembled argv.
+  fi
+  exit 0
 fi
 
 # --- Container-mode dispatch (issue #218) ---

@@ -169,6 +169,61 @@ else
   pass_msg "exit 6 with loud refusal naming Playwright MCP + remediation"
 fi
 
+# ---- Test (d): non-dry-run inline branch exits 0 without launching claude ----
+# Regression guard: spawn-claude.sh must short-circuit (exit 0) on the inline
+# branch BEFORE building BUILD_ARGV / launching claude — even when
+# PIPELINE_SPAWN_DRY_RUN is unset. Without this, a direct operator invocation
+# `bash spawn-claude.sh --container-mode=mock-web-eval` (ISOLATION unset) would
+# fall through to a bare-host claude session with INLINE_BROWSER_EVAL=1, which
+# is NOT the intended fail-fast behavior.
+#
+# We stub claude to fail loudly (point PATH at a directory that has no claude)
+# and assert the script still exits 0 within a 2s timeout. We also assert no
+# BUILD_ARGV banner appears in stdout/stderr (the script never reached the
+# argv-assembly block).
+echo "Test (d): ISOLATION unset + container-mode + dry-run OFF -> exit 0 without launching claude"
+inc
+# Strip claude from PATH and apply a hard wallclock cap; if the script tries
+# to launch claude (or wait on tmux), the timeout will fire (RC=124) and we
+# detect the regression. Use absolute path to timeout(1) because the inner
+# PATH has been narrowed to STUB_DIR (no coreutils).
+TIMEOUT_BIN="$(command -v timeout || true)"
+if [ -z "$TIMEOUT_BIN" ]; then
+  fail_msg "timeout(1) not available; cannot bound spawn-claude under non-dry-run"
+else
+  # Build a claude-less PATH: keep /usr/bin + /bin (for bash, jq, grep, etc.),
+  # add STUB_DIR (for gh stub), but ensure no `claude` is reachable. The fail-
+  # fast contract is: if spawn-claude reached the launcher it would invoke
+  # `claude` via PATH lookup; with claude absent the timeout(1) cap would fire.
+  CLAUDELESS_PATH="$STUB_DIR:/usr/bin:/bin"
+  if command -v claude >/dev/null 2>&1; then
+    : # If a global claude exists outside /usr/bin and /bin, the test still
+      # works because the timeout firing would catch a regression.
+  fi
+  OUT=$(cd "$PROJ" && \
+    PATH="$CLAUDELESS_PATH" \
+    STUB_LABELS="" \
+    PIPELINE_LOGS_ENABLED=true \
+    PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+    CLAUDE_PLUGIN_ROOT="$PROJ/.claude" \
+    "$TIMEOUT_BIN" 2 bash .claude/scripts/spawn-claude.sh \
+      --skill evaluate-issue-pr --container-mode=mock-web-eval \
+      "$PROJ/worktree" 303 slug tmux 2>&1 ; echo "RC=$?") || true
+  RC=$(echo "$OUT" | grep -E '^RC=' | tail -1 | sed 's/RC=//')
+  if [ "$RC" = "124" ]; then
+    fail_msg "spawn-claude timed out (likely fell through and tried to launch claude)"
+    echo "$OUT" | tail -25 | sed 's/^/    /'
+  elif [ "$RC" != "0" ]; then
+    fail_msg "expected RC=0 on inline non-dry-run path, got RC=$RC"
+    echo "$OUT" | tail -25 | sed 's/^/    /'
+  elif echo "$OUT" | grep -q 'BUILD_ARGV'; then
+    fail_msg "BUILD_ARGV banner appeared — script did not short-circuit on inline branch"
+    echo "$OUT" | tail -25 | sed 's/^/    /'
+  else
+    pass_msg "inline non-dry-run path: exit 0, no BUILD_ARGV, no claude launch attempt"
+  fi
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
