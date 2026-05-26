@@ -129,5 +129,33 @@ assert_stdout \
   "chore(general): random title with no prefix" \
   999 --title-override 'random title with no prefix' --labels-override 'priority/P2'
 
+# Task 8 (#507): non-canonical conventional-commit types normalize the type
+# while preserving the author's scope, instead of double-prefixing to
+# chore(general): <verbatim>.
+assert_stdout \
+  "non-canonical type with scope, no label -> chore(<scope>)" \
+  "chore(visual-proof): exercise visual-proof end-to-end" \
+  999 --title-override 'dogfood(visual-proof): exercise visual-proof end-to-end' --labels-override ''
+
+assert_stdout \
+  "non-canonical type with scope + enhancement label -> feat(<scope>)" \
+  "feat(visual-proof): X" \
+  999 --title-override 'dogfood(visual-proof): X' --labels-override 'enhancement'
+
+assert_stdout \
+  "non-canonical type with scope + bug label -> fix(<scope>)" \
+  "fix(visual-proof): X" \
+  999 --title-override 'dogfood(visual-proof): X' --labels-override 'bug'
+
+assert_stdout \
+  "idempotent double-prefix strip: chore(general): dogfood(visual-proof): X -> chore(visual-proof): X" \
+  "chore(visual-proof): X" \
+  999 --title-override 'chore(general): dogfood(visual-proof): X' --labels-override ''
+
+assert_stdout \
+  "non-canonical type with no scope (no parentheses) -> existing default fallback chore(general)" \
+  "chore(general): X" \
+  999 --title-override 'dogfood: X' --labels-override ''
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
