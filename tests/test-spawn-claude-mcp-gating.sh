@@ -49,6 +49,18 @@ PIPELINE_PATH_B_REVIEWER_EXECUTE=""
 PIPELINE_PATH_C_REVIEWER_EXECUTE=""
 EOF
 
+# Container-mode fixture vars (for Test E). Appended via an unquoted heredoc so
+# $WORKDIR expands; the resolver at spawn-claude.sh:466-528 only checks that
+# COMPOSE_FILE / SERVICE are non-empty under PIPELINE_SPAWN_DRY_RUN=1 — no
+# docker invocation occurs, but a stub compose path must exist on disk so any
+# future presence-check stays satisfied.
+touch "$WORKDIR/fake-compose.yml"
+cat >> "$PROJ/pipeline.config" <<EOF
+PIPELINE_EVAL_CONTAINERS="mock-web-eval"
+PIPELINE_EVAL_CONTAINER_MOCK_WEB_EVAL_COMPOSE_FILE="$WORKDIR/fake-compose.yml"
+PIPELINE_EVAL_CONTAINER_MOCK_WEB_EVAL_SERVICE="fake-service"
+EOF
+
 mkdir -p "$PROJ/worktree"
 
 # Stub gh: returns labels from STUB_LABELS (newline-separated), or exits 1 if
@@ -79,6 +91,29 @@ run_dryrun() {
     PIPELINE_LOGS_ENABLED=true \
     PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
     bash .claude/scripts/spawn-claude.sh "$PROJ/worktree" "$issue" slug tmux 2>/dev/null
+  cd - >/dev/null
+}
+
+# Container-mode variant (Test E). Threads --container-mode through and forces
+# PIPELINE_EVAL_ISOLATION=container so the inline-browser-eval short-circuit at
+# spawn-claude.sh:336 does NOT fire — we want the full container build-argv
+# path to execute under dry-run. --skill=evaluate-issue-pr satisfies the
+# default PIPELINE_CONTAINER_SKILLS allowlist without needing a needs-browser
+# permit (which would defeat the test by setting HAS_NEEDS_BROWSER=1).
+run_dryrun_container() {
+  local labels="$1" issue="$2" container_mode="$3"
+  cd "$PROJ"
+  PATH="$STUB_DIR:$PATH" \
+    STUB_LABELS="$labels" \
+    STUB_GH_FAIL="${STUB_GH_FAIL:-0}" \
+    PIPELINE_SPAWN_DRY_RUN=1 \
+    PIPELINE_LOGS_ENABLED=true \
+    PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+    PIPELINE_EVAL_ISOLATION=container \
+    bash .claude/scripts/spawn-claude.sh \
+      --skill evaluate-issue-pr \
+      "--container-mode=$container_mode" \
+      "$PROJ/worktree" "$issue" slug tmux 2>/dev/null
   cd - >/dev/null
 }
 
@@ -199,6 +234,39 @@ if ! echo "$BLOCK" | grep -qF -- '--mcp-config'; then
 else
   fail_msg "D: --mcp-config unexpectedly present despite needs-browser"
   echo "$BLOCK" | sed 's/^/    /'
+fi
+
+# -------------------------------------------------------------------------
+# Test E: CONTAINER_MODE set + no needs-browser -> empty-MCP branch SKIPPED.
+# Regression guard for #516: the host-side empty-MCP tempfile at /tmp/... is
+# unreachable inside the container, so the gate must skip the branch when
+# CONTAINER_MODE is set (container is the authority on MCP visibility).
+# -------------------------------------------------------------------------
+echo "Test E: CONTAINER_MODE + no needs-browser -> empty-MCP branch skipped"
+OUT=$(run_dryrun_container "" 904 mock-web-eval)
+BLOCK=$(build_block "$OUT")
+
+inc
+if echo "$OUT" | grep -qE '^EMPTY_MCP_FILE=$'; then
+  pass_msg "E: EMPTY_MCP_FILE empty under container mode"
+else
+  fail_msg "E: EMPTY_MCP_FILE expected empty under container mode"
+  echo "$OUT" | grep -E '^EMPTY_MCP_FILE=' | sed 's/^/    /' || true
+fi
+
+inc
+if ! echo "$BLOCK" | grep -qE 'CLAUDE_ARGV\+=\(--mcp-config\)'; then
+  pass_msg "E: --mcp-config token absent under container mode"
+else
+  fail_msg "E: --mcp-config unexpectedly present under container mode"
+  echo "$BLOCK" | sed 's/^/    /'
+fi
+
+inc
+if ! echo "$BLOCK" | grep -qE 'CLAUDE_ARGV\+=\(--strict-mcp-config\)'; then
+  pass_msg "E: --strict-mcp-config token absent under container mode"
+else
+  fail_msg "E: --strict-mcp-config unexpectedly present under container mode"
 fi
 
 echo ""

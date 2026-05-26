@@ -105,6 +105,14 @@ if [[ "$TITLE" =~ ^epic\( ]]; then
   refuse_tracker
 fi
 
+# Pathological double-prefix unwrap: chore(general): dogfood(visual-proof): X
+# Strip the outer canonical prefix and let normalization re-run on the inner.
+# See issue #507.
+DOUBLE_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)\([a-z0-9_-]+\)!?:[[:space:]]+([a-z][a-z0-9_-]*\([a-z0-9_-]+\):[[:space:]]+.+)$'
+if [[ "$TITLE" =~ $DOUBLE_RE ]]; then
+  TITLE="${BASH_REMATCH[2]}"
+fi
+
 # Conventional-commits passthrough — keep this regex in sync with
 # .github/workflows/pr-title-check.yml and skills/run/SKILL.md merge gate.
 CC_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)(\([a-z0-9_-]+\))?!?: .+'
@@ -124,6 +132,23 @@ if [[ "$TITLE" =~ ^bug\(([^\)]+)\):[[:space:]]+(.+)$ ]]; then
   scope=$(normalize_scope "${BASH_REMATCH[1]}")
   rest="${BASH_REMATCH[2]}"
   emit_title "$(printf 'fix(%s): %s' "$scope" "$rest")"
+  exit 0
+fi
+
+# Non-canonical conventional-commit shape: <word>(<scope>): <rest>
+# Normalize the type → canonical (chore by default, feat for enhancement,
+# fix for bug); preserve the scope. See issue #507.
+NONCANON_RE='^[a-z][a-z0-9_-]*\(([a-z0-9_-]+)\):[[:space:]]+(.+)$'
+if [[ "$TITLE" =~ $NONCANON_RE ]]; then
+  nc_scope=$(normalize_scope "${BASH_REMATCH[1]}")
+  nc_rest="${BASH_REMATCH[2]}"
+  if has_label "enhancement"; then
+    emit_title "$(printf 'feat(%s): %s' "$nc_scope" "$nc_rest")"
+  elif has_label "bug"; then
+    emit_title "$(printf 'fix(%s): %s' "$nc_scope" "$nc_rest")"
+  else
+    emit_title "$(printf 'chore(%s): %s' "$nc_scope" "$nc_rest")"
+  fi
   exit 0
 fi
 

@@ -160,6 +160,46 @@ if [ -z "${TMUX:-}" ]; then
   exit 1
 fi
 
+# Resolve an issue number to its linked PR number, or empty if none exists.
+# Exact-scope lookup (issue #518): the prior `linked:<N>` search qualifier was
+# NOT exact-scope and returned unrelated PRs that merely mentioned the issue,
+# which propagated the wrong PR diff into the pre-spawn classifier (causing
+# spurious container-mode dispatch — see issue body). The replacement queries
+# candidate PRs with `<N> in:title,body type:pr is:open`, then filters in
+# Python to the first PR whose body matches the closing-keyword regex
+# `(Close[sd]?|Fix(es|ed)?|Resolve[sd]?) #<N>(?!\d)` (case-insensitive,
+# word-boundary anchored — so `#5170` does not match `#517`). Fails closed
+# (empty string) on any gh error, malformed payload, or zero match — callers
+# already treat empty as "no PR yet", which is the correct semantics when
+# the only PR found is unrelated noise. Shared between classify_issue and
+# evaluator_finished_terminal so the fix lands once for both call sites.
+# Defined BEFORE classify_issue so the single-issue short-circuit (which
+# exits before later function definitions execute) sees it at call time.
+resolve_issue_pr() {
+  local issue="$1"
+  local payload
+  payload=$(gh pr list --repo "$PIPELINE_REPO" \
+    --search "${issue} in:title,body type:pr is:open" \
+    --json number,body 2>/dev/null) || return 0
+  [ -n "$payload" ] || return 0
+  printf '%s' "$payload" | ISSUE="$issue" python3 -c '
+import json, os, re, sys
+issue = os.environ["ISSUE"]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+pat = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(Close[sd]?|Fix(?:es|ed)?|Resolve[sd]?) #" +
+    re.escape(issue) + r"(?!\d)"
+)
+for pr in data:
+    if pat.search(pr.get("body") or ""):
+        print(pr.get("number", ""))
+        sys.exit(0)
+' 2>/dev/null || return 0
+}
+
 # --- Pre-spawn classifier (issue #218) ---
 #
 # classify_issue <issue> resolves the issue's current PR number (or empty
@@ -184,10 +224,12 @@ classify_issue() {
     return
   fi
   local pr=""
-  # `linked:<issue>` is the proven qualifier in this repo for issue->PR lookup
-  # (mirrors scripts/check-ci-fix-loop.sh). `head:<prefix>` does NOT work
-  # because GitHub search requires an exact branch ref.
-  pr=$(gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" --json number --jq '.[0].number' 2>/dev/null || echo "")
+  # Issue->PR lookup: delegate to resolve_issue_pr() so both call sites (this
+  # function and evaluator_finished_terminal) share one exact-scope helper.
+  # The previous inline `linked:<N>` qualifier was NOT exact-scope on GitHub
+  # search and could return unrelated PRs that merely mention the issue,
+  # causing the classifier to score the wrong diff (issue #518).
+  pr=$(resolve_issue_pr "$issue")
   local _classifier_invoke="${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh"
   local out err rc
   # Fail-OPEN: when the plugin-shipped helper is missing (e.g. a partial
@@ -325,6 +367,11 @@ declare -A BUCKET_MAX=()     # mode -> max concurrent for this bucket
 declare -A BUCKET_ACTIVE=()  # mode -> currently-active count
 declare -A ISSUE_MODE=()     # issue -> mode (or 'bare')
 declare -A ISSUE_EXTRAS=()   # issue -> space-separated passthrough tokens
+# Inline browser-eval dispatch (issue #517). One-shot migration warning when
+# PIPELINE_VISUAL_PROOF_TARGET_DIR is unset at the moment of inline dispatch;
+# WARNED_TARGET_DIR[$mode]=1 latches the first emission per slate (mode bucket)
+# so subsequent inline dispatches in the same slate stay silent.
+declare -A WARNED_TARGET_DIR=()
 
 # Route a single issue into the correct bucket. Returns 0 on success, 1 if
 # the classifier rejected the issue (in which case a SKIPPED log line is
@@ -477,6 +524,69 @@ launch_agent() {
 
   log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug}, mode=${mode})..."
   log "EVENT: agent-launched issue=${issue} mode=${mode} slug=${slug} worktree=${wt_path}"
+
+  # --- Inline browser-eval dispatch (issue #517) ---
+  # When the classifier matched a browser-eval surface (mode != bare) AND the
+  # operator has not pinned the legacy container path via
+  # PIPELINE_EVAL_ISOLATION=container, short-circuit the spawn-claude.sh
+  # invocation: emit the dispatch-inline EVENT line (with the broker-allocated
+  # port and resolved target dir / PR), and let the in-process Agent path in
+  # the orchestrator pick the slate up. The orchestrator owns the actual
+  # Agent() call site; this function only emits the contract event.
+  if [ "$mode" != "bare" ] && [ "${PIPELINE_EVAL_ISOLATION:-}" != "container" ]; then
+    # Compute slate_index by scanning the issue's position within
+    # BUCKET_QUEUE[$mode] (populated by route_issue). No new global map.
+    local _bq
+    # shellcheck disable=SC2206
+    _bq=( ${BUCKET_QUEUE[$mode]} )
+    local slate_index=0
+    local i
+    for i in "${!_bq[@]}"; do
+      if [ "${_bq[$i]}" = "$issue" ]; then
+        slate_index=$i
+        break
+      fi
+    done
+    local slate_width=${#_bq[@]}
+    local PORT
+    PORT=$(bash "${SCRIPT_DIR}/visual-proof-port-broker.sh" "$slate_index" "$slate_width" | sed -n "s/^PORT=//p")
+    local TARGET_DIR=""
+    if [ -n "${PIPELINE_VISUAL_PROOF_TARGET_DIR:-}" ]; then
+      TARGET_DIR="$wt_path/${PIPELINE_VISUAL_PROOF_TARGET_DIR}"
+    fi
+    local pr
+    pr=$(resolve_issue_pr "$issue")
+    local notes_field=""
+    if [ -z "$TARGET_DIR" ]; then
+      # Migration warning: one-shot per slate bucket. First inline-dispatch in
+      # this mode that hits the unset case emits the stderr warning + appends
+      # `notes=no-target-dir` to the EVENT line; subsequent inline dispatches
+      # in the same slate stay silent but still annotate the EVENT line.
+      if [ -z "${WARNED_TARGET_DIR[$mode]:-}" ]; then
+        echo "WARNING: PIPELINE_VISUAL_PROOF_TARGET_DIR unset; inline browser-eval will skip visual proof (see docs/migration-0.18.md)" >&2
+        WARNED_TARGET_DIR[$mode]=1
+      fi
+      notes_field=" notes=no-target-dir"
+      RESULTS[$issue]="dispatched-inline-no-visual-proof"
+    else
+      RESULTS[$issue]="dispatched-inline"
+    fi
+    log "EVENT: dispatch-inline issue=${issue} port=${PORT} target_dir=${TARGET_DIR} worktree=${wt_path} pr=${pr}${notes_field}"
+    # NOTE: do NOT bump BUCKET_ACTIVE[$mode] here. Inline dispatches are
+    # instantaneous EVENT-line emissions — there is no async claude
+    # subprocess for the poll loop to gate on, and no decrementer for
+    # inline issues exists (decrement runs only for spawn-claude-tracked
+    # agents via ACTIVE[$issue] at the agent-finished/manual-merge sites
+    # below). The BUCKET_ACTIVE counter exists to throttle concurrent
+    # spawn-claude.sh subprocesses; counting inline issues against the
+    # cap would freeze the slate after the first dispatch (BUCKET_MAX
+    # defaults to 1) and defeat the slate_width mechanism the visual-
+    # proof-port-broker uses for collision-free concurrent ports. The
+    # orchestrator's in-process Agent dispatcher owns its own concurrency
+    # limit downstream of the EVENT.
+    return 0
+  fi
+
   bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG $mode_flags "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"
@@ -501,16 +611,10 @@ check_issue_outcome() {
   fi
 }
 
-# Resolve an issue number to its linked PR number, or empty if none exists.
-# Mirrors the `linked:<issue>` qualifier used by classify_issue_mode() at the
-# top of this file and scripts/check-ci-fix-loop.sh — the only qualifier
-# GitHub search reliably honors for issue->PR lookup here. Fails closed (empty
-# string) on any gh error so callers can treat "no PR" as "not terminal yet".
-resolve_issue_pr() {
-  local issue="$1"
-  gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" \
-    --json number --jq '.[0].number' 2>/dev/null || true
-}
+# resolve_issue_pr is defined earlier in this file (before classify_issue) so
+# that single-issue short-circuit invocations — which exit before reaching
+# this point in the script — still see its definition at function-call time
+# (bash registers function definitions at execution time, not parse time).
 
 # Detect evaluator sessions that have completed their work but whose claude
 # child has not exited (manual-merge / block-* branch — issue #489). The

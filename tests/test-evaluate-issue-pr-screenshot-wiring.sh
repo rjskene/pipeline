@@ -36,12 +36,85 @@ assert "Step 9 template mentions Screenshot row"        "grep -q 'Screenshot' '$
 assert "Step 9 template includes branch-pinned raw image row" \
   "grep -qE '!\\[.*\\]\\(https://raw\\.githubusercontent\\.com/[^)]+/\\.eval-screenshots/[^)]+\\.png\\)' '$SKILL'"
 
-# Step 11 green-path prose must reflect Option A's ephemeral-404-after-merge
-# tradeoff, NOT the stale SHA-pinned-survives-squash-merge claim.
-assert "Step 11 prose no longer claims SHA-pinned URLs survive squash-merge" \
-  "! awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -q 'SHA-pinned'"
-assert "Step 11 prose documents ephemeral/404 tradeoff" \
-  "awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -qE 'ephemeral|404'"
+# Post-merge durable-URL contract (issue #506). The §117 attach prose and the
+# §224 Step 11 green-path prose must describe the merge-SHA rewrite, NOT the
+# superseded Option A ephemeral-404 behaviour.
+
+# (a) The stale "intentionally 404" claim must be gone (it lived in §117 prose).
+assert "no stale 'intentionally 404' claim remains" \
+  "! grep -q 'intentionally 404' '$SKILL'"
+
+# (b) §117 (Attach screenshots) must reference the merge-SHA rewrite and opt-out.
+S117="awk '/Attach screenshots to the eval comment/,/Failure-loud verification/' '$SKILL'"
+assert "§117 references merge-SHA rewrite" \
+  "$S117 | grep -qi 'merge-sha'"
+assert "§117 references PIPELINE_SCREENSHOT_REWRITE_ENABLED opt-out" \
+  "$S117 | grep -q 'PIPELINE_SCREENSHOT_REWRITE_ENABLED'"
+
+# (c) §224 Step 11 green path must invoke the rewrite step and call the URLs durable.
+GREEN="awk '/On .green.:/,/On any .block-/' '$SKILL'"
+assert "§224 green path invokes rewrite-eval-screenshot-urls.sh" \
+  "$GREEN | grep -q 'rewrite-eval-screenshot-urls.sh'"
+assert "§224 green path documents durable merge-SHA-pinned URLs" \
+  "$GREEN | grep -qi 'durable'"
+
+# Issue #517 — inline Agent dispatch mode for browser-eval PRs. The
+# Invocation-mode section gains a third bullet; the inline-mode visual-proof
+# setup re-uses the same durable URL substring (raw.githubusercontent.com/
+# <owner>/<repo>/<merge-sha>/.eval-screenshots/) as the existing §117/§224
+# contract. This guards against the inline-mode bullet drifting to a
+# branch-pinned URL shape (which 404s post-merge per issue #506).
+
+INLINE="awk '/Inline Agent dispatch \\(browser-eval/,/## Lifecycle/' '$SKILL'"
+
+assert "Invocation-mode section names inline Agent dispatch (browser-eval) as default" \
+  "grep -q 'Inline Agent dispatch (browser-eval' '$SKILL'"
+assert "inline-mode bullet conditions on PIPELINE_EVAL_ISOLATION != container" \
+  "grep -qE 'PIPELINE_EVAL_ISOLATION[^a-zA-Z_]+!=[^a-zA-Z_]+container|PIPELINE_EVAL_ISOLATION.*!=.*container' '$SKILL'"
+assert "inline-mode bullet names --container-mode classifier emission" \
+  "$INLINE | grep -q -- '--container-mode'"
+assert "inline-mode bullet preserves the durable raw.githubusercontent.com/<merge-sha>/.eval-screenshots substring" \
+  "$INLINE | grep -qE 'raw\\.githubusercontent\\.com/<owner>/<repo>/<merge-sha>/\\.eval-screenshots/'"
+
+# Container-dispatch admonition must scope to ISOLATION=container only (issue #517).
+assert "container-dispatch admonition scopes to PIPELINE_EVAL_ISOLATION=container" \
+  "awk '/Container dispatch .issue #218/,/## Lifecycle/' '$SKILL' | grep -q 'PIPELINE_EVAL_ISOLATION=container'"
+
+# Step 6c — inline-mode visual proof setup sub-bullet (issue #517).
+S6C="awk '/\\*\\*6c\\. Inline-mode visual proof setup/,/^7\\. \\*\\*If fixable/' '$SKILL'"
+assert "Step 6c (inline-mode visual proof setup) is present" \
+  "grep -q '6c\\. Inline-mode visual proof setup' '$SKILL'"
+assert "Step 6c binds python3 -m http.server to 127.0.0.1" \
+  "$S6C | grep -qE 'python3 -m http\\.server.*--bind 127\\.0\\.0\\.1|python3 -m http\\.server.*-b 127\\.0\\.0\\.1'"
+assert "Step 6c includes an EXIT trap for bg server cleanup" \
+  "$S6C | grep -qE \"trap .*EXIT\""
+assert "Step 6c uses curl readiness probe with 5 retries, 1s delay" \
+  "$S6C | grep -qE 'curl.*--retry 5.*--retry-delay 1|curl.*--retry-delay 1.*--retry 5'"
+
+# Canonical Agent prompt template fenced block (issue #517).
+TPL="awk '/Canonical Agent prompt template/,/Constraints/' '$SKILL'"
+assert "Canonical Agent prompt template heading present" \
+  "grep -q 'Canonical Agent prompt template' '$SKILL'"
+for field in Worktree PR "Target dir" Port Auto-merge; do
+  assert "Agent prompt template names field: $field" \
+    "$TPL | grep -q '$field'"
+done
+
+# 60s per-tool wall-clock budget for browser_evaluate / browser_navigate
+# with explicit #511 cross-ref (issue #517).
+assert "skill documents 60s per-tool budget for browser_evaluate / browser_navigate" \
+  "grep -qE '60s.*browser_(evaluate|navigate)|browser_(evaluate|navigate).*60s' '$SKILL'"
+assert "60s budget paragraph cross-refs issue #511" \
+  "grep -q '#511' '$SKILL'"
+
+# Migration-warning behavior (issue #517) — orchestrator owns the warning;
+# skill must document the contract so reviewers know where to look.
+assert "skill documents migration-warning behavior for missing TARGET_DIR" \
+  "grep -qE 'TARGET_DIR.*unset|PIPELINE_VISUAL_PROOF_TARGET_DIR.*unset' '$SKILL'"
+assert "migration-warning section names run-queue.sh launch_agent as owner" \
+  "grep -qE 'run-queue\\.sh.*launch_agent|launch_agent.*run-queue\\.sh' '$SKILL'"
+assert "migration-warning section states evaluation proceeds without visual proof / never blocks" \
+  "grep -qE 'never blocks|non-blocking' '$SKILL'"
 
 echo ""
 echo "================================"

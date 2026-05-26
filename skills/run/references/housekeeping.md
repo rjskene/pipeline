@@ -101,3 +101,11 @@ Auto-close any tracker issue whose Rollout-sequence children are all closed. Thi
 PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/auto-close-trackers.sh" --apply || \
   echo "[run] WARN: auto-close-trackers.sh exited non-zero (continuing)"
 ```
+
+## 8. Reap stale visual-proof servers
+
+Visual-proof evaluators spawn short-lived `python -m http.server` processes rooted at a worktree directory. If a worktree is removed (cleanup-worktree.sh, manual rm, container teardown) while a server is still bound to a port, the process leaks. The reaper enumerates such servers, identifies each one's enclosing `.git` ancestor, cross-checks against `git worktree list --porcelain`, and SIGTERM/SIGKILLs any whose worktree is no longer registered. Emits `EVENT: reaped pid=<P> dir=<D>` per kill or `(no stale servers)` when nothing matched. Always exits 0 (housekeeping, never gate-fatal). See #517.
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/reap-stale-visual-proof-servers.sh" || true
+```

@@ -58,6 +58,10 @@
     count -= 1;
     counterValue.textContent = String(count);
   });
+  document.getElementById('counter-reset').addEventListener('click', function () {
+    count = 0;
+    counterValue.textContent = '0';
+  });
 
   // 5. Footer build-timestamp set at page load.
   const stamp = document.getElementById('build-timestamp');

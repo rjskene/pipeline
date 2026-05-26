@@ -78,6 +78,7 @@ run_spawn() {
     PIPELINE_SPAWN_DRY_RUN=1 \
     PIPELINE_LOGS_ENABLED=true \
     PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+    PIPELINE_EVAL_ISOLATION=container \
     bash .claude/scripts/spawn-claude.sh \
       --skill evaluate-issue-pr --container-mode=web-eval "$@" \
       "$PROJ/worktree" "$issue" slug tmux \
