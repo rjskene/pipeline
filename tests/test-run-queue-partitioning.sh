@@ -145,6 +145,9 @@ run_dryrun() {
     slug="${entry##*:}"
     mkdir -p "/tmp/wt-${issue}-${slug}"
   done
+  # PIPELINE_EVAL_ISOLATION=container pins the legacy docker dispatch path
+  # (issue #517: inline browser-eval is the new default for container-mode).
+  # These tests assert spawn-claude.sh argv threading for the container path.
   (
     cd "$proj"
     PATH="$stub_dir:$PATH" \
@@ -152,6 +155,7 @@ run_dryrun() {
       SPAWN_LOG="$spawn_log" \
       GH_INVOCATIONS="$gh_log" \
       PIPELINE_QUEUE_DRY_RUN=1 \
+      PIPELINE_EVAL_ISOLATION=container \
       CLAUDE_PLUGIN_ROOT="$proj/.claude" \
       bash .claude/scripts/run-queue.sh "$@" 2>&1
   )
