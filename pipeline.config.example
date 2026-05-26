@@ -146,6 +146,19 @@ PIPELINE_CI_FIX_LOG_LINES="200"       # tail size when injecting CI failure log 
 # PIPELINE_EVAL_CLASSIFIER=".claude/scripts/eval-classifier.sh"
 PIPELINE_EVAL_CLASSIFIER=""
 
+# --- Evaluator isolation mode (issue #517) ---
+#
+# Set to "container" to opt into the legacy docker-evaluator path; empty = inline Agent dispatch (default for browser-eval surfaces)
+# PIPELINE_EVAL_ISOLATION="container"
+
+# --- Inline visual-proof loopback server (issue #517) ---
+#
+# Relative path under the worktree served by inline-mode loopback python http.server.
+# PIPELINE_VISUAL_PROOF_TARGET_DIR=""
+
+# Base TCP port for the inline visual-proof loopback python http.server.
+PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
+
 # --- Container-mode dispatch (issue #218) ---
 #
 # Space-separated list of container mode names the classifier may emit.
