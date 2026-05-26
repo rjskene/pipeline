@@ -67,12 +67,16 @@ else
   fail_msg "fixture-mode run exited non-zero (rc=$ROWS_RC)"
 fi
 
-EXPECTED_FIXTURE_PR_COUNT="$(jq -r 'length' "$FIXTURE_DIR/prs.json")"
+# Eligible PR count = total PRs in prs.json minus release PRs (see #500). The
+# 3 synthetic release PRs (901/902/903) are excluded by the is_release_pr
+# filter; only the 5 PATH-coverage feature PRs (101/102/103/104/302) are
+# iterated and emitted as rows.
+EXPECTED_ELIGIBLE_PR_COUNT=5
 N_ROWS="$(printf '%s' "$ROWS_OUT" | jq -r 'length' 2>/dev/null || echo 0)"
-if [ "$N_ROWS" = "$EXPECTED_FIXTURE_PR_COUNT" ]; then
-  pass_msg "fixture-mode emits one row per PR in prs.json (n=$N_ROWS)"
+if [ "$N_ROWS" = "$EXPECTED_ELIGIBLE_PR_COUNT" ]; then
+  pass_msg "fixture-mode emits one row per eligible feature PR (n=$N_ROWS)"
 else
-  fail_msg "expected $EXPECTED_FIXTURE_PR_COUNT PR rows, got $N_ROWS"
+  fail_msg "expected $EXPECTED_ELIGIBLE_PR_COUNT eligible PR rows, got $N_ROWS"
 fi
 
 # --- Scenario 3: per-PR metric extraction ---
