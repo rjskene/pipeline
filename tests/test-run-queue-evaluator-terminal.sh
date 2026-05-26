@@ -212,7 +212,11 @@ case "\$1 \$2" in
       fi
     fi
     ;;
-  "pr list") echo "1911" ;;
+  "pr list")
+    # resolve_issue_pr issue 518: uses --json number,body and Python-filters
+    # by closing-keyword regex. Return a JSON array with Closes 911.
+    echo '[{"number":1911,"body":"Closes #911"}]'
+    ;;
   "pr view")
     if [[ "\$ARGS" == *'comments[-1]'* ]]; then
       echo ""
@@ -266,7 +270,11 @@ case "$1 $2" in
       if [ "$issue" = "911" ]; then echo "pr-open"; else echo ""; fi
     fi
     ;;
-  "pr list") echo "1911" ;;
+  "pr list")
+    # resolve_issue_pr issue 518: uses --json number,body and Python-filters
+    # by closing-keyword regex. Return a JSON array with Closes 911.
+    echo '[{"number":1911,"body":"Closes #911"}]'
+    ;;
   "pr view")
     if [[ "$ARGS" == *'comments[-1]'* ]]; then
       echo 'Auto-merge skipped: block-verdict. Run `gh pr merge` manually.'
@@ -376,7 +384,11 @@ case "\$1 \$2" in
       if [ "\$issue" = "911" ]; then echo "manual-merge,pr-open"; else echo ""; fi
     fi
     ;;
-  "pr list") echo "1911" ;;
+  "pr list")
+    # resolve_issue_pr issue 518: uses --json number,body and Python-filters
+    # by closing-keyword regex. Return a JSON array with Closes 911.
+    echo '[{"number":1911,"body":"Closes #911"}]'
+    ;;
   "pr view") echo "" ;;
   *) echo "" ;;
 esac

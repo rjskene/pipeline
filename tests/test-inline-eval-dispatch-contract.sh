@@ -91,22 +91,27 @@ exit 0
 EOF
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/bin/bash
-# resolve_issue_pr uses `gh pr list --search "linked:<issue>"` and reads .[0].number
-# Map issue -> PR number via STUB_PR_FOR_<issue> env, default empty.
-for a in "$@"; do :; done
-# Find the issue number from `linked:<N>` token in argv.
-for tok in "$@"; do
-  case "$tok" in
-    linked:*) issue="${tok#linked:}" ;;
-  esac
+# resolve_issue_pr (issue #518) uses `gh pr list --search "<N> in:title,body
+# type:pr is:open" --json number,body` and Python-filters the body by
+# closing-keyword regex. Map issue -> PR number via STUB_PR_FOR_<issue> env;
+# emit a JSON array with `Closes #<issue>` in the body when a PR is mapped,
+# else an empty array.
+# Find the issue number from the first numeric token in the --search string.
+for ((i=1; i<=$#; i++)); do
+  if [ "${!i}" = "--search" ]; then
+    j=$((i+1))
+    raw="${!j:-}"
+    # raw looks like "510 in:title,body type:pr is:open"
+    issue="${raw%% *}"
+  fi
 done
 issue="${issue:-}"
 varname="STUB_PR_FOR_${issue}"
 val="${!varname:-}"
 if [ -n "$val" ]; then
-  echo "$val"
+  printf '[{"number":%s,"body":"Closes #%s"}]\n' "$val" "$issue"
 else
-  echo ""
+  echo "[]"
 fi
 EOF
 cat > "$STUB_DIR/git" <<'EOF'

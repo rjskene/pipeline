@@ -160,6 +160,46 @@ if [ -z "${TMUX:-}" ]; then
   exit 1
 fi
 
+# Resolve an issue number to its linked PR number, or empty if none exists.
+# Exact-scope lookup (issue #518): the prior `linked:<N>` search qualifier was
+# NOT exact-scope and returned unrelated PRs that merely mentioned the issue,
+# which propagated the wrong PR diff into the pre-spawn classifier (causing
+# spurious container-mode dispatch — see issue body). The replacement queries
+# candidate PRs with `<N> in:title,body type:pr is:open`, then filters in
+# Python to the first PR whose body matches the closing-keyword regex
+# `(Close[sd]?|Fix(es|ed)?|Resolve[sd]?) #<N>(?!\d)` (case-insensitive,
+# word-boundary anchored — so `#5170` does not match `#517`). Fails closed
+# (empty string) on any gh error, malformed payload, or zero match — callers
+# already treat empty as "no PR yet", which is the correct semantics when
+# the only PR found is unrelated noise. Shared between classify_issue and
+# evaluator_finished_terminal so the fix lands once for both call sites.
+# Defined BEFORE classify_issue so the single-issue short-circuit (which
+# exits before later function definitions execute) sees it at call time.
+resolve_issue_pr() {
+  local issue="$1"
+  local payload
+  payload=$(gh pr list --repo "$PIPELINE_REPO" \
+    --search "${issue} in:title,body type:pr is:open" \
+    --json number,body 2>/dev/null) || return 0
+  [ -n "$payload" ] || return 0
+  printf '%s' "$payload" | ISSUE="$issue" python3 -c '
+import json, os, re, sys
+issue = os.environ["ISSUE"]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+pat = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(Close[sd]?|Fix(?:es|ed)?|Resolve[sd]?) #" +
+    re.escape(issue) + r"(?!\d)"
+)
+for pr in data:
+    if pat.search(pr.get("body") or ""):
+        print(pr.get("number", ""))
+        sys.exit(0)
+' 2>/dev/null || return 0
+}
+
 # --- Pre-spawn classifier (issue #218) ---
 #
 # classify_issue <issue> resolves the issue's current PR number (or empty
@@ -184,10 +224,12 @@ classify_issue() {
     return
   fi
   local pr=""
-  # `linked:<issue>` is the proven qualifier in this repo for issue->PR lookup
-  # (mirrors scripts/check-ci-fix-loop.sh). `head:<prefix>` does NOT work
-  # because GitHub search requires an exact branch ref.
-  pr=$(gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" --json number --jq '.[0].number' 2>/dev/null || echo "")
+  # Issue->PR lookup: delegate to resolve_issue_pr() so both call sites (this
+  # function and evaluator_finished_terminal) share one exact-scope helper.
+  # The previous inline `linked:<N>` qualifier was NOT exact-scope on GitHub
+  # search and could return unrelated PRs that merely mention the issue,
+  # causing the classifier to score the wrong diff (issue #518).
+  pr=$(resolve_issue_pr "$issue")
   local _classifier_invoke="${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh"
   local out err rc
   # Fail-OPEN: when the plugin-shipped helper is missing (e.g. a partial
@@ -569,16 +611,10 @@ check_issue_outcome() {
   fi
 }
 
-# Resolve an issue number to its linked PR number, or empty if none exists.
-# Mirrors the `linked:<issue>` qualifier used by classify_issue_mode() at the
-# top of this file and scripts/check-ci-fix-loop.sh — the only qualifier
-# GitHub search reliably honors for issue->PR lookup here. Fails closed (empty
-# string) on any gh error so callers can treat "no PR" as "not terminal yet".
-resolve_issue_pr() {
-  local issue="$1"
-  gh pr list --repo "$PIPELINE_REPO" --search "linked:${issue}" \
-    --json number --jq '.[0].number' 2>/dev/null || true
-}
+# resolve_issue_pr is defined earlier in this file (before classify_issue) so
+# that single-issue short-circuit invocations — which exit before reaching
+# this point in the script — still see its definition at function-call time
+# (bash registers function definitions at execution time, not parse time).
 
 # Detect evaluator sessions that have completed their work but whose claude
 # child has not exited (manual-merge / block-* branch — issue #489). The
