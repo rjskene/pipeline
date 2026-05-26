@@ -116,6 +116,8 @@ else
 fi
 
 # ---- Test 2: classifier wants container BUT flag present -> normal dispatch ----
+# PIPELINE_EVAL_ISOLATION=container pins the legacy docker dispatch path so the
+# inline gate (issue #517) does not intercept this enforcement test.
 echo "Test 2: classifier emits --container-mode, flag present -> normal dispatch"
 inc
 OUT=$(cd "$PROJ" && \
@@ -124,6 +126,7 @@ OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   CLAUDE_PLUGIN_ROOT="$PROJ/.claude" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \

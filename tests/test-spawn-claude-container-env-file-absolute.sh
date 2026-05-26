@@ -87,6 +87,7 @@ OUT_A=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
     "$PROJ/worktree" 201 slug tmux 2>&1 || true)
@@ -134,6 +135,7 @@ OUT_B=$(cd "$PROJ_B" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
     "$PROJ_B/worktree" 202 slug tmux 2>&1 || true)
@@ -166,6 +168,7 @@ OUT_C=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="$PRE_SNIPPET" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
