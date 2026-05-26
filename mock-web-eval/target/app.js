@@ -28,6 +28,10 @@
     e.preventDefault();
     output.textContent = 'You said: ' + input.value;
   });
+  document.getElementById('echo-clear').addEventListener('click', function () {
+    input.value = '';
+    output.textContent = '';
+  });
 
   // 3. Add/remove list items mutate state.
   const list = document.getElementById('item-list');
