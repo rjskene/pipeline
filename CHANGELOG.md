@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.18.0-rc.1...v0.19.0-rc.1) (2026-05-26)
+
+
+### Features
+
+* **mock-web-eval:** add Clear button to echo section that resets input + output ([14924b4](https://github.com/rjskene/pipeline/commit/14924b455243ea0e8ea1b00cb480fc1212d4571f))
+* **mock-web-eval:** add Clear button to echo section that resets input and output ([7ee2abb](https://github.com/rjskene/pipeline/commit/7ee2abb94d544604b00fa81d5756e7ca8b8c5dd6))
+
 ## [0.18.0-rc.1](https://github.com/rjskene/pipeline/compare/v0.17.0-rc.1...v0.18.0-rc.1) (2026-05-26)
 
 
