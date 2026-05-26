@@ -77,6 +77,8 @@ RUNS_LOG="$WORKDIR/runs.log"
 
 run_dryrun() {
   # Args: <issue> <skill> [extra spawn-claude args...]
+  # PIPELINE_EVAL_ISOLATION=container pins the legacy docker dispatch path
+  # (issue #517: inline browser-eval is the new default for container-mode).
   local issue="$1" skill="$2"; shift 2
   cd "$PROJ"
   PATH="$STUB_DIR:$PATH" \
@@ -84,6 +86,7 @@ run_dryrun() {
     PIPELINE_SPAWN_DRY_RUN=1 \
     PIPELINE_LOGS_ENABLED=true \
     PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+    PIPELINE_EVAL_ISOLATION=container \
     bash .claude/scripts/spawn-claude.sh \
       --skill "$skill" "$@" "$PROJ/worktree" "$issue" slug tmux \
       2>"$WORKDIR/last.err"
@@ -149,6 +152,7 @@ PREFLIGHT_OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash -c 'exit 0'" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
@@ -171,6 +175,7 @@ PREFLIGHT_FAIL_OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   PIPELINE_EVAL_CONTAINER_web_eval_PREFLIGHT_CMD="bash -c 'exit 7'" \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
@@ -196,6 +201,7 @@ UNDECLARED_OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=ghost-mode \
     "$PROJ/worktree" 104 slug tmux 2>&1 ; echo "RC=$?") || true
@@ -220,6 +226,7 @@ PASSTHRU_OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr \
     --container-mode=web-eval \
@@ -248,6 +255,7 @@ GATE_OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   bash .claude/scripts/spawn-claude.sh \
     --skill execute-issue-plan --container-mode=web-eval \
     "$PROJ/worktree" 106 slug tmux 2>&1 ; echo "RC=$?") || true
@@ -276,6 +284,7 @@ PR_OUT=$(cd "$PROJ" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
     "$PROJ/worktree" 107 slug tmux 2>&1 || true)
@@ -324,6 +333,7 @@ UC_OUT=$(cd "$PROJ_UC" && \
   PIPELINE_SPAWN_DRY_RUN=1 \
   PIPELINE_LOGS_ENABLED=true \
   PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+  PIPELINE_EVAL_ISOLATION=container \
   bash .claude/scripts/spawn-claude.sh \
     --skill evaluate-issue-pr --container-mode=web-eval \
     "$PROJ_UC/worktree" 109 slug tmux 2>&1 || true)

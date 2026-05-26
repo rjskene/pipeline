@@ -325,6 +325,11 @@ declare -A BUCKET_MAX=()     # mode -> max concurrent for this bucket
 declare -A BUCKET_ACTIVE=()  # mode -> currently-active count
 declare -A ISSUE_MODE=()     # issue -> mode (or 'bare')
 declare -A ISSUE_EXTRAS=()   # issue -> space-separated passthrough tokens
+# Inline browser-eval dispatch (issue #517). One-shot migration warning when
+# PIPELINE_VISUAL_PROOF_TARGET_DIR is unset at the moment of inline dispatch;
+# WARNED_TARGET_DIR[$mode]=1 latches the first emission per slate (mode bucket)
+# so subsequent inline dispatches in the same slate stay silent.
+declare -A WARNED_TARGET_DIR=()
 
 # Route a single issue into the correct bucket. Returns 0 on success, 1 if
 # the classifier rejected the issue (in which case a SKIPPED log line is
@@ -477,6 +482,69 @@ launch_agent() {
 
   log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug}, mode=${mode})..."
   log "EVENT: agent-launched issue=${issue} mode=${mode} slug=${slug} worktree=${wt_path}"
+
+  # --- Inline browser-eval dispatch (issue #517) ---
+  # When the classifier matched a browser-eval surface (mode != bare) AND the
+  # operator has not pinned the legacy container path via
+  # PIPELINE_EVAL_ISOLATION=container, short-circuit the spawn-claude.sh
+  # invocation: emit the dispatch-inline EVENT line (with the broker-allocated
+  # port and resolved target dir / PR), and let the in-process Agent path in
+  # the orchestrator pick the slate up. The orchestrator owns the actual
+  # Agent() call site; this function only emits the contract event.
+  if [ "$mode" != "bare" ] && [ "${PIPELINE_EVAL_ISOLATION:-}" != "container" ]; then
+    # Compute slate_index by scanning the issue's position within
+    # BUCKET_QUEUE[$mode] (populated by route_issue). No new global map.
+    local _bq
+    # shellcheck disable=SC2206
+    _bq=( ${BUCKET_QUEUE[$mode]} )
+    local slate_index=0
+    local i
+    for i in "${!_bq[@]}"; do
+      if [ "${_bq[$i]}" = "$issue" ]; then
+        slate_index=$i
+        break
+      fi
+    done
+    local slate_width=${#_bq[@]}
+    local PORT
+    PORT=$(bash "${SCRIPT_DIR}/visual-proof-port-broker.sh" "$slate_index" "$slate_width" | sed -n "s/^PORT=//p")
+    local TARGET_DIR=""
+    if [ -n "${PIPELINE_VISUAL_PROOF_TARGET_DIR:-}" ]; then
+      TARGET_DIR="$wt_path/${PIPELINE_VISUAL_PROOF_TARGET_DIR}"
+    fi
+    local pr
+    pr=$(resolve_issue_pr "$issue")
+    local notes_field=""
+    if [ -z "$TARGET_DIR" ]; then
+      # Migration warning: one-shot per slate bucket. First inline-dispatch in
+      # this mode that hits the unset case emits the stderr warning + appends
+      # `notes=no-target-dir` to the EVENT line; subsequent inline dispatches
+      # in the same slate stay silent but still annotate the EVENT line.
+      if [ -z "${WARNED_TARGET_DIR[$mode]:-}" ]; then
+        echo "WARNING: PIPELINE_VISUAL_PROOF_TARGET_DIR unset; inline browser-eval will skip visual proof (see docs/migration-0.18.md)" >&2
+        WARNED_TARGET_DIR[$mode]=1
+      fi
+      notes_field=" notes=no-target-dir"
+      RESULTS[$issue]="dispatched-inline-no-visual-proof"
+    else
+      RESULTS[$issue]="dispatched-inline"
+    fi
+    log "EVENT: dispatch-inline issue=${issue} port=${PORT} target_dir=${TARGET_DIR} worktree=${wt_path} pr=${pr}${notes_field}"
+    # NOTE: do NOT bump BUCKET_ACTIVE[$mode] here. Inline dispatches are
+    # instantaneous EVENT-line emissions — there is no async claude
+    # subprocess for the poll loop to gate on, and no decrementer for
+    # inline issues exists (decrement runs only for spawn-claude-tracked
+    # agents via ACTIVE[$issue] at the agent-finished/manual-merge sites
+    # below). The BUCKET_ACTIVE counter exists to throttle concurrent
+    # spawn-claude.sh subprocesses; counting inline issues against the
+    # cap would freeze the slate after the first dispatch (BUCKET_MAX
+    # defaults to 1) and defeat the slate_width mechanism the visual-
+    # proof-port-broker uses for collision-free concurrent ports. The
+    # orchestrator's in-process Agent dispatcher owns its own concurrency
+    # limit downstream of the EVENT.
+    return 0
+  fi
+
   bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG $mode_flags "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"

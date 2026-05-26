@@ -313,6 +313,68 @@ if [ -n "${PIPELINE_CI_FIX_CONTEXT:-}" ]; then
   } >> "$APPEND_PROMPT_FILE"
 fi
 
+# --- Inline browser-eval dispatch gate (issue #517) ---
+# When --container-mode=<name> is set AND PIPELINE_EVAL_ISOLATION != container,
+# the consumer has opted into the inline Agent dispatch path: the classifier's
+# container-mode token is reinterpreted as a *browser-eval surface* hint, not
+# a docker-compose dispatch directive. spawn-claude exports INLINE_BROWSER_EVAL=1
+# so downstream tooling (run-queue.sh launch_agent, the evaluate-issue-pr skill)
+# can branch on it, and short-circuits BEFORE building DOCKER_PREFIX, validating
+# the container allowlist, or running the preflight.
+#
+# Precondition: the host must expose a Playwright MCP entry in $REPO_ROOT/.mcp.json
+# (probed with `jq -e .mcpServers.playwright`). If the entry is missing, exit 6
+# with a loud refusal — the inline path needs host Playwright to drive the
+# browser; the operator's remediation is to install Playwright MCP or pin the
+# legacy container path via PIPELINE_EVAL_ISOLATION=container.
+#
+# Validation: PIPELINE_EVAL_ISOLATION=container is only honored when the
+# --container-mode value also resolves under PIPELINE_EVAL_CONTAINERS; otherwise
+# control falls through to the existing exit-4 path emitted by the container
+# allowlist block below.
+INLINE_BROWSER_EVAL=0
+if [ -n "$CONTAINER_MODE" ] && [ "${PIPELINE_EVAL_ISOLATION:-}" != "container" ]; then
+  # Host-Playwright MCP probe (orchestrator project root). Fail-closed: if jq
+  # is missing or the file lacks a .mcpServers.playwright key, exit 6.
+  _mcp_file="${REPO_ROOT}/.mcp.json"
+  _mcp_ok=0
+  if command -v jq >/dev/null 2>&1 && [ -f "$_mcp_file" ]; then
+    if jq -e .mcpServers.playwright "$_mcp_file" >/dev/null 2>&1; then
+      _mcp_ok=1
+    fi
+  fi
+  if [ "$_mcp_ok" -ne 1 ]; then
+    echo "[spawn-claude] ERROR: PR ${ISSUE_NUM} requires browser eval but host Playwright MCP not detected. Install playwright MCP or set PIPELINE_EVAL_ISOLATION=container." >&2
+    exit 6
+  fi
+  INLINE_BROWSER_EVAL=1
+  export INLINE_BROWSER_EVAL
+  echo "[spawn-claude] inline browser-eval dispatch for issue #$ISSUE_NUM (CONTAINER_MODE=$CONTAINER_MODE, PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-})" >&2
+  # --- Inline-branch fail-fast exit (issue #517 must-fix 1) ---
+  # The inline browser-eval path is owned by run-queue.sh: it emits the
+  # `EVENT: dispatch-inline` line and the in-process Agent dispatcher picks
+  # up the slate. spawn-claude.sh has nothing to do on this branch — we
+  # must NOT fall through to DOCKER_PREFIX assembly, BUILD_ARGV, or a bare-
+  # host claude launch (the latter would silently regress the contract for
+  # any direct operator invocation that has ISOLATION unset and lands here).
+  # Emit the dry-run dump when requested (so Test (b) and any future
+  # observability still sees the resolved state), then exit 0.
+  if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
+    echo "PATH_LETTER=$PATH_LETTER"
+    echo "GENERATED_SESSION_ID=$GENERATED_SESSION_ID"
+    echo "RUNS_LOG=$RUNS_LOG"
+    echo "RUNS_LOG_LINE=$(tail -1 "$RUNS_LOG")"
+    echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
+    echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
+    echo "CONTAINER_MODE=$CONTAINER_MODE"
+    echo "INLINE_BROWSER_EVAL=$INLINE_BROWSER_EVAL"
+    echo "PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-}"
+    # NOTE: no DOCKER_PREFIX line — inline branch never assembled one.
+    # NOTE: no BUILD_ARGV banner — inline branch never assembled argv.
+  fi
+  exit 0
+fi
+
 # --- Container-mode dispatch (issue #218) ---
 # When --container-mode=<name> is set, validate the name against
 # PIPELINE_EVAL_CONTAINERS, run the optional preflight, and build a
@@ -320,6 +382,12 @@ fi
 # launch invocation. The prefix is exported through BUILD_ARGV as the
 # LAUNCH_CMD bash array, which each launcher mode uses in place of the
 # bare `claude` executable when emitting the final CMD.
+#
+# When INLINE_BROWSER_EVAL=1 (issue #517), this whole block is skipped:
+# the allowlist check, the #238 enforcement re-classification, and the
+# DOCKER_PREFIX assembly all live behind the `if [ "$INLINE_BROWSER_EVAL" != "1" ]`
+# guard so the dry-run dump (and the production launcher) never see a
+# docker prefix on the inline path.
 DOCKER_PREFIX=()
 # --- container-mode skill allowlist (issue #321) ---
 # PIPELINE_CONTAINER_SKILLS is a space-separated list of skill names that
@@ -333,7 +401,7 @@ DOCKER_PREFIX=()
 # Use the ${VAR-default} expansion (NO colon) so empty stays empty.
 # ${VAR:-default} would silently rebind empty -> default and break the
 # operator's intent to disable.
-if [ -n "$CONTAINER_MODE" ]; then
+if [ -n "$CONTAINER_MODE" ] && [ "$INLINE_BROWSER_EVAL" != "1" ]; then
   _container_skills_allowlist="${PIPELINE_CONTAINER_SKILLS-evaluate-issue-pr}"
   # empty allowlist == disable; do not "simplify" — empty-line grep gives the correct rejection.
   if ! printf '%s\n' $_container_skills_allowlist | tr ' ' '\n' | grep -qx "$SKILL"; then
@@ -376,6 +444,7 @@ fi
 # skill is not evaluate-issue-pr, the flag is already set, or the
 # ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh helper is missing / exits non-zero.
 if [ -z "$CONTAINER_MODE" ] \
+   && [ "$INLINE_BROWSER_EVAL" != "1" ] \
    && [ "$SKILL" = "evaluate-issue-pr" ] \
    && [ -n "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
   _classifier_invoke="${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh"
@@ -394,7 +463,7 @@ if [ -z "$CONTAINER_MODE" ] \
     fi
   fi
 fi
-if [ -n "$CONTAINER_MODE" ]; then
+if [ -n "$CONTAINER_MODE" ] && [ "$INLINE_BROWSER_EVAL" != "1" ]; then
   if ! printf '%s\n' ${PIPELINE_EVAL_CONTAINERS:-} | tr ' ' '\n' | grep -qx "$CONTAINER_MODE"; then
     echo "[spawn-claude] ERROR: container-mode '$CONTAINER_MODE' not declared in PIPELINE_EVAL_CONTAINERS" >&2
     exit 4
@@ -531,6 +600,8 @@ if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
   echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
   echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
   echo "CONTAINER_MODE=$CONTAINER_MODE"
+  echo "INLINE_BROWSER_EVAL=$INLINE_BROWSER_EVAL"
+  echo "PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-}"
   if [ ${#DOCKER_PREFIX[@]} -gt 0 ]; then
     # Flattened DOCKER_PREFIX so tests can substring-match individual tokens.
     echo "DOCKER_PREFIX=${DOCKER_PREFIX[*]}"

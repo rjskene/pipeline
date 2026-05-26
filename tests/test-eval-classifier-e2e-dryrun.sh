@@ -119,12 +119,17 @@ run_queue_dryrun() {
     slug="${entry##*:}"
     mkdir -p "/tmp/wt-${issue}-${slug}"
   done
+  # PIPELINE_EVAL_ISOLATION=container pins the legacy docker dispatch path
+  # (issue #517: inline browser-eval is the new default for container-mode
+  # classifier matches). These end-to-end tests assert spawn-claude.sh argv
+  # threading for the container path, so the isolation pin is required.
   (
     cd "$proj"
     PATH="$stub_dir:$PATH" \
       TMUX="fake" \
       SPAWN_LOG="$spawn_log" \
       PIPELINE_QUEUE_DRY_RUN=1 \
+      PIPELINE_EVAL_ISOLATION=container \
       CLAUDE_PLUGIN_ROOT="$proj/plugin-root" \
       bash plugin-root/scripts/run-queue.sh "$@" 2>&1
   )

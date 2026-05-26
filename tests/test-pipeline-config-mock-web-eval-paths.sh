@@ -138,6 +138,37 @@ if [ -f "$LIVE" ]; then
   done < <(extract_paths "$LIVE")
 fi
 
+# --- Issue #517 scaffolding: inline-default evaluator dispatch vars ---
+#
+# Assert the new evaluator-isolation + visual-proof config vars are present
+# (by name) in pipeline.config.example. PIPELINE_EVAL_ISOLATION uses the
+# comment-as-default convention: the only mention of its name should be the
+# leading "# PIPELINE_EVAL_ISOLATION=..." documentation line; no uncommented
+# assignment may exist (empty = inline default).
+check_var_named() {
+  local var="$1"
+  inc
+  if grep -Eq "^[[:space:]]*#?[[:space:]]*${var}=" "$EXAMPLE"; then
+    pass_msg "example: $var name appears in pipeline.config.example"
+  else
+    fail_msg "example: $var name missing from pipeline.config.example"
+  fi
+}
+
+check_var_named PIPELINE_EVAL_ISOLATION
+check_var_named PIPELINE_VISUAL_PROOF_TARGET_DIR
+check_var_named PIPELINE_VISUAL_PROOF_PORT_BASE
+
+# PIPELINE_EVAL_ISOLATION: comment-as-default convention — no uncommented
+# assignment may exist. Only commented "# PIPELINE_EVAL_ISOLATION=..." lines
+# are allowed.
+inc
+if grep -Eq "^[[:space:]]*PIPELINE_EVAL_ISOLATION=" "$EXAMPLE"; then
+  fail_msg "example: PIPELINE_EVAL_ISOLATION has an uncommented assignment (expected comment-as-default only)"
+else
+  pass_msg "example: PIPELINE_EVAL_ISOLATION uses comment-as-default convention (no uncommented assignment)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
