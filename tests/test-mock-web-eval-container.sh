@@ -114,9 +114,9 @@ fi
 # (positive structural marker: doctor.sh emits `CHECK:` / `=== Summary ===`).
 # The positive assertion is deliberate anti-cheat: a fix that silently restores
 # exit 0 without loading the plugin would emit neither marker and still FAIL.
-# TODO(#505): this fixture ships RED at the test-first commit on purpose — the
-# minimal mount/working_dir fix that flips it GREEN lands in the same PR, driven
-# by the written root-cause diagnosis (mock-web-eval/docs/diagnosis-505.md).
+# Goes GREEN via the same-absolute-path ~/.claude/plugins mount in compose.yml
+# (root cause: marketplace installLocation host-path mismatch — see
+# mock-web-eval/docs/diagnosis-505.md).
 echo "  -- Fixture #505: /pipeline:* discoverable inside container --"
 # The registered projectPath in ~/.claude/plugins/installed_plugins.json is the
 # MAIN worktree (first `git worktree list` entry), which is NOT this checkout
@@ -135,6 +135,15 @@ _cleanup_505  # clear any stale worktree from an aborted prior run
 if ! git -C "$MAIN_ROOT" worktree add --detach "$TEST_WT" HEAD >/dev/null 2>&1; then
   fail_msg "fixture #505 — could not create test worktree at $TEST_WT"
 else
+  # Real pipeline worktrees carry an untracked .claude/settings.local.json copied
+  # in by setup-worktree.sh / worktree-sync — it enables the local-scoped plugin.
+  # A raw `git worktree add` omits it, so seed it here to mirror the production
+  # worktree shape. Without this the fixture would exercise plugin ENABLEMENT (a
+  # state production never reaches) instead of the marketplace-resolution
+  # regression #505 actually fixes. See mock-web-eval/docs/diagnosis-505.md.
+  mkdir -p "$TEST_WT/.claude"
+  printf '{\n  "enabledPlugins": {\n    "pipeline@claude-pipeline": true\n  }\n}\n' \
+    > "$TEST_WT/.claude/settings.local.json"
   # Shell exports take precedence over --env-file for compose interpolation, so
   # working_dir/volumes resolve to the #505 reproduction layout. HOST_* still
   # come from the probe-seeded $ENV_FILE.
