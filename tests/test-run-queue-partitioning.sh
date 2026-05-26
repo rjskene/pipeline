@@ -366,14 +366,15 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# Test 7: classify_issue resolves PR via `gh pr list --search linked:<issue>`
-# The plan documents the classifier receives an issue and a PR number; the
-# existing pattern in this repo (check-ci-fix-loop.sh, review-audits.sh) is
-# `linked:<issue>` which works on real GitHub repos. `head:<prefix>` does
-# not — it requires an exact ref. This test asserts the right qualifier is
-# used so the consumer classifier actually receives a usable PR number.
+# Test 7: classify_issue resolves PR via exact-scope `<N> in:title,body`
+# search + closing-keyword body filter (issue #518). The prior `linked:<N>`
+# qualifier was NOT exact-scope and could return unrelated PRs (e.g. a
+# sibling issue's visual-proof PR), feeding the classifier the wrong diff
+# and causing spurious container-mode dispatch. This test asserts the new
+# search qualifier reaches gh for both issues, so the classifier receives
+# a usable PR number when one actually closes the issue.
 # -------------------------------------------------------------------------
-echo "Test 7: classify_issue uses gh pr list --search linked:<issue>"
+echo "Test 7: classify_issue uses gh pr list with exact-scope <N> in:title,body search"
 inc
 PROJ="$WORKDIR/p7"
 setup_proj "$PROJ"
@@ -391,11 +392,11 @@ OUT=$(STUB_WORKTREES="500:a 501:b" \
       CLASSIFIER_WEB_ISSUES="" \
       run_dryrun "$PROJ" "$STUB_DIR" 500 501)
 GH_LOG="$PROJ/gh-invocations.log"
-if grep -q 'pr list .*--search linked:500' "$GH_LOG" \
-   && grep -q 'pr list .*--search linked:501' "$GH_LOG"; then
-  pass_msg "classify_issue invokes gh pr list with --search linked:<issue>"
+if grep -q 'pr list .*--search 500 in:title,body type:pr is:open' "$GH_LOG" \
+   && grep -q 'pr list .*--search 501 in:title,body type:pr is:open' "$GH_LOG"; then
+  pass_msg "classify_issue invokes gh pr list with --search '<N> in:title,body type:pr is:open'"
 else
-  fail_msg "expected --search linked:<issue> in gh invocations; got:"
+  fail_msg "expected --search '<N> in:title,body type:pr is:open' in gh invocations; got:"
   cat "$GH_LOG" | sed 's/^/    /'
 fi
 
