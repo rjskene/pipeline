@@ -283,7 +283,11 @@ elif [ -z "${PIPELINE_REPO:-}" ]; then
 elif ! command -v gh >/dev/null 2>&1; then
   pass_msg "Scenario 6b skipped (gh CLI not installed)"
 else
-  OUT6B="$(bash "$HELPER" --limit 1 --dry-run 2>/dev/null || true)"
+  # Use a window wide enough to contain at least one feature PR: the
+  # is_release_pr filter (issue #500) excludes release PRs from the dry-run
+  # population, and the newest merged PR is frequently a release PR (e.g.
+  # `chore(main): release X.Y.Z`), which would empty a --limit 1 window.
+  OUT6B="$(bash "$HELPER" --limit 20 --dry-run 2>/dev/null || true)"
   if printf '%s\n' "$OUT6B" | grep -Eq '^would-fetch: PR #[0-9]+'; then
     pass_msg "live --dry-run prints 'would-fetch: PR #<N>'"
   else
