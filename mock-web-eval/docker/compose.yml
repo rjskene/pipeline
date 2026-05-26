@@ -32,7 +32,9 @@ services:
       # only when the container's working_dir lives under a registered
       # project path. The worktree (under .claude/worktrees/<slug>/) is
       # automatically reachable because it sits inside the project root.
-      # See #241 for the root-cause analysis.
+      # See #241 for the root-cause analysis — and #505 (with
+      # mock-web-eval/docs/diagnosis-505.md) for the related marketplace-path
+      # regression fixed by the host-absolute ~/.claude/plugins mount below.
       - "${PIPELINE_PROJECT_ROOT}:${PIPELINE_PROJECT_ROOT}"
       # Read-only credentials / settings / plugins / gh / git config.
       - "${HOME}/.claude/.credentials.json:/home/runner/.claude/.credentials.json:ro"
