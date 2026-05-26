@@ -67,12 +67,16 @@ else
   fail_msg "fixture-mode run exited non-zero (rc=$ROWS_RC)"
 fi
 
-EXPECTED_FIXTURE_PR_COUNT="$(jq -r 'length' "$FIXTURE_DIR/prs.json")"
+# Eligible PR count = total PRs in prs.json minus release PRs (see #500). The
+# 3 synthetic release PRs (901/902/903) are excluded by the is_release_pr
+# filter; only the 5 PATH-coverage feature PRs (101/102/103/104/302) are
+# iterated and emitted as rows.
+EXPECTED_ELIGIBLE_PR_COUNT=5
 N_ROWS="$(printf '%s' "$ROWS_OUT" | jq -r 'length' 2>/dev/null || echo 0)"
-if [ "$N_ROWS" = "$EXPECTED_FIXTURE_PR_COUNT" ]; then
-  pass_msg "fixture-mode emits one row per PR in prs.json (n=$N_ROWS)"
+if [ "$N_ROWS" = "$EXPECTED_ELIGIBLE_PR_COUNT" ]; then
+  pass_msg "fixture-mode emits one row per eligible feature PR (n=$N_ROWS)"
 else
-  fail_msg "expected $EXPECTED_FIXTURE_PR_COUNT PR rows, got $N_ROWS"
+  fail_msg "expected $EXPECTED_ELIGIBLE_PR_COUNT eligible PR rows, got $N_ROWS"
 fi
 
 # --- Scenario 3: per-PR metric extraction ---
@@ -279,13 +283,99 @@ elif [ -z "${PIPELINE_REPO:-}" ]; then
 elif ! command -v gh >/dev/null 2>&1; then
   pass_msg "Scenario 6b skipped (gh CLI not installed)"
 else
-  OUT6B="$(bash "$HELPER" --limit 1 --dry-run 2>/dev/null || true)"
+  # Use a window wide enough to contain at least one feature PR: the
+  # is_release_pr filter (issue #500) excludes release PRs from the dry-run
+  # population, and the newest merged PR is frequently a release PR (e.g.
+  # `chore(main): release X.Y.Z`), which would empty a --limit 1 window.
+  OUT6B="$(bash "$HELPER" --limit 20 --dry-run 2>/dev/null || true)"
   if printf '%s\n' "$OUT6B" | grep -Eq '^would-fetch: PR #[0-9]+'; then
     pass_msg "live --dry-run prints 'would-fetch: PR #<N>'"
   else
     fail_msg "live --dry-run did not print expected line (got: $OUT6B)"
   fi
 fi
+
+# --- Scenario 7: release-PR exclusion (issue #500) ---
+# The 3 synthetic release PRs in prs.json (#901 autorelease label, #902
+# back-sync title, #903 chore(release) title) must be excluded from the
+# rows, from the per-PR DEBUG stream, and counted in the banner. A
+# trailing single-line summary reports the count of non-release PRs that
+# were genuinely missing a Closes/Fixes/Resolves marker.
+inc_scenario "Scenario 7: release-PR exclusion (filter, banner, trailing summary)"
+
+ROWS7="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --emit-rows-json 2>/dev/null || true)"
+for n in 901 902 903; do
+  has_n="$(printf '%s' "$ROWS7" | jq --argjson n "$n" 'any(.[]; .pr_number == $n)' 2>/dev/null)"
+  if [ "$has_n" = "false" ]; then
+    pass_msg "release PR #$n is NOT in --emit-rows-json output"
+  else
+    fail_msg "release PR #$n leaked into --emit-rows-json output"
+  fi
+done
+
+ERR7="$(bash "$HELPER" --fixture "$FIXTURE_DIR" 2>&1 >/dev/null || true)"
+for n in 901 902 903; do
+  if printf '%s' "$ERR7" | grep -qE "PR #$n .*no linked issue"; then
+    fail_msg "release PR #$n emitted 'no linked issue' DEBUG line (should be filtered before that branch)"
+  else
+    pass_msg "release PR #$n produces no 'no linked issue' DEBUG line"
+  fi
+done
+
+OUT7="$(bash "$HELPER" --fixture "$FIXTURE_DIR" 2>/dev/null || true)"
+BANNER7="$(printf '%s\n' "$OUT7" | grep '^OVER-EVAL REPORT' | head -1)"
+if printf '%s' "$BANNER7" | grep -qE 'last 5 feature PRs.*3 release PRs excluded'; then
+  pass_msg "banner reports eligible feature-PR count + excluded release-PR count"
+else
+  fail_msg "banner does not report 'last 5 feature PRs ... 3 release PRs excluded' (got: $BANNER7)"
+fi
+
+# --- Trailing summary for K>0 non-release PRs missing Closes marker ---
+# Drive K=1 via a tiny inline fixture: one feature PR with no Closes
+# marker, plus one release PR (verifies release exclusions are NOT
+# counted toward K).
+TMP7="$(mktemp -d)"
+FIX7="$TMP7/fix7"
+mkdir -p "$FIX7"
+cat > "$FIX7/prs.json" <<'J'
+[
+  {"number":701,"title":"feat: unlinked feature","additions":3,"deletions":1,"body":"No close marker here","mergedAt":"2026-05-10T10:00:00Z","labels":[]},
+  {"number":702,"title":"chore(main): release 1.0.0","additions":50,"deletions":10,"body":"","mergedAt":"2026-05-11T10:00:00Z","labels":[{"name":"autorelease: tagged"}]}
+]
+J
+
+ERR7B="$(bash "$HELPER" --fixture "$FIX7" 2>&1 >/dev/null || true)"
+TRAILING="$(printf '%s\n' "$ERR7B" | grep 'over-eval-report:.*non-release PRs skipped for missing Closes' | head -1)"
+if printf '%s' "$TRAILING" | grep -qE '\b1 non-release PRs skipped for missing Closes/Fixes/Resolves marker'; then
+  pass_msg "trailing summary reports K=1 unlinked non-release PR"
+else
+  fail_msg "trailing summary missing or wrong (got: $TRAILING)"
+fi
+
+# Per-PR mid-stream DEBUG line should NOT appear (demoted to trailing summary).
+if printf '%s' "$ERR7B" | grep -qE 'PR #701.*no linked issue'; then
+  fail_msg "per-PR 'no linked issue' DEBUG line should be demoted to trailing summary"
+else
+  pass_msg "per-PR 'no linked issue' DEBUG line is demoted (not emitted mid-stream)"
+fi
+
+# K=0 case: trailing summary suppressed when every feature PR is linked.
+FIX7C="$TMP7/fix7c"
+mkdir -p "$FIX7C"
+cat > "$FIX7C/prs.json" <<'J'
+[
+  {"number":711,"title":"chore(main): release 1.0.0","additions":50,"deletions":10,"body":"","mergedAt":"2026-05-11T10:00:00Z","labels":[{"name":"autorelease: tagged"}]}
+]
+J
+
+ERR7C="$(bash "$HELPER" --fixture "$FIX7C" 2>&1 >/dev/null || true)"
+if printf '%s' "$ERR7C" | grep -q 'non-release PRs skipped for missing Closes'; then
+  fail_msg "trailing summary should be suppressed when K=0 (got: $ERR7C)"
+else
+  pass_msg "trailing summary suppressed when K=0"
+fi
+
+rm -rf "$TMP7"
 
 echo ""
 echo "== RESULTS =="

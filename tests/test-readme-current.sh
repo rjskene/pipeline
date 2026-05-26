@@ -13,7 +13,8 @@ assert_in()  { if grep -qF "$2" "$README"; then echo "  PASS: $1"; PASS=$((PASS+
 assert_out() { if grep -qF "$2" "$README"; then echo "  FAIL: $1"; FAIL=$((FAIL+1)); else echo "  PASS: $1"; PASS=$((PASS+1)); fi; }
 
 # Hero + 5-line lifecycle strip at the top
-assert_in "hero line present"                       "Claude Pipeline — a CI workflow"
+assert_in "hero title present"                      "# Pipeline"
+assert_in "hero tagline present"                    "Harness and orchestrator for GitHub-issue-driven CI workflows"
 assert_in "5-line lifecycle strip top-of-page"      "create → classify → plan → eval → execute → eval-pr → merge"
 assert_in "single pointer to docs/process-maps.md"  "Full process maps in docs/process-maps.md."
 

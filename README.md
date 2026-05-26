@@ -1,6 +1,12 @@
-# Claude Pipeline
+# Pipeline
 
-Claude Pipeline — a CI workflow for automating code updates through GitHub issues.
+> Harness and orchestrator for GitHub-issue-driven CI workflows on Claude Code
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/rjskene/pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/rjskene/pipeline/actions/workflows/ci.yml)
+[![Plugin](https://img.shields.io/badge/plugin-claude--pipeline-purple.svg)](#install--first-run)
+
+Pipeline manages GitHub issues end-to-end through automated stages, with explicit human checkpoints for plan approval and PR merge.
 
 ```
 create → classify → plan → eval → execute → eval-pr → merge
