@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.1](https://github.com/rjskene/pipeline/compare/v0.18.0...v0.18.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* evaluation fixes for [#500](https://github.com/rjskene/pipeline/issues/500) — widen live smoke window so release-PR filter has feature PRs ([0a02af2](https://github.com/rjskene/pipeline/commit/0a02af27f012793174429d0a0172273cca87ba69))
+* **over-eval-report:** exclude release PRs from window and demote per-PR debug noise ([8d7f84c](https://github.com/rjskene/pipeline/commit/8d7f84cf129152aba2b3b9abf46ef9e6196d4009)), closes [#500](https://github.com/rjskene/pipeline/issues/500)
+* **over-eval-report:** release PRs pollute 'no linked issue' debug stream and inflate apparent window size ([6f445a3](https://github.com/rjskene/pipeline/commit/6f445a30e921984a33708ac276eeefd383e224bb))
+* **release-please:** bump-patch-for-minor-pre-major true so feats iterate rc.N within minor ([#524](https://github.com/rjskene/pipeline/issues/524)) ([493ff73](https://github.com/rjskene/pipeline/commit/493ff733984f2ce40ee9fa167ccf73957edf7a92))
+* **release-please:** rc.N should accumulate feats within a minor — investigate + pick a config ([e5d0431](https://github.com/rjskene/pipeline/commit/e5d0431f2ffdf99e243ffe6b4e7e9f65b6b31091))
+* **test:** align readme-current hero assertion with new title block ([21574d9](https://github.com/rjskene/pipeline/commit/21574d9b5179fb1b20b2c2035bf9eee5a23f7185))
+
 ## [0.18.0](https://github.com/rjskene/pipeline/compare/v0.18.0...v0.18.0) (2026-05-26)
 
 
