@@ -15,5 +15,6 @@ h1 { color: #1d4ed8; }
 #item-add { background-color: #16a34a; color: #fff; border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
 #item-add:hover { background-color: #15803d; }
 .counter-reset { background-color: #dc2626; color: #fff; border: none; border-radius: 8px; padding: 8px 16px; }
+.counter-reset { visibility: hidden; }
 #page-footer { margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #ddd; color: #888; font-size: 0.85rem; }
 body { background: #fef3c7; }
