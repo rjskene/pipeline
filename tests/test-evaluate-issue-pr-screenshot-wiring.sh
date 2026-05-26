@@ -36,12 +36,27 @@ assert "Step 9 template mentions Screenshot row"        "grep -q 'Screenshot' '$
 assert "Step 9 template includes branch-pinned raw image row" \
   "grep -qE '!\\[.*\\]\\(https://raw\\.githubusercontent\\.com/[^)]+/\\.eval-screenshots/[^)]+\\.png\\)' '$SKILL'"
 
-# Step 11 green-path prose must reflect Option A's ephemeral-404-after-merge
-# tradeoff, NOT the stale SHA-pinned-survives-squash-merge claim.
-assert "Step 11 prose no longer claims SHA-pinned URLs survive squash-merge" \
-  "! awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -q 'SHA-pinned'"
-assert "Step 11 prose documents ephemeral/404 tradeoff" \
-  "awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -qE 'ephemeral|404'"
+# Post-merge durable-URL contract (issue #506). The §117 attach prose and the
+# §224 Step 11 green-path prose must describe the merge-SHA rewrite, NOT the
+# superseded Option A ephemeral-404 behaviour.
+
+# (a) The stale "intentionally 404" claim must be gone (it lived in §117 prose).
+assert "no stale 'intentionally 404' claim remains" \
+  "! grep -q 'intentionally 404' '$SKILL'"
+
+# (b) §117 (Attach screenshots) must reference the merge-SHA rewrite and opt-out.
+S117="awk '/Attach screenshots to the eval comment/,/Failure-loud verification/' '$SKILL'"
+assert "§117 references merge-SHA rewrite" \
+  "$S117 | grep -qi 'merge-sha'"
+assert "§117 references PIPELINE_SCREENSHOT_REWRITE_ENABLED opt-out" \
+  "$S117 | grep -q 'PIPELINE_SCREENSHOT_REWRITE_ENABLED'"
+
+# (c) §224 Step 11 green path must invoke the rewrite step and call the URLs durable.
+GREEN="awk '/On .green.:/,/On any .block-/' '$SKILL'"
+assert "§224 green path invokes rewrite-eval-screenshot-urls.sh" \
+  "$GREEN | grep -q 'rewrite-eval-screenshot-urls.sh'"
+assert "§224 green path documents durable merge-SHA-pinned URLs" \
+  "$GREEN | grep -qi 'durable'"
 
 echo ""
 echo "================================"
