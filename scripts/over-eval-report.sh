@@ -76,9 +76,24 @@ load_pr_list() {
       --repo "$PIPELINE_REPO" \
       --state merged \
       --limit "$LIMIT" \
-      --json number,title,additions,deletions,body,mergedAt
+      --json number,title,additions,deletions,body,mergedAt,labels
   fi
 }
+
+# is_release_pr — emit a jq filter that selects ONLY release PRs (any rule
+# matches → release). Used to partition the raw PR list into eligible
+# feature PRs vs release PRs that should be excluded from the report
+# (issue #500). Rules (OR-combined):
+#   - any label .name in {"autorelease: tagged", "autorelease: pending"}
+#   - .title matches ^chore\(main\): release   (release-please autorelease)
+#   - .title matches ^release: v               (back-sync convention)
+#   - .title matches ^chore\(release\):        (manual release housekeeping)
+RELEASE_PR_JQ='(
+  ((.labels // []) | any(.name == "autorelease: tagged" or .name == "autorelease: pending"))
+  or ((.title // "") | test("^chore\\(main\\): release"))
+  or ((.title // "") | test("^release: v"))
+  or ((.title // "") | test("^chore\\(release\\):"))
+)'
 
 # load_pr_view <num> — print the per-PR JSON payload including comments.
 load_pr_view() {
@@ -193,7 +208,12 @@ trap 'rm -f "$ROWS_TSV"' EXIT
 
 # --- main loop: iterate PRs, emit one TSV row per PR ---
 
-PR_LIST_JSON="$(load_pr_list)" || exit 1
+RAW_PR_LIST_JSON="$(load_pr_list)" || exit 1
+
+# Partition raw list into release PRs (excluded) and eligible feature PRs
+# (the report's actual population). See RELEASE_PR_JQ for detection rules.
+RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
+PR_LIST_JSON="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ | not)]" 2>/dev/null || echo '[]')"
 
 PR_COUNT="$(printf '%s' "$PR_LIST_JSON" | jq 'length' 2>/dev/null || echo 0)"
 
@@ -204,11 +224,10 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
-# Iterate PRs (process substitution preserves variable scope; we don't need it
-# here because we write to a temp file, but keep simple `while read`).
-printf '%s' "$PR_LIST_JSON" \
-  | jq -c '.[]' \
-  | while read -r pr; do
+# Iterate eligible PRs via process substitution so the SKIPPED_NO_LINK
+# counter (and any future counters) persist in the parent shell.
+SKIPPED_NO_LINK=0
+while read -r pr; do
       pr_num=$(printf '%s' "$pr" | jq -r '.number')
       pr_body=$(printf '%s' "$pr" | jq -r '.body // ""')
       pr_additions=$(printf '%s' "$pr" | jq -r '.additions // 0')
@@ -217,7 +236,7 @@ printf '%s' "$PR_LIST_JSON" \
 
       issue_num="$(extract_linked_issue "$pr_body")"
       if [ -z "$issue_num" ]; then
-        echo "over-eval-report: DEBUG: PR #$pr_num has no linked issue; skipping" >&2
+        SKIPPED_NO_LINK=$((SKIPPED_NO_LINK + 1))
         continue
       fi
 
@@ -245,7 +264,13 @@ printf '%s' "$PR_LIST_JSON" \
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$path" "$loc" "$plan_lines" "$plan_eval_lines" "$pr_eval_lines" "$pr_num" \
         >> "$ROWS_TSV"
-    done
+done < <(printf '%s' "$PR_LIST_JSON" | jq -c '.[]')
+
+# Trailing single-line summary of genuinely-unlinked non-release PRs.
+# Suppressed at K=0 per issue #500 acceptance criteria.
+if [ "$SKIPPED_NO_LINK" -gt 0 ]; then
+  echo "over-eval-report: $SKIPPED_NO_LINK non-release PRs skipped for missing Closes/Fixes/Resolves marker — these are real misses worth fixing" >&2
+fi
 
 # --- output ---
 
@@ -268,12 +293,20 @@ fi
 
 emit_table() {
   local oldest newest
+  # Window dates span the eligible feature-PR set, not the raw fetch window,
+  # so the operator sees the timestamps that actually back the report rows.
   oldest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | min // "?"')"
   newest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | max // "?"')"
-  # Banner uses the actual PR count, not $LIMIT, so a partial window
-  # (repo has fewer merged PRs than requested) reports accurately.
-  printf 'OVER-EVAL REPORT — last %s merged PRs (window: %s to %s)\n\n' \
-    "$PR_COUNT" "$oldest" "$newest"
+  # Banner reports the eligible feature-PR count and (when non-zero) the
+  # count of release PRs excluded by the is_release_pr filter — fixes the
+  # 'last 50 merged PRs' mis-statement called out by issue #500.
+  if [ "$RELEASE_PR_COUNT" -gt 0 ]; then
+    printf 'OVER-EVAL REPORT — last %s feature PRs (window: %s to %s; %s release PRs excluded)\n\n' \
+      "$PR_COUNT" "$oldest" "$newest" "$RELEASE_PR_COUNT"
+  else
+    printf 'OVER-EVAL REPORT — last %s feature PRs (window: %s to %s)\n\n' \
+      "$PR_COUNT" "$oldest" "$newest"
+  fi
 
   echo 'PATH | N  | median diff | median plan | median plan-eval | median pr-eval | ratio pr-eval:diff | ratio plan-eval:diff'
 
