@@ -17,14 +17,15 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 
 ## Invocation mode
 
-Two dispatch shapes; every step below is identical, only CWD setup differs:
+Three dispatch shapes; every step below is identical, only CWD + visual-proof setup differs:
 
 1. **Inline `Agent(...)` dispatch (PATH A, docs-only).** Worktree absolute path + issue number in the prompt. You are NOT in the worktree CWD — `cd <worktree-absolute-path>` before any step.
 2. **`${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch (PATH B/C and explicit requests).** Already in the feature worktree; no `cd`.
+3. **Inline Agent dispatch (browser-eval; default when classifier emits `--container-mode` and `PIPELINE_EVAL_ISOLATION != container`).** Worktree absolute path + issue number + PR + port + target-dir-abs + auto-merge-gate token are pre-resolved by the orchestrator; you `cd <worktree-abs>` and start the loopback HTTP server before any other step. The classifier's `--container-mode=<name>` token is reinterpreted as a *browser-eval surface* hint; the dispatch path itself is in-process Agent rather than `docker compose run`. Visual proof for these PRs reads from `http://127.0.0.1:$PORT/` against the durable URL substring `raw.githubusercontent.com/<owner>/<repo>/<merge-sha>/.eval-screenshots/` once Step 11.3 rewrites the eval comment — branch-pinned URLs apply during the review window only. See Step 6c for the loopback server setup and Step 11 for the unchanged auto-merge gate.
 
 For PATH A the orchestrator threads the manual-merge opt-out by including `MANUAL_MERGE=1` in the prompt (mirroring `spawn-claude.sh --manual-merge`). Inline token and env var are equivalent — both suppress the Step 11 greenlight.
 
-> **Container dispatch (issue #218).** When launched inside a consumer-declared container mode (e.g. `--container-mode=web-eval`), the dispatch is transparent to this skill — the consumer's compose service surfaces any marker env vars (e.g. `BOMON_WEB_EVAL=1`) the skill behavior reads. This skill does not branch on container mode.
+> **Container dispatch (issue #218; ISOLATION=container only).** When `PIPELINE_EVAL_ISOLATION=container` is set AND the consumer declares a container mode (e.g. `--container-mode=web-eval`), the dispatch is transparent to this skill — the consumer's compose service surfaces any marker env vars (e.g. `BOMON_WEB_EVAL=1`) the skill behavior reads. This branch is the explicit opt-in path; the default (unset / empty) is the inline Agent dispatch documented above. This skill does not otherwise branch on container mode.
 
 ## Lifecycle
 
@@ -135,6 +136,19 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    ```
 
    **6b. Visual proof verdict (needs-browser issues only).** If the issue carries the needs-browser label, invoke `Skill(skill: "pipeline:visual-proof-from-plan")` in this clean-container session and parse its JSON output. For every entry in `unsatisfied`, the verdict MUST be Flagged for user review — record the claim and the failing artifact path/URL in the **Remaining issues** row. This is the load-bearing trust layer; `satisfied` predicates from the executor session do NOT carry over.
+
+   **6c. Inline-mode visual proof setup** (issue #517 — applies when invoked via the inline Agent dispatch for browser-eval, dispatch mode #3 above). The orchestrator has pre-resolved `$PORT` (via `scripts/visual-proof-port-broker.sh`) and `$TARGET_DIR` (absolute path under the worktree, from `PIPELINE_VISUAL_PROOF_TARGET_DIR`). Before any `browser_navigate` / `browser_evaluate` call, start a loopback HTTP server bound to `127.0.0.1` and verify readiness:
+   ```bash
+   trap 'kill $(jobs -p) 2>/dev/null' EXIT
+   python3 -m http.server "$PORT" --directory "$TARGET_DIR" --bind 127.0.0.1 &
+   # Readiness probe: 5 retries, 1s delay.
+   curl --silent --fail --retry 5 --retry-delay 1 --max-time 10 \
+        "http://127.0.0.1:$PORT/" >/dev/null \
+     || { echo "block-server-start: http.server not ready on 127.0.0.1:$PORT"; exit 1; }
+   ```
+   All subsequent `browser_navigate` / `browser_evaluate` calls target `http://127.0.0.1:$PORT/<path>`. The EXIT trap kills the bg server on normal exit and most signals; SIGKILL leaks are reaped by `scripts/reap-stale-visual-proof-servers.sh` invoked from `/pipeline:run` Step 0 housekeeping. `--bind 127.0.0.1` is load-bearing — never bind to `0.0.0.0` (avoids external exposure during concurrent fullsend runs).
+
+   **Per-tool wall-clock budget.** Wrap each `browser_evaluate` and `browser_navigate` call in a 60s wall-clock budget. On timeout, post Flagged with a timeout note and exit non-zero — this explicitly prevents the `until-grep DONE_MARKER` wedge pattern from issue #511 from migrating into the inline path. The 60s budget applies to inline-mode dispatch (mode #3) only; container-mode and PATH-A dispatch retain their existing inner-loop timeouts.
 
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
@@ -251,6 +265,36 @@ Run \`\$CLAUDE_PLUGIN_ROOT/scripts/retarget-pr.sh $PR_NUM $PIPELINE_BASE_BRANCH\
        The label flip is what lets the runner (`scripts/run-queue.sh` `evaluator_finished_terminal()`) free the queue slot immediately instead of waiting for the per-agent 90-min timeout. Fails OPEN on `gh` error — the worst case is the pre-#489 behaviour (queue waits for the timeout). The label is permanent post-merge (`cleanup-worktree.sh` leaves it as a historical "this PR did not auto-merge" signal).
 
     Release-please PRs are out of scope for this gate — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of `run/SKILL.md`.
+
+## Canonical Agent prompt template (assembled by orchestrator)
+
+The inline Agent dispatch (mode #3 above) is launched by the orchestrator with the following prompt body. Fields are pre-resolved by the orchestrator — the subagent does NOT re-derive them:
+
+```
+You are dispatched to run /pipeline:evaluate-issue-pr <N> inline.
+Context (pre-resolved by orchestrator — do not re-derive):
+  - Worktree:   <abs-path>
+  - PR:         <PR-num>
+  - Target dir: <PIPELINE_VISUAL_PROOF_TARGET_DIR resolved abs-path>
+  - Port:       <P>  (use --bind 127.0.0.1)
+  - Auto-merge: <gated|allowed>  (per manual-merge label check)
+Setup: cd <worktree>; trap 'kill $(jobs -p) 2>/dev/null' EXIT;
+       python3 -m http.server $PORT --directory $TARGET_DIR --bind 127.0.0.1 &
+       (wait for server readiness via curl --retry 5 --retry-delay 1)
+Then: follow skills/evaluate-issue-pr/SKILL.md verbatim against http://127.0.0.1:$PORT.
+Terminal state: post `## Evaluation` comment via gh; report verdict + auto-merge-gate token.
+```
+
+Field semantics:
+- **Worktree** — absolute path to the feature worktree; subagent `cd`s here before any other step.
+- **PR** — PR number; threaded as `$PR_NUM` for the rest of the skill.
+- **Target dir** — absolute path under the worktree served by `python3 -m http.server`; resolved from `PIPELINE_VISUAL_PROOF_TARGET_DIR`.
+- **Port** — broker-allocated port (`scripts/visual-proof-port-broker.sh <slate_index>`).
+- **Auto-merge** — gate token threaded through to Step 11; `gated` mirrors `--manual-merge` / `MANUAL_MERGE=1`, `allowed` lets the Step 11 greenlight matrix decide.
+
+## Migration warning (issue #517 — owner: `scripts/run-queue.sh launch_agent()`)
+
+When the classifier matches a browser-eval surface but `PIPELINE_VISUAL_PROOF_TARGET_DIR` is unset on the operator's `pipeline.config`, the orchestrator (in `scripts/run-queue.sh launch_agent()`, NOT this skill) emits a **one-time stderr warning** plus a Notes column entry on the status table. Evaluation proceeds **without visual proof** — the warning is non-blocking and never blocks the verdict. This is the documented consumer-migration story for operators upgrading from 0.17.x to a release that defaults the inline browser-eval path; they pick (a) set `PIPELINE_VISUAL_PROOF_TARGET_DIR` to opt into inline visual proof, or (b) set `PIPELINE_EVAL_ISOLATION=container` to retain the legacy container path. The warning surface lives in `run-queue.sh launch_agent()` so it fires once per dispatch — this skill only documents the contract.
 
 ## Constraints
 - Do NOT read the executor's session logs or conversation history.
