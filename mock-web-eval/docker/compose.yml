@@ -32,12 +32,26 @@ services:
       # only when the container's working_dir lives under a registered
       # project path. The worktree (under .claude/worktrees/<slug>/) is
       # automatically reachable because it sits inside the project root.
-      # See #241 for the root-cause analysis.
+      # See #241 for the root-cause analysis — and #505 (with
+      # mock-web-eval/docs/diagnosis-505.md) for the related marketplace-path
+      # regression fixed by the host-absolute ~/.claude/plugins mount below.
       - "${PIPELINE_PROJECT_ROOT}:${PIPELINE_PROJECT_ROOT}"
       # Read-only credentials / settings / plugins / gh / git config.
       - "${HOME}/.claude/.credentials.json:/home/runner/.claude/.credentials.json:ro"
       - "${HOME}/.claude/settings.json:/home/runner/.claude/settings.json:ro"
       - "${HOME}/.claude/plugins:/home/runner/.claude/plugins:ro"
+      # ALSO bind ~/.claude/plugins at its host-absolute path (#505). The same
+      # mount above (at /home/runner) lets claude-cli FIND the plugin registry
+      # via $HOME, but ~/.claude/plugins/known_marketplaces.json records each
+      # marketplace's `installLocation` as a host-absolute path under the host
+      # HOME (e.g. /home/rjskene/.claude/plugins/marketplaces/<name>). Inside the
+      # container HOME is /home/runner, so those host-absolute paths are missing
+      # and EVERY plugin fails to load with "not found in marketplace" — the
+      # regression of #241, now one layer down in the marketplace registry rather
+      # than the project root. Binding the host-absolute path makes the recorded
+      # installLocation paths resolve. Same-absolute-path principle as the project
+      # mount above. See mock-web-eval/docs/diagnosis-505.md for the probe evidence.
+      - "${HOME}/.claude/plugins:${HOME}/.claude/plugins:ro"
       - "${HOME}/.gitconfig:/home/runner/.gitconfig:ro"
       - "${HOME}/.config/gh:/home/runner/.config/gh:ro"
     working_dir: ${PIPELINE_WORKTREE_PATH:-${PIPELINE_PROJECT_ROOT}}

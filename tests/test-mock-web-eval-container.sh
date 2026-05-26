@@ -103,6 +103,66 @@ else
   fail_msg "gh CLI missing inside container"
 fi
 
+# Fixture for issue #505: /pipeline:* slash commands MUST be discoverable
+# inside the container. Regression guard for #241 (same symptom one layer
+# deeper): the real eval dispatch sets working_dir to a *worktree* under the
+# registered project root, not the project root itself. PR #504's fullsend hit
+# `Unknown command: /pipeline:evaluate-issue-pr` here — the plugin was
+# registered (installed_plugins.json) but not discoverable from the worktree
+# cwd. This fixture reproduces that dispatch shape and asserts the command
+# RESOLVES (no `Unknown command:`) AND the doctor skill actually runs
+# (positive structural marker: doctor.sh emits `CHECK:` / `=== Summary ===`).
+# The positive assertion is deliberate anti-cheat: a fix that silently restores
+# exit 0 without loading the plugin would emit neither marker and still FAIL.
+# Goes GREEN via the same-absolute-path ~/.claude/plugins mount in compose.yml
+# (root cause: marketplace installLocation host-path mismatch — see
+# mock-web-eval/docs/diagnosis-505.md).
+echo "  -- Fixture #505: /pipeline:* discoverable inside container --"
+# The registered projectPath in ~/.claude/plugins/installed_plugins.json is the
+# MAIN worktree (first `git worktree list` entry), which is NOT this checkout
+# when the suite runs from a linked worktree. Mount THAT and point working_dir
+# at a fresh worktree beneath it — mirroring scripts/spawn-claude.sh container
+# dispatch (PIPELINE_PROJECT_ROOT=<main root>, working_dir=<worktree>).
+MAIN_ROOT="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')"
+[ -n "$MAIN_ROOT" ] || MAIN_ROOT="$REPO_ROOT"
+TEST_WT="$MAIN_ROOT/.claude/worktrees/test-505-discovery"
+_cleanup_505() {
+  git -C "$MAIN_ROOT" worktree remove --force "$TEST_WT" >/dev/null 2>&1 || true
+  rm -rf "$TEST_WT" 2>/dev/null || true
+}
+trap _cleanup_505 EXIT
+_cleanup_505  # clear any stale worktree from an aborted prior run
+if ! git -C "$MAIN_ROOT" worktree add --detach "$TEST_WT" HEAD >/dev/null 2>&1; then
+  fail_msg "fixture #505 — could not create test worktree at $TEST_WT"
+else
+  # Real pipeline worktrees carry an untracked .claude/settings.local.json copied
+  # in by setup-worktree.sh / worktree-sync — it enables the local-scoped plugin.
+  # A raw `git worktree add` omits it, so seed it here to mirror the production
+  # worktree shape. Without this the fixture would exercise plugin ENABLEMENT (a
+  # state production never reaches) instead of the marketplace-resolution
+  # regression #505 actually fixes. See mock-web-eval/docs/diagnosis-505.md.
+  mkdir -p "$TEST_WT/.claude"
+  printf '{\n  "enabledPlugins": {\n    "pipeline@claude-pipeline": true\n  }\n}\n' \
+    > "$TEST_WT/.claude/settings.local.json"
+  # Shell exports take precedence over --env-file for compose interpolation, so
+  # working_dir/volumes resolve to the #505 reproduction layout. HOST_* still
+  # come from the probe-seeded $ENV_FILE.
+  OUT505=$(PIPELINE_PROJECT_ROOT="$MAIN_ROOT" PIPELINE_WORKTREE_PATH="$TEST_WT" \
+    docker compose -f "$COMPOSE" --env-file "$ENV_FILE" run --rm --no-deps \
+      mock-web-eval claude --dangerously-skip-permissions -p '/pipeline:doctor' 2>&1 || true)
+  if echo "$OUT505" | grep -qi 'Unknown command'; then
+    echo "$OUT505" | sed 's/^/    /'
+    fail_msg "container plugin slash-command discovery (got: Unknown command:)"
+  elif echo "$OUT505" | grep -qiE 'CHECK:|=== Summary ===|gh_auth|pipeline_config|base_branch'; then
+    pass_msg "container plugin slash-command discovery (/pipeline:doctor resolved + ran)"
+  else
+    echo "$OUT505" | sed 's/^/    /'
+    fail_msg "container plugin slash-command discovery (no doctor output marker)"
+  fi
+fi
+trap - EXIT
+_cleanup_505
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
