@@ -59,5 +59,27 @@ spid=$(printf '%s\n' "$out" | sed -n 's/^SERVER: pid=\([0-9]*\) .*/\1/p')
 [ -n "$spid" ] && kill "$spid" 2>/dev/null
 rm -rf "$TMP_C"
 
+# ---- Case (d): reapability — a server started by the script is killed by the
+#      reaper after its --directory is rm -rf'd (no enclosing .git -> stale).
+#      Mirrors tests/test-reap-stale-visual-proof-servers.sh Case C. ----
+REAPER="$REPO_ROOT/scripts/reap-stale-visual-proof-servers.sh"
+TMP_D=$(mktemp -d); echo x > "$TMP_D/index.html"
+out=$(PIPELINE_VISUAL_PROOF_PORT_BASE=9500 bash "$STARTER" 11 "$TMP_D" 2>/dev/null)
+spid=$(printf '%s\n' "$out" | sed -n 's/^SERVER: pid=\([0-9]*\) .*/\1/p')
+if [ -n "$spid" ] && kill -0 "$spid" 2>/dev/null; then
+  rm -rf "$TMP_D"                       # yank the dir -> reaper sees it as stale
+  bash "$REAPER" >/dev/null 2>&1 || true
+  gone=0
+  for _ in 1 2 3 4 5; do
+    kill -0 "$spid" 2>/dev/null || { gone=1; break; }
+    sleep 1
+  done
+  [ "$gone" = "1" ] && pass_msg "reapability: server-start pid $spid reaped after dir removed" \
+                    || { fail_msg "reapability: pid $spid still alive after reaper"; kill -9 "$spid" 2>/dev/null || true; }
+else
+  fail_msg "reapability: server-start did not yield a live pid (out=$out)"
+  rm -rf "$TMP_D"
+fi
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
