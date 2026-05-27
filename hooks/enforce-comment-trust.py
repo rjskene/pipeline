@@ -21,7 +21,12 @@ Allowed (exit 0):
 
 Scope: only literal `tool_input.command` text is inspected. Reads hidden inside
 $(...) command substitutions or HEREDOC bodies are NOT resolved - same known
-limitation as hooks/check-ci-skip-markers.py.
+limitation as hooks/check-ci-skip-markers.py. Two further known gaps, accepted
+as out of this layer's contract scope (the helper remains the hard-drop
+boundary): (1) only the first `--json` flag is inspected, though `gh` itself
+rejects duplicate `--json` flags; (2) the native `gh issue/pr view --comments`
+boolean flag (no `--json`) is not blocked - a candidate follow-up if the
+defense surface widens beyond `--json ...comments...`.
 """
 import json
 import re
