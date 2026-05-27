@@ -65,14 +65,22 @@ fi
 # preserved verbatim.
 SRC="raw.githubusercontent.com/${PIPELINE_REPO}/${BRANCH}/.eval-screenshots/"
 DST="raw.githubusercontent.com/${PIPELINE_REPO}/${SHA}/.eval-screenshots/"
+# Private-repo blob host (issue #551): the attach helper emits
+# github.com/<repo>/blob/<branch>/.eval-screenshots/ URLs on private repos.
+# Branch-scope-pin those to the merge SHA too. Host strings do not cross-match:
+# raw.githubusercontent.com never contains the bare github.com/.../blob/ form.
+BLOB_SRC="github.com/${PIPELINE_REPO}/blob/${BRANCH}/.eval-screenshots/"
+BLOB_DST="github.com/${PIPELINE_REPO}/blob/${SHA}/.eval-screenshots/"
 
-# No-op if there is nothing to rewrite (no matching URL, or already SHA-pinned).
-if ! printf '%s' "$BODY" | grep -qF "$SRC"; then
+# No-op only if NEITHER host's branch-pinned form is present.
+if ! printf '%s' "$BODY" | grep -qF "$SRC" && ! printf '%s' "$BODY" | grep -qF "$BLOB_SRC"; then
   exit 0
 fi
 
 # `|` delimiter avoids escaping the slashes in owner/repo and feature/* names.
-NEW_BODY="$(printf '%s' "$BODY" | sed "s|${SRC}|${DST}|g")"
+# Both hosts are rewritten in one pass; each sed expression is a no-op when its
+# source pattern is absent, so the raw-only and blob-only paths are preserved.
+NEW_BODY="$(printf '%s' "$BODY" | sed -e "s|${SRC}|${DST}|g" -e "s|${BLOB_SRC}|${BLOB_DST}|g")"
 
 if ! gh api -X PATCH "/repos/${PIPELINE_REPO}/issues/comments/${COMMENT_ID}" -f body="$NEW_BODY" >/dev/null 2>&1; then
   echo "WARN: failed to PATCH comment ${COMMENT_ID} on PR #${PR}; branch-pinned URLs left in place" >&2
