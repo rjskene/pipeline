@@ -9,6 +9,8 @@ grep -qF 'BEGIN-PATH-MARKER-PARSE' "$FILE" || { echo "FAIL: BEGIN-PATH-MARKER-PA
 grep -qF 'END-PATH-MARKER-PARSE' "$FILE" || { echo "FAIL: END-PATH-MARKER-PARSE sentinel removed"; exit 1; }
 grep -qF 'BEGIN-LABEL-APPLY' "$FILE" || { echo "FAIL: BEGIN-LABEL-APPLY sentinel removed"; exit 1; }
 grep -qF 'END-LABEL-APPLY' "$FILE" || { echo "FAIL: END-LABEL-APPLY sentinel removed"; exit 1; }
+# Cap raised 220 -> 250 by #546: classify-issue gained an opener-association
+# trust gate (step 0a) and a `## Comment trust` contract section.
 LINES=$(wc -l < "$FILE")
-[ "$LINES" -le 220 ] || { echo "FAIL: $FILE has $LINES lines (cap is 220)"; exit 1; }
-echo "PASS: PATH D section + sentinels present, ${LINES}/220 lines"
+[ "$LINES" -le 250 ] || { echo "FAIL: $FILE has $LINES lines (cap is 250)"; exit 1; }
+echo "PASS: PATH D section + sentinels present, ${LINES}/250 lines"
