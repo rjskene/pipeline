@@ -144,6 +144,32 @@ else
   fail_msg "step 3a fallback still uses a raw --json comments fetch"
 fi
 
+# --- Task 6: `## Comment trust` prose contract section ---
+
+echo "Test 13: SKILL documents a '## Comment trust' section"
+inc
+if grep -qiE "Comment trust" "$SKILL_FILE"; then
+  pass_msg "'Comment trust' section present"
+else
+  fail_msg "missing '## Comment trust' section"
+fi
+
+echo "Test 14: section names the trust tier set OWNER/MEMBER/COLLABORATOR"
+inc
+if grep -qiE "OWNER.*MEMBER.*COLLABORATOR" "$SKILL_FILE"; then
+  pass_msg "trust tier set named"
+else
+  fail_msg "trust tier set (OWNER/MEMBER/COLLABORATOR) not named"
+fi
+
+echo "Test 15: section names the #545 dependency / helper"
+inc
+if grep -qF "#545" "$SKILL_FILE" || grep -qF "filter-trusted-comments.sh" "$SKILL_FILE"; then
+  pass_msg "dependency on #545 / filter-trusted-comments.sh named"
+else
+  fail_msg "missing #545 / filter-trusted-comments.sh dependency reference"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
