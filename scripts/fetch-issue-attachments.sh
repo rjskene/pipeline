@@ -81,6 +81,7 @@ fi
 # Build the scanned text: the opener body (only when the opener is trusted)
 # plus each comment body whose author is trusted. Untrusted bytes are dropped
 # HERE, before URL extraction, so attacker-controlled URLs are never fetched.
+DROPPED_COMMENT_LOGINS=()
 if [ -z "$RAW" ]; then
   BODY_AND_COMMENTS=""
 else
@@ -88,6 +89,7 @@ else
     BODY_AND_COMMENTS=$(jq -r '.body // ""' <<<"$RAW")
   else
     BODY_AND_COMMENTS=""
+    echo "ignored issue body from untrusted opener: @${OPENER_LOGIN:-unknown}" >&2
   fi
   comment_count=$(jq '.comments | length' <<<"$RAW")
   idx=0
@@ -96,9 +98,21 @@ else
     if is_trusted_assoc "$c_assoc"; then
       c_body=$(jq -r ".comments[$idx].body // \"\"" <<<"$RAW")
       BODY_AND_COMMENTS="$BODY_AND_COMMENTS"$'\n'"$c_body"
+    else
+      c_login=$(jq -r ".comments[$idx].author.login // \"\"" <<<"$RAW")
+      DROPPED_COMMENT_LOGINS+=("@${c_login:-unknown}")
     fi
     idx=$((idx + 1))
   done
+fi
+
+# Machine-readable audit (#545 shape): name the dropped untrusted comment
+# authors. Emitted only when ≥1 comment was dropped, so the all-trusted fast
+# path stays advisory-free.
+if [ "${#DROPPED_COMMENT_LOGINS[@]}" -gt 0 ]; then
+  dropped_joined=$(printf '%s, ' "${DROPPED_COMMENT_LOGINS[@]}")
+  dropped_joined="${dropped_joined%, }"
+  echo "ignored ${#DROPPED_COMMENT_LOGINS[@]} comments from untrusted authors: $dropped_joined" >&2
 fi
 
 # Extract GitHub-hosted attachment URLs. Three accepted hosts:

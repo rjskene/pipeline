@@ -550,6 +550,97 @@ else
   fail_msg "trusted-opener body asset missing (gate over-filtered); got: $OUT"
 fi
 
+# ---------------------------------------------------------------------------
+# Case 13: dropped-comment-author advisory (machine-readable, #545 shape)
+# ---------------------------------------------------------------------------
+echo "=== Case 13: dropped untrusted comment-author advisory ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 13)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+SHIM_COMMENTS_JSON=$(jq -n \
+  '{body:"opener body, no url",
+    comments:[
+      {author:{login:"maintainer"}, authorAssociation:"MEMBER",      body:"benign trusted comment"},
+      {author:{login:"attacker1"},  authorAssociation:"NONE",        body:"drive-by 1"},
+      {author:{login:"attacker2"},  authorAssociation:"CONTRIBUTOR", body:"drive-by 2"}
+    ]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_LOG SHIM_API_COUNT
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+run_helper 999 >/dev/null 2>"$ERRLOG"
+if grep -qE "ignored 2 comments from untrusted authors:" "$ERRLOG" \
+   && grep -q "@attacker1" "$ERRLOG" && grep -q "@attacker2" "$ERRLOG"; then
+  pass_msg "stderr names the 2 dropped untrusted comment authors"
+else
+  fail_msg "missing dropped-author advisory; stderr: $(cat "$ERRLOG")"
+fi
+inc
+if ! grep -q "@maintainer" "$ERRLOG"; then
+  pass_msg "trusted comment author not listed as dropped"
+else
+  fail_msg "trusted author wrongly listed in advisory; stderr: $(cat "$ERRLOG")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 14: untrusted-opener advisory names the opener login
+# ---------------------------------------------------------------------------
+echo "=== Case 14: untrusted-opener advisory ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 14)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+SHIM_COMMENTS_JSON=$(jq -n '{body:"opener body, no url", comments:[]}')
+SHIM_OPENER_ASSOC="NONE"
+SHIM_OPENER_LOGIN="drive-by-opener"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+run_helper 999 >/dev/null 2>"$ERRLOG"
+if grep -q "untrusted opener" "$ERRLOG" && grep -q "@drive-by-opener" "$ERRLOG"; then
+  pass_msg "stderr advisory names the untrusted opener login"
+else
+  fail_msg "missing untrusted-opener advisory; stderr: $(cat "$ERRLOG")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 15: pipeline-posted OWNER comment passes the gate (no over-filter)
+# ---------------------------------------------------------------------------
+echo "=== Case 15: pipeline OWNER comment passthrough ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 15)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_PLAN="https://github.com/user-attachments/assets/plancomment-uuid-15"
+SHIM_COMMENTS_JSON=$(jq -n --arg u "$URL_PLAN" \
+  '{body:"opener body, no url",
+    comments:[
+      {author:{login:"pipeline-bot"}, authorAssociation:"OWNER",
+       body:("## Implementation Plan\nrefer to " + $u)}
+    ]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+run_helper 999 >/dev/null 2>"$ERRLOG"
+if [ -f "$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999/plancomment-uuid-15.png" ]; then
+  pass_msg "OWNER (pipeline) comment URL downloaded"
+else
+  fail_msg "OWNER comment URL wrongly dropped"
+fi
+inc
+if ! grep -q "ignored" "$ERRLOG"; then
+  pass_msg "no dropped-author advisory when all authors trusted"
+else
+  fail_msg "advisory wrongly emitted for all-trusted issue; stderr: $(cat "$ERRLOG")"
+fi
+
 echo ""
 echo "================================================================"
 echo "Results: $PASS passed, $FAIL failed (out of $TESTS test assertions)"
