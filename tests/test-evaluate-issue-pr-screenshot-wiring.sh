@@ -91,8 +91,12 @@ assert "Step 6c binds python3 -m http.server to 127.0.0.1" \
   "$S6C | grep -qE 'python3 -m http\\.server.*--bind 127\\.0\\.0\\.1|python3 -m http\\.server.*-b 127\\.0\\.0\\.1'"
 assert "Step 6c includes an EXIT trap for bg server cleanup" \
   "$S6C | grep -qE \"trap .*EXIT\""
-assert "Step 6c uses curl readiness probe with 5 retries, 1s delay" \
-  "$S6C | grep -qE 'curl.*--retry 5.*--retry-delay 1|curl.*--retry-delay 1.*--retry 5'"
+# Step 6c delegates the bootstrap (port-broker + http.server + curl readiness
+# probe) to scripts/visual-proof-server-start.sh as of #527; the inline curl
+# probe moved into that helper, so the Step 6c contract is now "routes through
+# the helper" rather than "inlines the probe".
+assert "Step 6c routes bootstrap through visual-proof-server-start.sh helper" \
+  "$S6C | grep -q 'visual-proof-server-start\\.sh'"
 
 # Canonical Agent prompt template fenced block (issue #517).
 TPL="awk '/Canonical Agent prompt template/,/Constraints/' '$SKILL'"
