@@ -44,6 +44,35 @@ else
   pass_msg "raw un-filtered comments fetch removed"
 fi
 
+# --- Task 2: plan-revision detection keys off trusted feedback only ---
+
+echo "Test 3: SKILL names a trusted feedback/comment/author qualifier"
+inc
+if grep -qiE "trusted (feedback|comment|author)" "$SKILL_FILE"; then
+  pass_msg "trusted feedback/comment/author qualifier present"
+else
+  fail_msg "no 'trusted feedback/comment/author' qualifier found"
+fi
+
+echo "Test 4: step 2 ties plan-revision to a trusted-only qualifier"
+inc
+STEP2_TMP="$(mktemp)"
+trap 'rm -f "$STEP2_TMP"' EXIT
+awk '/^2\. / { inblock = 1 } /^3\. / { inblock = 0 } inblock { print }' "$SKILL_FILE" > "$STEP2_TMP"
+if grep -qiF "Changes from previous plan" "$STEP2_TMP" && grep -qi "trusted" "$STEP2_TMP"; then
+  pass_msg "step 2 mentions 'Changes from previous plan' AND a trusted qualifier"
+else
+  fail_msg "step 2 missing 'Changes from previous plan' + trusted qualifier"
+fi
+
+echo "Test 5: an untrusted/outsider comment cannot force a revision"
+inc
+if grep -qiE "outsider|untrusted" "$SKILL_FILE"; then
+  pass_msg "negative-intent (outsider/untrusted) language present"
+else
+  fail_msg "no 'outsider'/'untrusted' negative-intent language"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
