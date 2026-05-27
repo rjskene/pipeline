@@ -94,6 +94,14 @@ mkdir -p "$WORKTREE_PATH/.claude/hooks"
 if [ -f "$MAIN_REPO/.claude/settings.local.json" ]; then
   cp "$MAIN_REPO/.claude/settings.local.json" "$WORKTREE_PATH/.claude/settings.local.json"
 fi
+# Copy host-specific pipeline.config so the worktree-local `source ./pipeline.config`
+# in execute-issue-plan / evaluate-issue-pr Boot resolves PIPELINE_* vars. The main
+# checkout's copy is unreadable from inside a worktree (restrict_paths.py boundary).
+# gitignored + host-specific, so this is a runtime copy, not tracked (#529).
+if [ -f "$MAIN_REPO/pipeline.config" ]; then
+  cp "$MAIN_REPO/pipeline.config" "$WORKTREE_PATH/pipeline.config"
+  echo "  Copied pipeline.config"
+fi
 # Sync .env files
 for envfile in $PIPELINE_SYNC_ENVS; do
   if [ -f "$MAIN_REPO/$envfile" ]; then
