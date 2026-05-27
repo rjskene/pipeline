@@ -117,10 +117,13 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    **Attach screenshots to the eval comment.** For each PNG, invoke the attach helper, then verify the file actually reached the remote before embedding its link in Step 9's `**Screenshots:**` row. The helper commits the PNG to `<worktree>/.eval-screenshots/`, pushes to the PR branch, and returns a branch-pinned `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/<name>.png` URL. These URLs initially resolve via the branch-pinned form during the PR review window; after auto-merge fires, Step 11.3 rewrites them to the merge-SHA-pinned form (`raw.githubusercontent.com/<owner>/<repo>/<merge-sha>/.eval-screenshots/...`), which is durable for the life of the commit (issue #506, superseding the Option A ephemeral behaviour of tracker #383). Operators who prefer the legacy ephemeral behaviour may set `PIPELINE_SCREENSHOT_REWRITE_ENABLED=false`.
 
+   **Private repos (issue #551).** On a private repo the attach helper emits a `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` URL instead, and Step 6 wraps it as a clickable `[name](url)` link (not `![]()`). Reason: GitHub's camo image proxy fetches `![]()` image URLs anonymously, and a private repo's `raw.githubusercontent.com` content 404s anonymously — so the inline embed renders broken. The blob link routes through GitHub's authenticated file viewer, which renders the PNG for repo members. True inline rendering on a private repo is only possible via GitHub's `user-attachments` CDN (browser drag-drop upload, which needs a browser session + CSRF token and is NOT reachable via `gh`/PAT) — blob links are the CLI-feasible answer; drag-drop is the manual inline alternative. Visibility is detected fail-soft (`gh repo view "$PIPELINE_REPO" --json isPrivate`); any `gh` absence/error/non-`true` value falls back to the public raw + `![]()` behaviour.
+
    **Failure-loud verification.** A returned URL is not proof the blob landed on origin — `git push` can fail silently inside the sandbox. Before writing any `![](url)` row, confirm the branch exists on the remote (`git ls-remote --exit-code origin "refs/heads/$BRANCH"`) AND the specific file is present at that branch tip (`gh api repos/$PIPELINE_REPO/contents/.eval-screenshots/$name?ref=$BRANCH`). On failure, emit a `⚠️ screenshot attach failed` row instead of a broken-link image so the human reviewer gets a self-debugging trail.
    ```bash
    SCREENSHOT_LINES=()
    BRANCH="$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json headRefName --jq .headRefName)"
+   PRIVATE="$(gh repo view "$PIPELINE_REPO" --json isPrivate --jq .isPrivate 2>/dev/null || true)"
    for png in .claude/scratch/*.png; do
      [ -f "$png" ] || continue
      name="$(basename "$png")"
@@ -128,7 +131,13 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
      if [ -n "$url" ] \
         && git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1 \
         && gh api "repos/$PIPELINE_REPO/contents/.eval-screenshots/$name?ref=$BRANCH" --jq .sha >/dev/null 2>&1; then
-       SCREENSHOT_LINES+=("- ![${name%.*}](${url})")
+       if [ "$PRIVATE" = "true" ]; then
+         # Private repo: camo proxy can't fetch raw.githubusercontent.com anonymously (404),
+         # so use a clickable blob link — GitHub's authenticated viewer renders the PNG for members.
+         SCREENSHOT_LINES+=("- [${name%.*}](${url})")
+       else
+         SCREENSHOT_LINES+=("- ![${name%.*}](${url})")
+       fi
      else
        SCREENSHOT_LINES+=("- ⚠️ screenshot attach failed — see .eval-screenshots/${name} in the worktree")
      fi
@@ -174,7 +183,8 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out
 
    **Screenshots:** (one row per entry in `$SCREENSHOT_LINES` from Step 6 — already formatted as either an image row or a `⚠️` failure-loud row; `None` if empty)
-   - ![screenshot 1](https://raw.githubusercontent.com/owner/repo/<branch>/.eval-screenshots/<filename>.png)
+   - ![screenshot 1](https://raw.githubusercontent.com/owner/repo/<branch>/.eval-screenshots/<filename>.png)   <!-- public repo: inline embed -->
+   - [screenshot 1](https://github.com/owner/repo/blob/<branch>/.eval-screenshots/<filename>.png)             <!-- private repo: clickable blob link (#551) -->
 
    **Visual proof:** satisfied=N/M; unsatisfied=[<claim>...] (or `N/A — needs-browser not applied`)
 
@@ -223,7 +233,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
          gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch
          SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
          ```
-       - **Rewrite screenshot URLs to the merge SHA (issue #506).** The eval comment embeds branch-pinned `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...` URLs that 404 once `--delete-branch` removes the feature branch. Now that the authoritative merge SHA is captured, rewrite them to the durable merge-SHA form. Must run AFTER the SHA capture (the SHA it pins to) and BEFORE the footer-append (so the rewriter targets the screenshot comment, not the footer). Fail-soft — never block the merge that already completed:
+       - **Rewrite screenshot URLs to the merge SHA (issue #506, extended #551).** The eval comment embeds branch-pinned screenshot URLs that 404 once `--delete-branch` removes the feature branch. On public repos these are `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...`; on private repos they are `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` (the blob-link form from Step 6). The rewriter branch-scope-pins BOTH host forms to the durable merge-SHA equivalent (`.../<merge-sha>/.eval-screenshots/...`) in one pass. Now that the authoritative merge SHA is captured, rewrite them. Must run AFTER the SHA capture (the SHA it pins to) and BEFORE the footer-append (so the rewriter targets the screenshot comment, not the footer). Fail-soft — never block the merge that already completed:
          ```bash
          if [ -n "$SHA" ] && [ "${PIPELINE_SCREENSHOT_REWRITE_ENABLED:-true}" = "true" ]; then
            bash "${CLAUDE_PLUGIN_ROOT}/scripts/rewrite-eval-screenshot-urls.sh" "$PR_NUM" "$SHA" \
@@ -242,7 +252,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
          CLOSE_SUFFIX=$([ -n "$SHA" ] && echo " (${SHA})" || echo "")
          gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}${CLOSE_SUFFIX}. ${FOOTER}"
          ```
-       - Screenshots: no cleanup needed — the `.eval-screenshots/` commit collapses into the merge-commit and the feature branch is deleted by `--delete-branch`. Step 11.3 (above) has already rewritten the eval comment's branch-pinned `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...` URLs to the merge-SHA-pinned form (`.../<merge-sha>/.eval-screenshots/...`), so the embedded screenshots stay durable for the life of the commit even after the feature branch is deleted (issue #506). This supersedes the Option A ephemeral-artifact tradeoff originally accepted in tracker #383, where branch-pinned URLs returned 404 post-merge and reviewers had to capture evidence during the review window. Operators who deliberately want the legacy ephemeral behaviour (e.g. external or legal-hold screenshot capture) set `PIPELINE_SCREENSHOT_REWRITE_ENABLED=false`, which skips the Step 11.3 rewrite and restores the tracker-#383 post-merge-404 semantics.
+       - Screenshots: no cleanup needed — the `.eval-screenshots/` commit collapses into the merge-commit and the feature branch is deleted by `--delete-branch`. Step 11.3 (above) has already rewritten the eval comment's branch-pinned URLs — both the public `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...` form and the private `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` blob link (issue #551) — to the merge-SHA-pinned form (`.../<merge-sha>/.eval-screenshots/...`), so the embedded screenshots stay durable for the life of the commit even after the feature branch is deleted (issue #506). This supersedes the Option A ephemeral-artifact tradeoff originally accepted in tracker #383, where branch-pinned URLs returned 404 post-merge and reviewers had to capture evidence during the review window. Operators who deliberately want the legacy ephemeral behaviour (e.g. external or legal-hold screenshot capture) set `PIPELINE_SCREENSHOT_REWRITE_ENABLED=false`, which skips the Step 11.3 rewrite and restores the tracker-#383 post-merge-404 semantics.
 
     4. **On any `block-*` reason:** post a single comment explaining why auto-merge was skipped, then return Approved-but-not-merged. Do not flip labels or close the issue.
        ```bash

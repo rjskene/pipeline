@@ -116,6 +116,30 @@ assert "migration-warning section names run-queue.sh launch_agent as owner" \
 assert "migration-warning section states evaluation proceeds without visual proof / never blocks" \
   "grep -qE 'never blocks|non-blocking' '$SKILL'"
 
+# -----------------------------------------------------------------------------
+# Issue #551 — private-repo blob-link branch (Step 6 wrapper choice). The attach
+# helper emits a blob URL on private repos; Step 6 must independently choose the
+# `[]()` link wrapper (not `![]()` inline image) so GitHub's authenticated viewer
+# renders the PNG for members. The private-row assertion targets the WRAPPER
+# CHOICE — the runtime `${url}` variable form actually present in the SKILL —
+# NOT a `blob/.eval-screenshots` literal (which only appears in the Step 9
+# template, outside the $S6 range).
+S6="awk '/^6\\. \\*\\*Visual validation/,/^7\\. \\*\\*If fixable/' '$SKILL'"
+assert "Step 6 detects repo visibility via isPrivate" \
+  "$S6 | grep -qE 'gh repo view.*isPrivate'"
+assert "Step 6 guards the private branch on PRIVATE=true" \
+  "$S6 | grep -qE '\\[ \"?\\\$PRIVATE\"? = \"?true\"? \\]'"
+assert "Step 6 emits a private blob LINK row (- [name](url), not image)" \
+  "$S6 | grep -qE '\"- \\[\\\$\\{name%\\.\\*\\}\\]\\(\\\$\\{url\\}\\)\"'"
+assert "Step 6 keeps the public inline IMAGE row (- ![name](url))" \
+  "$S6 | grep -qE '\"- !\\[\\\$\\{name%\\.\\*\\}\\]\\(\\\$\\{url\\}\\)\"'"
+# Whole-file: user-attachments CDN limitation prose.
+assert "skill documents user-attachments CDN limitation for private inline rendering" \
+  "grep -qi 'user-attachments' '$SKILL'"
+# Step 11.3 GREEN-range: rewrite prose must mention the blob form for private repos.
+assert "Step 11.3 documents blob-URL rewrite for private repos" \
+  "$GREEN | grep -qE 'blob/.*\\.eval-screenshots|blob link'"
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
