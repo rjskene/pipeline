@@ -73,6 +73,77 @@ else
   fail_msg "no 'outsider'/'untrusted' negative-intent language"
 fi
 
+# --- Task 3: opener-association gate + trusted Classification fallback ---
+
+# Slice the step 0a gate block: from "0a." to the next top-level numbered
+# step "1. ".
+GATE_TMP="$(mktemp)"
+trap 'rm -f "$STEP2_TMP" "$GATE_TMP" "$STEP3A_TMP"' EXIT
+awk '/^0a\./ { inblock = 1 } /^1\. / { inblock = 0 } inblock { print }' "$SKILL_FILE" > "$GATE_TMP"
+
+# Slice step 3a: from "3a." to "3b.".
+STEP3A_TMP="$(mktemp)"
+awk '/^3a\./ { inblock = 1 } /^3b\./ { inblock = 0 } inblock { print }' "$SKILL_FILE" > "$STEP3A_TMP"
+
+echo "Test 6: opener check uses the is-trusted-author primitive"
+inc
+if grep -qF "is-trusted-author" "$SKILL_FILE"; then
+  pass_msg "is-trusted-author primitive referenced"
+else
+  fail_msg "missing is-trusted-author reference"
+fi
+
+echo "Test 7: opener association resolved via gh api author_association"
+inc
+if grep -qF "author_association" "$SKILL_FILE" \
+   && grep -qF "gh api repos/\$PIPELINE_REPO/issues" "$SKILL_FILE"; then
+  pass_msg "association resolved via gh api repos/\$PIPELINE_REPO/issues author_association"
+else
+  fail_msg "opener association not resolved via gh api .../author_association"
+fi
+
+echo "Test 8: is-trusted-author invoked single-arg over the association string"
+inc
+if grep -qF 'is-trusted-author "$ASSOC"' "$GATE_TMP"; then
+  pass_msg "0a block calls is-trusted-author \"\$ASSOC\" (single-arg)"
+else
+  fail_msg "0a block does not call single-arg is-trusted-author \"\$ASSOC\""
+fi
+
+echo "Test 9: broken two-arg / login call shapes are absent"
+inc
+if grep -qF "is-trusted-author <N>" "$SKILL_FILE" \
+   || grep -qF 'is-trusted-author "$OPENER"' "$SKILL_FILE"; then
+  fail_msg "broken two-arg/login is-trusted-author shape present"
+else
+  pass_msg "no broken two-arg/login is-trusted-author shape"
+fi
+
+echo "Test 10: refuse-and-surface language present"
+inc
+if grep -qiE "refuse|human triage|do NOT post" "$SKILL_FILE"; then
+  pass_msg "refuse/human-triage/do-NOT-post language present"
+else
+  fail_msg "missing refuse-and-surface language"
+fi
+
+echo "Test 11: the gate is on the OPENER and surfaces for human triage"
+inc
+if grep -qi "opener" "$GATE_TMP" && grep -qi "human triage" "$GATE_TMP"; then
+  pass_msg "0a block names the opener and human triage"
+else
+  fail_msg "0a block missing opener / human triage language"
+fi
+
+echo "Test 12: step 3a Classification fallback reads from the trusted set"
+inc
+if grep -qF "filter-trusted-comments.sh" "$STEP3A_TMP" \
+   || grep -qF "\$TRUSTED" "$STEP3A_TMP"; then
+  pass_msg "step 3a fallback reads trusted set (\$TRUSTED or helper)"
+else
+  fail_msg "step 3a fallback still uses a raw --json comments fetch"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
