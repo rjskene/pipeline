@@ -641,6 +641,78 @@ else
   fail_msg "advisory wrongly emitted for all-trusted issue; stderr: $(cat "$ERRLOG")"
 fi
 
+# ---------------------------------------------------------------------------
+# Case 16: malformed issue JSON → fail-closed (graceful, no abort)
+# ---------------------------------------------------------------------------
+echo "=== Case 16: malformed issue JSON → fail-closed ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 16)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+# `gh issue view --json` returns non-JSON garbage (e.g. a transient warning on
+# stdout). The helper must scan nothing and exit 0, not abort under set -e.
+SHIM_COMMENTS_JSON='this is not valid json { broken'
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_LOG SHIM_API_COUNT
+set +e
+OUT=$(run_helper 999 2>/dev/null); rc=$?
+set -e
+if [ "$rc" = "0" ] && grep -q "^Found 0 attachments for issue #999\." <<<"$OUT"; then
+  pass_msg "malformed JSON handled gracefully (exit 0, 0 attachments)"
+else
+  fail_msg "expected graceful exit 0 / 0 attachments; rc=$rc out=$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 17: trust helper absent → fail-closed, no scan, no misleading advisory
+# ---------------------------------------------------------------------------
+echo "=== Case 17: trust helper absent → fail-closed ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 17)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+# Run a copy of the script from a directory with NO sibling
+# filter-trusted-comments.sh, so the script-dir-relative resolution misses.
+STANDALONE="$PIPELINE_PROJECT_ROOT/standalone"
+mkdir -p "$STANDALONE"
+cp "$HELPER" "$STANDALONE/fetch-issue-attachments.sh"
+URL_X="https://github.com/user-attachments/assets/helperabsent-body-17"
+URL_Y="https://github.com/user-attachments/assets/helperabsent-comment-17"
+SHIM_COMMENTS_JSON=$(jq -n --arg x "$URL_X" --arg y "$URL_Y" \
+  '{body:("body " + $x),
+    comments:[{author:{login:"maintainer"}, authorAssociation:"MEMBER", body:("comment " + $y)}]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_OPENER_LOGIN="maintainer"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+set +e
+OUT=$( cd "$PIPELINE_PROJECT_ROOT" && bash "$STANDALONE/fetch-issue-attachments.sh" 999 2>"$ERRLOG" ); rc=$?
+set -e
+if [ "$rc" = "0" ] && grep -q "WARN: trust-filter helper not found" "$ERRLOG"; then
+  pass_msg "WARN emitted and exit 0 when helper absent"
+else
+  fail_msg "expected WARN + exit 0; rc=$rc stderr=$(cat "$ERRLOG")"
+fi
+inc
+SCRATCH17="$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999"
+if [ ! -f "$SCRATCH17/helperabsent-body-17.png" ] && [ ! -f "$SCRATCH17/helperabsent-comment-17.png" ]; then
+  pass_msg "nothing downloaded when helper absent (fail-closed)"
+else
+  fail_msg "assets were downloaded despite missing trust helper"
+fi
+inc
+if ! grep -q "untrusted opener" "$ERRLOG" && ! grep -q "from untrusted authors" "$ERRLOG"; then
+  pass_msg "no misleading untrusted-author advisory when helper absent"
+else
+  fail_msg "misleading advisory emitted in helper-absent fail-closed state; stderr: $(cat "$ERRLOG")"
+fi
+
 echo ""
 echo "================================================================"
 echo "Results: $PASS passed, $FAIL failed (out of $TESTS test assertions)"

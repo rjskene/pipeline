@@ -53,7 +53,9 @@ fi
 # single-arg `is-trusted-author <association>` subcommand (exit 0 = trusted,
 # nonzero = untrusted). Invoked as a subcommand — never sourced.
 HELPER="$(dirname "$0")/filter-trusted-comments.sh"
+HELPER_PRESENT=1
 if [ ! -f "$HELPER" ]; then
+  HELPER_PRESENT=0
   echo "WARN: trust-filter helper not found at $HELPER; failing closed (no attachment scan)" >&2
 fi
 # is_trusted_assoc <authorAssociation> — exit 0 if trusted, nonzero otherwise.
@@ -82,14 +84,25 @@ fi
 # plus each comment body whose author is trusted. Untrusted bytes are dropped
 # HERE, before URL extraction, so attacker-controlled URLs are never fetched.
 DROPPED_COMMENT_LOGINS=()
-if [ -z "$RAW" ]; then
+# Treat empty or non-JSON `gh issue view` output as "nothing to scan" rather
+# than aborting under set -e — fail-closed, consistent with the rest of this
+# script's defensive style. (A transient non-JSON line on stdout, despite a 0
+# exit, would otherwise crash the whole attachment fetch.)
+if [ -z "$RAW" ] || ! jq -e . >/dev/null 2>&1 <<<"$RAW"; then
   BODY_AND_COMMENTS=""
 else
   if is_trusted_assoc "$OPENER_ASSOC"; then
     BODY_AND_COMMENTS=$(jq -r '.body // ""' <<<"$RAW")
   else
     BODY_AND_COMMENTS=""
-    echo "ignored issue body from untrusted opener: @${OPENER_LOGIN:-unknown}" >&2
+    # Only label the opener "untrusted" when we actually resolved an untrusted
+    # association with the helper present. When the helper is missing or the
+    # association could not be determined, the body is still dropped (fail-
+    # closed) but the cause is the degraded state, not an untrusted author —
+    # the top-level WARN already explains a missing helper.
+    if [ "$HELPER_PRESENT" -eq 1 ] && [ -n "$OPENER_ASSOC" ]; then
+      echo "ignored issue body from untrusted opener: @${OPENER_LOGIN:-unknown}" >&2
+    fi
   fi
   comment_count=$(jq '.comments | length' <<<"$RAW")
   idx=0
@@ -98,7 +111,7 @@ else
     if is_trusted_assoc "$c_assoc"; then
       c_body=$(jq -r ".comments[$idx].body // \"\"" <<<"$RAW")
       BODY_AND_COMMENTS="$BODY_AND_COMMENTS"$'\n'"$c_body"
-    else
+    elif [ "$HELPER_PRESENT" -eq 1 ]; then
       c_login=$(jq -r ".comments[$idx].author.login // \"\"" <<<"$RAW")
       DROPPED_COMMENT_LOGINS+=("@${c_login:-unknown}")
     fi
