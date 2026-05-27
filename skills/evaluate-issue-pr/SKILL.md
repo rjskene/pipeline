@@ -158,16 +158,18 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    **6b. Visual proof verdict (needs-browser issues only).** If the issue carries the needs-browser label, invoke `Skill(skill: "pipeline:visual-proof-from-plan")` in this clean-container session and parse its JSON output. For every entry in `unsatisfied`, the verdict MUST be Flagged for user review — record the claim and the failing artifact path/URL in the **Remaining issues** row. This is the load-bearing trust layer; `satisfied` predicates from the executor session do NOT carry over.
 
-   **6c. Inline-mode visual proof setup** (issue #517 — applies when invoked via the inline Agent dispatch for browser-eval, dispatch mode #3 above). The orchestrator has pre-resolved `$PORT` (via `scripts/visual-proof-port-broker.sh`) and `$TARGET_DIR` (absolute path under the worktree, from `PIPELINE_VISUAL_PROOF_TARGET_DIR`). Before any `browser_navigate` / `browser_evaluate` call, start a loopback HTTP server bound to `127.0.0.1` and verify readiness:
+   **6c. Inline-mode visual proof setup** (issue #517, #527 — applies when invoked via the inline Agent dispatch for browser-eval, dispatch mode #3 above). Before any `browser_navigate` / `browser_evaluate` call, bootstrap the loopback server via the single-responsibility helper `scripts/visual-proof-server-start.sh` (composes the port broker + starts `python3 -m http.server --directory <target> --bind 127.0.0.1` + readiness probe). The helper allocates the port itself, so this path no longer depends on the orchestrator pre-resolving `$PORT`:
    ```bash
-   trap 'kill $(jobs -p) 2>/dev/null' EXIT
-   python3 -m http.server "$PORT" --directory "$TARGET_DIR" --bind 127.0.0.1 &
-   # Readiness probe: 5 retries, 1s delay.
-   curl --silent --fail --retry 5 --retry-delay 1 --max-time 10 \
-        "http://127.0.0.1:$PORT/" >/dev/null \
-     || { echo "block-server-start: http.server not ready on 127.0.0.1:$PORT"; exit 1; }
+   SERVER_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/visual-proof-server-start.sh" \
+                   "${SLATE_INDEX:-0}" "$TARGET_DIR" 2>&1) \
+     || { echo "$SERVER_LINE"; exit 1; }   # block-server-start: ... on stderr
+   PORT=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: .*port=\([0-9]*\) .*/\1/p')
+   SERVER_PID=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: pid=\([0-9]*\) .*/\1/p')
+   trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
    ```
-   All subsequent `browser_navigate` / `browser_evaluate` calls target `http://127.0.0.1:$PORT/<path>`. The EXIT trap kills the bg server on normal exit and most signals; SIGKILL leaks are reaped by `scripts/reap-stale-visual-proof-servers.sh` invoked from `/pipeline:run` Step 0 housekeeping. `--bind 127.0.0.1` is load-bearing — never bind to `0.0.0.0` (avoids external exposure during concurrent fullsend runs).
+   `$TARGET_DIR` is the absolute path under the worktree served by the server (from `PIPELINE_VISUAL_PROOF_TARGET_DIR`). For the **single-issue orchestrator-driven path** (interactive `/pipeline:run` evaluate-issue-pr dispatch, or fullsend on a 1-issue inline slate) the orchestrator does NOT pre-resolve `$PORT` — it never reaches `run-queue.sh launch_agent()` — so the helper allocating the port closes the #519 gap. `$SLATE_INDEX` defaults to 0 for a single-issue dispatch.
+
+   All subsequent `browser_navigate` / `browser_evaluate` calls target `http://127.0.0.1:$PORT/<path>`. The EXIT trap kills the server on normal exit and most signals; SIGKILL leaks are reaped by `scripts/reap-stale-visual-proof-servers.sh` (tracks by `--directory`, unchanged) invoked from `/pipeline:run` Step 0 housekeeping. `--bind 127.0.0.1` is load-bearing — never bind to `0.0.0.0` (avoids external exposure during concurrent fullsend runs). The queue dispatch-inline path (`run-queue.sh launch_agent()`) emits only the EVENT line and does NOT start a server, so routing the single start through the helper introduces no double-bootstrap.
 
    **Per-tool wall-clock budget.** Wrap each `browser_evaluate` and `browser_navigate` call in a 60s wall-clock budget. On timeout, post Flagged with a timeout note and exit non-zero — this explicitly prevents the `until-grep DONE_MARKER` wedge pattern from issue #511 from migrating into the inline path. The 60s budget applies to inline-mode dispatch (mode #3) only; container-mode and PATH-A dispatch retain their existing inner-loop timeouts.
 
@@ -298,11 +300,13 @@ Context (pre-resolved by orchestrator — do not re-derive):
   - Worktree:   <abs-path>
   - PR:         <PR-num>
   - Target dir: <PIPELINE_VISUAL_PROOF_TARGET_DIR resolved abs-path>
-  - Port:       <P>  (use --bind 127.0.0.1)
+  - Port:       <P>  (advisory; the helper re-allocates via the broker, --bind 127.0.0.1)
   - Auto-merge: <gated|allowed>  (per manual-merge label check)
-Setup: cd <worktree>; trap 'kill $(jobs -p) 2>/dev/null' EXIT;
-       python3 -m http.server $PORT --directory $TARGET_DIR --bind 127.0.0.1 &
-       (wait for server readiness via curl --retry 5 --retry-delay 1)
+Setup: cd <worktree>;
+       SERVER_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/visual-proof-server-start.sh" "${SLATE_INDEX:-0}" "$TARGET_DIR" 2>&1) || { echo "$SERVER_LINE"; exit 1; };
+       PORT=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: .*port=\([0-9]*\) .*/\1/p');
+       SERVER_PID=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: pid=\([0-9]*\) .*/\1/p');
+       trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
 Then: follow skills/evaluate-issue-pr/SKILL.md verbatim against http://127.0.0.1:$PORT.
 Terminal state: post `## Evaluation` comment via gh; report verdict + auto-merge-gate token.
 ```
@@ -311,7 +315,7 @@ Field semantics:
 - **Worktree** — absolute path to the feature worktree; subagent `cd`s here before any other step.
 - **PR** — PR number; threaded as `$PR_NUM` for the rest of the skill.
 - **Target dir** — absolute path under the worktree served by `python3 -m http.server`; resolved from `PIPELINE_VISUAL_PROOF_TARGET_DIR`.
-- **Port** — broker-allocated port (`scripts/visual-proof-port-broker.sh <slate_index>`).
+- **Port** — advisory only. `scripts/visual-proof-server-start.sh` re-allocates the port via the broker (`scripts/visual-proof-port-broker.sh <slate_index>`) at start time and emits the actual `port=` on its `SERVER:` line; the Setup block parses `$PORT` from there. The single-issue orchestrator path (#527) does not pre-resolve this field at all.
 - **Auto-merge** — gate token threaded through to Step 11; `gated` mirrors `--manual-merge` / `MANUAL_MERGE=1`, `allowed` lets the Step 11 greenlight matrix decide.
 
 ## Migration warning (issue #517 — owner: `scripts/run-queue.sh launch_agent()`)

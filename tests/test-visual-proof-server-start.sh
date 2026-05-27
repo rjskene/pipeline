@@ -81,5 +81,14 @@ else
   rm -rf "$TMP_D"
 fi
 
+# ---- Case (e): doc-contract — evaluate-issue-pr Step 6c routes through the
+#      new script (the wiring is the contract; SKILL.md is prose). ----
+SKILL_MD="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
+if grep -q "visual-proof-server-start.sh" "$SKILL_MD"; then
+  pass_msg "evaluate-issue-pr SKILL.md references visual-proof-server-start.sh"
+else
+  fail_msg "evaluate-issue-pr SKILL.md does not reference visual-proof-server-start.sh"
+fi
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
