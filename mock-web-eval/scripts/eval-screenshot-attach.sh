@@ -39,4 +39,15 @@ if ! git push origin HEAD >/dev/null 2>&1; then
 fi
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-echo "https://raw.githubusercontent.com/${PIPELINE_REPO}/${BRANCH}/.eval-screenshots/${FILENAME}"
+
+# Repo-visibility branch (issue #551). On private repos, raw.githubusercontent.com
+# content 404s for anonymous fetchers (and GitHub's camo image proxy can't
+# authenticate), so emit a github.com/<repo>/blob/<branch>/... URL instead —
+# GitHub's authenticated file viewer renders the PNG for repo members. Fail-soft:
+# any `gh` absence/error/non-`true` value falls back to the raw host (public).
+PRIVATE="$(gh repo view "$PIPELINE_REPO" --json isPrivate --jq .isPrivate 2>/dev/null || true)"
+if [ "$PRIVATE" = "true" ]; then
+  echo "https://github.com/${PIPELINE_REPO}/blob/${BRANCH}/.eval-screenshots/${FILENAME}"
+else
+  echo "https://raw.githubusercontent.com/${PIPELINE_REPO}/${BRANCH}/.eval-screenshots/${FILENAME}"
+fi

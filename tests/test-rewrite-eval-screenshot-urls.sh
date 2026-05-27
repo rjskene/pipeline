@@ -101,6 +101,10 @@ patch_body()  { cat "$PATCH_BODY_FILE" 2>/dev/null; }
 URL_BRANCH="https://raw.githubusercontent.com/test/repo/feature/foo/.eval-screenshots"
 URL_SHA="https://raw.githubusercontent.com/test/repo/abc123sha/.eval-screenshots"
 URL_MAIN="https://raw.githubusercontent.com/test/repo/main/.eval-screenshots/architecture.png"
+# Private-repo blob host (issue #551): the attach helper emits these on private
+# repos; the post-merge rewrite must branch-scope-pin them too.
+BLOB_BRANCH="https://github.com/test/repo/blob/feature/foo/.eval-screenshots"
+BLOB_SHA="https://github.com/test/repo/blob/abc123sha/.eval-screenshots"
 
 echo "=== (a) feature-branch URL rewritten to merge-SHA ==="
 reset_state
@@ -182,6 +186,34 @@ export GH_COMMENTS_JSON="$(make_comments "## Evaluation
 - ![shot](${URL_BRANCH}/shot.png)")"
 bash "$HELPER" 5 abc123sha 2>/dev/null
 if patched; then fail "(g) disabled flag must NOT PATCH"; else pass "(g) opt-out short-circuits"; fi
+
+echo "=== (h) blob-host URL rewritten to merge-SHA (private) ==="
+reset_state; export GH_HEAD_REF="feature/foo"
+export GH_COMMENTS_JSON="$(make_comments "## Evaluation
+
+- [shot](${BLOB_BRANCH}/shot.png)")"
+bash "$HELPER" 5 abc123sha 2>/dev/null
+if patched; then pass "(h) PATCH was called for blob URL"; else fail "(h) PATCH was called for blob URL"; fi
+if patch_body | grep -qF "${BLOB_SHA}/shot.png"; then pass "(h) blob body uses merge-SHA"; else fail "(h) blob body uses merge-SHA"; fi
+if patch_body | grep -qF "${BLOB_BRANCH}/shot.png"; then fail "(h) blob branch URL still present"; else pass "(h) blob branch URL removed"; fi
+
+echo "=== (i) already-SHA-pinned blob URL is a no-op (idempotent) ==="
+reset_state; export GH_HEAD_REF="feature/foo"
+export GH_COMMENTS_JSON="$(make_comments "## Evaluation
+
+- [shot](${BLOB_SHA}/shot.png)")"
+bash "$HELPER" 5 abc123sha 2>/dev/null
+if patched; then fail "(i) must NOT PATCH (blob already SHA-pinned)"; else pass "(i) blob idempotent no-op"; fi
+
+echo "=== (j) mixed raw + blob branch URLs both rewritten ==="
+reset_state; export GH_HEAD_REF="feature/foo"
+export GH_COMMENTS_JSON="$(make_comments "## Evaluation
+
+- ![one](${URL_BRANCH}/one.png)
+- [two](${BLOB_BRANCH}/two.png)")"
+bash "$HELPER" 5 abc123sha 2>/dev/null
+if patch_body | grep -qF "${URL_SHA}/one.png"; then pass "(j) raw URL rewritten"; else fail "(j) raw URL rewritten"; fi
+if patch_body | grep -qF "${BLOB_SHA}/two.png"; then pass "(j) blob URL rewritten"; else fail "(j) blob URL rewritten"; fi
 
 echo ""
 if [ "$FAILED" -ne 0 ]; then
