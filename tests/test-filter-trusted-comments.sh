@@ -51,6 +51,91 @@ for assoc in CONTRIBUTOR NONE FIRST_TIME_CONTRIBUTOR FIRST_TIMER "" lowercase_ow
 done
 
 # ---------------------------------------------------------------------------
+# Task 2: default mode — filter comments + emit dropped-author audit
+# ---------------------------------------------------------------------------
+# Stage a PATH-resident `gh` shim that replays $SHIM_VIEW_JSON verbatim for
+# `gh issue view <N> --json body,comments`. Any other invocation is an error.
+stage_shim() {
+  local bin="$ROOT_TMP/bin"
+  mkdir -p "$bin"
+  cat > "$bin/gh" <<'GH'
+#!/bin/bash
+# Strip flags we don't care about; match on the subcommand.
+if [ "${1:-}" = "issue" ] && [ "${2:-}" = "view" ]; then
+  printf '%s' "${SHIM_VIEW_JSON:-}"
+  exit 0
+fi
+echo "shim: unhandled gh invocation: $*" >&2
+exit 99
+GH
+  chmod +x "$bin/gh"
+  export PATH="$bin:$PATH"
+}
+stage_shim
+export PIPELINE_REPO="rjskene/pipeline"
+
+# Run the helper in default mode, capturing stdout and stderr to separate files.
+OUT_F="$ROOT_TMP/out"; ERR_F="$ROOT_TMP/err"
+run_default() {
+  : > "$OUT_F"; : > "$ERR_F"
+  bash "$HELPER" "$1" >"$OUT_F" 2>"$ERR_F"
+}
+
+echo "=== default mode: mixed tier — trusted kept, untrusted bytes dropped ==="
+inc
+export SHIM_VIEW_JSON='{
+  "body": "ISSUE_BODY_MARKER spec from operator",
+  "comments": [
+    {"body": "TRUSTED_OWNER_BYTES",   "author": {"login": "alice"},   "authorAssociation": "OWNER"},
+    {"body": "UNTRUSTED_NONE_BYTES",  "author": {"login": "mallory"}, "authorAssociation": "NONE"},
+    {"body": "TRUSTED_MEMBER_BYTES",  "author": {"login": "bob"},     "authorAssociation": "MEMBER"},
+    {"body": "UNTRUSTED_CONTRIB_BYTES","author": {"login": "eve"},    "authorAssociation": "CONTRIBUTOR"}
+  ]
+}'
+run_default 999 || true
+out=$(cat "$OUT_F"); err=$(cat "$ERR_F")
+if   ! grep -q "ISSUE_BODY_MARKER"   <<<"$out"; then fail_msg "issue body missing from stdout"
+elif ! grep -q "TRUSTED_OWNER_BYTES" <<<"$out"; then fail_msg "OWNER comment missing from stdout"
+elif ! grep -q "TRUSTED_MEMBER_BYTES"<<<"$out"; then fail_msg "MEMBER comment missing from stdout"
+elif   grep -q "UNTRUSTED_NONE_BYTES"  <<<"$out"; then fail_msg "NONE comment bytes leaked to stdout"
+elif   grep -q "UNTRUSTED_CONTRIB_BYTES"<<<"$out"; then fail_msg "CONTRIBUTOR comment bytes leaked to stdout"
+else pass_msg "trusted body+comments kept; untrusted bytes never reach stdout"
+fi
+
+echo "=== default mode: dropped-author audit on stderr (count + @logins) ==="
+inc
+if   ! grep -q "ignored 2" <<<"$err"; then fail_msg "audit count wrong; stderr: $err"
+elif ! grep -q "@mallory"  <<<"$err"; then fail_msg "audit missing @mallory; stderr: $err"
+elif ! grep -q "@eve"      <<<"$err"; then fail_msg "audit missing @eve; stderr: $err"
+else pass_msg "stderr audit lists count + untrusted @logins"
+fi
+
+echo "=== default mode: all-trusted → 'ignored 0' audit ==="
+inc
+export SHIM_VIEW_JSON='{"body":"BODY","comments":[{"body":"X","author":{"login":"alice"},"authorAssociation":"OWNER"}]}'
+run_default 1 || true
+if grep -q "ignored 0" "$ERR_F"; then pass_msg "all-trusted emits 'ignored 0' audit"
+else fail_msg "expected 'ignored 0'; stderr: $(cat "$ERR_F")"; fi
+
+echo "=== default mode: empty comments → body only + 'ignored 0' ==="
+inc
+export SHIM_VIEW_JSON='{"body":"ONLY_BODY_MARKER","comments":[]}'
+run_default 2 || true
+if grep -q "ONLY_BODY_MARKER" "$OUT_F" && grep -q "ignored 0" "$ERR_F"; then
+  pass_msg "empty-comments emits body + 'ignored 0'"
+else
+  fail_msg "stdout: $(cat "$OUT_F") | stderr: $(cat "$ERR_F")"
+fi
+
+echo "=== default mode: no issue arg → nonzero usage error ==="
+inc
+if bash "$HELPER" >/dev/null 2>&1; then
+  fail_msg "no-arg invocation should fail with usage error"
+else
+  pass_msg "no-arg → nonzero usage error"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
