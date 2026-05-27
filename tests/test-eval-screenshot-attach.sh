@@ -160,6 +160,47 @@ else
   fail_msg "fail-soft: helper not executable"
 fi
 
+# -----------------------------------------------------------------------------
+# Private-repo test (issue #551): when `gh repo view ... isPrivate` reports
+# `true`, the helper must emit a github.com/<repo>/blob/<branch>/.eval-screenshots/
+# URL (the raw.githubusercontent.com host 404s anonymously on private repos and
+# GitHub's camo image proxy can't authenticate). A `gh` shim is prepended to
+# PATH so the script's visibility probe sees isPrivate=true. The gh-free sealed
+# e2e above continues to assert the raw URL via the fail-soft default.
+# -----------------------------------------------------------------------------
+private_repo_emits_blob() {
+  local TMP; TMP="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$TMP'" RETURN
+  git init --bare -q -b main "$TMP/remote.git"
+  git -c init.defaultBranch=main init -q "$TMP/work"
+  (
+    cd "$TMP/work" || exit 99
+    git config user.email e@t.l; git config user.name t
+    git remote add origin "$TMP/remote.git"; echo seed > seed.txt
+    git add seed.txt; git commit -q -m seed; git push -q -u origin HEAD:main
+  )
+  mkdir -p "$TMP/bin"
+  cat > "$TMP/bin/gh" <<'SHIM'
+#!/bin/bash
+case "$*" in *"repo view"*"isPrivate"*) echo "true" ;; *) exit 0 ;; esac
+SHIM
+  chmod +x "$TMP/bin/gh"
+  local PNG="$TMP/probe.png"; printf '\x89PNG\r\n\x1a\n' > "$PNG"
+  local URL_OUT; URL_OUT="$(cd "$TMP/work" && PATH="$TMP/bin:$PATH" PIPELINE_REPO="test/repo" bash "$HELPER" 271 "$PNG" 2>/dev/null)"
+  if echo "$URL_OUT" | grep -qE 'https://github\.com/test/repo/blob/[^/]+/\.eval-screenshots/probe\.png'; then
+    pass_msg "private: helper printed blob URL"
+  else
+    fail_msg "private: helper printed blob URL (got: $URL_OUT)"
+  fi
+}
+
+if [ -x "$HELPER" ]; then
+  private_repo_emits_blob
+else
+  fail_msg "private: helper not executable"
+fi
+
 echo ""
 echo "================================"
 echo "  PASS=$PASS FAIL=$FAIL"
