@@ -68,5 +68,18 @@ if [ "$RESOLVED" = "rjskene/pipeline" ]; then
 else
   fail_msg "worktree-local source did not resolve PIPELINE_REPO (got '$RESOLVED')"
 fi
+HELPER_SRC="$SCRIPT_DIR/../scripts/setup-worktree.sh"
+if grep -q 'pipeline.config' "$HELPER_SRC" && grep -q 'cp "$MAIN_REPO/pipeline.config"' "$HELPER_SRC"; then
+  pass_msg "setup-worktree.sh references the pipeline.config copy in its sync step"
+else
+  fail_msg "setup-worktree.sh does not copy pipeline.config"
+fi
+# The worktree copy must be ignored by the shared .gitignore (never tracked).
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if grep -qE '^/?pipeline\.config$' "$REPO_ROOT/.gitignore"; then
+  pass_msg "pipeline.config is gitignored (worktree copy auto-ignored)"
+else
+  fail_msg "pipeline.config not gitignored — worktree copy could be tracked"
+fi
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
