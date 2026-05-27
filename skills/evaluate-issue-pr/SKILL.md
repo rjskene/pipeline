@@ -171,6 +171,8 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    **Per-tool wall-clock budget.** Wrap each `browser_evaluate` and `browser_navigate` call in a 60s wall-clock budget. On timeout, post Flagged with a timeout note and exit non-zero — this explicitly prevents the `until-grep DONE_MARKER` wedge pattern from issue #511 from migrating into the inline path. The 60s budget applies to inline-mode dispatch (mode #3) only; container-mode and PATH-A dispatch retain their existing inner-loop timeouts.
 
+   **Selector pitfall (as of 2026-05-26).** When clicking elements, prefer the `ref=` identifier returned by `browser_snapshot` over CSS selectors with embedded quotes (e.g. `#echo-form button[type="submit"]`). The Playwright MCP server rejects the latter on the literal string (escaped-quote selectors fail to parse); the `ref=` from the snapshot works instantly. Surfaced in the #525 / PR #526 dogfood. This is upstream Playwright MCP behavior, not a pipeline bug — flagged "as of 2026-05-26" so a future audit can re-verify it is still needed.
+
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
 8. **Check for branch divergence before merge decision:**
