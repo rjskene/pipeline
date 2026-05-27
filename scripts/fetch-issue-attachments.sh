@@ -66,14 +66,29 @@ is_trusted_assoc() {
 # Fetch body + per-comment {author.login, authorAssociation, body} in one call.
 RAW=$(gh issue view "$ISSUE" --repo "$REPO" --json body,comments 2>/dev/null || true)
 
-# Build the scanned text: the opener body plus each comment body whose author
-# is trusted. Untrusted comment bytes are dropped HERE, before URL extraction,
-# so attacker-controlled URLs are never fetched. (Opener-body gating by issue
-# author_association is added in a later commit.)
+# The opener's authorAssociation is NOT exposed by `gh issue view --json` (it
+# lives only on comments[]). Read it from the issue object directly — one extra
+# authenticated call. `.user.login` is captured for the dropped-author advisory.
+OPENER_META=$(gh api "repos/$REPO/issues/$ISSUE" 2>/dev/null || true)
+if [ -n "$OPENER_META" ]; then
+  OPENER_ASSOC=$(jq -r '.author_association // ""' <<<"$OPENER_META" 2>/dev/null || true)
+  OPENER_LOGIN=$(jq -r '.user.login // ""' <<<"$OPENER_META" 2>/dev/null || true)
+else
+  OPENER_ASSOC=""
+  OPENER_LOGIN=""
+fi
+
+# Build the scanned text: the opener body (only when the opener is trusted)
+# plus each comment body whose author is trusted. Untrusted bytes are dropped
+# HERE, before URL extraction, so attacker-controlled URLs are never fetched.
 if [ -z "$RAW" ]; then
   BODY_AND_COMMENTS=""
 else
-  BODY_AND_COMMENTS=$(jq -r '.body // ""' <<<"$RAW")
+  if is_trusted_assoc "$OPENER_ASSOC"; then
+    BODY_AND_COMMENTS=$(jq -r '.body // ""' <<<"$RAW")
+  else
+    BODY_AND_COMMENTS=""
+  fi
   comment_count=$(jq '.comments | length' <<<"$RAW")
   idx=0
   while [ "$idx" -lt "$comment_count" ]; do

@@ -82,6 +82,17 @@ case "$sub1 $sub2" in
       jq -n --arg b "${SHIM_BODY:-}" '{body:$b, comments:[]}'
     fi
     ;;
+  "api repos"*)
+    # Issue-level metadata lookup: `gh api repos/<owner>/<repo>/issues/<N>`.
+    # `gh issue view --json` does NOT expose issue-level authorAssociation, so
+    # the helper reads it here. Default opener is trusted (OWNER) so legacy /
+    # comment-gate cases keep including the opener body. Does NOT bump
+    # $SHIM_API_COUNT (that counter tracks attachment downloads only).
+    jq -n \
+      --arg assoc "${SHIM_OPENER_ASSOC:-OWNER}" \
+      --arg login "${SHIM_OPENER_LOGIN:-opener}" \
+      '{author_association:$assoc, user:{login:$login}}'
+    ;;
   "api -i"|"api"*)
     # `gh api -i <url>` — print HTTP-like response.
     if [ "$sub2" = "-i" ]; then URL="${3:-}"; else URL="${2:-}"; fi
@@ -481,6 +492,62 @@ if ! grep -q "$URL_UNTRUSTED" "$SHIM_LOG"; then
   pass_msg "no gh api download attempted for untrusted-comment URL"
 else
   fail_msg "gh api was invoked for the untrusted-comment URL: $(grep "$URL_UNTRUSTED" "$SHIM_LOG")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 11: trust gate — URL in an UNTRUSTED opener body is NOT downloaded
+# ---------------------------------------------------------------------------
+echo "=== Case 11: trust gate — untrusted opener body URL not downloaded ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 11)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_BODY="https://github.com/user-attachments/assets/openerbody-uuid-11"
+SHIM_COMMENTS_JSON=$(jq -n --arg b "$URL_BODY" \
+  '{body:("see " + $b), comments:[]}')
+SHIM_OPENER_ASSOC="NONE"
+SHIM_OPENER_LOGIN="drive-by"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+OUT=$(run_helper 999 2>/dev/null)
+if [ ! -f "$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999/openerbody-uuid-11.png" ]; then
+  pass_msg "untrusted-opener body URL not downloaded"
+else
+  fail_msg "untrusted-opener body asset was downloaded (opener gate not applied)"
+fi
+inc
+if ! grep -q "$URL_BODY" "$SHIM_LOG"; then
+  pass_msg "no gh api download attempted for untrusted-opener body URL"
+else
+  fail_msg "gh api was invoked for the untrusted-opener body URL"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 12: trust gate does NOT over-filter — trusted opener body URL downloaded
+# ---------------------------------------------------------------------------
+echo "=== Case 12: trusted opener body URL still downloaded ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 12)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_BODY2="https://github.com/user-attachments/assets/openerbody-uuid-12"
+SHIM_COMMENTS_JSON=$(jq -n --arg b "$URL_BODY2" \
+  '{body:("see " + $b), comments:[]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_OPENER_LOGIN="maintainer"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+OUT=$(run_helper 999 2>/dev/null)
+if [ -f "$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999/openerbody-uuid-12.png" ]; then
+  pass_msg "trusted-opener body URL still downloaded"
+else
+  fail_msg "trusted-opener body asset missing (gate over-filtered); got: $OUT"
 fi
 
 echo ""
