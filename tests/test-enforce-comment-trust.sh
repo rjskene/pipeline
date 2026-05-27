@@ -138,6 +138,32 @@ else
   fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
+echo "Case L: hook registered dogfood-only in .claude/settings.json"
+inc
+SETTINGS="$SCRIPT_DIR/../.claude/settings.json"
+set +e
+python3 - "$SETTINGS" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+for entry in data.get("hooks", {}).get("PreToolUse", []):
+    if entry.get("matcher") == "Bash":
+        for h in entry.get("hooks", []):
+            if h.get("type") == "command" \
+               and "enforce-comment-trust.py" in h.get("command", ""):
+                sys.exit(0)
+print("enforce-comment-trust.py NOT registered in .claude/settings.json",
+      file=sys.stderr)
+sys.exit(1)
+PY
+reg_rc=$?
+set -e
+if [ "$reg_rc" = "0" ]; then
+  pass_msg "registered under PreToolUse/Bash in .claude/settings.json"
+else
+  fail_msg "enforce-comment-trust.py not registered in .claude/settings.json"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
