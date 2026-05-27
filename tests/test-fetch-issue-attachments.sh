@@ -69,8 +69,29 @@ set -- "${ARGS[@]}"
 sub1="${1:-}"; sub2="${2:-}"
 case "$sub1 $sub2" in
   "issue view")
-    # The helper requests --json body,comments; emit a synthetic combined doc.
-    printf '%s' "${SHIM_BODY:-}"
+    # The helper requests --json body,comments. Two modes:
+    #   - $SHIM_COMMENTS_JSON set: emit it verbatim (structured per-comment
+    #     {author.login, authorAssociation, body} data — used by the trust-gate
+    #     cases).
+    #   - otherwise (legacy): wrap $SHIM_BODY as the issue body with no
+    #     comments, so the pre-trust-gate cases keep feeding their combined
+    #     text through unchanged.
+    if [ -n "${SHIM_COMMENTS_JSON:-}" ]; then
+      printf '%s' "$SHIM_COMMENTS_JSON"
+    else
+      jq -n --arg b "${SHIM_BODY:-}" '{body:$b, comments:[]}'
+    fi
+    ;;
+  "api repos"*)
+    # Issue-level metadata lookup: `gh api repos/<owner>/<repo>/issues/<N>`.
+    # `gh issue view --json` does NOT expose issue-level authorAssociation, so
+    # the helper reads it here. Default opener is trusted (OWNER) so legacy /
+    # comment-gate cases keep including the opener body. Does NOT bump
+    # $SHIM_API_COUNT (that counter tracks attachment downloads only).
+    jq -n \
+      --arg assoc "${SHIM_OPENER_ASSOC:-OWNER}" \
+      --arg login "${SHIM_OPENER_LOGIN:-opener}" \
+      '{author_association:$assoc, user:{login:$login}}'
     ;;
   "api -i"|"api"*)
     # `gh api -i <url>` — print HTTP-like response.
@@ -136,7 +157,7 @@ run_helper() {
 
 # Reset case-scoped env between cases.
 reset_shim_env() {
-  unset SHIM_BODY SHIM_CT_DEFAULT SHIM_CT_BY_URL SHIM_API_FAIL_URLS SHIM_BODY_BYTES SHIM_LOG SHIM_API_COUNT SHIM_BODY_FILE
+  unset SHIM_BODY SHIM_CT_DEFAULT SHIM_CT_BY_URL SHIM_API_FAIL_URLS SHIM_BODY_BYTES SHIM_LOG SHIM_API_COUNT SHIM_BODY_FILE SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN
 }
 
 # ---------------------------------------------------------------------------
@@ -426,6 +447,270 @@ if [ -f "$TARGET" ]; then
   fi
 else
   fail_msg "binary attachment file missing at $TARGET"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 10: trust gate — URL in an untrusted comment is NOT downloaded
+# ---------------------------------------------------------------------------
+echo "=== Case 10: trust gate — untrusted comment URL not downloaded ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 10)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_TRUSTED="https://github.com/user-attachments/assets/trusted-uuid-10"
+URL_UNTRUSTED="https://github.com/user-attachments/assets/untrusted-uuid-10"
+# Opener (OWNER) body has NO url; a trusted (MEMBER) comment carries the
+# trusted URL; an untrusted (NONE) comment carries the attacker URL.
+SHIM_COMMENTS_JSON=$(jq -n \
+  --arg t "$URL_TRUSTED" \
+  --arg u "$URL_UNTRUSTED" \
+  '{body:"Plain opener body, no attachments.",
+    comments:[
+      {author:{login:"maintainer"}, authorAssociation:"MEMBER", body:("trusted asset " + $t)},
+      {author:{login:"attacker"},   authorAssociation:"NONE",   body:("malicious asset " + $u)}
+    ]}')
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+OUT=$(run_helper 999 2>/dev/null)
+SCRATCH="$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999"
+if [ -f "$SCRATCH/trusted-uuid-10.png" ]; then
+  pass_msg "trusted-comment URL still downloaded"
+else
+  fail_msg "trusted-comment asset missing; got: $OUT"
+fi
+inc
+if [ ! -f "$SCRATCH/untrusted-uuid-10.png" ]; then
+  pass_msg "untrusted-comment URL not downloaded"
+else
+  fail_msg "untrusted-comment asset was downloaded (trust gate not applied)"
+fi
+inc
+if ! grep -q "$URL_UNTRUSTED" "$SHIM_LOG"; then
+  pass_msg "no gh api download attempted for untrusted-comment URL"
+else
+  fail_msg "gh api was invoked for the untrusted-comment URL: $(grep "$URL_UNTRUSTED" "$SHIM_LOG")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 11: trust gate — URL in an UNTRUSTED opener body is NOT downloaded
+# ---------------------------------------------------------------------------
+echo "=== Case 11: trust gate — untrusted opener body URL not downloaded ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 11)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_BODY="https://github.com/user-attachments/assets/openerbody-uuid-11"
+SHIM_COMMENTS_JSON=$(jq -n --arg b "$URL_BODY" \
+  '{body:("see " + $b), comments:[]}')
+SHIM_OPENER_ASSOC="NONE"
+SHIM_OPENER_LOGIN="drive-by"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+OUT=$(run_helper 999 2>/dev/null)
+if [ ! -f "$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999/openerbody-uuid-11.png" ]; then
+  pass_msg "untrusted-opener body URL not downloaded"
+else
+  fail_msg "untrusted-opener body asset was downloaded (opener gate not applied)"
+fi
+inc
+if ! grep -q "$URL_BODY" "$SHIM_LOG"; then
+  pass_msg "no gh api download attempted for untrusted-opener body URL"
+else
+  fail_msg "gh api was invoked for the untrusted-opener body URL"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 12: trust gate does NOT over-filter — trusted opener body URL downloaded
+# ---------------------------------------------------------------------------
+echo "=== Case 12: trusted opener body URL still downloaded ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 12)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_BODY2="https://github.com/user-attachments/assets/openerbody-uuid-12"
+SHIM_COMMENTS_JSON=$(jq -n --arg b "$URL_BODY2" \
+  '{body:("see " + $b), comments:[]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_OPENER_LOGIN="maintainer"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+OUT=$(run_helper 999 2>/dev/null)
+if [ -f "$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999/openerbody-uuid-12.png" ]; then
+  pass_msg "trusted-opener body URL still downloaded"
+else
+  fail_msg "trusted-opener body asset missing (gate over-filtered); got: $OUT"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 13: dropped-comment-author advisory (machine-readable, #545 shape)
+# ---------------------------------------------------------------------------
+echo "=== Case 13: dropped untrusted comment-author advisory ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 13)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+SHIM_COMMENTS_JSON=$(jq -n \
+  '{body:"opener body, no url",
+    comments:[
+      {author:{login:"maintainer"}, authorAssociation:"MEMBER",      body:"benign trusted comment"},
+      {author:{login:"attacker1"},  authorAssociation:"NONE",        body:"drive-by 1"},
+      {author:{login:"attacker2"},  authorAssociation:"CONTRIBUTOR", body:"drive-by 2"}
+    ]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_LOG SHIM_API_COUNT
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+run_helper 999 >/dev/null 2>"$ERRLOG"
+if grep -qE "ignored 2 comments from untrusted authors:" "$ERRLOG" \
+   && grep -q "@attacker1" "$ERRLOG" && grep -q "@attacker2" "$ERRLOG"; then
+  pass_msg "stderr names the 2 dropped untrusted comment authors"
+else
+  fail_msg "missing dropped-author advisory; stderr: $(cat "$ERRLOG")"
+fi
+inc
+if ! grep -q "@maintainer" "$ERRLOG"; then
+  pass_msg "trusted comment author not listed as dropped"
+else
+  fail_msg "trusted author wrongly listed in advisory; stderr: $(cat "$ERRLOG")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 14: untrusted-opener advisory names the opener login
+# ---------------------------------------------------------------------------
+echo "=== Case 14: untrusted-opener advisory ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 14)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+SHIM_COMMENTS_JSON=$(jq -n '{body:"opener body, no url", comments:[]}')
+SHIM_OPENER_ASSOC="NONE"
+SHIM_OPENER_LOGIN="drive-by-opener"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+run_helper 999 >/dev/null 2>"$ERRLOG"
+if grep -q "untrusted opener" "$ERRLOG" && grep -q "@drive-by-opener" "$ERRLOG"; then
+  pass_msg "stderr advisory names the untrusted opener login"
+else
+  fail_msg "missing untrusted-opener advisory; stderr: $(cat "$ERRLOG")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 15: pipeline-posted OWNER comment passes the gate (no over-filter)
+# ---------------------------------------------------------------------------
+echo "=== Case 15: pipeline OWNER comment passthrough ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 15)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_PLAN="https://github.com/user-attachments/assets/plancomment-uuid-15"
+SHIM_COMMENTS_JSON=$(jq -n --arg u "$URL_PLAN" \
+  '{body:"opener body, no url",
+    comments:[
+      {author:{login:"pipeline-bot"}, authorAssociation:"OWNER",
+       body:("## Implementation Plan\nrefer to " + $u)}
+    ]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+run_helper 999 >/dev/null 2>"$ERRLOG"
+if [ -f "$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999/plancomment-uuid-15.png" ]; then
+  pass_msg "OWNER (pipeline) comment URL downloaded"
+else
+  fail_msg "OWNER comment URL wrongly dropped"
+fi
+inc
+if ! grep -q "ignored" "$ERRLOG"; then
+  pass_msg "no dropped-author advisory when all authors trusted"
+else
+  fail_msg "advisory wrongly emitted for all-trusted issue; stderr: $(cat "$ERRLOG")"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 16: malformed issue JSON → fail-closed (graceful, no abort)
+# ---------------------------------------------------------------------------
+echo "=== Case 16: malformed issue JSON → fail-closed ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 16)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+# `gh issue view --json` returns non-JSON garbage (e.g. a transient warning on
+# stdout). The helper must scan nothing and exit 0, not abort under set -e.
+SHIM_COMMENTS_JSON='this is not valid json { broken'
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_LOG SHIM_API_COUNT
+set +e
+OUT=$(run_helper 999 2>/dev/null); rc=$?
+set -e
+if [ "$rc" = "0" ] && grep -q "^Found 0 attachments for issue #999\." <<<"$OUT"; then
+  pass_msg "malformed JSON handled gracefully (exit 0, 0 attachments)"
+else
+  fail_msg "expected graceful exit 0 / 0 attachments; rc=$rc out=$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 17: trust helper absent → fail-closed, no scan, no misleading advisory
+# ---------------------------------------------------------------------------
+echo "=== Case 17: trust helper absent → fail-closed ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 17)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+# Run a copy of the script from a directory with NO sibling
+# filter-trusted-comments.sh, so the script-dir-relative resolution misses.
+STANDALONE="$PIPELINE_PROJECT_ROOT/standalone"
+mkdir -p "$STANDALONE"
+cp "$HELPER" "$STANDALONE/fetch-issue-attachments.sh"
+URL_X="https://github.com/user-attachments/assets/helperabsent-body-17"
+URL_Y="https://github.com/user-attachments/assets/helperabsent-comment-17"
+SHIM_COMMENTS_JSON=$(jq -n --arg x "$URL_X" --arg y "$URL_Y" \
+  '{body:("body " + $x),
+    comments:[{author:{login:"maintainer"}, authorAssociation:"MEMBER", body:("comment " + $y)}]}')
+SHIM_OPENER_ASSOC="OWNER"
+SHIM_OPENER_LOGIN="maintainer"
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+ERRLOG="$PIPELINE_PROJECT_ROOT/stderr.log"
+set +e
+OUT=$( cd "$PIPELINE_PROJECT_ROOT" && bash "$STANDALONE/fetch-issue-attachments.sh" 999 2>"$ERRLOG" ); rc=$?
+set -e
+if [ "$rc" = "0" ] && grep -q "WARN: trust-filter helper not found" "$ERRLOG"; then
+  pass_msg "WARN emitted and exit 0 when helper absent"
+else
+  fail_msg "expected WARN + exit 0; rc=$rc stderr=$(cat "$ERRLOG")"
+fi
+inc
+SCRATCH17="$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999"
+if [ ! -f "$SCRATCH17/helperabsent-body-17.png" ] && [ ! -f "$SCRATCH17/helperabsent-comment-17.png" ]; then
+  pass_msg "nothing downloaded when helper absent (fail-closed)"
+else
+  fail_msg "assets were downloaded despite missing trust helper"
+fi
+inc
+if ! grep -q "untrusted opener" "$ERRLOG" && ! grep -q "from untrusted authors" "$ERRLOG"; then
+  pass_msg "no misleading untrusted-author advisory when helper absent"
+else
+  fail_msg "misleading advisory emitted in helper-absent fail-closed state; stderr: $(cat "$ERRLOG")"
 fi
 
 echo ""

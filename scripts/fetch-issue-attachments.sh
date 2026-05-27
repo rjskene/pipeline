@@ -49,9 +49,84 @@ if [ -f "${PIPELINE_PROJECT_ROOT}/.gitignore" ]; then
   fi
 fi
 
-# Fetch body + comments in one `gh` call.
-BODY_AND_COMMENTS=$(gh issue view "$ISSUE" --repo "$REPO" --json body,comments \
-  --jq '.body + "\n" + ([.comments[].body] | join("\n"))' 2>/dev/null || true)
+# Resolve the #545 trust-filter helper (script-dir-relative). It exposes the
+# single-arg `is-trusted-author <association>` subcommand (exit 0 = trusted,
+# nonzero = untrusted). Invoked as a subcommand — never sourced.
+HELPER="$(dirname "$0")/filter-trusted-comments.sh"
+HELPER_PRESENT=1
+if [ ! -f "$HELPER" ]; then
+  HELPER_PRESENT=0
+  echo "WARN: trust-filter helper not found at $HELPER; failing closed (no attachment scan)" >&2
+fi
+# is_trusted_assoc <authorAssociation> — exit 0 if trusted, nonzero otherwise.
+# Fails closed (untrusted) when the #545 helper is absent.
+is_trusted_assoc() {
+  [ -f "$HELPER" ] || return 1
+  bash "$HELPER" is-trusted-author "${1:-}"
+}
+
+# Fetch body + per-comment {author.login, authorAssociation, body} in one call.
+RAW=$(gh issue view "$ISSUE" --repo "$REPO" --json body,comments 2>/dev/null || true)
+
+# The opener's authorAssociation is NOT exposed by `gh issue view --json` (it
+# lives only on comments[]). Read it from the issue object directly — one extra
+# authenticated call. `.user.login` is captured for the dropped-author advisory.
+OPENER_META=$(gh api "repos/$REPO/issues/$ISSUE" 2>/dev/null || true)
+if [ -n "$OPENER_META" ]; then
+  OPENER_ASSOC=$(jq -r '.author_association // ""' <<<"$OPENER_META" 2>/dev/null || true)
+  OPENER_LOGIN=$(jq -r '.user.login // ""' <<<"$OPENER_META" 2>/dev/null || true)
+else
+  OPENER_ASSOC=""
+  OPENER_LOGIN=""
+fi
+
+# Build the scanned text: the opener body (only when the opener is trusted)
+# plus each comment body whose author is trusted. Untrusted bytes are dropped
+# HERE, before URL extraction, so attacker-controlled URLs are never fetched.
+DROPPED_COMMENT_LOGINS=()
+# Treat empty or non-JSON `gh issue view` output as "nothing to scan" rather
+# than aborting under set -e — fail-closed, consistent with the rest of this
+# script's defensive style. (A transient non-JSON line on stdout, despite a 0
+# exit, would otherwise crash the whole attachment fetch.)
+if [ -z "$RAW" ] || ! jq -e . >/dev/null 2>&1 <<<"$RAW"; then
+  BODY_AND_COMMENTS=""
+else
+  if is_trusted_assoc "$OPENER_ASSOC"; then
+    BODY_AND_COMMENTS=$(jq -r '.body // ""' <<<"$RAW")
+  else
+    BODY_AND_COMMENTS=""
+    # Only label the opener "untrusted" when we actually resolved an untrusted
+    # association with the helper present. When the helper is missing or the
+    # association could not be determined, the body is still dropped (fail-
+    # closed) but the cause is the degraded state, not an untrusted author —
+    # the top-level WARN already explains a missing helper.
+    if [ "$HELPER_PRESENT" -eq 1 ] && [ -n "$OPENER_ASSOC" ]; then
+      echo "ignored issue body from untrusted opener: @${OPENER_LOGIN:-unknown}" >&2
+    fi
+  fi
+  comment_count=$(jq '.comments | length' <<<"$RAW")
+  idx=0
+  while [ "$idx" -lt "$comment_count" ]; do
+    c_assoc=$(jq -r ".comments[$idx].authorAssociation // \"\"" <<<"$RAW")
+    if is_trusted_assoc "$c_assoc"; then
+      c_body=$(jq -r ".comments[$idx].body // \"\"" <<<"$RAW")
+      BODY_AND_COMMENTS="$BODY_AND_COMMENTS"$'\n'"$c_body"
+    elif [ "$HELPER_PRESENT" -eq 1 ]; then
+      c_login=$(jq -r ".comments[$idx].author.login // \"\"" <<<"$RAW")
+      DROPPED_COMMENT_LOGINS+=("@${c_login:-unknown}")
+    fi
+    idx=$((idx + 1))
+  done
+fi
+
+# Machine-readable audit (#545 shape): name the dropped untrusted comment
+# authors. Emitted only when ≥1 comment was dropped, so the all-trusted fast
+# path stays advisory-free.
+if [ "${#DROPPED_COMMENT_LOGINS[@]}" -gt 0 ]; then
+  dropped_joined=$(printf '%s, ' "${DROPPED_COMMENT_LOGINS[@]}")
+  dropped_joined="${dropped_joined%, }"
+  echo "ignored ${#DROPPED_COMMENT_LOGINS[@]} comments from untrusted authors: $dropped_joined" >&2
+fi
 
 # Extract GitHub-hosted attachment URLs. Three accepted hosts:
 #   - https://github.com/user-attachments/assets/<uuid>            (no extension)
