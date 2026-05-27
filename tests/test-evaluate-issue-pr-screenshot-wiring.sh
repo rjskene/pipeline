@@ -1,5 +1,8 @@
 #!/bin/bash
-set -uo pipefail
+# NOT pipefail: every assert is `awk ... | grep -q PATTERN`. When grep -q matches
+# early it closes the pipe, killing awk with SIGPIPE (exit 141); under pipefail
+# that surfaces as a spurious non-zero — a flaky FAIL even though grep matched.
+set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PASS=0; FAIL=0
