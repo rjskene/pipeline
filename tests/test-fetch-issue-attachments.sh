@@ -69,8 +69,18 @@ set -- "${ARGS[@]}"
 sub1="${1:-}"; sub2="${2:-}"
 case "$sub1 $sub2" in
   "issue view")
-    # The helper requests --json body,comments; emit a synthetic combined doc.
-    printf '%s' "${SHIM_BODY:-}"
+    # The helper requests --json body,comments. Two modes:
+    #   - $SHIM_COMMENTS_JSON set: emit it verbatim (structured per-comment
+    #     {author.login, authorAssociation, body} data — used by the trust-gate
+    #     cases).
+    #   - otherwise (legacy): wrap $SHIM_BODY as the issue body with no
+    #     comments, so the pre-trust-gate cases keep feeding their combined
+    #     text through unchanged.
+    if [ -n "${SHIM_COMMENTS_JSON:-}" ]; then
+      printf '%s' "$SHIM_COMMENTS_JSON"
+    else
+      jq -n --arg b "${SHIM_BODY:-}" '{body:$b, comments:[]}'
+    fi
     ;;
   "api -i"|"api"*)
     # `gh api -i <url>` — print HTTP-like response.
@@ -136,7 +146,7 @@ run_helper() {
 
 # Reset case-scoped env between cases.
 reset_shim_env() {
-  unset SHIM_BODY SHIM_CT_DEFAULT SHIM_CT_BY_URL SHIM_API_FAIL_URLS SHIM_BODY_BYTES SHIM_LOG SHIM_API_COUNT SHIM_BODY_FILE
+  unset SHIM_BODY SHIM_CT_DEFAULT SHIM_CT_BY_URL SHIM_API_FAIL_URLS SHIM_BODY_BYTES SHIM_LOG SHIM_API_COUNT SHIM_BODY_FILE SHIM_COMMENTS_JSON SHIM_OPENER_ASSOC SHIM_OPENER_LOGIN
 }
 
 # ---------------------------------------------------------------------------
@@ -426,6 +436,51 @@ if [ -f "$TARGET" ]; then
   fi
 else
   fail_msg "binary attachment file missing at $TARGET"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 10: trust gate — URL in an untrusted comment is NOT downloaded
+# ---------------------------------------------------------------------------
+echo "=== Case 10: trust gate — untrusted comment URL not downloaded ==="
+inc
+reset_shim_env
+PIPELINE_PROJECT_ROOT="$(stage_root 10)"; export PIPELINE_PROJECT_ROOT
+stage_shim "$PIPELINE_PROJECT_ROOT"
+URL_TRUSTED="https://github.com/user-attachments/assets/trusted-uuid-10"
+URL_UNTRUSTED="https://github.com/user-attachments/assets/untrusted-uuid-10"
+# Opener (OWNER) body has NO url; a trusted (MEMBER) comment carries the
+# trusted URL; an untrusted (NONE) comment carries the attacker URL.
+SHIM_COMMENTS_JSON=$(jq -n \
+  --arg t "$URL_TRUSTED" \
+  --arg u "$URL_UNTRUSTED" \
+  '{body:"Plain opener body, no attachments.",
+    comments:[
+      {author:{login:"maintainer"}, authorAssociation:"MEMBER", body:("trusted asset " + $t)},
+      {author:{login:"attacker"},   authorAssociation:"NONE",   body:("malicious asset " + $u)}
+    ]}')
+SHIM_LOG="$PIPELINE_PROJECT_ROOT/shim.log"; : > "$SHIM_LOG"
+SHIM_API_COUNT="$PIPELINE_PROJECT_ROOT/api.count"; : > "$SHIM_API_COUNT"
+SHIM_CT_DEFAULT="image/png"
+SHIM_BODY_BYTES=16
+export SHIM_COMMENTS_JSON SHIM_LOG SHIM_API_COUNT SHIM_CT_DEFAULT SHIM_BODY_BYTES
+OUT=$(run_helper 999 2>/dev/null)
+SCRATCH="$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-999"
+if [ -f "$SCRATCH/trusted-uuid-10.png" ]; then
+  pass_msg "trusted-comment URL still downloaded"
+else
+  fail_msg "trusted-comment asset missing; got: $OUT"
+fi
+inc
+if [ ! -f "$SCRATCH/untrusted-uuid-10.png" ]; then
+  pass_msg "untrusted-comment URL not downloaded"
+else
+  fail_msg "untrusted-comment asset was downloaded (trust gate not applied)"
+fi
+inc
+if ! grep -q "$URL_UNTRUSTED" "$SHIM_LOG"; then
+  pass_msg "no gh api download attempted for untrusted-comment URL"
+else
+  fail_msg "gh api was invoked for the untrusted-comment URL: $(grep "$URL_UNTRUSTED" "$SHIM_LOG")"
 fi
 
 echo ""

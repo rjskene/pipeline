@@ -49,9 +49,42 @@ if [ -f "${PIPELINE_PROJECT_ROOT}/.gitignore" ]; then
   fi
 fi
 
-# Fetch body + comments in one `gh` call.
-BODY_AND_COMMENTS=$(gh issue view "$ISSUE" --repo "$REPO" --json body,comments \
-  --jq '.body + "\n" + ([.comments[].body] | join("\n"))' 2>/dev/null || true)
+# Resolve the #545 trust-filter helper (script-dir-relative). It exposes the
+# single-arg `is-trusted-author <association>` subcommand (exit 0 = trusted,
+# nonzero = untrusted). Invoked as a subcommand — never sourced.
+HELPER="$(dirname "$0")/filter-trusted-comments.sh"
+if [ ! -f "$HELPER" ]; then
+  echo "WARN: trust-filter helper not found at $HELPER; failing closed (no attachment scan)" >&2
+fi
+# is_trusted_assoc <authorAssociation> — exit 0 if trusted, nonzero otherwise.
+# Fails closed (untrusted) when the #545 helper is absent.
+is_trusted_assoc() {
+  [ -f "$HELPER" ] || return 1
+  bash "$HELPER" is-trusted-author "${1:-}"
+}
+
+# Fetch body + per-comment {author.login, authorAssociation, body} in one call.
+RAW=$(gh issue view "$ISSUE" --repo "$REPO" --json body,comments 2>/dev/null || true)
+
+# Build the scanned text: the opener body plus each comment body whose author
+# is trusted. Untrusted comment bytes are dropped HERE, before URL extraction,
+# so attacker-controlled URLs are never fetched. (Opener-body gating by issue
+# author_association is added in a later commit.)
+if [ -z "$RAW" ]; then
+  BODY_AND_COMMENTS=""
+else
+  BODY_AND_COMMENTS=$(jq -r '.body // ""' <<<"$RAW")
+  comment_count=$(jq '.comments | length' <<<"$RAW")
+  idx=0
+  while [ "$idx" -lt "$comment_count" ]; do
+    c_assoc=$(jq -r ".comments[$idx].authorAssociation // \"\"" <<<"$RAW")
+    if is_trusted_assoc "$c_assoc"; then
+      c_body=$(jq -r ".comments[$idx].body // \"\"" <<<"$RAW")
+      BODY_AND_COMMENTS="$BODY_AND_COMMENTS"$'\n'"$c_body"
+    fi
+    idx=$((idx + 1))
+  done
+fi
 
 # Extract GitHub-hosted attachment URLs. Three accepted hosts:
 #   - https://github.com/user-attachments/assets/<uuid>            (no extension)
