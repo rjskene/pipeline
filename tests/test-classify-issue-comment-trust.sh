@@ -60,6 +60,70 @@ else
   fail_msg "step 2 missing ## Classification trust-set wiring"
 fi
 
+# --- Task 5: opener-association gate (refuse-and-surface, no label) ---
+
+# Slice the step 0a gate block: from "0a." to the next top-level numbered step.
+GATE_TMP="$(mktemp)"
+awk '/^0a\./ { inblock = 1 } /^1\. / { inblock = 0 } inblock { print }' "$SKILL_FILE" > "$GATE_TMP"
+
+echo "Test 4: opener check uses the is-trusted-author primitive"
+inc
+if grep -qF "is-trusted-author" "$SKILL_FILE"; then
+  pass_msg "is-trusted-author primitive referenced"
+else
+  fail_msg "missing is-trusted-author reference"
+fi
+
+echo "Test 5: opener association resolved via gh api author_association"
+inc
+if grep -qF "author_association" "$SKILL_FILE" \
+   && grep -qF "gh api repos/\$PIPELINE_REPO/issues" "$SKILL_FILE"; then
+  pass_msg "association resolved via gh api repos/\$PIPELINE_REPO/issues author_association"
+else
+  fail_msg "opener association not resolved via gh api .../author_association"
+fi
+
+echo "Test 6: is-trusted-author invoked single-arg over the association string"
+inc
+if grep -qF 'is-trusted-author "$ASSOC"' "$GATE_TMP"; then
+  pass_msg "0a block calls is-trusted-author \"\$ASSOC\" (single-arg)"
+else
+  fail_msg "0a block does not call single-arg is-trusted-author \"\$ASSOC\""
+fi
+
+echo "Test 7: broken two-arg / login call shapes are absent"
+inc
+if grep -qF "is-trusted-author <N>" "$SKILL_FILE" \
+   || grep -qF 'is-trusted-author "$OPENER"' "$SKILL_FILE"; then
+  fail_msg "broken two-arg/login is-trusted-author shape present"
+else
+  pass_msg "no broken two-arg/login is-trusted-author shape"
+fi
+
+echo "Test 8: refuse-and-surface language present"
+inc
+if grep -qiE "refuse|human triage" "$SKILL_FILE"; then
+  pass_msg "refuse/human-triage language present"
+else
+  fail_msg "missing refuse-and-surface language"
+fi
+
+echo "Test 9: untrusted opener applies no label and posts no classification"
+inc
+if grep -qi "do NOT apply" "$GATE_TMP" && grep -qi "do NOT post" "$GATE_TMP"; then
+  pass_msg "0a block states do-NOT-apply (label) and do-NOT-post (Classification)"
+else
+  fail_msg "0a block missing do-NOT-apply / do-NOT-post directives"
+fi
+
+echo "Test 10: the gate keys off the OPENER"
+inc
+if grep -qi "opener" "$GATE_TMP"; then
+  pass_msg "0a block keys off the opener"
+else
+  fail_msg "0a block does not mention the opener"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
