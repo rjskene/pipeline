@@ -28,6 +28,12 @@ Base-branch enforcement is defense-in-depth across three layers (eval-time gate,
 
 Per #459, feature PR merges and `staging → main` merges both use merge-commits (not squash), so per-PR conventional-commit history is preserved on the trunk — release-please enumerates one entry per merged feature PR — between releases, that means each PR's merge-commit subject becomes a CHANGELOG line (the **per-PR granularity contract**); within a single PR the sub-commits are reachable on the full DAG but are not enumerated, because release-please walks --first-parent from the release tip. See [docs/release-cadence.md#granularity-scope-decision-492](docs/release-cadence.md#granularity-scope-decision-492). Trade-off: staging history is noisier (WIP/fixup commits land verbatim from feature branches); accepted because the pipeline's `tdd-implementer` produces clean conventional commits by construction.
 
+## Dogfood install
+
+Pipeline operators iterate against the repo working tree on `staging` instead of a cache copy of the published plugin. The local-marketplace install (`pipeline@claude-pipeline-local`) sets `${CLAUDE_PLUGIN_ROOT}` to the repo working tree directly, so `git pull` on staging = live skill updates. See [docs/dogfood-setup.md](docs/dogfood-setup.md) for the one-shot bootstrap, the SessionStart + manual auto-refresh layers, and the `dogfood-mode.sh` / `consumer-mode.sh` swap pair.
+
+Consumers continue to install `pipeline@claude-pipeline` from the GitHub marketplace as before — the dogfood install is mutually exclusive with it and is dogfood-only by convention (the `SessionStart` hook lives in `.claude/settings.json`, not the published `.claude-plugin/plugin.json`).
+
 ## Namespace discipline
 
 The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json`. All plugin assets live under `~/.claude/plugins/claude-pipeline/` (read at runtime via `${CLAUDE_PLUGIN_ROOT}`).
