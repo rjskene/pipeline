@@ -40,6 +40,11 @@ PIPELINE_RUNS_LOG_OVERRIDE
 PIPELINE_TEST_TMPDIRS
 PIPELINE_VERSION
 
+# Test-isolation env override for check-config-drift.sh itself (points the
+# lint at a fixture allowlist under mktemp -d during sub-case 4). Not a
+# user-config knob; intentionally undocumented in pipeline.config.example.
+PIPELINE_CONFIG_DRIFT_ALLOWLIST
+
 # Genuinely undocumented but in-use. Companion cleanup issue documents these
 # in pipeline.config.example and peels them from this allowlist as each lands.
 PIPELINE_ANALYZE_MIN_AGE_HOURS
