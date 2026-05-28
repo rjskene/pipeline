@@ -52,6 +52,30 @@ else
   fail_msg "expected rc=0 on live tree, got rc=$rc; err=$(cat "$WORKDIR/c1.err")"
 fi
 
+echo "Sub-case 2: synthetic ORPHAN -> exit 1 + ORPHAN group names the var"
+inc
+FX2="$WORKDIR/c2"
+mkdir -p "$FX2/scan"
+cat >"$FX2/pipeline.config.example" <<'EOF'
+PIPELINE_TEST_ORPHAN=""
+EOF
+# Empty scan dir so nothing is referenced -> the declared var is orphan.
+touch "$FX2/scan/.keep"
+: >"$FX2/allowlist.txt"
+set +e
+PIPELINE_CONFIG_DRIFT_ALLOWLIST="$FX2/allowlist.txt" \
+  bash "$LINT" "$FX2/pipeline.config.example" "$FX2/scan" \
+  >"$WORKDIR/c2.out" 2>"$WORKDIR/c2.err"
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] \
+   && grep -q '^ORPHAN' "$WORKDIR/c2.err" \
+   && grep -q 'PIPELINE_TEST_ORPHAN' "$WORKDIR/c2.err"; then
+  pass_msg "ORPHAN flagged with token named"
+else
+  fail_msg "expected rc=1 + ORPHAN group + token; got rc=$rc; err=$(cat "$WORKDIR/c2.err")"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"

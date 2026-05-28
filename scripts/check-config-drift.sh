@@ -53,12 +53,12 @@ if [ "${#EXISTING_SCAN_DIRS[@]}" -eq 0 ]; then
 fi
 
 # --- Declared set ---------------------------------------------------------
-DECLARED=$(grep -hE '^\s*#?\s*PIPELINE_[A-Z0-9_]+=' "$CONFIG_EXAMPLE" \
+DECLARED=$( { grep -hE '^\s*#?\s*PIPELINE_[A-Z0-9_]+=' "$CONFIG_EXAMPLE" || true; } \
   | sed -E 's/^\s*#?\s*(PIPELINE_[A-Z0-9_]+)=.*/\1/' \
   | sort -u)
 
 # --- Referenced set -------------------------------------------------------
-REFERENCED=$(grep -rEohI '\bPIPELINE_[A-Z0-9_]+\b' "${EXISTING_SCAN_DIRS[@]}" 2>/dev/null \
+REFERENCED=$( { grep -rEohI '\bPIPELINE_[A-Z0-9_]+\b' "${EXISTING_SCAN_DIRS[@]}" 2>/dev/null || true; } \
   | sort -u)
 
 # --- Allowlist parser -----------------------------------------------------
