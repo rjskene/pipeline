@@ -19,7 +19,7 @@ set -euo pipefail
 #
 # installLocation is the absolute path to the repo working tree itself (NOT a
 # cache subdir). That is what makes ${CLAUDE_PLUGIN_ROOT} resolve to the live
-# tree at /pipeline:* runtime.
+# tree whenever a pipeline command resolves CLAUDE_PLUGIN_ROOT.
 #
 # Idempotence: when an entry with matching .installLocation and .source already
 # exists, the script preserves .lastUpdated so re-runs produce a byte-identical
