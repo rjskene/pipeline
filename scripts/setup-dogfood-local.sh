@@ -65,11 +65,25 @@ jq --arg root "$REPO_ROOT" '
 mv "$TMP_KM" "$KM_PATH"
 
 # Step 2: scrub any github-marketplace pipeline entries from installed_plugins.json
-# so the next /plugin install resolves through the local marketplace.
+# so the next /plugin install resolves through the local marketplace. Filter by
+# .projectPath to limit the blast radius to the current repo only (avoids nuking
+# pipeline@claude-pipeline installs in unrelated consumer projects on a multi-
+# project host). When the filtered array is empty, drop the key entirely so the
+# post-state is byte-identical to the legacy single-project behavior.
 if [ -f "$IP_PATH" ]; then
   TMP_IP="$(mktemp)"
-  if jq 'if has("plugins") then .plugins |= (del(.["pipeline@claude-pipeline"])) else . end' \
-       "$IP_PATH" > "$TMP_IP" 2>/dev/null; then
+  if jq --arg repo_root "$REPO_ROOT" '
+    if has("plugins") and (.plugins | has("pipeline@claude-pipeline")) then
+      .plugins["pipeline@claude-pipeline"] = (
+        .plugins["pipeline@claude-pipeline"] // []
+        | map(select(.projectPath != $repo_root))
+      )
+      | if (.plugins["pipeline@claude-pipeline"] | length) == 0
+          then .plugins |= del(.["pipeline@claude-pipeline"])
+          else .
+        end
+    else . end
+  ' "$IP_PATH" > "$TMP_IP" 2>/dev/null; then
     mv "$TMP_IP" "$IP_PATH"
   else
     rm -f "$TMP_IP"
