@@ -30,12 +30,28 @@ _find_main_repo() {
     echo "ERROR: PIPELINE_PROJECT_ROOT=$PIPELINE_PROJECT_ROOT does not contain both pipeline.config and a .git/ entry" >&2
     return 1
   fi
+  # Defensive: when invoked from a stale plugin cache (CLAUDE_PLUGIN_ROOT pinned
+  # to an older version and PIPELINE_PROJECT_ROOT not set by the caller), the
+  # walk-up below will never resolve a consumer repo. Bail clean with an
+  # actionable hint instead of letting the queue runner's poll loop emit a
+  # recurring "could not locate consumer repo" line. Cosmetic-only — must not
+  # propagate non-zero up to the runner (matches the file header contract).
+  local _self_dir
+  _self_dir="$(cd "$(dirname "$0")" && pwd)"
+  case "$_self_dir" in
+    */cache/claude-pipeline/pipeline/*/scripts)
+      echo "queue-status.sh: stale CLAUDE_PLUGIN_ROOT=$(dirname "$_self_dir") (set PIPELINE_PROJECT_ROOT or re-source _resolve-plugin-root.sh to pick the latest cache version)" >&2
+      # Signal the caller to short-circuit the snapshot via a sentinel exit
+      # code distinct from the walk-up failure — handled at the call site.
+      return 2
+      ;;
+  esac
   # Fallback: walk up from the script location looking for a directory that
   # holds BOTH pipeline.config AND a .git/ entry (file or dir — git worktrees
   # use a regular file). The combined check rejects the plugin tree's own
   # pipeline.config (which lives outside any git checkout the script cares about).
   local dir
-  dir="$(cd "$(dirname "$0")" && pwd)"
+  dir="$_self_dir"
   while [ "$dir" != "/" ]; do
     if [ -f "$dir/pipeline.config" ] && { [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; }; then
       printf '%s' "$dir"
@@ -46,7 +62,12 @@ _find_main_repo() {
   echo "ERROR: could not locate consumer repo (need both pipeline.config and .git/) walking up from $(dirname "$0") to /; set PIPELINE_PROJECT_ROOT to override" >&2
   return 1
 }
-REPO_ROOT="$(_find_main_repo)" || exit 1
+REPO_ROOT="$(_find_main_repo)"; _rc=$?
+if [ "$_rc" -eq 2 ]; then
+  echo "No queue runs found. (PIPELINE_LOGS_ENABLED=false)"
+  exit 0
+fi
+[ "$_rc" -eq 0 ] || exit 1
 source "${REPO_ROOT}/pipeline.config"
 # shellcheck disable=SC1091
 _logging_helper="$(cd "$(dirname "$0")" && pwd)/_logging.sh"
