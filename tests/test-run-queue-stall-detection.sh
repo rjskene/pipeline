@@ -223,6 +223,7 @@ STDOUT_CAPTURE="$WORKDIR/queue-stdout.log"
     POLL_SECONDS=1 \
     STATUS_INTERVAL=10000 \
     PIPELINE_STALL_POLL_THRESHOLD=3 \
+    PIPELINE_STALL_SAMPLES_PER_POLL=1 \
     CLAUDE_PLUGIN_ROOT="$PROJ/.claude" \
     bash .claude/scripts/run-queue.sh 901 902
 ) > "$STDOUT_CAPTURE" 2>&1
@@ -460,6 +461,7 @@ STDOUT_CAPTURE3="$WORKDIR/queue-stdout-903.log"
     STATUS_INTERVAL=10000 \
     PIPELINE_STALL_POLL_THRESHOLD=3 \
     PIPELINE_STALL_CPU_THRESHOLD=5 \
+    PIPELINE_STALL_SAMPLES_PER_POLL=1 \
     CLAUDE_PLUGIN_ROOT="$PROJ3/.claude" \
     bash .claude/scripts/run-queue.sh 903 904
 ) > "$STDOUT_CAPTURE3" 2>&1
@@ -475,6 +477,138 @@ else
   fail_msg "expected exactly 1 'EVENT: agent-stalled issue=903' in stdout, got $stall_count3"
   echo "--- stdout capture ---" >&2
   sed 's/^/    /' "$STDOUT_CAPTURE3" >&2
+fi
+
+# ---- Test 4: multi-sample-per-poll suppresses false stalls on bursty CPU -----
+#
+# Regression guard for issue #592. The runner now takes N=PIPELINE_STALL_SAMPLES_PER_POLL
+# `ps` snapshots per poll and feeds the MAX subtree-CPU across those samples into
+# the latch logic. Without that fix the runner samples once per poll and routinely
+# misses short-lived bash children spawned by `claude` tool calls (ps reports
+# lifetime-average %cpu — a Bash subshell caught mid-flight reads near 0).
+#
+# This test scripts a `ps` stub that returns 0.0 on sample-positions 1 and 3, and
+# 12.0 on sample-position 2, within each poll's three-sample window. With the
+# fix the max-of-3 per poll is 12.0 (> PIPELINE_STALL_CPU_THRESHOLD=5), so no
+# stall ever latches. Without the fix (single-sample), sample 1 (0.0) drives the
+# latch and `agent-stalled` fires.
+#
+# Two active issues so the poll loop runs (single-issue short-circuits skip it).
+# 905 is the bursty worker; 906 finishes on poll 1.
+echo ""
+echo "Test 4: multi-sample max-of-N per poll suppresses false stall on bursty subtree CPU (#592)"
+inc
+PROJ4="$WORKDIR/p4"
+setup_proj "$PROJ4"
+STUB_DIR4=$(make_stubs "$PROJ4")  # scaffolds gh/git; ps + tmux overridden below.
+
+cpu_counter4="$WORKDIR/ps-counter-905"
+win_counter4="$WORKDIR/win-counter-905"
+echo 0 > "$cpu_counter4"
+echo 0 > "$win_counter4"
+
+# ps stub: returns 12.0 on every 4th `ps -eo` call (positions 4, 8, 12, ...) and
+# 0.0 otherwise. Designed so the two sampling modes diverge:
+#
+#   Single-sample mode (the bug): one ps-call per poll, so polls 1/2/3 read 0.0
+#   (consec_idle reaches 3 → latch fires), poll 4 reads 12.0 (reset), ...
+#
+#   Multi-sample mode (the fix): three ps-calls per poll. Burst 1 = positions
+#   {1,2,3} = {0,0,0} → max=0 → consec_idle=1. Burst 2 = positions {4,5,6} =
+#   {12,0,0} → max=12 → reset. Burst 3 = positions {7,8,9} = {0,12,0} → max=12
+#   → reset. Burst 4 = positions {10,11,12} = {0,0,12} → max=12 → reset. ...
+#   consec_idle never reaches 3, latch never fires.
+cat > "$STUB_DIR4/ps" <<EOF
+#!/bin/bash
+CPU_COUNTER="$cpu_counter4"
+mode=""
+for arg in "\$@"; do
+  case "\$arg" in
+    -eo) mode="eo" ;;
+  esac
+done
+if [ "\$mode" = "eo" ]; then
+  n=\$(cat "\$CPU_COUNTER" 2>/dev/null || echo 0)
+  n=\$((n + 1))
+  echo "\$n" > "\$CPU_COUNTER"
+  # 12.0 every 4th call; 0.0 otherwise.
+  if [ \$(( n % 4 )) -eq 0 ]; then
+    val="12.0"
+  else
+    val="0.0"
+  fi
+  echo "90500 1 0.0"
+  echo "90501 90500 \$val"
+  echo "90600 1 0.0"
+else
+  echo "0.0"
+fi
+EOF
+chmod +x "$STUB_DIR4/ps"
+
+# tmux stub: issue-905 present for the first 8 list-windows calls, then vanishes
+# so the poll loop terminates. issue-906 never appears (finishes poll 1).
+cat > "$STUB_DIR4/tmux" <<EOF
+#!/bin/bash
+WIN_COUNTER="$win_counter4"
+case "\$1" in
+  list-windows)
+    n=\$(cat "\$WIN_COUNTER" 2>/dev/null || echo 0)
+    n=\$((n + 1))
+    echo "\$n" > "\$WIN_COUNTER"
+    if [ "\$n" -le 8 ]; then
+      echo "issue-905"
+    fi
+    ;;
+  list-panes)
+    target=""
+    shift
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        -t) target="\$2"; shift 2 ;;
+        *)  shift ;;
+      esac
+    done
+    case "\$target" in
+      *issue-905) echo "90500" ;;
+      *issue-906) echo "90600" ;;
+      *)          echo "90000" ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+chmod +x "$STUB_DIR4/tmux"
+
+mkdir -p "/tmp/wt-905-quux" "/tmp/wt-906-corge"
+STDOUT_CAPTURE4="$WORKDIR/queue-stdout-905.log"
+(
+  cd "$PROJ4"
+  PATH="$STUB_DIR4:$PATH" \
+    TMUX="fake" \
+    STUB_WORKTREES="905:quux 906:corge" \
+    PIPELINE_LOGS_ENABLED=true \
+    POLL_SECONDS=1 \
+    STATUS_INTERVAL=10000 \
+    PIPELINE_STALL_POLL_THRESHOLD=3 \
+    PIPELINE_STALL_CPU_THRESHOLD=5 \
+    PIPELINE_STALL_SAMPLES_PER_POLL=3 \
+    PIPELINE_STALL_SAMPLE_INTERVAL_SEC=0 \
+    CLAUDE_PLUGIN_ROOT="$PROJ4/.claude" \
+    bash .claude/scripts/run-queue.sh 905 906
+) > "$STDOUT_CAPTURE4" 2>&1
+
+# `grep -c` prints `0` (and exits 1) on no-match. With the fix, max-of-3 = 12.0
+# every poll, so NO stall latches; without the fix, latch fires at least once.
+stall_count4=$(grep -c 'EVENT: agent-stalled issue=905' "$STDOUT_CAPTURE4" 2>/dev/null || true)
+if [ "$stall_count4" -eq 0 ]; then
+  pass_msg "max-of-3-samples-per-poll suppressed false stall (bursty subtree CPU, sample-position-2 = 12%)"
+else
+  fail_msg "expected exactly 0 'EVENT: agent-stalled issue=905' in stdout, got $stall_count4"
+  echo "--- stdout capture ---" >&2
+  sed 's/^/    /' "$STDOUT_CAPTURE4" >&2
 fi
 
 echo ""
