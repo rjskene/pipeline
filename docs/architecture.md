@@ -25,7 +25,7 @@ Defense-in-depth across three layers:
 2. Skill-level quoted `--base "$PIPELINE_BASE_BRANCH"` in `execute-issue-plan` Step 9b at PR creation time.
 3. `enforce-base-branch.py` PreToolUse hook covering both `gh pr create` and `gh pr edit --base` retargets.
 
-The hook alone is not sufficient — it has bypassed (#295) when the consumer settings.json layout shadowed the plugin-registered matcher, or when a stale rendered spawn-claude.sh emitted an unnamespaced slash command that never loaded plugin hooks at all (see `dev/audits/295-root-cause.md`).
+The hook alone is not sufficient — it has bypassed (#295) when the consumer settings.json layout shadowed the plugin-registered matcher, or when a stale rendered spawn-claude.sh emitted an unnamespaced slash command that never loaded plugin hooks at all.
 
 ## Spawn-claude degradation behavior
 
