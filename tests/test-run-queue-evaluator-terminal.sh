@@ -60,15 +60,13 @@ setup_proj() {
 exit 0
 EOF
   chmod +x "$proj/.claude/scripts/spawn-claude.sh"
-  # PIPELINE_EVAL_CLASSIFIER="" short-circuits route_issue() to mode=bare with
-  # NO gh round-trip, so the only gh traffic in the loop is the new predicate.
+  # Post-#514 route_issue() unconditionally maps to mode=bare with no gh
+  # round-trip, so the only gh traffic in the loop is the new predicate.
   cat > "$proj/pipeline.config" <<EOF
 PIPELINE_REPO="fake/repo"
 PIPELINE_BASE_BRANCH="pipeline"
 PIPELINE_WORKTREE_PREFIX="wt"
 PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=""
-PIPELINE_EVAL_CONTAINERS=""
 EOF
 }
 

@@ -3,8 +3,11 @@ set -uo pipefail
 
 export PIPELINE_LOGS_ENABLED=true
 
-# Tests for queue partitioning by pre-spawn classifier output in
-# scripts/run-queue.sh (issue #218).
+# Tests for the always-inline run-queue dispatch contract (issue #514).
+#
+# Container isolation and the pre-spawn PIPELINE_EVAL_CLASSIFIER re-run
+# were removed in #514; every issue now lands in the single `bare` bucket
+# and no `--container-mode` token ever appears in the spawn argv.
 #
 # Uses PIPELINE_QUEUE_DRY_RUN=1 to short-circuit the poll loop after
 # initial classification + first fill_slots. Stubs:
@@ -12,7 +15,6 @@ export PIPELINE_LOGS_ENABLED=true
 #   - tmux:     no-op; never matters in dry-run
 #   - git:      returns canned worktree-list output so find_worktree resolves
 #   - spawn-claude.sh: logs argv to $PROJ/spawn-invocations.log and exits 0
-#   - eval-classifier-invoke.sh: emits --container-mode=<x> for issues in a set
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT_UNDER_TEST="$SCRIPT_DIR/../scripts/run-queue.sh"
@@ -39,15 +41,7 @@ setup_proj() {
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$SCRIPT_DIR/../scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
-  # run-queue.sh sources _resolve-container-var.sh from SCRIPT_DIR (#336);
-  # colocate it next to run-queue.sh in the fixture.
-  cp "$SCRIPT_DIR/../scripts/_resolve-container-var.sh" "$proj/.claude/scripts/_resolve-container-var.sh"
   chmod +x "$proj/.claude/scripts/run-queue.sh"
-  # Stage the plugin-shipped helper at the same dir as run-queue.sh + _logging.sh,
-  # so ${CLAUDE_PLUGIN_ROOT}/scripts/ resolution in classify_issue finds it under
-  # the same plugin-root prefix that CLAUDE_PLUGIN_ROOT points at in run_dryrun.
-  cp "$SCRIPT_DIR/../scripts/eval-classifier-invoke.sh" "$proj/.claude/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/.claude/scripts/eval-classifier-invoke.sh"
   # Stub spawn-claude.sh: logs argv and exits 0
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<'EOF'
 #!/bin/bash
@@ -103,35 +97,6 @@ EOF
   echo "$stub_dir"
 }
 
-write_classifier() {
-  # Writes a classifier script that emits --container-mode=<MODE> for issues
-  # in CLASSIFIER_WEB_ISSUES (space-separated list); empty otherwise.
-  # CLASSIFIER_FAIL_ISSUES exits 2 for those issues.
-  # CLASSIFIER_EXTRA_TOKENS appends each space-separated token for web issues.
-  local path="$1"
-  cat > "$path" <<'EOF'
-#!/bin/bash
-ISSUE="$1"
-for fi in ${CLASSIFIER_FAIL_ISSUES:-}; do
-  if [ "$ISSUE" = "$fi" ]; then
-    echo "stub-classifier: refusing #$ISSUE" >&2
-    exit 2
-  fi
-done
-for wi in ${CLASSIFIER_WEB_ISSUES:-}; do
-  if [ "$ISSUE" = "$wi" ]; then
-    echo "--container-mode=web-eval"
-    for tok in ${CLASSIFIER_EXTRA_TOKENS:-}; do
-      echo "$tok"
-    done
-    exit 0
-  fi
-done
-exit 0
-EOF
-  chmod +x "$path"
-}
-
 run_dryrun() {
   # $@: extra args to run-queue.sh (issue numbers etc.)
   local proj="$1"; shift
@@ -145,9 +110,6 @@ run_dryrun() {
     slug="${entry##*:}"
     mkdir -p "/tmp/wt-${issue}-${slug}"
   done
-  # PIPELINE_EVAL_ISOLATION=container pins the legacy docker dispatch path
-  # (issue #517: inline browser-eval is the new default for container-mode).
-  # These tests assert spawn-claude.sh argv threading for the container path.
   (
     cd "$proj"
     PATH="$stub_dir:$PATH" \
@@ -155,308 +117,119 @@ run_dryrun() {
       SPAWN_LOG="$spawn_log" \
       GH_INVOCATIONS="$gh_log" \
       PIPELINE_QUEUE_DRY_RUN=1 \
-      PIPELINE_EVAL_ISOLATION=container \
       CLAUDE_PLUGIN_ROOT="$proj/.claude" \
       bash .claude/scripts/run-queue.sh "$@" 2>&1
   )
 }
 
+write_minimal_config() {
+  local proj="$1"
+  cat > "$proj/pipeline.config" <<EOF
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="pipeline"
+PIPELINE_WORKTREE_PREFIX="wt"
+PIPELINE_TMUX_SESSION="fake"
+EOF
+}
+
 # -------------------------------------------------------------------------
-# Test 1: classifier unset -> single bare bucket, no --container-mode flags
+# Test 1: multi-issue dispatch -> single bare bucket, no --container-mode
 # -------------------------------------------------------------------------
-echo "Test 1: classifier unset -> single bare bucket preserves today's behavior"
+echo "Test 1: multi-issue dispatch lands in single bare bucket; no --container-mode"
 inc
 PROJ="$WORKDIR/p1"
 setup_proj "$PROJ"
 STUB_DIR=$(make_stubs "$PROJ")
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=""
-PIPELINE_EVAL_CONTAINERS=""
-EOF
-STUB_WORKTREES="200:foo 201:bar 202:baz" \
+write_minimal_config "$PROJ"
 OUT=$(STUB_WORKTREES="200:foo 201:bar 202:baz" \
       run_dryrun "$PROJ" "$STUB_DIR" 200 201 202)
 SPAWN_LOG="$PROJ/spawn-invocations.log"
+ok=1
 if grep -q -- "--container-mode" "$SPAWN_LOG"; then
-  fail_msg "spawn log unexpectedly contains --container-mode when classifier unset"
-elif ! echo "$OUT" | grep -qE '^BUCKET: mode=bare issues=.*200.* max='; then
+  fail_msg "spawn log unexpectedly contains --container-mode"
+  cat "$SPAWN_LOG" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && ! echo "$OUT" | grep -qE '^BUCKET: mode=bare issues=.*200.* max='; then
   fail_msg "expected 'BUCKET: mode=bare issues=...200... max=...' line"
   echo "$OUT" | sed 's/^/    /'
-elif [ "$(wc -l < "$SPAWN_LOG")" -lt 3 ]; then
+  ok=0
+fi
+# Exactly ONE bucket (bare); no other mode= lines.
+if [ "$ok" = "1" ] && [ "$(echo "$OUT" | grep -cE '^BUCKET: mode=')" -ne 1 ]; then
+  fail_msg "expected exactly one BUCKET line; got $(echo "$OUT" | grep -cE '^BUCKET: mode=')"
+  echo "$OUT" | sed 's/^/    /'
+  ok=0
+fi
+if [ "$ok" = "1" ] && [ "$(wc -l < "$SPAWN_LOG")" -lt 3 ]; then
   fail_msg "expected 3 spawn invocations (one per issue), got $(wc -l < "$SPAWN_LOG")"
   cat "$SPAWN_LOG" | sed 's/^/    /'
-else
-  pass_msg "classifier unset -> 3 spawns in bare bucket, no --container-mode flag"
+  ok=0
 fi
+[ "$ok" = "1" ] && pass_msg "3 spawns in bare bucket, no --container-mode flag"
 
 # -------------------------------------------------------------------------
-# Test 2: classifier emits web-eval for one issue -> two buckets
+# Test 2: single-issue short-circuit also bare; no --container-mode
 # -------------------------------------------------------------------------
-echo "Test 2: classifier partitions into web-eval (cap 1) + bare (cap N)"
+echo "Test 2: single-issue short-circuit lands in bare bucket; no --container-mode"
 inc
 PROJ="$WORKDIR/p2"
 setup_proj "$PROJ"
 STUB_DIR=$(make_stubs "$PROJ")
-write_classifier "$PROJ/.claude/scripts/classifier.sh"
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
-PIPELINE_EVAL_CONTAINERS="web-eval"
-EOF
-OUT=$(STUB_WORKTREES="100:a 101:b 102:c 103:d" \
-      CLASSIFIER_WEB_ISSUES="100" \
-      run_dryrun "$PROJ" "$STUB_DIR" 100 101 102 103)
+write_minimal_config "$PROJ"
+OUT=$(STUB_WORKTREES="100:a" \
+      run_dryrun "$PROJ" "$STUB_DIR" 100)
 SPAWN_LOG="$PROJ/spawn-invocations.log"
-
-ok=1
-echo "$OUT" | grep -qE '^BUCKET: mode=web-eval issues=.*100.* max=1$'  || { fail_msg "missing 'BUCKET: mode=web-eval issues=...100... max=1' line"; ok=0; }
-[ "$ok" = "1" ] && (echo "$OUT" | grep -qE '^BUCKET: mode=bare issues=' || { fail_msg "missing 'BUCKET: mode=bare ...' line"; ok=0; })
-
-# Issue 100 invocation carries --container-mode=web-eval
-if [ "$ok" = "1" ]; then
-  if ! grep -q '100.*--container-mode=web-eval\|--container-mode=web-eval.*100' "$SPAWN_LOG"; then
-    fail_msg "spawn log for issue 100 missing --container-mode=web-eval"
-    cat "$SPAWN_LOG" | sed 's/^/    /'
-    ok=0
-  fi
+if grep -q -- "--container-mode" "$SPAWN_LOG"; then
+  fail_msg "single-issue spawn log unexpectedly contains --container-mode"
+  cat "$SPAWN_LOG" | sed 's/^/    /'
+elif [ "$(wc -l < "$SPAWN_LOG")" -lt 1 ]; then
+  fail_msg "expected 1 spawn invocation, got $(wc -l < "$SPAWN_LOG")"
+else
+  pass_msg "single-issue spawn lacks --container-mode"
 fi
-# Issues 101/102/103 do NOT carry --container-mode
-if [ "$ok" = "1" ]; then
-  for ish in 101 102 103; do
-    if grep "$ish" "$SPAWN_LOG" | grep -q -- "--container-mode"; then
-      fail_msg "issue $ish unexpectedly has --container-mode flag in spawn log"
-      ok=0
-      break
-    fi
-  done
-fi
-[ "$ok" = "1" ] && pass_msg "web-eval bucket cap=1 with issue 100; bare bucket with 101/102/103"
 
 # -------------------------------------------------------------------------
-# Test 3: per-mode MAX_CONCURRENT override
+# Test 3: legacy PIPELINE_EVAL_* env vars are no-ops (universal invariant)
+#
+# The pipeline.config knobs PIPELINE_EVAL_CLASSIFIER / PIPELINE_EVAL_CONTAINERS
+# / PIPELINE_EVAL_ISOLATION are dead post-#514. Asserting they have no effect
+# on dispatch shape pins the always-inline contract.
 # -------------------------------------------------------------------------
-echo "Test 3: PIPELINE_EVAL_CONTAINER_<m>_MAX_CONCURRENT=2 -> web-eval cap=2"
+echo "Test 3: legacy PIPELINE_EVAL_* env vars do not re-introduce --container-mode"
 inc
 PROJ="$WORKDIR/p3"
 setup_proj "$PROJ"
 STUB_DIR=$(make_stubs "$PROJ")
-write_classifier "$PROJ/.claude/scripts/classifier.sh"
 cat > "$PROJ/pipeline.config" <<EOF
 PIPELINE_REPO="fake/repo"
 PIPELINE_BASE_BRANCH="pipeline"
 PIPELINE_WORKTREE_PREFIX="wt"
 PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
-PIPELINE_EVAL_CONTAINERS="web-eval"
-PIPELINE_EVAL_CONTAINER_web_eval_MAX_CONCURRENT="2"
+PIPELINE_EVAL_CLASSIFIER="/nonexistent/classifier.sh"
+PIPELINE_EVAL_CONTAINERS="web-eval mock-web-eval"
+PIPELINE_EVAL_ISOLATION="container"
 EOF
-OUT=$(STUB_WORKTREES="100:a 101:b" \
-      CLASSIFIER_WEB_ISSUES="100 101" \
-      run_dryrun "$PROJ" "$STUB_DIR" 100 101)
-if echo "$OUT" | grep -qE '^BUCKET: mode=web-eval .* max=2$'; then
-  pass_msg "per-mode max=2 honored"
-else
-  fail_msg "expected web-eval bucket with max=2"
-  echo "$OUT" | sed 's/^/    /'
-fi
-
-# -------------------------------------------------------------------------
-# Test 4: single-issue short-circuit threads --container-mode through
-# -------------------------------------------------------------------------
-echo "Test 4: single-issue short-circuit honors classifier output"
-inc
-PROJ="$WORKDIR/p4"
-setup_proj "$PROJ"
-STUB_DIR=$(make_stubs "$PROJ")
-write_classifier "$PROJ/.claude/scripts/classifier.sh"
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
-PIPELINE_EVAL_CONTAINERS="web-eval"
-EOF
-OUT=$(STUB_WORKTREES="100:a" \
-      CLASSIFIER_WEB_ISSUES="100" \
-      run_dryrun "$PROJ" "$STUB_DIR" 100)
-SPAWN_LOG="$PROJ/spawn-invocations.log"
-if grep -q -- "--container-mode=web-eval" "$SPAWN_LOG"; then
-  pass_msg "single-issue short-circuit spawn carries --container-mode=web-eval"
-else
-  fail_msg "spawn log missing --container-mode=web-eval"
-  cat "$SPAWN_LOG" | sed 's/^/    /'
-fi
-
-# -------------------------------------------------------------------------
-# Test 5: classifier rc!=0 -> issue skipped with reason logged
-# -------------------------------------------------------------------------
-echo "Test 5: classifier non-zero exit skips that issue"
-inc
-PROJ="$WORKDIR/p5"
-setup_proj "$PROJ"
-STUB_DIR=$(make_stubs "$PROJ")
-write_classifier "$PROJ/.claude/scripts/classifier.sh"
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
-PIPELINE_EVAL_CONTAINERS="web-eval"
-EOF
-OUT=$(STUB_WORKTREES="100:a 101:b 102:c" \
-      CLASSIFIER_FAIL_ISSUES="100" \
-      run_dryrun "$PROJ" "$STUB_DIR" 100 101 102)
+OUT=$(STUB_WORKTREES="300:x 301:y" \
+      run_dryrun "$PROJ" "$STUB_DIR" 300 301)
 SPAWN_LOG="$PROJ/spawn-invocations.log"
 ok=1
-if ! echo "$OUT" | grep -qE 'SKIPPED issue=100 reason='; then
-  fail_msg "missing 'SKIPPED issue=100 reason=...' line"
-  echo "$OUT" | sed 's/^/    /'
-  ok=0
-fi
-if [ "$ok" = "1" ] && grep -q '^100\b\| 100 ' "$SPAWN_LOG"; then
-  fail_msg "issue 100 unexpectedly spawned despite classifier failure"
+if grep -q -- "--container-mode" "$SPAWN_LOG"; then
+  fail_msg "spawn log contains --container-mode despite #514 always-inline contract"
   cat "$SPAWN_LOG" | sed 's/^/    /'
   ok=0
 fi
-if [ "$ok" = "1" ] && ! grep -q '101' "$SPAWN_LOG"; then
-  fail_msg "issue 101 should have spawned despite 100 failure"
-  cat "$SPAWN_LOG" | sed 's/^/    /'
+if [ "$ok" = "1" ] && [ "$(echo "$OUT" | grep -cE '^BUCKET: mode=')" -ne 1 ]; then
+  fail_msg "expected exactly one BUCKET line; got $(echo "$OUT" | grep -cE '^BUCKET: mode=')"
+  echo "$OUT" | sed 's/^/    /'
   ok=0
 fi
-[ "$ok" = "1" ] && pass_msg "issue 100 skipped; 101/102 still proceed"
-
-# -------------------------------------------------------------------------
-# Test 6: classifier extra tokens forwarded via --classifier-passthrough
-# -------------------------------------------------------------------------
-echo "Test 6: classifier extra tokens forwarded via --classifier-passthrough"
-inc
-PROJ="$WORKDIR/p6"
-setup_proj "$PROJ"
-STUB_DIR=$(make_stubs "$PROJ")
-write_classifier "$PROJ/.claude/scripts/classifier.sh"
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
-PIPELINE_EVAL_CONTAINERS="web-eval"
-EOF
-OUT=$(STUB_WORKTREES="100:a" \
-      CLASSIFIER_WEB_ISSUES="100" \
-      CLASSIFIER_EXTRA_TOKENS="--foo=bar" \
-      run_dryrun "$PROJ" "$STUB_DIR" 100 101)
-SPAWN_LOG="$PROJ/spawn-invocations.log"
-INVOCATION_100=$(grep '100' "$SPAWN_LOG" | head -1)
-if echo "$INVOCATION_100" | grep -q -- "--container-mode=web-eval" \
-   && echo "$INVOCATION_100" | grep -q -- "--classifier-passthrough=--foo=bar"; then
-  pass_msg "issue 100 spawn carries both --container-mode and --classifier-passthrough"
-else
-  fail_msg "issue 100 spawn missing one of: --container-mode=web-eval, --classifier-passthrough=--foo=bar"
-  echo "    invocation: $INVOCATION_100"
-fi
-
-# -------------------------------------------------------------------------
-# Test 7: classify_issue resolves PR via exact-scope `<N> in:title,body`
-# search + closing-keyword body filter (issue #518). The prior `linked:<N>`
-# qualifier was NOT exact-scope and could return unrelated PRs (e.g. a
-# sibling issue's visual-proof PR), feeding the classifier the wrong diff
-# and causing spurious container-mode dispatch. This test asserts the new
-# search qualifier reaches gh for both issues, so the classifier receives
-# a usable PR number when one actually closes the issue.
-# -------------------------------------------------------------------------
-echo "Test 7: classify_issue uses gh pr list with exact-scope <N> in:title,body search"
-inc
-PROJ="$WORKDIR/p7"
-setup_proj "$PROJ"
-STUB_DIR=$(make_stubs "$PROJ")
-write_classifier "$PROJ/.claude/scripts/classifier.sh"
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
-PIPELINE_EVAL_CONTAINERS="web-eval"
-EOF
-OUT=$(STUB_WORKTREES="500:a 501:b" \
-      CLASSIFIER_WEB_ISSUES="" \
-      run_dryrun "$PROJ" "$STUB_DIR" 500 501)
-GH_LOG="$PROJ/gh-invocations.log"
-if grep -q 'pr list .*--search 500 in:title,body type:pr is:open' "$GH_LOG" \
-   && grep -q 'pr list .*--search 501 in:title,body type:pr is:open' "$GH_LOG"; then
-  pass_msg "classify_issue invokes gh pr list with --search '<N> in:title,body type:pr is:open'"
-else
-  fail_msg "expected --search '<N> in:title,body type:pr is:open' in gh invocations; got:"
-  cat "$GH_LOG" | sed 's/^/    /'
-fi
-
-# -------------------------------------------------------------------------
-# Test 8: EVENT: agent-skipped line emitted for classifier-rejected issues
-# Observability: skipped issues should be discoverable in queue logs the
-# same way agent-launched / agent-finished are.
-# -------------------------------------------------------------------------
-echo "Test 8: skipped issues emit EVENT: agent-skipped line"
-inc
-PROJ="$WORKDIR/p8"
-setup_proj "$PROJ"
-STUB_DIR=$(make_stubs "$PROJ")
-write_classifier "$PROJ/.claude/scripts/classifier.sh"
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=".claude/scripts/classifier.sh"
-PIPELINE_EVAL_CONTAINERS="web-eval"
-EOF
-OUT=$(STUB_WORKTREES="600:a 601:b" \
-      CLASSIFIER_FAIL_ISSUES="600" \
-      run_dryrun "$PROJ" "$STUB_DIR" 600 601)
-if echo "$OUT" | grep -qE 'EVENT: agent-skipped issue=600 reason='; then
-  pass_msg "skipped issue 600 emitted EVENT: agent-skipped line"
-else
-  fail_msg "missing 'EVENT: agent-skipped issue=600 reason=...' line"
+if [ "$ok" = "1" ] && ! echo "$OUT" | grep -qE '^BUCKET: mode=bare '; then
+  fail_msg "expected BUCKET: mode=bare line"
   echo "$OUT" | sed 's/^/    /'
+  ok=0
 fi
-
-# -------------------------------------------------------------------------
-# Test 9: classifier unset -> NO gh pr list call (short-circuit)
-# When PIPELINE_EVAL_CLASSIFIER is empty, the helper exits early without
-# the consumer's classifier running. The pre-classify gh lookup is wasted
-# work in that case — short-circuit it.
-# -------------------------------------------------------------------------
-echo "Test 9: classifier unset short-circuits pre-classify gh pr list call"
-inc
-PROJ="$WORKDIR/p9"
-setup_proj "$PROJ"
-STUB_DIR=$(make_stubs "$PROJ")
-cat > "$PROJ/pipeline.config" <<EOF
-PIPELINE_REPO="fake/repo"
-PIPELINE_BASE_BRANCH="pipeline"
-PIPELINE_WORKTREE_PREFIX="wt"
-PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=""
-PIPELINE_EVAL_CONTAINERS=""
-EOF
-OUT=$(STUB_WORKTREES="700:a 701:b 702:c" \
-      run_dryrun "$PROJ" "$STUB_DIR" 700 701 702)
-GH_LOG="$PROJ/gh-invocations.log"
-if grep -q 'pr list' "$GH_LOG"; then
-  fail_msg "expected zero 'gh pr list' calls when classifier unset; got:"
-  cat "$GH_LOG" | sed 's/^/    /'
-else
-  pass_msg "no 'gh pr list' calls when PIPELINE_EVAL_CLASSIFIER is empty"
-fi
+[ "$ok" = "1" ] && pass_msg "legacy PIPELINE_EVAL_* vars are inert; everything bare, no --container-mode"
 
 echo ""
 echo "================================"

@@ -200,97 +200,22 @@ for pr in data:
 ' 2>/dev/null || return 0
 }
 
-# --- Pre-spawn classifier (issue #218) ---
+# --- Dispatch routing (issue #514) ---
 #
-# classify_issue <issue> resolves the issue's current PR number (or empty
-# if no PR has opened yet) and invokes ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh.
-# It echoes a single tab-separated line on stdout:
-#   <mode>\t<extra-tokens>\t<rc>\t<stderr-first-line>
-# where <mode> is `bare` when no --container-mode token was emitted, or
-# the value of the --container-mode=<value> token otherwise. Extra tokens
-# (any non-`--container-mode=` tokens from the classifier) are joined by
-# spaces. Callers MUST tolerate empty <extra-tokens>. rc != 0 means the
-# issue should be skipped; <stderr-first-line> carries the reason.
-#
-# --ci-fix re-dispatch is intentionally NOT re-classified — recovery is
-# mode-agnostic; consumers wanting containerized CI-fix re-label the PR.
+# Container isolation and the pre-spawn classifier re-run were removed in
+# #514. classify_issue now unconditionally emits mode=bare so the call sites
+# in route_issue() and the single-issue short-circuit continue to work
+# without re-shaping the four-line tuple they consume. No gh round-trip, no
+# mode tokens, no extras — every issue lands in the bare bucket.
 classify_issue() {
-  local issue="$1"
-  # Short-circuit when no classifier is configured — skip the gh pr list call
-  # entirely. The helper would still return mode=bare in this case, but the
-  # wasted gh round-trip is a real cost at multi-issue slate sizes.
-  if [ -z "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
-    printf '%s\n' "bare" "" "0" ""
-    return
-  fi
-  local pr=""
-  # Issue->PR lookup: delegate to resolve_issue_pr() so both call sites (this
-  # function and evaluator_finished_terminal) share one exact-scope helper.
-  # The previous inline `linked:<N>` qualifier was NOT exact-scope on GitHub
-  # search and could return unrelated PRs that merely mention the issue,
-  # causing the classifier to score the wrong diff (issue #518).
-  pr=$(resolve_issue_pr "$issue")
-  local _classifier_invoke="${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh"
-  local out err rc
-  # Fail-OPEN: when the plugin-shipped helper is missing (e.g. a partial
-  # upgrade, a stale install, or a worktree without CLAUDE_PLUGIN_ROOT
-  # resolution), surface mode=bare with a diagnostic stderr token rather
-  # than blocking the entire queue dispatch. Reconciles run-queue.sh with
-  # spawn-claude.sh's pre-existing fail-OPEN shape (#325).
-  if [ -f "$_classifier_invoke" ]; then
-    local tmp_out tmp_err
-    tmp_out=$(mktemp); tmp_err=$(mktemp)
-    # PIPELINE_EVAL_CLASSIFIER is sourced into this shell but not auto-exported;
-    # pass it inline so the child bash sees it. PIPELINE_PROJECT_ROOT anchors
-    # consumer-relative classifier paths at the project root rather than the
-    # plugin install dir. Use `&& rc=0 || rc=$?` to capture a non-zero exit
-    # instead of letting `set -e` kill the function.
-    PIPELINE_EVAL_CLASSIFIER="${PIPELINE_EVAL_CLASSIFIER:-}" \
-      PIPELINE_PROJECT_ROOT="$REPO_ROOT" \
-      PIPELINE_REPO="${PIPELINE_REPO:-}" \
-      bash "$_classifier_invoke" "$issue" "$pr" > "$tmp_out" 2> "$tmp_err" \
-        && rc=0 || rc=$?
-    out=$(cat "$tmp_out"); err=$(head -1 "$tmp_err")
-    rm -f "$tmp_out" "$tmp_err"
-  else
-    printf '%s\n' "bare" "" "0" "classifier-helper-missing: $_classifier_invoke"
-    return
-  fi
-
-  local mode="bare"
-  local extras=""
-  while IFS= read -r tok; do
-    [ -z "$tok" ] && continue
-    case "$tok" in
-      --container-mode=*) mode="${tok#--container-mode=}" ;;
-      *)                  extras="${extras:+$extras }$tok" ;;
-    esac
-  done <<< "$out"
-  # Emit one field per line so empty `extras` doesn't get collapsed by IFS
-  # whitespace-merging on the consumer side.
-  printf '%s\n' "$mode" "$extras" "$rc" "$err"
+  printf '%s\n' "bare" "" "0" ""
 }
 
-# Source the case-insensitive env-var resolver (#336). UPPERCASE wins,
-# lowercase falls back. Idempotent guard. Sourced from SCRIPT_DIR (the
-# plugin's scripts/ dir), mirroring the _logging.sh source above.
-if ! declare -f _resolve_container_var >/dev/null 2>&1; then
-  # shellcheck source=/dev/null
-  . "${SCRIPT_DIR}/_resolve-container-var.sh"
-fi
-
 # bucket_max <mode> -> echoes the configured max concurrency for that mode.
-# Default 1 for non-bare modes (exclusive-resource assumption); bare uses
-# the global MAX_CONCURRENT.
+# Post-#514 the only bucket is `bare` (global MAX_CONCURRENT cap); the mode
+# parameter is retained for call-site stability but no longer affects routing.
 bucket_max() {
-  local mode="$1"
-  if [ "$mode" = "bare" ]; then
-    echo "$MAX_CONCURRENT"
-    return
-  fi
-  local val
-  val="$(_resolve_container_var "$mode" MAX_CONCURRENT)"
-  echo "${val:-1}"
+  echo "$MAX_CONCURRENT"
 }
 
 # Single issue — launch directly, no queue overhead
@@ -320,25 +245,13 @@ if [ ${#QUEUE[@]} -eq 1 ]; then
     log "Queue log: ${QUEUE_LOG}"
   fi
 
-  # Apply classifier even on the short-circuit path so container mode is honored.
-  { read -r SINGLE_MODE; read -r SINGLE_EXTRAS; read -r SINGLE_RC; read -r SINGLE_ERR; } < <(classify_issue "$ISSUE")
-  if [ "$SINGLE_RC" -ne 0 ]; then
-    log "SKIPPED issue=${ISSUE} reason=${SINGLE_ERR}"
-    exit 0
-  fi
-  SINGLE_FLAGS=""
-  if [ "$SINGLE_MODE" != "bare" ]; then
-    SINGLE_FLAGS="--container-mode=${SINGLE_MODE}"
-  fi
-  for tok in $SINGLE_EXTRAS; do
-    SINGLE_FLAGS="${SINGLE_FLAGS:+$SINGLE_FLAGS }--classifier-passthrough=${tok}"
-  done
-
+  # Issue #514: all dispatches are always-inline / bare; no classifier re-run,
+  # no mode tokenization.
   if [ "${PIPELINE_QUEUE_DRY_RUN:-}" = "1" ]; then
-    SINGLE_MAX=$(bucket_max "$SINGLE_MODE")
-    echo "BUCKET: mode=${SINGLE_MODE} issues=${ISSUE} max=${SINGLE_MAX}"
+    SINGLE_MAX=$(bucket_max "bare")
+    echo "BUCKET: mode=bare issues=${ISSUE} max=${SINGLE_MAX}"
   fi
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG $SINGLE_FLAGS "$WT_PATH" "$ISSUE" "$SLUG" tmux
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
   exit 0
 fi
 
@@ -365,13 +278,8 @@ declare -A BUCKET_QUEUE=()   # mode -> space-separated issue list
 declare -A BUCKET_INDEX=()   # mode -> next-issue index in BUCKET_QUEUE
 declare -A BUCKET_MAX=()     # mode -> max concurrent for this bucket
 declare -A BUCKET_ACTIVE=()  # mode -> currently-active count
-declare -A ISSUE_MODE=()     # issue -> mode (or 'bare')
-declare -A ISSUE_EXTRAS=()   # issue -> space-separated passthrough tokens
-# Inline browser-eval dispatch (issue #517). One-shot migration warning when
-# PIPELINE_VISUAL_PROOF_TARGET_DIR is unset at the moment of inline dispatch;
-# WARNED_TARGET_DIR[$mode]=1 latches the first emission per slate (mode bucket)
-# so subsequent inline dispatches in the same slate stay silent.
-declare -A WARNED_TARGET_DIR=()
+declare -A ISSUE_MODE=()     # issue -> mode (always 'bare' post-#514)
+declare -A ISSUE_EXTRAS=()   # issue -> retained for call-site stability (unused)
 
 # Route a single issue into the correct bucket. Returns 0 on success, 1 if
 # the classifier rejected the issue (in which case a SKIPPED log line is
@@ -512,82 +420,15 @@ launch_agent() {
   local slug
   slug=$(slug_from_path "$wt_path" "$issue")
 
-  local mode="${ISSUE_MODE[$issue]:-bare}"
-  local extras="${ISSUE_EXTRAS[$issue]:-}"
-  local mode_flags=""
-  if [ "$mode" != "bare" ]; then
-    mode_flags="--container-mode=${mode}"
-  fi
-  for tok in $extras; do
-    mode_flags="${mode_flags:+$mode_flags }--classifier-passthrough=${tok}"
-  done
+  # Issue #514: every dispatch is always-inline / bare. No mode token, no
+  # inline browser-eval EVENT short-circuit, no per-mode bucket counter —
+  # the orchestrator owns inline browser-eval dispatch downstream.
+  local mode="bare"
 
   log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug}, mode=${mode})..."
   log "EVENT: agent-launched issue=${issue} mode=${mode} slug=${slug} worktree=${wt_path}"
 
-  # --- Inline browser-eval dispatch (issue #517) ---
-  # When the classifier matched a browser-eval surface (mode != bare) AND the
-  # operator has not pinned the legacy container path via
-  # PIPELINE_EVAL_ISOLATION=container, short-circuit the spawn-claude.sh
-  # invocation: emit the dispatch-inline EVENT line (with the broker-allocated
-  # port and resolved target dir / PR), and let the in-process Agent path in
-  # the orchestrator pick the slate up. The orchestrator owns the actual
-  # Agent() call site; this function only emits the contract event.
-  if [ "$mode" != "bare" ] && [ "${PIPELINE_EVAL_ISOLATION:-}" != "container" ]; then
-    # Compute slate_index by scanning the issue's position within
-    # BUCKET_QUEUE[$mode] (populated by route_issue). No new global map.
-    local _bq
-    # shellcheck disable=SC2206
-    _bq=( ${BUCKET_QUEUE[$mode]} )
-    local slate_index=0
-    local i
-    for i in "${!_bq[@]}"; do
-      if [ "${_bq[$i]}" = "$issue" ]; then
-        slate_index=$i
-        break
-      fi
-    done
-    local slate_width=${#_bq[@]}
-    local PORT
-    PORT=$(bash "${SCRIPT_DIR}/visual-proof-port-broker.sh" "$slate_index" "$slate_width" | sed -n "s/^PORT=//p")
-    local TARGET_DIR=""
-    if [ -n "${PIPELINE_VISUAL_PROOF_TARGET_DIR:-}" ]; then
-      TARGET_DIR="$wt_path/${PIPELINE_VISUAL_PROOF_TARGET_DIR}"
-    fi
-    local pr
-    pr=$(resolve_issue_pr "$issue")
-    local notes_field=""
-    if [ -z "$TARGET_DIR" ]; then
-      # Migration warning: one-shot per slate bucket. First inline-dispatch in
-      # this mode that hits the unset case emits the stderr warning + appends
-      # `notes=no-target-dir` to the EVENT line; subsequent inline dispatches
-      # in the same slate stay silent but still annotate the EVENT line.
-      if [ -z "${WARNED_TARGET_DIR[$mode]:-}" ]; then
-        echo "WARNING: PIPELINE_VISUAL_PROOF_TARGET_DIR unset; inline browser-eval will skip visual proof (see docs/migration-0.18.md)" >&2
-        WARNED_TARGET_DIR[$mode]=1
-      fi
-      notes_field=" notes=no-target-dir"
-      RESULTS[$issue]="dispatched-inline-no-visual-proof"
-    else
-      RESULTS[$issue]="dispatched-inline"
-    fi
-    log "EVENT: dispatch-inline issue=${issue} port=${PORT} target_dir=${TARGET_DIR} worktree=${wt_path} pr=${pr}${notes_field}"
-    # NOTE: do NOT bump BUCKET_ACTIVE[$mode] here. Inline dispatches are
-    # instantaneous EVENT-line emissions — there is no async claude
-    # subprocess for the poll loop to gate on, and no decrementer for
-    # inline issues exists (decrement runs only for spawn-claude-tracked
-    # agents via ACTIVE[$issue] at the agent-finished/manual-merge sites
-    # below). The BUCKET_ACTIVE counter exists to throttle concurrent
-    # spawn-claude.sh subprocesses; counting inline issues against the
-    # cap would freeze the slate after the first dispatch (BUCKET_MAX
-    # defaults to 1) and defeat the slate_width mechanism the visual-
-    # proof-port-broker uses for collision-free concurrent ports. The
-    # orchestrator's in-process Agent dispatcher owns its own concurrency
-    # limit downstream of the EVENT.
-    return 0
-  fi
-
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG $mode_flags "$wt_path" "$issue" "$slug" tmux
+  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"
   RESULTS[$issue]="running"
