@@ -207,8 +207,8 @@ and has two callers (the **two-caller pattern**):
 
 - **Executor (TDD loop)** — `execute-issue-plan` runs it inside red->green; an
   `unsatisfied` entry behaves like a failing test (iterate until satisfied). The
-  `needs-browser` label routes the executor through `--container-mode` via the
-  gate in `spawn-claude.sh` (#368; see `pipeline.config.example`).
+  `needs-browser` label routes the executor through inline `Agent()` dispatch
+  with the visual-proof preflight in `scripts/visual-proof-server-start.sh`.
 - **Evaluator (verdict)** — `evaluate-issue-pr` runs the same sub-skill; any
   `unsatisfied` entry is a blocking verdict finding.
 

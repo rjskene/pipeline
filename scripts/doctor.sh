@@ -706,49 +706,6 @@ else
 fi
 # END consumer_drift
 
-# BEGIN container_assets_unwired
-# --------------------------------------------------------------------------
-# Check: container_assets_unwired — detect compose.<mode>.{yml,yaml} files at
-# the project root whose mode is not declared in PIPELINE_EVAL_CONTAINERS but
-# whose intent IS witnessed by a .claude/hooks/*.py reading an env var the
-# compose file sets (the "marker-env triangle"). Helper:
-# scripts/check-container-assets.sh — see ## container_assets_unwired check
-# in skills/doctor/SKILL.md for the verdict table.
-#   pass — declared OR `# pipeline:manual-only` opt-out in first 5 lines
-#   warn — assets present but no marker-triangle / yaml-parse-skipped
-#   fail — full triangle: compose sets MARKER, hook reads MARKER, undeclared
-# Mirrors the dispatch-layer drift detected by consumer_drift, applied to a
-# different surface.
-# --------------------------------------------------------------------------
-CA_HELPER="$SCRIPT_DIR/check-container-assets.sh"
-if [ ! -f "$CA_HELPER" ]; then
-  record container_assets_unwired warn "check-container-assets.sh not found at $CA_HELPER"
-else
-  ca_out="$(bash "$CA_HELPER" 2>&1)"
-  ca_rc=$?
-  # Final status line shape: `status=<pass|warn|fail> detail=<msg>`. Pick the
-  # last status= line (the helper emits exactly one, at the end).
-  ca_status_line="$(printf '%s\n' "$ca_out" | grep -E '^status=' | tail -1)"
-  ca_status="$(printf '%s' "$ca_status_line" | sed -E 's/^status=([a-z]+).*/\1/')"
-  ca_detail="$(printf '%s' "$ca_status_line" | sed -E 's/^status=[a-z]+ detail=//')"
-  case "$ca_status" in
-    pass|warn|fail)
-      record container_assets_unwired "$ca_status" "$ca_detail"
-      ;;
-    *)
-      record container_assets_unwired warn "helper produced no status line (rc=$ca_rc)"
-      ;;
-  esac
-  # Replay per-asset diagnostic lines under the CHECK line (everything but the
-  # trailing status= line). Mirrors the consumer_drift summary-table shape.
-  ca_diag="$(printf '%s\n' "$ca_out" | grep -vE '^status=' || true)"
-  if [ -n "$ca_diag" ]; then
-    echo "  === container_assets_unwired report ==="
-    printf '%s\n' "$ca_diag"
-  fi
-fi
-# END container_assets_unwired
-
 # --------------------------------------------------------------------------
 # Check: preservation_refs — per-file reference report. For every consumer
 # .claude/{scripts,hooks}/ file whose basename collides with a plugin-shipped
@@ -937,62 +894,6 @@ else
   record base_branch_enforcement fail "hook exists but no PreToolUse Bash matcher invokes it (check plugin manifest or .claude/settings.json)"
 fi
 unset _bbe_plugin_root _bbe_hook_path _bbe_plugin_registered _bbe_plugin_manifest _bbe_consumer_registered _bbe_consumer_settings
-
-# --------------------------------------------------------------------------
-# Check: container_skills_validity (issue #321).
-# Pass when PIPELINE_CONTAINER_SKILLS is unset (default 'evaluate-issue-pr'),
-# empty (explicit disable), or contains only canonical skill names. Warn
-# when an unknown skill name appears. Never fails — misconfig is recoverable
-# (spawn-claude.sh still rejects bad dispatches at exit 4); this check
-# surfaces typos early.
-# --------------------------------------------------------------------------
-check_container_skills_validity() {
-  local name="container_skills_validity"
-
-  # Distinguish unset from empty using parameter expansion +x.
-  if [ -z "${PIPELINE_CONTAINER_SKILLS+x}" ]; then
-    record "$name" pass "default (evaluate-issue-pr)"
-    return 0
-  fi
-  if [ -z "$PIPELINE_CONTAINER_SKILLS" ]; then
-    record "$name" pass "disabled (explicit empty)"
-    return 0
-  fi
-
-  # Derive the canonical skill set at runtime from the plugin's skills
-  # directory. ${CLAUDE_PLUGIN_ROOT} is resolved by the existing
-  # _resolve-plugin-root.sh helper at doctor.sh boot.
-  local skills_dir="${CLAUDE_PLUGIN_ROOT:-}/skills"
-  if [ ! -d "$skills_dir" ]; then
-    # Fallback for dogfood self-runs where the script is invoked from the
-    # source repo with CLAUDE_PLUGIN_ROOT unset and no plugin-cache install.
-    skills_dir="$(cd "$(dirname "$0")/.." && pwd)/skills"
-  fi
-  if [ ! -d "$skills_dir" ]; then
-    record "$name" warn "cannot resolve skills/ directory; skipping canonical check"
-    return 0
-  fi
-  local canonical
-  canonical="$(ls "$skills_dir" 2>/dev/null | tr '\n' ' ')"
-
-  local unknown=""
-  local count=0
-  for sk in $PIPELINE_CONTAINER_SKILLS; do
-    count=$((count + 1))
-    if ! printf '%s\n' $canonical | tr ' ' '\n' | grep -qx "$sk"; then
-      unknown="$unknown $sk"
-    fi
-  done
-  unknown="${unknown# }"
-
-  if [ -z "$unknown" ]; then
-    record "$name" pass "$count skill(s) all canonical"
-    return 0
-  fi
-  record "$name" warn "unknown skill(s): $unknown"
-  return 0
-}
-check_container_skills_validity
 
 # --------------------------------------------------------------------------
 # Summary table + exit code.
