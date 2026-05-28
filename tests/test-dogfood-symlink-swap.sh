@@ -149,9 +149,13 @@ mk_repo "$T/repo"
 mkdir -p "$T/fakecache/pipeline/0.20.1"
 write_ip_json "$T" "$T/repo" "$T/fakecache/pipeline/0.20.1"
 
-# Empty PATH excludes jq (and most other things). Use /usr/bin/env via absolute
-# shebang to keep the helper invocable. We invoke via `bash` explicitly.
-HOME="$T" DOGFOOD_SYMLINK_SWAP_REPO_ROOT="$T/repo" PATH="/empty" bash "$TARGET"
+# Build a sandbox PATH containing ONLY bash (no jq). Symlink in just enough
+# for the helper's shebang + builtins to run. We deliberately omit jq.
+mkdir -p "$T/onlybash"
+ln -s "$(command -v bash)" "$T/onlybash/bash"
+# Stderr leak from the helper's missing dirname/awk is expected and harmless
+# (production invocation also redirects stderr). Suppress for pristine output.
+HOME="$T" DOGFOOD_SYMLINK_SWAP_REPO_ROOT="$T/repo" PATH="$T/onlybash" bash "$TARGET" 2>/dev/null
 rc=$?
 if [ "$rc" -eq 0 ]; then
   pass_msg "missing-jq fail-open exit 0"
