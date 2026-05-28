@@ -57,12 +57,19 @@ In a fresh Claude Code session opened from `~/claude-pipeline`:
 echo $CLAUDE_PLUGIN_ROOT
 ```
 
-Expected: `~/claude-pipeline` (the repo working tree). NOT a cache
-subdirectory under `~/.claude/plugins/cache/...`.
+Expected: a path resolving to the repo working tree. Claude Code may
+report a cache subdirectory under `~/.claude/plugins/cache/...`, but
+that path is now a symlink to `~/claude-pipeline` (see **Symlink
+verification** below). To confirm:
 
-If you see a cache path instead, the local-marketplace install fell
-back to a copy. File a follow-up issue and consult the
-**`_resolve-plugin-root.sh` compatibility** section.
+```bash
+cd $CLAUDE_PLUGIN_ROOT && pwd -P
+```
+
+Expected: `~/claude-pipeline` (`pwd -P` resolves the symlink). If
+instead `pwd -P` reports a cache subdirectory, the symlink hasn't
+landed — open a fresh Claude Code session in `~/claude-pipeline` and
+the SessionStart hook will self-heal it.
 
 ## Auto-refresh
 
@@ -140,16 +147,37 @@ If a future Claude Code release rejects `"file"`, file a follow-up
 issue with the rejection error so the canonical shape can be re-pinned
 in `scripts/setup-dogfood-local.sh`.
 
-## `_resolve-plugin-root.sh` compatibility (open follow-up)
+## Symlink verification
 
-`scripts/_resolve-plugin-root.sh` reads
-`~/.claude/plugins/installed_plugins.json` and uses each entry's
-`installPath`. For a local marketplace, `installPath` should equal the
-repo working tree. If Claude Code creates a cache copy regardless of
-source type, the resolver may need a small patch to detect a
-local-source marketplace and re-route to `installLocation` from
-`known_marketplaces.json`. Out of scope for issue #611; flagged here
-so the next dogfood operator knows where to look.
+Claude Code copies the repo into a cache subdirectory at
+`/plugin install pipeline@claude-pipeline-local` time — a snapshot,
+not a live view. To preserve the dogfood-as-live promise, the
+SessionStart hook (`dev/hooks/dogfood-refresh.sh`) invokes
+`dev/hooks/dogfood-symlink-swap.sh` as its last step. The helper reads
+the `pipeline@claude-pipeline-local` entry from
+`~/.claude/plugins/installed_plugins.json` whose `projectPath` matches
+the resolved repo root and replaces that entry's `installPath`
+directory with a symlink to the repo working tree. Self-heals on
+every session start. Idempotent + fail-open.
+
+Operator check (one command):
+
+```bash
+readlink "$(jq -r '.plugins["pipeline@claude-pipeline-local"][0].installPath' ~/.claude/plugins/installed_plugins.json)"
+```
+
+Expected output: the absolute path of the repo working tree
+(`~/claude-pipeline`). If the output is empty, the install path is
+still a regular directory — open a fresh Claude Code session in
+`~/claude-pipeline` to fire the SessionStart hook; the swap will land
+automatically.
+
+The cache directory path embeds the plugin version from
+`.claude-plugin/plugin.json` (e.g.
+`~/.claude/plugins/cache/claude-pipeline-local/pipeline/0.20.1`). On
+a version bump, Claude Code installs a fresh directory; the helper
+tracks whatever `installPath` `installed_plugins.json` reports, so the
+bump is transparent — no per-version edit required.
 
 ## Memory cleanup (per-operator, outside this PR)
 
