@@ -203,10 +203,14 @@ fi
 
 RUNS_LOG="${PIPELINE_RUNS_LOG_OVERRIDE:-${LOG_DIR}/runs.log}"
 RUNS_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# MODEL captures the REQUESTED model (intent) for diary/report joins on
+# session UUID — see #577 / tracker #450. Empty-string default keeps legacy
+# callers backward-compatible; readers tolerate the empty field.
+RUNS_MODEL="${MODEL:-}"
 if pipeline_logging_enabled; then
   mkdir -p "$(dirname "$RUNS_LOG")"
-  printf '%s\tsession=%s\tissue=%s\tpath=%s\tskill=%s\tworktree=%s\n' \
-    "$RUNS_TS" "$GENERATED_SESSION_ID" "$ISSUE_NUM" "$PATH_LETTER" "$SKILL" "$WORKTREE_PATH" \
+  printf '%s\tsession=%s\tissue=%s\tpath=%s\tskill=%s\tworktree=%s\tmodel=%s\n' \
+    "$RUNS_TS" "$GENERATED_SESSION_ID" "$ISSUE_NUM" "$PATH_LETTER" "$SKILL" "$WORKTREE_PATH" "$RUNS_MODEL" \
     >> "$RUNS_LOG"
 fi
 

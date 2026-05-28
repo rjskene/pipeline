@@ -108,7 +108,8 @@ else
   if [ "$ok" = "1" ]; then echo "$LINE" | grep -q $'\tissue=900\t' || { fail_msg "line missing issue=900"; ok=0; }; fi
   if [ "$ok" = "1" ]; then echo "$LINE" | grep -q $'\tpath=B\t' || { fail_msg "line missing path=B"; ok=0; }; fi
   if [ "$ok" = "1" ]; then echo "$LINE" | grep -q $'\tskill=execute-issue-plan\t' || { fail_msg "line missing skill=execute-issue-plan"; ok=0; }; fi
-  if [ "$ok" = "1" ]; then echo "$LINE" | grep -q $'\tworktree='"$PROJ/worktree"'$' || { fail_msg "line missing worktree=$PROJ/worktree"; ok=0; }; fi
+  # Tolerant of trailing fields appended after worktree= (e.g. model= per #577).
+  if [ "$ok" = "1" ]; then echo "$LINE" | grep -qE $'\tworktree='"$PROJ/worktree"$'($|\t)' || { fail_msg "line missing worktree=$PROJ/worktree"; ok=0; }; fi
   [ "$ok" = "1" ] && pass_msg "all six columns present: $LINE"
 fi
 
