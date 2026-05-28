@@ -8,6 +8,9 @@
 # Behavior:
 #   - `git fetch origin staging` then `git merge --ff-only origin/staging` in the
 #     repo working tree (NOT cwd — resolved from this script's location).
+#   - When invoked from a linked worktree, redirects REPO_ROOT to the MAIN
+#     repo working tree so worktree sessions refresh staging without
+#     disturbing the worktree's own feature branch (plan Risk #5, #611).
 #   - Idempotent. <2s on the no-op happy path (git fetch is the dominant cost).
 #   - Exits 0 on ALL failure modes (no network, dirty tree, non-FF state,
 #     missing git binary). MUST never block session start.
@@ -24,6 +27,18 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." 2>/dev/null && pwd || true)"
 REPO_ROOT="${DOGFOOD_REFRESH_REPO_ROOT:-$REPO_ROOT}"
+
+# If REPO_ROOT is a linked worktree (e.g., the SessionStart hook fired from
+# a feature-branch worktree), redirect to the main repo working tree.
+# `git worktree list --porcelain` always lists the main worktree FIRST.
+# Fail-open: any error keeps the current REPO_ROOT.
+if [ -n "${REPO_ROOT:-}" ] && [ -d "$REPO_ROOT" ]; then
+  MAIN_REPO="$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null \
+               | awk '/^worktree / {print $2; exit}')"
+  if [ -n "$MAIN_REPO" ] && [ -d "$MAIN_REPO" ]; then
+    REPO_ROOT="$MAIN_REPO"
+  fi
+fi
 
 # Bail (exit 0) if REPO_ROOT empty or not a directory.
 if [ -z "${REPO_ROOT:-}" ] || [ ! -d "$REPO_ROOT" ]; then

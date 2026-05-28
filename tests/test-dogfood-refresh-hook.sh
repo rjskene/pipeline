@@ -193,6 +193,87 @@ else
 fi
 
 rm -rf "$T"
+
+# 7. Worktree redirect: when REPO_ROOT auto-resolves to a linked worktree,
+# the script must redirect to the MAIN repo working tree and fast-forward
+# THAT, leaving the worktree's own feature branch untouched. This is the
+# plan Risk #5 mitigation for #611 (worktree SessionStart hook).
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+
+( set -e
+  mkdir -p "$T/origin.git"
+  git -C "$T/origin.git" init --bare --quiet --initial-branch=staging
+
+  # Sidecar seed to populate staging.
+  mkdir -p "$T/seed"
+  git -C "$T/seed" init --quiet --initial-branch=staging
+  git -C "$T/seed" config user.email "test@example.com"
+  git -C "$T/seed" config user.name "Test"
+  : > "$T/seed/README"
+  git -C "$T/seed" add README
+  git -C "$T/seed" commit --quiet -m "initial"
+  git -C "$T/seed" remote add origin "$T/origin.git"
+  git -C "$T/seed" push --quiet origin staging
+
+  # Main repo: clone on staging.
+  git clone --quiet -b staging "$T/origin.git" "$T/main"
+  git -C "$T/main" config user.email "test@example.com"
+  git -C "$T/main" config user.name "Test"
+
+  # Add a feature branch and a linked worktree checked out on it.
+  git -C "$T/main" branch feat
+  git -C "$T/main" worktree add --quiet "$T/worktree-feat" feat
+
+  # Push a new commit to origin/staging via the seed.
+  git -C "$T/seed" commit --quiet --allow-empty -m "wt-redirect upstream commit"
+  git -C "$T/seed" push --quiet origin staging
+
+  # Copy the live script into the worktree's own dev/hooks/ tree so the
+  # script's self-resolution of REPO_ROOT (dirname/../..) points at the
+  # worktree, not the main repo. This is the SessionStart-hook shape.
+  mkdir -p "$T/worktree-feat/dev/hooks"
+  cp "$TARGET" "$T/worktree-feat/dev/hooks/dogfood-refresh.sh"
+  chmod +x "$T/worktree-feat/dev/hooks/dogfood-refresh.sh"
+) >/dev/null 2>&1
+
+upstream_head="$(git -C "$T/seed" rev-parse HEAD)"
+main_head_before="$(git -C "$T/main" rev-parse HEAD)"
+wt_head_before="$(git -C "$T/worktree-feat" rev-parse HEAD)"
+
+# Invoke the worktree's copy of the script with DOGFOOD_REFRESH_REPO_ROOT
+# UNSET so the auto-detection (and the worktree-redirect block) runs.
+unset DOGFOOD_REFRESH_REPO_ROOT
+bash "$T/worktree-feat/dev/hooks/dogfood-refresh.sh"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "worktree-redirect exit 0"
+else
+  fail_msg "worktree-redirect exit 0 (got rc=$rc)"
+fi
+
+main_head_after="$(git -C "$T/main" rev-parse HEAD)"
+if [ "$main_head_after" = "$upstream_head" ]; then
+  pass_msg "worktree-redirect: main repo fast-forwarded to upstream HEAD"
+else
+  fail_msg "worktree-redirect: main repo fast-forwarded to upstream HEAD (before=$main_head_before after=$main_head_after upstream=$upstream_head)"
+fi
+
+wt_head_after="$(git -C "$T/worktree-feat" rev-parse HEAD)"
+if [ "$wt_head_after" = "$wt_head_before" ]; then
+  pass_msg "worktree-redirect: worktree HEAD unchanged (feature branch undisturbed)"
+else
+  fail_msg "worktree-redirect: worktree HEAD unchanged (before=$wt_head_before after=$wt_head_after)"
+fi
+
+wt_branch="$(git -C "$T/worktree-feat" rev-parse --abbrev-ref HEAD)"
+if [ "$wt_branch" = "feat" ]; then
+  pass_msg "worktree-redirect: worktree still on feat branch"
+else
+  fail_msg "worktree-redirect: worktree still on feat branch (got=$wt_branch)"
+fi
+
+rm -rf "$T"
 trap - EXIT
 
 echo "PASS=$PASS FAIL=$FAIL"
