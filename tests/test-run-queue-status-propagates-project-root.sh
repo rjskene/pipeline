@@ -46,9 +46,7 @@ setup_proj() {
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/.git"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$REPO_ROOT/scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
-  cp "$REPO_ROOT/scripts/_resolve-container-var.sh" "$proj/.claude/scripts/_resolve-container-var.sh"
-  cp "$REPO_ROOT/scripts/eval-classifier-invoke.sh" "$proj/.claude/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/.claude/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/.claude/scripts/run-queue.sh"
 
   # Stub queue-status.sh: record the PIPELINE_PROJECT_ROOT this child inherited.
   # Writes a stable marker line both to stdout (which the runner tees) and to a

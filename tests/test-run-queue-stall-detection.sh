@@ -34,14 +34,10 @@ setup_proj() {
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$REPO_ROOT/scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
-  # run-queue.sh sources _resolve-container-var.sh from SCRIPT_DIR (#336).
-  cp "$REPO_ROOT/scripts/_resolve-container-var.sh" "$proj/.claude/scripts/_resolve-container-var.sh"
   # The poll loop invokes queue-status.sh every STATUS_INTERVAL polls; copy it
   # so the call resolves (we also push STATUS_INTERVAL high to avoid it firing).
   cp "$REPO_ROOT/scripts/queue-status.sh" "$proj/.claude/scripts/queue-status.sh"
-  cp "$REPO_ROOT/scripts/eval-classifier-invoke.sh" "$proj/.claude/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/.claude/scripts/queue-status.sh" \
-    "$proj/.claude/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/.claude/scripts/queue-status.sh"
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<'EOF'
 #!/bin/bash
 exit 0

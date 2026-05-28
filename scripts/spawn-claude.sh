@@ -19,10 +19,7 @@ fi
 
 # Self-resolve CLAUDE_PLUGIN_ROOT when callers don't export it (e.g. direct
 # operator invocation from the consumer project root). Idempotent; no-op
-# when CLAUDE_PLUGIN_ROOT is already set. The shim's resolution is the
-# single source of truth that classify_issue() in run-queue.sh and the
-# fail-closed re-classification block below both rely on for the
-# ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh path (#325).
+# when CLAUDE_PLUGIN_ROOT is already set.
 if [ -f "${_spawn_claude_dir}/_resolve-plugin-root.sh" ]; then
   # shellcheck disable=SC1091
   source "${_spawn_claude_dir}/_resolve-plugin-root.sh"
