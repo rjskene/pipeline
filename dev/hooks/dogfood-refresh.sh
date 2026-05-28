@@ -67,4 +67,11 @@ git -C "$REPO_ROOT" fetch --quiet origin staging 2>/dev/null || exit 0
 # Fast-forward only. Non-FF or dirty tree exits non-zero; we swallow and exit 0.
 git -C "$REPO_ROOT" merge --ff-only origin/staging 2>/dev/null || true
 
+# Self-heal the local-marketplace install path into a symlink to the working
+# tree. Fail-open: the helper's own || true keeps refresh exit 0 regardless.
+SWAP_HELPER="$HERE/dogfood-symlink-swap.sh"
+if [ -x "$SWAP_HELPER" ]; then
+  DOGFOOD_SYMLINK_SWAP_REPO_ROOT="$REPO_ROOT" bash "$SWAP_HELPER" 2>/dev/null || true
+fi
+
 exit 0

@@ -274,6 +274,47 @@ else
 fi
 
 rm -rf "$T"
+
+# 8. Swap-helper invocation: after ff-merge, refresh must call the symlink-swap
+# helper so the local-marketplace install path is replaced with a symlink to
+# the repo working tree (the dogfood-as-live promise — #618).
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+mk_fixture "$T"
+
+# Pre-create a fake installed_plugins.json + cache install dir.
+mkdir -p "$T/.claude/plugins"
+mkdir -p "$T/fakecache/pipeline/0.20.1"
+cat > "$T/.claude/plugins/installed_plugins.json" <<JSON
+{
+  "plugins": {
+    "pipeline@claude-pipeline-local": [
+      {
+        "projectPath": "$T/clone",
+        "installPath": "$T/fakecache/pipeline/0.20.1",
+        "marketplace": "claude-pipeline-local"
+      }
+    ]
+  }
+}
+JSON
+
+HOME="$T" DOGFOOD_REFRESH_REPO_ROOT="$T/clone" bash "$TARGET"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "swap-helper invocation exit 0"
+else
+  fail_msg "swap-helper invocation exit 0 (got rc=$rc)"
+fi
+
+if [ -L "$T/fakecache/pipeline/0.20.1" ] && \
+   [ "$(readlink "$T/fakecache/pipeline/0.20.1")" = "$T/clone" ]; then
+  pass_msg "swap-helper invocation: install path is now a symlink to REPO_ROOT"
+else
+  fail_msg "swap-helper invocation: install path is now a symlink to REPO_ROOT"
+fi
+
+rm -rf "$T"
 trap - EXIT
 
 echo "PASS=$PASS FAIL=$FAIL"
