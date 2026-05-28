@@ -1,0 +1,3 @@
+{"number":102,"additions":120,"deletions":40,"comments":[
+  {"author":{"login":"rjskene"},"body":"## Evaluation\nVerdict: Changes Requested\n\n- [stage: issue] Acceptance criterion #2 references a column not in the schema\n- [stage: plan] Plan does not cover the bulk-delete API flow described in the issue body\n- [stage: plan-eval] Plan-eval flagged the missing index but the executor skipped it\n- [stage: pr-eval] Missing null-check on response.data in handlers/foo.ts","createdAt":"2026-05-11T11:00:00Z"}
+]}

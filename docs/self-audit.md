@@ -41,6 +41,10 @@ All digests and `index.jsonl` live in `dev/audits/`, which is gitignored — dig
 
 The orchestrator transcript path `~/.claude/projects/<project-hash>/<session-uuid>.jsonl` is a Claude Code internal. If Anthropic changes it, set `AUDIT_CLAUDE_PROJECTS_DIR` in the environment to point at the new location.
 
+## Late-error report
+
+`scripts/late-error-report.sh` walks recent merged feature PRs (release PRs filtered out by the shared `RELEASE_PR_JQ` rule) and categorizes each `## Evaluation` "Changes Requested" finding by the earliest stage at which it was detectable — `issue` (issue body), `plan` (`## Implementation Plan` comment), `plan-eval` (`## Plan Evaluation` comment), or `pr-eval` (only surfaceable from the PR diff). Output is a per-PATH summary table with N findings + per-stage counts + late-detectable rate, plus a TOP-5 outlier list of PRs with the highest per-PR late rate. v0 categorization is a literal substring match against explicit `[stage: ...]` markers; unmarked findings default to `pr-eval`. Run live with `bash scripts/late-error-report.sh` (requires `PIPELINE_REPO`), or against fixtures via `--fixture tests/fixtures/late-error-report/` from the test suite. The script is dogfood-only — not shipped in the plugin manifest, no `.claude/` writes. Companion of `scripts/over-eval-report.sh`; feeds the eventual `metrics-snapshot.sh` consumer referenced by #421 / #450.
+
 ## Tests
 
 Tests live at `dev/tests/test-*.sh` and are run by `dev/tests/run-all.sh` (which CI invokes alongside `tests/test*.sh`).

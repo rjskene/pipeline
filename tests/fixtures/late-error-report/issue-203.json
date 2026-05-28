@@ -1,0 +1,4 @@
+{"number":203,"labels":[{"name":"multi-task"}],"comments":[
+  {"body":"## Implementation Plan\nSplit auth/session modules and add migration.","createdAt":"2026-05-12T08:00:00Z"},
+  {"body":"## Plan Evaluation\nNeeds explicit rollback path.","createdAt":"2026-05-12T09:00:00Z"}
+]}
