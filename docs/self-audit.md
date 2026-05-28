@@ -45,6 +45,33 @@ The orchestrator transcript path `~/.claude/projects/<project-hash>/<session-uui
 
 `scripts/late-error-report.sh` walks recent merged feature PRs (release PRs filtered out by the shared `RELEASE_PR_JQ` rule) and categorizes each `## Evaluation` "Changes Requested" finding by the earliest stage at which it was detectable — `issue` (issue body), `plan` (`## Implementation Plan` comment), `plan-eval` (`## Plan Evaluation` comment), or `pr-eval` (only surfaceable from the PR diff). Output is a per-PATH summary table with N findings + per-stage counts + late-detectable rate, plus a TOP-5 outlier list of PRs with the highest per-PR late rate. v0 categorization is a literal substring match against explicit `[stage: ...]` markers; unmarked findings default to `pr-eval`. Run live with `bash scripts/late-error-report.sh` (requires `PIPELINE_REPO`), or against fixtures via `--fixture tests/fixtures/late-error-report/` from the test suite. The script is dogfood-only — not shipped in the plugin manifest, no `.claude/` writes. Companion of `scripts/over-eval-report.sh`; feeds the eventual `metrics-snapshot.sh` consumer referenced by #421 / #450.
 
+## Daily metrics time-series
+
+`scripts/metrics-snapshot.sh` aggregates four dogfood signals into a single JSONL row per run and appends to `.claude/logs/metrics-timeseries.jsonl`. Append-only; the row schema is sticky once written. Dogfood-only — **consumers do not run this**, and no `.github/workflows/` file is added.
+
+Row schema (locked, see issue #576 plan):
+
+| Field | Type | Aggregation |
+|-------|------|-------------|
+| `date` | `YYYY-MM-DD` (UTC) | `date -u +%Y-%m-%d` |
+| `pipeline_version` | string | `PIPELINE_VERSION` from `pipeline.config`, else `"unknown"` |
+| `over_eval_count` | int (or `null`) | Count of PRs in the 50-PR window with `pr_eval / max(loc,1) > 0.5`. Source: `over-eval-report.sh --emit-rows-json` |
+| `late_error_count_by_stage` | object (or `null`) | Findings per `.stage`; the four canonical keys `issue`/`plan`/`plan-eval`/`pr-eval` always present (zeros included) so #420's diary can parse by name. Source: `late-error-report.sh --emit-rows-json` |
+| `compliance_pass_rate` | float in `[0,1]` (or `null`) | `PASS / (PASS + SKIP)` — excludes `N/A` and `omitted` from the denominator. `null` when denom is 0. Source: `compliance-backfill.sh --emit-rows-json` |
+| `review_deviations_count` | int (or `null`) | `wc -l` of `review-audits.sh --deviations --since <yesterday-UTC>` output |
+
+A sibling failure degrades that field to `null` rather than aborting the snapshot — partial-day signal beats no-day signal. The snapshot exit code stays 0 when any sibling degrades.
+
+Host-cron registration (operator runs once during setup):
+
+```
+bash scripts/install-metrics-cron.sh
+```
+
+prints a ready-to-paste crontab line that runs the snapshot daily at 07:00 local and tees output to `.claude/logs/metrics-snapshot.cron.log`. The script does not mutate the live crontab; the operator pastes the line into `crontab -e`. Per the `feedback_dogfood_instrumentation_no_consumer_crud` rule, this stays host-local — putting it in `.github/workflows/` would compute metrics in every consumer's repo against their PRs, which is the wrong scope.
+
+The longitudinal artifact lets #420's diary distinguish trending vs. stale metrics. Sister scripts: `over-eval-report.sh` (#421), `late-error-report.sh` (#574), `compliance-backfill.sh` (#575). Tracker: #450.
+
 ## Tests
 
 Tests live at `dev/tests/test-*.sh` and are run by `dev/tests/run-all.sh` (which CI invokes alongside `tests/test*.sh`).
