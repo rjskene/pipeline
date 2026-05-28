@@ -76,6 +76,29 @@ else
   fail_msg "expected rc=1 + ORPHAN group + token; got rc=$rc; err=$(cat "$WORKDIR/c2.err")"
 fi
 
+echo "Sub-case 3: synthetic UNDOCUMENTED -> exit 1 + UNDOCUMENTED group names the var"
+inc
+FX3="$WORKDIR/c3"
+mkdir -p "$FX3/scan"
+: >"$FX3/pipeline.config.example"   # no declarations
+cat >"$FX3/scan/script.sh" <<'EOF'
+echo "${PIPELINE_TEST_UNDOC}"
+EOF
+: >"$FX3/allowlist.txt"
+set +e
+PIPELINE_CONFIG_DRIFT_ALLOWLIST="$FX3/allowlist.txt" \
+  bash "$LINT" "$FX3/pipeline.config.example" "$FX3/scan" \
+  >"$WORKDIR/c3.out" 2>"$WORKDIR/c3.err"
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] \
+   && grep -q '^UNDOCUMENTED' "$WORKDIR/c3.err" \
+   && grep -q 'PIPELINE_TEST_UNDOC' "$WORKDIR/c3.err"; then
+  pass_msg "UNDOCUMENTED flagged with token named"
+else
+  fail_msg "expected rc=1 + UNDOCUMENTED group + token; got rc=$rc; err=$(cat "$WORKDIR/c3.err")"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
