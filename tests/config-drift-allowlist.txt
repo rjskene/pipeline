@@ -1,0 +1,64 @@
+# Allow-list for scripts/check-config-drift.sh
+# One PIPELINE_* token per line. Blank lines and `#` comments ignored.
+# Each entry (or group) must explain WHY it is exempt.
+# Entries ending in `_` are concat-prefix wildcards: they suppress any token
+# whose name begins with that prefix (e.g. `PIPELINE_EVAL_` covers
+# `PIPELINE_EVAL_CLASSIFIER`, `PIPELINE_EVAL_CONTAINER`, etc.). Entries shrink
+# as the companion cleanup issue documents each var in pipeline.config.example.
+
+# Concat-prefix bases for dynamic PIPELINE_* var construction. spawn-claude.sh
+# and related scripts build var names like `PIPELINE_PATH_${X}_SKILLS_EXECUTE`
+# at runtime via bash indirect expansion, so the bare prefix tokens appear in
+# source. Also catches concrete vars sharing the prefix that haven't been
+# documented yet (the cleanup sub-issue will peel each as it documents them).
+PIPELINE_EVAL_
+PIPELINE_PATH_
+PIPELINE_CI_
+PIPELINE_LABELS_
+PIPELINE_CONTAINER_
+
+# Internal-state markers (script-local globals, not user-config knobs).
+PIPELINE_LOGGING_SH_SOURCED
+PIPELINE_BODY_OUT
+PIPELINE_BASENAMES
+PIPELINE_HOOK_NAMES
+PIPELINE_DIFF_PLUGIN_ROOT_MODE
+PIPELINE_INSTALLED_PLUGINS_FILE
+PIPELINE_RPR_FILE
+PIPELINE_RPR_PWD
+PIPELINE_RESOLVE_MODE
+
+# Per-spawn injected vars (orchestrator-to-subprocess contract, not user-config).
+PIPELINE_ISSUE_NUMBER
+PIPELINE_REPO_OVERRIDE
+PIPELINE_REPO_ROOT
+PIPELINE_PROJECT_ROOT
+PIPELINE_PLUGIN_CACHE_DIR
+PIPELINE_SPAWN_DRY_RUN
+PIPELINE_RUNS_LOG_OVERRIDE
+PIPELINE_TEST_TMPDIRS
+PIPELINE_VERSION
+
+# Test-isolation env override for check-config-drift.sh itself (points the
+# lint at a fixture allowlist under mktemp -d during sub-case 4). Not a
+# user-config knob; intentionally undocumented in pipeline.config.example.
+PIPELINE_CONFIG_DRIFT_ALLOWLIST
+
+# Fixture tokens used only inside tests/test-check-config-drift.sh's
+# synthetic sub-cases. The live tree scan picks them up because they appear
+# as heredoc literals in the test file itself. PIPELINE_TEST_PREFIX_ is a
+# concat-prefix wildcard covering the sub-case 4b fixture vars
+# (PIPELINE_TEST_PREFIX_FOO / _BAR).
+PIPELINE_TEST_ORPHAN
+PIPELINE_TEST_UNDOC
+PIPELINE_TEST_PREFIX_
+
+# Genuinely undocumented but in-use. Companion cleanup issue documents these
+# in pipeline.config.example and peels them from this allowlist as each lands.
+# #579 peeled PIPELINE_ANALYZE_MIN_AGE_HOURS, PIPELINE_REPO_CONSUMERS,
+# PIPELINE_QUEUE_DRY_RUN, and PIPELINE_CI_FIX_CONTEXT (via the PIPELINE_CI_
+# prefix collapse) — remaining entries below await follow-up doc-debt PRs.
+PIPELINE_SCREENSHOT_REWRITE_ENABLED
+PIPELINE_STALL_CPU_THRESHOLD
+PIPELINE_SUBTREE_BRANCH
+PIPELINE_SUBTREE_REMOTE
