@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.2-rc.1](https://github.com/rjskene/pipeline/compare/v0.20.1-rc.1...v0.20.2-rc.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **doctor:** seed full label set in LABEL_TABLE — tracker + path/feature labels ([31d17fb](https://github.com/rjskene/pipeline/commit/31d17fbd812fe912020ee1c45323899d575a50ec))
+* **doctor:** seed tracker + manual-merge in LABEL_TABLE ([69f5013](https://github.com/rjskene/pipeline/commit/69f5013b7b74023c083b70a2cfa3b37b85f76c24))
+* **queue-status:** bail clean when invoked from stale plugin-cache ([5ffcf5a](https://github.com/rjskene/pipeline/commit/5ffcf5a9162911ee12edb9b47f4ab9e652510117)), closes [#593](https://github.com/rjskene/pipeline/issues/593)
+* **queue-status:** stale 0.9.0 plugin-cache path hard-coded in queue-status.sh ([4a137f2](https://github.com/rjskene/pipeline/commit/4a137f2384d4a693e76d98b1612e18aa3b66b29a))
+* **run-queue:** multi-sample subtree CPU per poll to avoid false stalls on bursty Claude turns ([#592](https://github.com/rjskene/pipeline/issues/592)) ([3cd2b0a](https://github.com/rjskene/pipeline/commit/3cd2b0ad8644a4241d29edaa5bbaee6cd04bc44e))
+* **run-queue:** stall heuristic measures wrapper CPU instead of process tree — false positives during long Claude turns ([cd99980](https://github.com/rjskene/pipeline/commit/cd9998064038b19a2cd3f3f7cedbf721c1f0918f))
+
 ## [0.20.0-rc.3](https://github.com/rjskene/pipeline/compare/v0.19.0-rc.3...v0.20.0-rc.3) (2026-05-28)
 
 
