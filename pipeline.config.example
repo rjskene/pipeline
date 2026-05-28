@@ -126,6 +126,31 @@ PIPELINE_USE_LOCAL_PLUGIN=false
 PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true; further gated by PIPELINE_CI_CHECK_ENABLED
 PIPELINE_CI_FIX_RETRY_BUDGET="2"      # max re-dispatches per PR before applying the human label
 PIPELINE_CI_FIX_LOG_LINES="200"       # tail size when injecting CI failure log into executor context
+# Path to the CI-failure log injected into the CI-fix executor's
+# --append-system-prompt by scripts/run-queue.sh. Orchestrator-to-subprocess
+# contract — set by run-queue.sh at dispatch time, not by the operator.
+# PIPELINE_CI_FIX_CONTEXT=""
+
+# --- analyze-issues stage ---
+#
+# Age gate for the missing-label signal in scripts/analyze-issues.sh. Issues
+# younger than this threshold are silently suppressed so newly-filed issues
+# are not flagged before classify-issue has a chance to run. Default 24h.
+# PIPELINE_ANALYZE_MIN_AGE_HOURS=24
+
+# --- run-queue ---
+#
+# When set to "1", scripts/run-queue.sh prints the partitioning + concurrency
+# table ("BUCKET: mode=... issues=... max=N") and exits without spawning any
+# worker. Used by the queue-partitioning tests; operators rarely set this.
+# PIPELINE_QUEUE_DRY_RUN=""
+
+# --- multi-repo helpers ---
+#
+# Bash-array of consumer-repo helper paths consumed by
+# tests/test-skill-helper-env-export.sh to verify cross-repo env propagation.
+# Test fixture — operators do not need to set this in a normal install.
+# PIPELINE_REPO_CONSUMERS=()
 
 # --- Inline visual-proof loopback server (issue #517) ---
 #
