@@ -47,9 +47,12 @@ PIPELINE_CONFIG_DRIFT_ALLOWLIST
 
 # Fixture tokens used only inside tests/test-check-config-drift.sh's
 # synthetic sub-cases. The live tree scan picks them up because they appear
-# as heredoc literals in the test file itself.
+# as heredoc literals in the test file itself. PIPELINE_TEST_PREFIX_ is a
+# concat-prefix wildcard covering the sub-case 4b fixture vars
+# (PIPELINE_TEST_PREFIX_FOO / _BAR).
 PIPELINE_TEST_ORPHAN
 PIPELINE_TEST_UNDOC
+PIPELINE_TEST_PREFIX_
 
 # Genuinely undocumented but in-use. Companion cleanup issue documents these
 # in pipeline.config.example and peels them from this allowlist as each lands.

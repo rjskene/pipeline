@@ -99,6 +99,54 @@ else
   fail_msg "expected rc=1 + UNDOCUMENTED group + token; got rc=$rc; err=$(cat "$WORKDIR/c3.err")"
 fi
 
+echo "Sub-case 4a: allowlist EXACT-match suppression -> exit 0"
+inc
+FX4="$WORKDIR/c4"
+mkdir -p "$FX4/scan"
+: >"$FX4/pipeline.config.example"
+cat >"$FX4/scan/script.sh" <<'EOF'
+echo "${PIPELINE_TEST_UNDOC}"
+EOF
+cat >"$FX4/allowlist.txt" <<'EOF'
+# fixture allowlist — exact match
+PIPELINE_TEST_UNDOC
+EOF
+set +e
+PIPELINE_CONFIG_DRIFT_ALLOWLIST="$FX4/allowlist.txt" \
+  bash "$LINT" "$FX4/pipeline.config.example" "$FX4/scan" \
+  >"$WORKDIR/c4.out" 2>"$WORKDIR/c4.err"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  pass_msg "allowlist exact-match suppressed UNDOCUMENTED"
+else
+  fail_msg "expected rc=0, got rc=$rc; err=$(cat "$WORKDIR/c4.err")"
+fi
+
+echo "Sub-case 4b: allowlist CONCAT-PREFIX suppression -> exit 0"
+inc
+FX5="$WORKDIR/c5"
+mkdir -p "$FX5/scan"
+: >"$FX5/pipeline.config.example"
+cat >"$FX5/scan/script.sh" <<'EOF'
+echo "${PIPELINE_TEST_PREFIX_FOO} ${PIPELINE_TEST_PREFIX_BAR}"
+EOF
+cat >"$FX5/allowlist.txt" <<'EOF'
+# fixture allowlist — concat-prefix wildcard
+PIPELINE_TEST_PREFIX_
+EOF
+set +e
+PIPELINE_CONFIG_DRIFT_ALLOWLIST="$FX5/allowlist.txt" \
+  bash "$LINT" "$FX5/pipeline.config.example" "$FX5/scan" \
+  >"$WORKDIR/c5.out" 2>"$WORKDIR/c5.err"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  pass_msg "allowlist concat-prefix suppressed UNDOCUMENTED"
+else
+  fail_msg "expected rc=0, got rc=$rc; err=$(cat "$WORKDIR/c5.err")"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
