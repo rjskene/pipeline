@@ -8,8 +8,6 @@
     ".": {
       "release-type": "simple",
       "package-name": "pipeline",
-      "prerelease": true,
-      "prerelease-type": "rc",
       "extra-files": [
         {
           "type": "json",
