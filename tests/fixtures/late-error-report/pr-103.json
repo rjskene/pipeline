@@ -1,0 +1,3 @@
+{"number":103,"additions":500,"deletions":300,"comments":[
+  {"author":{"login":"rjskene"},"body":"## Evaluation\nVerdict: Changes Requested\n\n- [stage: plan] Plan did not split the auth module from the session module as the issue called for\n- [stage: plan] Plan's task list omitted the migration step the issue body required\n- [stage: plan-eval] Plan-eval flagged the missing rollback path; never addressed\n- [stage: pr-eval] Unhandled error path in session.refresh()\n- [stage: pr-eval] Race condition between session.commit() and store.persist()","createdAt":"2026-05-12T11:00:00Z"}
+]}

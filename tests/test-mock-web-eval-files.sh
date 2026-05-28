@@ -11,8 +11,6 @@ assert(){ if eval "$2"; then pass_msg "$1"; else fail_msg "$1"; fi; }
 assert "mock-web-eval/target/index.html exists"     "[ -f '$REPO_ROOT/mock-web-eval/target/index.html' ]"
 assert "mock-web-eval/target/app.js exists"         "[ -f '$REPO_ROOT/mock-web-eval/target/app.js' ]"
 assert "mock-web-eval/target/style.css exists"      "[ -f '$REPO_ROOT/mock-web-eval/target/style.css' ]"
-assert "mock-web-eval/docker/Dockerfile exists" "[ -f '$REPO_ROOT/mock-web-eval/docker/Dockerfile' ]"
-assert "mock-web-eval/docker/compose.yml exists" "[ -f '$REPO_ROOT/mock-web-eval/docker/compose.yml' ]"
 
 # Group 2 — index.html declares the three interaction regions
 IDX="$REPO_ROOT/mock-web-eval/target/index.html"
@@ -59,48 +57,6 @@ assert "style.css #item-add:hover has darker green" "awk '/#item-add:hover[[:spa
 # Group 5 — gitignore excludes host UID/GID env file
 GI="$REPO_ROOT/.gitignore"
 assert ".gitignore excludes mock-web-eval/target/.env.mock-web-eval" "grep -qE '^/?mock-web-eval/target/\.env\.mock-web-eval\$' '$GI'"
-
-# Group 6 — mock-web-eval/docker/Dockerfile structure (deterministic pins)
-DF="$REPO_ROOT/mock-web-eval/docker/Dockerfile"
-assert "Dockerfile uses Node LTS base"          "grep -qE '^FROM node:[0-9]+(\.[0-9]+)*(-[a-z]+)?\$|^FROM node:lts' '$DF'"
-assert "Dockerfile pins @anthropic-ai/claude-code@2.1.143" "grep -qF '@anthropic-ai/claude-code@2.1.143' '$DF'"
-assert "Dockerfile pins @playwright/mcp@0.0.75"           "grep -qF '@playwright/mcp@0.0.75' '$DF'"
-assert "Dockerfile pins serve@14.2.6"                     "grep -qF 'serve@14.2.6' '$DF'"
-assert "Dockerfile installs Chromium with deps" "grep -qE 'playwright install --with-deps chromium' '$DF'"
-assert "Dockerfile installs gh CLI"             "grep -qE 'apt-get install.*gh|cli\.github\.com' '$DF'"
-assert "Dockerfile declares UID build arg"      "grep -qE '^ARG HOST_UID' '$DF'"
-assert "Dockerfile declares GID build arg"      "grep -qE '^ARG HOST_GID' '$DF'"
-assert "Dockerfile creates non-root user"       "grep -qE 'useradd|adduser' '$DF' && grep -qE 'USER ' '$DF'"
-assert "Dockerfile WORKDIR is /workspace"       "grep -qE '^WORKDIR /workspace' '$DF'"
-
-# Group 7 — mock-web-eval/docker/compose.yml structure
-CF="$REPO_ROOT/mock-web-eval/docker/compose.yml"
-assert "compose defines service mock-web-eval"  "grep -qE '^[[:space:]]+mock-web-eval:' '$CF'"
-SERVICE_COUNT=$(grep -cE '^[[:space:]]{2}[a-z][a-z0-9-]*:' "$CF" 2>/dev/null || echo 0)
-assert "compose has exactly one service"        "[ \"$SERVICE_COUNT\" -eq 1 ]"
-assert "compose uses mock-web-eval/docker/Dockerfile"  "grep -q 'mock-web-eval/docker/Dockerfile' '$CF'"
-assert "compose sources .env.mock-web-eval"     "grep -q 'mock-web-eval/target/.env.mock-web-eval' '$CF'"
-assert "compose binds .claude credentials RO"   "grep -qE '\.claude/\.credentials\.json.*:ro' '$CF'"
-assert "compose binds .claude settings RO"      "grep -qE '\.claude/settings\.json.*:ro' '$CF'"
-assert "compose binds .claude plugins RO"       "grep -qE '\.claude/plugins.*:ro' '$CF'"
-assert "compose binds .gitconfig RO"            "grep -qE '\.gitconfig.*:ro' '$CF'"
-assert "compose binds .config/gh RO"            "grep -qE '\.config/gh.*:ro' '$CF'"
-assert "compose binds project root via PIPELINE_PROJECT_ROOT" "grep -qE '\\\$\\{PIPELINE_PROJECT_ROOT\\}:\\\$\\{PIPELINE_PROJECT_ROOT\\}' '$CF'"
-assert "compose working_dir uses PIPELINE_WORKTREE_PATH"      "grep -qE 'working_dir:.*\\\$\\{PIPELINE_WORKTREE_PATH' '$CF'"
-assert "compose no longer pins \${PWD}:\${PWD} bind"          "! grep -qE '\\\$\\{PWD\\}:\\\$\\{PWD\\}' '$CF'"
-assert "compose maps HOST_PORT to 3000"         "grep -qE '\\\$\\{HOST_PORT\\}:3000' '$CF'"
-assert "compose uses HOST_UID build-arg"        "grep -qE 'HOST_UID' '$CF'"
-assert "compose uses HOST_GID build-arg"        "grep -qE 'HOST_GID' '$CF'"
-
-# Group 8 — port probe helper
-PROBE="$REPO_ROOT/mock-web-eval/scripts/mock-web-eval-probe-port.sh"
-assert "probe script exists"          "[ -f '$PROBE' ]"
-assert "probe script is executable"   "[ -x '$PROBE' ]"
-assert "probe scans 8080..8089"       "grep -qE '8080.*8089|seq 8080 8089|\\{8080\\.\\.8089\\}' '$PROBE'"
-assert "probe writes HOST_PORT="      "grep -qE 'HOST_PORT=' '$PROBE'"
-assert "probe writes to env file"     "grep -q 'mock-web-eval/target/.env.mock-web-eval' '$PROBE'"
-assert "probe writes HOST_UID/GID seed" "grep -qE 'HOST_UID=' '$PROBE' && grep -qE 'HOST_GID=' '$PROBE'"
-assert "probe writes PIPELINE_PROJECT_ROOT="  "grep -qE 'PIPELINE_PROJECT_ROOT=' '$PROBE'"
 
 # Group 9 — counter section
 assert "index has counter section"      "grep -q 'id=\"counter-section\"' '$IDX'"

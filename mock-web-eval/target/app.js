@@ -50,6 +50,9 @@
     li.appendChild(removeBtn);
     list.appendChild(li);
   });
+  document.getElementById('list-clear').addEventListener('click', function () {
+    list.innerHTML = '';
+  });
 
   // 4. Counter buttons increment/decrement a running total (no bounds).
   const counterValue = document.getElementById('counter-value');

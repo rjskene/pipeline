@@ -1,0 +1,2 @@
+issue=101 path=B deviations=2 (priority, scope)
+issue=102 path=C deviations=1 (priority)

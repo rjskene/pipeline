@@ -45,11 +45,6 @@ scripts/_advisory-text.sh
 # scanner reads, never a write target (issue #295).
 scripts/check-base-branch-hook-wiring.sh
 
-# container_assets_unwired helper scans consumer .claude/hooks/*.py for
-# quoted-literal env-var marker reads — `.claude/hooks/` literals here are
-# scan-target path patterns, never write targets (issue #310).
-scripts/check-container-assets.sh
-
 # claude_md_residual scanner's fourth pass detects dangling
 # .claude/{scripts,hooks,skills}/ references in CLAUDE.md and verifies each
 # against on-disk existence — REGEX_DANGLING is a scan pattern, never a write

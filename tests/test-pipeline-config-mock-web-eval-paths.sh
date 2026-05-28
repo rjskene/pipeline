@@ -5,21 +5,15 @@ set -uo pipefail
 # the mock-web-eval subsystem into mock-web-eval/, leaving pipeline.config
 # and pipeline.config.example with stale pre-refactor paths).
 #
-# Scans pipeline.config.example for the documented mock-web-eval container
-# block and asserts every path-bearing value resolves to a real file (or,
-# for runtime-written env files, a real parent directory) in the checked-in
-# tree. Also checks the live pipeline.config when present (for dogfood
-# operators); the file is gitignored, so this branch is a no-op in CI.
+# After issue #514 removed container isolation entirely, this guard's scope
+# narrowed: the container/classifier vars are gone, so there are no path
+# assertions left to make against pipeline.config.example. What remains is
+# the inline visual-proof loopback surface (PIPELINE_VISUAL_PROOF_TARGET_DIR
+# and PIPELINE_VISUAL_PROOF_PORT_BASE) plus negative assertions that the
+# deleted container vars do NOT reappear.
 #
-# Variables checked (per file):
-#   PIPELINE_EVAL_CLASSIFIER                                   -> file
-#   PIPELINE_EVAL_CONTAINER_<mode>_COMPOSE_FILE                -> file
-#   PIPELINE_EVAL_CONTAINER_<mode>_ENV_FILE                    -> parent dir
-#   PIPELINE_EVAL_CONTAINER_<mode>_PREFLIGHT_CMD (path arg)    -> file
-#
-# Skipped (shape-only placeholders, not real paths in this repo):
-#   - generic `.claude/scripts/eval-classifier.sh` example (line ~120)
-#   - the `WEB_EVAL` block (lines 175-179) — illustrative consumer shape
+# Dual-scan per CLAUDE.md: pipeline.config.example is always present;
+# pipeline.config is gitignored and host-only (no-op in CI).
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"
@@ -38,113 +32,56 @@ if [ ! -f "$EXAMPLE" ]; then
   exit 1
 fi
 
-# Echoes "<kind>|<var>|<path>" per matched assignment. <kind> is one of
-# file | dir. Handles both live and commented (# PIPELINE_EVAL_...) forms.
-extract_paths() {
-  local file="$1"
-  awk '
-    function clean(v) {
-      sub(/^[^=]*=/, "", v)
-      sub(/^"/, "", v); sub(/".*$/, "", v)
-      sub(/^\047/, "", v); sub(/\047.*$/, "", v)
-      return v
-    }
-    function name_of(line) {
-      sub(/^[[:space:]]*#?[[:space:]]*/, "", line)
-      split(line, a, "=")
-      return a[1]
-    }
-    /^[[:space:]]*#?[[:space:]]*PIPELINE_EVAL_CLASSIFIER=/ {
-      name = name_of($0)
-      val = clean($0)
-      if (val != "") print "file|" name "|" val
-    }
-    /^[[:space:]]*#?[[:space:]]*PIPELINE_EVAL_CONTAINER_[A-Za-z0-9_]+_COMPOSE_FILE=/ {
-      name = name_of($0)
-      val = clean($0)
-      if (val != "") print "file|" name "|" val
-    }
-    /^[[:space:]]*#?[[:space:]]*PIPELINE_EVAL_CONTAINER_[A-Za-z0-9_]+_ENV_FILE=/ {
-      name = name_of($0)
-      val = clean($0)
-      if (val != "") print "dir|" name "|" val
-    }
-    /^[[:space:]]*#?[[:space:]]*PIPELINE_EVAL_CONTAINER_[A-Za-z0-9_]+_PREFLIGHT_CMD=/ {
-      name = name_of($0)
-      val = clean($0)
-      # Strip leading interpreter + whitespace ("bash ", "sh ", etc.) to
-      # recover the script path.
-      sub(/^[A-Za-z0-9_\/.-]+[[:space:]]+/, "", val)
-      if (val != "") print "file|" name "|" val
-    }
-  ' "$file"
-}
-
-# Skip shape-only placeholders that are documentation, not real paths.
-# Both UPPERCASE (post-#336 canonical) and lowercase (pre-#336 back-compat
-# fallback, still documented in mock-web-eval/replay/*) are skipped.
-is_placeholder() {
-  local var="$1" path="$2"
-  case "$var" in
-    PIPELINE_EVAL_CONTAINER_WEB_EVAL_*) return 0 ;;
-    PIPELINE_EVAL_CONTAINER_web_eval_*) return 0 ;;
-  esac
-  case "$path" in
-    .claude/scripts/eval-classifier.sh) return 0 ;;
-  esac
-  return 1
-}
-
-check() {
-  local label="$1" kind="$2" var="$3" path="$4"
+# --- Issue #514: container vars must be absent ---
+#
+# Asserts each removed knob has zero occurrences (commented OR uncommented)
+# in pipeline.config.example. Scanned in both the example file and the live
+# host-only pipeline.config (when present).
+assert_var_absent() {
+  local var="$1" file="$2" label="$3"
   inc
-  case "$kind" in
-    file)
-      if [ -f "$ROOT/$path" ]; then
-        pass_msg "$label: $var -> $path"
-      else
-        fail_msg "$label: $var -> $path does not exist"
-      fi
-      ;;
-    dir)
-      local parent
-      parent="$(dirname "$path")"
-      if [ -d "$ROOT/$parent" ]; then
-        pass_msg "$label: $var -> $path (parent dir $parent exists)"
-      else
-        fail_msg "$label: $var -> $path parent dir $parent does not exist"
-      fi
-      ;;
-  esac
+  if grep -Eq "^[[:space:]]*#?[[:space:]]*${var}=" "$file"; then
+    fail_msg "$label: $var still appears in $(basename "$file")"
+  else
+    pass_msg "$label: $var absent from $(basename "$file")"
+  fi
 }
 
-# Canonical example file (always in git, so always exercised).
-while IFS='|' read -r kind var val; do
-  [ -z "$var" ] && continue
-  if is_placeholder "$var" "$val"; then
-    continue
-  fi
-  check "example" "$kind" "$var" "$val"
-done < <(extract_paths "$EXAMPLE")
+REMOVED_VARS=(
+  PIPELINE_EVAL_CLASSIFIER
+  PIPELINE_EVAL_ISOLATION
+  PIPELINE_EVAL_CONTAINERS
+  PIPELINE_CONTAINER_SKILLS
+)
 
-# Live dogfood pipeline.config (gitignored; only present on dogfood hosts).
-if [ -f "$LIVE" ]; then
-  while IFS='|' read -r kind var val; do
-    [ -z "$var" ] && continue
-    if is_placeholder "$var" "$val"; then
-      continue
-    fi
-    check "live" "$kind" "$var" "$val"
-  done < <(extract_paths "$LIVE")
+for var in "${REMOVED_VARS[@]}"; do
+  assert_var_absent "$var" "$EXAMPLE" "example"
+done
+
+# Wildcard family: PIPELINE_EVAL_CONTAINER_<MODE>_* must not appear at all.
+inc
+if grep -Eq "^[[:space:]]*#?[[:space:]]*PIPELINE_EVAL_CONTAINER_[A-Za-z0-9_]+_(COMPOSE_FILE|SERVICE|ENV_FILE|PREFLIGHT_CMD|MAX_CONCURRENT)=" "$EXAMPLE"; then
+  fail_msg "example: PIPELINE_EVAL_CONTAINER_<MODE>_* family still appears in pipeline.config.example"
+else
+  pass_msg "example: PIPELINE_EVAL_CONTAINER_<MODE>_* family absent from pipeline.config.example"
 fi
 
-# --- Issue #517 scaffolding: inline-default evaluator dispatch vars ---
+if [ -f "$LIVE" ]; then
+  for var in "${REMOVED_VARS[@]}"; do
+    assert_var_absent "$var" "$LIVE" "live"
+  done
+  inc
+  if grep -Eq "^[[:space:]]*#?[[:space:]]*PIPELINE_EVAL_CONTAINER_[A-Za-z0-9_]+_(COMPOSE_FILE|SERVICE|ENV_FILE|PREFLIGHT_CMD|MAX_CONCURRENT)=" "$LIVE"; then
+    fail_msg "live: PIPELINE_EVAL_CONTAINER_<MODE>_* family still appears in pipeline.config"
+  else
+    pass_msg "live: PIPELINE_EVAL_CONTAINER_<MODE>_* family absent from pipeline.config"
+  fi
+fi
+
+# --- Issue #517 scaffolding: inline visual-proof loopback vars (preserved) ---
 #
-# Assert the new evaluator-isolation + visual-proof config vars are present
-# (by name) in pipeline.config.example. PIPELINE_EVAL_ISOLATION uses the
-# comment-as-default convention: the only mention of its name should be the
-# leading "# PIPELINE_EVAL_ISOLATION=..." documentation line; no uncommented
-# assignment may exist (empty = inline default).
+# These knobs survive #514's container teardown — the visual-proof loopback
+# is the inline-mode replacement for the deleted container surface.
 check_var_named() {
   local var="$1"
   inc
@@ -155,19 +92,8 @@ check_var_named() {
   fi
 }
 
-check_var_named PIPELINE_EVAL_ISOLATION
 check_var_named PIPELINE_VISUAL_PROOF_TARGET_DIR
 check_var_named PIPELINE_VISUAL_PROOF_PORT_BASE
-
-# PIPELINE_EVAL_ISOLATION: comment-as-default convention — no uncommented
-# assignment may exist. Only commented "# PIPELINE_EVAL_ISOLATION=..." lines
-# are allowed.
-inc
-if grep -Eq "^[[:space:]]*PIPELINE_EVAL_ISOLATION=" "$EXAMPLE"; then
-  fail_msg "example: PIPELINE_EVAL_ISOLATION has an uncommented assignment (expected comment-as-default only)"
-else
-  pass_msg "example: PIPELINE_EVAL_ISOLATION uses comment-as-default convention (no uncommented assignment)"
-fi
 
 echo ""
 echo "================================"

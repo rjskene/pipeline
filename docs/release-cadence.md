@@ -54,6 +54,10 @@ When a stable tag already exists in the line, **neither the `Release-As:` footer
 - **Bump the four manifest locations by hand in the same commit the tag points at**, so the published artifact's version matches the tag: `.release-please-manifest.json`, `.claude-plugin/plugin.json` (`$.version`), and `.claude-plugin/marketplace.json` (`metadata.version` **and** `plugins[0].version`).
 - The MEMORY notes `feedback_hand_cut_rc_from_stable` and `feedback_hand_cut_graduation_flow` codify this flow on the dogfood host. #541 is the tracking bug: if a future release-please version (or a `version-strategy` knob) honors the prerelease component from a stable base, this manual-cut path can be retired and the footer trigger un-scoped.
 
+### Breaking changes
+
+- Container-isolation opt-ins and the pre-spawn eval-classifier hook were removed in #514 (see that PR for the full list of retired `pipeline.config` knobs) — web-eval is now inline-only via the `needs-browser` label.
+
 ## Migration & rollback
 
 This repo flipped from squash to merge-commits on 2026-05-24 via #459. Baseline before-picture: `.claude/logs/issue-459-baseline.md` (gitignored; on the dogfood host).
