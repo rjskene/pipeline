@@ -97,7 +97,7 @@ If a re-run also fails to post the comment, flag the issue in the status report 
 
 Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
 
-**Pre-spawn classifier (issue #218).** Before dispatching the PR evaluator, the orchestrator runs `bash ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh <issue> <pr>` if `PIPELINE_EVAL_CLASSIFIER` is set. The classifier's stdout is parsed token-by-token; a `--container-mode=<name>` token causes the dispatch to fall through to `spawn-claude.sh --container-mode=<name>` regardless of PATH letter — container mode overrides PATH A inline subagent dispatch because container isolation cannot be honored inside an inline `Agent()` call. Any other `--flag=value` tokens are forwarded to `spawn-claude.sh` via `--classifier-passthrough=<token>`. If the classifier exit non-zero, the issue is skipped with the classifier's first stderr line surfaced as the reason; the orchestrator continues with the remaining issues. When `PIPELINE_EVAL_CLASSIFIER` is unset (default), this step is a no-op and PATH A / B / C routing below is unchanged.
+**Web-surface routing.** PRs labelled `needs-browser` route through inline `Agent(general-purpose)` dispatch with the visual-proof preflight; no separate classifier is consulted.
 
 ### Launch flow for PR evaluation
 

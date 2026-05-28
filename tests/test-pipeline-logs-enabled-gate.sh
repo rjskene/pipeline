@@ -27,9 +27,8 @@ CLEANUP="$REPO_ROOT/scripts/cleanup-worktree.sh"
 ANALYZE="$REPO_ROOT/scripts/analyze-issues.sh"
 CI_FIX="$REPO_ROOT/scripts/check-ci-fix-loop.sh"
 LOGGING_HELPER="$REPO_ROOT/scripts/_logging.sh"
-EVAL_CLASSIFIER="$REPO_ROOT/mock-web-eval/scripts/eval-classifier-invoke.sh"
 
-for f in "$SPAWN" "$RUN_QUEUE" "$CLEANUP" "$ANALYZE" "$CI_FIX" "$LOGGING_HELPER" "$EVAL_CLASSIFIER"; do
+for f in "$SPAWN" "$RUN_QUEUE" "$CLEANUP" "$ANALYZE" "$CI_FIX" "$LOGGING_HELPER"; do
   [ -f "$f" ] || { echo "ERROR: missing required file $f" >&2; exit 1; }
 done
 
@@ -67,8 +66,6 @@ PIPELINE_BASE_BRANCH="staging"
 PIPELINE_WORKTREE_PREFIX="wt"
 PIPELINE_WIN_TEMP=""
 PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=""
-PIPELINE_EVAL_CONTAINERS=""
 PIPELINE_PATH_A_SKILLS_EXECUTE=""
 PIPELINE_PATH_B_SKILLS_EXECUTE=""
 PIPELINE_PATH_C_SKILLS_EXECUTE=""
@@ -132,11 +129,10 @@ echo "[2/5] run-queue.sh -> queue-*.log + queue-pending.txt"
 setup_queue_proj() {
   local proj="$1"
   rm -rf "$proj"
-  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/mock-web-eval/scripts"
+  mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs"
   cp "$RUN_QUEUE"        "$proj/.claude/scripts/run-queue.sh"
   cp "$LOGGING_HELPER"   "$proj/.claude/scripts/_logging.sh"
-  cp "$EVAL_CLASSIFIER"  "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/mock-web-eval/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/.claude/scripts/run-queue.sh"
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<'EOF'
 #!/bin/bash
 exit 0

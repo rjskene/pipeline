@@ -50,25 +50,20 @@ setup_proj() {
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$REPO_ROOT/scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
-  cp "$REPO_ROOT/scripts/_resolve-container-var.sh" "$proj/.claude/scripts/_resolve-container-var.sh"
   cp "$REPO_ROOT/scripts/queue-status.sh" "$proj/.claude/scripts/queue-status.sh"
-  cp "$REPO_ROOT/scripts/eval-classifier-invoke.sh" "$proj/.claude/scripts/eval-classifier-invoke.sh"
-  chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/.claude/scripts/queue-status.sh" \
-    "$proj/.claude/scripts/eval-classifier-invoke.sh"
+  chmod +x "$proj/.claude/scripts/run-queue.sh" "$proj/.claude/scripts/queue-status.sh"
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<'EOF'
 #!/bin/bash
 exit 0
 EOF
   chmod +x "$proj/.claude/scripts/spawn-claude.sh"
-  # PIPELINE_EVAL_CLASSIFIER="" short-circuits route_issue() to mode=bare with
-  # NO gh round-trip, so the only gh traffic in the loop is the new predicate.
+  # Post-#514 route_issue() unconditionally maps to mode=bare with no gh
+  # round-trip, so the only gh traffic in the loop is the new predicate.
   cat > "$proj/pipeline.config" <<EOF
 PIPELINE_REPO="fake/repo"
 PIPELINE_BASE_BRANCH="pipeline"
 PIPELINE_WORKTREE_PREFIX="wt"
 PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=""
-PIPELINE_EVAL_CONTAINERS=""
 EOF
 }
 

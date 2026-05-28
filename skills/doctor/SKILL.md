@@ -47,11 +47,9 @@ State table — each row names a check, the trigger that fires it, the worst-cas
 | `settings_residual` | Pipeline-owned hook entries in `.claude/settings.json`; capability-impact annotation from `_advisory-text.sh` | WARN (jq required) | `--fix residual` (interactive) |
 | `skill_files_residual` | Consumer `.claude/{skills,hooks,scripts,agents}/` files colliding with plugin-shipped (relative-path compare); `*.template` renders reported separately as `consumer-required` | FAIL when stale `<owner>/<repo>` ≠ `$PIPELINE_REPO` | Delete duplicate or fix legacy install |
 | `consumer_drift` | Per-file drift classification (6 buckets) | varies — see sub-section | Per-bucket |
-| `container_assets_unwired` | Undeclared `compose.<mode>.{yml,yaml}` with marker-env triangle | varies — see sub-section | Declare in `PIPELINE_EVAL_CONTAINERS` or annotate `# pipeline:manual-only` |
 | `preservation_refs` | Why each duplicate is still here — six reference-source buckets; KEEP/DELETE verdict | WARN when any KEEP; never FAIL | Rewire then delete on KEEP |
 | `base_branch_local` | Local branch `$PIPELINE_BASE_BRANCH` exists | WARN if no upstream | `git fetch && git checkout -b <base> origin/<base>` |
 | `base_branch_enforcement` | `enforce-base-branch.py` exists AND ≥1 PreToolUse Bash matcher invokes it. Defense-in-depth #295 | FAIL if absent or unregistered | Restore plugin manifest or re-add matcher |
-| `container_skills_validity` | `PIPELINE_CONTAINER_SKILLS` lists only canonical skill names (#321) | WARN; never FAIL | Fix typo in `pipeline.config` |
 
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — also sourced by `migrate-from-subtree.sh` so the wording matches.
 
@@ -89,36 +87,6 @@ Per-file drift classification on top of `skill_files_residual`'s duplicate prese
 - Only **D / F** rows (or no rows) → `pass`.
 
 Textual-diff-only; no behavioral comparison. `--fix drift` is out of scope.
-
-## container_assets_unwired check
-
-Detects a class #218 left invisible: **the consumer repo has container assets but they're not declared in `PIPELINE_EVAL_CONTAINERS`**. When intent-evidence is present (a `.claude/hooks/*.py` reads an env var the compose file sets), the dispatch path is broken — `spawn-claude.sh` never invokes `docker compose run`, the marker never gets set, dependent hooks silently degrade. Helper: `scripts/check-container-assets.sh`.
-
-**Marker-env triangle (all three required for FAIL):**
-
-1. A `compose.<mode>.yml` or `compose.<mode>.yaml` file at the project root.
-2. The compose file sets a non-`PIPELINE_*` env var via `services.*.environment:`.
-3. A `.claude/hooks/*.py` file reads that exact env var via a quoted-literal string (`'MARKER'` or `"MARKER"`).
-
-**Verdict matrix:**
-
-| Signal | Verdict |
-|--------|---------|
-| Mode declared in `PIPELINE_EVAL_CONTAINERS` | **PASS** |
-| First 5 lines of compose contain `# pipeline:manual-only` | **PASS** (explicit opt-out) |
-| Undeclared compose, no marker-reader hook found | **WARN** (could be manual-use) |
-| Undeclared compose, full triangle (compose sets MARKER, hook reads MARKER) | **FAIL** (intent-evidence — undeclared dispatch breaks a wired hook) |
-| Undeclared compose, marker set but hook reads a DIFFERENT marker | **WARN** (no overlap, no triangle) |
-| YAML environment block unparseable (yq + awk fallback both fail) | **WARN** with `note=yaml-parse-skipped` — never escalate to FAIL without confirmed marker-set evidence |
-
-**Implementation notes.**
-- **YAML parsing.** `yq` first (handles anchors / merge keys); falls back to a flat-`environment:`-block awk scanner. When neither resolves, emit `note=yaml-parse-skipped` and stay at WARN — invariant: **never escalate to FAIL without confirmed evidence**.
-- **Marker filter.** Env-var names matching `PIPELINE_*` are filtered out before the marker-reader scan (plugin-internal noise).
-- **Hook-reader detection.** `grep -E "['\"]<MARKER>['\"]"` against `.claude/hooks/*.py`. False-positives suppressed by the triangle constraint.
-- **Suggested snippet emission.** On FAIL, the helper emits a copy-paste `pipeline.config` snippet from discovered values (compose filename, first `services.<name>:` entry, sibling `Dockerfile.<mode>` / `.env.<mode>`). Mode-name suffix: `tr '[:lower:]-' '[:upper:]_'`.
-- **Opt-out window.** `# pipeline:manual-only` must appear in the first 5 lines.
-- **Precedent.** Same escalation pattern as `consumer_drift::LOAD_BEARING_HOOKS` applied to the dispatch-asset surface.
-- **Out of scope.** `docker-compose.yml` without `.<mode>` infix — file a follow-up. Misconfigured `PIPELINE_EVAL_CONTAINER_<MODE>_COMPOSE_FILE` paths — `pipeline_config` territory.
 
 ## preservation_refs check
 

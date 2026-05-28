@@ -19,10 +19,7 @@ fi
 
 # Self-resolve CLAUDE_PLUGIN_ROOT when callers don't export it (e.g. direct
 # operator invocation from the consumer project root). Idempotent; no-op
-# when CLAUDE_PLUGIN_ROOT is already set. The shim's resolution is the
-# single source of truth that classify_issue() in run-queue.sh and the
-# fail-closed re-classification block below both rely on for the
-# ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh path (#325).
+# when CLAUDE_PLUGIN_ROOT is already set.
 if [ -f "${_spawn_claude_dir}/_resolve-plugin-root.sh" ]; then
   # shellcheck disable=SC1091
   source "${_spawn_claude_dir}/_resolve-plugin-root.sh"
@@ -37,7 +34,6 @@ fi
 SKIP_PERMS=""
 SKILL="execute-issue-plan"
 MANUAL_MERGE_ARG=""
-CONTAINER_MODE=""
 EXTRA_CLAUDE_ARGV=()
 # Loop-based parser: --manual-merge may appear anywhere before the
 # positional <worktree-path> argument. When present, MANUAL_MERGE=1 is
@@ -47,17 +43,14 @@ EXTRA_CLAUDE_ARGV=()
 # before any unknown-arg fallback, so stale installs that don't know the
 # flag degrade safely.
 #
-# --container-mode=<name> (issue #218) selects a consumer-declared container
-# from PIPELINE_EVAL_CONTAINERS. Only meaningful with --skill=evaluate-issue-pr
-# (other skills reject the flag). --classifier-passthrough=<token> is the
-# wrapper format the pre-spawn classifier uses to ferry extra claude-CLI
-# tokens through run-queue.sh into the final CLAUDE_ARGV.
+# --classifier-passthrough=<token> is the wrapper format the pre-spawn
+# classifier uses to ferry extra claude-CLI tokens through run-queue.sh
+# into the final CLAUDE_ARGV.
 while [ $# -gt 0 ]; do
   case "$1" in
     --dangerously-skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
     --skill) SKILL="$2"; shift 2 ;;
     --manual-merge) MANUAL_MERGE_ARG="--manual-merge"; shift ;;
-    --container-mode=*) CONTAINER_MODE="${1#--container-mode=}"; shift ;;
     --classifier-passthrough=*) EXTRA_CLAUDE_ARGV+=("${1#--classifier-passthrough=}"); shift ;;
     *) break ;;
   esac
@@ -177,7 +170,7 @@ fi
 # it under `set -u` regardless of which branch is taken.
 EMPTY_MCP_FILE=""
 MCP_EXTRA_ARGV=()
-if [ "${HAS_NEEDS_BROWSER:-0}" = "0" ] && [ -z "${CONTAINER_MODE:-}" ]; then
+if [ "${HAS_NEEDS_BROWSER:-0}" = "0" ]; then
   EMPTY_MCP_FILE=$(mktemp /tmp/claude-mcp-empty-XXXXXX.json)
   printf '%s\n' '{"mcpServers": {}}' > "$EMPTY_MCP_FILE"
   MCP_EXTRA_ARGV=(--mcp-config "$EMPTY_MCP_FILE" --strict-mcp-config)
@@ -317,240 +310,6 @@ if [ -n "${PIPELINE_CI_FIX_CONTEXT:-}" ]; then
   } >> "$APPEND_PROMPT_FILE"
 fi
 
-# --- Inline browser-eval dispatch gate (issue #517) ---
-# When --container-mode=<name> is set AND PIPELINE_EVAL_ISOLATION != container,
-# the consumer has opted into the inline Agent dispatch path: the classifier's
-# container-mode token is reinterpreted as a *browser-eval surface* hint, not
-# a docker-compose dispatch directive. spawn-claude exports INLINE_BROWSER_EVAL=1
-# so downstream tooling (run-queue.sh launch_agent, the evaluate-issue-pr skill)
-# can branch on it, and short-circuits BEFORE building DOCKER_PREFIX, validating
-# the container allowlist, or running the preflight.
-#
-# Precondition: the host must expose a Playwright MCP entry in $REPO_ROOT/.mcp.json
-# (probed with `jq -e .mcpServers.playwright`). If the entry is missing, exit 6
-# with a loud refusal — the inline path needs host Playwright to drive the
-# browser; the operator's remediation is to install Playwright MCP or pin the
-# legacy container path via PIPELINE_EVAL_ISOLATION=container.
-#
-# Validation: PIPELINE_EVAL_ISOLATION=container is only honored when the
-# --container-mode value also resolves under PIPELINE_EVAL_CONTAINERS; otherwise
-# control falls through to the existing exit-4 path emitted by the container
-# allowlist block below.
-INLINE_BROWSER_EVAL=0
-if [ -n "$CONTAINER_MODE" ] && [ "${PIPELINE_EVAL_ISOLATION:-}" != "container" ]; then
-  # Host-Playwright MCP probe (orchestrator project root). Fail-closed: if jq
-  # is missing or the file lacks a .mcpServers.playwright key, exit 6.
-  _mcp_file="${REPO_ROOT}/.mcp.json"
-  _mcp_ok=0
-  if command -v jq >/dev/null 2>&1 && [ -f "$_mcp_file" ]; then
-    if jq -e .mcpServers.playwright "$_mcp_file" >/dev/null 2>&1; then
-      _mcp_ok=1
-    fi
-  fi
-  if [ "$_mcp_ok" -ne 1 ]; then
-    echo "[spawn-claude] ERROR: PR ${ISSUE_NUM} requires browser eval but host Playwright MCP not detected. Install playwright MCP or set PIPELINE_EVAL_ISOLATION=container." >&2
-    exit 6
-  fi
-  INLINE_BROWSER_EVAL=1
-  export INLINE_BROWSER_EVAL
-  echo "[spawn-claude] inline browser-eval dispatch for issue #$ISSUE_NUM (CONTAINER_MODE=$CONTAINER_MODE, PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-})" >&2
-  # --- Inline-branch fail-fast exit (issue #517 must-fix 1) ---
-  # The inline browser-eval path is owned by run-queue.sh: it emits the
-  # `EVENT: dispatch-inline` line and the in-process Agent dispatcher picks
-  # up the slate. spawn-claude.sh has nothing to do on this branch — we
-  # must NOT fall through to DOCKER_PREFIX assembly, BUILD_ARGV, or a bare-
-  # host claude launch (the latter would silently regress the contract for
-  # any direct operator invocation that has ISOLATION unset and lands here).
-  # Emit the dry-run dump when requested (so Test (b) and any future
-  # observability still sees the resolved state), then exit 0.
-  if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
-    echo "PATH_LETTER=$PATH_LETTER"
-    echo "GENERATED_SESSION_ID=$GENERATED_SESSION_ID"
-    echo "RUNS_LOG=$RUNS_LOG"
-    echo "RUNS_LOG_LINE=$(tail -1 "$RUNS_LOG")"
-    echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
-    echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
-    echo "CONTAINER_MODE=$CONTAINER_MODE"
-    echo "INLINE_BROWSER_EVAL=$INLINE_BROWSER_EVAL"
-    echo "PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-}"
-    # NOTE: no DOCKER_PREFIX line — inline branch never assembled one.
-    # NOTE: no BUILD_ARGV banner — inline branch never assembled argv.
-  fi
-  exit 0
-fi
-
-# --- Container-mode dispatch (issue #218) ---
-# When --container-mode=<name> is set, validate the name against
-# PIPELINE_EVAL_CONTAINERS, run the optional preflight, and build a
-# `docker compose run --rm ... <service>` prefix that wraps the `claude`
-# launch invocation. The prefix is exported through BUILD_ARGV as the
-# LAUNCH_CMD bash array, which each launcher mode uses in place of the
-# bare `claude` executable when emitting the final CMD.
-#
-# When INLINE_BROWSER_EVAL=1 (issue #517), this whole block is skipped:
-# the allowlist check, the #238 enforcement re-classification, and the
-# DOCKER_PREFIX assembly all live behind the `if [ "$INLINE_BROWSER_EVAL" != "1" ]`
-# guard so the dry-run dump (and the production launcher) never see a
-# docker prefix on the inline path.
-DOCKER_PREFIX=()
-# --- container-mode skill allowlist (issue #321) ---
-# PIPELINE_CONTAINER_SKILLS is a space-separated list of skill names that
-# may be dispatched via --container-mode=<name>. Default (when the var is
-# UNSET) is "evaluate-issue-pr" — preserves the #218 behavior so existing
-# consumers see zero behavior change. EMPTY string ("") is distinct from
-# unset: it disables container dispatch for ALL skills. Consumers opt
-# additional skills in by listing them in pipeline.config — see
-# pipeline.config.example.
-#
-# Use the ${VAR-default} expansion (NO colon) so empty stays empty.
-# ${VAR:-default} would silently rebind empty -> default and break the
-# operator's intent to disable.
-if [ -n "$CONTAINER_MODE" ] && [ "$INLINE_BROWSER_EVAL" != "1" ]; then
-  _container_skills_allowlist="${PIPELINE_CONTAINER_SKILLS-evaluate-issue-pr}"
-  # empty allowlist == disable; do not "simplify" — empty-line grep gives the correct rejection.
-  if ! printf '%s\n' $_container_skills_allowlist | tr ' ' '\n' | grep -qx "$SKILL"; then
-    # --- label-aware container-mode permit for execute-issue-plan (issue #368) ---
-    # Do NOT widen the static allowlist; instead grant a per-invocation permit
-    # when the issue carries the needs-browser label. This lets a planned
-    # browser-dependent execution run in the eval container without opening the
-    # gate to every skill. Query labels with the same fail-closed idiom used at
-    # line ~127 (if VAR="$(... 2>/dev/null)"; then ... else <reject> fi) so a
-    # non-zero gh routes to the reject branch instead of aborting under set -e.
-    # gh-failure and unset-ISSUE_NUM both FAIL CLOSED (keep the rejection).
-    if [ "$SKILL" = "execute-issue-plan" ] && [ -n "$CONTAINER_MODE" ] && [ -n "$ISSUE_NUM" ]; then
-      if _nb_labels="$(gh issue view "$ISSUE_NUM" --repo "$PIPELINE_REPO" --json labels --jq '.labels[].name' 2>/dev/null)"; then
-        if printf '%s\n' "$_nb_labels" | grep -qx "needs-browser"; then
-          echo "[spawn-claude] container-mode permitted for execute-issue-plan via needs-browser label" >&2
-          # permit: skip the rejection (do NOT exit 4)
-        else
-          echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
-          exit 4
-        fi
-      else
-        # gh failed -> FAIL CLOSED: keep the existing rejection
-        echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
-        exit 4
-      fi
-    else
-      echo "[spawn-claude] ERROR: container-mode rejected: skill '$SKILL' not in PIPELINE_CONTAINER_SKILLS allowlist (current: $_container_skills_allowlist)" >&2
-      exit 4
-    fi
-  fi
-fi
-# --- container-mode-required enforcement (issue #238) ---
-# When PIPELINE_EVAL_CLASSIFIER is set and the operator launched
-# evaluate-issue-pr WITHOUT --container-mode=<name>, re-run the classifier
-# to ask "would you have emitted a container-mode token?" If yes, fail
-# closed with exit 5. Blocks the silent bare-host-evaluator-runs-and-approves
-# race documented in #238: a stale consumer-copy of this script that
-# lacks --container-mode parsing would otherwise pre-empt the operator's
-# container-path re-dispatch. Fail-open when the classifier is unset, the
-# skill is not evaluate-issue-pr, the flag is already set, or the
-# ${CLAUDE_PLUGIN_ROOT}/scripts/eval-classifier-invoke.sh helper is missing / exits non-zero.
-if [ -z "$CONTAINER_MODE" ] \
-   && [ "$INLINE_BROWSER_EVAL" != "1" ] \
-   && [ "$SKILL" = "evaluate-issue-pr" ] \
-   && [ -n "${PIPELINE_EVAL_CLASSIFIER:-}" ]; then
-  _classifier_invoke="${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh"
-  if [ -f "$_classifier_invoke" ]; then
-    set +e
-    _classifier_out="$(PIPELINE_EVAL_CLASSIFIER="$PIPELINE_EVAL_CLASSIFIER" PIPELINE_PROJECT_ROOT="$REPO_ROOT" PIPELINE_REPO="${PIPELINE_REPO:-}" bash "$_classifier_invoke" "$ISSUE_NUM" 2>/dev/null)"
-    _classifier_rc=$?
-    set -e
-    if [ "$_classifier_rc" -eq 0 ] && \
-       printf '%s\n' "$_classifier_out" | grep -q '^--container-mode='; then
-      _wanted_mode="$(printf '%s\n' "$_classifier_out" | grep '^--container-mode=' | head -1)"
-      echo "[spawn-claude] ERROR: classifier wants container dispatch but --container-mode not passed" >&2
-      echo "  classifier emitted: ${_wanted_mode}" >&2
-      echo "  Re-run after cd-ing to the project root: cd <project-root> && PIPELINE_PROJECT_ROOT=\"\$PWD\" bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/eval-classifier-invoke.sh ${ISSUE_NUM} | xargs bash \${CLAUDE_PLUGIN_ROOT:-.}/scripts/spawn-claude.sh --skill evaluate-issue-pr ..." >&2
-      exit 5
-    fi
-  fi
-fi
-if [ -n "$CONTAINER_MODE" ] && [ "$INLINE_BROWSER_EVAL" != "1" ]; then
-  if ! printf '%s\n' ${PIPELINE_EVAL_CONTAINERS:-} | tr ' ' '\n' | grep -qx "$CONTAINER_MODE"; then
-    echo "[spawn-claude] ERROR: container-mode '$CONTAINER_MODE' not declared in PIPELINE_EVAL_CONTAINERS" >&2
-    exit 4
-  fi
-  # Source the case-insensitive env-var resolver (#336). UPPERCASE wins,
-  # lowercase falls back. Idempotent guard: only source once per process.
-  # Fall back to an inline definition when the helper is missing (mirrors
-  # the _logging.sh pattern above) so tests that copy spawn-claude.sh in
-  # isolation never hard-fail. The fallback body MUST stay identical to
-  # scripts/_resolve-container-var.sh.
-  if ! declare -f _resolve_container_var >/dev/null 2>&1; then
-    _resolver="${CLAUDE_PLUGIN_ROOT:-$_spawn_claude_dir}/scripts/_resolve-container-var.sh"
-    [ -f "$_resolver" ] || _resolver="${_spawn_claude_dir}/_resolve-container-var.sh"
-    if [ -f "$_resolver" ]; then
-      # shellcheck source=/dev/null
-      . "$_resolver"
-    else
-      _resolve_container_var() {
-        local mode="$1" suffix="$2"
-        local norm_lower norm_upper var_upper var_lower
-        norm_lower="$(echo "$mode" | tr '-' '_')"
-        norm_upper="$(echo "$norm_lower" | tr '[:lower:]' '[:upper:]')"
-        var_upper="PIPELINE_EVAL_CONTAINER_${norm_upper}_${suffix}"
-        var_lower="PIPELINE_EVAL_CONTAINER_${norm_lower}_${suffix}"
-        printf '%s' "${!var_upper:-${!var_lower:-}}"
-      }
-    fi
-  fi
-  norm_mode_upper="$(echo "$CONTAINER_MODE" | tr '-' '_' | tr '[:lower:]' '[:upper:]')"
-  COMPOSE_FILE="$(_resolve_container_var "$CONTAINER_MODE" COMPOSE_FILE)"
-  ENV_FILE="$(_resolve_container_var "$CONTAINER_MODE" ENV_FILE)"
-  SERVICE="$(_resolve_container_var "$CONTAINER_MODE" SERVICE)"
-  PREFLIGHT="$(_resolve_container_var "$CONTAINER_MODE" PREFLIGHT_CMD)"
-  # Error messages name the UPPERCASE form (the recommended/canonical idiom)
-  # so new consumers see the canonical name first. Lowercase setups still
-  # resolve via the fallback; they only see this name on a missing-var
-  # error, in which case they're steered to UPPERCASE.
-  compose_var="PIPELINE_EVAL_CONTAINER_${norm_mode_upper}_COMPOSE_FILE"
-  svc_var="PIPELINE_EVAL_CONTAINER_${norm_mode_upper}_SERVICE"
-  # Resolve a relative ENV_FILE to absolute against WORKTREE_PATH BEFORE
-  # DOCKER_PREFIX is assembled. The probe (mock-web-eval/scripts/mock-web-eval-probe-port.sh)
-  # writes the env file under PIPELINE_WORKTREE_PATH so concurrent worktrees
-  # don't race on a shared file; the reader here must agree. Absolute paths
-  # are passed through verbatim. (#269; supersedes the REPO_ROOT base from #257.)
-  if [ -n "$ENV_FILE" ] && [[ "$ENV_FILE" != /* ]]; then
-    ENV_FILE="$WORKTREE_PATH/$ENV_FILE"
-  fi
-  if [ -z "$COMPOSE_FILE" ]; then
-    echo "[spawn-claude] ERROR: COMPOSE_FILE required for mode=$CONTAINER_MODE (set $compose_var)" >&2
-    exit 4
-  fi
-  if [ -z "$SERVICE" ]; then
-    echo "[spawn-claude] ERROR: SERVICE required for mode=$CONTAINER_MODE (set $svc_var)" >&2
-    exit 4
-  fi
-  if [ -n "$PREFLIGHT" ]; then
-    echo "PREFLIGHT: running ($PREFLIGHT)" >&2
-    if PIPELINE_PROJECT_ROOT="$REPO_ROOT" PIPELINE_WORKTREE_PATH="$WORKTREE_PATH" bash -c "$PREFLIGHT"; then
-      echo "PREFLIGHT: pass" >&2
-    else
-      rc=$?
-      echo "[spawn-claude] ERROR: container-mode preflight failed (rc=$rc) for mode=$CONTAINER_MODE" >&2
-      exit "$rc"
-    fi
-  fi
-  DOCKER_PREFIX=(docker compose)
-  [ -n "$ENV_FILE" ] && DOCKER_PREFIX+=(--env-file "$ENV_FILE")
-  DOCKER_PREFIX+=(-f "$COMPOSE_FILE" run --rm \
-    -e "CLAUDE_PIPELINE_ISSUE_NUMBER=$ISSUE_NUM" \
-    -e "CLAUDE_PIPELINE_SKILL=$SKILL" \
-    -e "PIPELINE_PROJECT_ROOT=$REPO_ROOT" \
-    -e "PIPELINE_WORKTREE_PATH=$WORKTREE_PATH")
-  # Bug 2 (#257): propagate --manual-merge into the containerized evaluator.
-  # The host export at line 43 only affects this script's env, not the
-  # in-container claude process; docker compose run isolates env unless we
-  # pass -e explicitly. Insert BEFORE "$SERVICE" so compose treats it as a
-  # per-run env var, not a positional arg to the service.
-  if [ -n "$MANUAL_MERGE_ARG" ]; then
-    DOCKER_PREFIX+=(-e "MANUAL_MERGE=1")
-  fi
-  DOCKER_PREFIX+=("$SERVICE")
-fi
-
 # Build-claude-argv snippet injected into each mode's launcher. Using bash
 # arrays + printf %q keeps multi-line system-prompt payloads intact.
 # $SYSPROMPT_FILE is the payload file path, or empty when no directive applies.
@@ -558,15 +317,11 @@ fi
 # emitted into runs.log, so PostToolUse hook payloads join 1:1 across
 # tool-use.log / subagents.log and runs.log.
 #
-# LAUNCH_CMD wraps `claude` so the launcher can transparently invoke either
-# the bare CLI or a containerized variant (`docker compose run --rm ...
-# <service> claude`) depending on whether --container-mode was passed.
+# LAUNCH_CMD wraps `claude` directly (container-isolation dispatch was
+# removed in #514; web-eval is inline-only via the needs-browser label).
 # EXTRA_CLAUDE_ARGV holds tokens forwarded from the pre-spawn classifier via
 # --classifier-passthrough=<token>; they are appended verbatim.
 _launch_cmd_quoted="claude"
-if [ ${#DOCKER_PREFIX[@]} -gt 0 ]; then
-  _launch_cmd_quoted="$(printf '%q ' "${DOCKER_PREFIX[@]}")claude"
-fi
 # One `CLAUDE_ARGV+=(<tok>)` line per classifier-passthrough token.
 _extra_argv_lines=""
 for tok in ${EXTRA_CLAUDE_ARGV[@]+"${EXTRA_CLAUDE_ARGV[@]}"}; do
@@ -603,13 +358,6 @@ if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
   echo "RUNS_LOG_LINE=$(tail -1 "$RUNS_LOG")"
   echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
   echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
-  echo "CONTAINER_MODE=$CONTAINER_MODE"
-  echo "INLINE_BROWSER_EVAL=$INLINE_BROWSER_EVAL"
-  echo "PIPELINE_EVAL_ISOLATION=${PIPELINE_EVAL_ISOLATION:-}"
-  if [ ${#DOCKER_PREFIX[@]} -gt 0 ]; then
-    # Flattened DOCKER_PREFIX so tests can substring-match individual tokens.
-    echo "DOCKER_PREFIX=${DOCKER_PREFIX[*]}"
-  fi
   echo "=== BUILD_ARGV ==="
   echo "$BUILD_ARGV"
   echo "=== END BUILD_ARGV ==="

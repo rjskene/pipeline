@@ -47,9 +47,6 @@ setup_proj() {
   mkdir -p "$proj/.claude/scripts" "$proj/.claude/logs" "$proj/mock-web-eval/scripts"
   cp "$SCRIPT_UNDER_TEST" "$proj/.claude/scripts/run-queue.sh"
   cp "$SCRIPT_DIR/../scripts/_logging.sh" "$proj/.claude/scripts/_logging.sh"
-  # run-queue.sh sources _resolve-container-var.sh from SCRIPT_DIR (#336);
-  # colocate it next to run-queue.sh in the fixture.
-  cp "$SCRIPT_DIR/../scripts/_resolve-container-var.sh" "$proj/.claude/scripts/_resolve-container-var.sh"
   chmod +x "$proj/.claude/scripts/run-queue.sh"
   # Stub spawn-claude.sh: logs argv and exits 0
   cat > "$proj/.claude/scripts/spawn-claude.sh" <<'EOF'
@@ -193,8 +190,6 @@ PIPELINE_REPO="fake/repo"
 PIPELINE_BASE_BRANCH="staging"
 PIPELINE_WORKTREE_PREFIX="wt"
 PIPELINE_TMUX_SESSION="fake"
-PIPELINE_EVAL_CLASSIFIER=""
-PIPELINE_EVAL_CONTAINERS=""
 EOF
 }
 
