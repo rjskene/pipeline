@@ -118,8 +118,19 @@ PIPELINE_STALL_POLL_THRESHOLD="${PIPELINE_STALL_POLL_THRESHOLD:-5}"
 # Subtree-aggregate CPU at or below this percentage counts as idle and bumps the
 # consecutive-idle-polls counter (issue #464). Strict zero missed the #456 wedge
 # where the parent claude drained a stuck subprocess's pipe at ~2% CPU. Set to 0
-# to restore the old strict-zero semantics.
+# to restore the old strict-zero semantics. Multi-sampling
+# (`PIPELINE_STALL_SAMPLES_PER_POLL`, default 3) takes the max subtree-CPU across
+# samples within a poll before comparing — see issue #592.
 PIPELINE_STALL_CPU_THRESHOLD="${PIPELINE_STALL_CPU_THRESHOLD:-5}"
+# Number of process-table snapshots to take per poll. Multi-sampling smooths
+# over short-lived bash children spawned by claude tool calls — `ps` reports
+# lifetime-average %cpu, so a single instant snapshot routinely undercounts a
+# busy-but-bursty subtree (issue #592). The per-poll CPU reading fed into the
+# latch is the MAX across all samples. Set to 1 to restore single-sample
+# semantics. Each additional sample adds `PIPELINE_STALL_SAMPLE_INTERVAL_SEC`
+# seconds of wall-clock latency to the poll loop.
+PIPELINE_STALL_SAMPLES_PER_POLL="${PIPELINE_STALL_SAMPLES_PER_POLL:-3}"
+PIPELINE_STALL_SAMPLE_INTERVAL_SEC="${PIPELINE_STALL_SAMPLE_INTERVAL_SEC:-1}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
@@ -369,8 +380,11 @@ is_agent_running() {
 # stall counter advancing.
 #
 # Args: $1=issue, $2=process snapshot (output of `ps -eo pid=,ppid=,%cpu=`).
-# The snapshot is captured once per poll by the caller to avoid 2N ps forks per
-# poll over N active agents.
+# The caller captures PIPELINE_STALL_SAMPLES_PER_POLL snapshots per poll
+# (issue #592) and feeds each one through this function, taking the MAX
+# subtree-CPU across samples before comparing against the threshold. This
+# function itself is unchanged — it still scopes the subtree from a single
+# snapshot.
 get_agent_cpu_pct() {
   local issue="$1"
   local snapshot="$2"
@@ -607,16 +621,36 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
   drain_pending_file
   fill_slots
 
-  # One process-table snapshot per poll, shared across all active agents (issue
-  # #437). Captured here so each call to get_agent_cpu_pct doesn't re-fork ps.
-  PS_SNAPSHOT=$(ps -eo pid=,ppid=,%cpu= 2>/dev/null || echo "")
+  # Multi-sample process-table snapshots per poll (issue #592). `ps` reports
+  # lifetime-average %cpu, so a single instant snapshot routinely undercounts
+  # short-lived bash children spawned by claude tool calls. Take
+  # PIPELINE_STALL_SAMPLES_PER_POLL snapshots ~1s apart and feed each through
+  # the per-agent subtree summer; the caller's reading is the max across
+  # samples. Snapshots are shared across all active agents so we still avoid
+  # 2N ps forks (issue #437).
+  PS_SNAPSHOTS=()
+  for _ in $(seq 1 "$PIPELINE_STALL_SAMPLES_PER_POLL"); do
+    PS_SNAPSHOTS+=("$(ps -eo pid=,ppid=,%cpu= 2>/dev/null || echo "")")
+    [ "$PIPELINE_STALL_SAMPLES_PER_POLL" -gt 1 ] && sleep "$PIPELINE_STALL_SAMPLE_INTERVAL_SEC"
+  done
 
   # Check each active agent
   for issue in "${!ACTIVE[@]}"; do
     # Stall detection (issue #437): track consecutive low-CPU polls (subtree
     # aggregate <= PIPELINE_STALL_CPU_THRESHOLD) and emit a single latched EVENT
-    # line per stall window. Observe-only — no kill.
-    cpu=$(get_agent_cpu_pct "$issue" "$PS_SNAPSHOT")
+    # line per stall window. Observe-only — no kill. The CPU reading is the
+    # max subtree-aggregate across PIPELINE_STALL_SAMPLES_PER_POLL snapshots
+    # (issue #592) so bursty workers (claude tool-calls spinning short-lived
+    # bash children) don't get falsely flagged.
+    cpu="0.0"
+    for _snap in "${PS_SNAPSHOTS[@]}"; do
+      _s=$(get_agent_cpu_pct "$issue" "$_snap")
+      _s_int=${_s%%.*}; _s_int=${_s_int:-0}
+      _c_int=${cpu%%.*}; _c_int=${_c_int:-0}
+      case "$_s_int" in ''|*[!0-9]*) _s_int=0 ;; esac
+      case "$_c_int" in ''|*[!0-9]*) _c_int=0 ;; esac
+      if [ "$_s_int" -gt "$_c_int" ]; then cpu="$_s"; fi
+    done
     cpu_int=${cpu%%.*}; cpu_int=${cpu_int:-0}
     # Digit-guard: if ps returned junk, coerce to 0 so the `-le` test below
     # never errors on a non-numeric operand (which would abort the runner).

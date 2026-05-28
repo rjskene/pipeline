@@ -86,6 +86,29 @@ else
 fi
 rm -rf "$TMP3"
 
+# ---- Test 4: stale plugin-cache invocation bails clean with hint ----
+# Reproduces #593: when CLAUDE_PLUGIN_ROOT is pinned to a stale cache version
+# (e.g. /home/rjskene/.claude/plugins/cache/claude-pipeline/pipeline/0.9.0)
+# and PIPELINE_PROJECT_ROOT is unset, the walk-up from the script's own
+# location cannot resolve a consumer repo. The fix is a cosmetic short-circuit
+# that exits 0 with an actionable hint instead of letting the queue runner's
+# poll loop emit a recurring "could not locate consumer repo" line.
+echo "Test 4: stale plugin-cache invocation bails clean with hint"
+TMP4="$(mktemp -d)"
+mkdir -p "$TMP4/cache/claude-pipeline/pipeline/0.9.0/scripts"
+cp "$SCRIPT" "$TMP4/cache/claude-pipeline/pipeline/0.9.0/scripts/queue-status.sh"
+chmod +x "$TMP4/cache/claude-pipeline/pipeline/0.9.0/scripts/queue-status.sh"
+OUT4=$(env -u PIPELINE_PROJECT_ROOT bash "$TMP4/cache/claude-pipeline/pipeline/0.9.0/scripts/queue-status.sh" 2>&1)
+rc4=$?
+if [ "$rc4" -eq 0 ] \
+   && echo "$OUT4" | grep -q "stale CLAUDE_PLUGIN_ROOT" \
+   && ! echo "$OUT4" | grep -q "pipeline.config: No such file"; then
+  _pass "Test 4: stale cache short-circuit (rc=0, hint emitted, no source-error noise)"
+else
+  _fail "Test 4: stale cache invocation did not short-circuit cleanly (rc=$rc4)" "$OUT4"
+fi
+rm -rf "$TMP4"
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

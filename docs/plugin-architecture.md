@@ -4,7 +4,7 @@ Pipeline assets live outside the consumer project. The plugin installs to `~/.cl
 
 ## Consumer-required rendered scripts
 
-Post-#215/#223, plugin skills invoke worktree/dispatch helpers as `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh` directly; the consumer `.claude/scripts/` mirror has been retired. The doctor's `.template-branch` in `doctor.sh` is dead code retained for legacy subtree consumers and will be removed in a follow-up.
+Post-#215/#223, plugin skills invoke worktree/dispatch helpers as `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh` directly; the consumer `.claude/scripts/` mirror has been retired. The doctor's legacy `.template-branch` probe (formerly retained for subtree consumers) has since been removed from `doctor.sh`.
 
 ## Consumer config
 

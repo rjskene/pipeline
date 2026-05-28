@@ -154,7 +154,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    done
    ```
 
-   **6b. Visual proof verdict (needs-browser issues only).** If the issue carries the needs-browser label, invoke `Skill(skill: "pipeline:visual-proof-from-plan")` in this clean-container session and parse its JSON output. For every entry in `unsatisfied`, the verdict MUST be Flagged for user review — record the claim and the failing artifact path/URL in the **Remaining issues** row. This is the load-bearing trust layer; `satisfied` predicates from the executor session do NOT carry over.
+   **6b. Visual proof verdict (needs-browser issues only).** If the issue carries the needs-browser label, invoke `Skill(skill: "pipeline:visual-proof-from-plan")` in this evaluator session and parse its JSON output. For every entry in `unsatisfied`, the verdict MUST be Flagged for user review — record the claim and the failing artifact path/URL in the **Remaining issues** row. This is the load-bearing trust layer; `satisfied` predicates from the executor session do NOT carry over.
 
    **6c. Inline-mode visual proof setup** (issue #517, #527 — applies when invoked via the inline Agent dispatch for browser-eval, dispatch mode #3 above). Before any `browser_navigate` / `browser_evaluate` call, bootstrap the loopback server via the single-responsibility helper `scripts/visual-proof-server-start.sh` (composes the port broker + starts `python3 -m http.server --directory <target> --bind 127.0.0.1` + readiness probe). The helper allocates the port itself, so this path no longer depends on the orchestrator pre-resolving `$PORT`:
    ```bash
