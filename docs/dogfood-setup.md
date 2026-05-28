@@ -36,11 +36,11 @@ What it does (idempotent, re-run safe):
 1. Adds a `claude-pipeline-local` entry in
    `~/.claude/plugins/known_marketplaces.json` whose `installLocation`
    is the repo working tree itself. The `source` is
-   `{"source": "local", "path": "<abs-repo-root>"}` — chosen by
-   empirical analogy to the existing `github`-discriminator entries in
-   the same file. If your version of Claude Code rejects that shape at
-   `/plugin install` time, see the **Schema fallback** subsection
-   below.
+   `{"source": "file", "path": "<abs-repo-root>"}` — the discriminator
+   value Claude Code accepts for a local marketplace registration. See
+   the **Schema fallback** subsection below for the history (the
+   initial implementation in #611 guessed `"local"`, which Claude Code
+   rejected at `/plugin install` time; #617 corrected it to `"file"`).
 2. Removes any cached `pipeline@claude-pipeline` install entries from
    `~/.claude/plugins/installed_plugins.json` so the published-install
    and dogfood-install do not collide.
@@ -110,28 +110,35 @@ local-install entries and prints the manual
 
 ## Schema fallback (research note)
 
-The chosen `known_marketplaces.json` shape for a local marketplace is:
+The canonical `known_marketplaces.json` shape for a local marketplace is:
 
 ```json
 {
   "claude-pipeline-local": {
-    "source": {"source": "local", "path": "/abs/path/to/repo"},
+    "source": {"source": "file", "path": "/abs/path/to/repo"},
     "installLocation": "/abs/path/to/repo",
     "lastUpdated": "<ISO-8601>"
   }
 }
 ```
 
-This shape was chosen by empirical analogy to the existing `github`
-discriminator (e.g., the `claude-plugins-official` entry uses
-`source: {source: "github", repo: "..."}`). If your Claude Code
-version rejects it at `/plugin install` time:
+History: #611's initial implementation guessed
+`source: {source: "local", path: ...}` by empirical analogy to the
+existing `github` discriminator (e.g., the `claude-plugins-official`
+entry uses `source: {source: "github", repo: "..."}`). Claude Code
+rejected that shape at `/plugin install` time. #617 pinned the
+verified-working discriminator to `"file"` — known-broken alternates
+documented for posterity:
 
-1. Try `source: {source: "file", path: "..."}`.
-2. Try `source: {source: "local", url: "file:///abs/path"}`.
+1. **Known-broken:** `source: {source: "local", path: "..."}` —
+   rejected by Claude Code's marketplace-schema validation (#611's
+   guess; #617's fix supersedes).
+2. **Unverified fallback:** `source: {source: "local", url: "file:///abs/path"}` —
+   never confirmed to work; preserved here only as a research note.
 
-File a follow-up issue with the rejection error so the canonical
-shape can be pinned in `scripts/setup-dogfood-local.sh`.
+If a future Claude Code release rejects `"file"`, file a follow-up
+issue with the rejection error so the canonical shape can be re-pinned
+in `scripts/setup-dogfood-local.sh`.
 
 ## `_resolve-plugin-root.sh` compatibility (open follow-up)
 
