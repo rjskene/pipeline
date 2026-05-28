@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.20.0-rc.3](https://github.com/rjskene/pipeline/compare/v0.19.0-rc.3...v0.20.0-rc.3) (2026-05-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **spawn-claude:** PIPELINE_EVAL_ISOLATION=container removed; web-eval is inline-only. PIPELINE_EVAL_CLASSIFIER, PIPELINE_CONTAINER_SKILLS, PIPELINE_EVAL_CONTAINERS, and PIPELINE_EVAL_CONTAINER_<MODE>_* are no longer read. Operators previously opting into container dispatch should remove these vars from pipeline.config.
+
+### Features
+
+* **compliance-audit:** retroactive TDD-compliance backfill wrapper ([5a64f66](https://github.com/rjskene/pipeline/commit/5a64f66444c39fe6f2720c36a917f6913046a0bf)), closes [#575](https://github.com/rjskene/pipeline/issues/575)
+* **compliance-audit:** retroactive TDD-compliance verdict over recent merged PRs (dogfood batch) ([73da95a](https://github.com/rjskene/pipeline/commit/73da95ab104c138049f02780b0faad4883968577))
+* **dynamic-effort:** record requested model in gated runs.log write ([c410240](https://github.com/rjskene/pipeline/commit/c410240201df02a2519637c9713630f864e79479))
+* **late-error-report:** implement scripts/late-error-report.sh ([#574](https://github.com/rjskene/pipeline/issues/574)) ([f052b91](https://github.com/rjskene/pipeline/commit/f052b91c5758ef93b9ffd1ac9e3e2fbc2a4e8114))
+* **late-errors:** late-error measurement report — categorize merged-PR eval findings by earliest-detectable stage ([72128b9](https://github.com/rjskene/pipeline/commit/72128b99f7a3ec2326681fee72a38253b1647e0f))
+* **mock-web-eval:** add 'Clear all' button markup to list section ([506eccd](https://github.com/rjskene/pipeline/commit/506eccd55515b4005ace36bcbeeeb789a5a78713))
+* **mock-web-eval:** add 'Clear all' button to list section that removes all items ([526ce71](https://github.com/rjskene/pipeline/commit/526ce715b1b8157755bdc9868252a014651b6030))
+* **mock-web-eval:** wire 'Clear all' handler to empty #item-list ([8973bf3](https://github.com/rjskene/pipeline/commit/8973bf39bfb099e725344420289dddf7e79d3709))
+* **self-improvement:** daily metrics-snapshot time-series + host cron ([5fe2f00](https://github.com/rjskene/pipeline/commit/5fe2f00fca590471a907f3b1671519d480e00443))
+* **self-improvement:** daily metrics-snapshot time-series + host cron ([53f1cd5](https://github.com/rjskene/pipeline/commit/53f1cd54ab65e6439c244d97f3a607eaf9273c92)), closes [#576](https://github.com/rjskene/pipeline/issues/576)
+* **spawn-claude:** record requested model on gated runs.log write ([f9a28ff](https://github.com/rjskene/pipeline/commit/f9a28fff3605b5c6eb883e10c03994c55a81c679))
+
+
+### Bug Fixes
+
+* **review:** drop classifier from spawned-agent enumeration ([98e0f06](https://github.com/rjskene/pipeline/commit/98e0f0691d3b89cedb643c851ef868fd3516ccc2)), closes [#514](https://github.com/rjskene/pipeline/issues/514)
+* **review:** quote fixture-path args and warn on worktree install-cron ([33dec8e](https://github.com/rjskene/pipeline/commit/33dec8e620b58dcb4faba715b5d7287974fe3d74))
+
+
+### Code Refactoring
+
+* **spawn-claude:** remove container isolation branch ([32f023a](https://github.com/rjskene/pipeline/commit/32f023a58589399ca182f989bb92e583a1fae8e5))
+
 ## [0.18.0](https://github.com/rjskene/pipeline/compare/v0.18.0...v0.18.0) (2026-05-26)
 
 
