@@ -92,18 +92,21 @@ LATE_ERROR_BIN="${REPO_ROOT}/scripts/late-error-report.sh"
 COMPLIANCE_BIN="${REPO_ROOT}/scripts/compliance-backfill.sh"
 REVIEW_AUDITS_BIN="${REPO_ROOT}/scripts/review-audits.sh"
 
-# Resolve per-sibling fixture flags. In fixture mode each sibling reads its
-# own subdir; in live mode the flags stay empty so each sibling hits `gh`.
-OE_FIX=""; LE_FIX=""; CB_FIX=""
+# Resolve per-sibling fixture flags as arrays so paths containing spaces
+# (test tmpdirs, $HOME on some hosts) are preserved as a single arg. In
+# live mode the arrays stay empty so each sibling hits `gh`.
+OE_FIX=()
+LE_FIX=()
+CB_FIX=()
 if [ -n "$FIXTURE_DIR" ]; then
-  OE_FIX="--fixture ${FIXTURE_DIR}/over-eval"
-  LE_FIX="--fixture ${FIXTURE_DIR}/late-error"
-  CB_FIX="--fixture ${FIXTURE_DIR}/compliance"
+  OE_FIX=(--fixture "${FIXTURE_DIR}/over-eval")
+  LE_FIX=(--fixture "${FIXTURE_DIR}/late-error")
+  CB_FIX=(--fixture "${FIXTURE_DIR}/compliance")
 fi
 
 # --- (2-A) over_eval_count ---
 # count of PRs in the window with pr_eval / max(loc,1) > 0.5
-if out=$(bash "$OVER_EVAL_BIN" $OE_FIX --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
+if out=$(bash "$OVER_EVAL_BIN" "${OE_FIX[@]}" --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
   if scalar=$(printf '%s' "$out" | jq -e '
         map(select(
           (.pr_eval | tonumber) /
@@ -120,7 +123,7 @@ fi
 
 # --- (2-B) late_error_count_by_stage ---
 # all four canonical stages present (zeros included); non-canonical stages pass through.
-if out=$(bash "$LATE_ERROR_BIN" $LE_FIX --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
+if out=$(bash "$LATE_ERROR_BIN" "${LE_FIX[@]}" --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
   if scalar=$(printf '%s' "$out" | jq -ec '
         {issue: 0, plan: 0, "plan-eval": 0, "pr-eval": 0}
         + (group_by(.stage) | map({(.[0].stage): length}) | add // {})
@@ -135,7 +138,7 @@ fi
 
 # --- (2-C) compliance_pass_rate ---
 # PASS / (PASS + SKIP); N/A and omitted excluded; null when denom == 0.
-if out=$(bash "$COMPLIANCE_BIN" $CB_FIX --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
+if out=$(bash "$COMPLIANCE_BIN" "${CB_FIX[@]}" --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
   if scalar=$(printf '%s' "$out" | jq -e '
         (map(select(.verdict == "PASS")) | length) as $pass
         | (map(select(.verdict == "PASS" or .verdict == "SKIP")) | length) as $denom

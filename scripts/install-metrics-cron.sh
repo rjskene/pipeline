@@ -27,6 +27,11 @@ Usage: install-metrics-cron.sh [--help]
   The operator pastes the line into `crontab -e` manually; this script
   does not mutate the live crontab.
 
+  Run from the canonical clone, not a worktree — the emitted `cd` path
+  is derived from the script's own location. If invoked inside a
+  worktree the script emits a stderr warning and the operator should
+  hand-edit the path before pasting.
+
   --help    Print this banner and exit 0.
 USAGE
 }
@@ -42,6 +47,14 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# A worktree's .git is a regular file (not a directory) pointing at the
+# main checkout's gitdir. Warn so the operator doesn't paste a worktree
+# path that may be torn down later.
+if [ -f "${REPO_ROOT}/.git" ]; then
+  echo "install-metrics-cron: WARN: running from a worktree (${REPO_ROOT})." >&2
+  echo "install-metrics-cron: WARN: rerun from your canonical clone, or hand-edit the cd path below." >&2
+fi
 
 cat <<EOF
 # Paste into \`crontab -e\` to run a daily metrics snapshot at 07:00 local.
