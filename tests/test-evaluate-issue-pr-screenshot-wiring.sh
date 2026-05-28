@@ -72,16 +72,18 @@ INLINE="awk '/Inline Agent dispatch \\(browser-eval/,/## Lifecycle/' '$SKILL'"
 
 assert "Invocation-mode section names inline Agent dispatch (browser-eval) as default" \
   "grep -q 'Inline Agent dispatch (browser-eval' '$SKILL'"
-assert "inline-mode bullet conditions on PIPELINE_EVAL_ISOLATION != container" \
-  "grep -qE 'PIPELINE_EVAL_ISOLATION[^a-zA-Z_]+!=[^a-zA-Z_]+container|PIPELINE_EVAL_ISOLATION.*!=.*container' '$SKILL'"
-assert "inline-mode bullet names --container-mode classifier emission" \
-  "$INLINE | grep -q -- '--container-mode'"
+assert "inline-mode bullet triggered by needs-browser label" \
+  "$INLINE | grep -q 'needs-browser'"
+assert "no PIPELINE_EVAL_ISOLATION references remain in SKILL.md" \
+  "! grep -q 'PIPELINE_EVAL_ISOLATION' '$SKILL'"
+assert "no --container-mode references remain in SKILL.md" \
+  "! grep -q -- '--container-mode' '$SKILL'"
+assert "no PIPELINE_EVAL_CLASSIFIER references remain in SKILL.md" \
+  "! grep -q 'PIPELINE_EVAL_CLASSIFIER' '$SKILL'"
+assert "Container dispatch admonition (issue #218) removed entirely" \
+  "! grep -q 'Container dispatch .issue #218' '$SKILL'"
 assert "inline-mode bullet preserves the durable raw.githubusercontent.com/<merge-sha>/.eval-screenshots substring" \
   "$INLINE | grep -qE 'raw\\.githubusercontent\\.com/<owner>/<repo>/<merge-sha>/\\.eval-screenshots/'"
-
-# Container-dispatch admonition must scope to ISOLATION=container only (issue #517).
-assert "container-dispatch admonition scopes to PIPELINE_EVAL_ISOLATION=container" \
-  "awk '/Container dispatch .issue #218/,/## Lifecycle/' '$SKILL' | grep -q 'PIPELINE_EVAL_ISOLATION=container'"
 
 # Step 6c — inline-mode visual proof setup sub-bullet (issue #517).
 S6C="awk '/\\*\\*6c\\. Inline-mode visual proof setup/,/^7\\. \\*\\*If fixable/' '$SKILL'"
