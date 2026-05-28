@@ -1,0 +1,4 @@
+{"number":202,"labels":[],"comments":[
+  {"body":"## Implementation Plan\nAdd the endpoint per acceptance criteria.","createdAt":"2026-05-11T08:00:00Z"},
+  {"body":"## Plan Evaluation\nMissing index on user_id — please address.","createdAt":"2026-05-11T09:00:00Z"}
+]}
