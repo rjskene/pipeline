@@ -11,7 +11,7 @@ set -euo pipefail
 # known_marketplaces.json schema written by this script:
 #   {
 #     "claude-pipeline-local": {
-#       "source": {"source": "local", "path": "<absolute-repo-root>"},
+#       "source": {"source": "file", "path": "<absolute-repo-root>"},
 #       "installLocation": "<absolute-repo-root>",
 #       "lastUpdated": "<ISO-8601 timestamp>"
 #     }
@@ -57,7 +57,7 @@ fi
 TMP_KM="$(mktemp)"
 jq --arg root "$REPO_ROOT" '
   .["claude-pipeline-local"] = {
-    source: {source: "local", path: $root},
+    source: {source: "file", path: $root},
     installLocation: $root,
     lastUpdated: (.["claude-pipeline-local"].lastUpdated // (now | strftime("%Y-%m-%dT%H:%M:%SZ")))
   }

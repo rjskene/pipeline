@@ -8,7 +8,7 @@ set -uo pipefail
 # Contract pinned by this test:
 #   - The marketplace entry's .installLocation equals the repo working tree root
 #     (so ${CLAUDE_PLUGIN_ROOT} resolves to the live tree).
-#   - The marketplace entry's .source has discriminator .source == "local" and
+#   - The marketplace entry's .source has discriminator .source == "file" and
 #     a .path equal to the repo working tree root.
 #   - Idempotence: re-running the script with the same HOME produces a
 #     byte-identical known_marketplaces.json (lastUpdated is preserved on
@@ -61,10 +61,10 @@ else
 fi
 
 SOURCE_DISC=$(jq -r '.["claude-pipeline-local"].source.source // ""' "$KM" 2>/dev/null || echo "")
-if [ "$SOURCE_DISC" = "local" ]; then
-  pass_msg ".source.source == \"local\""
+if [ "$SOURCE_DISC" = "file" ]; then
+  pass_msg ".source.source == \"file\""
 else
-  fail_msg ".source.source expected \"local\", got \"$SOURCE_DISC\""
+  fail_msg ".source.source expected \"file\", got \"$SOURCE_DISC\""
 fi
 
 SOURCE_PATH=$(jq -r '.["claude-pipeline-local"].source.path // ""' "$KM" 2>/dev/null || echo "")
