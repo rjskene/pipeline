@@ -94,6 +94,83 @@ else
   diff <(printf '%s' "$SNAPSHOT_1") <(printf '%s' "$SNAPSHOT_2") || true
 fi
 
+echo "Test: multi-project scrub preserves non-matching projectPath entries"
+# Fresh sandbox HOME so we don't collide with the prior test's seeded files.
+T2=$(mktemp -d)
+mkdir -p "$T2/.claude/plugins"
+printf '{}' > "$T2/.claude/plugins/known_marketplaces.json"
+IP2="$T2/.claude/plugins/installed_plugins.json"
+# Seed three pipeline@claude-pipeline entries: one matching this repo,
+# two non-matching synthetic projectPath values under /tmp.
+jq -n --arg repo_root "$REPO_ROOT" '
+  {
+    plugins: {
+      "pipeline@claude-pipeline": [
+        {projectPath: $repo_root, version: "0.20.1"},
+        {projectPath: "/tmp/other-project-a", version: "0.20.1"},
+        {projectPath: "/tmp/other-project-b", version: "0.20.1"}
+      ]
+    }
+  }
+' > "$IP2"
+
+HOME="$T2" bash "$HELPER" >/dev/null 2>&1
+RC3=$?
+if [ "$RC3" -eq 0 ]; then
+  pass_msg "multi-project run exit 0"
+else
+  fail_msg "multi-project run exit $RC3 (expected 0)"
+fi
+
+REMAINING_LEN=$(jq -r '.plugins["pipeline@claude-pipeline"] | length' "$IP2" 2>/dev/null || echo "-1")
+if [ "$REMAINING_LEN" = "2" ]; then
+  pass_msg "two non-matching entries preserved"
+else
+  fail_msg "expected 2 non-matching entries to remain, got $REMAINING_LEN"
+fi
+
+REMAINING_PATHS=$(jq -r '.plugins["pipeline@claude-pipeline"] | map(.projectPath) | sort | join(",")' "$IP2" 2>/dev/null || echo "")
+EXPECTED_PATHS="/tmp/other-project-a,/tmp/other-project-b"
+if [ "$REMAINING_PATHS" = "$EXPECTED_PATHS" ]; then
+  pass_msg "surviving entries match non-matching seeds"
+else
+  fail_msg "expected $EXPECTED_PATHS, got $REMAINING_PATHS"
+fi
+
+rm -rf "$T2"
+
+echo "Test: single-project scrub deletes the key (back-compat)"
+T3=$(mktemp -d)
+mkdir -p "$T3/.claude/plugins"
+printf '{}' > "$T3/.claude/plugins/known_marketplaces.json"
+IP3="$T3/.claude/plugins/installed_plugins.json"
+jq -n --arg repo_root "$REPO_ROOT" '
+  {
+    plugins: {
+      "pipeline@claude-pipeline": [
+        {projectPath: $repo_root, version: "0.20.1"}
+      ]
+    }
+  }
+' > "$IP3"
+
+HOME="$T3" bash "$HELPER" >/dev/null 2>&1
+RC4=$?
+if [ "$RC4" -eq 0 ]; then
+  pass_msg "single-project run exit 0"
+else
+  fail_msg "single-project run exit $RC4 (expected 0)"
+fi
+
+HAS_KEY=$(jq -r '.plugins | has("pipeline@claude-pipeline")' "$IP3" 2>/dev/null || echo "error")
+if [ "$HAS_KEY" = "false" ]; then
+  pass_msg "key removed when filtered array is empty"
+else
+  fail_msg "expected key absent (back-compat single-project), got has=$HAS_KEY"
+fi
+
+rm -rf "$T3"
+
 echo
 echo "===== test-setup-dogfood-local ====="
 echo "PASS: $PASS"
