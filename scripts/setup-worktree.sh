@@ -81,6 +81,10 @@ if git -C "$MAIN_REPO" worktree list | grep -q "$WORKTREE_PATH"; then
   echo "[1/6] Worktree already exists — skipping creation"
 else
   echo "[1/6] Creating worktree..."
+  # Branches off MAIN_REPO's LOCAL HEAD -- NOT origin/<base>. $BASE_BRANCH below
+  # is metadata/remote-existence only. Wave-running callers (fullsend) MUST
+  # `git pull --ff-only origin <base>` on MAIN_REPO between waves so a later
+  # wave's worktree inherits prior waves' merged-on-remote work (#626).
   if git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" "$BRANCH"
   else

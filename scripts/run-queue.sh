@@ -79,6 +79,11 @@ source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 # Launches up to MAX_CONCURRENT agents at a time, polls for completion,
 # and launches the next queued issue when a slot opens.
 #
+# fullsend invokes this once per wave with only that wave's issue numbers;
+# cross-wave serialization and the inter-wave `git pull` are enforced by the
+# fullsend loop, not here -- do NOT pass multiple waves' issues in one
+# invocation (#626).
+#
 # Usage:
 #   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
 #   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --add <issue1> <issue2> ...
