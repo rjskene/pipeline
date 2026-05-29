@@ -78,5 +78,46 @@ case "$LINE" in
   *) fail_msg "expected warn referencing claude-pipeline-local; got: $LINE" ;;
 esac
 
+# --------------------------------------------------------------------------
+# Case B: resolved root IS the local-marketplace symlink → pass.
+# --------------------------------------------------------------------------
+echo "Case B: resolved root is the local-marketplace symlink → pass"
+OUT=$(
+  cd "$REPO_ROOT"
+  HOME="$HHOME" \
+  CLAUDE_PLUGIN_ROOT="$LOCAL" \
+  PIPELINE_INSTALLED_PLUGINS_FILE="$IPFILE" \
+  PIPELINE_PROJECT_SETTINGS_FILE="$SETTINGS_ON" \
+    bash scripts/doctor.sh 2>&1 || true
+)
+LINE=$(echo "$OUT" | grep -E '^CHECK: dogfood_plugin_root ' | tail -n 1)
+case "$LINE" in
+  *"status=pass"*) pass_msg "match → pass" ;;
+  *) fail_msg "expected pass; got: $LINE" ;;
+esac
+
+# --------------------------------------------------------------------------
+# Case C: consumer host (local install disabled) → no check line emitted.
+# --------------------------------------------------------------------------
+echo "Case C: consumer host (local-marketplace disabled) → silent skip"
+SETTINGS_OFF="$TMP/settings-off.json"
+cat > "$SETTINGS_OFF" <<JSON
+{"enabledPlugins":{"pipeline@claude-pipeline-local":false}}
+JSON
+OUT=$(
+  cd "$REPO_ROOT"
+  HOME="$HHOME" \
+  CLAUDE_PLUGIN_ROOT="$PUB" \
+  PIPELINE_INSTALLED_PLUGINS_FILE="$IPFILE" \
+  PIPELINE_PROJECT_SETTINGS_FILE="$SETTINGS_OFF" \
+    bash scripts/doctor.sh 2>&1 || true
+)
+COUNT=$(echo "$OUT" | grep -cE '^CHECK: dogfood_plugin_root ')
+if [ "$COUNT" = "0" ]; then
+  pass_msg "no dogfood_plugin_root check emitted on consumer host"
+else
+  fail_msg "expected 0 dogfood_plugin_root lines, got $COUNT"
+fi
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
