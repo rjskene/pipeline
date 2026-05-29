@@ -95,7 +95,29 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    ```bash
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-reviewed"
    ```
-5. **Set up worktrees** — run `setup-worktree.sh` for each `plan-approved` issue (sequentially). Full invocation signature:
+### Execute the slate WAVE BY WAVE (Steps 5–7 per wave)
+
+The execute stage runs the approved slate **wave by wave**, not as a single blast. Each wave's worktrees are set up off the *current local base tip* so that wave N+1 inherits wave N's merged work. Two distinct `plan-waves.sh` passes drive this loop:
+
+**Pass A — wave order (re-run, `--stage=execute`).** Re-run the planner for the execute stage and capture stdout:
+
+```bash
+PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh --stage=execute <approved-slate>
+```
+
+This is a **second, distinct invocation** from the `--stage=classify` pre-think (see `## Wave plan (pre-think)`). The execute stage enables file-conflict waving (executors WRITE), so cross-references and shared-file conflicts ride along for free. Parse the `Wave N:` lines into per-wave issue lists and the wave order.
+
+**Pass B — the edge map for the halt closure (`--emit-edges`).** ALSO run:
+
+```bash
+PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh --stage=execute --emit-edges <approved-slate>
+```
+
+Parse the emitted `EDGE #<N> blockers=<csv> files=<csv>` lines into a per-issue map. **Why a separate machine-readable pass is required:** the human-readable `Wave N:` lines print per-issue `reason` strings ONLY for single-issue waves — a blocked issue grouped into a MULTI-issue wave has its dependency edge **suppressed in stdout**. The scoped-halt dependency closure (below) MUST therefore be computed from this `--emit-edges` edge map, **NOT** from the human-readable `Wave N:` lines, because `--emit-edges` emits every issue's blockers+files regardless of wave grouping.
+
+For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against ONLY that wave's issue numbers, then perform the **inter-wave pull** before starting wave N+1.
+
+5. **Set up worktrees** — for wave N, run `setup-worktree.sh` for each issue in wave N (sequentially), branched off the **current local base tip**. Full invocation signature:
 
    ```
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh [--base <base>] <branch-name> <issue-number>
@@ -112,7 +134,9 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 
    **Do NOT invoke with only the issue number** — the script will reject it as of #350. A bare integer like `setup-worktree.sh 81` fails the branch-prefix guard because `81` is not a `feature/<slug>` shape; without that guard, the worktree would silently land on a branch literally named `81` and every downstream stage would break.
-6. **Execute** — launch all worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for terminal events with a single `Monitor` invocation against the queue runner's captured stdout stream — the `Bash` tool's `run_in_background: true` task captures the runner's stdout, queryable via the `BashOutput` tool. That captured stdout is the always-on wake channel because `log()` (`scripts/run-queue.sh:136-142`) emits every `EVENT:` line to stdout unconditionally, even when `PIPELINE_LOGS_ENABLED=false` (the `queue-*.log` file is gated and may not exist on consumer hosts — do NOT tail it). Invocation shape: `Monitor` on the bash task's stdout stream with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000` (preserves the existing 2h worst-case wait budget). Per Monitor's coverage rule, the filter MUST cover every terminal state (failure + completion) so a crash is never silent — `agent-finished outcome=failed` IS the per-agent failure signal (the runner does not emit a separate `agent-failed`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
+
+   **Base-tip note (the #626 fix).** `setup-worktree.sh` adds the worktree via `git worktree add -b`, which **branches off the main repo's LOCAL HEAD, not `origin/<base>`**; the `--base` / `$BASE_BRANCH` value there is only metadata, not a remote fetch. So a wave's worktrees inherit exactly whatever the orchestrator's local base tip points at *at the moment Step 5 runs*. That is why the inter-wave pull (below) is mandatory between waves.
+6. **Execute (wave N)** — launch wave N's worktrees via the tmux queue runner with skip-permissions enabled (equivalent to user answering "tmux / y" at the launch prompt). Scope `run-queue.sh` to ONLY wave N's issue numbers — never mix issues from a later wave into the same queue (no cross-wave concurrency). **Within-wave parallelism is preserved:** same-wave issues that have no dependency or file-conflict edge between them still run concurrently up to run-queue's `MAX_AGENTS` cap — do not over-serialize within a wave. Launch the queue runner via `Bash` with `run_in_background: true` — do NOT use a foreground `while ... sleep ... grep` poll loop. Wait for terminal events with a single `Monitor` invocation against the queue runner's captured stdout stream — the `Bash` tool's `run_in_background: true` task captures the runner's stdout, queryable via the `BashOutput` tool. That captured stdout is the always-on wake channel because `log()` (`scripts/run-queue.sh:136-142`) emits every `EVENT:` line to stdout unconditionally, even when `PIPELINE_LOGS_ENABLED=false` (the `queue-*.log` file is gated and may not exist on consumer hosts — do NOT tail it). Invocation shape: `Monitor` on the bash task's stdout stream with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000` (preserves the existing 2h worst-case wait budget). Per Monitor's coverage rule, the filter MUST cover every terminal state (failure + completion) so a crash is never silent — `agent-finished outcome=failed` IS the per-agent failure signal (the runner does not emit a separate `agent-failed`). Status updates are emitted automatically by the queue runner every 3 minutes (configurable via `STATUS_INTERVAL`).
 
    ### Triage on agent-stalled wakes
 
@@ -131,7 +155,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
 
    Runner NEVER kills autonomously. The orchestrator's prompt to the user is the kill gate.
 
-6b. CI-fix loop — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each `pr-open` issue, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. Act per the table:
+6b. CI-fix loop (wave N) — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each of wave N's `pr-open` issues, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. Act per the table:
 
    | ACTION | Behavior |
    |--------|----------|
@@ -142,7 +166,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
 
    `check-ci-fix-loop.sh` is the authoritative source for retry-counter encoding (`pipeline.ci-retries: <n>` issue comment), tail-truncated failure-log path (`.claude/logs/ci-fix-<N>-attempt-<n>.log`), and `human` label application on budget-exhaust.
 
-7. **Evaluate PRs** — once all agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`). Launch this queue via `Bash` with `run_in_background: true` as described in step 6, then wait on it with the same event-driven waiter (identical to Step 6's waiter): a single `Monitor` invocation against the bash task's captured stdout stream (queried via the `BashOutput` tool — do NOT tail `queue-*.log`), with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000`. Apply the same wake-loop dispatch and "Triage on agent-stalled wakes" sub-section above — `agent-finished outcome=failed` is the per-agent failure signal (no separate `agent-failed`), `queue-complete` is terminal.
+7. **Evaluate PRs (wave N)** — once wave N's agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every wave-N `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`), and apply the per-PR greenlight auto-merge gate from the `## Greenlight matrix` above to each. Launch this queue via `Bash` with `run_in_background: true` as described in step 6, then wait on it with the same event-driven waiter (identical to Step 6's waiter): a single `Monitor` invocation against the bash task's captured stdout stream (queried via the `BashOutput` tool — do NOT tail `queue-*.log`), with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000`. Apply the same wake-loop dispatch and "Triage on agent-stalled wakes" sub-section above — `agent-finished outcome=failed` is the per-agent failure signal (no separate `agent-failed`), `queue-complete` is terminal.
 7b. **Auto-merge green release PRs (opt-in)** — runs after step 7 (Evaluate PRs) and before step 8 (Report). Only fires when `PIPELINE_RELEASE_PR_AUTO_MERGE=true` AND at least one release PR has `ci=pass`. Feature PRs land first; the release PR consolidates them so version bumps + CHANGELOG stay coherent.
 
    ```bash
@@ -162,6 +186,40 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    ```
 
    Default is **off** — existing repos that gate releases behind manual review are not surprised on upgrade. Step 8's final-report table should include any merged release PRs as their own section.
+
+### Inter-wave pull (advance the local base tip before wave N+1)
+
+After wave N's feature PRs **merge to the remote**, and **before** setting up wave N+1's worktrees (Step 5), the orchestrator advances its LOCAL base tip from the main repo. **Wait for wave N's PRs to merge before setting up wave N+1**, then run:
+
+```bash
+git -C "$MAIN_REPO" checkout "$PIPELINE_BASE_BRANCH"
+git -C "$MAIN_REPO" pull --ff-only --quiet origin "$PIPELINE_BASE_BRANCH"
+```
+
+The inter-wave step is a `git pull --ff-only --quiet origin` of the base branch, run against the main repo (`git -C "$MAIN_REPO" ...`).
+
+**Why this is mandatory (the #626 fix).** `setup-worktree.sh` branches each new worktree off `$MAIN_REPO`'s **LOCAL HEAD** via `git worktree add -b` — **not** off `origin/<base>`; the `$BASE_BRANCH` argument there is only metadata. PR merges land on the **remote**. So without this pull, wave N+1's worktrees branch off the stale, pre-merge local tip and are missing every earlier wave's merged work — the exact staleness bug this issue fixes. The pull **advances the orchestrator's LOCAL base tip** so the next wave's worktrees inherit the merged work. `--quiet` keeps the fast-forward file list out of orchestrator context. `$MAIN_REPO` is the orchestrator's own checkout root; `run-queue.sh` / `setup-worktree.sh` operate inside worktrees, so the orchestrator is free to `checkout` / `pull` on the main repo between waves without disturbing any in-flight worktree.
+
+### Scoped halt-and-report (closure sourced from `--emit-edges`)
+
+If a wave-N PR fails to merge, fullsend does **not** blindly halt every later wave. First discriminate transient from hard blocks:
+
+- **Transient (defer, do NOT halt):** a wave-N PR that lands `block-ci` or `pending` is NOT an immediate halt — let the existing **Step 6b** CI-fix loop run to terminal. If it resolves green, proceed. If it exhausts the red-retry budget (`red-budget-exhausted`, PR is `human`-flagged), only then treat it as a hard block.
+- **Hard block (triggers a scoped halt):** `block-mergestate`, `block-mergeable`, `block-verdict`, `block-base-mismatch`, or a CI failure whose retry budget is exhausted. When such a block leaves a wave-N issue's PR unmerged, compute its **dependency closure** and halt only that closure.
+
+**Closure computation — from the `--emit-edges` edge map, NOT the human-readable `Wave N:` lines.** Seed the closure with `{blocked issue}`. Then walk the parsed `EDGE` map to a fixpoint: add any issue whose `blockers=` csv contains a current closure member, and add any issue whose `files=` csv shares a path with any closure member; repeat **transitively** until no new issue is added. The closure is computed from the **emitted edges**, **not** from the human-readable `Wave N:` lines — because multi-issue waves print **no per-issue reason** strings, so a grouped issue's blocker would be invisible there; `--emit-edges` emits every issue's edges regardless of wave grouping, which is why the closure is reliable even for multi-issue waves.
+
+Then:
+
+- Later-wave issues **in** the closure are reported `Skipped (depends on blocked #<N>)`.
+- **Independent later-wave issues that are NOT in the closure MAY still proceed** off the current merged base — honoring the issue body's "don't over-serialize" constraint.
+- Earlier-wave and this-wave issues that already merged are **preserved** — a scoped halt never rolls back merged work.
+
+The Step 8 report names the issue that hard-blocked, its `block-*` reason token, and which downstream issues were skipped (with the dependency chain read from the edge map), so the operator can merge the blocker by hand and re-run `/pipeline:fullsend` for the remainder.
+
+### Self-mutation callout
+
+This issue edits the fullsend machinery the pipeline itself runs. This is a self-mutation: the change takes effect **only after merge** — that is, after the PR merges and the operator pulls the base branch into their orchestrator checkout. There is **no live-mutation risk** during this issue's own execution, because the work happens in an isolated **worktree** and the running orchestrator keeps its already-loaded skill body until it is restarted.
 8. **Report** — print a summary table of all issues with their final stage and any flags. Include a **Classification mismatch** column showing, for each issue, the current-label path vs. the recommended path when they diverged (else blank):
    ```
    FULL SEND COMPLETE
