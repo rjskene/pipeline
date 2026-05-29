@@ -3,7 +3,15 @@
 #
 # Default mode: when CLAUDE_PLUGIN_ROOT is empty/unset (which can happen
 # because Claude Code does not consistently export it into the Bash tool's
-# subshell), scan ~/.claude/plugins/cache/claude-pipeline/pipeline/*/ and
+# subshell), first apply the dogfood local-marketplace tie-break (#625): if the
+# current project ($PWD) has the pipeline@claude-pipeline-local install ENABLED
+# (per the project settings.local.json enabledPlugins) and an install entry in
+# installed_plugins.json, export that install's installPath (a symlink to the
+# repo working tree) and stop — this beats any same-version published copy.
+# Override the project settings path under test via PIPELINE_PROJECT_SETTINGS_FILE.
+# Consumer hosts (no local-marketplace install) fall straight through.
+#
+# Otherwise scan ~/.claude/plugins/cache/claude-pipeline/pipeline/*/ and
 # export the highest-version directory. Highest `MAJOR.MINOR.PATCH` wins
 # across the whole cache; within the same `M.m.p`, stable beats prerelease
 # (`-rc.N`), and rc numbers sort numerically.
@@ -39,6 +47,55 @@ fi
 if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   return 0 2>/dev/null || exit 0
 fi
+
+# Default-mode dogfood tie-break (#625): when running inside a project that has
+# the local-marketplace install (pipeline@claude-pipeline-local) ENABLED, prefer
+# its installPath (a symlink to the repo working tree) over any published copy
+# the cache scan would otherwise pick. Gated on the local-marketplace key +
+# enabledPlugins so consumer hosts (published install only) never enter here.
+# Override the project settings path under test via PIPELINE_PROJECT_SETTINGS_FILE.
+_rpr_ip_file="${PIPELINE_INSTALLED_PLUGINS_FILE:-${HOME}/.claude/plugins/installed_plugins.json}"
+_rpr_settings_file="${PIPELINE_PROJECT_SETTINGS_FILE:-$PWD/.claude/settings.local.json}"
+if [ -f "$_rpr_ip_file" ] && command -v python3 >/dev/null 2>&1; then
+  _rpr_local="$(
+    PIPELINE_RPR_PWD="$PWD" \
+    PIPELINE_RPR_IPFILE="$_rpr_ip_file" \
+    PIPELINE_RPR_SETTINGS="$_rpr_settings_file" \
+    python3 -c '
+import json, os, sys
+pwd = os.environ.get("PIPELINE_RPR_PWD", "")
+# enabledPlugins gate: only proceed if the local-marketplace key is explicitly true.
+enabled = False
+try:
+    with open(os.environ["PIPELINE_RPR_SETTINGS"]) as fh:
+        sett = json.load(fh)
+    enabled = bool((sett.get("enabledPlugins") or {}).get("pipeline@claude-pipeline-local"))
+except Exception:
+    enabled = False
+if not enabled:
+    sys.exit(0)
+try:
+    with open(os.environ["PIPELINE_RPR_IPFILE"]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+entries = (data.get("plugins") or {}).get("pipeline@claude-pipeline-local") or []
+if not isinstance(entries, list):
+    sys.exit(0)
+for e in entries:
+    if isinstance(e, dict) and e.get("projectPath") == pwd and e.get("installPath"):
+        print(e["installPath"])
+        break
+' 2>/dev/null
+  )"
+  if [ -n "$_rpr_local" ] && [ -d "$_rpr_local" ]; then
+    export CLAUDE_PLUGIN_ROOT="$_rpr_local"
+    unset _rpr_ip_file _rpr_settings_file _rpr_local
+    return 0 2>/dev/null || exit 0
+  fi
+  unset _rpr_local
+fi
+unset _rpr_ip_file _rpr_settings_file
 
 if [ "${PIPELINE_RESOLVE_MODE:-}" = "active-project" ]; then
   _rpr_plugins_file="${PIPELINE_INSTALLED_PLUGINS_FILE:-${HOME}/.claude/plugins/installed_plugins.json}"

@@ -27,6 +27,13 @@ PIPELINE_INSTALLED_PLUGINS_FILE
 PIPELINE_RPR_FILE
 PIPELINE_RPR_PWD
 PIPELINE_RESOLVE_MODE
+# #625 dogfood local-marketplace tie-break: internal python-helper env vars
+# (RPR_IPFILE/RPR_SETTINGS) plus the test-only settings-file override knob
+# (PROJECT_SETTINGS_FILE), used by _resolve-plugin-root.sh + doctor.sh. Not
+# user-config knobs — same class as PIPELINE_INSTALLED_PLUGINS_FILE above.
+PIPELINE_RPR_IPFILE
+PIPELINE_RPR_SETTINGS
+PIPELINE_PROJECT_SETTINGS_FILE
 
 # Per-spawn injected vars (orchestrator-to-subprocess contract, not user-config).
 PIPELINE_ISSUE_NUMBER
