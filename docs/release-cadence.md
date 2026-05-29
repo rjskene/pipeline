@@ -18,41 +18,20 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
 
 The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. Back-sync is now fully automated via the back-sync-release workflow; the merge to staging happens without human intervention on the clean path, and only true delete/modify conflicts open a draft fallback PR. The merge strategy is asymmetric between directions: `staging → main` uses `-X ours` (staging is strictly newer in that direction); `main → staging` uses `-X theirs` (main is strictly newer on every file the release commit touched). #205 fixed the regression where #200 had naively used `-X ours` for both directions.
 
-## Dev/prerelease channel
+### Version-bump policy
 
-The `Release-As:` footer mechanism for cutting prereleases is preserved — it correctly marks the GitHub Release as a prerelease and applies the `-rc.N` tag suffix via release-please. The dev marketplace (`claude-pipeline-dev`) has been **retired**: opt-in to a new version already lives at the `/plugin install` layer (a stable consumer only picks up a new version when they explicitly run `/plugin uninstall` + `/plugin install`), so the dual-marketplace gate added no real protection beyond what the install action itself provides. Mental model: **if you don't want an RC, don't reinstall.**
+Pre-1.0, release-please uses two conservatism flags in `release-please-config.json`:
 
-1. **Trigger (RC from a fresh or in-rc line).** To cut an RC, open a `staging → main` PR and merge it with `gh pr merge <N> --merge --body-file <path-to-body-with-Release-As-footer>` where the body file contains a `Release-As: X.Y.Z-rc.1` footer (substitute the target version). Using the GitHub web merge UI is acceptable ONLY if the merge-commit body preserves the `Release-As:` footer verbatim; `gh pr merge --merge --body-file` is the canonical path and writes the body file to the merge-commit message reliably. release-please reads the footer on the resulting merge commit on `main` and opens an RC Release PR instead of a stable one. Verify post-merge with `git log -1 --pretty=%B main | grep -q "Release-As:"`.
+- `bump-minor-pre-major: true` — `feat!:` / `BREAKING CHANGE:` commits resolve to a minor bump (NOT major). Locks "no 1.0 cut until explicit graduation."
+- `bump-patch-for-minor-pre-major: true` — `feat:` commits resolve to a patch bump (NOT minor). Locks "feat → patch only."
 
-   **Scope of the footer trigger.** This footer path works ONLY when the latest tag is itself a prerelease (no stable tag yet in the line) or the line is already in-rc. **When the latest tag is stable, the footer drops the `-rc` suffix and release-please opens a stable Release PR (#541)** — release-please anchors on the latest stable tag and discards the prerelease component of `Release-As`, despite `prerelease: true`. To start or advance an RC line from an established stable base, use the [manual cut](#starting--advancing-an-rc-line-or-graduating-from-an-established-stable-base-manual-cut) below instead.
-2. **Versioning.** RCs follow SemVer prerelease (`MAJOR.MINOR.PATCH-rc.N`), enabled by `prerelease: true` + `prerelease-type: "rc"` in `release-please-config.json`. One release-please run bumps `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and `.release-please-manifest.json` atomically via `extra-files`.
+| Commit type | Bump |
+|-------------|------|
+| `fix:` | patch |
+| `feat:` | patch |
+| `feat!:` / `BREAKING CHANGE:` | minor |
 
-   **rc.N iterates within the current minor** as `feat:` and `fix:` commits land on `main` — `bump-patch-for-minor-pre-major: true` in `release-please-config.json` makes feats resolve to a patch update pre-1.0, which release-please's prerelease strategy iterates as `-rc.N` instead of forcing a minor bump that resets to `-rc.1`. So once `0.18.0-rc.1` exists, a subsequent `feat:` cut yields `0.18.0-rc.2`, then `-rc.3`, and so on — the RC line accumulates rather than restarting. (`bump-minor-pre-major: true` stays untouched: it gates only *breaking* changes, so a pre-1.0 breaking change still maps to a minor bump rather than a `1.0.0` jump. The two knobs are independent — see #524.)
-
-   **To start the next minor's RC cycle** (e.g. cut `0.19.0-rc.1` after stabilising `0.18.x`), open a `staging → main` PR whose merge-commit body carries a `Release-As: 0.19.0-rc.1` footer. Without the footer, feats continue to land as patches on the current minor (`0.18.0-rc.N`) rather than auto-jumping the minor. This is the same footer mechanism step 1 uses to seed the first RC, and it advances the minor only from a fresh or in-rc line (no stable tag yet), because `bump-patch-for-minor-pre-major: true` deliberately suppresses the auto-minor-bump-on-feat behaviour. From an established stable base the footer is defeated (#541) — see the [manual cut](#starting--advancing-an-rc-line-or-graduating-from-an-established-stable-base-manual-cut) below. Graduation is unchanged from this cadence — see step 3.
-3. **Graduation.** Prereleases do NOT auto-graduate. To cut the stable `X.Y.Z`, the `staging → main` merge MUST be `gh pr merge <N> --merge --body-file <body-with-Release-As-footer>` (body contains `Release-As: X.Y.Z`). The merge-commit doctrine preserves per-PR `feat:`/`fix:` commits on `main` (reachable via the second parent), so release-please enumerates one entry per merged feature PR — the merge-commit subject — in the CHANGELOG rather than emitting `No user facing commits found` (see [granularity scope decision](#granularity-scope-decision-492) for why within-PR sub-commits are out of scope; the v0.14.0 stable-cut failure mode under the legacy squash regime had the squash subject `release: vX.Y.Z (staging → main)` — not a Conventional Commit type). The `Release-As:` footer is still required to flip prerelease→stable — without it, release-please opens a Release PR but does not graduate. RC and stable are mutually exclusive per `staging → main` PR. **Recovery.** If a no-footer merge already landed on `main`, open a follow-up empty `chore(release): graduate vX.Y.Z` PR whose body carries a `Release-As: X.Y.Z` footer to nudge release-please. After the tag lands, run `gh release edit vX.Y.Z --prerelease=false --latest` to flip the sticky prerelease flag (`release-please-config.json` has `prerelease: true`, so the flag persists across stable cuts until manually cleared). **This footer-nudge recovery (and any manifest-downgrade attempt) ONLY worked when there was no preceding stable tag in the line** (e.g. v0.18.0, whose only prior tags were rc prereleases). Once a stable tag exists in the line, the manifest-assertion also reconciles backward toward that stable tag (#541 follow-up: PR #542 tried `0.18.1-rc.1 → 0.18.0`, PR #544 tried `0.18.1 → 0.18.0`), so it is NOT a reliable graduation path from an established stable line — use the [manual cut](#starting--advancing-an-rc-line-or-graduating-from-an-established-stable-base-manual-cut) below instead.
-4. **Fallback (Risks).** If `Release-As:` footers fail to trigger in release-please v4 simple mode, the documented fallback is the `autorelease: pre-release` label on the live Release PR. Both satisfy the issue's "either footer or label" requirement; the canonical path is the footer.
-5. **Consumer cleanup (one-time).** Anyone who previously installed via the dev channel should run `/plugin uninstall pipeline@claude-pipeline-dev` followed by `/plugin marketplace remove claude-pipeline-dev` to unregister the now-orphaned manifest. The next `/plugin install pipeline@claude-pipeline` picks up the stable channel.
-
-### Starting / advancing an RC line or graduating from an established stable base (manual cut)
-
-When a stable tag already exists in the line, **neither the `Release-As:` footer nor a manifest assertion produces the intended version** — release-please reconciles toward the latest stable tag and ignores both signals (#541). The footer drops the `-rc` suffix — the prerelease component of `Release-As` is discarded (PR #539); the manifest-assertion reconciles backward (PR #542 tried `0.18.1-rc.1 → 0.18.0`, PR #544 tried `0.18.1 → 0.18.0`). The supported path is to cut the tag and GitHub Release by hand.
-
-- **RC cut from a stable base:**
-  ```bash
-  git tag vX.Y.Z-rc.N <main-tip-sha>
-  git push origin vX.Y.Z-rc.N
-  gh release create vX.Y.Z-rc.N --prerelease --title "vX.Y.Z-rc.N" --notes "<notes>"
-  ```
-  Then fast-forward `staging` to the release commit (the existing back-sync model syncs staging to the release tip; the automated `back-sync-release` workflow keys on release-please's `chore(main): release …` push, so a hand-cut tag needs the staging sync done by hand).
-- **Stable graduation from a stable base:**
-  ```bash
-  git tag vX.Y.Z <main-tip-sha>
-  git push origin vX.Y.Z
-  gh release create vX.Y.Z --latest --title "vX.Y.Z" --notes "<notes>"
-  ```
-- **Bump the four manifest locations by hand in the same commit the tag points at**, so the published artifact's version matches the tag: `.release-please-manifest.json`, `.claude-plugin/plugin.json` (`$.version`), and `.claude-plugin/marketplace.json` (`metadata.version` **and** `plugins[0].version`).
-- The MEMORY notes `feedback_hand_cut_rc_from_stable` and `feedback_hand_cut_graduation_flow` codify this flow on the dogfood host. #541 is the tracking bug: if a future release-please version (or a `version-strategy` knob) honors the prerelease component from a stable base, this manual-cut path can be retired and the footer trigger un-scoped.
+Graduating to 1.0 (future, not now): set both flags to `false` and push to `main`. The first cut after the flip honors default semver (`feat!:` → 1.0.0). Single-PR change; no hand-cutting. Tag history is preserved — existing `-rc` tags stay as-is.
 
 ### Breaking changes
 
@@ -72,7 +51,7 @@ This repo flipped from squash to merge-commits on 2026-05-24 via #459. Baseline 
 
 ### Granularity scope decision (#492)
 
-**Context.** v0.16.0-rc.1 produced exactly one CHANGELOG entry for PR #484 even though that PR carried five conventional sub-commits. This is the intended behavior of the per-PR granularity contract, not a regression: the merge-commit subject is the source of truth, and PR #484's single merge-commit subject became the single CHANGELOG line.
+**Context.** An earlier release cut produced exactly one CHANGELOG entry for PR #484 even though that PR carried five conventional sub-commits. This is the intended behavior of the per-PR granularity contract, not a regression: the merge-commit subject is the source of truth, and PR #484's single merge-commit subject became the single CHANGELOG line.
 
 **Why sub-commits collapse.** release-please's simple-mode projection walks `--first-parent` from the release tip. On that line a merged feature PR appears as ONE commit — its merge-commit subject — while the per-sub-commit conventional subjects live only on the merge's second parent (the full DAG), unreachable to a `--first-parent` walk. So a five-commit PR yields one CHANGELOG entry, keyed on the merge-commit subject. (This is the property characterized hermetically in `tests/test-release-please-changelog-fixture.sh`.)
 
