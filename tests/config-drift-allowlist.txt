@@ -44,6 +44,12 @@ PIPELINE_VERSION
 # user-config knob; intentionally undocumented in pipeline.config.example.
 PIPELINE_CONFIG_DRIFT_ALLOWLIST
 
+# Test-isolation env override for doctor.sh's dogfood_symlink_durable check
+# (#624). Points the check at a fixture installed_plugins.json under mktemp -d
+# in tests/test-doctor-dogfood-symlink-durable.sh. Not a user-config knob;
+# intentionally undocumented in pipeline.config.example.
+PIPELINE_INSTALLED_PLUGINS_JSON
+
 # Fixture tokens used only inside tests/test-check-config-drift.sh's
 # synthetic sub-cases. The live tree scan picks them up because they appear
 # as heredoc literals in the test file itself. PIPELINE_TEST_PREFIX_ is a
