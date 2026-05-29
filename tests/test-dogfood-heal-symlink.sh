@@ -167,5 +167,27 @@ fi
 rm -rf "$T"
 trap - EXIT
 
+# 9. Settings registration: .claude/settings.json wires the heal wrapper on
+#    UserPromptSubmit, and the existing audit-on-pipeline-run.sh entry survives.
+SETTINGS="$REPO_ROOT/.claude/settings.json"
+if command -v jq >/dev/null 2>&1; then
+  if jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("dogfood-heal-symlink.sh"))' \
+       "$SETTINGS" >/dev/null 2>&1; then
+    pass_msg "settings.json registers dogfood-heal-symlink.sh on UserPromptSubmit"
+  else
+    fail_msg "settings.json registers dogfood-heal-symlink.sh on UserPromptSubmit"
+  fi
+
+  if jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("audit-on-pipeline-run.sh"))' \
+       "$SETTINGS" >/dev/null 2>&1; then
+    pass_msg "settings.json preserves the audit-on-pipeline-run.sh UserPromptSubmit entry"
+  else
+    fail_msg "settings.json preserves the audit-on-pipeline-run.sh UserPromptSubmit entry"
+  fi
+else
+  pass_msg "jq absent — settings-registration assertions skipped"
+  pass_msg "jq absent — settings-registration assertions skipped"
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment": "dogfood-only. Registers (1) the UserPromptSubmit self-audit hook (issue #134), (2) the PostToolUse tool-use/subagent logging hooks (issue #95), and (3) the PreToolUse enforce-comment-trust hook (issue #549) — none is part of the published plugin manifest. See CLAUDE.md > 'Observability' and 'Self-improvement loop (dogfood-only)'. Also registers (4) the SessionStart dogfood-refresh hook (issue #611).",
+  "_comment": "dogfood-only. Registers (1) the UserPromptSubmit self-audit hook (issue #134), (2) the PostToolUse tool-use/subagent logging hooks (issue #95), and (3) the PreToolUse enforce-comment-trust hook (issue #549) — none is part of the published plugin manifest. See CLAUDE.md > 'Observability' and 'Self-improvement loop (dogfood-only)'. Also registers (4) the SessionStart dogfood-refresh hook (issue #611) and (5) the UserPromptSubmit dogfood-heal-symlink hook (issue #624).",
   "hooks": {
     "PreToolUse": [
       {
@@ -20,6 +20,15 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PROJECT_DIR:-.}/dev/hooks/audit-on-pipeline-run.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR:-.}/dev/hooks/dogfood-heal-symlink.sh"
           }
         ]
       }
