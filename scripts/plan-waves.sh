@@ -21,6 +21,7 @@ EOF
 }
 
 STAGE="execute"
+EMIT_EDGES=0
 NEW_ARGS=()
 for arg in "$@"; do
   case "$arg" in
@@ -30,6 +31,13 @@ for arg in "$@"; do
     --stage=*)
       echo "plan-waves: invalid --stage value: ${arg#--stage=} (expected classify|plan|execute)" >&2
       exit 1
+      ;;
+    --emit-edges)
+      # Additive, opt-in machine-readable mode (#626). When set, the script
+      # emits one EDGE line per input issue (in input order) carrying the
+      # internally-computed BLOCKERS/FILES edges, then exits 0 BEFORE the
+      # wave-building loop. The default human-readable path is untouched.
+      EMIT_EDGES=1
       ;;
     *)
       NEW_ARGS+=("$arg")
@@ -138,6 +146,31 @@ for N in "${ISSUES[@]}"; do
     FILES[$N]=""
   fi
 done
+
+# --emit-edges (#626): machine-readable edge recovery. Emit one line per input
+# issue, in input order, regardless of how issues are later grouped into waves
+# (the human-readable path only surfaces per-issue reasons for SINGLE-issue
+# waves, so a multi-issue-wave member would otherwise lose its edge). Format:
+#   EDGE #<N> blockers=<csv-of-issue-numbers-or-"-"> files=<csv-of-paths-or-"-">
+# Empty blockers/files render as "-". Then exit 0 -- no Wave lines are printed.
+if [ "$EMIT_EDGES" = "1" ]; then
+  for N in "${ISSUES[@]}"; do
+    blockers="${BLOCKERS[$N]:-}"
+    files="${FILES[$N]:-}"
+    if [ -n "$blockers" ]; then
+      blockers=$(echo "$blockers" | tr ' ' ',')
+    else
+      blockers="-"
+    fi
+    if [ -n "$files" ]; then
+      files=$(echo "$files" | tr ' ' ',')
+    else
+      files="-"
+    fi
+    echo "EDGE #$N blockers=$blockers files=$files"
+  done
+  exit 0
+fi
 
 # Build waves greedily, high priority tier first, then by issue number ascending.
 declare -A PLACED       # issue -> wave number

@@ -25,18 +25,30 @@ if [ ! -f "$SKILL_PATH" ]; then
   exit 1
 fi
 
-# --- Extract Step 6 section: from `6. **Execute**` up to (not incl) `6b.` ---
+# --- Extract Step 6 section: from `6. **Execute** [(wave N)]` up to (not incl)
+# the next step boundary. #626 restructured Steps 5-7 into a per-wave loop and
+# renamed the heading to `6. **Execute (wave N)**`, so the anchor matches with
+# OR without the `(wave N)` suffix. Terminate at the next sub-step (`6b.`) or
+# the next top-level numbered step / H3 boundary so the capture is robust to
+# 6b's presence or removal. ---
 STEP6=$(awk '
-  /^6\. \*\*Execute\*\*/ { capture=1 }
-  /^6b\./               { if (capture) exit }
-  capture                { print }
+  /^6\. \*\*Execute/                 { capture=1; print; next }
+  capture && /^6b\./                 { exit }
+  capture && /^[0-9]+\. /            { exit }
+  capture && /^### /                 { exit }
+  capture                            { print }
 ' "$SKILL_PATH")
 
-# --- Extract Step 7 section: from `7. **Evaluate PRs**` up to (not incl) `7b.` ---
+# --- Extract Step 7 section: from `7. **Evaluate PRs** [(wave N)]` up to (not
+# incl) the next step boundary (`7b.`, the next top-level numbered step, or the
+# next H3 such as `### Inter-wave pull`). Anchor matches with or without the
+# `(wave N)` suffix (#626). ---
 STEP7=$(awk '
-  /^7\. \*\*Evaluate PRs\*\*/ { capture=1 }
-  /^7b\./                     { if (capture) exit }
-  capture                      { print }
+  /^7\. \*\*Evaluate PRs/            { capture=1; print; next }
+  capture && /^7b\./                 { exit }
+  capture && /^[0-9]+\. /            { exit }
+  capture && /^### /                 { exit }
+  capture                            { print }
 ' "$SKILL_PATH")
 
 # --- Extract the triage sub-section (whole file scope is fine).
@@ -51,10 +63,10 @@ TRIAGE=$(awk '
 ' "$SKILL_PATH")
 
 if [ -z "$STEP6" ]; then
-  fail_msg "could not extract Step 6 section (anchor '6. **Execute**' .. '6b.')"
+  fail_msg "could not extract Step 6 section (anchor '6. **Execute[ (wave N)]**' .. next step boundary)"
 fi
 if [ -z "$STEP7" ]; then
-  fail_msg "could not extract Step 7 section (anchor '7. **Evaluate PRs**' .. '7b.')"
+  fail_msg "could not extract Step 7 section (anchor '7. **Evaluate PRs[ (wave N)]**' .. next step boundary)"
 fi
 
 MONITOR_REGEX='EVENT: (agent-stalled|agent-finished|queue-complete)'
