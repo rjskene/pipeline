@@ -33,7 +33,11 @@ Full process maps in docs/process-maps.md.
   /plugin install pipeline@claude-pipeline
   ```
 - The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`) and registers all slash commands, hooks, skills, and the `tdd-implementer` subagent automatically.
-- Configure — create `pipeline.config` at the repo root with the values for your project:
+- Initialize (recommended) — run `/pipeline:init` to bootstrap a fresh project. It preflights system deps (and prints the platform-appropriate install command if one is missing), detects your repo + default branch, generates `pipeline.config` (writing no-op defaults for projects without a test suite or CI), gitignores it, seeds the canonical labels, and ends with a read-only `doctor` audit. This is the greenfield counterpart to `scripts/migrate-from-subtree.sh` (which retires a legacy subtree install):
+  ```
+  /pipeline:init
+  ```
+- Configure (manual alternative to `/pipeline:init`) — create `pipeline.config` at the repo root with the values for your project:
   ```bash
   PIPELINE_REPO="your-org/your-repo"
   PIPELINE_BASE_BRANCH="staging"
