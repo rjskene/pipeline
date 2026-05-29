@@ -14,6 +14,10 @@ The consumer project owns exactly one pipeline file: `pipeline.config` at the pr
 
 All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:run`, …). Unprefixed command names like `plan-issue` are intentionally not registered so the plugin coexists with other plugins that might claim those names.
 
+## Greenfield install (`/pipeline:init`)
+
+`/pipeline:init` is the first-class bootstrap for a brand-new project that never had the subtree — the inverse of `migrate-from-subtree.sh`. Where migrate *retires* a legacy install, init *stands up* a fresh one. Entrypoint: `scripts/init.sh`; skill: `skills/init/SKILL.md`. It composes existing primitives rather than reimplementing them: label seeding delegates to `doctor.sh --fix labels` and the closing audit is the read-only `doctor.sh`. Its five phases are preflight (one `PREFLIGHT: <dep> status=<pass|fail|warn>` line per dep; `gh`/`jq`/`bash` fail-fast before any config write, `tmux` and the Windows-jq-on-bash-PATH probe warn), config generation (`PIPELINE_REPO` from `gh repo view --json nameWithOwner`, `PIPELINE_BASE_BRANCH` from `defaultBranchRef`, no-op `true`/empty defaults for projects without tests/CI, `--force` to overwrite), `.gitignore` append (idempotent), label seeding, and the doctor tail. The doctor itself remains read-only for everything except `--fix labels`; init is the write-path bootstrap that doctor was never meant to be.
+
 ## Legacy install
 
 Legacy install (`install.sh`, the `.claude-pipeline/` subtree, and the subtree-drift tooling) has been retired. Existing subtree consumers run `scripts/migrate-from-subtree.sh` once and then install the plugin.
