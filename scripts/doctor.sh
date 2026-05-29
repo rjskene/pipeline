@@ -854,6 +854,102 @@ fi
 unset _cpr_is_local_override
 
 # --------------------------------------------------------------------------
+# Check: dogfood_symlink_durable — dogfood-only durability of the
+# local-marketplace install symlink (#624). When the
+# pipeline@claude-pipeline-local entry for THIS repo exists in
+# installed_plugins.json, verify its installPath is a live symlink to the repo
+# working tree. A missing path (cache wiped mid-session — observed when
+# /remote-control re-materializes the cache dir) or a real directory (a
+# re-copied snapshot, not live) is a dogfood-operator-only condition that
+# self-heals on the next prompt via dev/hooks/dogfood-heal-symlink.sh — surface
+# it as `warn` with a heal hint, never `fail` (consumer machines have no local
+# entry and must stay green). No-emit on consumer installs (no matching entry).
+# Honors PIPELINE_INSTALLED_PLUGINS_JSON so tests can point at a fixture.
+# --------------------------------------------------------------------------
+_dsd_ip="${PIPELINE_INSTALLED_PLUGINS_JSON:-$HOME/.claude/plugins/installed_plugins.json}"
+if command -v jq >/dev/null 2>&1 && [ -f "$_dsd_ip" ]; then
+  # Resolve the repo working tree, redirecting to the MAIN tree when doctor is
+  # run from a linked worktree (mirrors dogfood-symlink-swap.sh) so the match
+  # against the install entry's projectPath does not silently miss.
+  _dsd_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  if [ -n "$_dsd_root" ] && [ -d "$_dsd_root" ]; then
+    _dsd_main="$(git -C "$_dsd_root" worktree list --porcelain 2>/dev/null \
+                 | awk '/^worktree / {print $2; exit}')"
+    [ -n "$_dsd_main" ] && [ -d "$_dsd_main" ] && _dsd_root="$_dsd_main"
+  fi
+  _dsd_install="$(jq -r --arg root "$_dsd_root" '
+    .plugins["pipeline@claude-pipeline-local"] // []
+    | map(select(.projectPath == $root)) | .[0].installPath // ""
+  ' "$_dsd_ip" 2>/dev/null)"
+  if [ -n "$_dsd_install" ] && [ "$_dsd_install" != "null" ]; then
+    if [ -L "$_dsd_install" ]; then
+      if [ "$(readlink "$_dsd_install" 2>/dev/null)" = "$_dsd_root" ]; then
+        record dogfood_symlink_durable pass "local install symlink → $_dsd_root"
+      else
+        record dogfood_symlink_durable warn "local install symlink points elsewhere ($(readlink "$_dsd_install" 2>/dev/null)); run: bash dev/hooks/dogfood-heal-symlink.sh"
+      fi
+    elif [ ! -e "$_dsd_install" ]; then
+      record dogfood_symlink_durable warn "local install path missing ($_dsd_install) — re-materialization wiped it; run: bash dev/hooks/dogfood-heal-symlink.sh"
+    elif [ -d "$_dsd_install" ]; then
+      record dogfood_symlink_durable warn "local install path is a real dir (snapshot, not live); run: bash dev/hooks/dogfood-heal-symlink.sh"
+    else
+      record dogfood_symlink_durable warn "local install path is not a live symlink ($_dsd_install); run: bash dev/hooks/dogfood-heal-symlink.sh"
+    fi
+  fi
+  unset _dsd_root _dsd_main _dsd_install
+fi
+unset _dsd_ip
+
+# --------------------------------------------------------------------------
+# Check: dogfood_plugin_root (#625) — on a dogfood host the live source is the
+# pipeline@claude-pipeline-local install (installPath = symlink → working tree).
+# Warn when that install is ENABLED for this project but the effective
+# CLAUDE_PLUGIN_ROOT is NOT it (e.g. a published cache copy won the resolution),
+# which means orchestrator bash steps would run stale published scripts.
+# Silent skip on consumer hosts (local install absent or disabled).
+# --------------------------------------------------------------------------
+_dpr_ip_file="${PIPELINE_INSTALLED_PLUGINS_FILE:-${HOME}/.claude/plugins/installed_plugins.json}"
+_dpr_settings_file="${PIPELINE_PROJECT_SETTINGS_FILE:-$PWD/.claude/settings.local.json}"
+if [ -f "$_dpr_ip_file" ] && command -v python3 >/dev/null 2>&1; then
+  _dpr_expected="$(
+    PIPELINE_RPR_PWD="$PWD" \
+    PIPELINE_RPR_IPFILE="$_dpr_ip_file" \
+    PIPELINE_RPR_SETTINGS="$_dpr_settings_file" \
+    python3 -c '
+import json, os, sys
+pwd = os.environ.get("PIPELINE_RPR_PWD", "")
+try:
+    with open(os.environ["PIPELINE_RPR_SETTINGS"]) as fh:
+        sett = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not bool((sett.get("enabledPlugins") or {}).get("pipeline@claude-pipeline-local")):
+    sys.exit(0)
+try:
+    with open(os.environ["PIPELINE_RPR_IPFILE"]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+for e in (data.get("plugins") or {}).get("pipeline@claude-pipeline-local") or []:
+    if isinstance(e, dict) and e.get("projectPath") == pwd and e.get("installPath"):
+        print(e["installPath"]); break
+' 2>/dev/null
+  )"
+  if [ -n "$_dpr_expected" ]; then
+    # Compare resolved targets so a symlink path and its target match.
+    _dpr_actual_real="$(readlink -f "${CLAUDE_PLUGIN_ROOT:-}" 2>/dev/null || printf '%s' "${CLAUDE_PLUGIN_ROOT:-}")"
+    _dpr_expected_real="$(readlink -f "$_dpr_expected" 2>/dev/null || printf '%s' "$_dpr_expected")"
+    if [ -n "$_dpr_actual_real" ] && [ "$_dpr_actual_real" = "$_dpr_expected_real" ]; then
+      record dogfood_plugin_root pass "resolved to enabled local-marketplace install ${CLAUDE_PLUGIN_ROOT}"
+    else
+      record dogfood_plugin_root warn "pipeline@claude-pipeline-local is enabled but CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-<empty>} (expected ${_dpr_expected}); orchestrator bash may run stale published scripts"
+    fi
+  fi
+  unset _dpr_expected _dpr_actual_real _dpr_expected_real
+fi
+unset _dpr_ip_file _dpr_settings_file
+
+# --------------------------------------------------------------------------
 # Check: base_branch_enforcement — defense-in-depth (#295) for the
 # `enforce-base-branch.py` PreToolUse hook. Pass when the hook file exists
 # on disk AND at least one PreToolUse Bash matcher (in the plugin manifest

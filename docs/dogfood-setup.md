@@ -157,8 +157,34 @@ SessionStart hook (`dev/hooks/dogfood-refresh.sh`) invokes
 the `pipeline@claude-pipeline-local` entry from
 `~/.claude/plugins/installed_plugins.json` whose `projectPath` matches
 the resolved repo root and replaces that entry's `installPath`
-directory with a symlink to the repo working tree. Self-heals on
-every session start. Idempotent + fail-open.
+directory with a symlink to the repo working tree. Idempotent + fail-open.
+
+**Two heal layers (#624).** SessionStart alone left a mid-session gap:
+if a plugin re-materialization wiped the cache dir between session
+starts (observed when `/remote-control` connects), the symlink stayed
+broken and `${CLAUDE_PLUGIN_ROOT}` for the local plugin 404'd until the
+next session. The heal now fires on BOTH events:
+
+- **SessionStart** — `dev/hooks/dogfood-refresh.sh` does the full
+  `git fetch` + `merge --ff-only` and then invokes the swap helper.
+- **UserPromptSubmit** — `dev/hooks/dogfood-heal-symlink.sh` re-asserts
+  the symlink before every user turn. It is the *cheap* path: it
+  delegates straight to `dogfood-symlink-swap.sh` (a `readlink`/`ln`,
+  microseconds) and pays NO `git fetch`/`merge` cost. Silent, exit 0
+  always, so it never blocks or pollutes the prompt.
+
+This closes the mid-session gap without paying network cost per prompt.
+
+**Manual detect path.** `scripts/doctor.sh` carries a
+`dogfood_symlink_durable` check: when the
+`pipeline@claude-pipeline-local` entry for this repo exists and its
+`installPath` is missing (cache wiped) or a real directory (a
+snapshot, not live), doctor records `warn` with a copy-pasteable heal
+hint (`run: bash dev/hooks/dogfood-heal-symlink.sh`); it records `pass`
+when the path is a live symlink to the repo, and emits nothing on
+consumer installs (no local-marketplace entry). The `warn` never flips
+doctor's exit code — a stale dogfood symlink is operator-only and
+self-heals on the next prompt.
 
 Operator check (one command):
 
