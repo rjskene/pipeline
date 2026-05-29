@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.20.2](https://github.com/rjskene/pipeline/compare/v0.20.1...v0.20.2) (2026-05-29)
+
+
+### Features
+
+* **dogfood:** add dev/hooks/dogfood-refresh.sh for SessionStart+manual refresh ([0745aa6](https://github.com/rjskene/pipeline/commit/0745aa6bd1d371c11ea27d4d0cf5979300c007b4))
+* **dogfood:** add setup-dogfood-local + mode-swap scripts ([d88a4d5](https://github.com/rjskene/pipeline/commit/d88a4d559a427337fc50e6ce06b53eeb63233d56))
+* **dogfood:** add symlink-swap helper ([#618](https://github.com/rjskene/pipeline/issues/618)) ([21f526e](https://github.com/rjskene/pipeline/commit/21f526ecfadb70ebfe9b8081fc35f3e2dc1ea112))
+* **dogfood:** call symlink-swap after refresh merge ([#618](https://github.com/rjskene/pipeline/issues/618)) ([3d1b0aa](https://github.com/rjskene/pipeline/commit/3d1b0aa7bc58522008855ba43eba785e29356216))
+* **dogfood:** local file:// marketplace + auto-refresh hook ([2df0099](https://github.com/rjskene/pipeline/commit/2df0099b3f654cdd8aafe7e5b2dff71b4057c41e))
+* **dogfood:** register SessionStart auto-refresh hook in .claude/settings.json ([000214b](https://github.com/rjskene/pipeline/commit/000214bd4797f1bd517df38a895adb93570899f5))
+* **dogfood:** symlink-swap installPath so `git pull` actually = live update ([202f8a5](https://github.com/rjskene/pipeline/commit/202f8a59fe6e53bd21bf6520062b590b4c1c6231))
+
+
+### Bug Fixes
+
+* **dogfood:** drop bare /pipeline:* substring from setup script comment ([e0181fb](https://github.com/rjskene/pipeline/commit/e0181fb001de34589162311c212f4f4211386cae))
+* **dogfood:** scope setup-dogfood-local.sh scrub to current repo's projectPath ([c4ca866](https://github.com/rjskene/pipeline/commit/c4ca866f6e3bbcbaa7e958faad1d19650905f00e))
+* **dogfood:** scope setup-dogfood-local.sh scrub to current repo's projectPath ([352559e](https://github.com/rjskene/pipeline/commit/352559e9d9f45147c3c3cd9675aa2c5b2a05883f)), closes [#615](https://github.com/rjskene/pipeline/issues/615)
+* **dogfood:** setup-dogfood-local.sh writes invalid source.source="local" — Claude Code accepts "file" ([675a0e6](https://github.com/rjskene/pipeline/commit/675a0e6ad3d5ccbb596405a3bcb9cf0bc28a926d))
+* **dogfood:** write source.source="file" so Claude Code accepts the marketplace entry ([e8ec264](https://github.com/rjskene/pipeline/commit/e8ec264800312c86bbfce252b5a17f3960a3b67f)), closes [#617](https://github.com/rjskene/pipeline/issues/617)
+* **review:** redirect dogfood-refresh to main repo when invoked from a worktree ([f622947](https://github.com/rjskene/pipeline/commit/f622947a03c981f357a4f9858e915fc4dffff3e4))
+
 ## [0.20.0-rc.3](https://github.com/rjskene/pipeline/compare/v0.19.0-rc.3...v0.20.0-rc.3) (2026-05-28)
 
 
