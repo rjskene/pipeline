@@ -901,6 +901,55 @@ fi
 unset _dsd_ip
 
 # --------------------------------------------------------------------------
+# Check: dogfood_plugin_root (#625) — on a dogfood host the live source is the
+# pipeline@claude-pipeline-local install (installPath = symlink → working tree).
+# Warn when that install is ENABLED for this project but the effective
+# CLAUDE_PLUGIN_ROOT is NOT it (e.g. a published cache copy won the resolution),
+# which means orchestrator bash steps would run stale published scripts.
+# Silent skip on consumer hosts (local install absent or disabled).
+# --------------------------------------------------------------------------
+_dpr_ip_file="${PIPELINE_INSTALLED_PLUGINS_FILE:-${HOME}/.claude/plugins/installed_plugins.json}"
+_dpr_settings_file="${PIPELINE_PROJECT_SETTINGS_FILE:-$PWD/.claude/settings.local.json}"
+if [ -f "$_dpr_ip_file" ] && command -v python3 >/dev/null 2>&1; then
+  _dpr_expected="$(
+    PIPELINE_RPR_PWD="$PWD" \
+    PIPELINE_RPR_IPFILE="$_dpr_ip_file" \
+    PIPELINE_RPR_SETTINGS="$_dpr_settings_file" \
+    python3 -c '
+import json, os, sys
+pwd = os.environ.get("PIPELINE_RPR_PWD", "")
+try:
+    with open(os.environ["PIPELINE_RPR_SETTINGS"]) as fh:
+        sett = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not bool((sett.get("enabledPlugins") or {}).get("pipeline@claude-pipeline-local")):
+    sys.exit(0)
+try:
+    with open(os.environ["PIPELINE_RPR_IPFILE"]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+for e in (data.get("plugins") or {}).get("pipeline@claude-pipeline-local") or []:
+    if isinstance(e, dict) and e.get("projectPath") == pwd and e.get("installPath"):
+        print(e["installPath"]); break
+' 2>/dev/null
+  )"
+  if [ -n "$_dpr_expected" ]; then
+    # Compare resolved targets so a symlink path and its target match.
+    _dpr_actual_real="$(readlink -f "${CLAUDE_PLUGIN_ROOT:-}" 2>/dev/null || printf '%s' "${CLAUDE_PLUGIN_ROOT:-}")"
+    _dpr_expected_real="$(readlink -f "$_dpr_expected" 2>/dev/null || printf '%s' "$_dpr_expected")"
+    if [ -n "$_dpr_actual_real" ] && [ "$_dpr_actual_real" = "$_dpr_expected_real" ]; then
+      record dogfood_plugin_root pass "resolved to enabled local-marketplace install ${CLAUDE_PLUGIN_ROOT}"
+    else
+      record dogfood_plugin_root warn "pipeline@claude-pipeline-local is enabled but CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-<empty>} (expected ${_dpr_expected}); orchestrator bash may run stale published scripts"
+    fi
+  fi
+  unset _dpr_expected _dpr_actual_real _dpr_expected_real
+fi
+unset _dpr_ip_file _dpr_settings_file
+
+# --------------------------------------------------------------------------
 # Check: base_branch_enforcement — defense-in-depth (#295) for the
 # `enforce-base-branch.py` PreToolUse hook. Pass when the hook file exists
 # on disk AND at least one PreToolUse Bash matcher (in the plugin manifest
