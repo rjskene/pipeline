@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.20.3](https://github.com/rjskene/pipeline/compare/v0.20.2...v0.20.3) (2026-05-29)
+
+
+### Features
+
+* add /pipeline:init to bootstrap the plugin in new (non-subtree) projects ([68c0c3b](https://github.com/rjskene/pipeline/commit/68c0c3b96133cfd1783428c9fad4a9fb205bb44a))
+* **doctor:** warn when dogfood local-marketplace install is enabled but not the resolved plugin root ([#625](https://github.com/rjskene/pipeline/issues/625)) ([24c47fc](https://github.com/rjskene/pipeline/commit/24c47fc54383a66a27e724614cefa449d8d14577))
+* **doctor:** warn when dogfood local-marketplace symlink is missing or stale ([#624](https://github.com/rjskene/pipeline/issues/624)) ([df7df91](https://github.com/rjskene/pipeline/commit/df7df9118acc2e55175ff0b666fbf68c5ae7a8cf))
+* **dogfood:** heal symlink on UserPromptSubmit, not just SessionStart ([#624](https://github.com/rjskene/pipeline/issues/624)) ([45730b0](https://github.com/rjskene/pipeline/commit/45730b0ef825e6ac7bd74c0022d8c90ffa82678f))
+* **dogfood:** register UserPromptSubmit symlink-heal hook ([#624](https://github.com/rjskene/pipeline/issues/624)) ([6078ee2](https://github.com/rjskene/pipeline/commit/6078ee27db8c99bfc1003e4932abd92229663c6c))
+* **init:** add /pipeline:init command skill ([37da6e6](https://github.com/rjskene/pipeline/commit/37da6e69762e91d31b9618ac4ab254da6f0fa340))
+* **init:** add init.sh bootstrap (preflight, config, labels, doctor tail) ([642096e](https://github.com/rjskene/pipeline/commit/642096ed1ceee2e521bb2ecb0ebe17f3b911c25b))
+
+
+### Bug Fixes
+
+* evaluation fixes for [#621](https://github.com/rjskene/pipeline/issues/621) — allowlist pipeline:init in namespace test ([3ea90e0](https://github.com/rjskene/pipeline/commit/3ea90e0223c24088ea89cbe7bebaa902120c1aae))
+* **general:** _resolve-plugin-root.sh prefers published cache over local-marketplace symlink in dogfood sessions (orchestrator runs stale scripts) ([32e7d5c](https://github.com/rjskene/pipeline/commit/32e7d5cc9313cdb6143d0632511cb4d5e23228fa))
+* **general:** Dogfood live-update symlink not durable mid-session (/remote-control wipes cache dir; heal only at SessionStart) ([c74300d](https://github.com/rjskene/pipeline/commit/c74300de463e80c38de1c1a1696761174640c4ff))
+* **resolve-plugin-root:** prefer enabled local-marketplace install over published cache copy ([#625](https://github.com/rjskene/pipeline/issues/625)) ([354e9ff](https://github.com/rjskene/pipeline/commit/354e9ff7f2b02ec6eaa0c42da3cf74b947d11f8c))
+
 ## [0.20.2](https://github.com/rjskene/pipeline/compare/v0.20.1...v0.20.2) (2026-05-29)
 
 
