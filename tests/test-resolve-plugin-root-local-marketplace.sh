@@ -91,6 +91,89 @@ else
   fail_msg "expected resolution to $REPO, got '$out_root' (-> $(readlink -f "$out_root" 2>/dev/null))"
 fi
 
+# --------------------------------------------------------------------------
+# Case 2: local-marketplace DISABLED → fall through to cache scan.
+# --------------------------------------------------------------------------
+echo "Case 2: disabled local-marketplace falls through to cache scan"
+SETTINGS_OFF="$TMP/settings-off.json"
+cat > "$SETTINGS_OFF" <<JSON
+{"enabledPlugins":{"pipeline@claude-pipeline-local":false}}
+JSON
+out_root="$(
+  cd "$REPO"
+  unset CLAUDE_PLUGIN_ROOT
+  unset PIPELINE_RESOLVE_MODE
+  PIPELINE_INSTALLED_PLUGINS_FILE="$PLUGINS_FILE" \
+  PIPELINE_PROJECT_SETTINGS_FILE="$SETTINGS_OFF" \
+  PIPELINE_PLUGIN_CACHE_DIR="$TMP/cache/claude-pipeline/pipeline" \
+    bash -c "source \"$RESOLVER\"; echo \"\${CLAUDE_PLUGIN_ROOT:-}\""
+)"
+if [ "$out_root" = "$PUB" ]; then
+  pass_msg "disabled local-marketplace fell through to published cache copy"
+else
+  fail_msg "expected fall-through to $PUB, got '$out_root'"
+fi
+
+# --------------------------------------------------------------------------
+# Case 3: settings file absent → fall through to cache scan.
+# --------------------------------------------------------------------------
+echo "Case 3: missing settings file falls through to cache scan"
+out_root="$(
+  cd "$REPO"
+  unset CLAUDE_PLUGIN_ROOT
+  unset PIPELINE_RESOLVE_MODE
+  PIPELINE_INSTALLED_PLUGINS_FILE="$PLUGINS_FILE" \
+  PIPELINE_PROJECT_SETTINGS_FILE="$TMP/does-not-exist.json" \
+  PIPELINE_PLUGIN_CACHE_DIR="$TMP/cache/claude-pipeline/pipeline" \
+    bash -c "source \"$RESOLVER\"; echo \"\${CLAUDE_PLUGIN_ROOT:-}\""
+)"
+if [ "$out_root" = "$PUB" ]; then
+  pass_msg "missing settings file fell through to published cache copy"
+else
+  fail_msg "expected fall-through to $PUB, got '$out_root'"
+fi
+
+# --------------------------------------------------------------------------
+# Case 4: pre-set CLAUDE_PLUGIN_ROOT short-circuits — new branch must not run.
+# --------------------------------------------------------------------------
+echo "Case 4: pre-set CLAUDE_PLUGIN_ROOT preserved (new branch does not run)"
+out_root="$(
+  cd "$REPO"
+  unset PIPELINE_RESOLVE_MODE
+  CLAUDE_PLUGIN_ROOT="/already/set" \
+  PIPELINE_INSTALLED_PLUGINS_FILE="$PLUGINS_FILE" \
+  PIPELINE_PROJECT_SETTINGS_FILE="$SETTINGS" \
+    bash -c "source \"$RESOLVER\"; echo \"\${CLAUDE_PLUGIN_ROOT:-}\""
+)"
+if [ "$out_root" = "/already/set" ]; then
+  pass_msg "pre-set CLAUDE_PLUGIN_ROOT preserved"
+else
+  fail_msg "pre-set CLAUDE_PLUGIN_ROOT clobbered: got '$out_root'"
+fi
+
+# --------------------------------------------------------------------------
+# Case 5: $PWD does not match any projectPath → fall through to cache scan.
+# --------------------------------------------------------------------------
+echo "Case 5: no projectPath match falls through to cache scan"
+NOMATCH="$TMP/no-match-proj"
+mkdir -p "$NOMATCH/.claude"
+cat > "$NOMATCH/.claude/settings.local.json" <<JSON
+{"enabledPlugins":{"pipeline@claude-pipeline-local":true}}
+JSON
+out_root="$(
+  cd "$NOMATCH"
+  unset CLAUDE_PLUGIN_ROOT
+  unset PIPELINE_RESOLVE_MODE
+  PIPELINE_INSTALLED_PLUGINS_FILE="$PLUGINS_FILE" \
+  PIPELINE_PLUGIN_CACHE_DIR="$TMP/cache/claude-pipeline/pipeline" \
+    bash -c "source \"$RESOLVER\"; echo \"\${CLAUDE_PLUGIN_ROOT:-}\""
+)"
+if [ "$out_root" = "$PUB" ]; then
+  pass_msg "no projectPath match fell through to published cache copy"
+else
+  fail_msg "expected fall-through to $PUB, got '$out_root'"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
