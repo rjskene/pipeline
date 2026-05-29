@@ -190,6 +190,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 11. **Report:** "PR opened for #N: <PR URL>"
 
+12. **Terminal state — STOP (Step 12).** Once Step 10 has applied the `pr-open` label and Step 11 has emitted the report line, the executor's work is DONE: the PR is confirmed open and all commits are pushed. This is the agent's terminal state — STOP here. Do NOT run any post-PR self-verification, "confirm PR opened" re-check, cleanup, or wait/poll loop: once the `pr-open` label is applied and the PR is confirmed open, the worktree handoff to `evaluate-issue-pr` is the orchestrator's job, and any lingering session holds the worktree + a concurrency slot and BLOCKS PR evaluation (a second `claude` session cannot safely run in the same worktree — issue #631). There is nothing left to wait for; emit the report line and end the session. (CI-fix mode (Step 0b) has its own terminal contract — report the new commit SHA and stop — and never reaches Step 10/11, so it is unaffected.)
+
 ## Handling evaluation feedback
 
 If `evaluate-issue-pr` flags the PR while the executor session is still active, invoke `superpowers:receiving-code-review` with the evaluation comment as context: `Skill(skill: "superpowers:receiving-code-review")`.
@@ -202,3 +204,4 @@ If `evaluate-issue-pr` flags the PR while the executor session is still active, 
 - Never skip build verification (`PIPELINE_TEST_CMD` from the sourced config).
 - Never inline unbounded sentinel-file polls (e.g. `until grep -q TOKEN file; do sleep N; done`). Use `scripts/wait-for-sentinel.sh <file> <token> [--timeout N]` (default 600s) — on timeout it exits non-zero with an actionable error so the Bash tool surfaces failure instead of wedging. The `check-unbounded-sentinel-polls` lint enforces this in CI.
 - Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.
+- Terminal after `pr-open`: once the `pr-open` label is applied and the PR is confirmed open, STOP. Never run a post-`pr-open` self-verification, "confirm PR opened" re-check, or wait/poll loop — a lingering executor holds the worktree + concurrency slot and blocks `evaluate-issue-pr` (issue #631).
