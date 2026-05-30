@@ -1,0 +1,7 @@
+{"issue":202,"stage":"plan","agent_type":"general-purpose","tokens":{"input":1200,"output":800,"cache":5000},"duration_ms":41000}
+{"issue":202,"stage":"execute","agent_type":"pipeline:tdd-implementer","tokens":{"input":3000,"output":2000,"cache":12000},"duration_ms":120000}
+{"issue":202,"stage":"pr-eval","agent_type":"general-purpose","tokens":{"input":1500,"output":1000,"cache":6000},"duration_ms":55000}
+{"issue":402,"stage":"plan","agent_type":"general-purpose","tokens":{"input":1000,"output":700,"cache":4000},"duration_ms":38000}
+{"issue":402,"stage":"execute","agent_type":"general-purpose","tokens":{"input":2500,"output":1500,"cache":9000},"duration_ms":90000}
+{"issue":203,"stage":"execute","agent_type":"pipeline:tdd-implementer","tokens":{"input":6000,"output":4000,"cache":20000},"duration_ms":200000}
+{"issue":999,"stage":"execute","agent_type":"general-purpose","tokens":{"input":9999,"output":9999,"cache":9999},"duration_ms":999999}

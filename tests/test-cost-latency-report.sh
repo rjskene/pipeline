@@ -61,6 +61,27 @@ if [ -f "$HELPER" ]; then
   fi
 fi
 
+# --- Scenario 2: fixture loaders produce JSON rows ---
+# Uses the static fixture directory tests/fixtures/cost-latency-report which
+# carries 4 eligible feature PRs (102→B, 302→B, 103→C, 104→D) plus a release
+# PR (#901) that must be excluded, and a capture.jsonl with records for issues
+# 202/402/203 (204 has none) plus an out-of-window record for issue 999.
+inc_scenario "Scenario 2: fixture loaders emit JSON rows"
+
+ROWS_OUT="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --emit-rows-json 2>/dev/null)"
+ROWS_RC=$?
+if [ "$ROWS_RC" -eq 0 ]; then
+  pass_msg "fixture-mode --emit-rows-json exits 0"
+else
+  fail_msg "fixture-mode --emit-rows-json exited non-zero (rc=$ROWS_RC)"
+fi
+
+if printf '%s' "$ROWS_OUT" | jq -e . >/dev/null 2>&1; then
+  pass_msg "--emit-rows-json output parses as JSON"
+else
+  fail_msg "--emit-rows-json output is not valid JSON (got: $(printf '%s' "$ROWS_OUT" | head -1))"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
