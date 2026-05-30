@@ -127,6 +127,8 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
 
    > Emergency lane: this PR did NOT pass through evaluate-issue-pr. Review and merge manually.
 
+   Once the PR is hand-merged, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/finish-manual-merge.sh" <N> <PR>` to close the audit-anchor issue and record the merge (`Merged via PR #<PR>`). The hotfix lane applies no pipeline labels, so the `pr-open`/`manual-merge` removals are no-ops here (absorbed by the helper's idempotency) — the load-bearing effect is the issue close + merge note, since the PR's `Closes #N` does not fire against the `staging` base.
+
 ## Boundary with PATH D
 
 `/pipeline:hotfix` and **PATH D (`quick-fix`)** share the same `tdd-implementer` leaf executor but differ in session shape and review gate:
