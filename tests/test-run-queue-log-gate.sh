@@ -145,22 +145,18 @@ if [ "$ok" = "1" ] && ! echo "$OUT" | grep -qE '^[[:space:]]+Queue log: .*\.clau
 fi
 [ "$ok" = "1" ] && pass_msg "both log files created"
 
-# ---- Test 3: single-issue short-circuit, logs disabled -> no 'Queue log:' line ----
-# The single-issue branch (run-queue.sh L250-293) was the exact reproduction
-# case in the issue body. STUB_WORKTREES with one entry + one issue arg routes
-# through it; the spawn-claude.sh fixture stub (exit 0) satisfies the dispatch.
-echo "Test 3: single-issue short-circuit, logs disabled -> no 'Queue log:' line"
+# ---- Test 3: single-issue dry-run via the general path, logs disabled -> no 'Queue log:' line ----
+# After #685 removed the single-issue short-circuit, a 1-issue queue flows
+# through the general path. run_q sets PIPELINE_QUEUE_DRY_RUN=1, so the general
+# dry-run hook emits BUCKET: + exit 0 before the poll loop; the gated
+# 'Queue log:' line is emitted earlier and remains suppressed when disabled.
+echo "Test 3: single-issue dry-run via general path, logs disabled -> no 'Queue log:' line"
 inc
 PROJ="$WORKDIR/p3"
 setup_proj "$PROJ"
 STUB_DIR=$(make_stubs "$PROJ")
 OUT=$(STUB_WORKTREES="200:foo" run_q "$PROJ" "$STUB_DIR" "false" 200)
 ok=1
-if ! echo "$OUT" | grep -q 'Single issue — launching directly (no queue)\.'; then
-  fail_msg "did not reach single-issue short-circuit branch"
-  echo "$OUT" | sed 's/^/    /'
-  ok=0
-fi
 if [ "$ok" = "1" ] && echo "$OUT" | grep -q 'Queue log: '; then
   fail_msg "single-issue branch should NOT emit 'Queue log:' when disabled"
   echo "$OUT" | sed 's/^/    /'
@@ -168,19 +164,17 @@ if [ "$ok" = "1" ] && echo "$OUT" | grep -q 'Queue log: '; then
 fi
 [ "$ok" = "1" ] && pass_msg "single-issue short-circuit suppresses Queue log: when disabled"
 
-# ---- Test 4: single-issue short-circuit, logs enabled -> 'Queue log:' present ----
-echo "Test 4: single-issue short-circuit, logs enabled -> 'Queue log:' present"
+# ---- Test 4: single-issue dry-run via the general path, logs enabled -> 'Queue log:' present ----
+# Symmetric to Test 3: the single-issue dry-run routes through the general path
+# (no short-circuit, post-#685); the gated 'Queue log: <path>' line is emitted
+# before the dry-run hook when PIPELINE_LOGS_ENABLED=true.
+echo "Test 4: single-issue dry-run via general path, logs enabled -> 'Queue log:' present"
 inc
 PROJ="$WORKDIR/p4"
 setup_proj "$PROJ"
 STUB_DIR=$(make_stubs "$PROJ")
 OUT=$(STUB_WORKTREES="200:foo" run_q "$PROJ" "$STUB_DIR" "true" 200)
 ok=1
-if ! echo "$OUT" | grep -q 'Single issue — launching directly (no queue)\.'; then
-  fail_msg "did not reach single-issue short-circuit branch (enabled)"
-  echo "$OUT" | sed 's/^/    /'
-  ok=0
-fi
 if [ "$ok" = "1" ] && ! echo "$OUT" | grep -qE 'Queue log: .*\.claude/logs/queue-.*\.log$'; then
   fail_msg "single-issue branch should emit 'Queue log: <path>' when enabled"
   echo "$OUT" | sed 's/^/    /'
