@@ -13,7 +13,7 @@ set -uo pipefail
 # shipped in the plugin manifest and writes nothing under
 # ${CLAUDE_PLUGIN_ROOT}. The only consumer-owned path it touches is the
 # gated `.claude/logs/` capture log it READS (resolved via $CAPTURE_LOG,
-# default .claude/logs/agent-usage.jsonl) — already on the runtime
+# default .claude/logs/agent-costs.jsonl) — already on the runtime
 # allow-list per CLAUDE.md "Namespace discipline". It consumes #642's
 # capture layer; if that file is absent/empty the report degrades
 # gracefully (all token/duration cells render `--`), never errors.
@@ -63,7 +63,7 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
   --top-n N            Size of the TOP-N consumer / slowest-stage lists
                        (default: 5).
   --capture-log PATH   Override the live capture JSONL path (default
-                       .claude/logs/agent-usage.jsonl). Ignored in fixture mode.
+                       .claude/logs/agent-costs.jsonl). Ignored in fixture mode.
   --help               Print this banner and exit 0.
 USAGE
 }
@@ -167,22 +167,25 @@ load_issue_view() {
 
 # load_capture — print the #642 capture JSONL (one JSON object per line) for
 # the report to read. Fixture mode reads DIR/capture.jsonl (empty string when
-# absent). Live mode resolves $CAPTURE_LOG (default .claude/logs/agent-usage.jsonl,
+# absent). Live mode resolves $CAPTURE_LOG (default .claude/logs/agent-costs.jsonl,
 # overridable by --capture-log) and cats it when present; emits empty otherwise
 # so the report still works (all token/duration cells render `--`).
 #
-# This is the ONLY coupling point with #642's writer. The schema this reads:
-#   {"issue":<int>,"stage":"classify|plan|plan-eval|execute|pr-eval",
-#    "agent_type":"<str>","tokens":{"input":<int>,"output":<int>,"cache":<int>},
+# This is the ONLY coupling point with #642's writer (merged via #653). Schema
+# (schema_version=1, see scripts/capture-agent-costs.sh OUTPUT RECORD SCHEMA):
+#   {"schema_version":1,"issue":"<string>","stage":"classify|plan|plan-eval|execute|pr-eval",
+#    "tokens":{"input":<int>,"output":<int>,"cache_read":<int>,"cache_creation":<int>,"total":<int>},
 #    "duration_ms":<int>}
-# A #642 rename is a one-line change to the CAPTURE_LOG default below.
+# NOTE: #642 emits `issue` as a STRING and `tokens.total` = input+output+
+# cache_read+cache_creation. Reads below coerce issue with `tostring` and sum
+# `.tokens.total` (the all-in count). A #642 rename is a one-line CAPTURE_LOG change.
 load_capture() {
   if [ -n "$FIXTURE_DIR" ]; then
     if [ -f "$FIXTURE_DIR/capture.jsonl" ]; then
       cat "$FIXTURE_DIR/capture.jsonl"
     fi
   else
-    local path="${CAPTURE_LOG:-${REPO_ROOT}/.claude/logs/agent-usage.jsonl}"
+    local path="${CAPTURE_LOG:-${REPO_ROOT}/.claude/logs/agent-costs.jsonl}"
     if [ -f "$path" ]; then
       cat "$path"
     fi
@@ -320,10 +323,10 @@ while read -r pr; do
 
       # Sum tokens_total + duration_ms across ALL capture records for this issue.
       # No records → literal "null".
-      sums="$(printf '%s' "$CAPTURE_JSON" | jq -c --argjson n "$issue_num" '
-        [.[] | select(.issue == $n)] as $recs
+      sums="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg n "$issue_num" '
+        [.[] | select((.issue|tostring) == $n)] as $recs
         | if ($recs | length) == 0 then {tokens: null, dur: null}
-          else {tokens: ([$recs[] | (.tokens.input + .tokens.output + .tokens.cache)] | add),
+          else {tokens: ([$recs[] | .tokens.total] | add),
                 dur:    ([$recs[] | .duration_ms] | add)}
           end' 2>/dev/null)"
       tokens_total="$(printf '%s' "$sums" | jq -r '.tokens // "null"' 2>/dev/null)"
@@ -372,17 +375,17 @@ fi
 
 # In-window issue numbers (column 1 of the row TSV), as a JSON array — used to
 # filter capture records into the per-stage aggregate.
-INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0) | tonumber' 2>/dev/null | jq -cs '.' 2>/dev/null)"
+INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq -cs '.' 2>/dev/null)"
 [ -z "$INWINDOW_JSON" ] && INWINDOW_JSON='[]'
 
 # Per-(issue,stage) capture sums for in-window issues:
 #   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum   (one line per (issue,stage) group)
 STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
-  [.[] | select(.issue as $i | $win | index($i))]
-  | group_by([.issue, .stage])
+  [.[] | select((.issue|tostring) as $i | $win | index($i))]
+  | group_by([(.issue|tostring), .stage])
   | .[]
-  | [ .[0].issue, .[0].stage,
-      ([.[] | (.tokens.input + .tokens.output + .tokens.cache)] | add),
+  | [ (.[0].issue|tostring), .[0].stage,
+      ([.[] | .tokens.total] | add),
       ([.[] | .duration_ms] | add) ]
   | @tsv' 2>/dev/null)"
 
