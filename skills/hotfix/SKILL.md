@@ -1,6 +1,6 @@
 ---
 name: hotfix
-description: Emergency-lane hotfix — in-session worktree fix bypassing all pipeline lifecycle gates (classify/plan/evaluate/auto-merge). Files an issue (or uses an existing one), creates a worktree, runs the test/fix loop in the current orchestrator session, opens a PR. Usage: /pipeline:hotfix "<problem>" | /pipeline:hotfix <issue-number> [--inline|--subagent]
+description: Emergency-lane hotfix — in-session worktree fix bypassing all pipeline lifecycle gates (classify/plan/evaluate/auto-merge). Files an issue (or uses an existing one), creates a worktree, runs the test/fix loop in the current orchestrator session, opens a PR. Usage: /pipeline:hotfix "<problem>" | /pipeline:hotfix <issue-number> [--inline|--subagent] [--auto-merge]
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill
 ---
@@ -31,7 +31,7 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
 - **In-session.** Executes directly in the calling session. No dispatch to a worker session.
 - **No pipeline labels.** None of `plan-pending`/`plan-reviewed`/`plan-approved`/`in-progress`/`pr-open` applied — the standard `pipeline:run` orchestrator does not pick it up.
 - **No evaluator gates.** Explicitly: no /pipeline:classify-issue, no /pipeline:plan-issue, no /pipeline:evaluate-issue-plan, no /pipeline:evaluate-issue-pr, no /pipeline:fullsend dispatch.
-- **No auto-merge.** The greenlight `scripts/auto-merge-gate.sh` does not fire — user merges manually.
+- **Auto-merge: manual by default, opt-in CI-only.** With no flag there is no auto-merge — the user merges manually. With `--auto-merge`, Step 6.5 runs `scripts/auto-merge-gate.sh` in `NO_VERDICT=1` mode (CI-only greenlight: every `statusCheckRollup` SUCCESS AND `mergeable == MERGEABLE` AND `mergeStateStatus == CLEAN` AND base `== $PIPELINE_BASE_BRANCH`, skipping the evaluator-verdict condition the emergency lane never produces) and merges on green. Never default.
 - **PR base.** Targets `PIPELINE_BASE_BRANCH` (defaults to `staging`).
 
 ## Steps
@@ -41,15 +41,17 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
    ```bash
    ARGS=("$@")
    EXECUTOR="--subagent"   # default executor is --subagent
+   AUTO_MERGE=0            # emergency lane must never surprise-merge — opt-in only
    ENTRY=""
    for a in "${ARGS[@]}"; do
      case "$a" in
-       --inline)   EXECUTOR="--inline" ;;
-       --subagent) EXECUTOR="--subagent" ;;
-       *)          ENTRY="$a" ;;
+       --inline)     EXECUTOR="--inline" ;;
+       --subagent)   EXECUTOR="--subagent" ;;
+       --auto-merge) AUTO_MERGE=1 ;;
+       *)            ENTRY="$a" ;;
      esac
    done
-   if [ -z "$ENTRY" ]; then echo "usage: /pipeline:hotfix \"<problem>\" | <issue-number> [--inline|--subagent]" >&2; exit 1; fi
+   if [ -z "$ENTRY" ]; then echo "usage: /pipeline:hotfix \"<problem>\" | <issue-number> [--inline|--subagent] [--auto-merge]" >&2; exit 1; fi
    ```
 
 2. **Look up or file the issue.**
@@ -106,15 +108,41 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
 
    ```bash
    if [ -z "$PIPELINE_BASE_BRANCH" ]; then echo "FATAL: PIPELINE_BASE_BRANCH unset; refusing to call gh pr create" >&2; exit 1; fi
-   gh pr create \
+   PR_URL=$(gh pr create \
      --repo "$PIPELINE_REPO" \
      --base "$PIPELINE_BASE_BRANCH" \
      --head "feature/hotfix-$N" \
      --title "hotfix: <short summary>" \
-     --body "Closes #$N"$'\n\n_Filed via /pipeline:hotfix — bypassed plan/evaluate gates intentionally (emergency lane)._'
+     --body "Closes #$N"$'\n\n_Filed via /pipeline:hotfix — bypassed plan/evaluate gates intentionally (emergency lane)._')
+   PR="${PR_URL##*/}"   # PR number, consumed by Step 6.5 when --auto-merge is set
    ```
 
-   Do NOT add `pr-open`, `in-progress`, or any other pipeline label to either the issue or the PR. The PR will not be picked up by the auto-merge gate — that's the design.
+   Do NOT add `pr-open`, `in-progress`, or any other pipeline label to either the issue or the PR. By default the PR will not be picked up by the auto-merge gate — that's the design. (When `--auto-merge` is set, Step 6.5 runs the CI-only gate explicitly; it still applies no labels.)
+
+6.5. **Opt-in CI-only auto-merge (only when `AUTO_MERGE=1`).** Skip this step entirely unless the user passed `--auto-merge`. There is no evaluator verdict in the emergency lane, so this runs the shared gate in `NO_VERDICT=1` mode — a CI-only greenlight that still enforces every other check (base, CI rollup, mergeable, mergeStateStatus) and still honors the `MANUAL_MERGE` env / `manual-merge` label opt-outs.
+
+   ```bash
+   if [ "${AUTO_MERGE:-0}" = "1" ]; then
+     source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
+     # Let freshly-created CI settle; a still-in-flight rollup would race to block-ci.
+     # `|| true` so a long/never-completing watch falls through to one gate evaluation
+     # rather than hanging the emergency lane indefinitely.
+     gh pr checks "$PR" --repo "$PIPELINE_REPO" --watch --interval 30 || true
+     GATE=$(NO_VERDICT=1 auto_merge_should_fire "$N" "$PR")
+     if [ "$GATE" = "green" ]; then
+       gh pr merge "$PR" --repo "$PIPELINE_REPO" --merge --delete-branch
+       # The hotfix lane applies NO pipeline labels and `Closes #N` does NOT fire
+       # against the `staging` base, so close the audit-anchor issue explicitly.
+       # TODO(#655): refactor to scripts/finish-manual-merge.sh once it lands.
+       gh issue close "$N" --repo "$PIPELINE_REPO" \
+         --comment "Auto-merged via PR #$PR (hotfix --auto-merge, CI-only greenlight, no evaluator verdict)."
+     else
+       echo "[hotfix] --auto-merge gate returned '$GATE'; leaving PR #$PR for manual merge." >&2
+     fi
+   fi
+   ```
+
+   Do NOT `--add-label` here — the lane stays label-free regardless of `--auto-merge`.
 
 7. **Restore cwd explicitly and clear the trap.**
 
@@ -139,7 +167,7 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
 | Session | spawned worker via `/pipeline:execute-issue-plan` | current orchestrator session, in-session |
 | Plan stage | skipped (PATH D dispatch directly) | skipped (emergency lane) |
 | Evaluator | `/pipeline:evaluate-issue-pr` runs | none |
-| Auto-merge gate | fires on Approved verdict | does not fire (no auto-merge) |
+| Auto-merge gate | fires on Approved verdict | off by default; `--auto-merge` fires CI-only (NO_VERDICT) |
 | Lifecycle labels | `in-progress` → `pr-open` → `merged` | none applied |
 | Who merges | pipeline (greenlight) | user (manually) |
 
