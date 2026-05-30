@@ -84,10 +84,11 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    ```bash
    $PIPELINE_TYPECHECK_CMD
    ```
-   **6b. Run tests:**
+   **6b. Run tests (single sequential pass, stdin-guarded).** Run the configured `$PIPELINE_TEST_CMD` — the targeted/relevant test command for this project. Do NOT improvise an unbounded `for t in tests/test*.sh; do bash "$t"; done` sweep over unrelated tests: it pulls in tests this issue did not touch, any one of which may block on an interactive `read`. Always redirect stdin from `/dev/null` and bound each run with `timeout` so a single interactive or hanging test cannot wedge the executor:
    ```bash
-   $PIPELINE_TEST_CMD
+   timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null
    ```
+   Run exactly ONE verification pass at a time — never launch concurrent full-suite invocations. Concurrent runs of stub/temp-file-sharing tests collide and report spurious failures, driving wasteful retry spins (issue #677). Before reaching this phase, the issue's OWN targeted test MUST already be green: a source edit that leaves the targeted test red is a red→green→commit violation — fix it (red→green→commit) before verification. Never commit past a red targeted test.
    **6c. Visual validation with Playwright** (Linux only, UI changes only): use Playwright MCP tools (configured in `.mcp.json`) to navigate to the frontend URL, screenshot affected views, and check `browser_console_messages` for JS errors. Fix and re-validate any visual issues. Backend-only changes do not require this step. (When clicking, prefer the `ref=` from `browser_snapshot` over CSS selectors with embedded quotes like `[type="submit"]` — the MCP server rejects the latter on the literal string; as of 2026-05-26.)
 
    **6d. Visual proof loop (needs-browser issues only):** If the issue carries the needs-browser label, after each plan section invoke `Skill(skill: "pipeline:visual-proof-from-plan")` passing the plan comment body. Iterate code→proof→code per section until the sub-skill reports `unsatisfied = []`. Commit the section. Proceed to the next section. This is the executor-side TDD loop with browser predicates standing in for unit tests; it does NOT replace 6a/6b which still run.
@@ -202,6 +203,7 @@ If `evaluate-issue-pr` flags the PR while the executor session is still active, 
 - All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base "$PIPELINE_BASE_BRANCH"` (quoted) to `gh pr create`.
 - Never use `--no-verify` or `--force`.
 - Never skip build verification (`PIPELINE_TEST_CMD` from the sourced config).
+- Verification (Step 6b) is a single sequential `$PIPELINE_TEST_CMD` pass wrapped with `</dev/null` + `timeout`; never improvise an unbounded `for t in tests/test*.sh` sweep over unrelated tests, and never launch concurrent full-suite runs (concurrent self-colliding suite runs report spurious failures — issue #677).
 - Never inline unbounded sentinel-file polls (e.g. `until grep -q TOKEN file; do sleep N; done`). Use `scripts/wait-for-sentinel.sh <file> <token> [--timeout N]` (default 600s) — on timeout it exits non-zero with an actionable error so the Bash tool surfaces failure instead of wedging. The `check-unbounded-sentinel-polls` lint enforces this in CI.
 - Executor does NOT merge PRs. All merging is handled by the pipeline orchestrator.
 - Terminal after `pr-open`: once the `pr-open` label is applied and the PR is confirmed open, STOP. Never run a post-`pr-open` self-verification, "confirm PR opened" re-check, or wait/poll loop — a lingering executor holds the worktree + concurrency slot and blocks `evaluate-issue-pr` (issue #631).

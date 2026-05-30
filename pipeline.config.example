@@ -7,6 +7,11 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
+# PIPELINE_TEST_CMD: the executor runs this as a SINGLE sequential verification pass
+# (see execute-issue-plan Step 6b). Keep it scoped to the targeted/relevant tests.
+# If you must script a loop, wrap it with a `timeout` and redirect `</dev/null` so an
+# interactive `read` or a hang can't wedge the executor — and never an unbounded
+# `for t in tests/test*.sh; do ...; done` sweep over unrelated tests (issue #677).
 PIPELINE_TEST_CMD="npm test"                       # Test command
 PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
 PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read
