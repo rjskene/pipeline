@@ -206,9 +206,22 @@ def build_stop_record(payload, logs_dir):
     last = state.get(session_id) or {}
     fields = ("input", "output", "cache_read", "cache_creation")
     tokens = {f: summ[f] - (last.get(f) or 0) for f in fields}
-    tokens["total"] = sum(tokens[f] for f in fields)
+    # tokens.total for the ORCHESTRATOR record is the WORK-TOTAL: input +
+    # output + cache_creation, EXCLUDING cache_read. cache_read is the full
+    # cached prefix re-read on EVERY turn, so summing it over a session
+    # multiplies the same cached context by the turn count (issue #668) and
+    # swamps comparison with inline agent_kind rows. It stays carried in the
+    # distinct tokens.cache_read field (no information lost). NOTE: inline /
+    # headless producers (build_record here, make_record in
+    # scripts/capture-agent-costs.sh) keep the all-four-field total — this
+    # carve-out is orchestrator-record-only. Field SET is unchanged so the
+    # schema_version=1 byte-compat contract holds.
+    work_fields = ("input", "output", "cache_creation")
+    tokens["total"] = sum(tokens[f] for f in work_fields)
     if tokens["total"] <= 0:
-        return None  # no new tokens since the last fire: emit nothing
+        # No new billable work since the last fire (a turn that adds ONLY
+        # cache_read leaves the work-total delta at 0): emit nothing.
+        return None
 
     state[session_id] = {f: summ[f] for f in fields}
     _save_state(logs_dir, state)
