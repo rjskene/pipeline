@@ -476,9 +476,12 @@ emit_stage_table() {
       m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
       for (k=1; k<=m; k++) {
         s = order[k]; cnt = c[s] + 0;
-        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s\n", s, 0, "--", "--"; continue }
+        # orchestrator tokens.total EXCLUDES cache_read while inline-stage totals
+        # include it (#668); the two are not directly comparable, so flag it.
+        note = (s == "orchestrator" && cnt > 0) ? "  (tokens excl. cache_read, #668)" : "";
+        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s%s\n", s, 0, "--", "--", note; continue }
         for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i] }
-        printf "%-9s | %-2d | %-13s | %-13s\n", s, cnt, fmt(median(tarr, cnt)), fmt(median(darr, cnt));
+        printf "%-9s | %-2d | %-13s | %-13s%s\n", s, cnt, fmt(median(tarr, cnt)), fmt(median(darr, cnt)), note;
         delete tarr; delete darr;
       }
     }'
@@ -495,10 +498,14 @@ emit_top_consumers() {
 }
 
 # TOP-N slowest stages, descending by summed duration_ms per (issue,stage).
+# Entries with a null/empty duration are excluded from this duration ranking —
+# notably orchestrator rows, whose duration_ms is always null post-#667 and
+# whose STAGE_TSV col1 is a session_id (not an issue number), so the `issue #`
+# prefix would be misleading. They remain visible in the per-stage table.
 emit_top_slow_stages() {
   echo ""
   echo "TOP-$TOPN SLOWEST STAGES:"
-  printf '%s\n' "$STAGE_TSV" | awk -F'\t' 'NF >= 4 { printf "%s\t%s\t%s\n", $4, $1, $2 }' \
+  printf '%s\n' "$STAGE_TSV" | awk -F'\t' 'NF >= 4 && $4 != "" { printf "%s\t%s\t%s\n", $4, $1, $2 }' \
     | sort -t "$(printf '\t')" -k1,1 -gr \
     | head -"$TOPN" \
     | awk -F'\t' '{ printf "issue #%s / %s: %s ms\n", $2, $3, $1 }'

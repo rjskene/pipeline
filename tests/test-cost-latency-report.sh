@@ -420,6 +420,40 @@ case "$ORCH_ROW12" in
 esac
 rm -rf "$TMP12"
 
+# --- Scenario 13: orchestrator slow-stage label + cache_read annotation (#678) ---
+# (a) The TOP-N SLOWEST STAGES list ranks by duration_ms; orchestrator dur is
+#     null (post-#667), and its STAGE_TSV col1 is now a session_id, so the old
+#     `issue #<session>` literal is misleading. It must not appear.
+# (b) The per-stage orchestrator row must flag the cache_read asymmetry (#668):
+#     orchestrator tokens.total EXCLUDES cache_read while inline totals include
+#     it, so the two are not directly comparable.
+inc_scenario "Scenario 13: orchestrator slow-stage label + cache_read annotation"
+
+TMP13="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP13/" 2>/dev/null
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-13","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
+} > "$TMP13/capture.jsonl"
+
+# Render with a high --top-n so the orchestrator group is NOT truncated out of
+# the slowest-stages list by head -N — forces the relabel/omit path to be
+# exercised rather than passing by coincidence of fixture size.
+TABLE13="$(bash "$HELPER" --fixture "$TMP13" --top-n 50 2>/dev/null)"
+
+# (a) No misleading `issue #sess-13` literal anywhere in the slowest-stages list.
+case "$TABLE13" in
+  *"issue #sess-13"*) fail_msg "slow-stages list printed misleading 'issue #sess-13' for an orchestrator session key" ;;
+  *) pass_msg "slow-stages list does not print 'issue #<session>' for orchestrator" ;;
+esac
+
+# (b) The orchestrator per-stage row carries a cache_read-asymmetry annotation.
+ORCH_ROW13="$(printf '%s\n' "$TABLE13" | grep -E '^orchestrator[[:space:]]*\|' | head -1)"
+case "$ORCH_ROW13" in
+  *cache_read*) pass_msg "orchestrator row annotates cache_read asymmetry (got: $ORCH_ROW13)" ;;
+  *) fail_msg "orchestrator row missing cache_read-asymmetry annotation (got: $ORCH_ROW13)" ;;
+esac
+rm -rf "$TMP13"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
