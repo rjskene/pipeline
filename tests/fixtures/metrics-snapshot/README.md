@@ -11,6 +11,6 @@ self-contained fixture for one sibling script:
   because `review-audits.sh` itself does not have a `--fixture` flag.
 
 Each fixture is intentionally minimal: just enough rows to exercise every
-aggregation branch (PASS+SKIP for compliance, all four stages for
+aggregation branch (PASS+WEAK+SKIP for compliance, all four stages for
 late-error, one outlier for over-eval) without duplicating the larger
 upstream sibling fixtures.

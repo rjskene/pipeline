@@ -19,7 +19,8 @@ set -uo pipefail
 #     "pipeline_version":           "<PIPELINE_VERSION or 'unknown'>",
 #     "over_eval_count":            <int|null>,          # count of PRs with pr_eval/loc > 0.5
 #     "late_error_count_by_stage":  {issue, plan, plan-eval, pr-eval : int},
-#     "compliance_pass_rate":       <float|null>,        # PASS / (PASS + SKIP)
+#     "compliance_pass_rate":       <float|null>,        # STRICT: PASS / (PASS + WEAK + SKIP)
+#     "compliance_weak_count":      <int|null>,          # v2 (#640): WEAK = test present but committed after source (additive; old rows read as null)
 #     "review_deviations_count":    <int|null>           # wc -l of --deviations rows
 #   }
 #
@@ -136,20 +137,28 @@ else
   LATE_ERROR_JSON="null"
 fi
 
-# --- (2-C) compliance_pass_rate ---
-# PASS / (PASS + SKIP); N/A and omitted excluded; null when denom == 0.
+# --- (2-C) compliance_pass_rate (STRICT) + (2-E) compliance_weak_count ---
+# pass_rate: numerator = PASS only; denominator = PASS+WEAK+SKIP; N/A and
+# omitted excluded; null when denom == 0. weak_count: number of WEAK
+# verdicts (test present but committed after source — test-after).
 if out=$(bash "$COMPLIANCE_BIN" "${CB_FIX[@]}" --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
   if scalar=$(printf '%s' "$out" | jq -e '
         (map(select(.verdict == "PASS")) | length) as $pass
-        | (map(select(.verdict == "PASS" or .verdict == "SKIP")) | length) as $denom
+        | (map(select(.verdict == "PASS" or .verdict == "WEAK" or .verdict == "SKIP")) | length) as $denom
         | if $denom == 0 then null else ($pass / $denom) end
       ' 2>/dev/null); then
     COMPLIANCE_JSON="$scalar"
   else
     COMPLIANCE_JSON="null"
   fi
+  if wscalar=$(printf '%s' "$out" | jq -e '[.[] | select(.verdict == "WEAK")] | length' 2>/dev/null); then
+    COMPLIANCE_WEAK_JSON="$wscalar"
+  else
+    COMPLIANCE_WEAK_JSON="null"
+  fi
 else
   COMPLIANCE_JSON="null"
+  COMPLIANCE_WEAK_JSON="null"
 fi
 
 # --- (2-D) review_deviations_count ---
@@ -181,6 +190,7 @@ ROW=$(jq -nc \
   --argjson over_eval "$OVER_EVAL_JSON" \
   --argjson late_error "$LATE_ERROR_JSON" \
   --argjson compliance "$COMPLIANCE_JSON" \
+  --argjson weak "$COMPLIANCE_WEAK_JSON" \
   --argjson review "$REVIEW_JSON" \
   '{
     date: $date,
@@ -188,6 +198,7 @@ ROW=$(jq -nc \
     over_eval_count: $over_eval,
     late_error_count_by_stage: $late_error,
     compliance_pass_rate: $compliance,
+    compliance_weak_count: $weak,
     review_deviations_count: $review
   }')
 
