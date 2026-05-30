@@ -82,6 +82,7 @@ expect(rec["tokens"]["output"] == 60, "tokens.output == 20+40")
 expect(rec["tokens"]["cache_read"] == 15, "tokens.cache_read == 5+10")
 expect(rec["tokens"]["cache_creation"] == 5, "tokens.cache_creation == 2+3")
 expect(rec["tokens"]["total"] == 380, "tokens.total == 380")
+expect(rec["duration_ms"] is None, "orchestrator duration_ms is null (calendar span is not compute)")
 PY
 
 # ---------------------------------------------------------------------------
@@ -163,6 +164,51 @@ stop = d.get("hooks", {}).get("Stop", [])
 cmds = [h.get("command", "") for blk in stop for h in blk.get("hooks", [])]
 if not any("capture_agent_cost.py" in c for c in cmds):
     raise SystemExit("assert failed: Stop hook for capture_agent_cost.py not registered (cmds=%r)" % cmds)
+PY
+
+# ---------------------------------------------------------------------------
+# Case 4: a Stop transcript spanning a large calendar gap (~38h, mirroring the
+# live #667 evidence of duration_ms=137345028) must NOT yield a multi-hour
+# duration_ms. The main-session transcript's ts_start/ts_end span the whole
+# calendar session (idle gaps + compactions), which is not compute, so the
+# orchestrator record's duration_ms is null by design.
+# ---------------------------------------------------------------------------
+PROJ4="$(make_project)"
+OUT4="$PROJ4/.claude/logs/agent-costs.jsonl"
+T4="$PROJ4/transcript-4.jsonl"
+
+# Two assistant lines ~38h apart; each carries usage so the delta is positive
+# and a record is emitted (not skipped via the delta<=0 path).
+cat > "$T4" <<'JSONL'
+{"type":"assistant","timestamp":"2026-05-28T00:00:00.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}}
+{"type":"assistant","timestamp":"2026-05-29T14:09:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":200,"output_tokens":40,"cache_read_input_tokens":10,"cache_creation_input_tokens":3}}}
+JSONL
+
+PAYLOAD4="$(printf '{"session_id":"stop-4","transcript_path":"%s"}' "$T4")"
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ4" \
+  python3 "$HOOK" <<<"$PAYLOAD4" \
+  || fail "case4: hook exited non-zero"
+
+[ -f "$OUT4" ] || fail "case4: agent-costs.jsonl NOT written for large-gap Stop payload"
+
+COUNT4="$(wc -l < "$OUT4" | tr -d ' ')"
+[ "$COUNT4" = "1" ] || fail "case4: expected exactly 1 record, got $COUNT4"
+
+python3 - "$OUT4" <<'PY' || fail "case4: large-gap record failed duration guard"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readline())
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+# The guard: a transcript spanning a large calendar gap must NOT produce a
+# multi-hour duration_ms — it must be JSON null.
+expect(rec["duration_ms"] is None, "large calendar gap -> duration_ms is null, not a multi-hour int")
+# And the record must genuinely be emitted (positive token delta), not skipped.
+expect(rec["tokens"]["total"] > 0, "tokens.total > 0 (record actually emitted)")
 PY
 
 echo "PASS: test-capture-agent-cost-orchestrator.sh"

@@ -182,7 +182,15 @@ def build_stop_record(payload, logs_dir):
     captured independently via PostToolUse(Agent), so the two streams are
     disjoint and never double-count). Attribution is synthetic:
     stage=orchestrator, agent_kind=main, issue='' (unknowable for free-form
-    turns)."""
+    turns).
+
+    The orchestrator record intentionally carries NO duration: duration_ms is
+    emitted as JSON null. The main-session transcript's ts_start/ts_end span
+    the entire calendar session (idle time between turns + compaction gaps),
+    so any wall-clock duration derived from it is not compute and is not a
+    meaningful orchestrator metric (#667). null is the honest sentinel for
+    "no compute-duration signal"; both downstream consumers already render it
+    as "--"."""
     session_id = payload.get("session_id") or ""
     transcript_path = payload.get("transcript_path")
     if not transcript_path:
@@ -226,7 +234,14 @@ def build_stop_record(payload, logs_dir):
         "session_id": session_id,
         "model": summ["model"],
         "tokens": tokens,
-        "duration_ms": duration_from_timestamps(ts_start, ts_end),
+        # duration_ms is null by design: the main-session transcript's
+        # ts_start/ts_end span the whole calendar session (idle gaps between
+        # turns + compaction gaps), so a wall-clock duration is not compute and
+        # not a meaningful orchestrator metric (#667). Both downstream consumers
+        # (cost-latency-report.sh, metrics-snapshot.sh) already drop/skip null,
+        # rendering it as "--". The inline-agent path (build_record) keeps a
+        # real per-dispatch duration.
+        "duration_ms": None,
         "ts_start": ts_start,
         "ts_end": ts_end,
         "source": source,
