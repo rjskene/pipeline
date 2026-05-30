@@ -76,6 +76,15 @@ PIPELINE_STALL_FORWARD_PROGRESS_GATE=1
 # the grace window (or set very high to effectively disable the reap).
 PIPELINE_EXECUTOR_REAP_GRACE_POLLS=3
 
+# PIPELINE_REAP_SIGKILL_GRACE_SEC controls how long the queue runner waits
+# between SIGTERM and SIGKILL when reaping a finished/wedged worker's process
+# GROUP (issue #666). On reap, the runner signals the whole script->timeout->
+# claude tree rooted at the tmux pane pid — not just the window — so
+# `queue-complete` implies no orphaned child survives. SIGTERM, then this grace,
+# then SIGKILL. Default 2 (seconds). Set to 0 to SIGKILL immediately (e.g. in
+# tests); raise to give the worker longer to exit cleanly on SIGTERM.
+PIPELINE_REAP_SIGKILL_GRACE_SEC=2
+
 # --- Executor safety-net timeout (issue #656) ---
 #
 # PIPELINE_EXECUTOR_TIMEOUT_SECONDS bounds how long the spawned executor

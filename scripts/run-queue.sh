@@ -97,6 +97,7 @@ source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 SKIP_PERMS=""
 SKILL_FLAG=""
+QUEUE_SKILL=""
 MANUAL_MERGE_FLAG=""
 # Loop-based parser: each flag may appear anywhere before/among the issue
 # numbers. --manual-merge in particular must be consumable from any argv
@@ -107,7 +108,7 @@ NEW_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
-    --skill)            SKILL_FLAG="--skill $2"; shift 2 ;;
+    --skill)            SKILL_FLAG="--skill $2"; QUEUE_SKILL="$2"; shift 2 ;;
     --manual-merge)     MANUAL_MERGE_FLAG="--manual-merge"; shift ;;
     *)                  NEW_ARGS+=("$1"); shift ;;
   esac
@@ -408,6 +409,29 @@ slug_from_path() {
 is_agent_running() {
   local issue="$1"
   tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
+}
+
+# Reap a finished/wedged worker: kill its process GROUP (the
+# script->timeout->claude tree rooted at the tmux pane pid) before closing the
+# window, so `queue-complete` implies no orphaned child survives the reap (issue
+# #666). Bare `tmux kill-window` only tears down the pane's controlling terminal;
+# the spawned claude can survive detached, holding the worktree + a slot.
+# Fail-safe: any missing pane pid / pgid simply skips the kill and still closes
+# the window, so a transient tmux/ps blip never errors the runner under the
+# poll-loop's `set +e` region.
+reap_worker_window() {
+  local issue="$1"
+  local pane_pid pgid
+  pane_pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+  if [ -n "$pane_pid" ]; then
+    pgid=$(ps -o pgid= -p "$pane_pid" 2>/dev/null | tr -d ' ')
+    if [ -n "$pgid" ]; then
+      kill -TERM "-${pgid}" 2>/dev/null || true
+      sleep "${PIPELINE_REAP_SIGKILL_GRACE_SEC:-2}"
+      kill -KILL "-${pgid}" 2>/dev/null || true
+    fi
+  fi
+  tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
 }
 
 # Echo the %CPU of an agent's tmux pane process subtree (issue #437). Resolves
@@ -818,7 +842,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       # specific outcome, free the bucket slot, and fill the gap. Checked BEFORE
       # is_agent_running so this more-specific signal wins when both are true on
       # the same poll.
-      tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
+      reap_worker_window "$issue"
       outcome="manual-merge-required"
       _block_reason=$(extract_block_reason "$issue")
       RESULTS[$issue]="$outcome"
@@ -832,7 +856,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       continue
     fi
 
-    if executor_finished_terminal "$issue"; then
+    if [ "$QUEUE_SKILL" != "evaluate-issue-pr" ] && executor_finished_terminal "$issue"; then
       # Executor lingering past pr-open (issue #636): PR opened + pr-open applied,
       # but the spawned claude child has not exited, holding the worktree + slot.
       # Require the pr-open observation to PERSIST across a grace window before
@@ -842,7 +866,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       # carries pr-open) records manual-merge-required, not a bare pr-open.
       PR_OPEN_POLLS[$issue]=$(( ${PR_OPEN_POLLS[$issue]:-0} + 1 ))
       if [ "${PR_OPEN_POLLS[$issue]}" -ge "$PIPELINE_EXECUTOR_REAP_GRACE_POLLS" ]; then
-        tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
+        reap_worker_window "$issue"
         outcome="pr-open"
         RESULTS[$issue]="$outcome"
         _finished_mode="${ISSUE_MODE[$issue]:-bare}"
@@ -855,8 +879,11 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
         continue
       fi
     else
-      # Predicate non-terminal this poll: reset the grace counter so the reap
-      # only fires on a CONTIGUOUS pr-open observation window (fail-closed).
+      # Predicate non-terminal this poll — OR an eval-mode queue, where `pr-open`
+      # is the evaluator's INPUT state, not its finish line (issue #666). Reset
+      # the grace counter so the reap only fires on a CONTIGUOUS pr-open
+      # observation window (fail-closed). The evaluator's correct terminal signal
+      # (evaluator_finished_terminal, checked above) is unaffected.
       PR_OPEN_POLLS[$issue]=0
     fi
 
