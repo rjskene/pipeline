@@ -265,10 +265,10 @@ fi
 # wedged evaluator slot (verdict Approved but manual-merge / block-* skip). The
 # wake-loop must document it as a no-op wake (mirrors outcome=success).
 inc
-if echo "$TRIAGE" | grep -qF 'agent-finished outcome=approved-manual-merge' && echo "$TRIAGE" | grep -qiE 'no-op'; then
-  pass_msg "wake-loop: agent-finished outcome=approved-manual-merge documented as no-op wake"
+if echo "$TRIAGE" | grep -qF 'agent-finished outcome=manual-merge-required' && echo "$TRIAGE" | grep -qiE 'no-op'; then
+  pass_msg "wake-loop: agent-finished outcome=manual-merge-required documented as no-op wake"
 else
-  fail_msg "wake-loop: agent-finished outcome=approved-manual-merge no-op semantics not documented"
+  fail_msg "wake-loop: agent-finished outcome=manual-merge-required no-op semantics not documented"
 fi
 
 echo ""
