@@ -52,3 +52,29 @@ records; issue 402 has `plan` + `execute` (deliberately **no** `pr-eval`);
 issue 203 has `execute`; issue 204 has **none** (→ tokens render `--`, JSON
 `null`). No record carries `classify` or `plan-eval`, so those per-stage rows
 render `--`. Record for issue 999 is out-of-window and must be dropped.
+
+## Orchestrator records (`stage: "orchestrator"`, #678)
+
+Orchestrator records are **session-scoped**, not PR-linked — they carry
+`issue: ""` (empty string) and identify the session via a `session_id` field.
+The Scenarios 9–13 fixtures append these inline rather than baking them into
+`capture.jsonl`. Two extra fields drive the report's orchestrator handling:
+
+- `session_id` — the per-session key. The report **groups orchestrator records
+  by `session_id`** (not by `issue`, which is the constant `""`), so the
+  per-stage orchestrator row reflects a per-session distribution (N = number of
+  distinct sessions) instead of a degenerate all-time sum (N = 1).
+- `duration_ms` — `null` for **post-#667** orchestrator records (orchestrator
+  duration is always null by construction in `hooks/capture_agent_cost.py`).
+  **Non-null** `duration_ms` marks a **pre-#667** record whose `tokens.total`
+  is cache_read-inflated all-time garbage; the report drops these at read-time
+  (`select(.stage == "orchestrator" and .duration_ms == null)`). Fixtures must
+  therefore use `duration_ms: null` to exercise the live (post-fix) path —
+  Scenarios 9 and 10 were reconciled to this shape.
+
+Caveat surfaced in the per-stage table (#668): orchestrator `tokens.total`
+**excludes** `cache_read` while inline-stage totals **include** it, so the
+orchestrator row is annotated `(tokens excl. cache_read, #668)` and is not
+directly comparable to the other stage rows. Orchestrator rows are also omitted
+from the `TOP-N SLOWEST STAGES` list (their `duration_ms` is null — no
+wall-clock to rank).

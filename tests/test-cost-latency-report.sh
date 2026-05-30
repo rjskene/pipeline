@@ -291,9 +291,12 @@ inc_scenario "Scenario 9: orchestrator stage row renders in per-stage table"
 
 TMP9="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP9/" 2>/dev/null
-# Append an orchestrator capture record attributed to in-window issue 202.
+# Append an orchestrator capture record in the honest post-#667 shape: issue:""
+# (session-scoped, NOT PR-linked), session_id present, duration_ms null. Pre-fix
+# records carried a non-null duration_ms and are now dropped (#678 Scenario 11),
+# so this fixture is reconciled to the null-duration shape it must survive under.
 { cat "$FIXTURE_DIR/capture.jsonl";
-  echo '{"schema_version":1,"issue":"202","stage":"orchestrator","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":30000}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-9","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
 } > "$TMP9/capture.jsonl"
 
 TABLE9="$(bash "$HELPER" --fixture "$TMP9" 2>/dev/null)"
@@ -312,10 +315,12 @@ inc_scenario "Scenario 10: orchestrator issue:\"\" records render a non-zero sta
 
 TMP10="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP10/" 2>/dev/null
-# One orchestrator record with issue:"" (session-scoped, NOT PR-linked). A single
-# record is its own median, so tokens median=1800 and dur median=30000 unambiguously.
+# One orchestrator record with issue:"" (session-scoped, NOT PR-linked) in the
+# honest post-#667 shape (session_id present, duration_ms null — pre-fix non-null
+# records are now dropped per #678 Scenario 11). A single record is its own median,
+# so tokens median=1800 unambiguously.
 { cat "$FIXTURE_DIR/capture.jsonl";
-  echo '{"schema_version":1,"issue":"","stage":"orchestrator","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":30000}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-10","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
 } > "$TMP10/capture.jsonl"
 
 TABLE10="$(bash "$HELPER" --fixture "$TMP10" 2>/dev/null)"
@@ -335,6 +340,119 @@ case "$ORCH_ROW10" in
   *) fail_msg "orchestrator row should render 1800 tokens, not '--' (got: $ORCH_ROW10)" ;;
 esac
 rm -rf "$TMP10"
+
+# --- Scenario 11: orchestrator pre-fix records (non-null duration_ms) excluded (#678) ---
+# Pre-#667 orchestrator records carry a non-null duration_ms (≈137M ms) and a
+# cache_read-inflated tokens.total (≈257M), which the report summed into a
+# grand all-time orchestrator row. Post-#667 orchestrator duration_ms is ALWAYS
+# null. The report must drop the non-null-duration (pre-fix garbage) records.
+inc_scenario "Scenario 11: orchestrator pre-fix records (non-null duration_ms) excluded"
+
+TMP11="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP11/" 2>/dev/null
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  # PRE-FIX garbage: non-null duration_ms + inflated total → must be DROPPED.
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-old","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":1,"output":1,"cache_read":257648472,"cache_creation":0,"total":257648474},"duration_ms":137345028}';
+  # POST-FIX honest record: null duration_ms → must be KEPT.
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-new","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
+} > "$TMP11/capture.jsonl"
+
+TABLE11="$(bash "$HELPER" --fixture "$TMP11" 2>/dev/null)"
+ORCH_ROW11="$(printf '%s\n' "$TABLE11" | grep -E '^orchestrator[[:space:]]*\|' | head -1)"
+
+# The grand garbage total must NOT appear anywhere in the orchestrator row.
+case "$ORCH_ROW11" in
+  *257648474*) fail_msg "orchestrator row leaked pre-fix tokens.total 257648474 (got: $ORCH_ROW11)" ;;
+  *) pass_msg "orchestrator row excludes pre-fix tokens.total (257648474 absent)" ;;
+esac
+# The pre-fix duration must NOT leak into the slow-stages / any rendered cell.
+case "$TABLE11" in
+  *137345028*) fail_msg "report leaked pre-fix duration_ms 137345028" ;;
+  *) pass_msg "report excludes pre-fix duration_ms (137345028 absent)" ;;
+esac
+# The post-fix record must still be present (1800 tokens).
+case "$ORCH_ROW11" in
+  *1800*) pass_msg "orchestrator row keeps post-fix record (1800 tokens)" ;;
+  *) fail_msg "orchestrator row should keep post-fix 1800-token record (got: $ORCH_ROW11)" ;;
+esac
+rm -rf "$TMP11"
+
+# --- Scenario 12: orchestrator records grouped by session_id, not collapsed to N=1 (#678) ---
+# Orchestrator issue is the constant "" so group_by([issue, stage]) is degenerate
+# (always N=1, and the "median" cell is the grand all-time sum). Orchestrator
+# records must group by session_id so the row reflects a per-session distribution.
+inc_scenario "Scenario 12: orchestrator records grouped by session_id (per-session N)"
+
+TMP12="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP12/" 2>/dev/null
+# THREE post-fix orchestrator records (duration_ms:null) across TWO sessions:
+#   sess-A: 1000 + 3000 = 4000   sess-B: 2000
+# → N must be 2 (two session groups); median of per-session SUMS (4000, 2000) = 3000.
+#   NOT N=1 and NOT the grand sum 6000.
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-A","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":1000},"duration_ms":null}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-A","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":3000},"duration_ms":null}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-B","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":2000},"duration_ms":null}';
+} > "$TMP12/capture.jsonl"
+
+TABLE12="$(bash "$HELPER" --fixture "$TMP12" 2>/dev/null)"
+ORCH_ROW12="$(printf '%s\n' "$TABLE12" | grep -E '^orchestrator[[:space:]]*\|' | head -1)"
+
+ORCH_N12="$(printf '%s' "$ORCH_ROW12" | awk -F'|' '{gsub(/ /,"",$2); print $2}')"
+if [ "${ORCH_N12:-0}" = "2" ]; then
+  pass_msg "orchestrator row N==2 (two session groups, not collapsed to 1)"
+else
+  fail_msg "orchestrator row N should be 2 (per-session), got N=$ORCH_N12 (row: $ORCH_ROW12)"
+fi
+
+# Median tokens cell == median of per-session sums (4000, 2000) == 3000.
+ORCH_TOK12="$(printf '%s' "$ORCH_ROW12" | awk -F'|' '{gsub(/ /,"",$3); print $3}')"
+if [ "$ORCH_TOK12" = "3000" ]; then
+  pass_msg "orchestrator median tokens == 3000 (median of per-session sums)"
+else
+  fail_msg "orchestrator median tokens should be 3000 (median of per-session sums), got $ORCH_TOK12 (row: $ORCH_ROW12)"
+fi
+
+# Must NOT be the grand all-time sum.
+case "$ORCH_ROW12" in
+  *6000*) fail_msg "orchestrator row leaked grand all-time sum 6000 (row: $ORCH_ROW12)" ;;
+  *) pass_msg "orchestrator row does not render grand all-time sum 6000" ;;
+esac
+rm -rf "$TMP12"
+
+# --- Scenario 13: orchestrator slow-stage label + cache_read annotation (#678) ---
+# (a) The TOP-N SLOWEST STAGES list ranks by duration_ms; orchestrator dur is
+#     null (post-#667), and its STAGE_TSV col1 is now a session_id, so the old
+#     `issue #<session>` literal is misleading. It must not appear.
+# (b) The per-stage orchestrator row must flag the cache_read asymmetry (#668):
+#     orchestrator tokens.total EXCLUDES cache_read while inline totals include
+#     it, so the two are not directly comparable.
+inc_scenario "Scenario 13: orchestrator slow-stage label + cache_read annotation"
+
+TMP13="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP13/" 2>/dev/null
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-13","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
+} > "$TMP13/capture.jsonl"
+
+# Render with a high --top-n so the orchestrator group is NOT truncated out of
+# the slowest-stages list by head -N — forces the relabel/omit path to be
+# exercised rather than passing by coincidence of fixture size.
+TABLE13="$(bash "$HELPER" --fixture "$TMP13" --top-n 50 2>/dev/null)"
+
+# (a) No misleading `issue #sess-13` literal anywhere in the slowest-stages list.
+case "$TABLE13" in
+  *"issue #sess-13"*) fail_msg "slow-stages list printed misleading 'issue #sess-13' for an orchestrator session key" ;;
+  *) pass_msg "slow-stages list does not print 'issue #<session>' for orchestrator" ;;
+esac
+
+# (b) The orchestrator per-stage row carries a cache_read-asymmetry annotation.
+ORCH_ROW13="$(printf '%s\n' "$TABLE13" | grep -E '^orchestrator[[:space:]]*\|' | head -1)"
+case "$ORCH_ROW13" in
+  *cache_read*) pass_msg "orchestrator row annotates cache_read asymmetry (got: $ORCH_ROW13)" ;;
+  *) fail_msg "orchestrator row missing cache_read-asymmetry annotation (got: $ORCH_ROW13)" ;;
+esac
+rm -rf "$TMP13"
 
 echo ""
 echo "== RESULTS =="

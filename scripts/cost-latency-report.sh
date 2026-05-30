@@ -380,16 +380,30 @@ INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq
 
 # Per-(issue,stage) capture sums for in-window issues:
 #   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum   (one line per (issue,stage) group)
+#
+# Orchestrator records are session-scoped (issue == ""), so grouping them by
+# [issue, stage] is degenerate (one all-time group). Partition the post-select
+# stream: group orchestrator records by session_id (col1 = session_id, dur =
+# null since post-#667 orchestrator duration_ms is always null), and keep inline
+# stages grouped by (issue, stage). Concatenate so the @tsv 4-column contract
+# (key \t stage \t tokens_sum \t dur_sum) consumed by emit_stage_table /
+# emit_top_slow_stages (NF >= 4) is preserved.
 STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
   [.[] | select(
-      (.stage == "orchestrator")
+      (.stage == "orchestrator" and .duration_ms == null)
       or ((.issue|tostring) as $i | $win | index($i))
-    )]
-  | group_by([(.issue|tostring), .stage])
+    )] as $recs
+  | (
+      ($recs | map(select(.stage == "orchestrator")) | group_by(.session_id)
+        | map([ (.[0].session_id // ""), "orchestrator",
+                ([.[] | .tokens.total] | add), null ]))
+      +
+      ($recs | map(select(.stage != "orchestrator")) | group_by([(.issue|tostring), .stage])
+        | map([ (.[0].issue|tostring), .[0].stage,
+                ([.[] | .tokens.total] | add),
+                ([.[] | .duration_ms] | add) ]))
+    )
   | .[]
-  | [ (.[0].issue|tostring), .[0].stage,
-      ([.[] | .tokens.total] | add),
-      ([.[] | .duration_ms] | add) ]
   | @tsv' 2>/dev/null)"
 
 emit_banner() {
@@ -462,9 +476,12 @@ emit_stage_table() {
       m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
       for (k=1; k<=m; k++) {
         s = order[k]; cnt = c[s] + 0;
-        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s\n", s, 0, "--", "--"; continue }
+        # orchestrator tokens.total EXCLUDES cache_read while inline-stage totals
+        # include it (#668); the two are not directly comparable, so flag it.
+        note = (s == "orchestrator" && cnt > 0) ? "  (tokens excl. cache_read, #668)" : "";
+        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s%s\n", s, 0, "--", "--", note; continue }
         for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i] }
-        printf "%-9s | %-2d | %-13s | %-13s\n", s, cnt, fmt(median(tarr, cnt)), fmt(median(darr, cnt));
+        printf "%-9s | %-2d | %-13s | %-13s%s\n", s, cnt, fmt(median(tarr, cnt)), fmt(median(darr, cnt)), note;
         delete tarr; delete darr;
       }
     }'
@@ -481,10 +498,14 @@ emit_top_consumers() {
 }
 
 # TOP-N slowest stages, descending by summed duration_ms per (issue,stage).
+# Entries with a null/empty duration are excluded from this duration ranking —
+# notably orchestrator rows, whose duration_ms is always null post-#667 and
+# whose STAGE_TSV col1 is a session_id (not an issue number), so the `issue #`
+# prefix would be misleading. They remain visible in the per-stage table.
 emit_top_slow_stages() {
   echo ""
   echo "TOP-$TOPN SLOWEST STAGES:"
-  printf '%s\n' "$STAGE_TSV" | awk -F'\t' 'NF >= 4 { printf "%s\t%s\t%s\n", $4, $1, $2 }' \
+  printf '%s\n' "$STAGE_TSV" | awk -F'\t' 'NF >= 4 && $4 != "" { printf "%s\t%s\t%s\n", $4, $1, $2 }' \
     | sort -t "$(printf '\t')" -k1,1 -gr \
     | head -"$TOPN" \
     | awk -F'\t' '{ printf "issue #%s / %s: %s ms\n", $2, $3, $1 }'
