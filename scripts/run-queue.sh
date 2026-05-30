@@ -143,6 +143,13 @@ PIPELINE_STALL_SAMPLE_INTERVAL_SEC="${PIPELINE_STALL_SAMPLE_INTERVAL_SEC:-1}"
 # alone false-flagged it as stalled. Set to 0 to restore pre-#641 CPU-only
 # behavior (counter advances on idle CPU regardless of pane progress).
 PIPELINE_STALL_FORWARD_PROGRESS_GATE="${PIPELINE_STALL_FORWARD_PROGRESS_GATE:-1}"
+# Number of consecutive polls a worker must be observed at the `pr-open` label
+# (PR opened, terminal action taken) while still alive before the runner reaps
+# it (issue #636). Mirrors PIPELINE_STALL_POLL_THRESHOLD's grace-window shape.
+# FAIL-CLOSED: a transient gh error makes executor_finished_terminal() return 1,
+# which resets the counter — the runner never reaps mid-`gh pr create`/push. At
+# the default 60s poll this is a few-minute grace window. Set higher to widen it.
+PIPELINE_EXECUTOR_REAP_GRACE_POLLS="${PIPELINE_EXECUTOR_REAP_GRACE_POLLS:-3}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
@@ -310,6 +317,7 @@ declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
 declare -A CPU_IDLE_POLLS=()  # issue -> consecutive low-CPU poll count
 declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this window
 declare -A PANE_FINGERPRINT=()  # issue -> last-seen tmux-pane fingerprint (forward-progress baseline, #641)
+declare -A PR_OPEN_POLLS=()   # issue -> consecutive polls observed at pr-open while alive (issue #636)
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
@@ -584,6 +592,36 @@ evaluator_finished_terminal() {
   return 0
 }
 
+# Detect an executor session that has opened its PR (issue at `pr-open`) but
+# whose spawned claude child has not exited — the post-PR lingering wedge
+# (issue #636). Symmetric to evaluator_finished_terminal(): the
+# is_agent_running() window-presence check is necessary but not sufficient,
+# because the executor can sit idle holding the worktree + a concurrency slot
+# until the per-agent timeout fires. This predicate gives the runner a second
+# terminal signal sourced from GitHub state.
+#
+# Returns 0 (terminal) iff the issue carries the `pr-open` label (the terminal
+# action — PR opened — has already been taken) AND is NOT yet `merged`. The
+# caller gates the actual reap behind a grace window (PR_OPEN_POLLS >=
+# PIPELINE_EXECUTOR_REAP_GRACE_POLLS) so a worker mid-`gh pr create`/push is
+# never killed. Fails closed: any gh error, empty labels, missing `pr-open`,
+# or a `merged` label returns 1 (the merged/auto-merge case is owned by the
+# existing is_agent_running / check_issue_outcome branches).
+executor_finished_terminal() {
+  local issue="$1"
+  local labels
+  labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" \
+    --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
+  [ -n "$labels" ] || return 1
+  # merged supersedes pr-open: the evaluator/auto-merge already advanced the
+  # issue; let the existing branches reap it. Comma-anchored exact match.
+  echo ",$labels," | grep -q ',merged,' && return 1
+  # Require pr-open present (terminal action taken). Comma-anchored so a
+  # hypothetical `not-pr-open` label cannot match.
+  echo ",$labels," | grep -q ',pr-open,' || return 1
+  return 0
+}
+
 # Check if the pending file has at least one non-empty line
 pending_file_has_items() {
   [ -f "$PENDING_FILE" ] || return 1
@@ -772,6 +810,34 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
       fill_slots
       continue
+    fi
+
+    if executor_finished_terminal "$issue"; then
+      # Executor lingering past pr-open (issue #636): PR opened + pr-open applied,
+      # but the spawned claude child has not exited, holding the worktree + slot.
+      # Require the pr-open observation to PERSIST across a grace window before
+      # reaping so we NEVER kill a worker mid-`gh pr create`/push — a transient gh
+      # blip flips the predicate to non-terminal, resetting the counter. Checked
+      # AFTER evaluator_finished_terminal so a manual-merge/block wedge (which also
+      # carries pr-open) records approved-manual-merge, not a bare pr-open.
+      PR_OPEN_POLLS[$issue]=$(( ${PR_OPEN_POLLS[$issue]:-0} + 1 ))
+      if [ "${PR_OPEN_POLLS[$issue]}" -ge "$PIPELINE_EXECUTOR_REAP_GRACE_POLLS" ]; then
+        tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
+        outcome="pr-open"
+        RESULTS[$issue]="$outcome"
+        _finished_mode="${ISSUE_MODE[$issue]:-bare}"
+        BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
+        unset 'ACTIVE['"$issue"']'
+        unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PR_OPEN_POLLS['"$issue"']'
+        log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (executor terminal, reaped after ${PIPELINE_EXECUTOR_REAP_GRACE_POLLS}-poll grace, window force-closed)"
+        log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+        fill_slots
+        continue
+      fi
+    else
+      # Predicate non-terminal this poll: reset the grace counter so the reap
+      # only fires on a CONTIGUOUS pr-open observation window (fail-closed).
+      PR_OPEN_POLLS[$issue]=0
     fi
 
     if ! is_agent_running "$issue"; then
