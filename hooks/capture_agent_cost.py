@@ -344,11 +344,30 @@ def build_record(payload):
     ts_start = _first(payload, "ts_start", "start_time", "started_at") or ""
     ts_end = _first(payload, "ts_end", "end_time", "ended_at", "timestamp") or ""
 
+    # The real PostToolUse(Agent) payload carries NO top-level ts_* key, so
+    # ts_end is empty here. PostToolUse(Agent) fires exactly when the subagent
+    # returns, so the hook wall-clock IS an accurate end timestamp. A payload
+    # that genuinely supplies ts_end (above) still wins -- this is a fallback.
+    if not ts_end:
+        ts_end = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
     total_duration_ms = payload.get("total_duration_ms")
     if isinstance(total_duration_ms, (int, float)) and not isinstance(total_duration_ms, bool):
         duration_ms = int(total_duration_ms)
     else:
         duration_ms = duration_from_timestamps(ts_start, ts_end)
+
+    # Backfill ts_start from ts_end - duration_ms AFTER duration_ms is resolved
+    # (so the derivation never feeds back into the duration calc). This yields a
+    # non-empty, internally-consistent start timestamp and -- critically -- gives
+    # record_key() per-record entropy instead of keying off "". Fail-open: leave
+    # ts_start as-is if ts_end is unparseable.
+    if not ts_start and duration_ms:
+        try:
+            end_dt = datetime.datetime.fromisoformat(ts_end.replace("Z", "+00:00"))
+            ts_start = (end_dt - datetime.timedelta(milliseconds=duration_ms)).isoformat()
+        except (ValueError, AttributeError):
+            pass
 
     model = _first(payload, "model") or ""
     agent_type = _first(payload, "subagent_type") or "unknown"
@@ -357,7 +376,12 @@ def build_record(payload):
 
     return {
         "schema_version": 1,
-        "record_key": record_key(source, agent_kind, session_id, issue, stage, ts_start),
+        # Seed the idempotency key off ts_start (now non-empty after the backfill
+        # above, so it carries per-record entropy) or ts_end if a degenerate path
+        # (no duration_ms) left ts_start empty -- ts_end is always populated. Was
+        # seeded from ts_start=="" for every inline record, so all records for a
+        # given (source, inline, session_id, issue, stage) collided (#690).
+        "record_key": record_key(source, agent_kind, session_id, issue, stage, ts_start or ts_end),
         "issue": issue,
         "stage": stage,
         "agent_kind": agent_kind,

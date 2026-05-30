@@ -98,28 +98,29 @@ PY
 
 # ---------------------------------------------------------------------------
 # Case B: two payloads sharing session_id + description (→ same issue+stage),
-#   differing only in emit time → DISTINCT record_key. Determinism is forced by
-#   giving each payload a distinct top-level ts_end (the precedence-preserving
-#   path from Case C); record_key seeds off ts_start (derived) which differs.
+#   differing only in emit time → DISTINCT record_key. Uses the FLAT shape with
+#   distinct explicit ts_end values for determinism (record_key seeds off the
+#   derived ts_start, which differs because ts_end differs). Pre-fix both keyed
+#   off ts_start=="" and collided.
 # ---------------------------------------------------------------------------
 PROJ_B="$(make_project)"
 OUT_B="$PROJ_B/.claude/logs/agent-costs.jsonl"
 
 PAYLOAD_B1='{
-  "tool_name": "Agent",
   "session_id": "sB",
-  "duration_ms": 1000,
+  "description": "execute-issue-plan #690",
+  "subagent_type": "x",
   "ts_end": "2026-05-30T22:00:00+00:00",
-  "tool_input": {"description": "execute-issue-plan #690", "subagent_type": "x"},
-  "tool_response": {"usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 1, "cache_creation_input_tokens": 1}}
+  "total_duration_ms": 1000,
+  "usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 1, "cache_creation_input_tokens": 1}
 }'
 PAYLOAD_B2='{
-  "tool_name": "Agent",
   "session_id": "sB",
-  "duration_ms": 1000,
+  "description": "execute-issue-plan #690",
+  "subagent_type": "x",
   "ts_end": "2026-05-30T22:05:00+00:00",
-  "tool_input": {"description": "execute-issue-plan #690", "subagent_type": "x"},
-  "tool_response": {"usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 1, "cache_creation_input_tokens": 1}}
+  "total_duration_ms": 1000,
+  "usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 1, "cache_creation_input_tokens": 1}
 }'
 
 run_hook "$PROJ_B" "$PAYLOAD_B1"
@@ -142,17 +143,20 @@ PY
 
 # ---------------------------------------------------------------------------
 # Case C: payload-supplied top-level ts_end WINS (wall-clock is a fallback).
+#   Uses the FLAT back-compat shape (no tool_name/tool_input/tool_response) so
+#   the top-level ts_end survives to build_record's _first(payload,"ts_end",...)
+#   read — the PostToolUse(Agent) normaliser intentionally drops top-level ts_*.
 # ---------------------------------------------------------------------------
 PROJ_C="$(make_project)"
 OUT_C="$PROJ_C/.claude/logs/agent-costs.jsonl"
 
 PAYLOAD_C='{
-  "tool_name": "Agent",
   "session_id": "sC",
-  "duration_ms": 2000,
+  "description": "execute-issue-plan #690",
+  "subagent_type": "x",
   "ts_end": "2026-05-30T22:00:00+00:00",
-  "tool_input": {"description": "execute-issue-plan #690", "subagent_type": "x"},
-  "tool_response": {"usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 1, "cache_creation_input_tokens": 1}}
+  "total_duration_ms": 2000,
+  "usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 1, "cache_creation_input_tokens": 1}
 }'
 
 run_hook "$PROJ_C" "$PAYLOAD_C"
