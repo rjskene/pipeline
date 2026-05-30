@@ -304,6 +304,38 @@ else
 fi
 rm -rf "$TMP9"
 
+# --- Scenario 10: orchestrator issue:"" records render a NON-ZERO stage row (#669) ---
+# Orchestrator records are session-scoped (issue:"" — no PR link). The per-stage
+# join must NOT gate them by the in-window PR-issue filter, else the orchestrator
+# row always renders "orchestrator | 0 | -- | --" even though records exist.
+inc_scenario "Scenario 10: orchestrator issue:\"\" records render a non-zero stage row"
+
+TMP10="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP10/" 2>/dev/null
+# One orchestrator record with issue:"" (session-scoped, NOT PR-linked). A single
+# record is its own median, so tokens median=1800 and dur median=30000 unambiguously.
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":30000}';
+} > "$TMP10/capture.jsonl"
+
+TABLE10="$(bash "$HELPER" --fixture "$TMP10" 2>/dev/null)"
+ORCH_ROW10="$(printf '%s\n' "$TABLE10" | grep -E '^orchestrator[[:space:]]*\|' | head -1)"
+
+# N column must be >= 1 (record was NOT filtered out).
+ORCH_N10="$(printf '%s' "$ORCH_ROW10" | awk -F'|' '{gsub(/ /,"",$2); print $2}')"
+if [ "${ORCH_N10:-0}" -ge 1 ] 2>/dev/null; then
+  pass_msg "orchestrator row N>=1 for issue:\"\" records (N=$ORCH_N10)"
+else
+  fail_msg "orchestrator row N should be >=1 for issue:\"\" records (got row: $ORCH_ROW10)"
+fi
+
+# Median tokens cell must be the real number 1800, NOT '--'.
+case "$ORCH_ROW10" in
+  *1800*) pass_msg "orchestrator row renders real median tokens (1800), not '--'" ;;
+  *) fail_msg "orchestrator row should render 1800 tokens, not '--' (got: $ORCH_ROW10)" ;;
+esac
+rm -rf "$TMP10"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

@@ -381,7 +381,10 @@ INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq
 # Per-(issue,stage) capture sums for in-window issues:
 #   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum   (one line per (issue,stage) group)
 STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
-  [.[] | select((.issue|tostring) as $i | $win | index($i))]
+  [.[] | select(
+      (.stage == "orchestrator")
+      or ((.issue|tostring) as $i | $win | index($i))
+    )]
   | group_by([(.issue|tostring), .stage])
   | .[]
   | [ (.[0].issue|tostring), .[0].stage,
