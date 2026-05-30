@@ -116,6 +116,10 @@ assert_contains "setup-worktree.sh"     "reuses existing worktree helper"
 # Opt-in auto-merge flag (#659).
 assert_contains "--auto-merge"          "documents --auto-merge flag"
 assert_contains "AUTO_MERGE"            "parses AUTO_MERGE variable"
+assert_contains "NO_VERDICT=1"          "Step 6.5 runs the gate in NO_VERDICT mode"
+assert_contains "auto_merge_should_fire" "Step 6.5 reuses the shared gate helper"
+assert_contains "gh issue close"        "Step 6.5 closes the audit-anchor issue explicitly"
+assert_contains "manual by default"     "invariant states auto-merge is manual by default"
 
 echo ""
 echo "================================"
