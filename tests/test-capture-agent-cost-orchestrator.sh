@@ -125,6 +125,23 @@ if s != 380:
     raise SystemExit("assert failed: SUM(tokens.total) == 380 (deltas, no double-count); got %d (%r)" % (s, totals))
 PY
 
+# The two delta records for the same session MUST carry DISTINCT record_keys
+# (the plan requires distinct keys per delta append; record_key is documented
+# as an idempotency key, so colliding keys would let a future dedup pass
+# collapse a session's deltas and undercount). ts_end advances as the
+# transcript grows, so it differentiates successive deltas.
+python3 - "$OUT2" <<'PY' || fail "case2: delta records must have distinct record_keys"
+import json, sys
+keys = []
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        line = line.strip()
+        if line:
+            keys.append(json.loads(line)["record_key"])
+if len(keys) != len(set(keys)):
+    raise SystemExit("assert failed: delta records share a record_key (idempotency contract); keys=%r" % keys)
+PY
+
 # Fire 3: no transcript growth -> delta <= 0 -> NO new record.
 env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
   python3 "$HOOK" <<<"$PAYLOAD2" || fail "case2: fire-3 hook exited non-zero"

@@ -212,9 +212,13 @@ def build_stop_record(payload, logs_dir):
     source = "forward"
     issue = ""
 
+    # record_key MUST differ per delta append (it is the idempotency key). The
+    # transcript's MIN timestamp (ts_start) is invariant as the transcript
+    # grows, so ts_end (the MAX, which advances with each new assistant
+    # message) is what differentiates successive session deltas.
     return {
         "schema_version": 1,
-        "record_key": record_key(source, agent_kind, session_id, issue, stage, ts_start),
+        "record_key": record_key(source, agent_kind, session_id, issue, stage, ts_end),
         "issue": issue,
         "stage": stage,
         "agent_kind": agent_kind,
