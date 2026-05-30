@@ -63,6 +63,11 @@ WORKTREE_PATH="$(realpath "$1" 2>/dev/null || echo "$1")"
 ISSUE_NUM="$2"
 SLUG="${3:-issue-$ISSUE_NUM}"
 MODE="${4:-terminal}"
+# Executor safety-net timeout (seconds). Configurable via pipeline.config
+# so a heavy PATH C can be given more headroom without editing this script
+# (issue #656). Default 5400 = 90 min. The 30s --kill-after grace below is
+# held constant.
+EXECUTOR_TIMEOUT="${PIPELINE_EXECUTOR_TIMEOUT_SECONDS:-5400}"
 SESSION_NAME="issue-${ISSUE_NUM}-${SLUG}"
 TMUX_WINDOW="issue-${ISSUE_NUM}"
 
@@ -482,7 +487,7 @@ INNER=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
 INNER="\${INNER# }"
 # -p (print mode): Claude processes the task then exits (no interactive prompt).
 # timeout safety net: 90 min with 30s grace before SIGKILL.
-CMD="timeout --foreground --signal=TERM --kill-after=30 5400 \$INNER"
+CMD="timeout --foreground --signal=TERM --kill-after=30 ${EXECUTOR_TIMEOUT} \$INNER"
 if [ "\$(uname -s)" = "Darwin" ]; then
   ${LAUNCHER_EXEC_DARWIN}
 else
