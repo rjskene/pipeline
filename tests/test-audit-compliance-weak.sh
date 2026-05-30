@@ -1,8 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
-# Task 2 (issue #417): PATH B PR with one commit touching tests AND another
-# touching source → TDD row verdict PASS, aggregate "Compliant".
+# Issue #640: source-then-test commit ordering (test committed AFTER source)
+# → TDD row verdict WEAK, aggregate "Compliant (weak: TDD)".
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -27,12 +27,13 @@ COMMITS_JSON="$TMPDIR/commits.json"
 LABELS_JSON="$TMPDIR/labels.json"
 
 cat > "$FILES_JSON" <<'EOF'
-["tests/test-foo.sh", "scripts/foo.sh"]
+["scripts/foo.sh","tests/test-foo.sh"]
 EOF
+# Source commit FIRST, test commit SECOND → test-after → WEAK.
 cat > "$COMMITS_JSON" <<'EOF'
 [
-  {"oid":"aaa111","files":["tests/test-foo.sh"]},
-  {"oid":"bbb222","files":["scripts/foo.sh"]}
+  {"oid":"s1","files":["scripts/foo.sh"]},
+  {"oid":"t1","files":["tests/test-foo.sh"]}
 ]
 EOF
 cat > "$LABELS_JSON" <<'EOF'
@@ -44,16 +45,16 @@ OUT="$(bash "$SCRIPT" 999 999 --dry-run \
   --commits-json "$COMMITS_JSON" \
   --labels-json "$LABELS_JSON" 2>&1)"
 
-if echo "$OUT" | grep -qF "| TDD   | yes (PATH B) | test committed before/with source (test-first) | PASS |"; then
-  pass_msg "stdout contains PATH B PASS TDD row"
+if echo "$OUT" | grep -qF "| TDD   | yes (PATH B) | test committed after source (test-after) | WEAK |"; then
+  pass_msg "stdout contains PATH B WEAK TDD row"
 else
-  fail_msg "stdout contains PATH B PASS TDD row (got: $OUT)"
+  fail_msg "stdout contains PATH B WEAK TDD row (got: $OUT)"
 fi
 
-if echo "$OUT" | grep -qF "Aggregate: Compliant"; then
-  pass_msg "stdout contains 'Aggregate: Compliant'"
+if echo "$OUT" | grep -qF "Aggregate: Compliant (weak: TDD)"; then
+  pass_msg "stdout contains 'Aggregate: Compliant (weak: TDD)'"
 else
-  fail_msg "stdout contains 'Aggregate: Compliant' (got: $OUT)"
+  fail_msg "stdout contains 'Aggregate: Compliant (weak: TDD)' (got: $OUT)"
 fi
 
 echo "PASS=$PASS FAIL=$FAIL"

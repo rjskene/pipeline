@@ -6,6 +6,7 @@
   {"number":105,"title":"refactor: big","additions":300,"deletions":100,"body":"Closes #205","mergedAt":"2026-05-14T10:00:00Z","labels":[]},
   {"number":106,"title":"fix: quick","additions":10,"deletions":3,"body":"Closes #206","mergedAt":"2026-05-15T10:00:00Z","labels":[]},
   {"number":107,"title":"fix: quick2","additions":15,"deletions":2,"body":"Closes #207","mergedAt":"2026-05-16T10:00:00Z","labels":[]},
+  {"number":109,"title":"feat: weak ordering","additions":40,"deletions":5,"body":"Closes #209","mergedAt":"2026-05-16T12:00:00Z","labels":[]},
   {"number":108,"title":"feat: unlinked","additions":20,"deletions":5,"body":"No close marker here","mergedAt":"2026-05-17T10:00:00Z","labels":[]},
   {"number":901,"title":"chore(main): release 0.20.0","additions":50,"deletions":10,"body":"","mergedAt":"2026-05-18T10:00:00Z","labels":[{"name":"autorelease: tagged"}]}
 ]

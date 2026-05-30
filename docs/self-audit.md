@@ -57,7 +57,8 @@ Row schema (locked, see issue #576 plan):
 | `pipeline_version` | string | `PIPELINE_VERSION` from `pipeline.config`, else `"unknown"` |
 | `over_eval_count` | int (or `null`) | Count of PRs in the 50-PR window with `pr_eval / max(loc,1) > 0.5`. Source: `over-eval-report.sh --emit-rows-json` |
 | `late_error_count_by_stage` | object (or `null`) | Findings per `.stage`; the four canonical keys `issue`/`plan`/`plan-eval`/`pr-eval` always present (zeros included) so #420's diary can parse by name. Source: `late-error-report.sh --emit-rows-json` |
-| `compliance_pass_rate` | float in `[0,1]` (or `null`) | `PASS / (PASS + SKIP)` — excludes `N/A` and `omitted` from the denominator. `null` when denom is 0. Source: `compliance-backfill.sh --emit-rows-json` |
+| `compliance_pass_rate` | float in `[0,1]` (or `null`) | STRICT test-first rate: `PASS / (PASS + WEAK + SKIP)` — excludes `N/A` and `omitted` from the denominator. `null` when denom is 0. Source: `compliance-backfill.sh --emit-rows-json` |
+| `compliance_weak_count` | int (or `null`) | v2 addition (#640): count of `WEAK` verdicts (test present but committed AFTER source — test-after). Additive schema bump; historical rows lacking the key are read as `null`. Source: `compliance-backfill.sh --emit-rows-json` |
 | `review_deviations_count` | int (or `null`) | `wc -l` of `review-audits.sh --deviations --since <yesterday-UTC>` output |
 
 A sibling failure degrades that field to `null` rather than aborting the snapshot — partial-day signal beats no-day signal. The snapshot exit code stays 0 when any sibling degrades.

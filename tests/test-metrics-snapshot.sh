@@ -102,6 +102,7 @@ if [ -f "$OUT_FILE" ] && jq -e '
   and (.over_eval_count | type == "number")
   and (.late_error_count_by_stage | type == "object")
   and ((.compliance_pass_rate | type == "number") or (.compliance_pass_rate == null))
+  and ((.compliance_weak_count | type == "number") or (.compliance_weak_count == null))
   and (.review_deviations_count | type == "number")
 ' "$OUT_FILE" >/dev/null 2>&1; then
   pass_msg "row has required keys with expected types"
@@ -124,6 +125,21 @@ if [ -f "$OUT_FILE" ] && jq -e '
   pass_msg "late_error_count_by_stage has all 4 canonical keys"
 else
   fail_msg "late_error_count_by_stage missing canonical keys"
+fi
+
+# Strict test-first pass-rate (#640). Compliance fixture: #101 omitted (PATH A),
+# #102 PASS (test-first), #103 SKIP (source-only), #104 WEAK (source-then-test).
+# Numerator = PASS only (1); denominator = PASS+WEAK+SKIP (3) → 1/3 ≈ 0.333.
+if [ -f "$OUT_FILE" ] && jq -e '.compliance_pass_rate > 0.33 and .compliance_pass_rate < 0.34' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "compliance_pass_rate is strict 1/3 (PASS / (PASS+WEAK+SKIP))"
+else
+  fail_msg "compliance_pass_rate not ~0.333 (got $(jq -c '.compliance_pass_rate' "$OUT_FILE" 2>/dev/null))"
+fi
+
+if [ -f "$OUT_FILE" ] && jq -e '.compliance_weak_count == 1' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "compliance_weak_count == 1 (one WEAK verdict in fixture)"
+else
+  fail_msg "compliance_weak_count != 1 (got $(jq -c '.compliance_weak_count' "$OUT_FILE" 2>/dev/null))"
 fi
 
 # --- Scenario 3: idempotent append (1 → 2 lines, first row preserved) ---
