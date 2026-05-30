@@ -456,7 +456,7 @@ emit_stage_table() {
     }
     NF >= 4 { s=$2; c[s]++; tk[s,c[s]]=$3; dr[s,c[s]]=$4 }
     END {
-      m = split("classify plan plan-eval execute pr-eval", order, " ");
+      m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
       for (k=1; k<=m; k++) {
         s = order[k]; cnt = c[s] + 0;
         if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s\n", s, 0, "--", "--"; continue }

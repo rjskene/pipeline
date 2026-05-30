@@ -286,6 +286,24 @@ else
 fi
 rm -rf "$TMP8"
 
+# --- Scenario 9: orchestrator stage row renders (#662) ---
+inc_scenario "Scenario 9: orchestrator stage row renders in per-stage table"
+
+TMP9="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP9/" 2>/dev/null
+# Append an orchestrator capture record attributed to in-window issue 202.
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  echo '{"schema_version":1,"issue":"202","stage":"orchestrator","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":30000}';
+} > "$TMP9/capture.jsonl"
+
+TABLE9="$(bash "$HELPER" --fixture "$TMP9" 2>/dev/null)"
+if printf '%s\n' "$TABLE9" | grep -qE '^orchestrator[[:space:]]*\|'; then
+  pass_msg "per-stage table renders an 'orchestrator' row"
+else
+  fail_msg "per-stage table missing 'orchestrator' row"
+fi
+rm -rf "$TMP9"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
