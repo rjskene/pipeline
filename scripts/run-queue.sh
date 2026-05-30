@@ -592,6 +592,36 @@ evaluator_finished_terminal() {
   return 0
 }
 
+# Detect an executor session that has opened its PR (issue at `pr-open`) but
+# whose spawned claude child has not exited — the post-PR lingering wedge
+# (issue #636). Symmetric to evaluator_finished_terminal(): the
+# is_agent_running() window-presence check is necessary but not sufficient,
+# because the executor can sit idle holding the worktree + a concurrency slot
+# until the per-agent timeout fires. This predicate gives the runner a second
+# terminal signal sourced from GitHub state.
+#
+# Returns 0 (terminal) iff the issue carries the `pr-open` label (the terminal
+# action — PR opened — has already been taken) AND is NOT yet `merged`. The
+# caller gates the actual reap behind a grace window (PR_OPEN_POLLS >=
+# PIPELINE_EXECUTOR_REAP_GRACE_POLLS) so a worker mid-`gh pr create`/push is
+# never killed. Fails closed: any gh error, empty labels, missing `pr-open`,
+# or a `merged` label returns 1 (the merged/auto-merge case is owned by the
+# existing is_agent_running / check_issue_outcome branches).
+executor_finished_terminal() {
+  local issue="$1"
+  local labels
+  labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" \
+    --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
+  [ -n "$labels" ] || return 1
+  # merged supersedes pr-open: the evaluator/auto-merge already advanced the
+  # issue; let the existing branches reap it. Comma-anchored exact match.
+  echo ",$labels," | grep -q ',merged,' && return 1
+  # Require pr-open present (terminal action taken). Comma-anchored so a
+  # hypothetical `not-pr-open` label cannot match.
+  echo ",$labels," | grep -q ',pr-open,' || return 1
+  return 0
+}
+
 # Check if the pending file has at least one non-empty line
 pending_file_has_items() {
   [ -f "$PENDING_FILE" ] || return 1
