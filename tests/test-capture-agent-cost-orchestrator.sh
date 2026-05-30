@@ -81,7 +81,7 @@ expect(rec["tokens"]["input"] == 300, "tokens.input == 100+200")
 expect(rec["tokens"]["output"] == 60, "tokens.output == 20+40")
 expect(rec["tokens"]["cache_read"] == 15, "tokens.cache_read == 5+10")
 expect(rec["tokens"]["cache_creation"] == 5, "tokens.cache_creation == 2+3")
-expect(rec["tokens"]["total"] == 380, "tokens.total == 380")
+expect(rec["tokens"]["total"] == 365, "tokens.total == work-total 365 (input+output+cache_creation; cache_read 15 EXCLUDED)")
 expect(rec["duration_ms"] is None, "orchestrator duration_ms is null (calendar span is not compute)")
 PY
 
@@ -103,7 +103,9 @@ JSONL
 env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
   python3 "$HOOK" <<<"$PAYLOAD2" || fail "case2: fire-1 hook exited non-zero"
 
-# Fire 2: append a second assistant line (adds 258), cumulative total = 380.
+# Fire 2: append a second assistant line. Its work-total contribution is
+# input+output+cache_creation = 200+40+3 = 243 (cache_read 15 EXCLUDED), so the
+# Fire-2 DELTA is 243 and the cumulative work-total reaches 122+243 = 365.
 cat >> "$T2" <<'JSONL'
 {"type":"assistant","timestamp":"2026-05-30T11:00:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":200,"output_tokens":40,"cache_read_input_tokens":15,"cache_creation_input_tokens":3}}}
 JSONL
@@ -122,8 +124,8 @@ with open(sys.argv[1]) as fh:
         if line:
             totals.append(json.loads(line)["tokens"]["total"])
 s = sum(totals)
-if s != 380:
-    raise SystemExit("assert failed: SUM(tokens.total) == 380 (deltas, no double-count); got %d (%r)" % (s, totals))
+if s != 365:
+    raise SystemExit("assert failed: SUM(tokens.total) == work-total 365 (delta 122 + 243, cache_read excluded, no double-count); got %d (%r)" % (s, totals))
 PY
 
 # The two delta records for the same session MUST carry DISTINCT record_keys
