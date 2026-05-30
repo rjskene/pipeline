@@ -64,7 +64,13 @@ try:
     result = tool_response.get("result", "")
     usage = tool_response.get("usage") or {}
     total_tokens = tool_response.get("total_tokens", 0)
-    total_duration_ms = tool_response.get("total_duration_ms", 0)
+    # Wall-clock duration lives at the payload TOP LEVEL as `duration_ms` in
+    # the real PostToolUse(Agent) shape; tool_response.total_duration_ms is
+    # null/absent there. Source top-level first, fall back to tool_response
+    # for back-compat with the synthetic fixture (#663, mirrors #660).
+    total_duration_ms = data.get("duration_ms")
+    if total_duration_ms is None:
+        total_duration_ms = tool_response.get("total_duration_ms", 0)
     num_turns = tool_response.get("num_turns", 0)
 
     agent_id = tool_response.get("agentId")
