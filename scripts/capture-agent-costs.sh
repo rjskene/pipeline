@@ -85,10 +85,18 @@ SKILL_STAGE = {
 
 
 def stage_from_description(d):
-    for pat, stage in STAGE_PATTERNS:
-        if re.search(pat, d, re.IGNORECASE):
-            return stage
-    return ""
+    # For multi-stage labels ("Classify + plan + evaluate #N") the FIRST stage
+    # token by string position wins; STAGE_PATTERNS index breaks ties so an
+    # overlapping single token ("evaluate plan" -> plan-eval) keeps precedence.
+    best = None  # ((start_pos, rank), stage)
+    for rank, (pat, stage) in enumerate(STAGE_PATTERNS):
+        m = re.search(pat, d, re.IGNORECASE)
+        if m is None:
+            continue
+        key = (m.start(), rank)
+        if best is None or key < best[0]:
+            best = (key, stage)
+    return best[1] if best else ""
 
 
 def issue_from_description(d):

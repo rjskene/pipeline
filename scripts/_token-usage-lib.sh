@@ -90,6 +90,10 @@ tu_stage_from_description() {
   python3 - "$desc" <<'PY'
 import re, sys
 d = sys.argv[1]
+# Precedence-ordered patterns: index is the disambiguation rank (lower wins on
+# ties). pr-eval/plan-eval are listed before execute/plan/classify so that a
+# single compound token like "evaluate plan" resolves to plan-eval rather than
+# the bare "plan" it contains.
 patterns = [
     (r"\b(eval(uate)?[ -]?(issue[ -]?)?pr|pr[ -]?eval|finish[ -]?eval[ -]?pr)\b", "pr-eval"),
     (r"\b(eval(uate)?[ -]?(issue[ -]?)?plan|eval[ -]?plan|re[ -]?eval(uate)?[ -]?plan)\b", "plan-eval"),
@@ -97,11 +101,18 @@ patterns = [
     (r"\b(re[ -]?)?plan([ -]?issue)?\b", "plan"),
     (r"\b(re[ -]?)?classif(y|y[ -]?issue)\b", "classify"),
 ]
-for pat, stage in patterns:
-    if re.search(pat, d, re.IGNORECASE):
-        print(stage)
-        sys.exit(0)
-print("")
+# For multi-stage labels ("Classify + plan + evaluate #N") the FIRST stage token
+# by string position wins. Rank breaks ties so overlapping single tokens at the
+# same position (e.g. "evaluate plan" -> plan-eval, not plan) keep precedence.
+best = None  # (start_pos, rank, stage)
+for rank, (pat, stage) in enumerate(patterns):
+    m = re.search(pat, d, re.IGNORECASE)
+    if m is None:
+        continue
+    key = (m.start(), rank)
+    if best is None or key < best[0]:
+        best = (key, stage)
+print(best[1] if best else "")
 PY
 }
 
