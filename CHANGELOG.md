@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.20.6](https://github.com/rjskene/pipeline/compare/v0.20.5...v0.20.6) (2026-05-30)
+
+
+### Features
+
+* **auto-merge:** add finish-manual-merge.sh for post-merge bookkeeping ([f34a614](https://github.com/rjskene/pipeline/commit/f34a614e220cff317b7a5e86703eb3f855bde572)), closes [#655](https://github.com/rjskene/pipeline/issues/655)
+* **auto-merge:** helper to replicate gate bookkeeping after a manual merge ([c3b3b07](https://github.com/rjskene/pipeline/commit/c3b3b070ec8ded6f3c2f265463833fe88038f846))
+* **auto-merge:** NO_VERDICT mode skips verdict gate for hotfix lane ([#659](https://github.com/rjskene/pipeline/issues/659)) ([66857c3](https://github.com/rjskene/pipeline/commit/66857c3a757c5d114f926b4fdb6b03beb3cb1ae1))
+* **hotfix:** opt-in auto-merge on green CI (no evaluator verdict) ([0db1a8f](https://github.com/rjskene/pipeline/commit/0db1a8f87aac414b22dc16bd23da4fbfa637ce59))
+* **hotfix:** parse opt-in --auto-merge flag in Step 1 ([#659](https://github.com/rjskene/pipeline/issues/659)) ([5470ab8](https://github.com/rjskene/pipeline/commit/5470ab87225e465759cdca172565452b9131b0e3))
+* **hotfix:** Step 6.5 opt-in CI-only auto-merge with explicit issue close ([#659](https://github.com/rjskene/pipeline/issues/659)) ([22633fa](https://github.com/rjskene/pipeline/commit/22633fa5d7f829587f69185a47caec714005ba35))
+
+
+### Bug Fixes
+
+* **dogfood-metrics:** inline forward cost records carry empty ts_start/ts_end → per-run time-windowing silently drops 100% of subagent rows ([8e74d77](https://github.com/rjskene/pipeline/commit/8e74d77d94e0d1bb396a0ba6124f72314211d553))
+* **dogfood-metrics:** inline forward cost records lose provenance — agent_type always "unknown", model always empty ([71c52a8](https://github.com/rjskene/pipeline/commit/71c52a82ffff18d241fb6ed22a40001ecc21bc8f))
+* **dogfood-metrics:** read agent_type from nested tool_input.subagent_type in build_record ([#691](https://github.com/rjskene/pipeline/issues/691)) ([5bfe69a](https://github.com/rjskene/pipeline/commit/5bfe69a36506e27db103cb6fb23e48a93bc6aeac))
+* **dogfood-metrics:** stamp inline forward ts_end at emit time + backfill ts_start for record_key entropy ([#690](https://github.com/rjskene/pipeline/issues/690)) ([3c22dd6](https://github.com/rjskene/pipeline/commit/3c22dd650045f9722fad510c35cea9071354077c))
+* **enforce-ci-wait:** stop instructing run_in_background in CI-wait remediation ([#684](https://github.com/rjskene/pipeline/issues/684)) ([4146561](https://github.com/rjskene/pipeline/commit/41465612b1eae5d17d7c55d93b031d573f06392a))
+* **evaluate-issue-pr:** evaluator subagent ends its turn on the CI-wait step instead of completing the verdict+merge ([5f8b468](https://github.com/rjskene/pipeline/commit/5f8b4684c4bc1696c7cd970701a1638e7ca2a5ad))
+* **evaluate-issue-pr:** run Step 5b CI-wait foreground so the subagent completes verdict+merge in-turn ([#684](https://github.com/rjskene/pipeline/issues/684)) ([dc77687](https://github.com/rjskene/pipeline/commit/dc77687e2a56e0a62cf2be184f77f6f465530694))
+* **run-queue:** route single-issue queues through the poll loop so they block to queue-complete ([#685](https://github.com/rjskene/pipeline/issues/685)) ([b9f2e55](https://github.com/rjskene/pipeline/commit/b9f2e557361e4cc8cc7729c8bf9841428b068b1a))
+* **run-queue:** single-issue queue exits 0 immediately instead of blocking to queue-complete ([1b7d1ac](https://github.com/rjskene/pipeline/commit/1b7d1acdf2b4108ef8b329f5721091a726a3536f))
+
 ## [0.20.5](https://github.com/rjskene/pipeline/compare/v0.20.4...v0.20.5) (2026-05-30)
 
 
