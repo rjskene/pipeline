@@ -168,11 +168,53 @@ def build_record(payload):
     }
 
 
+def _flag_from_config(project_dir):
+    """Read PIPELINE_LOGS_ENABLED from pipeline.config at project_dir.
+
+    pipeline.config is a bash-sourced KEY=value file; we DO NOT shell out to
+    `source` it. Extract the flag with a regex, strip surrounding quotes and
+    whitespace, ignore comments. Returns the resolved string value, or None if
+    the file is absent / unreadable / has no such assignment. Fail-open: any
+    error is swallowed (returns None)."""
+    try:
+        path = os.path.join(project_dir, "pipeline.config")
+        with open(path) as fh:
+            text = fh.read()
+    except (OSError, ValueError):
+        return None
+    value = None
+    for line in text.splitlines():
+        m = re.match(r"\s*(?:export\s+)?PIPELINE_LOGS_ENABLED\s*=\s*(.*)$", line)
+        if not m:
+            continue
+        raw = m.group(1)
+        # drop a trailing inline comment only when the value is not quoted
+        if raw[:1] not in ("'", '"'):
+            raw = raw.split("#", 1)[0]
+        raw = raw.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+            raw = raw[1:-1]
+        value = raw.strip()
+    return value
+
+
+def _logging_enabled(project_dir):
+    """True only when PIPELINE_LOGS_ENABLED resolves to exactly "true".
+
+    Process env wins; pipeline.config at project_dir is the fallback (the var
+    is never exported into the Claude Code process env, so without this the
+    hook would early-return every time -- #657)."""
+    env_val = os.environ.get("PIPELINE_LOGS_ENABLED")
+    if env_val is not None:
+        return env_val == "true"
+    return _flag_from_config(project_dir) == "true"
+
+
 def main():
-    if os.environ.get("PIPELINE_LOGS_ENABLED") != "true":
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    if not _logging_enabled(project_dir):
         return  # gate off: write nothing
 
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     logs_dir = os.path.join(project_dir, ".claude", "logs")
 
     try:
