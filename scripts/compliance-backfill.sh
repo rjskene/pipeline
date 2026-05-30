@@ -217,7 +217,7 @@ load_pr_files() {
 
 # extract_tdd_verdict <audit-stdout> — parse audit-compliance.sh's table for
 # the TDD row's Verdict column. When the row is omitted (PATH A), emit
-# 'omitted'. Else emit PASS / SKIP / N/A.
+# 'omitted'. Else emit PASS / WEAK / SKIP / N/A.
 extract_tdd_verdict() {
   local audit_out="$1"
   local tdd_line
