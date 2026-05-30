@@ -110,6 +110,24 @@ else
   fail_msg "row missing required keys or wrong types"
 fi
 
+# Cost/latency columns (issue #643): 3 new keys, each number|null.
+if [ -f "$OUT_FILE" ] && jq -e '
+  (.cost_tokens_total | (type == "number") or (. == null))
+  and (.cost_duration_ms_median | (type == "number") or (. == null))
+  and (.over_served_count | (type == "number") or (. == null))
+' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "cost/latency columns present with number|null types"
+else
+  fail_msg "cost/latency columns missing or wrong types"
+fi
+
+# Good fixture has one over-served issue (#210, full ceremony, loc 6) → count >= 1.
+if [ -f "$OUT_FILE" ] && jq -e '.over_served_count >= 1' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "over_served_count >= 1 with good cost-latency fixture"
+else
+  fail_msg "expected over_served_count >= 1 (got: $(jq -r '.over_served_count' "$OUT_FILE" 2>/dev/null))"
+fi
+
 # ISO YYYY-MM-DD date
 if [ -f "$OUT_FILE" ] && jq -re '.date' "$OUT_FILE" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
   pass_msg "date is ISO YYYY-MM-DD"
@@ -198,6 +216,14 @@ if [ -f "$OUT_BROKEN" ] && jq -e '.late_error_count_by_stage | type == "object"'
   pass_msg "other-sibling fields still populated when one fails"
 else
   fail_msg "non-failing siblings should still produce values"
+fi
+
+# Cost/latency sibling also degrades to null: BROKEN_FIXTURE has no
+# cost-latency subdir, so cost-latency-report.sh fails (missing prs.json).
+if [ -f "$OUT_BROKEN" ] && jq -e '.cost_tokens_total == null and .over_served_count == null' "$OUT_BROKEN" >/dev/null 2>&1; then
+  pass_msg "cost/latency columns degrade to null on sibling failure"
+else
+  fail_msg "expected cost_tokens_total == null and over_served_count == null on failure"
 fi
 
 # --- Scenario 5: --dry-run emits row to stdout, does not append ---
