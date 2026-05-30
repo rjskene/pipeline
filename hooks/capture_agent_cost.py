@@ -369,8 +369,34 @@ def build_record(payload):
         except (ValueError, AttributeError):
             pass
 
+    # model: WON'T-FIX for inline forward records — stays "" (deferred, #691
+    # Task 2). The PostToolUse(Agent) payload carries no `model` (top-level or
+    # under tool_response) and no `transcript_path`. The model lives only in the
+    # subagent transcript's `message.model`, reachable solely by reconstructing
+    # the /tmp/<agentId>.output transcript path. The host probe for #691 showed
+    # that reconstruction is not viable: the real runtime layout is
+    # /tmp/claude-<uid>/<PROJECT-PATH-slug>/<session_id>/tasks/<agentId>.output,
+    # NOT the /tmp/claude-<uid>/<sanitize_slug(description)>/... shape that
+    # log_subagent.py:83 builds (that jsonl_path_hint is itself stale). A correct
+    # reconstruction would require a new, undocumented cwd-slug derivation that is
+    # fragile (the tmp layout has already drifted once between CC versions),
+    # non-hermetic (uncoverable in CI — the /tmp transcript is not a tracked
+    # fixture), and would add symlink-resolving I/O to this fail-open hot path.
+    # So model stays "" for inline forward records; both downstream consumers
+    # already render "" as "--". The orchestrator (Stop) record still sources
+    # model from the main-session transcript via build_stop_record.
     model = _first(payload, "model") or ""
-    agent_type = _first(payload, "subagent_type") or "unknown"
+    # agent_type: prefer the top-level subagent_type (set by _normalize_payload
+    # for the Agent path), then fall through to the nested tool_input.subagent_type
+    # for flat/back-compat payloads where build_record sees the raw shape. Without
+    # the fallback the flat path keys agent_type to "unknown" (#691). Mirrors the
+    # correct read at log_subagent.py:61.
+    agent_type = _first(payload, "subagent_type")
+    if not agent_type:
+        ti = payload.get("tool_input")
+        if isinstance(ti, dict):
+            agent_type = ti.get("subagent_type")
+    agent_type = agent_type or "unknown"
     source = "forward"
     agent_kind = "inline"
 
