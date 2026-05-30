@@ -98,6 +98,109 @@ def record_key(source, agent_kind, session_id, issue, stage, ts_start):
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
+def transcript_sum(path):
+    """Sum per-assistant-message token usage over a transcript JSONL.
+
+    Mirrors scripts/capture-agent-costs.sh:transcript_sum so both producers
+    parse identically: skip blank/non-JSON/non-dict lines, track min/max
+    `timestamp`, accumulate the four `*_tokens` fields from `message.usage`,
+    capture the last non-empty `message.model`. Returns zeros on OSError."""
+    inp = out = cr = cc = 0
+    ts_start = ts_end = None
+    model = ""
+    try:
+        fh = open(path)
+    except OSError:
+        return {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0,
+                "ts_start": "", "ts_end": "", "model": ""}
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(obj, dict):
+                continue
+            ts = obj.get("timestamp")
+            if ts:
+                if ts_start is None or ts < ts_start:
+                    ts_start = ts
+                if ts_end is None or ts > ts_end:
+                    ts_end = ts
+            msg = obj.get("message")
+            if not isinstance(msg, dict):
+                continue
+            usage = msg.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            inp += usage.get("input_tokens") or 0
+            out += usage.get("output_tokens") or 0
+            cr += usage.get("cache_read_input_tokens") or 0
+            cc += usage.get("cache_creation_input_tokens") or 0
+            m = msg.get("model")
+            if m:
+                model = m
+    return {"input": inp, "output": out, "cache_read": cr, "cache_creation": cc,
+            "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model}
+
+
+def build_stop_record(payload, logs_dir):
+    """Build a schema_version=1 orchestrator record from a Stop payload, or None.
+
+    The Stop payload carries {session_id, transcript_path} but no usage; the
+    transcript JSONL carries per-assistant-message `message.usage`. We sum the
+    MAIN session transcript (subagent dispatches run in separate transcripts,
+    captured independently via PostToolUse(Agent), so the two streams are
+    disjoint and never double-count). Attribution is synthetic:
+    stage=orchestrator, agent_kind=main, issue='' (unknowable for free-form
+    turns)."""
+    session_id = payload.get("session_id") or ""
+    transcript_path = payload.get("transcript_path")
+    if not transcript_path:
+        return None
+
+    summ = transcript_sum(transcript_path)
+    tokens = {
+        "input": summ["input"],
+        "output": summ["output"],
+        "cache_read": summ["cache_read"],
+        "cache_creation": summ["cache_creation"],
+    }
+    tokens["total"] = (
+        tokens["input"] + tokens["output"]
+        + tokens["cache_read"] + tokens["cache_creation"]
+    )
+    if tokens["total"] <= 0:
+        return None  # nothing to record
+
+    ts_start = summ["ts_start"]
+    ts_end = summ["ts_end"]
+    stage = "orchestrator"
+    agent_kind = "main"
+    source = "forward"
+    issue = ""
+
+    return {
+        "schema_version": 1,
+        "record_key": record_key(source, agent_kind, session_id, issue, stage, ts_start),
+        "issue": issue,
+        "stage": stage,
+        "agent_kind": agent_kind,
+        "agent_type": "orchestrator",
+        "session_id": session_id,
+        "model": summ["model"],
+        "tokens": tokens,
+        "duration_ms": duration_from_timestamps(ts_start, ts_end),
+        "ts_start": ts_start,
+        "ts_end": ts_end,
+        "source": source,
+        "usage_complete": True,
+    }
+
+
 def _first(payload, *keys):
     for k in keys:
         v = payload.get(k)
@@ -262,6 +365,19 @@ def main():
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
         if not isinstance(payload, dict):
+            return
+        # Stop branch (#662): a payload carrying `transcript_path` and NO
+        # `tool_name` is a Stop event for the main orchestrator session. Route
+        # it to the transcript-summing orchestrator record builder and bypass
+        # the PostToolUse(Agent) normalisation/stage-gate path.
+        if payload.get("transcript_path") and "tool_name" not in payload:
+            os.makedirs(logs_dir, exist_ok=True)
+            rec = build_stop_record(payload, logs_dir)
+            if rec is not None:
+                append_locked(
+                    Path(logs_dir) / "agent-costs.jsonl",
+                    json.dumps(rec),
+                )
             return
         payload = _normalize_payload(payload)
         if payload is None:
