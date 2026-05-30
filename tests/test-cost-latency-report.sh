@@ -312,8 +312,8 @@ inc_scenario "Scenario 10: orchestrator issue:\"\" records render a non-zero sta
 
 TMP10="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP10/" 2>/dev/null
-# Two orchestrator records with issue:"" (session-scoped, NOT PR-linked). Distinct
-# token/dur values so the median is unambiguous: tokens median=1800, dur median=30000.
+# One orchestrator record with issue:"" (session-scoped, NOT PR-linked). A single
+# record is its own median, so tokens median=1800 and dur median=30000 unambiguously.
 { cat "$FIXTURE_DIR/capture.jsonl";
   echo '{"schema_version":1,"issue":"","stage":"orchestrator","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":30000}';
 } > "$TMP10/capture.jsonl"
