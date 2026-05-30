@@ -322,7 +322,7 @@ emit_table() {
   local agg_json
   agg_json="$(printf '%s' "$rows_json" | jq -c '
     reduce .[] as $r ({}; .[$r.path] = (
-      (.[$r.path] // {N:0, PASS:0, SKIP:0, "N/A":0, omitted:0}) as $b
+      (.[$r.path] // {N:0, PASS:0, WEAK:0, SKIP:0, "N/A":0, omitted:0}) as $b
       | $b
       | .N = $b.N + 1
       | .[$r.verdict] = ($b[$r.verdict] // 0) + 1
@@ -330,40 +330,42 @@ emit_table() {
   ')"
 
   # Render one row per PATH letter (deterministic order A→D).
-  local letter row_n row_pass row_skip row_na row_skip_rate denom
+  local letter row_n row_pass row_weak row_skip row_na row_skip_rate denom
   for letter in A B C D; do
     row_n=$(printf '%s' "$agg_json" | jq -r --arg p "$letter" '.[$p].N // 0')
     if [ "$row_n" = "0" ]; then
       continue
     fi
     row_pass=$(printf '%s' "$agg_json" | jq -r --arg p "$letter" '.[$p].PASS // 0')
+    row_weak=$(printf '%s' "$agg_json" | jq -r --arg p "$letter" '.[$p].WEAK // 0')
     row_skip=$(printf '%s' "$agg_json" | jq -r --arg p "$letter" '.[$p].SKIP // 0')
     row_na=$(printf '%s' "$agg_json" | jq -r --arg p "$letter" '.[$p]."N/A" // 0')
 
-    denom=$((row_pass + row_skip))
+    denom=$((row_pass + row_weak + row_skip))
     if [ "$denom" -gt 0 ]; then
       row_skip_rate="$(awk -v s="$row_skip" -v d="$denom" 'BEGIN { printf "%.1f%%", (s/d) * 100 }')"
     else
       row_skip_rate="--"
     fi
 
-    printf 'PATH %s | N=%s, PASS=%s, SKIP=%s, N/A=%s, SKIP-rate=%s\n' \
-      "$letter" "$row_n" "$row_pass" "$row_skip" "$row_na" "$row_skip_rate"
+    printf 'PATH %s | N=%s, PASS=%s, WEAK=%s, SKIP=%s, N/A=%s, SKIP-rate=%s\n' \
+      "$letter" "$row_n" "$row_pass" "$row_weak" "$row_skip" "$row_na" "$row_skip_rate"
   done
 
-  # Overall footer: SKIP-rate across all PASS+SKIP rows (excludes N/A,
+  # Overall footer: SKIP-rate across all PASS+WEAK+SKIP rows (excludes N/A,
   # excludes PATH-A-omitted rows since they do not represent a TDD decision).
-  local overall_pass overall_skip overall_denom overall_rate
+  local overall_pass overall_weak overall_skip overall_denom overall_rate
   overall_pass=$(printf '%s' "$rows_json" | jq '[.[] | select(.verdict == "PASS")] | length')
+  overall_weak=$(printf '%s' "$rows_json" | jq '[.[] | select(.verdict == "WEAK")] | length')
   overall_skip=$(printf '%s' "$rows_json" | jq '[.[] | select(.verdict == "SKIP")] | length')
-  overall_denom=$((overall_pass + overall_skip))
+  overall_denom=$((overall_pass + overall_weak + overall_skip))
   if [ "$overall_denom" -gt 0 ]; then
     overall_rate="$(awk -v s="$overall_skip" -v d="$overall_denom" 'BEGIN { printf "%.1f%%", (s/d) * 100 }')"
   else
     overall_rate="--"
   fi
-  printf '\nOverall SKIP-rate=%s (SKIP=%s / (PASS+SKIP)=%s)\n' \
-    "$overall_rate" "$overall_skip" "$overall_denom"
+  printf '\nOverall SKIP-rate=%s (SKIP=%s, WEAK=%s / (PASS+WEAK+SKIP)=%s)\n' \
+    "$overall_rate" "$overall_skip" "$overall_weak" "$overall_denom"
 }
 
 emit_table

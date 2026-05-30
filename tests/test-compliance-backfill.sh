@@ -72,29 +72,29 @@ inc_scenario "Scenario 3: per-PATH aggregation row counts"
 
 # PATH A: 1 PR (101), TDD row omitted by audit-compliance.sh, classified as
 # `omitted` and excluded from PASS/SKIP/N-A — SKIP-rate is undefined ("--").
-if printf '%s' "$TABLE_OUT" | grep -qF 'N=1, PASS=0, SKIP=0, N/A=0, SKIP-rate=--'; then
-  pass_msg "PATH A row: N=1, PASS=0, SKIP=0, N/A=0, SKIP-rate=--"
+if printf '%s' "$TABLE_OUT" | grep -qF 'N=1, PASS=0, WEAK=0, SKIP=0, N/A=0, SKIP-rate=--'; then
+  pass_msg "PATH A row: N=1, PASS=0, WEAK=0, SKIP=0, N/A=0, SKIP-rate=--"
 else
   fail_msg "PATH A row mismatch (got:\n$TABLE_OUT\n)"
 fi
 
-# PATH B: 3 PRs — PASS=1 (102), SKIP=1 (103), N/A=1 (104), SKIP-rate=50.0%
-if printf '%s' "$TABLE_OUT" | grep -qF 'N=3, PASS=1, SKIP=1, N/A=1, SKIP-rate=50.0%'; then
-  pass_msg "PATH B row: N=3, PASS=1, SKIP=1, N/A=1, SKIP-rate=50.0%"
+# PATH B: 4 PRs — PASS=1 (102), WEAK=1 (109), SKIP=1 (103), N/A=1 (104), SKIP-rate=33.3%
+if printf '%s' "$TABLE_OUT" | grep -qF 'N=4, PASS=1, WEAK=1, SKIP=1, N/A=1, SKIP-rate=33.3%'; then
+  pass_msg "PATH B row: N=4, PASS=1, WEAK=1, SKIP=1, N/A=1, SKIP-rate=33.3%"
 else
   fail_msg "PATH B row mismatch (got:\n$TABLE_OUT\n)"
 fi
 
 # PATH C: 1 PR (105) — PASS=1, SKIP-rate=0.0%
-if printf '%s' "$TABLE_OUT" | grep -qF 'N=1, PASS=1, SKIP=0, N/A=0, SKIP-rate=0.0%'; then
-  pass_msg "PATH C row: N=1, PASS=1, SKIP=0, N/A=0, SKIP-rate=0.0%"
+if printf '%s' "$TABLE_OUT" | grep -qF 'N=1, PASS=1, WEAK=0, SKIP=0, N/A=0, SKIP-rate=0.0%'; then
+  pass_msg "PATH C row: N=1, PASS=1, WEAK=0, SKIP=0, N/A=0, SKIP-rate=0.0%"
 else
   fail_msg "PATH C row mismatch (got:\n$TABLE_OUT\n)"
 fi
 
 # PATH D: 2 PRs — PASS=1 (106), SKIP=1 (107), SKIP-rate=50.0%
-if printf '%s' "$TABLE_OUT" | grep -qF 'N=2, PASS=1, SKIP=1, N/A=0, SKIP-rate=50.0%'; then
-  pass_msg "PATH D row: N=2, PASS=1, SKIP=1, N/A=0, SKIP-rate=50.0%"
+if printf '%s' "$TABLE_OUT" | grep -qF 'N=2, PASS=1, WEAK=0, SKIP=1, N/A=0, SKIP-rate=50.0%'; then
+  pass_msg "PATH D row: N=2, PASS=1, WEAK=0, SKIP=1, N/A=0, SKIP-rate=50.0%"
 else
   fail_msg "PATH D row mismatch (got:\n$TABLE_OUT\n)"
 fi
@@ -112,9 +112,9 @@ done
 inc_scenario "Scenario 4: overall SKIP-rate footer"
 
 # Overall denominator excludes N/A and PATH-A-omitted rows; numerator = SKIP.
-# PASS = 3 (102, 105, 106); SKIP = 2 (103, 107); SKIP-rate = 2/(3+2) = 40.0%.
-if printf '%s' "$TABLE_OUT" | grep -qF 'Overall SKIP-rate=40.0%'; then
-  pass_msg "overall footer: SKIP-rate=40.0%"
+# PASS = 3 (102, 105, 106); WEAK = 1 (109); SKIP = 2 (103, 107); SKIP-rate = 2/(3+1+2) = 33.3%.
+if printf '%s' "$TABLE_OUT" | grep -qF 'Overall SKIP-rate=33.3%'; then
+  pass_msg "overall footer: SKIP-rate=33.3%"
 else
   fail_msg "overall footer SKIP-rate missing or wrong (got:\n$TABLE_OUT\n)"
 fi
@@ -124,10 +124,10 @@ inc_scenario "Scenario 5: --emit-rows-json"
 
 ROWS_OUT="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --emit-rows-json 2>/dev/null)"
 N_ROWS="$(printf '%s' "$ROWS_OUT" | jq -r 'length' 2>/dev/null || echo 0)"
-if [ "$N_ROWS" = "7" ]; then
-  pass_msg "--emit-rows-json emits 7 objects (one per eligible feature PR)"
+if [ "$N_ROWS" = "8" ]; then
+  pass_msg "--emit-rows-json emits 8 objects (one per eligible feature PR)"
 else
-  fail_msg "expected 7 row objects, got $N_ROWS"
+  fail_msg "expected 8 row objects, got $N_ROWS"
 fi
 
 # Schema: every object has the four required keys.
@@ -138,8 +138,8 @@ else
 fi
 
 # Verdict domain.
-if printf '%s' "$ROWS_OUT" | jq -e 'all(.[]; .verdict as $v | ["PASS","SKIP","N/A","omitted"] | index($v) != null)' >/dev/null 2>&1; then
-  pass_msg "verdict ∈ {PASS, SKIP, N/A, omitted}"
+if printf '%s' "$ROWS_OUT" | jq -e 'all(.[]; .verdict as $v | ["PASS","WEAK","SKIP","N/A","omitted"] | index($v) != null)' >/dev/null 2>&1; then
+  pass_msg "verdict ∈ {PASS, WEAK, SKIP, N/A, omitted}"
 else
   fail_msg "verdict out of expected domain (got: $ROWS_OUT)"
 fi
@@ -164,6 +164,7 @@ assert_row_verdict 104 B "N/A" 204
 assert_row_verdict 105 C PASS 205
 assert_row_verdict 106 D PASS 206
 assert_row_verdict 107 D SKIP 207
+assert_row_verdict 109 B WEAK 209
 
 # --- Scenario 6: release-PR exclusion ---
 inc_scenario "Scenario 6: release-PR exclusion (PR 901)"
