@@ -244,7 +244,8 @@ def main() -> int:
             "CI-wait gate: --watch invocation not found for this session.\n"
             "Step 5b of evaluate-issue-pr requires:\n"
             "  timeout 600 gh pr checks <PR> --watch --fail-fast --interval 30\n"
-            "Run that command (via Bash run_in_background:true), then retry Stop.\n",
+            "Run that command in the FOREGROUND (a backgrounded Bash returns\n"
+            "immediately and ends the subagent's turn), then retry Stop.\n",
         )
 
     # Require a second rollup query after the --watch.
