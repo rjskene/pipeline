@@ -291,9 +291,12 @@ inc_scenario "Scenario 9: orchestrator stage row renders in per-stage table"
 
 TMP9="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP9/" 2>/dev/null
-# Append an orchestrator capture record attributed to in-window issue 202.
+# Append an orchestrator capture record in the honest post-#667 shape: issue:""
+# (session-scoped, NOT PR-linked), session_id present, duration_ms null. Pre-fix
+# records carried a non-null duration_ms and are now dropped (#678 Scenario 11),
+# so this fixture is reconciled to the null-duration shape it must survive under.
 { cat "$FIXTURE_DIR/capture.jsonl";
-  echo '{"schema_version":1,"issue":"202","stage":"orchestrator","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":30000}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-9","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
 } > "$TMP9/capture.jsonl"
 
 TABLE9="$(bash "$HELPER" --fixture "$TMP9" 2>/dev/null)"
@@ -312,10 +315,12 @@ inc_scenario "Scenario 10: orchestrator issue:\"\" records render a non-zero sta
 
 TMP10="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP10/" 2>/dev/null
-# One orchestrator record with issue:"" (session-scoped, NOT PR-linked). A single
-# record is its own median, so tokens median=1800 and dur median=30000 unambiguously.
+# One orchestrator record with issue:"" (session-scoped, NOT PR-linked) in the
+# honest post-#667 shape (session_id present, duration_ms null — pre-fix non-null
+# records are now dropped per #678 Scenario 11). A single record is its own median,
+# so tokens median=1800 unambiguously.
 { cat "$FIXTURE_DIR/capture.jsonl";
-  echo '{"schema_version":1,"issue":"","stage":"orchestrator","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":30000}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-10","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
 } > "$TMP10/capture.jsonl"
 
 TABLE10="$(bash "$HELPER" --fixture "$TMP10" 2>/dev/null)"
@@ -335,6 +340,42 @@ case "$ORCH_ROW10" in
   *) fail_msg "orchestrator row should render 1800 tokens, not '--' (got: $ORCH_ROW10)" ;;
 esac
 rm -rf "$TMP10"
+
+# --- Scenario 11: orchestrator pre-fix records (non-null duration_ms) excluded (#678) ---
+# Pre-#667 orchestrator records carry a non-null duration_ms (≈137M ms) and a
+# cache_read-inflated tokens.total (≈257M), which the report summed into a
+# grand all-time orchestrator row. Post-#667 orchestrator duration_ms is ALWAYS
+# null. The report must drop the non-null-duration (pre-fix garbage) records.
+inc_scenario "Scenario 11: orchestrator pre-fix records (non-null duration_ms) excluded"
+
+TMP11="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP11/" 2>/dev/null
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  # PRE-FIX garbage: non-null duration_ms + inflated total → must be DROPPED.
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-old","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":1,"output":1,"cache_read":257648472,"cache_creation":0,"total":257648474},"duration_ms":137345028}';
+  # POST-FIX honest record: null duration_ms → must be KEPT.
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-new","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":500,"output":300,"cache_read":1000,"cache_creation":0,"total":1800},"duration_ms":null}';
+} > "$TMP11/capture.jsonl"
+
+TABLE11="$(bash "$HELPER" --fixture "$TMP11" 2>/dev/null)"
+ORCH_ROW11="$(printf '%s\n' "$TABLE11" | grep -E '^orchestrator[[:space:]]*\|' | head -1)"
+
+# The grand garbage total must NOT appear anywhere in the orchestrator row.
+case "$ORCH_ROW11" in
+  *257648474*) fail_msg "orchestrator row leaked pre-fix tokens.total 257648474 (got: $ORCH_ROW11)" ;;
+  *) pass_msg "orchestrator row excludes pre-fix tokens.total (257648474 absent)" ;;
+esac
+# The pre-fix duration must NOT leak into the slow-stages / any rendered cell.
+case "$TABLE11" in
+  *137345028*) fail_msg "report leaked pre-fix duration_ms 137345028" ;;
+  *) pass_msg "report excludes pre-fix duration_ms (137345028 absent)" ;;
+esac
+# The post-fix record must still be present (1800 tokens).
+case "$ORCH_ROW11" in
+  *1800*) pass_msg "orchestrator row keeps post-fix record (1800 tokens)" ;;
+  *) fail_msg "orchestrator row should keep post-fix 1800-token record (got: $ORCH_ROW11)" ;;
+esac
+rm -rf "$TMP11"
 
 echo ""
 echo "== RESULTS =="
