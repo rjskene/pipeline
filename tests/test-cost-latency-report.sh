@@ -213,6 +213,54 @@ else
 fi
 rm -rf "$TMP6"
 
+# --- Scenario 7: --dry-run lists eligible PRs only + fixture README ---
+inc_scenario "Scenario 7: --dry-run + fixture README"
+
+DRY7="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --dry-run 2>/dev/null)"
+DRY7_RC=$?
+if [ "$DRY7_RC" -eq 0 ]; then
+  pass_msg "--dry-run exits 0"
+else
+  fail_msg "--dry-run exit=$DRY7_RC"
+fi
+
+# One 'would-fetch: PR #<N>' line per eligible (non-release) PR; #901 excluded.
+DRY7_COUNT="$(printf '%s\n' "$DRY7" | grep -cE '^would-fetch: PR #[0-9]+')"
+if [ "$DRY7_COUNT" = "4" ]; then
+  pass_msg "--dry-run prints one would-fetch line per eligible PR (n=4)"
+else
+  fail_msg "expected 4 would-fetch lines, got $DRY7_COUNT"
+fi
+
+# Release PR #901 must NOT appear in the dry-run list.
+if printf '%s' "$DRY7" | grep -qE '^would-fetch: PR #901$'; then
+  fail_msg "release PR #901 leaked into --dry-run output"
+else
+  pass_msg "release PR #901 excluded from --dry-run output"
+fi
+
+# --dry-run does NOT render the table.
+if printf '%s' "$DRY7" | grep -q 'COST/LATENCY REPORT'; then
+  fail_msg "--dry-run should not render the report banner/table"
+else
+  pass_msg "--dry-run does not render the table"
+fi
+
+# Fixture README documents the fixture files + capture schema.
+README7="$FIXTURE_DIR/README.md"
+if [ -f "$README7" ]; then
+  pass_msg "fixture README.md exists"
+else
+  fail_msg "fixture README.md missing at $README7"
+fi
+for token in capture.jsonl prs.json issue- pr-; do
+  if [ -f "$README7" ] && grep -qF "$token" "$README7"; then
+    pass_msg "README documents '$token'"
+  else
+    fail_msg "README does not mention '$token'"
+  fi
+done
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
