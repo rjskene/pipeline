@@ -555,6 +555,25 @@ check_issue_outcome() {
 # Returns 1 otherwise. Fails closed: any gh error, empty PR lookup, or missing
 # `## Evaluation` payload returns 1 so a transient API blip cannot prematurely
 # terminate a healthy worker.
+
+# Recover the gate's actual block-reason for a wedged evaluator's PR. The
+# evaluator posts `Auto-merge skipped: <REASON>. Run gh pr merge manually.`
+# for ANY block-* skip (skills/evaluate-issue-pr/SKILL.md Step 11.4), where
+# <REASON> is one of the auto-merge-gate.sh tokens (block-verdict, block-ci,
+# block-mergeable, block-mergestate, block-label, block-flag,
+# block-base-mismatch). Scan ALL PR comments (the skipped line is not always
+# the last comment under the manual-merge label arm). Fail-soft: prints
+# `unknown` on any gh error / no PR / no skipped line so the emit never breaks.
+extract_block_reason() {
+  local issue="$1" pr reason
+  pr=$(resolve_issue_pr "$issue")
+  [ -n "$pr" ] && [ "$pr" != "null" ] || { echo unknown; return 0; }
+  reason=$(gh pr view "$pr" --repo "$PIPELINE_REPO" --json comments \
+    --jq '.comments[].body' 2>/dev/null \
+    | grep -oE 'Auto-merge skipped: (block-[a-z-]+|green)' \
+    | head -1 | awk '{print $NF}')
+  [ -n "$reason" ] && echo "$reason" || echo unknown
+}
 evaluator_finished_terminal() {
   local issue="$1"
   local labels
@@ -800,14 +819,15 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       # is_agent_running so this more-specific signal wins when both are true on
       # the same poll.
       tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
-      outcome="approved-manual-merge"
+      outcome="manual-merge-required"
+      _block_reason=$(extract_block_reason "$issue")
       RESULTS[$issue]="$outcome"
       _finished_mode="${ISSUE_MODE[$issue]:-bare}"
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
       unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']'
-      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (evaluator terminal, window force-closed)"
-      log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (reason: ${_block_reason}, evaluator terminal, window force-closed)"
+      log "EVENT: agent-finished issue=${issue} outcome=${outcome} reason=${_block_reason} mode=${_finished_mode}"
       fill_slots
       continue
     fi
@@ -819,7 +839,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       # reaping so we NEVER kill a worker mid-`gh pr create`/push — a transient gh
       # blip flips the predicate to non-terminal, resetting the counter. Checked
       # AFTER evaluator_finished_terminal so a manual-merge/block wedge (which also
-      # carries pr-open) records approved-manual-merge, not a bare pr-open.
+      # carries pr-open) records manual-merge-required, not a bare pr-open.
       PR_OPEN_POLLS[$issue]=$(( ${PR_OPEN_POLLS[$issue]:-0} + 1 ))
       if [ "${PR_OPEN_POLLS[$issue]}" -ge "$PIPELINE_EXECUTOR_REAP_GRACE_POLLS" ]; then
         tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
