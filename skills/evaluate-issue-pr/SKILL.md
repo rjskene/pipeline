@@ -92,7 +92,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    ```
    If `CHECK_COUNT` is 0, log `"CI: none configured — skipping status check"` and proceed to Step 6.
 
-   **5b. Wait for in-progress checks to settle.** Single bounded wait via `Bash` with `run_in_background: true` (10-min one-shot, 30-second poll — do NOT wrap in a `while ... sleep ... grep` loop):
+   **5b. Wait for in-progress checks to settle.** Single bounded **foreground** (blocking, in-turn) wait via `Bash` — do NOT use `run_in_background`, and do NOT wrap in a `while ... sleep ... grep` loop. A subagent cannot durably block on a backgrounded monitor: a backgrounded `Bash` returns immediately, ending the subagent's turn before it reaches Step 5c → the verdict (Step 9) → the auto-merge gate (Step 11) (issue #684). The `timeout 600 ... --watch --fail-fast` below IS the hard iteration cap: it runs to completion in this turn, returns nonzero on the first failing check, and blocks until CI settles or the 600s budget elapses (10-min one-shot, 30-second poll):
    ```bash
    timeout 600 gh pr checks $PR_NUM --repo $PIPELINE_REPO --watch --fail-fast --interval 30
    ```
