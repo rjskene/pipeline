@@ -56,6 +56,15 @@ PIPELINE_LOGS_ENABLED=false
 # risk on cold-start; higher (10) approaches half the wedge window.
 PIPELINE_STALL_POLL_THRESHOLD=5
 
+# PIPELINE_STALL_FORWARD_PROGRESS_GATE gates the `agent-stalled` latch on
+# forward progress (issue #641). When enabled (default 1), a low-CPU poll only
+# advances the stall counter if the worker's tmux pane fingerprint is ALSO
+# unchanged since the prior poll — a healthy API-bound agent (executor/evaluator
+# blocked on the model) idles near 2% CPU but keeps emitting pane output, so CPU
+# alone false-flagged it as stalled. Set to 0 to restore the pre-#641 CPU-only
+# behavior (counter advances on idle CPU regardless of pane progress).
+PIPELINE_STALL_FORWARD_PROGRESS_GATE=1
+
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
 # When "true" AND the cwd's `git rev-parse --show-toplevel` is the
