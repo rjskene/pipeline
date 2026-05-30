@@ -65,6 +65,17 @@ PIPELINE_STALL_POLL_THRESHOLD=5
 # behavior (counter advances on idle CPU regardless of pane progress).
 PIPELINE_STALL_FORWARD_PROGRESS_GATE=1
 
+# --- Executor reap grace (issue #636) ---
+#
+# PIPELINE_EXECUTOR_REAP_GRACE_POLLS controls how many consecutive polls a
+# worker must be observed at the `pr-open` label (PR opened — the terminal
+# action has been taken) while still alive before the queue runner reaps it,
+# freeing the held worktree + concurrency slot. Default 3 polls (~3 minutes at
+# the default POLL_INTERVAL=60s). Fail-closed: a transient gh error resets the
+# counter, so a worker mid-`gh pr create`/push is never killed. Raise to widen
+# the grace window (or set very high to effectively disable the reap).
+PIPELINE_EXECUTOR_REAP_GRACE_POLLS=3
+
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
 # When "true" AND the cwd's `git rev-parse --show-toplevel` is the
