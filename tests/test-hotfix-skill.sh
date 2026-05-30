@@ -113,6 +113,10 @@ assert_contains "restrict_paths.py"     "references the restrict_paths.py hook b
 # Worktree helper reuse.
 assert_contains "setup-worktree.sh"     "reuses existing worktree helper"
 
+# Opt-in auto-merge flag (#659).
+assert_contains "--auto-merge"          "documents --auto-merge flag"
+assert_contains "AUTO_MERGE"            "parses AUTO_MERGE variable"
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

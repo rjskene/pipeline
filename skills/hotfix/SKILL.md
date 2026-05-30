@@ -1,6 +1,6 @@
 ---
 name: hotfix
-description: Emergency-lane hotfix — in-session worktree fix bypassing all pipeline lifecycle gates (classify/plan/evaluate/auto-merge). Files an issue (or uses an existing one), creates a worktree, runs the test/fix loop in the current orchestrator session, opens a PR. Usage: /pipeline:hotfix "<problem>" | /pipeline:hotfix <issue-number> [--inline|--subagent]
+description: Emergency-lane hotfix — in-session worktree fix bypassing all pipeline lifecycle gates (classify/plan/evaluate/auto-merge). Files an issue (or uses an existing one), creates a worktree, runs the test/fix loop in the current orchestrator session, opens a PR. Usage: /pipeline:hotfix "<problem>" | /pipeline:hotfix <issue-number> [--inline|--subagent] [--auto-merge]
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill
 ---
@@ -41,15 +41,17 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
    ```bash
    ARGS=("$@")
    EXECUTOR="--subagent"   # default executor is --subagent
+   AUTO_MERGE=0            # emergency lane must never surprise-merge — opt-in only
    ENTRY=""
    for a in "${ARGS[@]}"; do
      case "$a" in
-       --inline)   EXECUTOR="--inline" ;;
-       --subagent) EXECUTOR="--subagent" ;;
-       *)          ENTRY="$a" ;;
+       --inline)     EXECUTOR="--inline" ;;
+       --subagent)   EXECUTOR="--subagent" ;;
+       --auto-merge) AUTO_MERGE=1 ;;
+       *)            ENTRY="$a" ;;
      esac
    done
-   if [ -z "$ENTRY" ]; then echo "usage: /pipeline:hotfix \"<problem>\" | <issue-number> [--inline|--subagent]" >&2; exit 1; fi
+   if [ -z "$ENTRY" ]; then echo "usage: /pipeline:hotfix \"<problem>\" | <issue-number> [--inline|--subagent] [--auto-merge]" >&2; exit 1; fi
    ```
 
 2. **Look up or file the issue.**
