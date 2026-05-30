@@ -1,0 +1,12 @@
+{
+  "ts": "2026-05-30T12:01:00Z",
+  "session": "sess-inline",
+  "description": "Plan #310",
+  "subagent_type": "pipeline:plan-writer",
+  "usage": {
+    "input_tokens": 2000,
+    "output_tokens": 300,
+    "cache_read_input_tokens": 20,
+    "cache_creation_input_tokens": 7
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "ts": "2026-05-30T12:03:00Z",
+  "session": "sess-inline",
+  "description": "Evaluate plan for #134",
+  "subagent_type": "pipeline:plan-evaluator",
+  "usage": {
+    "input_tokens": 1400,
+    "output_tokens": 180,
+    "cache_read_input_tokens": 12,
+    "cache_creation_input_tokens": 3
+  }
+}
