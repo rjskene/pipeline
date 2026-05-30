@@ -1,0 +1,2 @@
+2026-05-30T10:00:00Z	session=sess-aaaa-1111	issue=642	path=A	skill=execute-issue-plan	worktree=/home/fix/claude-pipeline/.claude/worktrees/wt-642	model=claude-opus-4-8
+2026-05-30T11:00:00Z	session=sess-bbbb-2222	issue=999	path=A	skill=plan-issue	worktree=/home/fix/claude-pipeline/.claude/worktrees/wt-999-missing
