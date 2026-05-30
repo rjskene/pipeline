@@ -140,6 +140,55 @@ for argv in "--manual-merge 122 123" "122 123 --manual-merge" "122 --manual-merg
 123" "$REMAINING"
 done
 
+echo "=== NO_VERDICT mode (hotfix --auto-merge: CI-only, verdict skipped) ==="
+# (a) NO_VERDICT=1 + Flagged verdict + green rollup => green (verdict ignored).
+unset MANUAL_MERGE
+export GH_LABELS=""
+export GH_BASE_REF="staging"
+export GH_EVAL_BODY="$(make_eval Flagged)"
+export GH_ROLLUP="$(make_rollup success MERGEABLE CLEAN)"
+export NO_VERDICT=1
+check "NO_VERDICT skips Flagged verdict" "green" "$(run_gate)"
+
+# (b) NO_VERDICT=1 + no eval comment at all + green => green.
+export GH_EVAL_BODY=""
+check "NO_VERDICT skips missing eval comment" "green" "$(run_gate)"
+
+# (c) NO_VERDICT=1 + CI failure => block-ci (CI still enforced).
+export GH_EVAL_BODY="$(make_eval Flagged)"
+export GH_ROLLUP="$(make_rollup failure MERGEABLE CLEAN)"
+check "NO_VERDICT still enforces CI" "block-ci" "$(run_gate)"
+
+# (d) NO_VERDICT=1 + CONFLICTING => block-mergeable.
+export GH_ROLLUP="$(make_rollup success CONFLICTING CLEAN)"
+check "NO_VERDICT still enforces mergeable" "block-mergeable" "$(run_gate)"
+
+# (e) NO_VERDICT=1 + BLOCKED mergestate => block-mergestate.
+export GH_ROLLUP="$(make_rollup success MERGEABLE BLOCKED)"
+check "NO_VERDICT still enforces mergeStateStatus" "block-mergestate" "$(run_gate)"
+
+# (f) NO_VERDICT=1 + base mismatch => block-base-mismatch.
+export GH_ROLLUP="$(make_rollup success MERGEABLE CLEAN)"
+export GH_BASE_REF="main"
+check "NO_VERDICT still enforces base" "block-base-mismatch" "$(run_gate)"
+export GH_BASE_REF="staging"
+
+# (g) NO_VERDICT=1 + manual-merge label => block-label.
+export GH_LABELS="manual-merge"
+check "NO_VERDICT still honors manual-merge label" "block-label" "$(run_gate)"
+export GH_LABELS=""
+
+# (h) MANUAL_MERGE=1 NO_VERDICT=1 => block-flag (env opt-out precedes).
+export MANUAL_MERGE=1
+check "NO_VERDICT still honors MANUAL_MERGE env" "block-flag" "$(run_gate)"
+unset MANUAL_MERGE
+unset NO_VERDICT
+
+# (i) Regression: default mode (NO_VERDICT unset) + Flagged => block-verdict.
+export GH_EVAL_BODY="$(make_eval Flagged)"
+export GH_ROLLUP="$(make_rollup success MERGEABLE CLEAN)"
+check "default mode still blocks on Flagged verdict" "block-verdict" "$(run_gate)"
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1
