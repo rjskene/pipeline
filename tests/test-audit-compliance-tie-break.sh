@@ -1,8 +1,9 @@
 #!/bin/bash
 set -uo pipefail
 
-# Task 2 (issue #417): PATH B PR with one commit touching tests AND another
-# touching source → TDD row verdict PASS, aggregate "Compliant".
+# Issue #640: a single commit touching BOTH a test file and a source file
+# yields FIRST_TEST_IDX == FIRST_SRC_IDX; test-index <= source-index → PASS
+# (red+green in one commit is legitimately test-first).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -27,13 +28,11 @@ COMMITS_JSON="$TMPDIR/commits.json"
 LABELS_JSON="$TMPDIR/labels.json"
 
 cat > "$FILES_JSON" <<'EOF'
-["tests/test-foo.sh", "scripts/foo.sh"]
+["scripts/foo.sh","tests/test-foo.sh"]
 EOF
+# One commit touching BOTH test and source.
 cat > "$COMMITS_JSON" <<'EOF'
-[
-  {"oid":"aaa111","files":["tests/test-foo.sh"]},
-  {"oid":"bbb222","files":["scripts/foo.sh"]}
-]
+[{"oid":"c1","files":["scripts/foo.sh","tests/test-foo.sh"]}]
 EOF
 cat > "$LABELS_JSON" <<'EOF'
 []
@@ -45,9 +44,9 @@ OUT="$(bash "$SCRIPT" 999 999 --dry-run \
   --labels-json "$LABELS_JSON" 2>&1)"
 
 if echo "$OUT" | grep -qF "| TDD   | yes (PATH B) | test committed before/with source (test-first) | PASS |"; then
-  pass_msg "stdout contains PATH B PASS TDD row"
+  pass_msg "stdout contains PATH B PASS (tie-break) TDD row"
 else
-  fail_msg "stdout contains PATH B PASS TDD row (got: $OUT)"
+  fail_msg "stdout contains PATH B PASS (tie-break) TDD row (got: $OUT)"
 fi
 
 if echo "$OUT" | grep -qF "Aggregate: Compliant"; then
