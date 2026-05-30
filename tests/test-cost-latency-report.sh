@@ -377,6 +377,49 @@ case "$ORCH_ROW11" in
 esac
 rm -rf "$TMP11"
 
+# --- Scenario 12: orchestrator records grouped by session_id, not collapsed to N=1 (#678) ---
+# Orchestrator issue is the constant "" so group_by([issue, stage]) is degenerate
+# (always N=1, and the "median" cell is the grand all-time sum). Orchestrator
+# records must group by session_id so the row reflects a per-session distribution.
+inc_scenario "Scenario 12: orchestrator records grouped by session_id (per-session N)"
+
+TMP12="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP12/" 2>/dev/null
+# THREE post-fix orchestrator records (duration_ms:null) across TWO sessions:
+#   sess-A: 1000 + 3000 = 4000   sess-B: 2000
+# → N must be 2 (two session groups); median of per-session SUMS (4000, 2000) = 3000.
+#   NOT N=1 and NOT the grand sum 6000.
+{ cat "$FIXTURE_DIR/capture.jsonl";
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-A","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":1000},"duration_ms":null}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-A","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":3000},"duration_ms":null}';
+  echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-B","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":2000},"duration_ms":null}';
+} > "$TMP12/capture.jsonl"
+
+TABLE12="$(bash "$HELPER" --fixture "$TMP12" 2>/dev/null)"
+ORCH_ROW12="$(printf '%s\n' "$TABLE12" | grep -E '^orchestrator[[:space:]]*\|' | head -1)"
+
+ORCH_N12="$(printf '%s' "$ORCH_ROW12" | awk -F'|' '{gsub(/ /,"",$2); print $2}')"
+if [ "${ORCH_N12:-0}" = "2" ]; then
+  pass_msg "orchestrator row N==2 (two session groups, not collapsed to 1)"
+else
+  fail_msg "orchestrator row N should be 2 (per-session), got N=$ORCH_N12 (row: $ORCH_ROW12)"
+fi
+
+# Median tokens cell == median of per-session sums (4000, 2000) == 3000.
+ORCH_TOK12="$(printf '%s' "$ORCH_ROW12" | awk -F'|' '{gsub(/ /,"",$3); print $3}')"
+if [ "$ORCH_TOK12" = "3000" ]; then
+  pass_msg "orchestrator median tokens == 3000 (median of per-session sums)"
+else
+  fail_msg "orchestrator median tokens should be 3000 (median of per-session sums), got $ORCH_TOK12 (row: $ORCH_ROW12)"
+fi
+
+# Must NOT be the grand all-time sum.
+case "$ORCH_ROW12" in
+  *6000*) fail_msg "orchestrator row leaked grand all-time sum 6000 (row: $ORCH_ROW12)" ;;
+  *) pass_msg "orchestrator row does not render grand all-time sum 6000" ;;
+esac
+rm -rf "$TMP12"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

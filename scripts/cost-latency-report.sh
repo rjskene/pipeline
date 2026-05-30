@@ -380,16 +380,30 @@ INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq
 
 # Per-(issue,stage) capture sums for in-window issues:
 #   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum   (one line per (issue,stage) group)
+#
+# Orchestrator records are session-scoped (issue == ""), so grouping them by
+# [issue, stage] is degenerate (one all-time group). Partition the post-select
+# stream: group orchestrator records by session_id (col1 = session_id, dur =
+# null since post-#667 orchestrator duration_ms is always null), and keep inline
+# stages grouped by (issue, stage). Concatenate so the @tsv 4-column contract
+# (key \t stage \t tokens_sum \t dur_sum) consumed by emit_stage_table /
+# emit_top_slow_stages (NF >= 4) is preserved.
 STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
   [.[] | select(
       (.stage == "orchestrator" and .duration_ms == null)
       or ((.issue|tostring) as $i | $win | index($i))
-    )]
-  | group_by([(.issue|tostring), .stage])
+    )] as $recs
+  | (
+      ($recs | map(select(.stage == "orchestrator")) | group_by(.session_id)
+        | map([ (.[0].session_id // ""), "orchestrator",
+                ([.[] | .tokens.total] | add), null ]))
+      +
+      ($recs | map(select(.stage != "orchestrator")) | group_by([(.issue|tostring), .stage])
+        | map([ (.[0].issue|tostring), .[0].stage,
+                ([.[] | .tokens.total] | add),
+                ([.[] | .duration_ms] | add) ]))
+    )
   | .[]
-  | [ (.[0].issue|tostring), .[0].stage,
-      ([.[] | .tokens.total] | add),
-      ([.[] | .duration_ms] | add) ]
   | @tsv' 2>/dev/null)"
 
 emit_banner() {
