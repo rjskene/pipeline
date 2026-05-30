@@ -84,4 +84,52 @@ expect(rec["tokens"]["cache_creation"] == 5, "tokens.cache_creation == 2+3")
 expect(rec["tokens"]["total"] == 380, "tokens.total == 380")
 PY
 
+# ---------------------------------------------------------------------------
+# Case 2: repeated Stop fires for the same session with a GROWING transcript
+# emit only the per-fire DELTA (transcript usage is cumulative), so the
+# downstream SUM equals the cumulative total — never double-counts. A re-fire
+# with NO growth writes nothing.
+# ---------------------------------------------------------------------------
+PROJ2="$(make_project)"
+OUT2="$PROJ2/.claude/logs/agent-costs.jsonl"
+T2="$PROJ2/transcript-2.jsonl"
+PAYLOAD2="$(printf '{"session_id":"stop-2","transcript_path":"%s"}' "$T2")"
+
+# Fire 1: one assistant line, cumulative total = 122.
+cat > "$T2" <<'JSONL'
+{"type":"assistant","timestamp":"2026-05-30T11:00:01.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":2}}}
+JSONL
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
+  python3 "$HOOK" <<<"$PAYLOAD2" || fail "case2: fire-1 hook exited non-zero"
+
+# Fire 2: append a second assistant line (adds 258), cumulative total = 380.
+cat >> "$T2" <<'JSONL'
+{"type":"assistant","timestamp":"2026-05-30T11:00:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":200,"output_tokens":40,"cache_read_input_tokens":15,"cache_creation_input_tokens":3}}}
+JSONL
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
+  python3 "$HOOK" <<<"$PAYLOAD2" || fail "case2: fire-2 hook exited non-zero"
+
+COUNT2="$(wc -l < "$OUT2" | tr -d ' ')"
+[ "$COUNT2" = "2" ] || fail "case2: expected 2 records after two fires, got $COUNT2"
+
+python3 - "$OUT2" <<'PY' || fail "case2: delta sum assertion failed"
+import json, sys
+totals = []
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        line = line.strip()
+        if line:
+            totals.append(json.loads(line)["tokens"]["total"])
+s = sum(totals)
+if s != 380:
+    raise SystemExit("assert failed: SUM(tokens.total) == 380 (deltas, no double-count); got %d (%r)" % (s, totals))
+PY
+
+# Fire 3: no transcript growth -> delta <= 0 -> NO new record.
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
+  python3 "$HOOK" <<<"$PAYLOAD2" || fail "case2: fire-3 hook exited non-zero"
+
+COUNT3="$(wc -l < "$OUT2" | tr -d ' ')"
+[ "$COUNT3" = "2" ] || fail "case2: no-growth re-fire must write NO record (count stayed at 2), got $COUNT3"
+
 echo "PASS: test-capture-agent-cost-orchestrator.sh"

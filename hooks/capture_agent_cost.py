@@ -147,6 +147,32 @@ def transcript_sum(path):
             "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model}
 
 
+_STATE_FILENAME = "agent-cost-orchestrator-state.json"
+
+
+def _load_state(logs_dir):
+    """Map session_id -> last-emitted cumulative tokens. Fail-open to {}."""
+    try:
+        with open(os.path.join(logs_dir, _STATE_FILENAME)) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_state(logs_dir, state):
+    """Atomically persist the per-session cumulative state (tmp + os.replace).
+
+    Stop is single-writer per session, so a tmp+replace is sufficient; it
+    avoids torn reads without needing the flock held on agent-costs.jsonl."""
+    os.makedirs(logs_dir, exist_ok=True)
+    path = os.path.join(logs_dir, _STATE_FILENAME)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(state, fh)
+    os.replace(tmp, path)
+
+
 def build_stop_record(payload, logs_dir):
     """Build a schema_version=1 orchestrator record from a Stop payload, or None.
 
@@ -163,18 +189,21 @@ def build_stop_record(payload, logs_dir):
         return None
 
     summ = transcript_sum(transcript_path)
-    tokens = {
-        "input": summ["input"],
-        "output": summ["output"],
-        "cache_read": summ["cache_read"],
-        "cache_creation": summ["cache_creation"],
-    }
-    tokens["total"] = (
-        tokens["input"] + tokens["output"]
-        + tokens["cache_read"] + tokens["cache_creation"]
-    )
+
+    # Transcript usage is CUMULATIVE and Stop fires at every main-agent turn
+    # end. Emit only the per-session DELTA vs the last-emitted cumulative so
+    # the downstream SUM over a session's deltas equals the cumulative total
+    # and never double-counts. State lives in a sidecar keyed by session_id.
+    state = _load_state(logs_dir)
+    last = state.get(session_id) or {}
+    fields = ("input", "output", "cache_read", "cache_creation")
+    tokens = {f: summ[f] - (last.get(f) or 0) for f in fields}
+    tokens["total"] = sum(tokens[f] for f in fields)
     if tokens["total"] <= 0:
-        return None  # nothing to record
+        return None  # no new tokens since the last fire: emit nothing
+
+    state[session_id] = {f: summ[f] for f in fields}
+    _save_state(logs_dir, state)
 
     ts_start = summ["ts_start"]
     ts_end = summ["ts_end"]
