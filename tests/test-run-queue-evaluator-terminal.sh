@@ -17,7 +17,7 @@ set -uo pipefail
 # Three sub-cases:
 #   A — `manual-merge` label arm (production wedge after Task 2.5 lands). The
 #       label flips to manual-merge on the predicate's 2nd poll; the runner must
-#       kill 911 and emit outcome=approved-manual-merge.
+#       kill 911 and emit outcome=manual-merge-required reason=block-*.
 #   B — `Auto-merge skipped:` PR-comment arm (un-pre-labelled wedge, #459 shape).
 #       Label never carries manual-merge; the predicate's comment arm fires from
 #       the linked PR's last comment + Approved verdict.
@@ -214,7 +214,10 @@ case "\$1 \$2" in
     ;;
   "pr view")
     if [[ "\$ARGS" == *'comments[-1]'* ]]; then
-      echo ""
+      echo ""                       # label arm: NOT the last comment
+    elif [[ "\$ARGS" == *comments* ]]; then
+      # All-comments scan: Evaluation comment + the Auto-merge skipped line.
+      printf '## Evaluation\n\n**Verdict:** Flagged for user review\nAuto-merge skipped: block-verdict. Run `gh pr merge` manually.\n'
     else
       printf '## Evaluation\n\n**Verdict:** Approved\n'
     fi
@@ -226,10 +229,10 @@ chmod +x "$STUB_A/gh"
 run_case "$PROJ_A" "$CASE_A" 30
 
 inc
-if grep -q 'EVENT: agent-finished issue=911 outcome=approved-manual-merge' "$CASE_A/queue.log"; then
-  pass_msg "A1: runner emits agent-finished outcome=approved-manual-merge for 911"
+if grep -q 'EVENT: agent-finished issue=911 outcome=manual-merge-required reason=block-verdict' "$CASE_A/queue.log"; then
+  pass_msg "A1: runner emits agent-finished outcome=manual-merge-required reason=block-verdict for 911"
 else
-  fail_msg "A1: expected agent-finished outcome=approved-manual-merge for 911"
+  fail_msg "A1: expected agent-finished outcome=manual-merge-required reason=block-verdict for 911"
   sed 's/^/    /' "$CASE_A/queue.log" >&2
 fi
 inc
@@ -273,6 +276,12 @@ case "$1 $2" in
   "pr view")
     if [[ "$ARGS" == *'comments[-1]'* ]]; then
       echo 'Auto-merge skipped: block-verdict. Run `gh pr merge` manually.'
+    elif [[ "$ARGS" == *comments* ]]; then
+      # All-comments scan: Approved Evaluation comment + the skipped line.
+      # MUST stay **Verdict:** Approved — Case B has no manual-merge label, so it
+      # reaches arm-(b) whose gate (run-queue.sh:591) requires Approved; the
+      # appended skipped line feeds extract_block_reason() reason=block-verdict.
+      printf '## Evaluation\n\n**Verdict:** Approved\nAuto-merge skipped: block-verdict. Run `gh pr merge` manually.\n'
     else
       printf '## Evaluation\n\n**Verdict:** Approved\n'
     fi
@@ -284,10 +293,10 @@ chmod +x "$STUB_B/gh"
 run_case "$PROJ_B" "$CASE_B" 30
 
 inc
-if grep -q 'EVENT: agent-finished issue=911 outcome=approved-manual-merge' "$CASE_B/queue.log"; then
-  pass_msg "B1: runner emits agent-finished outcome=approved-manual-merge for 911"
+if grep -q 'EVENT: agent-finished issue=911 outcome=manual-merge-required reason=block-verdict' "$CASE_B/queue.log"; then
+  pass_msg "B1: runner emits agent-finished outcome=manual-merge-required reason=block-verdict for 911"
 else
-  fail_msg "B1: expected agent-finished outcome=approved-manual-merge for 911"
+  fail_msg "B1: expected agent-finished outcome=manual-merge-required reason=block-verdict for 911"
   sed 's/^/    /' "$CASE_B/queue.log" >&2
 fi
 inc
@@ -338,7 +347,7 @@ chmod +x "$STUB_C/gh"
 run_case "$PROJ_C" "$CASE_C" 10
 
 inc
-if ! grep -q 'EVENT: agent-finished issue=911 outcome=approved-manual-merge' "$CASE_C/queue.log"; then
+if ! grep -q 'EVENT: agent-finished issue=911 outcome=manual-merge-required' "$CASE_C/queue.log"; then
   pass_msg "C1: no false-positive agent-finished for 911 when no PR exists"
 else
   fail_msg "C1: predicate fired terminal for 911 despite no linked PR (false positive)"
@@ -392,7 +401,7 @@ chmod +x "$STUB_D/gh"
 run_case "$PROJ_D" "$CASE_D" 10
 
 inc
-if ! grep -q 'EVENT: agent-finished issue=911 outcome=approved-manual-merge' "$CASE_D/queue.log"; then
+if ! grep -q 'EVENT: agent-finished issue=911 outcome=manual-merge-required' "$CASE_D/queue.log"; then
   pass_msg "D1: no false-positive terminal for pre-applied label without Evaluation comment"
 else
   fail_msg "D1: predicate fired terminal on pre-applied manual-merge label without Evaluation comment (the #496-review bug)"
