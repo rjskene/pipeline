@@ -757,6 +757,138 @@ else
   sed 's/^/    /' "$STDOUT_CAPTURE7" >&2
 fi
 
+# ---- Test 6: true wedge (idle CPU + FROZEN pane) still latches once (#641) ----
+#
+# True-positive guard for the #641 fix. A genuine wedge is idle CPU AND a frozen
+# pane (no output across the window) — exactly the #456-family stall the runner
+# must still surface. Here capture-pane returns a CONSTANT string every poll, so
+# the fingerprint never changes == no forward progress; with steady 2% idle CPU
+# the latch must arm EXACTLY once (STALL_LATCHED suppresses re-emission). The
+# one-poll first-idle grace shifts the latch one poll later than the pure CPU
+# path, so issue-909's window stays present long enough to clear threshold+grace.
+#
+# 909 is the wedged worker (idle CPU + frozen pane); 910 finishes on poll 1.
+echo ""
+echo "Test 6: frozen tmux pane at idle CPU still latches stall once (#641 true-positive preserved)"
+inc
+PROJ9="$WORKDIR/p9"
+setup_proj "$PROJ9"
+STUB_DIR9=$(make_stubs "$PROJ9")  # scaffolds gh/git; ps + tmux overridden below.
+
+cpu_counter9="$WORKDIR/ps-counter-909"
+cpu_seq9="$WORKDIR/ps-sequence-909"
+win_counter9="$WORKDIR/win-counter-909"
+echo 0 > "$cpu_counter9"
+echo 0 > "$win_counter9"
+
+# Steady 2.0% on 909's claude descendant across every poll — idle CPU.
+cat > "$cpu_seq9" <<'EOF'
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+EOF
+
+cat > "$STUB_DIR9/ps" <<EOF
+#!/bin/bash
+CPU_COUNTER="$cpu_counter9"
+CPU_SEQ="$cpu_seq9"
+mode=""
+for arg in "\$@"; do
+  case "\$arg" in
+    -eo) mode="eo" ;;
+  esac
+done
+if [ "\$mode" = "eo" ]; then
+  n=\$(cat "\$CPU_COUNTER" 2>/dev/null || echo 0)
+  n=\$((n + 1))
+  echo "\$n" > "\$CPU_COUNTER"
+  val=\$(sed -n "\${n}p" "\$CPU_SEQ")
+  val="\${val:-2.0}"
+  echo "90900 1 0.0"
+  echo "90901 90900 \$val"
+  echo "91000 1 0.0"
+else
+  echo "0.0"
+fi
+EOF
+chmod +x "$STUB_DIR9/ps"
+
+# tmux stub: issue-909 present for the first 8 list-windows calls, then vanishes.
+# capture-pane returns a CONSTANT string every call (frozen pane) -> fingerprint
+# never changes -> no forward progress -> the wedge latches.
+cat > "$STUB_DIR9/tmux" <<EOF
+#!/bin/bash
+WIN_COUNTER="$win_counter9"
+case "\$1" in
+  capture-pane)
+    echo "wedged sleep-poll: gh pr list --head feature/foo (no change)"
+    ;;
+  list-windows)
+    n=\$(cat "\$WIN_COUNTER" 2>/dev/null || echo 0)
+    n=\$((n + 1))
+    echo "\$n" > "\$WIN_COUNTER"
+    if [ "\$n" -le 8 ]; then
+      echo "issue-909"
+    fi
+    ;;
+  list-panes)
+    target=""
+    shift
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        -t) target="\$2"; shift 2 ;;
+        *)  shift ;;
+      esac
+    done
+    case "\$target" in
+      *issue-909) echo "90900" ;;
+      *issue-910) echo "91000" ;;
+      *)          echo "90000" ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+chmod +x "$STUB_DIR9/tmux"
+
+mkdir -p "/tmp/wt-909-waldo" "/tmp/wt-910-fred"
+STDOUT_CAPTURE9="$WORKDIR/queue-stdout-909.log"
+(
+  cd "$PROJ9"
+  PATH="$STUB_DIR9:$PATH" \
+    TMUX="fake" \
+    STUB_WORKTREES="909:waldo 910:fred" \
+    PIPELINE_LOGS_ENABLED=true \
+    POLL_SECONDS=1 \
+    STATUS_INTERVAL=10000 \
+    PIPELINE_STALL_POLL_THRESHOLD=3 \
+    PIPELINE_STALL_CPU_THRESHOLD=5 \
+    PIPELINE_STALL_SAMPLES_PER_POLL=1 \
+    CLAUDE_PLUGIN_ROOT="$PROJ9/.claude" \
+    bash .claude/scripts/run-queue.sh 909 910
+) > "$STDOUT_CAPTURE9" 2>&1
+
+# Frozen pane at idle CPU == genuine wedge. Latch arms exactly once.
+stall_count9=$(grep -c 'EVENT: agent-stalled issue=909' "$STDOUT_CAPTURE9" 2>/dev/null || true)
+if [ "$stall_count9" -eq 1 ]; then
+  pass_msg "frozen pane at idle CPU still latches once (true wedge preserved)"
+else
+  fail_msg "expected exactly 1 stall event for frozen-pane wedge, got $stall_count9"
+  echo "--- stdout capture ---" >&2
+  sed 's/^/    /' "$STDOUT_CAPTURE9" >&2
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
