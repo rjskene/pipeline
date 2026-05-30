@@ -611,6 +611,152 @@ else
   sed 's/^/    /' "$STDOUT_CAPTURE4" >&2
 fi
 
+# ---- Test 5: advancing tmux pane at idle CPU suppresses the stall (#641) -----
+#
+# The #641 false-positive: an API-bound executor/evaluator idles near ~2% subtree
+# CPU (it is blocked on the model, not the host), so the #464 idle-CPU pre-filter
+# alone latches `agent-stalled` on a perfectly healthy worker. The fix gates the
+# latch on forward progress: a low-CPU poll only advances the stall counter if the
+# worker's tmux-pane fingerprint is ALSO unchanged since the prior poll. Here the
+# pane GROWS every poll (assistant tokens still streaming), so despite steady idle
+# CPU the worker must NEVER be flagged.
+#
+# Two active issues so the poll loop runs (single-issue short-circuits skip it).
+# 907 is the healthy API-bound worker (idle CPU + advancing pane); 908 finishes
+# on poll 1.
+echo ""
+echo "Test 5: advancing tmux pane at idle CPU suppresses stall (#641 false-positive fix)"
+inc
+PROJ7="$WORKDIR/p7"
+setup_proj "$PROJ7"
+STUB_DIR7=$(make_stubs "$PROJ7")  # scaffolds gh/git; ps + tmux overridden below.
+
+cpu_counter7="$WORKDIR/ps-counter-907"
+cpu_seq7="$WORKDIR/ps-sequence-907"
+win_counter7="$WORKDIR/win-counter-907"
+pane_counter7="$WORKDIR/pane-counter-907"
+echo 0 > "$cpu_counter7"
+echo 0 > "$win_counter7"
+echo 0 > "$pane_counter7"
+
+# Steady 2.0% on 907's claude descendant across every poll — the API-bound idle.
+cat > "$cpu_seq7" <<'EOF'
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+2.0
+EOF
+
+# ps stub: 907's pane_pid 90700 (timeout supervisor) at 0.0; its claude
+# descendant 90701 carries the scripted steady 2.0%. 908's pane 90800 sits at
+# 0.0 but 908 exits on poll 1 so it never accrues the threshold count.
+cat > "$STUB_DIR7/ps" <<EOF
+#!/bin/bash
+CPU_COUNTER="$cpu_counter7"
+CPU_SEQ="$cpu_seq7"
+mode=""
+for arg in "\$@"; do
+  case "\$arg" in
+    -eo) mode="eo" ;;
+  esac
+done
+if [ "\$mode" = "eo" ]; then
+  n=\$(cat "\$CPU_COUNTER" 2>/dev/null || echo 0)
+  n=\$((n + 1))
+  echo "\$n" > "\$CPU_COUNTER"
+  val=\$(sed -n "\${n}p" "\$CPU_SEQ")
+  val="\${val:-2.0}"
+  echo "90700 1 0.0"
+  echo "90701 90700 \$val"
+  echo "90800 1 0.0"
+else
+  echo "0.0"
+fi
+EOF
+chmod +x "$STUB_DIR7/ps"
+
+# tmux stub: issue-907 present for the first 10 list-windows calls, then vanishes
+# so the poll loop terminates. issue-908 never appears (finishes poll 1).
+# capture-pane returns a GROWING byte stream keyed on a per-call counter so the
+# fingerprint strictly advances poll-over-poll == forward progress observed.
+cat > "$STUB_DIR7/tmux" <<EOF
+#!/bin/bash
+WIN_COUNTER="$win_counter7"
+PANE_COUNTER="$pane_counter7"
+case "\$1" in
+  capture-pane)
+    n=\$(cat "\$PANE_COUNTER" 2>/dev/null || echo 0)
+    n=\$((n + 1))
+    echo "\$n" > "\$PANE_COUNTER"
+    for i in \$(seq 1 "\$n"); do echo "assistant-token-line-\$i"; done
+    ;;
+  list-windows)
+    n=\$(cat "\$WIN_COUNTER" 2>/dev/null || echo 0)
+    n=\$((n + 1))
+    echo "\$n" > "\$WIN_COUNTER"
+    if [ "\$n" -le 10 ]; then
+      echo "issue-907"
+    fi
+    ;;
+  list-panes)
+    target=""
+    shift
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        -t) target="\$2"; shift 2 ;;
+        *)  shift ;;
+      esac
+    done
+    case "\$target" in
+      *issue-907) echo "90700" ;;
+      *issue-908) echo "90800" ;;
+      *)          echo "90000" ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+chmod +x "$STUB_DIR7/tmux"
+
+mkdir -p "/tmp/wt-907-grault" "/tmp/wt-908-garply"
+STDOUT_CAPTURE7="$WORKDIR/queue-stdout-907.log"
+(
+  cd "$PROJ7"
+  PATH="$STUB_DIR7:$PATH" \
+    TMUX="fake" \
+    STUB_WORKTREES="907:grault 908:garply" \
+    PIPELINE_LOGS_ENABLED=true \
+    POLL_SECONDS=1 \
+    STATUS_INTERVAL=10000 \
+    PIPELINE_STALL_POLL_THRESHOLD=3 \
+    PIPELINE_STALL_CPU_THRESHOLD=5 \
+    PIPELINE_STALL_SAMPLES_PER_POLL=1 \
+    CLAUDE_PLUGIN_ROOT="$PROJ7/.claude" \
+    bash .claude/scripts/run-queue.sh 907 908
+) > "$STDOUT_CAPTURE7" 2>&1
+
+# Advancing pane == forward progress == healthy. Despite steady 2% idle CPU the
+# latch must NEVER arm. `grep -c` prints 0 (exit 1) on no-match; `|| true` keeps
+# it single-line.
+stall_count7=$(grep -c 'EVENT: agent-stalled issue=907' "$STDOUT_CAPTURE7" 2>/dev/null || true)
+if [ "$stall_count7" -eq 0 ]; then
+  pass_msg "advancing pane suppressed stall at idle CPU (healthy API-bound worker)"
+else
+  fail_msg "expected 0 stall events for healthy advancing-pane worker, got $stall_count7"
+  echo "--- stdout capture ---" >&2
+  sed 's/^/    /' "$STDOUT_CAPTURE7" >&2
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
