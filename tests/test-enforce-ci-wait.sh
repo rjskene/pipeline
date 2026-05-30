@@ -156,6 +156,15 @@ else
   fail_msg "expected exit 2 with --watch stderr; got rc=$RC stderr=$ERR"
 fi
 
+# --- Test 3b: remediation stderr must NOT instruct run_in_background (issue #684) ---
+echo "Test 3b: block stderr drops run_in_background guidance"
+inc
+if echo "$ERR" | grep -qi "run_in_background"; then
+  fail_msg "stderr still instructs run_in_background:true (issue #684); got: $ERR"
+else
+  pass_msg "stderr free of run_in_background guidance"
+fi
+
 # --- Test 4a: --watch ran but no post-watch rollup -> exit 2 ---
 echo "Test 4a: --watch but no post-watch rollup -> exit 2"
 inc
