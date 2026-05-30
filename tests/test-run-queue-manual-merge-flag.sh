@@ -23,7 +23,9 @@ want() {
 echo "=== run-queue.sh ==="
 want "$RQ" "MANUAL_MERGE_FLAG initializer"           'MANUAL_MERGE_FLAG='
 want "$RQ" "--manual-merge case in parser"           '--manual-merge\)'
-want "$RQ" "propagated to spawn-claude (single)"     'spawn-claude\.sh.*\$MANUAL_MERGE_FLAG.*"\$WT_PATH"'
+# Post-#685 there is a single, unified dispatch site (the poll-loop launch_agent);
+# the former single-issue short-circuit dispatch was removed, so its `"$WT_PATH"`
+# assertion is gone — a 1-issue queue now flows through this same loop dispatch.
 want "$RQ" "propagated to spawn-claude (loop)"       'spawn-claude\.sh.*\$MANUAL_MERGE_FLAG.*"\$wt_path"'
 
 echo "=== spawn-claude.sh ==="

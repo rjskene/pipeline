@@ -226,8 +226,6 @@ fi
 # already treat empty as "no PR yet", which is the correct semantics when
 # the only PR found is unrelated noise. Shared between classify_issue and
 # evaluator_finished_terminal so the fix lands once for both call sites.
-# Defined BEFORE classify_issue so the single-issue short-circuit (which
-# exits before later function definitions execute) sees it at call time.
 resolve_issue_pr() {
   local issue="$1"
   local payload
@@ -256,9 +254,9 @@ for pr in data:
 # --- Dispatch routing (issue #514) ---
 #
 # Container isolation and the pre-spawn classifier re-run were removed in
-# #514. classify_issue now unconditionally emits mode=bare so the call sites
-# in route_issue() and the single-issue short-circuit continue to work
-# without re-shaping the four-line tuple they consume. No gh round-trip, no
+# #514. classify_issue now unconditionally emits mode=bare so the call site
+# in route_issue() continues to work without re-shaping the four-line tuple
+# it consumes. No gh round-trip, no
 # mode tokens, no extras — every issue lands in the bare bucket.
 classify_issue() {
   printf '%s\n' "bare" "" "0" ""
@@ -270,43 +268,6 @@ classify_issue() {
 bucket_max() {
   echo "$MAX_CONCURRENT"
 }
-
-# Single issue — launch directly, no queue overhead
-if [ ${#QUEUE[@]} -eq 1 ]; then
-  ISSUE="${QUEUE[0]}"
-  # Accept BOTH bare `wt-<N>` and slugged `wt-<N>-<slug>` basenames (sibling
-  # of #365's cleanup-worktree.sh fix). The basename predicate avoids
-  # substring collisions: issue 4 must not match wt-42, 42 must not match wt-481.
-  WT_PATH=$(git worktree list --porcelain \
-    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${ISSUE}" \
-        '/^worktree / {
-           base = $2
-           sub(/.*\//, "", base)
-           if (base == p || base ~ "^"p"-") { print $2; exit }
-         }')
-  if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
-    log "ERROR: No worktree found for issue #${ISSUE}."
-    exit 1
-  fi
-  # Tighten the sed so bare `wt-<N>` yields empty (-n + p prints only on
-  # match), then fall back to `issue-<N>` so the launched agent never sees
-  # a literal `wt-<N>` slug value.
-  SLUG=$(basename "$WT_PATH" | sed -n "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9][0-9]*-\(.*\)/\1/p")
-  SLUG="${SLUG:-issue-${ISSUE}}"
-  log "Single issue — launching directly (no queue)."
-  if pipeline_logging_enabled; then
-    log "Queue log: ${QUEUE_LOG}"
-  fi
-
-  # Issue #514: all dispatches are always-inline / bare; no classifier re-run,
-  # no mode tokenization.
-  if [ "${PIPELINE_QUEUE_DRY_RUN:-}" = "1" ]; then
-    SINGLE_MAX=$(bucket_max "bare")
-    echo "BUCKET: mode=bare issues=${ISSUE} max=${SINGLE_MAX}"
-  fi
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
-  exit 0
-fi
 
 # Track active and completed issues
 declare -A ACTIVE=()    # issue -> worktree path
@@ -552,11 +513,6 @@ check_issue_outcome() {
     echo "unknown"
   fi
 }
-
-# resolve_issue_pr is defined earlier in this file (before classify_issue) so
-# that single-issue short-circuit invocations — which exit before reaching
-# this point in the script — still see its definition at function-call time
-# (bash registers function definitions at execution time, not parse time).
 
 # Detect evaluator sessions that have completed their work but whose claude
 # child has not exited (manual-merge / block-* branch — issue #489). The

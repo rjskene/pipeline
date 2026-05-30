@@ -66,6 +66,19 @@ else
   FAILED=$((FAILED+1))
 fi
 
+# --- Step 5b CI-wait must be a FOREGROUND in-turn wait (issue #684) ---
+# A subagent cannot durably block on a backgrounded Bash; run_in_background
+# ends its turn before the verdict/merge steps. The wait must run to
+# completion within the subagent's own turn.
+want "Step 5b foreground wait (timeout-bounded gh pr checks --watch)" \
+  'timeout 600 gh pr checks .*--watch --fail-fast --interval 30'
+if grep -qE 'run_in_background:?[[:space:]]*true' "$SKILL"; then
+  echo "  FAIL: Step 5b must not instruct run_in_background:true (issue #684)"
+  FAILED=$((FAILED+1))
+else
+  echo "  PASS: no run_in_background:true in evaluate-issue-pr SKILL.md"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1

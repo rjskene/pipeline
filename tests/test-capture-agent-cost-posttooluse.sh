@@ -126,4 +126,47 @@ env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
 
 [ -f "$OUT2" ] && fail "bash: agent-costs.jsonl written for non-Agent PostToolUse"
 
+# ---------------------------------------------------------------------------
+# Case 3 (#691): build_record reads agent_type from the nested
+# tool_input.subagent_type when it is ABSENT at the top level.
+#
+# The live "unknown" records (54/61) came through a payload shape where
+# build_record's _first(payload, "subagent_type") found nothing because
+# subagent_type was reachable only under tool_input. (_normalize_payload
+# strips tool_input for the Agent path and rejects it for non-Agent payloads,
+# so this nested-read fallback can only be exercised by calling build_record
+# directly.) This asserts build_record itself reaches into
+# tool_input.subagent_type — mirroring log_subagent.py:61 — so agent_type is
+# the dispatched type, NOT "unknown".
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" <<'PY' || fail "case3: agent_type not read from nested tool_input.subagent_type"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+# Flat back-compat payload: description/usage at top level (so build_record
+# proceeds past the stage gate and the usage check), subagent_type reachable
+# ONLY via nested tool_input — NOT at the top level.
+payload = {
+    "session_id": "s3",
+    "description": "execute-issue-plan #691",
+    "usage": {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 4,
+    },
+    "tool_input": {"subagent_type": "tdd-implementer"},
+}
+rec = mod.build_record(payload)
+if rec is None:
+    raise SystemExit("build_record returned None (expected a record)")
+if rec["agent_type"] != "tdd-implementer":
+    raise SystemExit(
+        "agent_type=%r expected 'tdd-implementer' (regression: nested "
+        "tool_input.subagent_type not read; got 'unknown')" % rec["agent_type"]
+    )
+PY
+
 echo "PASS: test-capture-agent-cost-posttooluse.sh"

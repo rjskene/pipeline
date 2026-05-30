@@ -8,6 +8,10 @@
 #         block-base-mismatch, block-ci, block-mergeable, block-mergestate.
 #       - Order: env (MANUAL_MERGE=1) > label (manual-merge on issue) >
 #         verdict > base-mismatch > CI rollup > mergeable > mergeStateStatus.
+#       - NO_VERDICT=1 skips ONLY the verdict step (for the /pipeline:hotfix
+#         --auto-merge emergency lane, which never produces an evaluator
+#         verdict — issue #659). Every other check is unchanged, and the
+#         MANUAL_MERGE env + manual-merge label opt-outs still precede it.
 #       - block-base-mismatch fires when the PR's baseRefName !=
 #         $PIPELINE_BASE_BRANCH — eval-time defense-in-depth for the
 #         enforce-base-branch hook (see #295, dev/audits/295-root-cause.md).
@@ -37,15 +41,17 @@ auto_merge_should_fire() {
     return 1
   fi
 
-  local verdict
-  verdict=$(gh pr view "$pr" --repo "$PIPELINE_REPO" --json comments \
-    --jq '[.comments[] | select(.body | contains("## Evaluation"))] | last | .body' \
-    2>/dev/null \
-    | grep -oE '\*\*Verdict:\*\* (Approved|Flagged[^[:space:]]*|Revise|Reject)' \
-    | head -1 | awk '{print $2}')
-  if [ "$verdict" != "Approved" ]; then
-    echo block-verdict
-    return 1
+  if [ "${NO_VERDICT:-0}" != "1" ]; then
+    local verdict
+    verdict=$(gh pr view "$pr" --repo "$PIPELINE_REPO" --json comments \
+      --jq '[.comments[] | select(.body | contains("## Evaluation"))] | last | .body' \
+      2>/dev/null \
+      | grep -oE '\*\*Verdict:\*\* (Approved|Flagged[^[:space:]]*|Revise|Reject)' \
+      | head -1 | awk '{print $2}')
+    if [ "$verdict" != "Approved" ]; then
+      echo block-verdict
+      return 1
+    fi
   fi
 
   # Defense-in-depth (issue #295): refuse to merge when the PR's baseRefName
