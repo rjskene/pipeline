@@ -226,8 +226,6 @@ fi
 # already treat empty as "no PR yet", which is the correct semantics when
 # the only PR found is unrelated noise. Shared between classify_issue and
 # evaluator_finished_terminal so the fix lands once for both call sites.
-# Defined BEFORE classify_issue so the single-issue short-circuit (which
-# exits before later function definitions execute) sees it at call time.
 resolve_issue_pr() {
   local issue="$1"
   local payload
@@ -256,9 +254,9 @@ for pr in data:
 # --- Dispatch routing (issue #514) ---
 #
 # Container isolation and the pre-spawn classifier re-run were removed in
-# #514. classify_issue now unconditionally emits mode=bare so the call sites
-# in route_issue() and the single-issue short-circuit continue to work
-# without re-shaping the four-line tuple they consume. No gh round-trip, no
+# #514. classify_issue now unconditionally emits mode=bare so the call site
+# in route_issue() continues to work without re-shaping the four-line tuple
+# it consumes. No gh round-trip, no
 # mode tokens, no extras — every issue lands in the bare bucket.
 classify_issue() {
   printf '%s\n' "bare" "" "0" ""
@@ -515,11 +513,6 @@ check_issue_outcome() {
     echo "unknown"
   fi
 }
-
-# resolve_issue_pr is defined earlier in this file (before classify_issue) so
-# that single-issue short-circuit invocations — which exit before reaching
-# this point in the script — still see its definition at function-call time
-# (bash registers function definitions at execution time, not parse time).
 
 # Detect evaluator sessions that have completed their work but whose claude
 # child has not exited (manual-merge / block-* branch — issue #489). The
