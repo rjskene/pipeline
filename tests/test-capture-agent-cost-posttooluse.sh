@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# test-capture-agent-cost-posttooluse.sh — #660 regression guard.
+#
+# The forward cost-capture hook (hooks/capture_agent_cost.py) was registered on
+# SubagentStop/Stop, but those payloads carry NEITHER `description` NOR `usage`
+# — so build_record() returned None every time and agent-costs.jsonl was never
+# written. The fix re-points the hook to PostToolUse(Agent), whose payload shape
+# is {tool_name, tool_input{description,subagent_type}, tool_response{usage,...}}.
+# (The subagent dispatch tool in this environment is named "Agent", not "Task".)
+#
+# This test pipes a realistic PostToolUse(Agent) payload and asserts a forward
+# record is written; it also asserts non-Agent PostToolUse payloads (e.g. Bash)
+# produce NO record.
+#
+# Hermetic: self-contained fixture project dir with its own pipeline.config
+# (PIPELINE_LOGS_ENABLED=true); never touches the live (gitignored) config.
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOOK="$REPO_ROOT/hooks/capture_agent_cost.py"
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+[ -f "$HOOK" ] || fail "hook not found: $HOOK"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+make_project() {
+  local proj="$WORK/proj-$RANDOM"
+  mkdir -p "$proj/.claude/logs"
+  cat > "$proj/pipeline.config" <<CFG
+# host-specific pipeline config (fixture)
+PIPELINE_BASE_BRANCH=staging
+PIPELINE_LOGS_ENABLED=true
+CFG
+  printf '%s' "$proj"
+}
+
+# ---------------------------------------------------------------------------
+# Case 1: PostToolUse(Agent) payload -> exactly one forward record.
+# ---------------------------------------------------------------------------
+PROJ="$(make_project)"
+OUT="$PROJ/.claude/logs/agent-costs.jsonl"
+
+# Realistic shape: wall-clock duration is at the TOP LEVEL as `duration_ms`
+# (e.g. 1344). The real PostToolUse(Agent) payload has tool_response with NO
+# total_duration_ms (null/absent) — so the hook must source duration from the
+# top-level field, falling back to tool_response.total_duration_ms.
+PAYLOAD_AGENT='{
+  "tool_name": "Agent",
+  "session_id": "s1",
+  "duration_ms": 1344,
+  "tool_input": {
+    "description": "plan-issue #656",
+    "subagent_type": "general-purpose"
+  },
+  "tool_response": {
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 30,
+      "cache_creation_input_tokens": 40
+    },
+    "total_duration_ms": null,
+    "total_tokens": 100
+  }
+}'
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ" \
+  python3 "$HOOK" <<<"$PAYLOAD_AGENT" \
+  || fail "agent: hook exited non-zero"
+
+[ -f "$OUT" ] || fail "agent: agent-costs.jsonl NOT written for PostToolUse(Agent)"
+
+COUNT="$(wc -l < "$OUT" | tr -d ' ')"
+[ "$COUNT" = "1" ] || fail "agent: expected exactly 1 record, got $COUNT"
+
+python3 - "$OUT" <<'PY' || fail "agent: record failed schema assertions"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readline())
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["stage"] == "plan", "stage==plan")
+expect(rec["issue"] == "656", "issue==656")
+expect(rec["source"] == "forward", "source==forward")
+expect(rec["agent_kind"] == "inline", "agent_kind==inline")
+expect(rec["agent_type"] == "general-purpose", "agent_type from subagent_type")
+expect(rec["session_id"] == "s1", "session_id from top-level")
+expect(rec["tokens"]["total"] == 100, "tokens.total == 10+20+30+40")
+expect(rec["duration_ms"] == 1344, "duration_ms from top-level duration_ms")
+expect(rec["duration_ms"] != 0, "duration_ms is non-zero (regression guard)")
+PY
+
+# ---------------------------------------------------------------------------
+# Case 2: PostToolUse for a non-Agent tool (Bash) -> NO record.
+# ---------------------------------------------------------------------------
+PROJ2="$(make_project)"
+OUT2="$PROJ2/.claude/logs/agent-costs.jsonl"
+
+PAYLOAD_BASH='{
+  "tool_name": "Bash",
+  "session_id": "s1",
+  "tool_input": {
+    "description": "plan-issue #656",
+    "subagent_type": "general-purpose"
+  },
+  "tool_response": {
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 30,
+      "cache_creation_input_tokens": 40
+    },
+    "total_duration_ms": 1234
+  }
+}'
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
+  python3 "$HOOK" <<<"$PAYLOAD_BASH" \
+  || fail "bash: hook exited non-zero"
+
+[ -f "$OUT2" ] && fail "bash: agent-costs.jsonl written for non-Agent PostToolUse"
+
+echo "PASS: test-capture-agent-cost-posttooluse.sh"

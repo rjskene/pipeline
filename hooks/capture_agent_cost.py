@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """capture_agent_cost.py -- forward agent token-cost capture hook (dogfood-only).
 
-Registered on SubagentStop and Stop. This is the DURABLE, ACCURATE forward
-cost source: it records cumulative token usage at agent finish, in contrast to
-the retroactive log-scanning parser in scripts/capture-agent-costs.sh.
+Registered on PostToolUse with an Agent matcher (#660). The SubagentStop/Stop
+payloads carry NEITHER `description` NOR `usage`, so the hook never emitted a
+record there; PostToolUse(Agent) carries both (description/subagent_type under
+tool_input, usage/total_duration_ms under tool_response). (The subagent dispatch
+tool in this environment is named "Agent", not "Task".) This is the DURABLE,
+ACCURATE forward cost source: it records cumulative token usage at agent
+finish, in contrast to the retroactive log-scanning parser in
+scripts/capture-agent-costs.sh.
+
+The flat top-level shape (description/usage at the top level) is still accepted
+for back-compat; see _normalize_payload.
 
 Gated behind PIPELINE_LOGS_ENABLED=="true" (strict lowercase, mirroring
 scripts/_logging.sh). When disabled, the hook writes NOTHING and exits 0.
@@ -109,6 +117,39 @@ def _extract_usage(payload):
     if isinstance(msg, dict) and isinstance(msg.get("usage"), dict):
         return msg["usage"]
     return None
+
+
+def _normalize_payload(payload):
+    """Map a PostToolUse(Agent) payload into the flat shape build_record expects.
+
+    PostToolUse fires for EVERY tool; only Agent carries subagent cost, so a
+    non-Agent PostToolUse payload normalises to None (skip). A payload that is
+    already in the flat top-level shape (carrying description/usage at the top
+    level, as SubagentStop fixtures and the existing tests do) is returned
+    unchanged for back-compat.
+
+    Returns a flat dict for build_record, or None to skip.
+    """
+    if "tool_name" in payload or "tool_input" in payload or "tool_response" in payload:
+        if payload.get("tool_name") != "Agent":
+            return None  # PostToolUse for a non-Agent tool: no subagent cost
+        tool_input = payload.get("tool_input") or {}
+        tool_response = payload.get("tool_response") or {}
+        # Wall-clock duration lives at the payload TOP LEVEL as `duration_ms` in
+        # the real PostToolUse(Agent) shape; tool_response.total_duration_ms is
+        # None/absent there. Source top-level first, fall back to tool_response
+        # for back-compat with the synthetic fixture (#660).
+        duration = payload.get("duration_ms")
+        if duration is None:
+            duration = tool_response.get("total_duration_ms")
+        return {
+            "session_id": payload.get("session_id"),
+            "description": tool_input.get("description"),
+            "subagent_type": tool_input.get("subagent_type"),
+            "usage": tool_response.get("usage"),
+            "total_duration_ms": duration,
+        }
+    return payload  # already flat top-level shape (SubagentStop / back-compat)
 
 
 def build_record(payload):
@@ -222,6 +263,9 @@ def main():
         payload = json.loads(raw) if raw.strip() else {}
         if not isinstance(payload, dict):
             return
+        payload = _normalize_payload(payload)
+        if payload is None:
+            return  # non-Agent PostToolUse: no subagent cost to capture
         rec = build_record(payload)
         if rec is None:
             return
