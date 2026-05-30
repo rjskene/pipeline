@@ -812,6 +812,34 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       continue
     fi
 
+    if executor_finished_terminal "$issue"; then
+      # Executor lingering past pr-open (issue #636): PR opened + pr-open applied,
+      # but the spawned claude child has not exited, holding the worktree + slot.
+      # Require the pr-open observation to PERSIST across a grace window before
+      # reaping so we NEVER kill a worker mid-`gh pr create`/push — a transient gh
+      # blip flips the predicate to non-terminal, resetting the counter. Checked
+      # AFTER evaluator_finished_terminal so a manual-merge/block wedge (which also
+      # carries pr-open) records approved-manual-merge, not a bare pr-open.
+      PR_OPEN_POLLS[$issue]=$(( ${PR_OPEN_POLLS[$issue]:-0} + 1 ))
+      if [ "${PR_OPEN_POLLS[$issue]}" -ge "$PIPELINE_EXECUTOR_REAP_GRACE_POLLS" ]; then
+        tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
+        outcome="pr-open"
+        RESULTS[$issue]="$outcome"
+        _finished_mode="${ISSUE_MODE[$issue]:-bare}"
+        BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
+        unset 'ACTIVE['"$issue"']'
+        unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PR_OPEN_POLLS['"$issue"']'
+        log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (executor terminal, reaped after ${PIPELINE_EXECUTOR_REAP_GRACE_POLLS}-poll grace, window force-closed)"
+        log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+        fill_slots
+        continue
+      fi
+    else
+      # Predicate non-terminal this poll: reset the grace counter so the reap
+      # only fires on a CONTIGUOUS pr-open observation window (fail-closed).
+      PR_OPEN_POLLS[$issue]=0
+    fi
+
     if ! is_agent_running "$issue"; then
       # Agent finished — check outcome
       outcome=$(check_issue_outcome "$issue")
