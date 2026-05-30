@@ -241,8 +241,31 @@ trap 'rm -f "$ROWS_TSV"' EXIT
 
 RAW_PR_LIST_JSON="$(load_pr_list)" || exit 1
 
-# Capture JSONL → JSON array (slurped once). Empty input → empty array.
-CAPTURE_JSON="$(load_capture | jq -cs '.' 2>/dev/null)"
+# Capture JSONL → JSON array (parsed once, tolerantly). Each line is validated
+# in isolation so a single malformed record (e.g. a torn final line from an
+# in-progress append to the #642 log) is SKIPPED with a warning rather than
+# silently zeroing the whole report. Empty / all-invalid input → empty array.
+load_capture_array() {
+  local line dropped=0
+  local lines=()
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    if printf '%s' "$line" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      lines+=("$line")
+    else
+      dropped=$((dropped + 1))
+    fi
+  done < <(load_capture)
+  if [ "$dropped" -gt 0 ]; then
+    echo "cost-latency-report: WARN: skipped $dropped malformed capture line(s)" >&2
+  fi
+  if [ "${#lines[@]}" -eq 0 ]; then
+    echo '[]'
+  else
+    printf '%s\n' "${lines[@]}" | jq -cs '.'
+  fi
+}
+CAPTURE_JSON="$(load_capture_array)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 
 # Partition raw list into release PRs (excluded) and eligible feature PRs.

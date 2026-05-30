@@ -261,6 +261,31 @@ for token in capture.jsonl prs.json issue- pr-; do
   fi
 done
 
+# --- Scenario 8: a malformed capture line is tolerated (valid records still sum) ---
+# An append-only log read mid-write can have a torn line; one bad line must NOT
+# silently zero the whole report.
+inc_scenario "Scenario 8: malformed capture line tolerated"
+
+TMP8="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP8/" 2>/dev/null
+{ echo 'this is not json'; cat "$FIXTURE_DIR/capture.jsonl"; } > "$TMP8/capture.jsonl"
+
+ROWS8="$(bash "$HELPER" --fixture "$TMP8" --emit-rows-json 2>/dev/null)"
+RC8=$?
+if [ "$RC8" -eq 0 ]; then
+  pass_msg "run with a malformed capture line exits 0"
+else
+  fail_msg "run with a malformed capture line exited non-zero (rc=$RC8)"
+fi
+
+TT8="$(printf '%s' "$ROWS8" | jq -r '.[] | select(.issue==202) | .tokens_total' 2>/dev/null)"
+if [ "$TT8" = "32500" ]; then
+  pass_msg "valid capture records still summed despite one malformed line (202=32500)"
+else
+  fail_msg "expected issue 202 tokens_total=32500 with a malformed line present, got $TT8"
+fi
+rm -rf "$TMP8"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
