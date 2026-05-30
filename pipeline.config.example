@@ -76,6 +76,16 @@ PIPELINE_STALL_FORWARD_PROGRESS_GATE=1
 # the grace window (or set very high to effectively disable the reap).
 PIPELINE_EXECUTOR_REAP_GRACE_POLLS=3
 
+# --- Executor safety-net timeout (issue #656) ---
+#
+# PIPELINE_EXECUTOR_TIMEOUT_SECONDS bounds how long the spawned executor
+# session (tmux mode) may run before `timeout` sends SIGTERM (with a 30s
+# grace before SIGKILL). Default 5400 = 90 min. A legitimately heavy PATH C
+# can finish green but exceed this budget before the PR step and get
+# SIGTERM'd with a complete-but-unpushed branch; raise this to widen the
+# window. Only the tmux launch path enforces this timeout.
+PIPELINE_EXECUTOR_TIMEOUT_SECONDS=5400
+
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
 # When "true" AND the cwd's `git rev-parse --show-toplevel` is the
