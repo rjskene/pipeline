@@ -271,43 +271,6 @@ bucket_max() {
   echo "$MAX_CONCURRENT"
 }
 
-# Single issue — launch directly, no queue overhead
-if [ ${#QUEUE[@]} -eq 1 ]; then
-  ISSUE="${QUEUE[0]}"
-  # Accept BOTH bare `wt-<N>` and slugged `wt-<N>-<slug>` basenames (sibling
-  # of #365's cleanup-worktree.sh fix). The basename predicate avoids
-  # substring collisions: issue 4 must not match wt-42, 42 must not match wt-481.
-  WT_PATH=$(git worktree list --porcelain \
-    | awk -v p="${PIPELINE_WORKTREE_PREFIX}-${ISSUE}" \
-        '/^worktree / {
-           base = $2
-           sub(/.*\//, "", base)
-           if (base == p || base ~ "^"p"-") { print $2; exit }
-         }')
-  if [ -z "$WT_PATH" ] || [ ! -d "$WT_PATH" ]; then
-    log "ERROR: No worktree found for issue #${ISSUE}."
-    exit 1
-  fi
-  # Tighten the sed so bare `wt-<N>` yields empty (-n + p prints only on
-  # match), then fall back to `issue-<N>` so the launched agent never sees
-  # a literal `wt-<N>` slug value.
-  SLUG=$(basename "$WT_PATH" | sed -n "s/^${PIPELINE_WORKTREE_PREFIX}-[0-9][0-9]*-\(.*\)/\1/p")
-  SLUG="${SLUG:-issue-${ISSUE}}"
-  log "Single issue — launching directly (no queue)."
-  if pipeline_logging_enabled; then
-    log "Queue log: ${QUEUE_LOG}"
-  fi
-
-  # Issue #514: all dispatches are always-inline / bare; no classifier re-run,
-  # no mode tokenization.
-  if [ "${PIPELINE_QUEUE_DRY_RUN:-}" = "1" ]; then
-    SINGLE_MAX=$(bucket_max "bare")
-    echo "BUCKET: mode=bare issues=${ISSUE} max=${SINGLE_MAX}"
-  fi
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$WT_PATH" "$ISSUE" "$SLUG" tmux
-  exit 0
-fi
-
 # Track active and completed issues
 declare -A ACTIVE=()    # issue -> worktree path
 declare -A RESULTS=()   # issue -> status (running/done/failed)
