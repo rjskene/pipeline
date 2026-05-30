@@ -344,3 +344,138 @@ if [ "$EMIT_ROWS_JSON" -eq 1 ]; then
   emit_rows_json
   exit 0
 fi
+
+# --- human table render ---
+
+# In-window issue numbers (column 1 of the row TSV), as a JSON array — used to
+# filter capture records into the per-stage aggregate.
+INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0) | tonumber' 2>/dev/null | jq -cs '.' 2>/dev/null)"
+[ -z "$INWINDOW_JSON" ] && INWINDOW_JSON='[]'
+
+# Per-(issue,stage) capture sums for in-window issues:
+#   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum   (one line per (issue,stage) group)
+STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
+  [.[] | select(.issue as $i | $win | index($i))]
+  | group_by([.issue, .stage])
+  | .[]
+  | [ .[0].issue, .[0].stage,
+      ([.[] | (.tokens.input + .tokens.output + .tokens.cache)] | add),
+      ([.[] | .duration_ms] | add) ]
+  | @tsv' 2>/dev/null)"
+
+emit_banner() {
+  local oldest newest
+  oldest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | min // "?"')"
+  newest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | max // "?"')"
+  if [ "$RELEASE_PR_COUNT" -gt 0 ]; then
+    printf 'COST/LATENCY REPORT — last %s feature PRs (window: %s to %s; %s release PRs excluded)\n\n' \
+      "$PR_COUNT" "$oldest" "$newest" "$RELEASE_PR_COUNT"
+  else
+    printf 'COST/LATENCY REPORT — last %s feature PRs (window: %s to %s)\n\n' \
+      "$PR_COUNT" "$oldest" "$newest"
+  fi
+}
+
+# Per-PATH aggregate table. Medians for loc are over all rows in the PATH;
+# token/duration/per-loc medians are over token-bearing rows only ('--' when
+# the PATH has no token-bearing rows).
+emit_path_table() {
+  echo 'PATH | N  | median loc | median tokens | median dur(ms) | median tokens/loc | median ms/loc'
+  sort -k2,2 "$ROWS_TSV" | awk -F'\t' '
+    function median(arr, n,   i, j, tmp) {
+      for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
+      if (n == 0) return "";
+      if (n % 2 == 1) return arr[(n+1)/2];
+      return (arr[n/2] + arr[n/2+1]) / 2;
+    }
+    function fmt(v) {
+      if (v == "") return "--";
+      if (v == int(v)) return sprintf("%d", v);
+      return sprintf("%.1f", v);
+    }
+    function flush(   lm) {
+      if (cur == "") return;
+      lm = median(locs, nrow);
+      printf "%-4s | %-2d | %-10s | %-13s | %-14s | %-17s | %-13s\n", \
+        cur, nrow, fmt(lm), \
+        (ntok ? fmt(median(toks, ntok)) : "--"), \
+        (ntok ? fmt(median(durs, ntok)) : "--"), \
+        (ntok ? fmt(median(tpls, ntok)) : "--"), \
+        (ntok ? fmt(median(mpls, ntok)) : "--");
+      cur=""; nrow=0; ntok=0; delete locs; delete toks; delete durs; delete tpls; delete mpls;
+    }
+    { path=$2; if (path != cur) { flush(); cur=path }
+      nrow++; locs[nrow]=$3;
+      if ($5 != "null") { ntok++; toks[ntok]=$5; durs[ntok]=$6; d=($3>0?$3:1); tpls[ntok]=$5/d; mpls[ntok]=$6/d }
+    }
+    END { flush() }'
+}
+
+# Per-stage aggregate table over the 5 canonical stages. Median tokens/dur over
+# the per-(issue,stage) sums; stages with no records render '--'.
+emit_stage_table() {
+  echo ""
+  echo 'STAGE | N | median tokens | median dur(ms)'
+  printf '%s\n' "$STAGE_TSV" | awk -F'\t' '
+    function median(arr, n,   i, j, tmp) {
+      for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
+      if (n == 0) return "";
+      if (n % 2 == 1) return arr[(n+1)/2];
+      return (arr[n/2] + arr[n/2+1]) / 2;
+    }
+    function fmt(v) {
+      if (v == "") return "--";
+      if (v == int(v)) return sprintf("%d", v);
+      return sprintf("%.1f", v);
+    }
+    NF >= 4 { s=$2; c[s]++; tk[s,c[s]]=$3; dr[s,c[s]]=$4 }
+    END {
+      m = split("classify plan plan-eval execute pr-eval", order, " ");
+      for (k=1; k<=m; k++) {
+        s = order[k]; cnt = c[s] + 0;
+        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s\n", s, 0, "--", "--"; continue }
+        for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i] }
+        printf "%-9s | %-2d | %-13s | %-13s\n", s, cnt, fmt(median(tarr, cnt)), fmt(median(darr, cnt));
+        delete tarr; delete darr;
+      }
+    }'
+}
+
+# TOP-N token consumers (per-issue), descending by tokens_total; null-token rows skipped.
+emit_top_consumers() {
+  echo ""
+  echo "TOP-$TOPN TOKEN CONSUMERS:"
+  awk -F'\t' '$5 != "null" { d=($3>0?$3:1); printf "%s\t%s\t%s\t%s\t%.1f\n", $5, $1, $2, $3, $5/d }' "$ROWS_TSV" \
+    | sort -t "$(printf '\t')" -k1,1 -gr \
+    | head -"$TOPN" \
+    | awk -F'\t' '{ printf "issue #%s (PATH %s): %s tokens, %s LOC → %s/LOC\n", $2, $3, $1, $4, $5 }'
+}
+
+# TOP-N slowest stages, descending by summed duration_ms per (issue,stage).
+emit_top_slow_stages() {
+  echo ""
+  echo "TOP-$TOPN SLOWEST STAGES:"
+  printf '%s\n' "$STAGE_TSV" | awk -F'\t' 'NF >= 4 { printf "%s\t%s\t%s\n", $4, $1, $2 }' \
+    | sort -t "$(printf '\t')" -k1,1 -gr \
+    | head -"$TOPN" \
+    | awk -F'\t' '{ printf "issue #%s / %s: %s ms\n", $2, $3, $1 }'
+}
+
+# Over-served outliers: every row with over_served == 1.
+emit_over_served() {
+  echo ""
+  echo "OVER-SERVED OUTLIERS:"
+  while IFS=$'\t' read -r issue path loc ceremony tt dur ov prn; do
+    [ -z "$issue" ] && continue
+    if [ "$ov" = "1" ]; then
+      printf "issue #%s (PATH %s): %s LOC, full ceremony → should've been TDD/hotfix\n" "$issue" "$path" "$loc"
+    fi
+  done < "$ROWS_TSV"
+}
+
+emit_banner
+emit_path_table
+emit_stage_table
+emit_top_consumers
+emit_top_slow_stages
+emit_over_served

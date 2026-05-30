@@ -143,6 +143,76 @@ else
   fail_msg "issue 204 .tokens_total should be null (no capture records)"
 fi
 
+# --- Scenario 4: human table render (banner, per-PATH/per-stage, over-served, --) ---
+inc_scenario "Scenario 4: rendered tables + over-served outliers"
+
+TABLE4="$(bash "$HELPER" --fixture "$FIXTURE_DIR" 2>/dev/null)"
+
+if printf '%s' "$TABLE4" | grep -q 'COST/LATENCY REPORT'; then
+  pass_msg "banner present"
+else
+  fail_msg "banner missing"
+fi
+
+if printf '%s' "$TABLE4" | grep -q 'PATH | N'; then
+  pass_msg "per-PATH aggregate header present"
+else
+  fail_msg "per-PATH aggregate header missing"
+fi
+
+if printf '%s' "$TABLE4" | grep -q 'STAGE | N'; then
+  pass_msg "per-stage aggregate header present"
+else
+  fail_msg "per-stage aggregate header missing"
+fi
+
+if printf '%s' "$TABLE4" | grep -q 'issue #402' \
+   && printf '%s' "$TABLE4" | grep -qF "should've been TDD/hotfix"; then
+  pass_msg "over-served section flags issue #402 with literal 'should've been TDD/hotfix'"
+else
+  fail_msg "over-served section missing issue #402 / flag string"
+fi
+
+# Per-stage 'classify' row has zero capture records in the fixture → '--'.
+CLASSIFY_ROW="$(printf '%s\n' "$TABLE4" | grep -E '^classify[[:space:]]*\|' | head -1)"
+case "$CLASSIFY_ROW" in
+  *--*) pass_msg "per-stage classify row renders '--' (no capture records)" ;;
+  *) fail_msg "per-stage classify row missing '--' (got: $CLASSIFY_ROW)" ;;
+esac
+
+# --- Scenario 5: --over-served-loc is tunable ---
+inc_scenario "Scenario 5: --over-served-loc 4 reclassifies issue 402 out"
+
+TABLE5="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --over-served-loc 4 2>/dev/null)"
+if printf '%s' "$TABLE5" | grep -qE "issue #402.*should've been"; then
+  fail_msg "issue 402 should NOT be over-served when threshold=4 (loc 8 > 4)"
+else
+  pass_msg "issue 402 reclassified out of over-served list at threshold 4"
+fi
+
+# --- Scenario 6: empty capture → all tokens '--', still exits 0 ---
+inc_scenario "Scenario 6: empty capture.jsonl degrades to '--'"
+
+TMP6="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP6/" 2>/dev/null
+: > "$TMP6/capture.jsonl"   # truncate to empty
+
+TABLE6="$(bash "$HELPER" --fixture "$TMP6" 2>/dev/null)"
+RC6=$?
+if [ "$RC6" -eq 0 ]; then
+  pass_msg "empty-capture run exits 0"
+else
+  fail_msg "empty-capture run exited non-zero (rc=$RC6)"
+fi
+
+ROWS6="$(bash "$HELPER" --fixture "$TMP6" --emit-rows-json 2>/dev/null)"
+if [ "$(printf '%s' "$ROWS6" | jq -r 'all(.[]; .tokens_total == null)' 2>/dev/null)" = "true" ]; then
+  pass_msg "every per-issue tokens_total is null with empty capture"
+else
+  fail_msg "expected all tokens_total null with empty capture"
+fi
+rm -rf "$TMP6"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
