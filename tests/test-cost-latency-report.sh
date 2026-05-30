@@ -82,6 +82,67 @@ else
   fail_msg "--emit-rows-json output is not valid JSON (got: $(printf '%s' "$ROWS_OUT" | head -1))"
 fi
 
+# --- Scenario 3: per-issue row schema (--emit-rows-json) ---
+inc_scenario "Scenario 3: per-issue rows (loc, path, ceremony, tokens, over-served)"
+
+ROWS3="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --emit-rows-json 2>/dev/null)"
+
+# Exactly 4 eligible issue rows (102→202, 302→402, 103→203, 104→204; #901 excluded).
+N3="$(printf '%s' "$ROWS3" | jq -r 'length' 2>/dev/null || echo 0)"
+if [ "$N3" = "4" ]; then
+  pass_msg "emits exactly 4 eligible issue rows"
+else
+  fail_msg "expected 4 eligible rows, got $N3"
+fi
+
+# row helper: fetch a field for a given issue number via jq.
+row_field() {
+  local issue="$1" field="$2"
+  printf '%s' "$ROWS3" | jq -r --argjson n "$issue" --arg f "$field" \
+    '.[] | select(.issue == $n) | .[$f] | tostring' 2>/dev/null
+}
+
+assert_rf() {
+  local issue="$1" field="$2" expected="$3"
+  local actual; actual="$(row_field "$issue" "$field")"
+  if [ "$actual" = "$expected" ]; then
+    pass_msg "issue $issue .$field == $expected"
+  else
+    fail_msg "issue $issue .$field expected=$expected actual=$actual"
+  fi
+}
+
+# Issue 202 (PATH B, loc 160, full ceremony, has capture → tokens>0, not over-served).
+assert_rf 202 loc 160
+assert_rf 202 path B
+assert_rf 202 ceremony 1
+assert_rf 202 over_served 0
+if [ "$(printf '%s' "$ROWS3" | jq -r '.[] | select(.issue==202) | (.tokens_total | type=="number" and . > 0)' 2>/dev/null)" = "true" ]; then
+  pass_msg "issue 202 .tokens_total is a number > 0"
+else
+  fail_msg "issue 202 .tokens_total should be a positive number"
+fi
+
+# Issue 402 (PATH B, loc 8, full ceremony, tiny diff → over-served). The operator's case.
+assert_rf 402 loc 8
+assert_rf 402 ceremony 1
+assert_rf 402 over_served 1
+if [ "$(printf '%s' "$ROWS3" | jq -r '.[] | select(.issue==402) | (.duration_ms | type=="number")' 2>/dev/null)" = "true" ]; then
+  pass_msg "issue 402 .duration_ms is a number"
+else
+  fail_msg "issue 402 .duration_ms should be a number"
+fi
+
+# Issue 204 (PATH D quick-fix, no plan/eval comments → ceremony 0 → not over-served
+# even though loc ≤ 20; AND no capture records → tokens_total null).
+assert_rf 204 ceremony 0
+assert_rf 204 over_served 0
+if [ "$(printf '%s' "$ROWS3" | jq -r '.[] | select(.issue==204) | (.tokens_total == null)' 2>/dev/null)" = "true" ]; then
+  pass_msg "issue 204 (no capture records) .tokens_total == null"
+else
+  fail_msg "issue 204 .tokens_total should be null (no capture records)"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

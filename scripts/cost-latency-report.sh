@@ -233,7 +233,114 @@ has_block() {
   fi
 }
 
+# --- temp files ---
+ROWS_TSV=$(mktemp)
+trap 'rm -f "$ROWS_TSV"' EXIT
+
+# --- load inputs ---
+
+RAW_PR_LIST_JSON="$(load_pr_list)" || exit 1
+
+# Capture JSONL → JSON array (slurped once). Empty input → empty array.
+CAPTURE_JSON="$(load_capture | jq -cs '.' 2>/dev/null)"
+[ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+
+# Partition raw list into release PRs (excluded) and eligible feature PRs.
+RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
+PR_LIST_JSON="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ | not)]" 2>/dev/null || echo '[]')"
+PR_COUNT="$(printf '%s' "$PR_LIST_JSON" | jq 'length' 2>/dev/null || echo 0)"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '%s' "$PR_LIST_JSON" | jq -r '.[].number' | while read -r n; do
+    echo "would-fetch: PR #$n"
+  done
+  exit 0
+fi
+
+# --- main loop: iterate eligible PRs, emit one TSV row per linked issue ---
+# Columns: issue<TAB>path<TAB>loc<TAB>ceremony<TAB>tokens_total<TAB>duration_ms<TAB>over_served<TAB>pr_num
+# tokens_total / duration_ms are the literal string "null" when the issue has
+# no capture records (distinct from a real 0).
+SKIPPED_NO_LINK=0
+while read -r pr; do
+      pr_num=$(printf '%s' "$pr" | jq -r '.number')
+      pr_body=$(printf '%s' "$pr" | jq -r '.body // ""')
+      pr_additions=$(printf '%s' "$pr" | jq -r '.additions // 0')
+      pr_deletions=$(printf '%s' "$pr" | jq -r '.deletions // 0')
+      loc=$((pr_additions + pr_deletions))
+
+      issue_num="$(extract_linked_issue "$pr_body")"
+      if [ -z "$issue_num" ]; then
+        SKIPPED_NO_LINK=$((SKIPPED_NO_LINK + 1))
+        continue
+      fi
+
+      pr_view="$(load_pr_view "$pr_num" 2>/dev/null)" || continue
+      issue_view="$(load_issue_view "$issue_num" 2>/dev/null)" || continue
+
+      issue_labels="$(printf '%s' "$issue_view" | jq -c '.labels // []')"
+      path="$(derive_path "$issue_labels")"
+
+      issue_comments="$(printf '%s' "$issue_view" | jq -c '.comments // []')"
+      pr_comments="$(printf '%s' "$pr_view"    | jq -c '.comments // []')"
+
+      # ceremony = 1 iff issue has both ## Implementation Plan and ## Plan
+      # Evaluation comments AND the PR has a ## Evaluation comment.
+      has_plan="$(has_block "$issue_comments" "Implementation Plan")"
+      has_plan_eval="$(has_block "$issue_comments" "Plan Evaluation")"
+      has_pr_eval="$(has_block "$pr_comments" "Evaluation")"
+      if [ "$has_plan" = "1" ] && [ "$has_plan_eval" = "1" ] && [ "$has_pr_eval" = "1" ]; then
+        ceremony=1
+      else
+        ceremony=0
+      fi
+
+      # Sum tokens_total + duration_ms across ALL capture records for this issue.
+      # No records → literal "null".
+      sums="$(printf '%s' "$CAPTURE_JSON" | jq -c --argjson n "$issue_num" '
+        [.[] | select(.issue == $n)] as $recs
+        | if ($recs | length) == 0 then {tokens: null, dur: null}
+          else {tokens: ([$recs[] | (.tokens.input + .tokens.output + .tokens.cache)] | add),
+                dur:    ([$recs[] | .duration_ms] | add)}
+          end' 2>/dev/null)"
+      tokens_total="$(printf '%s' "$sums" | jq -r '.tokens // "null"' 2>/dev/null)"
+      duration_ms="$(printf '%s' "$sums" | jq -r '.dur // "null"' 2>/dev/null)"
+      [ -z "$tokens_total" ] && tokens_total="null"
+      [ -z "$duration_ms" ] && duration_ms="null"
+
+      # over_served = ceremony AND loc <= OVER_SERVED_LOC.
+      if [ "$ceremony" = "1" ] && [ "$loc" -le "$OVER_SERVED_LOC" ]; then
+        over_served=1
+      else
+        over_served=0
+      fi
+
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$issue_num" "$path" "$loc" "$ceremony" "$tokens_total" "$duration_ms" "$over_served" "$pr_num" \
+        >> "$ROWS_TSV"
+done < <(printf '%s' "$PR_LIST_JSON" | jq -c '.[]')
+
+if [ "$SKIPPED_NO_LINK" -gt 0 ]; then
+  echo "cost-latency-report: $SKIPPED_NO_LINK non-release PRs skipped for missing Closes/Fixes/Resolves marker" >&2
+fi
+
+# --- emit per-issue rows as JSON (debug / metrics-snapshot consumer) ---
+emit_rows_json() {
+  awk -F'\t' '
+    BEGIN { print "[" }
+    {
+      if (NR > 1) print ",";
+      issue=$1; path=$2; loc=$3; ceremony=$4; tt=$5; dur=$6; ov=$7; prn=$8;
+      d = (loc > 0 ? loc : 1);
+      if (tt == "null") { tt_j="null"; tpl="null" } else { tt_j=tt; tpl=sprintf("%.1f", tt / d) }
+      if (dur == "null") { dur_j="null"; mpl="null" } else { dur_j=dur; mpl=sprintf("%.1f", dur / d) }
+      printf "  {\"issue\":%s,\"path\":\"%s\",\"loc\":%s,\"ceremony\":%s,\"tokens_total\":%s,\"duration_ms\":%s,\"tokens_per_loc\":%s,\"ms_per_loc\":%s,\"over_served\":%s,\"pr_number\":%s}", \
+        issue, path, loc, ceremony, tt_j, dur_j, tpl, mpl, ov, prn
+    }
+    END { print "\n]" }' "$ROWS_TSV"
+}
+
 if [ "$EMIT_ROWS_JSON" -eq 1 ]; then
-  echo "[]"
+  emit_rows_json
   exit 0
 fi
