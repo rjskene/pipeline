@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import traceback
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from subagent_log_utils import append_locked  # noqa: E402
@@ -184,7 +185,7 @@ def main():
             return
         os.makedirs(logs_dir, exist_ok=True)
         append_locked(
-            os.path.join(logs_dir, "agent-costs.jsonl"),
+            Path(logs_dir) / "agent-costs.jsonl",
             json.dumps(rec),
         )
     except Exception:  # noqa: BLE001 -- fail-open: never block agent completion
