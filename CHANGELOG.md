@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.20.4](https://github.com/rjskene/pipeline/compare/v0.20.3...v0.20.4) (2026-05-30)
+
+
+### Features
+
+* **fullsend:** execute slate wave-by-wave with inter-wave pull and emit-edges-sourced scoped halt ([#626](https://github.com/rjskene/pipeline/issues/626)) ([26720d9](https://github.com/rjskene/pipeline/commit/26720d91d7da43a5e1ce1a8466e2b3f403525a56))
+* **plan-waves:** add additive --emit-edges mode + per-wave/inter-wave-pull doc contracts ([#626](https://github.com/rjskene/pipeline/issues/626)) ([632f16f](https://github.com/rjskene/pipeline/commit/632f16fa5f2de70a5e62fd07f07686059e02e42b))
+
+
+### Bug Fixes
+
+* **execute-issue-plan:** add hard terminal exit after pr-open to stop post-PR lingering ([#631](https://github.com/rjskene/pipeline/issues/631)) ([63cc50a](https://github.com/rjskene/pipeline/commit/63cc50aa4c6c98f1ed5dab013cdf58f71c9b5614))
+* **execute-issue-plan:** agent lingers ~13min after PR creation, holding worktree + queue slot ([0c50a87](https://github.com/rjskene/pipeline/commit/0c50a8715f5522512f826431afb9e189e8d3522d))
+* **fullsend:** enforce wave-by-wave execution so blocked issues branch only after blockers merge ([20ad0a1](https://github.com/rjskene/pipeline/commit/20ad0a15f74d721fc048d5a03ae874c442027e69))
+* **metrics-snapshot:** export PIPELINE_REPO so sibling extractors don't degrade to null ([46b31ba](https://github.com/rjskene/pipeline/commit/46b31bad5a24fb669a77c45e9d5fc3d2ca294437))
+* **metrics-snapshot:** export PIPELINE_REPO so sibling extractors don't degrade to null ([91002fd](https://github.com/rjskene/pipeline/commit/91002fd053458829f65942f53bd06821151142b7)), closes [#638](https://github.com/rjskene/pipeline/issues/638)
+* **run-queue:** scope errexit off in the poll loop + diagnose abnormal exits, silence false-fire on benign exits ([#630](https://github.com/rjskene/pipeline/issues/630)) ([06d1552](https://github.com/rjskene/pipeline/commit/06d1552c0b852f8bfe623cb60312b304ee9a52de))
+* **run-queue:** set -e in poll loop kills the monitor on a transient gh/tmux non-zero while agents still run ([0ffd621](https://github.com/rjskene/pipeline/commit/0ffd621646860e1a38957a6abc6e7506f8dfd440))
+
 ## [0.20.3](https://github.com/rjskene/pipeline/compare/v0.20.2...v0.20.3) (2026-05-29)
 
 
