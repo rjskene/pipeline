@@ -63,6 +63,13 @@ setup_proj() {
 exit 0
 EOF
   chmod +x "$proj/.claude/scripts/spawn-claude.sh"
+  # `kill` is a bash BUILTIN, so a PATH stub alone cannot intercept the reap's
+  # process-group signals. BASH_ENV (sourced by every non-interactive bash,
+  # including run-queue.sh) disables the builtin so `kill` resolves to the PATH
+  # stub and Case F can observe the signalled pgid. Harmless to the other stubs.
+  cat > "$proj/.bash_env" <<'EOF'
+enable -n kill 2>/dev/null || true
+EOF
   # Post-#514 route_issue() unconditionally maps to mode=bare with no gh
   # round-trip, so the only gh traffic in the loop is the new predicate.
   cat > "$proj/pipeline.config" <<EOF
@@ -131,22 +138,40 @@ EOF
   chmod +x "$stub_dir/tmux"
 
   # ps stub: 911's pane pid 99911 runs hot (50%) so the subtree-sum stall check
-  # never flags it. No other pids needed.
+  # never flags it. The `-o pgid=` arm resolves pane pid 99911 to a fixed process
+  # GROUP id (88811) for the reap helper (issue #666); any other `-o pgid=` pid
+  # echoes empty so the helper's "no pgid -> skip kill" fail-safe is exercised.
   cat > "$stub_dir/ps" <<'EOF'
 #!/bin/bash
-mode=""
+mode=""; pid=""; want_pid=0
 for arg in "$@"; do
   case "$arg" in
-    -eo) mode="eo" ;;
+    -eo)   mode="eo" ;;
+    pgid=) mode="pgid" ;;
+    -p)    want_pid=1 ;;
+    *)     if [ "$want_pid" = 1 ]; then pid="$arg"; want_pid=0; fi ;;
   esac
 done
-if [ "$mode" = "eo" ]; then
+if [ "$mode" = "pgid" ]; then
+  if [ "$pid" = "99911" ]; then echo "88811"; else echo ""; fi
+elif [ "$mode" = "eo" ]; then
   echo "99911 1 50.0"
 else
   echo "0.0"
 fi
 EOF
   chmod +x "$stub_dir/ps"
+
+  # kill stub: record every invocation's args (`"$*"`) to the case's kill-log so
+  # Case F can assert the reap signalled the worker's process GROUP. Real signals
+  # would no-op against the stubbed pgid anyway; recording keeps the assertion
+  # hermetic.
+  cat > "$stub_dir/kill" <<EOF
+#!/bin/bash
+echo "\$*" >> "$case_dir/kill-log"
+exit 0
+EOF
+  chmod +x "$stub_dir/kill"
 
   cat > "$stub_dir/git" <<'EOF'
 #!/bin/bash
@@ -183,6 +208,8 @@ run_case() {
       POLL_SECONDS=1 \
       STATUS_INTERVAL=999 \
       PIPELINE_EXECUTOR_REAP_GRACE_POLLS="$grace_polls" \
+      PIPELINE_REAP_SIGKILL_GRACE_SEC=0 \
+      BASH_ENV="$proj/.bash_env" \
       PIPELINE_PROJECT_ROOT="$proj" \
       CLAUDE_PLUGIN_ROOT="$proj/.claude" \
       timeout "$tmo" bash .claude/scripts/run-queue.sh 911 912
@@ -360,6 +387,49 @@ if [ ! -f "$CASE_D/killed-911" ]; then
   pass_msg "D2: runner did NOT kill 911's window when merged supersedes pr-open"
 else
   fail_msg "D2: runner force-closed 911 via the executor path despite merged label"
+fi
+
+# ============ Case F: process-group kill on reap (issue #666) ============
+echo ""
+echo "Case F: reap SIGTERM+SIGKILLs the worker process group, not just the window"
+CASE_F="$ROOT/caseF"; mkdir -p "$CASE_F"
+PROJ_F="$CASE_F/proj"
+setup_proj "$PROJ_F"
+STUB_F=$(make_common_stubs "$PROJ_F" "$CASE_F")
+# Reuse Case A's gh stub (911 always pr-open, no manual-merge, no Evaluation
+# comment) so only the executor reap path fires. Default skill (no --skill),
+# grace=2 so the reap fires within the timeout.
+cat > "$STUB_F/gh" <<'EOF'
+#!/bin/bash
+ARGS="$*"
+case "$1 $2" in
+  "issue view")
+    issue="$3"
+    if [[ "$ARGS" == *labels* ]]; then
+      if [ "$issue" = "911" ]; then echo "pr-open"; else echo ""; fi
+    fi
+    ;;
+  "pr list") echo "null" ;;
+  "pr view") echo "" ;;
+  *) echo "" ;;
+esac
+EOF
+chmod +x "$STUB_F/gh"
+run_case "$PROJ_F" "$CASE_F" 30 2
+
+inc
+if grep -q -- '-TERM -88811' "$CASE_F/kill-log" 2>/dev/null \
+   && grep -q -- '-KILL -88811' "$CASE_F/kill-log" 2>/dev/null; then
+  pass_msg "F1: reap SIGTERM+SIGKILLs the worker process group 88811"
+else
+  fail_msg "F1: expected kill -TERM -88811 then kill -KILL -88811 in kill-log"
+  sed 's/^/    /' "$CASE_F/kill-log" >&2 2>/dev/null || true
+fi
+inc
+if [ -f "$CASE_F/killed-911" ]; then
+  pass_msg "F2: reap still force-closes 911's tmux window"
+else
+  fail_msg "F2: expected tmux kill-window for issue-911"
 fi
 
 echo ""
