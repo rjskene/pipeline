@@ -79,6 +79,11 @@ source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 # Launches up to MAX_CONCURRENT agents at a time, polls for completion,
 # and launches the next queued issue when a slot opens.
 #
+# fullsend invokes this once per wave with only that wave's issue numbers;
+# cross-wave serialization and the inter-wave `git pull` are enforced by the
+# fullsend loop, not here -- do NOT pass multiple waves' issues in one
+# invocation (#626).
+#
 # Usage:
 #   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh [--skip-permissions] [--skill <name>] <issue1> <issue2> ...
 #   bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --add <issue1> <issue2> ...
@@ -157,10 +162,32 @@ log() {
   fi
 }
 
+# Issue #630: the poll loop (below) makes many external calls per iteration
+# (gh, tmux list-panes/list-windows, ps). Under `set -e` a single transient
+# non-zero (a gh rate-limit blip, or a tmux race when a window closes between
+# snapshots) silently terminates the whole runner with no diagnostic, leaving
+# the spawned agents orphaned and the orchestrator without live EVENT lines.
+# Two-part fix: (1) an EXIT trap that surfaces an abnormal death with the
+# failing command + exit code (so the silent exit-1 becomes diagnosable), and
+# (2) `set +e` scoping errexit OFF for the poll-loop region only (see below) so
+# a blip degrades a single poll instead of aborting the run. RUNNER_DONE is
+# flipped to 1 once the loop exits normally (and before the benign empty-queue
+# usage exit), making the trap a no-op on those expected/intended exit paths.
+RUNNER_DONE=0
+_runner_exit_trap() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] && [ "$RUNNER_DONE" -eq 0 ]; then
+    log "EVENT: runner-aborted cmd=<${BASH_COMMAND}> rc=${rc} line=${BASH_LINENO[0]:-?}"
+  fi
+}
+trap _runner_exit_trap EXIT
+
 # Collect issue queue from args
 QUEUE=("$@")
 if [ ${#QUEUE[@]} -eq 0 ]; then
   echo "Usage: bash $0 [--skip-permissions] <issue1> <issue2> ..."
+  # Issue #630: benign usage exit — silence the abnormal-exit trap.
+  RUNNER_DONE=1
   exit 1
 fi
 
@@ -612,6 +639,11 @@ buckets_have_pending() {
   return 1
 }
 
+# Issue #630: errexit OFF for the poll-loop region. Each iteration runs many
+# external commands whose transient non-zero must degrade THAT poll, not kill
+# the runner. `set -u`/`pipefail` stay in force (only `-e` is the footgun here).
+set +e
+
 # Poll loop — continues while agents are active, items are queued, or pending file has items
 while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items; do
   sleep "$POLL_INTERVAL"
@@ -728,6 +760,10 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
     log "[$(date +%H:%M:%S)] Active: ${active_list:-none} | Queued: ${remaining}"
   fi
 done
+
+# Issue #630: poll loop exited normally — mark done so the EXIT trap does not
+# emit a runner-aborted diagnostic for the intended `queue-complete` exit.
+RUNNER_DONE=1
 
 # Final summary
 log ""

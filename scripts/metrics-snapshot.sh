@@ -83,7 +83,7 @@ fi
 
 # Source pipeline.config for PIPELINE_VERSION if set; tolerate absence.
 # shellcheck disable=SC1091
-[ -f "${REPO_ROOT}/pipeline.config" ] && source "${REPO_ROOT}/pipeline.config" 2>/dev/null || true
+if [ -f "${REPO_ROOT}/pipeline.config" ]; then set -a; source "${REPO_ROOT}/pipeline.config" 2>/dev/null || true; set +a; fi
 VERSION="${PIPELINE_VERSION:-unknown}"
 DATE_UTC="$(date -u +%Y-%m-%d)"
 
