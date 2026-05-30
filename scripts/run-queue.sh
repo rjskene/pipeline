@@ -143,6 +143,13 @@ PIPELINE_STALL_SAMPLE_INTERVAL_SEC="${PIPELINE_STALL_SAMPLE_INTERVAL_SEC:-1}"
 # alone false-flagged it as stalled. Set to 0 to restore pre-#641 CPU-only
 # behavior (counter advances on idle CPU regardless of pane progress).
 PIPELINE_STALL_FORWARD_PROGRESS_GATE="${PIPELINE_STALL_FORWARD_PROGRESS_GATE:-1}"
+# Number of consecutive polls a worker must be observed at the `pr-open` label
+# (PR opened, terminal action taken) while still alive before the runner reaps
+# it (issue #636). Mirrors PIPELINE_STALL_POLL_THRESHOLD's grace-window shape.
+# FAIL-CLOSED: a transient gh error makes executor_finished_terminal() return 1,
+# which resets the counter — the runner never reaps mid-`gh pr create`/push. At
+# the default 60s poll this is a few-minute grace window. Set higher to widen it.
+PIPELINE_EXECUTOR_REAP_GRACE_POLLS="${PIPELINE_EXECUTOR_REAP_GRACE_POLLS:-3}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
@@ -310,6 +317,7 @@ declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
 declare -A CPU_IDLE_POLLS=()  # issue -> consecutive low-CPU poll count
 declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this window
 declare -A PANE_FINGERPRINT=()  # issue -> last-seen tmux-pane fingerprint (forward-progress baseline, #641)
+declare -A PR_OPEN_POLLS=()   # issue -> consecutive polls observed at pr-open while alive (issue #636)
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
