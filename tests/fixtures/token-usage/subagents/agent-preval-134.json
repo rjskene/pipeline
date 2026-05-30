@@ -1,0 +1,12 @@
+{
+  "ts": "2026-05-30T12:04:00Z",
+  "session": "sess-inline",
+  "description": "Evaluate PR #137 for #134",
+  "subagent_type": "pipeline:pr-evaluator",
+  "usage": {
+    "input_tokens": 1300,
+    "output_tokens": 160,
+    "cache_read_input_tokens": 11,
+    "cache_creation_input_tokens": 2
+  }
+}

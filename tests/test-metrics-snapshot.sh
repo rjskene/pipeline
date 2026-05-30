@@ -102,11 +102,30 @@ if [ -f "$OUT_FILE" ] && jq -e '
   and (.over_eval_count | type == "number")
   and (.late_error_count_by_stage | type == "object")
   and ((.compliance_pass_rate | type == "number") or (.compliance_pass_rate == null))
+  and ((.compliance_weak_count | type == "number") or (.compliance_weak_count == null))
   and (.review_deviations_count | type == "number")
 ' "$OUT_FILE" >/dev/null 2>&1; then
   pass_msg "row has required keys with expected types"
 else
   fail_msg "row missing required keys or wrong types"
+fi
+
+# Cost/latency columns (issue #643): 3 new keys, each number|null.
+if [ -f "$OUT_FILE" ] && jq -e '
+  (.cost_tokens_total | (type == "number") or (. == null))
+  and (.cost_duration_ms_median | (type == "number") or (. == null))
+  and (.over_served_count | (type == "number") or (. == null))
+' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "cost/latency columns present with number|null types"
+else
+  fail_msg "cost/latency columns missing or wrong types"
+fi
+
+# Good fixture has one over-served issue (#210, full ceremony, loc 6) → count >= 1.
+if [ -f "$OUT_FILE" ] && jq -e '.over_served_count >= 1' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "over_served_count >= 1 with good cost-latency fixture"
+else
+  fail_msg "expected over_served_count >= 1 (got: $(jq -r '.over_served_count' "$OUT_FILE" 2>/dev/null))"
 fi
 
 # ISO YYYY-MM-DD date
@@ -124,6 +143,21 @@ if [ -f "$OUT_FILE" ] && jq -e '
   pass_msg "late_error_count_by_stage has all 4 canonical keys"
 else
   fail_msg "late_error_count_by_stage missing canonical keys"
+fi
+
+# Strict test-first pass-rate (#640). Compliance fixture: #101 omitted (PATH A),
+# #102 PASS (test-first), #103 SKIP (source-only), #104 WEAK (source-then-test).
+# Numerator = PASS only (1); denominator = PASS+WEAK+SKIP (3) → 1/3 ≈ 0.333.
+if [ -f "$OUT_FILE" ] && jq -e '.compliance_pass_rate > 0.33 and .compliance_pass_rate < 0.34' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "compliance_pass_rate is strict 1/3 (PASS / (PASS+WEAK+SKIP))"
+else
+  fail_msg "compliance_pass_rate not ~0.333 (got $(jq -c '.compliance_pass_rate' "$OUT_FILE" 2>/dev/null))"
+fi
+
+if [ -f "$OUT_FILE" ] && jq -e '.compliance_weak_count == 1' "$OUT_FILE" >/dev/null 2>&1; then
+  pass_msg "compliance_weak_count == 1 (one WEAK verdict in fixture)"
+else
+  fail_msg "compliance_weak_count != 1 (got $(jq -c '.compliance_weak_count' "$OUT_FILE" 2>/dev/null))"
 fi
 
 # --- Scenario 3: idempotent append (1 → 2 lines, first row preserved) ---
@@ -182,6 +216,14 @@ if [ -f "$OUT_BROKEN" ] && jq -e '.late_error_count_by_stage | type == "object"'
   pass_msg "other-sibling fields still populated when one fails"
 else
   fail_msg "non-failing siblings should still produce values"
+fi
+
+# Cost/latency sibling also degrades to null: BROKEN_FIXTURE has no
+# cost-latency subdir, so cost-latency-report.sh fails (missing prs.json).
+if [ -f "$OUT_BROKEN" ] && jq -e '.cost_tokens_total == null and .over_served_count == null' "$OUT_BROKEN" >/dev/null 2>&1; then
+  pass_msg "cost/latency columns degrade to null on sibling failure"
+else
+  fail_msg "expected cost_tokens_total == null and over_served_count == null on failure"
 fi
 
 # --- Scenario 5: --dry-run emits row to stdout, does not append ---

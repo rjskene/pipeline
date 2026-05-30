@@ -339,9 +339,16 @@ if [ "$MODE" = full ]; then
       local target="$1" answer=""
       if [ -n "$ASSUME" ]; then
         answer="$ASSUME"
-      else
+      elif [ -t 0 ]; then
         printf 'migrate-from-subtree: remove unmarkered duplicate %s? [y/N] ' "$target" >&2
         read -r answer || answer=""
+      else
+        # Non-interactive stdin (pipe/closed/CI) and no $ASSUME: a bare `read`
+        # blocks forever on an open pipe that never sends input or EOF. Use a
+        # bounded read so a piped answer is still honored, but no input within
+        # the timeout falls through to the safe default N (do not remove) instead
+        # of hanging. (#676)
+        read -t 1 -r answer || answer=""
       fi
       case "$answer" in
         y|Y|yes|YES) return 0 ;;

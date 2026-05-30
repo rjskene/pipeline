@@ -1,5 +1,6 @@
 [
   {"number":101,"title":"docs: tweak","additions":2,"deletions":1,"body":"Closes #201","mergedAt":"2026-05-20T10:00:00Z","labels":[]},
   {"number":102,"title":"feat: add fn","additions":50,"deletions":10,"body":"Closes #202","mergedAt":"2026-05-21T10:00:00Z","labels":[]},
-  {"number":103,"title":"refactor: rename","additions":80,"deletions":30,"body":"Closes #203","mergedAt":"2026-05-22T10:00:00Z","labels":[]}
+  {"number":103,"title":"refactor: rename","additions":80,"deletions":30,"body":"Closes #203","mergedAt":"2026-05-22T10:00:00Z","labels":[]},
+  {"number":104,"title":"feat: weak order","additions":40,"deletions":5,"body":"Closes #204","mergedAt":"2026-05-23T10:00:00Z","labels":[]}
 ]

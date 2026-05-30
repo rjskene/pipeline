@@ -13,8 +13,11 @@ set -uo pipefail
 # fallback is deferred to v1 (#418); invoking without the injection flags
 # hard-fails with rc=3 rather than silently emitting a misleading audit.
 #
-# Squash-merge before push can hide red→green history — v0 accepts this
-# misreport. Strict commit-ordering enforcement is tracked in #418.
+# Commit ORDERING is now enforced (#640/#418): the verdict is test-first
+# (PASS) / test-after (WEAK) / no-test (SKIP) / no-source (N/A), derived
+# from the chronological commit-array order. The #459 merge-commit
+# migration preserves per-PR sub-commit history, so red->green ordering is
+# observable on already-merged PRs.
 #
 # Usage: audit-compliance.sh <issue> <pr> [--dry-run]
 #                            --files-json F --commits-json F --labels-json F
@@ -105,22 +108,33 @@ while IFS= read -r f; do
   fi
 done < <(echo "$FILES_BODY" | jq -r '.[]')
 
-# Count commits touching at least one test file.
-TEST_COMMIT_COUNT=0
+# Derive commit ordering. The commits array is in chronological commit order
+# (the live load_pr_commits join in compliance-backfill.sh walks
+# repos/{repo}/pulls/{n}/commits, which is topo/chrono ordered). Record the
+# index of the FIRST commit touching any source file and the FIRST touching
+# any test file.
+FIRST_SRC_IDX=-1
+FIRST_TEST_IDX=-1
+idx=0
 while IFS= read -r cfiles; do
-  [ -z "$cfiles" ] && continue
-  hit=0
+  [ -z "$cfiles" ] && { idx=$((idx + 1)); continue; }
+  shit=0
+  thit=0
   while IFS= read -r f; do
     [ -z "$f" ] && continue
-    if _is_test_file "$f"; then hit=1; break; fi
+    if [ "$shit" = "0" ] && _is_source_file "$f"; then shit=1; fi
+    if [ "$thit" = "0" ] && _is_test_file "$f"; then thit=1; fi
   done < <(echo "$cfiles" | jq -r '.[]')
-  if [ "$hit" = "1" ]; then
-    TEST_COMMIT_COUNT=$((TEST_COMMIT_COUNT + 1))
-  fi
+  if [ "$shit" = "1" ] && [ "$FIRST_SRC_IDX" = "-1" ]; then FIRST_SRC_IDX=$idx; fi
+  if [ "$thit" = "1" ] && [ "$FIRST_TEST_IDX" = "-1" ]; then FIRST_TEST_IDX=$idx; fi
+  idx=$((idx + 1))
 done < <(echo "$COMMITS_BODY" | jq -c '.[].files')
 
 # Decide TDD verdict + detected-string. PATH A (docs-only) skips the TDD
-# expectation entirely; the row is omitted from the table.
+# expectation entirely; the row is omitted from the table. No source changed
+# => N/A. Else classify by commit ordering: test-index <= source-index is
+# test-first (PASS); test-index > source-index is test-after (WEAK); no test
+# commit at all is SKIP.
 EMIT_TDD_ROW=1
 TDD_DETECTED="no test files in commits"
 TDD_VERDICT="SKIP"
@@ -129,18 +143,31 @@ if [ "$PATH_LETTER" = "A" ]; then
 elif [ "$SRC_COUNT" = "0" ]; then
   TDD_DETECTED="n/a (no source changes)"
   TDD_VERDICT="N/A"
-elif [ "$TEST_COMMIT_COUNT" -gt 0 ]; then
-  TDD_DETECTED="test file committed before/with source"
+elif [ "$FIRST_TEST_IDX" = "-1" ]; then
+  TDD_DETECTED="no test files in commits"
+  TDD_VERDICT="SKIP"
+elif [ "$FIRST_SRC_IDX" = "-1" ] || [ "$FIRST_TEST_IDX" -le "$FIRST_SRC_IDX" ]; then
+  TDD_DETECTED="test committed before/with source (test-first)"
   TDD_VERDICT="PASS"
+else
+  TDD_DETECTED="test committed after source (test-after)"
+  TDD_VERDICT="WEAK"
 fi
 
-# Compose aggregate.
+# Compose aggregate. SKIP dominates (non-compliant); WEAK surfaces distinctly
+# as a compliant-but-weak signal; otherwise fully compliant.
 SKIPPED=()
+WEAKED=()
 if [ "$EMIT_TDD_ROW" = "1" ] && [ "$TDD_VERDICT" = "SKIP" ]; then
   SKIPPED+=("TDD")
 fi
+if [ "$EMIT_TDD_ROW" = "1" ] && [ "$TDD_VERDICT" = "WEAK" ]; then
+  WEAKED+=("TDD")
+fi
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
   AGGREGATE="Non-compliant (skipped: $(IFS=, ; echo "${SKIPPED[*]}"))"
+elif [ "${#WEAKED[@]}" -gt 0 ]; then
+  AGGREGATE="Compliant (weak: $(IFS=, ; echo "${WEAKED[*]}"))"
 else
   AGGREGATE="Compliant"
 fi

@@ -1,0 +1,9 @@
+2026-05-30T12:00:00Z	sess-inline	Classify #310	1200	0	0	agent-classify-310.json
+2026-05-30T12:01:00Z	sess-inline	Plan #310	3400	0	0	agent-plan-310.json
+2026-05-30T12:02:00Z	sess-inline	Evaluate plan #310	2200	0	0	agent-planeval-310.json
+2026-05-30T12:03:00Z	sess-inline	Evaluate plan for #134	2100	0	0	agent-planeval-134.json
+2026-05-30T12:04:00Z	sess-inline	Evaluate PR #137 for #134	1900	0	0	agent-preval-134.json
+2026-05-30T12:05:00Z	sess-inline	evaluate-issue-pr #626 / PR #637	1800	0	0	agent-preval-626.json
+2026-05-30T12:06:00Z	sess-inline	Re-plan #310	3000	0	0	agent-replan-310.json
+2026-05-30T12:07:00Z	sess-inline	Classify + plan + evaluate #777	4000	0	0	agent-multi-777.json
+2026-05-30T12:08:00Z	sess-inline	analyze open-issue hygiene shortlist	500	0	0	agent-analyze.json

@@ -19,8 +19,12 @@ set -uo pipefail
 #     "pipeline_version":           "<PIPELINE_VERSION or 'unknown'>",
 #     "over_eval_count":            <int|null>,          # count of PRs with pr_eval/loc > 0.5
 #     "late_error_count_by_stage":  {issue, plan, plan-eval, pr-eval : int},
-#     "compliance_pass_rate":       <float|null>,        # PASS / (PASS + SKIP)
-#     "review_deviations_count":    <int|null>           # wc -l of --deviations rows
+#     "compliance_pass_rate":       <float|null>,        # STRICT: PASS / (PASS + WEAK + SKIP)
+#     "compliance_weak_count":      <int|null>,          # v2 (#640): WEAK = test present but committed after source (additive; old rows read as null)
+#     "review_deviations_count":    <int|null>,          # wc -l of --deviations rows
+#     "cost_tokens_total":          <int|null>,          # sum of non-null per-issue tokens_total (#643)
+#     "cost_duration_ms_median":    <number|null>,       # median of non-null per-issue duration_ms (#643)
+#     "over_served_count":          <int|null>           # count of over_served==1 rows (#643)
 #   }
 #
 # A sibling failure degrades that field to null — partial-day signal
@@ -91,6 +95,7 @@ OVER_EVAL_BIN="${REPO_ROOT}/scripts/over-eval-report.sh"
 LATE_ERROR_BIN="${REPO_ROOT}/scripts/late-error-report.sh"
 COMPLIANCE_BIN="${REPO_ROOT}/scripts/compliance-backfill.sh"
 REVIEW_AUDITS_BIN="${REPO_ROOT}/scripts/review-audits.sh"
+COST_LATENCY_BIN="${REPO_ROOT}/scripts/cost-latency-report.sh"
 
 # Resolve per-sibling fixture flags as arrays so paths containing spaces
 # (test tmpdirs, $HOME on some hosts) are preserved as a single arg. In
@@ -98,10 +103,12 @@ REVIEW_AUDITS_BIN="${REPO_ROOT}/scripts/review-audits.sh"
 OE_FIX=()
 LE_FIX=()
 CB_FIX=()
+CL_FIX=()
 if [ -n "$FIXTURE_DIR" ]; then
   OE_FIX=(--fixture "${FIXTURE_DIR}/over-eval")
   LE_FIX=(--fixture "${FIXTURE_DIR}/late-error")
   CB_FIX=(--fixture "${FIXTURE_DIR}/compliance")
+  CL_FIX=(--fixture "${FIXTURE_DIR}/cost-latency")
 fi
 
 # --- (2-A) over_eval_count ---
@@ -136,20 +143,28 @@ else
   LATE_ERROR_JSON="null"
 fi
 
-# --- (2-C) compliance_pass_rate ---
-# PASS / (PASS + SKIP); N/A and omitted excluded; null when denom == 0.
+# --- (2-C) compliance_pass_rate (STRICT) + (2-E) compliance_weak_count ---
+# pass_rate: numerator = PASS only; denominator = PASS+WEAK+SKIP; N/A and
+# omitted excluded; null when denom == 0. weak_count: number of WEAK
+# verdicts (test present but committed after source — test-after).
 if out=$(bash "$COMPLIANCE_BIN" "${CB_FIX[@]}" --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
   if scalar=$(printf '%s' "$out" | jq -e '
         (map(select(.verdict == "PASS")) | length) as $pass
-        | (map(select(.verdict == "PASS" or .verdict == "SKIP")) | length) as $denom
+        | (map(select(.verdict == "PASS" or .verdict == "WEAK" or .verdict == "SKIP")) | length) as $denom
         | if $denom == 0 then null else ($pass / $denom) end
       ' 2>/dev/null); then
     COMPLIANCE_JSON="$scalar"
   else
     COMPLIANCE_JSON="null"
   fi
+  if wscalar=$(printf '%s' "$out" | jq -e '[.[] | select(.verdict == "WEAK")] | length' 2>/dev/null); then
+    COMPLIANCE_WEAK_JSON="$wscalar"
+  else
+    COMPLIANCE_WEAK_JSON="null"
+  fi
 else
   COMPLIANCE_JSON="null"
+  COMPLIANCE_WEAK_JSON="null"
 fi
 
 # --- (2-D) review_deviations_count ---
@@ -174,6 +189,36 @@ else
   fi
 fi
 
+# --- (2-E) cost/latency columns (issue #643) ---
+# cost_tokens_total       — sum of all non-null per-issue tokens_total.
+# cost_duration_ms_median — median of non-null per-issue duration_ms.
+# over_served_count        — count of rows flagged over_served == 1.
+# Any failure degrades all three to null (partial-day signal beats none).
+if out=$(bash "$COST_LATENCY_BIN" "${CL_FIX[@]}" --emit-rows-json 2>/dev/null) && [ -n "$out" ]; then
+  if scalar=$(printf '%s' "$out" | jq -ec '[.[] | .tokens_total | select(. != null)] | add // null' 2>/dev/null); then
+    COST_TOKENS_JSON="$scalar"
+  else
+    COST_TOKENS_JSON="null"
+  fi
+  if scalar=$(printf '%s' "$out" | jq -ec '
+        [.[] | .duration_ms | select(. != null)] | sort
+        | if length == 0 then null else .[(length - 1) / 2 | floor] end
+      ' 2>/dev/null); then
+    COST_DUR_JSON="$scalar"
+  else
+    COST_DUR_JSON="null"
+  fi
+  if scalar=$(printf '%s' "$out" | jq -ec '[.[] | select(.over_served == 1)] | length' 2>/dev/null); then
+    OVER_SERVED_JSON="$scalar"
+  else
+    OVER_SERVED_JSON="null"
+  fi
+else
+  COST_TOKENS_JSON="null"
+  COST_DUR_JSON="null"
+  OVER_SERVED_JSON="null"
+fi
+
 # --- Assemble row ---
 ROW=$(jq -nc \
   --arg date "$DATE_UTC" \
@@ -181,14 +226,22 @@ ROW=$(jq -nc \
   --argjson over_eval "$OVER_EVAL_JSON" \
   --argjson late_error "$LATE_ERROR_JSON" \
   --argjson compliance "$COMPLIANCE_JSON" \
+  --argjson weak "$COMPLIANCE_WEAK_JSON" \
   --argjson review "$REVIEW_JSON" \
+  --argjson cost_tokens "$COST_TOKENS_JSON" \
+  --argjson cost_dur "$COST_DUR_JSON" \
+  --argjson over_served "$OVER_SERVED_JSON" \
   '{
     date: $date,
     pipeline_version: $version,
     over_eval_count: $over_eval,
     late_error_count_by_stage: $late_error,
     compliance_pass_rate: $compliance,
-    review_deviations_count: $review
+    compliance_weak_count: $weak,
+    review_deviations_count: $review,
+    cost_tokens_total: $cost_tokens,
+    cost_duration_ms_median: $cost_dur,
+    over_served_count: $over_served
   }')
 
 if [ "$DRY_RUN" -eq 1 ]; then

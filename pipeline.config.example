@@ -7,6 +7,11 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
+# PIPELINE_TEST_CMD: the executor runs this as a SINGLE sequential verification pass
+# (see execute-issue-plan Step 6b). Keep it scoped to the targeted/relevant tests.
+# If you must script a loop, wrap it with a `timeout` and redirect `</dev/null` so an
+# interactive `read` or a hang can't wedge the executor — and never an unbounded
+# `for t in tests/test*.sh; do ...; done` sweep over unrelated tests (issue #677).
 PIPELINE_TEST_CMD="npm test"                       # Test command
 PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
 PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read
@@ -55,6 +60,45 @@ PIPELINE_LOGS_ENABLED=false
 # 2026-05-23 that motivated this knob. Lower (3) raises false-positive
 # risk on cold-start; higher (10) approaches half the wedge window.
 PIPELINE_STALL_POLL_THRESHOLD=5
+
+# PIPELINE_STALL_FORWARD_PROGRESS_GATE gates the `agent-stalled` latch on
+# forward progress (issue #641). When enabled (default 1), a low-CPU poll only
+# advances the stall counter if the worker's tmux pane fingerprint is ALSO
+# unchanged since the prior poll — a healthy API-bound agent (executor/evaluator
+# blocked on the model) idles near 2% CPU but keeps emitting pane output, so CPU
+# alone false-flagged it as stalled. Set to 0 to restore the pre-#641 CPU-only
+# behavior (counter advances on idle CPU regardless of pane progress).
+PIPELINE_STALL_FORWARD_PROGRESS_GATE=1
+
+# --- Executor reap grace (issue #636) ---
+#
+# PIPELINE_EXECUTOR_REAP_GRACE_POLLS controls how many consecutive polls a
+# worker must be observed at the `pr-open` label (PR opened — the terminal
+# action has been taken) while still alive before the queue runner reaps it,
+# freeing the held worktree + concurrency slot. Default 3 polls (~3 minutes at
+# the default POLL_INTERVAL=60s). Fail-closed: a transient gh error resets the
+# counter, so a worker mid-`gh pr create`/push is never killed. Raise to widen
+# the grace window (or set very high to effectively disable the reap).
+PIPELINE_EXECUTOR_REAP_GRACE_POLLS=3
+
+# PIPELINE_REAP_SIGKILL_GRACE_SEC controls how long the queue runner waits
+# between SIGTERM and SIGKILL when reaping a finished/wedged worker's process
+# GROUP (issue #666). On reap, the runner signals the whole script->timeout->
+# claude tree rooted at the tmux pane pid — not just the window — so
+# `queue-complete` implies no orphaned child survives. SIGTERM, then this grace,
+# then SIGKILL. Default 2 (seconds). Set to 0 to SIGKILL immediately (e.g. in
+# tests); raise to give the worker longer to exit cleanly on SIGTERM.
+PIPELINE_REAP_SIGKILL_GRACE_SEC=2
+
+# --- Executor safety-net timeout (issue #656) ---
+#
+# PIPELINE_EXECUTOR_TIMEOUT_SECONDS bounds how long the spawned executor
+# session (tmux mode) may run before `timeout` sends SIGTERM (with a 30s
+# grace before SIGKILL). Default 5400 = 90 min. A legitimately heavy PATH C
+# can finish green but exceed this budget before the PR step and get
+# SIGTERM'd with a complete-but-unpushed branch; raise this to widen the
+# window. Only the tmux launch path enforces this timeout.
+PIPELINE_EXECUTOR_TIMEOUT_SECONDS=5400
 
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #

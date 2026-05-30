@@ -1,0 +1,7 @@
+{"schema_version":1,"issue":"202","stage":"plan","agent_type":"general-purpose","tokens":{"input":1200,"output":800,"cache_read":5000,"cache_creation":0,"total":7000},"duration_ms":41000}
+{"schema_version":1,"issue":"202","stage":"execute","agent_type":"pipeline:tdd-implementer","tokens":{"input":3000,"output":2000,"cache_read":12000,"cache_creation":0,"total":17000},"duration_ms":120000}
+{"schema_version":1,"issue":"202","stage":"pr-eval","agent_type":"general-purpose","tokens":{"input":1500,"output":1000,"cache_read":6000,"cache_creation":0,"total":8500},"duration_ms":55000}
+{"schema_version":1,"issue":"402","stage":"plan","agent_type":"general-purpose","tokens":{"input":1000,"output":700,"cache_read":4000,"cache_creation":0,"total":5700},"duration_ms":38000}
+{"schema_version":1,"issue":"402","stage":"execute","agent_type":"general-purpose","tokens":{"input":2500,"output":1500,"cache_read":9000,"cache_creation":0,"total":13000},"duration_ms":90000}
+{"schema_version":1,"issue":"203","stage":"execute","agent_type":"pipeline:tdd-implementer","tokens":{"input":6000,"output":4000,"cache_read":20000,"cache_creation":0,"total":30000},"duration_ms":200000}
+{"schema_version":1,"issue":"999","stage":"execute","agent_type":"general-purpose","tokens":{"input":9999,"output":9999,"cache_read":9999,"cache_creation":0,"total":29997},"duration_ms":999999}

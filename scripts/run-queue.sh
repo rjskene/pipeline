@@ -97,6 +97,7 @@ source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 SKIP_PERMS=""
 SKILL_FLAG=""
+QUEUE_SKILL=""
 MANUAL_MERGE_FLAG=""
 # Loop-based parser: each flag may appear anywhere before/among the issue
 # numbers. --manual-merge in particular must be consumable from any argv
@@ -107,7 +108,7 @@ NEW_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
-    --skill)            SKILL_FLAG="--skill $2"; shift 2 ;;
+    --skill)            SKILL_FLAG="--skill $2"; QUEUE_SKILL="$2"; shift 2 ;;
     --manual-merge)     MANUAL_MERGE_FLAG="--manual-merge"; shift ;;
     *)                  NEW_ARGS+=("$1"); shift ;;
   esac
@@ -136,6 +137,20 @@ PIPELINE_STALL_CPU_THRESHOLD="${PIPELINE_STALL_CPU_THRESHOLD:-5}"
 # seconds of wall-clock latency to the poll loop.
 PIPELINE_STALL_SAMPLES_PER_POLL="${PIPELINE_STALL_SAMPLES_PER_POLL:-3}"
 PIPELINE_STALL_SAMPLE_INTERVAL_SEC="${PIPELINE_STALL_SAMPLE_INTERVAL_SEC:-1}"
+# Forward-progress gate (issue #641). When enabled (default), a low-CPU poll
+# only advances the stall counter if the worker's tmux pane fingerprint is ALSO
+# unchanged since the prior poll — a healthy API-bound agent (executor/evaluator
+# blocked on the model) idles near 2% CPU but keeps emitting pane output, so CPU
+# alone false-flagged it as stalled. Set to 0 to restore pre-#641 CPU-only
+# behavior (counter advances on idle CPU regardless of pane progress).
+PIPELINE_STALL_FORWARD_PROGRESS_GATE="${PIPELINE_STALL_FORWARD_PROGRESS_GATE:-1}"
+# Number of consecutive polls a worker must be observed at the `pr-open` label
+# (PR opened, terminal action taken) while still alive before the runner reaps
+# it (issue #636). Mirrors PIPELINE_STALL_POLL_THRESHOLD's grace-window shape.
+# FAIL-CLOSED: a transient gh error makes executor_finished_terminal() return 1,
+# which resets the counter — the runner never reaps mid-`gh pr create`/push. At
+# the default 60s poll this is a few-minute grace window. Set higher to widen it.
+PIPELINE_EXECUTOR_REAP_GRACE_POLLS="${PIPELINE_EXECUTOR_REAP_GRACE_POLLS:-3}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
@@ -302,6 +317,8 @@ declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
 # logs once, not every poll. Cleared when the agent recovers or exits.
 declare -A CPU_IDLE_POLLS=()  # issue -> consecutive low-CPU poll count
 declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this window
+declare -A PANE_FINGERPRINT=()  # issue -> last-seen tmux-pane fingerprint (forward-progress baseline, #641)
+declare -A PR_OPEN_POLLS=()   # issue -> consecutive polls observed at pr-open while alive (issue #636)
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
@@ -394,6 +411,29 @@ is_agent_running() {
   tmux list-windows -t "${PIPELINE_TMUX_SESSION:-dev}" -F '#{window_name}' 2>/dev/null | grep -q "^issue-${issue}$"
 }
 
+# Reap a finished/wedged worker: kill its process GROUP (the
+# script->timeout->claude tree rooted at the tmux pane pid) before closing the
+# window, so `queue-complete` implies no orphaned child survives the reap (issue
+# #666). Bare `tmux kill-window` only tears down the pane's controlling terminal;
+# the spawned claude can survive detached, holding the worktree + a slot.
+# Fail-safe: any missing pane pid / pgid simply skips the kill and still closes
+# the window, so a transient tmux/ps blip never errors the runner under the
+# poll-loop's `set +e` region.
+reap_worker_window() {
+  local issue="$1"
+  local pane_pid pgid
+  pane_pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+  if [ -n "$pane_pid" ]; then
+    pgid=$(ps -o pgid= -p "$pane_pid" 2>/dev/null | tr -d ' ')
+    if [ -n "$pgid" ]; then
+      kill -TERM "-${pgid}" 2>/dev/null || true
+      sleep "${PIPELINE_REAP_SIGKILL_GRACE_SEC:-2}"
+      kill -KILL "-${pgid}" 2>/dev/null || true
+    fi
+  fi
+  tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
+}
+
 # Echo the %CPU of an agent's tmux pane process subtree (issue #437). Resolves
 # the pane pid from the issue's window, then sums `%cpu` across pane_pid and all
 # its descendants from a caller-supplied snapshot of the process table. Per-
@@ -443,6 +483,26 @@ get_agent_cpu_pct() {
       printf "%.1f", total
     }
   '
+}
+
+# Forward-progress probe (issue #641). Echoes a fingerprint of the worker's
+# tmux pane: "<bytes>:<cksum>" of `capture-pane -p`. A changing fingerprint
+# poll-over-poll == the worker is still emitting (assistant tokens / tool
+# output) == forward progress, even while subtree CPU sits at the ~2% an
+# API-bound LLM agent idles at. A frozen fingerprint across the stall window
+# == a genuine wedge. Uses only the runner's native tmux addressing
+# (session:issue-N) and POSIX cksum -- NO session-uuid / .jsonl / runs.log
+# handle (the runner has none) and NO PIPELINE_LOGS_ENABLED dependency, so it
+# works identically on consumer hosts. On any tmux failure echoes the
+# sentinel "0:0" -- a capture failure reads as "no progress observed" so it
+# CANNOT mask a wedge (fail-closed toward latching; mirrors get_agent_cpu_pct
+# echoing 0.0 to advance the counter rather than hide a stall).
+get_agent_pane_fingerprint() {
+  local issue="$1"
+  local cap
+  cap=$(tmux capture-pane -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -p 2>/dev/null) || cap=""
+  if [ -z "$cap" ]; then echo "0:0"; return; fi
+  printf '%s' "$cap" | cksum | awk '{printf "%s:%s", $2, $1}'
 }
 
 # Launch an agent for an issue. Threads classifier-derived flags (mode +
@@ -519,6 +579,25 @@ check_issue_outcome() {
 # Returns 1 otherwise. Fails closed: any gh error, empty PR lookup, or missing
 # `## Evaluation` payload returns 1 so a transient API blip cannot prematurely
 # terminate a healthy worker.
+
+# Recover the gate's actual block-reason for a wedged evaluator's PR. The
+# evaluator posts `Auto-merge skipped: <REASON>. Run gh pr merge manually.`
+# for ANY block-* skip (skills/evaluate-issue-pr/SKILL.md Step 11.4), where
+# <REASON> is one of the auto-merge-gate.sh tokens (block-verdict, block-ci,
+# block-mergeable, block-mergestate, block-label, block-flag,
+# block-base-mismatch). Scan ALL PR comments (the skipped line is not always
+# the last comment under the manual-merge label arm). Fail-soft: prints
+# `unknown` on any gh error / no PR / no skipped line so the emit never breaks.
+extract_block_reason() {
+  local issue="$1" pr reason
+  pr=$(resolve_issue_pr "$issue")
+  [ -n "$pr" ] && [ "$pr" != "null" ] || { echo unknown; return 0; }
+  reason=$(gh pr view "$pr" --repo "$PIPELINE_REPO" --json comments \
+    --jq '.comments[].body' 2>/dev/null \
+    | grep -oE 'Auto-merge skipped: (block-[a-z-]+|green)' \
+    | head -1 | awk '{print $NF}')
+  [ -n "$reason" ] && echo "$reason" || echo unknown
+}
 evaluator_finished_terminal() {
   local issue="$1"
   local labels
@@ -553,6 +632,36 @@ evaluator_finished_terminal() {
     --json comments --jq '.comments[-1].body' 2>/dev/null) || return 1
   echo "$last_pr_comment" | grep -q '^Auto-merge skipped:' || return 1
   echo "$eval_body" | grep -q '\*\*Verdict:\*\* Approved' || return 1
+  return 0
+}
+
+# Detect an executor session that has opened its PR (issue at `pr-open`) but
+# whose spawned claude child has not exited — the post-PR lingering wedge
+# (issue #636). Symmetric to evaluator_finished_terminal(): the
+# is_agent_running() window-presence check is necessary but not sufficient,
+# because the executor can sit idle holding the worktree + a concurrency slot
+# until the per-agent timeout fires. This predicate gives the runner a second
+# terminal signal sourced from GitHub state.
+#
+# Returns 0 (terminal) iff the issue carries the `pr-open` label (the terminal
+# action — PR opened — has already been taken) AND is NOT yet `merged`. The
+# caller gates the actual reap behind a grace window (PR_OPEN_POLLS >=
+# PIPELINE_EXECUTOR_REAP_GRACE_POLLS) so a worker mid-`gh pr create`/push is
+# never killed. Fails closed: any gh error, empty labels, missing `pr-open`,
+# or a `merged` label returns 1 (the merged/auto-merge case is owned by the
+# existing is_agent_running / check_issue_outcome branches).
+executor_finished_terminal() {
+  local issue="$1"
+  local labels
+  labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" \
+    --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
+  [ -n "$labels" ] || return 1
+  # merged supersedes pr-open: the evaluator/auto-merge already advanced the
+  # issue; let the existing branches reap it. Comma-anchored exact match.
+  echo ",$labels," | grep -q ',merged,' && return 1
+  # Require pr-open present (terminal action taken). Comma-anchored so a
+  # hypothetical `not-pr-open` label cannot match.
+  echo ",$labels," | grep -q ',pr-open,' || return 1
   return 0
 }
 
@@ -690,18 +799,39 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       ''|*[!0-9]*) cpu_int=0 ;;
     esac
     if [ "$cpu_int" -le "$PIPELINE_STALL_CPU_THRESHOLD" ]; then
-      CPU_IDLE_POLLS[$issue]=$(( ${CPU_IDLE_POLLS[$issue]:-0} + 1 ))
-      if [ "${CPU_IDLE_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
-         && [ "${STALL_LATCHED[$issue]:-0}" -eq 0 ]; then
-        pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
-        window="issue-${issue}"
-        elapsed=$(( CPU_IDLE_POLLS[$issue] * POLL_INTERVAL / 60 ))
-        log "EVENT: agent-stalled issue=${issue} pid=${pid:-?} window=${window} elapsed=${elapsed}m"
-        STALL_LATCHED[$issue]=1
+      # CPU pre-filter says "maybe idle". Before advancing the stall counter,
+      # require NO forward progress (issue #641): compare the pane fingerprint to
+      # last poll's. A healthy API-bound worker idles near 2% CPU but keeps
+      # emitting pane output, so CPU alone false-flagged it.
+      progressed=0
+      if [ "${PIPELINE_STALL_FORWARD_PROGRESS_GATE:-1}" != "0" ]; then
+        fp=$(get_agent_pane_fingerprint "$issue")
+        prev_fp="${PANE_FINGERPRINT[$issue]:-}"
+        PANE_FINGERPRINT[$issue]="$fp"
+        # First idle poll has no baseline (prev empty) -> treat as progressed so
+        # we don't latch on the very first low-CPU sample; a real wedge stays
+        # frozen and latches on subsequent polls.
+        if [ -z "$prev_fp" ] || [ "$fp" != "$prev_fp" ]; then progressed=1; fi
+      fi
+      if [ "$progressed" -eq 1 ]; then
+        # Forward progress at idle CPU == healthy API-bound worker. Reset.
+        CPU_IDLE_POLLS[$issue]=0
+        STALL_LATCHED[$issue]=0
+      else
+        CPU_IDLE_POLLS[$issue]=$(( ${CPU_IDLE_POLLS[$issue]:-0} + 1 ))
+        if [ "${CPU_IDLE_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
+           && [ "${STALL_LATCHED[$issue]:-0}" -eq 0 ]; then
+          pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+          window="issue-${issue}"
+          elapsed=$(( CPU_IDLE_POLLS[$issue] * POLL_INTERVAL / 60 ))
+          log "EVENT: agent-stalled issue=${issue} pid=${pid:-?} window=${window} elapsed=${elapsed}m"
+          STALL_LATCHED[$issue]=1
+        fi
       fi
     else
       CPU_IDLE_POLLS[$issue]=0
       STALL_LATCHED[$issue]=0
+      PANE_FINGERPRINT[$issue]=""   # busy CPU resets the progress baseline (#641)
     fi
 
     if evaluator_finished_terminal "$issue"; then
@@ -712,17 +842,49 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       # specific outcome, free the bucket slot, and fill the gap. Checked BEFORE
       # is_agent_running so this more-specific signal wins when both are true on
       # the same poll.
-      tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
-      outcome="approved-manual-merge"
+      reap_worker_window "$issue"
+      outcome="manual-merge-required"
+      _block_reason=$(extract_block_reason "$issue")
       RESULTS[$issue]="$outcome"
       _finished_mode="${ISSUE_MODE[$issue]:-bare}"
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
-      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (evaluator terminal, window force-closed)"
-      log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']'
+      log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (reason: ${_block_reason}, evaluator terminal, window force-closed)"
+      log "EVENT: agent-finished issue=${issue} outcome=${outcome} reason=${_block_reason} mode=${_finished_mode}"
       fill_slots
       continue
+    fi
+
+    if [ "$QUEUE_SKILL" != "evaluate-issue-pr" ] && executor_finished_terminal "$issue"; then
+      # Executor lingering past pr-open (issue #636): PR opened + pr-open applied,
+      # but the spawned claude child has not exited, holding the worktree + slot.
+      # Require the pr-open observation to PERSIST across a grace window before
+      # reaping so we NEVER kill a worker mid-`gh pr create`/push — a transient gh
+      # blip flips the predicate to non-terminal, resetting the counter. Checked
+      # AFTER evaluator_finished_terminal so a manual-merge/block wedge (which also
+      # carries pr-open) records manual-merge-required, not a bare pr-open.
+      PR_OPEN_POLLS[$issue]=$(( ${PR_OPEN_POLLS[$issue]:-0} + 1 ))
+      if [ "${PR_OPEN_POLLS[$issue]}" -ge "$PIPELINE_EXECUTOR_REAP_GRACE_POLLS" ]; then
+        reap_worker_window "$issue"
+        outcome="pr-open"
+        RESULTS[$issue]="$outcome"
+        _finished_mode="${ISSUE_MODE[$issue]:-bare}"
+        BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
+        unset 'ACTIVE['"$issue"']'
+        unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PR_OPEN_POLLS['"$issue"']'
+        log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (executor terminal, reaped after ${PIPELINE_EXECUTOR_REAP_GRACE_POLLS}-poll grace, window force-closed)"
+        log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+        fill_slots
+        continue
+      fi
+    else
+      # Predicate non-terminal this poll — OR an eval-mode queue, where `pr-open`
+      # is the evaluator's INPUT state, not its finish line (issue #666). Reset
+      # the grace counter so the reap only fires on a CONTIGUOUS pr-open
+      # observation window (fail-closed). The evaluator's correct terminal signal
+      # (evaluator_finished_terminal, checked above) is unaffected.
+      PR_OPEN_POLLS[$issue]=0
     fi
 
     if ! is_agent_running "$issue"; then
@@ -733,8 +895,8 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
       # Clear stall-tracking state so a re-used issue number can't inherit a
-      # stale counter/latch (issue #437).
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
+      # stale counter/latch (issue #437) or progress baseline (issue #641).
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
 

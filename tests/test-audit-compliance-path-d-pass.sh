@@ -44,7 +44,7 @@ OUT="$(bash "$SCRIPT" 999 999 --dry-run \
   --commits-json "$COMMITS_JSON" \
   --labels-json "$LABELS_JSON" 2>&1)"
 
-if echo "$OUT" | grep -qF "| TDD   | yes (PATH D) | test file committed before/with source | PASS |"; then
+if echo "$OUT" | grep -qF "| TDD   | yes (PATH D) | test committed before/with source (test-first) | PASS |"; then
   pass_msg "stdout contains PATH D PASS TDD row"
 else
   fail_msg "stdout contains PATH D PASS TDD row (got: $OUT)"
