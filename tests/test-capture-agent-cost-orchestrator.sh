@@ -132,4 +132,20 @@ env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ2" \
 COUNT3="$(wc -l < "$OUT2" | tr -d ' ')"
 [ "$COUNT3" = "2" ] || fail "case2: no-growth re-fire must write NO record (count stayed at 2), got $COUNT3"
 
+# ---------------------------------------------------------------------------
+# Case 3: this repo's .claude/settings.json registers a Stop hook pointing at
+# capture_agent_cost.py (dogfood-only; not in the published plugin manifest).
+# ---------------------------------------------------------------------------
+SETTINGS="$REPO_ROOT/.claude/settings.json"
+[ -f "$SETTINGS" ] || fail "case3: settings.json not found at $SETTINGS"
+
+python3 - "$SETTINGS" <<'PY' || fail "case3: no Stop hook references capture_agent_cost.py"
+import json, sys
+d = json.load(open(sys.argv[1]))
+stop = d.get("hooks", {}).get("Stop", [])
+cmds = [h.get("command", "") for blk in stop for h in blk.get("hooks", [])]
+if not any("capture_agent_cost.py" in c for c in cmds):
+    raise SystemExit("assert failed: Stop hook for capture_agent_cost.py not registered (cmds=%r)" % cmds)
+PY
+
 echo "PASS: test-capture-agent-cost-orchestrator.sh"
