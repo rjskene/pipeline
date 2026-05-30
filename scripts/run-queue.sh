@@ -97,6 +97,7 @@ source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 
 SKIP_PERMS=""
 SKILL_FLAG=""
+QUEUE_SKILL=""
 MANUAL_MERGE_FLAG=""
 # Loop-based parser: each flag may appear anywhere before/among the issue
 # numbers. --manual-merge in particular must be consumable from any argv
@@ -107,7 +108,7 @@ NEW_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
-    --skill)            SKILL_FLAG="--skill $2"; shift 2 ;;
+    --skill)            SKILL_FLAG="--skill $2"; QUEUE_SKILL="$2"; shift 2 ;;
     --manual-merge)     MANUAL_MERGE_FLAG="--manual-merge"; shift ;;
     *)                  NEW_ARGS+=("$1"); shift ;;
   esac
@@ -855,7 +856,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       continue
     fi
 
-    if executor_finished_terminal "$issue"; then
+    if [ "$QUEUE_SKILL" != "evaluate-issue-pr" ] && executor_finished_terminal "$issue"; then
       # Executor lingering past pr-open (issue #636): PR opened + pr-open applied,
       # but the spawned claude child has not exited, holding the worktree + slot.
       # Require the pr-open observation to PERSIST across a grace window before
@@ -878,8 +879,11 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
         continue
       fi
     else
-      # Predicate non-terminal this poll: reset the grace counter so the reap
-      # only fires on a CONTIGUOUS pr-open observation window (fail-closed).
+      # Predicate non-terminal this poll — OR an eval-mode queue, where `pr-open`
+      # is the evaluator's INPUT state, not its finish line (issue #666). Reset
+      # the grace counter so the reap only fires on a CONTIGUOUS pr-open
+      # observation window (fail-closed). The evaluator's correct terminal signal
+      # (evaluator_finished_terminal, checked above) is unaffected.
       PR_OPEN_POLLS[$issue]=0
     fi
 

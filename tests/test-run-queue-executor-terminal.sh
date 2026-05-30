@@ -192,14 +192,17 @@ EOF
 }
 
 # Run the queue runner for one case and capture stdout. $1=proj, $2=case dir,
-# $3=timeout seconds, $4=grace polls (PIPELINE_EXECUTOR_REAP_GRACE_POLLS). EVENT
-# lines go to stdout unconditionally (logging-off path), so we grep the captured
-# stdout — no queue-*.log file needed.
+# $3=timeout seconds, $4=grace polls (PIPELINE_EXECUTOR_REAP_GRACE_POLLS),
+# $5=extra runner args (optional, word-split before the issue numbers; e.g.
+# `--skill evaluate-issue-pr`). EVENT lines go to stdout unconditionally
+# (logging-off path), so we grep the captured stdout — no queue-*.log file
+# needed.
 run_case() {
   local proj="$1"
   local case_dir="$2"
   local tmo="$3"
   local grace_polls="$4"
+  local extra_args="${5:-}"
   (
     cd "$proj"
     PATH="$proj/stub:$PATH" \
@@ -212,7 +215,7 @@ run_case() {
       BASH_ENV="$proj/.bash_env" \
       PIPELINE_PROJECT_ROOT="$proj" \
       CLAUDE_PLUGIN_ROOT="$proj/.claude" \
-      timeout "$tmo" bash .claude/scripts/run-queue.sh 911 912
+      timeout "$tmo" bash .claude/scripts/run-queue.sh $extra_args 911 912
   ) > "$case_dir/queue.log" 2>&1 || true
 }
 
@@ -387,6 +390,52 @@ if [ ! -f "$CASE_D/killed-911" ]; then
   pass_msg "D2: runner did NOT kill 911's window when merged supersedes pr-open"
 else
   fail_msg "D2: runner force-closed 911 via the executor path despite merged label"
+fi
+
+# ========= Case E: eval-mode queue does NOT reap on pr-open (#666) =========
+echo ""
+echo "Case E: --skill evaluate-issue-pr queue does NOT reap an evaluator at its pre-existing pr-open"
+CASE_E="$ROOT/caseE"; mkdir -p "$CASE_E"
+PROJ_E="$CASE_E/proj"
+setup_proj "$PROJ_E"
+STUB_E=$(make_common_stubs "$PROJ_E" "$CASE_E")
+# gh stub identical to Case A (911 always pr-open, no manual-merge; pr view / pr
+# list empty so evaluator_finished_terminal cannot fire). For an eval-mode queue,
+# `pr-open` is the evaluator's INPUT state, not its finish line, so the executor
+# reap branch must be gated off — 911 must be preserved.
+cat > "$STUB_E/gh" <<'EOF'
+#!/bin/bash
+ARGS="$*"
+case "$1 $2" in
+  "issue view")
+    issue="$3"
+    if [[ "$ARGS" == *labels* ]]; then
+      if [ "$issue" = "911" ]; then echo "pr-open"; else echo ""; fi
+    fi
+    ;;
+  "pr list") echo "null" ;;
+  "pr view") echo "" ;;
+  *) echo "" ;;
+esac
+EOF
+chmod +x "$STUB_E/gh"
+# Mirror Case A's generous timeout (30s) so the grace=2 reap WOULD fire absent
+# the mode gate — that is what makes E1/E2 a real RED: without the gate the
+# evaluator is wrongly reaped; with it, 911 is preserved.
+run_case "$PROJ_E" "$CASE_E" 30 2 "--skill evaluate-issue-pr"
+
+inc
+if ! grep -q 'EVENT: agent-finished issue=911 outcome=pr-open' "$CASE_E/queue.log"; then
+  pass_msg "E1: eval-mode queue does NOT reap a still-running evaluator at pr-open"
+else
+  fail_msg "E1: executor reap fired for an --skill evaluate-issue-pr queue (pr-open is the eval INPUT state)"
+  sed 's/^/    /' "$CASE_E/queue.log" >&2
+fi
+inc
+if [ ! -f "$CASE_E/killed-911" ]; then
+  pass_msg "E2: eval-mode queue did NOT force-close 911's window at pr-open"
+else
+  fail_msg "E2: runner force-closed an evaluator's window on its pre-existing pr-open"
 fi
 
 # ============ Case F: process-group kill on reap (issue #666) ============
