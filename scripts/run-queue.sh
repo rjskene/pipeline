@@ -136,6 +136,13 @@ PIPELINE_STALL_CPU_THRESHOLD="${PIPELINE_STALL_CPU_THRESHOLD:-5}"
 # seconds of wall-clock latency to the poll loop.
 PIPELINE_STALL_SAMPLES_PER_POLL="${PIPELINE_STALL_SAMPLES_PER_POLL:-3}"
 PIPELINE_STALL_SAMPLE_INTERVAL_SEC="${PIPELINE_STALL_SAMPLE_INTERVAL_SEC:-1}"
+# Forward-progress gate (issue #641). When enabled (default), a low-CPU poll
+# only advances the stall counter if the worker's tmux pane fingerprint is ALSO
+# unchanged since the prior poll — a healthy API-bound agent (executor/evaluator
+# blocked on the model) idles near 2% CPU but keeps emitting pane output, so CPU
+# alone false-flagged it as stalled. Set to 0 to restore pre-#641 CPU-only
+# behavior (counter advances on idle CPU regardless of pane progress).
+PIPELINE_STALL_FORWARD_PROGRESS_GATE="${PIPELINE_STALL_FORWARD_PROGRESS_GATE:-1}"
 STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
@@ -302,6 +309,7 @@ declare -A LAST_ACTIVITY=()  # issue -> last tmux window activity epoch
 # logs once, not every poll. Cleared when the agent recovers or exits.
 declare -A CPU_IDLE_POLLS=()  # issue -> consecutive low-CPU poll count
 declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this window
+declare -A PANE_FINGERPRINT=()  # issue -> last-seen tmux-pane fingerprint (forward-progress baseline, #641)
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
@@ -443,6 +451,26 @@ get_agent_cpu_pct() {
       printf "%.1f", total
     }
   '
+}
+
+# Forward-progress probe (issue #641). Echoes a fingerprint of the worker's
+# tmux pane: "<bytes>:<cksum>" of `capture-pane -p`. A changing fingerprint
+# poll-over-poll == the worker is still emitting (assistant tokens / tool
+# output) == forward progress, even while subtree CPU sits at the ~2% an
+# API-bound LLM agent idles at. A frozen fingerprint across the stall window
+# == a genuine wedge. Uses only the runner's native tmux addressing
+# (session:issue-N) and POSIX cksum -- NO session-uuid / .jsonl / runs.log
+# handle (the runner has none) and NO PIPELINE_LOGS_ENABLED dependency, so it
+# works identically on consumer hosts. On any tmux failure echoes the
+# sentinel "0:0" -- a capture failure reads as "no progress observed" so it
+# CANNOT mask a wedge (fail-closed toward latching; mirrors get_agent_cpu_pct
+# echoing 0.0 to advance the counter rather than hide a stall).
+get_agent_pane_fingerprint() {
+  local issue="$1"
+  local cap
+  cap=$(tmux capture-pane -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -p 2>/dev/null) || cap=""
+  if [ -z "$cap" ]; then echo "0:0"; return; fi
+  printf '%s' "$cap" | cksum | awk '{printf "%s:%s", $2, $1}'
 }
 
 # Launch an agent for an issue. Threads classifier-derived flags (mode +
@@ -690,18 +718,39 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       ''|*[!0-9]*) cpu_int=0 ;;
     esac
     if [ "$cpu_int" -le "$PIPELINE_STALL_CPU_THRESHOLD" ]; then
-      CPU_IDLE_POLLS[$issue]=$(( ${CPU_IDLE_POLLS[$issue]:-0} + 1 ))
-      if [ "${CPU_IDLE_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
-         && [ "${STALL_LATCHED[$issue]:-0}" -eq 0 ]; then
-        pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
-        window="issue-${issue}"
-        elapsed=$(( CPU_IDLE_POLLS[$issue] * POLL_INTERVAL / 60 ))
-        log "EVENT: agent-stalled issue=${issue} pid=${pid:-?} window=${window} elapsed=${elapsed}m"
-        STALL_LATCHED[$issue]=1
+      # CPU pre-filter says "maybe idle". Before advancing the stall counter,
+      # require NO forward progress (issue #641): compare the pane fingerprint to
+      # last poll's. A healthy API-bound worker idles near 2% CPU but keeps
+      # emitting pane output, so CPU alone false-flagged it.
+      progressed=0
+      if [ "${PIPELINE_STALL_FORWARD_PROGRESS_GATE:-1}" != "0" ]; then
+        fp=$(get_agent_pane_fingerprint "$issue")
+        prev_fp="${PANE_FINGERPRINT[$issue]:-}"
+        PANE_FINGERPRINT[$issue]="$fp"
+        # First idle poll has no baseline (prev empty) -> treat as progressed so
+        # we don't latch on the very first low-CPU sample; a real wedge stays
+        # frozen and latches on subsequent polls.
+        if [ -z "$prev_fp" ] || [ "$fp" != "$prev_fp" ]; then progressed=1; fi
+      fi
+      if [ "$progressed" -eq 1 ]; then
+        # Forward progress at idle CPU == healthy API-bound worker. Reset.
+        CPU_IDLE_POLLS[$issue]=0
+        STALL_LATCHED[$issue]=0
+      else
+        CPU_IDLE_POLLS[$issue]=$(( ${CPU_IDLE_POLLS[$issue]:-0} + 1 ))
+        if [ "${CPU_IDLE_POLLS[$issue]}" -ge "$PIPELINE_STALL_POLL_THRESHOLD" ] \
+           && [ "${STALL_LATCHED[$issue]:-0}" -eq 0 ]; then
+          pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+          window="issue-${issue}"
+          elapsed=$(( CPU_IDLE_POLLS[$issue] * POLL_INTERVAL / 60 ))
+          log "EVENT: agent-stalled issue=${issue} pid=${pid:-?} window=${window} elapsed=${elapsed}m"
+          STALL_LATCHED[$issue]=1
+        fi
       fi
     else
       CPU_IDLE_POLLS[$issue]=0
       STALL_LATCHED[$issue]=0
+      PANE_FINGERPRINT[$issue]=""   # busy CPU resets the progress baseline (#641)
     fi
 
     if evaluator_finished_terminal "$issue"; then
@@ -718,7 +767,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       _finished_mode="${ISSUE_MODE[$issue]:-bare}"
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (evaluator terminal, window force-closed)"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
       fill_slots
@@ -733,8 +782,8 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
       # Clear stall-tracking state so a re-used issue number can't inherit a
-      # stale counter/latch (issue #437).
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']'
+      # stale counter/latch (issue #437) or progress baseline (issue #641).
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
 

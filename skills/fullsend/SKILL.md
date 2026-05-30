@@ -142,12 +142,12 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    **Wake-loop semantics.** Each line matching the filter wakes the orchestrator. Dispatch by event:
    - `EVENT: queue-complete` — terminal; exit the Monitor wait and proceed to Step 6b / Step 7's next phase.
-   - `EVENT: agent-stalled issue=<N>` — runner reports worker idle at 0% CPU across `PIPELINE_STALL_POLL_THRESHOLD` polls; runner took no action. Run the four-option triage below; then re-enter `Monitor` with the SAME `timeout_ms` budget (the elapsed wait is preserved by the harness).
+   - `EVENT: agent-stalled issue=<N>` — runner reports worker at idle CPU **and** no forward progress (frozen tmux pane) across `PIPELINE_STALL_POLL_THRESHOLD` polls (#641); a healthy API-bound agent emitting pane output is no longer flagged. Runner took no action. Run the four-option triage below; then re-enter `Monitor` with the SAME `timeout_ms` budget (the elapsed wait is preserved by the harness).
    - `EVENT: agent-finished outcome=failed issue=<N>` — per-agent failure. Optional triage (capture pane, inspect PR/branch state); re-enter `Monitor` so the rest of the queue continues to be watched.
    - `EVENT: agent-finished outcome=success issue=<N>` — no-op wake; re-enter `Monitor`.
    - `EVENT: agent-finished outcome=approved-manual-merge issue=<N>` — no-op wake (issue #489); the runner freed a wedged evaluator slot whose PR is awaiting manual merge per the evaluator's Step 11.4 block-* skip. Re-enter `Monitor`. The operator merges the PR by hand (`gh pr merge <PR> --merge --delete-branch`) or via Step 8 of `run/SKILL.md`.
 
-   **Triage on `agent-stalled`.** Inspect the worker first (tmux pane via `tmux capture-pane -t "$PIPELINE_TMUX_SESSION:issue-<N>" -p`; process tree via `pstree -p <pid>`). Then surface the four-option prompt to the user:
+   **Triage on `agent-stalled`.** The event already implies the pane was frozen (no forward progress) across the whole window (#641), so the first triage action is to re-`capture-pane` and confirm it is *still* frozen before acting. Inspect the worker first (tmux pane via `tmux capture-pane -t "$PIPELINE_TMUX_SESSION:issue-<N>" -p`; process tree via `pstree -p <pid>`). Then surface the four-option prompt to the user:
    1. **Kill the wedged subscript only** — `kill <child-pid>` from the pstree output; executor may recover.
    2. **Kill the whole executor** — `tmux send-keys -t "$PIPELINE_TMUX_SESSION:issue-<N>" C-c` and let the runner record `agent-finished outcome=failed`.
    3. **Wait out the timeout** — re-enter `Monitor` with the same `timeout_ms` budget remaining.
