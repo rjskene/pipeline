@@ -33,5 +33,15 @@ else
   fail_msg "b2_epsilon outputs b2-epsilon (got: $out)"
 fi
 
+# Task 3: b2_zeta (sources delta + epsilon)
+# shellcheck source=/dev/null
+. "$B2_DIR/zeta.sh"
+out="$(b2_zeta)"
+if [ "$out" = "b2-delta b2-epsilon b2-zeta" ]; then
+  pass_msg "b2_zeta outputs b2-delta b2-epsilon b2-zeta"
+else
+  fail_msg "b2_zeta outputs b2-delta b2-epsilon b2-zeta (got: $out)"
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]
