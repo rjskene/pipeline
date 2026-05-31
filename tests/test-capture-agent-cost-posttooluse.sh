@@ -169,4 +169,173 @@ if rec["agent_type"] != "tdd-implementer":
     )
 PY
 
+# ---------------------------------------------------------------------------
+# Case 4a (#699): build_record defaults agent_type to "general-purpose" (NOT
+# "unknown") when NO subagent_type is present anywhere.
+#
+# Inline dispatches that supply no subagent_type fall through to build_record's
+# final default. #691 left that default at the literal "unknown", which is what
+# produced the 59/66 bogus "unknown" records. log_subagent.py:61 instead
+# defaults an absent subagent_type to "general-purpose" (the dispatch tool's
+# real default for un-typed inline dispatches). This asserts build_record
+# mirrors that default — provenance accuracy, not a placeholder swap.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" <<'PY' || fail "case4a: agent_type default not 'general-purpose' when subagent_type absent"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+# Flat payload that proceeds past the stage gate and usage check, carrying NO
+# subagent_type anywhere (no top-level key, no tool_input).
+payload = {
+    "session_id": "s4",
+    "description": "plan-issue #700",
+    "usage": {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 4,
+    },
+}
+rec = mod.build_record(payload)
+if rec is None:
+    raise SystemExit("build_record returned None (expected a record)")
+if rec["agent_type"] != "general-purpose":
+    raise SystemExit(
+        "agent_type=%r expected 'general-purpose' (regression: un-typed inline "
+        "dispatch defaults to the bogus 'unknown' instead of mirroring "
+        "log_subagent.py:61)" % rec["agent_type"]
+    )
+PY
+
+# ---------------------------------------------------------------------------
+# Case 4b (#699): an inline PostToolUse(Agent) record inherits the SESSION model
+# from the orchestrator state sidecar (keyed by session_id).
+#
+# The PostToolUse(Agent) payload carries no `model` and no usable transcript
+# path (#691 WON'T-FIX). But the inline subagent inherits the session model,
+# which build_stop_record already resolves from the main-session transcript and
+# persists into .claude/logs/agent-cost-orchestrator-state.json keyed by the
+# SAME session_id the inline records carry. We pre-seed that sidecar (as if a
+# Stop already ran for session "s4") and assert the written inline record's
+# `model` is inherited and `agent_type` is the dispatched type.
+# ---------------------------------------------------------------------------
+PROJ4="$(make_project)"
+OUT4="$PROJ4/.claude/logs/agent-costs.jsonl"
+STATE4="$PROJ4/.claude/logs/agent-cost-orchestrator-state.json"
+
+cat > "$STATE4" <<'STATE'
+{"s4": {"model": "claude-opus-4-8", "input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}}
+STATE
+
+PAYLOAD_INLINE='{
+  "tool_name": "Agent",
+  "session_id": "s4",
+  "duration_ms": 500,
+  "tool_input": {
+    "description": "plan-issue #700",
+    "subagent_type": "general-purpose"
+  },
+  "tool_response": {
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 30,
+      "cache_creation_input_tokens": 40
+    },
+    "total_duration_ms": null
+  }
+}'
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ4" \
+  python3 "$HOOK" <<<"$PAYLOAD_INLINE" \
+  || fail "case4b: hook exited non-zero"
+
+[ -f "$OUT4" ] || fail "case4b: agent-costs.jsonl NOT written"
+
+python3 - "$OUT4" <<'PY' || fail "case4b: inline record did not inherit session model / agent_type"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readline())
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["agent_kind"] == "inline", "agent_kind==inline")
+expect(rec["model"] == "claude-opus-4-8", "model inherited from sidecar")
+expect(rec["agent_type"] == "general-purpose", "agent_type is dispatched type, not unknown")
+PY
+
+# ---------------------------------------------------------------------------
+# Case 4c (#699): fail-open — when NO orchestrator state sidecar exists, the
+# inline record's model stays "" (unchanged behavior). Guards against a hard
+# dependency on the sidecar: an inline record that fires before the session's
+# first Stop must not raise and must leave model empty.
+# ---------------------------------------------------------------------------
+PROJ4C="$(make_project)"
+OUT4C="$PROJ4C/.claude/logs/agent-costs.jsonl"
+# No state file pre-seeded.
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ4C" \
+  python3 "$HOOK" <<<"$PAYLOAD_INLINE" \
+  || fail "case4c: hook exited non-zero"
+
+[ -f "$OUT4C" ] || fail "case4c: agent-costs.jsonl NOT written"
+
+python3 - "$OUT4C" <<'PY' || fail "case4c: model not fail-open empty when no sidecar"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readline())
+if rec["model"] != "":
+    raise SystemExit("model=%r expected '' (fail-open when no sidecar)" % rec["model"])
+PY
+
+# ---------------------------------------------------------------------------
+# Case 4d (#699): a model-less subsequent Stop must NOT clobber a
+# previously-known session model in the sidecar.
+#
+# build_stop_record rebuilds state[session_id] from the four token fields on
+# every fire. The model is persisted alongside, but only when the CURRENT
+# transcript resolves a model. A transcript whose tail carries no
+# `message.model` (e.g. after compaction/truncation) yields model="" — the
+# write must then PRESERVE the model a prior Stop already recorded, so inline
+# records keep inheriting it. Guards the no-clobber invariant the Task 2.1
+# comment asserts.
+# ---------------------------------------------------------------------------
+PROJ4D="$(make_project)"
+STATE4D="$PROJ4D/.claude/logs/agent-cost-orchestrator-state.json"
+TRANSCRIPT4D="$PROJ4D/transcript-4d.jsonl"
+
+# Pre-seed: a prior Stop already recorded session "sM" with a known model and
+# its last cumulative token totals.
+cat > "$STATE4D" <<'STATE'
+{"sM": {"model": "claude-opus-4-8", "input": 100, "output": 20, "cache_read": 5, "cache_creation": 2}}
+STATE
+
+# A new transcript with FRESH cumulative usage (so the work-delta is > 0 and a
+# record is emitted) but NO `message.model` anywhere — model-less.
+cat > "$TRANSCRIPT4D" <<'JSONL'
+{"type":"assistant","timestamp":"2026-05-30T11:00:01.000Z","message":{"usage":{"input_tokens":300,"output_tokens":60,"cache_read_input_tokens":15,"cache_creation_input_tokens":9}}}
+JSONL
+
+PAYLOAD4D="$(printf '{"session_id":"sM","transcript_path":"%s"}' "$TRANSCRIPT4D")"
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ4D" \
+  python3 "$HOOK" <<<"$PAYLOAD4D" \
+  || fail "case4d: hook exited non-zero"
+
+python3 - "$STATE4D" <<'PY' || fail "case4d: model-less Stop clobbered the previously-known session model"
+import json, sys
+with open(sys.argv[1]) as fh:
+    state = json.load(fh)
+model = state.get("sM", {}).get("model")
+if model != "claude-opus-4-8":
+    raise SystemExit(
+        "state['sM']['model']=%r expected 'claude-opus-4-8' preserved "
+        "(regression: model-less subsequent Stop clobbered a known model)" % model
+    )
+PY
+
 echo "PASS: test-capture-agent-cost-posttooluse.sh"
