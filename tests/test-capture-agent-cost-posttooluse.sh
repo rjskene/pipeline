@@ -169,4 +169,44 @@ if rec["agent_type"] != "tdd-implementer":
     )
 PY
 
+# ---------------------------------------------------------------------------
+# Case 4a (#699): build_record defaults agent_type to "general-purpose" (NOT
+# "unknown") when NO subagent_type is present anywhere.
+#
+# Inline dispatches that supply no subagent_type fall through to build_record's
+# final default. #691 left that default at the literal "unknown", which is what
+# produced the 59/66 bogus "unknown" records. log_subagent.py:61 instead
+# defaults an absent subagent_type to "general-purpose" (the dispatch tool's
+# real default for un-typed inline dispatches). This asserts build_record
+# mirrors that default — provenance accuracy, not a placeholder swap.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" <<'PY' || fail "case4a: agent_type default not 'general-purpose' when subagent_type absent"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+# Flat payload that proceeds past the stage gate and usage check, carrying NO
+# subagent_type anywhere (no top-level key, no tool_input).
+payload = {
+    "session_id": "s4",
+    "description": "plan-issue #700",
+    "usage": {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 4,
+    },
+}
+rec = mod.build_record(payload)
+if rec is None:
+    raise SystemExit("build_record returned None (expected a record)")
+if rec["agent_type"] != "general-purpose":
+    raise SystemExit(
+        "agent_type=%r expected 'general-purpose' (regression: un-typed inline "
+        "dispatch defaults to the bogus 'unknown' instead of mirroring "
+        "log_subagent.py:61)" % rec["agent_type"]
+    )
+PY
+
 echo "PASS: test-capture-agent-cost-posttooluse.sh"

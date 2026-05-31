@@ -388,15 +388,17 @@ def build_record(payload):
     model = _first(payload, "model") or ""
     # agent_type: prefer the top-level subagent_type (set by _normalize_payload
     # for the Agent path), then fall through to the nested tool_input.subagent_type
-    # for flat/back-compat payloads where build_record sees the raw shape. Without
-    # the fallback the flat path keys agent_type to "unknown" (#691). Mirrors the
-    # correct read at log_subagent.py:61.
+    # for flat/back-compat payloads where build_record sees the raw shape. When
+    # NO subagent_type is present anywhere (the un-typed inline dispatch), default
+    # to "general-purpose" — the dispatch tool's real default for un-typed
+    # dispatches, mirroring log_subagent.py:61. #691 left this at the literal
+    # "unknown", which produced the bogus "unknown" provenance bucket (#699).
     agent_type = _first(payload, "subagent_type")
     if not agent_type:
         ti = payload.get("tool_input")
         if isinstance(ti, dict):
             agent_type = ti.get("subagent_type")
-    agent_type = agent_type or "unknown"
+    agent_type = agent_type or "general-purpose"
     source = "forward"
     agent_kind = "inline"
 
