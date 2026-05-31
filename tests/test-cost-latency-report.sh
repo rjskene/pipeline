@@ -278,11 +278,13 @@ else
   fail_msg "run with a malformed capture line exited non-zero (rc=$RC8)"
 fi
 
+# 202's deduped total is 125499 (record_key K202PLAN last-write-wins → 99999,
+# not 99999+7000); the malformed line must not perturb the valid-record sum.
 TT8="$(printf '%s' "$ROWS8" | jq -r '.[] | select(.issue==202) | .tokens_total' 2>/dev/null)"
-if [ "$TT8" = "32500" ]; then
-  pass_msg "valid capture records still summed despite one malformed line (202=32500)"
+if [ "$TT8" = "125499" ]; then
+  pass_msg "valid capture records still summed (deduped) despite one malformed line (202=125499)"
 else
-  fail_msg "expected issue 202 tokens_total=32500 with a malformed line present, got $TT8"
+  fail_msg "expected issue 202 tokens_total=125499 with a malformed line present, got $TT8"
 fi
 rm -rf "$TMP8"
 
@@ -453,6 +455,42 @@ case "$ORCH_ROW13" in
   *) fail_msg "orchestrator row missing cache_read-asymmetry annotation (got: $ORCH_ROW13)" ;;
 esac
 rm -rf "$TMP13"
+
+# --- Scenario 14: record_key collisions are deduped (last-write-wins) (#698) ---
+# A capture record's record_key is a LOGICAL idempotency key: the same key may
+# recur across appends with revised token totals (same logical agent finish).
+# Any consumer that SUMS token/duration fields must first dedup on record_key
+# (group_by(.record_key) | last), else a key that legitimately recurs is
+# double-counted. The shared fixture carries TWO records for issue 202 / stage
+# 'plan' sharing record_key "K202PLAN" with divergent tokens.total (7000, 99999);
+# last-write-wins keeps only 99999.
+inc_scenario "Scenario 14: record_key collisions deduped (last-write-wins)"
+
+# Per-issue path (--emit-rows-json). Deduped 202 total = 99999 (plan, last wins)
+# + 17000 (execute) + 8500 (pr-eval) = 125499. The naive (un-deduped) sum would
+# also add the shadowed 7000 → 132499; assert the EXACT deduped integer.
+ROWS14="$(bash "$HELPER" --fixture "$FIXTURE_DIR" --emit-rows-json 2>/dev/null)"
+TT14="$(printf '%s' "$ROWS14" | jq -r '.[] | select(.issue==202) | .tokens_total' 2>/dev/null)"
+if [ "$TT14" = "125499" ]; then
+  pass_msg "per-issue 202 tokens_total deduped on record_key (125499, last-write-wins)"
+else
+  fail_msg "per-issue 202 tokens_total should be 125499 (deduped), got $TT14"
+fi
+
+# Per-stage path (STAGE_TSV → per-stage table). The 'plan' stage row's median is
+# over per-(issue,stage) plan sums: {202: 99999 (deduped), 402: 5700} → median
+# (5700+99999)/2 = 52849.5. The naive sum would make 202's plan group 106999
+# (7000+99999) → median 56349.5. Assert the deduped median, reject the naive one.
+TABLE14="$(bash "$HELPER" --fixture "$FIXTURE_DIR" 2>/dev/null)"
+PLAN_ROW14="$(printf '%s\n' "$TABLE14" | grep -E '^plan[[:space:]]*\|' | head -1)"
+case "$PLAN_ROW14" in
+  *52849.5*) pass_msg "per-stage 'plan' median reflects deduped 202 sum (52849.5)" ;;
+  *) fail_msg "per-stage 'plan' median should be 52849.5 (deduped), got: $PLAN_ROW14" ;;
+esac
+case "$PLAN_ROW14" in
+  *56349.5*) fail_msg "per-stage 'plan' median leaked naive un-deduped 202 sum (56349.5): $PLAN_ROW14" ;;
+  *) pass_msg "per-stage 'plan' median excludes naive un-deduped 202 sum (56349.5 absent)" ;;
+esac
 
 echo ""
 echo "== RESULTS =="
