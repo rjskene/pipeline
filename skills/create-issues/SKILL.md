@@ -164,7 +164,9 @@ EOF
 
 ### PATH D body marker (advisory)
 
-If the issue you are drafting describes a precedent-mirror fix, one-line config flip, dogfood-mirror edit, or guard-test addition, include `<!-- pipeline:path=D -->` in the body at filing time. This is the authoritative route to PATH D — phrase heuristics in `skills/classify-issue/SKILL.md` will not reliably flip a structured body to D. See `skills/classify-issue/SKILL.md` ("Authoring guide for PATH D candidates") for the full list of shapes.
+If the issue you are drafting describes a precedent-mirror fix, one-line config flip, dogfood-mirror edit, or guard-test addition, include `<!-- pipeline:path=D -->` in the body at filing time. This is the authoritative route to PATH D — phrase heuristics in `skills/classify-issue/SKILL.md` will not reliably flip a structured body to D. See the `### PATH D (quick-fix)` section in `skills/classify-issue/SKILL.md` (and its `#### Blast-radius B→D routing` subsection) for the full list of shapes.
+
+Filing-time backstop: when a `fix(` draft names ≤ 2 non-test source files in a single module under `## Affected areas` AND carries no high-uncertainty signal (concurrency/race/lock/deadlock/security/auth/crypto/migration/data-loss), propose adding `<!-- pipeline:path=D -->` — the filing-time mirror of the classifier's Blast-radius B→D rule, carrying the same carve-out (high-uncertainty `fix(` work stays B).
 
 Example:
 
