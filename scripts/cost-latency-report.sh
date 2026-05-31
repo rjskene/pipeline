@@ -1111,8 +1111,10 @@ emit_concurrency_assessment() {
   intervals="$(execute_headless_intervals_tsv)"
   max_conc="$(printf '%s\n' "$intervals" | awk -F'\t' '
     $1 != "" {
-      ev[++n] = $1 "\t" 1;       # start event
-      ev[++n] = $2 "\t" -1;      # end event
+      ev[++n] = $1 "\t" "1";     # start event
+      ev[++n] = $2 "\t" "-1";    # end event (quote the literal so awk does
+                                 # not parse "\t" - 1 as arithmetic, which
+                                 # dropped the tab+delta and broke the sweep)
     }
     END {
       # Sort events by epoch; on ties, process ENDS (-1) before STARTS (+1) so

@@ -1251,6 +1251,155 @@ else
 fi
 rm -rf "$TMP25"
 
+# --- Scenario 26: tokenomics-report fixture renders all --tokenomics tables non-zero (#721) ---
+# A SINGLE standing, model-bearing golden fixture (tests/fixtures/tokenomics-report)
+# that drives a RICH non-zero --tokenomics demo (the base cost-latency-report
+# fixture has no `model` field, so its $ tables render all-zero). This is the
+# fixture the /pipeline:tokenomics skill (Task 6) showcases. The fixture exercises
+# EVERY new dimension; this scenario runs the report ONCE and asserts golden values.
+#
+# Surviving PRICED records (model="claude-opus-4-8") after both dedup passes, with
+# their all-four-bucket $ at Opus default rates (per 1M: in 15, out 75, cc 18.75,
+# cr 1.50):
+#   301-plan      in 1.0M out 0.2M cc 2.0M cr 4.0M  → 15+15+37.5+6   = $ 73.50
+#   301-plan-eval in 0.5M out 0.1M cc 1.0M cr 2.0M  → 7.5+7.5+18.75+3= $ 36.75
+#   301-execute   in 2.0M out 1.0M cc 4.0M cr 10.0M → 30+75+75+15    = $195.00  (max-total winner of a dup)
+#   301-pr-eval   in 0.8M out 0.2M cc 1.0M cr 3.0M  → 12+15+18.75+4.5= $ 50.25
+#   302-plan      in 0.4M out 0.1M cc 0.8M cr 1.0M  → 6+7.5+15+1.5   = $ 30.00
+#   302-execute   in 1.0M out 0.5M cc 2.0M cr 5.0M  → 15+37.5+37.5+7.5=$ 97.50
+#   303-execute-b in 4.0M out 4.0M cc 8.0M cr 20.0M → 60+300+150+30  = $540.00  (session sB)
+#   303-execute-c in 3.0M out 3.0M cc 6.0M cr 15.0M → 45+225+112.5+22.5=$405.00 (session sC; multi-session re-run preserved)
+#   orch-final    in 5.0M out 2.0M cc 0   cr 0      → 75+150+0+0     = $225.00  (N snapshots collapse to this max-total)
+#                                                          PRICED $ TOTAL = $1653.00
+# Plus ONE UNPRICED inline record (model="") → excluded from $, COUNTED → coverage 9/10 = 90.0%.
+inc_scenario "Scenario 26: tokenomics-report fixture renders all --tokenomics tables non-zero"
+
+TOKFIX="$REPO_ROOT/tests/fixtures/tokenomics-report"
+
+# Run ONCE with Opus defaults (strip any ambient PIPELINE_PRICE_* override) and a
+# representative --skipped-count, capture all --tokenomics output.
+TOK26="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT \
+             -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
+             -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION \
+             -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
+         bash "$HELPER" --fixture "$TOKFIX" --tokenomics --skipped-count 2 2>/dev/null)"
+
+# (a) every table SECTION header present.
+for hdr in 'BUCKET' 'STAGE COST' 'STRUCTURE' 'STAGE x STRUCTURE' 'B→D BREAKEVEN' \
+           'COVERAGE HEALTH' 'TREND (per-day)' 'CONCURRENCY ASSESSMENT'; do
+  if printf '%s' "$TOK26" | grep -qF "$hdr"; then
+    pass_msg "tokenomics-report: section header present: $hdr"
+  else
+    fail_msg "tokenomics-report: missing section header: $hdr"
+  fi
+done
+
+# (b) priced $ total == $1653.00 (golden; arithmetic in the comment above).
+COST26="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT \
+              -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
+              -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION \
+              -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
+          bash "$HELPER" --fixture "$TOKFIX" --emit-pricing-json 2>/dev/null \
+          | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST26" = "1653.00" ]; then
+  pass_msg "tokenomics-report: priced \$ total == 1653.00 (exact golden)"
+else
+  fail_msg "tokenomics-report: priced \$ total should be 1653.00, got $COST26"
+fi
+
+# Bucket table $ is the SAME total (sum of the four bucket $ rows).
+BUCKET_USD_SUM26="$(printf '%s\n' "$TOK26" \
+  | awk -F'|' '/^(input|output|cache_creation|cache_read)[[:space:]]*\|/ {gsub(/[ $]/,"",$3); s+=$3} END{printf "%.2f", s}')"
+if [ "$BUCKET_USD_SUM26" = "1653.00" ]; then
+  pass_msg "tokenomics-report: bucket table \$ sums to 1653.00 (matches priced total)"
+else
+  fail_msg "tokenomics-report: bucket \$ rows should sum to 1653.00, got $BUCKET_USD_SUM26"
+fi
+
+# (c) token-share != cost-share: output cost% > token%; cache_read cost% < token%.
+OUT_ROW26="$(printf '%s\n' "$TOK26" | grep -E '^output[[:space:]]*\|' | head -1)"
+CR_ROW26="$(printf '%s\n' "$TOK26" | grep -E '^cache_read[[:space:]]*\|' | head -1)"
+OUT_COSTPCT26="$(printf '%s' "$OUT_ROW26" | awk -F'|' '{gsub(/[ %]/,"",$4); print $4+0}')"
+OUT_TOKPCT26="$(printf '%s' "$OUT_ROW26" | awk -F'|' '{gsub(/[ %]/,"",$5); print $5+0}')"
+CR_COSTPCT26="$(printf '%s' "$CR_ROW26" | awk -F'|' '{gsub(/[ %]/,"",$4); print $4+0}')"
+CR_TOKPCT26="$(printf '%s' "$CR_ROW26" | awk -F'|' '{gsub(/[ %]/,"",$5); print $5+0}')"
+if awk -v c="$OUT_COSTPCT26" -v t="$OUT_TOKPCT26" 'BEGIN{exit !(c>t)}'; then
+  pass_msg "tokenomics-report: output cost% ($OUT_COSTPCT26) > token% ($OUT_TOKPCT26)"
+else
+  fail_msg "tokenomics-report: output cost% should exceed token% (cost%=$OUT_COSTPCT26 token%=$OUT_TOKPCT26)"
+fi
+if awk -v c="$CR_COSTPCT26" -v t="$CR_TOKPCT26" 'BEGIN{exit !(c<t)}'; then
+  pass_msg "tokenomics-report: cache_read cost% ($CR_COSTPCT26) < token% ($CR_TOKPCT26)"
+else
+  fail_msg "tokenomics-report: cache_read cost% should be below token% (cost%=$CR_COSTPCT26 token%=$CR_TOKPCT26)"
+fi
+
+# (d) model-attribution coverage == 9/10 (90.0%) — one empty-model record present.
+if printf '%s' "$TOK26" | grep -qE 'model-attribution coverage: 9/10 \(90\.0%\)'; then
+  pass_msg "tokenomics-report: model-attribution coverage == 9/10 (90.0%)"
+else
+  fail_msg "tokenomics-report: coverage should be 9/10 (90.0%), got: $(printf '%s' "$TOK26" | grep -i 'model-attribution')"
+fi
+
+# (e) outlier day flagged: 2026-05-22 (57.2% of window > 40% threshold).
+OUTLIER_ROW26="$(printf '%s\n' "$TOK26" | grep -E '2026-05-22.*OUTLIER')"
+if [ -n "$OUTLIER_ROW26" ]; then
+  pass_msg "tokenomics-report: outlier day 2026-05-22 flagged"
+else
+  fail_msg "tokenomics-report: 2026-05-22 should be flagged *OUTLIER (got trend: $(printf '%s\n' "$TOK26" | grep 2026-05))"
+fi
+# The two non-outlier days must NOT be flagged.
+if printf '%s\n' "$TOK26" | grep -E '2026-05-2[01].*OUTLIER' >/dev/null; then
+  fail_msg "tokenomics-report: a non-outlier day (05-20/05-21) was wrongly flagged OUTLIER"
+else
+  pass_msg "tokenomics-report: non-outlier days (05-20, 05-21) not flagged"
+fi
+
+# (f) concurrency observed-max == 3 (three overlapping execute intervals).
+CONC_BLOCK26="$(printf '%s\n' "$TOK26" | awk '/CONCURRENCY/{f=1} f')"
+if printf '%s' "$CONC_BLOCK26" | grep -qE 'max observed concurrent execute workers: 3'; then
+  pass_msg "tokenomics-report: concurrency observed-max == 3"
+else
+  fail_msg "tokenomics-report: concurrency observed-max should be 3 (got: $CONC_BLOCK26)"
+fi
+
+# (g) headless ~5.4M ms session-lifetime durations annotated + EXCLUDED from
+# task-latency aggregate. The 5400000 value appears in the HEADLESS DURATIONS
+# block but the median-task-latency line must NOT carry it.
+HEADLESS_DUR_BLOCK26="$(printf '%s\n' "$TOK26" | awk '/HEADLESS DURATIONS/{f=1} /TASK LATENCY/{f=0} f')"
+if printf '%s' "$HEADLESS_DUR_BLOCK26" | grep -qE '5400000.*session-lifetime'; then
+  pass_msg "tokenomics-report: 5.4M ms headless duration annotated session-lifetime"
+else
+  fail_msg "tokenomics-report: 5400000 should be annotated session-lifetime (got: $HEADLESS_DUR_BLOCK26)"
+fi
+TASK_LAT_LINE26="$(printf '%s\n' "$TOK26" | grep -E 'median task latency')"
+if printf '%s' "$TASK_LAT_LINE26" | grep -q '5400000'; then
+  fail_msg "tokenomics-report: 5.4M ms headless duration leaked into task-latency aggregate ($TASK_LAT_LINE26)"
+else
+  pass_msg "tokenomics-report: 5.4M ms headless duration excluded from task-latency aggregate"
+fi
+
+# (h) breakeven has real PATH B rows (301, 302) and a positive TOTAL savings.
+if printf '%s' "$TOK26" | grep -qE 'issue #301' && printf '%s' "$TOK26" | grep -qE 'issue #302'; then
+  pass_msg "tokenomics-report: breakeven lists PATH B issues 301 and 302"
+else
+  fail_msg "tokenomics-report: breakeven should list PATH B issues 301 and 302"
+fi
+# 301 saved = plan(73.50)+plan-eval(36.75)=110.25; 302 saved = plan(30.00); TOTAL=140.25.
+BE_TOTAL26="$(printf '%s\n' "$TOK26" | grep -E '^TOTAL[[:space:]]*\|' | awk -F'|' '{gsub(/[ ]/,"",$4); print $4}')"
+if [ "$BE_TOTAL26" = "140.25" ]; then
+  pass_msg "tokenomics-report: breakeven TOTAL savings == 140.25 (golden: 73.50+36.75+30.00)"
+else
+  fail_msg "tokenomics-report: breakeven TOTAL savings should be 140.25, got $BE_TOTAL26"
+fi
+
+# (i) skipped-count plumbed through.
+if printf '%s' "$TOK26" | grep -qE 'headless skipped \(missing transcript\): 2'; then
+  pass_msg "tokenomics-report: --skipped-count 2 surfaced in coverage health"
+else
+  fail_msg "tokenomics-report: --skipped-count 2 should surface in coverage health"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
