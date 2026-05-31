@@ -51,6 +51,26 @@ PIPELINE_GROUPING_DETECTION_ENABLED="true"
 # That emergency-diagnosis stream is intentionally ungated.
 PIPELINE_LOGS_ENABLED=false
 
+# --- Per-model token pricing (issue #721) ---
+#
+# Per-1M-token USD rates consumed by `scripts/cost-latency-report.sh
+# --tokenomics` to price the dogfood agent-cost logs (same .claude/logs/
+# substrate gated by PIPELINE_LOGS_ENABLED above).
+#
+# Shape: PIPELINE_PRICE_<MODEL>_<BUCKET>, where <BUCKET> is one of INPUT,
+# OUTPUT, CACHE_CREATION, CACHE_READ. <MODEL> is the model id normalized by
+# upcasing and collapsing each non-alphanumeric run to a single underscore
+# (e.g. "claude-opus-4-8" -> "CLAUDE_OPUS_4_8"). Any bucket left unset falls
+# back to the Opus list-price defaults baked into the report script.
+#
+# The defaults below match the script's built-in Opus rates. These are the
+# tracked anchor: mirror them BY HAND into the gitignored, host-only live
+# pipeline.config (this .example file is never sourced at runtime).
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT=15
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT=75
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION=18.75
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
+
 # --- Stall detection (issue #437) ---
 #
 # PIPELINE_STALL_POLL_THRESHOLD controls when the queue runner emits
