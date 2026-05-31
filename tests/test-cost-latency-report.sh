@@ -546,6 +546,74 @@ else
 fi
 rm -rf "$TMP15"
 
+# --- Scenario 16: per-model pricing + unpriced (empty-model) count (#721) ---
+# A config-driven pricing helper prices each capture record from per-model rate
+# env vars (PIPELINE_PRICE_<MODEL>_{INPUT,OUTPUT,CACHE_CREATION,CACHE_READ}),
+# falling back to the Opus default list price per bucket (per 1M tokens):
+#   input 15, output 75, cache_creation 18.75, cache_read 1.50.
+# Records with model=="" (issue #699 INLINE records) are UNPRICED: excluded from
+# the $ total and COUNTED so coverage health is visible. Surfaced via
+# --emit-pricing-json → {priced_cost_usd, unpriced_count}.
+#
+# Golden (Opus defaults, no env override) for the ONE priced record below:
+#   input          2,000,000 → 2 * 15      = $30.00
+#   output         1,000,000 → 1 * 75      = $75.00
+#   cache_creation 4,000,000 → 4 * 18.75   = $75.00
+#   cache_read     8,000,000 → 8 * 1.50    = $12.00
+#                                    TOTAL = $192.00
+inc_scenario "Scenario 16: per-model pricing + unpriced empty-model count"
+
+TMP16="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP16/" 2>/dev/null
+# Two eligible feature PRs → fresh issues 206 (priced opus record) and 207 (unpriced).
+printf '%s\n' '[
+  {"number":106,"title":"feat: priced record issue","additions":300,"deletions":100,"body":"Closes #206","mergedAt":"2026-05-13T12:00:00Z","labels":[]},
+  {"number":107,"title":"feat: unpriced record issue","additions":50,"deletions":20,"body":"Closes #207","mergedAt":"2026-05-13T13:00:00Z","labels":[]}
+]' > "$TMP16/prs.json"
+printf '%s\n' '{"number":106,"additions":300,"deletions":100,"comments":[]}' > "$TMP16/pr-106.json"
+printf '%s\n' '{"number":206,"labels":[],"comments":[]}' > "$TMP16/issue-206.json"
+printf '%s\n' '{"number":107,"additions":50,"deletions":20,"comments":[]}' > "$TMP16/pr-107.json"
+printf '%s\n' '{"number":207,"labels":[],"comments":[]}' > "$TMP16/issue-207.json"
+{
+  echo '{"schema_version":1,"issue":"206","stage":"execute","session_id":"sP","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K206","tokens":{"input":2000000,"output":1000000,"cache_read":8000000,"cache_creation":4000000,"total":15000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"207","stage":"execute","session_id":"sU","model":"","agent_kind":"inline","record_key":"K207","tokens":{"input":500000,"output":500000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":900}'
+} > "$TMP16/capture.jsonl"
+
+# Pricing math uses Opus defaults (no PIPELINE_PRICE_* env exported here).
+PRICING16="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT \
+                 -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
+                 -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION \
+                 -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
+             bash "$HELPER" --fixture "$TMP16" --emit-pricing-json 2>/dev/null)"
+
+if printf '%s' "$PRICING16" | jq -e . >/dev/null 2>&1; then
+  pass_msg "--emit-pricing-json output parses as JSON"
+else
+  fail_msg "--emit-pricing-json output is not valid JSON (got: $(printf '%s' "$PRICING16" | head -1))"
+fi
+
+COST16="$(printf '%s' "$PRICING16" | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST16" = "192.00" ] || [ "$COST16" = "192" ] || [ "$COST16" = "192.0" ]; then
+  pass_msg "priced_cost_usd == 192.00 (Opus default rates, golden arithmetic)"
+else
+  fail_msg "priced_cost_usd should be 192.00 (30+75+75+12), got $COST16"
+fi
+
+UNPRICED16="$(printf '%s' "$PRICING16" | jq -r '.unpriced_count' 2>/dev/null)"
+if [ "$UNPRICED16" = "1" ]; then
+  pass_msg "unpriced_count == 1 (empty-model record counted, #699)"
+else
+  fail_msg "unpriced_count should be 1 (one model:\"\" record), got $UNPRICED16"
+fi
+
+# The unpriced record's 1,000,000 input+output tokens (would be $45 at Opus
+# rates) must NOT leak into the priced total — total stays 192, not 237.
+case "$COST16" in
+  237*) fail_msg "priced_cost_usd leaked the unpriced empty-model record (237)" ;;
+  *) pass_msg "priced_cost_usd excludes the unpriced empty-model record (237 rejected)" ;;
+esac
+rm -rf "$TMP16"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

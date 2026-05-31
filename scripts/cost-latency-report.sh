@@ -34,6 +34,7 @@ LIMIT=50
 FIXTURE_DIR=""
 DRY_RUN=0
 EMIT_ROWS_JSON=0
+EMIT_PRICING_JSON=0
 OVER_SERVED_LOC=20
 TOPN=5
 CAPTURE_LOG=""
@@ -58,6 +59,11 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                        each eligible feature PR, and exit without rendering.
   --emit-rows-json     Debug: emit the per-issue rows as a JSON array to
                        stdout instead of the formatted tables.
+  --emit-pricing-json  Debug: emit aggregate pricing as JSON
+                       {priced_cost_usd, unpriced_count} and exit. Prices each
+                       capture record from per-model rate env vars (Opus default
+                       fallback); model=="" records are UNPRICED (excluded from
+                       the $ total, counted separately). See PRICING below.
   --over-served-loc N  LOC threshold below which a full-ceremony issue is
                        flagged over-served (default: 20).
   --top-n N            Size of the TOP-N consumer / slowest-stage lists
@@ -77,6 +83,7 @@ while [ $# -gt 0 ]; do
     --fixture=*)          FIXTURE_DIR="${1#--fixture=}"; shift ;;
     --dry-run)            DRY_RUN=1; shift ;;
     --emit-rows-json)     EMIT_ROWS_JSON=1; shift ;;
+    --emit-pricing-json)  EMIT_PRICING_JSON=1; shift ;;
     --over-served-loc)    OVER_SERVED_LOC="${2:-}"; shift 2 ;;
     --over-served-loc=*)  OVER_SERVED_LOC="${1#--over-served-loc=}"; shift ;;
     --top-n)              TOPN="${2:-}"; shift 2 ;;
@@ -236,6 +243,84 @@ has_block() {
   fi
 }
 
+# --- pricing (issue #721) ---
+#
+# Per-model token pricing, config-driven. Rates are USD per 1,000,000 tokens,
+# one per bucket {input, output, cache_creation, cache_read}, read from env vars
+#
+#     PIPELINE_PRICE_<MODEL>_INPUT
+#     PIPELINE_PRICE_<MODEL>_OUTPUT
+#     PIPELINE_PRICE_<MODEL>_CACHE_CREATION
+#     PIPELINE_PRICE_<MODEL>_CACHE_READ
+#
+# where <MODEL> is the record's `model` string NORMALIZED: upcased, then every
+# run of non-alphanumeric chars collapsed to a single underscore (e.g.
+# "claude-opus-4-8" → "CLAUDE_OPUS_4_8"). The script runs after pipeline.config
+# is sourced by the skill, so these are ambient env; in fixture/test mode they
+# are typically unset and the Opus DEFAULT list price applies per bucket:
+#   input 15, output 75, cache_creation 18.75, cache_read 1.50  (per 1M tokens).
+#
+# Cost(record) = Σ_bucket (tokens_bucket / 1e6 * rate_bucket), summed across
+# records for aggregates. Records with model=="" (or model absent) are UNPRICED
+# (#699 INLINE records): they are NOT priced, are EXCLUDED from the $ total, and
+# are COUNTED so coverage health is visible — never silently dropped.
+
+# Opus default rate per bucket (per 1M tokens).
+PRICE_DEFAULT_INPUT=15
+PRICE_DEFAULT_OUTPUT=75
+PRICE_DEFAULT_CACHE_CREATION=18.75
+PRICE_DEFAULT_CACHE_READ=1.50
+
+# price_model_normalize <model-string> — upcase + non-alnum runs → single '_'.
+price_model_normalize() {
+  printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g'
+}
+
+# price_rate <normalized-model> <BUCKET> — echo the configured per-1M rate for
+# (model, bucket) via ${!var} indirection, falling back to the Opus default.
+# BUCKET is one of INPUT|OUTPUT|CACHE_CREATION|CACHE_READ.
+price_rate() {
+  local norm="$1" bucket="$2"
+  local var="PIPELINE_PRICE_${norm}_${bucket}"
+  local val="${!var:-}"
+  if [ -n "$val" ]; then
+    printf '%s' "$val"
+  else
+    local def="PRICE_DEFAULT_${bucket}"
+    printf '%s' "${!def}"
+  fi
+}
+
+# compute_pricing — read CAPTURE_JSON, return "<priced_cost_usd> <unpriced_count>"
+# (space-separated). priced_cost_usd is formatted to 2 decimals. Unpriced
+# (model=="" or absent) records are excluded from the cost but counted.
+compute_pricing() {
+  local total="0" unpriced=0
+  local line model norm
+  local r_in r_out r_cc r_cr
+  # Iterate one record per line so per-record model lookup + ${!var} indirection
+  # happens in bash; float arithmetic is delegated to awk per record.
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      unpriced=$((unpriced + 1))
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    total="$(printf '%s' "$line" | jq -r '
+        .tokens // {} | [(.input//0),(.output//0),(.cache_creation//0),(.cache_read//0)] | @tsv' 2>/dev/null \
+      | awk -v t="$total" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" -F'\t' '
+          { t += ($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr }
+          END { printf "%.10f", t }')"
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  printf '%s %s' "$(awk -v t="$total" 'BEGIN { printf "%.2f", t }')" "$unpriced"
+}
+
 # --- temp files ---
 ROWS_TSV=$(mktemp)
 trap 'rm -f "$ROWS_TSV"' EXIT
@@ -303,6 +388,14 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
   + [ .[] | select((has("session_id") | not) or .session_id == null) ]
 ' 2>/dev/null)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+
+# --- emit aggregate pricing as JSON (debug; feeds Task-3 tokenomics) ---
+if [ "$EMIT_PRICING_JSON" -eq 1 ]; then
+  read -r _priced_cost _unpriced_count < <(compute_pricing)
+  jq -cn --arg cost "$_priced_cost" --argjson unpriced "${_unpriced_count:-0}" \
+    '{priced_cost_usd: $cost, unpriced_count: $unpriced}'
+  exit 0
+fi
 
 # Partition raw list into release PRs (excluded) and eligible feature PRs.
 RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
