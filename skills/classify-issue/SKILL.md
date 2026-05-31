@@ -39,7 +39,7 @@ PATH D is the body-marker primary route: declare `<!-- pipeline:path=D -->` in t
 - Guard-test addition to an existing test file (one new assertion; no new file).
 - One-bullet bug report with a quoted error and an obvious one-liner.
 
-Execution: collapsed single-pass inline `tdd-implementer` in the orchestrator session (no spawned worker); `evaluate-issue-pr` is the sole review gate — `execute-issue-plan` Step 8 is skipped.
+Execution: collapsed single-pass inline `tdd-implementer` in the orchestrator session (no spawned worker); `evaluate-issue-pr` is the sole review gate — `execute-issue-plan` Step 8 is skipped. In the autonomous run/fullsend lanes, PATH D classify is the FIRST stage run INSIDE that single collapsed inline context (classify → plan → execute carried forward as one context), so the recommended_path / `quick-fix` label checkpoint is emitted by that same collapsed agent rather than by a separate upstream classify dispatch. The standalone interactive `/pipeline:classify-issue N` invocation and the `<!-- pipeline:path=D -->` body-marker route are UNCHANGED — they still post a `## Classification` comment and apply the path label directly.
 
 **Escalation backstop (down-route safety net).** The collapsed D lane has an escalation backstop: if the executor finds mid-run that the change exceeds D's envelope, it aborts up to a spawned PATH B run (see `execute-issue-plan`'s Collapsed inline D contract). That backstop is the precondition that makes a wrong B→D down-route (the #707 dependency) cheap and recoverable — mis-routing B work into D is reversed by escalation, not by shipping a too-large diff, so classification may lean D without fear.
 

@@ -129,6 +129,17 @@ else
   fail_msg "(1g) run/SKILL.md missing one of: 'No spawn-claude.sh', 'no tmux', 'no run-queue'"
 fi
 
+# (1h) PATH D planning branch routes D into ONE collapsed Agent, not a
+# separate classify+plan dispatch followed by a separate execute dispatch.
+inc
+PLAN_BRANCH_D=$(near "$RUN_SKILL" "For planning" "PATH D carve-out" 1600)
+PLAN_BRANCH_D2=$(near "$RUN_SKILL" "For planning" "collapse into ONE carried-forward inline" 1600)
+if [ "$PLAN_BRANCH_D" = "OK" ] || [ "$PLAN_BRANCH_D2" = "OK" ]; then
+  pass_msg "(1h) run/SKILL.md planning branch routes PATH D into ONE collapsed inline Agent"
+else
+  fail_msg "(1h) run/SKILL.md planning branch missing PATH D carve-out routing D into one collapsed inline Agent"
+fi
+
 # =====================================================================
 # Group 2 — skills/fullsend/SKILL.md: split-dispatch where D fans out as a
 # concurrent inline Agent batch in the FOREGROUND while B/C run-queue runs
@@ -169,6 +180,17 @@ if printf '%s' "$FULLSEND_BODY" | grep -qiE 'max 3 concurrent inline'; then
   pass_msg "(2d) 'max 3 concurrent inline' D bound stated in fullsend"
 else
   fail_msg "(2d) fullsend/SKILL.md missing 'max 3 concurrent inline' bound for D"
+fi
+
+# (2e) Step 1b explicitly EXCLUDES PATH D from per-stage classify/plan dispatch
+# (D's classify+plan run inside the collapsed foreground inline Agent at execute).
+inc
+STEP1B_D=$(near "$FULLSEND_SKILL" "1b. Dispatch classify and plan" "PATH D exclusion" 1400)
+STEP1B_D2=$(near "$FULLSEND_SKILL" "1b. Dispatch classify and plan" "EXCLUDED from this per-stage classify/plan dispatch" 1400)
+if [ "$STEP1B_D" = "OK" ] || [ "$STEP1B_D2" = "OK" ]; then
+  pass_msg "(2e) fullsend Step 1b EXCLUDES PATH D from per-stage classify/plan dispatch"
+else
+  fail_msg "(2e) fullsend Step 1b missing explicit PATH D exclusion from per-stage classify/plan dispatch"
 fi
 
 # =====================================================================
