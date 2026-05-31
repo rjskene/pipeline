@@ -247,3 +247,23 @@ whether Path 2 holds or we flip to Path 1.
 | #724 | autonomous cron relay | later (Path-1-only, parked) |
 | #722 | consumer productization of tokenomics | brainstorm |
 | #642/#643/#697/#698/#699 | prior cost instrumentation | various |
+
+## Format axis (#729) — JSON→markdown classification
+
+Child of #648. The format lever (JSON is token-expensive vs markdown) was found
+**already realized** across the pipeline; this section is the durable record and
+the contract the `test-json-markdown-surface-guard.sh` test enforces.
+
+| Surface | Output | Consumer | Class | Decision |
+|---|---|---|---|---|
+| ## Classification / ## Implementation Plan / ## Evaluation | markdown | model | model-consumed | already markdown |
+| post-plan.sh stdout | prose | operator | model-consumed | no JSON |
+| cost-latency-report.sh default / --tokenomics | markdown tables | model/operator | model-consumed | markdown (guarded) |
+| *-report.sh --emit-rows-json / --emit-pricing-json | JSON | tests + metrics-snapshot | script-parsed | KEEP JSON |
+| metrics-snapshot.sh | JSONL record | timeseries | machine record | KEEP JSON |
+| analyze-issues.sh shortlist | JSON (4 keys) | Stage-2 subagent prompt (key-addressed) | effective parse contract | KEEP JSON |
+| visual-proof-from-plan {satisfied,unsatisfied} | JSON | evaluate-issue-pr Step 6b (parsed) | machine-parse contract | KEEP JSON |
+
+**Hard line:** never markdown-ify a `--emit-rows-json`/JSONL/key-addressed surface —
+those are parsed downstream. The guard test pins both halves: model surfaces stay
+JSON-free, machine contracts stay JSON.
