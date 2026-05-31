@@ -48,12 +48,14 @@ if [ ! -s "$SLICE" ]; then
 fi
 
 # --- Test 1: rule presence (Blast-radius + Affected areas + D on one line) ---
-echo "Test 1: rule line names Blast-radius, Affected areas, and PATH D"
+# Exclude `#`-heading lines so this asserts the rule BODY, not the subsection
+# heading (which trivially carries all three tokens via "B→D"/"Affected areas").
+echo "Test 1: rule body line names Blast-radius, Affected areas, and PATH D"
 inc
-if awk '/Blast-radius/ && /Affected areas/ && /D/ { f = 1 } END { exit (f ? 0 : 1) }' "$SLICE"; then
-  pass_msg "rule line co-occurs Blast-radius + Affected areas + D"
+if awk '/^#/ { next } /Blast-radius/ && /Affected areas/ && /D/ { f = 1 } END { exit (f ? 0 : 1) }' "$SLICE"; then
+  pass_msg "rule body line co-occurs Blast-radius + Affected areas + D"
 else
-  fail_msg "no rule line co-occurring Blast-radius + Affected areas + D"
+  fail_msg "no rule body line co-occurring Blast-radius + Affected areas + D"
 fi
 
 # --- Test 2: deterministic counting clause (non-test source, exclude tests/+fixtures/) ---
