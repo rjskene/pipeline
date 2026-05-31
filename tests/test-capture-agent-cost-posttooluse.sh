@@ -292,4 +292,50 @@ if rec["model"] != "":
     raise SystemExit("model=%r expected '' (fail-open when no sidecar)" % rec["model"])
 PY
 
+# ---------------------------------------------------------------------------
+# Case 4d (#699): a model-less subsequent Stop must NOT clobber a
+# previously-known session model in the sidecar.
+#
+# build_stop_record rebuilds state[session_id] from the four token fields on
+# every fire. The model is persisted alongside, but only when the CURRENT
+# transcript resolves a model. A transcript whose tail carries no
+# `message.model` (e.g. after compaction/truncation) yields model="" — the
+# write must then PRESERVE the model a prior Stop already recorded, so inline
+# records keep inheriting it. Guards the no-clobber invariant the Task 2.1
+# comment asserts.
+# ---------------------------------------------------------------------------
+PROJ4D="$(make_project)"
+STATE4D="$PROJ4D/.claude/logs/agent-cost-orchestrator-state.json"
+TRANSCRIPT4D="$PROJ4D/transcript-4d.jsonl"
+
+# Pre-seed: a prior Stop already recorded session "sM" with a known model and
+# its last cumulative token totals.
+cat > "$STATE4D" <<'STATE'
+{"sM": {"model": "claude-opus-4-8", "input": 100, "output": 20, "cache_read": 5, "cache_creation": 2}}
+STATE
+
+# A new transcript with FRESH cumulative usage (so the work-delta is > 0 and a
+# record is emitted) but NO `message.model` anywhere — model-less.
+cat > "$TRANSCRIPT4D" <<'JSONL'
+{"type":"assistant","timestamp":"2026-05-30T11:00:01.000Z","message":{"usage":{"input_tokens":300,"output_tokens":60,"cache_read_input_tokens":15,"cache_creation_input_tokens":9}}}
+JSONL
+
+PAYLOAD4D="$(printf '{"session_id":"sM","transcript_path":"%s"}' "$TRANSCRIPT4D")"
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ4D" \
+  python3 "$HOOK" <<<"$PAYLOAD4D" \
+  || fail "case4d: hook exited non-zero"
+
+python3 - "$STATE4D" <<'PY' || fail "case4d: model-less Stop clobbered the previously-known session model"
+import json, sys
+with open(sys.argv[1]) as fh:
+    state = json.load(fh)
+model = state.get("sM", {}).get("model")
+if model != "claude-opus-4-8":
+    raise SystemExit(
+        "state['sM']['model']=%r expected 'claude-opus-4-8' preserved "
+        "(regression: model-less subsequent Stop clobbered a known model)" % model
+    )
+PY
+
 echo "PASS: test-capture-agent-cost-posttooluse.sh"

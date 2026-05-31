@@ -241,12 +241,16 @@ def build_stop_record(payload, logs_dir):
     state[session_id] = {f: summ[f] for f in fields}
     # Also persist the resolved session model so inline forward records (which
     # carry no model of their own) can inherit it via _session_model, keyed by
-    # this same session_id (#699). Only store when truthy so a model-less
-    # transcript never clobbers a previously-known model. _load_state already
-    # passes this extra key through untouched and the delta math above reads
-    # only the four token fields by name, so this does not perturb token deltas.
-    if summ["model"]:
-        state[session_id]["model"] = summ["model"]
+    # this same session_id (#699). Prefer the freshly-resolved model, else carry
+    # forward the one a prior Stop recorded (`last`) — the wholesale dict rebuild
+    # above drops the old key, so a model-less transcript (summ["model"]=="",
+    # reachable after compaction/truncation) must restore it here rather than
+    # clobber a previously-known model. Never store an empty model. _load_state
+    # passes this extra key through untouched and the delta math above reads only
+    # the four token fields by name, so this does not perturb token deltas.
+    model = summ["model"] or last.get("model")
+    if model:
+        state[session_id]["model"] = model
     _save_state(logs_dir, state)
 
     ts_start = summ["ts_start"]
