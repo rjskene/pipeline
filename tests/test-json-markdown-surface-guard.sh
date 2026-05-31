@@ -38,4 +38,11 @@ else
   fail "--emit-rows-json contract is no longer valid JSON (parser regression)"
 fi
 
+# 4) The #729 format-axis classification record must exist in the cost-architecture doc.
+if grep -q 'Format axis (#729)' "$REPO_ROOT/docs/cost-architecture.md"; then
+  pass "docs/cost-architecture.md records the #729 format-axis classification"
+else
+  fail "docs/cost-architecture.md missing the #729 format-axis section"
+fi
+
 [ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILS FAIL(S)"; exit 1; }
