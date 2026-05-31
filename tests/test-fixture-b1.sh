@@ -28,6 +28,16 @@ else
   fail_msg "Case A: expected 'b1-alpha', got '$out'"
 fi
 
+# ---- Case B: b1_beta prints exactly "b1-beta" ----
+echo "Case B: b1_beta output"
+inc
+out=$(bash -c "source '$FIXTURE_DIR/beta.sh' && b1_beta" 2>/dev/null) || true
+if [ "$out" = "b1-beta" ]; then
+  pass_msg "Case B: b1_beta prints 'b1-beta'"
+else
+  fail_msg "Case B: expected 'b1-beta', got '$out'"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
