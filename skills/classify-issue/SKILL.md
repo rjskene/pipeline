@@ -153,6 +153,8 @@ The skill receives an issue number as argument. Perform:
 
 5. **Compose the classification output:**
 
+   > **TERSENESS:** Classification is a routing decision, not a report. `**rationale:**` is 1-2 sentences citing the firing signal — no restatement of the issue body, no enumeration of rules that did NOT fire. Do not echo the rule table or the path definitions back into the comment.
+
    ```markdown
    ## Classification
    - **recommended_path:** A | B | C | D

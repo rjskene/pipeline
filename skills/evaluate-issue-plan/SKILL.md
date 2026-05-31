@@ -102,6 +102,9 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    ```
 
    Use this exact format:
+
+   > **TERSENESS:** Reference the plan and issue by `#N` — do NOT paste the plan body or re-quote the issue. Report only discrepancies: a passing `**File accuracy:**` row is one line (`path — ✅`), not a paragraph. Leave `**Missing files:** / **Spec gaps:** / **Conflict risk:**` as `None` when clean — do not narrate the absence. Keep `**Recommendations:**` to ≤3 actionable bullets.
+
    ```markdown
    ## Plan Evaluation
 

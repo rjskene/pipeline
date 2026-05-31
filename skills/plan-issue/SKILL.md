@@ -115,6 +115,8 @@ Receive an issue number as argument (or from context).
 
    Invoke `Skill(skill: "superpowers:writing-plans")`. Pass the issue title, body, prior plan comments, codebase findings from step 4, AND `PATH_LETTER` from step 3a. Tell it: "Do NOT save the plan to a file in `docs/`. Return the plan content directly so I can write it to the draft file under `.claude/logs/plan-drafts/`." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
 
+   > **TERSENESS:** The plan must be self-contained (execute-issue-plan reads ONLY this comment) — but self-contained ≠ verbose. Reference the issue by `#N`; do NOT paste the issue body back into the plan. Each `**Files to change:**` entry is `path — one-line reason`. Sections with no content are the single word `None` (`**DB schema changes:** None`), never a paragraph explaining why. Design detail belongs in `**Design decisions:**` as bullets — load-bearing data (tier tables, formulas, mode behaviors) stays; restated context goes.
+
    ```markdown
    ## Implementation Plan
 
