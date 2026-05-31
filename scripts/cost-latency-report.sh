@@ -271,28 +271,58 @@ has_block() {
 # run of non-alphanumeric chars collapsed to a single underscore (e.g.
 # "claude-opus-4-8" → "CLAUDE_OPUS_4_8"). The script runs after pipeline.config
 # is sourced by the skill, so these are ambient env; in fixture/test mode they
-# are typically unset and the Opus DEFAULT list price applies per bucket:
-#   input 15, output 75, cache_creation 18.75, cache_read 1.50  (per 1M tokens).
+# are typically unset and the per-model baked DEFAULT list price applies per
+# bucket (per 1M tokens, #733):
+#   Opus 4.8:   input 15, output 75, cache_creation 18.75, cache_read 1.50
+#   Sonnet 4.6: input  3, output 15, cache_creation  3.75, cache_read 0.30
+#   Haiku 4.5:  input  1, output  5, cache_creation  1.25, cache_read 0.10
+# An UNKNOWN model falls back EXPLICITLY to the Opus rates — a conservative
+# upper-bound over-estimate (better than under-counting an unrecognized model).
 #
 # Cost(record) = Σ_bucket (tokens_bucket / 1e6 * rate_bucket), summed across
 # records for aggregates. Records with model=="" (or model absent) are UNPRICED
 # (#699 INLINE records): they are NOT priced, are EXCLUDED from the $ total, and
 # are COUNTED so coverage health is visible — never silently dropped.
 
-# Opus default rate per bucket (per 1M tokens).
-PRICE_DEFAULT_INPUT=15
-PRICE_DEFAULT_OUTPUT=75
-PRICE_DEFAULT_CACHE_CREATION=18.75
-PRICE_DEFAULT_CACHE_READ=1.50
-
 # price_model_normalize <model-string> — upcase + non-alnum runs → single '_'.
 price_model_normalize() {
   printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g'
 }
 
-# price_rate <normalized-model> <BUCKET> — echo the configured per-1M rate for
-# (model, bucket) via ${!var} indirection, falling back to the Opus default.
+# price_default <normalized-model> <BUCKET> — echo the baked per-1M list-price
+# default for (model, bucket). Known models price at their own published rates;
+# unknown models fall back EXPLICITLY to Opus (conservative upper bound).
 # BUCKET is one of INPUT|OUTPUT|CACHE_CREATION|CACHE_READ.
+price_default() {
+  local norm="$1" bucket="$2"
+  case "$norm" in
+    CLAUDE_OPUS_4_8)
+      case "$bucket" in
+        INPUT) printf '15' ;; OUTPUT) printf '75' ;;
+        CACHE_CREATION) printf '18.75' ;; CACHE_READ) printf '1.50' ;;
+      esac ;;
+    CLAUDE_SONNET_4_6)
+      case "$bucket" in
+        INPUT) printf '3' ;; OUTPUT) printf '15' ;;
+        CACHE_CREATION) printf '3.75' ;; CACHE_READ) printf '0.30' ;;
+      esac ;;
+    CLAUDE_HAIKU_4_5)
+      case "$bucket" in
+        INPUT) printf '1' ;; OUTPUT) printf '5' ;;
+        CACHE_CREATION) printf '1.25' ;; CACHE_READ) printf '0.10' ;;
+      esac ;;
+    *)
+      # conservative upper-bound fallback for unknown models: Opus rates.
+      case "$bucket" in
+        INPUT) printf '15' ;; OUTPUT) printf '75' ;;
+        CACHE_CREATION) printf '18.75' ;; CACHE_READ) printf '1.50' ;;
+      esac ;;
+  esac
+}
+
+# price_rate <normalized-model> <BUCKET> — echo the configured per-1M rate for
+# (model, bucket) via ${!var} indirection, falling back to the per-model baked
+# default. BUCKET is one of INPUT|OUTPUT|CACHE_CREATION|CACHE_READ.
 price_rate() {
   local norm="$1" bucket="$2"
   local var="PIPELINE_PRICE_${norm}_${bucket}"
@@ -300,8 +330,7 @@ price_rate() {
   if [ -n "$val" ]; then
     printf '%s' "$val"
   else
-    local def="PRICE_DEFAULT_${bucket}"
-    printf '%s' "${!def}"
+    price_default "$norm" "$bucket"
   fi
 }
 
