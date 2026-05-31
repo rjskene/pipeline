@@ -11,6 +11,7 @@ At session start, before running any of the steps below, source the project's `p
 
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+# First run on a fresh project? Run /pipeline:init to generate pipeline.config + seed labels.
 # Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
 [ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
   && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
