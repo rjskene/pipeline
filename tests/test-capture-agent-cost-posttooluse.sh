@@ -209,4 +209,87 @@ if rec["agent_type"] != "general-purpose":
     )
 PY
 
+# ---------------------------------------------------------------------------
+# Case 4b (#699): an inline PostToolUse(Agent) record inherits the SESSION model
+# from the orchestrator state sidecar (keyed by session_id).
+#
+# The PostToolUse(Agent) payload carries no `model` and no usable transcript
+# path (#691 WON'T-FIX). But the inline subagent inherits the session model,
+# which build_stop_record already resolves from the main-session transcript and
+# persists into .claude/logs/agent-cost-orchestrator-state.json keyed by the
+# SAME session_id the inline records carry. We pre-seed that sidecar (as if a
+# Stop already ran for session "s4") and assert the written inline record's
+# `model` is inherited and `agent_type` is the dispatched type.
+# ---------------------------------------------------------------------------
+PROJ4="$(make_project)"
+OUT4="$PROJ4/.claude/logs/agent-costs.jsonl"
+STATE4="$PROJ4/.claude/logs/agent-cost-orchestrator-state.json"
+
+cat > "$STATE4" <<'STATE'
+{"s4": {"model": "claude-opus-4-8", "input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}}
+STATE
+
+PAYLOAD_INLINE='{
+  "tool_name": "Agent",
+  "session_id": "s4",
+  "duration_ms": 500,
+  "tool_input": {
+    "description": "plan-issue #700",
+    "subagent_type": "general-purpose"
+  },
+  "tool_response": {
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 30,
+      "cache_creation_input_tokens": 40
+    },
+    "total_duration_ms": null
+  }
+}'
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ4" \
+  python3 "$HOOK" <<<"$PAYLOAD_INLINE" \
+  || fail "case4b: hook exited non-zero"
+
+[ -f "$OUT4" ] || fail "case4b: agent-costs.jsonl NOT written"
+
+python3 - "$OUT4" <<'PY' || fail "case4b: inline record did not inherit session model / agent_type"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readline())
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["agent_kind"] == "inline", "agent_kind==inline")
+expect(rec["model"] == "claude-opus-4-8", "model inherited from sidecar")
+expect(rec["agent_type"] == "general-purpose", "agent_type is dispatched type, not unknown")
+PY
+
+# ---------------------------------------------------------------------------
+# Case 4c (#699): fail-open — when NO orchestrator state sidecar exists, the
+# inline record's model stays "" (unchanged behavior). Guards against a hard
+# dependency on the sidecar: an inline record that fires before the session's
+# first Stop must not raise and must leave model empty.
+# ---------------------------------------------------------------------------
+PROJ4C="$(make_project)"
+OUT4C="$PROJ4C/.claude/logs/agent-costs.jsonl"
+# No state file pre-seeded.
+
+env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ4C" \
+  python3 "$HOOK" <<<"$PAYLOAD_INLINE" \
+  || fail "case4c: hook exited non-zero"
+
+[ -f "$OUT4C" ] || fail "case4c: agent-costs.jsonl NOT written"
+
+python3 - "$OUT4C" <<'PY' || fail "case4c: model not fail-open empty when no sidecar"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readline())
+if rec["model"] != "":
+    raise SystemExit("model=%r expected '' (fail-open when no sidecar)" % rec["model"])
+PY
+
 echo "PASS: test-capture-agent-cost-posttooluse.sh"

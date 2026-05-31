@@ -160,6 +160,21 @@ def _load_state(logs_dir):
     return data if isinstance(data, dict) else {}
 
 
+def _session_model(logs_dir, session_id):
+    """Return the resolved session model persisted by build_stop_record, or "".
+
+    Cross-source channel for inline forward records (#699): the orchestrator
+    Stop record stores the session model under state[session_id]["model"]; an
+    inline record carrying the same session_id reads it back here. Fail-open ""
+    on any miss (no sidecar, no entry, no model key, or a Stop hasn't fired for
+    this session yet)."""
+    state = _load_state(logs_dir)
+    entry = state.get(session_id)
+    if not isinstance(entry, dict):
+        return ""
+    return entry.get("model") or ""
+
+
 def _save_state(logs_dir, state):
     """Atomically persist the per-session cumulative state (tmp + os.replace).
 
@@ -224,6 +239,14 @@ def build_stop_record(payload, logs_dir):
         return None
 
     state[session_id] = {f: summ[f] for f in fields}
+    # Also persist the resolved session model so inline forward records (which
+    # carry no model of their own) can inherit it via _session_model, keyed by
+    # this same session_id (#699). Only store when truthy so a model-less
+    # transcript never clobbers a previously-known model. _load_state already
+    # passes this extra key through untouched and the delta math above reads
+    # only the four token fields by name, so this does not perturb token deltas.
+    if summ["model"]:
+        state[session_id]["model"] = summ["model"]
     _save_state(logs_dir, state)
 
     ts_start = summ["ts_start"]
@@ -316,8 +339,13 @@ def _normalize_payload(payload):
     return payload  # already flat top-level shape (SubagentStop / back-compat)
 
 
-def build_record(payload):
-    """Return a schema_version=1 forward record dict, or None to skip."""
+def build_record(payload, logs_dir=None):
+    """Return a schema_version=1 forward record dict, or None to skip.
+
+    `logs_dir` (when given) is the .claude/logs dir; it lets the inline `model`
+    fall back to the session model persisted in the orchestrator state sidecar
+    (#699). Defaults to None so direct-import callers (tests) keep the prior
+    no-sidecar behavior."""
     session_id = _first(payload, "session_id", "sessionId") or ""
     description = _first(payload, "description", "label", "agent_description") or ""
 
@@ -369,23 +397,21 @@ def build_record(payload):
         except (ValueError, AttributeError):
             pass
 
-    # model: WON'T-FIX for inline forward records — stays "" (deferred, #691
-    # Task 2). The PostToolUse(Agent) payload carries no `model` (top-level or
-    # under tool_response) and no `transcript_path`. The model lives only in the
-    # subagent transcript's `message.model`, reachable solely by reconstructing
-    # the /tmp/<agentId>.output transcript path. The host probe for #691 showed
-    # that reconstruction is not viable: the real runtime layout is
-    # /tmp/claude-<uid>/<PROJECT-PATH-slug>/<session_id>/tasks/<agentId>.output,
-    # NOT the /tmp/claude-<uid>/<sanitize_slug(description)>/... shape that
-    # log_subagent.py:83 builds (that jsonl_path_hint is itself stale). A correct
-    # reconstruction would require a new, undocumented cwd-slug derivation that is
-    # fragile (the tmp layout has already drifted once between CC versions),
-    # non-hermetic (uncoverable in CI — the /tmp transcript is not a tracked
-    # fixture), and would add symlink-resolving I/O to this fail-open hot path.
-    # So model stays "" for inline forward records; both downstream consumers
-    # already render "" as "--". The orchestrator (Stop) record still sources
-    # model from the main-session transcript via build_stop_record.
-    model = _first(payload, "model") or ""
+    # model: the PostToolUse(Agent) payload carries no `model` (top-level or
+    # under tool_response) and no usable `transcript_path`. #691 ruled out
+    # reconstructing the /tmp/<agentId>.output transcript as fragile (the tmp
+    # layout has drifted between CC versions), non-hermetic (the /tmp transcript
+    # is not a tracked fixture), and I/O-heavy on this fail-open hot path. Instead
+    # the inline subagent inherits the SESSION model, which build_stop_record
+    # already resolves from the main-session transcript and persists into the
+    # orchestrator state sidecar keyed by this SAME session_id (#699). Read it
+    # back from there: a hermetic, in-process cross-source channel with no /tmp
+    # I/O. Fail-open "" when no sidecar entry exists yet (an inline record that
+    # fires before the session's first Stop); both downstream consumers render ""
+    # as "--", and the record self-heals once a Stop populates the sidecar.
+    model = _first(payload, "model") or (
+        _session_model(logs_dir, session_id) if logs_dir else ""
+    )
     # agent_type: prefer the top-level subagent_type (set by _normalize_payload
     # for the Agent path), then fall through to the nested tool_input.subagent_type
     # for flat/back-compat payloads where build_record sees the raw shape. When
@@ -495,7 +521,7 @@ def main():
         payload = _normalize_payload(payload)
         if payload is None:
             return  # non-Agent PostToolUse: no subagent cost to capture
-        rec = build_record(payload)
+        rec = build_record(payload, logs_dir)
         if rec is None:
             return
         os.makedirs(logs_dir, exist_ok=True)
