@@ -43,6 +43,31 @@ Execution: collapsed single-pass inline `tdd-implementer` in the orchestrator se
 
 **Escalation backstop (down-route safety net).** The collapsed D lane has an escalation backstop: if the executor finds mid-run that the change exceeds D's envelope, it aborts up to a spawned PATH B run (see `execute-issue-plan`'s Collapsed inline D contract). That backstop is the precondition that makes a wrong B→D down-route (the #707 dependency) cheap and recoverable — mis-routing B work into D is reversed by escalation, not by shipping a too-large diff, so classification may lean D without fear.
 
+#### Blast-radius B→D routing (Affected areas heuristic)
+
+**The rule (Blast-radius B→D).** Parse the issue body's `## Affected areas` section and count non-test source files, excluding any path under `tests/` or `fixtures/`; when `type = fix(` AND that source-file count is `≤ 2` AND all files share a single top-level module AND the high-uncertainty carve-out below does NOT apply, the issue is a **PATH D** candidate (strong prior, medium confidence).
+
+**`fix(`-applicability.** The down-route applies only to `type == fix(` work. `feat(` issues are NEVER auto-down-routed by file count — feature work carries design/novelty uncertainty that file count does not proxy; a `feat(` with ≤ 2 files stays B.
+
+**High-uncertainty carve-out (the protected axis).** Even for a `fix(` at `≤ 2` files in a single module, the down-route is SUPPRESSED — the issue stays B — when the title, body, or labels carry high-uncertainty signals: any of `concurrency`, `race`, `lock`, `deadlock`, `security`, `auth`, `crypto`, `migration`, or `data-loss`, or a label such as `security` / `concurrency`. Blast radius (file count) and uncertainty are orthogonal: a one-file race-condition fix is tiny in blast radius but high in correctness risk, so the carve-out guards the uncertainty axis that the `fix(` gate alone would admit.
+
+**Not an override.** This is a strong prior feeding step 4's score table, never an override: the authoritative `<!-- pipeline:path=D -->` body marker (step 3c) and an explicit path label (step 4 row 1) both still win over the blast-radius prior. Mined LOW-uncertainty exemplars (these down-route — few-shot calibration beats a numeric threshold):
+
+| issue | Affected areas | source files (non-test) | uncertainty | route |
+|-------|----------------|-------------------------|-------------|-------|
+| #691 | 1 src + test | 1 | low | D |
+| #667 | 1 src + test | 1 | low | D |
+| #656 | script + config + test | 2 | low | D |
+| #698 | 3 src + tests | 3 | low | **B (boundary — >2 source files = legitimate B; rule self-calibrates)** |
+
+Worked high-uncertainty counter-example (the carve-out in action — small blast radius, but stays B):
+
+| shape | Affected areas | source files | signal | route |
+|-------|----------------|--------------|--------|-------|
+| race-condition `fix(` | 1 src + test (single module) | 1 | `race` / `concurrency` / `lock` | **B (carve-out: file count says D, but the high-uncertainty signal SUPPRESSES the down-route — must NOT be flagged D)** |
+
+**Acceptance.** The issue's acceptance gate — "no false-D on high-uncertainty issues (concurrency, security)" — is discharged by the carve-out, not by the `fix(`/`feat(` split: only LOW-uncertainty small fixes down-route, while high-uncertainty small `fix(` work is suppressed and held in B, so no high-uncertainty issue can be auto-D-routed by file count. The worked counter-example above is the asserted proof of the protected axis. This is a guidance-presence discharge, not an empirical sweep — classify-time data (no LOC, no diff) cannot support a runtime held-out harness, so the carve-out's signal vocabulary is the held-out protection, asserted statically in CI, and #700's escalation backstop remains the cost net for any residual mis-route. LOC is a retrospective validation signal only, never a classify-time input.
+
 ## How classification runs
 
 The skill receives an issue number as argument. Perform:
@@ -144,6 +169,7 @@ The skill receives an issue number as argument. Perform:
    - **Alternative-bullet rule.** Lists of alternatives — `options:`, `either`, `choose one`, `pick one` — count as one work item with design ambiguity, not N tasks; lean B (not C) on 3+ alternatives to one decision.
    - **Acceptance-criteria skip.** Bullets nested under `Acceptance`, `Acceptance Criteria`, or `Out of scope` are verification scope or non-goals — skip them; do not count them as work items.
    - **Generic-keyword tightening for D triggers.** `flip` and `swap` fire D only when they co-occur with a code-shaped token (file path with `/`+extension, function name in parens, or a backticked `code` token); bare "flip the wording" does NOT trigger D. `tweak`, `obvious`, `minimal` retain broad match.
+   - **Blast-radius B→D prior.** For `fix(` issues whose `## Affected areas` names ≤ 2 non-test source files in a single top-level module and that carry no high-uncertainty signal, lean D — see the `#### Blast-radius B→D routing` subsection under PATH D (`feat(` excluded; high-uncertainty `fix(` stays B).
 
 4a. **Read any ingested attachments.** Before composing, list and `Read` every file in `.claude/scratch/issue-<N>/` (populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b). If empty or absent, skip — this step does NOT re-fetch. Mandatory for issues labeled `bug` or `user-submitted`.
 
