@@ -173,6 +173,19 @@ fi
 mkdir -p "$WORKTREE_PATH/.claude"
 echo "$BASE_BRANCH" > "$WORKTREE_PATH/.claude/base-branch"
 echo "[6/6] Wrote base branch metadata: $BASE_BRANCH"
+# Ignore the untracked base-branch metadata so `gh` doesn't warn about an
+# uncommitted change at PR time (#716). `git rev-parse --git-path info/exclude`
+# from a linked worktree resolves to the COMMON-DIR exclude (.git/info/exclude),
+# which is the only exclude file git honors for ignore resolution — a per-worktree
+# .git/worktrees/<name>/info/exclude is NOT consulted (verified, git 2.43.0). The
+# ignore is therefore repo-wide; that is acceptable here because `.claude/base-branch`
+# is pipeline-managed runtime metadata that must never be committed in any worktree
+# or the main checkout. Idempotent.
+WT_EXCLUDE="$(git -C "$WORKTREE_PATH" rev-parse --git-path info/exclude)"
+case "$WT_EXCLUDE" in /*) : ;; *) WT_EXCLUDE="$WORKTREE_PATH/$WT_EXCLUDE" ;; esac
+mkdir -p "$(dirname "$WT_EXCLUDE")"
+grep -qxF '.claude/base-branch' "$WT_EXCLUDE" 2>/dev/null \
+  || echo '.claude/base-branch' >> "$WT_EXCLUDE"
 
 echo ""
 echo "=== Setup complete ==="
