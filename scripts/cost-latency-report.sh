@@ -787,6 +787,28 @@ emit_stage_structure_crosstab() {
     }'
 }
 
+# emit_path_size_table — per-issue "size" view that NETS OUT cache_read for ALL
+# rows (input+output+cache_creation), not just the orchestrator row (#668). The
+# default emit_path_table above keeps cache_read INCLUDED and is byte-unchanged
+# when --tokenomics is absent; this view is the cache-net companion. Size sums
+# ALL capture records for the issue (priced + unpriced) — it is a token count,
+# not a $ figure. Issues with no records render '--'.
+emit_path_size_table() {
+  echo ""
+  echo 'PER-ISSUE SIZE (net of cache_read) | PATH | size tokens'
+  while IFS=$'\t' read -r issue path loc ceremony tt dur ov prn; do
+    [ -z "$issue" ] && continue
+    local size
+    size="$(printf '%s' "$CAPTURE_JSON" | jq -r --arg n "$issue" '
+      [.[] | select((.issue|tostring) == $n)] as $recs
+      | if ($recs | length) == 0 then "--"
+        else ([$recs[] | (.tokens.input//0)+(.tokens.output//0)+(.tokens.cache_creation//0)] | add)
+        end' 2>/dev/null)"
+    [ -z "$size" ] && size="--"
+    printf 'issue #%-29s | %-4s | %s\n' "$issue" "$path" "$size"
+  done < "$ROWS_TSV"
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -800,4 +822,5 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   emit_stage_cost_table
   emit_structure_table
   emit_stage_structure_crosstab
+  emit_path_size_table
 fi

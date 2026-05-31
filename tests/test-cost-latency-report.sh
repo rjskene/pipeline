@@ -824,6 +824,70 @@ case "$XPLAN_ROW19" in
 esac
 rm -rf "$TMP19"
 
+# --- Scenario 20: --tokenomics net-out cache_read in per-PATH/issue size view (#721) ---
+# Currently only the orchestrator stage row nets out cache_read (#668). Under
+# --tokenomics, the per-issue "size" view reports tokens NET OF cache_read
+# (input+output+cache_creation) for ALL rows. The DEFAULT emit_path_table
+# (cache_read INCLUDED) stays byte-unchanged when --tokenomics is absent.
+# Fixture: issue 220 with a huge cache_read:
+#   input        1,000,000
+#   cache_read  50,000,000
+#   total       51,000,000
+#   net-of-cache size = 1,000,000 (cache_read EXCLUDED).
+inc_scenario "Scenario 20: --tokenomics net-out cache_read in per-PATH/issue size view"
+
+TMP20="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP20/" 2>/dev/null
+printf '%s\n' '[
+  {"number":120,"title":"feat: per-issue size view","additions":300,"deletions":100,"body":"Closes #220","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP20/prs.json"
+printf '%s\n' '{"number":120,"additions":300,"deletions":100,"comments":[]}' > "$TMP20/pr-120.json"
+printf '%s\n' '{"number":220,"labels":[],"comments":[]}' > "$TMP20/issue-220.json"
+{
+  echo '{"schema_version":1,"issue":"220","stage":"execute","session_id":"s20","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K220","tokens":{"input":1000000,"output":0,"cache_read":50000000,"cache_creation":0,"total":51000000},"duration_ms":1000}'
+} > "$TMP20/capture.jsonl"
+
+# Default path table (no --tokenomics) reports the all-in total 51000000 → byte-unchanged.
+DEF20="$(bash "$HELPER" --fixture "$TMP20" 2>/dev/null)"
+PATH_ROW20="$(printf '%s\n' "$DEF20" | grep -E '^B[[:space:]]*\|' | head -1)"
+case "$PATH_ROW20" in
+  *51000000*) pass_msg "default per-PATH table keeps all-in tokens (51000000, cache_read INCLUDED)" ;;
+  *) fail_msg "default per-PATH table should show all-in 51000000 (got: $PATH_ROW20)" ;;
+esac
+# Default output must NOT carry a net-of-cache size section.
+if printf '%s' "$DEF20" | grep -qiE 'SIZE.*net|net.*cache_read'; then
+  fail_msg "default output leaked a net-of-cache SIZE view"
+else
+  pass_msg "default output has no net-of-cache size view (gated behind --tokenomics)"
+fi
+
+TOK20="$(bash "$HELPER" --fixture "$TMP20" --tokenomics 2>/dev/null)"
+# --tokenomics adds a per-issue net-of-cache size view.
+SIZE_BLOCK20="$(printf '%s\n' "$TOK20" | awk '/SIZE \(net of cache_read\)|PER-ISSUE SIZE/{f=1} f')"
+if [ -n "$SIZE_BLOCK20" ]; then
+  pass_msg "--tokenomics renders a per-issue net-of-cache size view"
+else
+  fail_msg "--tokenomics missing per-issue net-of-cache size view"
+fi
+# Issue 220's net-of-cache size == 1000000 (cache_read excluded), NOT 51000000.
+ISSUE_ROW20="$(printf '%s\n' "$SIZE_BLOCK20" | grep -E '220' | head -1)"
+case "$ISSUE_ROW20" in
+  *1000000*) ;;
+  *) fail_msg "issue 220 net-of-cache size should contain 1000000 (got: $ISSUE_ROW20)" ;;
+esac
+# Assert it is EXACTLY the net value and NOT the all-in total.
+SIZE_VAL20="$(printf '%s' "$ISSUE_ROW20" | grep -oE '[0-9]+' | sort -rn | head -1)"
+if [ "$SIZE_VAL20" = "1000000" ]; then
+  pass_msg "issue 220 net-of-cache size == 1000000 (cache_read excluded)"
+else
+  fail_msg "issue 220 net-of-cache size should be 1000000, got $SIZE_VAL20 (row=$ISSUE_ROW20)"
+fi
+case "$ISSUE_ROW20" in
+  *51000000*) fail_msg "issue 220 size view leaked all-in cache_read total (51000000): $ISSUE_ROW20" ;;
+  *) pass_msg "issue 220 size view excludes all-in total (51000000 absent)" ;;
+esac
+rm -rf "$TMP20"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
