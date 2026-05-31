@@ -225,18 +225,33 @@ CASE_A="$ROOT/caseA"; mkdir -p "$CASE_A"
 PROJ_A="$CASE_A/proj"
 setup_proj "$PROJ_A"
 STUB_A=$(make_common_stubs "$PROJ_A" "$CASE_A")
-# gh stub: 911 labels return `pr-open` on every query (no manual-merge, not
-# merged); 912 returns empty. The evaluator predicate must NOT fire (no
-# manual-merge label, and `pr view` returns no Evaluation comment), so only
-# executor_finished_terminal can free 911.
-cat > "$STUB_A/gh" <<'EOF'
+# gh stub: 911 labels model a real executor transition for the #694 witness gate
+# — `in-progress` for poll 1's label queries, `pr-open` on every subsequent query
+# (no manual-merge, not merged); 912 returns empty. The runner makes exactly TWO
+# `gh issue view ... labels` queries per poll for an active worker
+# (evaluator_finished_terminal then executor_finished_terminal — each calls it
+# once; the executor predicate is evaluated a single time per poll), so the first
+# 2 queries == poll 1. Returning `in-progress` for n<2 keeps BOTH of poll 1's
+# queries off pr-open, which sets SAW_OFF_PR_OPEN (the worker is witnessed
+# transitioning in-progress -> pr-open). Polls 2-3 then drive the contiguous
+# pr-open grace window (grace=2) and the reap fires on poll 3. WHY this must be
+# non-pr-open on the first poll: under the #694 transition gate a worker that is
+# pr-open from poll 1 models an EVALUATOR and is never reaped; without modelling
+# the transition this executor-reap case would silently stop firing (false-green).
+# The evaluator predicate must NOT fire (no manual-merge label, and `pr view`
+# returns no Evaluation comment), so only executor_finished_terminal can free 911.
+cat > "$STUB_A/gh" <<EOF
 #!/bin/bash
-ARGS="$*"
-case "$1 $2" in
+ARGS="\$*"
+CNT_FILE="$CASE_A/poll-count-911"
+case "\$1 \$2" in
   "issue view")
-    issue="$3"
-    if [[ "$ARGS" == *labels* ]]; then
-      if [ "$issue" = "911" ]; then echo "pr-open"; else echo ""; fi
+    issue="\$3"
+    if [[ "\$ARGS" == *labels* ]]; then
+      if [ "\$issue" = "911" ]; then
+        n=\$(cat "\$CNT_FILE" 2>/dev/null || echo 0); echo \$((n+1)) > "\$CNT_FILE"
+        if [ "\$n" -lt 2 ]; then echo "in-progress"; else echo "pr-open"; fi
+      else echo ""; fi
     fi
     ;;
   "pr list") echo "null" ;;
@@ -445,17 +460,23 @@ CASE_F="$ROOT/caseF"; mkdir -p "$CASE_F"
 PROJ_F="$CASE_F/proj"
 setup_proj "$PROJ_F"
 STUB_F=$(make_common_stubs "$PROJ_F" "$CASE_F")
-# Reuse Case A's gh stub (911 always pr-open, no manual-merge, no Evaluation
-# comment) so only the executor reap path fires. Default skill (no --skill),
-# grace=2 so the reap fires within the timeout.
-cat > "$STUB_F/gh" <<'EOF'
+# Reuse Case A's transition-modeling gh stub (911 = `in-progress` for poll 1's
+# two label queries, `pr-open` thereafter, no manual-merge, no Evaluation comment)
+# so the #694 witness is set before the executor reap path fires. See Case A's
+# stub comment for why n<2 == poll 1. Default skill (no --skill), grace=2 so the
+# reap fires within the timeout.
+cat > "$STUB_F/gh" <<EOF
 #!/bin/bash
-ARGS="$*"
-case "$1 $2" in
+ARGS="\$*"
+CNT_FILE="$CASE_F/poll-count-911"
+case "\$1 \$2" in
   "issue view")
-    issue="$3"
-    if [[ "$ARGS" == *labels* ]]; then
-      if [ "$issue" = "911" ]; then echo "pr-open"; else echo ""; fi
+    issue="\$3"
+    if [[ "\$ARGS" == *labels* ]]; then
+      if [ "\$issue" = "911" ]; then
+        n=\$(cat "\$CNT_FILE" 2>/dev/null || echo 0); echo \$((n+1)) > "\$CNT_FILE"
+        if [ "\$n" -lt 2 ]; then echo "in-progress"; else echo "pr-open"; fi
+      else echo ""; fi
     fi
     ;;
   "pr list") echo "null" ;;

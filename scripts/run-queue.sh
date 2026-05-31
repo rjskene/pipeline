@@ -280,6 +280,7 @@ declare -A CPU_IDLE_POLLS=()  # issue -> consecutive low-CPU poll count
 declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this window
 declare -A PANE_FINGERPRINT=()  # issue -> last-seen tmux-pane fingerprint (forward-progress baseline, #641)
 declare -A PR_OPEN_POLLS=()   # issue -> consecutive polls observed at pr-open while alive (issue #636)
+declare -A SAW_OFF_PR_OPEN=()  # issue -> 1 once observed NOT at pr-open since launch (transition witness, issue #694)
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
@@ -494,6 +495,7 @@ launch_agent() {
 
   ACTIVE[$issue]="$wt_path"
   RESULTS[$issue]="running"
+  unset 'SAW_OFF_PR_OPEN['"$issue"']'   # fresh worker: not yet witnessed off pr-open (issue #694)
   BUCKET_ACTIVE[$mode]=$(( ${BUCKET_ACTIVE[$mode]:-0} + 1 ))
 }
 
@@ -805,14 +807,27 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       _finished_mode="${ISSUE_MODE[$issue]:-bare}"
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (reason: ${_block_reason}, evaluator terminal, window force-closed)"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} reason=${_block_reason} mode=${_finished_mode}"
       fill_slots
       continue
     fi
 
+    # Evaluate the executor-terminal predicate ONCE per poll and reuse the result
+    # for both the reap gate and the transition witness (issue #694). A second
+    # `executor_finished_terminal` call in the else-branch would re-query gh in the
+    # same poll — wasteful on the common off-pr-open poll (#630) and racy (the two
+    # snapshots could disagree). In a non-eval-mode queue, `_exec_terminal=1` is
+    # exactly equivalent to "executor_finished_terminal returned non-terminal" (the
+    # && short-circuit only leaves the flag at 1 when the predicate was evaluated
+    # and failed), so the else-branch can witness the off-pr-open poll without a
+    # re-check.
+    _exec_terminal=1
     if [ "$QUEUE_SKILL" != "evaluate-issue-pr" ] && executor_finished_terminal "$issue"; then
+      _exec_terminal=0
+    fi
+    if [ "$_exec_terminal" = 0 ]; then
       # Executor lingering past pr-open (issue #636): PR opened + pr-open applied,
       # but the spawned claude child has not exited, holding the worktree + slot.
       # Require the pr-open observation to PERSIST across a grace window before
@@ -820,27 +835,45 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       # blip flips the predicate to non-terminal, resetting the counter. Checked
       # AFTER evaluator_finished_terminal so a manual-merge/block wedge (which also
       # carries pr-open) records manual-merge-required, not a bare pr-open.
-      PR_OPEN_POLLS[$issue]=$(( ${PR_OPEN_POLLS[$issue]:-0} + 1 ))
-      if [ "${PR_OPEN_POLLS[$issue]}" -ge "$PIPELINE_EXECUTOR_REAP_GRACE_POLLS" ]; then
-        reap_worker_window "$issue"
-        outcome="pr-open"
-        RESULTS[$issue]="$outcome"
-        _finished_mode="${ISSUE_MODE[$issue]:-bare}"
-        BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
-        unset 'ACTIVE['"$issue"']'
-        unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PR_OPEN_POLLS['"$issue"']'
-        log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (executor terminal, reaped after ${PIPELINE_EXECUTOR_REAP_GRACE_POLLS}-poll grace, window force-closed)"
-        log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
-        fill_slots
-        continue
+      # Transition gate (issue #694): only count this as a FINISHED executor if the
+      # worker was observed OFF pr-open at least once since launch (it TRANSITIONED
+      # in-progress -> pr-open under our watch). An evaluator's issue is pr-open from
+      # poll 1 — its INPUT state — so SAW_OFF_PR_OPEN is never set and PR_OPEN_POLLS
+      # never advances, regardless of the queue's --skill flag. The #666 queue-level
+      # QUEUE_SKILL guard above is retained as defense-in-depth.
+      if [ "${SAW_OFF_PR_OPEN[$issue]:-0}" = 1 ]; then
+        PR_OPEN_POLLS[$issue]=$(( ${PR_OPEN_POLLS[$issue]:-0} + 1 ))
+        if [ "${PR_OPEN_POLLS[$issue]}" -ge "$PIPELINE_EXECUTOR_REAP_GRACE_POLLS" ]; then
+          reap_worker_window "$issue"
+          outcome="pr-open"
+          RESULTS[$issue]="$outcome"
+          _finished_mode="${ISSUE_MODE[$issue]:-bare}"
+          BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
+          unset 'ACTIVE['"$issue"']'
+          unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PR_OPEN_POLLS['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']'
+          log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (executor terminal, reaped after ${PIPELINE_EXECUTOR_REAP_GRACE_POLLS}-poll grace, window force-closed)"
+          log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
+          fill_slots
+          continue
+        fi
       fi
     else
-      # Predicate non-terminal this poll — OR an eval-mode queue, where `pr-open`
-      # is the evaluator's INPUT state, not its finish line (issue #666). Reset
-      # the grace counter so the reap only fires on a CONTIGUOUS pr-open
-      # observation window (fail-closed). The evaluator's correct terminal signal
-      # (evaluator_finished_terminal, checked above) is unaffected.
+      # Predicate non-terminal this poll (issue NOT at pr-open / merged / gh error) —
+      # OR an eval-mode queue, where `pr-open` is the evaluator's INPUT state, not its
+      # finish line (issue #666). Reset the grace counter so the reap only fires on a
+      # CONTIGUOUS pr-open observation window (fail-closed). The evaluator's correct
+      # terminal signal (evaluator_finished_terminal, checked above) is unaffected.
+      # If we are in a non-eval-mode queue, _exec_terminal==1 here means the executor
+      # predicate was evaluated and returned non-terminal — i.e. the worker is
+      # genuinely OFF pr-open (or a fail-closed gh blip). Record the transition
+      # witness so a later pr-open snapshot is recognized as a real transition
+      # (issue #694). A transient gh blip harmlessly sets the witness, but the reap
+      # still requires a CONTIGUOUS pr-open grace window via PR_OPEN_POLLS, so a blip
+      # alone can never cause a spurious reap.
       PR_OPEN_POLLS[$issue]=0
+      if [ "$QUEUE_SKILL" != "evaluate-issue-pr" ]; then
+        SAW_OFF_PR_OPEN[$issue]=1
+      fi
     fi
 
     if ! is_agent_running "$issue"; then
@@ -852,7 +885,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       unset 'ACTIVE['"$issue"']'
       # Clear stall-tracking state so a re-used issue number can't inherit a
       # stale counter/latch (issue #437) or progress baseline (issue #641).
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
 
