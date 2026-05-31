@@ -287,6 +287,23 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
 ' 2>/dev/null)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 
+# SECOND dedup pass: collapse records sharing the same (session_id, issue, stage)
+# to the one with MAX tokens.total. This runs AFTER the record_key pass and
+# folds the cases record_key alone cannot: retroactive-inline lower-bounds,
+# duplicate captures, and N orchestrator cumulative snapshots of the SAME
+# session (each a later, larger cumulative total) down to the final cumulative
+# (max-total) figure. Records MISSING session_id (or null) are passed through
+# UNTOUCHED — each is its own group (NOT collapsed by (null,issue,stage)),
+# mirroring how the record_key pass partitions keyless records. DISTINCT
+# session_ids for the same (issue,stage) are a genuine multi-session re-run and
+# are preserved by group_by.
+CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
+  ([ .[] | select(has("session_id") and .session_id != null) ]
+     | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
+  + [ .[] | select((has("session_id") | not) or .session_id == null) ]
+' 2>/dev/null)"
+[ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+
 # Partition raw list into release PRs (excluded) and eligible feature PRs.
 RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
 PR_LIST_JSON="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ | not)]" 2>/dev/null || echo '[]')"

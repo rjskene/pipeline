@@ -388,8 +388,11 @@ inc_scenario "Scenario 12: orchestrator records grouped by session_id (per-sessi
 TMP12="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP12/" 2>/dev/null
 # THREE post-fix orchestrator records (duration_ms:null) across TWO sessions:
-#   sess-A: 1000 + 3000 = 4000   sess-B: 2000
-# → N must be 2 (two session groups); median of per-session SUMS (4000, 2000) = 3000.
+#   sess-A: snapshots 1000 + 3000   sess-B: 2000
+# The (session_id,issue,stage) max-total dedup (#721) collapses sess-A's two
+# cumulative snapshots to its FINAL cumulative (max-total 3000), so:
+#   sess-A → 3000   sess-B → 2000
+# → N must be 2 (two session groups); median of per-session totals (3000, 2000) = 2500.
 #   NOT N=1 and NOT the grand sum 6000.
 { cat "$FIXTURE_DIR/capture.jsonl";
   echo '{"schema_version":1,"issue":"","stage":"orchestrator","session_id":"sess-A","agent_kind":"main","agent_type":"orchestrator","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":1000},"duration_ms":null}';
@@ -407,12 +410,12 @@ else
   fail_msg "orchestrator row N should be 2 (per-session), got N=$ORCH_N12 (row: $ORCH_ROW12)"
 fi
 
-# Median tokens cell == median of per-session sums (4000, 2000) == 3000.
+# Median tokens cell == median of per-session max-totals (3000, 2000) == 2500.
 ORCH_TOK12="$(printf '%s' "$ORCH_ROW12" | awk -F'|' '{gsub(/ /,"",$3); print $3}')"
-if [ "$ORCH_TOK12" = "3000" ]; then
-  pass_msg "orchestrator median tokens == 3000 (median of per-session sums)"
+if [ "$ORCH_TOK12" = "2500" ]; then
+  pass_msg "orchestrator median tokens == 2500 (median of per-session max-totals, #721)"
 else
-  fail_msg "orchestrator median tokens should be 3000 (median of per-session sums), got $ORCH_TOK12 (row: $ORCH_ROW12)"
+  fail_msg "orchestrator median tokens should be 2500 (median of per-session max-totals), got $ORCH_TOK12 (row: $ORCH_ROW12)"
 fi
 
 # Must NOT be the grand all-time sum.
@@ -491,6 +494,57 @@ case "$PLAN_ROW14" in
   *56349.5*) fail_msg "per-stage 'plan' median leaked naive un-deduped 202 sum (56349.5): $PLAN_ROW14" ;;
   *) pass_msg "per-stage 'plan' median excludes naive un-deduped 202 sum (56349.5 absent)" ;;
 esac
+
+# --- Scenario 15: (session,issue,stage) max-total dedup + multi-session re-run preserved (#721) ---
+# A SECOND dedup pass (after the record_key pass) collapses records sharing the
+# same (session_id, issue, stage) to the one with MAX tokens.total — folding
+# retroactive-inline lower-bounds, duplicate captures, and N cumulative
+# orchestrator snapshots of one session down to the final cumulative figure.
+# DISTINCT session_ids for the same (issue,stage) are a genuine multi-session
+# re-run and MUST be preserved.
+inc_scenario "Scenario 15: (session,issue,stage) max-total dedup + multi-session re-run preserved"
+
+TMP15="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP15/" 2>/dev/null
+# Add an extra eligible feature PR #105 → fresh issue #205 (not 202/402/203/204/999).
+printf '%s\n' '[
+  {"number":102,"title":"feat(api): add endpoint","additions":120,"deletions":40,"body":"Closes #202","mergedAt":"2026-05-11T10:00:00Z","labels":[]},
+  {"number":302,"title":"feat: tiny tweak","additions":5,"deletions":3,"body":"Closes #402","mergedAt":"2026-05-14T10:00:00Z","labels":[]},
+  {"number":103,"title":"refactor(core): split modules","additions":500,"deletions":300,"body":"Closes #203","mergedAt":"2026-05-12T10:00:00Z","labels":[{"name":"multi-task"}]},
+  {"number":104,"title":"fix(util): tiny bug","additions":2,"deletions":1,"body":"Closes #204","mergedAt":"2026-05-13T10:00:00Z","labels":[{"name":"quick-fix"}]},
+  {"number":105,"title":"feat: fresh issue for dedup test","additions":300,"deletions":100,"body":"Closes #205","mergedAt":"2026-05-13T12:00:00Z","labels":[]},
+  {"number":901,"title":"chore(main): release 0.99.0","additions":50,"deletions":10,"body":"","mergedAt":"2026-05-15T10:00:00Z","labels":[{"name":"autorelease: tagged"}]}
+]' > "$TMP15/prs.json"
+printf '%s\n' '{"number":105,"additions":300,"deletions":100,"comments":[]}' > "$TMP15/pr-105.json"
+printf '%s\n' '{"number":205,"labels":[],"comments":[]}' > "$TMP15/issue-205.json"
+# Custom capture for issue 205:
+#   (sX, 205, execute): two records, divergent tokens.total (1000, 5000), DIFFERENT
+#     record_key → record_key pass keeps BOTH; new (session,issue,stage) max-total
+#     pass collapses to 5000.
+#   (sA, 205, plan)=100 and (sB, 205, plan)=200: same (issue,stage) but DISTINCT
+#     session_ids → genuine re-run, both PRESERVED.
+# Deduped per-issue 205 total = 5000 + 100 + 200 = 5300 (NOT the naive 6300).
+{
+  echo '{"schema_version":1,"issue":"205","stage":"execute","session_id":"sX","agent_kind":"sub","record_key":"K205A","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":1000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"205","stage":"execute","session_id":"sX","agent_kind":"sub","record_key":"K205B","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":5000},"duration_ms":2000}'
+  echo '{"schema_version":1,"issue":"205","stage":"plan","session_id":"sA","agent_kind":"sub","record_key":"K205PA","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":100},"duration_ms":500}'
+  echo '{"schema_version":1,"issue":"205","stage":"plan","session_id":"sB","agent_kind":"sub","record_key":"K205PB","tokens":{"input":0,"output":0,"cache_read":0,"cache_creation":0,"total":200},"duration_ms":600}'
+} > "$TMP15/capture.jsonl"
+
+ROWS15="$(bash "$HELPER" --fixture "$TMP15" --emit-rows-json 2>/dev/null)"
+TT15="$(printf '%s' "$ROWS15" | jq -r '.[] | select(.issue==205) | .tokens_total' 2>/dev/null)"
+if [ "$TT15" = "5300" ]; then
+  pass_msg "issue 205 tokens_total deduped on (session,issue,stage) max-total (5300), multi-session plan preserved"
+else
+  fail_msg "issue 205 tokens_total should be 5300 (5000 max-total + 100 + 200), got $TT15"
+fi
+# The naive (no session-stage dedup) sum would keep the shadowed 1000 → 6300.
+if [ "$TT15" = "6300" ]; then
+  fail_msg "issue 205 tokens_total leaked shadowed lower-bound record (naive 6300)"
+else
+  pass_msg "issue 205 tokens_total excludes shadowed lower-bound (naive 6300 rejected)"
+fi
+rm -rf "$TMP15"
 
 echo ""
 echo "== RESULTS =="
