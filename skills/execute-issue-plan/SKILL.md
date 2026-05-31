@@ -36,7 +36,7 @@ Every step below behaves identically across modes — only the working-directory
 
 ### Collapsed inline D contract
 
-When dispatched as the collapsed PATH D agent (mode 3), classify + plan happened in the SAME carried-forward context — the planner context is already present in-session. So this agent **carries the classify+plan context forward** and **does NOT re-read the plan comment** from GitHub: there is no separate plan-comment fetch (step 1's `gh issue view ... ## Implementation Plan` read is skipped on PATH D). Instead the collapsed agent emits the two stage records as inline side-effect **checkpoints**, byte-shaped exactly as the standalone classify/plan stages would have posted them:
+When dispatched as the collapsed PATH D agent (mode 3), this agent is the PRODUCER of the classify + plan stages, not a downstream consumer of upstream-posted comments. It RUNS classify and plan inline FIRST — emitting the two stage records as inline side-effect checkpoints (see below) — and THEN carries that context straight into execution. So this agent **carries the classify+plan context forward** within its own single session and **does NOT re-read the plan comment** from GitHub: there is no separate plan-comment fetch (step 1's `gh issue view ... ## Implementation Plan` read is skipped on PATH D, and because the plan is already in-context the STOP-on-empty guard never fires). The two inline side-effect **checkpoints**, byte-shaped exactly as the standalone classify/plan stages would have posted them, are:
 
 - a `## Classification` checkpoint carrying the recommended **path label** (`quick-fix` / PATH D);
 - a `## Implementation Plan` checkpoint with the `plan-pending` marker.
