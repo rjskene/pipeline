@@ -39,6 +39,7 @@ TOKENOMICS=0
 OVER_SERVED_LOC=20
 TOPN=5
 CAPTURE_LOG=""
+SKIPPED_COUNT=0
 
 print_usage() {
   cat <<'USAGE'
@@ -76,6 +77,10 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                        (default: 5).
   --capture-log PATH   Override the live capture JSONL path (default
                        .claude/logs/agent-costs.jsonl). Ignored in fixture mode.
+  --skipped-count N    headless_skipped_missing_transcript count (default 0),
+                       captured to STDERR by capture-agent-costs.sh and plumbed
+                       in by the skill; surfaced in the --tokenomics
+                       coverage-health block.
   --help               Print this banner and exit 0.
 USAGE
 }
@@ -97,6 +102,8 @@ while [ $# -gt 0 ]; do
     --top-n=*)            TOPN="${1#--top-n=}"; shift ;;
     --capture-log)        CAPTURE_LOG="${2:-}"; shift 2 ;;
     --capture-log=*)      CAPTURE_LOG="${1#--capture-log=}"; shift ;;
+    --skipped-count)      SKIPPED_COUNT="${2:-0}"; shift 2 ;;
+    --skipped-count=*)    SKIPPED_COUNT="${1#--skipped-count=}"; shift ;;
     *)
       echo "cost-latency-report: ERROR: unknown arg: $1" >&2
       exit 1
@@ -889,6 +896,40 @@ emit_breakeven_table() {
     }'
 }
 
+# emit_coverage_health — a single coverage-health block:
+#   - execute-stage record N (over the deduped capture stream);
+#   - headless_skipped_missing_transcript (from --skipped-count, default 0);
+#   - % feature PRs joined = joined ÷ eligible, where eligible == PR_COUNT and
+#     joined == PR_COUNT - SKIPPED_NO_LINK (PRs with a Closes/Fixes/Resolves link);
+#   - model-attribution coverage % = priced records ÷ total records (a priced
+#     record has a non-empty model; exposes #699 empty-model INLINE records).
+emit_coverage_health() {
+  echo ""
+  echo "COVERAGE HEALTH:"
+  local exec_n total_n priced_n
+  exec_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select(.stage == "execute")] | length' 2>/dev/null)"
+  total_n="$(printf '%s' "$CAPTURE_JSON" | jq -r 'length' 2>/dev/null)"
+  priced_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select((.model // "") != "")] | length' 2>/dev/null)"
+  [ -z "$exec_n" ] && exec_n=0
+  [ -z "$total_n" ] && total_n=0
+  [ -z "$priced_n" ] && priced_n=0
+
+  local eligible joined
+  eligible="$PR_COUNT"
+  joined=$((PR_COUNT - SKIPPED_NO_LINK))
+
+  printf 'execute-stage records: %s\n' "$exec_n"
+  printf 'headless skipped (missing transcript): %s\n' "$SKIPPED_COUNT"
+  awk -v j="$joined" -v e="$eligible" 'BEGIN {
+    pct = (e > 0 ? j/e*100 : 0);
+    printf "feature PRs joined: %d/%d (%.1f%%)\n", j, e, pct;
+  }'
+  awk -v p="$priced_n" -v t="$total_n" 'BEGIN {
+    pct = (t > 0 ? p/t*100 : 0);
+    printf "model-attribution coverage: %d/%d (%.1f%%)\n", p, t, pct;
+  }'
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -904,4 +945,5 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   emit_stage_structure_crosstab
   emit_path_size_table
   emit_breakeven_table
+  emit_coverage_health
 fi

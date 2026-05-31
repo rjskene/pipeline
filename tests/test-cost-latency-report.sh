@@ -956,6 +956,88 @@ case "$BE_TOTAL21" in
 esac
 rm -rf "$TMP21"
 
+# --- Scenario 22: --tokenomics coverage-health block (#721) ---
+# A single block reporting:
+#   - execute-stage record N;
+#   - headless_skipped_missing_transcript count (passed via --skipped-count N,
+#     produced to STDERR by scripts/capture-agent-costs.sh; the skill plumbs it);
+#   - % feature PRs joined = joined ÷ eligible (reuse SKIPPED_NO_LINK + PR_COUNT);
+#   - model-attribution coverage % = priced records ÷ total records (exposes #699).
+# Fixture: ONE eligible feature PR #122 → issue 222 with TWO capture records:
+#   execute / priced (opus)   — counts toward execute-N + priced.
+#   plan    / unpriced (model:"") — drags model-attribution to 50%.
+# joined = 1, eligible = 1 → 100%. priced 1 / total 2 → 50.0%. --skipped-count 3.
+inc_scenario "Scenario 22: --tokenomics coverage-health block"
+
+TMP22="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP22/" 2>/dev/null
+printf '%s\n' '[
+  {"number":122,"title":"feat: coverage issue","additions":300,"deletions":100,"body":"Closes #222","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP22/prs.json"
+printf '%s\n' '{"number":122,"additions":300,"deletions":100,"comments":[]}' > "$TMP22/pr-122.json"
+printf '%s\n' '{"number":222,"labels":[],"comments":[]}' > "$TMP22/issue-222.json"
+{
+  echo '{"schema_version":1,"issue":"222","stage":"execute","session_id":"s22a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K222E","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"222","stage":"plan","session_id":"s22b","model":"","agent_kind":"inline","record_key":"K222P","tokens":{"input":500000,"output":0,"cache_read":0,"cache_creation":0,"total":500000},"duration_ms":900}'
+} > "$TMP22/capture.jsonl"
+
+# Default (no --tokenomics): NO coverage-health block.
+DEF22="$(bash "$HELPER" --fixture "$TMP22" 2>/dev/null)"
+if printf '%s' "$DEF22" | grep -qi 'COVERAGE'; then
+  fail_msg "default output (no --tokenomics) leaked a COVERAGE block"
+else
+  pass_msg "default output has no coverage-health block (gated behind --tokenomics)"
+fi
+
+TOK22="$(bash "$HELPER" --fixture "$TMP22" --tokenomics --skipped-count 3 2>/dev/null)"
+COV_BLOCK22="$(printf '%s\n' "$TOK22" | awk '/COVERAGE/{f=1} f')"
+if [ -n "$COV_BLOCK22" ]; then
+  pass_msg "--tokenomics renders a coverage-health block"
+else
+  fail_msg "--tokenomics missing coverage-health block header"
+fi
+
+# execute-stage record N == 1.
+case "$COV_BLOCK22" in
+  *"execute"*1*) pass_msg "coverage block surfaces execute-stage record N (1)" ;;
+  *) fail_msg "coverage block should surface execute-stage N==1 (got: $COV_BLOCK22)" ;;
+esac
+
+# headless_skipped_missing_transcript == 3 (from --skipped-count).
+case "$COV_BLOCK22" in
+  *3*) pass_msg "coverage block surfaces headless_skipped_missing_transcript (3)" ;;
+  *) fail_msg "coverage block should surface skipped count 3 (got: $COV_BLOCK22)" ;;
+esac
+if printf '%s' "$COV_BLOCK22" | grep -qiE 'skip'; then
+  pass_msg "coverage block labels the skipped-transcript count"
+else
+  fail_msg "coverage block missing a skipped-transcript label (got: $COV_BLOCK22)"
+fi
+
+# % feature PRs joined == 100.0% (joined 1 / eligible 1).
+if printf '%s' "$COV_BLOCK22" | grep -qiE 'join'; then
+  pass_msg "coverage block reports % feature PRs joined"
+else
+  fail_msg "coverage block missing % feature PRs joined (got: $COV_BLOCK22)"
+fi
+case "$COV_BLOCK22" in
+  *100*) pass_msg "coverage block joined % == 100 (1/1)" ;;
+  *) fail_msg "coverage block joined % should be 100 (got: $COV_BLOCK22)" ;;
+esac
+
+# model-attribution coverage % == 50.0% (priced 1 / total 2).
+if printf '%s' "$COV_BLOCK22" | grep -qiE 'attribution|model'; then
+  pass_msg "coverage block reports model-attribution coverage"
+else
+  fail_msg "coverage block missing model-attribution coverage (got: $COV_BLOCK22)"
+fi
+MODELLINE22="$(printf '%s\n' "$COV_BLOCK22" | grep -iE 'attribution|model' | head -1)"
+case "$MODELLINE22" in
+  *50*) pass_msg "model-attribution coverage == 50% (priced 1 / total 2, #699)" ;;
+  *) fail_msg "model-attribution coverage should be 50% (got: $MODELLINE22)" ;;
+esac
+rm -rf "$TMP22"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
