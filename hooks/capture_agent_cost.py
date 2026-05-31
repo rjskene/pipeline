@@ -22,6 +22,13 @@ scripts/capture-agent-costs.sh. A forward record and a retroactive record for
 the same agent differ ONLY in source (forward vs retroactive) and
 usage_complete (forward true, retroactive-inline false).
 
+record_key is a LOGICAL idempotency key -- the same key denotes the same logical
+agent finish (last-write-wins). This producer dedups on append, but a key may
+legitimately RECUR across appends with revised token totals, so any consumer
+that SUMS token/duration fields MUST first dedup on record_key
+(group_by(.record_key) | last) -- see #698 and scripts/cost-latency-report.sh --
+or recurring keys are double-counted.
+
 Fail-open: the entire body is wrapped in try/except; exceptions are logged to
 .claude/logs/agent-cost-hook-errors.log and the hook ALWAYS exits 0 so it can
 never block agent completion.

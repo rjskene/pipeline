@@ -37,6 +37,14 @@
 #     usage_complete: true (headless) | false (inline lower-bound)
 #   }
 #   tokens.total = input + output + cache_read + cache_creation.
+#
+#   record_key is a LOGICAL idempotency key — the same key denotes the same
+#   logical agent finish (last-write-wins). Producers dedup on append (the
+#   `seen` set below), but a key may legitimately RECUR across appends with
+#   revised token totals (e.g. an inline lower-bound later superseded by a
+#   complete sum). Therefore any consumer that SUMS token/duration fields MUST
+#   first dedup on record_key (group_by(.record_key) | last) — see #698 and
+#   scripts/cost-latency-report.sh — or recurring keys are double-counted.
 # ===========================================================================
 set -uo pipefail
 
