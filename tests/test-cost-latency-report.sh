@@ -693,6 +693,70 @@ else
 fi
 rm -rf "$TMP17"
 
+# --- Scenario 18: --tokenomics per-stage cost table (size nets out cache_read) (#721) ---
+# Per-stage table with priced $ + cost share. The TOKEN column is a SIZE view:
+# tokens = input+output+cache_creation (EXCLUDING cache_read), so execute does
+# not read as ~90% cache; but the $ column uses ALL FOUR buckets.
+# Fixture: one 'execute' priced opus record with a huge cache_read:
+#   input          1,000,000   → $15.00
+#   cache_read   100,000,000   → $150.00
+#   output 0, cache_creation 0
+#   size tokens = 1,000,000 (cache_read EXCLUDED); $ = 165.00 (cache_read INCLUDED).
+inc_scenario "Scenario 18: --tokenomics per-stage cost table (size nets out cache_read)"
+
+TMP18="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP18/" 2>/dev/null
+printf '%s\n' '[
+  {"number":118,"title":"feat: stage cost table issue","additions":300,"deletions":100,"body":"Closes #218","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP18/prs.json"
+printf '%s\n' '{"number":118,"additions":300,"deletions":100,"comments":[]}' > "$TMP18/pr-118.json"
+printf '%s\n' '{"number":218,"labels":[],"comments":[]}' > "$TMP18/issue-218.json"
+{
+  echo '{"schema_version":1,"issue":"218","stage":"execute","session_id":"s18","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K218","tokens":{"input":1000000,"output":0,"cache_read":100000000,"cache_creation":0,"total":101000000},"duration_ms":1000}'
+} > "$TMP18/capture.jsonl"
+
+# Default (no --tokenomics): NO per-stage COST table (the legacy 'STAGE | N' table
+# is unaffected; this is a new header).
+DEF18="$(bash "$HELPER" --fixture "$TMP18" 2>/dev/null)"
+if printf '%s' "$DEF18" | grep -qiE 'STAGE COST'; then
+  fail_msg "default output leaked a STAGE COST table"
+else
+  pass_msg "default output has no per-stage cost table (gated behind --tokenomics)"
+fi
+
+TOK18="$(bash "$HELPER" --fixture "$TMP18" --tokenomics 2>/dev/null)"
+if printf '%s' "$TOK18" | grep -qiE 'STAGE COST'; then
+  pass_msg "--tokenomics renders a per-stage cost table"
+else
+  fail_msg "--tokenomics missing per-stage cost table header"
+fi
+
+# Locate the per-stage COST table's execute row (after the STAGE COST header to
+# avoid colliding with the legacy 'execute' median-token row).
+STAGECOST_BLOCK18="$(printf '%s\n' "$TOK18" | awk '/STAGE COST/{f=1} f')"
+EXEC_ROW18="$(printf '%s\n' "$STAGECOST_BLOCK18" | grep -E '^execute[[:space:]]*\|' | head -1)"
+
+# Size-view tokens column == 1000000 (cache_read EXCLUDED), NOT 101000000.
+EXEC_SIZE18="$(printf '%s' "$EXEC_ROW18" | awk -F'|' '{gsub(/[ ]/,"",$2); print $2}')"
+if [ "$EXEC_SIZE18" = "1000000" ]; then
+  pass_msg "execute size-view tokens == 1000000 (cache_read excluded)"
+else
+  fail_msg "execute size-view tokens should be 1000000 (nets out cache_read), got $EXEC_SIZE18 (row=$EXEC_ROW18)"
+fi
+case "$EXEC_ROW18" in
+  *101000000*) fail_msg "execute size-view tokens leaked cache_read (101000000): $EXEC_ROW18" ;;
+  *) pass_msg "execute size-view tokens excludes cache_read total (101000000 absent)" ;;
+esac
+
+# $ column INCLUDES cache_read cost → 165.00 (15 input + 150 cache_read).
+EXEC_USD18="$(printf '%s' "$EXEC_ROW18" | awk -F'|' '{gsub(/[ $]/,"",$3); print $3}')"
+if [ "$EXEC_USD18" = "165.00" ]; then
+  pass_msg "execute \$ == 165.00 (cache_read cost INCLUDED)"
+else
+  fail_msg "execute \$ should be 165.00 (15 + 150 cache_read), got $EXEC_USD18 (row=$EXEC_ROW18)"
+fi
+rm -rf "$TMP18"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

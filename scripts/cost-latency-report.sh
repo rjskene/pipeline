@@ -723,6 +723,31 @@ emit_bucket_table() {
     }'
 }
 
+# emit_stage_cost_table — per stage (the 6 canonical stages): priced $ + cost
+# share. The TOKEN column is a SIZE view that NETS OUT cache_read
+# (tokens = input+output+cache_creation), so a cache-heavy stage like execute
+# does not read as ~90% cache; the $ column uses ALL FOUR buckets (cache_read
+# cost INCLUDED). Stages with no priced records render 0 / 0.00.
+emit_stage_cost_table() {
+  echo ""
+  echo 'STAGE COST | size tokens  | $        | cost%'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      s=$1;
+      sz[s] += $3+$4+$5;                 # size view: input+output+cache_creation
+      cost[s] += $7+$8+$9+$10;           # $ over all four buckets
+      tcost += $7+$8+$9+$10;
+    }
+    END {
+      m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
+      for (k=1; k<=m; k++) {
+        s = order[k];
+        cp = (tcost>0 ? cost[s]/tcost*100 : 0);
+        printf "%-10s | %12d | %8.2f | %5.1f%%\n", s, (sz[s]+0), (cost[s]+0), cp;
+      }
+    }'
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -733,4 +758,5 @@ emit_over_served
 if [ "$TOKENOMICS" -eq 1 ]; then
   TOKENOMICS_TSV="$(priced_records_tsv)"
   emit_bucket_table
+  emit_stage_cost_table
 fi
