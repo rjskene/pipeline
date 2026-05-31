@@ -35,6 +35,7 @@ FIXTURE_DIR=""
 DRY_RUN=0
 EMIT_ROWS_JSON=0
 EMIT_PRICING_JSON=0
+TOKENOMICS=0
 OVER_SERVED_LOC=20
 TOPN=5
 CAPTURE_LOG=""
@@ -64,6 +65,11 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                        capture record from per-model rate env vars (Opus default
                        fallback); model=="" records are UNPRICED (excluded from
                        the $ total, counted separately). See PRICING below.
+  --tokenomics         Emit ADDITIONAL cost-analysis tables (per-bucket
+                       token-share vs cost-share, per-stage cost, spawn vs
+                       in-session structure + stage×structure cross-tab, and a
+                       net-of-cache_read "size" view). Default output is
+                       unchanged when this flag is absent.
   --over-served-loc N  LOC threshold below which a full-ceremony issue is
                        flagged over-served (default: 20).
   --top-n N            Size of the TOP-N consumer / slowest-stage lists
@@ -84,6 +90,7 @@ while [ $# -gt 0 ]; do
     --dry-run)            DRY_RUN=1; shift ;;
     --emit-rows-json)     EMIT_ROWS_JSON=1; shift ;;
     --emit-pricing-json)  EMIT_PRICING_JSON=1; shift ;;
+    --tokenomics)         TOKENOMICS=1; shift ;;
     --over-served-loc)    OVER_SERVED_LOC="${2:-}"; shift 2 ;;
     --over-served-loc=*)  OVER_SERVED_LOC="${1#--over-served-loc=}"; shift ;;
     --top-n)              TOPN="${2:-}"; shift 2 ;;
@@ -319,6 +326,39 @@ compute_pricing() {
           END { printf "%.10f", t }')"
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
   printf '%s %s' "$(awk -v t="$total" 'BEGIN { printf "%.2f", t }')" "$unpriced"
+}
+
+# priced_records_tsv — emit one TSV line per PRICED capture record (model!=""):
+#   stage <TAB> agent_kind <TAB> tok_in <TAB> tok_out <TAB> tok_cc <TAB> tok_cr <TAB>
+#   cost_in <TAB> cost_out <TAB> cost_cc <TAB> cost_cr
+# tokens are the raw bucket counts; cost_* are the per-bucket USD for that record
+# at the resolved per-(model,bucket) rate (Opus default fallback). Unpriced
+# (model=="") records are SKIPPED here — token totals for the tokenomics tables
+# are intentionally over PRICED records, since the $ columns are only meaningful
+# where a rate applies. This is the shared substrate for the --tokenomics tables.
+priced_records_tsv() {
+  local line model norm
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ (.stage // ""), (.agent_kind // ""),
+          (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          ci=($3/1e6)*ri; co=($4/1e6)*ro; cc=($5/1e6)*rcc; cr=($6/1e6)*rcr;
+          print $1,$2,$3,$4,$5,$6,ci,co,cc,cr
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
 # --- temp files ---
@@ -649,9 +689,48 @@ emit_over_served() {
   done < "$ROWS_TSV"
 }
 
+# ============================================================================
+# --tokenomics tables (issue #721). Each renders ONLY under --tokenomics; the
+# default report above is byte-unchanged when the flag is absent. The $ columns
+# price PRICED records (model!="") at the Opus-default-fallback per-bucket rate;
+# unpriced (model=="") records contribute no cost. Float math via awk.
+# ============================================================================
+TOKENOMICS_TSV=""
+
+# emit_bucket_table — per token bucket (input/output/cache_creation/cache_read):
+# total tokens (over priced records), priced $, %-of-cost, and %-of-tokens. The
+# headline finding: token-share != cost-share (output = low token-share / high
+# cost-share at 75/1M; cache_read = high token-share / low cost-share at 1.50/1M).
+emit_bucket_table() {
+  echo ""
+  echo 'BUCKET     | tokens       | $        | cost%  | token%'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      tin+=$3; tout+=$4; tcc+=$5; tcr+=$6;
+      cin+=$7; cout+=$8; ccc+=$9; ccr+=$10;
+    }
+    END {
+      ttok = tin+tout+tcc+tcr;
+      tcost = cin+cout+ccc+ccr;
+      n = split("input output cache_creation cache_read", names, " ");
+      tok[1]=tin; tok[2]=tout; tok[3]=tcc; tok[4]=tcr;
+      cost[1]=cin; cost[2]=cout; cost[3]=ccc; cost[4]=ccr;
+      for (i=1; i<=4; i++) {
+        cp = (tcost>0 ? cost[i]/tcost*100 : 0);
+        tp = (ttok>0  ? tok[i]/ttok*100  : 0);
+        printf "%-10s | %12d | %8.2f | %5.1f%% | %5.1f%%\n", names[i], tok[i], cost[i], cp, tp;
+      }
+    }'
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
 emit_top_consumers
 emit_top_slow_stages
 emit_over_served
+
+if [ "$TOKENOMICS" -eq 1 ]; then
+  TOKENOMICS_TSV="$(priced_records_tsv)"
+  emit_bucket_table
+fi

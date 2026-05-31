@@ -614,6 +614,85 @@ case "$COST16" in
 esac
 rm -rf "$TMP16"
 
+# --- Scenario 17: --tokenomics bucket table (token-share vs cost-share) (#721) ---
+# Under --tokenomics, emit a per-bucket (input/output/cache_creation/cache_read)
+# table with: total tokens, priced $ (Opus default rates over priced records),
+# and %-of-cost. Headline finding: token-share != cost-share.
+# Fixture: ONE priced opus record where:
+#   output     1,000,000  → $75.00  (token-share 9.09%, cost-share 83.33%)
+#   cache_read 10,000,000 → $15.00  (token-share 90.9%, cost-share 16.67%)
+#   input 0, cache_creation 0
+# Total tokens = 11,000,000; total cost = $90.00.
+# Assert: output cost% > output token%  AND  cache_read cost% < cache_read token%.
+# Also assert DEFAULT output (no --tokenomics) is byte-unchanged (no bucket table).
+inc_scenario "Scenario 17: --tokenomics bucket table (token-share vs cost-share)"
+
+TMP17="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP17/" 2>/dev/null
+printf '%s\n' '[
+  {"number":117,"title":"feat: bucket table issue","additions":300,"deletions":100,"body":"Closes #217","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP17/prs.json"
+printf '%s\n' '{"number":117,"additions":300,"deletions":100,"comments":[]}' > "$TMP17/pr-117.json"
+printf '%s\n' '{"number":217,"labels":[],"comments":[]}' > "$TMP17/issue-217.json"
+{
+  echo '{"schema_version":1,"issue":"217","stage":"execute","session_id":"s17","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K217","tokens":{"input":0,"output":1000000,"cache_read":10000000,"cache_creation":0,"total":11000000},"duration_ms":1000}'
+} > "$TMP17/capture.jsonl"
+
+# Default (no --tokenomics): NO bucket table.
+DEF17="$(bash "$HELPER" --fixture "$TMP17" 2>/dev/null)"
+if printf '%s' "$DEF17" | grep -qi 'BUCKET'; then
+  fail_msg "default output (no --tokenomics) leaked a BUCKET table"
+else
+  pass_msg "default output has no bucket table (gated behind --tokenomics)"
+fi
+
+TOK17="$(bash "$HELPER" --fixture "$TMP17" --tokenomics 2>/dev/null)"
+
+# Bucket table header present under --tokenomics.
+if printf '%s' "$TOK17" | grep -qiE 'BUCKET.*cost'; then
+  pass_msg "--tokenomics renders a per-bucket cost table"
+else
+  fail_msg "--tokenomics missing per-bucket cost table header"
+fi
+
+# Parse the output + cache_read rows: cols are "bucket | tokens | $ | cost%" with
+# token% appended. We assert via the rendered cost% and token% values.
+OUT_ROW17="$(printf '%s\n' "$TOK17" | grep -E '^output[[:space:]]*\|' | head -1)"
+CR_ROW17="$(printf '%s\n' "$TOK17" | grep -E '^cache_read[[:space:]]*\|' | head -1)"
+
+# output: token% ~9.1, cost% ~83.3 → cost% > token%.
+OUT_TOKPCT="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ %]/,"",$5); print $5+0}')"
+OUT_COSTPCT="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ %]/,"",$4); print $4+0}')"
+if awk -v c="$OUT_COSTPCT" -v t="$OUT_TOKPCT" 'BEGIN{exit !(c>t)}'; then
+  pass_msg "output bucket cost% ($OUT_COSTPCT) > token% ($OUT_TOKPCT)"
+else
+  fail_msg "output bucket cost% should exceed token% (cost%=$OUT_COSTPCT token%=$OUT_TOKPCT row=$OUT_ROW17)"
+fi
+
+# cache_read: token% ~90.9, cost% ~16.7 → cost% < token%.
+CR_TOKPCT="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ %]/,"",$5); print $5+0}')"
+CR_COSTPCT="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ %]/,"",$4); print $4+0}')"
+if awk -v c="$CR_COSTPCT" -v t="$CR_TOKPCT" 'BEGIN{exit !(c<t)}'; then
+  pass_msg "cache_read bucket cost% ($CR_COSTPCT) < token% ($CR_TOKPCT)"
+else
+  fail_msg "cache_read bucket cost% should be below token% (cost%=$CR_COSTPCT token%=$CR_TOKPCT row=$CR_ROW17)"
+fi
+
+# Sanity: output bucket $ == 75.00 (golden), cache_read $ == 15.00 (golden).
+OUT_USD17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$3); print $3}')"
+CR_USD17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$3); print $3}')"
+if [ "$OUT_USD17" = "75.00" ]; then
+  pass_msg "output bucket priced \$ == 75.00 (golden)"
+else
+  fail_msg "output bucket \$ should be 75.00, got $OUT_USD17 (row=$OUT_ROW17)"
+fi
+if [ "$CR_USD17" = "15.00" ]; then
+  pass_msg "cache_read bucket priced \$ == 15.00 (golden)"
+else
+  fail_msg "cache_read bucket \$ should be 15.00, got $CR_USD17 (row=$CR_ROW17)"
+fi
+rm -rf "$TMP17"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
