@@ -39,7 +39,9 @@ PATH D is the body-marker primary route: declare `<!-- pipeline:path=D -->` in t
 - Guard-test addition to an existing test file (one new assertion; no new file).
 - One-bullet bug report with a quoted error and an obvious one-liner.
 
-Execution: inline `tdd-implementer` in the orchestrator session (no spawned worker); `evaluate-issue-pr` is the sole review gate — `execute-issue-plan` Step 8 is skipped.
+Execution: collapsed single-pass inline `tdd-implementer` in the orchestrator session (no spawned worker); `evaluate-issue-pr` is the sole review gate — `execute-issue-plan` Step 8 is skipped.
+
+**Escalation backstop (down-route safety net).** The collapsed D lane has an escalation backstop: if the executor finds mid-run that the change exceeds D's envelope, it aborts up to a spawned PATH B run (see `execute-issue-plan`'s Collapsed inline D contract). That backstop is the precondition that makes a wrong B→D down-route (the #707 dependency) cheap and recoverable — mis-routing B work into D is reversed by escalation, not by shipping a too-large diff, so classification may lean D without fear.
 
 ## How classification runs
 

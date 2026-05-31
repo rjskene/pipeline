@@ -102,6 +102,17 @@ for N in "${ISSUES[@]}"; do
 
   # Files: only the `execute` stage runs file-conflict detection; classify/plan
   # stages skip it (the body heuristic over-serializes cross-references).
+  #
+  # UNIFIED A/B/C/D CONFLICT GRAPH (#700): file-conflict detection here reads
+  # ONLY the issue body / approved plan comment — it NEVER inspects the path
+  # label (`quick-fix`/`docs-only`/`multi-task`). There is NO path-label gate
+  # that exempts PATH D (`quick-fix`) issues from serialization. Consequence: a
+  # PATH D issue whose declared file paths collide with an in-flight PATH B/C/A
+  # issue serializes into a LATER wave exactly like any other issue. fullsend
+  # dispatches D inline in the foreground (zero run-queue slots), but that is a
+  # DISPATCH-mechanism choice downstream of waving — it does NOT exempt D from
+  # wave discipline. Do NOT add a "skip D in conflict detection" branch here:
+  # tests/test-plan-waves-unified-graph.sh locks this contract.
   if [ "$STAGE" = "execute" ]; then
     # Prefer plan-comment "**Files to change:**" bullets (exact paths from the
     # approved plan) over body-derived backticks (greedy + noisy). Fall back to

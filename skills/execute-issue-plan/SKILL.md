@@ -34,6 +34,15 @@ Every step below behaves identically across modes — only the working-directory
 | 2 | `spawn-claude.sh` / `claude -p` dispatch | already in worktree CWD | PATH B, PATH C |
 | 3 | PATH D inline tdd-implementer | `cd <worktree-absolute-path>` (same as mode 1) | PATH D (quick-fix) |
 
+### Collapsed inline D contract
+
+When dispatched as the collapsed PATH D agent (mode 3), classify + plan happened in the SAME carried-forward context — the planner context is already present in-session. So this agent **carries the classify+plan context forward** and **does NOT re-read the plan comment** from GitHub: there is no separate plan-comment fetch (step 1's `gh issue view ... ## Implementation Plan` read is skipped on PATH D). Instead the collapsed agent emits the two stage records as inline side-effect **checkpoints**, byte-shaped exactly as the standalone classify/plan stages would have posted them:
+
+- a `## Classification` checkpoint carrying the recommended **path label** (`quick-fix` / PATH D);
+- a `## Implementation Plan` checkpoint with the `plan-pending` marker.
+
+**Escalation backstop.** The collapsed D agent runs inside D's small **envelope** (the `## Affected areas` prediction: one file, ≤ ~20 LOC, single precedent). If mid-run it discovers the change **exceeds D's envelope** — it touches more files than `## Affected areas` predicted, needs a real plan, or hits unforeseen coupling — it does NOT force a too-large change through the D lane. It **aborts up** / **escalates** to a **spawned B run** (PATH B): a full spawned worker session with real planning. This is what makes a wrong B→D down-route cheap and recoverable — the backstop reverses it rather than shipping a too-large diff through D.
+
 # Execution Agent
 
 You will receive an issue number as the argument. Ensure CWD is the feature worktree (per the table above), then perform these steps:
@@ -42,7 +51,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 **0b. CI-fix mode.** If `$PIPELINE_CI_FIX_CONTEXT` is non-empty, you were dispatched to fix a red CI run on an existing PR — not to implement a new plan. Skip steps 1–4 and step 9. Read the failure log at `$PIPELINE_CI_FIX_CONTEXT` and run `gh pr diff` to see the PR so far. Diagnose the failure, apply red→green→commit TDD discipline for the fix, run step 6 (Validate) once, then push the follow-up commit to the existing branch with `git push`. Do NOT call `gh pr create`. Do NOT change the `pr-open` label. Report the new commit SHA back to the orchestrator.
 
-1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan` (latest wins, supports revisions):
+1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan` (latest wins, supports revisions). **PATH D skip:** the collapsed inline D agent carries the classify+plan context forward and does NOT re-read the plan comment (see the Collapsed inline D contract above) — skip this fetch on PATH D and use the in-context plan.
    ```bash
    gh issue view <N> --repo $PIPELINE_REPO --json comments \
      --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
@@ -70,7 +79,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline: single failing test → impl → pass → commit. No subagent dispatch, no skill invocations beyond this one.
+5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline in a single pass: single failing test → impl → pass → commit, once. No subagent dispatch, no skill invocations beyond this one. This is single-pass discipline, not ceremony: the failing-test gate (red→green→commit) is mandatory and is NOT skipped — what PATH D drops is the redundant pre-PR review double-check (Step 8, see the PATH D early-return contract below), since `evaluate-issue-pr` is D's sole external review gate. (And if the change turns out to exceed D's envelope mid-run, escalate per the Collapsed inline D contract above rather than forcing it through.)
 
    On `needs-browser` issues, each `tdd-implementer` dispatch (PATH C) or inline TDD task (PATH B/D) treats the predicates section as the test specification.
 
