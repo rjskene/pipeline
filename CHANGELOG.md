@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.20.7](https://github.com/rjskene/pipeline/compare/v0.20.6...v0.20.7) (2026-05-31)
+
+
+### Bug Fixes
+
+* **dogfood-metrics:** dedup capture records on record_key before summing (last-write-wins) ([90a3a59](https://github.com/rjskene/pipeline/commit/90a3a5940e808da5b641352866185a91e0056bde)), closes [#698](https://github.com/rjskene/pipeline/issues/698)
+* **dogfood-metrics:** default inline agent_type to general-purpose, mirroring log_subagent.py ([#699](https://github.com/rjskene/pipeline/issues/699)) ([772942b](https://github.com/rjskene/pipeline/commit/772942b1c611263bfb3499f147cb772b6270b9d9))
+* **dogfood-metrics:** execute-stage tokens never reach the main capture log (worker writes to worktree, then cleaned up) ([a12e903](https://github.com/rjskene/pipeline/commit/a12e9035d984884440112d061bd35af2edad5855))
+* **dogfood-metrics:** inline records inherit session model from orchestrator state sidecar ([#699](https://github.com/rjskene/pipeline/issues/699)) ([d8016e1](https://github.com/rjskene/pipeline/commit/d8016e15b37acade107b4c3783f252ab0c1d068c))
+* **dogfood-metrics:** inline-stage model/agent_type provenance empty despite [#691](https://github.com/rjskene/pipeline/issues/691) ([39834df](https://github.com/rjskene/pipeline/commit/39834dfac5afcd1da4f0e27b8ea06b9ce725823b))
+* **dogfood-metrics:** record_key not unique — re-run stages double-counted in per-issue token totals ([d4a99c5](https://github.com/rjskene/pipeline/commit/d4a99c56b6b0d4a06ca81081baf62cdaea6b9e2a))
+* **dogfood-metrics:** resolve agent-cost OUTPUT log to git common-dir main worktree so execute records survive worktree prune ([#697](https://github.com/rjskene/pipeline/issues/697)) ([d700b1d](https://github.com/rjskene/pipeline/commit/d700b1da3729134f7f266ce955dbcd88d3870037))
+* **review:** preserve session model on a model-less subsequent Stop ([#699](https://github.com/rjskene/pipeline/issues/699)) ([7e02028](https://github.com/rjskene/pipeline/commit/7e020287120d33e204444673548c7cded2723a3d))
+* **run-queue:** [#636](https://github.com/rjskene/pipeline/issues/636) executor-reap grace logic silently kills evaluator workers mid-CI-wait (issue already pr-open) ([9e78c70](https://github.com/rjskene/pipeline/commit/9e78c70287d7df674004d5cc895ca3d770faa6f9))
+* **run-queue:** require observed in-progress-&gt;pr-open transition before reaping a worker as a finished executor ([#694](https://github.com/rjskene/pipeline/issues/694)) ([936b72e](https://github.com/rjskene/pipeline/commit/936b72e829754d54e8dcf2f1479d1be83b9837e0))
+
 ## [0.20.6](https://github.com/rjskene/pipeline/compare/v0.20.5...v0.20.6) (2026-05-30)
 
 
