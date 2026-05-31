@@ -271,6 +271,22 @@ load_capture_array() {
 CAPTURE_JSON="$(load_capture_array)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 
+# Dedup capture records on `record_key` (last-write-wins) ONCE at the source, so
+# both downstream consumers — the per-issue sum (~l.326) and the per-stage
+# STAGE_TSV aggregate (~l.391) — inherit it without re-implementing the dedup.
+# `record_key` is a LOGICAL idempotency key: the same key denotes the same
+# logical agent finish and may legitimately recur across appends with revised
+# token totals; summing without deduping double-counts it (#698). Records with
+# NO record_key are passed through untouched — each keyless record is its own
+# group (they are NOT collapsed into a single "absent key" bucket), preserving
+# every legacy keyless capture line.
+CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
+  ([ .[] | select(has("record_key") and .record_key != null) ]
+     | group_by(.record_key) | map(.[-1]))
+  + [ .[] | select((has("record_key") | not) or .record_key == null) ]
+' 2>/dev/null)"
+[ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+
 # Partition raw list into release PRs (excluded) and eligible feature PRs.
 RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
 PR_LIST_JSON="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ | not)]" 2>/dev/null || echo '[]')"
