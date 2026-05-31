@@ -1125,6 +1125,60 @@ case "$PERPR_ROW23" in
 esac
 rm -rf "$TMP23"
 
+# --- Scenario 24: --tokenomics mark + exclude headless session-lifetime durations (#721) ---
+# Headless duration_ms is whole-session wall-clock (~5.4M ms cluster), NOT task
+# latency. Under --tokenomics, wherever durations render for headless records,
+# annotate "(session-lifetime, not task-latency)"; AND EXCLUDE headless durations
+# from any latency median/aggregate the --tokenomics tables compute.
+# Fixture: issue 224 (PR #124), three records:
+#   headless execute  duration 5,400,000  ← session-lifetime, must be annotated + excluded
+#   inline   plan      duration 1,000
+#   inline   plan-eval duration 2,000
+# Non-headless latency median = median(1000, 2000) = 1500 → aggregate == 1500,
+# and must NOT include the 5,400,000 value.
+inc_scenario "Scenario 24: --tokenomics mark + exclude headless session-lifetime durations"
+
+TMP24="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP24/" 2>/dev/null
+printf '%s\n' '[
+  {"number":124,"title":"feat: headless duration issue","additions":300,"deletions":100,"body":"Closes #224","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP24/prs.json"
+printf '%s\n' '{"number":124,"additions":300,"deletions":100,"comments":[]}' > "$TMP24/pr-124.json"
+printf '%s\n' '{"number":224,"labels":[],"comments":[]}' > "$TMP24/issue-224.json"
+{
+  echo '{"schema_version":1,"issue":"224","stage":"execute","session_id":"s24a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K224E","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":5400000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T10:30:00Z"}'
+  echo '{"schema_version":1,"issue":"224","stage":"plan","session_id":"s24b","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K224P","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000,"ts_start":"2026-05-12T08:00:00Z","ts_end":"2026-05-12T08:00:01Z"}'
+  echo '{"schema_version":1,"issue":"224","stage":"plan-eval","session_id":"s24c","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K224PE","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":2000,"ts_start":"2026-05-12T08:05:00Z","ts_end":"2026-05-12T08:05:02Z"}'
+} > "$TMP24/capture.jsonl"
+
+TOK24="$(bash "$HELPER" --fixture "$TMP24" --tokenomics 2>/dev/null)"
+
+# (a) Headless duration is annotated "(session-lifetime, not task-latency)".
+if printf '%s' "$TOK24" | grep -qF '(session-lifetime, not task-latency)'; then
+  pass_msg "headless duration annotated '(session-lifetime, not task-latency)'"
+else
+  fail_msg "headless duration should be annotated '(session-lifetime, not task-latency)'"
+fi
+
+# (b) A --tokenomics latency aggregate exists and == 1500 (median of non-headless).
+LAT_BLOCK24="$(printf '%s\n' "$TOK24" | awk '/TASK LATENCY/{f=1} f')"
+if [ -n "$LAT_BLOCK24" ]; then
+  pass_msg "--tokenomics renders a latency aggregate block"
+else
+  fail_msg "--tokenomics missing a latency aggregate block"
+fi
+case "$LAT_BLOCK24" in
+  *1500*) pass_msg "latency aggregate == 1500 (median of non-headless 1000,2000)" ;;
+  *) fail_msg "latency aggregate should be 1500 (got: $LAT_BLOCK24)" ;;
+esac
+
+# (c) The 5,400,000 session-lifetime value must NOT appear in the latency aggregate.
+case "$LAT_BLOCK24" in
+  *5400000*) fail_msg "latency aggregate leaked the headless session-lifetime duration (5400000)" ;;
+  *) pass_msg "latency aggregate excludes headless session-lifetime duration (5400000 absent)" ;;
+esac
+rm -rf "$TMP24"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

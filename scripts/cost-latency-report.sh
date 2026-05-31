@@ -435,6 +435,25 @@ priced_day_cost_tsv() {
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
+# priced_duration_tsv — emit one TSV line per PRICED capture record (model!="")
+# with a numeric duration_ms:  agent_kind <TAB> stage <TAB> duration_ms
+# Records with null/absent duration_ms are SKIPPED. Shared substrate for the
+# --tokenomics task-latency aggregate (which must distinguish headless
+# session-lifetime durations from in-session task latency).
+priced_duration_tsv() {
+  local line model
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    printf '%s' "$line" | jq -r '
+        select((.duration_ms // null) != null)
+        | [ (.agent_kind // ""), (.stage // ""), (.duration_ms) ] | @tsv' 2>/dev/null
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
 # --- temp files ---
 ROWS_TSV=$(mktemp)
 trap 'rm -f "$ROWS_TSV"' EXIT
@@ -1016,6 +1035,39 @@ emit_trend() {
     }'
 }
 
+# emit_latency_aggregate — task-latency view over PRICED records.
+#
+# Headless duration_ms is whole-session WALL-CLOCK (the ~5.4M ms cluster), NOT
+# per-task latency: a headless worker's record spans its entire `claude -p`
+# session, not the single task. So under --tokenomics we (1) list headless
+# durations separately, annotated "(session-lifetime, not task-latency)", and
+# (2) EXCLUDE headless durations from the task-latency median/aggregate, which
+# is computed over IN-SESSION (agent_kind != "headless") records only. The
+# default-path median dur(ms) rendering (emit_path_table/emit_stage_table) is
+# untouched — this is an additive --tokenomics-only view.
+emit_latency_aggregate() {
+  local dur_tsv
+  dur_tsv="$(priced_duration_tsv)"
+
+  echo ""
+  echo 'HEADLESS DURATIONS (session-lifetime, not task-latency):'
+  printf '%s\n' "$dur_tsv" | awk -F'\t' '
+    $1 == "headless" { printf "%-10s | %12d ms  (session-lifetime, not task-latency)\n", $2, $3 }'
+
+  echo ""
+  echo 'TASK LATENCY (in-session records only; headless excluded) | median dur(ms)'
+  printf '%s\n' "$dur_tsv" | awk -F'\t' '
+    function median(arr, n,   i, j, tmp) {
+      for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
+      if (n == 0) return "";
+      if (n % 2 == 1) return arr[(n+1)/2];
+      return (arr[n/2] + arr[n/2+1]) / 2;
+    }
+    function fmt(v) { if (v=="") return "--"; if (v==int(v)) return sprintf("%d", v); return sprintf("%.1f", v) }
+    $1 != "headless" { d[++n]=$3 }
+    END { printf "%-57s | %s\n", "median task latency", fmt(median(d, n)) }'
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -1033,4 +1085,5 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   emit_breakeven_table
   emit_coverage_health
   emit_trend
+  emit_latency_aggregate
 fi
