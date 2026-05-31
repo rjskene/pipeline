@@ -54,12 +54,28 @@ fi
 # Resolve the consumer logs dir. Honor CLAUDE_PROJECT_DIR (hermetic tests and
 # the dogfood runtime both set it); fall back to the worktree root.
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$THIS_DIR/.." && pwd)}"
-logs_dir="$PROJECT_DIR/.claude/logs"
+logs_dir="$PROJECT_DIR/.claude/logs"      # INPUT logs (worker-local)
 runs_log="$logs_dir/runs.log"
 subagents_log="$logs_dir/subagents.log"
 sidecar_dir="$logs_dir/subagents"
-out="$logs_dir/agent-costs.jsonl"
-mkdir -p "$logs_dir"
+
+# OUTPUT log resolves to the MAIN worktree so execute-stage records written
+# from inside a linked worktree survive cleanup-worktree.sh prune (#697).
+# git --git-common-dir resolves the shared .git from a linked worktree; its
+# parent dir is the main worktree root. Fail-open to PROJECT_DIR when not a
+# git worktree (hermetic non-git tests, raw consumer dirs).
+common_dir="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null || true)"
+if [ -n "$common_dir" ]; then
+  case "$common_dir" in
+    /*) main_root="$(cd "$(dirname "$common_dir")" && pwd)" ;;
+    *)  main_root="$(cd "$PROJECT_DIR/$(dirname "$common_dir")" && pwd)" ;;
+  esac
+else
+  main_root="$PROJECT_DIR"
+fi
+out_logs_dir="$main_root/.claude/logs"
+out="$out_logs_dir/agent-costs.jsonl"
+mkdir -p "$logs_dir" "$out_logs_dir"
 
 # All record emission, parsing, idempotency, and counters happen in python so
 # JSON construction matches the #643 contract exactly.
