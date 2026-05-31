@@ -177,6 +177,9 @@ out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
 grep -qE '^CHECK: pipeline_config status=fail.*not found' <<<"$out" \
   && pass_msg "no-config: pipeline_config status=fail not found" \
   || { fail_msg "no-config: wrong/missing fail detail"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'pipeline_config status=fail.*pipeline:init' <<<"$out" \
+  && pass_msg "no-config: fail detail points to pipeline:init" \
+  || { fail_msg "no-config: fail detail missing pipeline:init"; echo "$out" | sed 's/^/    /'; }
 grep -qE '^=== Summary ===$' <<<"$out" \
   && pass_msg "no-config: summary header still present" \
   || fail_msg "no-config: summary header missing"
@@ -195,6 +198,9 @@ out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
 grep -qE '^CHECK: pipeline_config status=fail.*PIPELINE_REPO' <<<"$out" \
   && pass_msg "no-repo-key: fail detail mentions PIPELINE_REPO" \
   || { fail_msg "no-repo-key: wrong detail"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'PIPELINE_REPO.*pipeline:init' <<<"$out" \
+  && pass_msg "no-repo-key: fail detail points to pipeline:init" \
+  || { fail_msg "no-repo-key: fail detail missing pipeline:init"; echo "$out" | sed 's/^/    /'; }
 [ "$rc" != "0" ] && pass_msg "no-repo-key: non-zero exit" || fail_msg "no-repo-key: exit was 0"
 
 # ---------------------------------------------------------------------------
@@ -241,6 +247,9 @@ grep -qE '^CHECK: labels_exist status=fail detail=missing:.*plan-approved' <<<"$
   && grep -qE 'brainstorm' <<<"$out" \
   && pass_msg "labels-missing: detail lists missing labels" \
   || { fail_msg "labels-missing: wrong detail"; echo "$out" | sed 's/^/    /'; }
+grep -qE 'labels_exist status=fail.*pipeline:init' <<<"$out" \
+  && pass_msg "labels-missing: fail detail points to pipeline:init" \
+  || { fail_msg "labels-missing: fail detail missing pipeline:init"; echo "$out" | sed 's/^/    /'; }
 
 echo "Case 5c: override honored"
 FX=$(fresh_fx fx-labels-override)
