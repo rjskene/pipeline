@@ -1179,6 +1179,78 @@ case "$LAT_BLOCK24" in
 esac
 rm -rf "$TMP24"
 
+# --- Scenario 25: --tokenomics concurrency assessment (observed overlap + ceiling) (#721) ---
+# Data-derived (per docs/cost-architecture.md §8): count overlapping
+# [ts_start, ts_end] intervals among EXECUTE-stage headless records (sweep-line),
+# report the MAX observed concurrent execute count, and a stated ceiling text =
+# min(rate-limit ceiling, cwd-isolation-safe count) referencing §8, plus the
+# observed number.
+# Fixture: issue 225 (PR #125), THREE execute headless records whose intervals
+# all overlap in the 09:20–09:25 window → max observed concurrency == 3:
+#   s1  09:00:00 – 09:30:00
+#   s2  09:10:00 – 09:40:00
+#   s3  09:20:00 – 09:25:00
+inc_scenario "Scenario 25: --tokenomics concurrency assessment (observed overlap + ceiling)"
+
+TMP25="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP25/" 2>/dev/null
+printf '%s\n' '[
+  {"number":125,"title":"feat: concurrency issue","additions":300,"deletions":100,"body":"Closes #225","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP25/prs.json"
+printf '%s\n' '{"number":125,"additions":300,"deletions":100,"comments":[]}' > "$TMP25/pr-125.json"
+printf '%s\n' '{"number":225,"labels":[],"comments":[]}' > "$TMP25/issue-225.json"
+{
+  echo '{"schema_version":1,"issue":"225","stage":"execute","session_id":"c1","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K225A","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1800000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T09:30:00Z"}'
+  echo '{"schema_version":1,"issue":"225","stage":"execute","session_id":"c2","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K225B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1800000,"ts_start":"2026-05-12T09:10:00Z","ts_end":"2026-05-12T09:40:00Z"}'
+  echo '{"schema_version":1,"issue":"225","stage":"execute","session_id":"c3","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K225C","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":300000,"ts_start":"2026-05-12T09:20:00Z","ts_end":"2026-05-12T09:25:00Z"}'
+} > "$TMP25/capture.jsonl"
+
+# Default (no --tokenomics): NO concurrency assessment.
+DEF25="$(bash "$HELPER" --fixture "$TMP25" 2>/dev/null)"
+if printf '%s' "$DEF25" | grep -qi 'CONCURRENCY'; then
+  fail_msg "default output (no --tokenomics) leaked a concurrency assessment"
+else
+  pass_msg "default output has no concurrency assessment (gated behind --tokenomics)"
+fi
+
+TOK25="$(bash "$HELPER" --fixture "$TMP25" --tokenomics 2>/dev/null)"
+CONC_BLOCK25="$(printf '%s\n' "$TOK25" | awk '/CONCURRENCY/{f=1} f')"
+if [ -n "$CONC_BLOCK25" ]; then
+  pass_msg "--tokenomics renders a concurrency assessment block"
+else
+  fail_msg "--tokenomics missing concurrency assessment block"
+fi
+
+# Max observed concurrency == 3.
+if printf '%s' "$CONC_BLOCK25" | grep -qE '(max|observed).*3|3.*concurren'; then
+  pass_msg "concurrency assessment reports max observed concurrency == 3"
+else
+  fail_msg "concurrency assessment should report max observed concurrency 3 (got: $CONC_BLOCK25)"
+fi
+
+# Assessment text references the §8 ceiling = min(rate-limit, cwd-isolation-safe).
+if printf '%s' "$CONC_BLOCK25" | grep -qiE 'ceiling'; then
+  pass_msg "concurrency assessment surfaces the ceiling framing"
+else
+  fail_msg "concurrency assessment missing ceiling framing (got: $CONC_BLOCK25)"
+fi
+if printf '%s' "$CONC_BLOCK25" | grep -qiE '§8|section 8|cost-architecture'; then
+  pass_msg "concurrency assessment references docs/cost-architecture.md §8"
+else
+  fail_msg "concurrency assessment should reference §8 (got: $CONC_BLOCK25)"
+fi
+if printf '%s' "$CONC_BLOCK25" | grep -qiE 'rate.?limit'; then
+  pass_msg "concurrency ceiling references rate-limit"
+else
+  fail_msg "concurrency ceiling should mention rate-limit (got: $CONC_BLOCK25)"
+fi
+if printf '%s' "$CONC_BLOCK25" | grep -qiE 'cwd|isolation'; then
+  pass_msg "concurrency ceiling references cwd-isolation"
+else
+  fail_msg "concurrency ceiling should mention cwd-isolation (got: $CONC_BLOCK25)"
+fi
+rm -rf "$TMP25"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

@@ -454,6 +454,32 @@ priced_duration_tsv() {
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
+# execute_headless_intervals_tsv — emit one TSV line per EXECUTE-stage headless
+# capture record with BOTH a non-empty ts_start and ts_end:
+#   start_epoch <TAB> end_epoch
+# Timestamps are converted to epoch seconds via `date -d`; records with an empty/
+# absent/unparseable ts_start or ts_end are SKIPPED (cannot bound an interval).
+# Shared substrate for the --tokenomics concurrency assessment (interval-overlap
+# sweep). Not gated on model — concurrency is a structural property of the
+# headless worker fleet, independent of pricing coverage.
+execute_headless_intervals_tsv() {
+  local line ts_s ts_e ep_s ep_e
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    ts_s="$(printf '%s' "$line" | jq -r '
+        select((.stage // "") == "execute" and (.agent_kind // "") == "headless")
+        | (.ts_start // "")' 2>/dev/null)"
+    [ -z "$ts_s" ] && continue
+    ts_e="$(printf '%s' "$line" | jq -r '(.ts_end // "")' 2>/dev/null)"
+    [ -z "$ts_e" ] && continue
+    ep_s="$(date -d "$ts_s" +%s 2>/dev/null)" || continue
+    ep_e="$(date -d "$ts_e" +%s 2>/dev/null)" || continue
+    [ -z "$ep_s" ] && continue
+    [ -z "$ep_e" ] && continue
+    printf '%s\t%s\n' "$ep_s" "$ep_e"
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
 # --- temp files ---
 ROWS_TSV=$(mktemp)
 trap 'rm -f "$ROWS_TSV"' EXIT
@@ -1068,6 +1094,45 @@ emit_latency_aggregate() {
     END { printf "%-57s | %s\n", "median task latency", fmt(median(d, n)) }'
 }
 
+# emit_concurrency_assessment — data-derived execute-concurrency analysis (per
+# docs/cost-architecture.md §8, the open empirical question this report owns).
+#
+# Observed: count overlapping [ts_start, ts_end] intervals among EXECUTE-stage
+# headless worker records via a sweep-line (events sorted by epoch; +1 at start,
+# -1 at end; running max). Reports the MAX observed concurrent execute count.
+#
+# Ceiling (TEXT): safe concurrency = min(rate-limit ceiling, cwd-isolation-safe
+# count) — the tighter binds (cost-architecture.md §8 / §6). Surfaced as analysis
+# text alongside the observed NUMBER so the operator can compare observed-vs-safe.
+emit_concurrency_assessment() {
+  echo ""
+  echo "CONCURRENCY ASSESSMENT (execute-stage headless workers):"
+  local intervals max_conc
+  intervals="$(execute_headless_intervals_tsv)"
+  max_conc="$(printf '%s\n' "$intervals" | awk -F'\t' '
+    $1 != "" {
+      ev[++n] = $1 "\t" 1;       # start event
+      ev[++n] = $2 "\t" -1;      # end event
+    }
+    END {
+      # Sort events by epoch; on ties, process ENDS (-1) before STARTS (+1) so
+      # touching-but-not-overlapping intervals are not counted as concurrent.
+      for (i=1;i<n;i++) for (j=i+1;j<=n;j++) {
+        split(ev[i], a, "\t"); split(ev[j], b, "\t");
+        if (a[1] > b[1] || (a[1]==b[1] && a[2] > b[2])) { t=ev[i]; ev[i]=ev[j]; ev[j]=t }
+      }
+      cur=0; max=0;
+      for (i=1;i<=n;i++) { split(ev[i], e, "\t"); cur += e[2]; if (cur > max) max=cur }
+      print max+0;
+    }')"
+  [ -z "$max_conc" ] && max_conc=0
+  printf 'max observed concurrent execute workers: %s\n' "$max_conc"
+  echo 'ceiling = min(rate-limit ceiling, cwd-isolation-safe count) — the tighter binds'
+  echo '  (per docs/cost-architecture.md §8: rate-limit = burst TPM + 5-hour rolling cap;'
+  echo '   cwd-isolation = concurrent inline agents racing on shared git/fs state, #31940).'
+  printf 'observed %s vs ceiling: see §8 for the empirical bind (TPM / rolling cap / cwd-isolation).\n' "$max_conc"
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -1086,4 +1151,5 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   emit_coverage_health
   emit_trend
   emit_latency_aggregate
+  emit_concurrency_assessment
 fi
