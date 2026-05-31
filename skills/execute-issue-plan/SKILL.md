@@ -79,6 +79,28 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
+4b. **Post-plan freshness gate (repo-wrap guard).** The base branch may have moved since this plan was approved — other PRs merge into `$PIPELINE_BASE_BRANCH` while the issue sat in the queue. Building on a stale snapshot risks implementing against assumptions the live tree has already invalidated. This gate blocks a stale-context build BEFORE any implementation begins (it runs after the `in-progress` label flip and before Step 5). It compares two ages: how far the worktree's base lags the live base (commit-drift), and how old the approved plan is (plan-age).
+
+   ```bash
+   # Worktree-base: the commit this worktree branched from.
+   WORKTREE_BASE=$(git merge-base HEAD "$PIPELINE_BASE_BRANCH")
+   # Plan epoch: createdAt of the latest `## Implementation Plan` comment.
+   PLAN_EPOCH=$(gh issue view <N> --repo "$PIPELINE_REPO" --json comments \
+     --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .createdAt' \
+     | xargs -I{} date -d {} +%s)
+   "${CLAUDE_PLUGIN_ROOT}/scripts/check-post-plan-freshness.sh" \
+     --base "$PIPELINE_BASE_BRANCH" \
+     --plan-epoch "$PLAN_EPOCH" \
+     --worktree-base "$WORKTREE_BASE" \
+     --repo "$PIPELINE_REPO"
+   FRESHNESS_RC=$?
+   ```
+
+   - **Exit 3 (STALE) → STOP.** Do NOT implement. Surface the helper's `STALE:` block verbatim so the operator sees exactly why. Remediation: rebase the worktree on the live base (`git fetch && git rebase "origin/$PIPELINE_BASE_BRANCH"`) and re-run `/pipeline:execute-issue-plan <N>`. The gate re-evaluates on the rebased base and lets the build proceed once it is fresh.
+   - **Exit 0 (FRESH) → continue to Step 5.**
+
+   **PATH D note.** The collapsed inline D agent also honors this gate. Because D runs the freshness check immediately after it produces classify + plan inline, plan-age never trips (the plan is seconds old) — but commit-drift still applies, so a D worktree branched off a base that has since moved is still STOPped here.
+
 5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline in a single pass: single failing test → impl → pass → commit, once. No subagent dispatch, no skill invocations beyond this one. This is single-pass discipline, not ceremony: the failing-test gate (red→green→commit) is mandatory and is NOT skipped — what PATH D drops is the redundant pre-PR review double-check (Step 8, see the PATH D early-return contract below), since `evaluate-issue-pr` is D's sole external review gate. (And if the change turns out to exceed D's envelope mid-run, escalate per the Collapsed inline D contract above rather than forcing it through.)
 
    On `needs-browser` issues, each `tdd-implementer` dispatch (PATH C) or inline TDD task (PATH B/D) treats the predicates section as the test specification.
