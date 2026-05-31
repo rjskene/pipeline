@@ -748,6 +748,45 @@ emit_stage_cost_table() {
     }'
 }
 
+# emit_structure_table — structure dimension over PRICED records:
+#   spawn      = agent_kind == "headless"
+#   in-session = agent_kind != "headless"  (inline + main/orchestrator)
+# Emit priced $ + cost share for each. $ uses ALL FOUR buckets.
+emit_structure_table() {
+  echo ""
+  echo 'STRUCTURE  | $        | cost%'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      c = $7+$8+$9+$10;
+      if ($2 == "headless") sp += c; else ins += c;
+      tot += c;
+    }
+    END {
+      printf "%-10s | %8.2f | %5.1f%%\n", "spawn",      (sp+0),  (tot>0 ? sp/tot*100  : 0);
+      printf "%-10s | %8.2f | %5.1f%%\n", "in-session", (ins+0), (tot>0 ? ins/tot*100 : 0);
+    }'
+}
+
+# emit_stage_structure_crosstab — stage × structure $ matrix: rows = the 6
+# canonical stages, cols = {spawn, in-session}, cells = priced $ (all four
+# buckets). Stages with no priced records render 0.00 / 0.00.
+emit_stage_structure_crosstab() {
+  echo ""
+  echo 'STAGE x STRUCTURE | spawn $  | in-session $'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      c = $7+$8+$9+$10;
+      if ($2 == "headless") sp[$1] += c; else ins[$1] += c;
+    }
+    END {
+      m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
+      for (k=1; k<=m; k++) {
+        s = order[k];
+        printf "%-17s | %8.2f | %12.2f\n", s, (sp[s]+0), (ins[s]+0);
+      }
+    }'
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -759,4 +798,6 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   TOKENOMICS_TSV="$(priced_records_tsv)"
   emit_bucket_table
   emit_stage_cost_table
+  emit_structure_table
+  emit_stage_structure_crosstab
 fi
