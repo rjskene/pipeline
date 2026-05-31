@@ -122,7 +122,10 @@ for N in "${ISSUES[@]}"; do
       PLAN_BODY=$(echo "$PLAN_JSON" \
         | jq -r '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body // ""')
       if [ -n "$PLAN_BODY" ] && [ "$PLAN_BODY" != "null" ]; then
-        PLAN_FILES=$(echo "$PLAN_BODY" \
+        # `grep -oE` exits 1 when the bullets carry no backtick-wrapped paths;
+        # under `set -euo pipefail` that aborts the whole script (#730). Guard
+        # the known-empty grep so a no-match yields an empty PLAN_FILES instead.
+        PLAN_FILES=$( { echo "$PLAN_BODY" \
           | awk 'BEGIN{in_block=0}
                  /^\*\*Files to change:\*\*/ {in_block=1; next}
                  in_block && /^\*\*/ {in_block=0}
@@ -130,7 +133,7 @@ for N in "${ISSUES[@]}"; do
           | grep -oE '`[^`]+`' \
           | tr -d '`' \
           | sort -u \
-          | tr '\n' ' ')
+          | tr '\n' ' '; } || true)
         PLAN_FILES="${PLAN_FILES% }"
       fi
     fi
