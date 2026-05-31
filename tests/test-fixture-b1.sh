@@ -38,6 +38,16 @@ else
   fail_msg "Case B: expected 'b1-beta', got '$out'"
 fi
 
+# ---- Case C: b1_gamma prints exactly "b1-alpha b1-beta b1-gamma" ----
+echo "Case C: b1_gamma output (sources alpha+beta)"
+inc
+out=$(bash -c "source '$FIXTURE_DIR/gamma.sh' && b1_gamma" 2>/dev/null) || true
+if [ "$out" = "b1-alpha b1-beta b1-gamma" ]; then
+  pass_msg "Case C: b1_gamma prints 'b1-alpha b1-beta b1-gamma'"
+else
+  fail_msg "Case C: expected 'b1-alpha b1-beta b1-gamma', got '$out'"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
