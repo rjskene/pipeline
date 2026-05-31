@@ -169,7 +169,7 @@ Receive an issue number as argument (or from context).
 
 7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke this from within your own turn. Do not stop, return, or summarize before the helper exits.
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
+   PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
    ```
    The helper posts the comment, verifies it, applies `plan-pending`, and verifies the label — each sub-step retries once. Do not retry from the skill. If the helper exits non-zero, surface its stderr AND the `$DRAFT` path verbatim, then STOP with: `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`. The operator can re-run the helper manually.
 
