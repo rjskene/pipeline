@@ -8,12 +8,18 @@ FAILS=0
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; FAILS=$((FAILS+1)); }
 # A "bare JSON line" = first non-space char is { or [ (top-level JSON emission).
-has_bare_json() { grep -qE '^[[:space:]]*[\{\[]' ; }
+# The bracket class is exactly { and [ — no backslashes (inside an ERE bracket
+# expression a backslash is a literal, so [\{\[] would wrongly also match \).
+has_bare_json() { grep -qE '^[[:space:]]*[{[]' ; }
 
 # 1) cost-latency-report DEFAULT + --tokenomics must be JSON-free.
+#    Empty output is treated as a failure: a silent script death would otherwise
+#    trivially pass the JSON-free check (false negative), defeating the guard.
 for flags in "" "--tokenomics"; do
   OUT="$(bash "$REPO_ROOT/scripts/cost-latency-report.sh" --fixture "$FIX" $flags 2>/dev/null)"
-  if printf '%s\n' "$OUT" | has_bare_json; then
+  if [ -z "$OUT" ]; then
+    fail "cost-latency-report ($flags) produced empty output (silent failure?)"
+  elif printf '%s\n' "$OUT" | has_bare_json; then
     fail "cost-latency-report ($flags) leaked bare JSON to the model surface"
   else
     pass "cost-latency-report ($flags) model surface is JSON-free"
@@ -23,7 +29,9 @@ done
 # 2) over-eval-report + late-error-report DEFAULT must be JSON-free.
 for s in over-eval-report late-error-report; do
   OUT="$(bash "$REPO_ROOT/scripts/$s.sh" --fixture "$REPO_ROOT/tests/fixtures/$s" 2>/dev/null)"
-  if printf '%s\n' "$OUT" | has_bare_json; then
+  if [ -z "$OUT" ]; then
+    fail "$s produced empty output (silent failure?)"
+  elif printf '%s\n' "$OUT" | has_bare_json; then
     fail "$s default output leaked bare JSON"
   else
     pass "$s default output is JSON-free"
