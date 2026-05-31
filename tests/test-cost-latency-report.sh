@@ -1038,6 +1038,93 @@ case "$MODELLINE22" in
 esac
 rm -rf "$TMP22"
 
+# --- Scenario 23: --tokenomics per-day + per-PR $ trend with outlier flagging (#721) ---
+# Per-day: bucket priced records by date(ts_start) (the YYYY-MM-DD prefix; skip
+# records with empty ts_start). Per day: total $, output $, output%-of-cost.
+# Outlier days flagged when day $ >= 40% of the window total (documented thresh).
+# Per-PR: cost per merged feature PR via the PR→issue join.
+# Fixture: issue 223 (PR #123), THREE execute records (opus, input-only, $15/1M),
+# one per day:
+#   2026-05-10  input 1,000,000 → $15.00
+#   2026-05-11  input 1,000,000 → $15.00
+#   2026-05-12  input 8,000,000 → $120.00   ← outlier (120 >= 40% of 150 = 60)
+# window total = $150.00. Days 05-10/05-11 ($15 each) are NOT outliers.
+inc_scenario "Scenario 23: --tokenomics per-day + per-PR \$ trend with outlier flagging"
+
+TMP23="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP23/" 2>/dev/null
+printf '%s\n' '[
+  {"number":123,"title":"feat: trend issue","additions":300,"deletions":100,"body":"Closes #223","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP23/prs.json"
+printf '%s\n' '{"number":123,"additions":300,"deletions":100,"comments":[]}' > "$TMP23/pr-123.json"
+printf '%s\n' '{"number":223,"labels":[],"comments":[]}' > "$TMP23/issue-223.json"
+{
+  echo '{"schema_version":1,"issue":"223","stage":"execute","session_id":"s23a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K223A","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000,"ts_start":"2026-05-10T09:00:00Z","ts_end":"2026-05-10T09:01:00Z"}'
+  echo '{"schema_version":1,"issue":"223","stage":"execute","session_id":"s23b","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K223B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000,"ts_start":"2026-05-11T09:00:00Z","ts_end":"2026-05-11T09:01:00Z"}'
+  echo '{"schema_version":1,"issue":"223","stage":"execute","session_id":"s23c","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K223C","tokens":{"input":8000000,"output":0,"cache_read":0,"cache_creation":0,"total":8000000},"duration_ms":1000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T09:01:00Z"}'
+} > "$TMP23/capture.jsonl"
+
+# Default (no --tokenomics): NO trend block.
+DEF23="$(bash "$HELPER" --fixture "$TMP23" 2>/dev/null)"
+if printf '%s' "$DEF23" | grep -qiE 'TREND|PER-DAY'; then
+  fail_msg "default output (no --tokenomics) leaked a trend block"
+else
+  pass_msg "default output has no trend block (gated behind --tokenomics)"
+fi
+
+TOK23="$(bash "$HELPER" --fixture "$TMP23" --tokenomics 2>/dev/null)"
+TREND_BLOCK23="$(printf '%s\n' "$TOK23" | awk '/TREND|PER-DAY/{f=1} f')"
+if [ -n "$TREND_BLOCK23" ]; then
+  pass_msg "--tokenomics renders a per-day trend block"
+else
+  fail_msg "--tokenomics missing per-day trend block"
+fi
+
+# Per-day rows for all three days.
+for day in 2026-05-10 2026-05-11 2026-05-12; do
+  if printf '%s' "$TREND_BLOCK23" | grep -qF "$day"; then
+    pass_msg "trend block has a row for $day"
+  else
+    fail_msg "trend block missing row for $day"
+  fi
+done
+
+# 05-12 row carries 120.00 and an outlier flag; 05-10 row carries 15.00 and no flag.
+DAY12_ROW23="$(printf '%s\n' "$TREND_BLOCK23" | grep -F '2026-05-12' | head -1)"
+DAY10_ROW23="$(printf '%s\n' "$TREND_BLOCK23" | grep -F '2026-05-10' | head -1)"
+case "$DAY12_ROW23" in
+  *120.00*) pass_msg "05-12 day total \$ == 120.00" ;;
+  *) fail_msg "05-12 day total \$ should be 120.00 (got: $DAY12_ROW23)" ;;
+esac
+if printf '%s' "$DAY12_ROW23" | grep -qiE 'outlier|\*|FLAG'; then
+  pass_msg "05-12 outlier day is flagged"
+else
+  fail_msg "05-12 outlier day should be flagged (got: $DAY12_ROW23)"
+fi
+case "$DAY10_ROW23" in
+  *15.00*) pass_msg "05-10 day total \$ == 15.00" ;;
+  *) fail_msg "05-10 day total \$ should be 15.00 (got: $DAY10_ROW23)" ;;
+esac
+if printf '%s' "$DAY10_ROW23" | grep -qiE 'outlier|FLAG'; then
+  fail_msg "05-10 normal day should NOT be flagged (got: $DAY10_ROW23)"
+else
+  pass_msg "05-10 normal day is not flagged"
+fi
+
+# Per-PR $ section: PR #123 costs $150.00 (all three records join to issue 223).
+PERPR_BLOCK23="$(printf '%s\n' "$TOK23" | awk '/PER-PR|PR \$|per-PR/{f=1} f')"
+if printf '%s' "$PERPR_BLOCK23" | grep -qE '123'; then
+  pass_msg "per-PR \$ section references PR #123"
+else
+  fail_msg "per-PR \$ section missing PR #123 (got: $PERPR_BLOCK23)"
+fi
+PERPR_ROW23="$(printf '%s\n' "$PERPR_BLOCK23" | grep -E '123' | head -1)"
+case "$PERPR_ROW23" in
+  *150.00*) pass_msg "per-PR \$ for PR #123 == 150.00 (sum of all three days)" ;;
+  *) fail_msg "per-PR \$ for PR #123 should be 150.00 (got: $PERPR_ROW23)" ;;
+esac
+rm -rf "$TMP23"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

@@ -399,6 +399,42 @@ priced_issue_stage_cost_tsv() {
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
+# priced_day_cost_tsv — emit one TSV line per PRICED capture record (model!="")
+# whose ts_start has a YYYY-MM-DD prefix:  date <TAB> cost_all <TAB> cost_output
+# date is the YYYY-MM-DD prefix of ts_start; records with EMPTY/absent ts_start
+# are SKIPPED (cannot be day-bucketed). cost_all is the all-four-bucket USD;
+# cost_output is just the output-bucket USD (for the output%-of-cost column).
+# Shared substrate for the --tokenomics per-day trend table.
+priced_day_cost_tsv() {
+  local line model norm day
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    # YYYY-MM-DD prefix of ts_start; skip empty/absent.
+    day="$(printf '%s' "$line" | jq -r '(.ts_start // "")' 2>/dev/null | cut -c1-10)"
+    if [ -z "$day" ] || ! printf '%s' "$day" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v d="$day" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          call=($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr;
+          cout=($2/1e6)*ro;
+          printf "%s\t%.10f\t%.10f\n", d, call, cout
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
 # --- temp files ---
 ROWS_TSV=$(mktemp)
 trap 'rm -f "$ROWS_TSV"' EXIT
@@ -930,6 +966,56 @@ emit_coverage_health() {
   }'
 }
 
+# emit_trend — per-day + per-PR $ trend with outlier flagging.
+#
+# Per-day: bucket PRICED records by date(ts_start) (YYYY-MM-DD prefix; records
+# with empty ts_start are skipped upstream in priced_day_cost_tsv). Per day:
+# total $, output $, output%-of-cost.
+#
+# OUTLIER THRESHOLD (documented): a day is flagged when its $ is >= 40% of the
+# window total $. (Chosen over a mean-multiple rule because a single dominant
+# day in a small window is exactly the signal we want to surface, and the
+# 40%-of-window share is stable regardless of how many normal days surround it.)
+#
+# Per-PR: cost per merged feature PR via the existing PR→issue join (ROWS_TSV
+# col1=issue, col8=pr_num), summing the per-(issue,stage) priced cost per issue.
+emit_trend() {
+  echo ""
+  echo 'TREND (per-day) | $ total  | $ output | output%-of-cost'
+  printf '%s\n' "$(priced_day_cost_tsv)" | awk -F'\t' '
+    { day=$1; if (day=="") next; tot[day]+=$2; out[day]+=$3; grand+=$2 }
+    END {
+      n=0; for (d in tot) order[++n]=d;
+      for (i=1;i<n;i++) for (j=i+1;j<=n;j++) if (order[i] > order[j]) { t=order[i]; order[i]=order[j]; order[j]=t }
+      thresh = grand * 0.40;
+      for (i=1;i<=n;i++) {
+        d=order[i];
+        op = (tot[d]>0 ? out[d]/tot[d]*100 : 0);
+        flag = (tot[d] >= thresh && grand > 0) ? "  *OUTLIER" : "";
+        printf "%-15s | %8.2f | %8.2f | %14.1f%%%s\n", d, tot[d], out[d], op, flag;
+      }
+    }'
+
+  echo ""
+  echo 'TREND (per-PR) | $ total'
+  # issue→pr map from ROWS_TSV (col1=issue, col8=pr_num).
+  local issue_pr
+  issue_pr="$(awk -F'\t' '{ print $1"\t"$8 }' "$ROWS_TSV")"
+  local cost_tsv
+  cost_tsv="$(priced_issue_stage_cost_tsv)"
+  printf '%s\n' "$cost_tsv" | awk -F'\t' -v map="$issue_pr" '
+    BEGIN {
+      n=split(map, lines, "\n");
+      for (i=1;i<=n;i++) { if (lines[i]=="") continue; split(lines[i], kv, "\t"); pr[kv[1]]=kv[2]; }
+    }
+    { iss=$1; if (!(iss in pr)) next; cost[pr[iss]] += $3 }
+    END {
+      m=0; for (p in cost) order[++m]=p;
+      for (i=1;i<m;i++) for (j=i+1;j<=m;j++) if (order[i]+0 > order[j]+0) { t=order[i]; order[i]=order[j]; order[j]=t }
+      for (i=1;i<=m;i++) { p=order[i]; printf "PR #%-11s | %8.2f\n", p, cost[p]; }
+    }'
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -946,4 +1032,5 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   emit_path_size_table
   emit_breakeven_table
   emit_coverage_health
+  emit_trend
 fi
