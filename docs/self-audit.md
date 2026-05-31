@@ -73,6 +73,10 @@ prints a ready-to-paste crontab line that runs the snapshot daily at 07:00 local
 
 The longitudinal artifact lets #420's diary distinguish trending vs. stale metrics. Sister scripts: `over-eval-report.sh` (#421), `late-error-report.sh` (#574), `compliance-backfill.sh` (#575). Tracker: #450.
 
+## Cost/latency report — `/pipeline:tokenomics`
+
+`scripts/cost-latency-report.sh` (#643) is the Efficiency-lens cost/latency report: it joins `.claude/logs/agent-costs.jsonl` (produced by `scripts/capture-agent-costs.sh`, #642) with merged feature PRs to surface tokens/$/latency by issue, stage, PATH, and session-structure. The **`/pipeline:tokenomics`** skill (#721, dogfood-only) is the operator entrypoint: Step 1 backfills via `capture-agent-costs.sh`, Step 2 runs `cost-latency-report.sh --tokenomics`, Step 3 presents every table in the assistant reply (per-bucket token-share vs cost-share, per-stage cost, structure + stage×structure cross-tab, B→D breakeven, coverage-health, per-day/per-PR trend with outlier flagging) plus the data-derived concurrency assessment. Per-model pricing is config-driven (`PIPELINE_PRICE_<MODEL>_<BUCKET>`, Opus defaults; regression-guarded by `tests/test-tokenomics-pricing-config.sh`). See [observability.md](observability.md#agent-cost-capture--pipelinetokenomics) for the capture layer. Dogfood-only — not in the plugin manifest, no consumer `.claude/` writes.
+
 ## Tests
 
 Tests live at `dev/tests/test-*.sh` and are run by `dev/tests/run-all.sh` (which CI invokes alongside `tests/test*.sh`).
