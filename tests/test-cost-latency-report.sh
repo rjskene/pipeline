@@ -888,6 +888,74 @@ case "$ISSUE_ROW20" in
 esac
 rm -rf "$TMP20"
 
+# --- Scenario 21: --tokenomics B→D breakeven table (#721) ---
+# For each PATH B issue in-window, project the savings if it had been routed
+# PATH D instead. PATH D drops the plan + plan-eval ceremony stages (collapses
+# execute to a single inline implementer). The MODELLED "saved" amount is the
+# issue's plan + plan-eval stage cost; projected-D $ = current $ - saved.
+# Fixture: PATH B issue 221 with three priced opus records (input-only, $15 each
+# at Opus default 15/1M):
+#   plan       input 1,000,000 → $15.00
+#   plan-eval  input 1,000,000 → $15.00
+#   execute    input 1,000,000 → $15.00
+# current $ = 45.00 ; saved (plan+plan-eval) = 30.00 ; projected-D $ = 15.00.
+inc_scenario "Scenario 21: --tokenomics B→D breakeven table"
+
+TMP21="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP21/" 2>/dev/null
+printf '%s\n' '[
+  {"number":121,"title":"feat: breakeven issue","additions":300,"deletions":100,"body":"Closes #221","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP21/prs.json"
+printf '%s\n' '{"number":121,"additions":300,"deletions":100,"comments":[]}' > "$TMP21/pr-121.json"
+printf '%s\n' '{"number":221,"labels":[],"comments":[]}' > "$TMP21/issue-221.json"
+{
+  echo '{"schema_version":1,"issue":"221","stage":"plan","session_id":"s21a","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K221P","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":900}'
+  echo '{"schema_version":1,"issue":"221","stage":"plan-eval","session_id":"s21b","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K221PE","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":800}'
+  echo '{"schema_version":1,"issue":"221","stage":"execute","session_id":"s21c","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K221E","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+} > "$TMP21/capture.jsonl"
+
+# Default (no --tokenomics): NO breakeven table.
+DEF21="$(bash "$HELPER" --fixture "$TMP21" 2>/dev/null)"
+if printf '%s' "$DEF21" | grep -qiE 'BREAKEVEN|B.*D'; then
+  if printf '%s' "$DEF21" | grep -qi 'BREAKEVEN'; then
+    fail_msg "default output (no --tokenomics) leaked a BREAKEVEN table"
+  else
+    pass_msg "default output has no breakeven table (gated behind --tokenomics)"
+  fi
+else
+  pass_msg "default output has no breakeven table (gated behind --tokenomics)"
+fi
+
+TOK21="$(bash "$HELPER" --fixture "$TMP21" --tokenomics 2>/dev/null)"
+if printf '%s' "$TOK21" | grep -qi 'BREAKEVEN'; then
+  pass_msg "--tokenomics renders a B→D breakeven table"
+else
+  fail_msg "--tokenomics missing B→D breakeven table header"
+fi
+
+BE_BLOCK21="$(printf '%s\n' "$TOK21" | awk '/BREAKEVEN/{f=1} f')"
+BE_ROW21="$(printf '%s\n' "$BE_BLOCK21" | grep -E '221' | head -1)"
+# Row should carry current 45.00, projected-D 15.00, savings 30.00.
+case "$BE_ROW21" in
+  *45.00*) pass_msg "breakeven issue 221 current \$ == 45.00" ;;
+  *) fail_msg "breakeven issue 221 current \$ should be 45.00 (got: $BE_ROW21)" ;;
+esac
+case "$BE_ROW21" in
+  *15.00*) pass_msg "breakeven issue 221 projected-D \$ == 15.00" ;;
+  *) fail_msg "breakeven issue 221 projected-D \$ should be 15.00 (got: $BE_ROW21)" ;;
+esac
+case "$BE_ROW21" in
+  *30.00*) pass_msg "breakeven issue 221 savings == 30.00 (plan+plan-eval cost)" ;;
+  *) fail_msg "breakeven issue 221 savings should be 30.00 (got: $BE_ROW21)" ;;
+esac
+# Aggregate total savings line == 30.00.
+BE_TOTAL21="$(printf '%s\n' "$BE_BLOCK21" | grep -iE 'TOTAL|aggregate' | head -1)"
+case "$BE_TOTAL21" in
+  *30.00*) pass_msg "breakeven aggregate total savings == 30.00" ;;
+  *) fail_msg "breakeven aggregate total savings should be 30.00 (got: $BE_TOTAL21)" ;;
+esac
+rm -rf "$TMP21"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

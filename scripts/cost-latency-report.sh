@@ -361,6 +361,37 @@ priced_records_tsv() {
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
+# priced_issue_stage_cost_tsv — emit one TSV line per PRICED capture record
+# (model!="") as:  issue <TAB> stage <TAB> cost_usd
+# cost_usd is the all-four-bucket USD for that record at the resolved per-(model,
+# bucket) rate (Opus default fallback). Unpriced (model=="") records are SKIPPED.
+# Shared substrate for the per-issue --tokenomics tables (B→D breakeven) that
+# need issue+stage attribution, which priced_records_tsv (stage-only) lacks.
+priced_issue_stage_cost_tsv() {
+  local line model norm
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ (.issue // "" | tostring), (.stage // ""),
+          (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          c=($3/1e6)*ri + ($4/1e6)*ro + ($5/1e6)*rcc + ($6/1e6)*rcr;
+          printf "%s\t%s\t%.10f\n", $1, $2, c
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
 # --- temp files ---
 ROWS_TSV=$(mktemp)
 trap 'rm -f "$ROWS_TSV"' EXIT
@@ -809,6 +840,55 @@ emit_path_size_table() {
   done < "$ROWS_TSV"
 }
 
+# emit_breakeven_table — B→D breakeven projection. For each PATH B issue
+# in-window, model the savings if it had been routed PATH D instead. PATH D
+# drops the plan + plan-eval ceremony stages and collapses execute to a single
+# inline implementer (no separate plan/plan-eval token+latency).
+#
+# MODELLING ASSUMPTION (auditable): the "saved" amount is the issue's
+# (plan + plan-eval) priced stage cost. Execute cost is assumed UNCHANGED under
+# PATH D (a single inline implementer still does the execute work), so
+# projected-D $ = current $ - (plan + plan-eval $). This intentionally ignores
+# any second-order execute delta (PATH D may run a leaner execute); it is a
+# first-order ceremony-elimination model, not a full re-simulation.
+#
+# Per-issue rows (issue, current $, projected-D $, savings) + an aggregate total.
+emit_breakeven_table() {
+  echo ""
+  echo 'B→D BREAKEVEN | current $ | projected-D $ | savings $'
+  # PATH B issues in-window (col2 == B) → one line per issue from ROWS_TSV.
+  local pathb
+  pathb="$(awk -F'\t' '$2 == "B" { print $1 }' "$ROWS_TSV")"
+  # Per-(issue,stage) priced cost for the whole capture stream.
+  local cost_tsv
+  cost_tsv="$(priced_issue_stage_cost_tsv)"
+  printf '%s\n' "$cost_tsv" | awk -F'\t' -v pathb="$pathb" '
+    BEGIN {
+      n = split(pathb, arr, "\n");
+      for (i=1; i<=n; i++) if (arr[i] != "") isb[arr[i]] = 1;
+    }
+    {
+      iss=$1; stage=$2; c=$3;
+      if (!(iss in isb)) next;
+      cur[iss] += c;
+      if (stage == "plan" || stage == "plan-eval") saved[iss] += c;
+    }
+    END {
+      tot_saved = 0;
+      # Emit in a stable issue order.
+      m = 0;
+      for (k in cur) order[++m] = k;
+      for (i=1; i<m; i++) for (j=i+1; j<=m; j++) if (order[i]+0 > order[j]+0) { t=order[i]; order[i]=order[j]; order[j]=t }
+      for (i=1; i<=m; i++) {
+        k = order[i];
+        proj = cur[k] - saved[k];
+        printf "issue #%-7s | %9.2f | %13.2f | %9.2f\n", k, cur[k], proj, saved[k];
+        tot_saved += saved[k];
+      }
+      printf "%-14s | %9s | %13s | %9.2f\n", "TOTAL", "", "", tot_saved;
+    }'
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
@@ -823,4 +903,5 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   emit_structure_table
   emit_stage_structure_crosstab
   emit_path_size_table
+  emit_breakeven_table
 fi
