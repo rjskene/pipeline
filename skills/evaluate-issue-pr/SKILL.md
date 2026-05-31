@@ -183,6 +183,9 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    If `PIPELINE_BASE_BRANCH` has advanced, `git rebase origin/$PIPELINE_BASE_BRANCH`. If conflicts are complex (semantic, not whitespace), flag for user review.
 
 9. **Post evaluation comment on the PR** via `gh pr comment $PR_NUM --repo $PIPELINE_REPO --body "<evaluation>"` using this format:
+
+   > **TERSENESS:** This is the highest-cost artifact in the pipeline — pr-eval output is ≈20% of total spend and output tokens are uncacheable. Emit decisions, not narration. Reference the plan and PR by `#N` / `#PR` — do NOT paste the plan body or re-quote the diff. Each row below is a verdict, not an essay: cap `**Code quality:**` and `**Remaining issues:**` at ≈3 bullets each, one line per bullet; drop a row's prose entirely when its value is "No issues found" / "None". Plan-compliance checkboxes are the evidence — do not restate the plan item in prose after checking it.
+
    ```markdown
    ## Evaluation
 
