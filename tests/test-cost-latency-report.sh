@@ -1400,6 +1400,66 @@ else
   fail_msg "tokenomics-report: --skipped-count 2 should surface in coverage health"
 fi
 
+# --- Scenario 27: per-model baked defaults — Sonnet & Haiku price at own rates (#733) ---
+# Non-Opus models must price at their OWN baked list-price defaults, not the
+# Opus rates. Two priced records (Sonnet 4.6 + Haiku 4.5) with round 1,000,000
+# tokens per bucket so the golden $ is exact at the baked per-model rates:
+#   Sonnet (3/15/3.75/0.30):  1*3 + 1*15 + 1*3.75 + 1*0.30  = $22.05
+#   Haiku  (1/5/1.25/0.10):   1*1 + 1*5  + 1*1.25 + 1*0.10  =  $7.35
+#                                                    COMBINED = $29.40
+# At the OLD Opus-only fallback both records would price at 15/75/18.75/1.50 =
+# $110.25 each → $220.50. Assert == 29.40 AND != 220.* so this fails RED against
+# current code for the RIGHT reason (Opus fallback applied to non-Opus models).
+inc_scenario "Scenario 27: per-model baked defaults (Sonnet+Haiku price at own rates, not Opus)"
+
+TMP27="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP27/" 2>/dev/null
+printf '%s\n' '[
+  {"number":127,"title":"feat: sonnet record issue","additions":300,"deletions":100,"body":"Closes #227","mergedAt":"2026-05-13T12:00:00Z","labels":[]},
+  {"number":128,"title":"feat: haiku record issue","additions":50,"deletions":20,"body":"Closes #228","mergedAt":"2026-05-13T13:00:00Z","labels":[]}
+]' > "$TMP27/prs.json"
+printf '%s\n' '{"number":127,"additions":300,"deletions":100,"comments":[]}' > "$TMP27/pr-127.json"
+printf '%s\n' '{"number":227,"labels":[],"comments":[]}' > "$TMP27/issue-227.json"
+printf '%s\n' '{"number":128,"additions":50,"deletions":20,"comments":[]}' > "$TMP27/pr-128.json"
+printf '%s\n' '{"number":228,"labels":[],"comments":[]}' > "$TMP27/issue-228.json"
+{
+  echo '{"schema_version":1,"issue":"227","stage":"execute","session_id":"s27a","model":"claude-sonnet-4-6","agent_kind":"headless","record_key":"K227","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"228","stage":"execute","session_id":"s27b","model":"claude-haiku-4-5","agent_kind":"headless","record_key":"K228","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":900}'
+} > "$TMP27/capture.jsonl"
+
+# Drive with env -u of every PIPELINE_PRICE_* key for these models so the
+# assertion exercises BAKED defaults, not ambient env (mirror Scenario 16).
+PRICING27="$(env -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_INPUT \
+                 -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_OUTPUT \
+                 -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_CREATION \
+                 -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_READ \
+                 -u PIPELINE_PRICE_CLAUDE_HAIKU_4_5_INPUT \
+                 -u PIPELINE_PRICE_CLAUDE_HAIKU_4_5_OUTPUT \
+                 -u PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION \
+                 -u PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ \
+             bash "$HELPER" --fixture "$TMP27" --emit-pricing-json 2>/dev/null)"
+
+if printf '%s' "$PRICING27" | jq -e . >/dev/null 2>&1; then
+  pass_msg "--emit-pricing-json output parses as JSON"
+else
+  fail_msg "--emit-pricing-json output is not valid JSON (got: $(printf '%s' "$PRICING27" | head -1))"
+fi
+
+COST27="$(printf '%s' "$PRICING27" | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST27" = "29.40" ] || [ "$COST27" = "29.4" ]; then
+  pass_msg "priced_cost_usd == 29.40 (Sonnet 22.05 + Haiku 7.35 at baked per-model rates)"
+else
+  fail_msg "priced_cost_usd should be 29.40 (Sonnet+Haiku baked defaults), got $COST27"
+fi
+
+# Guard: prove the flat Opus fallback did NOT apply to the non-Opus records
+# (Opus fallback would yield $220.50).
+case "$COST27" in
+  220*) fail_msg "priced_cost_usd applied the Opus fallback to non-Opus models (220.50)" ;;
+  *) pass_msg "priced_cost_usd did NOT apply Opus fallback to Sonnet/Haiku (220.50 rejected)" ;;
+esac
+rm -rf "$TMP27"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

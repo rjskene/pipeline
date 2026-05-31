@@ -61,15 +61,30 @@ PIPELINE_LOGS_ENABLED=false
 # OUTPUT, CACHE_CREATION, CACHE_READ. <MODEL> is the model id normalized by
 # upcasing and collapsing each non-alphanumeric run to a single underscore
 # (e.g. "claude-opus-4-8" -> "CLAUDE_OPUS_4_8"). Any bucket left unset falls
-# back to the Opus list-price defaults baked into the report script.
+# back to the per-model list-price defaults baked into the report script
+# (Opus, Sonnet, and Haiku each price at their own rates; unknown models fall
+# back to Opus as a conservative upper bound — see scripts/cost-latency-report.sh).
 #
-# The defaults below match the script's built-in Opus rates. These are the
+# The keys below match the script's built-in per-model rates. These are the
 # tracked anchor: mirror them BY HAND into the gitignored, host-only live
-# pipeline.config (this .example file is never sourced at runtime).
+# pipeline.config (this .example file is never sourced at runtime). The Opus
+# block is left live; the Sonnet/Haiku blocks are commented out because they
+# already match the baked defaults — they are override anchors, not required
+# live settings (uncomment + edit only to override a baked rate).
 PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT=15
 PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT=75
 PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION=18.75
 PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
+# Sonnet 4.6 (matches baked defaults; uncomment to override):
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_INPUT=3
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_OUTPUT=15
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_CREATION=3.75
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_READ=0.30
+# Haiku 4.5 (matches baked defaults; uncomment to override):
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_INPUT=1
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_OUTPUT=5
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION=1.25
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ=0.10
 
 # --- Stall detection (issue #437) ---
 #
