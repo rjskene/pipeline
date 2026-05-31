@@ -238,7 +238,15 @@ Path column shows `?` for ready issues not yet classified — classification run
            prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
      ```
    - **PATH B / PATH C**: proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
-   - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. Multiple D issues fan out as parallel inline Agent calls in a single tool-call batch. The subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a namespaced form.
+   - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D collapsed inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. The subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a namespaced form.
+
+     **Collapsed-D ceremony.** That single dispatch is **one collapsed inline `Agent`** doing **classify+plan+execute** in a single carried-forward context — NOT three separate Agent dispatches. The classify and plan stages run inside that same single context (carried-forward, not re-spawned), emitting `## Classification`+path label and `## Implementation Plan`+`plan-pending` as inline side-effects as the agent goes, then it carries straight on to execution.
+
+     **pr-eval stays a separate inline agent.** The collapsed D context covers classify+plan+execute only — the subsequent pr-eval STAYS a SEPARATE inline `Agent` (separate ≠ spawned; it is still inline, just a fresh context). An agent must not evaluate its own work — **evaluator independence** is the reason pr-eval is never folded into the collapsed D context.
+
+     **Concurrency bound + fan-out.** Multiple D issues fan out as parallel inline `Agent` calls in a single tool-call batch, capped at **max 3 concurrent inline** D agents — this bounds orchestrator context plus the blocking foreground turn while the inline agents run.
+
+     **Escalation backstop.** A collapsed D agent that discovers the change exceeds D's envelope (the quick-fix scope) aborts up to a spawned PATH B run rather than forcing the work through the collapsed inline path.
 
    Run the setup script with BOTH positional args — `<branch-name>` AND `<issue-number>`. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title per the **Branch and worktree naming convention** block above; `<issue-number>` is the bare integer:
 
