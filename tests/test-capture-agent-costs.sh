@@ -178,4 +178,52 @@ PY
 pass "all record_keys unique"
 
 rm -rf "$home" "$proj"
+
+# ---------------------------------------------------------------------------
+# Worktree-scoped capture: OUTPUT log lands in the MAIN worktree, not the
+# linked worktree (which cleanup-worktree.sh prunes). Regression for #697.
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"
+mainrepo="$(mktemp -d)"
+git -C "$mainrepo" init -q
+git -C "$mainrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+wt="$mainrepo/.claude/worktrees/wt-642-x"
+git -C "$mainrepo" worktree add -q "$wt"
+
+# Stage the worker-session input logs INSIDE the linked worktree.
+setup_env "$home" "$wt"
+
+# Run the script as the worker session would: CLAUDE_PROJECT_DIR points at the
+# linked worktree.
+HOME="$home" CLAUDE_PROJECT_DIR="$wt" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+
+main_out="$mainrepo/.claude/logs/agent-costs.jsonl"
+wt_out="$wt/.claude/logs/agent-costs.jsonl"
+
+# OUTPUT must land in the MAIN worktree's log.
+[ -f "$main_out" ] || fail "worktree: expected output in MAIN log $main_out"
+pass "worktree: output written to main log"
+
+# The execute/headless record (stage=execute, session sess-aaaa-1111) is present
+# in the MAIN log.
+python3 - "$main_out" <<'PY' || fail "worktree: execute record missing from main log"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+hit = [r for r in rows
+       if r.get("stage") == "execute"
+       and r.get("session_id") == "sess-aaaa-1111"
+       and r.get("agent_kind") == "headless"]
+assert hit, "execute/headless record not found in main log"
+print("execute record present in main log")
+PY
+pass "worktree: execute record present in main log"
+
+# The linked-worktree log path (pruned by cleanup) must NOT receive the record.
+[ ! -f "$wt_out" ] || fail "worktree: output must NOT land in pruned worktree log $wt_out"
+pass "worktree: worktree-local log not written"
+
+git -C "$mainrepo" worktree remove "$wt" --force 2>/dev/null || rm -rf "$wt"
+rm -rf "$home" "$mainrepo"
+
 echo "all tests passed"
