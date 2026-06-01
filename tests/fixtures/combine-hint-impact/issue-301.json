@@ -1,0 +1,17 @@
+{
+  "number": 301,
+  "createdAt": "2026-06-01T11:00:00Z",
+  "labels": [],
+  "body": "post issue 301 <!-- pipeline:path-hint=B -->",
+  "comments": [
+    {
+      "body": "## Implementation Plan\nplan-pending body"
+    },
+    {
+      "body": "## Classification\nrecommended_path:** B"
+    },
+    {
+      "body": "## Evaluation\nLGTM — APPROVE on first pass."
+    }
+  ]
+}

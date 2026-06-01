@@ -1,0 +1,20 @@
+{
+  "number": 302,
+  "createdAt": "2026-06-01T12:00:00Z",
+  "labels": [],
+  "body": "post issue 302 no hint",
+  "comments": [
+    {
+      "body": "## Implementation Plan\nplan-pending body"
+    },
+    {
+      "body": "## Classification\nrecommended_path:** B"
+    },
+    {
+      "body": "## Implementation Plan\nplan-pending revised"
+    },
+    {
+      "body": "Reconsidered: escalate B↔D re-classify needed."
+    }
+  ]
+}
