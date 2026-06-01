@@ -1680,6 +1680,58 @@ else
 fi
 rm -rf "$TMP29"
 
+# --- Scenario 32: inline-aware concurrency, honest lower-bound (#789 Task 5) ---
+# The interval-overlap sweep STAYS headless-only (inline records are point-in-time
+# ts_start==ts_end and can never overlap). emit_concurrency_assessment ADDS an
+# inline-accounting line: keep the headless peak unchanged, COUNT inline records,
+# and annotate the peak as a LOWER BOUND that excludes inline overlap.
+# Fixture: issue 234 (PR #134), TWO overlapping headless execute records (peak 2)
+# + ONE point-interval inline record (ts_start==ts_end, model="").
+inc_scenario "Scenario 32: inline-aware concurrency (honest lower-bound) (#789)"
+
+TMP32="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP32/" 2>/dev/null
+printf '%s\n' '[
+  {"number":134,"title":"feat: inline-aware concurrency","additions":300,"deletions":100,"body":"Closes #234","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP32/prs.json"
+printf '%s\n' '{"number":134,"additions":300,"deletions":100,"comments":[]}' > "$TMP32/pr-134.json"
+printf '%s\n' '{"number":234,"labels":[],"comments":[]}' > "$TMP32/issue-234.json"
+{
+  echo '{"schema_version":1,"issue":"234","stage":"execute","session_id":"h1","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K234A","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1800000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T09:30:00Z"}'
+  echo '{"schema_version":1,"issue":"234","stage":"execute","session_id":"h2","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K234B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1800000,"ts_start":"2026-05-12T09:10:00Z","ts_end":"2026-05-12T09:40:00Z"}'
+  echo '{"schema_version":1,"issue":"234","stage":"plan","session_id":"i1","model":"","agent_kind":"inline","record_key":"K234C","tokens":{"input":50000,"output":5000,"cache_read":0,"cache_creation":0,"total":55000},"duration_ms":1000,"ts_start":"2026-05-12T09:15:00Z","ts_end":"2026-05-12T09:15:00Z"}'
+} > "$TMP32/capture.jsonl"
+
+TOK32="$(bash "$HELPER" --fixture "$TMP32" --tokenomics 2>/dev/null)"
+CONC_BLOCK32="$(printf '%s\n' "$TOK32" | awk '/CONCURRENCY/{f=1} f')"
+
+# (a) headless interval peak is 2 — UNCHANGED by the inline point-interval record.
+if printf '%s' "$CONC_BLOCK32" | grep -qE 'max observed concurrent execute workers: 2'; then
+  pass_msg "headless interval peak == 2 (unchanged by inline record)"
+else
+  fail_msg "headless interval peak should be 2 (got: $CONC_BLOCK32)"
+fi
+
+# (b) the block carries a LOWER BOUND / not-interval-measurable annotation.
+if printf '%s' "$CONC_BLOCK32" | grep -qiE 'lower bound'; then
+  pass_msg "concurrency block annotates the peak as a LOWER BOUND"
+else
+  fail_msg "concurrency block should annotate the peak as a LOWER BOUND (got: $CONC_BLOCK32)"
+fi
+if printf '%s' "$CONC_BLOCK32" | grep -qiE 'not interval-measurable|point-in-time'; then
+  pass_msg "concurrency block notes inline is point-in-time / not interval-measurable"
+else
+  fail_msg "concurrency block should note inline is point-in-time (got: $CONC_BLOCK32)"
+fi
+
+# (c) the ONE inline record is counted.
+if printf '%s' "$CONC_BLOCK32" | grep -qE '1 inline record'; then
+  pass_msg "concurrency block counts 1 inline record present"
+else
+  fail_msg "concurrency block should count 1 inline record (got: $CONC_BLOCK32)"
+fi
+rm -rf "$TMP32"
+
 # --- Scenario 31: per-PATH token-bucket breakout (#789 Task 4) ---
 # emit_path_table adds input|output|cache_creation|cache_read columns per N,
 # sourced from CAPTURE_JSON (all records, per-issue bucket SUMS, medianed per PATH).

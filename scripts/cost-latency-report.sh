@@ -1255,7 +1255,7 @@ emit_latency_aggregate() {
 # text alongside the observed NUMBER so the operator can compare observed-vs-safe.
 emit_concurrency_assessment() {
   echo ""
-  echo "CONCURRENCY ASSESSMENT (execute-stage headless workers):"
+  echo "CONCURRENCY ASSESSMENT (headless interval peak + inline lower-bound):"
   local intervals max_conc
   intervals="$(execute_headless_intervals_tsv)"
   max_conc="$(printf '%s\n' "$intervals" | awk -F'\t' '
@@ -1278,6 +1278,16 @@ emit_concurrency_assessment() {
     }')"
   [ -z "$max_conc" ] && max_conc=0
   printf 'max observed concurrent execute workers: %s\n' "$max_conc"
+
+  # Inline records are point-in-time (ts_start==ts_end) under the current capture
+  # shape (#773's territory), so they can never overlap in the interval sweep —
+  # feeding them in would silently contribute zero. Instead we COUNT them and
+  # ANNOTATE the headless peak as a LOWER BOUND that excludes inline overlap.
+  local inline_n
+  inline_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select((.agent_kind // "") != "headless")] | length' 2>/dev/null)"
+  [ -z "$inline_n" ] && inline_n=0
+  printf 'inline agents are point-in-time (ts_start==ts_end) under the current capture shape → not interval-measurable; peak above is a LOWER BOUND that excludes inline overlap (%s inline records present).\n' "$inline_n"
+
   echo 'ceiling = min(rate-limit ceiling, cwd-isolation-safe count) — the tighter binds'
   echo '  (per docs/cost-architecture.md §8: rate-limit = burst TPM + 5-hour rolling cap;'
   echo '   cwd-isolation = concurrent inline agents racing on shared git/fs state, #31940).'
