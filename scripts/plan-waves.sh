@@ -144,12 +144,13 @@ for N in "${ISSUES[@]}"; do
       # single whitespace-free path-shaped token — either a `dir/file` shape
       # (a slash followed by a non-empty, non-slash filename segment) OR an
       # anchored known extension. The earlier predicate accepted ANY span
-      # containing a `/`, so backtick-wrapped PROSE with a slash (e.g.
-      # `git mv skills/`, `.claude/skills/` inside a sentence) leaked in: the
-      # span was whitespace-split and trailing-slash directory fragments like
-      # `skills/` re-passed the filter, fabricating false-positive paths. The
-      # `[^/[:space:]]+$` tail rejects trailing-slash dir fragments; anchoring
-      # with `^[^[:space:]]*` rejects multi-word prose phrases.
+      # containing a slash, so backtick-wrapped PROSE with a slash (e.g. a
+      # "git mv <dir>" phrase, or a dot-claude skills-directory fragment quoted
+      # inside a sentence) leaked in: the span was whitespace-split and
+      # trailing-slash directory fragments re-passed the filter, fabricating
+      # false-positive paths. The `[^/[:space:]]+$` tail rejects trailing-slash
+      # dir fragments; anchoring with `^[^[:space:]]*` rejects multi-word prose
+      # phrases.
       FILE_PATH_RE='^[^[:space:]]*/[^/[:space:]]+$|^[^[:space:]]+\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
       FROM_BACKTICKS=$( { echo "$BODY" \
         | grep -oE '`[^`]+`' \
