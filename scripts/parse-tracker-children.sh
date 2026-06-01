@@ -51,8 +51,8 @@ if [ "$FALLBACK" = "1" ]; then
     {
       line = $0
       gsub(/`[^`]*`/, "", line)
-      while (match(line, /#([0-9]+)/, m)) {
-        num = m[1]
+      while (match(line, /#[0-9]+/)) {
+        num = substr(line, RSTART + 1, RLENGTH - 1)
         if (!(num in seen)) {
           seen[num] = 1
           print num
@@ -66,8 +66,11 @@ else
     /^## Rollout sequence[[:space:]]*$/ { inrs=1; next }
     /^## / { inrs=0 }
     inrs {
-      if (match($0, /^- \[[ x]\] \*\*#([0-9]+)[[:space:]]*[-—]/, m)) {
-        print m[1]
+      if (match($0, /^- \[[ x]\] \*\*#[0-9]+[[:space:]]*[-—]/)) {
+        tok = substr($0, RSTART, RLENGTH)
+        sub(/^.*#/, "", tok)
+        sub(/[^0-9].*$/, "", tok)
+        print tok
       }
     }
   '
