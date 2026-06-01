@@ -1232,18 +1232,21 @@ else
 fi
 rm -rf "$TMP23"
 
-# --- Scenario 24: --tokenomics mark + exclude headless session-lifetime durations (#721) ---
-# Headless duration_ms is whole-session wall-clock (~5.4M ms cluster), NOT task
-# latency. Under --tokenomics, wherever durations render for headless records,
-# annotate "(session-lifetime, not task-latency)"; AND EXCLUDE headless durations
-# from any latency median/aggregate the --tokenomics tables compute.
-# Fixture: issue 224 (PR #124), three records:
-#   headless execute  duration 5,400,000  ← session-lifetime, must be annotated + excluded
-#   inline   plan      duration 1,000
-#   inline   plan-eval duration 2,000
-# Non-headless latency median = median(1000, 2000) = 1500 → aggregate == 1500,
-# and must NOT include the 5,400,000 value.
-inc_scenario "Scenario 24: --tokenomics mark + exclude headless session-lifetime durations"
+# --- Scenario 24: --tokenomics spawn vs inline task-latency split, unpriced-honest (#721, #789) ---
+# Task latency is split into TWO labelled rows (#789):
+#   - spawn  = headless duration_ms (session-lifetime), labelled
+#              "(session-lifetime, not task-latency)";
+#   - inline = median over agent_kind != "headless" records (true task-latency),
+#              sourced from CAPTURE_JSON (ALL records, NOT priced_duration_tsv) so
+#              a LIVE unpriced inline (model="") is NOT gated out of the median.
+# Durations render in MINUTES (#789 Task 1). The 5.4M ms value appears only on the
+# spawn row, never folded into the inline median.
+# Fixture: issue 224 (PR #124), three records (#789 LIVE shape — inline model=""):
+#   headless execute  duration 5,400,000 ms (= 90.0 min) ← spawn, session-lifetime
+#   inline   plan      duration 60,000 ms  UNPRICED (model="")
+#   inline   plan-eval duration 120,000 ms UNPRICED (model="")
+# inline median = median(60000,120000) = 90000 ms = 1.5 min, NON-ZERO on unpriced.
+inc_scenario "Scenario 24: --tokenomics spawn vs inline task-latency split (unpriced-honest)"
 
 TMP24="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP24/" 2>/dev/null
@@ -1254,35 +1257,55 @@ printf '%s\n' '{"number":124,"additions":300,"deletions":100,"comments":[]}' > "
 printf '%s\n' '{"number":224,"labels":[],"comments":[]}' > "$TMP24/issue-224.json"
 {
   echo '{"schema_version":1,"issue":"224","stage":"execute","session_id":"s24a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K224E","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":5400000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T10:30:00Z"}'
-  echo '{"schema_version":1,"issue":"224","stage":"plan","session_id":"s24b","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K224P","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000,"ts_start":"2026-05-12T08:00:00Z","ts_end":"2026-05-12T08:00:01Z"}'
-  echo '{"schema_version":1,"issue":"224","stage":"plan-eval","session_id":"s24c","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K224PE","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":2000,"ts_start":"2026-05-12T08:05:00Z","ts_end":"2026-05-12T08:05:02Z"}'
+  echo '{"schema_version":1,"issue":"224","stage":"plan","session_id":"s24b","model":"","agent_kind":"inline","record_key":"K224P","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":60000,"ts_start":"2026-05-12T08:00:00Z","ts_end":"2026-05-12T08:00:00Z"}'
+  echo '{"schema_version":1,"issue":"224","stage":"plan-eval","session_id":"s24c","model":"","agent_kind":"inline","record_key":"K224PE","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":120000,"ts_start":"2026-05-12T08:05:00Z","ts_end":"2026-05-12T08:05:00Z"}'
 } > "$TMP24/capture.jsonl"
 
 TOK24="$(bash "$HELPER" --fixture "$TMP24" --tokenomics 2>/dev/null)"
 
-# (a) Headless duration is annotated "(session-lifetime, not task-latency)".
+# (a) Headless/spawn duration is annotated "(session-lifetime, not task-latency)".
 if printf '%s' "$TOK24" | grep -qF '(session-lifetime, not task-latency)'; then
-  pass_msg "headless duration annotated '(session-lifetime, not task-latency)'"
+  pass_msg "spawn duration annotated '(session-lifetime, not task-latency)'"
 else
-  fail_msg "headless duration should be annotated '(session-lifetime, not task-latency)'"
+  fail_msg "spawn duration should be annotated '(session-lifetime, not task-latency)'"
 fi
 
-# (b) A --tokenomics latency aggregate exists and == 1500 (median of non-headless).
 LAT_BLOCK24="$(printf '%s\n' "$TOK24" | awk '/TASK LATENCY/{f=1} f')"
 if [ -n "$LAT_BLOCK24" ]; then
-  pass_msg "--tokenomics renders a latency aggregate block"
+  pass_msg "--tokenomics renders a task-latency block"
 else
-  fail_msg "--tokenomics missing a latency aggregate block"
+  fail_msg "--tokenomics missing a task-latency block"
 fi
-case "$LAT_BLOCK24" in
-  *1500*) pass_msg "latency aggregate == 1500 (median of non-headless 1000,2000)" ;;
-  *) fail_msg "latency aggregate should be 1500 (got: $LAT_BLOCK24)" ;;
+
+# (b) TWO labelled rows: spawn and inline.
+SPAWN_LAT24="$(printf '%s\n' "$LAT_BLOCK24" | grep -E '^spawn[[:space:]]*\|' | head -1)"
+INLINE_LAT24="$(printf '%s\n' "$LAT_BLOCK24" | grep -E '^inline[[:space:]]*\|' | head -1)"
+if [ -n "$SPAWN_LAT24" ]; then pass_msg "task-latency has a 'spawn' row"; else fail_msg "task-latency should have a 'spawn' row (got: $LAT_BLOCK24)"; fi
+if [ -n "$INLINE_LAT24" ]; then pass_msg "task-latency has an 'inline' row"; else fail_msg "task-latency should have an 'inline' row (got: $LAT_BLOCK24)"; fi
+
+# (c) spawn row carries the session-lifetime label.
+case "$SPAWN_LAT24" in
+  *session-lifetime*) pass_msg "spawn row labelled session-lifetime, not task-latency" ;;
+  *) fail_msg "spawn row should carry the session-lifetime label (got: $SPAWN_LAT24)" ;;
 esac
 
-# (c) The 5,400,000 session-lifetime value must NOT appear in the latency aggregate.
-case "$LAT_BLOCK24" in
-  *5400000*) fail_msg "latency aggregate leaked the headless session-lifetime duration (5400000)" ;;
-  *) pass_msg "latency aggregate excludes headless session-lifetime duration (5400000 absent)" ;;
+# (d) inline row median == 1.5 min (90000 ms), NON-ZERO on LIVE unpriced inline.
+INLINE_DUR24="$(printf '%s' "$INLINE_LAT24" | awk -F'|' '{gsub(/[ ]/,"",$NF); print $NF}')"
+if [ "$INLINE_DUR24" = "1.5" ]; then
+  pass_msg "inline task-latency == 1.5 min (median 90000 ms, sourced from all records — unpriced not gated out)"
+else
+  fail_msg "inline task-latency should be 1.5 min (NON-ZERO on unpriced inline), got '$INLINE_DUR24' (row=$INLINE_LAT24)"
+fi
+case "$INLINE_DUR24" in
+  0|0.0|--) fail_msg "inline task-latency row is ZERO/-- — unpriced inline was gated out (priced-gate pathology)" ;;
+  *) pass_msg "inline task-latency row is non-zero on live unpriced inline" ;;
+esac
+
+# (e) the 5.4M ms session-lifetime value appears only on the spawn row, never in
+# the inline median (which renders 1.5 min, not 90.0).
+case "$INLINE_LAT24" in
+  *5400000*|*90.0*) fail_msg "inline row leaked the headless session-lifetime duration (got: $INLINE_LAT24)" ;;
+  *) pass_msg "inline row excludes the headless session-lifetime duration" ;;
 esac
 rm -rf "$TMP24"
 
@@ -1470,21 +1493,30 @@ else
   fail_msg "tokenomics-report: concurrency observed-max should be 3 (got: $CONC_BLOCK26)"
 fi
 
-# (g) headless ~5.4M ms session-lifetime durations annotated + EXCLUDED from
-# task-latency aggregate. The 5400000 value appears in the HEADLESS DURATIONS
-# block but the median-task-latency line must NOT carry it.
+# (g) headless ~5.4M ms session-lifetime durations annotated + the inline
+# task-latency row must NOT carry the 5.4M value (#789 spawn/inline split). The
+# 5400000 value appears in the HEADLESS DURATIONS block and on the spawn row, but
+# never folded into the inline row's median.
 HEADLESS_DUR_BLOCK26="$(printf '%s\n' "$TOK26" | awk '/HEADLESS DURATIONS/{f=1} /TASK LATENCY/{f=0} f')"
 if printf '%s' "$HEADLESS_DUR_BLOCK26" | grep -qE '5400000.*session-lifetime'; then
   pass_msg "tokenomics-report: 5.4M ms headless duration annotated session-lifetime"
 else
   fail_msg "tokenomics-report: 5400000 should be annotated session-lifetime (got: $HEADLESS_DUR_BLOCK26)"
 fi
-TASK_LAT_LINE26="$(printf '%s\n' "$TOK26" | grep -E 'median task latency')"
-if printf '%s' "$TASK_LAT_LINE26" | grep -q '5400000'; then
-  fail_msg "tokenomics-report: 5.4M ms headless duration leaked into task-latency aggregate ($TASK_LAT_LINE26)"
+# The TASK LATENCY block carries TWO labelled rows (spawn, inline).
+LAT_BLOCK26="$(printf '%s\n' "$TOK26" | awk '/TASK LATENCY/{f=1} f')"
+SPAWN_LAT26="$(printf '%s\n' "$LAT_BLOCK26" | grep -E '^spawn[[:space:]]*\|' | head -1)"
+INLINE_LAT26="$(printf '%s\n' "$LAT_BLOCK26" | grep -E '^inline[[:space:]]*\|' | head -1)"
+if [ -n "$SPAWN_LAT26" ] && [ -n "$INLINE_LAT26" ]; then
+  pass_msg "tokenomics-report: task-latency has both spawn and inline rows"
 else
-  pass_msg "tokenomics-report: 5.4M ms headless duration excluded from task-latency aggregate"
+  fail_msg "tokenomics-report: task-latency should have spawn + inline rows (got: $LAT_BLOCK26)"
 fi
+# The inline row's median (rendered in minutes) must NOT be the 5.4M/90.0-min value.
+case "$INLINE_LAT26" in
+  *90.0*|*5400000*) fail_msg "tokenomics-report: inline task-latency leaked the headless session-lifetime duration ($INLINE_LAT26)" ;;
+  *) pass_msg "tokenomics-report: 5.4M ms headless duration excluded from inline task-latency" ;;
+esac
 
 # (h) breakeven has real PATH B rows (301, 302) and a positive TOTAL savings.
 if printf '%s' "$TOK26" | grep -qE 'issue #301' && printf '%s' "$TOK26" | grep -qE 'issue #302'; then

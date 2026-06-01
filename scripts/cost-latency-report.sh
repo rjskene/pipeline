@@ -486,6 +486,20 @@ priced_duration_tsv() {
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
+# inline_duration_tsv — emit one TSV line per INLINE (agent_kind != "headless")
+# capture record with a numeric duration_ms:  agent_kind <TAB> stage <TAB> duration_ms
+# Sourced over ALL records (priced + unpriced — NOT gated on model or interval
+# width), unlike priced_duration_tsv which SKIPS model=="" (#789). This is the
+# substrate for the INLINE task-latency row: live inline carries model="" so the
+# priced-gated source would drop every live inline record and zero the median.
+inline_duration_tsv() {
+  printf '%s' "$CAPTURE_JSON" | jq -r '
+    .[]
+    | select((.agent_kind // "") != "headless")
+    | select((.duration_ms // null) != null)
+    | [ (.agent_kind // ""), (.stage // ""), (.duration_ms) ] | @tsv' 2>/dev/null
+}
+
 # execute_headless_intervals_tsv — emit one TSV line per EXECUTE-stage headless
 # capture record with BOTH a non-empty ts_start and ts_end:
 #   start_epoch <TAB> end_epoch
@@ -1210,27 +1224,37 @@ emit_trend() {
     }'
 }
 
-# emit_latency_aggregate — task-latency view over PRICED records.
+# emit_latency_aggregate — task-latency view split by STRUCTURE (#789).
 #
 # Headless duration_ms is whole-session WALL-CLOCK (the ~5.4M ms cluster), NOT
 # per-task latency: a headless worker's record spans its entire `claude -p`
-# session, not the single task. So under --tokenomics we (1) list headless
-# durations separately, annotated "(session-lifetime, not task-latency)", and
-# (2) EXCLUDE headless durations from the task-latency median/aggregate, which
-# is computed over IN-SESSION (agent_kind != "headless") records only. The
-# default-path median dur(ms) rendering (emit_path_table/emit_stage_table) is
-# untouched — this is an additive --tokenomics-only view.
+# session, not the single task. Under --tokenomics we render TWO labelled rows
+# (option (a) — label, don't re-derive):
+#   - spawn  = the headless duration_ms (session-lifetime), labelled
+#              "(session-lifetime, not task-latency)" — sourced from
+#              priced_duration_tsv (headless always carries a model);
+#   - inline = the median over agent_kind != "headless" records (true task
+#              latency), sourced from inline_duration_tsv = CAPTURE_JSON ALL
+#              records (NOT priced_duration_tsv), so a LIVE unpriced inline
+#              (model="") is NOT gated out and the inline row is non-zero on
+#              real data (#789).
+# Both render in MINUTES (#789 Task 1). The annotation makes the apples-to-oranges
+# basis explicit so the two rows are not naively compared. The per-worker HEADLESS
+# DURATIONS list is preserved. The default-path duration rendering
+# (emit_path_table/emit_stage_table) is untouched — this is an additive view.
 emit_latency_aggregate() {
-  local dur_tsv
+  local dur_tsv inline_tsv
   dur_tsv="$(priced_duration_tsv)"
+  inline_tsv="$(inline_duration_tsv)"
 
   echo ""
   echo 'HEADLESS DURATIONS (session-lifetime, not task-latency):'
   printf '%s\n' "$dur_tsv" | awk -F'\t' '
-    $1 == "headless" { printf "%-10s | %12d ms  (session-lifetime, not task-latency)\n", $2, $3 }'
+    $1 == "headless" { printf "%-10s | %12d ms (= %.1f min)  (session-lifetime, not task-latency)\n", $2, $3, $3/60000 }'
 
   echo ""
-  echo 'TASK LATENCY (in-session records only; headless excluded) | median dur(ms)'
+  echo 'TASK LATENCY (spawn=session-lifetime, inline=task-latency) | structure | median dur(min)'
+  # spawn row: median headless duration (session-lifetime), priced-sourced.
   printf '%s\n' "$dur_tsv" | awk -F'\t' '
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
@@ -1238,9 +1262,20 @@ emit_latency_aggregate() {
       if (n % 2 == 1) return arr[(n+1)/2];
       return (arr[n/2] + arr[n/2+1]) / 2;
     }
-    function fmt(v) { if (v=="") return "--"; if (v==int(v)) return sprintf("%d", v); return sprintf("%.1f", v) }
-    $1 != "headless" { d[++n]=$3 }
-    END { printf "%-57s | %s\n", "median task latency", fmt(median(d, n)) }'
+    function min_fmt(v) { if (v=="") return "--"; return sprintf("%.1f", v/60000) }
+    $1 == "headless" { d[++n]=$3 }
+    END { printf "%-10s | %-44s | %s\n", "spawn", "(session-lifetime, not task-latency)", min_fmt(median(d, n)) }'
+  # inline row: median over ALL inline records (unpriced not gated out).
+  printf '%s\n' "$inline_tsv" | awk -F'\t' '
+    function median(arr, n,   i, j, tmp) {
+      for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
+      if (n == 0) return "";
+      if (n % 2 == 1) return arr[(n+1)/2];
+      return (arr[n/2] + arr[n/2+1]) / 2;
+    }
+    function min_fmt(v) { if (v=="") return "--"; return sprintf("%.1f", v/60000) }
+    $1 != "headless" && $1 != "" { d[++n]=$3 }
+    END { printf "%-10s | %-44s | %s\n", "inline", "(task-latency, all records incl. unpriced)", min_fmt(median(d, n)) }'
 }
 
 # emit_concurrency_assessment — data-derived execute-concurrency analysis (per
