@@ -936,17 +936,26 @@ emit_stage_structure_crosstab() {
 # not a $ figure. Issues with no records render '--'.
 emit_path_size_table() {
   echo ""
-  echo 'PER-ISSUE SIZE (net of cache_read) | PATH | size tokens'
+  echo 'PER-ISSUE SIZE | PATH | input | output | cache_read | net total'
   while IFS=$'\t' read -r issue path loc ceremony tt dur ov prn; do
     [ -z "$issue" ] && continue
-    local size
-    size="$(printf '%s' "$CAPTURE_JSON" | jq -r --arg n "$issue" '
+    local cells tin tout tcr net
+    # Four per-issue token sums over ALL records (priced + unpriced): it is a
+    # token count, not a $ figure. net total nets OUT cache_read (input+output+
+    # cache_creation), unchanged from the prior single-column value.
+    cells="$(printf '%s' "$CAPTURE_JSON" | jq -r --arg n "$issue" '
       [.[] | select((.issue|tostring) == $n)] as $recs
-      | if ($recs | length) == 0 then "--"
-        else ([$recs[] | (.tokens.input//0)+(.tokens.output//0)+(.tokens.cache_creation//0)] | add)
+      | if ($recs | length) == 0 then "--\t--\t--\t--"
+        else
+          ([$recs[] | (.tokens.input//0)] | add) as $tin
+          | ([$recs[] | (.tokens.output//0)] | add) as $tout
+          | ([$recs[] | (.tokens.cache_read//0)] | add) as $tcr
+          | ([$recs[] | (.tokens.input//0)+(.tokens.output//0)+(.tokens.cache_creation//0)] | add) as $net
+          | "\($tin)\t\($tout)\t\($tcr)\t\($net)"
         end' 2>/dev/null)"
-    [ -z "$size" ] && size="--"
-    printf 'issue #%-29s | %-4s | %s\n' "$issue" "$path" "$size"
+    IFS=$'\t' read -r tin tout tcr net <<<"$cells"
+    [ -z "$tin" ] && { tin="--"; tout="--"; tcr="--"; net="--"; }
+    printf 'issue #%-20s | %-4s | %12s | %12s | %12s | %12s\n' "$issue" "$path" "$tin" "$tout" "$tcr" "$net"
   done < "$ROWS_TSV"
 }
 

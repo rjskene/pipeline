@@ -875,17 +875,33 @@ case "$ISSUE_ROW20" in
   *1000000*) ;;
   *) fail_msg "issue 220 net-of-cache size should contain 1000000 (got: $ISSUE_ROW20)" ;;
 esac
-# Assert it is EXACTLY the net value and NOT the all-in total.
-SIZE_VAL20="$(printf '%s' "$ISSUE_ROW20" | grep -oE '[0-9]+' | sort -rn | head -1)"
-if [ "$SIZE_VAL20" = "1000000" ]; then
-  pass_msg "issue 220 net-of-cache size == 1000000 (cache_read excluded)"
+# Parse the issue-220 row by pipe position (EXEC_SIZE18 style). With cache_read
+# now a visible column the row shape is:
+#   issue #220 | PATH | input | output | cache_read | net total
+SIZE_IN20="$(printf '%s' "$ISSUE_ROW20" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+SIZE_OUT20="$(printf '%s' "$ISSUE_ROW20" | awk -F'|' '{gsub(/[ ]/,"",$4); print $4}')"
+SIZE_CR20="$(printf '%s' "$ISSUE_ROW20" | awk -F'|' '{gsub(/[ ]/,"",$5); print $5}')"
+SIZE_NET20="$(printf '%s' "$ISSUE_ROW20" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6}')"
+if [ "$SIZE_IN20" = "1000000" ]; then
+  pass_msg "issue 220 input column == 1000000"
 else
-  fail_msg "issue 220 net-of-cache size should be 1000000, got $SIZE_VAL20 (row=$ISSUE_ROW20)"
+  fail_msg "issue 220 input column should be 1000000, got $SIZE_IN20 (row=$ISSUE_ROW20)"
 fi
-case "$ISSUE_ROW20" in
-  *51000000*) fail_msg "issue 220 size view leaked all-in cache_read total (51000000): $ISSUE_ROW20" ;;
-  *) pass_msg "issue 220 size view excludes all-in total (51000000 absent)" ;;
-esac
+if [ "$SIZE_OUT20" = "0" ]; then
+  pass_msg "issue 220 output column == 0"
+else
+  fail_msg "issue 220 output column should be 0, got $SIZE_OUT20 (row=$ISSUE_ROW20)"
+fi
+if [ "$SIZE_CR20" = "50000000" ]; then
+  pass_msg "issue 220 cache_read column == 50000000 (now a visible column)"
+else
+  fail_msg "issue 220 cache_read column should be 50000000, got $SIZE_CR20 (row=$ISSUE_ROW20)"
+fi
+if [ "$SIZE_NET20" = "1000000" ]; then
+  pass_msg "issue 220 net total == 1000000 (net of cache_read)"
+else
+  fail_msg "issue 220 net total should be 1000000, got $SIZE_NET20 (row=$ISSUE_ROW20)"
+fi
 rm -rf "$TMP20"
 
 # --- Scenario 21: --tokenomics B→D breakeven table (#721) ---
