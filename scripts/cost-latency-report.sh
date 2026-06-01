@@ -919,22 +919,66 @@ emit_stage_cost_table() {
     }'
 }
 
-# emit_structure_table — structure dimension over PRICED records:
+# structure_buckets_tsv — emit one TSV line per capture record (ALL records,
+# priced + unpriced) keyed on STRUCTURE:
+#   structure <TAB> input <TAB> output <TAB> cache_creation <TAB> cache_read
+# structure is "spawn" (agent_kind=="headless") or "in-session" (else). NOT gated
+# on model — this is the all-records substrate so an UNPRICED (model="") in-session
+# row still shows REAL per-bucket token counts (#789), mirroring emit_path_size_table.
+structure_buckets_tsv() {
+  printf '%s' "$CAPTURE_JSON" | jq -r '
+    .[]
+    | [ (if (.agent_kind // "") == "headless" then "spawn" else "in-session" end),
+        (.tokens.input//0), (.tokens.output//0),
+        (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null
+}
+
+# emit_structure_table — structure dimension over BOTH substrates (#789):
 #   spawn      = agent_kind == "headless"
 #   in-session = agent_kind != "headless"  (inline + main/orchestrator)
-# Emit priced $ + cost share for each. $ uses ALL FOUR buckets.
+# N + token-bucket columns source from structure_buckets_tsv (ALL records) so the
+# in-session row shows REAL tokens even when unpriced; $ + cost% source from
+# TOKENOMICS_TSV (PRICED records only — a rate is required for $). When a
+# structure's priced cost is zero because ALL its records are unpriced, the $
+# column renders '--' with an '(unpriced)' mark so a zero-cost row is never read
+# as a zero-token row.
 emit_structure_table() {
   echo ""
-  echo 'STRUCTURE  | $        | cost%'
-  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
-    NF >= 10 {
-      c = $7+$8+$9+$10;
-      if ($2 == "headless") sp += c; else ins += c;
-      tot += c;
+  echo 'STRUCTURE  | N  | input        | output       | cache_creation | cache_read   | $        | cost%'
+
+  # Priced $ per structure (from TOKENOMICS_TSV: $2=agent_kind, $7..$10=cost).
+  local priced_tsv
+  priced_tsv="$(printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 { st = ($2 == "headless") ? "spawn" : "in-session"; c[st] += $7+$8+$9+$10 }
+    END { printf "spawn\t%.10f\nin-session\t%.10f\n", (c["spawn"]+0), (c["in-session"]+0) }')"
+
+  printf '%s\n' "$(structure_buckets_tsv)" | awk -F'\t' -v priced="$priced_tsv" '
+    BEGIN {
+      np = split(priced, plines, "\n");
+      for (i=1; i<=np; i++) { if (plines[i]=="") continue; split(plines[i], kv, "\t"); cost[kv[1]] = kv[2] }
+    }
+    $1 != "" {
+      st=$1; n[st]++;
+      tin[st]+=$2; tout[st]+=$3; tcc[st]+=$4; tcr[st]+=$5;
     }
     END {
-      printf "%-10s | %8.2f | %5.1f%%\n", "spawn",      (sp+0),  (tot>0 ? sp/tot*100  : 0);
-      printf "%-10s | %8.2f | %5.1f%%\n", "in-session", (ins+0), (tot>0 ? ins/tot*100 : 0);
+      ntot = (n["spawn"]+0) + (n["in-session"]+0);
+      tcost = (cost["spawn"]+0) + (cost["in-session"]+0);
+      m = split("spawn in-session", order, " ");
+      for (k=1; k<=m; k++) {
+        st = order[k];
+        c = cost[st] + 0;
+        # $ renders "--" with an (unpriced) mark when this structure has records
+        # but zero priced cost (all its records are unpriced — model="").
+        if ((n[st]+0) > 0 && c == 0) {
+          usd = "--"; cp = "  (unpriced)";
+        } else {
+          usd = sprintf("%8.2f", c);
+          cp = sprintf(" | %5.1f%%", (tcost>0 ? c/tcost*100 : 0));
+        }
+        printf "%-10s | %-2d | %12d | %12d | %14d | %12d | %8s%s\n", \
+          st, (n[st]+0), (tin[st]+0), (tout[st]+0), (tcc[st]+0), (tcr[st]+0), usd, cp;
+      }
     }'
 }
 

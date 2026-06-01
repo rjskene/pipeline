@@ -757,15 +757,19 @@ else
 fi
 rm -rf "$TMP18"
 
-# --- Scenario 19: --tokenomics structure table + stage×structure cross-tab (#721) ---
+# --- Scenario 19: --tokenomics structure table + stage×structure cross-tab (#721, #789) ---
 # Structure dimension: spawn = agent_kind=="headless"; in-session = agent_kind!=
-# "headless" (inline + main/orchestrator). Emit $ + share for spawn vs in-session,
-# THEN a stage × structure $ matrix (rows=stages, cols={spawn,in-session}).
-# Fixture (both PRICED so they appear in the $ tables):
-#   headless / execute: input 2,000,000 → $30.00  (spawn)
-#   inline   / plan:    input 1,000,000 → $15.00  (in-session)
-# spawn $ = 30, in-session $ = 15; total 45 → spawn share 66.7%, in-session 33.3%.
-# crosstab: execute×spawn = 30.00 ; plan×in-session = 15.00.
+# "headless" (inline + main/orchestrator). Header (revised #789):
+#   STRUCTURE | N | input | output | cache_creation | cache_read | $ | cost%
+# Token-bucket columns + N source from CAPTURE_JSON (ALL records) keyed on
+# agent_kind, so the in-session (inline) row shows REAL token counts even when
+# model="" (unpriced). The $/cost% columns stay PRICED-ONLY; an all-unpriced
+# in-session row renders $ == '--' with an '(unpriced)' mark.
+# Fixture (#789 LIVE shape):
+#   headless / execute: input 2,000,000 PRICED → spawn $30.00
+#   inline   / plan:    input 1,000,000 UNPRICED (model="") → in-session tokens
+#                       real, but $ == '--' (unpriced)
+# crosstab: execute×spawn = 30.00 ; plan×in-session = 0.00 (inline now unpriced).
 inc_scenario "Scenario 19: --tokenomics structure table + stage×structure cross-tab"
 
 TMP19="$(mktemp -d)"
@@ -777,7 +781,7 @@ printf '%s\n' '{"number":119,"additions":300,"deletions":100,"comments":[]}' > "
 printf '%s\n' '{"number":219,"labels":[],"comments":[]}' > "$TMP19/issue-219.json"
 {
   echo '{"schema_version":1,"issue":"219","stage":"execute","session_id":"s19a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K219A","tokens":{"input":2000000,"output":0,"cache_read":0,"cache_creation":0,"total":2000000},"duration_ms":1000}'
-  echo '{"schema_version":1,"issue":"219","stage":"plan","session_id":"s19b","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K219B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":900}'
+  echo '{"schema_version":1,"issue":"219","stage":"plan","session_id":"s19b","model":"","agent_kind":"inline","record_key":"K219B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":900}'
 } > "$TMP19/capture.jsonl"
 
 DEF19="$(bash "$HELPER" --fixture "$TMP19" 2>/dev/null)"
@@ -794,33 +798,48 @@ else
   fail_msg "--tokenomics missing structure table header"
 fi
 
-# Structure split: spawn $ == 30.00, in-session $ == 15.00.
+# Structure header carries the four token-bucket columns + N.
+STRUCT_HDR19="$(printf '%s\n' "$TOK19" | grep -E '^STRUCTURE[[:space:]]*\|')"
+for col in input output cache_creation cache_read; do
+  case "$STRUCT_HDR19" in
+    *"$col"*) pass_msg "structure header carries '$col' column" ;;
+    *) fail_msg "structure header missing '$col' column (got: $STRUCT_HDR19)" ;;
+  esac
+done
+
+# Row shape: STRUCTURE | N | input | output | cache_creation | cache_read | $ | cost%
 SPAWN_ROW19="$(printf '%s\n' "$TOK19" | grep -E '^spawn[[:space:]]*\|' | head -1)"
 INSESS_ROW19="$(printf '%s\n' "$TOK19" | grep -E '^in-session[[:space:]]*\|' | head -1)"
-SPAWN_USD19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$2); print $2}')"
-INSESS_USD19="$(printf '%s' "$INSESS_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$2); print $2}')"
-if [ "$SPAWN_USD19" = "30.00" ]; then
-  pass_msg "spawn structure \$ == 30.00 (headless record)"
-else
-  fail_msg "spawn structure \$ should be 30.00, got $SPAWN_USD19 (row=$SPAWN_ROW19)"
-fi
-if [ "$INSESS_USD19" = "15.00" ]; then
-  pass_msg "in-session structure \$ == 15.00 (inline record)"
-else
-  fail_msg "in-session structure \$ should be 15.00, got $INSESS_USD19 (row=$INSESS_ROW19)"
-fi
 
-# Cross-tab: stage × structure $ matrix. The execute row's spawn cell == 30.00.
+# spawn (headless, priced): input bucket 2000000, $ == 30.00.
+SPAWN_IN19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+SPAWN_USD19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+if [ "$SPAWN_IN19" = "2000000" ]; then pass_msg "spawn input bucket == 2000000"; else fail_msg "spawn input should be 2000000, got $SPAWN_IN19 (row=$SPAWN_ROW19)"; fi
+if [ "$SPAWN_USD19" = "30.00" ]; then pass_msg "spawn structure \$ == 30.00 (headless priced)"; else fail_msg "spawn structure \$ should be 30.00, got $SPAWN_USD19 (row=$SPAWN_ROW19)"; fi
+
+# in-session (inline UNPRICED): input bucket 1000000 (REAL, non-zero), $ == '--' / (unpriced).
+INSESS_IN19="$(printf '%s' "$INSESS_ROW19" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+if [ "$INSESS_IN19" = "1000000" ]; then
+  pass_msg "in-session input bucket == 1000000 (unpriced inline shows REAL tokens)"
+else
+  fail_msg "in-session input should be 1000000 (real unpriced tokens), got $INSESS_IN19 (row=$INSESS_ROW19)"
+fi
+case "$INSESS_ROW19" in
+  *unpriced*) pass_msg "in-session row carries an (unpriced) mark (all records model=\"\")" ;;
+  *) fail_msg "in-session row should carry an (unpriced) mark (got: $INSESS_ROW19)" ;;
+esac
+INSESS_USD19="$(printf '%s' "$INSESS_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+case "$INSESS_USD19" in
+  *--*) pass_msg "in-session \$ renders '--' (unpriced, never read as zero-token)" ;;
+  *) fail_msg "in-session \$ should render '--' when all records unpriced, got '$INSESS_USD19' (row=$INSESS_ROW19)" ;;
+esac
+
+# Cross-tab: stage × structure $ matrix (PRICED-only, unchanged by #789).
 XTAB_BLOCK19="$(printf '%s\n' "$TOK19" | awk '/STAGE.STRUCTURE|STAGE x STRUCTURE|CROSS-TAB|CROSSTAB/{f=1} f')"
 XEXEC_ROW19="$(printf '%s\n' "$XTAB_BLOCK19" | grep -E '^execute[[:space:]]*\|' | head -1)"
-XPLAN_ROW19="$(printf '%s\n' "$XTAB_BLOCK19" | grep -E '^plan[[:space:]]*\|' | head -1)"
 case "$XEXEC_ROW19" in
   *30.00*) pass_msg "cross-tab execute×spawn cell == 30.00" ;;
   *) fail_msg "cross-tab execute row should carry spawn cell 30.00 (got: $XEXEC_ROW19)" ;;
-esac
-case "$XPLAN_ROW19" in
-  *15.00*) pass_msg "cross-tab plan×in-session cell == 15.00" ;;
-  *) fail_msg "cross-tab plan row should carry in-session cell 15.00 (got: $XPLAN_ROW19)" ;;
 esac
 rm -rf "$TMP19"
 
