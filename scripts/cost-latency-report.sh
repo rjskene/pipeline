@@ -391,9 +391,12 @@ priced_records_tsv() {
 }
 
 # priced_issue_stage_cost_tsv — emit one TSV line per PRICED capture record
-# (model!="") as:  issue <TAB> stage <TAB> cost_usd
+# (model!="") as:
+#   issue <TAB> stage <TAB> cost_usd <TAB> input <TAB> output <TAB> cache_read
 # cost_usd is the all-four-bucket USD for that record at the resolved per-(model,
 # bucket) rate (Opus default fallback). Unpriced (model=="") records are SKIPPED.
+# input/output/cache_read are the raw token counts (append-only, for the per-PR
+# trend table's token columns); the breakeven consumer reads only $1/$2/$3.
 # Shared substrate for the per-issue --tokenomics tables (B→D breakeven) that
 # need issue+stage attribution, which priced_records_tsv (stage-only) lacks.
 priced_issue_stage_cost_tsv() {
@@ -416,7 +419,9 @@ priced_issue_stage_cost_tsv() {
           (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
       | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
           c=($3/1e6)*ri + ($4/1e6)*ro + ($5/1e6)*rcc + ($6/1e6)*rcr;
-          printf "%s\t%s\t%.10f\n", $1, $2, c
+          # APPEND raw input/output/cache_read token counts (internal jq $3/$4/$6)
+          # so CONSUMERS see: issue=$1 stage=$2 cost=$3 input=$4 output=$5 cache_read=$6
+          printf "%s\t%s\t%.10f\t%d\t%d\t%d\n", $1, $2, c, $3, $4, $6
         }'
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
@@ -1076,22 +1081,23 @@ emit_trend() {
     }'
 
   echo ""
-  echo 'TREND (per-PR) | $ total'
+  echo 'TREND (per-PR) | input | output | cache_read | $ total'
   # issue→pr map from ROWS_TSV (col1=issue, col8=pr_num).
   local issue_pr
   issue_pr="$(awk -F'\t' '{ print $1"\t"$8 }' "$ROWS_TSV")"
   local cost_tsv
   cost_tsv="$(priced_issue_stage_cost_tsv)"
+  # Consumer fields: issue=$1 stage=$2 cost=$3 input=$4 output=$5 cache_read=$6.
   printf '%s\n' "$cost_tsv" | awk -F'\t' -v map="$issue_pr" '
     BEGIN {
       n=split(map, lines, "\n");
       for (i=1;i<=n;i++) { if (lines[i]=="") continue; split(lines[i], kv, "\t"); pr[kv[1]]=kv[2]; }
     }
-    { iss=$1; if (!(iss in pr)) next; cost[pr[iss]] += $3 }
+    { iss=$1; if (!(iss in pr)) next; cost[pr[iss]] += $3; tin[pr[iss]] += $4; tout[pr[iss]] += $5; tcr[pr[iss]] += $6 }
     END {
       m=0; for (p in cost) order[++m]=p;
       for (i=1;i<m;i++) for (j=i+1;j<=m;j++) if (order[i]+0 > order[j]+0) { t=order[i]; order[i]=order[j]; order[j]=t }
-      for (i=1;i<=m;i++) { p=order[i]; printf "PR #%-11s | %8.2f\n", p, cost[p]; }
+      for (i=1;i<=m;i++) { p=order[i]; printf "PR #%-11s | %12d | %12d | %12d | %8.2f\n", p, tin[p], tout[p], tcr[p], cost[p]; }
     }'
 }
 

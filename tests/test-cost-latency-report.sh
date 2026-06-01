@@ -1189,6 +1189,28 @@ case "$PERPR_ROW23" in
   *180.00*) pass_msg "per-PR \$ for PR #123 == 180.00 (sum of all four days)" ;;
   *) fail_msg "per-PR \$ for PR #123 should be 180.00 (got: $PERPR_ROW23)" ;;
 esac
+# Per-PR token columns (pipe-position parse). New column order:
+#   PR # | input | output | cache_read | $ total
+# PR #123 sums input 10,000,000 / output 0 / cache_read 20,000,000 over its four
+# records. cache_read==20000000 is the per-PR off-by-one regression guard.
+PERPR_IN23="$(printf '%s' "$PERPR_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$2); print $2}')"
+PERPR_OUT23="$(printf '%s' "$PERPR_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+PERPR_CR23="$(printf '%s' "$PERPR_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$4); print $4}')"
+if [ "$PERPR_IN23" = "10000000" ]; then
+  pass_msg "per-PR input column == 10000000"
+else
+  fail_msg "per-PR input column should be 10000000, got $PERPR_IN23 (row=$PERPR_ROW23)"
+fi
+if [ "$PERPR_OUT23" = "0" ]; then
+  pass_msg "per-PR output column == 0"
+else
+  fail_msg "per-PR output column should be 0, got $PERPR_OUT23 (row=$PERPR_ROW23)"
+fi
+if [ "$PERPR_CR23" = "20000000" ]; then
+  pass_msg "per-PR cache_read column == 20000000 (off-by-one guard)"
+else
+  fail_msg "per-PR cache_read column should be 20000000, got $PERPR_CR23 (row=$PERPR_ROW23)"
+fi
 rm -rf "$TMP23"
 
 # --- Scenario 24: --tokenomics mark + exclude headless session-lifetime durations (#721) ---
