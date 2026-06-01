@@ -152,6 +152,30 @@ The skill receives an issue number as argument. Perform:
    # END-PATH-MARKER-PARSE
    ```
 
+3d. **Advisory path hint (overridable prior, parsed before the rule table is scored).** If the body contains `<!--\s*pipeline:path-hint=[A-Ca-c]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path-hint=[A-Ca-c][[:space:]]*-->`), it is an **advisory** prior emitted by `create-issues` — **not** authoritative. It is read as one **prior** among the keyword/blast-radius priors in step 4 and is fully **overridable**: it is **never an override** and **never short-circuits** the rule table. It is OUTRANKED by an explicit path label (step 4 row 1) and by the authoritative `<!-- pipeline:path=D -->` marker (step 3c). The advisory hint vocabulary is `{A, B, C}` ONLY — `D` is authoritative-only and is rejected to empty here, so a `path-hint=D` can never route as a hint. The hint parser cannot match the authoritative `path=` marker (distinct syntax), and the `path=` parser cannot match a `path-hint=` directive. Run the parser to populate `HINT_PATH`; it does NOT skip to step 5.
+
+   ```bash
+   # BEGIN-PATH-HINT-PARSE
+   # Required env: ISSUE_BODY. Sets: HINT_PATH ("A"|"B"|"C" or "").
+   # Advisory hint vocabulary is {A,B,C} ONLY — D is authoritative-only and is
+   # rejected to "" here so a path-hint=D can never route as a hint.
+   # Regex: <!--\s*pipeline:path-hint=[A-Ca-c]\s*--> (POSIX equivalent below).
+   HINT_PATH=""
+   _hraw=$(printf '%s' "$ISSUE_BODY" \
+     | grep -oE '<!--[[:space:]]*pipeline:path-hint=[A-Za-z][[:space:]]*-->' \
+     | head -1)
+   if [ -n "$_hraw" ]; then
+     _hletter=$(printf '%s' "$_hraw" \
+       | grep -oE 'pipeline:path-hint=[A-Za-z]' \
+       | head -1 | cut -d= -f2 | tr 'a-z' 'A-Z')
+     case "$_hletter" in
+       A|B|C) HINT_PATH="$_hletter" ;;
+       *) HINT_PATH="" ;;
+     esac
+   fi
+   # END-PATH-HINT-PARSE
+   ```
+
 4. **Score against rule set** (first match wins):
 
    | Signal | Path | Confidence |
@@ -170,6 +194,7 @@ The skill receives an issue number as argument. Perform:
    - **Acceptance-criteria skip.** Bullets nested under `Acceptance`, `Acceptance Criteria`, or `Out of scope` are verification scope or non-goals — skip them; do not count them as work items.
    - **Generic-keyword tightening for D triggers.** `flip` and `swap` fire D only when they co-occur with a code-shaped token (file path with `/`+extension, function name in parens, or a backticked `code` token); bare "flip the wording" does NOT trigger D. `tweak`, `obvious`, `minimal` retain broad match.
    - **Blast-radius B→D prior.** For `fix(` issues whose `## Affected areas` names ≤ 2 non-test source files in a single top-level module and that carry no high-uncertainty signal, lean D — see the `#### Blast-radius B→D routing` subsection under PATH D (`feat(` excluded; high-uncertainty `fix(` stays B).
+   - **Advisory path-hint prior (`HINT_PATH` from step 3d).** A non-empty `<!-- pipeline:path-hint=A|B|C -->` leans toward the hinted path — an advisory PRIOR in the same weight class as the Blast-radius B→D prior (a thumb on the scale, not a gate). It is **never an override** and **never short-circuits** the rule table: it is OUTRANKED by an explicit path label (row 1 above) and by the authoritative `<!-- pipeline:path=D -->` marker (step 3c). When other signals point elsewhere, they win; the hint only breaks ties / nudges among otherwise-balanced candidates.
 
 4a. **Read any ingested attachments.** Before composing, list and `Read` every file in `.claude/scratch/issue-<N>/` (populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b). If empty or absent, skip — this step does NOT re-fetch. Mandatory for issues labeled `bug` or `user-submitted`.
 
@@ -180,6 +205,8 @@ The skill receives an issue number as argument. Perform:
 5. **Compose the classification output:**
 
    > **TERSENESS:** Classification is a routing decision, not a report. `**rationale:**` is 1-2 sentences citing the firing signal — no restatement of the issue body, no enumeration of rules that did NOT fire. Do not echo the rule table or the path definitions back into the comment.
+
+   > **Override rationale.** If the resolved path differs from a non-empty `HINT_PATH` (step 3d), the `**rationale:**` MUST record the override (e.g. `create-issues hinted B; classified C — multiple subsystems in Affected areas`) so the divergence is auditable.
 
    ```markdown
    ## Classification
