@@ -1023,7 +1023,10 @@ emit_breakeven_table() {
 #   - % feature PRs joined = joined ÷ eligible, where eligible == PR_COUNT and
 #     joined == PR_COUNT - SKIPPED_NO_LINK (PRs with a Closes/Fixes/Resolves link);
 #   - model-attribution coverage % = priced records ÷ total records (a priced
-#     record has a non-empty model; exposes #699 empty-model INLINE records).
+#     record has a non-empty model; exposes #699 empty-model INLINE records);
+#   - lower-bound (unreconciled) count = usage_complete:false records ÷ total —
+#     inline sidecar/forward records whose subagent transcript was missing at
+#     backfill time, so their totals are a LOWER BOUND, not the real cost (#773).
 emit_coverage_health() {
   echo ""
   echo "COVERAGE HEALTH:"
@@ -1047,6 +1050,19 @@ emit_coverage_health() {
   awk -v p="$priced_n" -v t="$total_n" 'BEGIN {
     pct = (t > 0 ? p/t*100 : 0);
     printf "model-attribution coverage: %d/%d (%.1f%%)\n", p, t, pct;
+  }'
+
+  # Lower-bound (unreconciled) record count over the DEDUPED capture stream
+  # (#773). usage_complete=false records are inline sidecar / forward lower
+  # bounds whose subagent transcript was missing/pruned at backfill time; their
+  # token totals read as a LOWER BOUND, not the real cost. Re-running the
+  # capture backfill once the transcript exists reconciles them upward.
+  local lb_n
+  lb_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select(.usage_complete == false)] | length' 2>/dev/null)"
+  [ -z "$lb_n" ] && lb_n=0
+  awk -v lb="$lb_n" -v t="$total_n" 'BEGIN {
+    pct = (t > 0 ? lb/t*100 : 0);
+    printf "lower-bound (unreconciled) records: %d/%d (%.1f%%) — these read as a LOWER BOUND; run the backfill to reconcile\n", lb, t, pct;
   }'
 }
 

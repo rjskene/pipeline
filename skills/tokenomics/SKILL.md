@@ -65,14 +65,14 @@ The bash stdout is NOT surfaced to the user automatically. Relay **every** table
 - **Stage × structure crosstab** — which stages run headless vs inline.
 - **Per-PATH / issue size** — size distribution across PATH A/B/C/D.
 - **B→D breakeven** — the crossover where PATH B ceremony stops paying off vs PATH D quick-fix.
-- **Coverage-health** — how complete the cost data is; model-attribution coverage % is the completeness signal (flag if it is low).
+- **Coverage-health** — how complete the cost data is. Model-attribution coverage % is one completeness signal (flag if it is low). Inline costs are transcript-summed cumulative (`usage_complete=true`) after the Step-1 backfill resolves each subagent transcript; the **lower-bound (unreconciled) records** count names how many records are still forward/sidecar lower bounds (transcript missing or pruned at backfill time) — those totals read as a LOWER BOUND, not the real cost, so re-run the backfill to reconcile them once the transcript exists.
 - **Trend** — per-day and per-PR cost trend, with any outlier days called out.
 - **Task-latency** — wall-clock per task/stage.
 - **Concurrency assessment** — observed overlap and the concurrency ceiling.
 
 **Surface the concurrency assessment prominently** as an analysis deliverable in its own right — not just as one more table. State the observed peak overlap and the ceiling, and whether the workload is approaching it.
 
-If coverage-health shows low model-attribution coverage, lead the summary with that caveat: the cost figures are a lower bound until those records carry a model.
+If coverage-health shows low model-attribution coverage OR a non-zero lower-bound (unreconciled) record count, lead the summary with that caveat: the cost figures are a lower bound — until those records carry a model (model-attribution) and until each inline record's subagent transcript is resolved and transcript-summed (the unreconciled count). Re-running the Step-1 backfill reconciles the unreconciled lower bounds upward once their transcripts exist.
 
 ## Dogfood-only
 
