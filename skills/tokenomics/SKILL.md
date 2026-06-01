@@ -32,21 +32,25 @@ Run the retroactive HEADLESS + INLINE backfill. It is idempotent by `record_key`
 
 ```bash
 ERRLOG="$(mktemp)"
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/capture-agent-costs.sh" 2>"$ERRLOG"
+CAPTURE_OUT="$(PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" CLAUDE_PROJECT_DIR="$(pwd)" bash "${CLAUDE_PLUGIN_ROOT}/scripts/capture-agent-costs.sh" 2>"$ERRLOG")"
+printf '%s\n' "$CAPTURE_OUT"
 # The HEADLESS pass skips runs whose Claude Code transcript is missing and
-# counts them on stderr as headless_skipped_missing_transcript=N. That count is
-# captured to "$ERRLOG" for debugging only — it is no longer threaded into the
-# report.
+# counts them on stderr as headless_skipped_missing_transcript=N (captured to
+# "$ERRLOG" for debugging only; no longer threaded into the report).
 ```
 
-If `PIPELINE_LOGS_ENABLED` is not `true`, the script is a no-op — note that the report will then show empty/`--` cells and say so in Step 3.
+**Detect a gated skip.** If `$CAPTURE_OUT` contains `SKIP_LOGGING_DISABLED`, the backfill did NOT run. Because the invocation explicitly passes `PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED"`, the marker's echoed value tells you which case applies:
+
+- marker shows `PIPELINE_LOGS_ENABLED='false'` (or `<unset>`) → **intentional opt-out**: the report will show empty/`--` cells; say so plainly in Step 3.
+- marker shows `PIPELINE_LOGS_ENABLED='true'` → **contradiction / propagation bug**: the gate fired despite the skill passing `true`. STOP and report the propagation failure rather than rendering a misleadingly stale report.
+- if `$PIPELINE_LOGS_ENABLED` was itself empty in the skill shell, `pipeline.config` did not source correctly — re-check the Boot block before proceeding.
 
 ## Step 2 — Report
 
 Render the full tokenomics report over the (now-refreshed) `agent-costs.jsonl`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --tokenomics
+PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" CLAUDE_PROJECT_DIR="$(pwd)" bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --tokenomics
 ```
 
 Use `--limit N` to widen or narrow the window of most-recent merged PRs (default 50), e.g. `--limit 100`. The `--tokenomics` flag renders the bucket, per-stage-cost, structure, stage×structure crosstab, per-PATH size, breakeven, coverage-health, trend, latency, and concurrency tables. The report degrades gracefully (token/duration cells render `--`) when the capture log is absent or empty — it never errors.
