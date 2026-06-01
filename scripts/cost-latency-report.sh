@@ -696,15 +696,20 @@ INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq
 [ -z "$INWINDOW_JSON" ] && INWINDOW_JSON='[]'
 
 # Per-(issue,stage) capture sums for in-window issues:
-#   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum   (one line per (issue,stage) group)
+#   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum<TAB>input<TAB>output<TAB>cache_creation<TAB>cache_read
+#   (one line per (issue,stage) group)
 #
 # Orchestrator records are session-scoped (issue == ""), so grouping them by
 # [issue, stage] is degenerate (one all-time group). Partition the post-select
 # stream: group orchestrator records by session_id (col1 = session_id, dur =
 # null since post-#667 orchestrator duration_ms is always null), and keep inline
-# stages grouped by (issue, stage). Concatenate so the @tsv 4-column contract
-# (key \t stage \t tokens_sum \t dur_sum) consumed by emit_stage_table /
-# emit_top_slow_stages (NF >= 4) is preserved.
+# stages grouped by (issue, stage). Concatenate so the @tsv contract consumed by
+# emit_stage_table / emit_top_slow_stages (NF >= 4) is preserved.
+#
+# The four per-bucket token sums (cols 5-8) are over ALL records in the group
+# (priced + unpriced — neither model- nor interval-gated), so an UNPRICED
+# (model="") stage still shows REAL per-bucket token counts (#789). They mirror
+# the all-records substrate emit_path_size_table uses.
 STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
   [.[] | select(
       (.stage == "orchestrator" and .duration_ms == null)
@@ -713,12 +718,20 @@ STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" 
   | (
       ($recs | map(select(.stage == "orchestrator")) | group_by(.session_id)
         | map([ (.[0].session_id // ""), "orchestrator",
-                ([.[] | .tokens.total] | add), null ]))
+                ([.[] | .tokens.total] | add), null,
+                ([.[] | (.tokens.input//0)] | add),
+                ([.[] | (.tokens.output//0)] | add),
+                ([.[] | (.tokens.cache_creation//0)] | add),
+                ([.[] | (.tokens.cache_read//0)] | add) ]))
       +
       ($recs | map(select(.stage != "orchestrator")) | group_by([(.issue|tostring), .stage])
         | map([ (.[0].issue|tostring), .[0].stage,
                 ([.[] | .tokens.total] | add),
-                ([.[] | .duration_ms] | add) ]))
+                ([.[] | .duration_ms] | add),
+                ([.[] | (.tokens.input//0)] | add),
+                ([.[] | (.tokens.output//0)] | add),
+                ([.[] | (.tokens.cache_creation//0)] | add),
+                ([.[] | (.tokens.cache_read//0)] | add) ]))
     )
   | .[]
   | @tsv' 2>/dev/null)"
@@ -777,7 +790,7 @@ emit_path_table() {
 # the per-(issue,stage) sums; stages with no records render '--'.
 emit_stage_table() {
   echo ""
-  echo 'STAGE | N | median tokens | median dur(min)'
+  echo 'STAGE | N | median tokens | median dur(min) | input | output | cache_creation | cache_read'
   printf '%s\n' "$STAGE_TSV" | awk -F'\t' '
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
@@ -792,7 +805,8 @@ emit_stage_table() {
     }
     # min_fmt(ms) — render a raw ms duration in MINUTES (ms/60000, 1dp); "" → "--".
     function min_fmt(v) { if (v == "") return "--"; return sprintf("%.1f", v/60000) }
-    NF >= 4 { s=$2; c[s]++; tk[s,c[s]]=$3; dr[s,c[s]]=$4 }
+    NF >= 4 { s=$2; c[s]++; tk[s,c[s]]=$3; dr[s,c[s]]=$4;
+              bin[s,c[s]]=$5+0; bout[s,c[s]]=$6+0; bcc[s,c[s]]=$7+0; bcr[s,c[s]]=$8+0 }
     END {
       m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
       for (k=1; k<=m; k++) {
@@ -800,10 +814,12 @@ emit_stage_table() {
         # orchestrator tokens.total EXCLUDES cache_read while inline-stage totals
         # include it (#668); the two are not directly comparable, so flag it.
         note = (s == "orchestrator" && cnt > 0) ? "  (tokens excl. cache_read, #668)" : "";
-        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s%s\n", s, 0, "--", "--", note; continue }
-        for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i] }
-        printf "%-9s | %-2d | %-13s | %-13s%s\n", s, cnt, fmt(median(tarr, cnt)), min_fmt(median(darr, cnt)), note;
-        delete tarr; delete darr;
+        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-15s | %12s | %12s | %14s | %12s%s\n", s, 0, "--", "--", "--", "--", "--", "--", note; continue }
+        for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i]; iarr[i]=bin[s,i]; oarr[i]=bout[s,i]; carr[i]=bcc[s,i]; rarr[i]=bcr[s,i] }
+        printf "%-9s | %-2d | %-13s | %-15s | %12d | %12d | %14d | %12d%s\n", \
+          s, cnt, fmt(median(tarr, cnt)), min_fmt(median(darr, cnt)), \
+          median(iarr, cnt), median(oarr, cnt), median(carr, cnt), median(rarr, cnt), note;
+        delete tarr; delete darr; delete iarr; delete oarr; delete carr; delete rarr;
       }
     }'
 }

@@ -1661,6 +1661,49 @@ else
 fi
 rm -rf "$TMP29"
 
+# --- Scenario 30: per-stage token-bucket breakout, unpriced-honest (#789 Task 2) ---
+# emit_stage_table adds input|output|cache_creation|cache_read columns per N,
+# sourced from CAPTURE_JSON (ALL records, priced + unpriced) so an UNPRICED
+# (model="") stage shows REAL token counts, not zero.
+# Fixture: issue 232 (PR #132), one UNPRICED inline execute record:
+#   input 111000 output 222000 cache_creation 333000 cache_read 444000.
+inc_scenario "Scenario 30: per-stage token-bucket breakout (unpriced-honest) (#789)"
+
+TMP30="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP30/" 2>/dev/null
+printf '%s\n' '[
+  {"number":132,"title":"feat: stage bucket breakout","additions":300,"deletions":100,"body":"Closes #232","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP30/prs.json"
+printf '%s\n' '{"number":132,"additions":300,"deletions":100,"comments":[]}' > "$TMP30/pr-132.json"
+printf '%s\n' '{"number":232,"labels":[],"comments":[]}' > "$TMP30/issue-232.json"
+{
+  echo '{"schema_version":1,"issue":"232","stage":"execute","session_id":"s30","model":"","agent_kind":"inline","record_key":"K232","tokens":{"input":111000,"output":222000,"cache_creation":333000,"cache_read":444000,"total":1110000},"duration_ms":1000}'
+} > "$TMP30/capture.jsonl"
+
+TABLE30="$(bash "$HELPER" --fixture "$TMP30" 2>/dev/null)"
+
+# (a) per-stage header carries the four bucket columns.
+STAGE_HDR30="$(printf '%s\n' "$TABLE30" | grep -E '^STAGE \| N')"
+for col in input output cache_creation cache_read; do
+  case "$STAGE_HDR30" in
+    *"$col"*) pass_msg "per-stage header carries '$col' column" ;;
+    *) fail_msg "per-stage header missing '$col' column (got: $STAGE_HDR30)" ;;
+  esac
+done
+
+# (b) the execute row (UNPRICED) shows REAL per-bucket medians, not zero.
+# Row shape: STAGE | N | median tokens | median dur(min) | input | output | cache_creation | cache_read
+EXEC_ROW30="$(printf '%s\n' "$TABLE30" | grep -E '^execute[[:space:]]*\|' | head -1)"
+E_IN30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$5); print $5}')"
+E_OUT30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6}')"
+E_CC30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$7); print $7}')"
+E_CR30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8}')"
+if [ "$E_IN30" = "111000" ]; then pass_msg "execute input bucket == 111000 (unpriced shown)"; else fail_msg "execute input should be 111000, got $E_IN30 (row=$EXEC_ROW30)"; fi
+if [ "$E_OUT30" = "222000" ]; then pass_msg "execute output bucket == 222000"; else fail_msg "execute output should be 222000, got $E_OUT30 (row=$EXEC_ROW30)"; fi
+if [ "$E_CC30" = "333000" ]; then pass_msg "execute cache_creation bucket == 333000"; else fail_msg "execute cache_creation should be 333000, got $E_CC30 (row=$EXEC_ROW30)"; fi
+if [ "$E_CR30" = "444000" ]; then pass_msg "execute cache_read bucket == 444000"; else fail_msg "execute cache_read should be 444000, got $E_CR30 (row=$EXEC_ROW30)"; fi
+rm -rf "$TMP30"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
