@@ -136,6 +136,14 @@ output=1049), not the subagent's full internal loop. So inline cost is structura
 undercounted — an extension of #699. Inline agents do NOT consume less; we only measure
 one turn of them.
 
+Resolved per #765: inline forward records are now stamped `usage_complete=false`,
+matching the retroactive-inline producer (`scripts/capture-agent-costs.sh`). The token
+values are unchanged (still the final-turn snapshot) — the fix is honest provenance, not a
+fabricated cumulative: the flag marks the record as a lower-bound so SUM-ming consumers
+don't trust it as a complete total. Only cumulative-source forward records (if a future
+harness populates `total_usage`/`cumulative_usage`) and the transcript-summed
+orchestrator-Stop / headless paths carry `usage_complete=true`.
+
 ---
 
 ## 4. Billing reality
