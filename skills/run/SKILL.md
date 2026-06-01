@@ -260,7 +260,7 @@ Path column shows `?` for ready issues not yet classified — classification run
 
      **Concurrency bound + fan-out.** Multiple D issues fan out as parallel inline `Agent` calls in a single tool-call batch, capped at **max 3 concurrent inline** D agents — this bounds orchestrator context plus the blocking foreground turn while the inline agents run.
 
-     **Escalation backstop.** A collapsed D agent that discovers the change exceeds D's envelope (the quick-fix scope) aborts up to a spawned PATH B run rather than forcing the work through the collapsed inline path.
+     **Escalation backstop.** A collapsed D agent that discovers the change exceeds D's envelope (the quick-fix scope) aborts up to a full PATH B run rather than forcing the work through the collapsed inline path. (Per #748 a PATH B run is itself an inline `Agent`, not a spawned `claude -p` worker — the escalation buys real planning plus a full execute session, not a different transport.)
 
    Run the setup script with BOTH positional args — `<branch-name>` AND `<issue-number>`. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title per the **Branch and worktree naming convention** block above; `<issue-number>` is the bare integer:
 

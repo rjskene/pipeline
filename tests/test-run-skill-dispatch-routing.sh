@@ -59,4 +59,10 @@ echo "$STEP6" | grep -qF "pipeline:tdd-implementer" \
 echo "$STEP6" | grep -qF "No spawn-claude.sh" \
   || { echo "FAIL: Step 6 PATH D branch missing 'No spawn-claude.sh' negation"; exit 1; }
 
+# Issue #748 drift guard: PATH B is inline now, so no part of the run skill may
+# call a PATH B run a "spawned" one (the D escalation backstop used to). This is
+# a NOT-spawn-paired assertion in the #748 anti-masking spirit.
+grep -qE "spawned PATH B|spawned B run|PATH B.*spawned (worker|run)" "$SKILL" \
+  && { echo "FAIL: run SKILL.md still calls a PATH B run 'spawned' (B is inline now, #748)"; exit 1; } || true
+
 echo "PASS: run SKILL.md dispatch routing"
