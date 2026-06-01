@@ -1053,12 +1053,14 @@ rm -rf "$TMP22"
 # records with empty ts_start). Per day: total $, output $, output%-of-cost.
 # Outlier days flagged when day $ >= 40% of the window total (documented thresh).
 # Per-PR: cost per merged feature PR via the PR→issue join.
-# Fixture: issue 223 (PR #123), THREE execute records (opus, input-only, $15/1M),
-# one per day:
-#   2026-05-10  input 1,000,000 → $15.00
-#   2026-05-11  input 1,000,000 → $15.00
-#   2026-05-12  input 8,000,000 → $120.00   ← outlier (120 >= 40% of 150 = 60)
-# window total = $150.00. Days 05-10/05-11 ($15 each) are NOT outliers.
+# Fixture: issue 223 (PR #123), FOUR execute records (opus), one per day:
+#   2026-05-10  input 1,000,000        → $15.00
+#   2026-05-11  input 1,000,000        → $15.00
+#   2026-05-12  input 8,000,000        → $120.00   ← outlier (120 >= 40% of 180 = 72)
+#   2026-05-13  cache_read 20,000,000  → $30.00    (opus cache_read $1.50/1M)
+# window total = $180.00. Days 05-10/05-11 ($15) and 05-13 ($30) are NOT outliers.
+# The non-zero cache_read record is the regression guard for the per-PR/per-day
+# off-by-one (a wrong $7 index coerces cache_read to 0 and fails loudly).
 inc_scenario "Scenario 23: --tokenomics per-day + per-PR \$ trend with outlier flagging"
 
 TMP23="$(mktemp -d)"
@@ -1072,6 +1074,7 @@ printf '%s\n' '{"number":223,"labels":[],"comments":[]}' > "$TMP23/issue-223.jso
   echo '{"schema_version":1,"issue":"223","stage":"execute","session_id":"s23a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K223A","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000,"ts_start":"2026-05-10T09:00:00Z","ts_end":"2026-05-10T09:01:00Z"}'
   echo '{"schema_version":1,"issue":"223","stage":"execute","session_id":"s23b","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K223B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000,"ts_start":"2026-05-11T09:00:00Z","ts_end":"2026-05-11T09:01:00Z"}'
   echo '{"schema_version":1,"issue":"223","stage":"execute","session_id":"s23c","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K223C","tokens":{"input":8000000,"output":0,"cache_read":0,"cache_creation":0,"total":8000000},"duration_ms":1000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T09:01:00Z"}'
+  echo '{"schema_version":1,"issue":"223","stage":"execute","session_id":"s23d","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K223D","tokens":{"input":0,"output":0,"cache_read":20000000,"cache_creation":0,"total":20000000},"duration_ms":1000,"ts_start":"2026-05-13T09:00:00Z","ts_end":"2026-05-13T09:01:00Z"}'
 } > "$TMP23/capture.jsonl"
 
 # Default (no --tokenomics): NO trend block.
@@ -1090,8 +1093,8 @@ else
   fail_msg "--tokenomics missing per-day trend block"
 fi
 
-# Per-day rows for all three days.
-for day in 2026-05-10 2026-05-11 2026-05-12; do
+# Per-day rows for all four days.
+for day in 2026-05-10 2026-05-11 2026-05-12 2026-05-13; do
   if printf '%s' "$TREND_BLOCK23" | grep -qF "$day"; then
     pass_msg "trend block has a row for $day"
   else
@@ -1121,7 +1124,60 @@ else
   pass_msg "05-10 normal day is not flagged"
 fi
 
-# Per-PR $ section: PR #123 costs $150.00 (all three records join to issue 223).
+# Per-day token columns (pipe-position parse). New column order:
+#   date | input | output | cache_read | $ total | $ output | output%-of-cost
+# 05-12 row carries input 8,000,000 / output 0 / cache_read 0.
+DAY12_IN23="$(printf '%s' "$DAY12_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$2); print $2}')"
+DAY12_OUT23="$(printf '%s' "$DAY12_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+DAY12_CR23="$(printf '%s' "$DAY12_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$4); print $4}')"
+if [ "$DAY12_IN23" = "8000000" ]; then
+  pass_msg "05-12 input column == 8000000"
+else
+  fail_msg "05-12 input column should be 8000000, got $DAY12_IN23 (row=$DAY12_ROW23)"
+fi
+if [ "$DAY12_OUT23" = "0" ]; then
+  pass_msg "05-12 output column == 0"
+else
+  fail_msg "05-12 output column should be 0, got $DAY12_OUT23 (row=$DAY12_ROW23)"
+fi
+if [ "$DAY12_CR23" = "0" ]; then
+  pass_msg "05-12 cache_read column == 0"
+else
+  fail_msg "05-12 cache_read column should be 0, got $DAY12_CR23 (row=$DAY12_ROW23)"
+fi
+
+# 05-13 row: cache_read 20,000,000 (input/output 0), $ total 30.00, NOT flagged.
+# The cache_read==20000000 assertion is the per-day off-by-one regression guard.
+DAY13_ROW23="$(printf '%s\n' "$TREND_BLOCK23" | grep -F '2026-05-13' | head -1)"
+DAY13_IN23="$(printf '%s' "$DAY13_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$2); print $2}')"
+DAY13_OUT23="$(printf '%s' "$DAY13_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+DAY13_CR23="$(printf '%s' "$DAY13_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$4); print $4}')"
+if [ "$DAY13_IN23" = "0" ]; then
+  pass_msg "05-13 input column == 0"
+else
+  fail_msg "05-13 input column should be 0, got $DAY13_IN23 (row=$DAY13_ROW23)"
+fi
+if [ "$DAY13_OUT23" = "0" ]; then
+  pass_msg "05-13 output column == 0"
+else
+  fail_msg "05-13 output column should be 0, got $DAY13_OUT23 (row=$DAY13_ROW23)"
+fi
+if [ "$DAY13_CR23" = "20000000" ]; then
+  pass_msg "05-13 cache_read column == 20000000 (off-by-one guard)"
+else
+  fail_msg "05-13 cache_read column should be 20000000, got $DAY13_CR23 (row=$DAY13_ROW23)"
+fi
+case "$DAY13_ROW23" in
+  *30.00*) pass_msg "05-13 day total \$ == 30.00 (cache_read priced)" ;;
+  *) fail_msg "05-13 day total \$ should be 30.00 (got: $DAY13_ROW23)" ;;
+esac
+if printf '%s' "$DAY13_ROW23" | grep -qiE 'outlier|FLAG'; then
+  fail_msg "05-13 normal day should NOT be flagged (got: $DAY13_ROW23)"
+else
+  pass_msg "05-13 normal day is not flagged"
+fi
+
+# Per-PR $ section: PR #123 costs $180.00 (all four records join to issue 223).
 PERPR_BLOCK23="$(printf '%s\n' "$TOK23" | awk '/PER-PR|PR \$|per-PR/{f=1} f')"
 if printf '%s' "$PERPR_BLOCK23" | grep -qE '123'; then
   pass_msg "per-PR \$ section references PR #123"
@@ -1130,8 +1186,8 @@ else
 fi
 PERPR_ROW23="$(printf '%s\n' "$PERPR_BLOCK23" | grep -E '123' | head -1)"
 case "$PERPR_ROW23" in
-  *150.00*) pass_msg "per-PR \$ for PR #123 == 150.00 (sum of all three days)" ;;
-  *) fail_msg "per-PR \$ for PR #123 should be 150.00 (got: $PERPR_ROW23)" ;;
+  *180.00*) pass_msg "per-PR \$ for PR #123 == 180.00 (sum of all four days)" ;;
+  *) fail_msg "per-PR \$ for PR #123 should be 180.00 (got: $PERPR_ROW23)" ;;
 esac
 rm -rf "$TMP23"
 

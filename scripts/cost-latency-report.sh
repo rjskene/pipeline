@@ -422,10 +422,13 @@ priced_issue_stage_cost_tsv() {
 }
 
 # priced_day_cost_tsv — emit one TSV line per PRICED capture record (model!="")
-# whose ts_start has a YYYY-MM-DD prefix:  date <TAB> cost_all <TAB> cost_output
+# whose ts_start has a YYYY-MM-DD prefix:
+#   date <TAB> cost_all <TAB> cost_output <TAB> input <TAB> output <TAB> cache_read
 # date is the YYYY-MM-DD prefix of ts_start; records with EMPTY/absent ts_start
 # are SKIPPED (cannot be day-bucketed). cost_all is the all-four-bucket USD;
 # cost_output is just the output-bucket USD (for the output%-of-cost column).
+# input/output/cache_read are the raw token counts (append-only, for the trend
+# table's per-day token columns).
 # Shared substrate for the --tokenomics per-day trend table.
 priced_day_cost_tsv() {
   local line model norm day
@@ -452,7 +455,9 @@ priced_day_cost_tsv() {
       | awk -F'\t' -v d="$day" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
           call=($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr;
           cout=($2/1e6)*ro;
-          printf "%s\t%.10f\t%.10f\n", d, call, cout
+          # APPEND raw input/output/cache_read token counts (internal jq $1/$2/$4)
+          # so CONSUMERS see: date=$1 cost_all=$2 cost_output=$3 input=$4 output=$5 cache_read=$6
+          printf "%s\t%.10f\t%.10f\t%d\t%d\t%d\n", d, call, cout, $1, $2, $4
         }'
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
@@ -1055,9 +1060,9 @@ emit_coverage_health() {
 # col1=issue, col8=pr_num), summing the per-(issue,stage) priced cost per issue.
 emit_trend() {
   echo ""
-  echo 'TREND (per-day) | $ total  | $ output | output%-of-cost'
+  echo 'TREND (per-day) | input | output | cache_read | $ total  | $ output | output%-of-cost'
   printf '%s\n' "$(priced_day_cost_tsv)" | awk -F'\t' '
-    { day=$1; if (day=="") next; tot[day]+=$2; out[day]+=$3; grand+=$2 }
+    { day=$1; if (day=="") next; tot[day]+=$2; out[day]+=$3; tin[day]+=$4; tout[day]+=$5; tcr[day]+=$6; grand+=$2 }
     END {
       n=0; for (d in tot) order[++n]=d;
       for (i=1;i<n;i++) for (j=i+1;j<=n;j++) if (order[i] > order[j]) { t=order[i]; order[i]=order[j]; order[j]=t }
@@ -1066,7 +1071,7 @@ emit_trend() {
         d=order[i];
         op = (tot[d]>0 ? out[d]/tot[d]*100 : 0);
         flag = (tot[d] >= thresh && grand > 0) ? "  *OUTLIER" : "";
-        printf "%-15s | %8.2f | %8.2f | %14.1f%%%s\n", d, tot[d], out[d], op, flag;
+        printf "%-15s | %12d | %12d | %12d | %8.2f | %8.2f | %14.1f%%%s\n", d, tin[d], tout[d], tcr[d], tot[d], out[d], op, flag;
       }
     }'
 
