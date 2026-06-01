@@ -3,6 +3,7 @@
   "session": "sess-inline",
   "description": "Classify #310",
   "subagent_type": "pipeline:issue-classifier",
+  "agent_id": "atx310",
   "usage": {
     "input_tokens": 1000,
     "output_tokens": 100,

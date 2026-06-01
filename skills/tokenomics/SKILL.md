@@ -53,7 +53,7 @@ Render the full tokenomics report over the (now-refreshed) `agent-costs.jsonl`:
 PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" CLAUDE_PROJECT_DIR="$(pwd)" bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --tokenomics
 ```
 
-Use `--limit N` to widen or narrow the window of most-recent merged PRs (default 50), e.g. `--limit 100`. The `--tokenomics` flag renders the bucket, per-stage-cost, structure, stage×structure crosstab, per-PATH size, breakeven, coverage-health, trend, latency, and concurrency tables. The report degrades gracefully (token/duration cells render `--`) when the capture log is absent or empty — it never errors.
+Use `--limit N` to widen or narrow the window of most-recent merged PRs (default 50), e.g. `--limit 100`. The `--tokenomics` flag renders the bucket, per-stage-cost, structure, stage×structure crosstab, per-PATH size, breakeven, coverage-health, trend, latency, and concurrency tables. User-facing duration columns (per-PATH/per-stage `median dur`, top-slowest-stages, headless durations, task-latency) render in MINUTES; the per-stage / per-structure / per-PATH tables also carry per-N token-bucket columns (input / output / cache_creation / cache_read) sourced from all records so unpriced inline rows still show real token counts. Internal `--emit-rows-json` and the metrics-snapshot consumer stay in raw ms. The report degrades gracefully (token/duration cells render `--`) when the capture log is absent or empty — it never errors.
 
 ## Step 3 — Present
 
@@ -61,18 +61,18 @@ The bash stdout is NOT surfaced to the user automatically. Relay **every** table
 
 - **Bucket** — token-share vs cost-share per bucket (where the spend concentrates).
 - **Per-stage cost** — classify / plan / plan-eval / execute / pr-eval cost breakdown.
-- **Structure** — spawn (headless) vs in-session (inline) split.
+- **Structure** — spawn (headless) vs in-session (inline) split. The per-N token-bucket columns (input / output / cache_creation / cache_read) are sourced from ALL records, so an unpriced in-session (inline) row shows REAL token counts; the `$` column stays priced-only (a rate is required for `$`) and renders `--` with an `(unpriced)` mark when all of a structure's records are unpriced, so a zero-cost row is never misread as zero-token.
 - **Stage × structure crosstab** — which stages run headless vs inline.
 - **Per-PATH / issue size** — size distribution across PATH A/B/C/D.
 - **B→D breakeven** — the crossover where PATH B ceremony stops paying off vs PATH D quick-fix.
-- **Coverage-health** — how complete the cost data is; model-attribution coverage % is the completeness signal (flag if it is low).
+- **Coverage-health** — how complete the cost data is. Model-attribution coverage % is one completeness signal (flag if it is low). Inline costs are transcript-summed cumulative (`usage_complete=true`) after the Step-1 backfill resolves each subagent transcript; the **lower-bound (unreconciled) records** count names how many records are still forward/sidecar lower bounds (transcript missing or pruned at backfill time) — those totals read as a LOWER BOUND, not the real cost, so re-run the backfill to reconcile them once the transcript exists.
 - **Trend** — per-day and per-PR cost trend, with any outlier days called out.
-- **Task-latency** — wall-clock per task/stage.
-- **Concurrency assessment** — observed overlap and the concurrency ceiling.
+- **Task-latency** — wall-clock per task, split into two labelled rows: `spawn` (the headless `duration_ms`, which is session-lifetime, NOT task-latency) and `inline` (the true in-session task-latency). Durations render in MINUTES. The inline row's median is sourced from ALL records (not the priced-only substrate), so a live unpriced inline (`model=""`) shows its real task-latency rather than being gated out to `--`.
+- **Concurrency assessment** — observed overlap and the concurrency ceiling. The headless interval peak is a LOWER BOUND that EXCLUDES inline overlap: inline agents are point-in-time (`ts_start==ts_end`) under the current capture shape and are not interval-measurable, so they are COUNTED (the inline-records count is surfaced) and annotated rather than swept into the peak.
 
 **Surface the concurrency assessment prominently** as an analysis deliverable in its own right — not just as one more table. State the observed peak overlap and the ceiling, and whether the workload is approaching it.
 
-If coverage-health shows low model-attribution coverage, lead the summary with that caveat: the cost figures are a lower bound until those records carry a model.
+If coverage-health shows low model-attribution coverage OR a non-zero lower-bound (unreconciled) record count, lead the summary with that caveat: the cost figures are a lower bound — until those records carry a model (model-attribution) and until each inline record's subagent transcript is resolved and transcript-summed (the unreconciled count). Re-running the Step-1 backfill reconciles the unreconciled lower bounds upward once their transcripts exist.
 
 ## Dogfood-only
 

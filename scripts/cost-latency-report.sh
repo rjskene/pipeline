@@ -486,6 +486,20 @@ priced_duration_tsv() {
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
+# inline_duration_tsv — emit one TSV line per INLINE (agent_kind != "headless")
+# capture record with a numeric duration_ms:  agent_kind <TAB> stage <TAB> duration_ms
+# Sourced over ALL records (priced + unpriced — NOT gated on model or interval
+# width), unlike priced_duration_tsv which SKIPS model=="" (#789). This is the
+# substrate for the INLINE task-latency row: live inline carries model="" so the
+# priced-gated source would drop every live inline record and zero the median.
+inline_duration_tsv() {
+  printf '%s' "$CAPTURE_JSON" | jq -r '
+    .[]
+    | select((.agent_kind // "") != "headless")
+    | select((.duration_ms // null) != null)
+    | [ (.agent_kind // ""), (.stage // ""), (.duration_ms) ] | @tsv' 2>/dev/null
+}
+
 # execute_headless_intervals_tsv — emit one TSV line per EXECUTE-stage headless
 # capture record with BOTH a non-empty ts_start and ts_end:
 #   start_epoch <TAB> end_epoch
@@ -696,15 +710,20 @@ INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq
 [ -z "$INWINDOW_JSON" ] && INWINDOW_JSON='[]'
 
 # Per-(issue,stage) capture sums for in-window issues:
-#   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum   (one line per (issue,stage) group)
+#   issue<TAB>stage<TAB>tokens_sum<TAB>dur_sum<TAB>input<TAB>output<TAB>cache_creation<TAB>cache_read
+#   (one line per (issue,stage) group)
 #
 # Orchestrator records are session-scoped (issue == ""), so grouping them by
 # [issue, stage] is degenerate (one all-time group). Partition the post-select
 # stream: group orchestrator records by session_id (col1 = session_id, dur =
 # null since post-#667 orchestrator duration_ms is always null), and keep inline
-# stages grouped by (issue, stage). Concatenate so the @tsv 4-column contract
-# (key \t stage \t tokens_sum \t dur_sum) consumed by emit_stage_table /
-# emit_top_slow_stages (NF >= 4) is preserved.
+# stages grouped by (issue, stage). Concatenate so the @tsv contract consumed by
+# emit_stage_table / emit_top_slow_stages (NF >= 4) is preserved.
+#
+# The four per-bucket token sums (cols 5-8) are over ALL records in the group
+# (priced + unpriced — neither model- nor interval-gated), so an UNPRICED
+# (model="") stage still shows REAL per-bucket token counts (#789). They mirror
+# the all-records substrate emit_path_size_table uses.
 STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
   [.[] | select(
       (.stage == "orchestrator" and .duration_ms == null)
@@ -713,12 +732,20 @@ STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" 
   | (
       ($recs | map(select(.stage == "orchestrator")) | group_by(.session_id)
         | map([ (.[0].session_id // ""), "orchestrator",
-                ([.[] | .tokens.total] | add), null ]))
+                ([.[] | .tokens.total] | add), null,
+                ([.[] | (.tokens.input//0)] | add),
+                ([.[] | (.tokens.output//0)] | add),
+                ([.[] | (.tokens.cache_creation//0)] | add),
+                ([.[] | (.tokens.cache_read//0)] | add) ]))
       +
       ($recs | map(select(.stage != "orchestrator")) | group_by([(.issue|tostring), .stage])
         | map([ (.[0].issue|tostring), .[0].stage,
                 ([.[] | .tokens.total] | add),
-                ([.[] | .duration_ms] | add) ]))
+                ([.[] | .duration_ms] | add),
+                ([.[] | (.tokens.input//0)] | add),
+                ([.[] | (.tokens.output//0)] | add),
+                ([.[] | (.tokens.cache_creation//0)] | add),
+                ([.[] | (.tokens.cache_read//0)] | add) ]))
     )
   | .[]
   | @tsv' 2>/dev/null)"
@@ -740,8 +767,28 @@ emit_banner() {
 # token/duration/per-loc medians are over token-bearing rows only ('--' when
 # the PATH has no token-bearing rows).
 emit_path_table() {
-  echo 'PATH | N  | median loc | median tokens | median dur(ms) | median tokens/loc | median ms/loc'
-  sort -k2,2 "$ROWS_TSV" | awk -F'\t' '
+  echo 'PATH | N  | median loc | median tokens | median dur(min) | median tokens/loc | median ms/loc | input | output | cache_creation | cache_read'
+
+  # Per-issue token-bucket SUMS over ALL records (priced + unpriced), joined into
+  # the PATH table keyed on issue (#789). Mirrors emit_path_size_table's all-records
+  # source so unpriced inline issues still contribute real per-bucket tokens.
+  #   issue <TAB> input <TAB> output <TAB> cache_creation <TAB> cache_read
+  local issue_buckets
+  issue_buckets="$(printf '%s' "$CAPTURE_JSON" | jq -r '
+    group_by(.issue|tostring)
+    | map([ (.[0].issue|tostring),
+            ([.[] | (.tokens.input//0)] | add),
+            ([.[] | (.tokens.output//0)] | add),
+            ([.[] | (.tokens.cache_creation//0)] | add),
+            ([.[] | (.tokens.cache_read//0)] | add) ])
+    | .[] | @tsv' 2>/dev/null)"
+
+  sort -k2,2 "$ROWS_TSV" | awk -F'\t' -v ibk="$issue_buckets" '
+    BEGIN {
+      ni = split(ibk, ilines, "\n");
+      for (i=1; i<=ni; i++) { if (ilines[i]=="") continue; split(ilines[i], f, "\t");
+        bin[f[1]]=f[2]; bout[f[1]]=f[3]; bcc[f[1]]=f[4]; bcr[f[1]]=f[5] }
+    }
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
       if (n == 0) return "";
@@ -753,20 +800,31 @@ emit_path_table() {
       if (v == int(v)) return sprintf("%d", v);
       return sprintf("%.1f", v);
     }
+    function bfmt(v) { if (v == "") return "--"; return sprintf("%d", v) }
+    # min_fmt(ms) — render a raw ms duration in MINUTES (ms/60000, 1dp); "" → "--".
+    function min_fmt(v) { if (v == "") return "--"; return sprintf("%.1f", v/60000) }
     function flush(   lm) {
       if (cur == "") return;
       lm = median(locs, nrow);
-      printf "%-4s | %-2d | %-10s | %-13s | %-14s | %-17s | %-13s\n", \
+      printf "%-4s | %-2d | %-10s | %-13s | %-15s | %-17s | %-13s | %12s | %12s | %14s | %12s\n", \
         cur, nrow, fmt(lm), \
         (ntok ? fmt(median(toks, ntok)) : "--"), \
-        (ntok ? fmt(median(durs, ntok)) : "--"), \
+        (ntok ? min_fmt(median(durs, ntok)) : "--"), \
         (ntok ? fmt(median(tpls, ntok)) : "--"), \
-        (ntok ? fmt(median(mpls, ntok)) : "--");
-      cur=""; nrow=0; ntok=0; delete locs; delete toks; delete durs; delete tpls; delete mpls;
+        (ntok ? fmt(median(mpls, ntok)) : "--"), \
+        (nbk ? bfmt(median(bki, nbk)) : "--"), \
+        (nbk ? bfmt(median(bko, nbk)) : "--"), \
+        (nbk ? bfmt(median(bkc, nbk)) : "--"), \
+        (nbk ? bfmt(median(bkr, nbk)) : "--");
+      cur=""; nrow=0; ntok=0; nbk=0;
+      delete locs; delete toks; delete durs; delete tpls; delete mpls;
+      delete bki; delete bko; delete bkc; delete bkr;
     }
     { path=$2; if (path != cur) { flush(); cur=path }
       nrow++; locs[nrow]=$3;
       if ($5 != "null") { ntok++; toks[ntok]=$5; durs[ntok]=$6; d=($3>0?$3:1); tpls[ntok]=$5/d; mpls[ntok]=$6/d }
+      iss=$1;
+      if (iss in bin) { nbk++; bki[nbk]=bin[iss]; bko[nbk]=bout[iss]; bkc[nbk]=bcc[iss]; bkr[nbk]=bcr[iss] }
     }
     END { flush() }'
 }
@@ -775,7 +833,7 @@ emit_path_table() {
 # the per-(issue,stage) sums; stages with no records render '--'.
 emit_stage_table() {
   echo ""
-  echo 'STAGE | N | median tokens | median dur(ms)'
+  echo 'STAGE | N | median tokens | median dur(min) | input | output | cache_creation | cache_read'
   printf '%s\n' "$STAGE_TSV" | awk -F'\t' '
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
@@ -788,7 +846,10 @@ emit_stage_table() {
       if (v == int(v)) return sprintf("%d", v);
       return sprintf("%.1f", v);
     }
-    NF >= 4 { s=$2; c[s]++; tk[s,c[s]]=$3; dr[s,c[s]]=$4 }
+    # min_fmt(ms) — render a raw ms duration in MINUTES (ms/60000, 1dp); "" → "--".
+    function min_fmt(v) { if (v == "") return "--"; return sprintf("%.1f", v/60000) }
+    NF >= 4 { s=$2; c[s]++; tk[s,c[s]]=$3; dr[s,c[s]]=$4;
+              bin[s,c[s]]=$5+0; bout[s,c[s]]=$6+0; bcc[s,c[s]]=$7+0; bcr[s,c[s]]=$8+0 }
     END {
       m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
       for (k=1; k<=m; k++) {
@@ -796,10 +857,12 @@ emit_stage_table() {
         # orchestrator tokens.total EXCLUDES cache_read while inline-stage totals
         # include it (#668); the two are not directly comparable, so flag it.
         note = (s == "orchestrator" && cnt > 0) ? "  (tokens excl. cache_read, #668)" : "";
-        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s%s\n", s, 0, "--", "--", note; continue }
-        for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i] }
-        printf "%-9s | %-2d | %-13s | %-13s%s\n", s, cnt, fmt(median(tarr, cnt)), fmt(median(darr, cnt)), note;
-        delete tarr; delete darr;
+        if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-15s | %12s | %12s | %14s | %12s%s\n", s, 0, "--", "--", "--", "--", "--", "--", note; continue }
+        for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i]; iarr[i]=bin[s,i]; oarr[i]=bout[s,i]; carr[i]=bcc[s,i]; rarr[i]=bcr[s,i] }
+        printf "%-9s | %-2d | %-13s | %-15s | %12d | %12d | %14d | %12d%s\n", \
+          s, cnt, fmt(median(tarr, cnt)), min_fmt(median(darr, cnt)), \
+          median(iarr, cnt), median(oarr, cnt), median(carr, cnt), median(rarr, cnt), note;
+        delete tarr; delete darr; delete iarr; delete oarr; delete carr; delete rarr;
       }
     }'
 }
@@ -825,7 +888,7 @@ emit_top_slow_stages() {
   printf '%s\n' "$STAGE_TSV" | awk -F'\t' 'NF >= 4 && $4 != "" { printf "%s\t%s\t%s\n", $4, $1, $2 }' \
     | sort -t "$(printf '\t')" -k1,1 -gr \
     | head -"$TOPN" \
-    | awk -F'\t' '{ printf "issue #%s / %s: %s ms\n", $2, $3, $1 }'
+    | awk -F'\t' '{ printf "issue #%s / %s: %.1f min\n", $2, $3, $1/60000 }'
 }
 
 # Over-served outliers: every row with over_served == 1.
@@ -899,22 +962,66 @@ emit_stage_cost_table() {
     }'
 }
 
-# emit_structure_table — structure dimension over PRICED records:
+# structure_buckets_tsv — emit one TSV line per capture record (ALL records,
+# priced + unpriced) keyed on STRUCTURE:
+#   structure <TAB> input <TAB> output <TAB> cache_creation <TAB> cache_read
+# structure is "spawn" (agent_kind=="headless") or "in-session" (else). NOT gated
+# on model — this is the all-records substrate so an UNPRICED (model="") in-session
+# row still shows REAL per-bucket token counts (#789), mirroring emit_path_size_table.
+structure_buckets_tsv() {
+  printf '%s' "$CAPTURE_JSON" | jq -r '
+    .[]
+    | [ (if (.agent_kind // "") == "headless" then "spawn" else "in-session" end),
+        (.tokens.input//0), (.tokens.output//0),
+        (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null
+}
+
+# emit_structure_table — structure dimension over BOTH substrates (#789):
 #   spawn      = agent_kind == "headless"
 #   in-session = agent_kind != "headless"  (inline + main/orchestrator)
-# Emit priced $ + cost share for each. $ uses ALL FOUR buckets.
+# N + token-bucket columns source from structure_buckets_tsv (ALL records) so the
+# in-session row shows REAL tokens even when unpriced; $ + cost% source from
+# TOKENOMICS_TSV (PRICED records only — a rate is required for $). When a
+# structure's priced cost is zero because ALL its records are unpriced, the $
+# column renders '--' with an '(unpriced)' mark so a zero-cost row is never read
+# as a zero-token row.
 emit_structure_table() {
   echo ""
-  echo 'STRUCTURE  | $        | cost%'
-  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
-    NF >= 10 {
-      c = $7+$8+$9+$10;
-      if ($2 == "headless") sp += c; else ins += c;
-      tot += c;
+  echo 'STRUCTURE  | N  | input        | output       | cache_creation | cache_read   | $        | cost%'
+
+  # Priced $ per structure (from TOKENOMICS_TSV: $2=agent_kind, $7..$10=cost).
+  local priced_tsv
+  priced_tsv="$(printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 { st = ($2 == "headless") ? "spawn" : "in-session"; c[st] += $7+$8+$9+$10 }
+    END { printf "spawn\t%.10f\nin-session\t%.10f\n", (c["spawn"]+0), (c["in-session"]+0) }')"
+
+  printf '%s\n' "$(structure_buckets_tsv)" | awk -F'\t' -v priced="$priced_tsv" '
+    BEGIN {
+      np = split(priced, plines, "\n");
+      for (i=1; i<=np; i++) { if (plines[i]=="") continue; split(plines[i], kv, "\t"); cost[kv[1]] = kv[2] }
+    }
+    $1 != "" {
+      st=$1; n[st]++;
+      tin[st]+=$2; tout[st]+=$3; tcc[st]+=$4; tcr[st]+=$5;
     }
     END {
-      printf "%-10s | %8.2f | %5.1f%%\n", "spawn",      (sp+0),  (tot>0 ? sp/tot*100  : 0);
-      printf "%-10s | %8.2f | %5.1f%%\n", "in-session", (ins+0), (tot>0 ? ins/tot*100 : 0);
+      ntot = (n["spawn"]+0) + (n["in-session"]+0);
+      tcost = (cost["spawn"]+0) + (cost["in-session"]+0);
+      m = split("spawn in-session", order, " ");
+      for (k=1; k<=m; k++) {
+        st = order[k];
+        c = cost[st] + 0;
+        # $ renders "--" with an (unpriced) mark when this structure has records
+        # but zero priced cost (all its records are unpriced — model="").
+        if ((n[st]+0) > 0 && c == 0) {
+          usd = "--"; cp = "  (unpriced)";
+        } else {
+          usd = sprintf("%8.2f", c);
+          cp = sprintf(" | %5.1f%%", (tcost>0 ? c/tcost*100 : 0));
+        }
+        printf "%-10s | %-2d | %12d | %12d | %14d | %12d | %8s%s\n", \
+          st, (n[st]+0), (tin[st]+0), (tout[st]+0), (tcc[st]+0), (tcr[st]+0), usd, cp;
+      }
     }'
 }
 
@@ -1023,7 +1130,10 @@ emit_breakeven_table() {
 #   - % feature PRs joined = joined ÷ eligible, where eligible == PR_COUNT and
 #     joined == PR_COUNT - SKIPPED_NO_LINK (PRs with a Closes/Fixes/Resolves link);
 #   - model-attribution coverage % = priced records ÷ total records (a priced
-#     record has a non-empty model; exposes #699 empty-model INLINE records).
+#     record has a non-empty model; exposes #699 empty-model INLINE records);
+#   - lower-bound (unreconciled) count = usage_complete:false records ÷ total —
+#     inline sidecar/forward records whose subagent transcript was missing at
+#     backfill time, so their totals are a LOWER BOUND, not the real cost (#773).
 emit_coverage_health() {
   echo ""
   echo "COVERAGE HEALTH:"
@@ -1047,6 +1157,19 @@ emit_coverage_health() {
   awk -v p="$priced_n" -v t="$total_n" 'BEGIN {
     pct = (t > 0 ? p/t*100 : 0);
     printf "model-attribution coverage: %d/%d (%.1f%%)\n", p, t, pct;
+  }'
+
+  # Lower-bound (unreconciled) record count over the DEDUPED capture stream
+  # (#773). usage_complete=false records are inline sidecar / forward lower
+  # bounds whose subagent transcript was missing/pruned at backfill time; their
+  # token totals read as a LOWER BOUND, not the real cost. Re-running the
+  # capture backfill once the transcript exists reconciles them upward.
+  local lb_n
+  lb_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select(.usage_complete == false)] | length' 2>/dev/null)"
+  [ -z "$lb_n" ] && lb_n=0
+  awk -v lb="$lb_n" -v t="$total_n" 'BEGIN {
+    pct = (t > 0 ? lb/t*100 : 0);
+    printf "lower-bound (unreconciled) records: %d/%d (%.1f%%) — these read as a LOWER BOUND; run the backfill to reconcile\n", lb, t, pct;
   }'
 }
 
@@ -1101,27 +1224,37 @@ emit_trend() {
     }'
 }
 
-# emit_latency_aggregate — task-latency view over PRICED records.
+# emit_latency_aggregate — task-latency view split by STRUCTURE (#789).
 #
 # Headless duration_ms is whole-session WALL-CLOCK (the ~5.4M ms cluster), NOT
 # per-task latency: a headless worker's record spans its entire `claude -p`
-# session, not the single task. So under --tokenomics we (1) list headless
-# durations separately, annotated "(session-lifetime, not task-latency)", and
-# (2) EXCLUDE headless durations from the task-latency median/aggregate, which
-# is computed over IN-SESSION (agent_kind != "headless") records only. The
-# default-path median dur(ms) rendering (emit_path_table/emit_stage_table) is
-# untouched — this is an additive --tokenomics-only view.
+# session, not the single task. Under --tokenomics we render TWO labelled rows
+# (option (a) — label, don't re-derive):
+#   - spawn  = the headless duration_ms (session-lifetime), labelled
+#              "(session-lifetime, not task-latency)" — sourced from
+#              priced_duration_tsv (headless always carries a model);
+#   - inline = the median over agent_kind != "headless" records (true task
+#              latency), sourced from inline_duration_tsv = CAPTURE_JSON ALL
+#              records (NOT priced_duration_tsv), so a LIVE unpriced inline
+#              (model="") is NOT gated out and the inline row is non-zero on
+#              real data (#789).
+# Both render in MINUTES (#789 Task 1). The annotation makes the apples-to-oranges
+# basis explicit so the two rows are not naively compared. The per-worker HEADLESS
+# DURATIONS list is preserved. The default-path duration rendering
+# (emit_path_table/emit_stage_table) is untouched — this is an additive view.
 emit_latency_aggregate() {
-  local dur_tsv
+  local dur_tsv inline_tsv
   dur_tsv="$(priced_duration_tsv)"
+  inline_tsv="$(inline_duration_tsv)"
 
   echo ""
   echo 'HEADLESS DURATIONS (session-lifetime, not task-latency):'
   printf '%s\n' "$dur_tsv" | awk -F'\t' '
-    $1 == "headless" { printf "%-10s | %12d ms  (session-lifetime, not task-latency)\n", $2, $3 }'
+    $1 == "headless" { printf "%-10s | %12d ms (= %.1f min)  (session-lifetime, not task-latency)\n", $2, $3, $3/60000 }'
 
   echo ""
-  echo 'TASK LATENCY (in-session records only; headless excluded) | median dur(ms)'
+  echo 'TASK LATENCY (spawn=session-lifetime, inline=task-latency) | structure | median dur(min)'
+  # spawn row: median headless duration (session-lifetime), priced-sourced.
   printf '%s\n' "$dur_tsv" | awk -F'\t' '
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
@@ -1129,9 +1262,20 @@ emit_latency_aggregate() {
       if (n % 2 == 1) return arr[(n+1)/2];
       return (arr[n/2] + arr[n/2+1]) / 2;
     }
-    function fmt(v) { if (v=="") return "--"; if (v==int(v)) return sprintf("%d", v); return sprintf("%.1f", v) }
-    $1 != "headless" { d[++n]=$3 }
-    END { printf "%-57s | %s\n", "median task latency", fmt(median(d, n)) }'
+    function min_fmt(v) { if (v=="") return "--"; return sprintf("%.1f", v/60000) }
+    $1 == "headless" { d[++n]=$3 }
+    END { printf "%-10s | %-44s | %s\n", "spawn", "(session-lifetime, not task-latency)", min_fmt(median(d, n)) }'
+  # inline row: median over ALL inline records (unpriced not gated out).
+  printf '%s\n' "$inline_tsv" | awk -F'\t' '
+    function median(arr, n,   i, j, tmp) {
+      for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
+      if (n == 0) return "";
+      if (n % 2 == 1) return arr[(n+1)/2];
+      return (arr[n/2] + arr[n/2+1]) / 2;
+    }
+    function min_fmt(v) { if (v=="") return "--"; return sprintf("%.1f", v/60000) }
+    $1 != "headless" && $1 != "" { d[++n]=$3 }
+    END { printf "%-10s | %-44s | %s\n", "inline", "(task-latency, all records incl. unpriced)", min_fmt(median(d, n)) }'
 }
 
 # emit_concurrency_assessment — data-derived execute-concurrency analysis (per
@@ -1146,7 +1290,7 @@ emit_latency_aggregate() {
 # text alongside the observed NUMBER so the operator can compare observed-vs-safe.
 emit_concurrency_assessment() {
   echo ""
-  echo "CONCURRENCY ASSESSMENT (execute-stage headless workers):"
+  echo "CONCURRENCY ASSESSMENT (headless interval peak + inline lower-bound):"
   local intervals max_conc
   intervals="$(execute_headless_intervals_tsv)"
   max_conc="$(printf '%s\n' "$intervals" | awk -F'\t' '
@@ -1169,6 +1313,16 @@ emit_concurrency_assessment() {
     }')"
   [ -z "$max_conc" ] && max_conc=0
   printf 'max observed concurrent execute workers: %s\n' "$max_conc"
+
+  # Inline records are point-in-time (ts_start==ts_end) under the current capture
+  # shape (#773's territory), so they can never overlap in the interval sweep —
+  # feeding them in would silently contribute zero. Instead we COUNT them and
+  # ANNOTATE the headless peak as a LOWER BOUND that excludes inline overlap.
+  local inline_n
+  inline_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select((.agent_kind // "") != "headless")] | length' 2>/dev/null)"
+  [ -z "$inline_n" ] && inline_n=0
+  printf 'inline agents are point-in-time (ts_start==ts_end) under the current capture shape → not interval-measurable; peak above is a LOWER BOUND that excludes inline overlap (%s inline records present).\n' "$inline_n"
+
   echo 'ceiling = min(rate-limit ceiling, cwd-isolation-safe count) — the tighter binds'
   echo '  (per docs/cost-architecture.md §8: rate-limit = burst TPM + 5-hour rolling cap;'
   echo '   cwd-isolation = concurrent inline agents racing on shared git/fs state, #31940).'

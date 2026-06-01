@@ -757,15 +757,19 @@ else
 fi
 rm -rf "$TMP18"
 
-# --- Scenario 19: --tokenomics structure table + stage×structure cross-tab (#721) ---
+# --- Scenario 19: --tokenomics structure table + stage×structure cross-tab (#721, #789) ---
 # Structure dimension: spawn = agent_kind=="headless"; in-session = agent_kind!=
-# "headless" (inline + main/orchestrator). Emit $ + share for spawn vs in-session,
-# THEN a stage × structure $ matrix (rows=stages, cols={spawn,in-session}).
-# Fixture (both PRICED so they appear in the $ tables):
-#   headless / execute: input 2,000,000 → $30.00  (spawn)
-#   inline   / plan:    input 1,000,000 → $15.00  (in-session)
-# spawn $ = 30, in-session $ = 15; total 45 → spawn share 66.7%, in-session 33.3%.
-# crosstab: execute×spawn = 30.00 ; plan×in-session = 15.00.
+# "headless" (inline + main/orchestrator). Header (revised #789):
+#   STRUCTURE | N | input | output | cache_creation | cache_read | $ | cost%
+# Token-bucket columns + N source from CAPTURE_JSON (ALL records) keyed on
+# agent_kind, so the in-session (inline) row shows REAL token counts even when
+# model="" (unpriced). The $/cost% columns stay PRICED-ONLY; an all-unpriced
+# in-session row renders $ == '--' with an '(unpriced)' mark.
+# Fixture (#789 LIVE shape):
+#   headless / execute: input 2,000,000 PRICED → spawn $30.00
+#   inline   / plan:    input 1,000,000 UNPRICED (model="") → in-session tokens
+#                       real, but $ == '--' (unpriced)
+# crosstab: execute×spawn = 30.00 ; plan×in-session = 0.00 (inline now unpriced).
 inc_scenario "Scenario 19: --tokenomics structure table + stage×structure cross-tab"
 
 TMP19="$(mktemp -d)"
@@ -777,7 +781,7 @@ printf '%s\n' '{"number":119,"additions":300,"deletions":100,"comments":[]}' > "
 printf '%s\n' '{"number":219,"labels":[],"comments":[]}' > "$TMP19/issue-219.json"
 {
   echo '{"schema_version":1,"issue":"219","stage":"execute","session_id":"s19a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K219A","tokens":{"input":2000000,"output":0,"cache_read":0,"cache_creation":0,"total":2000000},"duration_ms":1000}'
-  echo '{"schema_version":1,"issue":"219","stage":"plan","session_id":"s19b","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K219B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":900}'
+  echo '{"schema_version":1,"issue":"219","stage":"plan","session_id":"s19b","model":"","agent_kind":"inline","record_key":"K219B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":900}'
 } > "$TMP19/capture.jsonl"
 
 DEF19="$(bash "$HELPER" --fixture "$TMP19" 2>/dev/null)"
@@ -794,33 +798,48 @@ else
   fail_msg "--tokenomics missing structure table header"
 fi
 
-# Structure split: spawn $ == 30.00, in-session $ == 15.00.
+# Structure header carries the four token-bucket columns + N.
+STRUCT_HDR19="$(printf '%s\n' "$TOK19" | grep -E '^STRUCTURE[[:space:]]*\|')"
+for col in input output cache_creation cache_read; do
+  case "$STRUCT_HDR19" in
+    *"$col"*) pass_msg "structure header carries '$col' column" ;;
+    *) fail_msg "structure header missing '$col' column (got: $STRUCT_HDR19)" ;;
+  esac
+done
+
+# Row shape: STRUCTURE | N | input | output | cache_creation | cache_read | $ | cost%
 SPAWN_ROW19="$(printf '%s\n' "$TOK19" | grep -E '^spawn[[:space:]]*\|' | head -1)"
 INSESS_ROW19="$(printf '%s\n' "$TOK19" | grep -E '^in-session[[:space:]]*\|' | head -1)"
-SPAWN_USD19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$2); print $2}')"
-INSESS_USD19="$(printf '%s' "$INSESS_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$2); print $2}')"
-if [ "$SPAWN_USD19" = "30.00" ]; then
-  pass_msg "spawn structure \$ == 30.00 (headless record)"
-else
-  fail_msg "spawn structure \$ should be 30.00, got $SPAWN_USD19 (row=$SPAWN_ROW19)"
-fi
-if [ "$INSESS_USD19" = "15.00" ]; then
-  pass_msg "in-session structure \$ == 15.00 (inline record)"
-else
-  fail_msg "in-session structure \$ should be 15.00, got $INSESS_USD19 (row=$INSESS_ROW19)"
-fi
 
-# Cross-tab: stage × structure $ matrix. The execute row's spawn cell == 30.00.
+# spawn (headless, priced): input bucket 2000000, $ == 30.00.
+SPAWN_IN19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+SPAWN_USD19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+if [ "$SPAWN_IN19" = "2000000" ]; then pass_msg "spawn input bucket == 2000000"; else fail_msg "spawn input should be 2000000, got $SPAWN_IN19 (row=$SPAWN_ROW19)"; fi
+if [ "$SPAWN_USD19" = "30.00" ]; then pass_msg "spawn structure \$ == 30.00 (headless priced)"; else fail_msg "spawn structure \$ should be 30.00, got $SPAWN_USD19 (row=$SPAWN_ROW19)"; fi
+
+# in-session (inline UNPRICED): input bucket 1000000 (REAL, non-zero), $ == '--' / (unpriced).
+INSESS_IN19="$(printf '%s' "$INSESS_ROW19" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
+if [ "$INSESS_IN19" = "1000000" ]; then
+  pass_msg "in-session input bucket == 1000000 (unpriced inline shows REAL tokens)"
+else
+  fail_msg "in-session input should be 1000000 (real unpriced tokens), got $INSESS_IN19 (row=$INSESS_ROW19)"
+fi
+case "$INSESS_ROW19" in
+  *unpriced*) pass_msg "in-session row carries an (unpriced) mark (all records model=\"\")" ;;
+  *) fail_msg "in-session row should carry an (unpriced) mark (got: $INSESS_ROW19)" ;;
+esac
+INSESS_USD19="$(printf '%s' "$INSESS_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+case "$INSESS_USD19" in
+  *--*) pass_msg "in-session \$ renders '--' (unpriced, never read as zero-token)" ;;
+  *) fail_msg "in-session \$ should render '--' when all records unpriced, got '$INSESS_USD19' (row=$INSESS_ROW19)" ;;
+esac
+
+# Cross-tab: stage × structure $ matrix (PRICED-only, unchanged by #789).
 XTAB_BLOCK19="$(printf '%s\n' "$TOK19" | awk '/STAGE.STRUCTURE|STAGE x STRUCTURE|CROSS-TAB|CROSSTAB/{f=1} f')"
 XEXEC_ROW19="$(printf '%s\n' "$XTAB_BLOCK19" | grep -E '^execute[[:space:]]*\|' | head -1)"
-XPLAN_ROW19="$(printf '%s\n' "$XTAB_BLOCK19" | grep -E '^plan[[:space:]]*\|' | head -1)"
 case "$XEXEC_ROW19" in
   *30.00*) pass_msg "cross-tab execute×spawn cell == 30.00" ;;
   *) fail_msg "cross-tab execute row should carry spawn cell 30.00 (got: $XEXEC_ROW19)" ;;
-esac
-case "$XPLAN_ROW19" in
-  *15.00*) pass_msg "cross-tab plan×in-session cell == 15.00" ;;
-  *) fail_msg "cross-tab plan row should carry in-session cell 15.00 (got: $XPLAN_ROW19)" ;;
 esac
 rm -rf "$TMP19"
 
@@ -1213,18 +1232,21 @@ else
 fi
 rm -rf "$TMP23"
 
-# --- Scenario 24: --tokenomics mark + exclude headless session-lifetime durations (#721) ---
-# Headless duration_ms is whole-session wall-clock (~5.4M ms cluster), NOT task
-# latency. Under --tokenomics, wherever durations render for headless records,
-# annotate "(session-lifetime, not task-latency)"; AND EXCLUDE headless durations
-# from any latency median/aggregate the --tokenomics tables compute.
-# Fixture: issue 224 (PR #124), three records:
-#   headless execute  duration 5,400,000  ← session-lifetime, must be annotated + excluded
-#   inline   plan      duration 1,000
-#   inline   plan-eval duration 2,000
-# Non-headless latency median = median(1000, 2000) = 1500 → aggregate == 1500,
-# and must NOT include the 5,400,000 value.
-inc_scenario "Scenario 24: --tokenomics mark + exclude headless session-lifetime durations"
+# --- Scenario 24: --tokenomics spawn vs inline task-latency split, unpriced-honest (#721, #789) ---
+# Task latency is split into TWO labelled rows (#789):
+#   - spawn  = headless duration_ms (session-lifetime), labelled
+#              "(session-lifetime, not task-latency)";
+#   - inline = median over agent_kind != "headless" records (true task-latency),
+#              sourced from CAPTURE_JSON (ALL records, NOT priced_duration_tsv) so
+#              a LIVE unpriced inline (model="") is NOT gated out of the median.
+# Durations render in MINUTES (#789 Task 1). The 5.4M ms value appears only on the
+# spawn row, never folded into the inline median.
+# Fixture: issue 224 (PR #124), three records (#789 LIVE shape — inline model=""):
+#   headless execute  duration 5,400,000 ms (= 90.0 min) ← spawn, session-lifetime
+#   inline   plan      duration 60,000 ms  UNPRICED (model="")
+#   inline   plan-eval duration 120,000 ms UNPRICED (model="")
+# inline median = median(60000,120000) = 90000 ms = 1.5 min, NON-ZERO on unpriced.
+inc_scenario "Scenario 24: --tokenomics spawn vs inline task-latency split (unpriced-honest)"
 
 TMP24="$(mktemp -d)"
 cp "$FIXTURE_DIR"/*.json "$TMP24/" 2>/dev/null
@@ -1235,35 +1257,55 @@ printf '%s\n' '{"number":124,"additions":300,"deletions":100,"comments":[]}' > "
 printf '%s\n' '{"number":224,"labels":[],"comments":[]}' > "$TMP24/issue-224.json"
 {
   echo '{"schema_version":1,"issue":"224","stage":"execute","session_id":"s24a","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K224E","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":5400000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T10:30:00Z"}'
-  echo '{"schema_version":1,"issue":"224","stage":"plan","session_id":"s24b","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K224P","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000,"ts_start":"2026-05-12T08:00:00Z","ts_end":"2026-05-12T08:00:01Z"}'
-  echo '{"schema_version":1,"issue":"224","stage":"plan-eval","session_id":"s24c","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K224PE","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":2000,"ts_start":"2026-05-12T08:05:00Z","ts_end":"2026-05-12T08:05:02Z"}'
+  echo '{"schema_version":1,"issue":"224","stage":"plan","session_id":"s24b","model":"","agent_kind":"inline","record_key":"K224P","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":60000,"ts_start":"2026-05-12T08:00:00Z","ts_end":"2026-05-12T08:00:00Z"}'
+  echo '{"schema_version":1,"issue":"224","stage":"plan-eval","session_id":"s24c","model":"","agent_kind":"inline","record_key":"K224PE","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":120000,"ts_start":"2026-05-12T08:05:00Z","ts_end":"2026-05-12T08:05:00Z"}'
 } > "$TMP24/capture.jsonl"
 
 TOK24="$(bash "$HELPER" --fixture "$TMP24" --tokenomics 2>/dev/null)"
 
-# (a) Headless duration is annotated "(session-lifetime, not task-latency)".
+# (a) Headless/spawn duration is annotated "(session-lifetime, not task-latency)".
 if printf '%s' "$TOK24" | grep -qF '(session-lifetime, not task-latency)'; then
-  pass_msg "headless duration annotated '(session-lifetime, not task-latency)'"
+  pass_msg "spawn duration annotated '(session-lifetime, not task-latency)'"
 else
-  fail_msg "headless duration should be annotated '(session-lifetime, not task-latency)'"
+  fail_msg "spawn duration should be annotated '(session-lifetime, not task-latency)'"
 fi
 
-# (b) A --tokenomics latency aggregate exists and == 1500 (median of non-headless).
 LAT_BLOCK24="$(printf '%s\n' "$TOK24" | awk '/TASK LATENCY/{f=1} f')"
 if [ -n "$LAT_BLOCK24" ]; then
-  pass_msg "--tokenomics renders a latency aggregate block"
+  pass_msg "--tokenomics renders a task-latency block"
 else
-  fail_msg "--tokenomics missing a latency aggregate block"
+  fail_msg "--tokenomics missing a task-latency block"
 fi
-case "$LAT_BLOCK24" in
-  *1500*) pass_msg "latency aggregate == 1500 (median of non-headless 1000,2000)" ;;
-  *) fail_msg "latency aggregate should be 1500 (got: $LAT_BLOCK24)" ;;
+
+# (b) TWO labelled rows: spawn and inline.
+SPAWN_LAT24="$(printf '%s\n' "$LAT_BLOCK24" | grep -E '^spawn[[:space:]]*\|' | head -1)"
+INLINE_LAT24="$(printf '%s\n' "$LAT_BLOCK24" | grep -E '^inline[[:space:]]*\|' | head -1)"
+if [ -n "$SPAWN_LAT24" ]; then pass_msg "task-latency has a 'spawn' row"; else fail_msg "task-latency should have a 'spawn' row (got: $LAT_BLOCK24)"; fi
+if [ -n "$INLINE_LAT24" ]; then pass_msg "task-latency has an 'inline' row"; else fail_msg "task-latency should have an 'inline' row (got: $LAT_BLOCK24)"; fi
+
+# (c) spawn row carries the session-lifetime label.
+case "$SPAWN_LAT24" in
+  *session-lifetime*) pass_msg "spawn row labelled session-lifetime, not task-latency" ;;
+  *) fail_msg "spawn row should carry the session-lifetime label (got: $SPAWN_LAT24)" ;;
 esac
 
-# (c) The 5,400,000 session-lifetime value must NOT appear in the latency aggregate.
-case "$LAT_BLOCK24" in
-  *5400000*) fail_msg "latency aggregate leaked the headless session-lifetime duration (5400000)" ;;
-  *) pass_msg "latency aggregate excludes headless session-lifetime duration (5400000 absent)" ;;
+# (d) inline row median == 1.5 min (90000 ms), NON-ZERO on LIVE unpriced inline.
+INLINE_DUR24="$(printf '%s' "$INLINE_LAT24" | awk -F'|' '{gsub(/[ ]/,"",$NF); print $NF}')"
+if [ "$INLINE_DUR24" = "1.5" ]; then
+  pass_msg "inline task-latency == 1.5 min (median 90000 ms, sourced from all records — unpriced not gated out)"
+else
+  fail_msg "inline task-latency should be 1.5 min (NON-ZERO on unpriced inline), got '$INLINE_DUR24' (row=$INLINE_LAT24)"
+fi
+case "$INLINE_DUR24" in
+  0|0.0|--) fail_msg "inline task-latency row is ZERO/-- — unpriced inline was gated out (priced-gate pathology)" ;;
+  *) pass_msg "inline task-latency row is non-zero on live unpriced inline" ;;
+esac
+
+# (e) the 5.4M ms session-lifetime value appears only on the spawn row, never in
+# the inline median (which renders 1.5 min, not 90.0).
+case "$INLINE_LAT24" in
+  *5400000*|*90.0*) fail_msg "inline row leaked the headless session-lifetime duration (got: $INLINE_LAT24)" ;;
+  *) pass_msg "inline row excludes the headless session-lifetime duration" ;;
 esac
 rm -rf "$TMP24"
 
@@ -1451,21 +1493,30 @@ else
   fail_msg "tokenomics-report: concurrency observed-max should be 3 (got: $CONC_BLOCK26)"
 fi
 
-# (g) headless ~5.4M ms session-lifetime durations annotated + EXCLUDED from
-# task-latency aggregate. The 5400000 value appears in the HEADLESS DURATIONS
-# block but the median-task-latency line must NOT carry it.
+# (g) headless ~5.4M ms session-lifetime durations annotated + the inline
+# task-latency row must NOT carry the 5.4M value (#789 spawn/inline split). The
+# 5400000 value appears in the HEADLESS DURATIONS block and on the spawn row, but
+# never folded into the inline row's median.
 HEADLESS_DUR_BLOCK26="$(printf '%s\n' "$TOK26" | awk '/HEADLESS DURATIONS/{f=1} /TASK LATENCY/{f=0} f')"
 if printf '%s' "$HEADLESS_DUR_BLOCK26" | grep -qE '5400000.*session-lifetime'; then
   pass_msg "tokenomics-report: 5.4M ms headless duration annotated session-lifetime"
 else
   fail_msg "tokenomics-report: 5400000 should be annotated session-lifetime (got: $HEADLESS_DUR_BLOCK26)"
 fi
-TASK_LAT_LINE26="$(printf '%s\n' "$TOK26" | grep -E 'median task latency')"
-if printf '%s' "$TASK_LAT_LINE26" | grep -q '5400000'; then
-  fail_msg "tokenomics-report: 5.4M ms headless duration leaked into task-latency aggregate ($TASK_LAT_LINE26)"
+# The TASK LATENCY block carries TWO labelled rows (spawn, inline).
+LAT_BLOCK26="$(printf '%s\n' "$TOK26" | awk '/TASK LATENCY/{f=1} f')"
+SPAWN_LAT26="$(printf '%s\n' "$LAT_BLOCK26" | grep -E '^spawn[[:space:]]*\|' | head -1)"
+INLINE_LAT26="$(printf '%s\n' "$LAT_BLOCK26" | grep -E '^inline[[:space:]]*\|' | head -1)"
+if [ -n "$SPAWN_LAT26" ] && [ -n "$INLINE_LAT26" ]; then
+  pass_msg "tokenomics-report: task-latency has both spawn and inline rows"
 else
-  pass_msg "tokenomics-report: 5.4M ms headless duration excluded from task-latency aggregate"
+  fail_msg "tokenomics-report: task-latency should have spawn + inline rows (got: $LAT_BLOCK26)"
 fi
+# The inline row's median (rendered in minutes) must NOT be the 5.4M/90.0-min value.
+case "$INLINE_LAT26" in
+  *90.0*|*5400000*) fail_msg "tokenomics-report: inline task-latency leaked the headless session-lifetime duration ($INLINE_LAT26)" ;;
+  *) pass_msg "tokenomics-report: 5.4M ms headless duration excluded from inline task-latency" ;;
+esac
 
 # (h) breakeven has real PATH B rows (301, 302) and a positive TOTAL savings.
 if printf '%s' "$TOK26" | grep -qE 'issue #301' && printf '%s' "$TOK26" | grep -qE 'issue #302'; then
@@ -1540,6 +1591,264 @@ case "$COST27" in
   *) pass_msg "priced_cost_usd did NOT apply Opus fallback to Sonnet/Haiku (220.50 rejected)" ;;
 esac
 rm -rf "$TMP27"
+
+# --- Scenario 28: backfill reconciliation (no double-count) + coverage lower-bound count (#773) ---
+# Two facets of the inline-cost backfill landing at render time:
+#   (a) For the SAME (session_id, issue, stage), a forward lower-bound record
+#       (source:"forward", usage_complete:false, small total) and a retroactive
+#       cumulative (source:"retroactive", usage_complete:true, large total)
+#       coexist (record_key includes source). The (session,issue,stage) max-total
+#       dedup MUST collapse them to the cumulative ONLY — no double-count. The
+#       per-issue token sum equals the LARGE cumulative, not the sum of both.
+#   (b) The COVERAGE HEALTH block reports how many DEDUPED records are still a
+#       lower bound (usage_complete:false) so the operator knows the figure is a
+#       floor for those rows. Deduped stream here has 2 records (the reconciled
+#       cumulative for 229 + a standalone unreconciled lower-bound for 230), so
+#       the count reads 1/2.
+inc_scenario "Scenario 28: backfill reconciliation (no double-count) + coverage lower-bound count"
+
+TMP28="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP28/" 2>/dev/null
+printf '%s\n' '[
+  {"number":129,"title":"feat: reconciled inline issue","additions":300,"deletions":100,"body":"Closes #229","mergedAt":"2026-05-13T12:00:00Z","labels":[]},
+  {"number":130,"title":"feat: unreconciled lower-bound issue","additions":50,"deletions":20,"body":"Closes #230","mergedAt":"2026-05-13T13:00:00Z","labels":[]}
+]' > "$TMP28/prs.json"
+printf '%s\n' '{"number":129,"additions":300,"deletions":100,"comments":[]}' > "$TMP28/pr-129.json"
+printf '%s\n' '{"number":229,"labels":[],"comments":[]}' > "$TMP28/issue-229.json"
+printf '%s\n' '{"number":130,"additions":50,"deletions":20,"comments":[]}' > "$TMP28/pr-130.json"
+printf '%s\n' '{"number":230,"labels":[],"comments":[]}' > "$TMP28/issue-230.json"
+{
+  # SAME (session s28, issue 229, stage execute): forward lower-bound (1115) +
+  # retroactive cumulative (86310). DISTINCT record_key (source differs) → both
+  # survive the record_key pass; (session,issue,stage) dedup keeps the cumulative.
+  echo '{"schema_version":1,"issue":"229","stage":"execute","session_id":"s28","model":"","agent_kind":"inline","source":"forward","usage_complete":false,"record_key":"K229F","tokens":{"input":1000,"output":100,"cache_read":10,"cache_creation":5,"total":1115},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"229","stage":"execute","session_id":"s28","model":"claude-opus-4-8","agent_kind":"inline","source":"retroactive","usage_complete":true,"record_key":"K229R","tokens":{"input":1100,"output":110,"cache_read":81000,"cache_creation":4100,"total":86310},"duration_ms":1000}'
+  # Standalone UNRECONCILED lower-bound for issue 230 (no transcript ever staged).
+  echo '{"schema_version":1,"issue":"230","stage":"execute","session_id":"s28b","model":"","agent_kind":"inline","source":"forward","usage_complete":false,"record_key":"K230F","tokens":{"input":2000,"output":200,"cache_read":20,"cache_creation":10,"total":2230},"duration_ms":900}'
+} > "$TMP28/capture.jsonl"
+
+# (a) per-issue 229 token sum == 86310 (cumulative ONLY), NOT 87425 (naive both).
+ROWS28="$(bash "$HELPER" --fixture "$TMP28" --emit-rows-json 2>/dev/null)"
+TT28="$(printf '%s' "$ROWS28" | jq -r '.[] | select(.issue==229) | .tokens_total' 2>/dev/null)"
+if [ "$TT28" = "86310" ]; then
+  pass_msg "issue 229 tokens_total == 86310 (reconciled cumulative, no double-count)"
+else
+  fail_msg "issue 229 tokens_total should be 86310 (cumulative only), got $TT28"
+fi
+if [ "$TT28" = "87425" ]; then
+  fail_msg "issue 229 tokens_total double-counted forward+retroactive (naive 87425)"
+else
+  pass_msg "issue 229 tokens_total excludes the forward lower-bound (naive 87425 rejected)"
+fi
+
+# (b) COVERAGE HEALTH carries a lower-bound (unreconciled) count == 1/2 over the
+# deduped stream (reconciled 229 cumulative is true; standalone 230 is false).
+TOK28="$(bash "$HELPER" --fixture "$TMP28" --tokenomics 2>/dev/null)"
+COV_BLOCK28="$(printf '%s\n' "$TOK28" | awk '/COVERAGE/{f=1} f')"
+LB_LINE28="$(printf '%s\n' "$COV_BLOCK28" | grep -iE 'lower-bound' | head -1)"
+if [ -n "$LB_LINE28" ]; then
+  pass_msg "coverage block reports a lower-bound (unreconciled) line"
+else
+  fail_msg "coverage block missing lower-bound (unreconciled) line (got: $COV_BLOCK28)"
+fi
+case "$LB_LINE28" in
+  *1/2*) pass_msg "lower-bound (unreconciled) count == 1/2 (one false of two deduped)" ;;
+  *) fail_msg "lower-bound count should be 1/2, got: $LB_LINE28" ;;
+esac
+rm -rf "$TMP28"
+
+# --- Scenario 29: duration columns render in minutes, not ms (#789 Task 1) ---
+# Every USER-FACING duration column switches to minutes (min = ms/60000, 1dp,
+# '--' passthrough). Internal --emit-rows-json + metrics-snapshot stay in ms.
+# Fixture: issue 229b (PR #131) PATH B with a 90000 ms (= 1.5 min) execute record.
+# Per-PATH `median dur` header reads (min) and the value renders 1.5, NOT 90000.
+inc_scenario "Scenario 29: duration columns render in minutes (#789)"
+
+TMP29="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP29/" 2>/dev/null
+printf '%s\n' '[
+  {"number":131,"title":"feat: minutes unit issue","additions":300,"deletions":100,"body":"Closes #231","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP29/prs.json"
+printf '%s\n' '{"number":131,"additions":300,"deletions":100,"comments":[]}' > "$TMP29/pr-131.json"
+printf '%s\n' '{"number":231,"labels":[],"comments":[]}' > "$TMP29/issue-231.json"
+{
+  echo '{"schema_version":1,"issue":"231","stage":"execute","session_id":"s29","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K231","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":90000}'
+} > "$TMP29/capture.jsonl"
+
+TABLE29="$(bash "$HELPER" --fixture "$TMP29" 2>/dev/null)"
+
+# (a) per-PATH table duration header reads (min), not (ms).
+if printf '%s' "$TABLE29" | grep -qE 'median dur\(min\)'; then
+  pass_msg "per-PATH/stage table duration header reads (min)"
+else
+  fail_msg "duration header should read median dur(min) (got: $(printf '%s\n' "$TABLE29" | grep -i 'PATH | N'))"
+fi
+if printf '%s' "$TABLE29" | grep -qE 'median dur\(ms\)'; then
+  fail_msg "duration header still reads (ms) — minutes switch incomplete"
+else
+  pass_msg "no duration header reads (ms) any more"
+fi
+
+# (b) per-PATH B-row duration cell renders 1.5 (90000 ms / 60000), NOT 90000.
+PATHB_ROW29="$(printf '%s\n' "$TABLE29" | grep -E '^B[[:space:]]*\|' | head -1)"
+DUR_CELL29="$(printf '%s' "$PATHB_ROW29" | awk -F'|' '{gsub(/[ ]/,"",$5); print $5}')"
+if [ "$DUR_CELL29" = "1.5" ]; then
+  pass_msg "per-PATH B median dur == 1.5 min (90000 ms rendered in minutes)"
+else
+  fail_msg "per-PATH B median dur should be 1.5 min, got $DUR_CELL29 (row=$PATHB_ROW29)"
+fi
+case "$PATHB_ROW29" in
+  *90000*) fail_msg "per-PATH duration cell leaked raw ms (90000): $PATHB_ROW29" ;;
+  *) pass_msg "per-PATH duration cell does not render raw ms (90000 absent)" ;;
+esac
+
+# (c) internal --emit-rows-json stays in raw ms (duration_ms == 90000).
+ROWS29="$(bash "$HELPER" --fixture "$TMP29" --emit-rows-json 2>/dev/null)"
+DMS29="$(printf '%s' "$ROWS29" | jq -r '.[] | select(.issue==231) | .duration_ms' 2>/dev/null)"
+if [ "$DMS29" = "90000" ]; then
+  pass_msg "--emit-rows-json duration_ms stays raw ms (90000), not minutes"
+else
+  fail_msg "--emit-rows-json duration_ms should stay 90000 (raw ms), got $DMS29"
+fi
+rm -rf "$TMP29"
+
+# --- Scenario 32: inline-aware concurrency, honest lower-bound (#789 Task 5) ---
+# The interval-overlap sweep STAYS headless-only (inline records are point-in-time
+# ts_start==ts_end and can never overlap). emit_concurrency_assessment ADDS an
+# inline-accounting line: keep the headless peak unchanged, COUNT inline records,
+# and annotate the peak as a LOWER BOUND that excludes inline overlap.
+# Fixture: issue 234 (PR #134), TWO overlapping headless execute records (peak 2)
+# + ONE point-interval inline record (ts_start==ts_end, model="").
+inc_scenario "Scenario 32: inline-aware concurrency (honest lower-bound) (#789)"
+
+TMP32="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP32/" 2>/dev/null
+printf '%s\n' '[
+  {"number":134,"title":"feat: inline-aware concurrency","additions":300,"deletions":100,"body":"Closes #234","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP32/prs.json"
+printf '%s\n' '{"number":134,"additions":300,"deletions":100,"comments":[]}' > "$TMP32/pr-134.json"
+printf '%s\n' '{"number":234,"labels":[],"comments":[]}' > "$TMP32/issue-234.json"
+{
+  echo '{"schema_version":1,"issue":"234","stage":"execute","session_id":"h1","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K234A","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1800000,"ts_start":"2026-05-12T09:00:00Z","ts_end":"2026-05-12T09:30:00Z"}'
+  echo '{"schema_version":1,"issue":"234","stage":"execute","session_id":"h2","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K234B","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1800000,"ts_start":"2026-05-12T09:10:00Z","ts_end":"2026-05-12T09:40:00Z"}'
+  echo '{"schema_version":1,"issue":"234","stage":"plan","session_id":"i1","model":"","agent_kind":"inline","record_key":"K234C","tokens":{"input":50000,"output":5000,"cache_read":0,"cache_creation":0,"total":55000},"duration_ms":1000,"ts_start":"2026-05-12T09:15:00Z","ts_end":"2026-05-12T09:15:00Z"}'
+} > "$TMP32/capture.jsonl"
+
+TOK32="$(bash "$HELPER" --fixture "$TMP32" --tokenomics 2>/dev/null)"
+CONC_BLOCK32="$(printf '%s\n' "$TOK32" | awk '/CONCURRENCY/{f=1} f')"
+
+# (a) headless interval peak is 2 — UNCHANGED by the inline point-interval record.
+if printf '%s' "$CONC_BLOCK32" | grep -qE 'max observed concurrent execute workers: 2'; then
+  pass_msg "headless interval peak == 2 (unchanged by inline record)"
+else
+  fail_msg "headless interval peak should be 2 (got: $CONC_BLOCK32)"
+fi
+
+# (b) the block carries a LOWER BOUND / not-interval-measurable annotation.
+if printf '%s' "$CONC_BLOCK32" | grep -qiE 'lower bound'; then
+  pass_msg "concurrency block annotates the peak as a LOWER BOUND"
+else
+  fail_msg "concurrency block should annotate the peak as a LOWER BOUND (got: $CONC_BLOCK32)"
+fi
+if printf '%s' "$CONC_BLOCK32" | grep -qiE 'not interval-measurable|point-in-time'; then
+  pass_msg "concurrency block notes inline is point-in-time / not interval-measurable"
+else
+  fail_msg "concurrency block should note inline is point-in-time (got: $CONC_BLOCK32)"
+fi
+
+# (c) the ONE inline record is counted.
+if printf '%s' "$CONC_BLOCK32" | grep -qE '1 inline record'; then
+  pass_msg "concurrency block counts 1 inline record present"
+else
+  fail_msg "concurrency block should count 1 inline record (got: $CONC_BLOCK32)"
+fi
+rm -rf "$TMP32"
+
+# --- Scenario 31: per-PATH token-bucket breakout (#789 Task 4) ---
+# emit_path_table adds input|output|cache_creation|cache_read columns per N,
+# sourced from CAPTURE_JSON (all records, per-issue bucket SUMS, medianed per PATH).
+# Fixture: issue 233 (PR #133) PATH B, one execute record:
+#   input 11000 output 22000 cache_creation 33000 cache_read 44000.
+# Single-issue PATH → median == that issue's bucket sums.
+inc_scenario "Scenario 31: per-PATH token-bucket breakout (#789)"
+
+TMP31="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP31/" 2>/dev/null
+printf '%s\n' '[
+  {"number":133,"title":"feat: path bucket breakout","additions":300,"deletions":100,"body":"Closes #233","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP31/prs.json"
+printf '%s\n' '{"number":133,"additions":300,"deletions":100,"comments":[]}' > "$TMP31/pr-133.json"
+printf '%s\n' '{"number":233,"labels":[],"comments":[]}' > "$TMP31/issue-233.json"
+{
+  echo '{"schema_version":1,"issue":"233","stage":"execute","session_id":"s31","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K233","tokens":{"input":11000,"output":22000,"cache_creation":33000,"cache_read":44000,"total":110000},"duration_ms":1000}'
+} > "$TMP31/capture.jsonl"
+
+TABLE31="$(bash "$HELPER" --fixture "$TMP31" 2>/dev/null)"
+
+# (a) per-PATH header carries the four bucket columns.
+PATH_HDR31="$(printf '%s\n' "$TABLE31" | grep -E '^PATH \| N')"
+for col in input output cache_creation cache_read; do
+  case "$PATH_HDR31" in
+    *"$col"*) pass_msg "per-PATH header carries '$col' column" ;;
+    *) fail_msg "per-PATH header missing '$col' column (got: $PATH_HDR31)" ;;
+  esac
+done
+
+# (b) the B row shows the per-PATH bucket medians.
+# Row shape: PATH | N | median loc | median tokens | median dur(min) | median tokens/loc | median ms/loc | input | output | cache_creation | cache_read
+PATHB_ROW31="$(printf '%s\n' "$TABLE31" | grep -E '^B[[:space:]]*\|' | head -1)"
+P_IN31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8}')"
+P_OUT31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$9); print $9}')"
+P_CC31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$10); print $10}')"
+P_CR31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$11); print $11}')"
+if [ "$P_IN31" = "11000" ]; then pass_msg "per-PATH B input bucket == 11000"; else fail_msg "per-PATH B input should be 11000, got $P_IN31 (row=$PATHB_ROW31)"; fi
+if [ "$P_OUT31" = "22000" ]; then pass_msg "per-PATH B output bucket == 22000"; else fail_msg "per-PATH B output should be 22000, got $P_OUT31 (row=$PATHB_ROW31)"; fi
+if [ "$P_CC31" = "33000" ]; then pass_msg "per-PATH B cache_creation bucket == 33000"; else fail_msg "per-PATH B cache_creation should be 33000, got $P_CC31 (row=$PATHB_ROW31)"; fi
+if [ "$P_CR31" = "44000" ]; then pass_msg "per-PATH B cache_read bucket == 44000"; else fail_msg "per-PATH B cache_read should be 44000, got $P_CR31 (row=$PATHB_ROW31)"; fi
+rm -rf "$TMP31"
+
+# --- Scenario 30: per-stage token-bucket breakout, unpriced-honest (#789 Task 2) ---
+# emit_stage_table adds input|output|cache_creation|cache_read columns per N,
+# sourced from CAPTURE_JSON (ALL records, priced + unpriced) so an UNPRICED
+# (model="") stage shows REAL token counts, not zero.
+# Fixture: issue 232 (PR #132), one UNPRICED inline execute record:
+#   input 111000 output 222000 cache_creation 333000 cache_read 444000.
+inc_scenario "Scenario 30: per-stage token-bucket breakout (unpriced-honest) (#789)"
+
+TMP30="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP30/" 2>/dev/null
+printf '%s\n' '[
+  {"number":132,"title":"feat: stage bucket breakout","additions":300,"deletions":100,"body":"Closes #232","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP30/prs.json"
+printf '%s\n' '{"number":132,"additions":300,"deletions":100,"comments":[]}' > "$TMP30/pr-132.json"
+printf '%s\n' '{"number":232,"labels":[],"comments":[]}' > "$TMP30/issue-232.json"
+{
+  echo '{"schema_version":1,"issue":"232","stage":"execute","session_id":"s30","model":"","agent_kind":"inline","record_key":"K232","tokens":{"input":111000,"output":222000,"cache_creation":333000,"cache_read":444000,"total":1110000},"duration_ms":1000}'
+} > "$TMP30/capture.jsonl"
+
+TABLE30="$(bash "$HELPER" --fixture "$TMP30" 2>/dev/null)"
+
+# (a) per-stage header carries the four bucket columns.
+STAGE_HDR30="$(printf '%s\n' "$TABLE30" | grep -E '^STAGE \| N')"
+for col in input output cache_creation cache_read; do
+  case "$STAGE_HDR30" in
+    *"$col"*) pass_msg "per-stage header carries '$col' column" ;;
+    *) fail_msg "per-stage header missing '$col' column (got: $STAGE_HDR30)" ;;
+  esac
+done
+
+# (b) the execute row (UNPRICED) shows REAL per-bucket medians, not zero.
+# Row shape: STAGE | N | median tokens | median dur(min) | input | output | cache_creation | cache_read
+EXEC_ROW30="$(printf '%s\n' "$TABLE30" | grep -E '^execute[[:space:]]*\|' | head -1)"
+E_IN30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$5); print $5}')"
+E_OUT30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6}')"
+E_CC30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$7); print $7}')"
+E_CR30="$(printf '%s' "$EXEC_ROW30" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8}')"
+if [ "$E_IN30" = "111000" ]; then pass_msg "execute input bucket == 111000 (unpriced shown)"; else fail_msg "execute input should be 111000, got $E_IN30 (row=$EXEC_ROW30)"; fi
+if [ "$E_OUT30" = "222000" ]; then pass_msg "execute output bucket == 222000"; else fail_msg "execute output should be 222000, got $E_OUT30 (row=$EXEC_ROW30)"; fi
+if [ "$E_CC30" = "333000" ]; then pass_msg "execute cache_creation bucket == 333000"; else fail_msg "execute cache_creation should be 333000, got $E_CC30 (row=$EXEC_ROW30)"; fi
+if [ "$E_CR30" = "444000" ]; then pass_msg "execute cache_read bucket == 444000"; else fail_msg "execute cache_read should be 444000, got $E_CR30 (row=$EXEC_ROW30)"; fi
+rm -rf "$TMP30"
 
 echo ""
 echo "== RESULTS =="
