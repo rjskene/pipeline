@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.21.3](https://github.com/rjskene/pipeline/compare/v0.21.2...v0.21.3) (2026-06-01)
+
+
+### Bug Fixes
+
+* **tokenomics:** emit distinct stdout skip-marker on logging gate-skip ([#790](https://github.com/rjskene/pipeline/issues/790)) ([707a32e](https://github.com/rjskene/pipeline/commit/707a32e6ba6481761e52f7ed2daf8762fb2d7dd5))
+* **tokenomics:** propagate gate vars into backfill/report scripts + surface gated skip ([#790](https://github.com/rjskene/pipeline/issues/790)) ([46c84b5](https://github.com/rjskene/pipeline/commit/46c84b545f70f755c8297b4a9859d491b411560c))
+* **tokenomics:** skill boot doesn't propagate config vars to backfill/report scripts — silent no-op + PIPELINE_REPO error ([7363bd4](https://github.com/rjskene/pipeline/commit/7363bd4f356acfb2440015eaed5aeedf8487aac2))
+
 ## [0.21.2](https://github.com/rjskene/pipeline/compare/v0.21.1...v0.21.2) (2026-06-01)
 
 
