@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.7](https://github.com/rjskene/pipeline/compare/v0.21.6...v0.21.7) (2026-06-01)
+
+
+### Features
+
+* combine + path-hint impact report with min-N verdict gate ([#757](https://github.com/rjskene/pipeline/issues/757)) ([f43c46b](https://github.com/rjskene/pipeline/commit/f43c46bdb35dad128fec6bfb64f58b890b816e2c))
+* **create-classify:** measure combine-heuristic impact — issue-count, cache_creation, PR overhead ([cadb0cf](https://github.com/rjskene/pipeline/commit/cadb0cfa3372251a0e40a2e0221eae025dfe67ad))
+
+
+### Bug Fixes
+
+* **combine-hint-impact:** gate verdict on real cost coverage + derive live file counts ([#757](https://github.com/rjskene/pipeline/issues/757)) ([e6e3abb](https://github.com/rjskene/pipeline/commit/e6e3abb7c2682312357cefd7e9d7a2d7d205bdbc))
+
 ## [0.21.6](https://github.com/rjskene/pipeline/compare/v0.21.5...v0.21.6) (2026-06-01)
 
 
