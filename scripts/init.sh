@@ -207,6 +207,28 @@ PIPELINE_CI_FIX_LOOP_ENABLED="true"
 PIPELINE_CI_FIX_RETRY_BUDGET="2"
 PIPELINE_CI_FIX_LOG_LINES="200"
 PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
+
+# --- Per-model token pricing (issue #721) ---
+#
+# Per-1M-token USD rates consumed by \`scripts/cost-latency-report.sh
+# --tokenomics\` to price the dogfood agent-cost logs (gated by
+# PIPELINE_LOGS_ENABLED above). Shape: PIPELINE_PRICE_<MODEL>_<BUCKET>, where
+# <BUCKET> is INPUT, OUTPUT, CACHE_CREATION, or CACHE_READ. Any bucket left
+# unset falls back to the per-model list-price defaults baked into the report
+# script. The lines below are COMMENTED OUT: they match the baked defaults, so
+# uncomment + edit only to OVERRIDE a baked rate (no behavior change otherwise).
+#PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT=15
+#PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT=75
+#PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION=18.75
+#PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_INPUT=3
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_OUTPUT=15
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_CREATION=3.75
+#PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_READ=0.30
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_INPUT=1
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_OUTPUT=5
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION=1.25
+#PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ=0.10
 EOF
 
   echo "init: wrote pipeline.config (PIPELINE_REPO=${repo:-<unknown>}, PIPELINE_BASE_BRANCH=$base)"
