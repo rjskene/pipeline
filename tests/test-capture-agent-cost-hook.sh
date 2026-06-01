@@ -135,4 +135,39 @@ COUNT="$(wc -l < "$OUT" | tr -d ' ')"
 
 [ -s "$ERRLOG" ] && fail "case4: error log non-empty: $(cat "$ERRLOG")"
 
+# ---------------------------------------------------------------------------
+# Case 5 (#765): a cumulative-source payload (usage under `total_usage`, no
+# top-level `usage`) stays usage_complete=true. Forward-compatible: if a future
+# harness populates total_usage/cumulative_usage, those records are correctly
+# trustworthy totals — the flag tracks provenance, not a hard-coded value.
+# ---------------------------------------------------------------------------
+PAYLOAD_CUMULATIVE='{
+  "session_id": "sess-cum",
+  "subagent_type": "pr-eval-agent",
+  "description": "Evaluate PR #300 for #299",
+  "total_duration_ms": 1000,
+  "total_usage": {
+    "input_tokens": 50,
+    "output_tokens": 10,
+    "cache_read_input_tokens": 2,
+    "cache_creation_input_tokens": 1
+  }
+}'
+run_hook "$PAYLOAD_CUMULATIVE" || fail "case5: hook exited non-zero"
+COUNT="$(wc -l < "$OUT" | tr -d ' ')"
+[ "$COUNT" = "2" ] || fail "case5: expected 2 records (case2 + case5), got $COUNT"
+
+python3 - "$OUT" <<'PY' || fail "case5: cumulative-source record failed assertions"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readlines()[-1])
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["usage_complete"] is True, "cumulative-source usage_complete==true")
+expect(rec["tokens"]["total"] == 63, "tokens.total == 50+10+2+1")
+PY
+
 echo "PASS: test-capture-agent-cost-hook.sh"
