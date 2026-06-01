@@ -35,6 +35,14 @@ setup_env() {
   mkdir -p "$home/.claude/projects/$slug"
   cp "$FIX/transcript.jsonl" "$home/.claude/projects/$slug/sess-aaaa-1111.jsonl"
   # the SECOND line (sess-bbbb-2222) transcript is intentionally absent.
+  # Stage the subagent transcript for the INLINE-pass reconciled-upgrade case:
+  # the resolver globs */sess-inline/subagents/agent-<agent_id>.jsonl, so the
+  # parent slug here is arbitrary — only the <session>/subagents/agent-<id>.jsonl
+  # tail matters. Classify #310 carries agent_id=atx310 in its sidecar.
+  mkdir -p "$home/.claude/projects/inline-slug/sess-inline/subagents"
+  cp "$FIX/subagents/agent-tx-310.jsonl" \
+    "$home/.claude/projects/inline-slug/sess-inline/subagents/agent-atx310.jsonl"
+  # All OTHER inline sidecars stage NO transcript -> exercise the lower-bound fallback.
 }
 
 # ---------------------------------------------------------------------------
@@ -127,7 +135,6 @@ assert h["record_key"] == rk, "record_key derivation: %r != %r" % (h["record_key
 il = by_kind["inline"]
 assert len(il) == 8, "expected 8 inline rows, got %d" % len(il)
 for r in il:
-    assert r["usage_complete"] is False, "inline usage_complete must be false: %r" % r
     assert r["session_id"] == "sess-inline", "inline session_id: %r" % r["session_id"]
 
 # stage/issue coverage from inline vocabulary
@@ -144,12 +151,24 @@ expect = sorted([
 ])
 assert pairs == expect, "inline (stage,issue) pairs:\n got %r\n exp %r" % (pairs, expect)
 
-# a sample inline sidecar usage propagated (Classify #310)
+# Reconciled-upgrade case: Classify #310 has a staged subagent transcript
+# (agent_id=atx310). The INLINE pass transcript-sums it to a cumulative that
+# EXCEEDS the sidecar lower-bound (1115), so the row upgrades to usage_complete=true.
+# transcript-sum = (500+50+40000+2000) + (600+60+41000+2100) = 86310.
 c310 = [r for r in il if r["stage"]=="classify" and str(r["issue"])=="310"][0]
 ct = c310["tokens"]
-assert (ct["input"],ct["output"],ct["cache_read"],ct["cache_creation"]) == (1000,100,10,5), \
-    "classify-310 tokens: %r" % ct
+assert (ct["input"],ct["output"],ct["cache_read"],ct["cache_creation"]) == (1100,110,81000,4100), \
+    "classify-310 transcript-summed tokens: %r" % ct
+assert ct["total"] == 86310, "classify-310 transcript-sum total: %r" % ct["total"]
+assert c310["usage_complete"] is True, "classify-310 must upgrade to usage_complete=true"
 assert c310["agent_type"] == "pipeline:issue-classifier", "classify-310 agent_type: %r" % c310["agent_type"]
+assert c310["model"] == "claude-opus-4-8", "classify-310 model adopted from transcript: %r" % c310["model"]
+
+# Fallback case: Plan #310 has NO staged transcript -> stays at sidecar lower-bound.
+p310 = [r for r in il if r["stage"]=="plan" and str(r["issue"])=="310"]
+# (two 'plan' rows for 310: Plan #310 + Re-plan #310; both lack a transcript)
+for r in p310:
+    assert r["usage_complete"] is False, "plan-310 (no transcript) must stay usage_complete=false: %r" % r
 
 # non-stage 'analyze' line must NOT appear
 assert not any(r.get("agent_type")=="pipeline:issue-analyzer" for r in rows), \

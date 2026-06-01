@@ -15,8 +15,13 @@
 #   INLINE pass — .claude/logs/subagents.log
 #       Stage + issue are parsed from the free-text description; non-stage lines
 #       are skipped. Tokens come from the per-agent JSON sidecar named in col 7
-#       (.claude/logs/subagents/<filename>); these are a documented lower-bound
-#       (usage_complete=false), never a fabricated cumulative sum.
+#       (.claude/logs/subagents/<filename>); the sidecar usage is a documented
+#       lower-bound (final-turn only). When the sidecar carries an agent_id, the
+#       pass BACKFILLS by transcript-summing the subagent transcript resolved at
+#       ~/.claude/projects/*/<session>/subagents/agent-<agent_id>.jsonl: if the
+#       summed cumulative EXCEEDS the lower-bound it is adopted (usage_complete=
+#       true, priced from the transcript model); otherwise the lower-bound stays
+#       (usage_complete=false). Never a fabricated cumulative, never a downgrade.
 #
 # ===========================================================================
 # OUTPUT RECORD SCHEMA (schema_version=1) — #643 CONSUMPTION CONTRACT, STABLE.
@@ -34,7 +39,8 @@
 #     ts_start:     <iso8601|"">,
 #     ts_end:       <iso8601|"">,
 #     source:       "retroactive",
-#     usage_complete: true (headless) | false (inline lower-bound)
+#     usage_complete: true (headless) | inline: false (sidecar lower-bound) |
+#                     true (subagent-transcript-summed cumulative)
 #   }
 #   tokens.total = input + output + cache_read + cache_creation.
 #
@@ -94,7 +100,7 @@ mkdir -p "$logs_dir" "$out_logs_dir"
 # JSON construction matches the #643 contract exactly.
 python3 - \
   "$runs_log" "$subagents_log" "$sidecar_dir" "$out" "${HOME:-}" <<'PY'
-import datetime, hashlib, json, os, re, sys
+import datetime, glob, hashlib, json, os, re, sys
 
 runs_log, subagents_log, sidecar_dir, out_path, home = sys.argv[1:6]
 
@@ -309,6 +315,7 @@ if os.path.exists(subagents_log):
                 continue
             issue = issue_from_description(description)
             agent_type = "unknown"
+            agent_id = ""
             usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
             sidecar = os.path.join(sidecar_dir, fname)
             if os.path.exists(sidecar):
@@ -316,6 +323,7 @@ if os.path.exists(subagents_log):
                     with open(sidecar) as sf:
                         data = json.load(sf)
                     agent_type = data.get("subagent_type", "unknown")
+                    agent_id = data.get("agent_id", "") or ""
                     u = data.get("usage", {}) or {}
                     usage = {
                         "input": u.get("input_tokens") or 0,
@@ -325,11 +333,42 @@ if os.path.exists(subagents_log):
                     }
                 except (ValueError, OSError):
                     pass
+
+            # BACKFILL: upgrade the sidecar lower-bound to the true cumulative by
+            # transcript-summing the subagent transcript when one resolves. The
+            # subagent transcript lives at an unknown worktree-derived slug under
+            # ~/.claude/projects, so glob on the */<session>/subagents/agent-<id>.jsonl
+            # tail. Only ADOPT the sum when it EXCEEDS the lower-bound (never downgrade);
+            # then the inline record becomes a usage_complete=true cumulative.
+            model = ""
+            usage_complete = False
+            if agent_id and session:
+                pattern = os.path.join(
+                    home, ".claude", "projects", "*", session,
+                    "subagents", "agent-" + agent_id + ".jsonl")
+                matches = glob.glob(pattern)
+                if matches:
+                    summ = transcript_sum(matches[0])
+                    summ_total = (summ["input"] + summ["output"]
+                                  + summ["cache_read"] + summ["cache_creation"])
+                    lb_total = (usage["input"] + usage["output"]
+                                + usage["cache_read"] + usage["cache_creation"])
+                    if summ_total > lb_total:
+                        usage = {
+                            "input": summ["input"],
+                            "output": summ["output"],
+                            "cache_read": summ["cache_read"],
+                            "cache_creation": summ["cache_creation"],
+                        }
+                        usage_complete = True
+                        if summ["model"]:
+                            model = summ["model"]
+
             rec = make_record(
                 issue=issue, stage=stage, agent_kind="inline", agent_type=agent_type,
-                session_id=session, model="",
+                session_id=session, model=model,
                 tokens=usage, ts_start=ts, ts_end=ts,
-                usage_complete=False)
+                usage_complete=usage_complete)
             if rec["record_key"] in seen:
                 continue
             seen.add(rec["record_key"])
