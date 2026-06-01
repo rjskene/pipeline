@@ -269,6 +269,44 @@ if [ -f "$FX/pipeline.config" ]; then
     && pass_msg "cfg: carries example defaults (PIPELINE_WORKTREE_PREFIX)" || fail_msg "cfg: missing example defaults"
   bash -n "$FX/pipeline.config" 2>/dev/null && pass_msg "cfg: bash -n clean" || fail_msg "cfg: bash -n errors"
   ( source "$FX/pipeline.config" ) >/dev/null 2>&1 && pass_msg "cfg: re-sourceable" || fail_msg "cfg: source failed"
+
+  # --- issue #734: generated config seeds a COMMENTED PIPELINE_PRICE_* block ---
+  # Discoverability anchor for cost-latency-report.sh --tokenomics overrides.
+  # Divergence from pipeline.config.example: in the GENERATED config every price
+  # line (Opus included) is commented out, so baked-in defaults stay authoritative
+  # until the operator opts in. (Example keeps Opus live; it is never sourced.)
+  grep -qE '^#.*[Pp]er-model token pricing' <<<"$cfg" \
+    && pass_msg "cfg: PRICE block header comment present" \
+    || fail_msg "cfg: PRICE block header comment missing"
+
+  price_keys=(
+    PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT
+    PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT
+    PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION
+    PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ
+    PIPELINE_PRICE_CLAUDE_SONNET_4_6_INPUT
+    PIPELINE_PRICE_CLAUDE_SONNET_4_6_OUTPUT
+    PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_CREATION
+    PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_READ
+    PIPELINE_PRICE_CLAUDE_HAIKU_4_5_INPUT
+    PIPELINE_PRICE_CLAUDE_HAIKU_4_5_OUTPUT
+    PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION
+    PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ
+  )
+  price_all_present=1
+  price_all_commented=1
+  for k in "${price_keys[@]}"; do
+    # present in some form (commented or not)
+    grep -qE "^[[:space:]]*#?[[:space:]]*${k}=" <<<"$cfg" || price_all_present=0
+    # MUST be commented out in the generated config (no live, uncommented line)
+    if grep -qE "^[[:space:]]*${k}=" <<<"$cfg"; then price_all_commented=0; fi
+  done
+  [ "$price_all_present" -eq 1 ] \
+    && pass_msg "cfg: all 12 PIPELINE_PRICE_* keys present" \
+    || { fail_msg "cfg: missing PIPELINE_PRICE_* keys"; echo "$cfg" | grep -i price | sed 's/^/    /'; }
+  [ "$price_all_commented" -eq 1 ] \
+    && pass_msg "cfg: all PIPELINE_PRICE_* lines commented (opt-in; no behavior change)" \
+    || { fail_msg "cfg: a PIPELINE_PRICE_* line is live/uncommented"; echo "$cfg" | grep -iE '^[[:space:]]*PIPELINE_PRICE' | sed 's/^/    /'; }
 else
   fail_msg "cfg: pipeline.config NOT written (rc=$rc)"; cat "$FX/err" | sed 's/^/    /'
 fi
