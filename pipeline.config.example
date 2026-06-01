@@ -2,6 +2,13 @@
 #
 # This file is sourced by shell scripts at runtime.
 
+# Export every var assigned below so sourced values propagate to child bash
+# steps (the auto-merge gate, helper scripts) that run in a separate subshell
+# from the step that sourced this config — without per-caller `export`
+# discipline (issue #801). NOTE: the gitignored, host-only live
+# pipeline.config needs the SAME `set -a` / `set +a` wrapper applied by hand.
+set -a
+
 PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
 PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: staging — dev trunk; override per-repo if needed)
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
@@ -238,3 +245,5 @@ PIPELINE_CI_FIX_LOG_LINES="200"       # tail size when injecting CI failure log 
 
 # Base TCP port for the inline visual-proof loopback python http.server.
 PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
+
+set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above)
