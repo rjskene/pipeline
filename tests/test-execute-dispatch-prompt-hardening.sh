@@ -25,9 +25,13 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Inline execute dispatch sites that MUST carry the terminal-state directive.
+# dispatch-routing.md mirrors the run/SKILL.md Step 6 directive verbatim — the
+# same two-site parity the plan-issue contract has across fullsend/SKILL.md and
+# dispatch-routing.md (#771, follow-up to #764).
 DISPATCH_SITES=(
   "skills/fullsend/SKILL.md"
   "skills/run/SKILL.md"
+  "skills/run/references/dispatch-routing.md"
 )
 
 # Canonical directive substrings (must appear at each dispatch site).
