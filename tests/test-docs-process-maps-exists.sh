@@ -10,6 +10,10 @@ done
 # (needs-browser lane)" subsection for a genuinely new pipeline lane. The new
 # section is kept tight; the bump is the proportionate alternative to gutting
 # the unrelated ASCII maps to preserve an arbitrary 200.
+# Cap raised 220 -> 235 (#777): the doc gained the "Dispatch transport" section
+# (inline Agent() vs spawn, keyed off PATH letter) + a Transport column on the
+# path table for a genuinely new documented axis. Kept tight (terse ASCII);
+# same proportionate-bump rationale as the #368 raise.
 LINES=$(wc -l < "$FILE")
-[ "$LINES" -le 220 ] || { echo "FAIL: $FILE has $LINES lines (cap is 220)"; exit 1; }
-echo "PASS: process-maps.md present, all headings found, ${LINES}/220 lines"
+[ "$LINES" -le 235 ] || { echo "FAIL: $FILE has $LINES lines (cap is 235)"; exit 1; }
+echo "PASS: process-maps.md present, all headings found, ${LINES}/235 lines"
