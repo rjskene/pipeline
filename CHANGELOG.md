@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/rjskene/pipeline/compare/v0.21.0...v0.21.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* evaluation fixes for [#777](https://github.com/rjskene/pipeline/issues/777) — raise process-maps line cap 220→235 for new Dispatch transport section ([6c0ec76](https://github.com/rjskene/pipeline/commit/6c0ec76d7d82efd4d20e4b727241917a385b92be))
+
 ## [0.21.0](https://github.com/rjskene/pipeline/compare/v0.20.7...v0.21.0) (2026-06-01)
 
 
