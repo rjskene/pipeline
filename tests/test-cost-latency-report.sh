@@ -959,14 +959,12 @@ rm -rf "$TMP21"
 # --- Scenario 22: --tokenomics coverage-health block (#721) ---
 # A single block reporting:
 #   - execute-stage record N;
-#   - headless_skipped_missing_transcript count (passed via --skipped-count N,
-#     produced to STDERR by scripts/capture-agent-costs.sh; the skill plumbs it);
 #   - % feature PRs joined = joined ÷ eligible (reuse SKIPPED_NO_LINK + PR_COUNT);
 #   - model-attribution coverage % = priced records ÷ total records (exposes #699).
 # Fixture: ONE eligible feature PR #122 → issue 222 with TWO capture records:
 #   execute / priced (opus)   — counts toward execute-N + priced.
 #   plan    / unpriced (model:"") — drags model-attribution to 50%.
-# joined = 1, eligible = 1 → 100%. priced 1 / total 2 → 50.0%. --skipped-count 3.
+# joined = 1, eligible = 1 → 100%. priced 1 / total 2 → 50.0%.
 inc_scenario "Scenario 22: --tokenomics coverage-health block"
 
 TMP22="$(mktemp -d)"
@@ -989,7 +987,7 @@ else
   pass_msg "default output has no coverage-health block (gated behind --tokenomics)"
 fi
 
-TOK22="$(bash "$HELPER" --fixture "$TMP22" --tokenomics --skipped-count 3 2>/dev/null)"
+TOK22="$(bash "$HELPER" --fixture "$TMP22" --tokenomics 2>/dev/null)"
 COV_BLOCK22="$(printf '%s\n' "$TOK22" | awk '/COVERAGE/{f=1} f')"
 if [ -n "$COV_BLOCK22" ]; then
   pass_msg "--tokenomics renders a coverage-health block"
@@ -1003,15 +1001,11 @@ case "$COV_BLOCK22" in
   *) fail_msg "coverage block should surface execute-stage N==1 (got: $COV_BLOCK22)" ;;
 esac
 
-# headless_skipped_missing_transcript == 3 (from --skipped-count).
-case "$COV_BLOCK22" in
-  *3*) pass_msg "coverage block surfaces headless_skipped_missing_transcript (3)" ;;
-  *) fail_msg "coverage block should surface skipped count 3 (got: $COV_BLOCK22)" ;;
-esac
-if printf '%s' "$COV_BLOCK22" | grep -qiE 'skip'; then
-  pass_msg "coverage block labels the skipped-transcript count"
+# Coverage block no longer surfaces a missing-transcript skipped row (#746).
+if printf '%s' "$COV_BLOCK22" | grep -qi 'missing transcript'; then
+  fail_msg "coverage block should no longer surface a missing-transcript skipped line (got: $COV_BLOCK22)"
 else
-  fail_msg "coverage block missing a skipped-transcript label (got: $COV_BLOCK22)"
+  pass_msg "coverage block no longer surfaces missing-transcript skipped line (#746)"
 fi
 
 # % feature PRs joined == 100.0% (joined 1 / eligible 1).
@@ -1276,13 +1270,13 @@ inc_scenario "Scenario 26: tokenomics-report fixture renders all --tokenomics ta
 
 TOKFIX="$REPO_ROOT/tests/fixtures/tokenomics-report"
 
-# Run ONCE with Opus defaults (strip any ambient PIPELINE_PRICE_* override) and a
-# representative --skipped-count, capture all --tokenomics output.
+# Run ONCE with Opus defaults (strip any ambient PIPELINE_PRICE_* override),
+# capture all --tokenomics output.
 TOK26="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT \
              -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
              -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION \
              -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
-         bash "$HELPER" --fixture "$TOKFIX" --tokenomics --skipped-count 2 2>/dev/null)"
+         bash "$HELPER" --fixture "$TOKFIX" --tokenomics 2>/dev/null)"
 
 # (a) every table SECTION header present.
 for hdr in 'BUCKET' 'STAGE COST' 'STRUCTURE' 'STAGE x STRUCTURE' 'B→D BREAKEVEN' \
@@ -1391,13 +1385,6 @@ if [ "$BE_TOTAL26" = "140.25" ]; then
   pass_msg "tokenomics-report: breakeven TOTAL savings == 140.25 (golden: 73.50+36.75+30.00)"
 else
   fail_msg "tokenomics-report: breakeven TOTAL savings should be 140.25, got $BE_TOTAL26"
-fi
-
-# (i) skipped-count plumbed through.
-if printf '%s' "$TOK26" | grep -qE 'headless skipped \(missing transcript\): 2'; then
-  pass_msg "tokenomics-report: --skipped-count 2 surfaced in coverage health"
-else
-  fail_msg "tokenomics-report: --skipped-count 2 should surface in coverage health"
 fi
 
 # --- Scenario 27: per-model baked defaults — Sonnet & Haiku price at own rates (#733) ---

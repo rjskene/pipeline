@@ -34,21 +34,19 @@ Run the retroactive HEADLESS + INLINE backfill. It is idempotent by `record_key`
 ERRLOG="$(mktemp)"
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/capture-agent-costs.sh" 2>"$ERRLOG"
 # The HEADLESS pass skips runs whose Claude Code transcript is missing and
-# counts them on stderr as headless_skipped_missing_transcript=N. Capture N —
-# it feeds Step 2's coverage-health table so partial coverage is visible.
-N="$(grep -oE 'headless_skipped_missing_transcript=[0-9]+' "$ERRLOG" | tail -1 | cut -d= -f2)"
-N="${N:-0}"
-echo "skipped (missing transcript): $N"
+# counts them on stderr as headless_skipped_missing_transcript=N. That count is
+# captured to "$ERRLOG" for debugging only — it is no longer threaded into the
+# report.
 ```
 
-If `PIPELINE_LOGS_ENABLED` is not `true`, the script is a no-op and `N` will be `0` — note that the report will then show empty/`--` cells and say so in Step 3.
+If `PIPELINE_LOGS_ENABLED` is not `true`, the script is a no-op — note that the report will then show empty/`--` cells and say so in Step 3.
 
 ## Step 2 — Report
 
-Render the full tokenomics report over the (now-refreshed) `agent-costs.jsonl`, passing the skipped count from Step 1 so coverage-health is accurate:
+Render the full tokenomics report over the (now-refreshed) `agent-costs.jsonl`:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --tokenomics --skipped-count "$N"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --tokenomics
 ```
 
 Use `--limit N` to widen or narrow the window of most-recent merged PRs (default 50), e.g. `--limit 100`. The `--tokenomics` flag renders the bucket, per-stage-cost, structure, stage×structure crosstab, per-PATH size, breakeven, coverage-health, trend, latency, and concurrency tables. The report degrades gracefully (token/duration cells render `--`) when the capture log is absent or empty — it never errors.
@@ -63,14 +61,14 @@ The bash stdout is NOT surfaced to the user automatically. Relay **every** table
 - **Stage × structure crosstab** — which stages run headless vs inline.
 - **Per-PATH / issue size** — size distribution across PATH A/B/C/D.
 - **B→D breakeven** — the crossover where PATH B ceremony stops paying off vs PATH D quick-fix.
-- **Coverage-health** — how complete the cost data is (fed by the Step 1 skipped count; flag if coverage is low).
+- **Coverage-health** — how complete the cost data is; model-attribution coverage % is the completeness signal (flag if it is low).
 - **Trend** — per-day and per-PR cost trend, with any outlier days called out.
 - **Task-latency** — wall-clock per task/stage.
 - **Concurrency assessment** — observed overlap and the concurrency ceiling.
 
 **Surface the concurrency assessment prominently** as an analysis deliverable in its own right — not just as one more table. State the observed peak overlap and the ceiling, and whether the workload is approaching it.
 
-If coverage-health shows a high skipped count, lead the summary with that caveat: the cost figures are a lower bound until those transcripts are present.
+If coverage-health shows low model-attribution coverage, lead the summary with that caveat: the cost figures are a lower bound until those records carry a model.
 
 ## Dogfood-only
 
