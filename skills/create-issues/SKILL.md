@@ -186,6 +186,27 @@ Same path-math family as #277 — fix one path constant in `scripts/foo.sh`.
 <!-- pipeline:path=D -->
 ```
 
+### PATH hint body marker (advisory)
+
+When the combined issue's discussion gives a clear **A/B/C** signal, append `<!-- pipeline:path-hint=A|B|C -->` to the body at filing time. This is **advisory** only — `classify-issue` reads it as one prior in its score table and may override it.
+
+This is deliberately **distinct** from the authoritative `<!-- pipeline:path=D -->` marker above: the syntax is `path-hint=` (note the `-hint`), **different from** the authoritative `path=`. The two can never be confused — the hint parser cannot match `path=` and the authoritative parser cannot match `path-hint=`.
+
+Rules:
+
+- **Letters A/B/C only.** `D` is NEVER a hint — D keeps its **authoritative** `<!-- pipeline:path=D -->` route (above). A `D` letter in the hint slot is malformed and silently ignored by `classify-issue`.
+- **Emit only on a clear signal — silence = no hint.** This preserves create-issues' **path-agnostic** default: when there is no clear A/B/C signal, write no marker and `classify-issue` decides cold. The motivating case is a combined clustered unit that could plausibly be B or C — there the hint earns its keep.
+- **Advisory, not a gate.** An explicit path label and the authoritative `pipeline:path=D` marker both outrank the hint inside `classify-issue`; it never short-circuits classification.
+
+Example (a clustered B/C unit you read as standard B):
+
+```
+## Context
+Single combined change to `scripts/foo.sh` and its one test.
+
+<!-- pipeline:path-hint=B -->
+```
+
 ### Session summary
 
 When the user ends the session ("done", "that's all", etc.), print:

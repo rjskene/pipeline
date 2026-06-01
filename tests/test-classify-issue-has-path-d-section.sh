@@ -16,7 +16,9 @@ grep -qF '#691' "$FILE" || { echo "FAIL: blast-radius exemplar #691 missing"; ex
 grep -qF '#698' "$FILE" || { echo "FAIL: blast-radius boundary exemplar #698 missing"; exit 1; }
 # Cap raised 220 -> 250 by #546 (opener-association trust gate + `## Comment
 # trust` section); 250 -> 270 by #707 (blast-radius rule + high-uncertainty
-# carve-out + two exemplar tables, ~25 lines).
+# carve-out + two exemplar tables, ~25 lines); 270 -> 290 by #759 (advisory
+# path-hint overridable-prior step 3d + parse block + step-4 prior + override
+# rationale; parse block condensed to keep the delta ~14 lines).
 LINES=$(wc -l < "$FILE")
-[ "$LINES" -le 270 ] || { echo "FAIL: $FILE has $LINES lines (cap is 270)"; exit 1; }
-echo "PASS: PATH D section + sentinels present, ${LINES}/270 lines"
+[ "$LINES" -le 290 ] || { echo "FAIL: $FILE has $LINES lines (cap is 290)"; exit 1; }
+echo "PASS: PATH D section + sentinels present, ${LINES}/290 lines"
