@@ -12,8 +12,15 @@ Subagent invocations run in fresh shells, so source `pipeline.config` first:
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
-[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
-  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Anchor the resolver via the plugin cache glob (a stable, var-independent path —
+# the same anchor the resolver body / doctor.sh / migrate-from-subtree.sh use) so the
+# snippet is NOT chicken-and-egg: it does not need CLAUDE_PLUGIN_ROOT pre-set to FIND
+# the resolver. _cpr_dir is the DIRECTORY prefix only; the `source` line keeps the
+# literal `_resolve-plugin-root.sh` (no space after `source`) so the source-resolver
+# contract regex still matches. When CLAUDE_PLUGIN_ROOT is already set, prefer it.
+_cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
+source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
 State (slate, base branch, repo) is inherited from `/pipeline:run` / `/pipeline:fullsend`; if these variables fail to resolve, **STOP** — preconditions live in `skills/run/SKILL.md`.

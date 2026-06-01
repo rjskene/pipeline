@@ -13,8 +13,15 @@ At session start, before running any of the steps below, source the project's `p
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # First run on a fresh project? Run /pipeline:init to generate pipeline.config + seed labels.
 # Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
-[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
-  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Anchor the resolver via the plugin cache glob (a stable, var-independent path —
+# the same anchor the resolver body / doctor.sh / migrate-from-subtree.sh use) so the
+# snippet is NOT chicken-and-egg: it does not need CLAUDE_PLUGIN_ROOT pre-set to FIND
+# the resolver. _cpr_dir is the DIRECTORY prefix only; the `source` line keeps the
+# literal `_resolve-plugin-root.sh` (no space after `source`) so the source-resolver
+# contract regex still matches. When CLAUDE_PLUGIN_ROOT is already set, prefer it.
+_cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
+source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
 The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.

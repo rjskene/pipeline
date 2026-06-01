@@ -11,6 +11,16 @@ At session start, before running any of the steps below, source the project's `p
 
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
+# Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
+# Anchor the resolver via the plugin cache glob (a stable, var-independent path —
+# the same anchor the resolver body / doctor.sh / migrate-from-subtree.sh use) so the
+# snippet is NOT chicken-and-egg: it does not need CLAUDE_PLUGIN_ROOT pre-set to FIND
+# the resolver. _cpr_dir is the DIRECTORY prefix only; the `source` line keeps the
+# literal `_resolve-plugin-root.sh` (no space after `source`) so the source-resolver
+# contract regex still matches. When CLAUDE_PLUGIN_ROOT is already set, prefer it.
+_cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
+source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
 # Doctor
@@ -22,8 +32,6 @@ gh auth → plugin install → pipeline.config → labels → settings wiring �
 Run the doctor script with the user-supplied flags (forward `$@` verbatim so both `/pipeline:doctor` and `/pipeline:doctor --fix labels` work):
 
 ```bash
-[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
-  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh" "$@"
 ```
 
