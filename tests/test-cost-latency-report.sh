@@ -1541,6 +1541,71 @@ case "$COST27" in
 esac
 rm -rf "$TMP27"
 
+# --- Scenario 28: backfill reconciliation (no double-count) + coverage lower-bound count (#773) ---
+# Two facets of the inline-cost backfill landing at render time:
+#   (a) For the SAME (session_id, issue, stage), a forward lower-bound record
+#       (source:"forward", usage_complete:false, small total) and a retroactive
+#       cumulative (source:"retroactive", usage_complete:true, large total)
+#       coexist (record_key includes source). The (session,issue,stage) max-total
+#       dedup MUST collapse them to the cumulative ONLY — no double-count. The
+#       per-issue token sum equals the LARGE cumulative, not the sum of both.
+#   (b) The COVERAGE HEALTH block reports how many DEDUPED records are still a
+#       lower bound (usage_complete:false) so the operator knows the figure is a
+#       floor for those rows. Deduped stream here has 2 records (the reconciled
+#       cumulative for 229 + a standalone unreconciled lower-bound for 230), so
+#       the count reads 1/2.
+inc_scenario "Scenario 28: backfill reconciliation (no double-count) + coverage lower-bound count"
+
+TMP28="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP28/" 2>/dev/null
+printf '%s\n' '[
+  {"number":129,"title":"feat: reconciled inline issue","additions":300,"deletions":100,"body":"Closes #229","mergedAt":"2026-05-13T12:00:00Z","labels":[]},
+  {"number":130,"title":"feat: unreconciled lower-bound issue","additions":50,"deletions":20,"body":"Closes #230","mergedAt":"2026-05-13T13:00:00Z","labels":[]}
+]' > "$TMP28/prs.json"
+printf '%s\n' '{"number":129,"additions":300,"deletions":100,"comments":[]}' > "$TMP28/pr-129.json"
+printf '%s\n' '{"number":229,"labels":[],"comments":[]}' > "$TMP28/issue-229.json"
+printf '%s\n' '{"number":130,"additions":50,"deletions":20,"comments":[]}' > "$TMP28/pr-130.json"
+printf '%s\n' '{"number":230,"labels":[],"comments":[]}' > "$TMP28/issue-230.json"
+{
+  # SAME (session s28, issue 229, stage execute): forward lower-bound (1115) +
+  # retroactive cumulative (86310). DISTINCT record_key (source differs) → both
+  # survive the record_key pass; (session,issue,stage) dedup keeps the cumulative.
+  echo '{"schema_version":1,"issue":"229","stage":"execute","session_id":"s28","model":"","agent_kind":"inline","source":"forward","usage_complete":false,"record_key":"K229F","tokens":{"input":1000,"output":100,"cache_read":10,"cache_creation":5,"total":1115},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"229","stage":"execute","session_id":"s28","model":"claude-opus-4-8","agent_kind":"inline","source":"retroactive","usage_complete":true,"record_key":"K229R","tokens":{"input":1100,"output":110,"cache_read":81000,"cache_creation":4100,"total":86310},"duration_ms":1000}'
+  # Standalone UNRECONCILED lower-bound for issue 230 (no transcript ever staged).
+  echo '{"schema_version":1,"issue":"230","stage":"execute","session_id":"s28b","model":"","agent_kind":"inline","source":"forward","usage_complete":false,"record_key":"K230F","tokens":{"input":2000,"output":200,"cache_read":20,"cache_creation":10,"total":2230},"duration_ms":900}'
+} > "$TMP28/capture.jsonl"
+
+# (a) per-issue 229 token sum == 86310 (cumulative ONLY), NOT 87425 (naive both).
+ROWS28="$(bash "$HELPER" --fixture "$TMP28" --emit-rows-json 2>/dev/null)"
+TT28="$(printf '%s' "$ROWS28" | jq -r '.[] | select(.issue==229) | .tokens_total' 2>/dev/null)"
+if [ "$TT28" = "86310" ]; then
+  pass_msg "issue 229 tokens_total == 86310 (reconciled cumulative, no double-count)"
+else
+  fail_msg "issue 229 tokens_total should be 86310 (cumulative only), got $TT28"
+fi
+if [ "$TT28" = "87425" ]; then
+  fail_msg "issue 229 tokens_total double-counted forward+retroactive (naive 87425)"
+else
+  pass_msg "issue 229 tokens_total excludes the forward lower-bound (naive 87425 rejected)"
+fi
+
+# (b) COVERAGE HEALTH carries a lower-bound (unreconciled) count == 1/2 over the
+# deduped stream (reconciled 229 cumulative is true; standalone 230 is false).
+TOK28="$(bash "$HELPER" --fixture "$TMP28" --tokenomics 2>/dev/null)"
+COV_BLOCK28="$(printf '%s\n' "$TOK28" | awk '/COVERAGE/{f=1} f')"
+LB_LINE28="$(printf '%s\n' "$COV_BLOCK28" | grep -iE 'lower-bound' | head -1)"
+if [ -n "$LB_LINE28" ]; then
+  pass_msg "coverage block reports a lower-bound (unreconciled) line"
+else
+  fail_msg "coverage block missing lower-bound (unreconciled) line (got: $COV_BLOCK28)"
+fi
+case "$LB_LINE28" in
+  *1/2*) pass_msg "lower-bound (unreconciled) count == 1/2 (one false of two deduped)" ;;
+  *) fail_msg "lower-bound count should be 1/2, got: $LB_LINE28" ;;
+esac
+rm -rf "$TMP28"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
