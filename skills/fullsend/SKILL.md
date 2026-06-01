@@ -1,6 +1,6 @@
 ---
 name: fullsend
-description: Run the full pipeline autonomously end-to-end (classify → plan → evaluate → execute → evaluate PR → auto-merge greenlit PRs) without intermediate confirmations. Usage: /pipeline:fullsend [issue_numbers...] [--manual-merge]
+description: Run the full pipeline autonomously end-to-end (classify → plan → evaluate → execute → evaluate PR → auto-merge greenlit PRs) without intermediate confirmations. Usage: /pipeline:fullsend [issue_numbers...] [--manual-merge] [--spawn]
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Agent
 ---
@@ -28,7 +28,7 @@ slate → wave plan → classify+plan (waves) → eval-plan → approve → exec
 
 Invoked two ways: (1) directly as `/pipeline:fullsend [issue_numbers...] [--manual-merge]` — the canonical entry point; (2) via the back-compat magic-string delegator in `/pipeline:run` — when a user prompt to `/pipeline:run` contains the token `full send` / `full-send` / `fullsend` (case-insensitive), `/pipeline:run` invokes this skill via `Skill(skill: "pipeline:fullsend", args: "<argv>")` with the original argv and stops.
 
-Argv shape: `[issue_numbers...] [--manual-merge]`, position-independent (the flag-parsing rule below preserves the prior behavior).
+Argv shape: `[issue_numbers...] [--manual-merge] [--spawn]`, position-independent (the flag-parsing rule below preserves the prior behavior). The `--spawn` flag (position-independent, cannot collide with bare-integer issue numbers — same parse rule as `--manual-merge`) forces the tmux run-queue transport for everything fullsend would otherwise run inline (Step 6 execute + Step 7 PR-eval, all paths → run-queue). **When `--spawn` is absent, behavior is exactly today's** (A/B/D execute inline, C queued; B PR-eval inline, C queued) — the flag is purely additive.
 
 PATH D (quick-fix) is NO LONGER path-agnostic to fullsend at the execute stage: fullsend now DOES branch D into a SPLIT DISPATCH (see Step 6). PATH-D-specific *lifecycle* behavior (auto-flip plan-pending → plan-approved, inline tdd-implementer execute dispatch, Step 8 skip) is still owned by /pipeline:run (skills/run/SKILL.md Step 4 and Step 6) and /pipeline:execute-issue-plan (skills/execute-issue-plan/SKILL.md Step 8 early-return). What fullsend adds on top is a DISPATCH split: within each wave, the wave's conflict-free A/B/D issues fan out as a **concurrent inline `Agent` batch in the FOREGROUND** while PATH C issues launch via the tmux **C-only run-queue** backgrounded with `run_in_background` (Step 6). Per #748, PATH B execute joined the inline foreground side alongside A/D (no `spawn-claude.sh` / `claude -p`), leaving only PATH C on the backgrounded run-queue. The inline foreground batch consumes **zero queue slots** — it is free concurrency atop the C-only run-queue capacity — so no fullsend run-queue change is required for the foreground paths themselves.
 
