@@ -44,7 +44,13 @@ You are in **brainstorming / issue-creation mode**: help the user discuss proble
    Skill(skill: "superpowers:brainstorming")
    ```
    Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /pipeline:plan-issue separately." It will ask one question at a time, multiple-choice when possible, with validation gates between sections.
-3. **Scope check — one issue vs many.** Take your own read: if clearly one concept (single file area, single behavior change), proceed silently. If 2+ independent pieces (different subsystems, ship moments, reviewers), surface a decomposition prompt — lead with your read (1–2 sentences), present 2–3 slicing options with trade-offs, ask the user to pick. One message, option list, no follow-ups.
+3. **Scope check — combine bias, fewer issues by default.** Take your own read. Default toward a SINGLE issue: if the candidate slices are clearly one concept, OR they would touch **overlapping files**, share one implementation plan, or hit the **same subsystem**, propose one issue and proceed silently. Splitting clustered same-file work buys no parallelism — the execute-stage wave planner serializes same-file issues into separate waves anyway — and pays N× the fixed per-issue overhead (N× classify, N× plan, N× the shared execute-prefix cache, N× PR/merge). Worst case: pay the split cost, get none of the benefit.
+
+   **Only split on genuinely independent surfaces:** disjoint file sets, separate ship/review/merge moments, distinct subsystems. When you do split, surface a decomposition prompt — lead with your read (1–2 sentences), **name the file overlap and the "serialize + N× overhead" cost** when you recommend combining vs splitting, present 2–3 slicing options with trade-offs, ask the user to pick. One message, option list, no follow-ups.
+
+   **Upper bound — don't over-combine:** keep genuinely independent ship/review/merge boundaries separate; respect the single execute agent's context-window ceiling (a combined issue must still fit one agent's working set); combining reduces per-PR CHANGELOG granularity (usually fine — one logical change = one entry). The bias is toward fewer, not toward one-issue-always.
+
+   **Path-agnostic.** Do not assign or hint a path here. A combined same-subsystem issue is fine as a single larger unit; `classify-issue` decides the path downstream.
 4. Propose creating a GitHub issue (or set, post-scope-check); on user confirmation, create.
 
 ### Grouping detection — before proposal
@@ -93,6 +99,8 @@ Then ask for confirmation in a single prompt, e.g. "Create these N issues? (y/n,
 **Do NOT render the full issue body** (Context / Scope / Affected areas / Notes) inline. The user already saw the reasoning in discussion; the body is persisted on GitHub. You still build the body internally — just don't print it before creation.
 
 **Multi-issue case — default to including a tracker.** When scope-check landed on 2+ issues, add a tracker as the last line marked `(pending tracker)`:
+
+> Reaching this case means scope-check (step 3) already cleared the combine bias — the slices are genuinely independent surfaces, not clustered same-file work.
 
 ```
 Proposed issues:
