@@ -23,6 +23,7 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 - **`staging`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
 - **`main`** — the release branch. release-please tracks `main` and cuts releases from it.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
+- **Dispatch model:** PATH A/B/D execute as an inline `Agent` in the orchestrator session; only PATH C spawns a `claude -p` worker via `spawn-claude.sh`. (Per #748 + the Path-2 cost decision — see [docs/cost-architecture.md](docs/cost-architecture.md).)
 
 Base-branch enforcement is defense-in-depth across three layers (eval-time gate, skill-level `--base`, PreToolUse hook). For the full release procedure and back-sync workflow, see [docs/release-cadence.md](docs/release-cadence.md).
 
