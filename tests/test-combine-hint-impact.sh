@@ -13,6 +13,7 @@ HELPER="$REPO_ROOT/scripts/combine-hint-impact.sh"
 FIXTURE_DIR="$REPO_ROOT/tests/fixtures/combine-hint-impact"
 KEEP_DIR="$FIXTURE_DIR/keep"
 REVERT_DIR="$FIXTURE_DIR/revert"
+HOLLOW_DIR="$FIXTURE_DIR/hollow-cost"
 
 PASS=0
 FAIL=0
@@ -125,6 +126,31 @@ printf '%s' "$ROUT" | grep -q 'Revert-candidate' && pass_msg "revert fixture →
 RVERD="$(bash "$HELPER" --fixture "$REVERT_DIR" --emit-verdict-json 2>/dev/null)"
 printf '%s' "$RVERD" | jq -e '.recommendation == "Revert-candidate"' >/dev/null 2>&1 \
   && pass_msg "revert verdict-json recommendation=Revert-candidate" || fail_msg "revert verdict-json not Revert-candidate"
+
+echo "== Scenario 9: cost-coverage gate (sufficient N, zero cost coverage) =="
+# hollow-cost: post_n=5 (clears MIN_N) BUT capture.jsonl is empty → no real cost
+# coverage. The verdict gate must refuse a Keep/Revert verdict and emit
+# INSUFFICIENT DATA — "no verdict on insufficient data" extends to cost coverage,
+# not just issue count (#757 PR #807 block-verdict).
+HOUT="$(bash "$HELPER" --fixture "$HOLLOW_DIR" 2>/dev/null)"
+rc=$?
+[ "$rc" -eq 0 ] && pass_msg "hollow-cost render exit 0" || fail_msg "hollow-cost render exit $rc"
+printf '%s' "$HOUT" | grep -q 'INSUFFICIENT DATA' \
+  && pass_msg "hollow-cost (no cost coverage) → INSUFFICIENT DATA" || fail_msg "hollow-cost did not emit INSUFFICIENT DATA"
+printf '%s' "$HOUT" | grep -qE '\b(Keep|Revert-candidate)\b' \
+  && fail_msg "hollow-cost leaked a recommendation despite zero cost coverage" \
+  || pass_msg "hollow-cost emits no Keep/Revert"
+HVERD="$(bash "$HELPER" --fixture "$HOLLOW_DIR" --emit-verdict-json 2>/dev/null)"
+printf '%s' "$HVERD" | jq -e '.recommendation == "INSUFFICIENT DATA"' >/dev/null 2>&1 \
+  && pass_msg "hollow-cost verdict-json recommendation=INSUFFICIENT DATA" || fail_msg "hollow-cost verdict-json not INSUFFICIENT DATA"
+printf '%s' "$HVERD" | jq -e 'has("post_cost_coverage")' >/dev/null 2>&1 \
+  && pass_msg "verdict-json exposes post_cost_coverage" || fail_msg "verdict-json missing post_cost_coverage"
+printf '%s' "$HVERD" | jq -e '.post_cost_coverage == 0' >/dev/null 2>&1 \
+  && pass_msg "hollow-cost post_cost_coverage=0" || fail_msg "hollow-cost post_cost_coverage not 0"
+# Guard: the keep/revert fixtures DO have cost coverage → coverage gate must NOT fire there
+KVERD2="$(bash "$HELPER" --fixture "$KEEP_DIR" --emit-verdict-json 2>/dev/null)"
+printf '%s' "$KVERD2" | jq -e '.post_cost_coverage > 0' >/dev/null 2>&1 \
+  && pass_msg "keep fixture has real post_cost_coverage" || fail_msg "keep fixture post_cost_coverage not > 0"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

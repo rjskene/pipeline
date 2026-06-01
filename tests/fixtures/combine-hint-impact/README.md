@@ -50,3 +50,14 @@ Force `post_n = 5` in PATH B × bucket `2-3` so the verdict gate clears
 
 Both: issues `501-505` (pre) and `601-605` (post), all PATH B, bucket
 `2-3`, first-pass approve, post issues carry `<!-- pipeline:path-hint=B -->`.
+
+## Cost-coverage gate variant (`hollow-cost/`)
+
+Copy of `keep/` (so `post_n = 5` clears `MIN_N`) but with an **empty**
+`capture.jsonl` — the post cohort has zero real cost records. The verdict
+gate's second condition (`post_cost_coverage > 0`) therefore fails and the
+tool emits `INSUFFICIENT DATA` instead of a spurious `Keep`. This guards the
+#757 PR #807 block-verdict defect: on today's empty/hollow-cost post cohort
+the means collapse to 0, every bucket reads `flat`, and an un-gated tool would
+recommend `Keep` — worse than no tool. "No verdict on insufficient data"
+extends to cost coverage, not just issue count.

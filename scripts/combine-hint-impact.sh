@@ -17,10 +17,17 @@ set -uo pipefail
 #   4. Hint quality — hint-emit rate + hint→classify agreement, POST-ONLY
 #                    (no pre baseline possible).
 #
-# Verdict is a RECOMMENDATION ONLY (never auto-action). A min-N gate (default 5)
-# refuses any verdict on tiny N → `INSUFFICIENT DATA`. This is the path the tool
-# ships on TODAY: the post cohort is ~empty right after #752, so the only
-# truthful verdict now is INSUFFICIENT DATA.
+# Verdict is a RECOMMENDATION ONLY (never auto-action). Two gates guard it, and
+# failing EITHER yields `INSUFFICIENT DATA` (never a Keep/Revert on hollow data):
+#   1. min-N (default 5) — at least one PATH×bucket must have post_n >= MIN_N.
+#   2. cost coverage      — the post cohort must carry real cost records
+#                           (post_cost_coverage > 0). With zero cost coverage the
+#                           per-bucket means collapse to 0, every bucket reads
+#                           "flat", and an un-gated tool would emit a spurious
+#                           Keep — worse than no tool. (#757 PR #807 block-verdict.)
+# This is the path the tool ships on TODAY: the post cohort is ~empty right after
+# #752 (and has no execute-stage cost records yet), so the only truthful verdict
+# now is INSUFFICIENT DATA.
 #
 # This script is for this repo's own dogfood operation only. It is NOT shipped
 # in the plugin manifest and writes nothing under ${CLAUDE_PLUGIN_ROOT}. The
@@ -169,14 +176,52 @@ derive_path() {
   fi
 }
 
-# file_count_bucket <n> — map a files-changed count to a bucket label.
+# file_count_bucket <n> — map a files-changed count to a bucket label. An
+# absent / non-numeric / undeterminable file count maps to the explicit "?"
+# bucket (NOT "1"). This matters in live mode: when an issue's PR file count
+# can't be derived, collapsing it into bucket "1" silently inflated PATH B ×
+# bucket-1 to post_n >= MIN_N and spuriously cleared the min-N gate (#757 PR
+# #807). The "?" bucket keeps undeterminable rows out of any real bucket, so
+# they can never clear the gate on their own.
 file_count_bucket() {
-  local n="${1:-0}"
-  [ -z "$n" ] && n=0
-  if [ "$n" -le 1 ]; then echo "1"
+  local n="${1:-}"
+  if ! printf '%s' "$n" | grep -qE '^[0-9]+$'; then echo "?"; return; fi
+  if [ "$n" -le 0 ]; then echo "?"
+  elif [ "$n" -le 1 ]; then echo "1"
   elif [ "$n" -le 3 ]; then echo "2-3"
   elif [ "$n" -le 6 ]; then echo "4-6"
   else echo "7+"; fi
+}
+
+# derive_files_changed_live <num> — derive an issue's changed-file count from its
+# associated PR in live mode (the plan's "live derives from gh pr view --json
+# files"). Walks the issue timeline for CONNECTED / CROSS_REFERENCED PRs and
+# takes the max changedFiles among them (a re-opened/superseded PR may appear).
+# Echoes empty when no PR is found or gh/jq is unavailable → the row buckets as
+# "?" and never inflates a real bucket.
+derive_files_changed_live() {
+  local num="$1"
+  [ -z "${PIPELINE_REPO:-}" ] && return 0
+  local owner="${PIPELINE_REPO%/*}" name="${PIPELINE_REPO#*/}"
+  gh api graphql \
+    -f query='query($owner:String!,$name:String!,$num:Int!){
+      repository(owner:$owner,name:$name){
+        issue(number:$num){
+          timelineItems(itemTypes:[CROSS_REFERENCED_EVENT,CONNECTED_EVENT],last:30){
+            nodes{
+              __typename
+              ... on ConnectedEvent { subject { ... on PullRequest { changedFiles } } }
+              ... on CrossReferencedEvent { source { ... on PullRequest { changedFiles } } }
+            }
+          }
+        }
+      }
+    }' \
+    -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null \
+    | jq -r '
+        [ (.data.repository.issue.timelineItems.nodes // [])[]
+          | (.subject.changedFiles // .source.changedFiles // empty) ]
+        | if length > 0 then (max | tostring) else "" end' 2>/dev/null
 }
 
 # --- capture dedup ---------------------------------------------------------
@@ -243,7 +288,13 @@ for num in $ISSUE_NUMS; do
   created="$(printf '%s' "$meta" | jq -r '.createdAt')"
   labels="$(printf '%s' "$meta" | jq -c '.labels // []')"
   body="$(printf '%s' "$meta" | jq -r '.body // ""')"
-  files_changed="$(printf '%s' "$meta" | jq -r '.files_changed // 0')"
+  # files_changed: fixtures supply it on the issue meta; live mode derives it
+  # from the issue's PR (gh). An empty result is left empty (NOT coerced to 0)
+  # so file_count_bucket maps it to "?" rather than silently into bucket "1".
+  files_changed="$(printf '%s' "$meta" | jq -r '.files_changed // empty')"
+  if [ -z "$files_changed" ] && [ -z "$FIXTURE_DIR" ]; then
+    files_changed="$(derive_files_changed_live "$num")"
+  fi
   wave="$(printf '%s' "$meta" | jq -r '.wave // ""')"
   pr="$(printf '%s' "$meta" | jq -r '.pr // ""')"
 
@@ -366,8 +417,20 @@ POST_TOTAL_N="$(printf '%s' "$ROWS_JSON" | jq '[.[]|select(.cohort=="post")]|len
 # Sufficient when at least one bucket clears MIN_N (post_n >= MIN_N).
 SUFFICIENT="$(printf '%s' "$BUCKETS_JSON" | jq --argjson minn "$MIN_N" 'any(.[]; .post_n >= $minn)')"
 
-# Verdict decision.
-if [ "$SUFFICIENT" = "true" ]; then
+# Post-cohort cost coverage — count of post rows carrying a NON-EMPTY cost
+# record (tokens_total > 0 OR cache_creation > 0). A verdict on cost direction
+# is meaningless when the post cohort has ZERO real cost records: the means
+# collapse to 0, every bucket reads "flat", and the tool would emit a spurious
+# Keep. "No verdict on insufficient data" (the locked design intent) therefore
+# extends to cost coverage, not just issue count — when post_cost_coverage == 0
+# the gate must emit INSUFFICIENT DATA. (#757 PR #807 block-verdict.)
+POST_COST_COVERAGE="$(printf '%s' "$ROWS_JSON" | jq '
+  [ .[] | select(.cohort=="post") | select((.tokens_total // 0) > 0 or (.cache_creation // 0) > 0) ] | length')"
+
+# Verdict decision. Two independent gates must clear: (1) at least one bucket has
+# post_n >= MIN_N; (2) the post cohort has real cost coverage. Failing either →
+# INSUFFICIENT DATA (never a Keep/Revert on hollow data).
+if [ "$SUFFICIENT" = "true" ] && [ "${POST_COST_COVERAGE:-0}" -gt 0 ]; then
   ANY_UP="$(printf '%s' "$BUCKETS_JSON" | jq --argjson minn "$MIN_N" 'any(.[]; .post_n >= $minn and .cost_direction == "up")')"
   if [ "$ANY_UP" = "true" ] || [ "$ACCURACY_WORSE" = "true" ]; then
     RECOMMENDATION="Revert-candidate"
@@ -387,6 +450,7 @@ VERDICT_JSON="$(jq -n \
   --argjson accuracy_worse "$ACCURACY_WORSE" \
   --argjson hint_quality "$HINT_QUALITY" \
   --argjson post_total_n "$POST_TOTAL_N" \
+  --argjson post_cost_coverage "$POST_COST_COVERAGE" \
   --argjson min_n "$MIN_N" \
   --arg recommendation "$RECOMMENDATION" \
   --arg merge_ts "$MERGE_TS" \
@@ -398,6 +462,7 @@ VERDICT_JSON="$(jq -n \
      accuracy_worse: $accuracy_worse,
      hint_quality: $hint_quality,
      post_total_n: $post_total_n,
+     post_cost_coverage: $post_cost_coverage,
      min_n: $min_n,
      recommendation: $recommendation
    }')"
@@ -441,7 +506,11 @@ printf '  hint_classify_agreement     | %s\n' "$(printf '%s' "$HINT_QUALITY" | j
 echo ""
 
 if [ "$RECOMMENDATION" = "INSUFFICIENT DATA" ]; then
-  echo "VERDICT: INSUFFICIENT DATA — N=${POST_TOTAL_N} (need >= ${MIN_N})"
+  if [ "${POST_COST_COVERAGE:-0}" -eq 0 ]; then
+    echo "VERDICT: INSUFFICIENT DATA — post cohort has zero cost coverage (N=${POST_TOTAL_N}, cost records=0; need >= ${MIN_N} with real cost)"
+  else
+    echo "VERDICT: INSUFFICIENT DATA — N=${POST_TOTAL_N} (need >= ${MIN_N})"
+  fi
 else
   echo "VERDICT: ${RECOMMENDATION} — recommendation only (operator decides)"
 fi
