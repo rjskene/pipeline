@@ -23,10 +23,17 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 - **`staging`** (or whatever `PIPELINE_BASE_BRANCH` is set to in `pipeline.config`) — the base branch for all pipeline work. PRs target this branch. The orchestrator session runs here.
 - **`main`** — the release branch. release-please tracks `main` and cuts releases from it.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
+- **Dispatch model:** PATH A/B/D execute as an inline `Agent` in the orchestrator session; only PATH C spawns a `claude -p` worker via `spawn-claude.sh`. (Per #748 + the Path-2 cost decision — see [docs/cost-architecture.md](docs/cost-architecture.md).)
 
 Base-branch enforcement is defense-in-depth across three layers (eval-time gate, skill-level `--base`, PreToolUse hook). For the full release procedure and back-sync workflow, see [docs/release-cadence.md](docs/release-cadence.md).
 
 Per #459, feature PR merges and `staging → main` merges both use merge-commits (not squash), so per-PR conventional-commit history is preserved on the trunk — release-please enumerates one entry per merged feature PR — between releases, that means each PR's merge-commit subject becomes a CHANGELOG line (the **per-PR granularity contract**); within a single PR the sub-commits are reachable on the full DAG but are not enumerated, because release-please walks --first-parent from the release tip. See [docs/release-cadence.md#granularity-scope-decision-492](docs/release-cadence.md#granularity-scope-decision-492). Trade-off: staging history is noisier (WIP/fixup commits land verbatim from feature branches); accepted because the pipeline's `tdd-implementer` produces clean conventional commits by construction.
+
+## Install paths
+
+- **Greenfield:** `/pipeline:init` bootstraps a fresh (non-subtree) project — five phases: preflight deps → config gen → `.gitignore` → label seed → doctor tail. Inverse of `migrate-from-subtree.sh`. See [docs/getting-started.md](docs/getting-started.md).
+- **Legacy subtree:** existing `.claude-pipeline/` consumers run `scripts/migrate-from-subtree.sh` once, then install the plugin. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md).
+- **Dogfood:** local `file://` marketplace against the working tree (below).
 
 ## Dogfood install
 
@@ -67,6 +74,8 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 ## Observability (dogfood-only)
 
 This repo's `.claude/settings.json` registers tool-use and subagent logging hooks; the published `pipeline@claude-pipeline` plugin manifest does NOT. See [docs/observability.md](docs/observability.md) for the log streams and `PIPELINE_LOGS_ENABLED` gating, and [docs/self-audit.md](docs/self-audit.md) for the inner/outer-loop digest system that consumes them.
+
+Agent token cost + latency are captured to the gated `agent-costs.jsonl` log and surfaced by `/pipeline:tokenomics` (dogfood-only, #721) — per-bucket/stage/structure cost with B→D breakeven. See [docs/observability.md](docs/observability.md#agent-cost-capture--pipelinetokenomics) and the cost analysis in [docs/cost-architecture.md](docs/cost-architecture.md).
 
 ## Configuration conventions
 
