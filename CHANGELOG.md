@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.6](https://github.com/rjskene/pipeline/compare/v0.21.5...v0.21.6) (2026-06-01)
+
+
+### Features
+
+* **inline-execute:** add --spawn all-paths-run-queue branch to fullsend Step 6 ([88122af](https://github.com/rjskene/pipeline/commit/88122afd6ee8c047df2d11a7993ea6fecf03d978))
+* **inline-execute:** add --spawn all-paths-run-queue branch to fullsend Step 7 ([6140320](https://github.com/rjskene/pipeline/commit/614032076abab47368850571f30b3ac0b7ca4fc1))
+* **inline-execute:** add --spawn flag to fullsend for all-paths run-queue dispatch ([070f9ac](https://github.com/rjskene/pipeline/commit/070f9ac6e6bc014ae4fca4e0e864eb4f156f27d4))
+* **inline-execute:** document fullsend --spawn in argv contract ([7dff503](https://github.com/rjskene/pipeline/commit/7dff503124d9ec4f137a83b576e91f4d306151bd))
+
 ## [0.21.5](https://github.com/rjskene/pipeline/compare/v0.21.4...v0.21.5) (2026-06-01)
 
 
