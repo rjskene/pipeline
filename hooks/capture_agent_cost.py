@@ -5,10 +5,19 @@ Registered on PostToolUse with an Agent matcher (#660). The SubagentStop/Stop
 payloads carry NEITHER `description` NOR `usage`, so the hook never emitted a
 record there; PostToolUse(Agent) carries both (description/subagent_type under
 tool_input, usage/total_duration_ms under tool_response). (The subagent dispatch
-tool in this environment is named "Agent", not "Task".) This is the DURABLE,
-ACCURATE forward cost source: it records cumulative token usage at agent
-finish, in contrast to the retroactive log-scanning parser in
+tool in this environment is named "Agent", not "Task".) This is the DURABLE
+forward cost source, in contrast to the retroactive log-scanning parser in
 scripts/capture-agent-costs.sh.
+
+Completeness (#765): in this harness PostToolUse(Agent).tool_response.usage is
+the subagent's FINAL TURN only, not a cumulative multi-turn total. So an inline
+forward record carries usage_complete=false (lower-bound, final-turn snapshot) —
+matching the retroactive-inline record from scripts/capture-agent-costs.sh; the
+two now agree. Only CUMULATIVE-source forward records (when a future harness
+populates total_usage/cumulative_usage) and the transcript-summed
+orchestrator-Stop / headless paths carry usage_complete=true. _extract_usage
+returns the cumulative flag and build_record stamps usage_complete from it, so
+the value tracks provenance automatically rather than being hard-coded.
 
 The flat top-level shape (description/usage at the top level) is still accepted
 for back-compat; see _normalize_payload.
@@ -18,9 +27,10 @@ scripts/_logging.sh). When disabled, the hook writes NOTHING and exits 0.
 
 Output is one JSON Lines record appended to .claude/logs/agent-costs.jsonl,
 byte-compatible with the schema_version=1 contract frozen in
-scripts/capture-agent-costs.sh. A forward record and a retroactive record for
-the same agent differ ONLY in source (forward vs retroactive) and
-usage_complete (forward true, retroactive-inline false).
+scripts/capture-agent-costs.sh. A forward inline record and a retroactive inline
+record for the same agent now differ ONLY in source (forward vs retroactive):
+both carry usage_complete=false (lower-bound final-turn snapshot), reconciled
+per #765.
 
 record_key is a LOGICAL idempotency key -- the same key denotes the same logical
 agent finish (last-write-wins). This producer dedups on append, but a key may
