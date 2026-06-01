@@ -753,8 +753,28 @@ emit_banner() {
 # token/duration/per-loc medians are over token-bearing rows only ('--' when
 # the PATH has no token-bearing rows).
 emit_path_table() {
-  echo 'PATH | N  | median loc | median tokens | median dur(min) | median tokens/loc | median ms/loc'
-  sort -k2,2 "$ROWS_TSV" | awk -F'\t' '
+  echo 'PATH | N  | median loc | median tokens | median dur(min) | median tokens/loc | median ms/loc | input | output | cache_creation | cache_read'
+
+  # Per-issue token-bucket SUMS over ALL records (priced + unpriced), joined into
+  # the PATH table keyed on issue (#789). Mirrors emit_path_size_table's all-records
+  # source so unpriced inline issues still contribute real per-bucket tokens.
+  #   issue <TAB> input <TAB> output <TAB> cache_creation <TAB> cache_read
+  local issue_buckets
+  issue_buckets="$(printf '%s' "$CAPTURE_JSON" | jq -r '
+    group_by(.issue|tostring)
+    | map([ (.[0].issue|tostring),
+            ([.[] | (.tokens.input//0)] | add),
+            ([.[] | (.tokens.output//0)] | add),
+            ([.[] | (.tokens.cache_creation//0)] | add),
+            ([.[] | (.tokens.cache_read//0)] | add) ])
+    | .[] | @tsv' 2>/dev/null)"
+
+  sort -k2,2 "$ROWS_TSV" | awk -F'\t' -v ibk="$issue_buckets" '
+    BEGIN {
+      ni = split(ibk, ilines, "\n");
+      for (i=1; i<=ni; i++) { if (ilines[i]=="") continue; split(ilines[i], f, "\t");
+        bin[f[1]]=f[2]; bout[f[1]]=f[3]; bcc[f[1]]=f[4]; bcr[f[1]]=f[5] }
+    }
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
       if (n == 0) return "";
@@ -766,22 +786,31 @@ emit_path_table() {
       if (v == int(v)) return sprintf("%d", v);
       return sprintf("%.1f", v);
     }
+    function bfmt(v) { if (v == "") return "--"; return sprintf("%d", v) }
     # min_fmt(ms) — render a raw ms duration in MINUTES (ms/60000, 1dp); "" → "--".
     function min_fmt(v) { if (v == "") return "--"; return sprintf("%.1f", v/60000) }
     function flush(   lm) {
       if (cur == "") return;
       lm = median(locs, nrow);
-      printf "%-4s | %-2d | %-10s | %-13s | %-15s | %-17s | %-13s\n", \
+      printf "%-4s | %-2d | %-10s | %-13s | %-15s | %-17s | %-13s | %12s | %12s | %14s | %12s\n", \
         cur, nrow, fmt(lm), \
         (ntok ? fmt(median(toks, ntok)) : "--"), \
         (ntok ? min_fmt(median(durs, ntok)) : "--"), \
         (ntok ? fmt(median(tpls, ntok)) : "--"), \
-        (ntok ? fmt(median(mpls, ntok)) : "--");
-      cur=""; nrow=0; ntok=0; delete locs; delete toks; delete durs; delete tpls; delete mpls;
+        (ntok ? fmt(median(mpls, ntok)) : "--"), \
+        (nbk ? bfmt(median(bki, nbk)) : "--"), \
+        (nbk ? bfmt(median(bko, nbk)) : "--"), \
+        (nbk ? bfmt(median(bkc, nbk)) : "--"), \
+        (nbk ? bfmt(median(bkr, nbk)) : "--");
+      cur=""; nrow=0; ntok=0; nbk=0;
+      delete locs; delete toks; delete durs; delete tpls; delete mpls;
+      delete bki; delete bko; delete bkc; delete bkr;
     }
     { path=$2; if (path != cur) { flush(); cur=path }
       nrow++; locs[nrow]=$3;
       if ($5 != "null") { ntok++; toks[ntok]=$5; durs[ntok]=$6; d=($3>0?$3:1); tpls[ntok]=$5/d; mpls[ntok]=$6/d }
+      iss=$1;
+      if (iss in bin) { nbk++; bki[nbk]=bin[iss]; bko[nbk]=bout[iss]; bkc[nbk]=bcc[iss]; bkr[nbk]=bcr[iss] }
     }
     END { flush() }'
 }

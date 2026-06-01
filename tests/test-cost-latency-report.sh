@@ -1680,6 +1680,49 @@ else
 fi
 rm -rf "$TMP29"
 
+# --- Scenario 31: per-PATH token-bucket breakout (#789 Task 4) ---
+# emit_path_table adds input|output|cache_creation|cache_read columns per N,
+# sourced from CAPTURE_JSON (all records, per-issue bucket SUMS, medianed per PATH).
+# Fixture: issue 233 (PR #133) PATH B, one execute record:
+#   input 11000 output 22000 cache_creation 33000 cache_read 44000.
+# Single-issue PATH → median == that issue's bucket sums.
+inc_scenario "Scenario 31: per-PATH token-bucket breakout (#789)"
+
+TMP31="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP31/" 2>/dev/null
+printf '%s\n' '[
+  {"number":133,"title":"feat: path bucket breakout","additions":300,"deletions":100,"body":"Closes #233","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP31/prs.json"
+printf '%s\n' '{"number":133,"additions":300,"deletions":100,"comments":[]}' > "$TMP31/pr-133.json"
+printf '%s\n' '{"number":233,"labels":[],"comments":[]}' > "$TMP31/issue-233.json"
+{
+  echo '{"schema_version":1,"issue":"233","stage":"execute","session_id":"s31","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K233","tokens":{"input":11000,"output":22000,"cache_creation":33000,"cache_read":44000,"total":110000},"duration_ms":1000}'
+} > "$TMP31/capture.jsonl"
+
+TABLE31="$(bash "$HELPER" --fixture "$TMP31" 2>/dev/null)"
+
+# (a) per-PATH header carries the four bucket columns.
+PATH_HDR31="$(printf '%s\n' "$TABLE31" | grep -E '^PATH \| N')"
+for col in input output cache_creation cache_read; do
+  case "$PATH_HDR31" in
+    *"$col"*) pass_msg "per-PATH header carries '$col' column" ;;
+    *) fail_msg "per-PATH header missing '$col' column (got: $PATH_HDR31)" ;;
+  esac
+done
+
+# (b) the B row shows the per-PATH bucket medians.
+# Row shape: PATH | N | median loc | median tokens | median dur(min) | median tokens/loc | median ms/loc | input | output | cache_creation | cache_read
+PATHB_ROW31="$(printf '%s\n' "$TABLE31" | grep -E '^B[[:space:]]*\|' | head -1)"
+P_IN31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8}')"
+P_OUT31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$9); print $9}')"
+P_CC31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$10); print $10}')"
+P_CR31="$(printf '%s' "$PATHB_ROW31" | awk -F'|' '{gsub(/[ ]/,"",$11); print $11}')"
+if [ "$P_IN31" = "11000" ]; then pass_msg "per-PATH B input bucket == 11000"; else fail_msg "per-PATH B input should be 11000, got $P_IN31 (row=$PATHB_ROW31)"; fi
+if [ "$P_OUT31" = "22000" ]; then pass_msg "per-PATH B output bucket == 22000"; else fail_msg "per-PATH B output should be 22000, got $P_OUT31 (row=$PATHB_ROW31)"; fi
+if [ "$P_CC31" = "33000" ]; then pass_msg "per-PATH B cache_creation bucket == 33000"; else fail_msg "per-PATH B cache_creation should be 33000, got $P_CC31 (row=$PATHB_ROW31)"; fi
+if [ "$P_CR31" = "44000" ]; then pass_msg "per-PATH B cache_read bucket == 44000"; else fail_msg "per-PATH B cache_read should be 44000, got $P_CR31 (row=$PATHB_ROW31)"; fi
+rm -rf "$TMP31"
+
 # --- Scenario 30: per-stage token-bucket breakout, unpriced-honest (#789 Task 2) ---
 # emit_stage_table adds input|output|cache_creation|cache_read columns per N,
 # sourced from CAPTURE_JSON (ALL records, priced + unpriced) so an UNPRICED
