@@ -157,13 +157,14 @@ else
   fail_msg "(2a) fullsend/SKILL.md missing 'concurrent inline Agent batch' + 'foreground' for D"
 fi
 
-# (2b) B/C run-queue runs via run_in_background.
+# (2b) PATH C-only run-queue runs via run_in_background (issue #748: PATH B left
+# the run-queue for the inline foreground side, so the run-queue is C-only).
 inc
-if printf '%s' "$FULLSEND_BODY" | grep -qiE 'B/C run-queue' \
+if printf '%s' "$FULLSEND_BODY" | grep -qiE 'C-only run-queue|PATH C run-queue' \
    && printf '%s' "$FULLSEND_BODY" | grep -qF "run_in_background"; then
-  pass_msg "(2b) B/C run-queue runs via run_in_background"
+  pass_msg "(2b) PATH C-only run-queue runs via run_in_background"
 else
-  fail_msg "(2b) fullsend/SKILL.md missing 'B/C run-queue ... run_in_background' split"
+  fail_msg "(2b) fullsend/SKILL.md missing 'C-only run-queue ... run_in_background' split"
 fi
 
 # (2c) D consumes zero queue slots / costs no run-queue slot.
@@ -191,6 +192,32 @@ if [ "$STEP1B_D" = "OK" ] || [ "$STEP1B_D2" = "OK" ]; then
   pass_msg "(2e) fullsend Step 1b EXCLUDES PATH D from per-stage classify/plan dispatch"
 else
   fail_msg "(2e) fullsend Step 1b missing explicit PATH D exclusion from per-stage classify/plan dispatch"
+fi
+
+# ---------------------------------------------------------------------
+# Group 2 (#748): PATH B joins the inline foreground side; the backgrounded
+# tmux run-queue is now C-only. Conflict-free B issues fan out as a concurrent
+# inline Agent batch (max 3, zero queue slots) exactly like A/D.
+# ---------------------------------------------------------------------
+
+echo "Group 2 (#748): fullsend PATH B inline foreground / C-only run-queue"
+
+# (2f) conflict-free PATH B fans out on the inline foreground side alongside A/D.
+inc
+if printf '%s' "$FULLSEND_BODY" | grep -qiE 'conflict-free PATH A/B/D|PATH A/B/D issues fan out' \
+   || printf '%s' "$FULLSEND_BODY" | grep -qiE 'PATH B[^.]*inline `?Agent`? batch[^.]*foreground|foreground[^.]*PATH B'; then
+  pass_msg "(2f) PATH B joins the inline foreground Agent batch alongside A/D"
+else
+  fail_msg "(2f) fullsend/SKILL.md missing PATH B on the inline foreground side"
+fi
+
+# (2g) PATH B is NO LONGER paired with the backgrounded run-queue (drift guard:
+# the old 'B/C run-queue' framing must be gone — run-queue is C-only).
+inc
+if printf '%s' "$FULLSEND_BODY" | grep -qiE 'B/C run-queue'; then
+  fail_msg "(2g) fullsend still pairs PATH B with the run-queue ('B/C run-queue' should be C-only)"
+else
+  pass_msg "(2g) PATH B no longer paired with the backgrounded run-queue (C-only)"
 fi
 
 # =====================================================================

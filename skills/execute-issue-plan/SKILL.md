@@ -21,7 +21,7 @@ State (slate, base branch, repo) is inherited from `/pipeline:run` / `/pipeline:
 ## Lifecycle
 
 ```
-worktree spawn → tdd-implementer (PATH C) | inline (PATH D) | direct (PATH A/B) → push → PR
+worktree spawn → spawn-claude tdd-implementer (PATH C) | inline Agent (PATH A/B, PATH D tdd) → push → PR
 ```
 
 ## Invocation mode
@@ -30,8 +30,8 @@ Every step below behaves identically across modes — only the working-directory
 
 | # | Mode | CWD setup | Used by |
 |---|------|-----------|---------|
-| 1 | Inline `Agent(...)` dispatch | `cd <worktree-absolute-path>` (prompt provides it) | PATH A (docs-only) |
-| 2 | `spawn-claude.sh` / `claude -p` dispatch | already in worktree CWD | PATH B, PATH C |
+| 1 | Inline `Agent(...)` dispatch | `cd <worktree-absolute-path>` (prompt provides it) | PATH A (docs-only), PATH B (standard) |
+| 2 | `spawn-claude.sh` / `claude -p` dispatch | already in worktree CWD | PATH C (multi-task) |
 | 3 | PATH D inline tdd-implementer | `cd <worktree-absolute-path>` (same as mode 1) | PATH D (quick-fix) |
 
 ### Collapsed inline D contract
@@ -41,7 +41,7 @@ When dispatched as the collapsed PATH D agent (mode 3), this agent is the PRODUC
 - a `## Classification` checkpoint carrying the recommended **path label** (`quick-fix` / PATH D);
 - a `## Implementation Plan` checkpoint with the `plan-pending` marker.
 
-**Escalation backstop.** The collapsed D agent runs inside D's small **envelope** (the `## Affected areas` prediction: one file, ≤ ~20 LOC, single precedent). If mid-run it discovers the change **exceeds D's envelope** — it touches more files than `## Affected areas` predicted, needs a real plan, or hits unforeseen coupling — it does NOT force a too-large change through the D lane. It **aborts up** / **escalates** to a **spawned B run** (PATH B): a full spawned worker session with real planning. This is what makes a wrong B→D down-route cheap and recoverable — the backstop reverses it rather than shipping a too-large diff through D.
+**Escalation backstop.** The collapsed D agent runs inside D's small **envelope** (the `## Affected areas` prediction: one file, ≤ ~20 LOC, single precedent). If mid-run it discovers the change **exceeds D's envelope** — it touches more files than `## Affected areas` predicted, needs a real plan, or hits unforeseen coupling — it does NOT force a too-large change through the D lane. It **aborts up** / **escalates** to a **full PATH B run**: real planning plus a full execute session (per #748 PATH B execute now runs as an inline `Agent`, not a spawned `claude -p` worker). This is what makes a wrong B→D down-route cheap and recoverable — the backstop reverses it rather than shipping a too-large diff through D.
 
 # Execution Agent
 
