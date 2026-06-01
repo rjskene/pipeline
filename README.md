@@ -21,6 +21,7 @@ Full process maps in docs/process-maps.md.
 | `/pipeline:run` | Interactive — check pipeline status, see what's ready, advance the next stage |
 | `/pipeline:fullsend [N ...]` | Autonomous end-to-end run for one or many issues (classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge) |
 | `/pipeline:analyze-issues` | read-only hygiene pass — duplicate / tracker-fit / missing-label / supersession detection |
+| `/pipeline:init` | Bootstrap a fresh project — preflight deps / detect repo+branch / generate gitignored `pipeline.config` / seed labels / doctor audit |
 
 ## Install + first run
 
@@ -32,12 +33,13 @@ Full process maps in docs/process-maps.md.
   ```
   /plugin install pipeline@claude-pipeline
   ```
-- The plugin lives at `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`) and registers all slash commands, hooks, skills, and the `tdd-implementer` subagent automatically.
-- Initialize (recommended) — run `/pipeline:init` to bootstrap a fresh project. It preflights system deps (and prints the platform-appropriate install command if one is missing), detects your repo + default branch, generates `pipeline.config` (writing no-op defaults for projects without a test suite or CI), gitignores it, seeds the canonical labels, and ends with a read-only `doctor` audit. This is the greenfield counterpart to `scripts/migrate-from-subtree.sh` (which retires a legacy subtree install):
+  Registers all slash commands, hooks, skills, and the `tdd-implementer` subagent. Lives at `~/.claude/plugins/claude-pipeline/` (runtime `${CLAUDE_PLUGIN_ROOT}`).
+- Init (recommended):
   ```
   /pipeline:init
   ```
-- Configure (manual alternative to `/pipeline:init`) — create `pipeline.config` at the repo root with the values for your project:
+  Bootstrap a fresh project — preflight deps / detect repo+branch / generate gitignored `pipeline.config` / seed labels / doctor audit. Greenfield counterpart to `scripts/migrate-from-subtree.sh`.
+- Configure (manual alt to init) — create `pipeline.config` at repo root:
   ```bash
   PIPELINE_REPO="your-org/your-repo"
   PIPELINE_BASE_BRANCH="staging"
