@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.21.5](https://github.com/rjskene/pipeline/compare/v0.21.4...v0.21.5) (2026-06-01)
+
+
+### Features
+
+* **classify:** read path-hint as overridable prior + record override rationale ([#759](https://github.com/rjskene/pipeline/issues/759)) ([3521d31](https://github.com/rjskene/pipeline/commit/3521d31fadb1264532ab3c888abc73ebcc0f569d))
+* **create-classify:** make create-issues path-aware via advisory path-hint marker ([940667f](https://github.com/rjskene/pipeline/commit/940667f114f6e1be263df2ca71f276aa41b8e333))
+* **create-issues:** emit advisory path-hint marker on clear A/B/C signal ([#759](https://github.com/rjskene/pipeline/issues/759)) ([d0e5f1f](https://github.com/rjskene/pipeline/commit/d0e5f1f216909d33528d664b24492a91f434c491))
+
+
+### Bug Fixes
+
+* **classify:** condense path-hint parse block + bump SKILL line cap to 290 ([#759](https://github.com/rjskene/pipeline/issues/759)) ([ec07c00](https://github.com/rjskene/pipeline/commit/ec07c00accda9c21275c71e1f3b3127afcf1488b))
+
 ## [0.21.4](https://github.com/rjskene/pipeline/compare/v0.21.3...v0.21.4) (2026-06-01)
 
 
