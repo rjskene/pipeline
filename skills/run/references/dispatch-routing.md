@@ -97,6 +97,8 @@ If a re-run also fails to post the comment, flag the issue in the status report 
 
 Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
 
+**Path-tier scope (#748).** The `spawn-claude.sh` / `run-queue.sh` launch flow described below applies to **PATH C only**. PATH A, PATH B, and PATH D PR-evals dispatch inline via `Agent(subagent_type='general-purpose', ...)` (no `spawn-claude.sh`, no `run-queue.sh`, no tmux) — see the path-tier routing blocks in SKILL.md Step 6. PATH B joined the inline foreground path in #748; the inline B execute Agent and the inline B PR-eval Agent stay SEPARATE inline contexts (evaluator independence).
+
 **Web-surface routing.** PRs labelled `needs-browser` route through inline `Agent(general-purpose)` dispatch with the visual-proof preflight; no separate classifier is consulted.
 
 ### Launch flow for PR evaluation
@@ -115,6 +117,8 @@ Use the same launch flow as execution — the worktree already exists from execu
 ## Execution (plan-approved → worktree setup)
 
 For each approved issue's branch (deduplicated — issues sharing a branch get one worktree):
+
+**Path-tier scope (#748).** Worktree setup (`setup-worktree.sh`) is identical for every path, but the *launch* differs by tier. The `spawn-claude.sh` / `run-queue.sh` launch flow below applies to **PATH C only**. PATH A and PATH B execute dispatch inline via `Agent(subagent_type='general-purpose', ...)`, and PATH D via the collapsed inline `Agent(subagent_type='tdd-implementer', ...)` — none of A/B/D use `spawn-claude.sh`, `run-queue.sh`, or tmux (see the SKILL.md Step 6 path-tier blocks). PATH B's red→green discipline comes from the plan's Task 0 `superpowers:test-driven-development` bookend inside execute-issue-plan, identical to a spawned worker, so the transport flip changes only the launch, not the TDD discipline.
 
 ### Setup-worktree invocation
 

@@ -103,7 +103,7 @@ are the unmarked-untagged fallback (default = B).
 | Path | Produces                                                            |
 |------|---------------------------------------------------------------------|
 | A    | Flat edits in the worktree. No TDD cycle.                           |
-| B    | TDD discipline (red->green->commit) in a spawned worker session.    |
+| B    | TDD discipline (red->green->commit) inline; no spawned worker.      |
 | C    | One or more `tdd-implementer` subagents, scoped per target dir.     |
 |      | A delegation hook blocks orchestrator-side Edit/Write on impl files.|
 | D    | Inline `tdd-implementer` in the orchestrator session. Skips the     |

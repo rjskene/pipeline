@@ -34,6 +34,8 @@ LIMIT=50
 FIXTURE_DIR=""
 DRY_RUN=0
 EMIT_ROWS_JSON=0
+EMIT_PRICING_JSON=0
+TOKENOMICS=0
 OVER_SERVED_LOC=20
 TOPN=5
 CAPTURE_LOG=""
@@ -58,6 +60,16 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                        each eligible feature PR, and exit without rendering.
   --emit-rows-json     Debug: emit the per-issue rows as a JSON array to
                        stdout instead of the formatted tables.
+  --emit-pricing-json  Debug: emit aggregate pricing as JSON
+                       {priced_cost_usd, unpriced_count} and exit. Prices each
+                       capture record from per-model rate env vars (Opus default
+                       fallback); model=="" records are UNPRICED (excluded from
+                       the $ total, counted separately). See PRICING below.
+  --tokenomics         Emit ADDITIONAL cost-analysis tables (per-bucket
+                       token-share vs cost-share, per-stage cost, spawn vs
+                       in-session structure + stage×structure cross-tab, and a
+                       net-of-cache_read "size" view). Default output is
+                       unchanged when this flag is absent.
   --over-served-loc N  LOC threshold below which a full-ceremony issue is
                        flagged over-served (default: 20).
   --top-n N            Size of the TOP-N consumer / slowest-stage lists
@@ -77,6 +89,8 @@ while [ $# -gt 0 ]; do
     --fixture=*)          FIXTURE_DIR="${1#--fixture=}"; shift ;;
     --dry-run)            DRY_RUN=1; shift ;;
     --emit-rows-json)     EMIT_ROWS_JSON=1; shift ;;
+    --emit-pricing-json)  EMIT_PRICING_JSON=1; shift ;;
+    --tokenomics)         TOKENOMICS=1; shift ;;
     --over-served-loc)    OVER_SERVED_LOC="${2:-}"; shift 2 ;;
     --over-served-loc=*)  OVER_SERVED_LOC="${1#--over-served-loc=}"; shift ;;
     --top-n)              TOPN="${2:-}"; shift 2 ;;
@@ -236,6 +250,268 @@ has_block() {
   fi
 }
 
+# --- pricing (issue #721) ---
+#
+# Per-model token pricing, config-driven. Rates are USD per 1,000,000 tokens,
+# one per bucket {input, output, cache_creation, cache_read}, read from env vars
+#
+#     PIPELINE_PRICE_<MODEL>_INPUT
+#     PIPELINE_PRICE_<MODEL>_OUTPUT
+#     PIPELINE_PRICE_<MODEL>_CACHE_CREATION
+#     PIPELINE_PRICE_<MODEL>_CACHE_READ
+#
+# where <MODEL> is the record's `model` string NORMALIZED: upcased, then every
+# run of non-alphanumeric chars collapsed to a single underscore (e.g.
+# "claude-opus-4-8" → "CLAUDE_OPUS_4_8"). The script runs after pipeline.config
+# is sourced by the skill, so these are ambient env; in fixture/test mode they
+# are typically unset and the per-model baked DEFAULT list price applies per
+# bucket (per 1M tokens, #733):
+#   Opus 4.8:   input 15, output 75, cache_creation 18.75, cache_read 1.50
+#   Sonnet 4.6: input  3, output 15, cache_creation  3.75, cache_read 0.30
+#   Haiku 4.5:  input  1, output  5, cache_creation  1.25, cache_read 0.10
+# An UNKNOWN model falls back EXPLICITLY to the Opus rates — a conservative
+# upper-bound over-estimate (better than under-counting an unrecognized model).
+#
+# Cost(record) = Σ_bucket (tokens_bucket / 1e6 * rate_bucket), summed across
+# records for aggregates. Records with model=="" (or model absent) are UNPRICED
+# (#699 INLINE records): they are NOT priced, are EXCLUDED from the $ total, and
+# are COUNTED so coverage health is visible — never silently dropped.
+
+# price_model_normalize <model-string> — upcase + non-alnum runs → single '_'.
+price_model_normalize() {
+  printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g'
+}
+
+# price_default <normalized-model> <BUCKET> — echo the baked per-1M list-price
+# default for (model, bucket). Known models price at their own published rates;
+# unknown models fall back EXPLICITLY to Opus (conservative upper bound).
+# BUCKET is one of INPUT|OUTPUT|CACHE_CREATION|CACHE_READ.
+price_default() {
+  local norm="$1" bucket="$2"
+  case "$norm" in
+    CLAUDE_OPUS_4_8)
+      case "$bucket" in
+        INPUT) printf '15' ;; OUTPUT) printf '75' ;;
+        CACHE_CREATION) printf '18.75' ;; CACHE_READ) printf '1.50' ;;
+      esac ;;
+    CLAUDE_SONNET_4_6)
+      case "$bucket" in
+        INPUT) printf '3' ;; OUTPUT) printf '15' ;;
+        CACHE_CREATION) printf '3.75' ;; CACHE_READ) printf '0.30' ;;
+      esac ;;
+    CLAUDE_HAIKU_4_5)
+      case "$bucket" in
+        INPUT) printf '1' ;; OUTPUT) printf '5' ;;
+        CACHE_CREATION) printf '1.25' ;; CACHE_READ) printf '0.10' ;;
+      esac ;;
+    *)
+      # conservative upper-bound fallback for unknown models: Opus rates.
+      case "$bucket" in
+        INPUT) printf '15' ;; OUTPUT) printf '75' ;;
+        CACHE_CREATION) printf '18.75' ;; CACHE_READ) printf '1.50' ;;
+      esac ;;
+  esac
+}
+
+# price_rate <normalized-model> <BUCKET> — echo the configured per-1M rate for
+# (model, bucket) via ${!var} indirection, falling back to the per-model baked
+# default. BUCKET is one of INPUT|OUTPUT|CACHE_CREATION|CACHE_READ.
+price_rate() {
+  local norm="$1" bucket="$2"
+  local var="PIPELINE_PRICE_${norm}_${bucket}"
+  local val="${!var:-}"
+  if [ -n "$val" ]; then
+    printf '%s' "$val"
+  else
+    price_default "$norm" "$bucket"
+  fi
+}
+
+# compute_pricing — read CAPTURE_JSON, return "<priced_cost_usd> <unpriced_count>"
+# (space-separated). priced_cost_usd is formatted to 2 decimals. Unpriced
+# (model=="" or absent) records are excluded from the cost but counted.
+compute_pricing() {
+  local total="0" unpriced=0
+  local line model norm
+  local r_in r_out r_cc r_cr
+  # Iterate one record per line so per-record model lookup + ${!var} indirection
+  # happens in bash; float arithmetic is delegated to awk per record.
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      unpriced=$((unpriced + 1))
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    total="$(printf '%s' "$line" | jq -r '
+        .tokens // {} | [(.input//0),(.output//0),(.cache_creation//0),(.cache_read//0)] | @tsv' 2>/dev/null \
+      | awk -v t="$total" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" -F'\t' '
+          { t += ($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr }
+          END { printf "%.10f", t }')"
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  printf '%s %s' "$(awk -v t="$total" 'BEGIN { printf "%.2f", t }')" "$unpriced"
+}
+
+# priced_records_tsv — emit one TSV line per PRICED capture record (model!=""):
+#   stage <TAB> agent_kind <TAB> tok_in <TAB> tok_out <TAB> tok_cc <TAB> tok_cr <TAB>
+#   cost_in <TAB> cost_out <TAB> cost_cc <TAB> cost_cr
+# tokens are the raw bucket counts; cost_* are the per-bucket USD for that record
+# at the resolved per-(model,bucket) rate (Opus default fallback). Unpriced
+# (model=="") records are SKIPPED here — token totals for the tokenomics tables
+# are intentionally over PRICED records, since the $ columns are only meaningful
+# where a rate applies. This is the shared substrate for the --tokenomics tables.
+priced_records_tsv() {
+  local line model norm
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ (.stage // ""), (.agent_kind // ""),
+          (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          ci=($3/1e6)*ri; co=($4/1e6)*ro; cc=($5/1e6)*rcc; cr=($6/1e6)*rcr;
+          print $1,$2,$3,$4,$5,$6,ci,co,cc,cr
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
+# priced_issue_stage_cost_tsv — emit one TSV line per PRICED capture record
+# (model!="") as:
+#   issue <TAB> stage <TAB> cost_usd <TAB> input <TAB> output <TAB> cache_read
+# cost_usd is the all-four-bucket USD for that record at the resolved per-(model,
+# bucket) rate (Opus default fallback). Unpriced (model=="") records are SKIPPED.
+# input/output/cache_read are the raw token counts (append-only, for the per-PR
+# trend table's token columns); the breakeven consumer reads only $1/$2/$3.
+# Shared substrate for the per-issue --tokenomics tables (B→D breakeven) that
+# need issue+stage attribution, which priced_records_tsv (stage-only) lacks.
+priced_issue_stage_cost_tsv() {
+  local line model norm
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ (.issue // "" | tostring), (.stage // ""),
+          (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          c=($3/1e6)*ri + ($4/1e6)*ro + ($5/1e6)*rcc + ($6/1e6)*rcr;
+          # APPEND raw input/output/cache_read token counts (internal jq $3/$4/$6)
+          # so CONSUMERS see: issue=$1 stage=$2 cost=$3 input=$4 output=$5 cache_read=$6
+          printf "%s\t%s\t%.10f\t%d\t%d\t%d\n", $1, $2, c, $3, $4, $6
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
+# priced_day_cost_tsv — emit one TSV line per PRICED capture record (model!="")
+# whose ts_start has a YYYY-MM-DD prefix:
+#   date <TAB> cost_all <TAB> cost_output <TAB> input <TAB> output <TAB> cache_read
+# date is the YYYY-MM-DD prefix of ts_start; records with EMPTY/absent ts_start
+# are SKIPPED (cannot be day-bucketed). cost_all is the all-four-bucket USD;
+# cost_output is just the output-bucket USD (for the output%-of-cost column).
+# input/output/cache_read are the raw token counts (append-only, for the trend
+# table's per-day token columns).
+# Shared substrate for the --tokenomics per-day trend table.
+priced_day_cost_tsv() {
+  local line model norm day
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    # YYYY-MM-DD prefix of ts_start; skip empty/absent.
+    day="$(printf '%s' "$line" | jq -r '(.ts_start // "")' 2>/dev/null | cut -c1-10)"
+    if [ -z "$day" ] || ! printf '%s' "$day" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v d="$day" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          call=($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr;
+          cout=($2/1e6)*ro;
+          # APPEND raw input/output/cache_read token counts (internal jq $1/$2/$4)
+          # so CONSUMERS see: date=$1 cost_all=$2 cost_output=$3 input=$4 output=$5 cache_read=$6
+          printf "%s\t%.10f\t%.10f\t%d\t%d\t%d\n", d, call, cout, $1, $2, $4
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
+# priced_duration_tsv — emit one TSV line per PRICED capture record (model!="")
+# with a numeric duration_ms:  agent_kind <TAB> stage <TAB> duration_ms
+# Records with null/absent duration_ms are SKIPPED. Shared substrate for the
+# --tokenomics task-latency aggregate (which must distinguish headless
+# session-lifetime durations from in-session task latency).
+priced_duration_tsv() {
+  local line model
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    printf '%s' "$line" | jq -r '
+        select((.duration_ms // null) != null)
+        | [ (.agent_kind // ""), (.stage // ""), (.duration_ms) ] | @tsv' 2>/dev/null
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
+# execute_headless_intervals_tsv — emit one TSV line per EXECUTE-stage headless
+# capture record with BOTH a non-empty ts_start and ts_end:
+#   start_epoch <TAB> end_epoch
+# Timestamps are converted to epoch seconds via `date -d`; records with an empty/
+# absent/unparseable ts_start or ts_end are SKIPPED (cannot bound an interval).
+# Shared substrate for the --tokenomics concurrency assessment (interval-overlap
+# sweep). Not gated on model — concurrency is a structural property of the
+# headless worker fleet, independent of pricing coverage.
+execute_headless_intervals_tsv() {
+  local line ts_s ts_e ep_s ep_e
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    ts_s="$(printf '%s' "$line" | jq -r '
+        select((.stage // "") == "execute" and (.agent_kind // "") == "headless")
+        | (.ts_start // "")' 2>/dev/null)"
+    [ -z "$ts_s" ] && continue
+    ts_e="$(printf '%s' "$line" | jq -r '(.ts_end // "")' 2>/dev/null)"
+    [ -z "$ts_e" ] && continue
+    ep_s="$(date -d "$ts_s" +%s 2>/dev/null)" || continue
+    ep_e="$(date -d "$ts_e" +%s 2>/dev/null)" || continue
+    [ -z "$ep_s" ] && continue
+    [ -z "$ep_e" ] && continue
+    printf '%s\t%s\n' "$ep_s" "$ep_e"
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
 # --- temp files ---
 ROWS_TSV=$(mktemp)
 trap 'rm -f "$ROWS_TSV"' EXIT
@@ -286,6 +562,31 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
   + [ .[] | select((has("record_key") | not) or .record_key == null) ]
 ' 2>/dev/null)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+
+# SECOND dedup pass: collapse records sharing the same (session_id, issue, stage)
+# to the one with MAX tokens.total. This runs AFTER the record_key pass and
+# folds the cases record_key alone cannot: retroactive-inline lower-bounds,
+# duplicate captures, and N orchestrator cumulative snapshots of the SAME
+# session (each a later, larger cumulative total) down to the final cumulative
+# (max-total) figure. Records MISSING session_id (or null) are passed through
+# UNTOUCHED — each is its own group (NOT collapsed by (null,issue,stage)),
+# mirroring how the record_key pass partitions keyless records. DISTINCT
+# session_ids for the same (issue,stage) are a genuine multi-session re-run and
+# are preserved by group_by.
+CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
+  ([ .[] | select(has("session_id") and .session_id != null) ]
+     | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
+  + [ .[] | select((has("session_id") | not) or .session_id == null) ]
+' 2>/dev/null)"
+[ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+
+# --- emit aggregate pricing as JSON (debug; feeds Task-3 tokenomics) ---
+if [ "$EMIT_PRICING_JSON" -eq 1 ]; then
+  read -r _priced_cost _unpriced_count < <(compute_pricing)
+  jq -cn --arg cost "$_priced_cost" --argjson unpriced "${_unpriced_count:-0}" \
+    '{priced_cost_usd: $cost, unpriced_count: $unpriced}'
+  exit 0
+fi
 
 # Partition raw list into release PRs (excluded) and eligible feature PRs.
 RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
@@ -539,9 +840,358 @@ emit_over_served() {
   done < "$ROWS_TSV"
 }
 
+# ============================================================================
+# --tokenomics tables (issue #721). Each renders ONLY under --tokenomics; the
+# default report above is byte-unchanged when the flag is absent. The $ columns
+# price PRICED records (model!="") at the Opus-default-fallback per-bucket rate;
+# unpriced (model=="") records contribute no cost. Float math via awk.
+# ============================================================================
+TOKENOMICS_TSV=""
+
+# emit_bucket_table — per token bucket (input/output/cache_creation/cache_read):
+# total tokens (over priced records), priced $, %-of-cost, and %-of-tokens. The
+# headline finding: token-share != cost-share (output = low token-share / high
+# cost-share at 75/1M; cache_read = high token-share / low cost-share at 1.50/1M).
+emit_bucket_table() {
+  echo ""
+  echo 'BUCKET     | tokens       | $        | cost%  | token%'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      tin+=$3; tout+=$4; tcc+=$5; tcr+=$6;
+      cin+=$7; cout+=$8; ccc+=$9; ccr+=$10;
+    }
+    END {
+      ttok = tin+tout+tcc+tcr;
+      tcost = cin+cout+ccc+ccr;
+      n = split("input output cache_creation cache_read", names, " ");
+      tok[1]=tin; tok[2]=tout; tok[3]=tcc; tok[4]=tcr;
+      cost[1]=cin; cost[2]=cout; cost[3]=ccc; cost[4]=ccr;
+      for (i=1; i<=4; i++) {
+        cp = (tcost>0 ? cost[i]/tcost*100 : 0);
+        tp = (ttok>0  ? tok[i]/ttok*100  : 0);
+        printf "%-10s | %12d | %8.2f | %5.1f%% | %5.1f%%\n", names[i], tok[i], cost[i], cp, tp;
+      }
+    }'
+}
+
+# emit_stage_cost_table — per stage (the 6 canonical stages): priced $ + cost
+# share. The TOKEN column is a SIZE view that NETS OUT cache_read
+# (tokens = input+output+cache_creation), so a cache-heavy stage like execute
+# does not read as ~90% cache; the $ column uses ALL FOUR buckets (cache_read
+# cost INCLUDED). Stages with no priced records render 0 / 0.00.
+emit_stage_cost_table() {
+  echo ""
+  echo 'STAGE COST | size tokens  | $        | cost%'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      s=$1;
+      sz[s] += $3+$4+$5;                 # size view: input+output+cache_creation
+      cost[s] += $7+$8+$9+$10;           # $ over all four buckets
+      tcost += $7+$8+$9+$10;
+    }
+    END {
+      m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
+      for (k=1; k<=m; k++) {
+        s = order[k];
+        cp = (tcost>0 ? cost[s]/tcost*100 : 0);
+        printf "%-10s | %12d | %8.2f | %5.1f%%\n", s, (sz[s]+0), (cost[s]+0), cp;
+      }
+    }'
+}
+
+# emit_structure_table — structure dimension over PRICED records:
+#   spawn      = agent_kind == "headless"
+#   in-session = agent_kind != "headless"  (inline + main/orchestrator)
+# Emit priced $ + cost share for each. $ uses ALL FOUR buckets.
+emit_structure_table() {
+  echo ""
+  echo 'STRUCTURE  | $        | cost%'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      c = $7+$8+$9+$10;
+      if ($2 == "headless") sp += c; else ins += c;
+      tot += c;
+    }
+    END {
+      printf "%-10s | %8.2f | %5.1f%%\n", "spawn",      (sp+0),  (tot>0 ? sp/tot*100  : 0);
+      printf "%-10s | %8.2f | %5.1f%%\n", "in-session", (ins+0), (tot>0 ? ins/tot*100 : 0);
+    }'
+}
+
+# emit_stage_structure_crosstab — stage × structure $ matrix: rows = the 6
+# canonical stages, cols = {spawn, in-session}, cells = priced $ (all four
+# buckets). Stages with no priced records render 0.00 / 0.00.
+emit_stage_structure_crosstab() {
+  echo ""
+  echo 'STAGE x STRUCTURE | spawn $  | in-session $'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+    NF >= 10 {
+      c = $7+$8+$9+$10;
+      if ($2 == "headless") sp[$1] += c; else ins[$1] += c;
+    }
+    END {
+      m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
+      for (k=1; k<=m; k++) {
+        s = order[k];
+        printf "%-17s | %8.2f | %12.2f\n", s, (sp[s]+0), (ins[s]+0);
+      }
+    }'
+}
+
+# emit_path_size_table — per-issue "size" view that NETS OUT cache_read for ALL
+# rows (input+output+cache_creation), not just the orchestrator row (#668). The
+# default emit_path_table above keeps cache_read INCLUDED and is byte-unchanged
+# when --tokenomics is absent; this view is the cache-net companion. Size sums
+# ALL capture records for the issue (priced + unpriced) — it is a token count,
+# not a $ figure. Issues with no records render '--'.
+emit_path_size_table() {
+  echo ""
+  echo 'PER-ISSUE SIZE | PATH | input | output | cache_read | net total'
+  while IFS=$'\t' read -r issue path loc ceremony tt dur ov prn; do
+    [ -z "$issue" ] && continue
+    local cells tin tout tcr net
+    # Four per-issue token sums over ALL records (priced + unpriced): it is a
+    # token count, not a $ figure. net total nets OUT cache_read (input+output+
+    # cache_creation), unchanged from the prior single-column value.
+    cells="$(printf '%s' "$CAPTURE_JSON" | jq -r --arg n "$issue" '
+      [.[] | select((.issue|tostring) == $n)] as $recs
+      | if ($recs | length) == 0 then "--\t--\t--\t--"
+        else
+          ([$recs[] | (.tokens.input//0)] | add) as $tin
+          | ([$recs[] | (.tokens.output//0)] | add) as $tout
+          | ([$recs[] | (.tokens.cache_read//0)] | add) as $tcr
+          | ([$recs[] | (.tokens.input//0)+(.tokens.output//0)+(.tokens.cache_creation//0)] | add) as $net
+          | "\($tin)\t\($tout)\t\($tcr)\t\($net)"
+        end' 2>/dev/null)"
+    IFS=$'\t' read -r tin tout tcr net <<<"$cells"
+    [ -z "$tin" ] && { tin="--"; tout="--"; tcr="--"; net="--"; }
+    printf 'issue #%-20s | %-4s | %12s | %12s | %12s | %12s\n' "$issue" "$path" "$tin" "$tout" "$tcr" "$net"
+  done < "$ROWS_TSV"
+}
+
+# emit_breakeven_table — B→D breakeven projection. For each PATH B issue
+# in-window, model the savings if it had been routed PATH D instead. PATH D
+# drops the plan + plan-eval ceremony stages and collapses execute to a single
+# inline implementer (no separate plan/plan-eval token+latency).
+#
+# MODELLING ASSUMPTION (auditable): the "saved" amount is the issue's
+# (plan + plan-eval) priced stage cost. Execute cost is assumed UNCHANGED under
+# PATH D (a single inline implementer still does the execute work), so
+# projected-D $ = current $ - (plan + plan-eval $). This intentionally ignores
+# any second-order execute delta (PATH D may run a leaner execute); it is a
+# first-order ceremony-elimination model, not a full re-simulation.
+#
+# Per-issue rows (issue, current $, projected-D $, savings) + an aggregate total.
+emit_breakeven_table() {
+  echo ""
+  echo 'B→D BREAKEVEN | current $ | projected-D $ | savings $'
+  # PATH B issues in-window (col2 == B) → one line per issue from ROWS_TSV.
+  local pathb
+  pathb="$(awk -F'\t' '$2 == "B" { print $1 }' "$ROWS_TSV")"
+  # Per-(issue,stage) priced cost for the whole capture stream.
+  local cost_tsv
+  cost_tsv="$(priced_issue_stage_cost_tsv)"
+  printf '%s\n' "$cost_tsv" | awk -F'\t' -v pathb="$pathb" '
+    BEGIN {
+      n = split(pathb, arr, "\n");
+      for (i=1; i<=n; i++) if (arr[i] != "") isb[arr[i]] = 1;
+    }
+    {
+      iss=$1; stage=$2; c=$3;
+      if (!(iss in isb)) next;
+      cur[iss] += c;
+      if (stage == "plan" || stage == "plan-eval") saved[iss] += c;
+    }
+    END {
+      tot_saved = 0;
+      # Emit in a stable issue order.
+      m = 0;
+      for (k in cur) order[++m] = k;
+      for (i=1; i<m; i++) for (j=i+1; j<=m; j++) if (order[i]+0 > order[j]+0) { t=order[i]; order[i]=order[j]; order[j]=t }
+      for (i=1; i<=m; i++) {
+        k = order[i];
+        proj = cur[k] - saved[k];
+        printf "issue #%-7s | %9.2f | %13.2f | %9.2f\n", k, cur[k], proj, saved[k];
+        tot_saved += saved[k];
+      }
+      printf "%-14s | %9s | %13s | %9.2f\n", "TOTAL", "", "", tot_saved;
+    }'
+}
+
+# emit_coverage_health — a single coverage-health block:
+#   - execute-stage record N (over the deduped capture stream);
+#   - % feature PRs joined = joined ÷ eligible, where eligible == PR_COUNT and
+#     joined == PR_COUNT - SKIPPED_NO_LINK (PRs with a Closes/Fixes/Resolves link);
+#   - model-attribution coverage % = priced records ÷ total records (a priced
+#     record has a non-empty model; exposes #699 empty-model INLINE records).
+emit_coverage_health() {
+  echo ""
+  echo "COVERAGE HEALTH:"
+  local exec_n total_n priced_n
+  exec_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select(.stage == "execute")] | length' 2>/dev/null)"
+  total_n="$(printf '%s' "$CAPTURE_JSON" | jq -r 'length' 2>/dev/null)"
+  priced_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select((.model // "") != "")] | length' 2>/dev/null)"
+  [ -z "$exec_n" ] && exec_n=0
+  [ -z "$total_n" ] && total_n=0
+  [ -z "$priced_n" ] && priced_n=0
+
+  local eligible joined
+  eligible="$PR_COUNT"
+  joined=$((PR_COUNT - SKIPPED_NO_LINK))
+
+  printf 'execute-stage records: %s\n' "$exec_n"
+  awk -v j="$joined" -v e="$eligible" 'BEGIN {
+    pct = (e > 0 ? j/e*100 : 0);
+    printf "feature PRs joined: %d/%d (%.1f%%)\n", j, e, pct;
+  }'
+  awk -v p="$priced_n" -v t="$total_n" 'BEGIN {
+    pct = (t > 0 ? p/t*100 : 0);
+    printf "model-attribution coverage: %d/%d (%.1f%%)\n", p, t, pct;
+  }'
+}
+
+# emit_trend — per-day + per-PR $ trend with outlier flagging.
+#
+# Per-day: bucket PRICED records by date(ts_start) (YYYY-MM-DD prefix; records
+# with empty ts_start are skipped upstream in priced_day_cost_tsv). Per day:
+# total $, output $, output%-of-cost.
+#
+# OUTLIER THRESHOLD (documented): a day is flagged when its $ is >= 40% of the
+# window total $. (Chosen over a mean-multiple rule because a single dominant
+# day in a small window is exactly the signal we want to surface, and the
+# 40%-of-window share is stable regardless of how many normal days surround it.)
+#
+# Per-PR: cost per merged feature PR via the existing PR→issue join (ROWS_TSV
+# col1=issue, col8=pr_num), summing the per-(issue,stage) priced cost per issue.
+emit_trend() {
+  echo ""
+  echo 'TREND (per-day) | input | output | cache_read | $ total  | $ output | output%-of-cost'
+  printf '%s\n' "$(priced_day_cost_tsv)" | awk -F'\t' '
+    { day=$1; if (day=="") next; tot[day]+=$2; out[day]+=$3; tin[day]+=$4; tout[day]+=$5; tcr[day]+=$6; grand+=$2 }
+    END {
+      n=0; for (d in tot) order[++n]=d;
+      for (i=1;i<n;i++) for (j=i+1;j<=n;j++) if (order[i] > order[j]) { t=order[i]; order[i]=order[j]; order[j]=t }
+      thresh = grand * 0.40;
+      for (i=1;i<=n;i++) {
+        d=order[i];
+        op = (tot[d]>0 ? out[d]/tot[d]*100 : 0);
+        flag = (tot[d] >= thresh && grand > 0) ? "  *OUTLIER" : "";
+        printf "%-15s | %12d | %12d | %12d | %8.2f | %8.2f | %14.1f%%%s\n", d, tin[d], tout[d], tcr[d], tot[d], out[d], op, flag;
+      }
+    }'
+
+  echo ""
+  echo 'TREND (per-PR) | input | output | cache_read | $ total'
+  # issue→pr map from ROWS_TSV (col1=issue, col8=pr_num).
+  local issue_pr
+  issue_pr="$(awk -F'\t' '{ print $1"\t"$8 }' "$ROWS_TSV")"
+  local cost_tsv
+  cost_tsv="$(priced_issue_stage_cost_tsv)"
+  # Consumer fields: issue=$1 stage=$2 cost=$3 input=$4 output=$5 cache_read=$6.
+  printf '%s\n' "$cost_tsv" | awk -F'\t' -v map="$issue_pr" '
+    BEGIN {
+      n=split(map, lines, "\n");
+      for (i=1;i<=n;i++) { if (lines[i]=="") continue; split(lines[i], kv, "\t"); pr[kv[1]]=kv[2]; }
+    }
+    { iss=$1; if (!(iss in pr)) next; cost[pr[iss]] += $3; tin[pr[iss]] += $4; tout[pr[iss]] += $5; tcr[pr[iss]] += $6 }
+    END {
+      m=0; for (p in cost) order[++m]=p;
+      for (i=1;i<m;i++) for (j=i+1;j<=m;j++) if (order[i]+0 > order[j]+0) { t=order[i]; order[i]=order[j]; order[j]=t }
+      for (i=1;i<=m;i++) { p=order[i]; printf "PR #%-11s | %12d | %12d | %12d | %8.2f\n", p, tin[p], tout[p], tcr[p], cost[p]; }
+    }'
+}
+
+# emit_latency_aggregate — task-latency view over PRICED records.
+#
+# Headless duration_ms is whole-session WALL-CLOCK (the ~5.4M ms cluster), NOT
+# per-task latency: a headless worker's record spans its entire `claude -p`
+# session, not the single task. So under --tokenomics we (1) list headless
+# durations separately, annotated "(session-lifetime, not task-latency)", and
+# (2) EXCLUDE headless durations from the task-latency median/aggregate, which
+# is computed over IN-SESSION (agent_kind != "headless") records only. The
+# default-path median dur(ms) rendering (emit_path_table/emit_stage_table) is
+# untouched — this is an additive --tokenomics-only view.
+emit_latency_aggregate() {
+  local dur_tsv
+  dur_tsv="$(priced_duration_tsv)"
+
+  echo ""
+  echo 'HEADLESS DURATIONS (session-lifetime, not task-latency):'
+  printf '%s\n' "$dur_tsv" | awk -F'\t' '
+    $1 == "headless" { printf "%-10s | %12d ms  (session-lifetime, not task-latency)\n", $2, $3 }'
+
+  echo ""
+  echo 'TASK LATENCY (in-session records only; headless excluded) | median dur(ms)'
+  printf '%s\n' "$dur_tsv" | awk -F'\t' '
+    function median(arr, n,   i, j, tmp) {
+      for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
+      if (n == 0) return "";
+      if (n % 2 == 1) return arr[(n+1)/2];
+      return (arr[n/2] + arr[n/2+1]) / 2;
+    }
+    function fmt(v) { if (v=="") return "--"; if (v==int(v)) return sprintf("%d", v); return sprintf("%.1f", v) }
+    $1 != "headless" { d[++n]=$3 }
+    END { printf "%-57s | %s\n", "median task latency", fmt(median(d, n)) }'
+}
+
+# emit_concurrency_assessment — data-derived execute-concurrency analysis (per
+# docs/cost-architecture.md §8, the open empirical question this report owns).
+#
+# Observed: count overlapping [ts_start, ts_end] intervals among EXECUTE-stage
+# headless worker records via a sweep-line (events sorted by epoch; +1 at start,
+# -1 at end; running max). Reports the MAX observed concurrent execute count.
+#
+# Ceiling (TEXT): safe concurrency = min(rate-limit ceiling, cwd-isolation-safe
+# count) — the tighter binds (cost-architecture.md §8 / §6). Surfaced as analysis
+# text alongside the observed NUMBER so the operator can compare observed-vs-safe.
+emit_concurrency_assessment() {
+  echo ""
+  echo "CONCURRENCY ASSESSMENT (execute-stage headless workers):"
+  local intervals max_conc
+  intervals="$(execute_headless_intervals_tsv)"
+  max_conc="$(printf '%s\n' "$intervals" | awk -F'\t' '
+    $1 != "" {
+      ev[++n] = $1 "\t" "1";     # start event
+      ev[++n] = $2 "\t" "-1";    # end event (quote the literal so awk does
+                                 # not parse "\t" - 1 as arithmetic, which
+                                 # dropped the tab+delta and broke the sweep)
+    }
+    END {
+      # Sort events by epoch; on ties, process ENDS (-1) before STARTS (+1) so
+      # touching-but-not-overlapping intervals are not counted as concurrent.
+      for (i=1;i<n;i++) for (j=i+1;j<=n;j++) {
+        split(ev[i], a, "\t"); split(ev[j], b, "\t");
+        if (a[1] > b[1] || (a[1]==b[1] && a[2] > b[2])) { t=ev[i]; ev[i]=ev[j]; ev[j]=t }
+      }
+      cur=0; max=0;
+      for (i=1;i<=n;i++) { split(ev[i], e, "\t"); cur += e[2]; if (cur > max) max=cur }
+      print max+0;
+    }')"
+  [ -z "$max_conc" ] && max_conc=0
+  printf 'max observed concurrent execute workers: %s\n' "$max_conc"
+  echo 'ceiling = min(rate-limit ceiling, cwd-isolation-safe count) — the tighter binds'
+  echo '  (per docs/cost-architecture.md §8: rate-limit = burst TPM + 5-hour rolling cap;'
+  echo '   cwd-isolation = concurrent inline agents racing on shared git/fs state, #31940).'
+  printf 'observed %s vs ceiling: see §8 for the empirical bind (TPM / rolling cap / cwd-isolation).\n' "$max_conc"
+}
+
 emit_banner
 emit_path_table
 emit_stage_table
 emit_top_consumers
 emit_top_slow_stages
 emit_over_served
+
+if [ "$TOKENOMICS" -eq 1 ]; then
+  TOKENOMICS_TSV="$(priced_records_tsv)"
+  emit_bucket_table
+  emit_stage_cost_table
+  emit_structure_table
+  emit_stage_structure_crosstab
+  emit_path_size_table
+  emit_breakeven_table
+  emit_coverage_health
+  emit_trend
+  emit_latency_aggregate
+  emit_concurrency_assessment
+fi

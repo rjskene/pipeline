@@ -1,0 +1,56 @@
+#!/bin/bash
+# Guard (#729): model-facing report DEFAULT output must stay JSON-free (markdown
+# pipe-tables), while the --emit-rows-json machine contract must stay JSON.
+set -uo pipefail
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FIX="$REPO_ROOT/tests/fixtures/cost-latency-report"
+FAILS=0
+pass() { echo "PASS: $1"; }
+fail() { echo "FAIL: $1"; FAILS=$((FAILS+1)); }
+# A "bare JSON line" = first non-space char is { or [ (top-level JSON emission).
+# The bracket class is exactly { and [ — no backslashes (inside an ERE bracket
+# expression a backslash is a literal, so [\{\[] would wrongly also match \).
+has_bare_json() { grep -qE '^[[:space:]]*[{[]' ; }
+
+# 1) cost-latency-report DEFAULT + --tokenomics must be JSON-free.
+#    Empty output is treated as a failure: a silent script death would otherwise
+#    trivially pass the JSON-free check (false negative), defeating the guard.
+for flags in "" "--tokenomics"; do
+  OUT="$(bash "$REPO_ROOT/scripts/cost-latency-report.sh" --fixture "$FIX" $flags 2>/dev/null)"
+  if [ -z "$OUT" ]; then
+    fail "cost-latency-report ($flags) produced empty output (silent failure?)"
+  elif printf '%s\n' "$OUT" | has_bare_json; then
+    fail "cost-latency-report ($flags) leaked bare JSON to the model surface"
+  else
+    pass "cost-latency-report ($flags) model surface is JSON-free"
+  fi
+done
+
+# 2) over-eval-report + late-error-report DEFAULT must be JSON-free.
+for s in over-eval-report late-error-report; do
+  OUT="$(bash "$REPO_ROOT/scripts/$s.sh" --fixture "$REPO_ROOT/tests/fixtures/$s" 2>/dev/null)"
+  if [ -z "$OUT" ]; then
+    fail "$s produced empty output (silent failure?)"
+  elif printf '%s\n' "$OUT" | has_bare_json; then
+    fail "$s default output leaked bare JSON"
+  else
+    pass "$s default output is JSON-free"
+  fi
+done
+
+# 3) The --emit-rows-json MACHINE contract must REMAIN JSON.
+ROWS="$(bash "$REPO_ROOT/scripts/cost-latency-report.sh" --fixture "$FIX" --emit-rows-json 2>/dev/null)"
+if printf '%s\n' "$ROWS" | head -1 | has_bare_json && printf '%s' "$ROWS" | jq -e . >/dev/null 2>&1; then
+  pass "--emit-rows-json contract still emits valid JSON"
+else
+  fail "--emit-rows-json contract is no longer valid JSON (parser regression)"
+fi
+
+# 4) The #729 format-axis classification record must exist in the cost-architecture doc.
+if grep -q 'Format axis (#729)' "$REPO_ROOT/docs/cost-architecture.md"; then
+  pass "docs/cost-architecture.md records the #729 format-axis classification"
+else
+  fail "docs/cost-architecture.md missing the #729 format-axis section"
+fi
+
+[ "$FAILS" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILS FAIL(S)"; exit 1; }

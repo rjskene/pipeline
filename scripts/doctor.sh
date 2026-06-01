@@ -310,7 +310,7 @@ record jq_installed pass "jq on PATH"
 # Check: pipeline_config — file present and PIPELINE_REPO non-empty.
 # --------------------------------------------------------------------------
 if [ ! -f pipeline.config ]; then
-  record pipeline_config fail "pipeline.config not found in $(pwd)"
+  record pipeline_config fail "pipeline.config not found in $(pwd) — run /pipeline:init to bootstrap (or copy pipeline.config.example and edit)"
 else
   if ! bash -n pipeline.config 2>/dev/null; then
     record pipeline_config fail "pipeline.config has syntax errors"
@@ -320,7 +320,7 @@ else
     # shellcheck disable=SC1091
     source ./pipeline.config 2>/dev/null
     if [ -z "${PIPELINE_REPO:-}" ]; then
-      record pipeline_config fail "PIPELINE_REPO is empty in pipeline.config"
+      record pipeline_config fail "PIPELINE_REPO is empty in pipeline.config — run /pipeline:init to regenerate"
     else
       record pipeline_config pass "$(pwd)/pipeline.config (PIPELINE_REPO=$PIPELINE_REPO)"
     fi
@@ -377,7 +377,7 @@ else
     record labels_exist pass "$total/$total"
   else
     missing_csv="$(IFS=', '; echo "${missing[*]}")"
-    record labels_exist fail "missing: $missing_csv"
+    record labels_exist fail "missing: $missing_csv — run /pipeline:init (seeds labels) or doctor --fix labels"
   fi
 fi
 

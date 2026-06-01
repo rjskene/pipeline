@@ -102,6 +102,17 @@ for N in "${ISSUES[@]}"; do
 
   # Files: only the `execute` stage runs file-conflict detection; classify/plan
   # stages skip it (the body heuristic over-serializes cross-references).
+  #
+  # UNIFIED A/B/C/D CONFLICT GRAPH (#700): file-conflict detection here reads
+  # ONLY the issue body / approved plan comment — it NEVER inspects the path
+  # label (`quick-fix`/`docs-only`/`multi-task`). There is NO path-label gate
+  # that exempts PATH D (`quick-fix`) issues from serialization. Consequence: a
+  # PATH D issue whose declared file paths collide with an in-flight PATH B/C/A
+  # issue serializes into a LATER wave exactly like any other issue. fullsend
+  # dispatches D inline in the foreground (zero run-queue slots), but that is a
+  # DISPATCH-mechanism choice downstream of waving — it does NOT exempt D from
+  # wave discipline. Do NOT add a "skip D in conflict detection" branch here:
+  # tests/test-plan-waves-unified-graph.sh locks this contract.
   if [ "$STAGE" = "execute" ]; then
     # Prefer plan-comment "**Files to change:**" bullets (exact paths from the
     # approved plan) over body-derived backticks (greedy + noisy). Fall back to
@@ -111,7 +122,10 @@ for N in "${ISSUES[@]}"; do
       PLAN_BODY=$(echo "$PLAN_JSON" \
         | jq -r '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body // ""')
       if [ -n "$PLAN_BODY" ] && [ "$PLAN_BODY" != "null" ]; then
-        PLAN_FILES=$(echo "$PLAN_BODY" \
+        # `grep -oE` exits 1 when the bullets carry no backtick-wrapped paths;
+        # under `set -euo pipefail` that aborts the whole script (#730). Guard
+        # the known-empty grep so a no-match yields an empty PLAN_FILES instead.
+        PLAN_FILES=$( { echo "$PLAN_BODY" \
           | awk 'BEGIN{in_block=0}
                  /^\*\*Files to change:\*\*/ {in_block=1; next}
                  in_block && /^\*\*/ {in_block=0}
@@ -119,7 +133,7 @@ for N in "${ISSUES[@]}"; do
           | grep -oE '`[^`]+`' \
           | tr -d '`' \
           | sort -u \
-          | tr '\n' ' ')
+          | tr '\n' ' '; } || true)
         PLAN_FILES="${PLAN_FILES% }"
       fi
     fi

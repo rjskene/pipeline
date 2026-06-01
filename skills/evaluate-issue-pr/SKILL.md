@@ -19,11 +19,11 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 
 Three dispatch shapes; every step below is identical, only CWD + visual-proof setup differs:
 
-1. **Inline `Agent(...)` dispatch (PATH A, docs-only).** Worktree absolute path + issue number in the prompt. You are NOT in the worktree CWD — `cd <worktree-absolute-path>` before any step.
-2. **`${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch (PATH B/C and explicit requests).** Already in the feature worktree; no `cd`.
+1. **Inline `Agent(...)` dispatch (PATH A, docs-only; PATH B, standard).** Worktree absolute path + issue number in the prompt. You are NOT in the worktree CWD — `cd <worktree-absolute-path>` before any step. (Per #748 PATH B PR-eval dispatches inline here, alongside PATH A — the inline B execute Agent and inline B PR-eval Agent are SEPARATE inline contexts for evaluator independence.)
+2. **`${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch (PATH C, multi-task, and explicit requests).** Already in the feature worktree; no `cd`.
 3. **Inline Agent dispatch (browser-eval; triggered by the `needs-browser` label).** Worktree absolute path + issue number + PR + port + target-dir-abs + auto-merge-gate token are pre-resolved by the orchestrator; you `cd <worktree-abs>` and start the loopback HTTP server before any other step. The dispatch path is in-process `Agent()` triggered by the `needs-browser` label on the PR's source issue. Visual proof for these PRs reads from `http://127.0.0.1:$PORT/` against the durable URL substring `raw.githubusercontent.com/<owner>/<repo>/<merge-sha>/.eval-screenshots/` once Step 11.3 rewrites the eval comment — branch-pinned URLs apply during the review window only. See Step 6c for the loopback server setup and Step 11 for the unchanged auto-merge gate.
 
-For PATH A the orchestrator threads the manual-merge opt-out by including `MANUAL_MERGE=1` in the prompt (mirroring `spawn-claude.sh --manual-merge`). Inline token and env var are equivalent — both suppress the Step 11 greenlight.
+For PATH A and PATH B (both inline) the orchestrator threads the manual-merge opt-out by including `MANUAL_MERGE=1` in the prompt (mirroring `spawn-claude.sh --manual-merge`). Inline token and env var are equivalent — both suppress the Step 11 greenlight.
 
 ## Lifecycle
 
@@ -183,6 +183,9 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
    If `PIPELINE_BASE_BRANCH` has advanced, `git rebase origin/$PIPELINE_BASE_BRANCH`. If conflicts are complex (semantic, not whitespace), flag for user review.
 
 9. **Post evaluation comment on the PR** via `gh pr comment $PR_NUM --repo $PIPELINE_REPO --body "<evaluation>"` using this format:
+
+   > **TERSENESS:** This is the highest-cost artifact in the pipeline — pr-eval output is ≈20% of total spend and output tokens are uncacheable. Emit decisions, not narration. Reference the plan and PR by `#N` / `#PR` — do NOT paste the plan body or re-quote the diff. Each row below is a verdict, not an essay: cap `**Code quality:**` and `**Remaining issues:**` at ≈3 bullets each, one line per bullet; drop a row's prose entirely when its value is "No issues found" / "None". Plan-compliance checkboxes are the evidence — do not restate the plan item in prose after checking it.
+
    ```markdown
    ## Evaluation
 

@@ -115,6 +115,8 @@ Receive an issue number as argument (or from context).
 
    Invoke `Skill(skill: "superpowers:writing-plans")`. Pass the issue title, body, prior plan comments, codebase findings from step 4, AND `PATH_LETTER` from step 3a. Tell it: "Do NOT save the plan to a file in `docs/`. Return the plan content directly so I can write it to the draft file under `.claude/logs/plan-drafts/`." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
 
+   > **TERSENESS:** The plan must be self-contained (execute-issue-plan reads ONLY this comment) — but self-contained ≠ verbose. Reference the issue by `#N`; do NOT paste the issue body back into the plan. Each `**Files to change:**` entry is `path — one-line reason`. Sections with no content are the single word `None` (`**DB schema changes:** None`), never a paragraph explaining why. Design detail belongs in `**Design decisions:**` as bullets — load-bearing data (tier tables, formulas, mode behaviors) stays; restated context goes.
+
    ```markdown
    ## Implementation Plan
 
@@ -167,7 +169,7 @@ Receive an issue number as argument (or from context).
 
 7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke this from within your own turn. Do not stop, return, or summarize before the helper exits.
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
+   PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
    ```
    The helper posts the comment, verifies it, applies `plan-pending`, and verifies the label — each sub-step retries once. Do not retry from the skill. If the helper exits non-zero, surface its stderr AND the `$DRAFT` path verbatim, then STOP with: `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`. The operator can re-run the helper manually.
 

@@ -16,6 +16,19 @@ PIPELINE_PATH_
 PIPELINE_CI_
 PIPELINE_LABELS_
 PIPELINE_CONTAINER_
+# #721 per-model token pricing: cost-latency-report.sh builds rate var names
+# like `PIPELINE_PRICE_${norm}_${bucket}` at runtime via bash indirect
+# expansion, so the bare `PIPELINE_PRICE_` prefix appears in source. The
+# concrete keys (PIPELINE_PRICE_CLAUDE_OPUS_4_8_{INPUT,OUTPUT,CACHE_CREATION,
+# CACHE_READ}) ARE declared in pipeline.config.example and guarded by
+# tests/test-tokenomics-pricing-config.sh; only the dynamic prefix is exempt.
+PIPELINE_PRICE_
+# #734: tests/test-init-script.sh asserts the generated config seeds a commented
+# PIPELINE_PRICE_* block, using a `grep -iE '^[[:space:]]*PIPELINE_PRICE'` anchor
+# whose pattern fragment ends at the bare `PIPELINE_PRICE` token (no trailing `_`,
+# so the PIPELINE_PRICE_ concat-prefix above does not cover it). Not a config knob
+# — a regex literal in the test. Exact-match exempt.
+PIPELINE_PRICE
 
 # Internal-state markers (script-local globals, not user-config knobs).
 PIPELINE_LOGGING_SH_SOURCED

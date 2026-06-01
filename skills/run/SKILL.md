@@ -211,7 +211,7 @@ Path column shows `?` for ready issues not yet classified — classification run
 
    **For plan evaluation (plan-pending → plan-reviewed):** Run `/pipeline:evaluate-issue-plan N` for each issue needing evaluation; parallel Agent dispatches when multiple.
 
-   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Classify the user-committed subset first — for each issue, check whether a fresh `## Classification` comment exists (`createdAt >= issue.updatedAt`). If any lack a fresh classification, dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel**, each invoking `/pipeline:classify-issue N`. Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for each issue, parallel when multiple.
+   **For planning (no label → plan-pending) or re-planning (plan-pending with user feedback):** Classify the user-committed subset first — for each issue, check whether a fresh `## Classification` comment exists (`createdAt >= issue.updatedAt`). If any lack a fresh classification, dispatch one `Agent(subagent_type='general-purpose')` per stale/missing issue **in parallel**, each invoking `/pipeline:classify-issue N`. Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for each issue, parallel when multiple. **PATH D carve-out.** PATH D (`quick-fix`) issues are NOT classified and planned as separate Agent dispatches in this planning branch; they collapse into ONE carried-forward inline `Agent` that runs classify+plan+execute in a single context — the same single dispatch described in the PATH D execute bullet below. The classify and plan stages are emitted as inline checkpoints by that one agent, NOT as separate upstream `general-purpose` classify + `plan-issue` dispatches.
 
    **For PR evaluation (pr-open → evaluated):** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed.
 
@@ -225,7 +225,14 @@ Path column shows `?` for ready issues not yet classified — classification run
            prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
      ```
      Thread `MANUAL_MERGE=1` into the prompt verbatim when the issue carries the manual-merge label or the user passed `--manual-merge`; the evaluate-issue-pr skill treats the inline token identically to the `MANUAL_MERGE=1` env var set by `spawn-claude.sh --manual-merge`.
-   - **PATH B / PATH C**: proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` (see [references/dispatch-routing.md](references/dispatch-routing.md#pr-evaluation-pr-open--evaluated)).
+   - **PATH B** (standard): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. The worktree already exists from execute-issue-plan, so reuse `<worktree-path>`:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='evaluate-issue-pr #<N> (PATH B inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
+     ```
+     Thread `MANUAL_MERGE=1` into the prompt verbatim when the issue carries the manual-merge label or the user passed `--manual-merge` (identical token handling to PATH A above). No spawn-claude.sh, no run-queue.sh, no tmux. The inline B execute Agent and the inline B PR-eval Agent are SEPARATE inline contexts — an agent must not evaluate its own work.
+   - **PATH C** (`multi-task`): proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` (see [references/dispatch-routing.md](references/dispatch-routing.md#pr-evaluation-pr-open--evaluated)).
    - **PATH D**: PR evaluation stays `general-purpose` (NOT `tdd-implementer`) — inline dispatch shape identical to PATH A. Asymmetric by design: reusing `tdd-implementer` for eval would force red→green discipline on a workflow that does not need it.
 
    **For execution (plan-approved → worktree setup):** For each approved issue's branch (deduplicated):
@@ -237,8 +244,25 @@ Path column shows `?` for ready issues not yet classified — classification run
            description='execute-issue-plan #<N> (PATH A inline)',
            prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
      ```
-   - **PATH B / PATH C**: proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
-   - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. Multiple D issues fan out as parallel inline Agent calls in a single tool-call batch. The subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a namespaced form.
+   - **PATH B** (standard): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. The worktree was created by `setup-worktree.sh`; only the agent launch is inline. `subagent_type='general-purpose'` (NOT `tdd-implementer`) — B's red→green discipline comes from the plan's Task 0 `superpowers:test-driven-development` bookend inside execute-issue-plan, identical to how a spawned B worker runs it:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='execute-issue-plan #<N> (PATH B inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
+     ```
+     No spawn-claude.sh, no run-queue.sh, no tmux. Completion is the inline Agent's foreground return, NOT an `EVENT:` stream watch — so there is no Monitor regex to wire for B (Monitor stays scoped to the PATH C run-queue). Conflict-free same-wave B issues fan out as one foreground `Agent` batch capped at **max 3 concurrent**, the same precedent PATH D uses.
+   - **PATH C** (`multi-task`): proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
+   - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D collapsed inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. The subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a namespaced form.
+
+     **Collapsed-D ceremony.** That single dispatch is **one collapsed inline `Agent`** doing **classify+plan+execute** in a single carried-forward context — NOT three separate Agent dispatches. The classify and plan stages run inside that same single context (carried-forward, not re-spawned), emitting `## Classification`+path label and `## Implementation Plan`+`plan-pending` as inline side-effects as the agent goes, then it carries straight on to execution. There is NO separate upstream classify/plan dispatch and NO fresh execute re-dispatch — the one agent carries the classify+plan context forward and does NOT re-read the plan comment from GitHub (the execute-issue-plan Step 1 plan-comment re-read is skipped because the plan is already in context).
+
+     **pr-eval stays a separate inline agent.** The collapsed D context covers classify+plan+execute only — the subsequent pr-eval STAYS a SEPARATE inline `Agent` (separate ≠ spawned; it is still inline, just a fresh context). An agent must not evaluate its own work — **evaluator independence** is the reason pr-eval is never folded into the collapsed D context.
+
+     **Concurrency bound + fan-out.** Multiple D issues fan out as parallel inline `Agent` calls in a single tool-call batch, capped at **max 3 concurrent inline** D agents — this bounds orchestrator context plus the blocking foreground turn while the inline agents run.
+
+     **Escalation backstop.** A collapsed D agent that discovers the change exceeds D's envelope (the quick-fix scope) aborts up to a full PATH B run rather than forcing the work through the collapsed inline path. (Per #748 a PATH B run is itself an inline `Agent`, not a spawned `claude -p` worker — the escalation buys real planning plus a full execute session, not a different transport.)
+
+   **Inline execute dispatch prompt contract (mandatory).** Each inline PATH A/B/D `/pipeline:execute-issue-plan N` Agent prompt MUST end with a directive stating the dispatched subagent's *only* valid terminal states are: **(a)** the PR is opened and the issue is flipped to `pr-open`, reporting the success line (PR number + final test status); or **(b)** the work failed, reporting a FAILED line. Narrating an intention to "wait" (e.g. *"I'll wait for the suite notification."*) — or returning prose/edits instead of committing, pushing, and opening the PR — is explicitly a **failure**: a dispatched `Agent`'s turn ends the moment it stops emitting tool calls, so narrate-and-yield strands the subagent with uncommitted work in progress (the #752/#764 drop-out). The subagent must instead run to completion (commit → push → `gh pr create` → label flip) or actually block on the suite via `Monitor`/`BashOutput` before yielding. A `general-purpose`/`tdd-implementer` subagent may never load `skills/execute-issue-plan/SKILL.md` (it can treat `/pipeline:execute-issue-plan N` as content rather than a skill load), so this dispatch-site directive — not the skill body — is the binding contract. (Mirrors the plan-issue dispatch prompt contract.)
 
    Run the setup script with BOTH positional args — `<branch-name>` AND `<issue-number>`. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title per the **Branch and worktree naming convention** block above; `<issue-number>` is the bare integer:
 

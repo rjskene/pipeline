@@ -38,10 +38,10 @@ State table — each row names a check, the trigger that fires it, the worst-cas
 | `gh_installed` | `gh` on PATH AND major ≥ 2 (needed for `--json baseRefName`) | FAIL | Upgrade `gh` |
 | `gh_auth` | `gh auth status` succeeds | FAIL | `gh auth login` |
 | `gh_repo_reachable` | `gh repo view $PIPELINE_REPO` succeeds | FAIL | Check perms / `PIPELINE_REPO` |
-| `pipeline_config` | `pipeline.config` exists at project root + `PIPELINE_REPO` set | FAIL | Copy `pipeline.config.example` and edit |
+| `pipeline_config` | `pipeline.config` exists at project root + `PIPELINE_REPO` set | FAIL | `/pipeline:init` (or copy `pipeline.config.example` and edit) |
 | `claude_plugin_root` | `CLAUDE_PLUGIN_ROOT` resolves to a real plugin install (4 env-states) | varies | See sub-section below |
 | `plugin_loaded` | `claude plugin list` includes `claude-pipeline` | WARN if `claude` not on PATH | `/plugin install pipeline@claude-pipeline` |
-| `labels_exist` | All 10 pipeline labels present (honors `PIPELINE_LABELS_*` overrides) | FAIL | `--fix labels` (idempotent upsert) |
+| `labels_exist` | All 10 pipeline labels present (honors `PIPELINE_LABELS_*` overrides) | FAIL | `/pipeline:init` seeds labels, or `--fix labels` (idempotent upsert) |
 | `no_residual_subtree` | No `.claude-pipeline/` or `.pipeline-managed` markers from the retired subtree installer | FAIL | `scripts/migrate-from-subtree.sh` |
 | `claude_md_residual` | Legacy section headers / `.claude-pipeline/` paths / dangling `.claude/{scripts,hooks,skills}/` refs / unprefixed slash commands (delegates to `migration-cleanup-claudemd.sh`; on-disk path verification) | WARN | `migrate-from-subtree.sh --keep-referenced` |
 | `settings_residual` | Pipeline-owned hook entries in `.claude/settings.json`; capability-impact annotation from `_advisory-text.sh` | WARN (jq required) | `--fix residual` (interactive) |

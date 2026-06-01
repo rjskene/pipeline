@@ -4,6 +4,8 @@ This guide walks an existing consumer of claude-pipeline from the legacy `.claud
 
 The migration is one-shot and idempotent: re-running on an already-migrated project is a no-op.
 
+Bootstrapping a fresh (non-subtree) project instead? See [Getting started](getting-started.md) — the greenfield counterpart that leads with /pipeline:init.
+
 ## 1. Confirm you have a subtree install
 
 ```bash
