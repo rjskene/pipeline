@@ -391,9 +391,12 @@ priced_records_tsv() {
 }
 
 # priced_issue_stage_cost_tsv — emit one TSV line per PRICED capture record
-# (model!="") as:  issue <TAB> stage <TAB> cost_usd
+# (model!="") as:
+#   issue <TAB> stage <TAB> cost_usd <TAB> input <TAB> output <TAB> cache_read
 # cost_usd is the all-four-bucket USD for that record at the resolved per-(model,
 # bucket) rate (Opus default fallback). Unpriced (model=="") records are SKIPPED.
+# input/output/cache_read are the raw token counts (append-only, for the per-PR
+# trend table's token columns); the breakeven consumer reads only $1/$2/$3.
 # Shared substrate for the per-issue --tokenomics tables (B→D breakeven) that
 # need issue+stage attribution, which priced_records_tsv (stage-only) lacks.
 priced_issue_stage_cost_tsv() {
@@ -416,16 +419,21 @@ priced_issue_stage_cost_tsv() {
           (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
       | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
           c=($3/1e6)*ri + ($4/1e6)*ro + ($5/1e6)*rcc + ($6/1e6)*rcr;
-          printf "%s\t%s\t%.10f\n", $1, $2, c
+          # APPEND raw input/output/cache_read token counts (internal jq $3/$4/$6)
+          # so CONSUMERS see: issue=$1 stage=$2 cost=$3 input=$4 output=$5 cache_read=$6
+          printf "%s\t%s\t%.10f\t%d\t%d\t%d\n", $1, $2, c, $3, $4, $6
         }'
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
 # priced_day_cost_tsv — emit one TSV line per PRICED capture record (model!="")
-# whose ts_start has a YYYY-MM-DD prefix:  date <TAB> cost_all <TAB> cost_output
+# whose ts_start has a YYYY-MM-DD prefix:
+#   date <TAB> cost_all <TAB> cost_output <TAB> input <TAB> output <TAB> cache_read
 # date is the YYYY-MM-DD prefix of ts_start; records with EMPTY/absent ts_start
 # are SKIPPED (cannot be day-bucketed). cost_all is the all-four-bucket USD;
 # cost_output is just the output-bucket USD (for the output%-of-cost column).
+# input/output/cache_read are the raw token counts (append-only, for the trend
+# table's per-day token columns).
 # Shared substrate for the --tokenomics per-day trend table.
 priced_day_cost_tsv() {
   local line model norm day
@@ -452,7 +460,9 @@ priced_day_cost_tsv() {
       | awk -F'\t' -v d="$day" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
           call=($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr;
           cout=($2/1e6)*ro;
-          printf "%s\t%.10f\t%.10f\n", d, call, cout
+          # APPEND raw input/output/cache_read token counts (internal jq $1/$2/$4)
+          # so CONSUMERS see: date=$1 cost_all=$2 cost_output=$3 input=$4 output=$5 cache_read=$6
+          printf "%s\t%.10f\t%.10f\t%d\t%d\t%d\n", d, call, cout, $1, $2, $4
         }'
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
@@ -936,17 +946,26 @@ emit_stage_structure_crosstab() {
 # not a $ figure. Issues with no records render '--'.
 emit_path_size_table() {
   echo ""
-  echo 'PER-ISSUE SIZE (net of cache_read) | PATH | size tokens'
+  echo 'PER-ISSUE SIZE | PATH | input | output | cache_read | net total'
   while IFS=$'\t' read -r issue path loc ceremony tt dur ov prn; do
     [ -z "$issue" ] && continue
-    local size
-    size="$(printf '%s' "$CAPTURE_JSON" | jq -r --arg n "$issue" '
+    local cells tin tout tcr net
+    # Four per-issue token sums over ALL records (priced + unpriced): it is a
+    # token count, not a $ figure. net total nets OUT cache_read (input+output+
+    # cache_creation), unchanged from the prior single-column value.
+    cells="$(printf '%s' "$CAPTURE_JSON" | jq -r --arg n "$issue" '
       [.[] | select((.issue|tostring) == $n)] as $recs
-      | if ($recs | length) == 0 then "--"
-        else ([$recs[] | (.tokens.input//0)+(.tokens.output//0)+(.tokens.cache_creation//0)] | add)
+      | if ($recs | length) == 0 then "--\t--\t--\t--"
+        else
+          ([$recs[] | (.tokens.input//0)] | add) as $tin
+          | ([$recs[] | (.tokens.output//0)] | add) as $tout
+          | ([$recs[] | (.tokens.cache_read//0)] | add) as $tcr
+          | ([$recs[] | (.tokens.input//0)+(.tokens.output//0)+(.tokens.cache_creation//0)] | add) as $net
+          | "\($tin)\t\($tout)\t\($tcr)\t\($net)"
         end' 2>/dev/null)"
-    [ -z "$size" ] && size="--"
-    printf 'issue #%-29s | %-4s | %s\n' "$issue" "$path" "$size"
+    IFS=$'\t' read -r tin tout tcr net <<<"$cells"
+    [ -z "$tin" ] && { tin="--"; tout="--"; tcr="--"; net="--"; }
+    printf 'issue #%-20s | %-4s | %12s | %12s | %12s | %12s\n' "$issue" "$path" "$tin" "$tout" "$tcr" "$net"
   done < "$ROWS_TSV"
 }
 
@@ -1046,9 +1065,9 @@ emit_coverage_health() {
 # col1=issue, col8=pr_num), summing the per-(issue,stage) priced cost per issue.
 emit_trend() {
   echo ""
-  echo 'TREND (per-day) | $ total  | $ output | output%-of-cost'
+  echo 'TREND (per-day) | input | output | cache_read | $ total  | $ output | output%-of-cost'
   printf '%s\n' "$(priced_day_cost_tsv)" | awk -F'\t' '
-    { day=$1; if (day=="") next; tot[day]+=$2; out[day]+=$3; grand+=$2 }
+    { day=$1; if (day=="") next; tot[day]+=$2; out[day]+=$3; tin[day]+=$4; tout[day]+=$5; tcr[day]+=$6; grand+=$2 }
     END {
       n=0; for (d in tot) order[++n]=d;
       for (i=1;i<n;i++) for (j=i+1;j<=n;j++) if (order[i] > order[j]) { t=order[i]; order[i]=order[j]; order[j]=t }
@@ -1057,27 +1076,28 @@ emit_trend() {
         d=order[i];
         op = (tot[d]>0 ? out[d]/tot[d]*100 : 0);
         flag = (tot[d] >= thresh && grand > 0) ? "  *OUTLIER" : "";
-        printf "%-15s | %8.2f | %8.2f | %14.1f%%%s\n", d, tot[d], out[d], op, flag;
+        printf "%-15s | %12d | %12d | %12d | %8.2f | %8.2f | %14.1f%%%s\n", d, tin[d], tout[d], tcr[d], tot[d], out[d], op, flag;
       }
     }'
 
   echo ""
-  echo 'TREND (per-PR) | $ total'
+  echo 'TREND (per-PR) | input | output | cache_read | $ total'
   # issue→pr map from ROWS_TSV (col1=issue, col8=pr_num).
   local issue_pr
   issue_pr="$(awk -F'\t' '{ print $1"\t"$8 }' "$ROWS_TSV")"
   local cost_tsv
   cost_tsv="$(priced_issue_stage_cost_tsv)"
+  # Consumer fields: issue=$1 stage=$2 cost=$3 input=$4 output=$5 cache_read=$6.
   printf '%s\n' "$cost_tsv" | awk -F'\t' -v map="$issue_pr" '
     BEGIN {
       n=split(map, lines, "\n");
       for (i=1;i<=n;i++) { if (lines[i]=="") continue; split(lines[i], kv, "\t"); pr[kv[1]]=kv[2]; }
     }
-    { iss=$1; if (!(iss in pr)) next; cost[pr[iss]] += $3 }
+    { iss=$1; if (!(iss in pr)) next; cost[pr[iss]] += $3; tin[pr[iss]] += $4; tout[pr[iss]] += $5; tcr[pr[iss]] += $6 }
     END {
       m=0; for (p in cost) order[++m]=p;
       for (i=1;i<m;i++) for (j=i+1;j<=m;j++) if (order[i]+0 > order[j]+0) { t=order[i]; order[i]=order[j]; order[j]=t }
-      for (i=1;i<=m;i++) { p=order[i]; printf "PR #%-11s | %8.2f\n", p, cost[p]; }
+      for (i=1;i<=m;i++) { p=order[i]; printf "PR #%-11s | %12d | %12d | %12d | %8.2f\n", p, tin[p], tout[p], tcr[p], cost[p]; }
     }'
 }
 
