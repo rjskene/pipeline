@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.21.4](https://github.com/rjskene/pipeline/compare/v0.21.3...v0.21.4) (2026-06-01)
+
+
+### Features
+
+* **token-cost:** inline-aware concurrency (honest lower-bound on point-interval inline) ([6b0899c](https://github.com/rjskene/pipeline/commit/6b0899c602bd49e02de3a0af45a675cdde2da411))
+* **token-cost:** per-N token-bucket breakout on per-PATH table ([9915c31](https://github.com/rjskene/pipeline/commit/9915c31fd30c339d4ccd5c76fa6ab882bba9f5e0))
+* **token-cost:** per-N token-bucket breakout on per-stage table (unpriced-honest) ([e730093](https://github.com/rjskene/pipeline/commit/e73009319c1aebbc7203e0feec03b5b483ec0b8f))
+* **token-cost:** per-N token-bucket breakout on structure table (unpriced-honest inline) ([44d2405](https://github.com/rjskene/pipeline/commit/44d2405887a15a45625aa5b68efded6ebfa81e78))
+* **token-cost:** render tokenomics durations in minutes ([31d9d10](https://github.com/rjskene/pipeline/commit/31d9d10aa0424f3985c0fc12a20771ae185775b5))
+* **token-cost:** split task-latency by spawn vs inline structure (unpriced-honest inline) ([5eacb09](https://github.com/rjskene/pipeline/commit/5eacb09cc820477a7974dc4653c81fd6b525541c))
+* **token-cost:** tokenomics report readability — minutes, per-N token-bucket breakouts, inline-aware concurrency + spawn/inline task-latency ([5836cb3](https://github.com/rjskene/pipeline/commit/5836cb338670728da27548e62f464fade136ecdd))
+* **tokenomics:** inline agent costs read ~15-30x low until retroactive transcript-sum runs — surface lower-bound vs auto-backfill ([cbf3733](https://github.com/rjskene/pipeline/commit/cbf373332203d75da9b2ddf4b97f037cf8fe6a74))
+* **tokenomics:** surface unreconciled lower-bound record count in coverage-health ([f704310](https://github.com/rjskene/pipeline/commit/f704310b8c07c6eff93e0c1697fe6775472f66ed))
+
+
+### Bug Fixes
+
+* **capture:** transcript-sum inline subagent costs instead of sidecar lower-bound ([b95a976](https://github.com/rjskene/pipeline/commit/b95a97641d322aba8c7b699823ad226206f6832b))
+
 ## [0.21.3](https://github.com/rjskene/pipeline/compare/v0.21.2...v0.21.3) (2026-06-01)
 
 
