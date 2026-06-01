@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.2](https://github.com/rjskene/pipeline/compare/v0.21.1...v0.21.2) (2026-06-01)
+
+
+### Bug Fixes
+
+* **inline-execute:** mandate terminal-state directive on evaluate-issue-pr inline dispatch ([6518b2e](https://github.com/rjskene/pipeline/commit/6518b2ecf4cd250817a9e1cfe9b6582a79dea091))
+* **inline-execute:** mandate terminal-state directive on evaluate-issue-pr inline dispatch ([a1b6cc7](https://github.com/rjskene/pipeline/commit/a1b6cc7c79528d7372dbd0e0ccffc35dff6191f5)), closes [#772](https://github.com/rjskene/pipeline/issues/772)
+
 ## [0.21.1](https://github.com/rjskene/pipeline/compare/v0.21.0...v0.21.1) (2026-06-01)
 
 
