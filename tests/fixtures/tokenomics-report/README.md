@@ -10,7 +10,7 @@ demo that exercises **every** new dimension in one run:
 
 ```
 bash scripts/cost-latency-report.sh --fixture tests/fixtures/tokenomics-report \
-    --tokenomics --skipped-count 2
+    --tokenomics
 ```
 
 No live `gh` calls — `--fixture DIR` mode reads these files instead.
