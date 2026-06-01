@@ -225,7 +225,14 @@ Path column shows `?` for ready issues not yet classified — classification run
            prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
      ```
      Thread `MANUAL_MERGE=1` into the prompt verbatim when the issue carries the manual-merge label or the user passed `--manual-merge`; the evaluate-issue-pr skill treats the inline token identically to the `MANUAL_MERGE=1` env var set by `spawn-claude.sh --manual-merge`.
-   - **PATH B / PATH C**: proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` (see [references/dispatch-routing.md](references/dispatch-routing.md#pr-evaluation-pr-open--evaluated)).
+   - **PATH B** (standard): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. The worktree already exists from execute-issue-plan, so reuse `<worktree-path>`:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='evaluate-issue-pr #<N> (PATH B inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
+     ```
+     Thread `MANUAL_MERGE=1` into the prompt verbatim when the issue carries the manual-merge label or the user passed `--manual-merge` (identical token handling to PATH A above). No spawn-claude.sh, no run-queue.sh, no tmux. The inline B execute Agent and the inline B PR-eval Agent are SEPARATE inline contexts — an agent must not evaluate its own work.
+   - **PATH C** (`multi-task`): proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh` (see [references/dispatch-routing.md](references/dispatch-routing.md#pr-evaluation-pr-open--evaluated)).
    - **PATH D**: PR evaluation stays `general-purpose` (NOT `tdd-implementer`) — inline dispatch shape identical to PATH A. Asymmetric by design: reusing `tdd-implementer` for eval would force red→green discipline on a workflow that does not need it.
 
    **For execution (plan-approved → worktree setup):** For each approved issue's branch (deduplicated):
@@ -237,7 +244,14 @@ Path column shows `?` for ready issues not yet classified — classification run
            description='execute-issue-plan #<N> (PATH A inline)',
            prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
      ```
-   - **PATH B / PATH C**: proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
+   - **PATH B** (standard): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. The worktree was created by `setup-worktree.sh`; only the agent launch is inline. `subagent_type='general-purpose'` (NOT `tdd-implementer`) — B's red→green discipline comes from the plan's Task 0 `superpowers:test-driven-development` bookend inside execute-issue-plan, identical to how a spawned B worker runs it:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='execute-issue-plan #<N> (PATH B inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
+     ```
+     No spawn-claude.sh, no run-queue.sh, no tmux. Completion is the inline Agent's foreground return, NOT an `EVENT:` stream watch — so there is no Monitor regex to wire for B (Monitor stays scoped to the PATH C run-queue). Conflict-free same-wave B issues fan out as one foreground `Agent` batch capped at **max 3 concurrent**, the same precedent PATH D uses.
+   - **PATH C** (`multi-task`): proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
    - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D collapsed inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. The subagent_type uses the BARE `tdd-implementer` form (matching the existing PATH C plan-issue precedent and the agent-file declaration), NOT a namespaced form.
 
      **Collapsed-D ceremony.** That single dispatch is **one collapsed inline `Agent`** doing **classify+plan+execute** in a single carried-forward context — NOT three separate Agent dispatches. The classify and plan stages run inside that same single context (carried-forward, not re-spawned), emitting `## Classification`+path label and `## Implementation Plan`+`plan-pending` as inline side-effects as the agent goes, then it carries straight on to execution. There is NO separate upstream classify/plan dispatch and NO fresh execute re-dispatch — the one agent carries the classify+plan context forward and does NOT re-read the plan comment from GitHub (the execute-issue-plan Step 1 plan-comment re-read is skipped because the plan is already in context).
