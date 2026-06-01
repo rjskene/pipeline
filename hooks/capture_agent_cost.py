@@ -305,16 +305,37 @@ def _first(payload, *keys):
 
 
 def _extract_usage(payload):
-    """Return the usage dict if the payload carries one anywhere we recognise,
-    else None. None means fail-open: emit no record."""
+    """Return (usage_dict_or_None, is_cumulative_bool).
+
+    The boolean reports whether the source was a CUMULATIVE field
+    (`total_usage`/`cumulative_usage`) — which is a trustworthy multi-turn total
+    — or a FINAL-TURN snapshot (top-level `usage` / `message.usage`), which in
+    this harness reflects only the subagent's last turn (#765). build_record
+    stamps `usage_complete` from this flag so inline final-turn records are
+    honestly marked lower-bound rather than masquerading as complete totals.
+
+    Token VALUES preserve the prior key precedence (`usage` first, for the common
+    inline case); only the cumulative classification is new. We collect the first
+    matching dict over `("usage", "total_usage", "cumulative_usage")` for tokens
+    AND separately note whether ANY of `total_usage`/`cumulative_usage` was a
+    dict for the flag — so a cumulative field wins the flag even when a top-level
+    `usage` is also present. Falls back to `message.usage` (non-cumulative) when
+    none of the three matched. None means fail-open: emit no record."""
+    first = None
+    is_cumulative = False
     for key in ("usage", "total_usage", "cumulative_usage"):
         u = payload.get(key)
         if isinstance(u, dict):
-            return u
+            if first is None:
+                first = u
+            if key in ("total_usage", "cumulative_usage"):
+                is_cumulative = True
+    if first is not None:
+        return first, is_cumulative
     msg = payload.get("message")
     if isinstance(msg, dict) and isinstance(msg.get("usage"), dict):
-        return msg["usage"]
-    return None
+        return msg["usage"], False
+    return None, False
 
 
 def _normalize_payload(payload):
@@ -365,7 +386,7 @@ def build_record(payload, logs_dir=None):
         return None  # non-pipeline agent: emit nothing
     issue = issue_from_description(description)
 
-    usage = _extract_usage(payload)
+    usage, usage_is_cumulative = _extract_usage(payload)
     if usage is None:
         return None  # no usage field at all: fail-open to no record
 
@@ -458,7 +479,13 @@ def build_record(payload, logs_dir=None):
         "ts_start": ts_start,
         "ts_end": ts_end,
         "source": source,
-        "usage_complete": True,
+        # usage_complete reflects PROVENANCE, not a fabricated total: True only
+        # when _extract_usage sourced a cumulative field (total_usage/
+        # cumulative_usage). The common inline path carries only a final-turn
+        # `usage` snapshot (#765), so usage_is_cumulative is False and the record
+        # is honestly marked lower-bound — reconciles with
+        # scripts/capture-agent-costs.sh inline lower-bound contract (#765).
+        "usage_complete": usage_is_cumulative,
     }
 
 

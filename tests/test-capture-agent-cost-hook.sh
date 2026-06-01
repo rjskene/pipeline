@@ -87,7 +87,7 @@ expect(rec["agent_kind"] == "inline", "agent_kind==inline")
 expect(rec["agent_type"] == "pr-eval-agent", "agent_type from subagent_type")
 expect(rec["session_id"] == "sess-abc", "session_id")
 expect(rec["source"] == "forward", "source==forward")
-expect(rec["usage_complete"] is True, "usage_complete==true")
+expect(rec["usage_complete"] is False, "inline final-turn usage_complete==false")
 
 t = rec["tokens"]
 expect(t["input"] == 100, "tokens.input")
