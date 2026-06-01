@@ -55,7 +55,12 @@ source "$THIS_DIR/_logging.sh"
 source "$THIS_DIR/_token-usage-lib.sh"
 
 if ! pipeline_logging_enabled; then
+  # Loud, machine-detectable skip signal (#790). The stderr line is the human
+  # message; the stdout marker is what the tokenomics skill greps for so it can
+  # tell an intentional opt-out (PIPELINE_LOGS_ENABLED unset/false by design)
+  # from a propagation failure (the skill passed the var but it didn't arrive).
   echo "capture-agent-costs: PIPELINE_LOGS_ENABLED not 'true'; skipping (no writes)." >&2
+  echo "capture-agent-costs: SKIP_LOGGING_DISABLED (PIPELINE_LOGS_ENABLED='${PIPELINE_LOGS_ENABLED:-<unset>}')"
   exit 0
 fi
 
