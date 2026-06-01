@@ -1,5 +1,88 @@
 # Changelog
 
+## [0.21.0](https://github.com/rjskene/pipeline/compare/v0.20.7...v0.21.0) (2026-06-01)
+
+
+### Features
+
+* **classify:** blast-radius B→D routing rule + high-uncertainty carve-out + mined exemplars ([#707](https://github.com/rjskene/pipeline/issues/707)) ([30bd6fe](https://github.com/rjskene/pipeline/commit/30bd6fe03b03c0a6d0505d995034740f0561dac2))
+* **classify:** feature-based B→D routing — blast-radius rule + mined exemplars ([fdb5776](https://github.com/rjskene/pipeline/commit/fdb5776d949bcfe9107297f6348eeb2de2b62384))
+* **cost-report:** --tokenomics B→D breakeven table ([ac0429c](https://github.com/rjskene/pipeline/commit/ac0429c9f64f65b0e93984ec12e69dd2a34e68bf))
+* **cost-report:** --tokenomics bucket table (token-share vs cost-share) ([0162ded](https://github.com/rjskene/pipeline/commit/0162ded48a7a8568f8887cc212c258917361bccc))
+* **cost-report:** --tokenomics concurrency assessment (observed overlap + ceiling) ([0e7f269](https://github.com/rjskene/pipeline/commit/0e7f2691f769df6f9b08568f52783c2cdbee80b8))
+* **cost-report:** --tokenomics coverage-health block ([af520d5](https://github.com/rjskene/pipeline/commit/af520d55294f98d48d924307a5fba95f4511c13b))
+* **cost-report:** --tokenomics mark+exclude headless session-lifetime durations ([5e99831](https://github.com/rjskene/pipeline/commit/5e9983120ff9abff2341da6e4f9f228adab45438))
+* **cost-report:** --tokenomics net-out cache_read in per-PATH/issue size view ([6091b9a](https://github.com/rjskene/pipeline/commit/6091b9ae740a2fa5ad69648086b7e56ed6c5f319))
+* **cost-report:** --tokenomics per-day + per-PR $ trend with outlier flagging ([5b806f3](https://github.com/rjskene/pipeline/commit/5b806f31a810e0c1b720819b00a87bd7a6ce086d))
+* **cost-report:** --tokenomics per-stage cost table (token size nets out cache_read) ([751b79a](https://github.com/rjskene/pipeline/commit/751b79a55a251a3b2070fa012b29e5cd62241601))
+* **cost-report:** --tokenomics structure table + stage×structure cross-tab ([e179645](https://github.com/rjskene/pipeline/commit/e179645bc20252d1f64eb795c7c9d63cfa1fde82))
+* **cost-report:** config-driven per-model pricing; surface unpriced empty-model records ([c69adda](https://github.com/rjskene/pipeline/commit/c69adda3590637eba6c87e3324ddd352cdaef730))
+* **cost-report:** dedup by (session_id,issue,stage) max-total before totaling ([5b33162](https://github.com/rjskene/pipeline/commit/5b33162bf856eb6f35c0105895732f5d3a2bdf34))
+* **doctor:** route pipeline_config/labels_exist remediation to /pipeline:init ([#726](https://github.com/rjskene/pipeline/issues/726)) ([ec13a67](https://github.com/rjskene/pipeline/commit/ec13a676ed327eb89bc2c333dbdc1de29bdfaa95))
+* **dogfood-fixtures:** add b1 alpha module (PATH B fixture) ([c4ef8fe](https://github.com/rjskene/pipeline/commit/c4ef8fedf91f98856a375ee9e85b382dc071930f))
+* **dogfood-fixtures:** add b2 delta module (PATH B fixture) ([913da39](https://github.com/rjskene/pipeline/commit/913da3923f1171f1ecbbbf99392b9d2c068e95c4))
+* **execute,classify:** collapsed-D carried-forward context + escalation backstop ([#700](https://github.com/rjskene/pipeline/issues/700)) ([1c75e56](https://github.com/rjskene/pipeline/commit/1c75e5638390de9a7a7328eb8aaf53068e1eb4f7))
+* **fixture-b1:** add b1_beta fixture ([a9c4786](https://github.com/rjskene/pipeline/commit/a9c47860ae30c20f646b6ea6bbce4ce3ad73aa7a))
+* **fixture-b1:** add b1_gamma sourcing alpha+beta ([824d2ff](https://github.com/rjskene/pipeline/commit/824d2ff0331a82be5f3fc71547cd5313b36b9093))
+* **fixtures:** add b2 epsilon fixture ([7fe3b68](https://github.com/rjskene/pipeline/commit/7fe3b68ca9d8eb43d552ed9dde53948c583515cf))
+* **fixtures:** add b2 harness + delta fixture ([ab599ee](https://github.com/rjskene/pipeline/commit/ab599ee8fa88fa99acb70420f5f9e4498524f343))
+* **fixtures:** add b2 zeta fixture sourcing delta+epsilon ([973e149](https://github.com/rjskene/pipeline/commit/973e149bd5396ae2d9b280cc0bd069a018288384))
+* **fullsend:** collapse PATH D classify+plan+execute into one foreground inline Agent, skip per-stage 1b dispatch ([#715](https://github.com/rjskene/pipeline/issues/715)) ([47fc465](https://github.com/rjskene/pipeline/commit/47fc46502e6780857622d3e07b0e62f3b810c456))
+* **fullsend:** split-dispatch D inline foreground batch alongside B/C run-queue ([#700](https://github.com/rjskene/pipeline/issues/700)) ([27fe052](https://github.com/rjskene/pipeline/commit/27fe0526fc84a7a12601a81222d51caab02292ad))
+* **init:** seed commented PIPELINE_PRICE_* override block into generated config ([#734](https://github.com/rjskene/pipeline/issues/734)) ([17a1bc7](https://github.com/rjskene/pipeline/commit/17a1bc77a65570d5d1efac6a77a68d729ec83b75))
+* **inline-execute:** dispatch PATH B execute via inline Agent (no claude -p) ([bf250a4](https://github.com/rjskene/pipeline/commit/bf250a42a1df4baabdc9d54e34feee47ca992e08))
+* **inline-execute:** move PATH B PR-eval to inline dispatch mode in evaluate-issue-pr ([#748](https://github.com/rjskene/pipeline/issues/748)) ([75cf076](https://github.com/rjskene/pipeline/commit/75cf0762834c4f14a289dcf5ab69fb8c1ca44da7))
+* **inline-execute:** move PATH B to inline dispatch mode in execute-issue-plan ([#748](https://github.com/rjskene/pipeline/issues/748)) ([9eb55ef](https://github.com/rjskene/pipeline/commit/9eb55ef3dcb12e8166b5ccd0d0709dc13543bad2))
+* **inline-execute:** route PATH B execute via inline Agent batch in fullsend ([#748](https://github.com/rjskene/pipeline/issues/748)) ([3aee533](https://github.com/rjskene/pipeline/commit/3aee533bba597c830732464f8e26871ab04f3070))
+* **inline-execute:** route PATH B execute/PR-eval via inline Agent in run skill ([#748](https://github.com/rjskene/pipeline/issues/748)) ([dec111a](https://github.com/rjskene/pipeline/commit/dec111a5845fe4c164fdf85ed44be74e3738c4f7))
+* **pipeline:** collapse PATH D ceremony — inline the quick-fix path, skip redundant re-contexting ([f4c7037](https://github.com/rjskene/pipeline/commit/f4c7037115d8a53b2ad9fa4d340d3da53e0174a5))
+* **run:** collapse PATH D into single inline context, keep pr-eval separate ([#700](https://github.com/rjskene/pipeline/issues/700)) ([24b74db](https://github.com/rjskene/pipeline/commit/24b74db7be0b50d70252b7050ecd904a20d9326d))
+* **run:** route PATH D through one collapsed inline classify+plan+execute Agent ([#715](https://github.com/rjskene/pipeline/issues/715)) ([b17b3fc](https://github.com/rjskene/pipeline/commit/b17b3fcd01b5d40c9a90d2a3351471532412b155))
+* **token-cost:** add input/output/cache_read columns to per-day trend ([07470bc](https://github.com/rjskene/pipeline/commit/07470bc9c2df460d79dd43e9b5fbf73bf6563320))
+* **token-cost:** add input/output/cache_read columns to per-PR trend ([ca8c926](https://github.com/rjskene/pipeline/commit/ca8c92660af4bb4aa4fb00ae9884580d187d3c49))
+* **token-cost:** break out input/output/cache_read in per-issue size table ([6959cf9](https://github.com/rjskene/pipeline/commit/6959cf985e8e795357186d6660875d93a9f8857c))
+* **token-cost:** break out input/output/cache_read token columns in per-issue size + trend tables ([9c9ada3](https://github.com/rjskene/pipeline/commit/9c9ada30a3cfbce9d2fa080e3a1be818b1ebcdd1))
+* **token-cost:** JSON→markdown swap in helper payloads + dogfood reports (where no parse contract) ([c0cb99a](https://github.com/rjskene/pipeline/commit/c0cb99af3c9f1f11332ca041f4d5373bc49f001f))
+* **token-cost:** terser ## Classification emit guidance ([#728](https://github.com/rjskene/pipeline/issues/728)) ([ee4b6d6](https://github.com/rjskene/pipeline/commit/ee4b6d655146443226089912a6db505aba07d4c2))
+* **token-cost:** terser ## Evaluation emit guidance in evaluate-issue-pr ([#728](https://github.com/rjskene/pipeline/issues/728)) ([5528e99](https://github.com/rjskene/pipeline/commit/5528e99701a000152ecfffdecde5571fffc6fc2f))
+* **token-cost:** terser ## Implementation Plan emit guidance ([#728](https://github.com/rjskene/pipeline/issues/728)) ([890bff6](https://github.com/rjskene/pipeline/commit/890bff6257f01f5fcedcfc2a1c7965ee28ea44db))
+* **token-cost:** terser ## Plan Evaluation emit guidance ([#728](https://github.com/rjskene/pipeline/issues/728)) ([a68b2ed](https://github.com/rjskene/pipeline/commit/a68b2edafb1eca819d6f1d7a17e06edaf09141b5))
+* **token-cost:** terser artifact templates — verbosity-trim plan/eval/classify skills ([2f92069](https://github.com/rjskene/pipeline/commit/2f92069683eb66be11e04b887433f23a3277a0cc))
+* **tokenomics:** /pipeline:init seeds PIPELINE_PRICE_* override block into generated pipeline.config ([24b5305](https://github.com/rjskene/pipeline/commit/24b530592321ed6cf5a87b2d9a8ceb96a5746fab))
+* **tokenomics:** /pipeline:tokenomics — dogfood usage-analysis skill (backfill + cost/latency report) ([b262d8c](https://github.com/rjskene/pipeline/commit/b262d8c40ac31cbec43aa2681752dc020d8e87db))
+* **tokenomics:** /pipeline:tokenomics dogfood skill (backfill + report) ([3b5af78](https://github.com/rjskene/pipeline/commit/3b5af787dc8c258e3bb82ac092f4853f358aff70))
+
+
+### Bug Fixes
+
+* allowlist bare PIPELINE_PRICE drift token from test regex for [#734](https://github.com/rjskene/pipeline/issues/734) ([0158427](https://github.com/rjskene/pipeline/commit/0158427ffdbd63780f74b84a774f4afe42832513))
+* **dogfood-fixtures:** add d1 quick utility (PATH D fixture) ([0f1eaaf](https://github.com/rjskene/pipeline/commit/0f1eaaf70a2deffa338ab534374c788881da93e9))
+* **dogfood-fixtures:** add d2 echo utility (PATH D collapse validation) ([7b53cb8](https://github.com/rjskene/pipeline/commit/7b53cb87e8f37dcd6af8b2ca007395bbee50b0e0))
+* **dogfood-fixtures:** add d2 echo utility (PATH D collapse validation) ([7dc86b2](https://github.com/rjskene/pipeline/commit/7dc86b234a5d14f34d7256aece658df027254a79)), closes [#718](https://github.com/rjskene/pipeline/issues/718)
+* evaluation fixes for [#721](https://github.com/rjskene/pipeline/issues/721) — allowlist pipeline:tokenomics in namespace test ([38d9bc0](https://github.com/rjskene/pipeline/commit/38d9bc01024a7239a13e36b8a6c0bdec4bfb3b8b))
+* **inline-execute:** inline agent cost undercounted — forward hook logs final-turn usage as usage_complete=true ([bd15853](https://github.com/rjskene/pipeline/commit/bd158530fa4f3bb7d2cf639725c0a4c7aa2dbfdb))
+* **inline-execute:** mandate terminal-state directive in inline execute dispatch ([d862b89](https://github.com/rjskene/pipeline/commit/d862b89e05d6a6898997bb0267029c1d6f4120b3)), closes [#764](https://github.com/rjskene/pipeline/issues/764)
+* **inline-execute:** mandate terminal-state directive in inline execute dispatch — kill narrate-and-yield drop-out ([b0a0ef7](https://github.com/rjskene/pipeline/commit/b0a0ef71b075d427fda4798a8cd003b3f1fbe5b6))
+* **inline-execute:** stamp inline forward cost records usage_complete=false (lower-bound) ([2c651f4](https://github.com/rjskene/pipeline/commit/2c651f4bf106c7e5fdfc2bccacfc6730b798e06f))
+* **pipeline:** [#715](https://github.com/rjskene/pipeline/issues/715) follow-ups — PIPELINE_REPO wrap on post-plan + exclude base-branch metadata ([#716](https://github.com/rjskene/pipeline/issues/716)) ([be169c4](https://github.com/rjskene/pipeline/commit/be169c4dbd06e3790e437fdef5e8532ccf47d81e))
+* **pipeline:** PATH D collapse is contract-only — classify+plan+execute still run as separate contexts ([ae90c62](https://github.com/rjskene/pipeline/commit/ae90c62501938fdeda7f1c3fb2c849ac74fa6c0b))
+* **plan-issue:** wrap post-plan.sh call with PIPELINE_REPO= to propagate into subshell ([#716](https://github.com/rjskene/pipeline/issues/716)) ([fd1f5df](https://github.com/rjskene/pipeline/commit/fd1f5df3ddd7cbb3fa01d68b275ad3cc6d0aaa98))
+* **plan-waves:** guard empty-backtick Files-to-change grep under pipefail ([#730](https://github.com/rjskene/pipeline/issues/730)) ([c406bd0](https://github.com/rjskene/pipeline/commit/c406bd073f507f502c0acc20a9e9a4d1f15005f7))
+* **plan-waves:** pipefail kills wave computation when a plan comment has no backtick-wrapped Files-to-change paths ([8ac7ab2](https://github.com/rjskene/pipeline/commit/8ac7ab23aad187c82c5fedbd054d15b4cb022bd3))
+* **review:** harden blast-radius Test 1 to assert the rule body, not the heading ([#707](https://github.com/rjskene/pipeline/issues/707)) ([303c46c](https://github.com/rjskene/pipeline/commit/303c46c7f6a8b4b25c28d2a737ba9af7ded17fe1))
+* **review:** scrub residual 'spawned PATH B' framing in run skill + process-maps; guard it ([#748](https://github.com/rjskene/pipeline/issues/748)) ([7952065](https://github.com/rjskene/pipeline/commit/79520650b931c44cb369054f4914ef574a1b2d03))
+* **review:** tighten guard predicate + fail on empty report output ([#729](https://github.com/rjskene/pipeline/issues/729)) ([7df8b9a](https://github.com/rjskene/pipeline/commit/7df8b9ad34e28d614358458736df8f7ff141dd23))
+* **setup-worktree:** exclude untracked .claude/base-branch via common-dir git exclude ([#716](https://github.com/rjskene/pipeline/issues/716)) ([b0603f0](https://github.com/rjskene/pipeline/commit/b0603f0077bcc7d502a0c0250fd29e3430717d0a))
+* **token-cost:** drop missing-transcript skipped line from coverage-health ([2601240](https://github.com/rjskene/pipeline/commit/260124012469b3840832b05e92fdfe9d3e5d650b))
+* **token-cost:** drop missing-transcript skipped line from coverage-health for [#746](https://github.com/rjskene/pipeline/issues/746) ([cf6cad6](https://github.com/rjskene/pipeline/commit/cf6cad62a512a0f62b0ece64a5f84bd38fd26f03))
+* **tokenomics:** bake in Sonnet + Haiku list-price defaults — non-Opus models silently priced at Opus rates ([406b997](https://github.com/rjskene/pipeline/commit/406b997cc89aab335940cabd80aaafaf2d636f9c))
+* **tokenomics:** bake in Sonnet/Haiku list-price defaults ([#733](https://github.com/rjskene/pipeline/issues/733)) ([d44240f](https://github.com/rjskene/pipeline/commit/d44240fd7763e7d779c522b8ad4d5de2ff93acdd))
+
+
+### Miscellaneous Chores
+
+* release 0.21.0 (inline-agent dispatch migration) ([#774](https://github.com/rjskene/pipeline/issues/774)) ([7e501f4](https://github.com/rjskene/pipeline/commit/7e501f454cc63bfd649817c972f082a79523cb56))
+
 ## [0.20.7](https://github.com/rjskene/pipeline/compare/v0.20.6...v0.20.7) (2026-05-31)
 
 
