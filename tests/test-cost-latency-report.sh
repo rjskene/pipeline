@@ -1606,6 +1606,61 @@ case "$LB_LINE28" in
 esac
 rm -rf "$TMP28"
 
+# --- Scenario 29: duration columns render in minutes, not ms (#789 Task 1) ---
+# Every USER-FACING duration column switches to minutes (min = ms/60000, 1dp,
+# '--' passthrough). Internal --emit-rows-json + metrics-snapshot stay in ms.
+# Fixture: issue 229b (PR #131) PATH B with a 90000 ms (= 1.5 min) execute record.
+# Per-PATH `median dur` header reads (min) and the value renders 1.5, NOT 90000.
+inc_scenario "Scenario 29: duration columns render in minutes (#789)"
+
+TMP29="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP29/" 2>/dev/null
+printf '%s\n' '[
+  {"number":131,"title":"feat: minutes unit issue","additions":300,"deletions":100,"body":"Closes #231","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP29/prs.json"
+printf '%s\n' '{"number":131,"additions":300,"deletions":100,"comments":[]}' > "$TMP29/pr-131.json"
+printf '%s\n' '{"number":231,"labels":[],"comments":[]}' > "$TMP29/issue-231.json"
+{
+  echo '{"schema_version":1,"issue":"231","stage":"execute","session_id":"s29","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K231","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":90000}'
+} > "$TMP29/capture.jsonl"
+
+TABLE29="$(bash "$HELPER" --fixture "$TMP29" 2>/dev/null)"
+
+# (a) per-PATH table duration header reads (min), not (ms).
+if printf '%s' "$TABLE29" | grep -qE 'median dur\(min\)'; then
+  pass_msg "per-PATH/stage table duration header reads (min)"
+else
+  fail_msg "duration header should read median dur(min) (got: $(printf '%s\n' "$TABLE29" | grep -i 'PATH | N'))"
+fi
+if printf '%s' "$TABLE29" | grep -qE 'median dur\(ms\)'; then
+  fail_msg "duration header still reads (ms) — minutes switch incomplete"
+else
+  pass_msg "no duration header reads (ms) any more"
+fi
+
+# (b) per-PATH B-row duration cell renders 1.5 (90000 ms / 60000), NOT 90000.
+PATHB_ROW29="$(printf '%s\n' "$TABLE29" | grep -E '^B[[:space:]]*\|' | head -1)"
+DUR_CELL29="$(printf '%s' "$PATHB_ROW29" | awk -F'|' '{gsub(/[ ]/,"",$5); print $5}')"
+if [ "$DUR_CELL29" = "1.5" ]; then
+  pass_msg "per-PATH B median dur == 1.5 min (90000 ms rendered in minutes)"
+else
+  fail_msg "per-PATH B median dur should be 1.5 min, got $DUR_CELL29 (row=$PATHB_ROW29)"
+fi
+case "$PATHB_ROW29" in
+  *90000*) fail_msg "per-PATH duration cell leaked raw ms (90000): $PATHB_ROW29" ;;
+  *) pass_msg "per-PATH duration cell does not render raw ms (90000 absent)" ;;
+esac
+
+# (c) internal --emit-rows-json stays in raw ms (duration_ms == 90000).
+ROWS29="$(bash "$HELPER" --fixture "$TMP29" --emit-rows-json 2>/dev/null)"
+DMS29="$(printf '%s' "$ROWS29" | jq -r '.[] | select(.issue==231) | .duration_ms' 2>/dev/null)"
+if [ "$DMS29" = "90000" ]; then
+  pass_msg "--emit-rows-json duration_ms stays raw ms (90000), not minutes"
+else
+  fail_msg "--emit-rows-json duration_ms should stay 90000 (raw ms), got $DMS29"
+fi
+rm -rf "$TMP29"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

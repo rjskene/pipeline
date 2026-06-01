@@ -740,7 +740,7 @@ emit_banner() {
 # token/duration/per-loc medians are over token-bearing rows only ('--' when
 # the PATH has no token-bearing rows).
 emit_path_table() {
-  echo 'PATH | N  | median loc | median tokens | median dur(ms) | median tokens/loc | median ms/loc'
+  echo 'PATH | N  | median loc | median tokens | median dur(min) | median tokens/loc | median ms/loc'
   sort -k2,2 "$ROWS_TSV" | awk -F'\t' '
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
@@ -753,13 +753,15 @@ emit_path_table() {
       if (v == int(v)) return sprintf("%d", v);
       return sprintf("%.1f", v);
     }
+    # min_fmt(ms) — render a raw ms duration in MINUTES (ms/60000, 1dp); "" → "--".
+    function min_fmt(v) { if (v == "") return "--"; return sprintf("%.1f", v/60000) }
     function flush(   lm) {
       if (cur == "") return;
       lm = median(locs, nrow);
-      printf "%-4s | %-2d | %-10s | %-13s | %-14s | %-17s | %-13s\n", \
+      printf "%-4s | %-2d | %-10s | %-13s | %-15s | %-17s | %-13s\n", \
         cur, nrow, fmt(lm), \
         (ntok ? fmt(median(toks, ntok)) : "--"), \
-        (ntok ? fmt(median(durs, ntok)) : "--"), \
+        (ntok ? min_fmt(median(durs, ntok)) : "--"), \
         (ntok ? fmt(median(tpls, ntok)) : "--"), \
         (ntok ? fmt(median(mpls, ntok)) : "--");
       cur=""; nrow=0; ntok=0; delete locs; delete toks; delete durs; delete tpls; delete mpls;
@@ -775,7 +777,7 @@ emit_path_table() {
 # the per-(issue,stage) sums; stages with no records render '--'.
 emit_stage_table() {
   echo ""
-  echo 'STAGE | N | median tokens | median dur(ms)'
+  echo 'STAGE | N | median tokens | median dur(min)'
   printf '%s\n' "$STAGE_TSV" | awk -F'\t' '
     function median(arr, n,   i, j, tmp) {
       for (i=1; i<n; i++) for (j=i+1; j<=n; j++) if (arr[i] > arr[j]) { tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp }
@@ -788,6 +790,8 @@ emit_stage_table() {
       if (v == int(v)) return sprintf("%d", v);
       return sprintf("%.1f", v);
     }
+    # min_fmt(ms) — render a raw ms duration in MINUTES (ms/60000, 1dp); "" → "--".
+    function min_fmt(v) { if (v == "") return "--"; return sprintf("%.1f", v/60000) }
     NF >= 4 { s=$2; c[s]++; tk[s,c[s]]=$3; dr[s,c[s]]=$4 }
     END {
       m = split("classify plan plan-eval execute pr-eval orchestrator", order, " ");
@@ -798,7 +802,7 @@ emit_stage_table() {
         note = (s == "orchestrator" && cnt > 0) ? "  (tokens excl. cache_read, #668)" : "";
         if (cnt == 0) { printf "%-9s | %-2d | %-13s | %-13s%s\n", s, 0, "--", "--", note; continue }
         for (i=1; i<=cnt; i++) { tarr[i]=tk[s,i]; darr[i]=dr[s,i] }
-        printf "%-9s | %-2d | %-13s | %-13s%s\n", s, cnt, fmt(median(tarr, cnt)), fmt(median(darr, cnt)), note;
+        printf "%-9s | %-2d | %-13s | %-13s%s\n", s, cnt, fmt(median(tarr, cnt)), min_fmt(median(darr, cnt)), note;
         delete tarr; delete darr;
       }
     }'
@@ -825,7 +829,7 @@ emit_top_slow_stages() {
   printf '%s\n' "$STAGE_TSV" | awk -F'\t' 'NF >= 4 && $4 != "" { printf "%s\t%s\t%s\n", $4, $1, $2 }' \
     | sort -t "$(printf '\t')" -k1,1 -gr \
     | head -"$TOPN" \
-    | awk -F'\t' '{ printf "issue #%s / %s: %s ms\n", $2, $3, $1 }'
+    | awk -F'\t' '{ printf "issue #%s / %s: %.1f min\n", $2, $3, $1/60000 }'
 }
 
 # Over-served outliers: every row with over_served == 1.
