@@ -20,7 +20,11 @@
 #         position; prints the remaining args (one per line) to stdout.
 #
 # Requires: gh (>= 2.0 for mergeStateStatus), jq, $PIPELINE_REPO and
-#           $PIPELINE_BASE_BRANCH in env.
+#           $PIPELINE_BASE_BRANCH in env. When $PIPELINE_BASE_BRANCH is empty
+#           the gate self-sources pipeline.config (resolved via
+#           PIPELINE_PROJECT_ROOT / $(pwd) / git toplevel) to recover it; if it
+#           is STILL empty after that, the gate `return 2`s with a diagnostic
+#           rather than emitting a spurious block-base-mismatch (issue #801).
 
 auto_merge_should_fire() {
   local issue="$1" pr="$2"
@@ -60,6 +64,31 @@ auto_merge_should_fire() {
   # bypassed in production (stale rendered spawn-claude.sh, consumer
   # settings.json shadowing) — see dev/audits/295-root-cause.md. This
   # eval-time check is the load-bearing zero-data-loss gate.
+  # Self-source pipeline.config when the base branch is not in env (issue #801).
+  # Callers source config in one bash step and run the gate in a separate
+  # subshell; a non-exported PIPELINE_BASE_BRANCH is then empty here and made
+  # the base check spuriously emit block-base-mismatch. Resolve the project
+  # root (NOT this script's dir — it is sourced from the plugin cache, whose
+  # parent is not the consumer root) and source the config to recover it.
+  if [ -z "${PIPELINE_BASE_BRANCH:-}" ]; then
+    local _amg_root _amg_cfg
+    _amg_root="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+    _amg_cfg="$_amg_root/pipeline.config"
+    if [ ! -f "$_amg_cfg" ]; then
+      _amg_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+      [ -n "$_amg_root" ] && _amg_cfg="$_amg_root/pipeline.config"
+    fi
+    # shellcheck disable=SC1090
+    [ -f "$_amg_cfg" ] && source "$_amg_cfg"
+  fi
+  # Fail-safe (issue #801): an empty base after the recovery attempt is a hard
+  # config error, NOT a real base divergence — never let it masquerade as
+  # block-base-mismatch. Diagnosable, fail-closed (mirrors the missing-jq path).
+  if [ -z "${PIPELINE_BASE_BRANCH:-}" ]; then
+    echo "[auto-merge-gate] ERROR: PIPELINE_BASE_BRANCH is empty (pipeline.config not found/sourced); cannot evaluate base — set PIPELINE_BASE_BRANCH or run from the project root" >&2
+    return 2
+  fi
+
   local base
   base=$(gh pr view "$pr" --repo "$PIPELINE_REPO" --json baseRefName \
     --jq .baseRefName 2>/dev/null)
