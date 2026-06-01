@@ -1,0 +1,17 @@
+{
+  "number": 105,
+  "createdAt": "2026-05-25T09:00:00Z",
+  "labels": [],
+  "body": "pre issue 105",
+  "comments": [
+    {
+      "body": "## Implementation Plan\nplan-pending body"
+    },
+    {
+      "body": "## Classification\nrecommended_path:** B"
+    },
+    {
+      "body": "## Evaluation\nLGTM — APPROVE on first pass."
+    }
+  ]
+}

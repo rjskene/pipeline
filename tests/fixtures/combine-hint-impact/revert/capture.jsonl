@@ -1,0 +1,10 @@
+{"schema_version":1,"issue":"501","stage":"execute","session_id":"s501","record_key":"rk501","tokens":{"input":1000,"output":0,"cache_read":0,"cache_creation":1000,"total":2000}}
+{"schema_version":1,"issue":"502","stage":"execute","session_id":"s502","record_key":"rk502","tokens":{"input":1000,"output":0,"cache_read":0,"cache_creation":1000,"total":2000}}
+{"schema_version":1,"issue":"503","stage":"execute","session_id":"s503","record_key":"rk503","tokens":{"input":1000,"output":0,"cache_read":0,"cache_creation":1000,"total":2000}}
+{"schema_version":1,"issue":"504","stage":"execute","session_id":"s504","record_key":"rk504","tokens":{"input":1000,"output":0,"cache_read":0,"cache_creation":1000,"total":2000}}
+{"schema_version":1,"issue":"505","stage":"execute","session_id":"s505","record_key":"rk505","tokens":{"input":1000,"output":0,"cache_read":0,"cache_creation":1000,"total":2000}}
+{"schema_version":1,"issue":"601","stage":"execute","session_id":"s601","record_key":"rk601","tokens":{"input":1400,"output":0,"cache_read":0,"cache_creation":1400,"total":2800}}
+{"schema_version":1,"issue":"602","stage":"execute","session_id":"s602","record_key":"rk602","tokens":{"input":1400,"output":0,"cache_read":0,"cache_creation":1400,"total":2800}}
+{"schema_version":1,"issue":"603","stage":"execute","session_id":"s603","record_key":"rk603","tokens":{"input":1400,"output":0,"cache_read":0,"cache_creation":1400,"total":2800}}
+{"schema_version":1,"issue":"604","stage":"execute","session_id":"s604","record_key":"rk604","tokens":{"input":1400,"output":0,"cache_read":0,"cache_creation":1400,"total":2800}}
+{"schema_version":1,"issue":"605","stage":"execute","session_id":"s605","record_key":"rk605","tokens":{"input":1400,"output":0,"cache_read":0,"cache_creation":1400,"total":2800}}

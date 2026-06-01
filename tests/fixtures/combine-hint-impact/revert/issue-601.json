@@ -1,0 +1,17 @@
+{
+  "number": 601,
+  "createdAt": "2026-05-20T09:00:00Z",
+  "labels": [],
+  "body": "post 601 <!-- pipeline:path-hint=B -->",
+  "comments": [
+    {
+      "body": "## Implementation Plan\nplan-pending"
+    },
+    {
+      "body": "## Classification\nrecommended_path:** B"
+    },
+    {
+      "body": "## Evaluation\nAPPROVE first pass."
+    }
+  ]
+}
