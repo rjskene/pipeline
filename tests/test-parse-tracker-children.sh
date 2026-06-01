@@ -237,6 +237,45 @@ else
   fail_msg "Case J: helper exited non-zero ($?), expected 0"
 fi
 
+# ============================================================================
+# POSIX / mawk portability (#800): the embedded awk programs must NOT depend on
+# the gawk-only 3-arg match(str, regex, arr) extension. On mawk (the Debian/
+# Ubuntu default awk) the 3-arg form is a hard parse error, so auto-close
+# silently no-ops. Run the helper with a PATH shim that forces `awk` -> mawk.
+# ============================================================================
+
+if command -v mawk >/dev/null 2>&1; then
+  SHIM="$TMP/awkshim"
+  mkdir -p "$SHIM"
+  ln -sf "$(command -v mawk)" "$SHIM/awk"
+
+  # ---- Case K: default mode parses under mawk ----
+  echo "Case K: default mode works when awk is mawk"
+  inc
+  out=$(PATH="$SHIM:$PATH" bash "$HELPER" "$A" 2>"$TMP/err-k") \
+    || { fail_msg "Case K: exit non-zero"; cat "$TMP/err-k"; }
+  expected=$'101\n102\n103'
+  if [ "$out" = "$expected" ] && [ ! -s "$TMP/err-k" ]; then
+    pass_msg "Case K: default-mode children parsed under mawk, no awk errors"
+  else
+    fail_msg "Case K: expected '$expected' got '$out' (stderr: $(cat "$TMP/err-k"))"
+  fi
+
+  # ---- Case L: --fallback-mentions mode parses under mawk ----
+  echo "Case L: --fallback-mentions works when awk is mawk"
+  inc
+  out=$(PATH="$SHIM:$PATH" bash "$HELPER" "$F" --fallback-mentions 2>"$TMP/err-l") \
+    || { fail_msg "Case L: exit non-zero"; cat "$TMP/err-l"; }
+  expected=$'101\n102\n103\n104'
+  if [ "$out" = "$expected" ] && [ ! -s "$TMP/err-l" ]; then
+    pass_msg "Case L: fallback-mode mentions parsed under mawk, no awk errors"
+  else
+    fail_msg "Case L: expected '$expected' got '$out' (stderr: $(cat "$TMP/err-l"))"
+  fi
+else
+  echo "Case K/L: mawk not installed — skipping POSIX-portability checks"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
