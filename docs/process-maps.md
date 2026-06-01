@@ -100,14 +100,31 @@ short-circuits; otherwise label, then heuristics.
 Caption: marker is authoritative; otherwise label is authoritative; heuristics
 are the unmarked-untagged fallback (default = B).
 
-| Path | Produces                                                            |
-|------|---------------------------------------------------------------------|
-| A    | Flat edits in the worktree. No TDD cycle.                           |
-| B    | TDD discipline (red->green->commit) inline; no spawned worker.      |
-| C    | One or more `tdd-implementer` subagents, scoped per target dir.     |
-|      | A delegation hook blocks orchestrator-side Edit/Write on impl files.|
-| D    | Inline `tdd-implementer` in the orchestrator session. Skips the     |
-|      | pre-PR review loop in `execute-issue-plan` Step 8.                  |
+## Dispatch transport
+
+Once PATH is resolved, the transport (how the execute/eval agent launches) keys
+off the PATH letter. Worktree creation (`setup-worktree.sh`) is identical across
+all paths — only the launch differs.
+
+```
+  PATH letter -> transport
+    A,B,D -> inline  Agent(subagent_type=...) in orchestrator session
+       A -> Agent(general-purpose)
+       B -> Agent(general-purpose)
+       D -> Agent(tdd-implementer)
+    C     -> spawn   spawn-claude.sh -> claude -p
+                     (+ run-queue.sh / tmux for multi-issue)
+```
+
+Caption: inline `Agent()` is the default transport; spawn
+(`spawn-claude.sh` / `run-queue.sh` / tmux) is PATH C only.
+
+| Path | Transport                          | Produces                                |
+|------|------------------------------------|-----------------------------------------|
+| A    | inline `Agent(general-purpose)`    | Flat edits in the worktree. No TDD cycle.|
+| B    | inline `Agent(general-purpose)`    | TDD discipline (red->green->commit) inline; no spawned worker.|
+| C    | spawn `spawn-claude.sh` / `run-queue.sh` tmux | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
+| D    | inline `Agent(tdd-implementer)`    | Inline `tdd-implementer` in the orchestrator session. Skips the pre-PR review loop in `execute-issue-plan` Step 8.|
 
 ## Wave-plan flow
 
@@ -153,8 +170,8 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
            |
            v
   +--------+----------+
-  | run-queue.sh      |   tmux, max 3 workers concurrent
-  |  (execute)        |
+  | execute           |   B/D: inline Agent() in orchestrator
+  |                   |   C:   run-queue.sh / tmux, max 3 concurrent
   +--------+----------+
            |
            v
@@ -180,7 +197,7 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
    +-------+-------+
    | yes           | no
    v               v
- squash-merge   manual merge (block-* reason posted)
+ merge-commit   manual merge (block-* reason posted)
  + close issue
 ```
 

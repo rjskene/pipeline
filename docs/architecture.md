@@ -1,10 +1,10 @@
-# Architecture — dispatch, waves, spawn-claude
+# Architecture — dispatch, waves, transport
 
-Internal mechanism notes. Read this when touching dispatch code, the full-send wave planner, or `spawn-claude.sh`.
+Internal mechanism notes. Read this when touching dispatch code, the full-send wave planner, or the transports: inline `Agent()` (the default — PATH A/B/D) and `spawn-claude.sh` (PATH C only).
 
 ## Dispatch model (hybrid)
 
-Pipeline stages dispatch in one of two ways, keyed off the path label written by `/pipeline:classify-issue`:
+Pipeline stages dispatch in one of two ways, keyed off the path label written by `/pipeline:classify-issue`. Inline `Agent()` in the orchestrator session is the **default** (PATH A/B/D); `spawn-claude.sh` → `claude -p` is the **PATH C only** transport:
 
 - **PATH A** (`docs-only`) — execute-issue-plan and evaluate-issue-pr run inline via `Agent(subagent_type='general-purpose', ...)` from the orchestrator session. No `spawn-claude.sh`, no `claude -p`, no tmux. The worktree is still created by `setup-worktree.sh`; only the agent launch is inline. Routing logic lives in `skills/run/SKILL.md` Step 6 and Step 7.
 - **PATH B** (`standard`) — as of #748, execute-issue-plan and evaluate-issue-pr also run inline via `Agent(subagent_type='general-purpose', ...)` from the orchestrator session, exactly like PATH A — no spawned `claude -p` worker, no tmux. The worktree is still created by `setup-worktree.sh`; only the launch is inline. B's red→green discipline comes from the plan's Task 0 `superpowers:test-driven-development` bookend inside execute-issue-plan, identical to how a spawned B worker ran it — so the transport flip changes only the launch, eliminating the `claude -p` stream stall (boots, ~13s CPU, frozen log, 0 commits, `Sl+`) and the inverted cache_read:cache_creation ratio it caused, without changing the TDD discipline. The inline B execute Agent and inline B PR-eval Agent stay SEPARATE inline contexts (evaluator independence).
