@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.22.3](https://github.com/rjskene/pipeline/compare/v0.22.2...v0.22.3) (2026-06-02)
+
+
+### Features
+
+* **status-table:** orphan first-level sort by stage — ready → human → brainstorm → later ([aa4273e](https://github.com/rjskene/pipeline/commit/aa4273e6640595f73778d57b6ad12446f9a2fa61))
+* **status-table:** orphan first-level sort by stage ordinal ([724ad95](https://github.com/rjskene/pipeline/commit/724ad95fa4926d1520b728f81c0d9eefb51ff3d3)), closes [#883](https://github.com/rjskene/pipeline/issues/883)
+* **tokenomics:** emit agent_id on forward inline records ([7158cc0](https://github.com/rjskene/pipeline/commit/7158cc0ed2ff8465326aeb761dde2d1c53ed07cd))
+* **tokenomics:** emit agent_id on retroactive inline records ([e114cb7](https://github.com/rjskene/pipeline/commit/e114cb73fe80a08b092085f73af515954ae04967))
+
+
+### Bug Fixes
+
+* **boot:** prefer claude-pipeline-local cache glob to locate resolver in SKILL Boot snippets ([86f43c0](https://github.com/rjskene/pipeline/commit/86f43c0ab7ef6b4850591b63faf743b2ad6295a1))
+* **ci-fix-loop:** query real gh pr checks state field instead of conclusion ([310f41d](https://github.com/rjskene/pipeline/commit/310f41ddf03c9af45d2502f08fc897af0225b521))
+* **ci-fix-loop:** query real gh pr checks state field instead of conclusion ([c90ef1c](https://github.com/rjskene/pipeline/commit/c90ef1ca34f7437fce5f36384f75ddcfed6d49ac)), closes [#876](https://github.com/rjskene/pipeline/issues/876)
+* **plugin-root:** dogfood tie-break misses in worktree subagents — execute/eval run stale published cache (0.21.6) ([8a55969](https://github.com/rjskene/pipeline/commit/8a559698ee27a03e99ffd2c5f8bfff5d194bd647))
+* **plugin-root:** guard worktree git fallback against set -e abort ([#885](https://github.com/rjskene/pipeline/issues/885)) ([47e9703](https://github.com/rjskene/pipeline/commit/47e97030e0fe8cb9795655eec104c61877abfb0c))
+* **plugin-root:** normalize worktree $PWD to main-repo root and export live projectPath in dogfood tie-break ([6478a67](https://github.com/rjskene/pipeline/commit/6478a674211715992a32d319c44a4d7afe87eca3))
+* **test:** exclude claude-pipeline-local/pipeline cache path from namespace lint ([#878](https://github.com/rjskene/pipeline/issues/878)) ([7d09fda](https://github.com/rjskene/pipeline/commit/7d09fda2bc4471c23dbdace59d8c85a6cf2be5b8))
+* **tokenomics:** dedup forward/retroactive pairs on agent_id ([#880](https://github.com/rjskene/pipeline/issues/880)) ([eb56ae3](https://github.com/rjskene/pipeline/commit/eb56ae358df76943c9bae95acc7e6296d4ece690))
+* **tokenomics:** dedup forward/retroactive records on agent_id ([#880](https://github.com/rjskene/pipeline/issues/880)) ([ef8bb93](https://github.com/rjskene/pipeline/commit/ef8bb9330dfc605092fd8e47f10a80641cac5024))
+
 ## [0.22.2](https://github.com/rjskene/pipeline/compare/v0.22.1...v0.22.2) (2026-06-02)
 
 
