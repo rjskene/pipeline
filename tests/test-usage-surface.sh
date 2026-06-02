@@ -138,6 +138,14 @@ if grep -qE '^# *PIPELINE_USAGE_CAP_TOKENS' "$CONFIG_EXAMPLE"; then pass_msg "PI
 # The explanatory block references the dogfood gating substrate.
 if grep -q 'PIPELINE_LOGS_ENABLED' "$CONFIG_EXAMPLE" && grep -qi 'usage read-out' "$CONFIG_EXAMPLE"; then pass_msg "config example references gating + read-out block"; else fail_msg "config example missing gating/read-out explanatory block"; fi
 
+# --- Scenario 6: surface points wired into status + fullsend ---
+inc_scenario "Scenario 6: surface points wired into status + fullsend"
+
+STATUS_SKILL="$REPO_ROOT/skills/status/SKILL.md"
+FULLSEND_SKILL="$REPO_ROOT/skills/fullsend/SKILL.md"
+if grep -q 'usage-surface.sh' "$STATUS_SKILL"; then pass_msg "status SKILL references usage-surface.sh"; else fail_msg "status SKILL missing usage-surface.sh"; fi
+if grep -q 'usage-surface.sh' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL references usage-surface.sh"; else fail_msg "fullsend SKILL missing usage-surface.sh"; fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

@@ -75,8 +75,13 @@ The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PI
 
 1. Run the existing **execute → 6b → eval-pr → greenlight-merge** machinery (Steps 5–7 wave-by-wave) scoped to this leg's issue numbers.
 2. **Base advance** — perform the inter-wave-style local base-tip advance: `git -C "$MAIN_REPO" checkout "$PIPELINE_BASE_BRANCH"` then `git -C "$MAIN_REPO" pull --ff-only --quiet origin "$PIPELINE_BASE_BRANCH"` so the next leg's worktrees inherit this leg's merged work (same #626 reason as the `### Inter-wave pull`).
-3. **End-of-leg bug filing** (see below).
-4. Proceed to the next leg.
+3. **Usage read-out at the leg boundary** (dogfood-only, #725) — after the base advance, render the rolling-window usage read-out and surface its headroom / throttle-ETA so the operator can size the next leg with the headroom number in hand. READ-ONLY advisory; never gate-fatal. **NO automated hold / queue / pacing is performed** — the read-out is purely informational (the control loop is explicitly out of scope per #725):
+   ```bash
+   PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" \
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-surface.sh" || true
+   ```
+4. **End-of-leg bug filing** (see below).
+5. Proceed to the next leg.
 
 **End-of-leg bug filing.** A **SINGLE serialized orchestrator action** at the end of each leg collects all signals from that leg — eval-pr `block-*` flags, Step-6b CI-fix repairs, execute `FAILED`/off-plan reports, and any skipped/halted issues — and files them. Before each `gh issue create`, it **dedups** against (1) currently-open issues and (2) the running campaign-filed set, so two legs cannot double-file the same bug (the cross-leg race guard). This is **file-only — no auto-fold** of related signals into one issue (auto-fold is deferred).
 
