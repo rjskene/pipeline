@@ -22,7 +22,7 @@ decision it forced. It is the durable record behind issues #721, #723, #707,
 ## Critical Path
 
 ```
-#721  tokenomics skill — backfill + 3-dim report + per-day trend + execute-concurrency assessment
+#721  tokenomics skill — backfill + 3-dim report + per-day window (--since/--until/--per-day) + per-N/per-LOC columns + durable history snapshot + execute-concurrency assessment
   │     (THE GATE: produces cost numbers, the concurrency ceiling, and the governor's data feed)
   ├─→ #725  usage-governor (opt-in sustained-cap pacing)      ← consumes #721 capture
   ├─→ #723  inline migration (P1, primary architecture)        ← needs concurrency ceiling
@@ -245,7 +245,7 @@ whether Path 2 holds or we flip to Path 1.
 | Issue | Role | Status |
 |---|---|---|
 | #450 | epic — measure→intervene; two intervention axes | tracker |
-| **#721** | tokenomics skill — backfill + 3-dim report + trend + concurrency assessment | **the gate** |
+| **#721** | tokenomics skill — backfill + 3-dim report + per-day window + per-N/per-LOC columns + history snapshot + concurrency assessment | **the gate** |
 | #723 | `claude -p`→inline migration (primary architecture; `claude -p` opt-in) | P1 |
 | #707 | feature-based B→D routing (first migration slice) | ready |
 | #725 | opt-in usage-governor (sustained-cap pacing) | P2, depends #721 |

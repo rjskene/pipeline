@@ -132,7 +132,7 @@ What `fullsend` does across a slate of issues — file-conflict serialization,
 wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
 
 ```
-  fullsend <issues...> [--manual-merge]
+  fullsend <issues...> [--manual-merge] [--spawn] [--campaign]
            |
            v
   +--------+----------+
@@ -203,6 +203,8 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
 
 Caption: `--manual-merge` opt-out (flag or `manual-merge` label) stops short of
 the auto-merge gate even when all four greenlight conditions hold.
+
+Campaign mode (`--campaign`): `scripts/plan-campaign.sh` partitions the approved set into ordered **legs**, each run as one wave through the flow above. Per-leg caps are `PIPELINE_CAMPAIGN_MAX_BC` (default 2 — expensive PATH-B/C) and `PIPELINE_CAMPAIGN_MAX_AD` (default 5 — cheap PATH-A/D), overridable per-invocation via `--max-bc=N` / `--max-ad=N`. There is NO `PIPELINE_*_LEG_CAP` var — these two are the only knobs.
 
 ## Entrypoints
 
