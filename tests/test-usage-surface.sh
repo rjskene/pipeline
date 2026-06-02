@@ -94,6 +94,34 @@ WD="$(PIPELINE_LOGS_ENABLED=true bash "$HELPER" \
   --window-hours 5 --cap-tokens 1000000 --now 2026-06-02T12:00:00Z 2>&1)"
 if printf '%s' "$WD" | grep -q 'window=30000tok'; then pass_msg "dedup: record_key last-write + (session,issue,stage) max_by (=30000tok)"; else fail_msg "wrong deduped sum (got: $WD)"; fi
 
+# --- Scenario 4: headroom + throttle-ETA ---
+inc_scenario "Scenario 4: headroom + throttle-ETA"
+
+# 4a: headroom = cap - window_sum (floored at 0). cap 120000, window 60000 → 60000.
+# burn = 60000 / span(=min(5, 12:00-08:00=4)=4h) = 15000/h.
+# eta_minutes = 60000 / 15000 * 60 = 240m → "~4h 0m".
+H4="$(PIPELINE_LOGS_ENABLED=true bash "$HELPER" \
+  --capture-log "$FIXTURE_DIR/capture-window.jsonl" \
+  --window-hours 5 --cap-tokens 120000 --now 2026-06-02T12:00:00Z 2>&1)"
+if printf '%s' "$H4" | grep -q 'headroom=60000tok'; then pass_msg "headroom = cap - window_sum (=60000tok)"; else fail_msg "wrong headroom (got: $H4)"; fi
+if printf '%s' "$H4" | grep -q 'throttle-ETA ~4h 0m'; then pass_msg "throttle-ETA ~4h 0m at observed burn"; else fail_msg "wrong throttle-ETA (got: $H4)"; fi
+
+# 4b: usage >= cap → headroom 0tok, ETA "now (cap reached)".
+H4B="$(PIPELINE_LOGS_ENABLED=true bash "$HELPER" \
+  --capture-log "$FIXTURE_DIR/capture-window.jsonl" \
+  --window-hours 5 --cap-tokens 50000 --now 2026-06-02T12:00:00Z 2>&1)"
+if printf '%s' "$H4B" | grep -q 'headroom=0tok'; then pass_msg "cap reached → headroom=0tok"; else fail_msg "cap reached headroom not 0 (got: $H4B)"; fi
+if printf '%s' "$H4B" | grep -q 'throttle-ETA now (cap reached)'; then pass_msg "cap reached → ETA now (cap reached)"; else fail_msg "cap reached ETA wrong (got: $H4B)"; fi
+
+# 4c: zero burn (no in-window records) → ETA "--", headroom = cap (no div0).
+# now far in the future so all fixture records fall outside the window.
+H4C="$(PIPELINE_LOGS_ENABLED=true bash "$HELPER" \
+  --capture-log "$FIXTURE_DIR/capture-window.jsonl" \
+  --window-hours 5 --cap-tokens 120000 --now 2026-06-09T12:00:00Z 2>&1)"
+if printf '%s' "$H4C" | grep -q 'window=0tok'; then pass_msg "no in-window records → window=0tok"; else fail_msg "expected window=0tok (got: $H4C)"; fi
+if printf '%s' "$H4C" | grep -q 'headroom=120000tok'; then pass_msg "zero burn → headroom = cap"; else fail_msg "zero burn headroom wrong (got: $H4C)"; fi
+if printf '%s' "$H4C" | grep -q 'throttle-ETA --'; then pass_msg "zero burn → ETA -- (no div0)"; else fail_msg "zero burn ETA not -- (got: $H4C)"; fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

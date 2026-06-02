@@ -111,8 +111,9 @@ fi
 #   (2) group_by(session_id,issue,stage) | max_by(.tokens.total)
 #       (records missing session_id passed through untouched)
 # Then keep records whose ts_start is non-empty AND >= (now - window_hours),
-# compared via fromdateiso8601; sum tokens.total.
-WINDOW_SUM="$(jq -rs \
+# compared via fromdateiso8601. Emit "<sum> <earliest-in-window-epoch|->" so the
+# caller can compute the elapsed span for the burn-rate projection.
+WINDOW_DATA="$(jq -rs \
   --arg now "$NOW" --argjson wh "$WINDOW_HOURS" '
   ( ([ .[] | select(has("record_key") and .record_key != null) ]
        | group_by(.record_key) | map(.[-1]))
@@ -124,10 +125,15 @@ WINDOW_SUM="$(jq -rs \
   | ($nowsec - ($wh * 3600)) as $cutoff
   | [ .[]
       | select((.ts_start // "") != "")
-      | select((.ts_start | fromdateiso8601) >= $cutoff)
-      | (.tokens.total // 0) ]
-  | add // 0
+      | { ts: (.ts_start | fromdateiso8601), tot: (.tokens.total // 0) }
+      | select(.ts >= $cutoff) ] as $in
+  | (($in | map(.tot) | add) // 0) as $sum
+  | (if ($in | length) == 0 then "-" else ($in | map(.ts) | min) end) as $earliest
+  | "\($sum) \($earliest)"
 ' "$CAPTURE_LOG" 2>/dev/null)"
+
+WINDOW_SUM="${WINDOW_DATA%% *}"
+EARLIEST_EPOCH="${WINDOW_DATA##* }"
 
 # Defensive: if jq failed (malformed log / bad clock) degrade gracefully.
 if [ -z "$WINDOW_SUM" ] || ! printf '%s' "$WINDOW_SUM" | grep -qE '^[0-9]+$'; then
@@ -135,4 +141,44 @@ if [ -z "$WINDOW_SUM" ] || ! printf '%s' "$WINDOW_SUM" | grep -qE '^[0-9]+$'; th
   exit 0
 fi
 
-echo "Usage read-out (${WINDOW_HOURS}h window): window=${WINDOW_SUM}tok / cap=${CAP_TOKENS}tok"
+# --- headroom + throttle-ETA projection ---
+# headroom = max(0, cap - window_sum). When usage >= cap, ETA "now (cap reached)".
+# Otherwise burn_per_hour = window_sum / span_hours, where span_hours =
+# min(window_hours, now - earliest-in-window-ts) in hours. ETA minutes =
+# headroom / burn_per_hour * 60, rendered "~Nm" (or "~Nh Mm" when >= 60m).
+# When window_sum == 0 (no burn) ETA renders "--" (no division by zero).
+NOW_EPOCH="$(date -u -d "$NOW" +%s 2>/dev/null || echo "")"
+
+read -r HEADROOM ETA < <(awk \
+  -v sum="$WINDOW_SUM" -v cap="$CAP_TOKENS" -v wh="$WINDOW_HOURS" \
+  -v earliest="$EARLIEST_EPOCH" -v now="$NOW_EPOCH" '
+  BEGIN {
+    headroom = cap - sum;
+    if (headroom < 0) headroom = 0;
+
+    if (sum >= cap) { print headroom, "now (cap reached)"; exit }
+    if (sum <= 0)   { print headroom, "--"; exit }
+
+    # elapsed span in hours, capped at the window length, floored to a small
+    # epsilon to avoid div0 when earliest == now.
+    span_h = wh;
+    if (earliest != "-" && now != "") {
+      elapsed_h = (now - earliest) / 3600.0;
+      if (elapsed_h < span_h) span_h = elapsed_h;
+    }
+    if (span_h < 0.0001) span_h = 0.0001;
+
+    burn_per_hour = sum / span_h;
+    eta_min = headroom / burn_per_hour * 60.0;
+    eta_min_int = int(eta_min + 0.5);
+
+    if (eta_min_int >= 60) {
+      h = int(eta_min_int / 60);
+      m = eta_min_int % 60;
+      printf "%d ~%dh %dm\n", headroom, h, m;
+    } else {
+      printf "%d ~%dm\n", headroom, eta_min_int;
+    }
+  }')
+
+echo "Usage read-out (${WINDOW_HOURS}h window): window=${WINDOW_SUM}tok / cap=${CAP_TOKENS}tok — headroom=${HEADROOM}tok — throttle-ETA ${ETA}"
