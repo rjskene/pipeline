@@ -174,6 +174,74 @@ else
   fail_msg "expected fall-through to $PUB, got '$out_root'"
 fi
 
+# --------------------------------------------------------------------------
+# Case 6: worktree $PWD resolves to the main-repo working tree (#878).
+# Execute/eval subagents cd into <root>/.claude/worktrees/wt-<N>-<slug>, whose
+# $PWD does NOT equal the install projectPath (the main repo). The resolver must
+# normalize the worktree $PWD up to the enclosing main-repo root before matching
+# projectPath, so the local-marketplace install still wins instead of falling
+# through to the stale published cache copy.
+# --------------------------------------------------------------------------
+echo "Case 6: worktree \$PWD normalizes to main-repo root and resolves to working tree"
+WT="$REPO/.claude/worktrees/wt-878-x"
+mkdir -p "$WT/.claude"
+cat > "$WT/.claude/settings.local.json" <<JSON
+{"enabledPlugins":{"pipeline@claude-pipeline-local":true}}
+JSON
+out_root="$(
+  cd "$WT"
+  unset CLAUDE_PLUGIN_ROOT
+  unset PIPELINE_RESOLVE_MODE
+  PIPELINE_INSTALLED_PLUGINS_FILE="$PLUGINS_FILE" \
+  PIPELINE_PLUGIN_CACHE_DIR="$TMP/cache/claude-pipeline/pipeline" \
+    bash -c "source \"$RESOLVER\"; echo \"\${CLAUDE_PLUGIN_ROOT:-}\""
+)"
+if [ "$(readlink -f "$out_root")" = "$(readlink -f "$REPO")" ]; then
+  pass_msg "worktree \$PWD normalized to repo root, resolved to working tree ($out_root)"
+else
+  fail_msg "expected resolution to $REPO (not stale cache $PUB), got '$out_root' (-> $(readlink -f "$out_root" 2>/dev/null))"
+fi
+
+# --------------------------------------------------------------------------
+# Case 7: export the live projectPath tree over a stale cache installPath (#878).
+# On the live dogfood host the matched install's installPath is a STALE plain
+# cache dir (NOT a symlink to the working tree); projectPath IS the live tree.
+# The resolver must export projectPath (the live tree) rather than the stale
+# cache installPath, so "git pull on staging = live skill updates" holds.
+# --------------------------------------------------------------------------
+echo "Case 7: resolver exports live projectPath over stale cache installPath"
+STALE_CACHE="$TMP/cache/claude-pipeline-local/pipeline/0.20.1"  # plain dir, NOT a symlink
+mkdir -p "$STALE_CACHE"
+PLUGINS_FILE_STALE="$TMP/installed_plugins_stale.json"
+cat > "$PLUGINS_FILE_STALE" <<JSON
+{
+  "version": 2,
+  "plugins": {
+    "pipeline@claude-pipeline-local": [
+      {
+        "scope": "local",
+        "projectPath": "$REPO",
+        "installPath": "$STALE_CACHE",
+        "version": "0.20.1"
+      }
+    ]
+  }
+}
+JSON
+out_root="$(
+  cd "$REPO"
+  unset CLAUDE_PLUGIN_ROOT
+  unset PIPELINE_RESOLVE_MODE
+  PIPELINE_INSTALLED_PLUGINS_FILE="$PLUGINS_FILE_STALE" \
+  PIPELINE_PLUGIN_CACHE_DIR="$TMP/cache/claude-pipeline/pipeline" \
+    bash -c "source \"$RESOLVER\"; echo \"\${CLAUDE_PLUGIN_ROOT:-}\""
+)"
+if [ "$(readlink -f "$out_root")" = "$(readlink -f "$REPO")" ]; then
+  pass_msg "resolver exported live projectPath tree ($out_root), not stale cache"
+else
+  fail_msg "expected export of live tree $REPO, got '$out_root' (stale cache was $STALE_CACHE)"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

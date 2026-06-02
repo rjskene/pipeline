@@ -205,6 +205,37 @@ a version bump, Claude Code installs a fresh directory; the helper
 tracks whatever `installPath` `installed_plugins.json` reports, so the
 bump is transparent — no per-version edit required.
 
+## Worktree-aware resolution + projectPath export (#878)
+
+The symlink-swap above is the *intended* wiring: `installPath` becomes a
+symlink to the working tree, so resolving it yields the live tree. In practice
+that swap is not guaranteed to have landed (the cache dir may be a stale plain
+copy, or absent), and — more importantly — execute/eval subagents run from a
+**worktree** (`<root>/.claude/worktrees/wt-<N>-<slug>`), not the main repo root.
+Two consequences the default-mode tie-break in `scripts/_resolve-plugin-root.sh`
+now handles directly, so dogfood resolution does not depend on the symlink being
+healthy:
+
+1. **Worktree `$PWD` is normalized to the main-repo root before matching.** The
+   local install's `projectPath` is the MAIN repo, so a raw worktree `$PWD`
+   never matched and the tie-break used to fall through to the stale published
+   cache. The resolver strips at `/.claude/worktrees/` (var-independent primary
+   rule; `git rev-parse --git-common-dir` fallback for worktrees elsewhere)
+   before matching `projectPath`. A non-worktree `$PWD` normalizes to itself.
+
+2. **The resolver exports the matched entry's `projectPath` (the live working
+   tree), not its `installPath`.** On this host `installPath` is a stale cache
+   copy, NOT the symlink the resolver header once claimed; `projectPath` is the
+   live `staging` tree by construction. `installPath` is used only as a fallback
+   when `projectPath` is missing/non-dir. This is what makes "git pull on
+   staging = live skill updates" actually hold inside worktree subagents,
+   independent of whether the symlink-swap hook has run.
+
+The `## Boot` snippet shared across all plugin-root `SKILL.md` files also globs
+the `claude-pipeline-local` cache ahead of the published `claude-pipeline` cache
+when LOCATING the resolver, so the first resolver sourced on a dogfood host is
+the live one rather than a stale published copy.
+
 ## When do edits go live? (session-cached skill bodies)
 
 `git pull` on staging updates the skill/script FILES on disk immediately (the
