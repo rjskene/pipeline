@@ -211,7 +211,7 @@ def record_key(source, agent_kind, session_id, issue, stage, ts_start):
 
 
 def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
-                tokens, ts_start, ts_end, usage_complete):
+                tokens, ts_start, ts_end, usage_complete, agent_id=""):
     total = sum(tokens[k] for k in ("input", "output", "cache_read", "cache_creation"))
     source = "retroactive"
     return {
@@ -222,6 +222,11 @@ def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
         "agent_kind": agent_kind,
         "agent_type": agent_type,
         "session_id": session_id,
+        # agent_id is the stable per-logical-agent dedup key the consumer
+        # (cost-latency-report.sh, #880) collapses forward+retroactive PAIRS on.
+        # The INLINE pass threads the sidecar-resolved id here; the HEADLESS pass
+        # has no subagent id and defaults to "".
+        "agent_id": agent_id,
         "model": model,
         "tokens": {
             "input": tokens["input"],
@@ -393,7 +398,7 @@ if os.path.exists(subagents_log):
                 issue=issue, stage=stage, agent_kind="inline", agent_type=agent_type,
                 session_id=session, model=model,
                 tokens=usage, ts_start=ts, ts_end=ts,
-                usage_complete=usage_complete)
+                usage_complete=usage_complete, agent_id=agent_id)
             if rec["record_key"] in seen:
                 continue
             seen.add(rec["record_key"])
