@@ -221,6 +221,59 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/err"
 fi
 
+# =====================================================================
+# Case 6: CLI flags --max-bc / --max-ad OVERRIDE the env caps.
+# Three PATH-B issues, no deps/conflicts. With env MAX_BC=2 they would split
+# 2+1. We set env MAX_BC=2 but pass --max-bc=3 on the CLI: the override must
+# win, putting all three in a single leg (BC=3).
+# =====================================================================
+echo "Case 6: --max-bc CLI flag overrides PIPELINE_CAMPAIGN_MAX_BC env"
+S="$TMP/case6"; mkdir -p "$S"; export GH_ISSUE_DIR="$S"
+write_issue "$S" 1 "" "Independent B."
+write_issue "$S" 2 "" "Independent B."
+write_issue "$S" 3 "" "Independent B."
+inc
+if OUT=$(PIPELINE_CAMPAIGN_MAX_BC=2 run_helper --max-bc=3 1 2 3 2>"$S/err"); then
+  L1=$(echo "$OUT" | grep -E '^Leg 1: ' || true)
+  L2=$(echo "$OUT" | grep -E '^Leg 2: ' || true)
+  if echo "$L1" | grep -qE '#1, #2, #3' \
+     && echo "$L1" | grep -qE '\(BC=3 AD=0\)' \
+     && [ -z "$L2" ]; then
+    pass_msg "Case 6: --max-bc=3 beat env=2; all three in one leg (BC=3)"
+  else
+    fail_msg "Case 6: CLI --max-bc did not override env"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 6: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/err"
+fi
+
+# Symmetric AD override: env MAX_AD=5 but --max-ad=2 forces a 2+1 split of 3
+# PATH-A/D issues.
+echo "Case 6b: --max-ad CLI flag overrides PIPELINE_CAMPAIGN_MAX_AD env"
+write_issue "$S" 4 "docs-only" "Docs A."
+write_issue "$S" 5 "docs-only" "Docs A."
+write_issue "$S" 6 "docs-only" "Docs A."
+inc
+if OUT=$(PIPELINE_CAMPAIGN_MAX_AD=5 run_helper --max-ad=2 4 5 6 2>"$S/errb"); then
+  L1=$(echo "$OUT" | grep -E '^Leg 1: ' || true)
+  L2=$(echo "$OUT" | grep -E '^Leg 2: ' || true)
+  if echo "$L1" | grep -qE '#4, #5' \
+     && echo "$L1" | grep -qE '\(BC=0 AD=2\)' \
+     && echo "$L2" | grep -qE '#6'; then
+    pass_msg "Case 6b: --max-ad=2 beat env=5; #4,#5 in leg 1 (AD=2), #6 rolls"
+  else
+    fail_msg "Case 6b: CLI --max-ad did not override env"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 6b: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/errb"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
