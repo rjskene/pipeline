@@ -339,4 +339,216 @@ if model != "claude-opus-4-8":
     )
 PY
 
+# ---------------------------------------------------------------------------
+# Case 5pre (#815): _normalize_payload surfaces tool_response.agentId as the
+# flat `agent_id` field, so build_record can resolve the durable subagent
+# transcript at agent-finish. log_subagent.py:76 already reads
+# tool_response.agentId; capture_agent_cost.py:_normalize_payload currently
+# drops it.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" <<'PY' || fail "case5pre: agentId not surfaced by _normalize_payload"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+payload = {
+    "tool_name": "Agent",
+    "session_id": "s5pre",
+    "duration_ms": 100,
+    "tool_input": {"description": "plan-issue #815", "subagent_type": "general-purpose"},
+    "tool_response": {
+        "agentId": "a1234",
+        "usage": {
+            "input_tokens": 1, "output_tokens": 2,
+            "cache_read_input_tokens": 3, "cache_creation_input_tokens": 4,
+        },
+        "total_duration_ms": None,
+    },
+}
+norm = mod._normalize_payload(payload)
+if norm is None:
+    raise SystemExit("_normalize_payload returned None (expected a flat dict)")
+if norm.get("agent_id") != "a1234":
+    raise SystemExit("agent_id=%r expected 'a1234' (regression: agentId dropped)" % norm.get("agent_id"))
+PY
+
+# ---------------------------------------------------------------------------
+# Case 5help (#815): _subagent_transcript_sum resolves the durable subagent
+# transcript via the same glob the backfill INLINE pass uses
+# (scripts/capture-agent-costs.sh:346-348):
+#   $HOME/.claude/projects/*/<session_id>/subagents/agent-<agent_id>.jsonl
+# Sums the four token fields over the transcript JSONL. Returns None on a
+# missing transcript or empty agent_id/session_id.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" "$WORK" <<'PY' || fail "case5help: _subagent_transcript_sum did not resolve/sum durable transcript"
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+fake_home = os.path.join(sys.argv[2], "home5help")
+sub = os.path.join(fake_home, ".claude", "projects", "-slug", "sessHELP", "subagents")
+os.makedirs(sub)
+with open(os.path.join(sub, "agent-aHELP.jsonl"), "w") as fh:
+    fh.write('{"message":{"usage":{"cache_read_input_tokens":700}}}\n')
+    fh.write('{"message":{"usage":{"cache_read_input_tokens":700}}}\n')
+
+os.environ["HOME"] = fake_home
+summ = mod._subagent_transcript_sum("sessHELP", "aHELP")
+if summ is None:
+    raise SystemExit("expected a sum dict, got None")
+if summ["cache_read"] != 1400:
+    raise SystemExit("cache_read=%r expected 1400" % summ["cache_read"])
+if mod._subagent_transcript_sum("sessHELP", "missing") is not None:
+    raise SystemExit("missing agent_id should resolve to None")
+if mod._subagent_transcript_sum("sessHELP", "") is not None:
+    raise SystemExit("empty agent_id should resolve to None")
+PY
+
+# ---------------------------------------------------------------------------
+# Case 5a (#815): build_record TRUES-UP the forward lower-bound from the durable
+# subagent transcript when the cumulative strictly exceeds the final-turn snap.
+# usage_complete flips to true; the transcript model wins. source/agent_kind
+# unchanged. This is the #815 close.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" "$WORK" <<'PY' || fail "case5a: cumulative not adopted (true-up)"
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+fake_home = os.path.join(sys.argv[2], "home5a")
+sub = os.path.join(fake_home, ".claude", "projects", "-slug", "sess5a", "subagents")
+os.makedirs(sub)
+with open(os.path.join(sub, "agent-a5a.jsonl"), "w") as fh:
+    fh.write('{"message":{"model":"claude-opus-4-8","usage":{"cache_read_input_tokens":5000}}}\n')
+    fh.write('{"message":{"model":"claude-opus-4-8","usage":{"cache_read_input_tokens":5000}}}\n')
+os.environ["HOME"] = fake_home
+
+# final-turn lower-bound: 100 input + 200 output + 300 cache_read + 400 cache_creation = 1000
+payload = {
+    "session_id": "sess5a",
+    "agent_id": "a5a",
+    "description": "execute-issue-plan #815",
+    "usage": {
+        "input_tokens": 100, "output_tokens": 200,
+        "cache_read_input_tokens": 300, "cache_creation_input_tokens": 400,
+    },
+    "tool_input": {"subagent_type": "general-purpose"},
+}
+rec = mod.build_record(payload)
+if rec is None:
+    raise SystemExit("build_record returned None")
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["usage_complete"] is True, "usage_complete True on adopt")
+expect(rec["tokens"]["cache_read"] == 10000, "cache_read summed from transcript")
+# transcript: input 0, output 0, cache_read 10000, cache_creation 0
+expect(rec["tokens"]["input"] == 0, "input from transcript")
+expect(rec["tokens"]["output"] == 0, "output from transcript")
+expect(rec["tokens"]["cache_creation"] == 0, "cache_creation from transcript")
+expect(rec["tokens"]["total"] == 10000, "total == summed transcript total")
+expect(rec["model"] == "claude-opus-4-8", "transcript model wins")
+expect(rec["source"] == "forward", "source unchanged")
+expect(rec["agent_kind"] == "inline", "agent_kind unchanged")
+PY
+
+# ---------------------------------------------------------------------------
+# Case 5b (#815): pruned-race fallback — agentId present but the durable
+# transcript is absent (empty HOME → no glob match). Keep the lower-bound;
+# usage_complete stays false; no crash.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" "$WORK" <<'PY' || fail "case5b: pruned-race fallback did not keep lower-bound"
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+os.environ["HOME"] = os.path.join(sys.argv[2], "home5b-empty")  # no transcript dir
+payload = {
+    "session_id": "sess5b",
+    "agent_id": "a5b",
+    "description": "execute-issue-plan #815",
+    "usage": {
+        "input_tokens": 100, "output_tokens": 0,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    },
+}
+rec = mod.build_record(payload)
+if rec is None:
+    raise SystemExit("build_record returned None")
+if rec["usage_complete"] is not False:
+    raise SystemExit("usage_complete=%r expected False (no transcript)" % rec["usage_complete"])
+if rec["tokens"]["total"] != 100:
+    raise SystemExit("tokens.total=%r expected 100 (lower-bound kept)" % rec["tokens"]["total"])
+PY
+
+# ---------------------------------------------------------------------------
+# Case 5c (#815): never-downgrade — transcript sum (total 4) is <= the
+# final-turn lower-bound (total 400). Keep the lower-bound; usage_complete stays
+# false. A partial/empty transcript can never understate a record.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" "$WORK" <<'PY' || fail "case5c: never-downgrade violated"
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+fake_home = os.path.join(sys.argv[2], "home5c")
+sub = os.path.join(fake_home, ".claude", "projects", "-slug", "sess5c", "subagents")
+os.makedirs(sub)
+with open(os.path.join(sub, "agent-a5c.jsonl"), "w") as fh:
+    fh.write('{"message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}}\n')
+os.environ["HOME"] = fake_home
+
+# lower-bound total 400 (100 each) > transcript total 4
+payload = {
+    "session_id": "sess5c",
+    "agent_id": "a5c",
+    "description": "execute-issue-plan #815",
+    "usage": {
+        "input_tokens": 100, "output_tokens": 100,
+        "cache_read_input_tokens": 100, "cache_creation_input_tokens": 100,
+    },
+}
+rec = mod.build_record(payload)
+if rec is None:
+    raise SystemExit("build_record returned None")
+if rec["usage_complete"] is not False:
+    raise SystemExit("usage_complete=%r expected False (no-downgrade)" % rec["usage_complete"])
+if rec["tokens"]["total"] != 400:
+    raise SystemExit("tokens.total=%r expected 400 (lower-bound kept)" % rec["tokens"]["total"])
+PY
+
+# ---------------------------------------------------------------------------
+# Case 5d (#815): agentId absent — unchanged behavior, no transcript lookup,
+# usage_complete false, no crash.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" <<'PY' || fail "case5d: agentId-absent path changed/crashed"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+payload = {
+    "session_id": "sess5d",
+    "description": "execute-issue-plan #815",
+    "usage": {
+        "input_tokens": 100, "output_tokens": 0,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    },
+}
+rec = mod.build_record(payload)
+if rec is None:
+    raise SystemExit("build_record returned None")
+if rec["usage_complete"] is not False:
+    raise SystemExit("usage_complete=%r expected False (no agentId)" % rec["usage_complete"])
+if rec["tokens"]["total"] != 100:
+    raise SystemExit("tokens.total=%r expected 100" % rec["tokens"]["total"])
+PY
+
 echo "PASS: test-capture-agent-cost-posttooluse.sh"
