@@ -40,12 +40,15 @@ OVER_SERVED_LOC=20
 TOPN=5
 CAPTURE_LOG=""
 SINCE=""
+UNTIL=""
+PERDAY=0
 
 print_usage() {
   cat <<'USAGE'
 Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                               [--emit-rows-json] [--over-served-loc N]
-                              [--top-n N] [--capture-log PATH] [--help]
+                              [--top-n N] [--capture-log PATH]
+                              [--since DATE] [--until DATE] [--per-day] [--help]
 
   cost-latency-report.sh — DOGFOOD-ONLY cost & latency report.
 
@@ -80,6 +83,16 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
   --since DATE         Restrict cost/token tables to records whose ts_start
                        date (YYYY-MM-DD) is >= DATE (the reconcilable era).
                        Records with empty/absent ts_start are excluded.
+  --until DATE         Restrict cost/token tables to records whose ts_start
+                       date (YYYY-MM-DD) is <= DATE (inclusive upper bound,
+                       mirror of --since). Records with empty/absent ts_start
+                       are excluded. Composes with --since to form a closed window.
+  --per-day            Walk the [--since, --until] window day-by-day, emitting
+                       a full report per day under a "=== DAY YYYY-MM-DD ==="
+                       header (re-invokes --since=D --until=D internally; reuses
+                       pricing + PR-join). Default window: last 5 days ending
+                       today (UTC). Honors --tokenomics / --limit / --fixture /
+                       --capture-log.
   --help               Print this banner and exit 0.
 USAGE
 }
@@ -103,6 +116,9 @@ while [ $# -gt 0 ]; do
     --capture-log=*)      CAPTURE_LOG="${1#--capture-log=}"; shift ;;
     --since)              SINCE="${2:-}"; shift 2 ;;
     --since=*)            SINCE="${1#--since=}"; shift ;;
+    --until)              UNTIL="${2:-}"; shift 2 ;;
+    --until=*)            UNTIL="${1#--until=}"; shift ;;
+    --per-day)            PERDAY=1; shift ;;
     *)
       echo "cost-latency-report: ERROR: unknown arg: $1" >&2
       exit 1
@@ -112,6 +128,31 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# --- --per-day loop (issue #831) ---
+# Convenience window-walker: re-invoke THIS script once per day across
+# [SINCE, UNTIL] with --since=D --until=D, so each day reuses the full
+# pricing + PR-join + table logic (no parallel jq path). Default window
+# when bounds are unset: the last 5 days ending today (UTC). The child
+# invocation drops --per-day (PERDAY unset there) to avoid recursion.
+if [ "$PERDAY" -eq 1 ]; then
+  pd_until="${UNTIL:-$(date -u +%F)}"
+  pd_since="${SINCE:-$(date -u -d "$pd_until -4 days" +%F)}"
+  # Forward every passthrough flag EXCEPT --since/--until/--per-day.
+  pd_args=()
+  [ -n "$FIXTURE_DIR" ] && pd_args+=(--fixture "$FIXTURE_DIR")
+  [ -n "$CAPTURE_LOG" ] && pd_args+=(--capture-log "$CAPTURE_LOG")
+  [ "$TOKENOMICS" -eq 1 ] && pd_args+=(--tokenomics)
+  pd_args+=(--limit "$LIMIT" --over-served-loc "$OVER_SERVED_LOC" --top-n "$TOPN")
+  d="$pd_since"
+  while [ ! "$d" \> "$pd_until" ]; do
+    echo "=== DAY $d ==="
+    bash "$0" "${pd_args[@]}" --since "$d" --until "$d"
+    echo ""
+    d="$(date -u -d "$d +1 day" +%F)"
+  done
+  exit 0
+fi
 
 # --- I/O helpers (fixture-aware) ---
 
@@ -619,6 +660,11 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '[ .[] | select(.usage_compl
 if [ -n "$SINCE" ]; then
   CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg since "$SINCE" '
     [ .[] | select(((.ts_start // "") | .[0:10]) >= $since and (.ts_start // "") != "") ]' 2>/dev/null)"
+  [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+fi
+if [ -n "$UNTIL" ]; then
+  CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg until "$UNTIL" '
+    [ .[] | select(((.ts_start // "") | .[0:10]) <= $until and (.ts_start // "") != "") ]' 2>/dev/null)"
   [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 fi
 EXCLUDED_LOWER_BOUND="$(printf '%s' "$CAPTURE_ALL" | jq -r '[ .[] | select(.usage_complete == false) ] | length' 2>/dev/null)"

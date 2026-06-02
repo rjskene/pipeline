@@ -1939,6 +1939,65 @@ IL37="$(printf '%s\n' "$CONC37" | grep -iE 'inline record' | head -1)"
 case "$IL37" in *"2 inline record"*) pass_msg "concurrency inline_n counts full stream (2, incl usage_complete:false)";; *) fail_msg "concurrency inline_n should count 2 (full stream), got: $IL37";; esac
 rm -rf "$TMP37"
 
+# --- Scenario 38: --until DATE upper-bounds by ts_start (#831) ---
+inc_scenario "Scenario 38: --until DATE upper-bounds cost tables by ts_start (#831)"
+TMP38="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP38/" 2>/dev/null
+printf '%s\n' '[{"number":138,"title":"feat: until filter","additions":10,"deletions":0,"body":"Closes #238","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP38/prs.json"
+printf '%s\n' '{"number":138,"additions":10,"deletions":0,"comments":[]}' > "$TMP38/pr-138.json"
+printf '%s\n' '{"number":238,"labels":[],"comments":[]}' > "$TMP38/issue-238.json"
+{ echo '{"schema_version":1,"issue":"238","stage":"execute","session_id":"s38a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K238A","ts_start":"2026-05-20T10:00:00Z","tokens":{"input":1000,"output":0,"cache_creation":0,"cache_read":0,"total":1000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"238","stage":"execute","session_id":"s38b","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K238B","ts_start":"2026-05-31T10:00:00Z","tokens":{"input":2000,"output":0,"cache_creation":0,"cache_read":0,"total":2000},"duration_ms":1000}'
+} > "$TMP38/capture.jsonl"
+ALL38="$(bash "$HELPER" --fixture "$TMP38" --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==238) | .tokens_total')"
+UNT38="$(bash "$HELPER" --fixture "$TMP38" --until 2026-05-20 --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==238) | .tokens_total')"
+if [ "$ALL38" = "3000" ]; then pass_msg "no --until aggregates both dates (3000)"; else fail_msg "expected 3000 without --until, got $ALL38"; fi
+if [ "$UNT38" = "1000" ]; then pass_msg "--until 2026-05-20 keeps only on/before-cutoff record (1000, inclusive)"; else fail_msg "expected 1000 with --until 2026-05-20, got $UNT38"; fi
+rm -rf "$TMP38"
+
+# --- Scenario 39: --since + --until form a closed window; empty ts_start excluded (#831) ---
+inc_scenario "Scenario 39: --since+--until closed window + empty-ts_start excluded under --until (#831)"
+TMP39="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP39/" 2>/dev/null
+printf '%s\n' '[{"number":139,"title":"feat: closed window","additions":10,"deletions":0,"body":"Closes #239","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP39/prs.json"
+printf '%s\n' '{"number":139,"additions":10,"deletions":0,"comments":[]}' > "$TMP39/pr-139.json"
+printf '%s\n' '{"number":239,"labels":[],"comments":[]}' > "$TMP39/issue-239.json"
+{ echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239A","ts_start":"2026-05-19T10:00:00Z","tokens":{"input":100,"output":0,"cache_creation":0,"cache_read":0,"total":100},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39b","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239B","ts_start":"2026-05-20T10:00:00Z","tokens":{"input":2000,"output":0,"cache_creation":0,"cache_read":0,"total":2000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39c","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239C","ts_start":"2026-05-25T10:00:00Z","tokens":{"input":400,"output":0,"cache_creation":0,"cache_read":0,"total":400},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39e","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239E","ts_start":"","tokens":{"input":9999,"output":0,"cache_creation":0,"cache_read":0,"total":9999},"duration_ms":1000}'
+} > "$TMP39/capture.jsonl"
+WIN39="$(bash "$HELPER" --fixture "$TMP39" --since 2026-05-20 --until 2026-05-20 --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==239) | .tokens_total')"
+if [ "$WIN39" = "2000" ]; then pass_msg "--since 2026-05-20 --until 2026-05-20 isolates a single day (2000), excludes 05-19/05-25 and empty ts_start (9999)"; else fail_msg "expected 2000 for closed single-day window, got $WIN39"; fi
+rm -rf "$TMP39"
+
+# --- Scenario 40: --per-day emits one day-block per day in the window (#831) ---
+inc_scenario "Scenario 40: --per-day emits N day-blocks for an N-day window (#831)"
+TMP40="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP40/" 2>/dev/null
+printf '%s\n' '[{"number":140,"title":"feat: per-day","additions":10,"deletions":0,"body":"Closes #240","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP40/prs.json"
+printf '%s\n' '{"number":140,"additions":10,"deletions":0,"comments":[]}' > "$TMP40/pr-140.json"
+printf '%s\n' '{"number":240,"labels":[],"comments":[]}' > "$TMP40/issue-240.json"
+{ echo '{"schema_version":1,"issue":"240","stage":"execute","session_id":"s40a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K240A","ts_start":"2026-05-20T10:00:00Z","tokens":{"input":1000,"output":0,"cache_creation":0,"cache_read":0,"total":1000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"240","stage":"execute","session_id":"s40c","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K240C","ts_start":"2026-05-22T10:00:00Z","tokens":{"input":3000,"output":0,"cache_creation":0,"cache_read":0,"total":3000},"duration_ms":1000}'
+} > "$TMP40/capture.jsonl"
+PD40="$(bash "$HELPER" --fixture "$TMP40" --per-day --since 2026-05-20 --until 2026-05-22 2>/dev/null)"
+DAYHDRS40="$(printf '%s\n' "$PD40" | grep -cE '^=== DAY 2026-05-2[0-2] ===$')"
+if [ "$DAYHDRS40" = "3" ]; then pass_msg "--per-day emits 3 day-blocks for a 3-day window (05-20..05-22)"; else fail_msg "expected 3 day-block headers, got $DAYHDRS40"; fi
+if printf '%s\n' "$PD40" | grep -qE '^=== DAY 2026-05-20 ===$' \
+   && printf '%s\n' "$PD40" | grep -qE '^=== DAY 2026-05-21 ===$' \
+   && printf '%s\n' "$PD40" | grep -qE '^=== DAY 2026-05-22 ===$'; then
+  pass_msg "--per-day day headers cover each day in [since,until] inclusive"
+else
+  fail_msg "--per-day missing one of the expected day headers"
+fi
+rm -rf "$TMP40"
+
+# --- Scenario 41: unknown-arg guard intact + --help documents new flags (#831) ---
+inc_scenario "Scenario 41: unknown-arg guard intact + --help documents --until/--per-day (#831)"
+bash "$HELPER" --bogus-flag >/dev/null 2>&1
+if [ "$?" -ne 0 ]; then pass_msg "unknown arg --bogus-flag still exits non-zero"; else fail_msg "unknown arg should exit non-zero (guard regressed)"; fi
+HELP41="$(bash "$HELPER" --help 2>&1 || true)"
+if printf '%s' "$HELP41" | grep -q -- '--until'; then pass_msg "--help documents --until"; else fail_msg "--help missing --until"; fi
+if printf '%s' "$HELP41" | grep -q -- '--per-day'; then pass_msg "--help documents --per-day"; else fail_msg "--help missing --per-day"; fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
