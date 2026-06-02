@@ -274,6 +274,53 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/errb"
 fi
 
+# =====================================================================
+# Case 7: scoped-halt `closure` — fixpoint walk, multi-hop, via BOTH a
+# blocked-by edge AND a file-conflict edge.
+#   #10  = the blocked issue (seed).
+#   #11  = `blocked by #10`            -> 1st hop (blocker edge to seed)
+#   #12  = shares `f.sh` with #11      -> 2nd hop (file edge to a member)
+#   #13  = unrelated                   -> must NOT enter the closure
+# Closure of {#10} = {10, 11, 12}; #13 excluded.
+# =====================================================================
+echo "Case 7: closure subcommand — multi-hop transitive (blocker + file edge)"
+S="$TMP/case7"; mkdir -p "$S"; export GH_ISSUE_DIR="$S"
+write_issue "$S" 10 "" "Seed issue; touches \`seed.sh\`."
+write_issue "$S" 11 "" "Touches \`f.sh\`. blocked by #10."
+write_issue "$S" 12 "" "Also touches \`f.sh\` (file edge to #11)."
+write_issue "$S" 13 "" "Unrelated; touches \`other.sh\`."
+inc
+if OUT=$(run_helper closure 10 10 11 12 13 2>"$S/err"); then
+  GOT=$(echo "$OUT" | grep -E '^[0-9]+$' | sort -n | tr '\n' ' ' | sed 's/ *$//')
+  if [ "$GOT" = "10 11 12" ]; then
+    pass_msg "Case 7: closure(10) = {10,11,12}; #13 excluded"
+  else
+    fail_msg "Case 7: wrong closure set (got: [$GOT], expected: [10 11 12])"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 7: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/err"
+fi
+
+# Case 7b: --closure=<N> flag form yields the same closure set.
+echo "Case 7b: --closure=<N> flag form equals the subcommand form"
+inc
+if OUT=$(run_helper --closure=10 10 11 12 13 2>"$S/errb"); then
+  GOT=$(echo "$OUT" | grep -E '^[0-9]+$' | sort -n | tr '\n' ' ' | sed 's/ *$//')
+  if [ "$GOT" = "10 11 12" ]; then
+    pass_msg "Case 7b: --closure=10 = {10,11,12}"
+  else
+    fail_msg "Case 7b: wrong closure set (got: [$GOT])"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 7b: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/errb"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
