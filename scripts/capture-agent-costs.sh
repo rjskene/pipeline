@@ -246,8 +246,13 @@ def kv(fields, key):
     return ""
 
 
-# existing record_keys for idempotency
+# existing record_keys for idempotency, plus the set of (session_id, issue,
+# stage) tuples already carrying a usage_complete==true record. The INLINE pass
+# uses complete_tuples to SUPPRESS a stranded lower-bound (usage_complete=false)
+# when a durable complete sibling already covers the same logical agent finish —
+# closing the retroactive half of the inline cost reconciliation leak (#830).
 seen = set()
+complete_tuples = set()
 if os.path.exists(out_path):
     with open(out_path) as fh:
         for line in fh:
@@ -255,9 +260,19 @@ if os.path.exists(out_path):
             if not line:
                 continue
             try:
-                seen.add(json.loads(line)["record_key"])
-            except (ValueError, KeyError):
+                rec = json.loads(line)
+            except ValueError:
                 continue
+            try:
+                seen.add(rec["record_key"])
+            except (KeyError, TypeError):
+                pass
+            if rec.get("usage_complete") is True:
+                complete_tuples.add((
+                    rec.get("session_id", ""),
+                    str(rec.get("issue", "")),
+                    rec.get("stage", ""),
+                ))
 
 new_records = []
 headless_skipped_missing_transcript = 0
@@ -363,6 +378,16 @@ if os.path.exists(subagents_log):
                         usage_complete = True
                         if summ["model"]:
                             model = summ["model"]
+
+            # RECONCILIATION (#830): suppress a stranded lower-bound when a
+            # durable usage_complete=true record already covers this logical
+            # agent finish at the (session, issue, stage) grain — the same grain
+            # the consumer (cost-latency-report.sh) collapses on. Only ever drops
+            # a lower-bound; complete records always proceed (still subject to
+            # record_key idempotency via `seen`). When no complete record exists,
+            # the lower-bound is preserved as the sole cost signal.
+            if not usage_complete and (session, str(issue), stage) in complete_tuples:
+                continue
 
             rec = make_record(
                 issue=issue, stage=stage, agent_kind="inline", agent_type=agent_type,
