@@ -70,6 +70,14 @@ PIPELINE_CONFIG_DRIFT_ALLOWLIST
 # intentionally undocumented in pipeline.config.example.
 PIPELINE_INSTALLED_PLUGINS_JSON
 
+# #857/#762: PIPELINE_FRONTEND_PORT_OFFSET was removed (0 readers repo-wide) from
+# pipeline.config.example and scripts/init.sh. The ONLY remaining occurrence of
+# the token is the negative regression-guard in tests/test-pipeline-config-prune-762.sh,
+# which asserts the var stays absent from the example/live config. That literal
+# token in the test file is picked up by the live-tree scan as "referenced";
+# exempt it so the deliberately-removed knob is not mis-flagged as drift.
+PIPELINE_FRONTEND_PORT_OFFSET
+
 # Fixture tokens used only inside tests/test-check-config-drift.sh's
 # synthetic sub-cases. The live tree scan picks them up because they appear
 # as heredoc literals in the test file itself. PIPELINE_TEST_PREFIX_ is a
