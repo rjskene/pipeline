@@ -691,6 +691,26 @@ if [ "$CR_USD17" = "15.00" ]; then
 else
   fail_msg "cache_read bucket \$ should be 15.00, got $CR_USD17 (row=$CR_ROW17)"
 fi
+
+# per-N / per-LOC columns (issue #833). Fixture: N=1 record, total LOC=400.
+# Appended after the existing 5 cols: tok/N($6) | $/N($7) | tok/LOC($8) | $/LOC($9).
+# output:     tok/N=1000000, $/N=75.00, tok/LOC=2500.0, $/LOC=0.1875→0.19
+# cache_read: tok/N=10000000, $/N=15.00, tok/LOC=25000.0, $/LOC=0.0375→0.04
+OUT_TOKN17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6+0}')"
+OUT_USDN17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+OUT_TOKLOC17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8+0}')"
+OUT_USDLOC17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$9); print $9}')"
+if [ "$OUT_TOKN17" = "1000000" ]; then pass_msg "output tok/N == 1000000"; else fail_msg "output tok/N should be 1000000, got $OUT_TOKN17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_USDN17" = "75.00" ]; then pass_msg "output \$/N == 75.00"; else fail_msg "output \$/N should be 75.00, got $OUT_USDN17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_TOKLOC17" = "2500" ]; then pass_msg "output tok/LOC == 2500"; else fail_msg "output tok/LOC should be 2500, got $OUT_TOKLOC17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_USDLOC17" = "0.19" ]; then pass_msg "output \$/LOC == 0.19"; else fail_msg "output \$/LOC should be 0.19, got $OUT_USDLOC17 (row=$OUT_ROW17)"; fi
+
+CR_TOKN17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6+0}')"
+CR_USDN17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+CR_USDLOC17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$9); print $9}')"
+if [ "$CR_TOKN17" = "10000000" ]; then pass_msg "cache_read tok/N == 10000000"; else fail_msg "cache_read tok/N should be 10000000, got $CR_TOKN17 (row=$CR_ROW17)"; fi
+if [ "$CR_USDN17" = "15.00" ]; then pass_msg "cache_read \$/N == 15.00"; else fail_msg "cache_read \$/N should be 15.00, got $CR_USDN17 (row=$CR_ROW17)"; fi
+if [ "$CR_USDLOC17" = "0.04" ]; then pass_msg "cache_read \$/LOC == 0.04"; else fail_msg "cache_read \$/LOC should be 0.04, got $CR_USDLOC17 (row=$CR_ROW17)"; fi
 rm -rf "$TMP17"
 
 # --- Scenario 18: --tokenomics per-stage cost table (size nets out cache_read) (#721) ---
