@@ -47,7 +47,7 @@ rm -f "$ISSUES_JSON" "$TRACKERS_JSON"
 
 Bash tool stdout is hidden inside a folded tool call, so after invoking the renderer the orchestrator MUST paste the renderer's EXACT stdout verbatim into a single fenced code block in its next assistant message — byte-for-byte, with nothing added or removed around the rows. **Contract violation:** reformatting the table, restating rows in prose, narrating per-row, or substituting a "here's the gist" summary for the rendered output. The renderer stays the single deterministic source of truth (golden-file guaranteed) — do NOT re-render the table from JSON in the model and do NOT route it through a file; paste the renderer's stdout verbatim.
 
-The renderer emits the canonical status table to stdout: a release-PR block (only when the release-prs file is non-empty; Stage column renders as the display-only literal `release-pending`, NOT a real GitHub label), then the dated status header, then a tracker section (with each open child indented, or a placeholder for trackers whose children are all closed), then an orphan section bucketed by conventional-commit scope, then a non-default-metadata block (Target Base / Path / Blocked by / on-disk attachments), then any multi-tracker WARN lines, then a counts footer (`N epics + N children + N orphans = T open`). See `scripts/render-status-table.sh` and `tests/test-render-status-table.sh` for the canonical format and per-rule contract; `att` is sourced from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` and is populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch attachments at discovery time.
+The renderer emits the canonical status table to stdout: a release-PR block (only when the release-prs file is non-empty; Stage column renders as the display-only literal `release-pending`, NOT a real GitHub label), then the dated status header, then a tracker section (with each open child indented, or a placeholder for trackers whose children are all closed), then a flat orphan section sorted by readiness (ready first) then conventional-commit type (chore→docs→fix→feat), then a non-default-metadata block (Target Base / Path / Blocked by / on-disk attachments), then any multi-tracker WARN lines, then a counts footer (`N epics + N children + N orphans = T open`). See `scripts/render-status-table.sh` and `tests/test-render-status-table.sh` for the canonical format and per-rule contract; `att` is sourced from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` and is populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch attachments at discovery time.
 
 ## Example output
 
@@ -69,13 +69,10 @@ EPICS
 ================================================================
 ORPHANS
 ================================================================
- (run)
-    [P1] #133 — feat(run): canonical status table grouped by tracker + scope   (plan-pending)
-    [P2]  #34 — feat(run): sort status table by scope                           (ready)
- (doctor)
-    [P2] #150 — feat(doctor): settings cleanup patch                            (merged)
- (none / generic)
     [P2] #999 — chore: bump tooling                                             (ready)
+    [P2]  #34 — feat(run): sort status table by scope                           (ready)
+    [P1] #133 — feat(run): canonical status table grouped by tracker + scope    (plan-pending)
+    [P2] #150 — feat(doctor): settings cleanup patch                            (merged)
 ================================================================
 ```
 
