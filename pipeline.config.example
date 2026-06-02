@@ -97,6 +97,19 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION=1.25
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ=0.10
 
+# --- Rolling-window usage read-out (issue #725, dogfood-only phase 1) ---
+#
+# Read-only operator surface over the gated agent-cost capture
+# (.claude/logs/agent-costs.jsonl, same PIPELINE_LOGS_ENABLED substrate as the
+# #721 pricing block above). Both keys must be set for the read-out to render;
+# unset = no read-out. READ-ONLY: it reports window-usage / headroom /
+# throttle-ETA so the operator can size the next campaign leg — no hold/queue,
+# no auto-pacing (consumer + control loop are out of scope per #725).
+# Window length for the rolling-usage sum (~5h subscription cap). Default 5.
+# PIPELINE_USAGE_WINDOW_HOURS=5
+# Token ceiling the read-out measures headroom against. Unset disables the read-out.
+# PIPELINE_USAGE_CAP_TOKENS=
+
 # --- Stall detection (issue #437) ---
 #
 # PIPELINE_STALL_POLL_THRESHOLD controls when the queue runner emits

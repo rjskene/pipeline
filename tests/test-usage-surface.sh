@@ -122,6 +122,22 @@ if printf '%s' "$H4C" | grep -q 'window=0tok'; then pass_msg "no in-window recor
 if printf '%s' "$H4C" | grep -q 'headroom=120000tok'; then pass_msg "zero burn → headroom = cap"; else fail_msg "zero burn headroom wrong (got: $H4C)"; fi
 if printf '%s' "$H4C" | grep -q 'throttle-ETA --'; then pass_msg "zero burn → ETA -- (no div0)"; else fail_msg "zero burn ETA not -- (got: $H4C)"; fi
 
+# --- Scenario 5: config keys in pipeline.config.example ---
+inc_scenario "Scenario 5: config keys in pipeline.config.example"
+
+if [ -f "$CONFIG_EXAMPLE" ]; then
+  pass_msg "pipeline.config.example exists"
+else
+  fail_msg "pipeline.config.example missing"
+fi
+if grep -q 'PIPELINE_USAGE_WINDOW_HOURS' "$CONFIG_EXAMPLE"; then pass_msg "config example documents PIPELINE_USAGE_WINDOW_HOURS"; else fail_msg "config example missing PIPELINE_USAGE_WINDOW_HOURS"; fi
+if grep -q 'PIPELINE_USAGE_CAP_TOKENS' "$CONFIG_EXAMPLE"; then pass_msg "config example documents PIPELINE_USAGE_CAP_TOKENS"; else fail_msg "config example missing PIPELINE_USAGE_CAP_TOKENS"; fi
+# Both keys ship commented (unset = no read-out).
+if grep -qE '^# *PIPELINE_USAGE_WINDOW_HOURS' "$CONFIG_EXAMPLE"; then pass_msg "PIPELINE_USAGE_WINDOW_HOURS is commented (unset default)"; else fail_msg "PIPELINE_USAGE_WINDOW_HOURS not commented"; fi
+if grep -qE '^# *PIPELINE_USAGE_CAP_TOKENS' "$CONFIG_EXAMPLE"; then pass_msg "PIPELINE_USAGE_CAP_TOKENS is commented (unset default)"; else fail_msg "PIPELINE_USAGE_CAP_TOKENS not commented"; fi
+# The explanatory block references the dogfood gating substrate.
+if grep -q 'PIPELINE_LOGS_ENABLED' "$CONFIG_EXAMPLE" && grep -qi 'usage read-out' "$CONFIG_EXAMPLE"; then pass_msg "config example references gating + read-out block"; else fail_msg "config example missing gating/read-out explanatory block"; fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
