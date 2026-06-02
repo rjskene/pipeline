@@ -197,6 +197,30 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/err"
 fi
 
+# =====================================================================
+# Case 5: a dangling blocker (referenced issue NOT in the input set) is treated
+# as SATISFIED. #1 is `blocked by #99`, but #99 is not in {1}. #1 must still be
+# placed in leg 1 (no deferral, no serial reason from the dangling blocker).
+# =====================================================================
+echo "Case 5: dangling/out-of-set blocker is treated as satisfied"
+S="$TMP/case5"; mkdir -p "$S"; export GH_ISSUE_DIR="$S"
+write_issue "$S" 1 "" "B work. blocked by #99 (out of set)."
+inc
+if OUT=$(run_helper 1 2>"$S/err"); then
+  L1=$(echo "$OUT" | grep -E '^Leg 1: ' || true)
+  if echo "$L1" | grep -qE '^Leg 1: #1 ' \
+     && ! echo "$L1" | grep -q 'blocked by'; then
+    pass_msg "Case 5: #1 placed in leg 1; dangling blocker #99 did not defer it"
+  else
+    fail_msg "Case 5: dangling blocker not treated as satisfied"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 5: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/err"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
