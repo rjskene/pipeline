@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.22.0](https://github.com/rjskene/pipeline/compare/v0.21.10...v0.22.0) (2026-06-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **run:** rename run skill to status, narrow to read-only, add --table
+
+### Bug Fixes
+
+* evaluation fixes for [#763](https://github.com/rjskene/pipeline/issues/763) — drop dead dispatch-routing.md link in housekeeping ref ([4e22802](https://github.com/rjskene/pipeline/commit/4e228025ef63150b08f47d11f0ba862d93ec6fa8))
+
+
+### Code Refactoring
+
+* **run:** rename run skill to status, narrow to read-only, add --table ([af292f2](https://github.com/rjskene/pipeline/commit/af292f28033de0e2803bd202740eafe2dfa4a88a))
+
 ## [0.21.10](https://github.com/rjskene/pipeline/compare/v0.21.9...v0.21.10) (2026-06-02)
 
 
