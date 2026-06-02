@@ -75,6 +75,25 @@ G2D="$(PIPELINE_LOGS_ENABLED=true bash "$HELPER" --cap-tokens 1000000 --capture-
 if [ "$G2D_RC" -eq 0 ]; then pass_msg "empty log exits 0"; else fail_msg "empty log exited non-zero (rc=$G2D_RC)"; fi
 if printf '%s' "$G2D" | grep -q 'window=--'; then pass_msg "empty log renders window=-- placeholder"; else fail_msg "empty log missing window=-- (got: $G2D)"; fi
 
+# --- Scenario 3: window-usage math + dedup contract ---
+inc_scenario "Scenario 3: window-usage math + dedup contract"
+
+# 3a: in-window deduped sum, out-of-window record excluded.
+# Inside the 5h window (cutoff 2026-06-02T07:00:00Z): 10000+20000+30000 = 60000.
+# The 2026-06-02T05:00:00Z record (total 99999) must be excluded.
+W3="$(PIPELINE_LOGS_ENABLED=true bash "$HELPER" \
+  --capture-log "$FIXTURE_DIR/capture-window.jsonl" \
+  --window-hours 5 --cap-tokens 1000000 --now 2026-06-02T12:00:00Z 2>&1)"
+if printf '%s' "$W3" | grep -q 'window=60000tok'; then pass_msg "window sum excludes out-of-window record (=60000tok)"; else fail_msg "wrong window sum (got: $W3)"; fi
+
+# 3b: dedup — recurring record_key counted ONCE (last-write-wins) and a same
+# (session,issue,stage) pair collapses to max_by(total).
+# DK1 last-write 12000 + DK2 max(7000,18000)=18000 → 30000.
+WD="$(PIPELINE_LOGS_ENABLED=true bash "$HELPER" \
+  --capture-log "$FIXTURE_DIR/capture-dup.jsonl" \
+  --window-hours 5 --cap-tokens 1000000 --now 2026-06-02T12:00:00Z 2>&1)"
+if printf '%s' "$WD" | grep -q 'window=30000tok'; then pass_msg "dedup: record_key last-write + (session,issue,stage) max_by (=30000tok)"; else fail_msg "wrong deduped sum (got: $WD)"; fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

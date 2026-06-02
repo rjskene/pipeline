@@ -103,3 +103,36 @@ if [ ! -s "$CAPTURE_LOG" ]; then
   echo "Usage read-out (${WINDOW_HOURS}h window): window=--tok / cap=${CAP_TOKENS}tok — headroom=--tok — throttle-ETA --"
   exit 0
 fi
+
+# --- window-usage: deduped sum of tokens.total inside the rolling window ---
+# Reproduce the cost-latency-report.sh two-pass dedup BEFORE summing (#698):
+#   (1) group_by(.record_key) | last     — keyed records last-write-wins
+#       (keyless records passed through, each its own group)
+#   (2) group_by(session_id,issue,stage) | max_by(.tokens.total)
+#       (records missing session_id passed through untouched)
+# Then keep records whose ts_start is non-empty AND >= (now - window_hours),
+# compared via fromdateiso8601; sum tokens.total.
+WINDOW_SUM="$(jq -rs \
+  --arg now "$NOW" --argjson wh "$WINDOW_HOURS" '
+  ( ([ .[] | select(has("record_key") and .record_key != null) ]
+       | group_by(.record_key) | map(.[-1]))
+    + [ .[] | select((has("record_key") | not) or .record_key == null) ] )
+  | ( ([ .[] | select(has("session_id") and .session_id != null) ]
+         | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
+      + [ .[] | select((has("session_id") | not) or .session_id == null) ] )
+  | ($now | fromdateiso8601) as $nowsec
+  | ($nowsec - ($wh * 3600)) as $cutoff
+  | [ .[]
+      | select((.ts_start // "") != "")
+      | select((.ts_start | fromdateiso8601) >= $cutoff)
+      | (.tokens.total // 0) ]
+  | add // 0
+' "$CAPTURE_LOG" 2>/dev/null)"
+
+# Defensive: if jq failed (malformed log / bad clock) degrade gracefully.
+if [ -z "$WINDOW_SUM" ] || ! printf '%s' "$WINDOW_SUM" | grep -qE '^[0-9]+$'; then
+  echo "Usage read-out (${WINDOW_HOURS}h window): window=--tok / cap=${CAP_TOKENS}tok — headroom=--tok — throttle-ETA --"
+  exit 0
+fi
+
+echo "Usage read-out (${WINDOW_HOURS}h window): window=${WINDOW_SUM}tok / cap=${CAP_TOKENS}tok"
