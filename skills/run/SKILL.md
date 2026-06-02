@@ -42,12 +42,19 @@ PATH labels (A=docs-only, B=standard, C=multi-task, D=quick-fix) are owned by `s
 
 When `--analyze` appears anywhere in the argv to `/pipeline:run`, this skill MUST delegate by invoking `Skill(skill: "pipeline:analyze-issues")` and then STOP. Do not duplicate the analyze flow inline — the delegation is the only supported path. Full spec: [skills/analyze-issues/SKILL.md](../analyze-issues/SKILL.md).
 
+## Auto-cleanup mode (--keep-trees)
+
+When a merged PR still has an active worktree, `/pipeline:run` **auto-proceeds** the cleanup during Step 0 housekeeping — **before discovery**, as a **non-blocking** tail pass that never preempts feature work — WITHOUT a confirmation gate. This is safe by construction: `cleanup-worktree.sh` already gates every destructive op on `PR state == MERGED`, and the destructive worktree-remove + branch-delete remain subject to the existing `ALLOW_DELETIONS` gate (`block_deletions.py` / `sync-worktrees.sh`). No second gate is added. The batch `create-checkpoint-tag.sh` (local-only `checkpoint/YYYY-MM-DD-NN` tag) is the rollback point for the whole auto-cleaned batch.
+
+When `--keep-trees` appears **anywhere in the argv**, the auto-cleanup is **SUPPRESSED** for that invocation: candidates are still detected and surfaced (status table + Step 4), they are just NOT acted on. The flag is **per-invocation only — there is NO persistent `pipeline.config` default** (precedent: `--analyze`, `--manual-merge`). Auto-cleanup is non-blocking and never gate-fatal; it never preempts feature-work proposal.
+
 ## Shortcuts
 
 | Shortcut | Meaning |
 |----------|---------|
 | **full send** | Back-compat alias for `/pipeline:fullsend`. Delegates to that skill with the same argv. |
 | `--analyze` | Read-only hygiene pass — delegates to /pipeline:analyze-issues. See [skills/analyze-issues/SKILL.md](../analyze-issues/SKILL.md). |
+| `--keep-trees` | Opt out of auto-cleanup for this invocation — merged-worktree cleanup candidates are still surfaced but NOT acted on. Flag-only; no pipeline.config default. |
 
 ## Full Send — back-compat delegator
 
@@ -111,7 +118,7 @@ Path column shows `?` for ready issues not yet classified — classification run
 
 ## Steps
 
-0. **Housekeeping** — concerns covered before any discovery: orchestrator branch check, base-branch hook wiring advisory, `next-major-release` warning, worktree sync, release-PR discovery, stale tmux cleanup, auto-close trackers, reap stale visual-proof servers. Full detail in [references/housekeeping.md](references/housekeeping.md). The branch check must use `git pull --quiet origin "${EXPECTED_BASE}"` (quiet flag is required so the orchestrator does not pull the fast-forward file list into context). Discover release PRs with `list-release-prs.sh` (which lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL`, default `autorelease: pending`), auto-close finished trackers, sync worktrees, and reap stale visual-proof servers — all wrapped with `PIPELINE_REPO=` per Issue #288:
+0. **Housekeeping** — concerns covered before any discovery: orchestrator branch check, base-branch hook wiring advisory, `next-major-release` warning, worktree sync, release-PR discovery, stale tmux cleanup, auto-close trackers, reap stale visual-proof servers, and auto-cleanup of merged worktrees (unless `--keep-trees`). Full detail in [references/housekeeping.md](references/housekeeping.md). **Auto-cleanup placement:** detect cleanup candidates inline here (reuse the per-worktree merged-PR loop — `gh pr list --head <wt> --state merged` — so detection does not depend on Step 1 ordering), then run cleanup as Step 0's NON-BLOCKING tail pass; this is the auto path documented in [references/dispatch-routing.md](references/dispatch-routing.md#cleanup-merged-prs-with-active-worktrees). When `--keep-trees` is in argv, SKIP the auto-cleanup dispatch (candidates are still detected and surfaced downstream in the status table / Step 4, just not acted on). The branch check must use `git pull --quiet origin "${EXPECTED_BASE}"` (quiet flag is required so the orchestrator does not pull the fast-forward file list into context). Discover release PRs with `list-release-prs.sh` (which lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL`, default `autorelease: pending`), auto-close finished trackers, sync worktrees, and reap stale visual-proof servers — all wrapped with `PIPELINE_REPO=` per Issue #288:
 
    ```bash
    RELEASE_PRS=$(PIPELINE_REPO="$PIPELINE_REPO" bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)
@@ -186,7 +193,7 @@ Path column shows `?` for ready issues not yet classified — classification run
 
 4. **Propose ONE action** based on state priority (highest → lowest): cleanup > in-progress > pr-open eval > plan-pending eval > plan-reviewed (await user) > plan-approved exec > merge release PR > ready planning. Rationale: a release PR is the end of the release loop — it must NOT preempt active feature work, but it should come BEFORE pulling in new ready work.
 
-   - **cleanup**: if any worktrees are cleanup candidates (merged PR with active worktree) → propose cleanup; list each candidate with issue number and worktree path.
+   - **cleanup**: cleanup candidates (merged PR with active worktree) were ALREADY auto-cleaned in Step 0 (unless `--keep-trees` was passed); Step 4 only SURFACES any remaining candidates — those held by `--keep-trees`, or ones that could not be auto-cleaned. With `--keep-trees`, list each surfaced candidate (issue number + worktree path) but do NOT propose acting on it. Cleanup stays the highest-priority CONCERN in the ordering above, but it is non-blocking — auto-handled upstream in Step 0, not a Step 5 confirmation gate.
    - **in-progress**: print which issues, note agents are working, do not propose anything else.
    - **pr-open**: for each, check for a `## Evaluation` comment via `gh pr view $PR_NUM --json comments`. If any have no evaluation → propose `/pipeline:evaluate-issue-pr` for those. If all have evaluation → remind user to review flagged PRs or note they're ready to merge.
    - **plan-pending**:
@@ -210,7 +217,7 @@ Path column shows `?` for ready issues not yet classified — classification run
 
 6. **On confirmation — dispatch.** Verbose detail (cleanup walkthrough, plan-evaluation narrative, queue-runner mechanics, manual-mode block) in [references/dispatch-routing.md](references/dispatch-routing.md). The path-tier routing surfaces stay inline because contract tests grep for them.
 
-   **For cleanup (merged PRs with active worktrees):** Update CLAUDE.md, run `scripts/cleanup-worktree.sh` per candidate, then create a batch checkpoint tag with `scripts/create-checkpoint-tag.sh`. Full walkthrough in [references/dispatch-routing.md](references/dispatch-routing.md#cleanup-merged-prs-with-active-worktrees).
+   **For cleanup (merged PRs with active worktrees):** This dispatch now runs AUTOMATICALLY in Step 0 housekeeping (no confirmation gate) — see the auto path in [references/dispatch-routing.md](references/dispatch-routing.md#cleanup-merged-prs-with-active-worktrees). This Step 6 entry is retained only for the manual re-run case (e.g. `--keep-trees` was set on the prior invocation and the operator now wants to clean up): update CLAUDE.md, run `scripts/cleanup-worktree.sh` per candidate, then create a batch checkpoint tag with `scripts/create-checkpoint-tag.sh`.
 
    **For plan evaluation (plan-pending → plan-reviewed):** Run `/pipeline:evaluate-issue-plan N` for each issue needing evaluation; parallel Agent dispatches when multiple.
 

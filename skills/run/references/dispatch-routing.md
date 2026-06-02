@@ -6,6 +6,8 @@ This file holds the verbose detail for Step 6 of `/pipeline:run` (on-confirmatio
 
 ## Cleanup (merged PRs with active worktrees)
 
+**Auto-run (#766).** This walkthrough now runs **AUTOMATICALLY during Step 0 housekeeping** (no confirmation gate) — see [housekeeping.md §9](housekeeping.md) and the SKILL.md Step 0 placement note. It is **SKIPPED when `--keep-trees`** is set in the argv (candidates are still detected and surfaced in the status table / Step 4, just not acted on). The Step 6 cleanup entry is retained only for the manual re-run case (e.g. `--keep-trees` was passed on a prior invocation). The cleanup reuses the existing `cleanup-worktree.sh` (which already gates on `PR state == MERGED`) and the existing `ALLOW_DELETIONS` gate (`block_deletions.py` / `sync-worktrees.sh`) — no second gate is added.
+
 ### Step A — Update CLAUDE.md files
 
 Before removing any worktree, review what the merged branch changed and update the CLAUDE.md documentation so it reflects the new state of the codebase. For each cleanup candidate:
