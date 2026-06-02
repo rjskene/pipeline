@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.22.1](https://github.com/rjskene/pipeline/compare/v0.22.0...v0.22.1) (2026-06-02)
+
+
+### Features
+
+* **usage-surface:** config keys in pipeline.config.example ([#725](https://github.com/rjskene/pipeline/issues/725)) ([11975be](https://github.com/rjskene/pipeline/commit/11975bef84c2c879fbc8e21ba60b638f136ec504))
+* **usage-surface:** gate + graceful-degrade ([#725](https://github.com/rjskene/pipeline/issues/725)) ([c6f5c91](https://github.com/rjskene/pipeline/commit/c6f5c91ada63ca4cda1b85dca497dfa6514ba900))
+* **usage-surface:** headroom + throttle-ETA projection ([#725](https://github.com/rjskene/pipeline/issues/725)) ([ef940e4](https://github.com/rjskene/pipeline/commit/ef940e4bdaa2ea9189e567e4f3bfb9b0f50e606c))
+* **usage-surface:** rolling-window token sum with record_key dedup ([#725](https://github.com/rjskene/pipeline/issues/725)) ([6c6c349](https://github.com/rjskene/pipeline/commit/6c6c349a1a308ec03e5fbd517429d657498feebb))
+* **usage-surface:** rolling-window usage read-out (dogfood, phase 1) — usage + headroom + throttle ETA ([66c36c0](https://github.com/rjskene/pipeline/commit/66c36c0b406d936b04403ea81e271172b627fa10))
+
+
+### Bug Fixes
+
+* **config:** CI gating toggles' documented default disagrees with code fallback (per [#762](https://github.com/rjskene/pipeline/issues/762) audit) ([702cc42](https://github.com/rjskene/pipeline/commit/702cc42bc8d4c618a345d7787ad074f2ebb02d90))
+* **config:** default CI gating toggles ON when unset via colon-less fallback, preserve =""⇒OFF ([#858](https://github.com/rjskene/pipeline/issues/858)) ([9f678b2](https://github.com/rjskene/pipeline/commit/9f678b2781122ffea04bceabf380b854ae0b1ef3))
+
 ## [0.22.0](https://github.com/rjskene/pipeline/compare/v0.21.10...v0.22.0) (2026-06-02)
 
 
