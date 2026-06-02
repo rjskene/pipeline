@@ -12,8 +12,11 @@ Source the project's `pipeline.config` so `PIPELINE_*` variables (`PIPELINE_REPO
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
-[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
-  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
+# CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
+_cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
+source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
 ## Lifecycle
