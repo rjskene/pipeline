@@ -23,6 +23,8 @@ Full process maps in docs/process-maps.md.
 | `/pipeline:analyze-issues` | read-only hygiene pass — duplicate / tracker-fit / missing-label / supersession detection |
 | `/pipeline:init` | Bootstrap a fresh project — preflight deps / detect repo+branch / generate gitignored `pipeline.config` / seed labels / doctor audit |
 
+Full command catalogue (every skill, all flags, interaction surfaces): see [docs/skills-api.md](docs/skills-api.md).
+
 ## Install + first run
 
 - Marketplace add:
@@ -80,6 +82,7 @@ claude-pipeline/
 ## Where to look
 
 - `docs/` — system reference (process maps, architecture, release cadence, plugin architecture, observability, self-audit, migration-from-subtree).
+- `docs/skills-api.md` — full command catalogue: every skill, all flags, and interaction surfaces (labels, config knobs, body markers).
 - `skills/<name>/SKILL.md` — authoritative behavior for each slash command.
 - `CLAUDE.md` — working instructions for this repo (branches, namespace discipline, configuration conventions).
 
