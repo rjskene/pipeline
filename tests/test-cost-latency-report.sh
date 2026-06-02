@@ -1850,6 +1850,95 @@ if [ "$E_CC30" = "333000" ]; then pass_msg "execute cache_creation bucket == 333
 if [ "$E_CR30" = "444000" ]; then pass_msg "execute cache_read bucket == 444000"; else fail_msg "execute cache_read should be 444000, got $E_CR30 (row=$EXEC_ROW30)"; fi
 rm -rf "$TMP30"
 
+# --- Scenario 33: reconciled substrate drops usage_complete:false (#816 Task 1) ---
+# Cost/token magnitude tables aggregate the reconciled substrate (usage_complete
+# != false). A standalone usage_complete:false lower-bound on a DISTINCT
+# session_id survives both dedup passes but must be EXCLUDED from the magnitude.
+inc_scenario "Scenario 33: reconciled-substrate drop of usage_complete:false (#816)"
+
+TMP33="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP33/" 2>/dev/null
+printf '%s\n' '[{"number":133,"title":"feat: reconciled substrate","additions":10,"deletions":0,"body":"Closes #233","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP33/prs.json"
+printf '%s\n' '{"number":133,"additions":10,"deletions":0,"comments":[]}' > "$TMP33/pr-133.json"
+printf '%s\n' '{"number":233,"labels":[],"comments":[]}' > "$TMP33/issue-233.json"
+{ echo '{"schema_version":1,"issue":"233","stage":"execute","session_id":"s33t","model":"claude-opus-4-8","agent_kind":"inline","source":"retroactive","usage_complete":true,"record_key":"K233T","tokens":{"input":1000,"output":1000,"cache_creation":1000,"cache_read":1000,"total":4000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"233","stage":"execute","session_id":"s33f","model":"claude-opus-4-8","agent_kind":"inline","source":"forward","usage_complete":false,"record_key":"K233F","tokens":{"input":50,"output":50,"cache_creation":50,"cache_read":50,"total":200},"duration_ms":1000}'
+} > "$TMP33/capture.jsonl"
+ROWS33="$(bash "$HELPER" --fixture "$TMP33" --emit-rows-json 2>/dev/null)"
+TT33="$(printf '%s' "$ROWS33" | jq -r '.[] | select(.issue==233) | .tokens_total')"
+if [ "$TT33" = "4000" ]; then pass_msg "issue 233 cost-table tokens exclude usage_complete:false lower-bound (4200 rejected)"; else fail_msg "issue 233 tokens_total should be 4000 (true only), got $TT33"; fi
+rm -rf "$TMP33"
+
+# --- Scenario 34: coverage-health full-stream count + excluded disclosure (#816 Task 2) ---
+# Coverage-health reads the FULL deduped stream (CAPTURE_ALL) so the lower-bound
+# count is the TRUE total (regression guard against shrinking to the reconciled
+# stream); a NEW line discloses how many lower-bounds were EXCLUDED from cost tables.
+inc_scenario "Scenario 34: coverage-health full-stream + excluded disclosure (#816)"
+
+TMP34="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP34/" 2>/dev/null
+printf '%s\n' '[{"number":134,"title":"feat: coverage disclosure","additions":10,"deletions":0,"body":"Closes #234","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP34/prs.json"
+printf '%s\n' '{"number":134,"additions":10,"deletions":0,"comments":[]}' > "$TMP34/pr-134.json"
+printf '%s\n' '{"number":234,"labels":[],"comments":[]}' > "$TMP34/issue-234.json"
+{ echo '{"schema_version":1,"issue":"234","stage":"execute","session_id":"s34t","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K234T","tokens":{"input":10,"output":10,"cache_creation":10,"cache_read":10,"total":40},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"234","stage":"execute","session_id":"s34f","model":"","agent_kind":"inline","usage_complete":false,"record_key":"K234F","tokens":{"input":5,"output":5,"cache_read":5,"cache_creation":5,"total":20},"duration_ms":900}'
+} > "$TMP34/capture.jsonl"
+TOK34="$(bash "$HELPER" --fixture "$TMP34" --tokenomics 2>/dev/null)"
+COV34="$(printf '%s\n' "$TOK34" | awk '/COVERAGE/{f=1} f')"
+LB34="$(printf '%s\n' "$COV34" | grep -iE 'lower-bound \(unreconciled\)' | head -1)"
+case "$LB34" in *1/2*) pass_msg "coverage lower-bound count still over FULL stream (1/2)";; *) fail_msg "coverage lower-bound should be 1/2, got: $LB34";; esac
+EXC34="$(printf '%s\n' "$COV34" | grep -iE 'excluded.*cost tables' | head -1)"
+case "$EXC34" in *1*) pass_msg "coverage discloses excluded-from-cost-tables count (1)";; *) fail_msg "coverage missing excluded-from-cost-tables disclosure, got: $EXC34";; esac
+rm -rf "$TMP34"
+
+# --- Scenario 35: --since DATE filters by ts_start (#816 Task 3) ---
+inc_scenario "Scenario 35: --since DATE scopes cost tables to the reconcilable era (#816)"
+
+TMP35="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP35/" 2>/dev/null
+printf '%s\n' '[{"number":135,"title":"feat: since filter","additions":10,"deletions":0,"body":"Closes #235","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP35/prs.json"
+printf '%s\n' '{"number":135,"additions":10,"deletions":0,"comments":[]}' > "$TMP35/pr-135.json"
+printf '%s\n' '{"number":235,"labels":[],"comments":[]}' > "$TMP35/issue-235.json"
+{ echo '{"schema_version":1,"issue":"235","stage":"execute","session_id":"s35a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K235A","ts_start":"2026-05-20T10:00:00Z","tokens":{"input":1000,"output":0,"cache_creation":0,"cache_read":0,"total":1000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"235","stage":"execute","session_id":"s35b","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K235B","ts_start":"2026-05-31T10:00:00Z","tokens":{"input":2000,"output":0,"cache_creation":0,"cache_read":0,"total":2000},"duration_ms":1000}'
+} > "$TMP35/capture.jsonl"
+ALL35="$(bash "$HELPER" --fixture "$TMP35" --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==235) | .tokens_total')"
+SIN35="$(bash "$HELPER" --fixture "$TMP35" --since 2026-05-31 --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==235) | .tokens_total')"
+if [ "$ALL35" = "3000" ]; then pass_msg "no --since aggregates both dates (3000)"; else fail_msg "expected 3000 without --since, got $ALL35"; fi
+if [ "$SIN35" = "2000" ]; then pass_msg "--since 2026-05-31 keeps only on/after-cutoff record (2000)"; else fail_msg "expected 2000 with --since 2026-05-31, got $SIN35"; fi
+rm -rf "$TMP35"
+
+# --- Scenario 36: absent-usage_complete records stay in cost tables (#816 Task 4) ---
+# Fixture/legacy compat: a record with NO usage_complete field must still be
+# aggregated (the != false predicate keeps it; codifies the contract so a later
+# switch to == true would break loudly).
+inc_scenario "Scenario 36: absent usage_complete record kept (fixture-compat) (#816)"
+
+TMP36="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP36/" 2>/dev/null
+printf '%s\n' '[{"number":136,"title":"feat: absent-field compat","additions":10,"deletions":0,"body":"Closes #236","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP36/prs.json"
+printf '%s\n' '{"number":136,"additions":10,"deletions":0,"comments":[]}' > "$TMP36/pr-136.json"
+printf '%s\n' '{"number":236,"labels":[],"comments":[]}' > "$TMP36/issue-236.json"
+echo '{"schema_version":1,"issue":"236","stage":"execute","session_id":"s36","model":"claude-opus-4-8","agent_kind":"inline","record_key":"K236","tokens":{"input":7000,"output":0,"cache_creation":0,"cache_read":0,"total":7000},"duration_ms":1000}' > "$TMP36/capture.jsonl"
+TT36="$(bash "$HELPER" --fixture "$TMP36" --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==236) | .tokens_total')"
+if [ "$TT36" = "7000" ]; then pass_msg "record with absent usage_complete is kept (7000)"; else fail_msg "absent usage_complete record should be kept (7000), got $TT36"; fi
+rm -rf "$TMP36"
+
+# --- Scenario 37: concurrency inline_n counts the FULL stream (#816 evaluator item 1) ---
+# emit_concurrency_assessment's "N inline records present" is a PRESENCE
+# disclosure, not a cost magnitude — it must read CAPTURE_ALL so explicit-false
+# inline lower-bounds are not silently dropped from the count.
+inc_scenario "Scenario 37: concurrency inline_n reads full stream (#816)"
+
+TMP37="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP37/" 2>/dev/null
+printf '%s\n' '[{"number":137,"title":"feat: inline_n full stream","additions":10,"deletions":0,"body":"Closes #237","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP37/prs.json"
+printf '%s\n' '{"number":137,"additions":10,"deletions":0,"comments":[]}' > "$TMP37/pr-137.json"
+printf '%s\n' '{"number":237,"labels":[],"comments":[]}' > "$TMP37/issue-237.json"
+{ echo '{"schema_version":1,"issue":"237","stage":"execute","session_id":"s37t","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K237T","tokens":{"input":10,"output":10,"cache_creation":10,"cache_read":10,"total":40},"duration_ms":1000,"ts_start":"2026-05-31T09:00:00Z","ts_end":"2026-05-31T09:00:00Z"}'
+  echo '{"schema_version":1,"issue":"237","stage":"execute","session_id":"s37f","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":false,"record_key":"K237F","tokens":{"input":5,"output":5,"cache_creation":5,"cache_read":5,"total":20},"duration_ms":900,"ts_start":"2026-05-31T09:05:00Z","ts_end":"2026-05-31T09:05:00Z"}'
+} > "$TMP37/capture.jsonl"
+TOK37="$(bash "$HELPER" --fixture "$TMP37" --tokenomics 2>/dev/null)"
+CONC37="$(printf '%s\n' "$TOK37" | awk '/CONCURRENCY/{f=1} f')"
+IL37="$(printf '%s\n' "$CONC37" | grep -iE 'inline record' | head -1)"
+case "$IL37" in *"2 inline record"*) pass_msg "concurrency inline_n counts full stream (2, incl usage_complete:false)";; *) fail_msg "concurrency inline_n should count 2 (full stream), got: $IL37";; esac
+rm -rf "$TMP37"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
