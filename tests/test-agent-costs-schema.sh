@@ -3,8 +3,8 @@
 #
 # BOTH agent-cost producers must emit the EXACT schema_version=1 field set:
 #   top-level: schema_version record_key issue stage agent_kind agent_type
-#              session_id model tokens duration_ms ts_start ts_end source
-#              usage_complete
+#              agent_id session_id model tokens duration_ms ts_start ts_end
+#              source usage_complete
 #   tokens.* : input output cache_read cache_creation total
 #
 # We drive each producer to emit a real record and assert the emitted JSON
@@ -29,7 +29,7 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-EXPECTED_TOP='agent_kind agent_type duration_ms issue model record_key schema_version session_id source stage tokens ts_end ts_start usage_complete'
+EXPECTED_TOP='agent_id agent_kind agent_type duration_ms issue model record_key schema_version session_id source stage tokens ts_end ts_start usage_complete'
 EXPECTED_TOKENS='cache_creation cache_read input output total'
 
 # --- drive the RETROACTIVE producer against the fixtures ------------------
