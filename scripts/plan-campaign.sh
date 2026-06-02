@@ -39,6 +39,87 @@ MAX_BC="${PIPELINE_CAMPAIGN_MAX_BC:-2}"
 MAX_AD="${PIPELINE_CAMPAIGN_MAX_AD:-5}"
 CLOSURE_TARGET=""
 
+# ---- aggregate-signals subcommand (#863) ----
+# Reads `SIGNAL issue=#<N> kind=<...> title="<conventional-commit title>"
+# detail="<...>"` records on stdin, dedups by issue number against the open
+# (--open=<csv>) and campaign-filed (--filed=<csv>) sets, groups survivors by
+# conventional-commit <scope>, and emits one
+#   CANDIDATE scope=<scope> issues=#a,#b title="<derived title>" kinds=<csv>
+# line per surviving group. Pure read/stdout: no `gh`, no edits.
+if [ "${1:-}" = "aggregate-signals" ]; then
+  shift
+  OPEN_CSV=""
+  FILED_CSV=""
+  for arg in "$@"; do
+    case "$arg" in
+      --open=*)  OPEN_CSV="${arg#--open=}" ;;
+      --filed=*) FILED_CSV="${arg#--filed=}" ;;
+      *) echo "plan-campaign aggregate-signals: unexpected arg: $arg" >&2; exit 1 ;;
+    esac
+  done
+
+  # Drop-set membership lookup (open ∪ filed), keyed by bare issue number.
+  declare -A DROP
+  for n in $(printf '%s' "${OPEN_CSV},${FILED_CSV}" | tr ',' ' '); do
+    n="${n#\#}"
+    [ -n "$n" ] && DROP["$n"]=1
+  done
+
+  # Per-scope accumulation (insertion order preserved via SCOPE_ORDER).
+  declare -A SC_ISSUES   # scope -> space-separated #N tokens
+  declare -A SC_KINDS    # scope -> space-separated kinds
+  declare -A SC_TITLE    # scope -> first title seen for the scope
+  SCOPE_ORDER=""
+
+  scope_of() {
+    # echoes the conventional-commit <scope> token, or empty. Mirrors the
+    # regex in find-grouping-candidates.sh so the two stay consistent.
+    printf '%s' "$1" | sed -nE 's/^[a-z]+\(([a-z0-9_-]+)\):.*/\1/p'
+  }
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    case "$line" in
+      "SIGNAL "*) ;;
+      *) continue ;;
+    esac
+
+    # Parse fields. issue=#N kind=K title="..." detail="..."
+    issue="${line#*issue=}"; issue="${issue%% *}"; issue="${issue#\#}"
+    kind="${line#*kind=}"; kind="${kind%% *}"
+    title="${line#*title=\"}"; title="${title%%\"*}"
+
+    # Dedup against open ∪ filed sets (issue #0 / empty = "no number yet", never dropped).
+    if [ -n "$issue" ] && [ "$issue" != "0" ] && [ -n "${DROP[$issue]+x}" ]; then
+      continue
+    fi
+
+    scope="$(scope_of "$title")"
+    [ -z "$scope" ] && scope="general"
+
+    if [ -z "${SC_TITLE[$scope]+x}" ]; then
+      SC_TITLE[$scope]="$title"
+      SC_ISSUES[$scope]=""
+      SC_KINDS[$scope]=""
+      SCOPE_ORDER="$SCOPE_ORDER $scope"
+    fi
+    if [ -n "$issue" ] && [ "$issue" != "0" ]; then
+      SC_ISSUES[$scope]="${SC_ISSUES[$scope]} #$issue"
+    fi
+    SC_KINDS[$scope]="${SC_KINDS[$scope]} $kind"
+  done
+
+  for scope in $SCOPE_ORDER; do
+    # De-dup + join issues with commas.
+    issues=$(printf '%s\n' ${SC_ISSUES[$scope]} | awk 'NF' | awk '!seen[$0]++' | paste -sd, -)
+    # De-dup + join kinds with commas (preserve first-seen order).
+    kinds=$(printf '%s\n' ${SC_KINDS[$scope]} | awk 'NF' | awk '!seen[$0]++' | paste -sd, -)
+    printf 'CANDIDATE scope=%s issues=%s title="%s" kinds=%s\n' \
+      "$scope" "$issues" "${SC_TITLE[$scope]}" "$kinds"
+  done
+  exit 0
+fi
+
 NEW_ARGS=()
 for arg in "$@"; do
   case "$arg" in

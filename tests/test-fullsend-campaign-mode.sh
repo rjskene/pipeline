@@ -78,8 +78,37 @@ if [ -n "${ord_execute:-}" ] && [ -n "${ord_evalpr:-}" ] && [ -n "${ord_green:-}
   fi
 fi
 
-# (7) end-of-leg bug filing dedups against open issues + the campaign-filed set.
+# (7) bug filing dedups against open issues + the campaign-filed set.
 printf '%s' "$camp" | grep -qiE 'dedups?' || { echo "MISSING (Campaign mode): dedup/dedups"; fail=1; }
+
+# (7a) Filing happens at END OF CAMPAIGN (consolidated), not per-leg create.
+printf '%s' "$camp" | grep -qiE 'end-of-campaign|campaign completion' \
+  || { echo "MISSING (Campaign mode): end-of-campaign / campaign completion filing trigger"; fail=1; }
+
+# (7b) Routes through the deterministic create-issues subset (#863):
+#      scope-check / combine-bias heuristic, find-grouping-candidates.sh,
+#      the Context/Scope/Affected-areas/Notes body template, and a path-hint.
+printf '%s' "$camp" | grep -qiE 'scope-check|combine bias|combine-bias' \
+  || { echo "MISSING (Campaign mode): scope-check / combine-bias heuristic"; fail=1; }
+assert_camp "find-grouping-candidates.sh"
+assert_camp "## Context"
+assert_camp "## Scope"
+assert_camp "## Affected areas"
+assert_camp "## Notes"
+printf '%s' "$camp" | grep -qiE 'path-hint' \
+  || { echo "MISSING (Campaign mode): path-hint marker"; fail=1; }
+
+# (7c) Autonomy constraint (#863): the deterministic NON-INTERACTIVE subset
+#      only — never the interactive brainstorming dialogue.
+printf '%s' "$camp" | grep -qiE 'non-interactive|not the interactive|no brainstorming|never .*brainstorming' \
+  || { echo "MISSING (Campaign mode): non-interactive autonomy constraint"; fail=1; }
+printf '%s' "$camp" | grep -qiF "aggregate-signals" \
+  || { echo "MISSING (Campaign mode): aggregate-signals invocation"; fail=1; }
+
+# (7d) Per-leg dedup against open issues + campaign-filed set is PRESERVED
+#      (signal COLLECTION still race-guards across legs).
+printf '%s' "$camp" | grep -qiE 'campaign-filed' \
+  || { echo "MISSING (Campaign mode): campaign-filed set preserved"; fail=1; }
 
 # (8) scoped halt computes a dependency closure (via plan-campaign.sh closure).
 assert_camp "closure"

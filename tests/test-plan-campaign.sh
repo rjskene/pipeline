@@ -321,6 +321,99 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/errb"
 fi
 
+# =====================================================================
+# aggregate-signals subcommand (#863). Reads `SIGNAL ...` records on stdin,
+# dedups by issue number against an open-issue set (--open=<csv>) + a
+# campaign-filed set (--filed=<csv>), groups survivors by conventional-commit
+# <scope>, and emits one `CANDIDATE scope=... issues=#a,#b title="..."
+# kinds=...` line per surviving group. Pure read/stdout — no gh, no edits.
+# =====================================================================
+
+# Case 8: two legs each emit a SIGNAL with the same <scope> -> ONE candidate.
+echo "Case 8: aggregate-signals collapses same-scope signals from two legs into one candidate"
+inc
+IN8=$(printf '%s\n' \
+  'SIGNAL issue=#0 kind=failed title="fix(fullsend): leg one race" detail="leg1"' \
+  'SIGNAL issue=#0 kind=off-plan title="fix(fullsend): leg two drift" detail="leg2"')
+if OUT=$(printf '%s' "$IN8" | run_helper aggregate-signals 2>"$TMP/err8"); then
+  LINES=$(echo "$OUT" | grep -cE '^CANDIDATE ' || true)
+  C=$(echo "$OUT" | grep -E '^CANDIDATE ' | head -1)
+  if [ "$LINES" = "1" ] \
+     && echo "$C" | grep -q 'scope=fullsend' \
+     && echo "$C" | grep -qE 'kinds=[^ ]*failed' \
+     && echo "$C" | grep -qE 'kinds=[^ ]*off-plan'; then
+    pass_msg "Case 8: same-scope signals collapse to one candidate (kinds merged)"
+  else
+    fail_msg "Case 8: same-scope signals did not collapse"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 8: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$TMP/err8"
+fi
+
+# Case 9: a signal whose issue number is in --open OR --filed is DROPPED.
+echo "Case 9: aggregate-signals drops signals already in the open-issue or campaign-filed set"
+inc
+IN9=$(printf '%s\n' \
+  'SIGNAL issue=#42 kind=failed title="fix(alpha): already open" detail="x"' \
+  'SIGNAL issue=#43 kind=failed title="fix(beta): already filed" detail="y"' \
+  'SIGNAL issue=#44 kind=failed title="fix(gamma): brand new" detail="z"')
+if OUT=$(printf '%s' "$IN9" | run_helper aggregate-signals --open=42 --filed=43 2>"$TMP/err9"); then
+  if ! echo "$OUT" | grep -q 'scope=alpha' \
+     && ! echo "$OUT" | grep -q 'scope=beta' \
+     && echo "$OUT" | grep -q 'scope=gamma'; then
+    pass_msg "Case 9: #42 (open) and #43 (filed) dropped; #44 (gamma) survives"
+  else
+    fail_msg "Case 9: open/filed dedup not applied"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 9: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$TMP/err9"
+fi
+
+# Case 10: empty input -> zero candidate lines, exit 0.
+echo "Case 10: aggregate-signals on empty input emits nothing and exits 0"
+inc
+if OUT=$(printf '' | run_helper aggregate-signals 2>"$TMP/err10"); then
+  LINES=$(echo "$OUT" | grep -cE '^CANDIDATE ' || true)
+  if [ "$LINES" = "0" ]; then
+    pass_msg "Case 10: empty input -> zero candidates, exit 0"
+  else
+    fail_msg "Case 10: empty input emitted candidates"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 10: helper exited $rc on empty input"
+  echo "    stderr:"; sed 's/^/      /' "$TMP/err10"
+fi
+
+# Case 11: distinct scopes stay separate (two candidates).
+echo "Case 11: aggregate-signals keeps distinct scopes as separate candidates"
+inc
+IN11=$(printf '%s\n' \
+  'SIGNAL issue=#0 kind=failed title="fix(one): aye" detail="a"' \
+  'SIGNAL issue=#0 kind=failed title="fix(two): bee" detail="b"')
+if OUT=$(printf '%s' "$IN11" | run_helper aggregate-signals 2>"$TMP/err11"); then
+  LINES=$(echo "$OUT" | grep -cE '^CANDIDATE ' || true)
+  if [ "$LINES" = "2" ] \
+     && echo "$OUT" | grep -q 'scope=one' \
+     && echo "$OUT" | grep -q 'scope=two'; then
+    pass_msg "Case 11: distinct scopes -> two separate candidates"
+  else
+    fail_msg "Case 11: distinct scopes collapsed or miscounted"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 11: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$TMP/err11"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
