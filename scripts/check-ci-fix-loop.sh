@@ -48,9 +48,18 @@ if [ -z "$PR_NUM" ]; then
   exit 0
 fi
 
+# `gh pr checks --json` exposes `state` (uppercase per-check status:
+# SUCCESS / FAILURE / PENDING / SKIPPED / NEUTRAL / CANCELLED / ...) and a
+# lowercase `bucket` category — but NOT `conclusion` (that field lives on
+# `gh pr view --json statusCheckRollup`). Querying `--json conclusion` here
+# errored unconditionally, leaving CONCLUSION empty so no ACTION= was ever
+# emitted (issue #876). Map the real `state` field to the same
+# green/pending/red verdict: any FAILURE/CANCELLED/TIMED_OUT/ACTION_REQUIRED/
+# STARTUP_FAILURE -> red; all SUCCESS/SKIPPED/NEUTRAL -> green; anything else
+# (PENDING/EXPECTED) -> pending.
 CONCLUSION=$(gh pr checks "$PR_NUM" --repo "$PIPELINE_REPO" \
-  --json conclusion --jq \
-  '[.[] | .conclusion] | if any(. == "failure") then "failure" elif all(. == "success" or . == "skipped" or . == "neutral") then "success" else "pending" end')
+  --json state --jq \
+  '[.[] | .state] | if any(. == "FAILURE" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE") then "failure" elif all(. == "SUCCESS" or . == "SKIPPED" or . == "NEUTRAL") then "success" else "pending" end')
 
 if [ "$CONCLUSION" = "success" ]; then
   echo "ACTION=green ISSUE=$ISSUE PR=$PR_NUM"
