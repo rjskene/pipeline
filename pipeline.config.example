@@ -38,6 +38,10 @@ PIPELINE_RELEASE_PR_AUTO_MERGE="false"             # Opt-in: auto-merge green re
 PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies release-bot PRs to discover. Default matches release-please; override for other bots (e.g. "please-release").
 # Pre-think wave planner for /pipeline:run full send. When "true", the orchestrator runs scripts/plan-waves.sh before dispatching classify/plan agents and processes ready issues wave-by-wave (priority tier + explicit blockers + shared-file conflicts). Set to "false" to restore the legacy single-blast parallel dispatch.
 PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED="true"
+# Campaign mode (/pipeline:fullsend --campaign) per-leg caps. BC = max PATH-B/C issues per leg (expensive); overridable per-invocation via --max-bc.
+PIPELINE_CAMPAIGN_MAX_BC="2"
+# AD = max PATH-A/D issues per campaign leg (cheap/fast); overridable per-invocation via --max-ad.
+PIPELINE_CAMPAIGN_MAX_AD="5"
 
 # Grouping detection in /pipeline:create-issues. When "true", the skill calls scripts/find-grouping-candidates.sh before printing the proposal list to recommend TRACKER / GROUP / STANDALONE per proposed title. Set to "false" to skip the heuristic entirely (the proposal proceeds as if every recommendation were STANDALONE).
 PIPELINE_GROUPING_DETECTION_ENABLED="true"

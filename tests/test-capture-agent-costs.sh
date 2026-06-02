@@ -245,4 +245,79 @@ pass "worktree: worktree-local log not written"
 git -C "$mainrepo" worktree remove "$wt" --force 2>/dev/null || rm -rf "$wt"
 rm -rf "$home" "$mainrepo"
 
+# ---------------------------------------------------------------------------
+# Cross-source reconciliation (#830): a pre-existing usage_complete=true record
+# for (session_id, issue, stage) SUPPRESSES the stranded retroactive lower-bound
+# the INLINE pass would otherwise append for the SAME tuple (no transcript ->
+# usage_complete=false). The complete record is the durable cost signal; the
+# stranded lower-bound is the reconciliation leak this fix closes.
+#
+# Regression guard: a lower-bound whose tuple is NOT covered by any complete
+# record MUST still be emitted (usage_complete=false) — the only-signal path is
+# preserved; suppression is scoped to covered tuples only.
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/runs.log"   # no headless rows for this scenario
+
+# Two inline agents, both lower-bound only (no staged subagent transcripts):
+#   - sess-recon / #820 / execute  -> COVERED by a pre-seeded complete record  -> suppressed
+#   - sess-recon / #821 / execute  -> NOT covered                              -> still emitted
+{
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "2026-06-01T12:00:00.000Z" "sess-recon" "Execute issue plan for #820" "x" "x" "x" "recon-820.json"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "2026-06-01T12:01:00.000Z" "sess-recon" "Execute issue plan for #821" "x" "x" "x" "recon-821.json"
+} > "$proj/.claude/logs/subagents.log"
+
+# Sidecars: final-turn lower-bounds, NO agent_id -> backfill keeps usage_complete=false.
+cat > "$proj/.claude/logs/subagents/recon-820.json" <<'JSON'
+{"subagent_type":"general-purpose","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}
+JSON
+cat > "$proj/.claude/logs/subagents/recon-821.json" <<'JSON'
+{"subagent_type":"general-purpose","usage":{"input_tokens":11,"output_tokens":6,"cache_read_input_tokens":4,"cache_creation_input_tokens":1}}
+JSON
+
+# Pre-seed the OUTPUT log with ONE usage_complete=true record covering
+# (sess-recon, 820, execute). The script appends to this file and reads it in
+# its idempotency scan, so this on-disk row is the complete sibling the
+# reconciliation must learn.
+recon_out="$proj/.claude/logs/agent-costs.jsonl"
+cat > "$recon_out" <<'JSON'
+{"schema_version":1,"record_key":"seed-recon-820-complete","issue":"820","stage":"execute","agent_kind":"inline","agent_type":"general-purpose","session_id":"sess-recon","model":"claude-opus-4-8","tokens":{"input":50000,"output":500,"cache_read":40000,"cache_creation":2000,"total":92500},"duration_ms":0,"ts_start":"2026-06-01T11:00:00.000Z","ts_end":"2026-06-01T11:30:00.000Z","source":"forward","usage_complete":true}
+JSON
+
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+
+python3 - "$recon_out" <<'PY' || fail "reconciliation (#830) assertions failed"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+
+def match(r, issue, complete):
+    return (r.get("session_id") == "sess-recon"
+            and str(r.get("issue")) == issue
+            and r.get("stage") == "execute"
+            and r.get("usage_complete") is complete)
+
+# The pre-seeded complete record for #820 survives.
+assert any(match(r, "820", True) for r in rows), \
+    "pre-seeded complete record for #820 must survive"
+
+# SUPPRESSION: no stranded lower-bound for the COVERED tuple (#820).
+stranded820 = [r for r in rows if match(r, "820", False)]
+assert not stranded820, \
+    "stranded lower-bound for covered (#820) must be suppressed, got %r" % stranded820
+
+# REGRESSION GUARD: the uncovered tuple (#821) lower-bound IS still emitted.
+emitted821 = [r for r in rows if match(r, "821", False)]
+assert emitted821, \
+    "lower-bound for uncovered (#821) must still be emitted (only-signal path)"
+
+print("reconciliation (#830) assertions OK")
+PY
+pass "reconciliation (#830): complete record suppresses stranded lower-bound; uncovered lower-bound preserved"
+
+rm -rf "$home" "$proj"
+
 echo "all tests passed"

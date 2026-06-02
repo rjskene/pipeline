@@ -1939,6 +1939,155 @@ IL37="$(printf '%s\n' "$CONC37" | grep -iE 'inline record' | head -1)"
 case "$IL37" in *"2 inline record"*) pass_msg "concurrency inline_n counts full stream (2, incl usage_complete:false)";; *) fail_msg "concurrency inline_n should count 2 (full stream), got: $IL37";; esac
 rm -rf "$TMP37"
 
+# --- Scenario 38: --until DATE upper-bounds by ts_start (#831) ---
+inc_scenario "Scenario 38: --until DATE upper-bounds cost tables by ts_start (#831)"
+TMP38="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP38/" 2>/dev/null
+printf '%s\n' '[{"number":138,"title":"feat: until filter","additions":10,"deletions":0,"body":"Closes #238","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP38/prs.json"
+printf '%s\n' '{"number":138,"additions":10,"deletions":0,"comments":[]}' > "$TMP38/pr-138.json"
+printf '%s\n' '{"number":238,"labels":[],"comments":[]}' > "$TMP38/issue-238.json"
+{ echo '{"schema_version":1,"issue":"238","stage":"execute","session_id":"s38a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K238A","ts_start":"2026-05-20T10:00:00Z","tokens":{"input":1000,"output":0,"cache_creation":0,"cache_read":0,"total":1000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"238","stage":"execute","session_id":"s38b","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K238B","ts_start":"2026-05-31T10:00:00Z","tokens":{"input":2000,"output":0,"cache_creation":0,"cache_read":0,"total":2000},"duration_ms":1000}'
+} > "$TMP38/capture.jsonl"
+ALL38="$(bash "$HELPER" --fixture "$TMP38" --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==238) | .tokens_total')"
+UNT38="$(bash "$HELPER" --fixture "$TMP38" --until 2026-05-20 --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==238) | .tokens_total')"
+if [ "$ALL38" = "3000" ]; then pass_msg "no --until aggregates both dates (3000)"; else fail_msg "expected 3000 without --until, got $ALL38"; fi
+if [ "$UNT38" = "1000" ]; then pass_msg "--until 2026-05-20 keeps only on/before-cutoff record (1000, inclusive)"; else fail_msg "expected 1000 with --until 2026-05-20, got $UNT38"; fi
+rm -rf "$TMP38"
+
+# --- Scenario 39: --since + --until form a closed window; empty ts_start excluded (#831) ---
+inc_scenario "Scenario 39: --since+--until closed window + empty-ts_start excluded under --until (#831)"
+TMP39="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP39/" 2>/dev/null
+printf '%s\n' '[{"number":139,"title":"feat: closed window","additions":10,"deletions":0,"body":"Closes #239","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP39/prs.json"
+printf '%s\n' '{"number":139,"additions":10,"deletions":0,"comments":[]}' > "$TMP39/pr-139.json"
+printf '%s\n' '{"number":239,"labels":[],"comments":[]}' > "$TMP39/issue-239.json"
+{ echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239A","ts_start":"2026-05-19T10:00:00Z","tokens":{"input":100,"output":0,"cache_creation":0,"cache_read":0,"total":100},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39b","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239B","ts_start":"2026-05-20T10:00:00Z","tokens":{"input":2000,"output":0,"cache_creation":0,"cache_read":0,"total":2000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39c","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239C","ts_start":"2026-05-25T10:00:00Z","tokens":{"input":400,"output":0,"cache_creation":0,"cache_read":0,"total":400},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"239","stage":"execute","session_id":"s39e","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K239E","ts_start":"","tokens":{"input":9999,"output":0,"cache_creation":0,"cache_read":0,"total":9999},"duration_ms":1000}'
+} > "$TMP39/capture.jsonl"
+WIN39="$(bash "$HELPER" --fixture "$TMP39" --since 2026-05-20 --until 2026-05-20 --emit-rows-json 2>/dev/null | jq -r '.[] | select(.issue==239) | .tokens_total')"
+if [ "$WIN39" = "2000" ]; then pass_msg "--since 2026-05-20 --until 2026-05-20 isolates a single day (2000), excludes 05-19/05-25 and empty ts_start (9999)"; else fail_msg "expected 2000 for closed single-day window, got $WIN39"; fi
+rm -rf "$TMP39"
+
+# --- Scenario 40: --per-day emits one day-block per day in the window (#831) ---
+inc_scenario "Scenario 40: --per-day emits N day-blocks for an N-day window (#831)"
+TMP40="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP40/" 2>/dev/null
+printf '%s\n' '[{"number":140,"title":"feat: per-day","additions":10,"deletions":0,"body":"Closes #240","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP40/prs.json"
+printf '%s\n' '{"number":140,"additions":10,"deletions":0,"comments":[]}' > "$TMP40/pr-140.json"
+printf '%s\n' '{"number":240,"labels":[],"comments":[]}' > "$TMP40/issue-240.json"
+{ echo '{"schema_version":1,"issue":"240","stage":"execute","session_id":"s40a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K240A","ts_start":"2026-05-20T10:00:00Z","tokens":{"input":1000,"output":0,"cache_creation":0,"cache_read":0,"total":1000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"240","stage":"execute","session_id":"s40c","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K240C","ts_start":"2026-05-22T10:00:00Z","tokens":{"input":3000,"output":0,"cache_creation":0,"cache_read":0,"total":3000},"duration_ms":1000}'
+} > "$TMP40/capture.jsonl"
+PD40="$(bash "$HELPER" --fixture "$TMP40" --per-day --since 2026-05-20 --until 2026-05-22 2>/dev/null)"
+DAYHDRS40="$(printf '%s\n' "$PD40" | grep -cE '^=== DAY 2026-05-2[0-2] ===$')"
+if [ "$DAYHDRS40" = "3" ]; then pass_msg "--per-day emits 3 day-blocks for a 3-day window (05-20..05-22)"; else fail_msg "expected 3 day-block headers, got $DAYHDRS40"; fi
+if printf '%s\n' "$PD40" | grep -qE '^=== DAY 2026-05-20 ===$' \
+   && printf '%s\n' "$PD40" | grep -qE '^=== DAY 2026-05-21 ===$' \
+   && printf '%s\n' "$PD40" | grep -qE '^=== DAY 2026-05-22 ===$'; then
+  pass_msg "--per-day day headers cover each day in [since,until] inclusive"
+else
+  fail_msg "--per-day missing one of the expected day headers"
+fi
+rm -rf "$TMP40"
+
+# --- Scenario 41: unknown-arg guard intact + --help documents new flags (#831) ---
+inc_scenario "Scenario 41: unknown-arg guard intact + --help documents --until/--per-day (#831)"
+bash "$HELPER" --bogus-flag >/dev/null 2>&1
+if [ "$?" -ne 0 ]; then pass_msg "unknown arg --bogus-flag still exits non-zero"; else fail_msg "unknown arg should exit non-zero (guard regressed)"; fi
+HELP41="$(bash "$HELPER" --help 2>&1 || true)"
+if printf '%s' "$HELP41" | grep -q -- '--until'; then pass_msg "--help documents --until"; else fail_msg "--help missing --until"; fi
+if printf '%s' "$HELP41" | grep -q -- '--per-day'; then pass_msg "--help documents --per-day"; else fail_msg "--help missing --per-day"; fi
+
+# --- Scenario 42: --emit-day-json per-day aggregate mode (#832) ---
+# Builds a 2-day fixture window. Day 2026-05-31 has two PRICED opus records
+# (input-only + output-only) plus one UNPRICED (model:"") record; Day
+# 2026-06-01 has one PRICED opus record plus one explicit usage_complete:false
+# lower-bound (excluded from totals but flips the floor flag). Issue 250 is the
+# in-window LOC join (PR 150, loc 10).
+inc_scenario "Scenario 42: --emit-day-json per-day aggregates (#832)"
+TMP42="$(mktemp -d)"
+printf '%s\n' '[{"number":150,"title":"feat: day-json","additions":7,"deletions":3,"body":"Closes #250","mergedAt":"2026-05-31T12:00:00Z","labels":[]}]' > "$TMP42/prs.json"
+printf '%s\n' '{"number":150,"additions":7,"deletions":3,"comments":[]}' > "$TMP42/pr-150.json"
+printf '%s\n' '{"number":250,"labels":[],"comments":[]}' > "$TMP42/issue-250.json"
+{ echo '{"schema_version":1,"issue":"250","stage":"plan","session_id":"s42a","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K42A","ts_start":"2026-05-31T09:00:00Z","tokens":{"input":1000,"output":0,"cache_creation":0,"cache_read":0,"total":1000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"250","stage":"execute","session_id":"s42b","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K42B","ts_start":"2026-05-31T10:00:00Z","tokens":{"input":0,"output":2000,"cache_creation":0,"cache_read":0,"total":2000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"250","stage":"pr-eval","session_id":"s42c","model":"","agent_kind":"inline","usage_complete":true,"record_key":"K42C","ts_start":"2026-05-31T11:00:00Z","tokens":{"input":500,"output":0,"cache_creation":0,"cache_read":0,"total":500},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"250","stage":"execute","session_id":"s42d","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"K42D","ts_start":"2026-06-01T10:00:00Z","tokens":{"input":4000,"output":0,"cache_creation":0,"cache_read":0,"total":4000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"250","stage":"execute","session_id":"s42e","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":false,"record_key":"K42E","ts_start":"2026-06-01T11:00:00Z","tokens":{"input":9999,"output":0,"cache_creation":0,"cache_read":0,"total":9999},"duration_ms":1000}'
+} > "$TMP42/capture.jsonl"
+
+DJ42="$(bash "$HELPER" --fixture "$TMP42" --emit-day-json --since 2026-05-31 --until 2026-06-01 2>/dev/null)"
+DJ42_RC=$?
+if [ "$DJ42_RC" -eq 0 ]; then pass_msg "--emit-day-json exits 0"; else fail_msg "--emit-day-json exited non-zero (rc=$DJ42_RC)"; fi
+
+if printf '%s' "$DJ42" | jq -se 'length==2' >/dev/null 2>&1; then
+  pass_msg "--emit-day-json emits valid JSON Lines, 2 day objects"
+else
+  fail_msg "--emit-day-json expected 2 JSON-Lines day objects (got: $(printf '%s' "$DJ42" | head -3))"
+fi
+
+# Schema-key presence on the first day object.
+KEYS42="$(printf '%s' "$DJ42" | head -1 | jq -r '[paths(scalars==null or true)] | length' 2>/dev/null)"
+if printf '%s' "$DJ42" | head -1 | jq -e '
+    has("date") and has("n") and (.tokens|has("input") and has("output") and has("cache_creation") and has("cache_read") and has("total"))
+    and (.per_n|has("input") and has("output") and has("cache_creation") and has("cache_read") and has("total"))
+    and has("active_loc") and has("per_loc")
+    and has("priced_n")
+    and (.cost|has("input") and has("output") and has("cache_creation") and has("cache_read") and has("total"))
+    and has("cost_per_n") and has("cost_per_loc") and has("usage_complete_floor")' >/dev/null 2>&1; then
+  pass_msg "day object carries the full schema keys"
+else
+  fail_msg "day object missing schema keys (got: $(printf '%s' "$DJ42" | head -1))"
+fi
+
+dj_field() { printf '%s' "$DJ42" | jq -r --arg d "$1" 'select(.date==$d) | '"$2" 2>/dev/null; }
+
+# Day 2026-05-31: 3 records (2 priced + 1 unpriced); tokens.total=1000+2000+500=3500; priced_n=2.
+if [ "$(dj_field 2026-05-31 '.n')" = "3" ]; then pass_msg "05-31 n==3 (all records incl. unpriced)"; else fail_msg "05-31 n expected 3, got $(dj_field 2026-05-31 '.n')"; fi
+if [ "$(dj_field 2026-05-31 '.tokens.total')" = "3500" ]; then pass_msg "05-31 tokens.total==3500"; else fail_msg "05-31 tokens.total expected 3500, got $(dj_field 2026-05-31 '.tokens.total')"; fi
+# tokens.input sums ALL records (priced + unpriced): 1000 (K42A) + 500 (K42C unpriced) = 1500.
+if [ "$(dj_field 2026-05-31 '.tokens.input')" = "1500" ]; then pass_msg "05-31 tokens.input==1500 (incl. unpriced)"; else fail_msg "05-31 tokens.input expected 1500, got $(dj_field 2026-05-31 '.tokens.input')"; fi
+if [ "$(dj_field 2026-05-31 '.tokens.output')" = "2000" ]; then pass_msg "05-31 tokens.output==2000"; else fail_msg "05-31 tokens.output expected 2000, got $(dj_field 2026-05-31 '.tokens.output')"; fi
+if [ "$(dj_field 2026-05-31 '.priced_n')" = "2" ]; then pass_msg "05-31 priced_n==2 (excludes model:\"\")"; else fail_msg "05-31 priced_n expected 2, got $(dj_field 2026-05-31 '.priced_n')"; fi
+if [ "$(dj_field 2026-05-31 '.usage_complete_floor')" = "false" ]; then pass_msg "05-31 usage_complete_floor==false (clean day)"; else fail_msg "05-31 floor expected false, got $(dj_field 2026-05-31 '.usage_complete_floor')"; fi
+# cost.total = 1000/1e6*15 + 2000/1e6*75 = 0.015 + 0.15 = 0.165
+if awk -v c="$(dj_field 2026-05-31 '.cost.total')" 'BEGIN{exit !(c>0.16 && c<0.17)}'; then pass_msg "05-31 cost.total ~= 0.165"; else fail_msg "05-31 cost.total expected ~0.165, got $(dj_field 2026-05-31 '.cost.total')"; fi
+# active_loc: issue 250 has records on 05-31, loc=10 → active_loc=10
+if [ "$(dj_field 2026-05-31 '.active_loc')" = "10" ]; then pass_msg "05-31 active_loc==10 (issue 250 LOC join)"; else fail_msg "05-31 active_loc expected 10, got $(dj_field 2026-05-31 '.active_loc')"; fi
+
+# Day 2026-06-01: usage_complete:false record excluded from totals (4000 only); floor flips true.
+if [ "$(dj_field 2026-06-01 '.n')" = "1" ]; then pass_msg "06-01 n==1 (lower-bound excluded from substrate)"; else fail_msg "06-01 n expected 1, got $(dj_field 2026-06-01 '.n')"; fi
+if [ "$(dj_field 2026-06-01 '.tokens.total')" = "4000" ]; then pass_msg "06-01 tokens.total==4000 (lower-bound excluded)"; else fail_msg "06-01 tokens.total expected 4000, got $(dj_field 2026-06-01 '.tokens.total')"; fi
+if [ "$(dj_field 2026-06-01 '.usage_complete_floor')" = "true" ]; then pass_msg "06-01 usage_complete_floor==true (day still has a lower-bound)"; else fail_msg "06-01 floor expected true, got $(dj_field 2026-06-01 '.usage_complete_floor')"; fi
+rm -rf "$TMP42"
+
+# --- Scenario 43: --history renders the persisted store, no gh (#832) ---
+inc_scenario "Scenario 43: --history render mode (#832)"
+TMP43="$(mktemp -d)"
+STORE43="$TMP43/tokenomics-history.jsonl"
+{ echo '{"date":"2026-05-30","n":4,"tokens":{"input":100,"output":50,"cache_creation":0,"cache_read":200,"total":350},"per_n":{"input":25,"output":12.5,"cache_creation":0,"cache_read":50,"total":87.5},"active_loc":40,"per_loc":{"input":2.5,"output":1.25,"cache_creation":0,"cache_read":5,"total":8.75},"priced_n":4,"cost":{"input":0.0015,"output":0.00375,"cache_creation":0,"cache_read":0.0003,"total":0.00555},"cost_per_n":0.0013875,"cost_per_loc":0.000138,"usage_complete_floor":false}'
+  echo '{"date":"2026-05-31","n":2,"tokens":{"input":1000,"output":2000,"cache_creation":0,"cache_read":0,"total":3000},"per_n":{"input":500,"output":1000,"cache_creation":0,"cache_read":0,"total":1500},"active_loc":null,"per_loc":null,"priced_n":2,"cost":{"input":0.015,"output":0.15,"cache_creation":0,"cache_read":0,"total":0.165},"cost_per_n":0.0825,"cost_per_loc":null,"usage_complete_floor":true}'
+} > "$STORE43"
+HIST43="$(bash "$HELPER" --history "$STORE43" 2>/dev/null)"
+HIST43_RC=$?
+if [ "$HIST43_RC" -eq 0 ]; then pass_msg "--history exits 0"; else fail_msg "--history exited non-zero (rc=$HIST43_RC)"; fi
+if printf '%s' "$HIST43" | grep -qi 'HISTORY (persisted per-day)'; then pass_msg "--history prints the HISTORY table header"; else fail_msg "--history missing HISTORY header"; fi
+if printf '%s' "$HIST43" | grep -q '2026-05-30' && printf '%s' "$HIST43" | grep -q '2026-05-31'; then pass_msg "--history renders one row per stored day"; else fail_msg "--history missing a stored day row"; fi
+# null per_loc / cost_per_loc render as --
+if printf '%s' "$HIST43" | grep -E '2026-05-31' | grep -q -- '--'; then pass_msg "--history renders null per-LOC as --"; else fail_msg "--history did not render null per-LOC as --"; fi
+# Absent store → graceful empty notice, exit 0, no gh.
+HIST43B="$(bash "$HELPER" --history "$TMP43/does-not-exist.jsonl" 2>/dev/null)"
+HIST43B_RC=$?
+if [ "$HIST43B_RC" -eq 0 ]; then pass_msg "--history absent store exits 0 (graceful)"; else fail_msg "--history absent store exited non-zero (rc=$HIST43B_RC)"; fi
+if printf '%s' "$HIST43B" | grep -qi 'no persisted store'; then pass_msg "--history absent store prints empty notice"; else fail_msg "--history absent store missing empty notice (got: $HIST43B)"; fi
+rm -rf "$TMP43"
+
+# --- Scenario 44: --help documents --emit-day-json + --history (#832) ---
+inc_scenario "Scenario 44: --help documents --emit-day-json + --history (#832)"
+HELP44="$(bash "$HELPER" --help 2>&1 || true)"
+if printf '%s' "$HELP44" | grep -q -- '--emit-day-json'; then pass_msg "--help documents --emit-day-json"; else fail_msg "--help missing --emit-day-json"; fi
+if printf '%s' "$HELP44" | grep -q -- '--history'; then pass_msg "--help documents --history"; else fail_msg "--help missing --history"; fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

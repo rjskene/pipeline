@@ -58,7 +58,7 @@ PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" CL
 
 Use `--limit N` to widen or narrow the window of most-recent merged PRs (default 50), e.g. `--limit 100`. The `--tokenomics` flag renders the bucket, per-stage-cost, structure, stage×structure crosstab, per-PATH size, breakeven, coverage-health, trend, latency, and concurrency tables. User-facing duration columns (per-PATH/per-stage `median dur`, top-slowest-stages, headless durations, task-latency) render in MINUTES; the per-stage / per-structure / per-PATH tables also carry per-N token-bucket columns (input / output / cache_creation / cache_read) sourced from the **reconciled substrate** (so unpriced inline rows still show real token counts, but explicit `usage_complete=false` lower-bounds are excluded). Internal `--emit-rows-json` and the metrics-snapshot consumer stay in raw ms. The report degrades gracefully (token/duration cells render `--`) when the capture log is absent or empty — it never errors.
 
-The cost/token magnitude tables aggregate the **reconciled substrate** — complete records only, i.e. `usage_complete != false` (keeps `true` AND records with no `usage_complete` field for fixture/legacy compat; drops only explicit lower-bounds). This is NOT a `source=="retroactive"` filter. Coverage-health stays on the full deduped stream (see Step 3). `--since DATE` further restricts the cost/token tables to records whose `ts_start` date (`YYYY-MM-DD`) is on/after DATE — the reconcilable era (≥ `2026-05-31`); records with an empty/absent `ts_start` are excluded under `--since`.
+The cost/token magnitude tables aggregate the **reconciled substrate** — complete records only, i.e. `usage_complete != false` (keeps `true` AND records with no `usage_complete` field for fixture/legacy compat; drops only explicit lower-bounds). This is NOT a `source=="retroactive"` filter. Coverage-health stays on the full deduped stream (see Step 3). `--since DATE` further restricts the cost/token tables to records whose `ts_start` date (`YYYY-MM-DD`) is on/after DATE — the reconcilable era (≥ `2026-05-31`); records with an empty/absent `ts_start` are excluded under `--since`. `--until DATE` is the inclusive upper-bound mirror of `--since` (records whose `ts_start` date is on/before DATE; empty/absent `ts_start` excluded) — it composes with `--since` to form a closed window, e.g. `--since=D --until=D` isolates a single calendar day. `--per-day` walks the `[--since, --until]` window day-by-day (default: the last 5 days ending today, UTC), emitting one full report per day under a `=== DAY YYYY-MM-DD ===` block by re-invoking the script with `--since=D --until=D` (so each day reuses the same pricing + PR-join, no drift); it honors `--tokenomics` / `--limit` / `--fixture` / `--capture-log`.
 
 ## Step 3 — Present
 
@@ -78,6 +78,28 @@ The bash stdout is NOT surfaced to the user automatically. Relay **every** table
 **Surface the concurrency assessment prominently** as an analysis deliverable in its own right — not just as one more table. State the observed peak overlap and the ceiling, and whether the workload is approaching it.
 
 If coverage-health shows low model-attribution coverage OR a non-zero lower-bound (unreconciled) record count, lead the summary with that caveat: the cost figures are a lower bound — until those records carry a model (model-attribution) and until each inline record's subagent transcript is resolved and transcript-summed (the unreconciled count). Re-running the Step-1 backfill reconciles the unreconciled lower bounds upward once their transcripts exist.
+
+## Persisted history (#832)
+
+The live `agent-costs.jsonl` is subject to transcript/log pruning — once a raw transcript is gone, the backfill can no longer reconcile that day. `scripts/snapshot-tokenomics-history.sh` rolls up a durable **per-day aggregate** that survives raw-log pruning, so the seed-doc shape is reproducible after the underlying records are gone. It is the live successor to the hand-computed seed in `docs/tokenomics-history-2026-05-29-to-06-02.md`.
+
+- **Snapshot step** — gated (`PIPELINE_LOGS_ENABLED=true`); a gated-off run prints `SKIP_LOGGING_DISABLED` and exits 0 (same skip-detection as Step 1):
+
+  ```bash
+  PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" CLAUDE_PROJECT_DIR="$(pwd)" bash "${CLAUDE_PLUGIN_ROOT}/scripts/snapshot-tokenomics-history.sh"
+  ```
+
+  It invokes `cost-latency-report.sh --emit-day-json` (one aggregation path — same dedup / reconcile / pricing / LOC-join substrate) and **upserts** each day object into `.claude/logs/tokenomics-history.jsonl`, keyed by `date` (last-write-wins). Re-running a day overwrites its row, so as lower-bounds reconcile upward (`usage_complete` flips, totals grow) the stored row grows monotonically; the `usage_complete_floor` field records whether a day is still a floor. Passthrough flags (`--since` / `--until` / `--limit` / `--capture-log` / `--fixture`) forward verbatim to the report. The store resolves to the MAIN worktree (like `capture-agent-costs.sh`), so a run from a linked worktree still lands in the durable store.
+
+- **`--emit-day-json`** (machine mode on the report) — emits one compact JSON object per day over the resolved `[--since,--until]` window, sorted ascending by date. Schema: `{date, n, tokens{input,output,cache_creation,cache_read,total}, per_n{...}, active_loc, per_loc{...|null}, priced_n, cost{...}, cost_per_n, cost_per_loc, usage_complete_floor}`. `n` counts ALL records (priced + unpriced); `priced_n` excludes `model==""`. The **per-LOC figures are directional, not additive** across days (the same issue's LOC can recur under multiple days) — `per_loc` / `cost_per_loc` are `null` for days with no merged-PR LOC join.
+
+- **`--history [PATH]`** (render mode on the report) — renders a table from the persisted store instead of the live log, for use after the live log is pruned. Reads ONLY the store (no PR join, no `gh`); an absent/empty store prints an empty-history notice and exits 0. With no `PATH`, defaults to the resolved `.claude/logs/tokenomics-history.jsonl`. `null` per-LOC cells render `--`.
+
+  ```bash
+  PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" CLAUDE_PROJECT_DIR="$(pwd)" bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --history
+  ```
+
+- **Cadence (operator-applied)** — recommended to run the snapshot on the operator's host (cron) **more frequently than transcript/log retention**, so a day is captured before its raw records are pruned. Per CLAUDE.md "Configuration conventions" the live `pipeline.config`/crontab is host-specific and hand-patched; this script ships the logic, the operator wires the crontab line locally (same pattern as the `capture-agent-costs.sh` cron). No tracked-file footprint for the cron itself.
 
 ## Dogfood-only
 

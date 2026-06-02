@@ -40,12 +40,17 @@ OVER_SERVED_LOC=20
 TOPN=5
 CAPTURE_LOG=""
 SINCE=""
+UNTIL=""
+PERDAY=0
+EMIT_DAY_JSON=0
+HISTORY=""
 
 print_usage() {
   cat <<'USAGE'
 Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                               [--emit-rows-json] [--over-served-loc N]
-                              [--top-n N] [--capture-log PATH] [--help]
+                              [--top-n N] [--capture-log PATH]
+                              [--since DATE] [--until DATE] [--per-day] [--help]
 
   cost-latency-report.sh — DOGFOOD-ONLY cost & latency report.
 
@@ -80,6 +85,30 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
   --since DATE         Restrict cost/token tables to records whose ts_start
                        date (YYYY-MM-DD) is >= DATE (the reconcilable era).
                        Records with empty/absent ts_start are excluded.
+  --until DATE         Restrict cost/token tables to records whose ts_start
+                       date (YYYY-MM-DD) is <= DATE (inclusive upper bound,
+                       mirror of --since). Records with empty/absent ts_start
+                       are excluded. Composes with --since to form a closed window.
+  --per-day            Walk the [--since, --until] window day-by-day, emitting
+                       a full report per day under a "=== DAY YYYY-MM-DD ==="
+                       header (re-invokes --since=D --until=D internally; reuses
+                       pricing + PR-join). Default window: last 5 days ending
+                       today (UTC). Honors --tokenomics / --limit / --fixture /
+                       --capture-log.
+  --emit-day-json      Machine mode: emit one compact JSON object per day over
+                       the resolved [--since,--until] window (JSON Lines, sorted
+                       ascending by date) and exit 0. Reuses the same dedup /
+                       reconcile / pricing / LOC-join substrate as the human
+                       tables. Each object: {date, n, tokens{...}, per_n{...},
+                       active_loc, per_loc{...|null}, priced_n, cost{...},
+                       cost_per_n, cost_per_loc, usage_complete_floor}. Consumed
+                       by snapshot-tokenomics-history.sh.
+  --history PATH       Render a table from a persisted per-day store (the JSON
+                       Lines written by snapshot-tokenomics-history.sh) instead
+                       of the live capture log. Reads ONLY the store — no PR
+                       join, no `gh`. Absent/empty store prints an empty-history
+                       notice and exits 0. With no PATH, defaults to the
+                       resolved .claude/logs/tokenomics-history.jsonl.
   --help               Print this banner and exit 0.
 USAGE
 }
@@ -103,6 +132,19 @@ while [ $# -gt 0 ]; do
     --capture-log=*)      CAPTURE_LOG="${1#--capture-log=}"; shift ;;
     --since)              SINCE="${2:-}"; shift 2 ;;
     --since=*)            SINCE="${1#--since=}"; shift ;;
+    --until)              UNTIL="${2:-}"; shift 2 ;;
+    --until=*)            UNTIL="${1#--until=}"; shift ;;
+    --per-day)            PERDAY=1; shift ;;
+    --emit-day-json)      EMIT_DAY_JSON=1; shift ;;
+    --history)
+      # Optional PATH arg: bare --history (or followed by another flag) uses the
+      # default resolved store via the __DEFAULT__ sentinel.
+      if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
+        HISTORY="$2"; shift 2
+      else
+        HISTORY="__DEFAULT__"; shift
+      fi ;;
+    --history=*)          HISTORY="${1#--history=}"; shift ;;
     *)
       echo "cost-latency-report: ERROR: unknown arg: $1" >&2
       exit 1
@@ -112,6 +154,95 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# resolve_history_store — echo the path to the persisted per-day store
+# (.claude/logs/tokenomics-history.jsonl) resolved to the MAIN worktree, so a
+# render invoked from a linked worktree still finds the durable store. Mirrors
+# the resolver in scripts/snapshot-tokenomics-history.sh (which WRITES the
+# store); keep the two in sync. Fail-open to REPO_ROOT for non-git dirs.
+resolve_history_store() {
+  local project_dir="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}"
+  local common_dir main_root
+  common_dir="$(git -C "$project_dir" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ -n "$common_dir" ]; then
+    case "$common_dir" in
+      /*) main_root="$(cd "$(dirname "$common_dir")" && pwd)" ;;
+      *)  main_root="$(cd "$project_dir/$(dirname "$common_dir")" && pwd)" ;;
+    esac
+  else
+    main_root="$project_dir"
+  fi
+  printf '%s/.claude/logs/tokenomics-history.jsonl' "$main_root"
+}
+
+# render_history <store-path> — render a human table from the persisted per-day
+# store. Missing/empty store → empty-history notice + return 0 (graceful, mirrors
+# the capture-log-absent contract). null per_loc / cost_per_loc render as `--`.
+render_history() {
+  local store="$1"
+  if [ ! -s "$store" ]; then
+    echo "HISTORY (persisted per-day): (no persisted store at $store)"
+    return 0
+  fi
+  echo "HISTORY (persisted per-day)"
+  printf '%-12s %5s %14s %12s %12s %10s %12s %8s\n' \
+    "DATE" "N" "TOTAL_TOK" "\$_TOTAL" "\$/N" "ACT_LOC" "\$/LOC" "FLOOR"
+  jq -rs 'sort_by(.date)[] |
+    [ (.date // "--"),
+      (.n // 0),
+      (.tokens.total // 0),
+      (.cost.total // 0),
+      (if .cost_per_n == null then "null" else .cost_per_n end),
+      (if .active_loc == null then "null" else .active_loc end),
+      (if .cost_per_loc == null then "null" else .cost_per_loc end),
+      (.usage_complete_floor // false)
+    ] | @tsv' "$store" \
+  | while IFS=$'\t' read -r date n tot ctot cpn loc cploc floor; do
+      [ "$cpn" = "null" ] && cpn="--"
+      [ "$loc" = "null" ] && loc="--"
+      [ "$cploc" = "null" ] && cploc="--"
+      printf '%-12s %5s %14s %12s %12s %10s %12s %8s\n' \
+        "$date" "$n" "$tot" "$ctot" "$cpn" "$loc" "$cploc" "$floor"
+    done
+  return 0
+}
+
+# --- --history render mode (issue #832) ---
+# Reads ONLY the persisted per-day store — no capture load, no PR join, no `gh`.
+# Branch EARLY so an absent store (or a fresh consumer) renders the empty notice
+# without ever touching the live log or the GitHub API.
+if [ -n "$HISTORY" ]; then
+  case "$HISTORY" in
+    __DEFAULT__) HISTORY="$(resolve_history_store)" ;;
+  esac
+  render_history "$HISTORY"
+  exit 0
+fi
+
+# --- --per-day loop (issue #831) ---
+# Convenience window-walker: re-invoke THIS script once per day across
+# [SINCE, UNTIL] with --since=D --until=D, so each day reuses the full
+# pricing + PR-join + table logic (no parallel jq path). Default window
+# when bounds are unset: the last 5 days ending today (UTC). The child
+# invocation drops --per-day (PERDAY unset there) to avoid recursion.
+if [ "$PERDAY" -eq 1 ]; then
+  pd_until="${UNTIL:-$(date -u +%F)}"
+  pd_since="${SINCE:-$(date -u -d "$pd_until -4 days" +%F)}"
+  # Forward every passthrough flag EXCEPT --since/--until/--per-day.
+  pd_args=()
+  [ -n "$FIXTURE_DIR" ] && pd_args+=(--fixture "$FIXTURE_DIR")
+  [ -n "$CAPTURE_LOG" ] && pd_args+=(--capture-log "$CAPTURE_LOG")
+  [ "$TOKENOMICS" -eq 1 ] && pd_args+=(--tokenomics)
+  pd_args+=(--limit "$LIMIT" --over-served-loc "$OVER_SERVED_LOC" --top-n "$TOPN")
+  d="$pd_since"
+  while [ ! "$d" \> "$pd_until" ]; do
+    echo "=== DAY $d ==="
+    bash "$0" "${pd_args[@]}" --since "$d" --until "$d"
+    echo ""
+    d="$(date -u -d "$d +1 day" +%F)"
+  done
+  exit 0
+fi
 
 # --- I/O helpers (fixture-aware) ---
 
@@ -473,6 +604,42 @@ priced_day_cost_tsv() {
   done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
 }
 
+# priced_day_bucket_cost_tsv — emit one TSV line per PRICED capture record
+# (model!="") whose ts_start has a YYYY-MM-DD prefix:
+#   date <TAB> cost_input <TAB> cost_output <TAB> cost_cache_creation <TAB> cost_cache_read
+# Per-bucket USD at the resolved per-(model,bucket) rate (Opus default fallback).
+# Records with EMPTY/absent ts_start are SKIPPED (cannot be day-bucketed).
+# Shared substrate for the --emit-day-json per-bucket cost aggregation (#832):
+# this keeps a SINGLE pricing path (price_rate) so day-JSON cost matches the
+# human tables exactly. Aggregation (sum per day) happens in the emit branch.
+priced_day_bucket_cost_tsv() {
+  local line model norm day
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    day="$(printf '%s' "$line" | jq -r '(.ts_start // "")' 2>/dev/null | cut -c1-10)"
+    if [ -z "$day" ] || ! printf '%s' "$day" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v d="$day" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          printf "%s\t%.10f\t%.10f\t%.10f\t%.10f\n", d,
+            ($1/1e6)*ri, ($2/1e6)*ro, ($3/1e6)*rcc, ($4/1e6)*rcr
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
 # priced_duration_tsv — emit one TSV line per PRICED capture record (model!="")
 # with a numeric duration_ms:  agent_kind <TAB> stage <TAB> duration_ms
 # Records with null/absent duration_ms are SKIPPED. Shared substrate for the
@@ -621,6 +788,11 @@ if [ -n "$SINCE" ]; then
     [ .[] | select(((.ts_start // "") | .[0:10]) >= $since and (.ts_start // "") != "") ]' 2>/dev/null)"
   [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 fi
+if [ -n "$UNTIL" ]; then
+  CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg until "$UNTIL" '
+    [ .[] | select(((.ts_start // "") | .[0:10]) <= $until and (.ts_start // "") != "") ]' 2>/dev/null)"
+  [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+fi
 EXCLUDED_LOWER_BOUND="$(printf '%s' "$CAPTURE_ALL" | jq -r '[ .[] | select(.usage_complete == false) ] | length' 2>/dev/null)"
 [ -z "$EXCLUDED_LOWER_BOUND" ] && EXCLUDED_LOWER_BOUND=0
 
@@ -729,6 +901,138 @@ emit_rows_json() {
 
 if [ "$EMIT_ROWS_JSON" -eq 1 ]; then
   emit_rows_json
+  exit 0
+fi
+
+# --- emit one JSON object per day (machine mode; issue #832) ---
+# Reuses the already-built reconciled substrate (CAPTURE_JSON = deduped +
+# usage_complete!=false + [--since,--until] window) plus CAPTURE_ALL (pre-filter,
+# for the floor flag) and ROWS_TSV (issue→loc, for active_loc). One pricing path:
+# per-bucket day costs come from priced_day_bucket_cost_tsv (price_rate). Emits
+# JSON Lines sorted ascending by date, then exits 0.
+if [ "$EMIT_DAY_JSON" -eq 1 ]; then
+  DAY_COST_FILE="$(mktemp)"
+  priced_day_bucket_cost_tsv > "$DAY_COST_FILE"
+  python3 - "$CAPTURE_JSON" "$CAPTURE_ALL" "$ROWS_TSV" "$DAY_COST_FILE" <<'PY'
+import json, sys
+from collections import defaultdict
+
+capture_json, capture_all_json, rows_tsv, cost_file = sys.argv[1:5]
+with open(cost_file) as _cf:
+    cost_lines = _cf.read().splitlines()
+
+cap = json.loads(capture_json) if capture_json.strip() else []
+allrecs = json.loads(capture_all_json) if capture_all_json.strip() else []
+
+BUCKETS = ("input", "output", "cache_creation", "cache_read")
+
+
+def day_of(rec):
+    ts = (rec.get("ts_start") or "")[0:10]
+    if len(ts) == 10 and ts[4] == "-" and ts[7] == "-":
+        return ts
+    return ""
+
+
+# issue -> loc (from the PR-join ROWS_TSV; col1=issue, col3=loc)
+issue_loc = {}
+try:
+    with open(rows_tsv) as fh:
+        for line in fh:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) >= 3 and cols[0]:
+                try:
+                    issue_loc[str(cols[0])] = int(cols[2])
+                except ValueError:
+                    pass
+except OSError:
+    pass
+
+# Per-day token buckets + n + priced_n, plus the set of distinct in-window
+# issues seen that day (for active_loc).
+tok = defaultdict(lambda: {b: 0 for b in BUCKETS})
+n = defaultdict(int)
+priced_n = defaultdict(int)
+day_issues = defaultdict(set)
+for rec in cap:
+    d = day_of(rec)
+    if not d:
+        continue
+    n[d] += 1
+    t = rec.get("tokens") or {}
+    for b in BUCKETS:
+        tok[d][b] += t.get(b) or 0
+    model = rec.get("model") or ""
+    if model:
+        priced_n[d] += 1
+    iss = str(rec.get("issue") or "")
+    if iss in issue_loc:
+        day_issues[d].add(iss)
+
+# Per-day cost buckets from the single-pricing-path TSV.
+cost = defaultdict(lambda: {b: 0.0 for b in BUCKETS})
+for line in cost_lines:
+    if not line.strip():
+        continue
+    parts = line.split("\t")
+    if len(parts) < 5:
+        continue
+    d = parts[0]
+    try:
+        cost[d]["input"] += float(parts[1])
+        cost[d]["output"] += float(parts[2])
+        cost[d]["cache_creation"] += float(parts[3])
+        cost[d]["cache_read"] += float(parts[4])
+    except ValueError:
+        continue
+
+# Floor flag: day still carries an explicit usage_complete==false lower-bound
+# in the PRE-filter stream (CAPTURE_ALL), signalling the day may reconcile up.
+floor_days = set()
+for rec in allrecs:
+    if rec.get("usage_complete") is False:
+        d = day_of(rec)
+        if d:
+            floor_days.add(d)
+
+ROUND = 6
+for d in sorted(n.keys()):
+    tk = {b: tok[d][b] for b in BUCKETS}
+    tk["total"] = sum(tk[b] for b in BUCKETS)
+    nn = n[d]
+    per_n = {b: round(tk[b] / nn, 4) for b in BUCKETS}
+    per_n["total"] = round(tk["total"] / nn, 4)
+    # active_loc: distinct in-window issues with a record that day → sum LOC.
+    # NOTE: per-LOC figures are DIRECTIONAL, not additive across days (the same
+    # issue's LOC can appear under multiple days). Null when no LOC join.
+    active_loc = sum(issue_loc[i] for i in day_issues[d]) if day_issues[d] else 0
+    cb = {b: round(cost[d][b], ROUND) for b in BUCKETS}
+    cb["total"] = round(sum(cost[d][b] for b in BUCKETS), ROUND)
+    pn = priced_n[d]
+    cost_per_n = round(cb["total"] / pn, ROUND) if pn > 0 else None
+    if active_loc > 0:
+        per_loc = {b: round(tk[b] / active_loc, 4) for b in BUCKETS}
+        per_loc["total"] = round(tk["total"] / active_loc, 4)
+        cost_per_loc = round(cb["total"] / active_loc, ROUND)
+    else:
+        per_loc = None
+        cost_per_loc = None
+    obj = {
+        "date": d,
+        "n": nn,
+        "tokens": tk,
+        "per_n": per_n,
+        "active_loc": active_loc if active_loc > 0 else None,
+        "per_loc": per_loc,
+        "priced_n": pn,
+        "cost": cb,
+        "cost_per_n": cost_per_n,
+        "cost_per_loc": cost_per_loc,
+        "usage_complete_floor": d in floor_days,
+    }
+    sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
+PY
+  rm -f "$DAY_COST_FILE"
   exit 0
 fi
 
