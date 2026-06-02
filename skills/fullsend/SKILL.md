@@ -1,6 +1,6 @@
 ---
 name: fullsend
-description: Run the full pipeline autonomously end-to-end (classify → plan → evaluate → execute → evaluate PR → auto-merge greenlit PRs) without intermediate confirmations. Usage: /pipeline:fullsend [issue_numbers...] [--manual-merge] [--spawn]
+description: Run the full pipeline autonomously end-to-end (classify → plan → evaluate → execute → evaluate PR → auto-merge greenlit PRs) without intermediate confirmations. Usage: /pipeline:fullsend [issue_numbers...] [--manual-merge] [--spawn] [--campaign]
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep, Agent
 ---
@@ -31,7 +31,7 @@ slate → wave plan → classify+plan (waves) → eval-plan → approve → exec
 
 Invoked two ways: (1) directly as `/pipeline:fullsend [issue_numbers...] [--manual-merge]` — the canonical entry point; (2) via the back-compat magic-string delegator in `/pipeline:run` — when a user prompt to `/pipeline:run` contains the token `full send` / `full-send` / `fullsend` (case-insensitive), `/pipeline:run` invokes this skill via `Skill(skill: "pipeline:fullsend", args: "<argv>")` with the original argv and stops.
 
-Argv shape: `[issue_numbers...] [--manual-merge] [--spawn]`, position-independent (the flag-parsing rule below preserves the prior behavior). The `--spawn` flag (position-independent, cannot collide with bare-integer issue numbers — same parse rule as `--manual-merge`) forces the tmux run-queue transport for everything fullsend would otherwise run inline (Step 6 execute + Step 7 PR-eval, all paths → run-queue). **When `--spawn` is absent, behavior is exactly today's** (A/B/D execute inline, C queued; B PR-eval inline, C queued) — the flag is purely additive.
+Argv shape: `[issue_numbers...] [--manual-merge] [--spawn] [--campaign]`, position-independent (the flag-parsing rule below preserves the prior behavior). The `--spawn` flag (position-independent, cannot collide with bare-integer issue numbers — same parse rule as `--manual-merge`) forces the tmux run-queue transport for everything fullsend would otherwise run inline (Step 6 execute + Step 7 PR-eval, all paths → run-queue). **When `--spawn` is absent, behavior is exactly today's** (A/B/D execute inline, C queued; B PR-eval inline, C queued) — the flag is purely additive. The `--campaign` flag (also position-independent, same bare-integer-safe parse rule, composes freely with `--spawn` and `--manual-merge`) wraps the whole slate in the coordinated-leg OUTER loop documented in `## Campaign mode` below — when absent, fullsend runs the single wave-by-wave pass exactly as today.
 
 PATH D (quick-fix) is NO LONGER path-agnostic to fullsend at the execute stage: fullsend now DOES branch D into a SPLIT DISPATCH (see Step 6). PATH-D-specific *lifecycle* behavior (auto-flip plan-pending → plan-approved, inline tdd-implementer execute dispatch, Step 8 skip) is still owned by /pipeline:run (skills/run/SKILL.md Step 4 and Step 6) and /pipeline:execute-issue-plan (skills/execute-issue-plan/SKILL.md Step 8 early-return). What fullsend adds on top is a DISPATCH split: within each wave, the wave's conflict-free A/B/D issues fan out as a **concurrent inline `Agent` batch in the FOREGROUND** while PATH C issues launch via the tmux **C-only run-queue** backgrounded with `run_in_background` (Step 6). Per #748, PATH B execute joined the inline foreground side alongside A/D (no `spawn-claude.sh` / `claude -p`), leaving only PATH C on the backgrounded run-queue. The inline foreground batch consumes **zero queue slots** — it is free concurrency atop the C-only run-queue capacity — so no fullsend run-queue change is required for the foreground paths themselves.
 
@@ -48,6 +48,47 @@ Wave 5: classify #108 in parallel
 ```
 
 Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `false`, fullsend falls back to single-blast parallel dispatch. The same wave-by-wave discipline applies to plan-issue dispatch in Step 1b — the wave plan is reused; the planner is not re-run.
+
+## Campaign mode
+
+`--campaign` is an **OUTER loop above the existing wave-by-wave steps** — it **does not replace** them. Each **LEG** is one full pass of Steps 1→8 over that leg's issues; the wave-by-wave `### Execute the slate WAVE BY WAVE` machinery (Steps 5–7, the `### Inter-wave pull`, the `### Scoped halt-and-report`) runs unchanged *inside* each leg. Campaign mode WRAPS that pass and sequences multiple legs so the global rate-limit budget is spent in bounded batches rather than a single flat blast of the entire set.
+
+**Global-budget rule (applies to ALL stages).** Every agent dispatch — **classify and plan INCLUDED, not just execute** — is **batched under the caps**. There is **NO flat parallel blast of the whole set even for the read-only stages** (classify/plan): the rate-limit budget is GLOBAL, so a flat read-only blast still burns the same shared budget that execute needs. Batch classify/plan dispatch under the same concurrency cap as everything else.
+
+**Campaign flow:**
+
+(a) **Classify the ENTIRE set, BATCHED under a FLAT concurrency cap.** Paths are unknown *before* classify runs, so the set cannot be per-path-capped at this stage (the chicken-and-egg: per-path caps need path labels, but path labels are exactly what classify produces). Use a single FLAT cap across the whole set for classify; do not flat-blast it.
+
+(b) **Plan the ENTIRE set, BATCHED and path-aware.** By plan time the classify labels exist, so the plan batch may honor per-path caps.
+
+(c) **Eval-plan the ENTIRE set, BATCHED, and APPROVE ALL up front.** There is **no per-leg re-plan**: every approved issue is flipped to `plan-approved` before any leg executes. Staleness between approval and a late leg's execute is absorbed downstream — the execute-agent rebases on the fresh base tip, and the `evaluate-issue-pr` gate re-validates against the merged base — so re-planning per leg buys nothing.
+
+(d) **Partition the approved set into legs** via:
+
+```bash
+PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh <approved-set>
+```
+
+The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PIPELINE_CAMPAIGN_MAX_AD` (A/D-pool per-leg cap) from the environment. A user instruction at invocation overrides those via the script's `--max-bc=N` / `--max-ad=N` flags. Parse the emitted `Leg <K>: #a, #b, ... (BC=<n> AD=<m>)` lines into ordered per-leg issue lists; legs run **in order**.
+
+(e) **For each leg IN ORDER**, run the existing wave-by-wave pass over ONLY that leg's issues, then advance the base, then file end-of-leg bugs, then move to the next leg:
+
+1. Run the existing **execute → 6b → eval-pr → greenlight-merge** machinery (Steps 5–7 wave-by-wave) scoped to this leg's issue numbers.
+2. **Base advance** — perform the inter-wave-style local base-tip advance: `git -C "$MAIN_REPO" checkout "$PIPELINE_BASE_BRANCH"` then `git -C "$MAIN_REPO" pull --ff-only --quiet origin "$PIPELINE_BASE_BRANCH"` so the next leg's worktrees inherit this leg's merged work (same #626 reason as the `### Inter-wave pull`).
+3. **End-of-leg bug filing** (see below).
+4. Proceed to the next leg.
+
+**End-of-leg bug filing.** A **SINGLE serialized orchestrator action** at the end of each leg collects all signals from that leg — eval-pr `block-*` flags, Step-6b CI-fix repairs, execute `FAILED`/off-plan reports, and any skipped/halted issues — and files them. Before each `gh issue create`, it **dedups** against (1) currently-open issues and (2) the running campaign-filed set, so two legs cannot double-file the same bug (the cross-leg race guard). This is **file-only — no auto-fold** of related signals into one issue (auto-fold is deferred).
+
+**Scoped halt (campaign-level mirror of `### Scoped halt-and-report`).** When a leg's issue hard-fails or hard-blocks, compute its **dependency CLOSURE** and drop that closure from the REMAINING legs:
+
+```bash
+PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh closure <blocked-N> <remaining-set>
+```
+
+The closure walks the `--emit-edges` edge map (blocked-by + file-conflict edges) to a fixpoint. **Independent later legs that are NOT in the closure still proceed.** Failed issues plus their skipped-closure dependents are reported at campaign end. Transient blocks (`block-ci` / `pending`) do **NOT** trigger an immediate halt — they defer to the Step-6b CI-fix loop and only become a hard block once the retry budget exhausts (mirroring the transient-vs-hard-block discrimination in `### Scoped halt-and-report`).
+
+**Self-mutation callout.** This `--campaign` mode edits the fullsend machinery the pipeline itself runs; the work happens in an isolated worktree and the running orchestrator keeps its already-loaded skill body until restart, so there is no live-mutation risk (same as `### Self-mutation callout`).
 
 ## Greenlight matrix
 
