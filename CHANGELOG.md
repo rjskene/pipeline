@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.21.8](https://github.com/rjskene/pipeline/compare/v0.21.7...v0.21.8) (2026-06-02)
+
+
+### Features
+
+* **run:** auto-cleanup merged worktrees on /pipeline:run, --keep-trees opt-out ([d0be52c](https://github.com/rjskene/pipeline/commit/d0be52c372f0e608f5f56fb25ba3f971c46dc8b3))
+* **run:** auto-cleanup merged worktrees, --keep-trees opt-out ([#766](https://github.com/rjskene/pipeline/issues/766)) ([3ce522e](https://github.com/rjskene/pipeline/commit/3ce522ea0cb1acdea34f830572c36c1c8d43e3f9))
+
+
+### Bug Fixes
+
+* **auto-merge-gate:** self-source config + fail-safe empty PIPELINE_BASE_BRANCH ([#801](https://github.com/rjskene/pipeline/issues/801)) ([07fedbf](https://github.com/rjskene/pipeline/commit/07fedbff745861093b4881e26da4d35c63588b82))
+* **auto-merge-gate:** spurious block-base-mismatch when PIPELINE_BASE_BRANCH not exported (config.example assigns without export) ([0e21f08](https://github.com/rjskene/pipeline/commit/0e21f08c6578648ab76a44509a9516f7b2b4addb))
+* **cost-capture:** transcript-sum at agent-finish to true-up inline forward records ([#815](https://github.com/rjskene/pipeline/issues/815)) ([ed0d326](https://github.com/rjskene/pipeline/commit/ed0d326124161b151498db1e2b6e682f968e906d))
+* **cost-capture:** true-up inline forward records from durable subagent transcript at agent-finish ([#815](https://github.com/rjskene/pipeline/issues/815)) ([18e2759](https://github.com/rjskene/pipeline/commit/18e27596bea6c43ede2068b9952c8143f6b89cdc))
+* **evaluate-issue-pr:** swallow benign already-closed on merge ([2c23a07](https://github.com/rjskene/pipeline/commit/2c23a07814c0ec1f7adcbdb3fe5f823235b1a7d4))
+* **evaluate-issue-pr:** swallow benign already-closed on merge ([9180cf0](https://github.com/rjskene/pipeline/commit/9180cf0cbce93a245254443fb7a46d989adcc8ba)), closes [#813](https://github.com/rjskene/pipeline/issues/813)
+* **execute-issue-plan:** ban /tmp test-wait monitor in Step 6b body ([#814](https://github.com/rjskene/pipeline/issues/814)) ([c24a660](https://github.com/rjskene/pipeline/commit/c24a6600e869e5c62657a41a143ee9a219f9aa50))
+* **general:** Boot snippet CLAUDE_PLUGIN_ROOT self-resolve is chicken-and-egg in consumer installs ([3a8e7e5](https://github.com/rjskene/pipeline/commit/3a8e7e5c60fc1178f9077cd260be565633bb0195))
+* **inline-execute:** test-wait monitor output under /tmp is boundary-blocked → narrate-and-yield drop-out ([8132add](https://github.com/rjskene/pipeline/commit/8132addacc12c72562ff81199090c72c87ff4f4a))
+* **parse-tracker-children:** gawk-only 3-arg match() breaks auto-close on mawk (Debian default awk) ([99b11cc](https://github.com/rjskene/pipeline/commit/99b11ccaa28b8593d8805227ace2e48886dd49ce))
+* **parse-tracker-children:** POSIX-portable match()/substr for mawk ([e81719f](https://github.com/rjskene/pipeline/commit/e81719fa81d04e220a1599ec995d5850c96d0146)), closes [#800](https://github.com/rjskene/pipeline/issues/800)
+* **pipeline-config:** export example vars via set -a so they cross process boundaries ([#801](https://github.com/rjskene/pipeline/issues/801)) ([9ea751d](https://github.com/rjskene/pipeline/commit/9ea751d7bea82320700312e3ae6e3efdcb0107ac))
+* **plan-waves:** reword comment to avoid consumer-.claude path literal ([beccbd5](https://github.com/rjskene/pipeline/commit/beccbd5b031d7ab501adc897a5d8a45ac5bb7040))
+* **plan-waves:** tighten --emit-edges file-path predicate to reject backtick prose ([ca29e00](https://github.com/rjskene/pipeline/commit/ca29e00a289347af411d36d7db949cf6fb88dd87))
+* **plan-waves:** tighten file-path predicate to reject backtick prose ([725d706](https://github.com/rjskene/pipeline/commit/725d70673aee2f47624183e2c3af98078bc8ac42)), closes [#811](https://github.com/rjskene/pipeline/issues/811)
+* **plugin-root:** anchor boot resolver via cache glob across all skills ([#810](https://github.com/rjskene/pipeline/issues/810)) ([2eccc2f](https://github.com/rjskene/pipeline/commit/2eccc2f21b79df197a065c9b7e2c125ce67176bd))
+* **plugin-root:** anchor boot resolver via cache glob in run skill ([#810](https://github.com/rjskene/pipeline/issues/810)) ([47da0fb](https://github.com/rjskene/pipeline/commit/47da0fbc71a08f7e4587d2979b12308c49ff34d4))
+* **plugin-root:** trim boot snippet comment to keep classify-issue under line cap ([#810](https://github.com/rjskene/pipeline/issues/810)) ([28f0c0e](https://github.com/rjskene/pipeline/commit/28f0c0e4550b45462bf11b35e8634d9dc2d0e734))
+* **tokenomics:** scope cost/token tables to reconciled (usage_complete!=false) substrate ([e1cb32b](https://github.com/rjskene/pipeline/commit/e1cb32b171dfed29cc2f6e51d72dba64f38f4c32))
+
 ## [0.21.7](https://github.com/rjskene/pipeline/compare/v0.21.6...v0.21.7) (2026-06-01)
 
 
