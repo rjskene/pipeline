@@ -114,8 +114,10 @@ fi
 # Stage label precedence mirrors the prose spec in skills/status/SKILL.md
 # (merged > pr-open > in-progress > plan-approved > plan-reviewed >
 #  plan-pending > tracker > later > human > brainstorm > ready).
-# Scope comes from the conventional-commit `type(scope):` prefix; titles
-# without that shape land in the `(none / generic)` bucket.
+# cc_type comes from the conventional-commit `type(scope)?:` prefix and
+# drives the flat orphan sort (chore→docs→fix→feat→other). ready_rank
+# (ready=0 else 1) is the primary orphan sort key. The legacy `scope` def
+# is retained for compatibility but no longer drives orphan grouping.
 ROWS_JSON=$(jq -c \
   --arg later     "$PIPELINE_LABELS_LATER" \
   --arg human     "$PIPELINE_LABELS_HUMAN" \
@@ -143,11 +145,25 @@ ROWS_JSON=$(jq -c \
     end;
   def stage_rank:
     if (stage | IN($later,$human,$brainst)) then 1 else 0 end;
+  def ready_rank:
+    if stage == "ready" then 0 else 1 end;
   def scope:
     ([.title
         | capture("^(?<t>feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)\\((?<s>[^)]+)\\):").s
       ] | first)
     | if . == null then "" else . end;
+  def cc_type:
+    ([.title
+        | capture("^(?<t>feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)(\\([^)]+\\))?:").t
+      ] | first)
+    | if . == null then "" else . end;
+  def cc_type_rank:
+    cc_type as $t
+    | if   $t == "chore" then 0
+      elif $t == "docs"  then 1
+      elif $t == "fix"   then 2
+      elif $t == "feat"  then 3
+      else 9 end;
   def target_base:
     if has_label("next-major-release") then "next" else $base end;
   def path_letter:
@@ -172,7 +188,10 @@ ROWS_JSON=$(jq -c \
       target_base: target_base,
       path_letter: path_letter,
       blocked_by: blocked_by,
-      stage_rank: stage_rank
+      stage_rank: stage_rank,
+      ready_rank: ready_rank,
+      cc_type: cc_type,
+      cc_type_rank: cc_type_rank
     }
   ]
 ' "$ISSUES_FILE")
@@ -247,23 +266,13 @@ fi
 # ----- ORPHANS section -----------------------------------------------
 #
 # Orphans = non-tracker issues NOT referenced as a child under any tracker.
-# Bucket alphabetically with (none / generic) last; within a bucket, sort
-# by priority tier ("9" = no priority, comes last).
+# Rendered as a single flat list sorted by
+# (ready_rank, cc_type_rank, priority_tier, number): ready issues first,
+# then by conventional-commit type (chore→docs→fix→feat→other), then tier,
+# then number. No scope bucketing.
 ORPHAN_ROWS_JSON=$(printf '%s' "$ROWS_JSON" \
   | jq -c --argjson children "$CHILD_NUMBERS_JSON" \
       '[.[] | select((.is_tracker | not) and ((.number as $n | $children | index($n)) == null))]')
-
-# Named buckets ordered by (min stage_rank in bucket, scope_alpha).
-# The (none / generic) bucket is detected separately and rendered last.
-BUCKET_ORDER=$(printf '%s' "$ORPHAN_ROWS_JSON" \
-  | jq -r '
-      [.[] | select(.scope != "")]
-      | group_by(.scope)
-      | map({scope: .[0].scope, min_rank: (map(.stage_rank) | min)})
-      | sort_by(.min_rank, .scope)
-      | .[] | .scope')
-HAS_GENERIC=$(printf '%s' "$ORPHAN_ROWS_JSON" \
-  | jq -r 'any(.[]; .scope == "") | if . then "1" else "0" end')
 
 # ----- RELEASE PRs section (rendered ABOVE PIPELINE STATUS) ----------
 #
@@ -348,27 +357,13 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   echo "ORPHANS"
   echo "================================================================"
 
-  # Print named buckets ordered by (min stage_rank in bucket, scope_alpha).
-  while IFS= read -r bucket; do
-    [ -n "$bucket" ] || continue
-    echo " ($bucket)"
-    printf '%s' "$ORPHAN_ROWS_JSON" \
-      | jq -r --arg b "$bucket" '
-          [.[] | select(.scope == $b)]
-          | sort_by(.stage_rank, .priority_tier, .number)
-          | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
-        '
-  done <<< "$BUCKET_ORDER"
-  # Then the (none / generic) bucket, if present
-  if [ "$HAS_GENERIC" = "1" ]; then
-    echo " (none / generic)"
-    printf '%s' "$ORPHAN_ROWS_JSON" \
-      | jq -r '
-          [.[] | select(.scope == "")]
-          | sort_by(.stage_rank, .priority_tier, .number)
-          | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
-        '
-  fi
+  # Flat list sorted by (ready_rank, cc_type_rank, priority_tier, number).
+  # priority_tier is the string "0".."9"; tonumber keeps the tiebreak numeric.
+  printf '%s' "$ORPHAN_ROWS_JSON" \
+    | jq -r '
+        sort_by(.ready_rank, .cc_type_rank, (.priority_tier | tonumber), .number)
+        | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
+      '
   echo "================================================================"
 fi
 

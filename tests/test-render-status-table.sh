@@ -75,12 +75,15 @@ else
 fi
 
 # ----------------------------------------------------------------------
-# Task 2: ORPHANS section — scope buckets + priority sort + stage
+# Task 2: ORPHANS section — flat ready/cc-type sort + stage
 # ----------------------------------------------------------------------
 
-# Scenario 2.1: 4 orphans across 3 scope buckets render in alphabetical
-# bucket order with (none / generic) last; rows within a bucket sort by
-# priority tier; each row uses `[Pn] #N — <title>  (stage)`.
+# Scenario 2.1: 4 orphans render as a single flat list (no scope buckets),
+# sorted by (ready_rank, cc_type_rank, priority_tier, number). Given the
+# orphans-issues.json fixture (#133 feat/plan-pending/P1, #34 feat/ready/P2,
+# #150 feat/merged/P2, #999 chore/ready/P2) the flat order is
+# #999 < #34 < #133 < #150 (ready chore, ready feat, then not-ready by tier).
+# Each row uses `[Pn] #N — <title>  (stage)`.
 inc
 bash "$HELPER" \
   --issues "$FIXTURES/orphans-issues.json" \
@@ -99,26 +102,18 @@ else
   fi
 
   inc
-  # bucket order: (doctor) before (run) before (none / generic)
-  doctor_line=$(grep -n '^ (doctor)' "$TMP/out" | head -1 | cut -d: -f1)
-  run_line=$(grep -n '^ (run)' "$TMP/out" | head -1 | cut -d: -f1)
-  none_line=$(grep -n '^ (none / generic)' "$TMP/out" | head -1 | cut -d: -f1)
-  if [ -n "$doctor_line" ] && [ -n "$run_line" ] && [ -n "$none_line" ] \
-     && [ "$doctor_line" -lt "$run_line" ] && [ "$run_line" -lt "$none_line" ]; then
-    pass_msg "bucket order: (doctor) < (run) < (none / generic)"
-  else
-    fail_msg "bucket order: (doctor) < (run) < (none / generic)" \
-      "doctor=$doctor_line run=$run_line none=$none_line"
-  fi
-
-  inc
-  # within (run): P1 issue #133 appears before P2 issue #34
-  p133_line=$(grep -n '#133' "$TMP/out" | head -1 | cut -d: -f1)
+  # flat order by line number: #999 < #34 < #133 < #150
+  p999_line=$(grep -n '#999' "$TMP/out" | head -1 | cut -d: -f1)
   p34_line=$(grep -n '#34 ' "$TMP/out" | head -1 | cut -d: -f1)
-  if [ -n "$p133_line" ] && [ -n "$p34_line" ] && [ "$p133_line" -lt "$p34_line" ]; then
-    pass_msg "within (run): P1 #133 before P2 #34"
+  p133_line=$(grep -n '#133' "$TMP/out" | head -1 | cut -d: -f1)
+  p150_line=$(grep -n '#150' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$p999_line" ] && [ -n "$p34_line" ] && [ -n "$p133_line" ] && [ -n "$p150_line" ] \
+     && [ "$p999_line" -lt "$p34_line" ] && [ "$p34_line" -lt "$p133_line" ] \
+     && [ "$p133_line" -lt "$p150_line" ]; then
+    pass_msg "flat orphan order: #999 < #34 < #133 < #150"
   else
-    fail_msg "within (run): P1 #133 before P2 #34" "p133=$p133_line p34=$p34_line"
+    fail_msg "flat orphan order: #999 < #34 < #133 < #150" \
+      "p999=$p999_line p34=$p34_line p133=$p133_line p150=$p150_line"
   fi
 
   inc
@@ -146,14 +141,12 @@ else
   fi
 
   inc
-  # #999 (chore: bump tooling — no scope parens) lands in (none / generic)
-  none_anchor=$(grep -n '^ (none / generic)' "$TMP/out" | head -1 | cut -d: -f1)
-  p999_anchor=$(grep -n '#999' "$TMP/out" | head -1 | cut -d: -f1)
-  if [ -n "$none_anchor" ] && [ -n "$p999_anchor" ] && [ "$p999_anchor" -gt "$none_anchor" ]; then
-    pass_msg "#999 (no-scope title) lands under (none / generic)"
+  # #999 (chore) sorts first among ready orphans (chore cc_type_rank=0 < feat=3)
+  if [ -n "$p999_line" ] && [ -n "$p34_line" ] && [ "$p999_line" -lt "$p34_line" ]; then
+    pass_msg "#999 (chore) sorts first among ready orphans (#999 < #34)"
   else
-    fail_msg "#999 (no-scope title) lands under (none / generic)" \
-      "none=$none_anchor p999=$p999_anchor"
+    fail_msg "#999 (chore) sorts first among ready orphans (#999 < #34)" \
+      "p999=$p999_line p34=$p34_line"
   fi
 fi
 
@@ -227,11 +220,11 @@ else
   fi
 
   inc
-  # orphan #999 still in (none / generic) bucket
+  # orphan #999 still appears in the flat ORPHANS list
   if grep -qE '#999[[:space:]]+—.*\(ready\)' "$TMP/out"; then
-    pass_msg "orphan #999 still appears in ORPHANS bucket"
+    pass_msg "orphan #999 still appears in flat ORPHANS list"
   else
-    fail_msg "orphan #999 still appears in ORPHANS bucket" "$(grep '#999' "$TMP/out")"
+    fail_msg "orphan #999 still appears in flat ORPHANS list" "$(grep '#999' "$TMP/out")"
   fi
 fi
 
@@ -526,8 +519,10 @@ else
   fi
 fi
 
-# S.2 — bucket-level: a ready-only bucket (alpha-late) floats above a
-# later-only bucket (alpha-early).
+# S.2 — flat ready-rank dominance: in the single flat orphan list, the
+# ready row (#711) floats above the not-ready (later) row (#710) regardless
+# of what used to be separate scope buckets. Same fixture, same intent:
+# ready_rank dominates the sort.
 inc
 bash "$HELPER" \
   --issues "$FIXTURES/stage-rank-buckets-issues.json" \
@@ -537,13 +532,13 @@ rc=$?
 if [ "$rc" -ne 0 ]; then
   fail_msg "S.2 stage-rank buckets render exits 0" "rc=$rc, stderr=$(cat "$TMP/err")"
 else
-  zulu_line=$(grep -n '^ (zulu)' "$TMP/out" | head -1 | cut -d: -f1)
-  alpha_line=$(grep -n '^ (alpha)' "$TMP/out" | head -1 | cut -d: -f1)
-  if [ -n "$zulu_line" ] && [ -n "$alpha_line" ] && [ "$zulu_line" -lt "$alpha_line" ]; then
-    pass_msg "S.2 ready-only (zulu) bucket above later-only (alpha) bucket"
+  p711_line=$(grep -n '#711' "$TMP/out" | head -1 | cut -d: -f1)
+  p710_line=$(grep -n '#710' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$p711_line" ] && [ -n "$p710_line" ] && [ "$p711_line" -lt "$p710_line" ]; then
+    pass_msg "S.2 ready #711 sorts above not-ready (later) #710 in flat list"
   else
-    fail_msg "S.2 ready-only (zulu) bucket above later-only (alpha) bucket" \
-      "zulu=$zulu_line alpha=$alpha_line"
+    fail_msg "S.2 ready #711 sorts above not-ready (later) #710 in flat list" \
+      "p711=$p711_line p710=$p710_line"
   fi
 fi
 
