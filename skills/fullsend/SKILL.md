@@ -71,7 +71,7 @@ PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.
 
 The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PIPELINE_CAMPAIGN_MAX_AD` (A/D-pool per-leg cap) from the environment. A user instruction at invocation overrides those via the script's `--max-bc=N` / `--max-ad=N` flags. Parse the emitted `Leg <K>: #a, #b, ... (BC=<n> AD=<m>)` lines into ordered per-leg issue lists; legs run **in order**.
 
-(e) **For each leg IN ORDER**, run the existing wave-by-wave pass over ONLY that leg's issues, then advance the base, then file end-of-leg bugs, then move to the next leg:
+(e) **For each leg IN ORDER**, run the existing wave-by-wave pass over ONLY that leg's issues, then advance the base, then collect (NOT file) that leg's bug signals, then move to the next leg:
 
 1. Run the existing **execute → 6b → eval-pr → greenlight-merge** machinery (Steps 5–7 wave-by-wave) scoped to this leg's issue numbers.
 2. **Base advance** — perform the inter-wave-style local base-tip advance: `git -C "$MAIN_REPO" checkout "$PIPELINE_BASE_BRANCH"` then `git -C "$MAIN_REPO" pull --ff-only --quiet origin "$PIPELINE_BASE_BRANCH"` so the next leg's worktrees inherit this leg's merged work (same #626 reason as the `### Inter-wave pull`).
@@ -80,10 +80,43 @@ The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PI
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" \
      bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-surface.sh" || true
    ```
-4. **End-of-leg bug filing** (see below).
+4. **Collect this leg's bug signals** (NO `gh issue create` per leg). Append every signal from this leg — eval-pr `block-*` flags, Step-6b CI-fix repairs, execute `FAILED`/off-plan reports, and any skipped/halted-closure issues — to the running campaign signal log as one `SIGNAL issue=#<N> kind=<...> title="<conventional-commit title>" detail="<short>"` record per signal. **Preserve the per-leg race guard:** before recording, dedup against (1) currently-open issues and (2) the running campaign-filed set, so a leg never re-records a signal a prior leg already filed (the cross-leg race guard). Actual filing is deferred to **End-of-campaign bug filing** below, after the last leg.
 5. Proceed to the next leg.
 
-**End-of-leg bug filing.** A **SINGLE serialized orchestrator action** at the end of each leg collects all signals from that leg — eval-pr `block-*` flags, Step-6b CI-fix repairs, execute `FAILED`/off-plan reports, and any skipped/halted issues — and files them. Before each `gh issue create`, it **dedups** against (1) currently-open issues and (2) the running campaign-filed set, so two legs cannot double-file the same bug (the cross-leg race guard). This is **file-only — no auto-fold** of related signals into one issue (auto-fold is deferred).
+**End-of-campaign bug filing.** AFTER the last leg's `(e)` step completes (campaign completion), a **SINGLE serialized orchestrator action** routes the aggregated signal log through the **deterministic, NON-INTERACTIVE subset** of the create-issues flow — the combine-bias scope-check heuristic + the grouping-detection script + the standard issue-body template + the advisory path-hint marker. It **NEVER invokes the interactive `superpowers:brainstorming` dialogue** (no one-question-at-a-time loop) and does **NOT** call the full `/pipeline:create-issues` skill — it calls the three deterministic helpers directly, because campaign completion is autonomous (the #863 autonomy constraint). Steps:
+
+1. **Aggregate + dedup the signals** across all legs via `plan-campaign.sh aggregate-signals`, passing the open-issue set and the running campaign-filed set so completion-time filing cannot double-file what a leg already filed (the dedup contract is two-layer: per-leg collection AND here):
+   ```bash
+   printf '%s\n' "${CAMPAIGN_SIGNALS[@]}" \
+     | PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh \
+         aggregate-signals --open="<open-issue-csv>" --filed="<campaign-filed-csv>"
+   ```
+   Each emitted `CANDIDATE scope=<scope> issues=#a,#b title="<derived title>" kinds=<csv>` line is one proposed issue.
+2. **Apply the combine-bias scope-check heuristic** (from `skills/create-issues/SKILL.md` step 3) to the candidate set: default toward FEWER issues; split only on genuinely independent surfaces (disjoint files, distinct subsystems). This is model judgment over the candidate lines — no interactive prompt.
+3. **Run grouping detection** over the surviving candidate titles and honor its recommendations (tracker auto-append / GROUP→tracker create; opt-out via `PIPELINE_GROUPING_DETECTION_ENABLED=false`):
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/find-grouping-candidates.sh" \
+     --title "<candidate-title-1>" --title "<candidate-title-2>"
+   ```
+4. **File each surviving issue** with the standard create-issues body template (Context / Scope / Affected areas / Notes) and the advisory `<!-- pipeline:path-hint=A|B|C -->` marker when a clear A/B/C signal exists:
+   ```bash
+   gh issue create --repo $PIPELINE_REPO --title "<title>" --body "$(cat <<'EOF'
+   ## Context
+   <1-3 sentences: which leg/stage surfaced this and the failure shape>
+
+   ## Scope
+   - <what this issue covers>
+
+   ## Affected areas
+   - <file paths or system areas likely involved>
+
+   ## Notes
+   - <constraints / dependencies surfaced during the campaign>
+   <!-- pipeline:path-hint=B -->
+   EOF
+   )"
+   ```
+   Before each `gh issue create`, re-check the open-issue set + campaign-filed set one final time (the second dedup layer), then add the new number to the campaign-filed set. This consolidated end-of-campaign pass replaces the old per-leg file-only path: grouping/dedup now operate across the WHOLE campaign rather than one leg at a time.
 
 **Scoped halt (campaign-level mirror of `### Scoped halt-and-report`).** When a leg's issue hard-fails or hard-blocks, compute its **dependency CLOSURE** and drop that closure from the REMAINING legs:
 
