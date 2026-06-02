@@ -98,7 +98,7 @@ DEDUP=$(jq -s 'reduce .[] as $r ({}; .[$r.record_key]=$r) | [.[]]
 ## Staged follow-on issues
 
 - **#831** — per-day windowing: `--until DATE` + `--per-day` mode in `cost-latency-report.sh`.
-- **#832** — persisted historical snapshot so per-day history survives log pruning (#830).
+- **#832** — persisted historical snapshot so per-day history survives log pruning (#830). **DONE:** `scripts/snapshot-tokenomics-history.sh` + `.claude/logs/tokenomics-history.jsonl` are the live successor to the hand-computed seed below — the snapshot upserts each day (`cost-latency-report.sh --emit-day-json`) into the durable store, and `cost-latency-report.sh --history` renders it after the live log is pruned.
 - **#833** — per-N / per-LOC columns in the `--tokenomics` bucket table.
 
 All three under epic #791 (tokenomics measurement + reporting hardening).
