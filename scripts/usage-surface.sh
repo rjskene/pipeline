@@ -50,12 +50,56 @@ Usage: usage-surface.sh [--capture-log PATH] [--window-hours N]
 USAGE
 }
 
+# Config from env (overridable by flags below).
+WINDOW_HOURS="${PIPELINE_USAGE_WINDOW_HOURS:-5}"
+CAP_TOKENS="${PIPELINE_USAGE_CAP_TOKENS:-}"
+CAPTURE_LOG=""
+NOW=""
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --help|-h)        print_usage; exit 0 ;;
+    --help|-h)         print_usage; exit 0 ;;
+    --capture-log)     CAPTURE_LOG="${2:-}"; shift 2 ;;
+    --capture-log=*)   CAPTURE_LOG="${1#--capture-log=}"; shift ;;
+    --window-hours)    WINDOW_HOURS="${2:-}"; shift 2 ;;
+    --window-hours=*)  WINDOW_HOURS="${1#--window-hours=}"; shift ;;
+    --cap-tokens)      CAP_TOKENS="${2:-}"; shift 2 ;;
+    --cap-tokens=*)    CAP_TOKENS="${1#--cap-tokens=}"; shift ;;
+    --now)             NOW="${2:-}"; shift 2 ;;
+    --now=*)           NOW="${1#--now=}"; shift ;;
     *)
       echo "usage-surface: ERROR: unknown arg: $1" >&2
       exit 1
       ;;
   esac
 done
+
+# --- gating: PIPELINE_LOGS_ENABLED (mirror capture-agent-costs.sh) ---
+# Loud, machine-detectable skip when logging is disabled.
+if [ "${PIPELINE_LOGS_ENABLED:-false}" != "true" ]; then
+  echo "usage-surface: PIPELINE_LOGS_ENABLED not 'true'; skipping (read-only, no output)." >&2
+  echo "usage-surface: SKIP_LOGGING_DISABLED (PIPELINE_LOGS_ENABLED='${PIPELINE_LOGS_ENABLED:-<unset>}')"
+  exit 0
+fi
+
+# --- gating: cap required to render ---
+if [ -z "$CAP_TOKENS" ]; then
+  echo "Usage read-out: disabled (PIPELINE_USAGE_CAP_TOKENS unset)"
+  exit 0
+fi
+
+WINDOW_HOURS="${WINDOW_HOURS:-5}"
+
+# Resolve the capture-log path (default the gated allow-listed log).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CAPTURE_LOG="${CAPTURE_LOG:-${REPO_ROOT}/.claude/logs/agent-costs.jsonl}"
+
+# Resolve the clock: --now wins; else current UTC.
+NOW="${NOW:-$(date -u +%FT%TZ)}"
+
+# --- graceful-degrade: missing/empty capture log → -- placeholders ---
+if [ ! -s "$CAPTURE_LOG" ]; then
+  echo "Usage read-out (${WINDOW_HOURS}h window): window=--tok / cap=${CAP_TOKENS}tok — headroom=--tok — throttle-ETA --"
+  exit 0
+fi
