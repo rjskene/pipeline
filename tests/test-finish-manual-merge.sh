@@ -100,16 +100,21 @@ fi
 echo "Case B: wedged → corrected"
 inc
 B="$TMP/case-b"; reset_case "$B"
-export LABELS="pr-open,manual-merge"
+# Full pipeline label set present so the helper's combined flip strips them all
+# without tripping the absent-label 422 fallback.
+export LABELS="pr-open,manual-merge,plan-approved,in-progress,priority/P1"
 export STATE="OPEN"
 if bash "$HELPER" 655 4242 >"$B/stdout" 2>"$B/stderr"; then
   ok=1
   grep -qF -- '--add-label merged' "$SHIM_LOG"            || { ok=0; fail_msg "wedged: no --add-label merged recorded"; }
   grep -qF -- '--remove-label pr-open' "$SHIM_LOG"        || { ok=0; fail_msg "wedged: no --remove-label pr-open recorded"; }
   grep -qF -- '--remove-label manual-merge' "$SHIM_LOG"   || { ok=0; fail_msg "wedged: no --remove-label manual-merge recorded"; }
+  # Helper-backed full strip-set (issue #866): wider labels are now stripped too.
+  grep -qF -- '--remove-label plan-approved' "$SHIM_LOG"  || { ok=0; fail_msg "wedged: no --remove-label plan-approved recorded (helper full strip-set)"; }
+  grep -qF -- '--remove-label priority/P1' "$SHIM_LOG"    || { ok=0; fail_msg "wedged: no --remove-label priority/P1 recorded (helper full strip-set)"; }
   grep -qE 'issue close 655' "$SHIM_LOG"                  || { ok=0; fail_msg "wedged: no issue close 655 recorded"; }
   grep -qF 'Merged via PR #4242' "$SHIM_LOG"              || { ok=0; fail_msg "wedged: close comment lacks 'Merged via PR #4242'"; }
-  [ "$ok" = "1" ] && pass_msg "wedged: add merged + remove pr-open/manual-merge + close with 'Merged via PR #4242'"
+  [ "$ok" = "1" ] && pass_msg "wedged: full strip-set (incl. plan-approved/priority/P1) + close with 'Merged via PR #4242'"
   [ "$ok" = "1" ] || sed 's/^/    /' "$SHIM_LOG"
 else
   rc=$?
