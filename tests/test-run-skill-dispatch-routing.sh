@@ -73,4 +73,16 @@ echo "$STEP6" | grep -qF "No spawn-claude.sh" \
 grep -qE "spawned PATH B|spawned B run|PATH B.*spawned (worker|run)" "$SKILL" \
   && { echo "FAIL: run SKILL.md still calls a PATH B run 'spawned' (B is inline now, #748)"; exit 1; } || true
 
+# Issue #749 Task 4: the routing/Step-6 prose must name a CONSERVATIVE inline-C
+# concurrency cap of 1–2 concurrent tdd-implementer AND justify it by the
+# bigger-than-B orchestrator-context cost (plan-read + N-target sequencing + PR
+# creation + N inline dispatch/return contexts held in-orchestrator). Phrase-
+# presence guard — pure model-facing prose.
+grep -qF "1–2 concurrent" "$SKILL" \
+  || { echo "FAIL: SKILL.md missing the conservative inline-C cap of '1–2 concurrent' tdd-implementer (#749)"; exit 1; }
+grep -qF "bigger-than-B orchestrator-context cost" "$SKILL" \
+  || { echo "FAIL: SKILL.md missing the inline-C cap justification ('bigger-than-B orchestrator-context cost') (#749)"; exit 1; }
+grep -qF "N inline dispatch/return contexts" "$SKILL" \
+  || { echo "FAIL: SKILL.md missing the orchestrator-context-cost breakdown ('N inline dispatch/return contexts') (#749)"; exit 1; }
+
 echo "PASS: run SKILL.md dispatch routing"
