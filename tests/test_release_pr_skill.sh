@@ -2,11 +2,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Issue #143: full-send autonomous flow moved from skills/run/SKILL.md to
-# skills/fullsend/SKILL.md. Task 3 + Task 5 markers live in the run skill
-# (housekeeping discovery + interactive propose-action remain there); Task 4
-# markers (full-send auto-merge gate / Step 7b) live in the fullsend skill.
-SKILL=skills/run/SKILL.md
+# Issue #143: full-send autonomous flow moved from the old /pipeline:run skill
+# to skills/fullsend/SKILL.md. Task 4 markers (full-send auto-merge gate /
+# Step 7b) live in the fullsend skill.
+#
+# #763: the run→status rename moved the housekeeping release-PR DISCOVERY markers
+# (Task 3) into the read-only skills/status/SKILL.md, and REMOVED the Task-5
+# interactive "propose merging the release PR" action entirely — /pipeline:status
+# proposes nothing, and autonomous merge of release PRs lives in fullsend's
+# Step 7b (already covered by the Task-4 markers).
+SKILL=skills/status/SKILL.md
 FS_SKILL=skills/fullsend/SKILL.md
 [ -f "$SKILL" ] || { echo "FAIL: $SKILL not found"; exit 1; }
 [ -f "$FS_SKILL" ] || { echo "FAIL: $FS_SKILL not found"; exit 1; }
@@ -24,10 +29,9 @@ grep -qE 'gh pr merge .* --merge' "$FS_SKILL" || { echo "FAIL: full-send must me
 grep -qE 'after step 7|post-step-7|step 7b|7b\.' "$FS_SKILL" || { echo "FAIL: full-send must place merge after step 7"; exit 1; }
 echo "PASS test_release_pr_skill (task4)"
 
-# Task 5 markers — interactive propose-action entry for release PRs (in run skill)
-grep -qE 'merge release PR|merge the release PR' "$SKILL" || { echo "FAIL: interactive mode must propose merging release PRs"; exit 1; }
-# Capture awk output to a variable first to avoid pipefail+SIGPIPE race
-# (grep -q exits on first match; awk still writing → SIGPIPE → exit 141 under pipefail).
-_block=$(awk '/Propose ONE action/,/Wait for user confirmation/' "$SKILL")
-printf '%s\n' "$_block" | grep -q 'release PR' || { echo "FAIL: release PR proposal missing from propose-action block"; exit 1; }
-echo "PASS test_release_pr_skill (task5)"
+# Task 5 markers DELETED for #763: the interactive "propose merging the release
+# PR" action was removed when /pipeline:run became the read-only /pipeline:status
+# survey (status proposes no actions). Autonomous release-PR merge now lives in
+# fullsend's Step 7b, which is already covered by the Task-4 markers above.
+# Verified obsolete: neither "merge release PR" nor a "Propose ONE action" block
+# exists in skills/status/SKILL.md.

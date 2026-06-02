@@ -13,7 +13,7 @@ if ! declare -F pipeline_logging_enabled >/dev/null 2>&1; then
 fi
 #
 # analyze-issues.sh — Stage 1 deterministic shortlist generator backing
-# /pipeline:run --analyze (issue #138).
+# /pipeline:status --analyze (issue #138).
 #
 # Reads open issues + open trackers via `gh` (or fixture files), emits a
 # candidate-shortlist JSON to .claude/logs/analyze-shortlist-<ISO>.json

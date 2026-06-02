@@ -1,22 +1,26 @@
 #!/bin/bash
-# Asserts that BOTH setup-worktree.sh call sites in skills/run/SKILL.md
-# document the full invocation signature: both positional args
-# (branch-name + issue-number), a worked example, a cross-link to the
-# "Branch and worktree naming convention" block (heading-text reference,
-# never a hard-coded line number), and a "Do NOT invoke with only the
-# issue number" callout.
-#
-# Site A: the proposal-prose call site under the ladder (around line 435)
-#         where the orchestrator proposes setting up worktrees.
-# Site B: the execution-block call site under the "For execution
-#         (plan-approved -> worktree setup)" block (around line 556)
-#         where the script is actually invoked.
+# Asserts that the setup-worktree.sh execution call site documents the full
+# invocation signature: both positional args (branch-name + issue-number), a
+# worked example, a cross-link to the "Branch and worktree naming convention"
+# block (heading-text reference, never a hard-coded line number), and a
+# "Do NOT invoke with only the issue number" callout.
 #
 # Introduced by issue #350 (parallel to fullsend Task 3).
+#
+# #763 repoint: the run→status rename moved ALL dispatch/worktree-setup wiring
+# out of the (now read-only) /pipeline:status skill into skills/fullsend/SKILL.md.
+# So the execution call site is now fullsend's Step 5 "Set up worktrees" block.
+# The old Site A "propose setting up worktrees" proposal-prose narration was
+# DELETED — autonomous fullsend sets up worktrees wave-by-wave directly; it does
+# not narrate a proposal first (status, the read-only successor, proposes
+# nothing). Only the execution-block assertions remain, scoped to fullsend.
+# The "Branch and worktree naming convention" heading the call site cross-links
+# to now lives in skills/status/SKILL.md (the canonical convention home).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_PATH="$SCRIPT_DIR/../skills/run/SKILL.md"
+SKILL_PATH="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+CONVENTION_PATH="$SCRIPT_DIR/../skills/status/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -26,131 +30,79 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
 if [ ! -f "$SKILL_PATH" ]; then
-  fail_msg "SKILL.md not found at $SKILL_PATH"
+  fail_msg "fullsend SKILL.md not found at $SKILL_PATH"
   echo "  $TESTS tests: $PASS passed, $FAIL failed"
   exit 1
 fi
 
 # -----------------------------------------------------------------------------
-# Locate Site A — the proposal-prose call site.
-# Anchor on the literal phrase "propose setting up worktrees" which is the
-# under-specified prose currently at ~line 435.
+# Locate the execution call site — fullsend's Step 5 "Set up worktrees" block.
+# Anchor on the numbered step heading and window forward to the next numbered
+# step (Step 6 "Execute").
 # -----------------------------------------------------------------------------
-SITE_A_LINE=$(grep -nF 'propose setting up worktrees' "$SKILL_PATH" | head -1 | cut -d: -f1)
+SITE_LINE=$(grep -nE '^5\. \*\*Set up worktrees\*\*' "$SKILL_PATH" | head -1 | cut -d: -f1)
 
-if [ -z "$SITE_A_LINE" ]; then
-  fail_msg "could not find Site A anchor ('propose setting up worktrees') in $SKILL_PATH"
+if [ -z "$SITE_LINE" ]; then
+  fail_msg "could not find execution call site anchor ('5. **Set up worktrees**') in $SKILL_PATH"
   echo "  $TESTS tests: $PASS passed, $FAIL failed"
   exit 1
 fi
 
-# Window forward ~25 lines from the anchor.
-SITE_A_END=$((SITE_A_LINE + 25))
-SITE_A_WINDOW=$(sed -n "${SITE_A_LINE},${SITE_A_END}p" "$SKILL_PATH")
+SITE_END=$((SITE_LINE + 30))
+SITE_WINDOW=$(sed -n "${SITE_LINE},${SITE_END}p" "$SKILL_PATH")
 
-# Site A assertion 1: mentions setup-worktree.sh literally.
+# Assertion 1: mentions setup-worktree.sh literally.
 inc
-if echo "$SITE_A_WINDOW" | grep -qF 'setup-worktree.sh'; then
-  pass_msg "Site A mentions setup-worktree.sh"
+if echo "$SITE_WINDOW" | grep -qF 'setup-worktree.sh'; then
+  pass_msg "execution site mentions setup-worktree.sh"
 else
-  fail_msg "Site A window (lines $SITE_A_LINE-$SITE_A_END) does not mention 'setup-worktree.sh'"
+  fail_msg "execution site window (lines $SITE_LINE-$SITE_END) does not mention 'setup-worktree.sh'"
 fi
 
-# Site A assertion 2: documents branch shape feature/<slug>.
+# Assertion 2: documents branch shape feature/<slug>.
 inc
-if echo "$SITE_A_WINDOW" | grep -qE 'feature/<[^>]+>'; then
-  pass_msg "Site A documents branch shape feature/<slug>"
+if echo "$SITE_WINDOW" | grep -qE 'feature/<[^>]+>'; then
+  pass_msg "execution site documents branch shape feature/<slug>"
 else
-  fail_msg "Site A window does not document branch shape (expected feature/<slug> or feature/<something>)"
+  fail_msg "execution site window does not document branch shape (expected feature/<slug>)"
 fi
 
-# Site A assertion 3: shows worked two-argument example with both
-# feature/<slug> and an integer issue number.
+# Assertion 3: shows worked two-argument example with both feature/<slug> and
+# an integer issue number.
 inc
-if echo "$SITE_A_WINDOW" | grep -qE 'setup-worktree\.sh[[:space:]]+(--base[[:space:]]+[^[:space:]]+[[:space:]]+)?feature/[a-z0-9-]+[[:space:]]+[0-9]+'; then
-  pass_msg "Site A shows worked two-argument example (feature/<slug> <integer>)"
+if echo "$SITE_WINDOW" | grep -qE 'setup-worktree\.sh[[:space:]]+(--base[[:space:]]+[^[:space:]]+[[:space:]]+)?feature/[a-z0-9-]+[[:space:]]+[0-9]+'; then
+  pass_msg "execution site shows worked two-argument example (feature/<slug> <integer>)"
 else
-  fail_msg "Site A window does not contain a worked example like 'setup-worktree.sh feature/gmail-ci-filter 81'"
+  fail_msg "execution site window does not contain a worked example like 'setup-worktree.sh feature/gmail-ci-filter 81'"
 fi
 
-# Site A assertion 4: cross-links to the branch-naming convention block.
+# Assertion 4: cross-links to the branch-naming convention block.
 inc
-if echo "$SITE_A_WINDOW" | grep -qiE 'Branch and worktree naming convention|branch[- ]naming convention'; then
-  pass_msg "Site A cross-links to the Branch and worktree naming convention block"
+if echo "$SITE_WINDOW" | grep -qiE 'Branch and worktree naming convention|branch[- ]naming convention'; then
+  pass_msg "execution site cross-links to the Branch and worktree naming convention block"
 else
-  fail_msg "Site A window does not cross-link to the 'Branch and worktree naming convention' block"
+  fail_msg "execution site window does not cross-link to the 'Branch and worktree naming convention' block"
 fi
 
-# -----------------------------------------------------------------------------
-# Locate Site B — the execution-block call site.
-# Anchor on the literal phrase "Run the setup script with" which is the
-# leading prose of the numbered step (~line 554) that introduces the
-# invocation code block.
-# -----------------------------------------------------------------------------
-SITE_B_LINE=$(grep -nF 'Run the setup script with' "$SKILL_PATH" | head -1 | cut -d: -f1)
-
-if [ -z "$SITE_B_LINE" ]; then
-  fail_msg "could not find Site B anchor ('Run the setup script with') in $SKILL_PATH"
-  echo "  $TESTS tests: $PASS passed, $FAIL failed"
-  exit 1
-fi
-
-SITE_B_END=$((SITE_B_LINE + 25))
-SITE_B_WINDOW=$(sed -n "${SITE_B_LINE},${SITE_B_END}p" "$SKILL_PATH")
-
-# Site B assertion 1: mentions setup-worktree.sh literally.
+# Assertion 5: explicit "Do NOT invoke with only the issue number" callout —
+# the most important defense at the actual invocation site.
 inc
-if echo "$SITE_B_WINDOW" | grep -qF 'setup-worktree.sh'; then
-  pass_msg "Site B mentions setup-worktree.sh"
+if echo "$SITE_WINDOW" | grep -qiE '[Dd]o NOT invoke.*only the issue number|[Dd]o not invoke.*only the issue'; then
+  pass_msg "execution site contains 'Do NOT invoke with only the issue number' callout"
 else
-  fail_msg "Site B window (lines $SITE_B_LINE-$SITE_B_END) does not mention 'setup-worktree.sh'"
-fi
-
-# Site B assertion 2: documents branch shape feature/<slug>.
-inc
-if echo "$SITE_B_WINDOW" | grep -qE 'feature/<[^>]+>'; then
-  pass_msg "Site B documents branch shape feature/<slug>"
-else
-  fail_msg "Site B window does not document branch shape (expected feature/<slug> or feature/<something>)"
-fi
-
-# Site B assertion 3: shows worked two-argument example with both
-# feature/<slug> and an integer issue number.
-inc
-if echo "$SITE_B_WINDOW" | grep -qE 'setup-worktree\.sh[[:space:]]+(--base[[:space:]]+[^[:space:]]+[[:space:]]+)?feature/[a-z0-9-]+[[:space:]]+[0-9]+'; then
-  pass_msg "Site B shows worked two-argument example (feature/<slug> <integer>)"
-else
-  fail_msg "Site B window does not contain a worked example like 'setup-worktree.sh feature/gmail-ci-filter 81'"
-fi
-
-# Site B assertion 4: cross-links to the branch-naming convention block.
-inc
-if echo "$SITE_B_WINDOW" | grep -qiE 'Branch and worktree naming convention|branch[- ]naming convention'; then
-  pass_msg "Site B cross-links to the Branch and worktree naming convention block"
-else
-  fail_msg "Site B window does not cross-link to the 'Branch and worktree naming convention' block"
-fi
-
-# Site B assertion 5: explicit "Do NOT invoke with only the issue number"
-# callout — this is the most important defense at the actual invocation site.
-inc
-if echo "$SITE_B_WINDOW" | grep -qiE '[Dd]o NOT invoke.*only the issue number|[Dd]o not invoke.*only the issue'; then
-  pass_msg "Site B contains 'Do NOT invoke with only the issue number' callout"
-else
-  fail_msg "Site B window lacks an explicit 'Do NOT invoke with only the issue number' callout"
+  fail_msg "execution site window lacks an explicit 'Do NOT invoke with only the issue number' callout"
 fi
 
 # -----------------------------------------------------------------------------
 # Cross-cutting assertion: the "Branch and worktree naming convention" heading
-# that both Site A and Site B point at must actually exist as a heading in
-# SKILL.md. If anyone renames or removes the block, this test fails loudly
-# rather than letting Site A/B silently point at a dead target.
+# that the call site points at must actually exist as a heading. After the
+# run→status rename the canonical convention home is skills/status/SKILL.md.
 # -----------------------------------------------------------------------------
 inc
-if grep -qE '^#{1,4}[[:space:]]+Branch and worktree naming convention' "$SKILL_PATH"; then
-  pass_msg "'Branch and worktree naming convention' heading exists in SKILL.md"
+if grep -qE '^#{1,4}[[:space:]]+Branch and worktree naming convention' "$CONVENTION_PATH"; then
+  pass_msg "'Branch and worktree naming convention' heading exists in skills/status/SKILL.md"
 else
-  fail_msg "convention heading missing from $SKILL_PATH (Site A and Site B cross-refs would be dead)"
+  fail_msg "convention heading missing from $CONVENTION_PATH (cross-refs would be dead)"
 fi
 
 # -----------------------------------------------------------------------------

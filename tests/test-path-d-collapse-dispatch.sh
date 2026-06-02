@@ -14,7 +14,17 @@ set -euo pipefail
 # for "token X appears near token Y" assertions.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUN_SKILL="$SCRIPT_DIR/../skills/run/SKILL.md"
+# #763: the run→status rename moved ALL collapsed-PATH-D dispatch wiring out of
+# the old /pipeline:run skill into fullsend's "Collapsed-D ceremony" / Dispatch-
+# routing reference. The read-only /pipeline:status skill no longer carries any
+# of it, so the Group-1 collapsed-D dispatch contract is now asserted against
+# fullsend (same file as Group 2). The line-content Group-1 assertions (1a-1g)
+# are all carried by fullsend's Collapsed-D ceremony; the windowed planning-branch
+# carve-out assertion (1h) was DELETED — that "For planning ... PATH D carve-out"
+# routing was specific to the old run skill's planning section and has no fullsend
+# equivalent; in fullsend the equivalent contract is Group 2's split-dispatch +
+# Step-1b PATH-D exclusion (assertion 2e), which is the canonical home.
+RUN_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
 FULLSEND_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
 EXECUTE_SKILL="$SCRIPT_DIR/../skills/execute-issue-plan/SKILL.md"
 
@@ -129,16 +139,13 @@ else
   fail_msg "(1g) run/SKILL.md missing one of: 'No spawn-claude.sh', 'no tmux', 'no run-queue'"
 fi
 
-# (1h) PATH D planning branch routes D into ONE collapsed Agent, not a
-# separate classify+plan dispatch followed by a separate execute dispatch.
-inc
-PLAN_BRANCH_D=$(near "$RUN_SKILL" "For planning" "PATH D carve-out" 1600)
-PLAN_BRANCH_D2=$(near "$RUN_SKILL" "For planning" "collapse into ONE carried-forward inline" 1600)
-if [ "$PLAN_BRANCH_D" = "OK" ] || [ "$PLAN_BRANCH_D2" = "OK" ]; then
-  pass_msg "(1h) run/SKILL.md planning branch routes PATH D into ONE collapsed inline Agent"
-else
-  fail_msg "(1h) run/SKILL.md planning branch missing PATH D carve-out routing D into one collapsed inline Agent"
-fi
+# (1h) DELETED for #763: the "For planning ... PATH D carve-out" planning-branch
+# routing was specific to the old /pipeline:run skill's planning section, which
+# was removed in the run→status rename (status is read-only and dispatches
+# nothing). fullsend has no "For planning" planning-branch — its equivalent
+# PATH-D contract is the Step-1b per-stage classify/plan EXCLUSION asserted by
+# Group 2's (2e) below, which is the canonical home. Verified obsolete: neither
+# "For planning" nor "PATH D carve-out" exists in fullsend.
 
 # =====================================================================
 # Group 2 — skills/fullsend/SKILL.md: split-dispatch where D fans out as a

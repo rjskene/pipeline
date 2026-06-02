@@ -9,7 +9,7 @@
 #                          [--today YYYY-MM-DD]
 #
 # Inputs are FILES (no live `gh` calls). All three input shapes are produced
-# upstream by `/pipeline:run` step 0–1:
+# upstream by `/pipeline:status` step 0–1:
 #   issues.json     — verbatim `gh issue list --json number,title,labels,body,updatedAt`
 #   trackers.json   — JSON object {"<num>": "<body string>", ...} per tracker
 #   release-prs.txt — one line per release PR in the format
@@ -59,7 +59,7 @@ if [ -z "$ISSUES_FILE" ]; then
 fi
 
 # Accept regular files AND bash process substitutions (/dev/fd/N) — the
-# canonical /pipeline:run invocation feeds --release-prs via <(printf ...).
+# canonical /pipeline:status invocation feeds --release-prs via <(printf ...).
 # Use `-r` (readable) instead of `-f` (regular file) so /dev/fd entries pass.
 if [ ! -r "$ISSUES_FILE" ]; then
   echo "render-status-table.sh: --issues file not found: $ISSUES_FILE" >&2
@@ -111,7 +111,7 @@ fi
 #
 # jq emits one record per issue with the fields the renderer needs:
 #   number, title, scope, priority_tier, priority_badge, stage
-# Stage label precedence mirrors the prose spec in skills/run/SKILL.md
+# Stage label precedence mirrors the prose spec in skills/status/SKILL.md
 # (merged > pr-open > in-progress > plan-approved > plan-reviewed >
 #  plan-pending > tracker > later > human > brainstorm > ready).
 # Scope comes from the conventional-commit `type(scope):` prefix; titles

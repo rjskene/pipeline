@@ -191,7 +191,7 @@ EOF
 - Newly created issues get no pipeline labels by default (enter as `ready`).
 - If the user specifies a label during discussion ("this is a bug"), add it: `--label bug`.
 - Tracker issues (created via the tracker body template above) automatically receive the `tracker` label so the orchestrator excludes them from the action queue.
-- If the user's framing is architectural critique, open-ended exploration, or "should we / could we" without a commit-to-act, propose creating with `--label brainstorm`. The label parks the issue in the discussion bucket — visible in `/pipeline:run` (stage = `brainstorm`) but never auto-planned or auto-executed. User promotes by removing the label.
+- If the user's framing is architectural critique, open-ended exploration, or "should we / could we" without a commit-to-act, propose creating with `--label brainstorm`. The label parks the issue in the discussion bucket — visible in `/pipeline:status` (stage = `brainstorm`) but never auto-planned or auto-executed. User promotes by removing the label.
 
 ### PATH D body marker (advisory)
 

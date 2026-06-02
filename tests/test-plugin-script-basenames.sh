@@ -5,7 +5,8 @@ set -uo pipefail
 # carry a `.sh.template` suffix (from the retired subtree installer) must now
 # ship as plain `.sh` so consumers can find them at
 # `${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh`. Failing this test means a fresh
-# plugin install will hit "file not found" on `/pipeline:run`.
+# plugin install will hit "file not found" on `/pipeline:status` (renamed from
+# `/pipeline:run` in #763; alias retained).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

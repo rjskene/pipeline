@@ -666,5 +666,5 @@ cat <<'EOF'
 Migration complete.
 
 Install the plugin: claude plugin install hts-collab-org/claude-pipeline
-Re-run /pipeline:run to verify.
+Re-run /pipeline:status to verify.
 EOF

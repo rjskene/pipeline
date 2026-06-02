@@ -60,8 +60,14 @@ want_match "fullsend skill contains plan-waves.sh invocation" "$FS_SKILL" 'bash 
 want_match "fullsend skill contains FULL SEND COMPLETE banner" "$FS_SKILL" "FULL SEND COMPLETE"
 want_match "fullsend skill contains Auto-merged? column" "$FS_SKILL" "Auto-merged?"
 
-# 5. Run skill contains the delegator to /pipeline:fullsend.
-want_match "run skill delegates to pipeline:fullsend" "$RUN_SKILL" 'Skill(skill: "pipeline:fullsend"'
+# 5. DELETED for #763: the old /pipeline:run "Full Send — back-compat delegator"
+#    delegated to pipeline:fullsend. The run→status rename retired that
+#    delegator — /pipeline:run is now a thin DEPRECATED ALIAS that forwards to
+#    the read-only /pipeline:status (NOT fullsend), so
+#    `Skill(skill: "pipeline:fullsend"` is gone from the alias by design.
+#    Verified obsolete: see tests/test-run-alias-delegates.sh +
+#    tests/test-status-no-full-send-delegator.sh, which assert the alias
+#    delegates to status and never to fullsend.
 
 # 6. Run skill no longer contains the moved Step 0a wave-plan content
 #    (regression guard against content forking).

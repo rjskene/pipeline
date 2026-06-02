@@ -16,7 +16,7 @@ Broader PATH C inline migration is intentionally deferred (see issue #80 rationa
 
 ## Full Send wave model
 
-When the user invokes `/pipeline:fullsend` (or the back-compat `"full send"` magic-string in `/pipeline:run`, which delegates to the same skill), the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
+When the user invokes `/pipeline:fullsend`, the orchestrator runs `scripts/plan-waves.sh` against the set of ready issues before dispatching any classify/plan agents. The helper groups issues into ordered waves by priority tier (`priority/P0` > `P1` > `P2` > `P3`), respecting explicit `blocked by #N` / `depends on #N` body annotations and shared-file conflicts inferred from issue bodies. Each wave is dispatched in parallel; subsequent waves wait for the prior wave to finish. Disable with `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED=false` to restore the legacy single-blast dispatch.
 
 ## Base-branch enforcement
 
@@ -39,7 +39,7 @@ The hook alone is not sufficient — it has bypassed (#295) when the consumer se
 
 ## MCP gating for spawned agents
 
-The repo-root `.mcp.json` registers Playwright MCP. The orchestrator session (the one running `/pipeline:run` or `/pipeline:fullsend`) loads `.mcp.json` automatically from its working directory — unaffected by this gating.
+The repo-root `.mcp.json` registers Playwright MCP. The orchestrator session (the one running `/pipeline:status` or `/pipeline:fullsend`) loads `.mcp.json` automatically from its working directory — unaffected by this gating.
 
 Per-issue spawned agents (planner, executor, evaluator launched via `scripts/spawn-claude.sh`) default to **zero MCP servers**: the script synthesises a transient `/tmp/claude-mcp-empty-*.json` containing `{"mcpServers": {}}` and passes `--mcp-config <file> --strict-mcp-config` to the spawned `claude` CLI. The `--strict-mcp-config` flag is essential — without it `claude` can still discover MCP servers from user- or system-level config, defeating the gate. The tempfile is unlinked by the existing deferred-cleanup trap (alongside the system-prompt file and launcher).
 

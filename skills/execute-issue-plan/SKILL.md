@@ -19,7 +19,7 @@ _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipe
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-State (slate, base branch, repo) is inherited from `/pipeline:run` / `/pipeline:fullsend`; if these variables fail to resolve, **STOP** — preconditions live in `skills/run/SKILL.md`.
+State (slate, base branch, repo) is inherited from `/pipeline:fullsend`; if these variables fail to resolve, **STOP** — preconditions live in `skills/fullsend/SKILL.md`.
 
 ## Lifecycle
 

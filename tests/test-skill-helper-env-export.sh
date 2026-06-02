@@ -13,6 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+STATUS_SKILL="$REPO_ROOT/skills/status/SKILL.md"
 RUN_SKILL="$REPO_ROOT/skills/run/SKILL.md"
 FULLSEND_SKILL="$REPO_ROOT/skills/fullsend/SKILL.md"
 
@@ -60,7 +61,7 @@ scan_file() {
 
 echo "=== Static scan: PIPELINE_REPO consumers wrapped in skill prose ==="
 
-for SKILL_FILE in "$RUN_SKILL" "$FULLSEND_SKILL"; do
+for SKILL_FILE in "$STATUS_SKILL" "$RUN_SKILL" "$FULLSEND_SKILL"; do
   for HELPER in "${PIPELINE_REPO_CONSUMERS[@]}"; do
     while IFS= read -r match; do
       [ -z "$match" ] && continue

@@ -9,7 +9,7 @@ set -euo pipefail
 # prose must not fire them.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_PATH="$SCRIPT_DIR/../skills/run/SKILL.md"
+SKILL_PATH="$SCRIPT_DIR/../skills/status/SKILL.md"
 
 PASS=0
 FAIL=0

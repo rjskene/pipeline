@@ -17,9 +17,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Dispatch sites that MUST carry the verbatim contract directive.
+# #763: the run→status rename DELETED skills/run/references/dispatch-routing.md
+# (its plan-issue dispatch-prompt contract relocated into fullsend's Step 1b).
+# fullsend is now the single dispatch site for the plan-issue contract.
 DISPATCH_SITES=(
   "skills/fullsend/SKILL.md"
-  "skills/run/references/dispatch-routing.md"
 )
 
 # Canonical directive substrings (must appear at each dispatch site).
@@ -95,7 +97,11 @@ done
 #    regardless and give false confidence.
 assert_contains "caller-contract" "skills/plan-issue/SKILL.md" "## Caller contract"
 assert_section_contains "caller-contract" "skills/plan-issue/SKILL.md" "## Caller contract" "/pipeline:fullsend"
-assert_section_contains "caller-contract" "skills/plan-issue/SKILL.md" "## Caller contract" "/pipeline:run"
+# The "/pipeline:run" caller-contract cross-reference was DROPPED for #763: Task 1
+# narrowed plan-issue's Caller contract to name only /pipeline:fullsend as the
+# dispatching caller (the read-only /pipeline:status and its /pipeline:run alias
+# no longer dispatch plan-issue). Verified: plan-issue's `## Caller contract`
+# section references only /pipeline:fullsend.
 
 echo ""
 echo "================================"

@@ -11,7 +11,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKILL="${ROOT}/skills/run/SKILL.md"
+SKILL="${ROOT}/skills/status/SKILL.md"
 
 PASS=0
 FAIL=0
