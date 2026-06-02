@@ -24,6 +24,7 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 - **`main`** — the release branch. release-please tracks `main` and cuts releases from it.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 - **Dispatch model:** PATH A/B/D execute as an inline `Agent` in the orchestrator session; only PATH C spawns a `claude -p` worker via `spawn-claude.sh`. (Per #748 + the Path-2 cost decision — see [docs/cost-architecture.md](docs/cost-architecture.md).)
+- **Campaign mode:** `/pipeline:fullsend --campaign` partitions the approved slate into ordered per-path legs capped by `PIPELINE_CAMPAIGN_MAX_BC` (default 2, expensive B/C) / `PIPELINE_CAMPAIGN_MAX_AD` (default 5, cheap A/D), each leg run as a wave. See [docs/process-maps.md](docs/process-maps.md).
 
 Base-branch enforcement is defense-in-depth across three layers (eval-time gate, skill-level `--base`, PreToolUse hook). For the full release procedure and back-sync workflow, see [docs/release-cadence.md](docs/release-cadence.md).
 
@@ -76,6 +77,8 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 This repo's `.claude/settings.json` registers tool-use and subagent logging hooks; the published `pipeline@claude-pipeline` plugin manifest does NOT. See [docs/observability.md](docs/observability.md) for the log streams and `PIPELINE_LOGS_ENABLED` gating, and [docs/self-audit.md](docs/self-audit.md) for the inner/outer-loop digest system that consumes them.
 
 Agent token cost + latency are captured to the gated `agent-costs.jsonl` log and surfaced by `/pipeline:tokenomics` (dogfood-only, #721) — per-bucket/stage/structure cost with B→D breakeven. See [docs/observability.md](docs/observability.md#agent-cost-capture--pipelinetokenomics) and the cost analysis in [docs/cost-architecture.md](docs/cost-architecture.md).
+
+Operator playbook — boundary-hook gotchas, executor wedge recovery, hand-driving scripts, campaign/wave caps, and other durable operational lessons: [docs/operational-notes.md](docs/operational-notes.md).
 
 ## Configuration conventions
 
