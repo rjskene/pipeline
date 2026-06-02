@@ -62,6 +62,31 @@ Two contract tests enforce this invariant:
 
 Adding a new consumer-facing skill? Copy the canonical snippet verbatim from `skills/create-issues/SKILL.md` into your `## Boot` block, then add the new skill to the `SKILLS` arrays in both tests. A third test, `tests/test-skill-boot-snippet-anchor.sh`, pins the cache-glob anchor shape (no chicken-and-egg `${CLAUDE_PLUGIN_ROOT:-.}` form) across all `SKILL.md` Boot blocks.
 
+### CLAUDE_PLUGIN_ROOT staleness — two distinct failure modes
+
+A `CLAUDE_PLUGIN_ROOT` pointing at a stale/orphaned cache version (e.g. an old
+`.../cache/claude-pipeline/pipeline/0.9.0` instead of the live dogfood
+`claude-pipeline-local/...`) has two unrelated causes — diagnose before "fixing":
+
+- **Inherited launch-time export (the common case).** The value is bound once at
+  process launch; a stale value is usually an export that existed in the
+  environment when `claude` started, NOT `claude` resolving wrong. A same-shell
+  `/exit`+restart can keep re-inheriting it. **Disambiguate with the fresh-shell
+  test:** open a brand-new shell → `echo $CLAUDE_PLUGIN_ROOT` (confirm empty) →
+  launch `claude` → check again inside. Empty/correct ⇒ inherited-export (already
+  fixed by the new launch; the current session stays stale until it dies — move
+  work to the fresh session). Still stale ⇒ THEN it is a real resolver/install
+  bug. tmux is a red herring unless the var shows in `tmux show-environment [-g]`.
+
+- **Audits that grep `$CLAUDE_PLUGIN_ROOT/...` read the stale copy.** For drift
+  audits (e.g. `doctor.sh` LABEL_TABLE, `skills/*/SKILL.md`, `tests/`), read the
+  **repo-rooted** copy (`${PIPELINE_PROJECT_ROOT}/<file>` — the working tree),
+  NOT `${CLAUDE_PLUGIN_ROOT}/<file>`. `_resolve-plugin-root.sh` has resolved to a
+  much older cached version mid-audit, producing false "N rows missing" findings.
+  The `${CLAUDE_PLUGIN_ROOT}` path IS correct for *runtime script invocation*
+  (the harness resolves it), but for human reading / drift detection, prefer the
+  repo tree.
+
 ## Doctor
 
 `/pipeline:doctor` is a non-mutating validator consumers run after install. It audits `pipeline.config`, `gh` auth, plugin registration, the pipeline-stage labels on the GitHub repo, residual subtree artifacts, and the base branch's local presence + remote tracking — emitting structured `CHECK: <name> status=<pass|fail|warn> detail=<msg>` lines and a final summary table. Non-zero exit signals any `fail`. The `--fix labels` flag is the one write path: it seeds the canonical pipeline labels via `gh label create --force` (idempotent upsert) and honors `PIPELINE_LABELS_*` overrides. Entrypoint: `scripts/doctor.sh`. Skill: `skills/doctor/SKILL.md`.

@@ -15,15 +15,18 @@ FAIL=0
 pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-# (1) pipeline.config.example declares PIPELINE_GROUPING_DETECTION_ENABLED.
-if grep -qE '^PIPELINE_GROUPING_DETECTION_ENABLED=' "$EXAMPLE"; then
-  pass_msg "pipeline.config.example declares PIPELINE_GROUPING_DETECTION_ENABLED"
+# (1) pipeline.config.example documents PIPELINE_GROUPING_DETECTION_ENABLED as a
+# discoverable escape-hatch. Per #857/#762 this knob was demoted from a live line
+# to a commented escape-hatch (default "true" single-sourced in skill prose), so
+# accept the commented form. It must still appear by name.
+if grep -qE '^[[:space:]]*#?[[:space:]]*PIPELINE_GROUPING_DETECTION_ENABLED=' "$EXAMPLE"; then
+  pass_msg "pipeline.config.example documents PIPELINE_GROUPING_DETECTION_ENABLED"
 else
-  fail_msg "pipeline.config.example declares PIPELINE_GROUPING_DETECTION_ENABLED"
+  fail_msg "pipeline.config.example documents PIPELINE_GROUPING_DETECTION_ENABLED"
 fi
 
-# (2) Default is "true".
-if grep -qE '^PIPELINE_GROUPING_DETECTION_ENABLED="?true"?' "$EXAMPLE"; then
+# (2) The escape-hatch carries the "true" default value (commented OR live).
+if grep -qE '^[[:space:]]*#?[[:space:]]*PIPELINE_GROUPING_DETECTION_ENABLED="?true"?' "$EXAMPLE"; then
   pass_msg "pipeline.config.example defaults PIPELINE_GROUPING_DETECTION_ENABLED to true"
 else
   fail_msg "pipeline.config.example defaults PIPELINE_GROUPING_DETECTION_ENABLED to true"
