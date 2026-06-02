@@ -168,6 +168,35 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/err"
 fi
 
+# =====================================================================
+# Case 4: same-leg file conflict serializes. #1 and #2 are both PATH-B with
+# no deps (BC cap 2 would allow them together), but BOTH touch `shared.sh`.
+# The second placed (#2) shares a file with an already-placed leg member, so
+# it rolls to leg 2 with a `shares shared.sh with #1` reason.
+# =====================================================================
+echo "Case 4: same-leg file conflict serializes the second issue"
+S="$TMP/case4"; mkdir -p "$S"; export GH_ISSUE_DIR="$S"
+write_issue "$S" 1 "" "Touches \`shared.sh\` only."
+write_issue "$S" 2 "" "Also touches \`shared.sh\` (conflict)."
+inc
+if OUT=$(run_helper 1 2 2>"$S/err"); then
+  L1=$(echo "$OUT" | grep -E '^Leg 1: ' || true)
+  L2=$(echo "$OUT" | grep -E '^Leg 2: ' || true)
+  if echo "$L1" | grep -qE '^Leg 1: #1 ' \
+     && ! echo "$L1" | grep -q '#2' \
+     && echo "$L2" | grep -qE '^Leg 2: #2 ' \
+     && echo "$L2" | grep -q 'shares shared.sh with #1'; then
+    pass_msg "Case 4: #2 serialized to leg 2 with 'shares shared.sh with #1'"
+  else
+    fail_msg "Case 4: same-leg file conflict did not serialize"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 4: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/err"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
