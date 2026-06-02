@@ -37,6 +37,41 @@ Graduating to 1.0 (future, not now): set both flags to `false` and push to `main
 
 - Container-isolation opt-ins and the pre-spawn eval-classifier hook were removed in #514 (see that PR for the full list of retired `pipeline.config` knobs) — web-eval is now inline-only via the `needs-browser` label.
 
+## Release gotchas
+
+**GitHub Actions PR permission (first-run install).** release-please (and any
+Action that opens PRs) fails with `GitHub Actions is not permitted to create or
+approve pull requests` *after* it has already pushed the release branch — only
+the final PR-create API call is blocked. Repos default to
+`default_workflow_permissions=read`; an org policy can lock the repo-level
+setting until the org flips its own. On a new org-owned repo, flip both
+proactively before the first run, don't wait for the failure:
+
+- Org: `https://github.com/organizations/<ORG>/settings/actions` → Workflow
+  permissions → Read+write + allow PR creation (needs `admin:org`; UI is the only
+  path without it).
+- Repo: `gh api -X PUT repos/<ORG>/<REPO>/actions/permissions/workflow -F default_workflow_permissions=write -F can_approve_pull_request_reviews=true`
+
+After enabling, `gh run rerun <ID>` — release-please skips the already-pushed
+branch and just opens the PR.
+
+**Tests that self-destruct on the first release.** release-please mutates
+`CHANGELOG.md` and the `extra-files` version locations on every cut, so two test
+anti-patterns are time bombs:
+
+- **Grepping the repo as a "no references" guard.** A test that asserts "string X
+  must not appear anywhere" will match release-please's own CHANGELOG entry
+  containing the commit subject. Such tests MUST exclude `CHANGELOG.md`,
+  `.claude/logs/`, and `.git/` from the grep.
+- **Hard-coded version literals in equality assertions.** A version-sync test must
+  assert the values match *each other* (manifest == `plugin.json` == `marketplace.json`),
+  optionally with a semver-shape regex — never compare to a string literal like
+  `0.2.0`, which goes red the moment release-please bumps it.
+
+In plan-issue / evaluate-issue-plan, flag any new test that (a) greps the whole
+repo without excluding generated paths, or (b) compares a version field to a
+literal.
+
 ## Migration & rollback
 
 This repo flipped from squash to merge-commits on 2026-05-24 via #459. Baseline before-picture: `.claude/logs/issue-459-baseline.md` (gitignored; on the dogfood host).

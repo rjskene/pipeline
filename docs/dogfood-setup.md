@@ -205,6 +205,29 @@ a version bump, Claude Code installs a fresh directory; the helper
 tracks whatever `installPath` `installed_plugins.json` reports, so the
 bump is transparent — no per-version edit required.
 
+## When do edits go live? (session-cached skill bodies)
+
+`git pull` on staging updates the skill/script FILES on disk immediately (the
+symlink points at the working tree — no release/reinstall). But the files being
+fresh on disk is NOT enough to make new *skill behavior* live in the **running
+orchestrator session**:
+
+- **Orchestrator's own `Skill()` invocations are session-cached.** A fresh
+  `Skill(pipeline:fullsend)` call mid-session returns the body that was loaded at
+  session start, even after merge+pull — the Skill tool does NOT re-read
+  `SKILL.md` from disk. Stale until the session is **restarted** (restart, NOT
+  reinstall — the symlink already points at the live tree).
+- **Everything else reads fresh:** spawned `claude -p` workers (PATH B/C execute +
+  evaluate), inline `Agent(subagent_type=...)` subagents whose prompt says "follow
+  `skills/.../SKILL.md`", scripts (`plan-waves.sh`, `run-queue.sh`, …), and hooks
+  (repo-rooted) all read the current on-disk file.
+
+So: to test a just-merged change that lives in an **orchestrator-driven** skill
+body (`run`/`status`, `fullsend` dispatch logic), restart the session after
+merge+pull. Changes in worker-loaded skills (`execute-issue-plan`,
+`evaluate-issue-pr`) or in scripts are live without restart. Do NOT trust a fresh
+`Skill()` call to pick up on-disk edits mid-session.
+
 ## Memory cleanup (per-operator, outside this PR)
 
 Auto-memory entries that describe the old cache-based dogfood model
