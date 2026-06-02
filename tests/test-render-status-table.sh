@@ -78,11 +78,17 @@ fi
 # Task 2: ORPHANS section — flat ready/cc-type sort + stage
 # ----------------------------------------------------------------------
 
-# Scenario 2.1: 4 orphans render as a single flat list (no scope buckets),
-# sorted by (ready_rank, cc_type_rank, priority_tier, number). Given the
-# orphans-issues.json fixture (#133 feat/plan-pending/P1, #34 feat/ready/P2,
-# #150 feat/merged/P2, #999 chore/ready/P2) the flat order is
-# #999 < #34 < #133 < #150 (ready chore, ready feat, then not-ready by tier).
+# Scenario 2.1: 5 orphans render as a single flat list (no scope buckets),
+# sorted by (orphan_stage_rank, cc_type_rank, priority_tier, number). The
+# first-level key is a stage ordinal: in-flight(-1) → ready(0) → human(1) →
+# brainstorm(2) → later(3). Within a bucket the #871 tiebreak holds
+# (cc_type_rank → priority_tier → number). Given the orphans-issues.json
+# fixture (#133 feat/plan-pending/P1, #34 feat/ready/P2, #150 feat/merged/P2,
+# #999 chore/ready/P2, #555 feat/human/P0) the flat order is
+# #133 < #150 < #999 < #34 < #555:
+#   in-flight bucket: #133 (plan-pending, P1) < #150 (merged, P2)
+#   ready bucket:     #999 (chore) < #34 (feat)
+#   human bucket:     #555
 # Each row uses `[Pn] #N — <title>  (stage)`.
 inc
 bash "$HELPER" \
@@ -102,18 +108,20 @@ else
   fi
 
   inc
-  # flat order by line number: #999 < #34 < #133 < #150
+  # flat order by line number: #133 < #150 < #999 < #34 < #555
   p999_line=$(grep -n '#999' "$TMP/out" | head -1 | cut -d: -f1)
   p34_line=$(grep -n '#34 ' "$TMP/out" | head -1 | cut -d: -f1)
   p133_line=$(grep -n '#133' "$TMP/out" | head -1 | cut -d: -f1)
   p150_line=$(grep -n '#150' "$TMP/out" | head -1 | cut -d: -f1)
-  if [ -n "$p999_line" ] && [ -n "$p34_line" ] && [ -n "$p133_line" ] && [ -n "$p150_line" ] \
-     && [ "$p999_line" -lt "$p34_line" ] && [ "$p34_line" -lt "$p133_line" ] \
-     && [ "$p133_line" -lt "$p150_line" ]; then
-    pass_msg "flat orphan order: #999 < #34 < #133 < #150"
+  p555_line=$(grep -n '#555' "$TMP/out" | head -1 | cut -d: -f1)
+  if [ -n "$p999_line" ] && [ -n "$p34_line" ] && [ -n "$p133_line" ] \
+     && [ -n "$p150_line" ] && [ -n "$p555_line" ] \
+     && [ "$p133_line" -lt "$p150_line" ] && [ "$p150_line" -lt "$p999_line" ] \
+     && [ "$p999_line" -lt "$p34_line" ] && [ "$p34_line" -lt "$p555_line" ]; then
+    pass_msg "flat orphan order: #133 < #150 < #999 < #34 < #555"
   else
-    fail_msg "flat orphan order: #999 < #34 < #133 < #150" \
-      "p999=$p999_line p34=$p34_line p133=$p133_line p150=$p150_line"
+    fail_msg "flat orphan order: #133 < #150 < #999 < #34 < #555" \
+      "p133=$p133_line p150=$p150_line p999=$p999_line p34=$p34_line p555=$p555_line"
   fi
 
   inc
@@ -147,6 +155,26 @@ else
   else
     fail_msg "#999 (chore) sorts first among ready orphans (#999 < #34)" \
       "p999=$p999_line p34=$p34_line"
+  fi
+
+  inc
+  # stage-ordinal first-level key: human bucket (#555) sorts AFTER the ready
+  # bucket (#34/#999) regardless of #555's higher priority (P0). This is the
+  # behavior change vs the old binary ready_rank, where the not-ready group
+  # would only tiebreak by tier — never by a per-stage ordinal.
+  if [ -n "$p34_line" ] && [ -n "$p555_line" ] && [ "$p34_line" -lt "$p555_line" ]; then
+    pass_msg "human-stage #555 sorts after ready bucket (ready → human)"
+  else
+    fail_msg "human-stage #555 sorts after ready bucket (ready → human)" \
+      "p34=$p34_line p555=$p555_line"
+  fi
+
+  inc
+  # #555 renders with its (human) stage
+  if grep -qE '#555[[:space:]].*\(human\)' "$TMP/out"; then
+    pass_msg "human-stage issue #555 renders as (human)"
+  else
+    fail_msg "human-stage issue #555 renders as (human)" "$(grep '#555' "$TMP/out")"
   fi
 fi
 

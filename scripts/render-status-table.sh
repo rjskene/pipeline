@@ -115,9 +115,14 @@ fi
 # (merged > pr-open > in-progress > plan-approved > plan-reviewed >
 #  plan-pending > tracker > later > human > brainstorm > ready).
 # cc_type comes from the conventional-commit `type(scope)?:` prefix and
-# drives the flat orphan sort (chore→docs→fix→feat→other). ready_rank
-# (ready=0 else 1) is the primary orphan sort key. The legacy `scope` def
-# is retained for compatibility but no longer drives orphan grouping.
+# drives the within-bucket flat orphan tiebreak (chore→docs→fix→feat→other).
+# orphan_stage_rank is the PRIMARY orphan sort key — a stage ordinal:
+# in-flight(-1) → ready(0) → human(1) → brainstorm(2) → later(3). It
+# replaces the older binary ready_rank (ready=0 else 1) as the first-level
+# key so the parked buckets read in a deliberate order (#883); ready_rank is
+# retained for the within-tracker child re-sort and back-compat. The legacy
+# `scope` def is retained for compatibility but no longer drives orphan
+# grouping.
 ROWS_JSON=$(jq -c \
   --arg later     "$PIPELINE_LABELS_LATER" \
   --arg human     "$PIPELINE_LABELS_HUMAN" \
@@ -147,6 +152,17 @@ ROWS_JSON=$(jq -c \
     if (stage | IN($later,$human,$brainst)) then 1 else 0 end;
   def ready_rank:
     if stage == "ready" then 0 else 1 end;
+  # Primary orphan flat-list sort key (#883). Stage ordinal so the parked
+  # buckets read ready → human → brainstorm → later; in-flight stages
+  # (plan-pending…pr-open, merged, tracker) are out of the four named
+  # buckets and sort ahead (-1) as active work.
+  def orphan_stage_rank:
+    stage as $s
+    | if   $s == "ready"    then 0
+      elif $s == $human     then 1
+      elif $s == $brainst   then 2
+      elif $s == $later     then 3
+      else -1 end;
   def scope:
     ([.title
         | capture("^(?<t>feat|fix|chore|refactor|docs|test|perf|build|ci|style|revert|bug|brainstorm)\\((?<s>[^)]+)\\):").s
@@ -190,6 +206,7 @@ ROWS_JSON=$(jq -c \
       blocked_by: blocked_by,
       stage_rank: stage_rank,
       ready_rank: ready_rank,
+      orphan_stage_rank: orphan_stage_rank,
       cc_type: cc_type,
       cc_type_rank: cc_type_rank
     }
@@ -267,9 +284,10 @@ fi
 #
 # Orphans = non-tracker issues NOT referenced as a child under any tracker.
 # Rendered as a single flat list sorted by
-# (ready_rank, cc_type_rank, priority_tier, number): ready issues first,
-# then by conventional-commit type (chore→docs→fix→feat→other), then tier,
-# then number. No scope bucketing.
+# (orphan_stage_rank, cc_type_rank, priority_tier, number): the first-level
+# key is a stage ordinal (in-flight → ready → human → brainstorm → later),
+# then the #871 within-bucket tiebreak — conventional-commit type
+# (chore→docs→fix→feat→other), then tier, then number. No scope bucketing.
 ORPHAN_ROWS_JSON=$(printf '%s' "$ROWS_JSON" \
   | jq -c --argjson children "$CHILD_NUMBERS_JSON" \
       '[.[] | select((.is_tracker | not) and ((.number as $n | $children | index($n)) == null))]')
@@ -357,11 +375,13 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   echo "ORPHANS"
   echo "================================================================"
 
-  # Flat list sorted by (ready_rank, cc_type_rank, priority_tier, number).
-  # priority_tier is the string "0".."9"; tonumber keeps the tiebreak numeric.
+  # Flat list sorted by (orphan_stage_rank, cc_type_rank, priority_tier, number).
+  # orphan_stage_rank is the stage ordinal (in-flight → ready → human →
+  # brainstorm → later, #883); priority_tier is the string "0".."9", so
+  # tonumber keeps the tiebreak numeric.
   printf '%s' "$ORPHAN_ROWS_JSON" \
     | jq -r '
-        sort_by(.ready_rank, .cc_type_rank, (.priority_tier | tonumber), .number)
+        sort_by(.orphan_stage_rank, .cc_type_rank, (.priority_tier | tonumber), .number)
         | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
       '
   echo "================================================================"

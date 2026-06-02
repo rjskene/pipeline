@@ -26,5 +26,12 @@
     "labels": [{"name": "priority/P2"}],
     "body": "",
     "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 555,
+    "title": "feat(human): operator decision needed",
+    "labels": [{"name": "priority/P0"}, {"name": "human"}],
+    "body": "",
+    "updatedAt": "2026-05-21T00:00:00Z"
   }
 ]
