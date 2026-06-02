@@ -212,7 +212,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    Runner NEVER kills autonomously. The orchestrator's prompt to the user is the kill gate.
 
-6b. CI-fix loop (wave N) — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED:-false}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED:-false}" = "true" ]`. For each of wave N's `pr-open` issues, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. Act per the table:
+6b. CI-fix loop (wave N) — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED-true}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]` (colon-LESS fallback per #858: unset ⇒ ON to match the documented `.example` default; explicit `=""` ⇒ OFF to preserve the no-CI consumer contract; `="true"/"false"` honored). For each of wave N's `pr-open` issues, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. Act per the table:
 
    | ACTION | Behavior |
    |--------|----------|
