@@ -58,6 +58,14 @@ for skill_md in $SKILLS; do
   else
     fail_msg "$rel Boot does NOT match the source-resolver contract regex"
   fi
+  # (D) #878: must reference the local-marketplace cache glob (preferred to LOCATE
+  # the resolver, ahead of the published claude-pipeline glob), so the very first
+  # resolver sourced on a dogfood host is the live one — not the stale published copy.
+  if printf '%s' "$head30" | grep -q 'plugins/cache/claude-pipeline-local/pipeline'; then
+    pass_msg "$rel references the local-marketplace cache anchor (#878)"
+  else
+    fail_msg "$rel does NOT reference the local-marketplace cache anchor (#878)"
+  fi
 done
 
 # (B) hermetic exec of the canonical snippet.
@@ -80,6 +88,7 @@ run_snippet() {  # args: extra env assignments evaluated before the snippet
     eval "$1"
     # --- canonical Boot snippet under test (keep byte-identical to SKILL.md) ---
     _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+    _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
     _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
     source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
     # --- end snippet ---
@@ -103,6 +112,21 @@ if [ "$(run_snippet "export PIPELINE_PLUGIN_CACHE_DIR=$TMP/decoy")" = "RESOLVED_
   pass_msg "snippet ignores PIPELINE_PLUGIN_CACHE_DIR (location-only bootstrap hardcodes \${HOME} cache)"
 else
   fail_msg "snippet unexpectedly honored PIPELINE_PLUGIN_CACHE_DIR"
+fi
+
+# B3 (#878): when BOTH a local-marketplace and a published resolver are present,
+# the snippet LOCATES the local-marketplace one (dogfood live tree), not the
+# stale published copy. Place a distinct resolver under the local-marketplace
+# cache glob; B1's published resolver (RESOLVED_OK) must lose.
+LOCAL_CACHE="$FAKE_HOME/.claude/plugins/cache/claude-pipeline-local/pipeline/0.99.0/scripts"
+mkdir -p "$LOCAL_CACHE"
+cat > "$LOCAL_CACHE/_resolve-plugin-root.sh" <<'LOCALR'
+export CLAUDE_PLUGIN_ROOT="LOCAL_WINS"
+LOCALR
+if [ "$(run_snippet ':')" = "LOCAL_WINS" ]; then
+  pass_msg "snippet prefers local-marketplace cache glob over published (#878)"
+else
+  fail_msg "snippet did NOT prefer local-marketplace glob (got '$(run_snippet ':')')"
 fi
 
 echo "RESULT: $PASS passed, $FAIL failed"
