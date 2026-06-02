@@ -91,8 +91,16 @@ case "$cmd $sub" in
     exit 0
     ;;
   "pr checks")
-    # Args: pr_num --repo ... --json conclusion --jq ...
-    # or:   pr_num --repo ... --json link --jq ...
+    # Args: pr_num --repo ... --json <field> --jq ...
+    #
+    # This shim mirrors real `gh pr checks --json` FIELD VALIDATION: the
+    # only fields it knows are the ones real `gh` exposes. Requesting an
+    # unknown field (e.g. the bogus `conclusion`, which only exists on
+    # `gh pr view --json statusCheckRollup`) errors to stderr and exits
+    # non-zero — exactly as real `gh` does. This is the guard the old
+    # shim lacked: it answered `conclusion` unconditionally, masking that
+    # the helper queried a field that always errors against real `gh`
+    # (issue #876).
     json_flag=""
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -100,7 +108,25 @@ case "$cmd $sub" in
         *) shift ;;
       esac
     done
-    if [[ "$json_flag" == "conclusion" ]]; then
+    # Real `gh pr checks --json` fields. `state` carries the uppercase
+    # per-check status; `bucket` the lowercase category. `conclusion` is
+    # deliberately NOT here.
+    VALID_FIELDS="bucket completedAt description event link name startedAt state workflow"
+    case " $VALID_FIELDS " in
+      *" $json_flag "*) : ;;
+      *)
+        echo "Unknown JSON field: \"$json_flag\"" >&2
+        echo "Available fields:" >&2
+        echo "  $VALID_FIELDS" >&2
+        exit 1
+        ;;
+    esac
+    if [[ "$json_flag" == "state" ]]; then
+      # The helper feeds `state` through a `--jq` filter that collapses the
+      # per-check uppercase `state` values to a canonical success/pending/
+      # failure verdict. The shim does not run jq, so it returns that
+      # already-collapsed verdict directly (matching the post-jq value the
+      # helper reads) — same contract the old `conclusion` branch used.
       echo "${S[conclusion]:-pending}"
       exit 0
     fi
