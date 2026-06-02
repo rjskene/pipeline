@@ -17,8 +17,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUN_SKILL="${ROOT}/skills/run/SKILL.md"
-STATUS_REF="${ROOT}/skills/run/references/status-table.md"
+RUN_SKILL="${ROOT}/skills/status/SKILL.md"
+STATUS_REF="${ROOT}/skills/status/references/status-table.md"
 
 # (a) The verbatim-paste directive must be present in both contract sites.
 WANT_MARKER='verbatim into a single fenced code block'
@@ -65,10 +65,10 @@ reject_banned() {
   [ "$hit" -eq 0 ] && echo "  PASS: $name (no banned soft-reprint wording)"
 }
 
-want_marker "$RUN_SKILL"  "skills/run/SKILL.md mandates verbatim paste"
-want_marker "$STATUS_REF" "skills/run/references/status-table.md mandates verbatim paste"
-reject_banned "$RUN_SKILL"  "skills/run/SKILL.md drops soft-reprint wording"
-reject_banned "$STATUS_REF" "skills/run/references/status-table.md drops soft-reprint wording"
+want_marker "$RUN_SKILL"  "skills/status/SKILL.md mandates verbatim paste"
+want_marker "$STATUS_REF" "skills/status/references/status-table.md mandates verbatim paste"
+reject_banned "$RUN_SKILL"  "skills/status/SKILL.md drops soft-reprint wording"
+reject_banned "$STATUS_REF" "skills/status/references/status-table.md drops soft-reprint wording"
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"

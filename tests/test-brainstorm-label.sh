@@ -51,7 +51,7 @@ else
 fi
 
 # --- Task 2: run/SKILL.md surfaces -------------------------------------------
-RUN_SKILL="$REPO_ROOT/skills/run/SKILL.md"
+RUN_SKILL="$REPO_ROOT/skills/status/SKILL.md"
 
 inc
 if [ -f "$RUN_SKILL" ]; then

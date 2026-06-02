@@ -6,7 +6,7 @@ set -uo pipefail
 # that the renderer invocation block is present.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_MD="$SCRIPT_DIR/../skills/run/SKILL.md"
+SKILL_MD="$SCRIPT_DIR/../skills/status/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -88,14 +88,12 @@ else
       "tracker-filter block missing from $SKILL_MD"
   fi
 
-  inc
-  # Decision-tree (step 4 "Propose ONE action") preserved.
-  if grep -q '^4\. \*\*Propose ONE action\*\*' "$SKILL_MD"; then
-    pass_msg "SKILL.md preserves step 4 (Propose ONE action decision tree)"
-  else
-    fail_msg "SKILL.md preserves step 4 (Propose ONE action decision tree)" \
-      "step 4 heading missing from $SKILL_MD"
-  fi
+  # Step 4 "Propose ONE action" assertion DELETED for #763: when /pipeline:run
+  # became the read-only /pipeline:status survey, the propose-action decision
+  # tree was removed entirely (status renders the table and STOPs — it does NOT
+  # propose actions; autonomous advancement moved to /pipeline:fullsend).
+  # Genuinely obsolete: "Propose ONE action" exists in neither status nor
+  # fullsend.
 fi
 
 echo ""

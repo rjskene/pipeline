@@ -5,12 +5,15 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# Issue #143: full-send-specific contract markers moved from skills/run/SKILL.md
-# to skills/fullsend/SKILL.md. Markers that live on the merge-orchestration
-# step (Step 8 of the run skill, still active in interactive mode) stay on the
-# run skill.
-RUN_SKILL="${ROOT}/skills/run/SKILL.md"
+# Issue #143: full-send-specific contract markers moved from the old /pipeline:run
+# skill to skills/fullsend/SKILL.md.
+# #763: the run→status rename moved the REMAINING auto-merge wiring out of the
+# old run skill too — the read-only /pipeline:status skill carries no auto-merge
+# gate. The Step-8 auto-merge-gate.sh invocation and the report-table Auto-merged
+# column now live in fullsend; the `Auto-merged: ...` confirmation FOOTER (fired
+# by the evaluator's Step 11 gate) lives in skills/evaluate-issue-pr/SKILL.md.
 FS_SKILL="${ROOT}/skills/fullsend/SKILL.md"
+EVAL_SKILL="${ROOT}/skills/evaluate-issue-pr/SKILL.md"
 FAILED=0
 
 want_in() {
@@ -23,12 +26,11 @@ want_in() {
   fi
 }
 
-want_in "$RUN_SKILL" "run skill Step 8 references helper or four conditions" 'scripts/auto-merge-gate.sh'
-want_in "$FS_SKILL"  "fullsend FULL SEND header documents argv position"    'manual-merge.* anywhere in argv'
-want_in "$RUN_SKILL" "run skill Step 8 greps auto-merged footer prefix"     'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
-want_in "$FS_SKILL"  "fullsend Step 9 prose is conditional, not absolute"   'do NOT merge unless'
-want_in "$RUN_SKILL" "run skill report table has Auto-merged column"        'Auto-merged\?'
-want_in "$FS_SKILL"  "fullsend report table has Auto-merged column"         'Auto-merged\?'
+want_in "$FS_SKILL"   "fullsend Step 8 references auto-merge-gate.sh helper"    'scripts/auto-merge-gate.sh'
+want_in "$FS_SKILL"   "fullsend FULL SEND header documents argv position"      'manual-merge.* anywhere in argv'
+want_in "$EVAL_SKILL" "evaluate-issue-pr emits auto-merged footer prefix"      'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
+want_in "$FS_SKILL"   "fullsend Step 9 prose is conditional, not absolute"     'do NOT merge unless'
+want_in "$FS_SKILL"   "fullsend report table has Auto-merged column"           'Auto-merged\?'
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"

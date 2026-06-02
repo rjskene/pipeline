@@ -15,8 +15,11 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUN_SKILL="${ROOT}/skills/run/SKILL.md"
-DISPATCH="${ROOT}/skills/run/references/dispatch-routing.md"
+RUN_SKILL="${ROOT}/skills/status/SKILL.md"
+# Auto-cleanup housekeeping prose (cleanup-worktree.sh / CLEANUP-SUMMARY /
+# create-checkpoint-tag.sh) relocated from the deleted dispatch-routing.md into
+# skills/status/references/housekeeping.md when run→status renamed (#763).
+DISPATCH="${ROOT}/skills/status/references/housekeeping.md"
 FAILED=0
 
 want_in() {
@@ -70,9 +73,9 @@ want_in_window "auto-cleanup section is non-blocking / pre-discovery" "$AUTOCLEA
 # 4. The auto path STILL reuses the existing machinery — all three literals
 #    must remain present in dispatch-routing.md (drift guard against a future
 #    edit dropping them).
-want_in_fixed "$DISPATCH" "dispatch-routing keeps cleanup-worktree.sh"     'cleanup-worktree.sh'
-want_in_fixed "$DISPATCH" "dispatch-routing keeps CLEANUP-SUMMARY"         'CLEANUP-SUMMARY'
-want_in_fixed "$DISPATCH" "dispatch-routing keeps create-checkpoint-tag.sh" 'create-checkpoint-tag.sh'
+want_in_fixed "$DISPATCH" "housekeeping keeps cleanup-worktree.sh"     'cleanup-worktree.sh'
+want_in_fixed "$DISPATCH" "housekeeping keeps CLEANUP-SUMMARY"         'CLEANUP-SUMMARY'
+want_in_fixed "$DISPATCH" "housekeeping keeps create-checkpoint-tag.sh" 'create-checkpoint-tag.sh'
 
 # 5. Drift guard: cleanup is NOT gated behind the Step 5 user-confirmation on
 #    the default path. The Step 4 cleanup bullet must have been rewritten to

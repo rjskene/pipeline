@@ -18,11 +18,14 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0; FAIL=0
 assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
 
+# #763: the run→status rename moved the `gh pr merge ... --merge` command out of
+# the now read-only /pipeline:status skill and DELETED
+# skills/run/references/merge-orchestration.md (the merge-orchestration prose
+# relocated into skills/fullsend/SKILL.md, already in this list). The remaining
+# FILES still each carry a live `gh pr merge ... --merge` command.
 FILES=(
   "skills/evaluate-issue-pr/SKILL.md"
   "skills/fullsend/SKILL.md"
-  "skills/run/SKILL.md"
-  "skills/run/references/merge-orchestration.md"
   "docs/release-cadence.md"
 )
 

@@ -12,9 +12,11 @@ set -euo pipefail
 # section heading.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Issue #143: the autonomous full-send flow was extracted from skills/run/SKILL.md
-# into its own skill at skills/fullsend/SKILL.md. The Step 0a wave-plan content
-# lives there now; skills/run/SKILL.md retains only a delegator stub.
+# Issue #143: the autonomous full-send flow was extracted from the old
+# /pipeline:run skill into its own skill at skills/fullsend/SKILL.md. The Step 0a
+# wave-plan content lives there now. Per #763 the old run skill was renamed to
+# the read-only skills/status/SKILL.md and skills/run/SKILL.md is now only a thin
+# deprecated alias forwarding to /pipeline:status.
 SKILL_PATH="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
 
 PASS=0
@@ -64,7 +66,7 @@ fi
 # 3. Existing step 1 anchor sentence is preserved verbatim (no rewrites).
 # This guards merge surface with #31 / #122 — see plan.
 inc
-ANCHOR='before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment'
+ANCHOR='before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh `## Classification` comment'
 if grep -qF "$ANCHOR" "$SKILL_PATH"; then
   pass_msg "step 1 anchor sentence preserved verbatim"
 else

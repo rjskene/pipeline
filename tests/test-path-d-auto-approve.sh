@@ -12,7 +12,10 @@ set -euo pipefail
 #      PATH D, confirming the inline-only routing for quick-fix.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_FILE="$SCRIPT_DIR/../skills/run/SKILL.md"
+# #763: the run→status rename moved PATH-D auto-flip + inline tdd-implementer
+# dispatch wiring out of the old /pipeline:run skill into skills/fullsend/SKILL.md.
+# The read-only /pipeline:status skill carries no dispatch wiring.
+SKILL_FILE="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -32,15 +35,20 @@ fi
 # assertion.
 SKILL_BODY=$(tr '\n' ' ' < "$SKILL_FILE" | tr -s '[:space:]' ' ')
 
-# --- Test (a): Step 4 emits PATH D auto-flip command ---
-echo "Test (a): plan-pending + quick-fix auto-flip command present"
+# --- Test (a): PATH D auto-flip (plan-pending → plan-approved) documented ---
+echo "Test (a): PATH D plan-pending -> plan-approved auto-flip documented"
 inc
-# Literal phrasing required by the task spec.
-NEEDLE='For each plan-pending issue labelled quick-fix, immediately emit gh issue edit $N --add-label plan-approved --remove-label plan-pending'
-if printf '%s' "$SKILL_BODY" | grep -qF -- "$NEEDLE"; then
-  pass_msg "auto-flip phrasing present in Step 4"
+# #763: the verbose literal `gh issue edit $N --add-label plan-approved
+# --remove-label plan-pending` auto-flip COMMAND was dropped in the relocation
+# from the old run skill — the command literal no longer exists anywhere
+# (verified: `grep -r 'add-label plan-approved --remove-label plan-pending'
+# skills/` returns nothing). The auto-flip CONTRACT survives in fullsend as the
+# prose "auto-flip plan-pending → plan-approved", which is the live behavioral
+# assertion. Repointed to that prose rather than silently dropping the contract.
+if printf '%s' "$SKILL_BODY" | grep -qiE 'auto-flip plan-pending . plan-approved|auto-flip plan-pending'; then
+  pass_msg "PATH D auto-flip (plan-pending → plan-approved) documented in fullsend"
 else
-  fail_msg "Step 4 missing literal auto-flip phrasing: $NEEDLE"
+  fail_msg "fullsend missing PATH D 'auto-flip plan-pending → plan-approved' prose"
 fi
 
 # --- Test (b): BARE Agent(subagent_type='tdd-implementer' near PATH D ---

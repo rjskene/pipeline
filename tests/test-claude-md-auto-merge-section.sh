@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOCS=(
   "${ROOT}/skills/evaluate-issue-pr/SKILL.md"
   "${ROOT}/skills/fullsend/SKILL.md"
-  "${ROOT}/skills/run/SKILL.md"
+  "${ROOT}/skills/status/SKILL.md"
 )
 FAILED=0
 

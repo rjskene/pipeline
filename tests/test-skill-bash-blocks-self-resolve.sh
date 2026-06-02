@@ -29,6 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR/.."
 
 SKILLS=(
+  "skills/status/SKILL.md"
   "skills/run/SKILL.md"
   "skills/fullsend/SKILL.md"
   "skills/create-issues/SKILL.md"

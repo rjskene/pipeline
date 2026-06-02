@@ -3,7 +3,8 @@ set -uo pipefail
 #
 # Tests for scripts/check-conventional-title.sh — the shared Conventional
 # Commits PR-title validator used by /pipeline:execute-issue-plan and
-# /pipeline:run. See Issue #45.
+# /pipeline:status (renamed from /pipeline:run in #763; alias retained).
+# See Issue #45.
 #
 # Asserts:
 #   (a) the script exists and is executable

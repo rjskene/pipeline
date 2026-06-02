@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SKILL="skills/run/SKILL.md"
+# #763: the run→status rename moved the per-path dispatch-routing contract out of
+# the old /pipeline:run skill into fullsend's "## Dispatch routing by path tier
+# (reference)" section (the read-only /pipeline:status skill dispatches nothing).
+SKILL="skills/fullsend/SKILL.md"
 [ -f "$SKILL" ] || { echo "FAIL: $SKILL missing"; exit 1; }
 
-STEP6=$(awk '/^[[:space:]]*\*\*For execution \(plan-approved/,/^### Anti-patterns|^8\. \*\*Merge orchestration/' "$SKILL")
+STEP6=$(awk '/^[[:space:]]*\*\*For execution \(plan-approved/,/^### Anti-patterns|^## Merge orchestration|^8\. \*\*Merge orchestration/' "$SKILL")
 STEP7=$(awk '/^[[:space:]]*\*\*For PR evaluation \(pr-open/,/^[[:space:]]*\*\*For execution \(plan-approved/' "$SKILL")
 
 echo "$STEP6" | grep -q "PATH A" || { echo "FAIL: Step 6 missing PATH A branch"; exit 1; }
