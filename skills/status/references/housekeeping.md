@@ -123,7 +123,7 @@ for wt in $(git worktree list --porcelain | awk '/^branch refs/{sub("refs/heads/
 done
 ```
 
-For each candidate (merged PR + active worktree), run `cleanup-worktree.sh <issue>` capturing its `CLEANUP-SUMMARY:` line, then create ONE batch `create-checkpoint-tag.sh --issues … --prs …` for the whole batch. The full walkthrough (CLAUDE.md update, `cleanup-worktree.sh` + `CLEANUP-SUMMARY` capture, the batch `create-checkpoint-tag.sh`, and the CLEANUP COMPLETE table) lives in [dispatch-routing.md](dispatch-routing.md#cleanup-merged-prs-with-active-worktrees).
+For each candidate (merged PR + active worktree), run `cleanup-worktree.sh <issue>` capturing its `CLEANUP-SUMMARY:` line, then create ONE batch `create-checkpoint-tag.sh --issues … --prs …` for the whole batch — updating CLAUDE.md, capturing each `CLEANUP-SUMMARY`, creating the batch `create-checkpoint-tag.sh`, and emitting the CLEANUP COMPLETE table.
 
 **Gate reuse, not duplication.** `cleanup-worktree.sh` already verifies `PR state == MERGED` before any destructive op, and the destructive worktree-remove + branch-delete remain subject to the existing `ALLOW_DELETIONS` gate (read from `settings.local.json` `.env.ALLOW_DELETIONS` by `sync-worktrees.sh` pruning and honored by `block_deletions.py`). Do NOT add a second gate.
 
