@@ -303,6 +303,34 @@ PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id
 RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
 if [ "$RC" = "2" ]; then pass_msg "exit 2 (stale dispatch skipped by mtime filter)"; else fail_msg "expected exit 2, got $RC"; fi
 
+# --- Test 18 (#749): inline orchestrator-owned fan-out — ALLOW path ---
+# A top-level orchestrator that dispatches a tdd-implementer with a target=web/
+# sentinel (inline fan-out, NOT a spawned worker) must authorize the same-session
+# Edit on web/foo.ts. The hook is transport-agnostic by construction: it keys on
+# the multi-task label + a same-session tdd-implementer dispatch log, regardless
+# of whether the dispatch originated from spawn-claude.sh or top-level orchestrator
+# fan-out. This pins that the allow-path holds unchanged under inline fan-out.
+echo "Test 18 (#749): inline orchestrator fan-out (target=web/) authorizes web/foo.ts -> exit 0"
+inc
+reset_state
+write_dispatch "sess-18-inline-fanout" "tdd-implementer" "target=web/ inline orchestrator-owned fan-out" "orchestrator inline fan-out"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-18-inline-fanout"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (inline fan-out delegation permitted)"; else fail_msg "expected exit 0 under inline fan-out, got $RC"; fi
+
+# --- Test 19 (#749): inline orchestrator-owned fan-out — BLOCK path ---
+# With NO covering dispatch log, a direct orchestrator Edit on an impl file in a
+# multi-task session is still blocked (exit 2). This proves that flattening the
+# worker into orchestrator-owned fan-out does NOT open a hole: the orchestrator
+# must still delegate via a tdd-implementer dispatch and may NOT Edit/Write impl
+# files directly.
+echo "Test 19 (#749): direct orchestrator Edit, no dispatch, stays blocked under inline fan-out -> exit 2"
+inc
+reset_state
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-19-no-dispatch"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (direct orchestrator Edit still blocked)"; else fail_msg "expected exit 2, got $RC"; fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
