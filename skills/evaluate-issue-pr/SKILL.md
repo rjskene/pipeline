@@ -270,7 +270,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        - Flip labels and close the issue (omit `(${SHA})` if `$SHA` is empty). **Swallow the benign "already closed" non-error (issue #813).** `gh pr merge` auto-closes the linked issue via `closingIssuesReferences` a beat before this explicit `gh issue close` runs, so the explicit close routinely fails with an "already closed" message. That is cosmetic — the final state (merged + closed) is already correct — so the guard treats an `already closed` stderr as success and only re-raises a genuine close failure (e.g. a transient API error). The label flip and close comment still run for the case where the PR body carried no `Closes #N` link:
          The label flip is delegated to the shared `finalize-issue-labels.sh` helper (issue #866): it adds `merged` and strips the full pipeline lifecycle/path/priority set (not just `pr-open`), keeping all three merge-completion sites (this path, `finish-manual-merge.sh`, `cleanup-worktree.sh`) in lockstep. The close-comment / "already closed" guard (#813) is unchanged.
          ```bash
-         bash "${CLAUDE_PLUGIN_ROOT}/scripts/finalize-issue-labels.sh" "$ISSUE"
+         bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/finalize-issue-labels.sh" "$ISSUE" 2>/dev/null || true
          CLOSE_SUFFIX=$([ -n "$SHA" ] && echo " (${SHA})" || echo "")
          CLOSE_ERR=$(gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}${CLOSE_SUFFIX}. ${FOOTER}" 2>&1)
          if [ $? -ne 0 ]; then
