@@ -96,7 +96,7 @@ The live `agent-costs.jsonl` is subject to transcript/log pruning — once a raw
 - **`--history [PATH]`** (render mode on the report) — renders a table from the persisted store instead of the live log, for use after the live log is pruned. Reads ONLY the store (no PR join, no `gh`); an absent/empty store prints an empty-history notice and exits 0. With no `PATH`, defaults to the resolved `.claude/logs/tokenomics-history.jsonl`. `null` per-LOC cells render `--`.
 
   ```bash
-  bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --history
+  PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" CLAUDE_PROJECT_DIR="$(pwd)" bash "${CLAUDE_PLUGIN_ROOT}/scripts/cost-latency-report.sh" --history
   ```
 
 - **Cadence (operator-applied)** — recommended to run the snapshot on the operator's host (cron) **more frequently than transcript/log retention**, so a day is captured before its raw records are pruned. Per CLAUDE.md "Configuration conventions" the live `pipeline.config`/crontab is host-specific and hand-patched; this script ships the logic, the operator wires the crontab line locally (same pattern as the `capture-agent-costs.sh` cron). No tracked-file footprint for the cron itself.
