@@ -64,7 +64,7 @@ The cost/token magnitude tables aggregate the **reconciled substrate** — compl
 
 The bash stdout is NOT surfaced to the user automatically. Relay **every** table from the report into the assistant reply, with a one-line read for each:
 
-- **Bucket** — token-share vs cost-share per bucket (where the spend concentrates).
+- **Bucket** — token-share vs cost-share per bucket (where the spend concentrates), plus normalized **tok/N**, **$/N** (÷ reconciled-substrate record count), **tok/LOC**, **$/LOC** (÷ total merged-PR LOC across the window) columns. N and LOC divisors render `--` when zero (no divide-by-zero).
 - **Per-stage cost** — classify / plan / plan-eval / execute / pr-eval cost breakdown.
 - **Structure** — spawn (headless) vs in-session (inline) split. The per-N token-bucket columns (input / output / cache_creation / cache_read) are sourced from the reconciled substrate (`usage_complete != false`), so an unpriced in-session (inline) row shows REAL token counts while explicit lower-bounds are excluded; the `$` column stays priced-only (a rate is required for `$`) and renders `--` with an `(unpriced)` mark when all of a structure's records are unpriced, so a zero-cost row is never misread as zero-token.
 - **Stage × structure crosstab** — which stages run headless vs inline.
