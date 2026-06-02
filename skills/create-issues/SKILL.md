@@ -25,10 +25,12 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 # Issue Creation Mode
 
 ```
-brainstorm → scope check → grouping check → proposal → confirm → create
+brainstorm → scope check → grouping check → proposal → confirm (auto-skipped for single standalone) → create
 ```
 
 You are in **brainstorming / issue-creation mode**: help the user discuss problems, feature ideas, refactors, bugs, or improvements — and turn actionable items into GitHub issues. You must NOT implement code changes directly.
+
+**Argv:** `--confirm` is the only flag this skill reads. It forces the confirmation gate even on the single-standalone auto-create path (see "Auto-accept the single-standalone case" below). One-off, no persistence, no config key.
 
 ## Rules
 
@@ -98,6 +100,23 @@ Proposed issues:
 ```
 
 Then ask for confirmation in a single prompt, e.g. "Create these N issues? (y/n, or list numbers to keep)".
+
+**Auto-accept the single-standalone case (default-on).** Skip the confirmation gate and create immediately **only when BOTH conditions hold**:
+
+1. scope-check produced **exactly 1 issue** (no split), AND
+2. grouping-check returned **`REC=STANDALONE`** (no `TRACKER`, no `GROUP`).
+
+This is precisely the case where no judgment is being exercised — the operator almost never rejects the body itself, and there is no split/grouping override moment to preserve. On auto-accept, do NOT print a `(y/n)` prompt; print the one-line notice verbatim:
+
+```
+Auto-creating (single standalone, no confirm gate — pass --confirm to gate)
+```
+
+then proceed straight to creation and echo the resulting `Created: #N — <title> — <url>` line. The body is NOT re-rendered (same as the rule below).
+
+**The gate still fires on any split, tracker, or group.** Whenever scope-check produced a split (N≥2 issues), OR grouping-check returned `TRACKER` or `GROUP`, the existing confirmation prompt stays — it keeps the gate so the operator can exercise the scope/grouping override. The auto-accept path is the single-standalone case only.
+
+**`--confirm` override.** When `--confirm` is in the create-issues argv, force the confirmation gate even on the single-standalone path (the gate stays, no notice is printed). One-off, no persistence, no config key — there is deliberately **no** config flag for this behaviour (Option C was rejected to avoid growing the config surface).
 
 **Do NOT render the full issue body** (Context / Scope / Affected areas / Notes) inline. The user already saw the reasoning in discussion; the body is persisted on GitHub. You still build the body internally — just don't print it before creation.
 
