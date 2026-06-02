@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.21.9](https://github.com/rjskene/pipeline/compare/v0.21.8...v0.21.9) (2026-06-02)
+
+
+### Features
+
+* **campaign:** ship per-path leg cap vars + regression guard ([6d68043](https://github.com/rjskene/pipeline/commit/6d68043b25cfc0443a18aaa1908a24c6b784a088))
+* **fullsend:** --campaign mode — coordinated dependency-ordered fullsend legs under per-path caps ([a08eaff](https://github.com/rjskene/pipeline/commit/a08eaff8a7382e89753477c2b75d53180776e50d))
+* **fullsend:** add --campaign coordinated-leg mode ([11a2c1d](https://github.com/rjskene/pipeline/commit/11a2c1ddbe2e936b67658a4ea77b4eaa15657c76))
+* **plan-campaign:** BC per-path leg cap honored ([4a5a5bf](https://github.com/rjskene/pipeline/commit/4a5a5bfd897b6a2e4ef2faf93301d1fcfffe905d))
+* **plan-campaign:** scoped-halt closure — multi-hop transitive fixpoint ([b1e2285](https://github.com/rjskene/pipeline/commit/b1e2285fa969c877a7cf4a349491ff85a385c962))
+* **tokenomics:** add --emit-day-json and --history modes to cost-latency-report ([4d8d0f2](https://github.com/rjskene/pipeline/commit/4d8d0f2e0fd2c3882d3911dcab74c3d3a79169dd))
+* **tokenomics:** add --until + --per-day windowing to cost-latency-report ([#831](https://github.com/rjskene/pipeline/issues/831)) ([ee830d9](https://github.com/rjskene/pipeline/commit/ee830d928e6fde8d0ddd01722e594335194373a4))
+* **tokenomics:** add snapshot-tokenomics-history per-day store upsert ([4201187](https://github.com/rjskene/pipeline/commit/42011871ffcbfff53df6527e560f3ddf21fe66bd))
+* **tokenomics:** per-day windowing for cost-latency-report (--until + --per-day) ([d247800](https://github.com/rjskene/pipeline/commit/d247800c19414096217c2aff0d1a9ecdd9393e37))
+* **tokenomics:** persist per-day history snapshot so aggregates survive log pruning ([9f013f0](https://github.com/rjskene/pipeline/commit/9f013f0c6e87c537bfa5dfdad6f8eac4cfa75cb9))
+
+
+### Bug Fixes
+
+* **review:** wrap --history SKILL.md example with config gate prefix ([ddc6e3f](https://github.com/rjskene/pipeline/commit/ddc6e3f7670367478116339be0da3e75a46c594d))
+* **tokenomics:** close retroactive-pruned half of inline cost reconciliation leak ([18cd138](https://github.com/rjskene/pipeline/commit/18cd13853f22c92b118273288cb301aac9fe23a1))
+* **tokenomics:** suppress stranded retroactive lower-bound when a complete record already covers the agent ([#830](https://github.com/rjskene/pipeline/issues/830)) ([c1c0523](https://github.com/rjskene/pipeline/commit/c1c05239dc3fd460e00e51e6f0a6441d2594d58a))
+
 ## [0.21.8](https://github.com/rjskene/pipeline/compare/v0.21.7...v0.21.8) (2026-06-02)
 
 
