@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # scripts/check-base-branch-hook-wiring.sh -- housekeeping advisory used by
-# /pipeline:run to warn when the enforce-base-branch.py PreToolUse hook is
+# /pipeline:status to warn when the enforce-base-branch.py PreToolUse hook is
 # wired in NEITHER the plugin manifest (.claude-plugin/plugin.json) NOR the
 # consumer's local settings (.claude/settings.json).
 #
@@ -13,7 +13,7 @@
 # Non-fatal advisory: always exits 0. Prints nothing when at least one side
 # wires the hook; prints a single WARN line on stdout when neither does.
 #
-# /pipeline:run cannot fix consumer settings.json -- #215 tracks render-on-
+# /pipeline:status cannot fix consumer settings.json -- #215 tracks render-on-
 # install. This helper is the visibility surface in the meantime.
 #
 # Usage:

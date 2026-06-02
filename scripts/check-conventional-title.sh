@@ -2,7 +2,7 @@
 #
 # Canonical Conventional Commits PR-title validator used pipeline-wide.
 # Single source of truth for both /pipeline:execute-issue-plan (pre-PR-create
-# pre-validation) and /pipeline:run (pre-merge gates). See Issue #45.
+# pre-validation) and /pipeline:status (pre-merge gates). See Issue #45.
 #
 # Usage:
 #

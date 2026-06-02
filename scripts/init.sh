@@ -319,5 +319,5 @@ ensure_gitignore
 seed_labels
 doctor_tail
 
-echo "init: bootstrap complete. Re-run /pipeline:run to start the workflow."
+echo "init: bootstrap complete. Re-run /pipeline:status to start the workflow."
 exit 0
