@@ -47,11 +47,12 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
 # CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
 _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-The snippet locates the resolver via a var-independent cache-glob anchor (`~/.claude/plugins/cache/claude-pipeline/pipeline/*/`) rather than the old chicken-and-egg `${CLAUDE_PLUGIN_ROOT:-.}/scripts/...` form — which silently no-op'd when `CLAUDE_PLUGIN_ROOT` was unset because it collapsed to a non-existent `./scripts/...` in the consumer cwd (#810). The glob only LOCATES the resolver; sourcing it then re-derives the authoritative root (dogfood `claude-pipeline-local` tiebreak, active-project mode, highest-semver scan), so consumers and dogfood operators converge on the same root as before.
+The snippet locates the resolver via a var-independent cache-glob anchor rather than the old chicken-and-egg `${CLAUDE_PLUGIN_ROOT:-.}/scripts/...` form — which silently no-op'd when `CLAUDE_PLUGIN_ROOT` was unset because it collapsed to a non-existent `./scripts/...` in the consumer cwd (#810). It globs the dogfood `claude-pipeline-local` cache FIRST and falls back to the published `claude-pipeline` cache (#878), so on a dogfood host the very first resolver sourced is the live one, not a stale published copy; consumer hosts have no local cache and the published glob fires. The glob only LOCATES the resolver; sourcing it then re-derives the authoritative root (dogfood `claude-pipeline-local` tiebreak, active-project mode, highest-semver scan), so consumers and dogfood operators converge on the same root as before.
 
 Why every skill needs it: `CLAUDE_PLUGIN_ROOT` only lives for the Bash tool's subshell. Each subsequent Bash tool call spawns a fresh subshell with no inherited env — so the orchestrator's session-start export does not propagate. Without the in-skill resolver, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh"` collapses to `bash "/scripts/foo.sh"` or `bash "./scripts/foo.sh"`, 404'ing the plugin helper. The resolver is idempotent: a no-op when `CLAUDE_PLUGIN_ROOT` is already a valid path.
 
@@ -62,7 +63,7 @@ Two contract tests enforce this invariant:
 
 Adding a new consumer-facing skill? Copy the canonical snippet verbatim from `skills/create-issues/SKILL.md` into your `## Boot` block, then add the new skill to the `SKILLS` arrays in both tests. A third test, `tests/test-skill-boot-snippet-anchor.sh`, pins the cache-glob anchor shape (no chicken-and-egg `${CLAUDE_PLUGIN_ROOT:-.}` form) across all `SKILL.md` Boot blocks.
 
-### CLAUDE_PLUGIN_ROOT staleness — two distinct failure modes
+### CLAUDE_PLUGIN_ROOT staleness — three distinct failure modes
 
 A `CLAUDE_PLUGIN_ROOT` pointing at a stale/orphaned cache version (e.g. an old
 `.../cache/claude-pipeline/pipeline/0.9.0` instead of the live dogfood
@@ -86,6 +87,21 @@ A `CLAUDE_PLUGIN_ROOT` pointing at a stale/orphaned cache version (e.g. an old
   The `${CLAUDE_PLUGIN_ROOT}` path IS correct for *runtime script invocation*
   (the harness resolves it), but for human reading / drift detection, prefer the
   repo tree.
+
+- **Worktree-subagent `projectPath` miss (#878).** Distinct from the two above:
+  this is the resolver picking the stale *published* cache because the
+  default-mode dogfood tie-break missed. Execute/eval subagents `cd` into a
+  worktree (`<root>/.claude/worktrees/wt-<N>-<slug>`), but the local-marketplace
+  install's `projectPath` is the MAIN repo, so a raw worktree `$PWD` never
+  matched → fall-through to the highest published cache version (silently running
+  pre-merge code in every worktree subagent). `_resolve-plugin-root.sh` now
+  normalizes `$PWD` up to the enclosing main-repo root (path-strip at
+  `/.claude/worktrees/`, `git rev-parse --git-common-dir` fallback) before
+  matching `projectPath`, and exports the matched entry's `projectPath` (the live
+  working tree) rather than its `installPath` (a stale cache copy on this host,
+  NOT the symlink earlier docs claimed). Regression guard:
+  `tests/test-resolve-plugin-root-local-marketplace.sh` (Cases 6–7). Consumer
+  hosts have no `claude-pipeline-local` install and fall through unaffected.
 
 ## Doctor
 
