@@ -84,7 +84,10 @@ echo "[2/6] Closing issue #${ISSUE_NUM}..."
 ISSUE_STATE="$(gh issue view "$ISSUE_NUM" --repo "$PIPELINE_REPO" --json state --jq '.state' 2>/dev/null || echo "")"
 if [ "$ISSUE_STATE" = "OPEN" ]; then
   gh issue close "$ISSUE_NUM" --repo "$PIPELINE_REPO" --reason completed
-  gh issue edit "$ISSUE_NUM" --repo "$PIPELINE_REPO" --add-label "merged" --remove-label "pr-open" 2>/dev/null || true
+  # Flip labels via the shared strip-set helper (issue #866): add `merged`, strip
+  # the full pipeline lifecycle/path/priority set. Resolve via CLAUDE_PLUGIN_ROOT
+  # when plugin-invoked, else relative to this script when run from the repo.
+  bash "${CLAUDE_PLUGIN_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}/scripts/finalize-issue-labels.sh" "$ISSUE_NUM" --repo "$PIPELINE_REPO" 2>/dev/null || true
   echo "  Issue #${ISSUE_NUM} closed"
 elif [ "$ISSUE_STATE" = "CLOSED" ]; then
   echo "  Issue #${ISSUE_NUM} already closed"
