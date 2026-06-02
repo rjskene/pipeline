@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.21.10](https://github.com/rjskene/pipeline/compare/v0.21.9...v0.21.10) (2026-06-02)
+
+
+### Features
+
+* **create-issues:** auto-accept single-standalone issue creation ([8161bd9](https://github.com/rjskene/pipeline/commit/8161bd928b2f3988fb1c44b62a87b2ccce8f7935))
+* **create-issues:** auto-accept single-standalone issue creation ([1684d96](https://github.com/rjskene/pipeline/commit/1684d9684255fa6c1fa287d6b877b48948f09300)), closes [#767](https://github.com/rjskene/pipeline/issues/767)
+* **tokenomics:** add per-N and per-LOC columns to bucket table ([9eab2cd](https://github.com/rjskene/pipeline/commit/9eab2cd79b765f33069a9fa3688d813ca0651e67))
+* **tokenomics:** add per-N and per-LOC columns to the --tokenomics bucket table ([48158a2](https://github.com/rjskene/pipeline/commit/48158a21dbb3408c356c60986e1ad2a692805e81))
+
+
+### Bug Fixes
+
+* **run:** status table must render verbatim in-session, not a re-summarized chat recap ([289b630](https://github.com/rjskene/pipeline/commit/289b63033c3326f6a2271a96374dd68ba4ed4042))
+* **run:** status table must render verbatim in-session, not a re-summarized recap ([52d5e5d](https://github.com/rjskene/pipeline/commit/52d5e5deca6ac1d92d12bcf703d57ddbbf622a6e)), closes [#834](https://github.com/rjskene/pipeline/issues/834)
+
 ## [0.21.9](https://github.com/rjskene/pipeline/compare/v0.21.8...v0.21.9) (2026-06-02)
 
 
