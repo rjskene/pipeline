@@ -4,12 +4,21 @@
 # Default mode: when CLAUDE_PLUGIN_ROOT is empty/unset (which can happen
 # because Claude Code does not consistently export it into the Bash tool's
 # subshell), first apply the dogfood local-marketplace tie-break (#625): if the
-# current project ($PWD) has the pipeline@claude-pipeline-local install ENABLED
-# (per the project settings.local.json enabledPlugins) and an install entry in
-# installed_plugins.json, export that install's installPath (a symlink to the
-# repo working tree) and stop — this beats any same-version published copy.
+# current project has the pipeline@claude-pipeline-local install ENABLED (per the
+# project settings.local.json enabledPlugins) and an install entry in
+# installed_plugins.json, export that install's LIVE working tree (its
+# projectPath) and stop — this beats any same-version published copy.
 # Override the project settings path under test via PIPELINE_PROJECT_SETTINGS_FILE.
 # Consumer hosts (no local-marketplace install) fall straight through.
+#
+# Worktree-aware (#878): execute/eval subagents run from a worktree
+# (<root>/.claude/worktrees/wt-<N>-<slug>), so $PWD never equals the install
+# projectPath (the MAIN repo). The tie-break normalizes $PWD up to the enclosing
+# main-repo root (path-strip at /.claude/worktrees/, git fallback) before
+# matching, and exports the matched entry's projectPath (the live tree) rather
+# than its installPath — which on this host is a STALE cache copy, NOT the
+# symlink earlier versions of this header claimed. Falls back to installPath only
+# when projectPath is missing/non-dir.
 #
 # Otherwise scan ~/.claude/plugins/cache/claude-pipeline/pipeline/*/ and
 # export the highest-version directory. Highest `MAJOR.MINOR.PATCH` wins
@@ -67,9 +76,40 @@ fi
 # Override the project settings path under test via PIPELINE_PROJECT_SETTINGS_FILE.
 _rpr_ip_file="${PIPELINE_INSTALLED_PLUGINS_FILE:-${HOME}/.claude/plugins/installed_plugins.json}"
 _rpr_settings_file="${PIPELINE_PROJECT_SETTINGS_FILE:-$PWD/.claude/settings.local.json}"
+# Worktree-aware project-root normalization (#878). Execute/eval subagents cd into
+# <root>/.claude/worktrees/wt-<N>-<slug>, so a raw $PWD never matches the install's
+# projectPath (the MAIN repo) — the tie-break would miss and fall through to the
+# stale published cache. Normalize $PWD up to the enclosing main-repo root before
+# matching. Primary rule = path-strip at /.claude/worktrees/ (var-independent, no
+# git dependency, matches the canonical worktree location per CLAUDE.md). Fallback
+# = git (handles a worktree that sits outside .claude/worktrees/). A non-worktree
+# $PWD normalizes to itself, so the existing Cases 1–5 stay byte-stable.
+_rpr_proj="$PWD"
+case "$_rpr_proj" in
+  */.claude/worktrees/*)
+    _rpr_proj="${_rpr_proj%%/.claude/worktrees/*}"
+    ;;
+  *)
+    if command -v git >/dev/null 2>&1; then
+      _rpr_common="$(git -C "$PWD" rev-parse --git-common-dir 2>/dev/null)"
+      if [ -n "$_rpr_common" ]; then
+        case "$_rpr_common" in
+          /*) : ;;                       # absolute
+          *)  _rpr_common="$PWD/$_rpr_common" ;;
+        esac
+        # --git-common-dir points at the MAIN checkout's .git; its parent is the
+        # main-repo root (true even from a linked worktree, where --show-toplevel
+        # would return the worktree itself).
+        _rpr_cand="$(cd "$_rpr_common/.." 2>/dev/null && pwd)"
+        [ -n "$_rpr_cand" ] && _rpr_proj="$_rpr_cand"
+      fi
+      unset _rpr_common _rpr_cand
+    fi
+    ;;
+esac
 if [ -f "$_rpr_ip_file" ] && command -v python3 >/dev/null 2>&1; then
   _rpr_local="$(
-    PIPELINE_RPR_PWD="$PWD" \
+    PIPELINE_RPR_PWD="$_rpr_proj" \
     PIPELINE_RPR_IPFILE="$_rpr_ip_file" \
     PIPELINE_RPR_SETTINGS="$_rpr_settings_file" \
     python3 -c '
@@ -94,19 +134,31 @@ entries = (data.get("plugins") or {}).get("pipeline@claude-pipeline-local") or [
 if not isinstance(entries, list):
     sys.exit(0)
 for e in entries:
-    if isinstance(e, dict) and e.get("projectPath") == pwd and e.get("installPath"):
-        print(e["installPath"])
-        break
+    if isinstance(e, dict) and e.get("projectPath") == pwd:
+        # Export the live working tree (projectPath) when it is a valid dir, NOT
+        # the cache installPath (#878). On a dogfood host installPath is a STALE
+        # cache copy (e.g. .../claude-pipeline-local/pipeline/0.20.1), so the old
+        # resolver-header claim that installPath is a symlink to the working tree
+        # is false; projectPath IS the live tree by construction. Fall back to
+        # installPath only if projectPath is missing/non-dir.
+        proj = e.get("projectPath")
+        ipath = e.get("installPath")
+        if proj and os.path.isdir(proj):
+            print(proj)
+            break
+        if ipath:
+            print(ipath)
+            break
 ' 2>/dev/null
   )"
   if [ -n "$_rpr_local" ] && [ -d "$_rpr_local" ]; then
     export CLAUDE_PLUGIN_ROOT="$_rpr_local"
-    unset _rpr_ip_file _rpr_settings_file _rpr_local
+    unset _rpr_ip_file _rpr_settings_file _rpr_local _rpr_proj
     return 0 2>/dev/null || exit 0
   fi
   unset _rpr_local
 fi
-unset _rpr_ip_file _rpr_settings_file
+unset _rpr_ip_file _rpr_settings_file _rpr_proj
 
 if [ "${PIPELINE_RESOLVE_MODE:-}" = "active-project" ]; then
   _rpr_plugins_file="${PIPELINE_INSTALLED_PLUGINS_FILE:-${HOME}/.claude/plugins/installed_plugins.json}"
