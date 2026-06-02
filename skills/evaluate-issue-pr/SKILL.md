@@ -249,7 +249,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
          fi
          ```
          If `REASON` is now `block-base-mismatch`, jump to Step 11.4 — do not invoke `gh pr merge`.
-       - Merge synchronously (NOT `--auto`), then capture the squash SHA (empty `$SHA` from rare API lag → omit from close comment; the merge is authoritative):
+       - Merge synchronously (NOT `--auto`), then capture the merge-commit SHA (empty `$SHA` from rare API lag → omit from close comment; the merge is authoritative):
          ```bash
          gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch
          SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
