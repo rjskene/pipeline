@@ -51,7 +51,7 @@ Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `fals
 
 ## Greenlight matrix
 
-When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend auto-squash-merges if and only if all four conditions hold; otherwise the PR is left for manual merge with a `block-*` reason token.
+When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend auto-merges (merge-commit) if and only if all four conditions hold; otherwise the PR is left for manual merge with a `block-*` reason token.
 
 ```
 | # | Condition                                                | Source                              |
