@@ -27,7 +27,7 @@ TRACKER_ISSUES=$(echo "$ISSUE_LIST_JSON" | jq -r '
 # END-TRACKER-FILTER
 ```
 
-`READY_ISSUES` feeds the planning proposal in Step 4 of `/pipeline:run`. `TRACKER_ISSUES` feeds the status-table render in Step 3 — those issues are displayed with `Stage=tracker` and never reach the classify/plan dispatch.
+`READY_ISSUES` is the ready set surfaced by `/pipeline:status`. `TRACKER_ISSUES` feeds the status-table render in Step 3 — those issues are displayed with `Stage=tracker` and never reach any classify/plan dispatch (dispatch lives in `/pipeline:fullsend`).
 
 Classification is deferred — see Step 6 (Propose ONE action → planning branch) for the cache-checked dispatch that runs only on the user-committed slate.
 

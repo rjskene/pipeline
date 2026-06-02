@@ -29,11 +29,11 @@ The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPEL
 slate → wave plan → classify+plan (waves) → eval-plan → approve → execute → eval-pr → greenlight → merge
 ```
 
-Invoked two ways: (1) directly as `/pipeline:fullsend [issue_numbers...] [--manual-merge]` — the canonical entry point; (2) via the back-compat magic-string delegator in `/pipeline:run` — when a user prompt to `/pipeline:run` contains the token `full send` / `full-send` / `fullsend` (case-insensitive), `/pipeline:run` invokes this skill via `Skill(skill: "pipeline:fullsend", args: "<argv>")` with the original argv and stops.
+Invoked directly as `/pipeline:fullsend [issue_numbers...] [--manual-merge]` — the **sole** autonomous entry point. The legacy `full send` magic-string delegator in the old `/pipeline:run` skill is retired: `/pipeline:run` is now a thin deprecated alias for the read-only `/pipeline:status` and does NOT intercept `full send` / `full-send` / `fullsend`. Autonomous advancement always starts here.
 
 Argv shape: `[issue_numbers...] [--manual-merge] [--spawn] [--campaign]`, position-independent (the flag-parsing rule below preserves the prior behavior). The `--spawn` flag (position-independent, cannot collide with bare-integer issue numbers — same parse rule as `--manual-merge`) forces the tmux run-queue transport for everything fullsend would otherwise run inline (Step 6 execute + Step 7 PR-eval, all paths → run-queue). **When `--spawn` is absent, behavior is exactly today's** (A/B/D execute inline, C queued; B PR-eval inline, C queued) — the flag is purely additive. The `--campaign` flag (also position-independent, same bare-integer-safe parse rule, composes freely with `--spawn` and `--manual-merge`) wraps the whole slate in the coordinated-leg OUTER loop documented in `## Campaign mode` below — when absent, fullsend runs the single wave-by-wave pass exactly as today.
 
-PATH D (quick-fix) is NO LONGER path-agnostic to fullsend at the execute stage: fullsend now DOES branch D into a SPLIT DISPATCH (see Step 6). PATH-D-specific *lifecycle* behavior (auto-flip plan-pending → plan-approved, inline tdd-implementer execute dispatch, Step 8 skip) is still owned by /pipeline:run (skills/run/SKILL.md Step 4 and Step 6) and /pipeline:execute-issue-plan (skills/execute-issue-plan/SKILL.md Step 8 early-return). What fullsend adds on top is a DISPATCH split: within each wave, the wave's conflict-free A/B/D issues fan out as a **concurrent inline `Agent` batch in the FOREGROUND** while PATH C issues launch via the tmux **C-only run-queue** backgrounded with `run_in_background` (Step 6). Per #748, PATH B execute joined the inline foreground side alongside A/D (no `spawn-claude.sh` / `claude -p`), leaving only PATH C on the backgrounded run-queue. The inline foreground batch consumes **zero queue slots** — it is free concurrency atop the C-only run-queue capacity — so no fullsend run-queue change is required for the foreground paths themselves.
+PATH D (quick-fix) is NO LONGER path-agnostic to fullsend at the execute stage: fullsend now DOES branch D into a SPLIT DISPATCH (see Step 6). PATH-D-specific *lifecycle* behavior (auto-flip plan-pending → plan-approved, inline tdd-implementer execute dispatch, Step 8 skip) is owned by fullsend's `## Dispatch routing by path tier (reference)` section below and by /pipeline:execute-issue-plan (skills/execute-issue-plan/SKILL.md Step 8 early-return). What fullsend adds on top is a DISPATCH split: within each wave, the wave's conflict-free A/B/D issues fan out as a **concurrent inline `Agent` batch in the FOREGROUND** while PATH C issues launch via the tmux **C-only run-queue** backgrounded with `run_in_background` (Step 6). Per #748, PATH B execute joined the inline foreground side alongside A/D (no `spawn-claude.sh` / `claude -p`), leaving only PATH C on the backgrounded run-queue. The inline foreground batch consumes **zero queue slots** — it is free concurrency atop the C-only run-queue capacity — so no fullsend run-queue change is required for the foreground paths themselves.
 
 ## Wave plan (pre-think)
 
@@ -41,7 +41,7 @@ Before any dispatch, fullsend pre-thinks the slate via `PIPELINE_REPO="$PIPELINE
 
 ```
 Wave 1: classify #101, #102, #103 in parallel
-Wave 2: classify #104 (serial — shares skills/run/SKILL.md with #101)
+Wave 2: classify #104 (serial — shares skills/status/SKILL.md with #101)
 Wave 3: classify #105 (serial — blocked by #104)
 Wave 4: classify #106, #107 in parallel
 Wave 5: classify #108 in parallel
@@ -123,9 +123,9 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    done
    ```
 
-   The helper is idempotent — repeat invocations cost zero `gh api` calls. The `head -1` cap keeps wave-log output to one line per issue. This is the autonomous-mode ingestion site; `/pipeline:run` step 0 does NOT fetch attachments. Interactive single-issue planning fetches at `/pipeline:plan-issue` step 3b instead.
+   The helper is idempotent — repeat invocations cost zero `gh api` calls. The `head -1` cap keeps wave-log output to one line per issue. This is the autonomous-mode ingestion site; `/pipeline:status` step 0 does NOT fetch attachments. Interactive single-issue planning fetches at `/pipeline:plan-issue` step 3b instead.
 
-   **1b. Dispatch classify and plan.** Process wave by wave per the `## Wave plan (pre-think)` section above — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh Classification comment (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete. **PATH D exclusion.** PATH D (`quick-fix`) issues are EXCLUDED from this per-stage classify/plan dispatch — their classify+plan stages run INSIDE the single collapsed foreground inline `Agent` dispatched at execute (Step 6), emitting `## Classification`+`quick-fix` and `## Implementation Plan`+`plan-pending` as inline side-effect checkpoints. Only A/B/C issues go through this Step 1b per-stage classify/plan dispatch. (The `## Wave plan (pre-think)` ordering still includes D — only the per-stage classify/plan *dispatch* is what D skips.)
+   **1b. Dispatch classify and plan.** Process wave by wave per the `## Wave plan (pre-think)` section above — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh `## Classification` comment (the comment's `createdAt >= issue.updatedAt`) (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete. **PATH D exclusion.** PATH D (`quick-fix`) issues are EXCLUDED from this per-stage classify/plan dispatch — their classify+plan stages run INSIDE the single collapsed foreground inline `Agent` dispatched at execute (Step 6), emitting `## Classification`+`quick-fix` and `## Implementation Plan`+`plan-pending` as inline side-effect checkpoints. Only A/B/C issues go through this Step 1b per-stage classify/plan dispatch. (The `## Wave plan (pre-think)` ordering still includes D — only the per-stage classify/plan *dispatch* is what D skips.)
    - **Dispatch prompt contract (mandatory):** each `/pipeline:plan-issue N` Agent prompt MUST end with a directive stating the dispatched subagent's *only* valid terminal states are: (a) `bash "${CLAUDE_PLUGIN_ROOT}/scripts/post-plan.sh" N <draft-file>` exited 0 and it reports the success line, or (b) `post-plan.sh` exited non-zero and it reports the FAILED line. Returning the plan body in chat is a failure — the plan does not exist until `post-plan.sh` has posted the `## Implementation Plan` comment and applied the `plan-pending` label. A `general-purpose` subagent may never load `skills/plan-issue/SKILL.md` (it can treat `/pipeline:plan-issue N` as content rather than a skill load), so this dispatch-site directive — not the skill body — is the binding contract.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
      ```bash
@@ -167,7 +167,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup-worktree.sh [--base <base>] <branch-name> <issue-number>
    ```
 
-   Both positional args are required. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short) — same convention as `skills/run/SKILL.md` ("Branch and worktree naming convention"). `<issue-number>` is the bare integer.
+   Both positional args are required. `<branch-name>` MUST be `feature/<slug>` where `<slug>` is derived from the issue title (lowercase, hyphens, short) — same convention as `skills/status/SKILL.md` ("Branch and worktree naming convention"). `<issue-number>` is the bare integer.
 
    Worked example:
 
@@ -197,7 +197,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
    - `EVENT: agent-stalled issue=<N>` — runner reports worker at idle CPU **and** no forward progress (frozen tmux pane) across `PIPELINE_STALL_POLL_THRESHOLD` polls (#641); a healthy API-bound agent emitting pane output is no longer flagged. Runner took no action. Run the four-option triage below; then re-enter `Monitor` with the SAME `timeout_ms` budget (the elapsed wait is preserved by the harness).
    - `EVENT: agent-finished outcome=failed issue=<N>` — per-agent failure. Optional triage (capture pane, inspect PR/branch state); re-enter `Monitor` so the rest of the queue continues to be watched.
    - `EVENT: agent-finished outcome=success issue=<N>` — no-op wake; re-enter `Monitor`.
-   - `EVENT: agent-finished outcome=manual-merge-required reason=<block-reason> issue=<N>` — no-op wake (issue #489); the runner freed a wedged evaluator slot whose PR is awaiting manual merge per the evaluator's Step 11.4 block-* skip. The `reason=` field carries the gate's actual block token (`block-verdict`, `block-ci`, `block-mergeable`, `block-mergestate`, `block-label`, `block-flag`, `block-base-mismatch`, or `unknown` if unrecoverable) so the token is NEVER read as an "approved" verdict — a `block-verdict` reason means the evaluator FLAGGED the PR (issue #654). Re-enter `Monitor`. The operator merges the PR by hand (`gh pr merge <PR> --merge --delete-branch`) or via Step 8 of `run/SKILL.md`. Note: `run/SKILL.md`'s live-events `Monitor` match is the generic `EVENT: agent-finished` substring and is intentionally token-agnostic, so it needs no per-token update.
+   - `EVENT: agent-finished outcome=manual-merge-required reason=<block-reason> issue=<N>` — no-op wake (issue #489); the runner freed a wedged evaluator slot whose PR is awaiting manual merge per the evaluator's Step 11.4 block-* skip. The `reason=` field carries the gate's actual block token (`block-verdict`, `block-ci`, `block-mergeable`, `block-mergestate`, `block-label`, `block-flag`, `block-base-mismatch`, or `unknown` if unrecoverable) so the token is NEVER read as an "approved" verdict — a `block-verdict` reason means the evaluator FLAGGED the PR (issue #654). Re-enter `Monitor`. The operator merges the PR by hand (`gh pr merge <PR> --merge --delete-branch`) or fullsend's `## Merge orchestration (reference)` greenlight path handles it.
 
    **Triage on `agent-stalled`.** The event already implies the pane was frozen (no forward progress) across the whole window (#641), so the first triage action is to re-`capture-pane` and confirm it is *still* frozen before acting. Inspect the worker first (tmux pane via `tmux capture-pane -t "$PIPELINE_TMUX_SESSION:issue-<N>" -p`; process tree via `pstree -p <pid>`). Then surface the four-option prompt to the user:
    1. **Kill the wedged subscript only** — `kill <child-pid>` from the pstree output; executor may recover.
@@ -222,7 +222,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    **`--spawn` override (#750).** When `--spawn` is present, route **every path's PR-eval through `run-queue.sh --skill evaluate-issue-pr`** — including the paths whose PR-eval is inline by default (PATH B). PATH C PR-eval is already queued, so for C this is a documented no-op. When `--spawn` is absent, the default below applies (PATH B PR-eval inline, others via the run-queue). Launch this queue via `Bash` with `run_in_background: true` as described in step 6, then wait on it with the same event-driven waiter (identical to Step 6's waiter): a single `Monitor` invocation against the bash task's captured stdout stream (queried via the `BashOutput` tool — do NOT tail `queue-*.log`), with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000`. Apply the same wake-loop dispatch and "Triage on agent-stalled wakes" sub-section above — `agent-finished outcome=failed` is the per-agent failure signal (no separate `agent-failed`), `queue-complete` is terminal.
 
-   **Inline PR-eval dispatch prompt contract (mandatory).** Whenever an `evaluate-issue-pr` evaluation is dispatched as an inline `Agent` (PATH A/B/D re-dispatch, or any pr-open issue evaluated inline rather than via the run-queue), the Agent prompt MUST end with a directive stating the dispatched evaluator's *only* valid terminal states are: **(a)** a `## Evaluation` comment posted with an explicit `**Verdict:**` line AND the greenlight gate fired (merged on `green`, or left with a `block-*` reason token); or **(b)** the eval failed, reporting a FAILED line. Narrating an intention to "wait" / "await CI" (e.g. *"All plan items verified. Awaiting the suite/CI output."*) — or returning verification prose instead of posting the verdict and firing the gate — is explicitly a **failure**: a dispatched `Agent`'s turn ends the moment it stops emitting tool calls, so narrate-and-yield strands the PR un-evaluated at `pr-open` and forces a fresh re-dispatch (the #765 drop-out). The evaluator must instead run to completion (post `## Evaluation` → fire greenlight gate) or actually block on pending CI via `Monitor`/`BashOutput` before yielding. A `general-purpose` subagent may never load `skills/evaluate-issue-pr/SKILL.md`, so this dispatch-site directive — not the skill body — is the binding contract. (Verbatim with `skills/run/SKILL.md` Step 6 — the two PR-eval dispatch sites are one contract in two places, mirroring the #764/#771 execute precedent.)
+   **Inline PR-eval dispatch prompt contract (mandatory).** Whenever an `evaluate-issue-pr` evaluation is dispatched as an inline `Agent` (PATH A/B/D re-dispatch, or any pr-open issue evaluated inline rather than via the run-queue), the Agent prompt MUST end with a directive stating the dispatched evaluator's *only* valid terminal states are: **(a)** a `## Evaluation` comment posted with an explicit `**Verdict:**` line AND the greenlight gate fired (merged on `green`, or left with a `block-*` reason token); or **(b)** the eval failed, reporting a FAILED line. Narrating an intention to "wait" / "await CI" (e.g. *"All plan items verified. Awaiting the suite/CI output."*) — or returning verification prose instead of posting the verdict and firing the gate — is explicitly a **failure**: a dispatched `Agent`'s turn ends the moment it stops emitting tool calls, so narrate-and-yield strands the PR un-evaluated at `pr-open` and forces a fresh re-dispatch (the #765 drop-out). The evaluator must instead run to completion (post `## Evaluation` → fire greenlight gate) or actually block on pending CI via `Monitor`/`BashOutput` before yielding. A `general-purpose` subagent may never load `skills/evaluate-issue-pr/SKILL.md`, so this dispatch-site directive — not the skill body — is the binding contract. (Fullsend is now the sole owner of this PR-eval dispatch contract; `/pipeline:status` is read-only and no longer dispatches, mirroring the #764/#771 execute precedent.)
 7b. **Auto-merge green release PRs (opt-in)** — runs after step 7 (Evaluate PRs) and before step 8 (Report). Only fires when `PIPELINE_RELEASE_PR_AUTO_MERGE=true` AND at least one release PR has `ci=pass`. Feature PRs land first; the release PR consolidates them so version bumps + CHANGELOG stay coherent.
 
    ```bash
@@ -289,9 +289,71 @@ This issue edits the fullsend machinery the pipeline itself runs. This is a self
    ```
 9. **Stop** — do NOT merge unless the greenlight matrix held in Step 8. Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
 
+## Dispatch routing by path tier (reference)
+
+This section consolidates the per-path dispatch contract for the autonomous flow — the canonical home for the routing detail that previously lived in `/pipeline:run`. `/pipeline:status` is read-only and no longer dispatches; fullsend owns all dispatch.
+
+**For PR evaluation (pr-open → evaluated).** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed. Read each PR-open issue's labels and route by tier:
+   - **PATH A** (`docs-only`): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. Reuse the existing `<worktree-path>`:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='evaluate-issue-pr #<N> (PATH A inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
+     ```
+   - **PATH B** (standard): dispatch inline — No spawn-claude.sh, no `claude -p`, no tmux. The worktree already exists; reuse it:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='evaluate-issue-pr #<N> (PATH B inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
+     ```
+     No spawn-claude.sh, no run-queue.sh, no tmux. The inline B execute Agent and the inline B PR-eval Agent are SEPARATE inline contexts — an agent must not evaluate its own work.
+   - **PATH C** (`multi-task`): proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
+   - **PATH D**: PR evaluation stays `general-purpose` (NOT `tdd-implementer`) — inline dispatch shape identical to PATH A.
+
+**For execution (plan-approved → worktree setup).** After the worktree is set up, read each approved issue's labels and route by tier:
+   - **PATH A** (`docs-only`): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='execute-issue-plan #<N> (PATH A inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
+     ```
+   - **PATH B** (standard): dispatch inline — `subagent_type='general-purpose'` (NOT `tdd-implementer`); B's red→green discipline comes from the plan's Task 0 `superpowers:test-driven-development` bookend inside execute-issue-plan:
+     ```
+     Agent(subagent_type='general-purpose',
+           description='execute-issue-plan #<N> (PATH B inline)',
+           prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
+     ```
+     No spawn-claude.sh, no run-queue.sh, no tmux.
+   - **PATH C** (`multi-task`): proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
+   - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='tdd-implementer', description='execute-issue-plan #<N> (PATH D collapsed inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. The subagent_type uses the BARE `tdd-implementer` form (NOT a namespaced form).
+
+     **Collapsed-D ceremony.** That single dispatch is **one collapsed inline `Agent`** doing **classify+plan+execute** in a single carried-forward context — NOT three separate Agent dispatches. The classify and plan stages run inside that same single context (carried-forward, not re-spawned). pr-eval stays a SEPARATE inline agent — evaluator independence is the reason it is never folded in. Bound the foreground batch at **max 3 concurrent inline** D agents.
+
+## Merge orchestration (reference)
+
+After all evaluations complete, fullsend merges via the greenlight gate (the per-PR auto-merge loop, `## Greenlight matrix` above). Default is **autonomous merge for the green subset**.
+
+**Pre-merge pairwise overlap scan.** Before the sequential merge loop, source `${CLAUDE_PLUGIN_ROOT}/scripts/detect-merge-overlap.sh` and run `detect_merge_overlap` over the approved-PR set to surface pairwise file overlaps; `recommend_merge_order` returns a fewest-overlap-first ordering to use for the loop. Advisory — does not block.
+
+```bash
+source "${CLAUDE_PLUGIN_ROOT}/scripts/detect-merge-overlap.sh"
+APPROVED=( $(gh pr list --repo "$PIPELINE_REPO" --label pr-open --json number --jq '.[].number') )
+if [ "${#APPROVED[@]}" -ge 2 ]; then
+  echo "=== Pre-merge pairwise overlap scan ==="
+  detect_merge_overlap "${APPROVED[@]}"
+  echo "=== Recommended merge order (fewest overlap first) ==="
+  ORDERED=( $(recommend_merge_order "${APPROVED[@]}") )
+  printf '  %s\n' "${ORDERED[@]}"
+else
+  ORDERED=( "${APPROVED[@]}" )
+fi
+```
+
+Use `${ORDERED[@]}` as the iteration order for the sequential merge loop. Before each merge: detect the PR's base branch; if it diverges from `.claude/base-branch` (or `PIPELINE_BASE_BRANCH`), call `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE`. Check `mergeable`; on conflict, rebase in the worktree and force-push with `--force-with-lease`, retrying merge. Merge PRs sequentially to avoid cascading conflicts. Validate the PR title against the Conventional Commits format (`scripts/check-conventional-title.sh`).
+
 **Constraints during full send:**
 
-Slate-pre-hygiene (housekeeping, worktree cleanup, discovery) is owned by `/pipeline:run`; fullsend assumes a clean slate and does not re-implement that flow.
+Slate-pre-hygiene (housekeeping, worktree cleanup, discovery) is owned by `/pipeline:status`; fullsend assumes a clean slate and does not re-implement that flow.
 
 - Issues labeled `PIPELINE_LABELS_EXCLUDED` are always skipped.
 - Issues labeled `PIPELINE_LABELS_LATER` are shown in the final report (stage = `PIPELINE_LABELS_LATER`) but not processed.

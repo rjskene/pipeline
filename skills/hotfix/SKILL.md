@@ -32,7 +32,7 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
 ## Invariants
 
 - **In-session.** Executes directly in the calling session. No dispatch to a worker session.
-- **No pipeline labels.** None of `plan-pending`/`plan-reviewed`/`plan-approved`/`in-progress`/`pr-open` applied — the standard `pipeline:run` orchestrator does not pick it up.
+- **No pipeline labels.** None of `plan-pending`/`plan-reviewed`/`plan-approved`/`in-progress`/`pr-open` applied — the standard `pipeline:fullsend` orchestrator does not pick it up.
 - **No evaluator gates.** Explicitly: no /pipeline:classify-issue, no /pipeline:plan-issue, no /pipeline:evaluate-issue-plan, no /pipeline:evaluate-issue-pr, no /pipeline:fullsend dispatch.
 - **Auto-merge: manual by default, opt-in CI-only.** With no flag there is no auto-merge — the user merges manually. With `--auto-merge`, Step 6.5 runs `scripts/auto-merge-gate.sh` in `NO_VERDICT=1` mode (CI-only greenlight: every `statusCheckRollup` SUCCESS AND `mergeable == MERGEABLE` AND `mergeStateStatus == CLEAN` AND base `== $PIPELINE_BASE_BRANCH`, skipping the evaluator-verdict condition the emergency lane never produces) and merges on green. Never default.
 - **PR base.** Targets `PIPELINE_BASE_BRANCH` (defaults to `staging`).

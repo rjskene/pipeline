@@ -1,6 +1,6 @@
 # Step 0 housekeeping — verbose detail
 
-`/pipeline:run` Step 0 covers nine housekeeping concerns. SKILL.md keeps a compact version of each; the full detail (including the surrounding rationale) lives here.
+`/pipeline:status` Step 0 covers nine housekeeping concerns. SKILL.md keeps a compact version of each; the full detail (including the surrounding rationale) lives here.
 
 ## 1. Orchestrator branch check
 
@@ -21,7 +21,7 @@ Also print a reminder: *"PRs created by spawned agents will target `${EXPECTED_B
 
 ## 2. Base-branch hook wiring advisory
 
-Defense-in-depth visibility: the `enforce-base-branch.py` PreToolUse hook is what makes the branch-check reminder above actually enforceable, and that hook must be registered in *either* the plugin manifest (`.claude-plugin/plugin.json`) *or* the consumer's local `.claude/settings.json`. If both surfaces silently drop the registration (e.g. a stale install, a hand-edited settings file, or a partial migration), `gh pr create` from spawned agents can escape `PIPELINE_BASE_BRANCH` and target the repo's default branch. The helper scans both files and prints a single `WARN:` line on stdout when neither wires the hook — otherwise it stays silent. The check is **advisory only and never aborts the run**; `/pipeline:run` cannot rewrite a consumer's `.claude/settings.json` (#215 tracks render-on-install). Surface the WARN to the user and continue.
+Defense-in-depth visibility: the `enforce-base-branch.py` PreToolUse hook is what makes the branch-check reminder above actually enforceable, and that hook must be registered in *either* the plugin manifest (`.claude-plugin/plugin.json`) *or* the consumer's local `.claude/settings.json`. If both surfaces silently drop the registration (e.g. a stale install, a hand-edited settings file, or a partial migration), `gh pr create` from spawned agents can escape `PIPELINE_BASE_BRANCH` and target the repo's default branch. The helper scans both files and prints a single `WARN:` line on stdout when neither wires the hook — otherwise it stays silent. The check is **advisory only and never aborts the run**; `/pipeline:status` cannot rewrite a consumer's `.claude/settings.json` (#215 tracks render-on-install). Surface the WARN to the user and continue.
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-base-branch-hook-wiring.sh" \

@@ -105,4 +105,4 @@ The live `agent-costs.jsonl` is subject to transcript/log pruning — once a raw
 
 This skill is **dogfood-only by convention**. It reads ONLY the `PIPELINE_LOGS_ENABLED`-gated `.claude/logs/agent-costs.jsonl`, invokes repo-local scripts via `${CLAUDE_PLUGIN_ROOT}/scripts/`, and writes **NOTHING** to the consumer's `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` (see CLAUDE.md "Namespace discipline"). The `.claude/logs/` capture log is the only consumer-owned path touched, and only for reads — it is already on the runtime allow-list.
 
-The name `tokenomics` was chosen over `analyze-usage` to avoid colliding with `/pipeline:run --analyze`.
+The name `tokenomics` was chosen over `analyze-usage` to avoid colliding with `/pipeline:status --analyze`.
