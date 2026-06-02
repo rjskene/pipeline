@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.22.2](https://github.com/rjskene/pipeline/compare/v0.22.1...v0.22.2) (2026-06-02)
+
+
+### Features
+
+* **fullsend:** add aggregate-signals subcommand to plan-campaign.sh ([8d61660](https://github.com/rjskene/pipeline/commit/8d6166052fbea8e831618f698caa79956c299614))
+* **fullsend:** route end-of-campaign bug filing through deterministic create-issues subset ([83b7835](https://github.com/rjskene/pipeline/commit/83b7835b537192c6f4c442b7fbd5cc264b83477c))
+* **fullsend:** route end-of-campaign bug filing through the create-issues flow (scope-check + grouping + templating) ([f440cdf](https://github.com/rjskene/pipeline/commit/f440cdfe52e02bda757603d17b64f908dd25ea1f))
+* **merge:** add finalize-issue-labels.sh shared strip-set helper ([a95a372](https://github.com/rjskene/pipeline/commit/a95a3728172c02949c7cf258070c81b6e0c65035))
+* **status-table:** sort orphans by ready then conventional-commit type ([5227f78](https://github.com/rjskene/pipeline/commit/5227f783476e0595d40d7b118efcf2c79dbb161e)), closes [#871](https://github.com/rjskene/pipeline/issues/871)
+* **status-table:** sort orphans by ready/not-ready then conventional-commit type, drop scope bucketing ([cf4458c](https://github.com/rjskene/pipeline/commit/cf4458cd5958be9e7f17690ac0d88634f7255f50))
+
+
+### Bug Fixes
+
+* **merge:** auto-merge path strips full pipeline label set via shared helper ([c1e6646](https://github.com/rjskene/pipeline/commit/c1e6646e704d5930ace271ba5349874fead53044))
+* **merge:** cleanup-worktree strips full pipeline label set via shared helper ([9e59468](https://github.com/rjskene/pipeline/commit/9e59468ffb65251b4b5bc59f704e83e87b7a28ed))
+* **merge:** finish-manual-merge strips full pipeline label set via shared helper ([9cae78b](https://github.com/rjskene/pipeline/commit/9cae78bbfe8d93cd8cd5792f1caafbb6a9fba962))
+* **merge:** guard CLAUDE_PLUGIN_ROOT in finalize-issue-labels call under set -u ([1a47fb9](https://github.com/rjskene/pipeline/commit/1a47fb963bbfd4b555bfb2250ceecff8a74765f0))
+* **merge:** strip residual pipeline labels when a merged PR closes its issue ([cead8f9](https://github.com/rjskene/pipeline/commit/cead8f95eb1901cd71edb4931bd1298e079765ea))
+
 ## [0.22.1](https://github.com/rjskene/pipeline/compare/v0.22.0...v0.22.1) (2026-06-02)
 
 
