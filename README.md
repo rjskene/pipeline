@@ -18,7 +18,7 @@ Full process maps in docs/process-maps.md.
 
 | Command | When to use |
 |---|---|
-| `/pipeline:run` | Interactive — check pipeline status, see what's ready, advance the next stage |
+| `/pipeline:status` | Interactive — check pipeline status, see what's ready, advance the next stage (`/pipeline:run` remains as a deprecated alias) |
 | `/pipeline:fullsend [N ...]` | Autonomous end-to-end run for one or many issues (classify → plan → evaluate-plan → execute → evaluate-pr → greenlight-merge) |
 | `/pipeline:analyze-issues` | read-only hygiene pass — duplicate / tracker-fit / missing-label / supersession detection |
 | `/pipeline:init` | Bootstrap a fresh project — preflight deps / detect repo+branch / generate gitignored `pipeline.config` / seed labels / doctor audit |
@@ -57,14 +57,15 @@ Full process maps in docs/process-maps.md.
   Read-only audit; `--fix labels` seeds canonical labels idempotently.
 - First run:
   ```
-  /pipeline:run
+  /pipeline:status
   ```
+  (`/pipeline:run` remains as a deprecated alias for `/pipeline:status`.)
 
 ## Project layout
 
 ```
 claude-pipeline/
-├── skills/         # Pipeline slash-command skills (run, fullsend, plan-issue, ...)
+├── skills/         # Pipeline slash-command skills (status, fullsend, plan-issue, ...)
 ├── agents/         # Subagent definitions (tdd-implementer, ...)
 ├── hooks/          # PreToolUse / PostToolUse / Stop hook scripts
 ├── scripts/        # Shell helpers invoked by skills and hooks

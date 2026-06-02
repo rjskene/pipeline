@@ -4,13 +4,13 @@ This repo dogfoods a **repo-only audit system** that observes pipeline behavior 
 
 ## Trigger
 
-This repo's `.claude/settings.json` registers a `UserPromptSubmit` hook that runs `dev/hooks/audit-on-pipeline-run.sh`. When the submitted prompt starts with `/pipeline:run`, the hook backgrounds `dev/self-audit/inner-loop.sh` and returns in <200ms. The user's prompt is not blocked.
+This repo's `.claude/settings.json` registers a `UserPromptSubmit` hook that runs `dev/hooks/audit-on-pipeline-run.sh`. When the submitted prompt starts with `/pipeline:status` (or its deprecated alias `/pipeline:run`), the hook backgrounds `dev/self-audit/inner-loop.sh` and returns in <200ms. The user's prompt is not blocked.
 
 ## Inner loop
 
 `dev/self-audit/inner-loop.sh` reads `dev/audits/index.jsonl` for the last audit timestamp, queries `gh` for merged feature/* PRs since then, reads observability logs (`.claude/logs/subagents/*.json`, `.claude/logs/tool-use*.log`, `.claude/logs/runs.log`) plus the orchestrator transcript at `${AUDIT_CLAUDE_PROJECTS_DIR:-~/.claude/projects}/<project-hash>/<session-uuid>.jsonl`, and emits `dev/audits/inner-<ISO>.md`.
 
-Every digest contains five sections: **Compliance**, **Interaction**, **Pattern → defaults** (per-run noise), **Efficiency**, and **Data quality** (which inputs were present/missing — blind spots are a first-class finding). The Interaction section ships as a `_pending subagent classification — session <uuid>_` placeholder. As of the startup-prompt strip (#317) the placeholder is no longer filled in by `/pipeline:run`; a dogfood-only follow-up will move dispatch into `inner-loop.sh` itself via `claude -p` (filed separately as a `brainstorm` issue). After every third new entry, the inner loop backgrounds `outer-loop.sh`.
+Every digest contains five sections: **Compliance**, **Interaction**, **Pattern → defaults** (per-run noise), **Efficiency**, and **Data quality** (which inputs were present/missing — blind spots are a first-class finding). The Interaction section ships as a `_pending subagent classification — session <uuid>_` placeholder. As of the startup-prompt strip (#317) the placeholder is no longer filled in by `/pipeline:status`; a dogfood-only follow-up will move dispatch into `inner-loop.sh` itself via `claude -p` (filed separately as a `brainstorm` issue). After every third new entry, the inner loop backgrounds `outer-loop.sh`.
 
 ## Outer loop
 

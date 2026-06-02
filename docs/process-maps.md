@@ -208,9 +208,9 @@ the auto-merge gate even when all four greenlight conditions hold.
 
 Top-level slash commands that drive the maps above:
 
-- `/pipeline:run` — orchestrator session: prioritize, group, and dispatch the action queue.
+- `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) — orchestrator session: prioritize, group, and dispatch the action queue.
 - `/pipeline:fullsend` — wave-plan flow across a slate of issues (the map above).
-- `/pipeline:analyze-issues` — read-only hygiene pass over the open-issue set; see [skills/analyze-issues/SKILL.md](../skills/analyze-issues/SKILL.md). `/pipeline:run --analyze` delegates to `/pipeline:analyze-issues` for back-compat.
+- `/pipeline:analyze-issues` — read-only hygiene pass over the open-issue set; see [skills/analyze-issues/SKILL.md](../skills/analyze-issues/SKILL.md). `/pipeline:status --analyze` delegates to `/pipeline:analyze-issues` for back-compat.
 
 `analyze-issues` surfaces four detection categories (no mutations): duplicate candidates, standalones that fit an existing tracker, issues with missing labels, and merged-PR supersession candidates.
 

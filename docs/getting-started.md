@@ -20,7 +20,7 @@ From the root of your project, inside Claude Code:
 4. **Labels** — seeds the canonical GitHub labels.
 5. **Doctor** — ends with a read-only `doctor` audit so init lands in a known state.
 
-After init reports `bootstrap complete`, run `/pipeline:run` to start the workflow.
+After init reports `bootstrap complete`, run `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) to start the workflow.
 
 ## Manual `pipeline.config` fallback
 
