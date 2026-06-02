@@ -91,7 +91,12 @@ case "$_rpr_proj" in
     ;;
   *)
     if command -v git >/dev/null 2>&1; then
-      _rpr_common="$(git -C "$PWD" rev-parse --git-common-dir 2>/dev/null)"
+      # `|| true` keeps the assignment's exit status 0: this resolver is SOURCED
+      # into scripts running `set -e` (e.g. spawn-claude.sh), and a bare
+      # `x="$(failing-cmd)"` aborts the host under `set -e`. When $PWD is not a
+      # git repo (CI plain-checkout temp dirs), git exits 128 — without the guard
+      # the host script dies here before doing its own work (#885).
+      _rpr_common="$(git -C "$PWD" rev-parse --git-common-dir 2>/dev/null || true)"
       if [ -n "$_rpr_common" ]; then
         case "$_rpr_common" in
           /*) : ;;                       # absolute
@@ -100,7 +105,7 @@ case "$_rpr_proj" in
         # --git-common-dir points at the MAIN checkout's .git; its parent is the
         # main-repo root (true even from a linked worktree, where --show-toplevel
         # would return the worktree itself).
-        _rpr_cand="$(cd "$_rpr_common/.." 2>/dev/null && pwd)"
+        _rpr_cand="$(cd "$_rpr_common/.." 2>/dev/null && pwd || true)"
         [ -n "$_rpr_cand" ] && _rpr_proj="$_rpr_cand"
       fi
       unset _rpr_common _rpr_cand
