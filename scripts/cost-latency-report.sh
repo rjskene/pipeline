@@ -750,20 +750,39 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
 ' 2>/dev/null)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 
-# SECOND dedup pass: collapse records sharing the same (session_id, issue, stage)
-# to the one with MAX tokens.total. This runs AFTER the record_key pass and
-# folds the cases record_key alone cannot: retroactive-inline lower-bounds,
-# duplicate captures, and N orchestrator cumulative snapshots of the SAME
-# session (each a later, larger cumulative total) down to the final cumulative
-# (max-total) figure. Records MISSING session_id (or null) are passed through
-# UNTOUCHED — each is its own group (NOT collapsed by (null,issue,stage)),
-# mirroring how the record_key pass partitions keyless records. DISTINCT
-# session_ids for the same (issue,stage) are a genuine multi-session re-run and
-# are preserved by group_by.
+# SECOND dedup pass: collapse a forward+retroactive PAIR (or any duplicate
+# captures) of the SAME logical agent to the one with MAX tokens.total. This runs
+# AFTER the record_key pass and folds the cases record_key alone cannot:
+# retroactive-inline lower-bounds, duplicate captures, and N orchestrator
+# cumulative snapshots of the SAME session (each a later, larger cumulative
+# total) down to the final cumulative (max-total) figure.
+#
+# Identity is agent_id-aware (#880): the forward (PostToolUse(Agent)) and
+# retroactive (capture-agent-costs.sh) records for one inline subagent carry
+# DIFFERENT record_key, DIFFERENT ts_start, and may carry DIFFERENT session_id
+# (forward keys on the dispatching session; the retroactive sidecar may resolve a
+# different session id), so a (session_id, issue, stage) key neither collapses the
+# pair (different session) nor is safe when issue=="" (it OVER-collapses many
+# distinct agents in one (session,"",stage) group). The stable per-logical-agent
+# key is the subagent agent_id (both producers emit it). So partition:
+#   (i) records carrying a non-empty agent_id → group_by(.agent_id) and keep
+#       max_by(.tokens.total): the forward+retroactive PAIR collapses to the one
+#       reconciled (larger cumulative) record, regardless of session_id;
+#   (ii) records with empty/absent agent_id (orchestrator agent_kind=main,
+#       headless, legacy capture lines) → keep the original
+#       (session_id, issue, stage) fallback, which still folds same-session
+#       lower-bounds and orchestrator cumulative snapshots. Records MISSING
+#       session_id (or null) are passed through UNTOUCHED — each is its own group
+#       (NOT collapsed by (null,issue,stage)), mirroring how the record_key pass
+#       partitions keyless records.
 CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
-  ([ .[] | select(has("session_id") and .session_id != null) ]
+  ([ .[] | select((.agent_id // "") != "") ]
+     | group_by(.agent_id) | map(max_by(.tokens.total)))
+  + ([ .[] | select((.agent_id // "") == "")
+            | select(has("session_id") and .session_id != null) ]
      | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
-  + [ .[] | select((has("session_id") | not) or .session_id == null) ]
+  + [ .[] | select((.agent_id // "") == "")
+          | select((has("session_id") | not) or .session_id == null) ]
 ' 2>/dev/null)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 

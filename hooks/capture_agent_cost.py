@@ -318,6 +318,10 @@ def build_stop_record(payload, logs_dir):
         "agent_kind": agent_kind,
         "agent_type": "orchestrator",
         "session_id": session_id,
+        # Orchestrator records have no subagent id; agent_id="" routes them to the
+        # consumer's (session, issue, stage) fallback dedup, not the agent_id pair
+        # collapse (#880).
+        "agent_id": "",
         "model": summ["model"],
         "tokens": tokens,
         # duration_ms is null by design: the main-session transcript's
@@ -546,6 +550,13 @@ def build_record(payload, logs_dir=None):
         "agent_kind": agent_kind,
         "agent_type": agent_type,
         "session_id": session_id,
+        # agent_id is the stable per-logical-agent dedup key the consumer
+        # (cost-latency-report.sh, #880) collapses forward+retroactive PAIRS on —
+        # the SAME id the retroactive sidecar resolves, so the two records of one
+        # inline agent share it. Resolved above (tool_response.agentId →
+        # payload.agent_id); "" when absent (un-id'd dispatch → consumer falls
+        # back to (session, issue, stage)).
+        "agent_id": agent_id or "",
         "model": model,
         "tokens": tokens,
         "duration_ms": duration_ms,
