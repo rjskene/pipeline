@@ -14,6 +14,11 @@
 #    `Merged via PR #<PR>` comment)
 # so the operator can run a single one-liner after a hand merge.
 #
+# The label-strip op is delegated to the shared `finalize-issue-labels.sh`
+# helper (issue #866), so the merged-state strip-set stays in lockstep with the
+# auto-merge path and `cleanup-worktree.sh` — it strips the full pipeline
+# lifecycle/path/priority set, not just `pr-open`/`manual-merge`.
+#
 # It MIRRORS Step 11's bookkeeping rather than sourcing it: `auto-merge-gate.sh`
 # exposes only the *decision* (`auto_merge_should_fire`), not the bookkeeping,
 # which lives inline in the skill markdown. Refactoring Step 11 to call this
@@ -67,15 +72,11 @@ if [ -z "$REPO" ]; then
   exit 2
 fi
 
-# Flip labels: add `merged`, drop the wedged `pr-open` / `manual-merge`. The
-# `|| true` absorbs gh's 422 when a label being removed is already absent — the
-# combined call still records the add; for the absent-label edge the safe
-# fallback is to run the add separately so it is never swallowed.
-gh issue edit "$ISSUE" --repo "$REPO" \
-  --add-label merged --remove-label pr-open --remove-label manual-merge \
-  2>/dev/null \
-  || gh issue edit "$ISSUE" --repo "$REPO" --add-label merged 2>/dev/null \
-  || true
+# Flip labels via the shared strip-set helper (issue #866): add `merged` and
+# strip the full pipeline lifecycle/path/priority set (not just
+# `pr-open`/`manual-merge`). The helper owns the absent-label 422 fallback so
+# the three merge-completion sites can never drift. See finalize-issue-labels.sh.
+bash "$(dirname "${BASH_SOURCE[0]}")/finalize-issue-labels.sh" "$ISSUE" --repo "$REPO"
 
 # Close with the merge note. `|| true` makes a re-run on an already-closed
 # issue a no-op. The literal `Merged via PR #<PR>` wording is mandated by #655.
