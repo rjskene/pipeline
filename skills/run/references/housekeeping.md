@@ -1,6 +1,6 @@
 # Step 0 housekeeping — verbose detail
 
-`/pipeline:run` Step 0 covers six housekeeping concerns. SKILL.md keeps a compact version of each; the full detail (including the surrounding rationale) lives here.
+`/pipeline:run` Step 0 covers nine housekeeping concerns. SKILL.md keeps a compact version of each; the full detail (including the surrounding rationale) lives here.
 
 ## 1. Orchestrator branch check
 
@@ -109,3 +109,22 @@ Visual-proof evaluators spawn short-lived `python -m http.server` processes root
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/reap-stale-visual-proof-servers.sh" || true
 ```
+
+## 9. Auto-cleanup of merged worktrees
+
+When a merged PR still has an active worktree, clean it up automatically here — as the **non-blocking tail of Step 0, before discovery** — so it never preempts feature-work proposal. This reuses the EXISTING cleanup machinery; no new deletion logic and no second gate.
+
+Detect cleanup candidates inline (do not depend on Step 1 ordering) via the per-worktree merged-PR loop:
+
+```bash
+for wt in $(git worktree list --porcelain | awk '/^branch refs/{sub("refs/heads/","",$2); print $2}'); do
+  gh pr list --repo "$PIPELINE_REPO" --head "$wt" --state merged --json number,headRefName \
+    --jq '.[] | {branch: .headRefName, pr: .number}'
+done
+```
+
+For each candidate (merged PR + active worktree), run `cleanup-worktree.sh <issue>` capturing its `CLEANUP-SUMMARY:` line, then create ONE batch `create-checkpoint-tag.sh --issues … --prs …` for the whole batch. The full walkthrough (CLAUDE.md update, `cleanup-worktree.sh` + `CLEANUP-SUMMARY` capture, the batch `create-checkpoint-tag.sh`, and the CLEANUP COMPLETE table) lives in [dispatch-routing.md](dispatch-routing.md#cleanup-merged-prs-with-active-worktrees).
+
+**Gate reuse, not duplication.** `cleanup-worktree.sh` already verifies `PR state == MERGED` before any destructive op, and the destructive worktree-remove + branch-delete remain subject to the existing `ALLOW_DELETIONS` gate (read from `settings.local.json` `.env.ALLOW_DELETIONS` by `sync-worktrees.sh` pruning and honored by `block_deletions.py`). Do NOT add a second gate.
+
+**`--keep-trees` opt-out.** When `--keep-trees` appears anywhere in the argv, SKIP this concern entirely — candidates are still detected and surfaced downstream (status table / Step 4), they are just not acted on. Auto-cleanup is non-blocking and never gate-fatal.
