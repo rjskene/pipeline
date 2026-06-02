@@ -38,6 +38,14 @@ printf '%s' "$step6" | grep -qiF "all paths" || { echo "MISSING (Step 6): all pa
 printf '%s' "$step6" | grep -qiF "run-queue" || { echo "MISSING (Step 6): run-queue"; fail=1; }
 printf '%s' "$step6" | grep -qiF "inline" || { echo "MISSING (Step 6): inline (negative-default)"; fail=1; }
 
+# Issue #749: now that inline-C is PATH C's execute DEFAULT, --spawn has a LIVE
+# effect on C (no longer a no-op) — the Step 6 --spawn branch must explicitly
+# state PATH C execute reverts to the legacy spawn-claude.sh -> tdd-implementer
+# fan-out.
+printf '%s' "$step6" | grep -qiF "PATH C" || { echo "MISSING (Step 6 --spawn): PATH C explicit mention (#749)"; fail=1; }
+printf '%s' "$step6" | grep -qiF "spawn-claude.sh" || { echo "MISSING (Step 6 --spawn): spawn-claude.sh revert target for PATH C (#749)"; fail=1; }
+printf '%s' "$step6" | grep -qiF "tdd-implementer" || { echo "MISSING (Step 6 --spawn): tdd-implementer fan-out for reverted PATH C (#749)"; fail=1; }
+
 # (c) Step 7 has the all-paths-run-queue branch. Block-scope to the Step 7
 # block: starts at "7. **Evaluate PRs (wave N)" and ends at the "7b. " line.
 step7="$(awk '/^7\. \*\*Evaluate PRs \(wave N\)/{f=1} /^7b\. /{f=0} f' "$FILE")"
