@@ -25,7 +25,7 @@ State (slate, base branch, repo) is inherited from `/pipeline:fullsend`; if thes
 ## Lifecycle
 
 ```
-worktree spawn → spawn-claude tdd-implementer (PATH C) | inline Agent (PATH A/B, PATH D tdd) → push → PR
+worktree spawn → inline orchestrator-owned Agent(tdd-implementer) fan-out (PATH C, DEFAULT; spawn-claude tdd-implementer only under `--spawn`) | inline Agent (PATH A/B, PATH D tdd) → push → PR
 ```
 
 ## Invocation mode
@@ -35,7 +35,7 @@ Every step below behaves identically across modes — only the working-directory
 | # | Mode | CWD setup | Used by |
 |---|------|-----------|---------|
 | 1 | Inline `Agent(...)` dispatch | `cd <worktree-absolute-path>` (prompt provides it) | PATH A (docs-only), PATH B (standard) |
-| 2 | `spawn-claude.sh` / `claude -p` dispatch | already in worktree CWD | PATH C (multi-task) |
+| 2 | Inline orchestrator-owned `Agent(tdd-implementer)` fan-out (DEFAULT); `spawn-claude.sh` / `claude -p` dispatch only under `fullsend --spawn` | already in worktree CWD (CWD = worktree for both transports) | PATH C (multi-task) |
 | 3 | PATH D inline tdd-implementer | `cd <worktree-absolute-path>` (same as mode 1) | PATH D (quick-fix) |
 
 ### Collapsed inline D contract
@@ -83,7 +83,11 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline in a single pass: single failing test → impl → pass → commit, once. No subagent dispatch, no skill invocations beyond this one. This is single-pass discipline, not ceremony: the failing-test gate (red→green→commit) is mandatory and is NOT skipped — what PATH D drops is the redundant pre-PR review double-check (Step 8, see the PATH D early-return contract below), since `evaluate-issue-pr` is D's sole external review gate. (And if the change turns out to exceed D's envelope mid-run, escalate per the Collapsed inline D contract above rather than forcing it through.)
+5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels).
+
+   **PATH C (`multi-task`) — inline orchestrator-owned fan-out (DEFAULT).** On PATH C the orchestrator itself reads the `## Implementation Plan` and, for each `target=<dir>` in the plan, dispatches one inline `Agent(subagent_type='tdd-implementer', description='target=<dir>/ ...', prompt='target=<dir>/ ...')` — one leaf `tdd-implementer` per target — then handles push + `gh pr create` + label flip itself (Steps 9–10). The orchestrator MUST NOT `Edit`/`Write` impl files directly: the `enforce-path-c-delegation` hook blocks direct orchestrator Edit/Write and authorizes only files under a dispatched `target=<dir>` sentinel. `tdd-implementer` stays a hard leaf executor (the `Agent` tool is removed from its toolset) dispatched from the top level — no grandchild dispatch. Bound concurrency by the **conservative inline-C cap of 1–2 concurrent `tdd-implementer`** (justified by the bigger-than-B orchestrator-context cost: the orchestrator holds plan-read + N-target sequencing + PR creation + N inline dispatch/return contexts simultaneously; tune upward only after the live branch test confirms context load is tolerable). Non-overlapping targets may run concurrently up to that cap. Each dispatch carries a real-subdirectory `target=<dir>/` sentinel (`target=.`/`./`/`/` are rejected by the hook) and applies red→green→commit autonomously. **Under `fullsend --spawn`, PATH C reverts to the legacy `spawn-claude.sh` → `tdd-implementer` fan-out** (the reversible escape hatch, #750) — same per-target sentinel + TDD discipline, different transport.
+
+   On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline in a single pass: single failing test → impl → pass → commit, once. No subagent dispatch, no skill invocations beyond this one. This is single-pass discipline, not ceremony: the failing-test gate (red→green→commit) is mandatory and is NOT skipped — what PATH D drops is the redundant pre-PR review double-check (Step 8, see the PATH D early-return contract below), since `evaluate-issue-pr` is D's sole external review gate. (And if the change turns out to exceed D's envelope mid-run, escalate per the Collapsed inline D contract above rather than forcing it through.)
 
    On `needs-browser` issues, each `tdd-implementer` dispatch (PATH C) or inline TDD task (PATH B/D) treats the predicates section as the test specification.
 
@@ -138,7 +142,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    ```
 
    Path-specific constraints when applying must-fixes:
-   - **PATH C (`multi-task`):** any must-fix touching impl code MUST go through a NEW `tdd-implementer` dispatch — the `enforce-path-c-delegation` hook blocks direct orchestrator `Edit`/`Write` on impl files.
+   - **PATH C (`multi-task`):** any must-fix touching impl code MUST go through a fresh inline `Agent(tdd-implementer)` dispatch (or a spawned worker under `--spawn`) — the `enforce-path-c-delegation` hook blocks direct orchestrator `Edit`/`Write` on impl files regardless of transport.
    - **PATH B (standard):** must-fix code edits follow red→green→commit discipline.
    - **PATH A (`docs-only`):** must-fix edits are direct.
    - **PATH D (quick-fix):** step 8 is skipped entirely (see early-return contract above); this row only applies on forced re-entry.

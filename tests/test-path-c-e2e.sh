@@ -110,6 +110,67 @@ else
   fail_msg "Step B expected exit 0, got $RC"
 fi
 
+# Step C (#749): inline orchestrator-owned fan-out is functionally equivalent to
+# the spawned-worker fan-out for hook authorization. A dispatch JSON shaped as a
+# TOP-LEVEL orchestrator-owned tdd-implementer dispatch (target=web/, NOT routed
+# through a spawned claude -p worker) must authorize the same-session Edit on
+# web/foo.ts identically to Step B. This pins that flipping PATH C execute to
+# inline orchestrator fan-out does not change the hook's authorization outcome.
+echo "Step C: inline orchestrator-owned tdd-implementer dispatch authorizes the Edit identically -> allow"
+# Fresh session so this case is independent of Step B's dispatch log.
+INLINE_SESSION_ID="e2e-inline-sess-$$"
+run_hook_inline() {
+  local out_file="$WORKDIR/out.txt"
+  local err_file="$WORKDIR/err.txt"
+  local payload
+  payload=$(python3 -c "
+import json
+print(json.dumps({
+  'tool_name': 'Edit',
+  'tool_input': {'file_path': 'web/foo.ts'},
+  'session_id': '$INLINE_SESSION_ID',
+}))
+")
+  cd "$PROJ"
+  set +e
+  echo "$payload" | env -i \
+    HOME="$HOME" \
+    PATH="$STUB_DIR:/usr/bin:/bin" \
+    CLAUDE_PROJECT_DIR="$PROJ" \
+    CLAUDE_PIPELINE_ISSUE_NUMBER="$ISSUE_NUM" \
+    STUB_LABELS="multi-task" \
+    python3 "$HOOK" >"$out_file" 2>"$err_file"
+  local rc=$?
+  set -e
+  cd - >/dev/null
+  echo "$rc"
+}
+
+# Orchestrator-owned inline fan-out dispatch: top-level, carries the target=web/
+# sentinel and an inline-fan-out description (no spawned-worker transport).
+python3 - "$PROJ/.claude/logs/subagents/${INLINE_SESSION_ID}-dispatch.json" "$INLINE_SESSION_ID" <<'PY'
+import json, sys
+file, sess = sys.argv[1:3]
+with open(file, "w") as f:
+    json.dump({
+        "schema_version": 1,
+        "timestamp_utc": "2026-04-19T00:00:00",
+        "session_id": sess,
+        "agent_id": "inline-fanout-fake",
+        "description": "orchestrator-owned inline fan-out: target=web/",
+        "subagent_type": "tdd-implementer",
+        "prompt": "target=web/\n\nInline orchestrator-owned fan-out; do the thing.",
+    }, f)
+PY
+
+inc
+RC=$(run_hook_inline)
+if [ "$RC" = "0" ]; then
+  pass_msg "Step C allowed (exit 0) under inline orchestrator-owned fan-out"
+else
+  fail_msg "Step C expected exit 0, got $RC"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
