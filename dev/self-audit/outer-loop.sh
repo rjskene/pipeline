@@ -75,10 +75,10 @@ MD
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       echo "$line"
-      target="skills/run/SKILL.md prose (orchestrator-side discipline)"
+      target="skills/status/SKILL.md prose (orchestrator-side discipline)"
       case "$line" in
         *TDD*|*tdd_*) target="skills/execute-issue-plan/SKILL.md prose + hooks/ (e.g. enforce-tdd-order)" ;;
-        *wave_*)      target="skills/run/SKILL.md prose (wave-prioritization)" ;;
+        *wave_*)      target="skills/status/SKILL.md prose (wave-prioritization)" ;;
         *turn_count*) target="pipeline.config.example tuning (verbose-mode default) OR skill prose" ;;
         *PATH-*|*path-tier*) target="scripts/spawn-claude.sh (dispatch routing)" ;;
       esac
@@ -123,7 +123,7 @@ MD
       lower=$(printf '%s' "$d" | tr '[:upper:]' '[:lower:]')
       scope="self-improve"
       case "$lower" in
-        *skills/run/*|*pipeline:run*) scope="run" ;;
+        *skills/status/*|*pipeline:status*|*skills/run/*|*pipeline:run*) scope="status" ;;
         *classify-issue*)             scope="classify-issue" ;;
         *evaluate-issue-pr*|*evaluate-issue-plan*) scope="evaluate" ;;
         *execute-issue-plan*)         scope="execute" ;;
