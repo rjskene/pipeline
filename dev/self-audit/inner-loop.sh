@@ -69,8 +69,8 @@ MD
 MD
 
   # Derive prior session UUID + one-liner from runs.log (most recent row).
-  # The subagent classifier (dispatched from /pipeline:run step 1c) finds the
-  # placeholder line via exact-string match and replaces it via Edit.
+  # The subagent classifier (dispatched during a /pipeline:status session) finds
+  # the placeholder line via exact-string match and replaces it via Edit.
   PRIOR_LINE=$(tail -n 1 "$LOGS_DIR/runs.log" 2>/dev/null || true)
   if [ -n "$PRIOR_LINE" ]; then
     PRIOR_UUID=$(printf '%s' "$PRIOR_LINE" | grep -oE 'session=[a-zA-Z0-9_-]+' | head -1 | cut -d= -f2)

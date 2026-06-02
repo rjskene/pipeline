@@ -13,14 +13,19 @@ set -euo pipefail
 #       equality reads as fresh
 #   (b) skills/classify-issue/SKILL.md no longer carries the bare strict-`>`
 #       shape `[[ -n "$LATEST_CLASS_TS" && "$LATEST_CLASS_TS" > "$ISSUE_TS" ]]`
-#   (c) both prose mentions (skills/run/SKILL.md and
-#       skills/run/references/dispatch-routing.md) read `createdAt >=
-#       issue.updatedAt`, and neither still carries the strict-`>` literal
+#   (c) the freshness prose mention reads `createdAt >= issue.updatedAt`, and
+#       does not still carry the strict-`>` literal
+#
+# #763 repoint: the run→status rename moved ALL classify/plan dispatch wiring
+# (including this freshness-check prose) out of the read-only /pipeline:status
+# skill into skills/fullsend/SKILL.md, and DELETED skills/run/references/
+# dispatch-routing.md entirely. So the single surviving prose home for the
+# `createdAt >= issue.updatedAt` mention is fullsend's Step 1b. The classify-issue
+# OR-equality asserts (a)/(b) are unchanged.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLASSIFY_PATH="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
-RUN_PATH="$SCRIPT_DIR/../skills/run/SKILL.md"
-ROUTING_PATH="$SCRIPT_DIR/../skills/run/references/dispatch-routing.md"
+FULLSEND_PATH="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -29,7 +34,7 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-for f in "$CLASSIFY_PATH" "$RUN_PATH" "$ROUTING_PATH"; do
+for f in "$CLASSIFY_PATH" "$FULLSEND_PATH"; do
   if [ ! -f "$f" ]; then
     echo "  FAIL: expected file not found at $f"
     exit 1
@@ -52,33 +57,21 @@ else
   pass_msg "classify-issue/SKILL.md no longer carries the bare strict-\`>\` conditional"
 fi
 
-# (c) Prose mentions must read `>=`, and the strict-`>` literal must be gone.
+# (c) The fullsend prose mention must read `>=`, and the strict-`>` literal
+#     must be gone. (The deleted dispatch-routing.md asserts were dropped — that
+#     reference file no longer exists; fullsend Step 1b is its only successor.)
 inc
-if grep -qF 'createdAt >= issue.updatedAt' "$RUN_PATH"; then
-  pass_msg "run/SKILL.md prose reads 'createdAt >= issue.updatedAt'"
+if grep -qF 'createdAt >= issue.updatedAt' "$FULLSEND_PATH"; then
+  pass_msg "fullsend/SKILL.md prose reads 'createdAt >= issue.updatedAt'"
 else
-  fail_msg "run/SKILL.md prose does not read 'createdAt >= issue.updatedAt'"
+  fail_msg "fullsend/SKILL.md prose does not read 'createdAt >= issue.updatedAt'"
 fi
 
 inc
-if grep -qF 'createdAt >= issue.updatedAt' "$ROUTING_PATH"; then
-  pass_msg "dispatch-routing.md prose reads 'createdAt >= issue.updatedAt'"
+if grep -qF 'createdAt > issue.updatedAt' "$FULLSEND_PATH"; then
+  fail_msg "fullsend/SKILL.md still carries the strict-\`>\` prose literal 'createdAt > issue.updatedAt'"
 else
-  fail_msg "dispatch-routing.md prose does not read 'createdAt >= issue.updatedAt'"
-fi
-
-inc
-if grep -qF 'createdAt > issue.updatedAt' "$RUN_PATH"; then
-  fail_msg "run/SKILL.md still carries the strict-\`>\` prose literal 'createdAt > issue.updatedAt'"
-else
-  pass_msg "run/SKILL.md carries no strict-\`>\` prose literal"
-fi
-
-inc
-if grep -qF 'createdAt > issue.updatedAt' "$ROUTING_PATH"; then
-  fail_msg "dispatch-routing.md still carries the strict-\`>\` prose literal 'createdAt > issue.updatedAt'"
-else
-  pass_msg "dispatch-routing.md carries no strict-\`>\` prose literal"
+  pass_msg "fullsend/SKILL.md carries no strict-\`>\` prose literal"
 fi
 
 echo ""

@@ -114,7 +114,7 @@ if [[ "$TITLE" =~ $DOUBLE_RE ]]; then
 fi
 
 # Conventional-commits passthrough — keep this regex in sync with
-# .github/workflows/pr-title-check.yml and skills/run/SKILL.md merge gate.
+# .github/workflows/pr-title-check.yml and skills/status/SKILL.md merge gate.
 CC_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)(\([a-z0-9_-]+\))?!?: .+'
 if [[ "$TITLE" =~ $CC_RE ]]; then
   emit_title "$TITLE"
@@ -188,7 +188,7 @@ fi
 
 # Default — no recognized signal. Emit chore(general) so release-please
 # still ingests it cleanly; a human can rename with `gh pr edit --title`
-# and the merge-gate validation in skills/run/SKILL.md is the final
+# and the merge-gate validation in skills/status/SKILL.md is the final
 # reword opportunity.
 emit_title "$(printf 'chore(general): %s' "$(summary_from_title)")"
 exit 0

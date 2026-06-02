@@ -24,11 +24,13 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Inline evaluate-issue-pr dispatch sites that MUST carry the terminal-state
-# directive (mirror of the execute two-site parity).
+# Inline evaluate-issue-pr dispatch site that MUST carry the terminal-state
+# directive. #763: the run→status rename moved ALL inline PR-eval dispatch wiring
+# out of the old /pipeline:run skill into fullsend's Step 7 — the read-only
+# /pipeline:status skill no longer dispatches — so fullsend is now the single
+# PR-eval dispatch site.
 DISPATCH_SITES=(
   "skills/fullsend/SKILL.md"
-  "skills/run/SKILL.md"
 )
 
 # Canonical directive substrings (must appear at each dispatch site).

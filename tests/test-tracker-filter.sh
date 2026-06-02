@@ -13,7 +13,7 @@ set -euo pipefail
 # tracker label.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RUN_SKILL="$SCRIPT_DIR/../skills/run/SKILL.md"
+RUN_SKILL="$SCRIPT_DIR/../skills/status/SKILL.md"
 CREATE_SKILL="$SCRIPT_DIR/../skills/create-issues/SKILL.md"
 
 PASS=0

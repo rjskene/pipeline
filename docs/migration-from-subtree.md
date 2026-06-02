@@ -92,8 +92,10 @@ If the migration script printed a different install hint at the end of step 2 (e
 ## 6. Verify
 
 ```bash
-/pipeline:run
+/pipeline:status
 ```
+
+(`/pipeline:run` remains as a deprecated alias for `/pipeline:status`.)
 
 You should see the pipeline orchestrator inspect the issue queue and report the next stage. If the command is not found, the plugin did not install correctly — re-run step 5 and check for errors.
 

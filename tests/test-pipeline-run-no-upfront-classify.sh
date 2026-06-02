@@ -18,7 +18,7 @@ set -euo pipefail
 #       present in step 4
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_PATH="$SCRIPT_DIR/../skills/run/SKILL.md"
+SKILL_PATH="$SCRIPT_DIR/../skills/status/SKILL.md"
 
 PASS=0
 FAIL=0
@@ -56,13 +56,12 @@ else
   fail_msg "skills/run/SKILL.md is missing the 'Path column shows \`?\` for ready issues not yet classified' footnote"
 fi
 
-# (d) The unclassified-subset proposal phrasing must be present.
-inc
-if grep -qF 'lack classification' "$SKILL_PATH"; then
-  pass_msg "skills/run/SKILL.md surfaces the unclassified subset in the planning proposal"
-else
-  fail_msg "skills/run/SKILL.md is missing the 'lack classification' planning-proposal phrasing"
-fi
+# (d) DELETED for #763: the "lack classification" planning-proposal phrasing was
+#     removed when /pipeline:run became the read-only /pipeline:status survey.
+#     status renders the table and STOPs — it no longer proposes a planning
+#     action over the unclassified subset (classification is a /pipeline:fullsend
+#     concern, surfaced only as the Path=? footnote, asserted by (c) above).
+#     Genuinely obsolete: status makes NO proposals by design.
 
 echo ""
 echo "================================"

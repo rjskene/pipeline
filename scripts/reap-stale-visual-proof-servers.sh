@@ -20,7 +20,7 @@
 set -euo pipefail
 
 # Discover orchestrator repo root for the `git worktree list` cross-check.
-# Default to PWD; callers (skills/run Step 0) typically already cd'd to the
+# Default to PWD; callers (skills/status Step 0) typically already cd'd to the
 # orchestrator base. Fall back to PWD if `git -C` fails.
 WORKTREE_BASE="${PIPELINE_REPO_ROOT:-$(pwd)}"
 

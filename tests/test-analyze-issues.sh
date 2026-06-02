@@ -4,7 +4,8 @@ set -uo pipefail
 export PIPELINE_LOGS_ENABLED=true
 #
 # Tests for scripts/analyze-issues.sh — the Stage 1 deterministic shortlist
-# generator backing /pipeline:run --analyze (issue #138).
+# generator backing /pipeline:status --analyze (issue #138; renamed from
+# /pipeline:run --analyze in #763, with /pipeline:run kept as a deprecated alias).
 #
 # Uses fixture mode (--fixture <dir>) so no live `gh` calls are required.
 # The fixture directory must contain:

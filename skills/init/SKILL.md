@@ -67,5 +67,5 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/init.sh" --preflight-only
 
 To regenerate `pipeline.config` over an existing one, pass `--force`.
 
-After init reports `bootstrap complete`, run `/pipeline:run` to start the
+After init reports `bootstrap complete`, run `/pipeline:status` to start the
 workflow.

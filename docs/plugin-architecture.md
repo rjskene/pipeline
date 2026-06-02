@@ -12,7 +12,7 @@ The consumer project owns exactly one pipeline file: `pipeline.config` at the pr
 
 ## Slash command namespacing
 
-All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:run`, …). Unprefixed command names like `plan-issue` are intentionally not registered so the plugin coexists with other plugins that might claim those names.
+All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/pipeline:status`, …). Unprefixed command names like `plan-issue` are intentionally not registered so the plugin coexists with other plugins that might claim those names.
 
 ## Greenfield install (`/pipeline:init`)
 
