@@ -133,7 +133,7 @@ Use `${ORDERED[@]}` as the iteration order for the sequential merge loop below. 
    - If rebase succeeds: run tests, force-push with `--force-with-lease`, retry merge
    - If conflicts are complex: abort rebase, flag for user review, skip this PR
 
-4. Merge PRs sequentially to avoid cascading conflicts. Before each merge, validate the PR title against the Conventional Commits format — release-please reads the squash commit on merge, so a non-conforming title breaks automated versioning and CHANGELOG generation.
+4. Merge PRs sequentially to avoid cascading conflicts. Before each merge, validate the PR title against the Conventional Commits format — release-please reads the merge-commit subject on merge, so a non-conforming title breaks automated versioning and CHANGELOG generation.
 
    ```bash
    # Validate PR title against Conventional Commits format.
