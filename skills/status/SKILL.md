@@ -124,6 +124,13 @@ Path column shows `?` for ready issues not yet classified — classification run
    # Reap stale visual-proof servers (orphaned python http.servers whose
    # worktree has been pruned). Housekeeping; never gate-fatal. See #517.
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/reap-stale-visual-proof-servers.sh" || true
+   # Rolling-window usage read-out (dogfood-only, #725). READ-ONLY advisory
+   # over the gated agent-cost capture — relay its single read-out line so the
+   # operator sees window-usage / headroom / throttle-ETA. Never gate-fatal;
+   # emits SKIP_LOGGING_DISABLED when logs are off and a `disabled (... unset)`
+   # line when the cap is unset. No hold/queue/pacing is performed (#725).
+   PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" \
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-surface.sh" || true
    ```
 
    Output schema, one line per PR: `pr=<num> ci=<pass|fail|pending> title=<title>`. Empty when no release PRs are open. Release PRs are surfaced in the status table as a Release-PR block with Stage column rendering as the display-only literal `release-pending` (NOT a real GitHub label) and never enter the issue lifecycle.
