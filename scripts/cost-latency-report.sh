@@ -1250,9 +1250,15 @@ TOKENOMICS_TSV=""
 # headline finding: token-share != cost-share (output = low token-share / high
 # cost-share at 75/1M; cache_read = high token-share / low cost-share at 1.50/1M).
 emit_bucket_table() {
+  # Per-N / per-LOC divisors (issue #833): N = reconciled-substrate record count
+  # (CAPTURE_JSON length); LOC = total merged-PR LOC across the window (sum of
+  # ROWS_TSV col3). Both substrates are populated before the --tokenomics block.
+  local bt_n bt_loc
+  bt_n="$(printf '%s' "$CAPTURE_JSON" | jq -r 'length' 2>/dev/null)"; [ -z "$bt_n" ] && bt_n=0
+  bt_loc="$(awk -F'\t' '{s+=$3} END{print s+0}' "$ROWS_TSV")"
   echo ""
-  echo 'BUCKET     | tokens       | $        | cost%  | token%'
-  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' '
+  echo 'BUCKET     | tokens       | $        | cost%  | token% |      tok/N |    $/N |    tok/LOC |  $/LOC'
+  printf '%s\n' "$TOKENOMICS_TSV" | awk -F'\t' -v nrec="$bt_n" -v loc="$bt_loc" '
     NF >= 10 {
       tin+=$3; tout+=$4; tcc+=$5; tcr+=$6;
       cin+=$7; cout+=$8; ccc+=$9; ccr+=$10;
@@ -1266,7 +1272,12 @@ emit_bucket_table() {
       for (i=1; i<=4; i++) {
         cp = (tcost>0 ? cost[i]/tcost*100 : 0);
         tp = (ttok>0  ? tok[i]/ttok*100  : 0);
-        printf "%-10s | %12d | %8.2f | %5.1f%% | %5.1f%%\n", names[i], tok[i], cost[i], cp, tp;
+        if (nrec > 0) { tpn = sprintf("%d", tok[i]/nrec);  upn = sprintf("%.2f", cost[i]/nrec); }
+        else          { tpn = "--";                        upn = "--"; }
+        if (loc > 0)  { tpl = sprintf("%.1f", tok[i]/loc); upl = sprintf("%.2f", cost[i]/loc); }
+        else          { tpl = "--";                        upl = "--"; }
+        printf "%-10s | %12d | %8.2f | %5.1f%% | %5.1f%% | %10s | %6s | %10s | %6s\n", \
+          names[i], tok[i], cost[i], cp, tp, tpn, upn, tpl, upl;
       }
     }'
 }

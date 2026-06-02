@@ -691,7 +691,43 @@ if [ "$CR_USD17" = "15.00" ]; then
 else
   fail_msg "cache_read bucket \$ should be 15.00, got $CR_USD17 (row=$CR_ROW17)"
 fi
+
+# per-N / per-LOC columns (issue #833). Fixture: N=1 record, total LOC=400.
+# Appended after the existing 5 cols: tok/N($6) | $/N($7) | tok/LOC($8) | $/LOC($9).
+# output:     tok/N=1000000, $/N=75.00, tok/LOC=2500.0, $/LOC=0.1875→0.19
+# cache_read: tok/N=10000000, $/N=15.00, tok/LOC=25000.0, $/LOC=0.0375→0.04
+OUT_TOKN17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6+0}')"
+OUT_USDN17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+OUT_TOKLOC17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8+0}')"
+OUT_USDLOC17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$9); print $9}')"
+if [ "$OUT_TOKN17" = "1000000" ]; then pass_msg "output tok/N == 1000000"; else fail_msg "output tok/N should be 1000000, got $OUT_TOKN17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_USDN17" = "75.00" ]; then pass_msg "output \$/N == 75.00"; else fail_msg "output \$/N should be 75.00, got $OUT_USDN17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_TOKLOC17" = "2500" ]; then pass_msg "output tok/LOC == 2500"; else fail_msg "output tok/LOC should be 2500, got $OUT_TOKLOC17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_USDLOC17" = "0.19" ]; then pass_msg "output \$/LOC == 0.19"; else fail_msg "output \$/LOC should be 0.19, got $OUT_USDLOC17 (row=$OUT_ROW17)"; fi
+
+CR_TOKN17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6+0}')"
+CR_USDN17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
+CR_USDLOC17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$9); print $9}')"
+if [ "$CR_TOKN17" = "10000000" ]; then pass_msg "cache_read tok/N == 10000000"; else fail_msg "cache_read tok/N should be 10000000, got $CR_TOKN17 (row=$CR_ROW17)"; fi
+if [ "$CR_USDN17" = "15.00" ]; then pass_msg "cache_read \$/N == 15.00"; else fail_msg "cache_read \$/N should be 15.00, got $CR_USDN17 (row=$CR_ROW17)"; fi
+if [ "$CR_USDLOC17" = "0.04" ]; then pass_msg "cache_read \$/LOC == 0.04"; else fail_msg "cache_read \$/LOC should be 0.04, got $CR_USDLOC17 (row=$CR_ROW17)"; fi
 rm -rf "$TMP17"
+
+# per-LOC divide-by-zero guard (issue #833). Fixture: a priced capture record but
+# ZERO joined LOC — the PR body has no Closes/Fixes/Resolves marker, so it is
+# skipped from ROWS_TSV (SKIPPED_NO_LINK) → total LOC = 0 → tok/LOC and $/LOC
+# must render '--' (no divide-by-zero).
+TMP17B="$(mktemp -d)"; cp "$FIXTURE_DIR"/*.json "$TMP17B/" 2>/dev/null
+printf '%s\n' '[{"number":118,"title":"feat: no-link","additions":50,"deletions":0,"body":"no marker here","mergedAt":"2026-05-13T12:00:00Z","labels":[]}]' > "$TMP17B/prs.json"
+printf '%s\n' '{"number":118,"additions":50,"deletions":0,"comments":[]}' > "$TMP17B/pr-118.json"
+printf '%s\n' '{"schema_version":1,"issue":"218","stage":"execute","session_id":"s17b","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K218","tokens":{"input":0,"output":1000000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}' > "$TMP17B/capture.jsonl"
+TOK17B="$(bash "$HELPER" --fixture "$TMP17B" --tokenomics 2>/dev/null)"
+OUT_ROW17B="$(printf '%s\n' "$TOK17B" | grep -E '^output[[:space:]]*\|' | head -1)"
+OUT_TOKLOC17B="$(printf '%s' "$OUT_ROW17B" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8}')"
+OUT_USDLOC17B="$(printf '%s' "$OUT_ROW17B" | awk -F'|' '{gsub(/[ ]/,"",$9); print $9}')"
+if [ "$OUT_TOKLOC17B" = "--" ]; then pass_msg "tok/LOC renders -- when total LOC is 0 (no divide-by-zero)"; else fail_msg "tok/LOC should be -- with zero LOC, got $OUT_TOKLOC17B (row=$OUT_ROW17B)"; fi
+if [ "$OUT_USDLOC17B" = "--" ]; then pass_msg "\$/LOC renders -- when total LOC is 0 (no divide-by-zero)"; else fail_msg "\$/LOC should be -- with zero LOC, got $OUT_USDLOC17B (row=$OUT_ROW17B)"; fi
+rm -rf "$TMP17B"
 
 # --- Scenario 18: --tokenomics per-stage cost table (size nets out cache_read) (#721) ---
 # Per-stage table with priced $ + cost share. The TOKEN column is a SIZE view:
