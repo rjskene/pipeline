@@ -105,6 +105,39 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/err"
 fi
 
+# =====================================================================
+# Case 2: AD cap honored independently of BC (default MAX_AD=5)
+# Six PATH-A/D issues (docs-only / quick-fix), no deps, no conflicts. With
+# MAX_AD=5 the first leg takes five; the sixth rolls to leg 2. Crucially the
+# AD pool is accounted SEPARATELY from BC.
+# =====================================================================
+echo "Case 2: AD cap (default 5) caps a leg at 5 A/D-class issues, independent of BC"
+S="$TMP/case2"; mkdir -p "$S"; export GH_ISSUE_DIR="$S"
+write_issue "$S" 1 "docs-only" "Docs A."
+write_issue "$S" 2 "quick-fix" "Quick D."
+write_issue "$S" 3 "docs-only" "Docs A."
+write_issue "$S" 4 "quick-fix" "Quick D."
+write_issue "$S" 5 "docs-only" "Docs A."
+write_issue "$S" 6 "quick-fix" "Quick D."
+inc
+if OUT=$(run_helper 1 2 3 4 5 6 2>"$S/err"); then
+  L1=$(echo "$OUT" | grep -E '^Leg 1: ' || true)
+  L2=$(echo "$OUT" | grep -E '^Leg 2: ' || true)
+  if echo "$L1" | grep -qE '\(BC=0 AD=5\)' \
+     && echo "$L1" | grep -qE '#1, #2, #3, #4, #5' \
+     && ! echo "$L1" | grep -q '#6' \
+     && echo "$L2" | grep -qE '#6'; then
+    pass_msg "Case 2: leg 1 holds 5 A/D issues (AD=5); #6 rolls to leg 2"
+  else
+    fail_msg "Case 2: AD cap not honored independently"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 2: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/err"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
