@@ -138,6 +138,36 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/err"
 fi
 
+# =====================================================================
+# Case 3: dependency order — a same-leg blocker defers the dependent to the
+# NEXT leg. #1 and #2 are both PATH-B, no file conflict, so absent deps they
+# would share leg 1 (BC cap is 2). But #2 is `blocked by #1`; since #1 is
+# placed in THIS same leg, #2 must defer to leg 2 (a same-leg blocker is not
+# yet satisfied). Leg 2's single #2 line carries the `blocked by #1` reason.
+# =====================================================================
+echo "Case 3: a same-leg blocker defers the dependent to the next leg"
+S="$TMP/case3"; mkdir -p "$S"; export GH_ISSUE_DIR="$S"
+write_issue "$S" 1 "" "Independent B; touches \`x.sh\`."
+write_issue "$S" 2 "" "B work; touches \`y.sh\`. blocked by #1 for ordering."
+inc
+if OUT=$(run_helper 1 2 2>"$S/err"); then
+  L1=$(echo "$OUT" | grep -E '^Leg 1: ' || true)
+  L2=$(echo "$OUT" | grep -E '^Leg 2: ' || true)
+  if echo "$L1" | grep -qE '^Leg 1: #1 ' \
+     && ! echo "$L1" | grep -q '#2' \
+     && echo "$L2" | grep -qE '^Leg 2: #2 ' \
+     && echo "$L2" | grep -q 'blocked by #1'; then
+    pass_msg "Case 3: #2 deferred to leg 2 with 'blocked by #1' reason"
+  else
+    fail_msg "Case 3: same-leg blocker did not defer dependent"
+    echo "    stdout:"; echo "$OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 3: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/err"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
