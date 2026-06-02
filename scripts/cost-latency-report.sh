@@ -39,6 +39,7 @@ TOKENOMICS=0
 OVER_SERVED_LOC=20
 TOPN=5
 CAPTURE_LOG=""
+SINCE=""
 
 print_usage() {
   cat <<'USAGE'
@@ -76,6 +77,9 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                        (default: 5).
   --capture-log PATH   Override the live capture JSONL path (default
                        .claude/logs/agent-costs.jsonl). Ignored in fixture mode.
+  --since DATE         Restrict cost/token tables to records whose ts_start
+                       date (YYYY-MM-DD) is >= DATE (the reconcilable era).
+                       Records with empty/absent ts_start are excluded.
   --help               Print this banner and exit 0.
 USAGE
 }
@@ -97,6 +101,8 @@ while [ $# -gt 0 ]; do
     --top-n=*)            TOPN="${1#--top-n=}"; shift ;;
     --capture-log)        CAPTURE_LOG="${2:-}"; shift 2 ;;
     --capture-log=*)      CAPTURE_LOG="${1#--capture-log=}"; shift ;;
+    --since)              SINCE="${2:-}"; shift 2 ;;
+    --since=*)            SINCE="${1#--since=}"; shift ;;
     *)
       echo "cost-latency-report: ERROR: unknown arg: $1" >&2
       exit 1
@@ -593,6 +599,30 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
   + [ .[] | select((has("session_id") | not) or .session_id == null) ]
 ' 2>/dev/null)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+
+# --- reconciled-substrate scoping (issue #816) ---
+# Preserve the FULL deduped stream for coverage-health disclosure (it must
+# still SEE the lower-bounds it reports) and the concurrency inline-presence
+# count. Cost/token MAGNITUDE tables then read only the reconciled substrate:
+# usage_complete != false (keeps `true` AND records with no usage_complete
+# field — fixture/legacy compat — drops ONLY explicit lower-bounds). NOT a
+# source=="retroactive" filter: that would drop complete forward
+# orchestrator/main records and keep retroactive lower-bounds (issue #816
+# decision). Optional --since DATE additionally restricts to records whose
+# ts_start date (YYYY-MM-DD prefix) is >= DATE; records with an empty/absent
+# ts_start are dropped under --since (cannot be date-placed). EXCLUDED_LOWER_BOUND
+# counts what the usage_complete filter removed, for the coverage-health
+# disclosure line.
+CAPTURE_ALL="$CAPTURE_JSON"
+CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '[ .[] | select(.usage_complete != false) ]' 2>/dev/null)"
+[ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+if [ -n "$SINCE" ]; then
+  CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg since "$SINCE" '
+    [ .[] | select(((.ts_start // "") | .[0:10]) >= $since and (.ts_start // "") != "") ]' 2>/dev/null)"
+  [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
+fi
+EXCLUDED_LOWER_BOUND="$(printf '%s' "$CAPTURE_ALL" | jq -r '[ .[] | select(.usage_complete == false) ] | length' 2>/dev/null)"
+[ -z "$EXCLUDED_LOWER_BOUND" ] && EXCLUDED_LOWER_BOUND=0
 
 # --- emit aggregate pricing as JSON (debug; feeds Task-3 tokenomics) ---
 if [ "$EMIT_PRICING_JSON" -eq 1 ]; then
@@ -1137,10 +1167,14 @@ emit_breakeven_table() {
 emit_coverage_health() {
   echo ""
   echo "COVERAGE HEALTH:"
+  # Coverage-health reads the FULL deduped stream (CAPTURE_ALL), NOT the
+  # reconciled substrate (issue #816): it is the disclosure of what was
+  # excluded, so it must keep counting the usage_complete=false lower-bounds it
+  # reports. Cost/token MAGNITUDE tables read the reconciled $CAPTURE_JSON.
   local exec_n total_n priced_n
-  exec_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select(.stage == "execute")] | length' 2>/dev/null)"
-  total_n="$(printf '%s' "$CAPTURE_JSON" | jq -r 'length' 2>/dev/null)"
-  priced_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select((.model // "") != "")] | length' 2>/dev/null)"
+  exec_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select(.stage == "execute")] | length' 2>/dev/null)"
+  total_n="$(printf '%s' "$CAPTURE_ALL" | jq -r 'length' 2>/dev/null)"
+  priced_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select((.model // "") != "")] | length' 2>/dev/null)"
   [ -z "$exec_n" ] && exec_n=0
   [ -z "$total_n" ] && total_n=0
   [ -z "$priced_n" ] && priced_n=0
@@ -1165,12 +1199,17 @@ emit_coverage_health() {
   # token totals read as a LOWER BOUND, not the real cost. Re-running the
   # capture backfill once the transcript exists reconciles them upward.
   local lb_n
-  lb_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select(.usage_complete == false)] | length' 2>/dev/null)"
+  lb_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select(.usage_complete == false)] | length' 2>/dev/null)"
   [ -z "$lb_n" ] && lb_n=0
   awk -v lb="$lb_n" -v t="$total_n" 'BEGIN {
     pct = (t > 0 ? lb/t*100 : 0);
     printf "lower-bound (unreconciled) records: %d/%d (%.1f%%) — these read as a LOWER BOUND; run the backfill to reconcile\n", lb, t, pct;
   }'
+
+  # Disclose how many lower-bounds the reconciled substrate EXCLUDED from the
+  # cost/token magnitude tables, so the scoping is explicit (issue #816; CLAUDE.md
+  # Observability → no silent drops).
+  printf 'excluded from cost tables (usage_complete=false lower-bounds): %s — cost/token magnitude tables aggregate the reconciled substrate only (issue #816)\n' "$EXCLUDED_LOWER_BOUND"
 }
 
 # emit_trend — per-day + per-PR $ trend with outlier flagging.
@@ -1318,8 +1357,12 @@ emit_concurrency_assessment() {
   # shape (#773's territory), so they can never overlap in the interval sweep —
   # feeding them in would silently contribute zero. Instead we COUNT them and
   # ANNOTATE the headless peak as a LOWER BOUND that excludes inline overlap.
+  # Read the FULL deduped stream (CAPTURE_ALL), NOT the reconciled substrate
+  # (issue #816 evaluator item 1): this is a PRESENCE disclosure ("N inline
+  # records present"), not a cost magnitude, so explicit usage_complete=false
+  # inline rows must still be counted rather than silently dropped.
   local inline_n
-  inline_n="$(printf '%s' "$CAPTURE_JSON" | jq -r '[.[] | select((.agent_kind // "") != "headless")] | length' 2>/dev/null)"
+  inline_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select((.agent_kind // "") != "headless")] | length' 2>/dev/null)"
   [ -z "$inline_n" ] && inline_n=0
   printf 'inline agents are point-in-time (ts_start==ts_end) under the current capture shape → not interval-measurable; peak above is a LOWER BOUND that excludes inline overlap (%s inline records present).\n' "$inline_n"
 

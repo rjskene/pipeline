@@ -46,6 +46,7 @@ never block agent completion.
 from __future__ import annotations
 
 import datetime
+import glob
 import hashlib
 import json
 import os
@@ -162,6 +163,34 @@ def transcript_sum(path):
                 model = m
     return {"input": inp, "output": out, "cache_read": cr, "cache_creation": cc,
             "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model}
+
+
+def _subagent_transcript_sum(session_id, agent_id):
+    """Sum the durable subagent transcript for (session_id, agent_id), or None.
+
+    Resolves the same path the backfill INLINE pass uses
+    (scripts/capture-agent-costs.sh:346-348):
+        $HOME/.claude/projects/*/<session_id>/subagents/agent-<agent_id>.jsonl
+    where <session_id> is the orchestrator session that dispatched the subagent
+    (the id the payload carries and the backfill keys on). This transcript is the
+    CUMULATIVE multi-turn total, present at agent-finish (before pruning) — unlike
+    the final-turn `usage` snapshot the PostToolUse(Agent) payload carries (#765).
+
+    Returns transcript_sum(match) for the first glob match, or None when agent_id
+    or session_id is empty, HOME is unset, or no transcript file exists (the
+    pruned-race fallback: the caller then keeps the final-turn lower-bound). HOME
+    is read from os.environ so tests can override it."""
+    if not agent_id or not session_id:
+        return None
+    home = os.environ.get("HOME")
+    if not home:
+        return None
+    pattern = os.path.join(home, ".claude", "projects", "*", session_id,
+                           "subagents", "agent-" + agent_id + ".jsonl")
+    matches = glob.glob(pattern)
+    if not matches:
+        return None
+    return transcript_sum(matches[0])
 
 
 _STATE_FILENAME = "agent-cost-orchestrator-state.json"
@@ -377,6 +406,11 @@ def _normalize_payload(payload):
             "subagent_type": tool_input.get("subagent_type"),
             "usage": tool_response.get("usage"),
             "total_duration_ms": duration,
+            # agentId keys the durable subagent transcript
+            # (projects/*/<session>/subagents/agent-<id>.jsonl) that build_record
+            # sums at agent-finish to true-up the final-turn lower-bound (#815).
+            # log_subagent.py:76 reads the same field.
+            "agent_id": tool_response.get("agentId"),
         }
     return payload  # already flat top-level shape (SubagentStop / back-compat)
 
@@ -439,18 +473,22 @@ def build_record(payload, logs_dir=None):
         except (ValueError, AttributeError):
             pass
 
-    # model: the PostToolUse(Agent) payload carries no `model` (top-level or
-    # under tool_response) and no usable `transcript_path`. #691 ruled out
-    # reconstructing the /tmp/<agentId>.output transcript as fragile (the tmp
-    # layout has drifted between CC versions), non-hermetic (the /tmp transcript
-    # is not a tracked fixture), and I/O-heavy on this fail-open hot path. Instead
-    # the inline subagent inherits the SESSION model, which build_stop_record
-    # already resolves from the main-session transcript and persists into the
-    # orchestrator state sidecar keyed by this SAME session_id (#699). Read it
-    # back from there: a hermetic, in-process cross-source channel with no /tmp
-    # I/O. Fail-open "" when no sidecar entry exists yet (an inline record that
-    # fires before the session's first Stop); both downstream consumers render ""
-    # as "--", and the record self-heals once a Stop populates the sidecar.
+    # model resolution order: transcript model → sidecar session model (#699) →
+    # "". The PostToolUse(Agent) payload carries no `model` (top-level or under
+    # tool_response). #691 ruled out reconstructing the fragile
+    # /tmp/<agentId>.output transcript (the /tmp layout has drifted between CC
+    # versions, is non-hermetic, and is I/O-heavy on this fail-open hot path) —
+    # but that WON'T-FIX referred ONLY to the /tmp transcript, NOT to the durable
+    # projects/.../subagents/agent-<id>.jsonl transcript, which IS now summed at
+    # agent-finish (#815): when that transcript is present and adopted below, its
+    # model wins (set after this block). Absent a transcript model, the inline
+    # subagent inherits the SESSION model, which build_stop_record resolves from
+    # the main-session transcript and persists into the orchestrator state
+    # sidecar keyed by this SAME session_id (#699) — a hermetic, in-process
+    # cross-source channel with no /tmp I/O. Fail-open "" when no sidecar entry
+    # exists yet (an inline record that fires before the session's first Stop);
+    # both downstream consumers render "" as "--", and the record self-heals once
+    # a Stop populates the sidecar.
     model = _first(payload, "model") or (
         _session_model(logs_dir, session_id) if logs_dir else ""
     )
@@ -469,6 +507,31 @@ def build_record(payload, logs_dir=None):
     agent_type = agent_type or "general-purpose"
     source = "forward"
     agent_kind = "inline"
+
+    # True-up the final-turn lower-bound from the durable subagent transcript
+    # (#815). The PostToolUse(Agent) `usage` is the subagent's FINAL TURN only
+    # (#765) — an honest lower-bound. But the cumulative multi-turn transcript at
+    # projects/*/<session>/subagents/agent-<id>.jsonl is present at agent-finish
+    # (before pruning), so sum it and ADOPT-ONLY-WHEN-EXCEEDS the lower-bound
+    # (never downgrade — a partial/empty transcript can never understate a
+    # record). Mirrors the backfill (scripts/capture-agent-costs.sh:356-365):
+    # transcript model wins on adopt; usage_complete flips to True only on a real
+    # adopted cumulative. Fail-open: a missing transcript (pruned race / empty
+    # agent_id) leaves the honest lower-bound and usage_complete=False.
+    agent_id = _first(payload, "agent_id")
+    usage_complete = usage_is_cumulative
+    summ = _subagent_transcript_sum(session_id, agent_id) if agent_id else None
+    if summ is not None:
+        summ_total = summ["input"] + summ["output"] + summ["cache_read"] + summ["cache_creation"]
+        if summ_total > tokens["total"]:
+            tokens = {
+                "input": summ["input"], "output": summ["output"],
+                "cache_read": summ["cache_read"], "cache_creation": summ["cache_creation"],
+                "total": summ_total,
+            }
+            usage_complete = True
+            if summ["model"]:
+                model = summ["model"]
 
     return {
         "schema_version": 1,
@@ -490,12 +553,14 @@ def build_record(payload, logs_dir=None):
         "ts_end": ts_end,
         "source": source,
         # usage_complete reflects PROVENANCE, not a fabricated total: True only
-        # when _extract_usage sourced a cumulative field (total_usage/
-        # cumulative_usage). The common inline path carries only a final-turn
-        # `usage` snapshot (#765), so usage_is_cumulative is False and the record
-        # is honestly marked lower-bound — reconciles with
+        # when the source was a cumulative total — either _extract_usage sourced
+        # a cumulative field (total_usage/cumulative_usage), or the durable
+        # subagent transcript was summed and ADOPTED above (#815). The common
+        # inline path carries only a final-turn `usage` snapshot (#765); when no
+        # transcript trues it up, usage_is_cumulative is False and the record is
+        # honestly marked lower-bound — reconciling with the
         # scripts/capture-agent-costs.sh inline lower-bound contract (#765).
-        "usage_complete": usage_is_cumulative,
+        "usage_complete": usage_complete,
     }
 
 

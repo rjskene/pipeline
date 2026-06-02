@@ -12,8 +12,11 @@ Subagent invocations run in fresh shells, so source `pipeline.config` first:
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
-[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
-  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
+# CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
+_cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
+source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
 State (slate, base branch, repo) is inherited from `/pipeline:run` / `/pipeline:fullsend`; if these variables fail to resolve, **STOP** — preconditions live in `skills/run/SKILL.md`.
@@ -98,6 +101,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null
    ```
    Run exactly ONE verification pass at a time — never launch concurrent full-suite invocations. Concurrent runs of stub/temp-file-sharing tests collide and report spurious failures, driving wasteful retry spins (issue #677). Before reaching this phase, the issue's OWN targeted test MUST already be green: a source edit that leaves the targeted test red is a red→green→commit violation — fix it (red→green→commit) before verification. Never commit past a red targeted test.
+
+   **Run the suite SYNCHRONOUSLY in the foreground and read its exit code directly** (the `timeout 600 bash -c ...` line above runs in the foreground; its exit code is the result). Do NOT background a test monitor and then `Read` its `/tmp/...` output to learn the result: the dogfood boundary hook (`restrict_paths.py`) blocks reads under `/tmp` (outside the project boundary), so the `Read` fails and the agent narrate-and-yields — narrating an intention to "wait" ends the turn and strands committed-but-unpushed work (the #752 / #759 / #750 drop-out that the #764 dispatch-prompt band-aid did NOT durably fix). Never narrate "I'll wait for the suite" and stop; the suite has already finished synchronously when the Bash call returns. If async monitoring is ever genuinely required, write monitor output INSIDE the project boundary (`.claude/logs/` or `.claude/scratch/`, both allow-listed), never `/tmp`.
    **6c. Visual validation with Playwright** (Linux only, UI changes only): use Playwright MCP tools (configured in `.mcp.json`) to navigate to the frontend URL, screenshot affected views, and check `browser_console_messages` for JS errors. Fix and re-validate any visual issues. Backend-only changes do not require this step. (When clicking, prefer the `ref=` from `browser_snapshot` over CSS selectors with embedded quotes like `[type="submit"]` — the MCP server rejects the latter on the literal string; as of 2026-05-26.)
 
    **6d. Visual proof loop (needs-browser issues only):** If the issue carries the needs-browser label, after each plan section invoke `Skill(skill: "pipeline:visual-proof-from-plan")` passing the plan comment body. Iterate code→proof→code per section until the sub-skill reports `unsatisfied = []`. Commit the section. Proceed to the next section. This is the executor-side TDD loop with browser predicates standing in for unit tests; it does NOT replace 6a/6b which still run.

@@ -11,8 +11,12 @@ Source `pipeline.config` so `PIPELINE_*` variables are available:
 
 ```bash
 source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
-[ -f "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" ] \
-  && source "${CLAUDE_PLUGIN_ROOT:-.}/scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Self-resolve CLAUDE_PLUGIN_ROOT in case the env var is unset in the Bash subshell.
+# Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
+# CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
+_cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
+source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
 ## Invocation mode
@@ -245,7 +249,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
          fi
          ```
          If `REASON` is now `block-base-mismatch`, jump to Step 11.4 — do not invoke `gh pr merge`.
-       - Merge synchronously (NOT `--auto`), then capture the squash SHA (empty `$SHA` from rare API lag → omit from close comment; the merge is authoritative):
+       - Merge synchronously (NOT `--auto`), then capture the merge-commit SHA (empty `$SHA` from rare API lag → omit from close comment; the merge is authoritative):
          ```bash
          gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch
          SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
@@ -263,11 +267,19 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
          FOOTER="Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at ${TS}"
          gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" --body "$FOOTER"
          ```
-       - Flip labels and close the issue (omit `(${SHA})` if `$SHA` is empty):
+       - Flip labels and close the issue (omit `(${SHA})` if `$SHA` is empty). **Swallow the benign "already closed" non-error (issue #813).** `gh pr merge` auto-closes the linked issue via `closingIssuesReferences` a beat before this explicit `gh issue close` runs, so the explicit close routinely fails with an "already closed" message. That is cosmetic — the final state (merged + closed) is already correct — so the guard treats an `already closed` stderr as success and only re-raises a genuine close failure (e.g. a transient API error). The label flip and close comment still run for the case where the PR body carried no `Closes #N` link:
          ```bash
          gh issue edit "$ISSUE" --repo "$PIPELINE_REPO" --add-label "merged" --remove-label "pr-open"
          CLOSE_SUFFIX=$([ -n "$SHA" ] && echo " (${SHA})" || echo "")
-         gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}${CLOSE_SUFFIX}. ${FOOTER}"
+         CLOSE_ERR=$(gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}${CLOSE_SUFFIX}. ${FOOTER}" 2>&1)
+         if [ $? -ne 0 ]; then
+           if printf '%s' "$CLOSE_ERR" | grep -qi 'already closed'; then
+             echo "Issue #${ISSUE} already closed by gh pr merge (closingIssuesReferences) — benign (issue #813)."
+           else
+             echo "$CLOSE_ERR" >&2
+             exit 1
+           fi
+         fi
          ```
        - Screenshots: no cleanup needed — the `.eval-screenshots/` commit collapses into the merge-commit and the feature branch is deleted by `--delete-branch`. Step 11.3 (above) has already rewritten the eval comment's branch-pinned URLs — both the public `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...` form and the private `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` blob link (issue #551) — to the merge-SHA-pinned form (`.../<merge-sha>/.eval-screenshots/...`), so the embedded screenshots stay durable for the life of the commit even after the feature branch is deleted (issue #506). This supersedes the Option A ephemeral-artifact tradeoff originally accepted in tracker #383, where branch-pinned URLs returned 404 post-merge and reviewers had to capture evidence during the review window. Operators who deliberately want the legacy ephemeral behaviour (e.g. external or legal-hold screenshot capture) set `PIPELINE_SCREENSHOT_REWRITE_ENABLED=false`, which skips the Step 11.3 rewrite and restores the tracker-#383 post-merge-404 semantics.
 

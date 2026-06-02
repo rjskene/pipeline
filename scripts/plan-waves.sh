@@ -140,10 +140,22 @@ for N in "${ISSUES[@]}"; do
     if [ -n "$PLAN_FILES" ]; then
       FILES[$N]="$PLAN_FILES"
     else
+      # Path predicate (#811): a token only counts as a file path when it is a
+      # single whitespace-free path-shaped token — either a `dir/file` shape
+      # (a slash followed by a non-empty, non-slash filename segment) OR an
+      # anchored known extension. The earlier predicate accepted ANY span
+      # containing a slash, so backtick-wrapped PROSE with a slash (e.g. a
+      # "git mv <dir>" phrase, or a dot-claude skills-directory fragment quoted
+      # inside a sentence) leaked in: the span was whitespace-split and
+      # trailing-slash directory fragments re-passed the filter, fabricating
+      # false-positive paths. The `[^/[:space:]]+$` tail rejects trailing-slash
+      # dir fragments; anchoring with `^[^[:space:]]*` rejects multi-word prose
+      # phrases.
+      FILE_PATH_RE='^[^[:space:]]*/[^/[:space:]]+$|^[^[:space:]]+\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
       FROM_BACKTICKS=$( { echo "$BODY" \
         | grep -oE '`[^`]+`' \
         | tr -d '`' \
-        | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'; } || true)
+        | grep -E "$FILE_PATH_RE"; } || true)
       FROM_AFFECTED=$(echo "$BODY" \
         | awk 'BEGIN{IGNORECASE=1; in_block=0}
                /^##[[:space:]]+Affected areas/ {in_block=1; next}
@@ -151,7 +163,7 @@ for N in "${ISSUES[@]}"; do
                in_block && NF>0 {print}')
       FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
         | sed 's/[[:space:]]\+/\n/g' \
-        | grep -E '/|\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$' \
+        | grep -E "$FILE_PATH_RE" \
         | sort -u \
         | tr '\n' ' '; } || true)
       FILES[$N]="${FLIST% }"

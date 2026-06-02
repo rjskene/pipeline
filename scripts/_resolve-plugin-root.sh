@@ -27,8 +27,19 @@
 #
 # Idempotent. Silent on success. No-op when already set or when no cache exists.
 #
+# BOOT ANCHOR: SKILL.md ## Boot blocks bootstrap this resolver via the cache
+# glob ~/.claude/plugins/cache/claude-pipeline/pipeline/*/scripts/_resolve-plugin-root.sh
+# when CLAUDE_PLUGIN_ROOT is unset (a var-independent anchor — the boot snippet
+# cannot reference CLAUDE_PLUGIN_ROOT to FIND itself). That boot snippet
+# deliberately does NOT honor PIPELINE_PLUGIN_CACHE_DIR: it must be a
+# self-contained literal that runs BEFORE any pipeline env is sourced (it is the
+# bootstrap), so it hardcodes ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline.
+# Once this resolver IS sourced, its body below re-applies PIPELINE_PLUGIN_CACHE_DIR
+# for root SELECTION. The boot snippet only LOCATES the resolver file.
+#
 # NOTE: the plugin cache path is a Claude Code internal. If Anthropic moves it,
-# set PIPELINE_PLUGIN_CACHE_DIR to point at the new location.
+# set PIPELINE_PLUGIN_CACHE_DIR to point at the new location (and update the boot
+# snippet's hardcoded ${HOME} cache path in every SKILL.md + docs/plugin-architecture.md).
 
 if [ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = "true" ] && command -v git >/dev/null 2>&1; then
   _rpr_top="$(git rev-parse --show-toplevel 2>/dev/null)"
