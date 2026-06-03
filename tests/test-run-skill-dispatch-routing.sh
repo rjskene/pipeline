@@ -73,16 +73,15 @@ echo "$STEP6" | grep -qF "No spawn-claude.sh" \
 grep -qE "spawned PATH B|spawned B run|PATH B.*spawned (worker|run)" "$SKILL" \
   && { echo "FAIL: run SKILL.md still calls a PATH B run 'spawned' (B is inline now, #748)"; exit 1; } || true
 
-# Issue #749 Task 4: the routing/Step-6 prose must name a CONSERVATIVE inline-C
-# concurrency cap of 1–2 concurrent tdd-implementer AND justify it by the
-# bigger-than-B orchestrator-context cost (plan-read + N-target sequencing + PR
-# creation + N inline dispatch/return contexts held in-orchestrator). Phrase-
-# presence guard — pure model-facing prose.
-grep -qF "1–2 concurrent" "$SKILL" \
-  || { echo "FAIL: SKILL.md missing the conservative inline-C cap of '1–2 concurrent' tdd-implementer (#749)"; exit 1; }
-grep -qF "bigger-than-B orchestrator-context cost" "$SKILL" \
-  || { echo "FAIL: SKILL.md missing the inline-C cap justification ('bigger-than-B orchestrator-context cost') (#749)"; exit 1; }
-grep -qF "N inline dispatch/return contexts" "$SKILL" \
-  || { echo "FAIL: SKILL.md missing the orchestrator-context-cost breakdown ('N inline dispatch/return contexts') (#749)"; exit 1; }
+# Issue #896: the #749 conservative 1–2 git-index cap is RETIRED by the per-leaf
+# -worktree fix. The routing/Step-6 prose must instead name the per-leaf worktree
+# helper and bound concurrency by orchestrator context (max-3 foreground), NOT a
+# git-index cap. Phrase-presence guard — pure model-facing prose.
+grep -qF "path-c-split-worktree.sh" "$SKILL" \
+  || { echo "FAIL: SKILL.md missing the per-leaf-worktree helper 'path-c-split-worktree.sh' (#896)"; exit 1; }
+grep -qF "per-leaf worktree" "$SKILL" \
+  || { echo "FAIL: SKILL.md missing the 'per-leaf worktree' isolation contract (#896)"; exit 1; }
+grep -qE "never share a git index|shared.index race|git-index cap is retired|1–2 (git-index )?cap is retired" "$SKILL" \
+  || { echo "FAIL: SKILL.md must explain per-leaf worktrees eliminate the shared git-index race / retire the 1–2 cap (#896)"; exit 1; }
 
 echo "PASS: run SKILL.md dispatch routing"

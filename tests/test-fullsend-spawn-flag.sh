@@ -56,15 +56,16 @@ printf '%s' "$step7" | grep -qiF -- "--spawn" || { echo "MISSING (Step 7): --spa
 printf '%s' "$step7" | grep -qiF "run-queue" || { echo "MISSING (Step 7): run-queue"; fail=1; }
 printf '%s' "$step7" | grep -qiF -- "--skill evaluate-issue-pr" || { echo "MISSING (Step 7): --skill evaluate-issue-pr"; fail=1; }
 
-# Issue #749 Task 6: inline-C's first rollout is operator merge-gated on a live
-# branch test — run one real PATH C issue through inline fan-out, confirm the
-# main-session context load is tolerable, and dispatch with --manual-merge (no
-# auto-merge) until validated. Phrase-presence guard (file-level: the gate note
-# lives in the PATH C execution routing-reference branch).
+# Issue #749 Task 6 / #896: inline-C's first rollout was operator merge-gated on a
+# live branch test (run one real PATH C issue through inline fan-out FROM THE
+# FEATURE BRANCH with --manual-merge). The #894/#896 probes SATISFIED that gate —
+# they surfaced the shared git-index race now fixed by per-leaf worktrees. The
+# gate note must still record the --manual-merge live-branch-test contract and
+# mark it cleared. Phrase-presence guard (file-level).
 assert_has "Live branch-test merge gate"
-assert_has "main-session context load is tolerable"
 grep -qiF -- "--manual-merge" "$FILE" || { echo "MISSING (#749 merge gate): --manual-merge"; fail=1; }
-grep -qiF "NO auto-merge" "$FILE" || { echo "MISSING (#749 merge gate): NO auto-merge"; fail=1; }
+grep -qiE "satisfied by #894/#896|clearing the gate|gate.*satisfied|cleared" "$FILE" \
+  || { echo "MISSING (#896): live-branch-test merge gate marked satisfied/cleared"; fail=1; }
 
 if [ "$fail" -eq 0 ]; then
   echo "PASS: fullsend --spawn flag phrases present"
