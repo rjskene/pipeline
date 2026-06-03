@@ -87,6 +87,44 @@ case "$cmd $sub" in
     exit 0
     ;;
   "pr list")
+    # State-driven, argument-aware. Parses --head <branch> and
+    # --search <query> out of $@.
+    #   head_<ref>=<prnum>  -> exact-branch linkage. For --head <ref>:
+    #                          echo [{"number":<p>}] on match, [] otherwise.
+    #   latest_open_pr=<p>  -> the PR a buggy "latest open PR" resolver picks.
+    #                          Returned for a bare/unfiltered search (NO
+    #                          "<N> in:body" filter). The trap: the fixed
+    #                          helper must never return this for an issue.
+    #   body_pr_<N>=<p>     -> for --search "<N> in:body": echo
+    #                          [{"number":<p>,"body":"...#<N>..."}], else [].
+    head_ref=""
+    search_q=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --head)   head_ref="$2"; shift 2 ;;
+        --search) search_q="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    # The shim does NOT run jq -- like the `closedByPullRequestsReferences`
+    # branch above, it returns the ALREADY-jq-collapsed value (the bare PR
+    # number, or empty for no match) that the helper's `--jq` would yield.
+    if [ -n "$head_ref" ]; then
+      echo "${S[head_${head_ref}]:-}"
+      exit 0
+    fi
+    if [ -n "$search_q" ]; then
+      # Extract the leading issue number from a "<N> in:body" query.
+      if [[ "$search_q" =~ ^([0-9]+)[[:space:]]+in:body ]]; then
+        n="${BASH_REMATCH[1]}"
+        echo "${S[body_pr_$n]:-}"
+        exit 0
+      fi
+      # Bare/unfiltered search (the legacy fuzzy `linked:` path). Return the
+      # trap value the OLD helper's `.[0]` resolution would latch onto.
+      echo "${S[latest_open_pr]:-}"
+      exit 0
+    fi
     echo ""
     exit 0
     ;;
@@ -411,6 +449,108 @@ RECORDER: $(cat "$RECORDER_LOG")
 DISPATCH: $(cat "$fg/dispatch.out")"
     fi
   fi
+fi
+
+# ---- Fixture H: concurrent open PRs resolve per-issue ------------------
+# Reproduces #909: in a concurrent leg/wave with >=2 open feature PRs and
+# NO auto-linked closing PR ("Closes #N"), the helper must resolve each
+# issue to its OWN PR via that issue's worktree branch ref -- never the
+# latest open PR. Shared gh-state advertises:
+#   - wt-838-campaign-fold-wave -> feature/campaign-fold-wave -> PR 906
+#   - wt-888-finalize-labels-repo-arg -> feature/finalize-labels-repo-arg -> 907
+#   - latest_open_pr=907 (the trap a naive resolver would pick for 838)
+#   - closing-PR refs EMPTY for both (pr unset) -> forces branch resolution
+# Plus a non-feature/ (fix/...) worktree to prove no feature/$SLUG rebuild.
+echo "Fixture H: concurrent open PRs -> each issue resolves to its OWN PR"
+fh=$(mktemp -d)
+PIPELINE_TEST_TMPDIRS+=("$fh")
+mkdir -p "$fh/stub" \
+  "$fh/.claude/worktrees/wt-838-campaign-fold-wave" \
+  "$fh/.claude/worktrees/wt-888-finalize-labels-repo-arg" \
+  "$fh/.claude/worktrees/wt-555-some-bug"
+make_shim "$fh/stub"
+
+# Shared state: no closing-PR auto-link (pr unset), branch->PR linkage,
+# the latest-open-pr trap, and CI green so the helper short-circuits to
+# ACTION=green PR=<resolved> (we only assert the PR resolution here).
+cat > "$fh/stub/gh-state" <<'STATE'
+conclusion=success
+run_id=0
+retries=0
+head_feature/campaign-fold-wave=906
+head_feature/finalize-labels-repo-arg=907
+head_fix/some-bug=555
+latest_open_pr=907
+STATE
+
+# Fake `git worktree list --porcelain` advertising all three worktrees,
+# each with the FULL branch ref the helper reads verbatim (no prefix
+# reconstruction). Includes a fix/ branch to prove prefix-agnostic resolution.
+cat > "$fh/stub/git" <<GIT
+#!/usr/bin/env bash
+if [ "\$1" = "worktree" ] && [ "\$2" = "list" ]; then
+  echo "worktree $fh/.claude/worktrees/wt-838-campaign-fold-wave"
+  echo "HEAD deadbeef"
+  echo "branch refs/heads/feature/campaign-fold-wave"
+  echo ""
+  echo "worktree $fh/.claude/worktrees/wt-888-finalize-labels-repo-arg"
+  echo "HEAD cafebabe"
+  echo "branch refs/heads/feature/finalize-labels-repo-arg"
+  echo ""
+  echo "worktree $fh/.claude/worktrees/wt-555-some-bug"
+  echo "HEAD f00dface"
+  echo "branch refs/heads/fix/some-bug"
+  exit 0
+fi
+exec /usr/bin/git "\$@"
+GIT
+chmod +x "$fh/stub/git"
+
+run_h() {
+  local issue="$1"
+  set +e
+  ( cd "$fh" && PATH="$fh/stub:$PATH" \
+    GH_FAKE_LOG="$fh/gh-$issue.log" GH_FAKE_STATE="$fh/stub/gh-state" \
+    PIPELINE_REPO="fake/repo" \
+    PIPELINE_CI_FIX_RETRY_BUDGET="2" \
+    PIPELINE_CI_FIX_LOG_LINES="200" \
+    PIPELINE_LOGS_ENABLED="" \
+    bash "$HELPER" "$issue" 2>&1 )
+  set -e
+}
+
+# Issue 838 MUST resolve to its own PR 906, NOT the trap 907.
+inc
+out_h838=$(run_h 838)
+if echo "$out_h838" | grep -q "ISSUE=838 PR=906"; then
+  pass_msg "H 838 -> own PR 906"
+else
+  fail_msg "H 838 expected PR=906, got: $out_h838"
+fi
+inc
+if echo "$out_h838" | grep -q "PR=907"; then
+  fail_msg "H 838 MISROUTED to trap PR 907: $out_h838"
+else
+  pass_msg "H 838 never picks the latest-open-pr trap (907)"
+fi
+
+# Issue 888 MUST resolve to its own PR 907.
+inc
+out_h888=$(run_h 888)
+if echo "$out_h888" | grep -q "ISSUE=888 PR=907"; then
+  pass_msg "H 888 -> own PR 907"
+else
+  fail_msg "H 888 expected PR=907, got: $out_h888"
+fi
+
+# Issue 555 on a fix/ branch MUST resolve to PR 555 via the FULL ref
+# (proves no lossy feature/$SLUG reconstruction).
+inc
+out_h555=$(run_h 555)
+if echo "$out_h555" | grep -q "ISSUE=555 PR=555"; then
+  pass_msg "H 555 (fix/ branch) -> PR 555 via full ref (no feature/ rebuild)"
+else
+  fail_msg "H 555 expected PR=555, got: $out_h555"
 fi
 
 # ---- Summary -----------------------------------------------------------

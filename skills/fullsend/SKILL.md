@@ -265,7 +265,25 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    Runner NEVER kills autonomously. The orchestrator's prompt to the user is the kill gate.
 
-6b. CI-fix loop (wave N) — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED-true}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]` (colon-LESS fallback per #858: unset ⇒ ON to match the documented `.example` default; explicit `=""` ⇒ OFF to preserve the no-CI consumer contract; `="true"/"false"` honored). For each of wave N's `pr-open` issues, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. Act per the table:
+6a. **Post-dispatch completion verification (mandatory).** Immediately AFTER the inline foreground `Agent` batch returns (every dispatched PATH A/B/D issue in this wave) and BEFORE the Step 6b CI-fix loop, the orchestrator MUST verify each dispatched issue actually reached its terminal state — branch pushed **AND** PR open **AND** issue at `pr-open` — and **MUST NOT trust the agent's narrated self-report**. The #764/#814 dispatch-prompt + SKILL-body directives are necessary but **not** sufficient: they landed and were present, yet the narrate-and-yield drop-out RECURRED (#838/#904 — committed work, then *"...Waiting for the sweep Monitor..."*, no push, no PR, issue stuck at `in-progress`). This sub-step is the missing orchestrator-side backstop. For EVERY PATH A/B/D issue dispatched in the inline foreground batch, run:
+
+   ```bash
+   PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-execute-completion.sh" <N>
+   ```
+
+   and parse the single emitted `ACTION=` line (the token, not the exit code, carries the verdict — the helper exits 0 in every case, mirroring `check-ci-fix-loop.sh`; fail-closed: any unconfirmed terminal state emits a recover token, never `complete`). The helper resolves the feature branch **deterministically** — primary: the issue's worktree from `git worktree list --porcelain` (the `wt-<N>-<slug>` dir → its `branch refs/heads/<...>` ref, read verbatim — there is NO `feature/issue-<N>` convention); secondary: the issue's linked PR head — and pins the git remote to `origin` (`PIPELINE_REPO` is the gh owner/repo slug, not a git remote). Act per the table:
+
+   | ACTION | Behavior |
+   |--------|----------|
+   | `complete` | issue verified pushed + PR-open + labelled; proceed to 6b. |
+   | `recover-push` | branch committed-but-unpushed: orchestrator finishes `git push -u origin <branch>` for the feature branch (branch as resolved by the helper), then re-run the helper. |
+   | `recover-pr` | branch pushed, no PR: orchestrator runs `gh pr create --base "$PIPELINE_BASE_BRANCH"`, then re-run the helper. |
+   | `recover-label` | PR open, issue still `in-progress`: orchestrator applies `pr-open` / removes `in-progress`, then re-run the helper. |
+   | `recover-redispatch` | stranded with no committed work / no resolvable branch: re-dispatch the execute `Agent` for `<N>` (counts against the same wave). |
+
+   This complements (does NOT replace) the `--spawn`/run-queue path's existing `executor_finished_terminal()` reap (`scripts/run-queue.sh:595`, #636/#666): that backstop covers the spawned-worker transport only. The gap closed here is specifically the INLINE foreground batch (#838/#904), which has no runner backstop.
+
+6b. CI-fix loop (wave N) — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED-true}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]` (colon-LESS fallback per #858: unset ⇒ ON to match the documented `.example` default; explicit `=""` ⇒ OFF to preserve the no-CI consumer contract; `="true"/"false"` honored). For each of wave N's `pr-open` issues, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. The helper resolves issue→PR **deterministically per-issue** — closing-PR ref → the issue's `git worktree list` branch ref (`--head <ref>`) → body reference, from the orchestrator CWD where the worktrees are siblings — so a concurrent wave with ≥2 open PRs never misroutes to another issue's PR (#909). The invocation takes a single `<N>` arg (no branch/PR wiring). Act per the table:
 
    | ACTION | Behavior |
    |--------|----------|
@@ -274,7 +292,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
    | `red-retry` | autonomous mode: fire `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-queue.sh --ci-fix <N> <LOG>` in the background. Interactive mode: propose "re-dispatch executor on #N (CI red, retry budget <NEXT>/<BUDGET>)" as a candidate action. |
    | `red-budget-exhausted` | issue is already labelled `human` by the helper; mark "Flagged (CI persistent failure)" in the final report and skip evaluate-issue-pr for that issue. |
 
-   `check-ci-fix-loop.sh` is the authoritative source for retry-counter encoding (`pipeline.ci-retries: <n>` issue comment), tail-truncated failure-log path (`.claude/logs/ci-fix-<N>-attempt-<n>.log`), and `human` label application on budget-exhaust.
+   `check-ci-fix-loop.sh` is the authoritative source for issue→PR resolution (deterministic per-issue: closing-PR ref → worktree branch ref → body reference; never "latest open PR" — #909), retry-counter encoding (`pipeline.ci-retries: <n>` issue comment), tail-truncated failure-log path (`.claude/logs/ci-fix-<N>-attempt-<n>.log`), and `human` label application on budget-exhaust.
 
 7. **Evaluate PRs (wave N)** — once wave N's agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every wave-N `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`), and apply the per-PR greenlight auto-merge gate from the `## Greenlight matrix` above to each.
 
