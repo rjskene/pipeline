@@ -211,6 +211,13 @@ When planning a LABEL_TABLE change, list BOTH test files.
 Per-path concurrency caps govern a campaign (`/pipeline:fullsend --campaign`,
 #647) — coordinated fullsends run wave-by-wave to merge, dependency-ordered.
 
+- **Two equivalent entry points, one machinery (#904).** A campaign starts via
+  either `/pipeline:fullsend --campaign` or the standalone `/pipeline:campaign`
+  — they execute the IDENTICAL coordinated-leg loop (same caps, autonomy, and
+  two-layer dedup contracts). The leg-loop prose lives ONCE in
+  `skills/fullsend/SKILL.md` `## Campaign mode`; `skills/campaign/SKILL.md`
+  defers to it, so the two routes can never drift. Neither is deprecated.
+
 - **Caps apply to ALL dispatch stages, not just execute.** The "classify/plan are
   read-only ⇒ a flat parallel blast is free" assumption does NOT hold under a
   rate-limit budget: read-only agents consume the same budget. Batch/serialize

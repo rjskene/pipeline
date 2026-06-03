@@ -11,6 +11,7 @@ The exhaustive catalogue of pipeline slash commands — invocation form, args/fl
 | [`/pipeline:status`](../skills/status/SKILL.md) | `[--table] [--analyze] [--keep-trees]` | Read-only status table + housekeeping; advances nothing. |
 | [`/pipeline:run`](../skills/run/SKILL.md) | (none) | Deprecated alias forwarding to `/pipeline:status`. |
 | [`/pipeline:fullsend`](../skills/fullsend/SKILL.md) | `[issue_numbers...] [--manual-merge] [--spawn] [--campaign]` | Autonomous end-to-end run; flags position-independent. |
+| [`/pipeline:campaign`](../skills/campaign/SKILL.md) | `[issue_numbers...] [--manual-merge] [--spawn] [--max-bc=N] [--max-ad=N]` | Standalone coordinated-leg campaign; equivalent to `/pipeline:fullsend --campaign` (same machinery). |
 | [`/pipeline:classify-issue`](../skills/classify-issue/SKILL.md) | `<issue_number>` | Triage → PATH A/B/C/D; applies the path label, posts `## Classification`. |
 | [`/pipeline:plan-issue`](../skills/plan-issue/SKILL.md) | `<issue_number>` | Produce + post `## Implementation Plan`; label `plan-pending`. |
 | [`/pipeline:evaluate-issue-plan`](../skills/evaluate-issue-plan/SKILL.md) | `<issue_number>` | Independent plan review; label `plan-reviewed`. |
@@ -33,8 +34,14 @@ Only the load-bearing nuance is captured here; see each SKILL.md for the full sp
 
 - `--spawn` routes every path's execute (Step 6) and PR-eval (Step 7) through the tmux run-queue — purely additive; A/B/D execute inline by default, C is always queued.
 - `--manual-merge` skips auto-merge (also settable per-issue via a `manual-merge` label).
-- `--campaign` wraps the slate in ordered per-path legs, capped by `PIPELINE_CAMPAIGN_MAX_BC` (default 2) / `PIPELINE_CAMPAIGN_MAX_AD` (default 5).
+- `--campaign` wraps the slate in ordered per-path legs, capped by `PIPELINE_CAMPAIGN_MAX_BC` (default 2) / `PIPELINE_CAMPAIGN_MAX_AD` (default 5). Equivalent to the standalone `/pipeline:campaign` entry — same machinery; `--campaign` is NOT deprecated.
 - All flags are position-independent and cannot collide with bare-integer issue numbers.
+
+### campaign
+
+- Standalone entry into the SAME coordinated-leg machinery as `/pipeline:fullsend --campaign` — the canonical leg-loop prose lives ONCE in `skills/fullsend/SKILL.md` `## Campaign mode`; this skill defers to it (no forked machinery, no drift).
+- `--max-bc=N` / `--max-ad=N` override the per-leg `PIPELINE_CAMPAIGN_MAX_BC` / `PIPELINE_CAMPAIGN_MAX_AD` caps for that invocation.
+- `--spawn` and `--manual-merge` compose exactly as under `--campaign`.
 
 ### status
 
