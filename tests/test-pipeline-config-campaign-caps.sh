@@ -42,6 +42,7 @@ check_var_named() {
 CAMPAIGN_VARS=(
   PIPELINE_CAMPAIGN_MAX_BC
   PIPELINE_CAMPAIGN_MAX_AD
+  PIPELINE_CAMPAIGN_MAX_FOLD
 )
 
 # --- Example file: always present ---

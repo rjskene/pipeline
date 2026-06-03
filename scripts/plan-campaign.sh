@@ -120,6 +120,45 @@ if [ "${1:-}" = "aggregate-signals" ]; then
   exit 0
 fi
 
+# ---- fold-select subcommand (#838) ----
+# Reads SIGNAL records on stdin in FIFO (campaign-filing) order. Emits, in order:
+#   FOLD issue=#<N> title="<t>"      for the first --max clean signals,
+#   SKIP issue=#<N> reason=high-uncertainty title="<t>"  for title-keyword hits
+#                                    (does NOT consume the fold budget),
+#   OVERFLOW issue=#<N> title="<t>"  for clean signals beyond the budget.
+# Mechanical only: FIFO + ceiling + high-uncertainty TITLE-keyword skip. The
+# classify-clean (human/brainstorm/excluded) decision is model judgment in
+# skills/fullsend/SKILL.md, NOT here. Pure read/stdout: no gh, no edits.
+if [ "${1:-}" = "fold-select" ]; then
+  shift
+  FOLD_MAX="${PIPELINE_CAMPAIGN_MAX_FOLD:-3}"
+  for arg in "$@"; do
+    case "$arg" in
+      --max=*) FOLD_MAX="${arg#--max=}" ;;
+      *) echo "plan-campaign fold-select: unexpected arg: $arg" >&2; exit 1 ;;
+    esac
+  done
+  HU_RE='concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss'
+  taken=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    case "$line" in "SIGNAL "*) ;; *) continue ;; esac
+    issue="${line#*issue=}"; issue="${issue%% *}"; issue="${issue#\#}"
+    title="${line#*title=\"}"; title="${title%%\"*}"
+    if printf '%s' "$title" | grep -qiE "$HU_RE"; then
+      printf 'SKIP issue=#%s reason=high-uncertainty title="%s"\n' "$issue" "$title"
+      continue
+    fi
+    if [ "$taken" -lt "$FOLD_MAX" ]; then
+      printf 'FOLD issue=#%s title="%s"\n' "$issue" "$title"
+      taken=$((taken + 1))
+    else
+      printf 'OVERFLOW issue=#%s title="%s"\n' "$issue" "$title"
+    fi
+  done
+  exit 0
+fi
+
 NEW_ARGS=()
 for arg in "$@"; do
   case "$arg" in
