@@ -170,6 +170,34 @@ for row in "${PY_HOOKS[@]}"; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# Task 3 — bash hook log-tool-use.sh bounds its `cat` stdin read with timeout.
+# ---------------------------------------------------------------------------
+echo "Task 3: log-tool-use.sh bounds its stdin read"
+
+BASH_HOOK="$HOOKS_DIR/log-tool-use.sh"
+if [ ! -f "$BASH_HOOK" ]; then
+  fail_msg "3[log-tool-use.sh]: hook file not found at $BASH_HOOK"
+else
+  # (a) self-limited exit on never-closing stdin (run in a writable scratch dir
+  # so the hook's mkdir/log write does not touch unexpected paths).
+  TMP3="$(mktemp -d)"
+  run_with_blocking_stdin env "CLAUDE_PROJECT_DIR=$TMP3" bash "$BASH_HOOK"
+  rm -rf "$TMP3"
+  if [ "$RUN_RC" = "0" ] && [ "$RUN_ELAPSED" -lt 8 ]; then
+    pass_msg "3[log-tool-use.sh]: exit 0 in ${RUN_ELAPSED}s on never-closing stdin (not 124-via-kill)"
+  else
+    fail_msg "3[log-tool-use.sh]: rc=$RUN_RC elapsed=${RUN_ELAPSED}s (want rc=0, <8s, not external kill)"
+  fi
+
+  # (b) grep guard — the stdin `cat` capture is wrapped with `timeout`.
+  if grep -Eq 'INPUT=\$\(\s*timeout\b' "$BASH_HOOK"; then
+    pass_msg "3[log-tool-use.sh]: stdin cat wrapped with timeout"
+  else
+    fail_msg "3[log-tool-use.sh]: bare INPUT=\$(cat) — not timeout-wrapped"
+  fi
+fi
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
