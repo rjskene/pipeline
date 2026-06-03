@@ -93,7 +93,7 @@ gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --li
 (no label) → [classified: docs-only | multi-task | none] → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged → (cleaned up)
 ```
 
-- `docs-only` / `multi-task` — PATH tag applied by classify-issue; persists through the rest of the lifecycle. Read by plan-issue (to emit PATH-aware Task 0/N), by spawn-claude.sh (to inject the path-specific execute skills), and by the enforce-path-c-delegation hook (to block direct orchestrator edits on multi-task issues).
+- `docs-only` / `multi-task` — PATH tag applied by classify-issue; persists through the rest of the lifecycle. Read by plan-issue (to emit PATH-aware Task 0/N), by spawn-claude.sh under `--spawn` (the legacy transport — to inject the path-specific execute skills; the default `multi-task` execute is the inline orchestrator-owned per-leaf-worktree fan-out), and by the enforce-path-c-delegation hook (to block direct orchestrator edits on multi-task issues).
 - `plan-pending` — plan posted, awaiting evaluation.
 - `plan-reviewed` — evaluation posted, awaiting user approval.
 - `plan-approved` — user approved the plan; ready for execution.

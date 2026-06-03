@@ -87,13 +87,15 @@ pane alone is not a stall.
      push, file an issue noting "implementation branch exists for adoption" (the
      build cost is sunk; don't toss coherent work).
   2. **Reset** the issue's branch — pull base, `git reset --hard origin/<base>`.
-  3. **Re-execute INLINE, not via run-queue** — `Agent(tdd-implementer)` pointed
-     at the worktree, the approved plan embedded, plus an **absolute file
-     tripwire**: "you may create/edit ONLY these N files; if implementing needs
-     any other file, or you find yourself building a feature not described, STOP
-     and report." The orchestrator then opens the PR + labels (tdd-implementer is
-     a leaf and won't). Inline + plan-pinned beats re-running a worker that
-     diverged.
+  3. **Re-execute plan-pinned** — inline `Agent(tdd-implementer)` (the default
+     transport since #749/#896) pointed at the worktree, the approved plan
+     embedded, plus an **absolute file tripwire**: "you may create/edit ONLY
+     these N files; if implementing needs any other file, or you find yourself
+     building a feature not described, STOP and report." The orchestrator then
+     opens the PR + labels (tdd-implementer is a leaf and won't). The recovery
+     emphasis is the plan-pinning + file tripwire — not inline-vs-queue novelty;
+     re-running a `--spawn` worker that re-reads the comment is what diverged, so
+     keep the re-execute plan-pinned rather than comment-driven.
 
 - **Inline execute narrate-and-yield at the test-wait step.** Inline
   `general-purpose` PATH-B execute agents background a test monitor whose stdout

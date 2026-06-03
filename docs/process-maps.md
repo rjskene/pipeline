@@ -1,14 +1,14 @@
 # Process Maps
 
-System-view reference for the pipeline's runtime behavior. Three ASCII maps,
-each self-contained, showing the traversal shape of a different layer:
+System-view reference for the pipeline's runtime behavior. Three self-contained
+ASCII maps, each showing the traversal shape of a different layer:
 
 1. **Full lifecycle map** — issue creation through merge, with label transitions.
 2. **PATH dispatch decision tree** — how an issue resolves to PATH A/B/C/D.
 3. **Wave-plan flow** — what `fullsend` does across many issues in parallel.
 
-No cross-references to SKILL files. Authoritative definitions live in each
-skill's own SKILL.md; this doc only shows the shapes.
+Authoritative definitions live in each skill's own SKILL.md; this doc only
+shows the shapes.
 
 ## Full lifecycle map
 
@@ -104,26 +104,16 @@ are the unmarked-untagged fallback (default = B).
 
 Once PATH is resolved, the transport (how the execute/eval agent launches) keys
 off the PATH letter. Worktree creation (`setup-worktree.sh`) is identical across
-all paths — only the launch differs.
-
-```
-  PATH letter -> transport
-    A,B,D -> inline  Agent(subagent_type=...) in orchestrator session
-       A -> Agent(general-purpose)
-       B -> Agent(general-purpose)
-       D -> Agent(tdd-implementer)
-    C     -> spawn   spawn-claude.sh -> claude -p
-                     (+ run-queue.sh / tmux for multi-issue)
-```
-
-Caption: inline `Agent()` is the default transport; spawn
-(`spawn-claude.sh` / `run-queue.sh` / tmux) is PATH C only.
+all paths — only the launch differs. Inline `Agent(subagent_type=...)` in the
+orchestrator session is the default transport for ALL paths; the
+`spawn-claude.sh` → `claude -p` run-queue / tmux transport is the `--spawn`
+legacy escape hatch (formerly C-only).
 
 | Path | Transport                          | Produces                                |
 |------|------------------------------------|-----------------------------------------|
 | A    | inline `Agent(general-purpose)`    | Flat edits in the worktree. No TDD cycle.|
 | B    | inline `Agent(general-purpose)`    | TDD discipline (red->green->commit) inline; no spawned worker.|
-| C    | spawn `spawn-claude.sh` / `run-queue.sh` tmux | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
+| C    | inline `Agent(tdd-implementer)` per `target=<dir>` leaf, each in its own per-leaf worktree + cherry-pick reassemble (#896); `--spawn` = legacy run-queue | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
 | D    | inline `Agent(tdd-implementer)`    | Inline `tdd-implementer` in the orchestrator session. Skips the pre-PR review loop in `execute-issue-plan` Step 8.|
 
 ## Wave-plan flow
@@ -170,8 +160,9 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
            |
            v
   +--------+----------+
-  | execute           |   B/D: inline Agent() in orchestrator
-  |                   |   C:   run-queue.sh / tmux, max 3 concurrent
+  | execute           |   A/B/D: inline Agent() in orchestrator
+  |                   |   C: inline tdd-implementer per leaf,
+  |                   |      per-leaf worktree, max 3 concurrent
   +--------+----------+
            |
            v
@@ -204,7 +195,7 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
 Caption: `--manual-merge` opt-out (flag or `manual-merge` label) stops short of
 the auto-merge gate even when all four greenlight conditions hold.
 
-Campaign mode (`--campaign`): `scripts/plan-campaign.sh` partitions the approved set into ordered **legs**, each run as one wave through the flow above. Per-leg caps are `PIPELINE_CAMPAIGN_MAX_BC` (default 2 — expensive PATH-B/C) and `PIPELINE_CAMPAIGN_MAX_AD` (default 5 — cheap PATH-A/D), overridable per-invocation via `--max-bc=N` / `--max-ad=N`. There is NO `PIPELINE_*_LEG_CAP` var — these two are the only knobs.
+Campaign mode (`--campaign`): `scripts/plan-campaign.sh` partitions the approved set into ordered **legs**, each run as one wave through the flow above. Per-leg caps are `PIPELINE_CAMPAIGN_MAX_BC` (default 2 — expensive PATH-B/C) and `PIPELINE_CAMPAIGN_MAX_AD` (default 5 — cheap PATH-A/D), overridable via `--max-bc=N` / `--max-ad=N`. These two are the only knobs (no `PIPELINE_*_LEG_CAP` var).
 
 ## Entrypoints
 
@@ -226,8 +217,8 @@ and has two callers (the **two-caller pattern**):
 
 - **Executor (TDD loop)** — `execute-issue-plan` runs it inside red->green; an
   `unsatisfied` entry behaves like a failing test (iterate until satisfied). The
-  `needs-browser` label routes the executor through inline `Agent()` dispatch
-  with the visual-proof preflight in `scripts/visual-proof-server-start.sh`.
+  `needs-browser` label routes the executor through inline `Agent()` dispatch with
+  the visual-proof preflight in `scripts/visual-proof-server-start.sh`.
 - **Evaluator (verdict)** — `evaluate-issue-pr` runs the same sub-skill; any
   `unsatisfied` entry is a blocking verdict finding.
 
