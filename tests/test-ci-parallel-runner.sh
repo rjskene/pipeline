@@ -132,11 +132,18 @@ if [ -f "$CI_YML" ]; then
   fi
 
   # Path-filter: the heavy `tests` job is path-scoped; `guard` stays ungated.
+  # The mechanism is a paths-filter action (job-level gate) rather than native
+  # on.pull_request.paths — native paths would make the required `tests` check
+  # silently DISAPPEAR on docs PRs (the #897 path-filter caveat). Instead the
+  # `tests` job always runs but short-circuits to no-op success on docs/prose
+  # diffs, so the required check still reports. Assert either the native
+  # paths/paths-ignore form OR the paths-filter action + a code-gated `if:`.
   inc
-  if grep -Eq '(paths|paths-ignore):' "$CI_YML"; then
+  if grep -Eq '(paths|paths-ignore):' "$CI_YML" \
+     || { grep -q 'paths-filter' "$CI_YML" && grep -Eq 'needs\.changes\.outputs\.code' "$CI_YML"; }; then
     pass_msg "ci.yml carries a path filter governing the tests job"
   else
-    fail_msg "ci.yml has no paths/paths-ignore filter for the tests job"
+    fail_msg "ci.yml has no path filter governing the tests job"
   fi
 
   # Guard always-on: assert no job-level `if:` gate sits inside the guard job.

@@ -5,6 +5,8 @@ on:
   pull_request:
 
 jobs:
+  # guard — consumer-.claude/ write lint. ALWAYS-ON: no path filter, no job-level
+  # `if:` gate. Must run on every push/PR regardless of touched paths (issue #897).
   guard:
     runs-on: ubuntu-latest
     steps:
@@ -12,21 +14,47 @@ jobs:
       - name: consumer-.claude/ write lint
         run: bash scripts/check-no-consumer-claude-writes.sh
 
+  # changes — detect whether the PR touches code (vs docs/skill-prose only). Drives
+  # the path-filter on the heavy `tests` job below without letting the required
+  # check silently disappear: `tests` always runs but short-circuits to a no-op
+  # success when only docs/prose changed (issue #897 path-filter caveat).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!(**/*.md)'
+              - '!docs/**'
+
   tests:
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Cache the apt archives so the fixed jq-install boot overhead is paid once
+      # per runner-OS generation instead of every job (issue #897).
+      - name: cache apt archives
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-jq-v1
+          restore-keys: |
+            ${{ runner.os }}-apt-
       - name: install jq
+        if: needs.changes.outputs.code == 'true'
         run: sudo apt-get update && sudo apt-get install -y jq
-      - name: test suite (strict)
-        run: |
-          fail=0
-          for t in tests/test*.sh tests/test_*.sh; do
-            [ -f "$t" ] || continue
-            echo "::group::$t"
-            bash "$t" || fail=1
-            echo "::endgroup::"
-          done
-          exit $fail
+      - name: test suite (strict, parallel)
+        if: needs.changes.outputs.code == 'true'
+        run: bash scripts/run-test-suite.sh
       - name: dev/ self-audit tests
+        if: needs.changes.outputs.code == 'true'
         run: bash dev/tests/run-all.sh
+      - name: docs-only short-circuit
+        if: needs.changes.outputs.code != 'true'
+        run: echo "Docs/prose-only change — heavy test suite skipped; required check reports success."
