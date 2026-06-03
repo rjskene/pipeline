@@ -24,6 +24,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
+from subagent_log_utils import read_event_stdin  # noqa: E402
 
 
 def _pipeline_repo() -> str:
@@ -228,11 +229,7 @@ def main() -> int:
     # above on the zero-I/O fast path.
     sweep_stale_caches()
 
-    raw_input = sys.stdin.read()
-    try:
-        data = json.loads(raw_input) if raw_input else {}
-    except json.JSONDecodeError:
-        return 0
+    data = read_event_stdin()
 
     tool_name = data.get("tool_name", "")
     if tool_name not in ("Edit", "Write"):

@@ -2,7 +2,6 @@
 PreToolUse hook — restricts file operations to the project directory and ~/.claude/.
 Exits 2 (blocked) if a tool targets a path outside those boundaries.
 """
-import json
 import os
 import re
 import sys
@@ -23,8 +22,9 @@ if not PLUGIN_ROOT:
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
+from subagent_log_utils import read_event_stdin  # noqa: E402
 
-data = json.load(sys.stdin)
+data = read_event_stdin()
 tool_name = data.get("tool_name", "")
 tool_input = data.get("tool_input", {})
 

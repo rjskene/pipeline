@@ -21,9 +21,12 @@ Scope:
     `--body "$(cat <<EOF ... EOF)"` are NOT reliably parseable from
     tool_input.command and are accepted as a known limitation.
 """
-import json
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from subagent_log_utils import read_event_stdin  # noqa: E402
 
 MARKER_RE = re.compile(
     r"\[(?:skip|no)[\s-]?ci\]|\[ci[\s-]?skip\]|\*\*\*NO_CI\*\*\*",
@@ -49,7 +52,7 @@ def _extract_arg_values(command: str, flags: tuple[str, ...]) -> list[str]:
 
 
 def main() -> int:
-    data = json.load(sys.stdin)
+    data = read_event_stdin()
     command = data.get("tool_input", {}).get("command", "")
     if not command:
         return 0

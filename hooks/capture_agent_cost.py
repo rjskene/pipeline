@@ -56,7 +56,7 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from subagent_log_utils import append_locked  # noqa: E402
+from subagent_log_utils import append_locked, read_event_stdin  # noqa: E402
 
 
 # Stage/issue normaliser -- mirrors tu_stage_from_description /
@@ -625,8 +625,7 @@ def main():
     logs_dir = os.path.join(project_dir, ".claude", "logs")
 
     try:
-        raw = sys.stdin.read()
-        payload = json.loads(raw) if raw.strip() else {}
+        payload = read_event_stdin()
         if not isinstance(payload, dict):
             return
         # Stop branch (#662): a payload carrying `transcript_path` and NO
