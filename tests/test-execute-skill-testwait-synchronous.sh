@@ -93,6 +93,21 @@ else
   fail_msg "antipattern-negation: Step 6b region missing a negation token (do NOT/never)"
 fi
 
+# 4) The Monitor-yield ban (#912): the region must explicitly ban yielding on an
+#    un-awaitable background `Monitor` across a turn boundary (a `Monitor` token
+#    paired with a negation), AND name a `BashOutput` poll-to-terminal as the
+#    sanctioned async fallback. #838/#904 recurred because the agent narrated
+#    "waiting for the sweep Monitor" then ended its turn.
+inc
+if printf '%s' "$REGION" | grep -F -q -- 'Monitor' \
+   && printf '%s' "$REGION" | grep -E -q -- 'do NOT|Do NOT|never|Never'; then
+  pass_msg "monitor-yield-ban: Step 6b region bans yielding on a background Monitor (Monitor + negation)"
+else
+  fail_msg "monitor-yield-ban: Step 6b region missing a Monitor-yield ban (Monitor + negation token)"
+fi
+
+assert_region_contains "monitor-bashoutput-fallback" 'BashOutput'
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
