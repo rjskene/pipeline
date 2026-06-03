@@ -46,8 +46,13 @@ inc()      { TESTS=$((TESTS + 1)); }
 ROOT=$(mktemp -d)
 # Worktree dirs find_worktree() existence-checks; shared across cases (dirs only
 # need to exist). STUB_WORKTREES drives the git stub's `worktree list` output.
-mkdir -p "/tmp/wt-911-exec" "/tmp/wt-912-bar"
-trap 'rm -rf "$ROOT" "/tmp/wt-911-exec" "/tmp/wt-912-bar"' EXIT
+# Use a per-run unique base dir (not a fixed /tmp/wt-911-* path) so concurrent
+# runs under the parallel test runner can't collide on the same directory
+# (issue #897 test-isolation fix). The git stub reads $STUB_WT_BASE.
+WT_BASE="$ROOT/worktrees"
+export STUB_WT_BASE="$WT_BASE"
+mkdir -p "$WT_BASE/wt-911-exec" "$WT_BASE/wt-912-bar"
+trap 'rm -rf "$ROOT"' EXIT
 
 # Build a project tree with run-queue.sh + its sourced deps and a minimal config.
 setup_proj() {
@@ -179,7 +184,7 @@ if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
   for entry in ${STUB_WORKTREES:-}; do
     issue="${entry%%:*}"
     slug="${entry##*:}"
-    echo "worktree /tmp/wt-${issue}-${slug}"
+    echo "worktree ${STUB_WT_BASE:-/tmp}/wt-${issue}-${slug}"
     echo "HEAD abc123"
     echo "branch refs/heads/feature/${slug}"
     echo ""

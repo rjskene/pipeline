@@ -160,6 +160,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 2b. Test-isolation regression pins (issue #897 Task 5).
+#     These two tests reded ONLY under the parallel fan-out. Pin the fixes so a
+#     revert reds again:
+#       - test-fullsend-wave-execute-loop.sh used `echo "$VAR" | grep -q`, which
+#         under `set -o pipefail` + CPU load returns 141 (SIGPIPE) when grep
+#         short-circuits before echo finishes — a parallel-only flake. The fix
+#         is here-string grep (`grep -q <<< "$VAR"`), no pipe, no SIGPIPE.
+#       - test-run-queue-executor-terminal.sh used fixed /tmp/wt-911-* paths that
+#         collide across concurrent runs; the fix routes them through a per-run
+#         unique $STUB_WT_BASE.
+# ---------------------------------------------------------------------------
+
+FULLSEND_TEST="$ROOT/tests/test-fullsend-wave-execute-loop.sh"
+TERMINAL_TEST="$ROOT/tests/test-run-queue-executor-terminal.sh"
+
+inc
+if [ -f "$FULLSEND_TEST" ] && grep -q 'echo "\$EXEC_REGION" | grep' "$FULLSEND_TEST"; then
+  fail_msg "test-fullsend-wave-execute-loop.sh uses SIGPIPE-prone 'echo \$EXEC_REGION | grep' (parallel-flaky; use here-string grep)"
+else
+  pass_msg "test-fullsend-wave-execute-loop.sh avoids the SIGPIPE-prone echo|grep idiom"
+fi
+
+inc
+if [ -f "$TERMINAL_TEST" ] && grep -Eq 'mkdir[^#]*"/tmp/wt-|rm -rf[^#]*"/tmp/wt-' "$TERMINAL_TEST"; then
+  fail_msg "test-run-queue-executor-terminal.sh uses fixed /tmp/wt-* paths (parallel-colliding; use a per-run unique base dir)"
+else
+  pass_msg "test-run-queue-executor-terminal.sh uses a per-run unique worktree base (no fixed /tmp/wt-* paths)"
+fi
+
+# ---------------------------------------------------------------------------
 # 3. pipeline.config.example mirror (dual-scan per CLAUDE.md #357)
 # ---------------------------------------------------------------------------
 

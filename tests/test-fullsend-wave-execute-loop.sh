@@ -55,7 +55,7 @@ EXEC_REGION=$(sed -n "${REGION_START},${TOTAL_LINES}p" "$SKILL_PATH")
 #    --stage=classify pre-think).
 # ---------------------------------------------------------------------------
 inc
-if echo "$EXEC_REGION" | grep -qF 'plan-waves.sh --stage=execute'; then
+if grep -qF 'plan-waves.sh --stage=execute' <<< "$EXEC_REGION"; then
   pass_msg "execute region invokes plan-waves.sh --stage=execute"
 else
   fail_msg "execute region does not invoke 'plan-waves.sh --stage=execute' (distinct from --stage=classify pre-think)"
@@ -66,14 +66,14 @@ fi
 #    off the CURRENT (local) base tip.
 # ---------------------------------------------------------------------------
 inc
-if echo "$EXEC_REGION" | grep -qiE 'wave by wave|for each wave|wave N\b'; then
+if grep -qiE 'wave by wave|for each wave|wave N\b' <<< "$EXEC_REGION"; then
   pass_msg "execute region has a per-wave loop marker (wave by wave / for each wave / wave N)"
 else
   fail_msg "execute region lacks a per-wave loop marker (expected 'wave by wave' | 'for each wave' | 'wave N')"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE 'off the current.*base tip|current local base tip|current local base'; then
+if grep -qiE 'off the current.*base tip|current local base tip|current local base' <<< "$EXEC_REGION"; then
   pass_msg "execute region phrases setting up a wave off the current local base tip"
 else
   fail_msg "execute region lacks 'off the current base tip' (current-local-base-tip) phrasing"
@@ -84,7 +84,7 @@ fi
 #    setting up wave N+1).
 # ---------------------------------------------------------------------------
 inc
-if echo "$EXEC_REGION" | grep -qiE "wait for wave N.?s.*merge before|before setting up wave N\+1|PRs to merge before"; then
+if grep -qiE "wait for wave N.?s.*merge before|before setting up wave N\+1|PRs to merge before" <<< "$EXEC_REGION"; then
   pass_msg "execute region has an inter-wave merge gate phrasing"
 else
   fail_msg "execute region lacks an inter-wave merge gate (e.g. 'wait for wave N's PRs to merge before setting up wave N+1')"
@@ -98,28 +98,28 @@ fi
 #    HEAD (not origin/<base>), which is why the pull is required.
 # ---------------------------------------------------------------------------
 inc
-if echo "$EXEC_REGION" | grep -qF 'git pull --ff-only --quiet origin'; then
+if grep -qF 'git pull --ff-only --quiet origin' <<< "$EXEC_REGION"; then
   pass_msg "execute region has the literal 'git pull --ff-only --quiet origin' inter-wave pull"
 else
   fail_msg "execute region lacks the literal 'git pull --ff-only --quiet origin' token"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qF 'git -C "$MAIN_REPO" checkout'; then
+if grep -qF 'git -C "$MAIN_REPO" checkout' <<< "$EXEC_REGION"; then
   pass_msg "execute region has the 'git -C \"\$MAIN_REPO\" checkout' main-repo base checkout"
 else
   fail_msg "execute region lacks a 'git -C \"\$MAIN_REPO\" checkout' main-repo base checkout token"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE "advances? the orchestrator.?s local base tip|inherit.*merged work|advances? .*local base tip so the next wave"; then
+if grep -qiE "advances? the orchestrator.?s local base tip|inherit.*merged work|advances? .*local base tip so the next wave" <<< "$EXEC_REGION"; then
   pass_msg "execute region states the pull advances the orchestrator's LOCAL base tip so the next wave inherits merged work"
 else
   fail_msg "execute region lacks a 'advances the orchestrator's LOCAL base tip ... inherit merged work' phrasing"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE "branches? off (the )?LOCAL HEAD|off LOCAL HEAD.*not .?origin|not .?origin/<base>"; then
+if grep -qiE "branches? off (the )?LOCAL HEAD|off LOCAL HEAD.*not .?origin|not .?origin/<base>" <<< "$EXEC_REGION"; then
   pass_msg "execute region states setup-worktree.sh branches off LOCAL HEAD (not origin/<base>)"
 else
   fail_msg "execute region lacks an explicit 'setup-worktree.sh branches off LOCAL HEAD (not origin/<base>)' statement"
@@ -129,49 +129,49 @@ fi
 # 5. The --emit-edges-sourced scoped halt closure.
 # ---------------------------------------------------------------------------
 inc
-if echo "$EXEC_REGION" | grep -qF -- '--emit-edges'; then
+if grep -qF -- '--emit-edges' <<< "$EXEC_REGION"; then
   pass_msg "execute region references --emit-edges"
 else
   fail_msg "execute region does not reference '--emit-edges'"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE 'EDGE |edge map|machine-readable edges'; then
+if grep -qiE 'EDGE |edge map|machine-readable edges' <<< "$EXEC_REGION"; then
   pass_msg "execute region references the EDGE / edge map / machine-readable edges"
 else
   fail_msg "execute region lacks EDGE / 'edge map' / 'machine-readable edges' phrasing"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiF 'dependency closure'; then
+if grep -qiF 'dependency closure' <<< "$EXEC_REGION"; then
   pass_msg "execute region references a dependency closure"
 else
   fail_msg "execute region lacks a 'dependency closure' phrasing"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE 'transitive(ly)?'; then
+if grep -qiE 'transitive(ly)?' <<< "$EXEC_REGION"; then
   pass_msg "execute region references transitive/transitively closure walking"
 else
   fail_msg "execute region lacks 'transitive' / 'transitively' phrasing"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE 'computed from( this)? the?( \*\*)?(--?emit-edges|emitted)( \*\*)? edges|NOT( \*\*not\*\*)? from the human-readable .?Wave N'; then
+if grep -qiE 'computed from( this)? the?( \*\*)?(--?emit-edges|emitted)( \*\*)? edges|NOT( \*\*not\*\*)? from the human-readable .?Wave N' <<< "$EXEC_REGION"; then
   pass_msg "execute region states the closure is computed from the emitted edges, NOT the human-readable Wave N lines"
 else
   fail_msg "execute region lacks a 'closure computed from emitted edges, NOT human-readable Wave N lines' statement"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE 'multi-issue waves? (print|emit|suppress|have).*(no per-issue reason|reason)'; then
+if grep -qiE 'multi-issue waves? (print|emit|suppress|have).*(no per-issue reason|reason)' <<< "$EXEC_REGION"; then
   pass_msg "execute region explains multi-issue waves suppress per-issue reasons"
 else
   fail_msg "execute region lacks the 'multi-issue waves print no per-issue reasons' rationale"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE 'independent later-wave issues.*(outside the closure)?.*(may|can) still proceed|outside the closure.*may still proceed|may still proceed off the current merged base'; then
+if grep -qiE 'independent later-wave issues.*(outside the closure)?.*(may|can) still proceed|outside the closure.*may still proceed|may still proceed off the current merged base' <<< "$EXEC_REGION"; then
   pass_msg "execute region states independent later-wave issues (outside closure) may still proceed off the merged base"
 else
   fail_msg "execute region lacks 'independent later-wave issues outside the closure may still proceed off the current merged base'"
@@ -180,19 +180,19 @@ fi
 # transient-block discrimination: distinguish block-ci/pending (defer to 6b
 # CI-fix loop) from human-needed hard blocks.
 inc
-if echo "$EXEC_REGION" | grep -qF 'block-ci' \
-   && echo "$EXEC_REGION" | grep -qiE '\bpending\b' \
-   && echo "$EXEC_REGION" | grep -qiE 'CI-fix loop|Step 6b'; then
+if grep -qF 'block-ci' <<< "$EXEC_REGION" \
+   && grep -qiE '\bpending\b' <<< "$EXEC_REGION" \
+   && grep -qiE 'CI-fix loop|Step 6b' <<< "$EXEC_REGION"; then
   pass_msg "execute region defers block-ci / pending to the Step 6b CI-fix loop"
 else
   fail_msg "execute region lacks transient-block discrimination (block-ci/pending defer to the Step 6b CI-fix loop)"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qF 'block-mergestate' \
-   && echo "$EXEC_REGION" | grep -qF 'block-verdict' \
-   && echo "$EXEC_REGION" | grep -qF 'block-mergeable' \
-   && echo "$EXEC_REGION" | grep -qF 'block-base-mismatch'; then
+if grep -qF 'block-mergestate' <<< "$EXEC_REGION" \
+   && grep -qF 'block-verdict' <<< "$EXEC_REGION" \
+   && grep -qF 'block-mergeable' <<< "$EXEC_REGION" \
+   && grep -qF 'block-base-mismatch' <<< "$EXEC_REGION"; then
   pass_msg "execute region names the hard-block tokens (block-mergestate/block-verdict/block-mergeable/block-base-mismatch)"
 else
   fail_msg "execute region does not name all hard-block tokens (block-mergestate, block-verdict, block-mergeable, block-base-mismatch)"
@@ -203,9 +203,9 @@ fi
 #    live-mutation risk because execution happens in a worktree.
 # ---------------------------------------------------------------------------
 inc
-if echo "$EXEC_REGION" | grep -qiE 'self-mutation|live-mutation' \
-   && echo "$EXEC_REGION" | grep -qiE 'after (the |this )?(PR )?merges?|only( takes effect)? after merge' \
-   && echo "$EXEC_REGION" | grep -qiE 'worktree'; then
+if grep -qiE 'self-mutation|live-mutation' <<< "$EXEC_REGION" \
+   && grep -qiE 'after (the |this )?(PR )?merges?|only( takes effect)? after merge' <<< "$EXEC_REGION" \
+   && grep -qiE 'worktree' <<< "$EXEC_REGION"; then
   pass_msg "execute region has a self-mutation callout (takes effect after merge+pull; no live-mutation risk in a worktree)"
 else
   fail_msg "execute region lacks the self-mutation callout (effect only after merge+pull; no live-mutation risk; worktree-isolated)"
@@ -216,21 +216,21 @@ fi
 #    regressing tests/test-fullsend-skill-setup-worktree-signature.sh).
 # ---------------------------------------------------------------------------
 inc
-if echo "$EXEC_REGION" | grep -qE 'feature/<[^>]+>'; then
+if grep -qE 'feature/<[^>]+>' <<< "$EXEC_REGION"; then
   pass_msg "execute region preserves the feature/<slug> branch shape token"
 else
   fail_msg "execute region dropped the feature/<slug> branch shape token"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qE 'setup-worktree\.sh[[:space:]]+(--base[[:space:]]+[^[:space:]]+[[:space:]]+)?feature/[a-z0-9-]+[[:space:]]+[0-9]+'; then
+if grep -qE 'setup-worktree\.sh[[:space:]]+(--base[[:space:]]+[^[:space:]]+[[:space:]]+)?feature/[a-z0-9-]+[[:space:]]+[0-9]+' <<< "$EXEC_REGION"; then
   pass_msg "execute region preserves a worked two-arg setup-worktree.sh example"
 else
   fail_msg "execute region dropped the worked two-arg setup-worktree.sh example (feature/<slug> <integer>)"
 fi
 
 inc
-if echo "$EXEC_REGION" | grep -qiE '[Dd]o NOT invoke.*only the issue number|[Dd]o not invoke.*only the issue'; then
+if grep -qiE '[Dd]o NOT invoke.*only the issue number|[Dd]o not invoke.*only the issue' <<< "$EXEC_REGION"; then
   pass_msg "execute region preserves the 'Do NOT invoke with only the issue number' callout"
 else
   fail_msg "execute region dropped the 'Do NOT invoke with only the issue number' callout"
