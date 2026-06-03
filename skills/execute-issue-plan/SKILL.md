@@ -25,7 +25,7 @@ State (slate, base branch, repo) is inherited from `/pipeline:fullsend`; if thes
 ## Lifecycle
 
 ```
-worktree spawn → spawn-claude tdd-implementer (PATH C) | inline Agent (PATH A/B, PATH D tdd) → push → PR
+worktree spawn → inline orchestrator-owned Agent(tdd-implementer) fan-out (PATH C, DEFAULT; spawn-claude tdd-implementer only under `--spawn`) | inline Agent (PATH A/B, PATH D tdd) → push → PR
 ```
 
 ## Invocation mode
@@ -35,7 +35,7 @@ Every step below behaves identically across modes — only the working-directory
 | # | Mode | CWD setup | Used by |
 |---|------|-----------|---------|
 | 1 | Inline `Agent(...)` dispatch | `cd <worktree-absolute-path>` (prompt provides it) | PATH A (docs-only), PATH B (standard) |
-| 2 | `spawn-claude.sh` / `claude -p` dispatch | already in worktree CWD | PATH C (multi-task) |
+| 2 | Inline orchestrator-owned `Agent(tdd-implementer)` fan-out (DEFAULT); `spawn-claude.sh` / `claude -p` dispatch only under `fullsend --spawn` | each leaf `cd`s into its OWN per-leaf worktree (`path-c-split-worktree.sh setup`); orchestrator reassembles into the feature worktree via cherry-pick (#896) | PATH C (multi-task) |
 | 3 | PATH D inline tdd-implementer | `cd <worktree-absolute-path>` (same as mode 1) | PATH D (quick-fix) |
 
 ### Collapsed inline D contract
@@ -83,7 +83,18 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels). On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline in a single pass: single failing test → impl → pass → commit, once. No subagent dispatch, no skill invocations beyond this one. This is single-pass discipline, not ceremony: the failing-test gate (red→green→commit) is mandatory and is NOT skipped — what PATH D drops is the redundant pre-PR review double-check (Step 8, see the PATH D early-return contract below), since `evaluate-issue-pr` is D's sole external review gate. (And if the change turns out to exceed D's envelope mid-run, escalate per the Collapsed inline D contract above rather than forcing it through.)
+5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels).
+
+   **PATH C (`multi-task`) — inline orchestrator-owned fan-out with per-leaf worktrees (DEFAULT).** On PATH C the orchestrator itself reads the `## Implementation Plan` and, for each `target=<dir>` in the plan, dispatches one leaf `Agent(subagent_type='tdd-implementer', description='target=<dir>/ ...', prompt='cd <leaf-worktree>; target=<dir>/ ...')`, then handles push + `gh pr create` + label flip itself (Steps 9–10). The orchestrator MUST NOT `Edit`/`Write` impl files directly: the `enforce-path-c-delegation` hook blocks direct orchestrator Edit/Write and authorizes only files under a dispatched `target=<dir>` sentinel. `tdd-implementer` stays a hard leaf executor (the `Agent` tool is removed from its toolset) dispatched from the top level — no grandchild dispatch. Each dispatch carries a real-subdirectory `target=<dir>/` sentinel (`target=.`/`./`/`/` are rejected by the hook) and applies red→green→commit autonomously.
+
+   **Per-leaf worktrees (the #896 fix — eliminates the shared-index race).** Each leaf gets its OWN worktree+branch off the feature-branch worktree HEAD, so concurrent leaves never share a git index. Without this, leaves committing in the same worktree race: transient `index.lock` collisions and one leaf's files swept into another leaf's commit (the #894 c+d collision), breaking per-target commit isolation and the per-PR CHANGELOG granularity contract. Drive it with `scripts/path-c-split-worktree.sh`:
+   - **Setup** — for each `target=<dir>`: `LEAF=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/path-c-split-worktree.sh" setup <feature-worktree> <target>)`; dispatch that target's leaf with `cd $LEAF` in its prompt.
+   - **Reassemble** — after ALL leaves report committed: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/path-c-split-worktree.sh" reassemble <feature-worktree> <target> [<target> ...]` cherry-picks each leaf's commits onto the feature branch (disjoint targets ⇒ conflict-free; cherry-pick is a git op so it does NOT trip `enforce-path-c-delegation`). A conflict means the targets were not actually disjoint — the helper aborts and errors; re-plan the overlap rather than forcing it.
+   - **Teardown** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/path-c-split-worktree.sh" teardown <feature-worktree> <target> [<target> ...]` removes the leaf worktrees + branches before push.
+
+   Because each leaf has an isolated index, **concurrency is bounded only by orchestrator context, not by a git-index cap** — the live branch test (#894/#896) confirmed leaf returns are ~one line each with negligible context cost, so non-overlapping targets may fan out fully concurrently (keep leaf returns terse). **Under `fullsend --spawn`, PATH C reverts to the legacy `spawn-claude.sh` → `tdd-implementer` fan-out** (the reversible escape hatch, #750) — same per-target sentinel + TDD discipline, different transport; the spawned path already isolates per worker so it needs no split-worktree step.
+
+   On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline in a single pass: single failing test → impl → pass → commit, once. No subagent dispatch, no skill invocations beyond this one. This is single-pass discipline, not ceremony: the failing-test gate (red→green→commit) is mandatory and is NOT skipped — what PATH D drops is the redundant pre-PR review double-check (Step 8, see the PATH D early-return contract below), since `evaluate-issue-pr` is D's sole external review gate. (And if the change turns out to exceed D's envelope mid-run, escalate per the Collapsed inline D contract above rather than forcing it through.)
 
    On `needs-browser` issues, each `tdd-implementer` dispatch (PATH C) or inline TDD task (PATH B/D) treats the predicates section as the test specification.
 
@@ -138,7 +149,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    ```
 
    Path-specific constraints when applying must-fixes:
-   - **PATH C (`multi-task`):** any must-fix touching impl code MUST go through a NEW `tdd-implementer` dispatch — the `enforce-path-c-delegation` hook blocks direct orchestrator `Edit`/`Write` on impl files.
+   - **PATH C (`multi-task`):** any must-fix touching impl code MUST go through a fresh inline `Agent(tdd-implementer)` dispatch (or a spawned worker under `--spawn`) — the `enforce-path-c-delegation` hook blocks direct orchestrator `Edit`/`Write` on impl files regardless of transport.
    - **PATH B (standard):** must-fix code edits follow red→green→commit discipline.
    - **PATH A (`docs-only`):** must-fix edits are direct.
    - **PATH D (quick-fix):** step 8 is skipped entirely (see early-return contract above); this row only applies on forced re-entry.

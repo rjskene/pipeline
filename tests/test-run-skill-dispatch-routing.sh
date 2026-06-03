@@ -32,9 +32,14 @@ STEP6_B=$(path_block "$STEP6" "PATH B")
 [ -n "$STEP6_B" ] || { echo "FAIL: Step 6 missing standalone PATH B branch"; exit 1; }
 echo "$STEP6_B" | grep -q "Agent(subagent_type=" || { echo "FAIL: Step 6 PATH B branch missing inline Agent(subagent_type=...)"; exit 1; }
 echo "$STEP6_B" | grep -qF "No spawn-claude.sh" || { echo "FAIL: Step 6 PATH B branch missing 'No spawn-claude.sh' negation"; exit 1; }
+# Issue #749: Step 6 (execution) PATH C is now INLINE-by-default — the
+# orchestrator fans out Agent(subagent_type='tdd-implementer') per target=<dir>,
+# with spawn-claude.sh/run-queue.sh reachable only under the --spawn fallback.
 STEP6_C=$(path_block "$STEP6" "PATH C")
 [ -n "$STEP6_C" ] || { echo "FAIL: Step 6 missing standalone PATH C branch"; exit 1; }
-echo "$STEP6_C" | grep -q "spawn-claude.sh" || { echo "FAIL: Step 6 PATH C branch missing spawn-claude.sh"; exit 1; }
+echo "$STEP6_C" | grep -q "Agent(subagent_type=" || { echo "FAIL: Step 6 PATH C branch missing inline Agent(subagent_type=...) (inline-by-default, #749)"; exit 1; }
+echo "$STEP6_C" | grep -qF -- "--spawn" || { echo "FAIL: Step 6 PATH C branch missing --spawn fallback reference (#749)"; exit 1; }
+echo "$STEP6_C" | grep -qE "spawn-claude.sh|run-queue.sh" || { echo "FAIL: Step 6 PATH C branch missing legacy spawn-claude.sh/run-queue.sh fallback target (#749)"; exit 1; }
 
 # Step 7 (PR evaluation): PATH B inline, PATH C spawn.
 STEP7_B=$(path_block "$STEP7" "PATH B")
@@ -67,5 +72,16 @@ echo "$STEP6" | grep -qF "No spawn-claude.sh" \
 # a NOT-spawn-paired assertion in the #748 anti-masking spirit.
 grep -qE "spawned PATH B|spawned B run|PATH B.*spawned (worker|run)" "$SKILL" \
   && { echo "FAIL: run SKILL.md still calls a PATH B run 'spawned' (B is inline now, #748)"; exit 1; } || true
+
+# Issue #896: the #749 conservative 1–2 git-index cap is RETIRED by the per-leaf
+# -worktree fix. The routing/Step-6 prose must instead name the per-leaf worktree
+# helper and bound concurrency by orchestrator context (max-3 foreground), NOT a
+# git-index cap. Phrase-presence guard — pure model-facing prose.
+grep -qF "path-c-split-worktree.sh" "$SKILL" \
+  || { echo "FAIL: SKILL.md missing the per-leaf-worktree helper 'path-c-split-worktree.sh' (#896)"; exit 1; }
+grep -qF "per-leaf worktree" "$SKILL" \
+  || { echo "FAIL: SKILL.md missing the 'per-leaf worktree' isolation contract (#896)"; exit 1; }
+grep -qE "never share a git index|shared.index race|git-index cap is retired|1–2 (git-index )?cap is retired" "$SKILL" \
+  || { echo "FAIL: SKILL.md must explain per-leaf worktrees eliminate the shared git-index race / retire the 1–2 cap (#896)"; exit 1; }
 
 echo "PASS: run SKILL.md dispatch routing"
