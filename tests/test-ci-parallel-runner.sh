@@ -96,6 +96,52 @@ STUB
     fail_msg "runner exited $rc despite all stubs passing"
   fi
   rm -rf "$WORK_OK"
+
+  # 1c. Serial-retry semantics (issue #897): a FLAKY stub that fails its first
+  # invocation but passes on retry must NOT red the runner (recovered flake),
+  # while a stub that fails DETERMINISTICALLY (250 above) must. Models the
+  # SIGPIPE-under-load flake class the corpus exhibits.
+  WORK_FLAKE="$(mktemp -d)"
+  cat > "$WORK_FLAKE/test-flaky.sh" <<'STUB'
+#!/bin/bash
+# Fails the first time it is run, passes thereafter (marker in its own dir).
+marker="$(dirname "$0")/.flaky-seen"
+if [ ! -f "$marker" ]; then
+  touch "$marker"
+  exit 1
+fi
+exit 0
+STUB
+  chmod +x "$WORK_FLAKE"/*.sh
+
+  inc
+  TESTS_DIR="$WORK_FLAKE" bash "$RUNNER" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pass_msg "runner recovers a flaky stub via serial retry (no spurious fail)"
+  else
+    fail_msg "runner red ($rc) on a stub that passes on retry (retry semantics broken)"
+  fi
+  rm -rf "$WORK_FLAKE"
+
+  # 1d. A DETERMINISTICALLY failing stub (fails both passes) must still red —
+  # the retry must not swallow real failures.
+  WORK_HARD="$(mktemp -d)"
+  cat > "$WORK_HARD/test-hardfail.sh" <<'STUB'
+#!/bin/bash
+exit 1
+STUB
+  chmod +x "$WORK_HARD"/*.sh
+
+  inc
+  TESTS_DIR="$WORK_HARD" bash "$RUNNER" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    pass_msg "runner reds a deterministically-failing stub (retry does not mask real failures)"
+  else
+    fail_msg "runner exited 0 on a stub that fails every run (retry swallowed a real failure)"
+  fi
+  rm -rf "$WORK_HARD"
 fi
 
 # ---------------------------------------------------------------------------

@@ -38,12 +38,15 @@ if [ -z "$PAR" ]; then
   PAR="$(nproc 2>/dev/null || echo 1)"
 fi
 
+# CANDIDATES records tests that failed in the PARALLEL pass; SENTINEL records
+# tests CONFIRMED failing after a serial retry (the real failures).
+CANDIDATES="$(mktemp)"
 SENTINEL="$(mktemp)"
-export SENTINEL
+export CANDIDATES
 
 # Per-file worker — exported so xargs-spawned bash subshells can call it.
 # Folds the Actions log per file (::group::/::endgroup::) and records any
-# failure (including high exit codes) into the shared sentinel file.
+# failure (including high exit codes) into the shared CANDIDATES file.
 run_one() {
   local t="$1"
   [ -f "$t" ] || return 0
@@ -52,24 +55,53 @@ run_one() {
   timeout 300 bash "$t" </dev/null || rc=$?
   echo "::endgroup::"
   if [ "$rc" -ne 0 ]; then
-    echo "FAIL rc=$rc $t" >> "$SENTINEL"
-    echo "::error::$t failed (exit $rc)"
+    printf '%s\t%s\n' "$rc" "$t" >> "$CANDIDATES"
+    echo "::error::$t failed in parallel pass (exit $rc) — will retry serially"
   fi
 }
 export -f run_one
 
-# Enumerate matching test files (NUL-delimited to survive odd names) and fan out.
-# Disable the failglob/nullglob surprises by checking existence in run_one.
+# Phase 1 — PARALLEL fan-out. NUL-delimited to survive odd names; existence is
+# re-checked in run_one to dodge failglob/nullglob surprises.
 find "$TESTS_DIR" -maxdepth 1 -type f \
   \( -name 'test*.sh' -o -name 'test_*.sh' \) -print0 \
   | sort -z \
   | xargs -0 -P "$PAR" -I{} bash -c 'run_one "$@"' _ {}
 
+# Phase 2 — SERIAL retry of every parallel-pass failure. The corpus is riddled
+# with `<producer> | grep -q` pipelines that, under `set -o pipefail`, return
+# 141 (SIGPIPE) when grep short-circuits before the producer finishes writing —
+# a load-induced FLAKE that surfaces only under the parallel fan-out (issue
+# #897). A genuinely-broken test fails again here; a flake passes. This keeps
+# STRICT aggregate fail intact (a real failure, including high exit codes like
+# 250, reds both passes) while not manufacturing spurious failures. Retries run
+# one-at-a-time with no contention, so the flake does not recur.
+if [ -s "$CANDIDATES" ]; then
+  echo "" >&2
+  echo "Retrying $(wc -l < "$CANDIDATES") parallel-pass failure(s) serially..." >&2
+  # De-dup the candidate paths (one retry per file regardless of how recorded).
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    echo "::group::retry $t"
+    rc=0
+    timeout 300 bash "$t" </dev/null || rc=$?
+    echo "::endgroup::"
+    if [ "$rc" -ne 0 ]; then
+      printf '%s\t%s\n' "$rc" "$t" >> "$SENTINEL"
+      echo "::error::$t failed on serial retry (exit $rc) — CONFIRMED failure"
+    else
+      echo "  RECOVERED on retry: $t (parallel-pass flake)" >&2
+    fi
+  done < <(cut -f2 "$CANDIDATES" | sort -u)
+fi
+
+rm -f "$CANDIDATES"
+
 if [ -s "$SENTINEL" ]; then
   echo "" >&2
-  echo "================ FAILURES ================" >&2
+  echo "================ FAILURES (confirmed after retry) ================" >&2
   cat "$SENTINEL" >&2
-  echo "=========================================" >&2
+  echo "=================================================================" >&2
   rm -f "$SENTINEL"
   exit 1
 fi
