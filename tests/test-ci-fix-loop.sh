@@ -106,39 +106,26 @@ case "$cmd $sub" in
         *) shift ;;
       esac
     done
+    # The shim does NOT run jq -- like the `closedByPullRequestsReferences`
+    # branch above, it returns the ALREADY-jq-collapsed value (the bare PR
+    # number, or empty for no match) that the helper's `--jq` would yield.
     if [ -n "$head_ref" ]; then
-      key="head_${head_ref}"
-      val="${S[$key]:-}"
-      if [ -n "$val" ]; then
-        echo "[{\"number\":$val}]"
-      else
-        echo "[]"
-      fi
+      echo "${S[head_${head_ref}]:-}"
       exit 0
     fi
     if [ -n "$search_q" ]; then
       # Extract the leading issue number from a "<N> in:body" query.
       if [[ "$search_q" =~ ^([0-9]+)[[:space:]]+in:body ]]; then
         n="${BASH_REMATCH[1]}"
-        val="${S[body_pr_$n]:-}"
-        if [ -n "$val" ]; then
-          echo "[{\"number\":$val,\"body\":\"resolves #$n\"}]"
-        else
-          echo "[]"
-        fi
+        echo "${S[body_pr_$n]:-}"
         exit 0
       fi
       # Bare/unfiltered search (the legacy fuzzy `linked:` path). Return the
       # trap value the OLD helper's `.[0]` resolution would latch onto.
-      val="${S[latest_open_pr]:-}"
-      if [ -n "$val" ]; then
-        echo "[{\"number\":$val}]"
-      else
-        echo "[]"
-      fi
+      echo "${S[latest_open_pr]:-}"
       exit 0
     fi
-    echo "[]"
+    echo ""
     exit 0
     ;;
   "pr checks")
