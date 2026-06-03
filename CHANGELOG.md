@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.23.0](https://github.com/rjskene/pipeline/compare/v0.22.3...v0.23.0) (2026-06-03)
+
+
+### Features
+
+* **ci:** extract parallel run-test-suite.sh with sentinel-file strict-fail ([08fad1f](https://github.com/rjskene/pipeline/commit/08fad1fdc9ac282b5df0ec7963508f491f42cfae))
+* **inline-execute:** --spawn routes inline PATH C back to spawn-claude fan-out ([227b223](https://github.com/rjskene/pipeline/commit/227b2235cb5f5d740e6c892ca1cd6471bd0bf18b))
+* **inline-execute:** conservative 1-2 concurrency cap for inline PATH C ([b111aa4](https://github.com/rjskene/pipeline/commit/b111aa4e6bd71f07828f07c39f8b5482f7ae428f))
+* **inline-execute:** dispatch PATH C execute inline — flatten worker into orchestrator-owned tdd-implementer fan-out ([f94443e](https://github.com/rjskene/pipeline/commit/f94443e05cb4c68a34ecf5a80083ffe67365d287))
+* **inline-execute:** fullsend routes PATH C execute inline by default ([fdca54a](https://github.com/rjskene/pipeline/commit/fdca54a4d8e383cda50811d563bf342af9ef7ea3))
+* **inline-execute:** PATH C execute fans out inline from orchestrator by default ([a541214](https://github.com/rjskene/pipeline/commit/a54121463d886a37c3cccb13faea9d4150e25006))
+
+
+### Bug Fixes
+
+* **ci:** serial-retry parallel-pass failures to absorb SIGPIPE flakes ([82110cb](https://github.com/rjskene/pipeline/commit/82110cbcb6731a70d9e5336869ec28a3d5823a6d))
+* **inline-execute:** per-leaf worktrees for PATH C fan-out — eliminate shared git-index race ([#896](https://github.com/rjskene/pipeline/issues/896)) ([cfa396e](https://github.com/rjskene/pipeline/commit/cfa396e9fea5440fae4539c539d929083b74ed8e))
+* **review:** clarify runner two-phase doc + use dorny canonical negation filter ([7289534](https://github.com/rjskene/pipeline/commit/72895343ed781f0a52e0570eaa2617028a5d3509))
+* **tests:** isolate shared state so suite is parallel-safe ([c654907](https://github.com/rjskene/pipeline/commit/c6549079952a8ed1a529773524c38bb18b022cc5))
+
+
+### Performance Improvements
+
+* **ci:** run parallel suite via run-test-suite.sh, cache apt/jq, path-filter tests job (guard always-on) ([78c2860](https://github.com/rjskene/pipeline/commit/78c2860acf481b9dda04a8587c3f1db1370aeb2f))
+* **ci:** speed up the test suite — parallelize runner, path-filter, cache setup ([d0c0353](https://github.com/rjskene/pipeline/commit/d0c0353d0cb4946f955fa91a15c34804aa202147))
+
+
+### Miscellaneous Chores
+
+* release 0.23.0 ([fef7660](https://github.com/rjskene/pipeline/commit/fef76607dcec6f8863f4997e2aef7217aaf81afe))
+
 ## [0.22.3](https://github.com/rjskene/pipeline/compare/v0.22.2...v0.22.3) (2026-06-02)
 
 
