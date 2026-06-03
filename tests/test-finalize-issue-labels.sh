@@ -270,11 +270,16 @@ else
 fi
 
 inc
-if grep -qF 'finalize-issue-labels.sh' "$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md" \
-   && ! grep -qF -- '--add-label "merged" --remove-label "pr-open"' "$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"; then
-  pass_msg "evaluate-issue-pr SKILL.md references the helper and dropped its inline flip"
+SKILL_MD="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
+finalize_line="$(grep -F 'finalize-issue-labels.sh' "$SKILL_MD" | grep -F '"$ISSUE"' | head -1)"
+if grep -qF 'finalize-issue-labels.sh' "$SKILL_MD" \
+   && ! grep -qF -- '--add-label "merged" --remove-label "pr-open"' "$SKILL_MD" \
+   && printf '%s' "$finalize_line" | grep -qF -- '--repo "$PIPELINE_REPO"' \
+   && ! printf '%s' "$finalize_line" | grep -qF -- '2>/dev/null || true'; then
+  pass_msg "evaluate-issue-pr SKILL.md Step 11.3 passes --repo and dropped the silent 2>/dev/null || true swallow"
 else
-  fail_msg "evaluate-issue-pr SKILL.md should reference finalize-issue-labels.sh and drop the inline --add-label merged --remove-label pr-open flip"
+  fail_msg "evaluate-issue-pr SKILL.md Step 11.3 must pass --repo \"\$PIPELINE_REPO\" to finalize-issue-labels.sh and drop the bare 2>/dev/null || true swallow (#888)"
+  echo "    finalize_line: $finalize_line"
 fi
 
 echo ""
