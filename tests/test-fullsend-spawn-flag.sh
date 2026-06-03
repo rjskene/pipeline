@@ -38,6 +38,14 @@ printf '%s' "$step6" | grep -qiF "all paths" || { echo "MISSING (Step 6): all pa
 printf '%s' "$step6" | grep -qiF "run-queue" || { echo "MISSING (Step 6): run-queue"; fail=1; }
 printf '%s' "$step6" | grep -qiF "inline" || { echo "MISSING (Step 6): inline (negative-default)"; fail=1; }
 
+# Issue #749: now that inline-C is PATH C's execute DEFAULT, --spawn has a LIVE
+# effect on C (no longer a no-op) — the Step 6 --spawn branch must explicitly
+# state PATH C execute reverts to the legacy spawn-claude.sh -> tdd-implementer
+# fan-out.
+printf '%s' "$step6" | grep -qiF "PATH C" || { echo "MISSING (Step 6 --spawn): PATH C explicit mention (#749)"; fail=1; }
+printf '%s' "$step6" | grep -qiF "spawn-claude.sh" || { echo "MISSING (Step 6 --spawn): spawn-claude.sh revert target for PATH C (#749)"; fail=1; }
+printf '%s' "$step6" | grep -qiF "tdd-implementer" || { echo "MISSING (Step 6 --spawn): tdd-implementer fan-out for reverted PATH C (#749)"; fail=1; }
+
 # (c) Step 7 has the all-paths-run-queue branch. Block-scope to the Step 7
 # block: starts at "7. **Evaluate PRs (wave N)" and ends at the "7b. " line.
 step7="$(awk '/^7\. \*\*Evaluate PRs \(wave N\)/{f=1} /^7b\. /{f=0} f' "$FILE")"
@@ -47,6 +55,17 @@ fi
 printf '%s' "$step7" | grep -qiF -- "--spawn" || { echo "MISSING (Step 7): --spawn"; fail=1; }
 printf '%s' "$step7" | grep -qiF "run-queue" || { echo "MISSING (Step 7): run-queue"; fail=1; }
 printf '%s' "$step7" | grep -qiF -- "--skill evaluate-issue-pr" || { echo "MISSING (Step 7): --skill evaluate-issue-pr"; fail=1; }
+
+# Issue #749 Task 6 / #896: inline-C's first rollout was operator merge-gated on a
+# live branch test (run one real PATH C issue through inline fan-out FROM THE
+# FEATURE BRANCH with --manual-merge). The #894/#896 probes SATISFIED that gate —
+# they surfaced the shared git-index race now fixed by per-leaf worktrees. The
+# gate note must still record the --manual-merge live-branch-test contract and
+# mark it cleared. Phrase-presence guard (file-level).
+assert_has "Live branch-test merge gate"
+grep -qiF -- "--manual-merge" "$FILE" || { echo "MISSING (#749 merge gate): --manual-merge"; fail=1; }
+grep -qiE "satisfied by #894/#896|clearing the gate|gate.*satisfied|cleared" "$FILE" \
+  || { echo "MISSING (#896): live-branch-test merge gate marked satisfied/cleared"; fail=1; }
 
 if [ "$fail" -eq 0 ]; then
   echo "PASS: fullsend --spawn flag phrases present"

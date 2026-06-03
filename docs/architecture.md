@@ -5,19 +5,19 @@ Internal mechanism notes.
 **When to read:** touching dispatch code, the full-send wave planner, or the transports.
 
 **Transports:**
-- inline `Agent()` — default; PATH A/B/D.
-- `spawn-claude.sh` → `claude -p` — PATH C only.
+- inline `Agent()` — default; PATH A/B/C/D.
+- `spawn-claude.sh` → `claude -p` — PATH C under `--spawn` (legacy escape hatch).
 
 ## Dispatch model (hybrid)
 
-Dispatch is keyed off the path label written by `/pipeline:classify-issue`. Inline `Agent()` in the orchestrator session is the default (A/B/D); `spawn-claude.sh` is C-only.
+Dispatch is keyed off the path label written by `/pipeline:classify-issue`. Inline `Agent()` in the orchestrator session is the default for ALL paths (A/B/C/D); `spawn-claude.sh` is the `--spawn` opt-in (PATH C only).
 
 ```
 path        transport                         subagent           notes
 ----        ---------                         --------           -----
 A docs-only inline Agent()                    general-purpose    worktree by setup-worktree.sh; launch inline
 B standard  inline Agent() (#748)             general-purpose    TDD via plan Task 0 bookend; separate exec/PR-eval contexts
-C multi     spawn-claude.sh -> claude -p      tdd-implementer    + run-queue.sh + tmux for multi-issue; deferred (#80)
+C multi     inline Agent() (#749/#896)        tdd-implementer    one per target=<dir> leaf; per-leaf worktree + cherry-pick reassemble; --spawn -> spawn-claude.sh run-queue
 D quick-fix inline Agent()                    tdd-implementer    skips eval-issue-plan + pre-PR review; PR-eval is sole gate
 precedence: A > D > C > B  (when path labels collide)
 ```
@@ -27,21 +27,21 @@ precedence: A > D > C > B  (when path labels collide)
   - Red→green discipline comes from the plan's Task 0 `superpowers:test-driven-development` bookend inside execute-issue-plan, identical to a spawned B worker. Transport flip changes only the launch — TDD discipline unchanged.
   - The flip eliminated the `claude -p` stream stall (boots, ~13s CPU, frozen log, 0 commits, `Sl+`) and the inverted cache_read:cache_creation ratio it caused.
   - Inline B execute Agent and inline B PR-eval Agent stay SEPARATE inline contexts (evaluator independence).
-- **PATH C** (`multi-task`) — execute-issue-plan + evaluate-issue-pr dispatch through `scripts/spawn-claude.sh` (→ `claude -p`); multi-issue runs add `scripts/run-queue.sh` + tmux. Unchanged; remains the indefinite default for C until external pressure (deprecation / quota signals on `-p`) forces broader migration.
+- **PATH C** (`multi-task`) — as of #749/#891/#896, execute-issue-plan fans out **inline by default**: the orchestrator reads the plan and dispatches one orchestrator-owned `Agent(subagent_type=tdd-implementer, ...)` per `target=<dir>` leaf, each in its OWN per-leaf worktree (`scripts/path-c-split-worktree.sh` setup/reassemble/teardown) so concurrent leaves never share a git index, then reassembles each leaf's commits onto the feature branch by **cherry-pick** (disjoint targets ⇒ conflict-free, #896). `--spawn` (#750) reverts C to the legacy `scripts/spawn-claude.sh` (→ `claude -p`) run-queue/tmux transport (per-worker isolation, no split-worktree step) — the reversible escape hatch.
 - **PATH D** (`quick-fix`) — execute-issue-plan runs inline via `Agent(subagent_type=tdd-implementer, ...)` — like A/B but subagent is `tdd-implementer` (leaf executor, strict red→green→commit) not general-purpose.
-  - evaluate-issue-pr unchanged (auto-routes by PATH letter: inline for A/B/D, spawn-claude for C).
+  - evaluate-issue-pr auto-routes by PATH letter: inline for A/B/C/D by default; spawn-claude for C under `--spawn`.
   - D ALSO skips evaluate-issue-plan entirely (orchestrator auto-flips `plan-pending` → `plan-approved` on a `quick-fix`+`plan-pending` issue in Step 4) and skips Step 8 (pre-PR review loop) of execute-issue-plan.
   - Bet: evaluate-issue-pr is sufficient review at quick-fix scope.
 - **Other stages** (classify-issue, plan-issue, evaluate-issue-plan, create-issues) already invoked inline as `Agent(...)` regardless of path; nothing changes.
 
-**Deferred PATH C inline migration (#80).** Intentionally deferred. Risks not yet accepted at C scope:
+**PATH C inline migration (#80 → shipped #749/#891/#896).** Originally deferred over risks at C scope:
 - subagent context budget
 - turn budget
 - permission inheritance
 - TDD discipline drift
 - crash recovery
 
-As of #748 those risks are accepted at A and B scope (B is single-context → budget/discipline bounded) but not at C scope, where the multi-task `tdd-implementer` fan-out keeps the spawned transport.
+As of #748 those risks were accepted at A and B scope. As of #749/#891/#896 they are accepted at C scope too: the per-leaf-worktree fan-out (#896) gives each `target=<dir>` leaf an isolated git index, so concurrency is bounded by orchestrator context (max-3 foreground), not a git-index cap, and leaf returns are ~one line each (negligible context cost — the #894/#896 live branch test). `--spawn` remains the reversible escape hatch back to the legacy spawned transport.
 
 ## Full Send wave model
 

@@ -19,6 +19,19 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # If you must script a loop, wrap it with a `timeout` and redirect `</dev/null` so an
 # interactive `read` or a hang can't wedge the executor — and never an unbounded
 # `for t in tests/test*.sh; do ...; done` sweep over unrelated tests (issue #677).
+#
+# Parallel form (issue #897): for a bash test tree, prefer the bundled parallel
+# runner over a serial for-loop — it fans tests/test*.sh across cores with
+# `xargs -P` and preserves STRICT aggregate fail via a sentinel file (a single
+# failing test, even with a high exit code, still reds the run). It already
+# wraps each test in `timeout 300 ... </dev/null`, so no extra hang-guard needed:
+#   PIPELINE_TEST_CMD='bash scripts/run-test-suite.sh'
+# Optionally cap the runner's fan-out width (defaults to `nproc`):
+# PIPELINE_TEST_PARALLELISM=4
+# NOTE: the live, host-only pipeline.config is GITIGNORED and cannot ship in a PR
+# (see CLAUDE.md "Configuration conventions"). Apply the same parallel-runner edit
+# to your live pipeline.config by HAND on the operator host — this example file is
+# the only tracked surface a PR can land on.
 PIPELINE_TEST_CMD="npm test"                       # Test command
 PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
 PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read
