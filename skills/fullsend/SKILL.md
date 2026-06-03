@@ -52,6 +52,8 @@ Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `fals
 
 ## Campaign mode
 
+**This section is the single source of truth for the campaign machinery.** `/pipeline:campaign` is an **equivalent standalone entry point** into the SAME loop documented here — it owns no leg-loop prose of its own and defers to this section verbatim (see `skills/campaign/SKILL.md`). `--campaign` on `/pipeline:fullsend` remains supported on an ongoing basis and is **NOT deprecated**; the two entries are interchangeable and execute identical machinery, so they can never drift.
+
 `--campaign` is an **OUTER loop above the existing wave-by-wave steps** — it **does not replace** them. Each **LEG** is one full pass of Steps 1→8 over that leg's issues; the wave-by-wave `### Execute the slate WAVE BY WAVE` machinery (Steps 5–7, the `### Inter-wave pull`, the `### Scoped halt-and-report`) runs unchanged *inside* each leg. Campaign mode WRAPS that pass and sequences multiple legs so the global rate-limit budget is spent in bounded batches rather than a single flat blast of the entire set.
 
 **Global-budget rule (applies to ALL stages).** Every agent dispatch — **classify and plan INCLUDED, not just execute** — is **batched under the caps**. There is **NO flat parallel blast of the whole set even for the read-only stages** (classify/plan): the rate-limit budget is GLOBAL, so a flat read-only blast still burns the same shared budget that execute needs. Batch classify/plan dispatch under the same concurrency cap as everything else.
@@ -83,6 +85,23 @@ The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PI
    ```
 4. **Collect this leg's bug signals** (NO `gh issue create` per leg). Append every signal from this leg — eval-pr `block-*` flags, Step-6b CI-fix repairs, execute `FAILED`/off-plan reports, and any skipped/halted-closure issues — to the running campaign signal log as one `SIGNAL issue=#<N> kind=<...> title="<conventional-commit title>" detail="<short>"` record per signal. **Preserve the per-leg race guard:** before recording, dedup against (1) currently-open issues and (2) the running campaign-filed set, so a leg never re-records a signal a prior leg already filed (the cross-leg race guard). Actual filing is deferred to **End-of-campaign bug filing** below, after the last leg.
 5. Proceed to the next leg.
+
+**End-of-campaign fold wave (#838).** AFTER the last regular leg's `(e)` step completes but BEFORE **End-of-campaign bug filing** below, run ONE bounded fold wave over bugs filed *this campaign*. This is the ONLY place mid-campaign-filed signals re-enter the wave machinery; during the legs, bug handling is unchanged (collect-only, deferred filing). Steps:
+
+1. **Select up to `PIPELINE_CAMPAIGN_MAX_FOLD` (default 3) signals, FIFO.** Pipe the running campaign signal log through the mechanical selector, which walks records in filing (FIFO) order, applies the ceiling, and skips high-uncertainty TITLE-keyword hits without consuming budget:
+   ```bash
+   printf '%s\n' "${CAMPAIGN_SIGNALS[@]}" \
+     | PIPELINE_REPO="$PIPELINE_REPO" \
+       PIPELINE_CAMPAIGN_MAX_FOLD="${PIPELINE_CAMPAIGN_MAX_FOLD:-3}" \
+       bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh fold-select
+   ```
+   It emits `FOLD issue=#<N> title="..."` (selected), `SKIP issue=#<N> reason=high-uncertainty title="..."` (left posted), and `OVERFLOW issue=#<N> title="..."` (beyond ceiling, left posted) lines.
+2. **Apply the classify-clean skip (model judgment, NOT mechanized).** For each `FOLD` line, additionally **skip (leave posted)** any signal that would classify `human` / `brainstorm` / `excluded` — these always wait for human review. The `fold-select` script only does the mechanical FIFO + ceiling + high-uncertainty keyword skip (`concurrency` / `race` / `lock` / `deadlock` / `security` / `auth` / `crypto` / `migration` / `data-loss`); the **non-autonomous** classify-clean decision is yours here. A `FOLD` line that you classify non-autonomous is demoted to the leave-posted set exactly like `SKIP`/`OVERFLOW`.
+3. **File the surviving FOLD signals as issues FIRST** (the wave machinery needs issue NUMBERS). For each surviving `FOLD` signal, `gh issue create` it via the same standard body template + path-hint marker used by **End-of-campaign bug filing**, re-checking the open-issue + campaign-filed sets immediately before create (the dedup contract), then add the new number to the campaign-filed set AND remove its signal from `CAMPAIGN_SIGNALS` so the filing step below does not re-file it.
+4. **Run ONE wave** over exactly those newly-filed fold issue numbers through the normal wave machinery — classify → plan → eval-plan → execute → eval-PR → auto-merge — the same `### Execute the slate WAVE BY WAVE` pass used by every leg, respecting `--manual-merge`. **Conflicts are handled at merge, not pre-filtered:** a folded PR that collides with just-merged leg work surfaces as a normal merge conflict and rides the standard eval/merge path (no file-conflict eligibility predicate).
+5. **Bound — one wave, NO recursion.** Any NEW signal collected DURING this fold wave is appended to `CAMPAIGN_SIGNALS` and **just posts** in the **End-of-campaign bug filing** step below — it is **never folded again**. The fold wave is single-shot; `fold-select` reads the already-serialized, dedup-guarded filed set ONCE.
+
+**Overflow + SKIP signals stay posted.** Every `OVERFLOW`/`SKIP` signal and every classify-clean-demoted signal remains in `CAMPAIGN_SIGNALS` and flows into **End-of-campaign bug filing** below — they are filed for the NEXT campaign (no loss; nothing is dropped). Only the surviving FOLD signals filed in step 3 are removed from the file-only set.
 
 **End-of-campaign bug filing.** AFTER the last leg's `(e)` step completes (campaign completion), a **SINGLE serialized orchestrator action** routes the aggregated signal log through the **deterministic, NON-INTERACTIVE subset** of the create-issues flow — the combine-bias scope-check heuristic + the grouping-detection script + the standard issue-body template + the advisory path-hint marker. It **NEVER invokes the interactive `superpowers:brainstorming` dialogue** (no one-question-at-a-time loop) and does **NOT** call the full `/pipeline:create-issues` skill — it calls the three deterministic helpers directly, because campaign completion is autonomous (the #863 autonomy constraint). Steps:
 

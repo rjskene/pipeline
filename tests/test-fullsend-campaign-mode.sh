@@ -113,6 +113,35 @@ printf '%s' "$camp" | grep -qiE 'campaign-filed' \
 # (8) scoped halt computes a dependency closure (via plan-campaign.sh closure).
 assert_camp "closure"
 
+# (9) End-of-campaign fold wave (#838): bounded, FIFO, skip non-autonomous,
+#     overflow stays posted, one wave, no recursion, placed BEFORE filing.
+assert_camp "End-of-campaign fold wave"
+assert_camp "PIPELINE_CAMPAIGN_MAX_FOLD"
+assert_camp "fold-select"
+printf '%s' "$camp" | grep -qiF "FIFO" \
+  || { echo "MISSING (Campaign mode): FIFO fold order"; fail=1; }
+printf '%s' "$camp" | grep -qiE 'skip .*non-autonomous|non-autonomous .*skip|human / brainstorm / excluded|human/brainstorm/excluded' \
+  || { echo "MISSING (Campaign mode): skip non-autonomous"; fail=1; }
+printf '%s' "$camp" | grep -qiE 'overflow .*(stay|post)|stay posted' \
+  || { echo "MISSING (Campaign mode): overflow stays posted"; fail=1; }
+printf '%s' "$camp" | grep -qiE 'no recursion|never fold(ed)? again|just posts' \
+  || { echo "MISSING (Campaign mode): no recursion / fold-once bound"; fail=1; }
+printf '%s' "$camp" | grep -qiE 'high-uncertainty' \
+  || { echo "MISSING (Campaign mode): high-uncertainty skip vocabulary"; fail=1; }
+
+# (9a) Fold wave is placed BEFORE the End-of-campaign bug filing step (ordinal).
+# Anchor on the bug-filing HEADING (line-leading bold marker), not the prose
+# forward-references in the leg loop / fold subsection that also mention it.
+ord_fold=$(printf '%s' "$camp_lc" | grep -n "end-of-campaign fold wave" | head -1 | cut -d: -f1)
+ord_bug_heading=$(printf '%s' "$camp_lc" | grep -n '^\*\*end-of-campaign bug filing\.\*\*' | head -1 | cut -d: -f1)
+if [ -z "${ord_fold:-}" ]; then
+  echo "MISSING (Campaign mode): end-of-campaign fold wave ordinal"; fail=1
+elif [ -z "${ord_bug_heading:-}" ]; then
+  echo "MISSING (Campaign mode): End-of-campaign bug filing heading ordinal"; fail=1
+elif [ "$ord_fold" -gt "$ord_bug_heading" ]; then
+  echo "VIOLATION: fold wave must precede End-of-campaign bug filing"; fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo "PASS: fullsend --campaign mode phrases present"
 else

@@ -54,6 +54,8 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 #PIPELINE_CAMPAIGN_MAX_BC="2"
 # AD = max PATH-A/D issues per campaign leg (cheap/fast); overridable per-invocation via --max-ad. Default 5.
 #PIPELINE_CAMPAIGN_MAX_AD="5"
+# FOLD = max filed-this-campaign bugs folded into the end-of-campaign fold wave (#838); FIFO, skip non-autonomous. Default 3.
+#PIPELINE_CAMPAIGN_MAX_FOLD="3"
 
 # Grouping detection in /pipeline:create-issues. When "true" (default), the skill calls scripts/find-grouping-candidates.sh before printing the proposal list to recommend TRACKER / GROUP / STANDALONE per proposed title. Set to "false" to skip the heuristic entirely (the proposal proceeds as if every recommendation were STANDALONE).
 #PIPELINE_GROUPING_DETECTION_ENABLED="true"
