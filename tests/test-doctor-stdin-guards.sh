@@ -169,6 +169,71 @@ run_doctor "$FX" "$PLUGIN_ROOT"
 st="$(guard_status "$FX/out")"
 [ "$st" = "warn" ] && pass_msg "case4: severity warn (not fail)" || { fail_msg "case4: status='$st' (want warn)"; grep -i stdin "$FX/out" | sed 's/^/    /'; }
 
+# ---------------------------------------------------------------------------
+# Task 5 — `--fix stdin-guards` remediation.
+# ---------------------------------------------------------------------------
+run_fix() {
+  local fx="$1" plugin_root="$2"; shift 2
+  local stdin_input="${STDIN_INPUT:-}"
+  (
+    cd "$fx"
+    if [ -n "$stdin_input" ]; then
+      PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$plugin_root" "$@" \
+        bash "$HELPER" --fix stdin-guards <<<"$stdin_input"
+    else
+      PATH="$TMP/bin:$PATH" env "CLAUDE_PLUGIN_ROOT=$plugin_root" "$@" \
+        bash "$HELPER" --fix stdin-guards </dev/null
+    fi
+  ) >"$fx/fixout" 2>&1
+  echo "$?" > "$fx/fixrc"
+}
+
+echo "Case 5: --fix stdin-guards patches/re-syncs → re-run reports pass"
+FX=$(fresh_fx fx-fix)
+mkdir -p "$FX/.claude/hooks"
+# Plugin-shipped Python dup (drifted/unguarded) → re-synced from plugin.
+cat > "$FX/.claude/hooks/restrict_paths.py" <<'PY'
+import json, sys
+data = json.load(sys.stdin)
+PY
+# Consumer-authored bash hook (unguarded) → in-place timeout-wrap with .bak.
+cat > "$FX/.claude/hooks/custom-logger.sh" <<'SH'
+#!/bin/bash
+INPUT=$(cat)
+echo "$INPUT"
+SH
+
+STDIN_INPUT="" run_fix "$FX" "$PLUGIN_ROOT" DOCTOR_FIX_NONINTERACTIVE=1
+fixrc="$(cat "$FX/fixrc")"
+[ "$fixrc" = "0" ] && pass_msg "case5: --fix stdin-guards exit 0" || { fail_msg "case5: exit $fixrc"; sed 's/^/    /' "$FX/fixout"; }
+
+# (a) bash hook now wraps its read with timeout.
+if grep -Eq 'INPUT=\$\(\s*timeout\b' "$FX/.claude/hooks/custom-logger.sh"; then
+  pass_msg "case5a: consumer bash hook timeout-wrapped in place"
+else
+  fail_msg "case5a: bash hook not timeout-wrapped"
+  sed 's/^/    /' "$FX/.claude/hooks/custom-logger.sh"
+fi
+# .bak backup left for the bash edit.
+if [ -f "$FX/.claude/hooks/custom-logger.sh.bak" ]; then
+  pass_msg "case5: .bak backup created for bash edit"
+else
+  fail_msg "case5: no .bak backup for bash edit"
+fi
+# (b) plugin-shipped Python dup re-synced (now guarded; no bare json.load).
+if grep -q "read_event_stdin" "$FX/.claude/hooks/restrict_paths.py" \
+   && ! grep -Eq 'json\.load\(sys\.stdin\)' "$FX/.claude/hooks/restrict_paths.py"; then
+  pass_msg "case5b: plugin-shipped Python dup re-synced (guarded)"
+else
+  fail_msg "case5b: Python dup not re-synced"
+  sed 's/^/    /' "$FX/.claude/hooks/restrict_paths.py"
+fi
+
+# (c) re-running doctor now reports pass.
+run_doctor "$FX" "$PLUGIN_ROOT"
+st="$(guard_status "$FX/out")"
+[ "$st" = "pass" ] && pass_msg "case5c: doctor re-run status=pass" || { fail_msg "case5c: status='$st' (want pass)"; grep -i stdin "$FX/out" | sed 's/^/    /'; }
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

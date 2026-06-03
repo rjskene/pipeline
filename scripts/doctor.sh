@@ -88,6 +88,96 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "labels" ]; then
 fi
 
 # --------------------------------------------------------------------------
+# --fix stdin-guards (#917): patch consumer .claude/hooks/ files whose stdin
+# reads lack a timeout guard. Strategy split:
+#   - plugin-shipped Python duplicate (basename exists under
+#     ${CLAUDE_PLUGIN_ROOT}/hooks/) → RE-SYNC: copy the now-guarded plugin file
+#     over the drifted consumer copy (the existing drift-remediation idiom;
+#     avoids fragile in-place AST surgery).
+#   - consumer-authored bash hook → IN-PLACE timeout-wrap of the `$(cat)`
+#     capture, with a `.bak` backup (same `.bak` convention as --fix residual).
+# Prompts [y/N] per file; DOCTOR_FIX_NONINTERACTIVE=1 is honored as auto-YES so
+# CI/tests can assert the patch path without a TTY (mirrors the --fix prompt
+# convention; see skills/doctor/SKILL.md).
+# --------------------------------------------------------------------------
+if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "stdin-guards" ]; then
+  SG_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  SG_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SG_SCRIPT_DIR/.." && pwd)}"
+  SG_HOOKS_DIR=".claude/hooks"
+
+  # prompt [y/N]; DOCTOR_FIX_NONINTERACTIVE=1 → auto-YES (apply).
+  sg_prompt_yn() {
+    local msg="$1"
+    printf '%s [y/N] ' "$msg"
+    if [ "${DOCTOR_FIX_NONINTERACTIVE:-0}" = "1" ]; then
+      echo "y"
+      REPLY="y"
+      return 0
+    fi
+    if ! IFS= read -r REPLY; then
+      REPLY=""
+      printf '\n' >&2
+      return 1
+    fi
+    return 0
+  }
+
+  if [ -d "$SG_HOOKS_DIR" ]; then
+    while IFS= read -r -d '' sg_f; do
+      sg_bn="$(basename "$sg_f")"
+      case "$sg_f" in
+        *.py)
+          # Only Python files with an unguarded stdin read are candidates.
+          if ! grep -Eq 'json\.load\(sys\.stdin\)|sys\.stdin\.read\(\)' "$sg_f" \
+             || grep -Eq 'read_event_stdin|signal\.alarm|select\.select' "$sg_f"; then
+            continue
+          fi
+          sg_plugin_file="$SG_PLUGIN_ROOT/hooks/$sg_bn"
+          if [ -f "$sg_plugin_file" ]; then
+            if sg_prompt_yn "Re-sync plugin-shipped Python hook from plugin (overwrites drift): $sg_f?"; then
+              case "$REPLY" in
+                y|Y|yes|YES)
+                  cp "$sg_plugin_file" "$sg_f"
+                  echo "  re-synced from plugin: $sg_f"
+                  ;;
+                *) echo "  skipped: $sg_f" ;;
+              esac
+            else
+              echo "  skipped (no input): $sg_f"
+            fi
+          else
+            echo "  manual review (consumer-authored Python; no plugin counterpart): $sg_f"
+            echo "    add a bounded read (e.g. read_event_stdin / signal.alarm) by hand."
+          fi
+          ;;
+        *.sh)
+          # Bash files with an unguarded $(cat) stdin capture.
+          if ! grep -Eq '\$\(\s*cat( +-)?\s*\)' "$sg_f" \
+             || grep -Eq '\$\(\s*timeout\b' "$sg_f"; then
+            continue
+          fi
+          if sg_prompt_yn "Timeout-wrap stdin read in consumer bash hook (in place, .bak backup): $sg_f?"; then
+            case "$REPLY" in
+              y|Y|yes|YES)
+                cp "$sg_f" "$sg_f.bak"
+                # INPUT=$(cat) / =$(cat -) → INPUT=$(timeout 5 cat || true)
+                sed -E -i 's/\$\(\s*cat( +-)?\s*\)/$(timeout 5 cat || true)/g' "$sg_f"
+                echo "  timeout-wrapped in place (backup: $sg_f.bak): $sg_f"
+                ;;
+              *) echo "  skipped: $sg_f" ;;
+            esac
+          else
+            echo "  skipped (no input): $sg_f"
+          fi
+          ;;
+      esac
+    done < <(find "$SG_HOOKS_DIR" -type f \( -name '*.py' -o -name '*.sh' \) \
+               -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
+  fi
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
 # --fix residual: re-run the three residual-state detectors in remediate
 # mode, prompting [y/N] per finding. Honors DOCTOR_FIX_NONINTERACTIVE=1
 # (auto-N for every prompt; used by tests to assert the prompt-and-skip path
