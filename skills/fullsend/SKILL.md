@@ -52,6 +52,8 @@ Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `fals
 
 ## Campaign mode
 
+**This section is the single source of truth for the campaign machinery.** `/pipeline:campaign` is an **equivalent standalone entry point** into the SAME loop documented here — it owns no leg-loop prose of its own and defers to this section verbatim (see `skills/campaign/SKILL.md`). `--campaign` on `/pipeline:fullsend` remains supported on an ongoing basis and is **NOT deprecated**; the two entries are interchangeable and execute identical machinery, so they can never drift.
+
 `--campaign` is an **OUTER loop above the existing wave-by-wave steps** — it **does not replace** them. Each **LEG** is one full pass of Steps 1→8 over that leg's issues; the wave-by-wave `### Execute the slate WAVE BY WAVE` machinery (Steps 5–7, the `### Inter-wave pull`, the `### Scoped halt-and-report`) runs unchanged *inside* each leg. Campaign mode WRAPS that pass and sequences multiple legs so the global rate-limit budget is spent in bounded batches rather than a single flat blast of the entire set.
 
 **Global-budget rule (applies to ALL stages).** Every agent dispatch — **classify and plan INCLUDED, not just execute** — is **batched under the caps**. There is **NO flat parallel blast of the whole set even for the read-only stages** (classify/plan): the rate-limit budget is GLOBAL, so a flat read-only blast still burns the same shared budget that execute needs. Batch classify/plan dispatch under the same concurrency cap as everything else.
