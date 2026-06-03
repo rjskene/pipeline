@@ -13,7 +13,7 @@ decision it forced. It is the durable record behind issues #721, #723, #707,
 - The pipeline's real compute cost is **~$15.8k over 17 days (~$900–1000/day list-price-equivalent)** — masked until now by subscription billing.
 - **94% of it is `claude -p` worker stages** (execute 74% + pr-eval 20%); **output tokens are the #1 cost driver (37%) and are uncacheable.**
 - The **2026-06-15 billing change** meters `claude -p`/Agent-SDK usage on subscription against a tiny separate credit (Max 20x = **$200/mo ≈ 5–8 hours** of load), then bills standard API rates. The subscription subsidy on automated work is going away.
-- **Decision: Path 2** — keep work on the subscription's *interactive pool* by running execute+pr-eval as **inline subagents from a human-attended orchestrator**, `claude -p` opt-in. Path 1 (API-key, full automation) is the documented later-option.
+- **Decision: Path 2** — keep work on the subscription's *interactive pool* by running execute+pr-eval as **inline subagents from a human-attended orchestrator**, `claude -p` opt-in. As of #749/#891/#896 this now applies to PATH C as well: C execute/PR-eval fan out inline by default (one `tdd-implementer` per `target=<dir>` leaf in its own per-leaf worktree, reassembled by cherry-pick), with `--spawn` as the opt-in legacy `claude -p` worker transport. Path 1 (API-key, full automation) is the documented later-option.
 - **Two parallel workstreams, both required:** migrate to inline (#723/#707) AND drive down tokens (#648/#420/#700).
 - **Everything gates on #721** (measurement) — it also produces the execute-concurrency assessment that sizes the migration and feeds the governor.
 
@@ -202,7 +202,10 @@ trade.** What you give up moving inline:
 2. **Per-agent cwd isolation** — none in the public Agent SDK (open: anthropics/claude-code
    #31940). Subagents inherit parent cwd; concurrent inline agents `cd`-ing into different
    worktrees can **race** on shared filesystem/git state. (This harness's `isolation:"worktree"`
-   gives first-class isolation; public SDK does not.)
+   gives first-class isolation; public SDK does not.) The pipeline's PATH C fan-out works
+   around this with **per-leaf worktrees** (#896): each `target=<dir>` leaf gets its own
+   worktree+branch off feature HEAD so leaves never share a git index, reassembled onto the
+   feature branch by cherry-pick — see `docs/architecture.md` and `scripts/path-c-split-worktree.sh`.
 
 ⇒ **Safe concurrency = min(rate-limit ceiling, cwd-isolation-safe count)** — the tighter binds.
 
