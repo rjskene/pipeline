@@ -108,22 +108,26 @@ all paths — only the launch differs.
 
 ```
   PATH letter -> transport
-    A,B,D -> inline  Agent(subagent_type=...) in orchestrator session
+    A,B,C,D -> inline  Agent(subagent_type=...) in orchestrator session
        A -> Agent(general-purpose)
        B -> Agent(general-purpose)
+       C -> Agent(tdd-implementer) per target=<dir> leaf, each in its
+            OWN per-leaf worktree (path-c-split-worktree.sh), reassembled
+            onto the feature branch by cherry-pick (#896)
        D -> Agent(tdd-implementer)
-    C     -> spawn   spawn-claude.sh -> claude -p
-                     (+ run-queue.sh / tmux for multi-issue)
+    C under --spawn -> legacy spawn-claude.sh -> claude -p
+                       (+ run-queue.sh / tmux run-queue)
 ```
 
-Caption: inline `Agent()` is the default transport; spawn
-(`spawn-claude.sh` / `run-queue.sh` / tmux) is PATH C only.
+Caption: inline `Agent()` is the default transport for ALL paths; the
+spawn / run-queue / tmux transport is the `--spawn` legacy escape hatch
+(formerly C-only).
 
 | Path | Transport                          | Produces                                |
 |------|------------------------------------|-----------------------------------------|
 | A    | inline `Agent(general-purpose)`    | Flat edits in the worktree. No TDD cycle.|
 | B    | inline `Agent(general-purpose)`    | TDD discipline (red->green->commit) inline; no spawned worker.|
-| C    | spawn `spawn-claude.sh` / `run-queue.sh` tmux | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
+| C    | inline `Agent(tdd-implementer)` per `target=<dir>` leaf, each in its own per-leaf worktree + cherry-pick reassemble (#896); `--spawn` = legacy run-queue | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
 | D    | inline `Agent(tdd-implementer)`    | Inline `tdd-implementer` in the orchestrator session. Skips the pre-PR review loop in `execute-issue-plan` Step 8.|
 
 ## Wave-plan flow
@@ -170,8 +174,9 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
            |
            v
   +--------+----------+
-  | execute           |   B/D: inline Agent() in orchestrator
-  |                   |   C:   run-queue.sh / tmux, max 3 concurrent
+  | execute           |   A/B/D: inline Agent() in orchestrator
+  |                   |   C: inline tdd-implementer per leaf,
+  |                   |      per-leaf worktree, max 3 concurrent
   +--------+----------+
            |
            v
