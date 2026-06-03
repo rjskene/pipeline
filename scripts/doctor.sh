@@ -994,6 +994,52 @@ fi
 unset _bbe_plugin_root _bbe_hook_path _bbe_plugin_registered _bbe_plugin_manifest _bbe_consumer_registered _bbe_consumer_settings
 
 # --------------------------------------------------------------------------
+# Check: stdin_read_timeout_guards (#917) — scan consumer .claude/hooks/ for
+# stdin reads that lack a timeout guard. An unguarded hook fed a never-closing
+# stdin blocks indefinitely and wedges the session. Severity WARN (consumer-
+# owned files, in the runtime allow-list; never FAIL — mirrors settings_residual).
+# The plugin's own shipped hooks are guarded in the plugin source; this check is
+# the migration aid for already-vendored consumer copies. Remediation:
+# `/pipeline:doctor --fix stdin-guards`.
+#   - Python: flag `json.load(sys.stdin)` / `sys.stdin.read()` with NO nearby
+#     guard token (read_event_stdin / signal.alarm / select.select).
+#   - Bash:   flag a `$(cat)` / `$(cat -)` stdin capture with NO `timeout` on it.
+# Heuristic "guarded" detection (guard token present anywhere in the file) is
+# acceptable for a WARN-level aid; false-negatives only under-report.
+# --------------------------------------------------------------------------
+_srtg_hooks_dir=".claude/hooks"
+_srtg_unguarded=()
+if [ -d "$_srtg_hooks_dir" ]; then
+  while IFS= read -r -d '' _srtg_f; do
+    case "$_srtg_f" in
+      *.py)
+        if grep -Eq 'json\.load\(sys\.stdin\)|sys\.stdin\.read\(\)' "$_srtg_f" \
+           && ! grep -Eq 'read_event_stdin|signal\.alarm|select\.select' "$_srtg_f"; then
+          _srtg_unguarded+=("$_srtg_f")
+        fi
+        ;;
+      *.sh)
+        # A $(cat) / $(cat -) capture with no `timeout` wrapping it.
+        if grep -Eq '\$\(\s*cat( +-)?\s*\)' "$_srtg_f" \
+           && ! grep -Eq '\$\(\s*timeout\b' "$_srtg_f"; then
+          _srtg_unguarded+=("$_srtg_f")
+        fi
+        ;;
+    esac
+  done < <(find "$_srtg_hooks_dir" -type f \( -name '*.py' -o -name '*.sh' \) \
+             -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
+fi
+
+_srtg_n="${#_srtg_unguarded[@]}"
+if [ "$_srtg_n" = "0" ]; then
+  record stdin_read_timeout_guards pass "no unguarded stdin reads in consumer .claude/hooks/"
+else
+  _srtg_csv="$(IFS=', '; echo "${_srtg_unguarded[*]}")"
+  record stdin_read_timeout_guards warn "$_srtg_n consumer hook(s) read stdin without a timeout guard ($_srtg_csv) — run /pipeline:doctor --fix stdin-guards"
+fi
+unset _srtg_hooks_dir _srtg_unguarded _srtg_f _srtg_n _srtg_csv
+
+# --------------------------------------------------------------------------
 # Summary table + exit code.
 # --------------------------------------------------------------------------
 echo
