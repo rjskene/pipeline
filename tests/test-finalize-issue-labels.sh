@@ -37,6 +37,7 @@ echo "gh $*" >> "$SHIM_LOG"
 sub1="${1:-}"; sub2="${2:-}"
 case "$sub1 $sub2" in
   "issue edit")
+    if [ -n "${FORCE_EDIT_FAIL:-}" ]; then exit 1; fi
     have=",${LABELS:-},"
     rc=0
     while [ $# -gt 0 ]; do
@@ -51,6 +52,11 @@ case "$sub1 $sub2" in
       shift
     done
     exit "$rc"
+    ;;
+  "repo view")
+    # Simulate `gh repo view --json nameWithOwner -q .nameWithOwner`.
+    # FALLBACK_REPO empty => simulate gh failure (exit 1, no stdout).
+    if [ -n "${FALLBACK_REPO:-}" ]; then echo "$FALLBACK_REPO"; exit 0; else exit 1; fi
     ;;
   *)
     exit 0
@@ -185,6 +191,64 @@ else
   fail_msg "--repo flag: helper exited $rc; expected 0"
   echo "    stderr:"; sed 's/^/      /' "$F/stderr"
 fi
+
+# ---- Case H: env-only PIPELINE_REPO (Step-11.3 shape) reaches the gh call ----
+echo "Case H: env-only PIPELINE_REPO recorded in gh call"
+inc
+H="$TMP/case-h"; reset_case "$H"
+export LABELS="$(IFS=,; echo "${STRIP_SET[*]}")"
+# PIPELINE_REPO is exported at top of file (rjskene/pipeline); no --repo flag.
+if bash "$HELPER" 888 >"$H/stdout" 2>"$H/stderr"; then
+  if grep -qF -- '--repo rjskene/pipeline' "$SHIM_LOG"; then
+    pass_msg "env-only PIPELINE_REPO: gh call carries --repo rjskene/pipeline"
+  else
+    fail_msg "env-only PIPELINE_REPO: --repo rjskene/pipeline not recorded in gh call"
+    sed 's/^/    /' "$SHIM_LOG"
+  fi
+else
+  rc=$?
+  fail_msg "env-only PIPELINE_REPO: helper exited $rc; expected 0"
+  echo "    stderr:"; sed 's/^/      /' "$H/stderr"
+fi
+
+# ---- Case I: REPO unset → gh repo view fallback resolves the repo ----
+echo "Case I: gh repo view fallback when PIPELINE_REPO unset"
+inc
+I="$TMP/case-i"; reset_case "$I"
+if env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$HOME" SHIM_LOG="$I/calls.log" \
+     FALLBACK_REPO="fallback/repo" \
+     LABELS="$(IFS=,; echo "${STRIP_SET[*]}")" \
+     bash "$HELPER" 888 >"$I/stdout" 2>"$I/stderr"; then
+  if grep -qF -- '--repo fallback/repo' "$I/calls.log"; then
+    pass_msg "gh repo view fallback: resolved repo threaded into gh issue edit"
+  else
+    fail_msg "gh repo view fallback: --repo fallback/repo not recorded"
+    sed 's/^/    /' "$I/calls.log"
+  fi
+else
+  rc=$?
+  fail_msg "gh repo view fallback: helper exited $rc; expected 0"
+  echo "    stderr:"; sed 's/^/      /' "$I/stderr"
+fi
+
+# ---- Case J: total gh issue edit failure → WARN on stderr, still exit 0 ----
+echo "Case J: total edit failure emits WARN (non-blocking)"
+inc
+J="$TMP/case-j"; reset_case "$J"
+export LABELS="$(IFS=,; echo "${STRIP_SET[*]}")"
+if FORCE_EDIT_FAIL=1 bash "$HELPER" 888 >"$J/stdout" 2>"$J/stderr"; then
+  if grep -qi 'WARN' "$J/stderr"; then
+    pass_msg "total edit failure: WARN surfaced on stderr and helper stayed non-blocking (exit 0)"
+  else
+    fail_msg "total edit failure: exited 0 but no WARN on stderr (silent no-op regression #888)"
+    echo "    stderr:"; sed 's/^/      /' "$J/stderr"
+  fi
+else
+  rc=$?
+  fail_msg "total edit failure: helper exited $rc; expected 0 (merge path must stay non-blocking)"
+  echo "    stderr:"; sed 's/^/      /' "$J/stderr"
+fi
+unset FORCE_EDIT_FAIL
 
 # ---- Grep-guards: the three call sites delegate to the helper ----
 echo "Case G: call sites delegate to the shared helper"

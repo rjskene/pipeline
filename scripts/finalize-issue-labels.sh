@@ -27,7 +27,8 @@
 # Usage:
 #   bash finalize-issue-labels.sh <issue> [--repo <owner/repo>]
 #
-# Repo resolution: $PIPELINE_REPO env (or --repo flag) is required.
+# Repo resolution order: --repo flag > $PIPELINE_REPO env > `gh repo view`
+# current-repo (git remote) fallback (#888). One of these must resolve.
 #
 # Emits one audit line to stdout:
 #   FINALIZED: issue=<N> labels=merged stripped=<count>
@@ -60,8 +61,14 @@ if [ -z "$ISSUE" ]; then
   exit 2
 fi
 
+# Repo resolution order: --repo flag > $PIPELINE_REPO env > gh's current-repo
+# config (the git remote). The fallback covers the Step-11.3 subshell case
+# where PIPELINE_REPO was sourced but not exported into this context (#888).
 if [ -z "$REPO" ]; then
-  echo "finalize-issue-labels.sh: PIPELINE_REPO (or --repo) is required" >&2
+  REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+fi
+if [ -z "$REPO" ]; then
+  echo "finalize-issue-labels.sh: PIPELINE_REPO (or --repo, or a gh-resolvable current repo) is required" >&2
   exit 2
 fi
 
@@ -86,9 +93,14 @@ for l in "${STRIP_LABELS[@]}"; do
   REMOVE_ARGS+=(--remove-label "$l")
 done
 
-gh issue edit "$ISSUE" --repo "$REPO" --add-label merged "${REMOVE_ARGS[@]}" \
-  2>/dev/null \
-  || gh issue edit "$ISSUE" --repo "$REPO" --add-label merged 2>/dev/null \
-  || true
+# Attempt the combined add+strip. gh 422s the WHOLE call if any removed label
+# is already absent, so on failure we retry the `merged` add alone (idempotent).
+# Unlike before, the fallback's stderr is captured: a genuine total failure
+# (bad repo, API error) now surfaces a WARN instead of a silent no-op (#888).
+if ! gh issue edit "$ISSUE" --repo "$REPO" --add-label merged "${REMOVE_ARGS[@]}" 2>/dev/null; then
+  EDIT_ERR="$(gh issue edit "$ISSUE" --repo "$REPO" --add-label merged 2>&1)" || {
+    echo "WARN: finalize-issue-labels: label finalization failed for issue=${ISSUE} repo=${REPO}; labels may be stale. gh: ${EDIT_ERR}" >&2
+  }
+fi
 
 echo "FINALIZED: issue=${ISSUE} labels=merged stripped=${#STRIP_LABELS[@]}"
