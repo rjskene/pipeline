@@ -11,7 +11,7 @@ MANIFEST="$REPO_ROOT/.claude-plugin/plugin.json"
 PASS=0; FAIL=0
 assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  FAIL: $1"; FAIL=$((FAIL+1)); fi; }
 
-SKILLS=(classify-issue create-issues doctor evaluate-issue-plan evaluate-issue-pr execute-issue-plan hotfix init plan-issue run worktree-sync)
+SKILLS=(campaign classify-issue create-issues doctor evaluate-issue-plan evaluate-issue-pr execute-issue-plan hotfix init plan-issue run worktree-sync)
 
 # 1. Canonical SKILL.md exists at plugin root, with matching frontmatter, and no .template leftover.
 for name in "${SKILLS[@]}"; do
