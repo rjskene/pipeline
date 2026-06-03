@@ -9,9 +9,40 @@ Provides:
 - fcntl-based append locking for the consolidated log
 """
 import fcntl
+import json
 import os
 import re
+import signal
+import sys
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Fail-open bounded stdin read
+# ---------------------------------------------------------------------------
+
+def read_event_stdin(timeout: int = 5) -> dict:
+    """Read+parse the hook event JSON from stdin with a bounded, fail-open
+    deadline. Returns {} on timeout, EOF/empty, or malformed JSON — a guard
+    hook that cannot read its event must never wedge the session (#917)."""
+    def _on_timeout(signum, frame):
+        raise TimeoutError
+
+    old = signal.signal(signal.SIGALRM, _on_timeout)
+    try:
+        signal.alarm(timeout)
+        raw = sys.stdin.read()
+    except Exception:
+        return {}
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+    if not raw or not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except (ValueError, json.JSONDecodeError):
+        return {}
 
 
 # ---------------------------------------------------------------------------
