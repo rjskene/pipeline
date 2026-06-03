@@ -281,6 +281,7 @@ declare -A STALL_LATCHED=()   # issue -> 1 once agent-stalled emitted this windo
 declare -A PANE_FINGERPRINT=()  # issue -> last-seen tmux-pane fingerprint (forward-progress baseline, #641)
 declare -A PR_OPEN_POLLS=()   # issue -> consecutive polls observed at pr-open while alive (issue #636)
 declare -A SAW_OFF_PR_OPEN=()  # issue -> 1 once observed NOT at pr-open since launch (transition witness, issue #694)
+declare -A WORKER_PGID=()      # issue -> agent process-group id captured at spawn time (issue #919)
 QUEUE_INDEX=0
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-300}"  # 5 minutes default
 POLL_COUNT=0
@@ -378,20 +379,31 @@ is_agent_running() {
 # window, so `queue-complete` implies no orphaned child survives the reap (issue
 # #666). Bare `tmux kill-window` only tears down the pane's controlling terminal;
 # the spawned claude can survive detached, holding the worktree + a slot.
+# Prefer the pgid CAPTURED AT SPAWN TIME (WORKER_PGID, issue #919) and kill the
+# group UNCONDITIONALLY: re-parenting an orphan to init changes its PPID, not its
+# PGID, so `kill -- -<pgid>` still catches a worker whose lead pid already died
+# (OOM/crash) — a case where the legacy at-reap-time `ps -o pgid= -p <dead pid>`
+# lookup returns empty and silently skips the kill, leaking children. Fall back
+# to the legacy at-reap-time lookup only when no spawn-time pgid was stored (e.g.
+# a tmux race where the pane wasn't listable at launch) — best-effort, same
+# fail-safe as before.
 # Fail-safe: any missing pane pid / pgid simply skips the kill and still closes
 # the window, so a transient tmux/ps blip never errors the runner under the
 # poll-loop's `set +e` region.
 reap_worker_window() {
   local issue="$1"
   local pane_pid pgid
-  pane_pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
-  if [ -n "$pane_pid" ]; then
-    pgid=$(ps -o pgid= -p "$pane_pid" 2>/dev/null | tr -d ' ')
-    if [ -n "$pgid" ]; then
-      kill -TERM "-${pgid}" 2>/dev/null || true
-      sleep "${PIPELINE_REAP_SIGKILL_GRACE_SEC:-2}"
-      kill -KILL "-${pgid}" 2>/dev/null || true
-    fi
+  pgid="${WORKER_PGID[$issue]:-}"
+  if [ -z "$pgid" ]; then
+    # Fallback: no spawn-time capture. Re-derive at reap time as before —
+    # best-effort, may be empty if the lead is already dead.
+    pane_pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+    [ -n "$pane_pid" ] && pgid=$(ps -o pgid= -p "$pane_pid" 2>/dev/null | tr -d ' ')
+  fi
+  if [ -n "$pgid" ]; then
+    kill -TERM "-${pgid}" 2>/dev/null || true
+    sleep "${PIPELINE_REAP_SIGKILL_GRACE_SEC:-2}"
+    kill -KILL "-${pgid}" 2>/dev/null || true
   fi
   tmux kill-window -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" 2>/dev/null || true
 }
@@ -495,6 +507,22 @@ launch_agent() {
 
   ACTIVE[$issue]="$wt_path"
   RESULTS[$issue]="running"
+
+  # Capture the agent's process-GROUP id at SPAWN time, while the tmux pane lead
+  # is still alive (issue #919). The pane runs its command as a fresh process-
+  # group leader, so the pane lead pid's pgid IS the [script→]timeout→claude
+  # subtree's group. Storing it now lets reap_worker_window tear the group down
+  # by the STORED pgid even if the lead later dies (OOM/crash) and an at-reap-time
+  # `ps -o pgid= -p <dead pid>` lookup returns empty. If list-panes races empty
+  # immediately after new-window, the capture is skipped and reap falls back to
+  # the legacy at-reap lookup (no regression vs. before).
+  local _spawn_pane_pid _spawn_pgid
+  _spawn_pane_pid=$(tmux list-panes -t "${PIPELINE_TMUX_SESSION:-dev}:issue-${issue}" -F '#{pane_pid}' 2>/dev/null | head -1)
+  if [ -n "$_spawn_pane_pid" ]; then
+    _spawn_pgid=$(ps -o pgid= -p "$_spawn_pane_pid" 2>/dev/null | tr -d ' ')
+    [ -n "$_spawn_pgid" ] && WORKER_PGID[$issue]="$_spawn_pgid"
+  fi
+
   unset 'SAW_OFF_PR_OPEN['"$issue"']'   # fresh worker: not yet witnessed off pr-open (issue #694)
   BUCKET_ACTIVE[$mode]=$(( ${BUCKET_ACTIVE[$mode]:-0} + 1 ))
 }
@@ -807,7 +835,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       _finished_mode="${ISSUE_MODE[$issue]:-bare}"
       BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
       unset 'ACTIVE['"$issue"']'
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']' 'WORKER_PGID['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (reason: ${_block_reason}, evaluator terminal, window force-closed)"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} reason=${_block_reason} mode=${_finished_mode}"
       fill_slots
@@ -850,7 +878,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
           _finished_mode="${ISSUE_MODE[$issue]:-bare}"
           BUCKET_ACTIVE[$_finished_mode]=$(( ${BUCKET_ACTIVE[$_finished_mode]:-1} - 1 ))
           unset 'ACTIVE['"$issue"']'
-          unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PR_OPEN_POLLS['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']'
+          unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PR_OPEN_POLLS['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']' 'WORKER_PGID['"$issue"']'
           log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome} (executor terminal, reaped after ${PIPELINE_EXECUTOR_REAP_GRACE_POLLS}-poll grace, window force-closed)"
           log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
           fill_slots
@@ -885,7 +913,7 @@ while [ ${#ACTIVE[@]} -gt 0 ] || buckets_have_pending || pending_file_has_items;
       unset 'ACTIVE['"$issue"']'
       # Clear stall-tracking state so a re-used issue number can't inherit a
       # stale counter/latch (issue #437) or progress baseline (issue #641).
-      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']'
+      unset 'CPU_IDLE_POLLS['"$issue"']' 'STALL_LATCHED['"$issue"']' 'PANE_FINGERPRINT['"$issue"']' 'SAW_OFF_PR_OPEN['"$issue"']' 'WORKER_PGID['"$issue"']'
       log "[$(date +%H:%M:%S)] Agent for issue #${issue} finished — outcome: ${outcome}"
       log "EVENT: agent-finished issue=${issue} outcome=${outcome} mode=${_finished_mode}"
 
