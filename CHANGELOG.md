@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.23.2](https://github.com/rjskene/pipeline/compare/v0.23.1...v0.23.2) (2026-06-03)
+
+
+### Features
+
+* **verify:** add verify-execute-completion.sh orchestrator-side backstop ([#912](https://github.com/rjskene/pipeline/issues/912)) ([1bbd326](https://github.com/rjskene/pipeline/commit/1bbd32637667be502897c370e092e838becfe8e4))
+
+
+### Bug Fixes
+
+* **check-ci-fix-loop:** issue→PR resolution returns the latest open PR, not the issue's own PR, when multiple feature PRs are open concurrently ([945441e](https://github.com/rjskene/pipeline/commit/945441ef34a84f66f91ab0fe7f5bd3bcd7e3e534))
+* **check-ci-fix-loop:** resolve issue→PR via own worktree branch, not latest open PR ([#909](https://github.com/rjskene/pipeline/issues/909)) ([bb892af](https://github.com/rjskene/pipeline/commit/bb892af5df3d69536fe6fa8ae823d9c37ddb0778))
+* **fullsend:** add post-dispatch execute completion check + auto-recover ([#912](https://github.com/rjskene/pipeline/issues/912)) ([7f49d71](https://github.com/rjskene/pipeline/commit/7f49d71af4391763e6920284f9b0539c52e00522))
+* **inline-execute:** terminal-state directive ([#764](https://github.com/rjskene/pipeline/issues/764)) is insufficient — inline execute agents still narrate-and-yield before opening the PR ([3dd0497](https://github.com/rjskene/pipeline/commit/3dd049711aebe24676f96de8c2c04c40c3188cd4))
+
 ## [0.23.1](https://github.com/rjskene/pipeline/compare/v0.23.0...v0.23.1) (2026-06-03)
 
 
