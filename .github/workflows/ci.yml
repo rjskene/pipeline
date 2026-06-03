@@ -27,9 +27,13 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # "code" matches any changed path that is NOT pure docs/markdown.
+          # dorny treats a leading '!' as a negation predicate; a change is
+          # "code" when at least one changed file survives both exclusions.
           filters: |
             code:
-              - '!(**/*.md)'
+              - '**'
+              - '!**/*.md'
               - '!docs/**'
 
   tests:

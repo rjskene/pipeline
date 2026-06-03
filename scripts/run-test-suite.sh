@@ -3,10 +3,13 @@
 #
 # Fans tests/test*.sh + tests/test_*.sh across cores via `xargs -P`. xargs masks
 # child exit codes by default (and `--halt` semantics on high exit codes like 250
-# are unreliable across xargs builds), so each child writes a marker line to a
-# shared mktemp SENTINEL file on failure; after the fan-out we exit non-zero iff
-# the sentinel is non-empty. This guarantees strict fail survives even for
-# high/128+ exit codes (issue #897 acceptance bar).
+# are unreliable across xargs builds), so each child appends a marker line to a
+# shared mktemp file on failure and we exit non-zero iff that file is non-empty
+# — strict fail survives even high/128+ exit codes (issue #897 acceptance bar).
+#
+# Two phases: a PARALLEL fan-out records candidate failures, then a SERIAL retry
+# of those candidates confirms real failures vs. load-induced SIGPIPE flakes
+# (see the Phase 2 note below). Only twice-failing tests red the run.
 #
 # Usage:
 #   scripts/run-test-suite.sh [tests-dir]
