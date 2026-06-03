@@ -55,6 +55,7 @@ State table — each row names a check, the trigger that fires it, the worst-cas
 | `preservation_refs` | Why each duplicate is still here — six reference-source buckets; KEEP/DELETE verdict | WARN when any KEEP; never FAIL | Rewire then delete on KEEP |
 | `base_branch_local` | Local branch `$PIPELINE_BASE_BRANCH` exists | WARN if no upstream | `git fetch && git checkout -b <base> origin/<base>` |
 | `base_branch_enforcement` | `enforce-base-branch.py` exists AND ≥1 PreToolUse Bash matcher invokes it. Defense-in-depth #295 | FAIL if absent or unregistered | Restore plugin manifest or re-add matcher |
+| `stdin_read_timeout_guards` | Consumer `.claude/hooks/` files reading stdin without a timeout guard (Python `json.load(sys.stdin)`/`sys.stdin.read()` with no `read_event_stdin`/`signal.alarm`/`select.select` nearby; bash `$(cat)` with no `timeout`). #917 | WARN (consumer-owned; never FAIL) | `--fix stdin-guards` |
 
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — also sourced by `migrate-from-subtree.sh` so the wording matches.
 
@@ -128,3 +129,13 @@ Interactive remediation for the three residual checks (`claude_md_residual`, `se
 - `claude_md_residual` only surfaces the report from `migration-cleanup-claudemd.sh`; doctor does NOT edit `CLAUDE.md` directly — it's user-authored prose.
 - `skill_files_residual` lists each duplicate as a `y/N` prompt; consumer-required `.template`-rendered paths are excluded from the prompts.
 - Consumer-required paths rendered from plugin `scripts/*.template` / `hooks/*.template` are **never** proposed for deletion (load-bearing). The `.template`-branch becomes obsolete once #215 lands.
+
+### `--fix stdin-guards`
+
+Remediates the `stdin_read_timeout_guards` check (#917): patches consumer `.claude/hooks/` files whose stdin reads lack a timeout guard so a never-closing stdin can no longer wedge the session. `y/N` prompt per file. Strategy split by file type:
+
+- **Plugin-shipped Python duplicate** (basename also exists under `${CLAUDE_PLUGIN_ROOT}/hooks/`) → **re-sync**: copies the now-guarded plugin file over the drifted consumer copy. This is the existing drift-remediation idiom and avoids fragile in-place AST surgery.
+- **Consumer-authored bash hook** → **in-place** `$(cat)` → `$(timeout 5 cat || true)` rewrite, with a `.bak` backup (same `.bak` convention as `--fix residual`).
+- **Consumer-authored Python hook** (no plugin counterpart) is surfaced for manual review only — doctor does not attempt an in-place AST edit.
+
+Unlike `--fix residual` (which auto-**skips** under `DOCTOR_FIX_NONINTERACTIVE=1`), `--fix stdin-guards` honors `DOCTOR_FIX_NONINTERACTIVE=1` as auto-**yes** (applies the patch) so CI/tests can exercise the remediation path without a TTY.
