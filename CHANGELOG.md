@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.23.1](https://github.com/rjskene/pipeline/compare/v0.23.0...v0.23.1) (2026-06-03)
+
+
+### Features
+
+* **campaign:** add standalone /pipeline:campaign skill deferring to shared machinery ([#904](https://github.com/rjskene/pipeline/issues/904)) ([b98ca37](https://github.com/rjskene/pipeline/commit/b98ca374932fcb383f1d504845c3d13128f63f65))
+* **campaign:** extract standalone /pipeline:campaign skill; keep fullsend --campaign ([e0693b6](https://github.com/rjskene/pipeline/commit/e0693b68c9d4d59208dafd3fdbd3e2ca94f0d95a))
+* **fullsend:** add end-of-campaign fold wave to campaign mode ([97f098e](https://github.com/rjskene/pipeline/commit/97f098ebf55da4467bac89e82547d036dbbd4687))
+* **fullsend:** add fold-select subcommand to plan-campaign.sh ([91b9c00](https://github.com/rjskene/pipeline/commit/91b9c00f41fda43805bf33a4a0ab780f7264eb8d))
+* **fullsend:** add PIPELINE_CAMPAIGN_MAX_FOLD config knob ([c324a7b](https://github.com/rjskene/pipeline/commit/c324a7b3efa466e9e074e3bc2e98d055df2faecb))
+* **fullsend:** auto-fold filed bug issues into the live campaign ([f9b69de](https://github.com/rjskene/pipeline/commit/f9b69def8d92788a8bb60d8240143fafe4259da3))
+
+
+### Bug Fixes
+
+* **evaluate-issue-pr:** finalize-issue-labels.sh Step 11.3 silently no-ops when PIPELINE_REPO unexported into sourced subshell ([fe79e2e](https://github.com/rjskene/pipeline/commit/fe79e2eb0959224708ad6965b1c3a863098840cf))
+* **evaluate-issue-pr:** pass --repo and surface WARN at Step 11.3 finalize call ([#888](https://github.com/rjskene/pipeline/issues/888)) ([6f3f7ce](https://github.com/rjskene/pipeline/commit/6f3f7ce555ec5bcb01119f3a7dbe6d172ba688ce))
+* **finalize-issue-labels:** gh current-repo fallback + WARN on total failure ([#888](https://github.com/rjskene/pipeline/issues/888)) ([4c9417d](https://github.com/rjskene/pipeline/commit/4c9417d5b03d993eb44d06889ee1eed39f309a47))
+
 ## [0.23.0](https://github.com/rjskene/pipeline/compare/v0.22.3...v0.23.0) (2026-06-03)
 
 
