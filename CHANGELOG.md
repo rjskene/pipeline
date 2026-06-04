@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.23.3](https://github.com/rjskene/pipeline/compare/v0.23.2...v0.23.3) (2026-06-04)
+
+
+### Features
+
+* **doctor:** --fix stdin-guards patches/re-syncs unguarded hook reads ([#917](https://github.com/rjskene/pipeline/issues/917)) ([20d54e4](https://github.com/rjskene/pipeline/commit/20d54e4812583bc357e6eebb4c70d9dd1325adb8))
+* **doctor:** add agent_resource_caps capability check ([#918](https://github.com/rjskene/pipeline/issues/918)) ([f39926c](https://github.com/rjskene/pipeline/commit/f39926c5a4562d2a2c77798e50fff52a192edd96))
+* **doctor:** detect unguarded hook stdin reads in consumer projects ([#917](https://github.com/rjskene/pipeline/issues/917)) ([0bd6880](https://github.com/rjskene/pipeline/commit/0bd68808e9cc301b4a6afc02c355cfd045d7c489))
+* **dynamic-effort:** add path-b-execute-eligible blast-radius predicate for [#950](https://github.com/rjskene/pipeline/issues/950) low-blast gate ([e5ed0d1](https://github.com/rjskene/pipeline/commit/e5ed0d1fc290ea0bbd4597221502f84f601fc7ab))
+* **dynamic-effort:** eligibility-gate Sonnet on PATH B execute — restrict downshift to the [#950](https://github.com/rjskene/pipeline/issues/950) low-blast lane ([4e475ca](https://github.com/rjskene/pipeline/commit/4e475caaefadef862a62f0f5295bfca0bcff8d96))
+* **dynamic-effort:** gate PATH B Sonnet execute on path-b-execute-eligible low-blast predicate ([#955](https://github.com/rjskene/pipeline/issues/955)) ([13cbb65](https://github.com/rjskene/pipeline/commit/13cbb6582f5285f4b19fbc3999afd9e955395206))
+* **fullsend:** default-off per-path execute model routing gate ([#868](https://github.com/rjskene/pipeline/issues/868)) ([b7ababd](https://github.com/rjskene/pipeline/commit/b7ababd25982e38f68e36846de952f282fa65530))
+* **fullsend:** default-off per-path execute model routing gate ([#868](https://github.com/rjskene/pipeline/issues/868)) ([09fd0b8](https://github.com/rjskene/pipeline/commit/09fd0b8f2259bf5b2b8129408f2dbcec5c64191d))
+* **hooks:** add fail-open read_event_stdin(timeout=5) helper ([#917](https://github.com/rjskene/pipeline/issues/917)) ([64b43a0](https://github.com/rjskene/pipeline/commit/64b43a03e63e9d9db293095802981efcc5a9e715))
+* **spawn:** launch each agent in a resource-capped systemd-run scope ([#918](https://github.com/rjskene/pipeline/issues/918)) ([2f186de](https://github.com/rjskene/pipeline/commit/2f186deba8bec5fe7cc41c8f12640e76946269e1))
+* **spawn:** launch each tmux agent inside the systemd-run scope ([#918](https://github.com/rjskene/pipeline/issues/918)) ([2349c24](https://github.com/rjskene/pipeline/commit/2349c2492de2aafdaef9ae22829af38866f08498))
+* **spawn:** resolve per-agent systemd-run scope prefix with graceful degrade ([#918](https://github.com/rjskene/pipeline/issues/918)) ([c2b3f68](https://github.com/rjskene/pipeline/commit/c2b3f68701054be437a13850c80cbf76be3cc952))
+
+
+### Bug Fixes
+
+* evaluation fixes for [#917](https://github.com/rjskene/pipeline/issues/917) — drop now-unused json import in enforce-ci-wait.py ([6b4842c](https://github.com/rjskene/pipeline/commit/6b4842c46b171f681c72ed8d947be13bf875c355))
+* **hooks:** bound all Python hook stdin reads with fail-open timeout ([#917](https://github.com/rjskene/pipeline/issues/917)) ([3f0f0c6](https://github.com/rjskene/pipeline/commit/3f0f0c6e00101b8bc413e6cbc16ac992ac800a32))
+* **hooks:** bound hook stdin reads with fail-open timeout ([#917](https://github.com/rjskene/pipeline/issues/917)) ([286b825](https://github.com/rjskene/pipeline/commit/286b8251c259f36dd9dd1ae2084ab5f0e56c1a59))
+* **hooks:** bound log-tool-use.sh stdin read with timeout ([#917](https://github.com/rjskene/pipeline/issues/917)) ([b0610cb](https://github.com/rjskene/pipeline/commit/b0610cb5b88400d9914de659041f1234a9fc9edc))
+* **run-queue:** capture agent PGID at spawn, reap by stored PGID unconditionally ([#919](https://github.com/rjskene/pipeline/issues/919)) ([9e6a24e](https://github.com/rjskene/pipeline/commit/9e6a24eeb510c7d68cfcc59ae1a8bbe8f1851fc8))
+* **test:** make agent-costs gate test hermetic against caller PIPELINE_LOGS_ENABLED ([31fce37](https://github.com/rjskene/pipeline/commit/31fce3781155f095320dc344fe2216d577e98e34))
+* **test:** make agent-costs gate test hermetic against caller PIPELINE_LOGS_ENABLED ([d02146c](https://github.com/rjskene/pipeline/commit/d02146c51fbd387228853a0715d3bee4d756aa27))
+
 ## [0.23.2](https://github.com/rjskene/pipeline/compare/v0.23.1...v0.23.2) (2026-06-03)
 
 
