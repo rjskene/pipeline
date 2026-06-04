@@ -178,6 +178,26 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # Default 5400, single-sourced at the read site (${VAR:-5400}); uncomment to override.
 #PIPELINE_EXECUTOR_TIMEOUT_SECONDS=5400
 
+# --- Per-agent resource caps (issue #918) ---
+#
+# Each spawned agent is launched inside its own transient systemd user scope
+# (systemd-run --user --scope) so a runaway fork/memory bomb in one agent is
+# OOM/pid-killed inside its cgroup instead of taking down the host. These knobs
+# set the scope's ceilings; spawn-claude.sh degrades gracefully to an unbounded
+# `timeout … claude …` (plus a WARNING) when systemd-run --user is unavailable
+# (containers, Windows/Git-Bash, no user systemd manager) — run /pipeline:doctor
+# (agent_resource_caps check) to see the recommended host seatbelt.
+#
+# PIPELINE_AGENT_MEMORY_MAX is the hard cgroup memory ceiling (MemoryMax); the
+# kernel OOM-kills the scope's processes when exceeded. Raise for unusually
+# heavy PATH C agents. Default 2G, single-sourced at the read site (${VAR:-2G}).
+#PIPELINE_AGENT_MEMORY_MAX=2G
+#
+# PIPELINE_AGENT_TASKS_MAX is the pid ceiling (TasksMax); a fork bomb hits it
+# and fork() fails inside the scope, leaving siblings + host pid space intact.
+# Default 512, single-sourced at the read site (${VAR:-512}).
+#PIPELINE_AGENT_TASKS_MAX=512
+
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
 # When "true" AND the cwd's `git rev-parse --show-toplevel` is the
@@ -244,6 +264,18 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # PIPELINE_PATH_C_SKILLS_EXECUTE="superpowers:subagent-driven-development"
 # PIPELINE_PATH_C_REVIEWER_EXECUTE="superpowers:code-reviewer"
 # PIPELINE_PATH_C_SKILL_ARGS_EXECUTE_SUBAGENT_DRIVEN_DEVELOPMENT="scripts/skill-args/c-execute-subagent-driven-development.txt"
+
+# --- per-path execute MODEL routing (#868 default-off gate) ---
+#
+# When set, fullsend's execute dispatch (Step 6) pins this model for eligible
+# PATH B / PATH D issues; the value is the Agent `model` enum: sonnet | opus | haiku.
+# Unset/empty = NO model= param is passed, so the inline subagent INHERITS the
+# orchestrator's model (Opus) = current behavior, byte-for-byte. Host-only override;
+# keep commented to preserve the inherit/Opus default. pr-eval dispatch is NEVER
+# gated by these — the independent evaluator always stays on the inherited Opus
+# backstop (the property that makes a cheaper-execute pilot safe, #868).
+#PIPELINE_PATH_B_MODEL_EXECUTE=
+#PIPELINE_PATH_D_MODEL_EXECUTE=
 
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true when unset (fullsend 6b reads colon-less ${VAR-true}); set "" to disable. Further gated by PIPELINE_CI_CHECK_ENABLED.

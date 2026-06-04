@@ -15,6 +15,9 @@ printf 'PIPELINE_BASE_BRANCH="staging"\n' > "$SANDBOX/pipeline.config"
 cp "$REPO_ROOT/hooks/log-tool-use.sh" "$SANDBOX/.claude/hooks/log-tool-use.sh"
 cp "$REPO_ROOT/hooks/_pipeline_config.py" "$SANDBOX/.claude/hooks/_pipeline_config.py"
 cp "$REPO_ROOT/hooks/enforce-base-branch.py" "$SANDBOX/.claude/hooks/enforce-base-branch.py"
+# enforce-base-branch.py imports the shared read_event_stdin helper (#917); the
+# plugin/subtree install ships the whole hooks/ dir, so co-locate it here too.
+cp "$REPO_ROOT/hooks/subagent_log_utils.py" "$SANDBOX/.claude/hooks/subagent_log_utils.py"
 chmod +x "$SANDBOX/.claude/hooks/log-tool-use.sh"
 
 PASS=0

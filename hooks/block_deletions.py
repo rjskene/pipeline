@@ -2,15 +2,18 @@
 PreToolUse hook — blocks destructive deletion commands in the Bash tool.
 Exits 1 (blocked) if the command matches a known destructive pattern.
 """
-import json
 import os
 import re
 import sys
+from pathlib import Path
 
 if os.environ.get("ALLOW_DELETIONS") == "true":
     sys.exit(0)
 
-data = json.load(sys.stdin)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from subagent_log_utils import read_event_stdin  # noqa: E402
+
+data = read_event_stdin()
 command = data.get("tool_input", {}).get("command", "")
 
 BLOCKED = [

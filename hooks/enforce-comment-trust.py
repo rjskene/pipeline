@@ -28,9 +28,12 @@ rejects duplicate `--json` flags; (2) the native `gh issue/pr view --comments`
 boolean flag (no `--json`) is not blocked - a candidate follow-up if the
 defense surface widens beyond `--json ...comments...`.
 """
-import json
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from subagent_log_utils import read_event_stdin  # noqa: E402
 
 HELPER = "filter-trusted-comments.sh"
 
@@ -53,7 +56,7 @@ def _json_field_list(command):
 
 
 def main():
-    data = json.load(sys.stdin)
+    data = read_event_stdin()
     command = data.get("tool_input", {}).get("command", "")
     if not command:
         return 0

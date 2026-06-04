@@ -13,7 +13,6 @@ Exit codes:
   0 = allow (default)
   2 = block (Claude Code hook contract; surfaces stderr to the model)
 """
-import json
 import os
 import re
 import subprocess
@@ -24,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
+from subagent_log_utils import read_event_stdin  # noqa: E402
 
 GH_TIMEOUT_SECONDS = 10
 ROLLUP_RE = re.compile(r"\bgh\s+pr\s+view\s+(\d+)\b.*--json\s+statusCheckRollup")
@@ -212,11 +212,7 @@ def log_error(message: str) -> None:
 def main() -> int:
     if os.environ.get("CLAUDE_PIPELINE_SKILL", "") != "evaluate-issue-pr":
         return 0
-    raw = sys.stdin.read()
-    try:
-        data = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        return 0
+    data = read_event_stdin()
     session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID", "")
     if not session_id:
         return 0
