@@ -1130,6 +1130,26 @@ fi
 unset _srtg_hooks_dir _srtg_unguarded _srtg_f _srtg_n _srtg_csv
 
 # --------------------------------------------------------------------------
+# Check: agent_resource_caps (#918) — verify per-agent systemd-run --user
+# scopes are available so spawned agents run under a MemoryMax/TasksMax cgroup
+# ceiling. Without them, a runaway fork/memory bomb in one agent can take down
+# the host (the original incident). Severity WARN when unavailable (the agent
+# still runs, just UNBOUNDED — never FAIL). Probe mirrors spawn-claude.sh:
+# `command -v systemd-run` AND a live `--user --scope -- true` smoke (presence
+# on PATH alone is insufficient — a Git-Bash host may have the binary but no
+# user manager).
+# --------------------------------------------------------------------------
+_arc_mem="${PIPELINE_AGENT_MEMORY_MAX:-2G}"
+_arc_tasks="${PIPELINE_AGENT_TASKS_MAX:-512}"
+if command -v systemd-run >/dev/null 2>&1 \
+   && systemd-run --user --scope --quiet -- true >/dev/null 2>&1; then
+  record agent_resource_caps pass "per-agent scopes enabled (MemoryMax=${_arc_mem} TasksMax=${_arc_tasks})"
+else
+  record agent_resource_caps warn "systemd-run --user unavailable — agents run UNBOUNDED (no MemoryMax/TasksMax cgroup ceiling). Recommended host seatbelt: add swap and set MemoryMax/pids.max on the user slice (e.g. systemctl --user set-property or a drop-in), or run under a host that supports user scopes."
+fi
+unset _arc_mem _arc_tasks
+
+# --------------------------------------------------------------------------
 # Summary table + exit code.
 # --------------------------------------------------------------------------
 echo
