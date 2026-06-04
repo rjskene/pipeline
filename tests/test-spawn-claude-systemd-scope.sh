@@ -293,6 +293,18 @@ else
   fail_msg "example: PIPELINE_AGENT_TASKS_MAX default 512 not visible"
 fi
 
+# ---------------------------------------------------------------------------
+# Case 6 (Task 4): skills/doctor/SKILL.md documents the agent_resource_caps row.
+# ---------------------------------------------------------------------------
+echo "Case 6: skills/doctor/SKILL.md documents the agent_resource_caps check"
+DOCTOR_SKILL="$ROOT/skills/doctor/SKILL.md"
+inc
+if [ -f "$DOCTOR_SKILL" ] && grep -q 'agent_resource_caps' "$DOCTOR_SKILL"; then
+  pass_msg "doctor SKILL.md mentions agent_resource_caps"
+else
+  fail_msg "doctor SKILL.md missing the agent_resource_caps row"
+fi
+
 # Dual-scan: live config (host-only) must not hardcode a conflicting cap form.
 # No-op when absent in CI; presence-only sanity (knob value is operator choice).
 if [ -f "$LIVE" ]; then
@@ -300,7 +312,10 @@ if [ -f "$LIVE" ]; then
   # If the live config references the knobs at all, just assert it is parseable
   # (sourcing already happened via spawn-claude); this guard exists so a future
   # bad live edit (e.g. unquoted value) surfaces. We assert the file sources.
-  if bash -n <(grep -E '^[[:space:]]*PIPELINE_AGENT_(MEMORY|TASKS)_MAX=' "$LIVE" 2>/dev/null) 2>/dev/null; then
+  # (Match full var names with separate -e patterns. A grouped alternation on
+  # the shared prefix would leave a bare prefix token that check-config-drift.sh
+  # flags as an undeclared reference — so spell each var name out in full.)
+  if bash -n <(grep -E -e '^[[:space:]]*PIPELINE_AGENT_MEMORY_MAX=' -e '^[[:space:]]*PIPELINE_AGENT_TASKS_MAX=' "$LIVE" 2>/dev/null) 2>/dev/null; then
     pass_msg "live: pipeline.config agent-cap knobs parse cleanly (or absent)"
   else
     fail_msg "live: pipeline.config agent-cap knob lines do not parse"

@@ -56,6 +56,7 @@ State table — each row names a check, the trigger that fires it, the worst-cas
 | `base_branch_local` | Local branch `$PIPELINE_BASE_BRANCH` exists | WARN if no upstream | `git fetch && git checkout -b <base> origin/<base>` |
 | `base_branch_enforcement` | `enforce-base-branch.py` exists AND ≥1 PreToolUse Bash matcher invokes it. Defense-in-depth #295 | FAIL if absent or unregistered | Restore plugin manifest or re-add matcher |
 | `stdin_read_timeout_guards` | Consumer `.claude/hooks/` files reading stdin without a timeout guard (Python `json.load(sys.stdin)`/`sys.stdin.read()` with no `read_event_stdin`/`signal.alarm`/`select.select` nearby; bash `$(cat)` with no `timeout`). #917 | WARN (consumer-owned; never FAIL) | `--fix stdin-guards` |
+| `agent_resource_caps` | Per-agent `systemd-run --user` scopes available so spawned agents run under a `MemoryMax`/`TasksMax` cgroup ceiling (probed via `command -v systemd-run` + a live `--user --scope -- true` smoke; honors `PIPELINE_AGENT_MEMORY_MAX`/`PIPELINE_AGENT_TASKS_MAX`). #918 | PASS names the caps; WARN (never FAIL) when unavailable — agents run UNBOUNDED | Add swap + set `MemoryMax`/`pids.max` on the user slice, or run under a host that supports user scopes |
 
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — also sourced by `migrate-from-subtree.sh` so the wording matches.
 
