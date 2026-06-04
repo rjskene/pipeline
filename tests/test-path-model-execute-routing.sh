@@ -90,6 +90,71 @@ else
   fail_msg "skill: missing the 'pr-eval not gated' invariant near the gate"
 fi
 
+# --- #955: PATH B execute model= is eligibility-gated to the #950 low-blast lane ---
+
+# 7. The routing block names the path-b-execute-eligible helper.
+inc
+if grep -Eq "path-b-execute-eligible(\.sh)?" "$SKILL"; then
+  pass_msg "skill: routing block names path-b-execute-eligible helper"
+else
+  fail_msg "skill: routing block does NOT reference path-b-execute-eligible"
+fi
+
+# 8. PATH B passes model= ONLY when the predicate returns low-blast.
+#    Assert `low-blast` co-occurs with PATH B in the routing block.
+inc
+if awk '
+  /Per-path execute MODEL routing/ { inblock = 1 }
+  inblock && /^## / { inblock = 0 }
+  inblock && /low-blast/ && /PATH B/ { f = 1 }
+  END { exit (f ? 0 : 1) }
+' "$SKILL"; then
+  pass_msg "skill: PATH B model= gated on low-blast (low-blast co-occurs with PATH B)"
+else
+  fail_msg "skill: missing 'low-blast' + 'PATH B' gating in the routing block"
+fi
+
+# 9. High-blast PATH B is documented to inherit Opus / pass NO model=.
+inc
+if awk '
+  /Per-path execute MODEL routing/ { inblock = 1 }
+  inblock && /^## / { inblock = 0 }
+  inblock && /high-blast/ && (/inherit/ || /NO[[:space:]].*model=/ || /no[[:space:]].*model=/) { f = 1 }
+  END { exit (f ? 0 : 1) }
+' "$SKILL"; then
+  pass_msg "skill: high-blast PATH B inherits Opus (passes NO model=)"
+else
+  fail_msg "skill: high-blast PATH B not documented to inherit Opus / pass no model="
+fi
+
+# 10. PATH D stays UNCONDITIONAL — the eligibility predicate does NOT gate D.
+#     Assert the routing block states D's model= is unconditional (applies to all D).
+inc
+if awk '
+  /Per-path execute MODEL routing/ { inblock = 1 }
+  inblock && /^## / { inblock = 0 }
+  inblock && /PATH D/ && /unconditional/ { f = 1 }
+  END { exit (f ? 0 : 1) }
+' "$SKILL"; then
+  pass_msg "skill: PATH D model= stays unconditional (not gated by eligibility predicate)"
+else
+  fail_msg "skill: PATH D unconditional-routing clause missing from the block"
+fi
+
+# 11. The predicate is documented as a pre-execute classify/plan-time ESTIMATE
+#     (added-LOC not known from a diff at dispatch time).
+inc
+if awk '
+  /Per-path execute MODEL routing/ { inblock = 1 }
+  inblock && /^## / { inblock = 0 }
+  inblock && /estimate/ { f = 1 }
+  END { exit (f ? 0 : 1) }
+' "$SKILL"; then
+  pass_msg "skill: predicate documented as a pre-execute ESTIMATE (not a diff)"
+else
+  fail_msg "skill: missing the estimate-not-diff rationale in the block"
+fi
+
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="
 [ "$FAIL" -eq 0 ]
