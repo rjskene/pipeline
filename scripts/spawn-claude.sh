@@ -523,7 +523,11 @@ INNER=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
 INNER="\${INNER# }"
 # -p (print mode): Claude processes the task then exits (no interactive prompt).
 # timeout safety net: 90 min with 30s grace before SIGKILL.
-CMD="timeout --foreground --signal=TERM --kill-after=30 ${EXECUTOR_TIMEOUT} \$INNER"
+# \${SCOPE_PREFIX} (resolved in the spawning shell, interpolated as a literal)
+# wraps the whole timeout->claude tree in a systemd-run --user scope so a runaway
+# is OOM/pid-killed inside its cgroup; it ends with "-- " or is empty (graceful
+# degrade), so this collapses to a clean "timeout …" when unavailable (#918).
+CMD="${SCOPE_PREFIX}timeout --foreground --signal=TERM --kill-after=30 ${EXECUTOR_TIMEOUT} \$INNER"
 if [ "\$(uname -s)" = "Darwin" ]; then
   ${LAUNCHER_EXEC_DARWIN}
 else
