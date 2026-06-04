@@ -13,7 +13,6 @@ Exit codes:
   0 = allow (default)
   2 = block (Claude Code hook contract; surfaces stderr to the model)
 """
-import json
 import os
 import re
 import subprocess
