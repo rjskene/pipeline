@@ -44,14 +44,14 @@ setup_retro_project() {
 # $1 = project dir; remaining args = extra env assignments.
 run_retro() {
   local proj="$1"; shift
-  env HOME="$RHOME" CLAUDE_PROJECT_DIR="$proj" "$@" \
+  env -u PIPELINE_LOGS_ENABLED HOME="$RHOME" CLAUDE_PROJECT_DIR="$proj" "$@" \
     bash "$RETRO_SRC" >/dev/null 2>&1 || true
 }
 
 FWD_PAYLOAD='{"session_id":"fwd123","description":"execute-issue-plan #643","subagent_type":"pipeline:tdd-implementer","model":"claude-opus","ts_start":"2026-05-30T10:00:00Z","ts_end":"2026-05-30T10:05:00Z","total_duration_ms":300000,"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":20,"cache_creation_input_tokens":10}}'
 run_forward() {
   local proj="$1"; shift
-  printf '%s' "$FWD_PAYLOAD" | env CLAUDE_PROJECT_DIR="$proj" "$@" \
+  printf '%s' "$FWD_PAYLOAD" | env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$proj" "$@" \
     python3 "$FWD_SRC" >/dev/null 2>&1 || true
 }
 
@@ -107,6 +107,23 @@ if [ -s "$P6/$OUT_REL" ]; then
   pass_msg "forward: gate=true appends"
 else
   fail_msg "forward: gate=true must append"
+fi
+
+# --- regression guard: both helpers must scrub PIPELINE_LOGS_ENABLED --------
+# Ensures the -u flag is present in both env invocations so the unset cases
+# remain hermetic even if the helpers are refactored.
+SELF="$SCRIPT_DIR/$(basename "$0")"
+retro_scrubs=$(awk '/^run_retro\(\)/,/^\}/' "$SELF" | grep -c 'env -u PIPELINE_LOGS_ENABLED' || true)
+fwd_scrubs=$(awk '/^run_forward\(\)/,/^\}/' "$SELF" | grep -c 'env -u PIPELINE_LOGS_ENABLED' || true)
+if [ "${retro_scrubs:-0}" -ge 1 ]; then
+  pass_msg "regression guard: run_retro scrubs PIPELINE_LOGS_ENABLED"
+else
+  fail_msg "regression guard: run_retro must use env -u PIPELINE_LOGS_ENABLED"
+fi
+if [ "${fwd_scrubs:-0}" -ge 1 ]; then
+  pass_msg "regression guard: run_forward scrubs PIPELINE_LOGS_ENABLED"
+else
+  fail_msg "regression guard: run_forward must use env -u PIPELINE_LOGS_ENABLED"
 fi
 
 echo ""
