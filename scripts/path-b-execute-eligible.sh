@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# PATH B Sonnet-execute eligibility predicate (issue #955).
+#
+# Dispatch-time blast-radius ESTIMATE that gates the PATH B Sonnet execute
+# downshift (PIPELINE_PATH_B_MODEL_EXECUTE) to the #950 §4 low-blast lane —
+# moving that gate from prose (docs/analysis/model-downsampling.md §4) into the
+# dispatch path. Emits exactly one machine-readable line on stdout:
+#
+#   ELIGIBLE=<low-blast|high-blast> ISSUE=<N> REASON=<token>
+#
+# REASON tokens:
+#   low-blast:  single-module
+#   high-blast: multi-module | too-many-files | loc-over | high-uncertainty
+#               | indeterminate
+#
+# The token carries the verdict; the script exits 0 in EVERY case (mirrors
+# scripts/check-ci-fix-loop.sh / scripts/verify-execute-completion.sh). The
+# caller (skills/fullsend) parses ELIGIBLE= and passes model= to the PATH B
+# execute Agent ONLY when ELIGIBLE=low-blast.
+#
+# The #950 §4 four-part low-blast gate (ALL must hold for low-blast):
+#   1. ≤1 source MODULE (excl tests/docs)   — single-module=true
+#   2. ≤6 source files                       — SRC_COUNT ceiling
+#   3. ≤150 added-LOC (a pre-execute ESTIMATE — PROXY, never a measured diff)
+#   4. no security/migration/auth/concurrency signal
+# ANY failure ⇒ high-blast (fail-closed to Opus — never downshift on
+# uncertain blast-radius).
+#
+# Added-LOC is a PROXY, NOT a real diff: at dispatch time (classify/plan-time)
+# there is no diff, mirroring classify-issue's "LOC is a retrospective
+# validation signal only, never a classify-time input." The 150-LOC ceiling is
+# treated as SATISFIED-BY-PROXY when the file/module bounds hold, with an
+# explicit `~N LOC` body token as an override that can force high-blast.
+#
+# Module count, NOT file count, is the low-blast axis (evaluator rec #1): the
+# low-blast criterion is single-module (≤1 source module) AND files ≤6. A
+# legitimate single-module 2-6-file change IS low-blast.
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <issue-number>" >&2
+  exit 2
+fi
+
+N="$1"
+REPO="${PIPELINE_REPO:-}"
+
+emit() {
+  # emit <low-blast|high-blast> <reason>
+  echo "ELIGIBLE=$1 ISSUE=$N REASON=$2"
+  exit 0
+}
+
+# --- Fetch issue (fail-closed on any gh/parse failure) ----------------------
+RAW="$(gh issue view "$N" --repo "$REPO" --json title,body,labels 2>/dev/null)" || emit high-blast indeterminate
+[ -n "$RAW" ] || emit high-blast indeterminate
+
+TITLE="$(printf '%s' "$RAW" | jq -r '.title // ""' 2>/dev/null)" || emit high-blast indeterminate
+BODY="$(printf '%s' "$RAW" | jq -r '.body // ""' 2>/dev/null)" || emit high-blast indeterminate
+LABELS="$(printf '%s' "$RAW" | jq -r '[.labels[].name] | join(" ")' 2>/dev/null)" || LABELS=""
+
+# --- High-uncertainty carve-out (the protected axis) ------------------------
+# REUSE classify-issue's exact vocabulary (skills/classify-issue/SKILL.md
+# line 56) so the carve-out can never drift from classify's protected axis.
+# Any hit ⇒ high-blast regardless of file count (#950 §4 "no security/
+# migration/auth/concurrency signal").
+HIGH_UNCERTAINTY_RE='concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss'
+if printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" \
+     | grep -iEq "$HIGH_UNCERTAINTY_RE"; then
+  emit high-blast high-uncertainty
+fi
+
+# --- Source-file extraction (REUSE plan-waves.sh parser, do NOT reinvent) ----
+# Same `## Affected areas` awk slice + FILE_PATH_RE copied from
+# scripts/plan-waves.sh (lines 154-169).
+FILE_PATH_RE='^[^[:space:]]*/[^/[:space:]]+$|^[^[:space:]]+\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
+
+FROM_BACKTICKS=$( { printf '%s' "$BODY" \
+  | grep -oE '`[^`]+`' \
+  | tr -d '`' \
+  | grep -E "$FILE_PATH_RE"; } || true)
+FROM_AFFECTED=$(printf '%s' "$BODY" \
+  | awk 'BEGIN{IGNORECASE=1; in_block=0}
+         /^##[[:space:]]+Affected areas/ {in_block=1; next}
+         in_block && /^##/ {in_block=0}
+         in_block && NF>0 {print}')
+# Strip surrounding markdown list/backtick punctuation before the regex pass:
+# `## Affected areas` lines are commonly `- `dir/file.ext`` (backtick-wrapped),
+# and backticks are non-whitespace so they survive the whitespace-split and
+# corrupt the leading path segment (the module). Drop backticks + leading list
+# bullets so a backtick-wrapped affected-area path normalizes to the same bare
+# token as plan-waves.sh's FROM_BACKTICKS stream.
+ALL_PATHS=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
+  | tr -d '`' \
+  | sed -E 's/^[[:space:]]*[-*][[:space:]]+//' \
+  | sed 's/[[:space:]]\+/\n/g' \
+  | grep -E "$FILE_PATH_RE" \
+  | sort -u; } || true)
+
+# Empty Affected areas / no parseable paths ⇒ fail-closed (indeterminate).
+if [ -z "$ALL_PATHS" ]; then
+  emit high-blast indeterminate
+fi
+
+# Keep only non-test / non-doc SOURCE paths (the "excl tests/docs" clause):
+# drop any path with a tests/, test/, fixtures/, or docs/ segment.
+SRC_PATHS=$(printf '%s\n' "$ALL_PATHS" \
+  | grep -Ev '(^|/)(tests?|fixtures|docs)/' || true)
+
+if [ -z "$SRC_PATHS" ]; then
+  # Only test/doc files in Affected areas — no source blast radius to size.
+  emit high-blast indeterminate
+fi
+
+SRC_COUNT=$(printf '%s\n' "$SRC_PATHS" | grep -c .)
+
+# MODULE = first path segment of each kept source path. single-module iff all
+# kept source paths share one top-level segment.
+MODULE_COUNT=$(printf '%s\n' "$SRC_PATHS" \
+  | sed 's#/.*##' \
+  | sort -u \
+  | grep -c .)
+
+# --- Decision (ALL must hold for low-blast) ---------------------------------
+# 1. single-module: ≤1 source MODULE (the low-blast axis, evaluator rec #1).
+if [ "$MODULE_COUNT" -gt 1 ]; then
+  emit high-blast multi-module
+fi
+
+# 2. ≤6 source files (the §4 file ceiling — NOT the low-blast axis on its own).
+if [ "$SRC_COUNT" -gt 6 ]; then
+  emit high-blast too-many-files
+fi
+
+# 3. ≤150 added-LOC ESTIMATE: satisfied-by-PROXY from the file/module bounds
+#    above, with an explicit `~N LOC` body token as an override that forces
+#    high-blast when it says >150 (lower-bound wins on multiple matches).
+LOC_TOKENS=$(printf '%s' "$BODY" \
+  | grep -oiE '~?[0-9]+[[:space:]]*LOC' \
+  | grep -oE '[0-9]+' || true)
+if [ -n "$LOC_TOKENS" ]; then
+  MIN_LOC=$(printf '%s\n' "$LOC_TOKENS" | sort -n | head -1)
+  if [ "$MIN_LOC" -gt 150 ]; then
+    emit high-blast loc-over
+  fi
+fi
+
+# All four §4 criteria hold ⇒ low-blast.
+emit low-blast single-module
