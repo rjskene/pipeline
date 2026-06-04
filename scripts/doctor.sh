@@ -88,6 +88,96 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "labels" ]; then
 fi
 
 # --------------------------------------------------------------------------
+# --fix stdin-guards (#917): patch consumer .claude/hooks/ files whose stdin
+# reads lack a timeout guard. Strategy split:
+#   - plugin-shipped Python duplicate (basename exists under
+#     ${CLAUDE_PLUGIN_ROOT}/hooks/) → RE-SYNC: copy the now-guarded plugin file
+#     over the drifted consumer copy (the existing drift-remediation idiom;
+#     avoids fragile in-place AST surgery).
+#   - consumer-authored bash hook → IN-PLACE timeout-wrap of the `$(cat)`
+#     capture, with a `.bak` backup (same `.bak` convention as --fix residual).
+# Prompts [y/N] per file; DOCTOR_FIX_NONINTERACTIVE=1 is honored as auto-YES so
+# CI/tests can assert the patch path without a TTY (mirrors the --fix prompt
+# convention; see skills/doctor/SKILL.md).
+# --------------------------------------------------------------------------
+if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "stdin-guards" ]; then
+  SG_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  SG_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SG_SCRIPT_DIR/.." && pwd)}"
+  SG_HOOKS_DIR=".claude/hooks"
+
+  # prompt [y/N]; DOCTOR_FIX_NONINTERACTIVE=1 → auto-YES (apply).
+  sg_prompt_yn() {
+    local msg="$1"
+    printf '%s [y/N] ' "$msg"
+    if [ "${DOCTOR_FIX_NONINTERACTIVE:-0}" = "1" ]; then
+      echo "y"
+      REPLY="y"
+      return 0
+    fi
+    if ! IFS= read -r REPLY; then
+      REPLY=""
+      printf '\n' >&2
+      return 1
+    fi
+    return 0
+  }
+
+  if [ -d "$SG_HOOKS_DIR" ]; then
+    while IFS= read -r -d '' sg_f; do
+      sg_bn="$(basename "$sg_f")"
+      case "$sg_f" in
+        *.py)
+          # Only Python files with an unguarded stdin read are candidates.
+          if ! grep -Eq 'json\.load\(sys\.stdin\)|sys\.stdin\.read\(\)' "$sg_f" \
+             || grep -Eq 'read_event_stdin|signal\.alarm|select\.select' "$sg_f"; then
+            continue
+          fi
+          sg_plugin_file="$SG_PLUGIN_ROOT/hooks/$sg_bn"
+          if [ -f "$sg_plugin_file" ]; then
+            if sg_prompt_yn "Re-sync plugin-shipped Python hook from plugin (overwrites drift): $sg_f?"; then
+              case "$REPLY" in
+                y|Y|yes|YES)
+                  cp "$sg_plugin_file" "$sg_f"
+                  echo "  re-synced from plugin: $sg_f"
+                  ;;
+                *) echo "  skipped: $sg_f" ;;
+              esac
+            else
+              echo "  skipped (no input): $sg_f"
+            fi
+          else
+            echo "  manual review (consumer-authored Python; no plugin counterpart): $sg_f"
+            echo "    add a bounded read (e.g. read_event_stdin / signal.alarm) by hand."
+          fi
+          ;;
+        *.sh)
+          # Bash files with an unguarded $(cat) stdin capture.
+          if ! grep -Eq '\$\(\s*cat( +-)?\s*\)' "$sg_f" \
+             || grep -Eq '\$\(\s*timeout\b' "$sg_f"; then
+            continue
+          fi
+          if sg_prompt_yn "Timeout-wrap stdin read in consumer bash hook (in place, .bak backup): $sg_f?"; then
+            case "$REPLY" in
+              y|Y|yes|YES)
+                cp "$sg_f" "$sg_f.bak"
+                # INPUT=$(cat) / =$(cat -) → INPUT=$(timeout 5 cat || true)
+                sed -E -i 's/\$\(\s*cat( +-)?\s*\)/$(timeout 5 cat || true)/g' "$sg_f"
+                echo "  timeout-wrapped in place (backup: $sg_f.bak): $sg_f"
+                ;;
+              *) echo "  skipped: $sg_f" ;;
+            esac
+          else
+            echo "  skipped (no input): $sg_f"
+          fi
+          ;;
+      esac
+    done < <(find "$SG_HOOKS_DIR" -type f \( -name '*.py' -o -name '*.sh' \) \
+               -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
+  fi
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
 # --fix residual: re-run the three residual-state detectors in remediate
 # mode, prompting [y/N] per finding. Honors DOCTOR_FIX_NONINTERACTIVE=1
 # (auto-N for every prompt; used by tests to assert the prompt-and-skip path
@@ -992,6 +1082,52 @@ else
   record base_branch_enforcement fail "hook exists but no PreToolUse Bash matcher invokes it (check plugin manifest or .claude/settings.json)"
 fi
 unset _bbe_plugin_root _bbe_hook_path _bbe_plugin_registered _bbe_plugin_manifest _bbe_consumer_registered _bbe_consumer_settings
+
+# --------------------------------------------------------------------------
+# Check: stdin_read_timeout_guards (#917) — scan consumer .claude/hooks/ for
+# stdin reads that lack a timeout guard. An unguarded hook fed a never-closing
+# stdin blocks indefinitely and wedges the session. Severity WARN (consumer-
+# owned files, in the runtime allow-list; never FAIL — mirrors settings_residual).
+# The plugin's own shipped hooks are guarded in the plugin source; this check is
+# the migration aid for already-vendored consumer copies. Remediation:
+# `/pipeline:doctor --fix stdin-guards`.
+#   - Python: flag `json.load(sys.stdin)` / `sys.stdin.read()` with NO nearby
+#     guard token (read_event_stdin / signal.alarm / select.select).
+#   - Bash:   flag a `$(cat)` / `$(cat -)` stdin capture with NO `timeout` on it.
+# Heuristic "guarded" detection (guard token present anywhere in the file) is
+# acceptable for a WARN-level aid; false-negatives only under-report.
+# --------------------------------------------------------------------------
+_srtg_hooks_dir=".claude/hooks"
+_srtg_unguarded=()
+if [ -d "$_srtg_hooks_dir" ]; then
+  while IFS= read -r -d '' _srtg_f; do
+    case "$_srtg_f" in
+      *.py)
+        if grep -Eq 'json\.load\(sys\.stdin\)|sys\.stdin\.read\(\)' "$_srtg_f" \
+           && ! grep -Eq 'read_event_stdin|signal\.alarm|select\.select' "$_srtg_f"; then
+          _srtg_unguarded+=("$_srtg_f")
+        fi
+        ;;
+      *.sh)
+        # A $(cat) / $(cat -) capture with no `timeout` wrapping it.
+        if grep -Eq '\$\(\s*cat( +-)?\s*\)' "$_srtg_f" \
+           && ! grep -Eq '\$\(\s*timeout\b' "$_srtg_f"; then
+          _srtg_unguarded+=("$_srtg_f")
+        fi
+        ;;
+    esac
+  done < <(find "$_srtg_hooks_dir" -type f \( -name '*.py' -o -name '*.sh' \) \
+             -not -path '*/__pycache__/*' -not -name '*.pyc' -print0 2>/dev/null)
+fi
+
+_srtg_n="${#_srtg_unguarded[@]}"
+if [ "$_srtg_n" = "0" ]; then
+  record stdin_read_timeout_guards pass "no unguarded stdin reads in consumer .claude/hooks/"
+else
+  _srtg_csv="$(IFS=', '; echo "${_srtg_unguarded[*]}")"
+  record stdin_read_timeout_guards warn "$_srtg_n consumer hook(s) read stdin without a timeout guard ($_srtg_csv) — run /pipeline:doctor --fix stdin-guards"
+fi
+unset _srtg_hooks_dir _srtg_unguarded _srtg_f _srtg_n _srtg_csv
 
 # --------------------------------------------------------------------------
 # Summary table + exit code.

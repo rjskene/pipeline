@@ -23,6 +23,7 @@ from subagent_log_utils import (
     build_json_record,
     consolidated_log_path,
     error_log_path,
+    read_event_stdin,
     sanitize_slug,
     subagents_dir,
 )
@@ -41,7 +42,7 @@ def log_error(message: str) -> None:
 
 
 try:
-    data = json.load(sys.stdin)
+    data = read_event_stdin()
     tool_name = data.get("tool_name", "")
 
     # Only handle Agent tool invocations

@@ -1,6 +1,9 @@
 #!/bin/bash
 # PreToolUse/PostToolUse hook — logs every tool call to tool-use.log (TSV, always exits 0).
-INPUT=$(cat)
+# Bound the stdin read so a never-closing stdin cannot wedge the session (#917).
+# `timeout` exits 124 on the deadline; `|| true` keeps the hook exit 0, and the
+# empty INPUT then flows to the existing jq -r '.tool_name' → empty → clean skip.
+INPUT=$(timeout 5 cat || true)
 if ! command -v jq >/dev/null 2>&1; then
     LOG_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/logs"
     mkdir -p "$LOG_DIR"

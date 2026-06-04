@@ -16,7 +16,6 @@ Strict allowlist: blocks ``gh pr create`` unless it explicitly uses
 post-creation retargeting); ``gh pr edit`` without ``--base`` is
 unaffected because it represents a title/body-only edit.
 """
-import json
 import os
 import re
 import sys
@@ -24,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
+from subagent_log_utils import read_event_stdin  # noqa: E402
 
 
 def _resolve_expected_base() -> str:
@@ -40,7 +40,7 @@ def _resolve_expected_base() -> str:
 
 EXPECTED_BASE = _resolve_expected_base()
 
-data = json.load(sys.stdin)
+data = read_event_stdin()
 command = data.get("tool_input", {}).get("command", "")
 
 # Only inspect `gh pr create` and `gh pr edit` commands; everything
