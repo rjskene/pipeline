@@ -71,6 +71,39 @@ EXECUTOR_TIMEOUT="${PIPELINE_EXECUTOR_TIMEOUT_SECONDS:-5400}"
 SESSION_NAME="issue-${ISSUE_NUM}-${SLUG}"
 TMUX_WINDOW="issue-${ISSUE_NUM}"
 
+# --- Per-agent resource caps via a systemd-run --user scope (issue #918) ---
+#
+# Each spawned agent is launched inside its OWN transient systemd user scope so
+# that a runaway fork/memory bomb in one agent is OOM/pid-killed inside its
+# cgroup instead of taking down the host. The scope wraps `timeout` (which wraps
+# `claude`), so the entire timeout→claude→hooks/grandchildren tree lives in one
+# cgroup and scope teardown is atomic (no reparenting escape).
+#
+#   MemoryMax — hard cgroup ceiling; the kernel OOM-kills the scope's procs when
+#               exceeded (configurable via PIPELINE_AGENT_MEMORY_MAX, default 2G).
+#   TasksMax  — pid ceiling; a fork bomb hits it and fork() fails inside the
+#               scope, leaving siblings + host pid space intact (configurable via
+#               PIPELINE_AGENT_TASKS_MAX, default 512).
+#
+# Graceful degrade: when `systemd-run --user` is unavailable (containers,
+# Windows/Git-Bash, hosts with no user systemd manager) SCOPE_PREFIX collapses
+# to empty — the launch is a plain `timeout … claude …` (identical to legacy
+# behavior) — plus a one-line stderr WARNING pointing at /pipeline:doctor. The
+# probe is `command -v systemd-run` AND a cheap live `systemd-run --user`
+# smoke, because presence on PATH alone is insufficient (a Git-Bash host may
+# have the binary but no user manager).
+AGENT_MEMORY_MAX="${PIPELINE_AGENT_MEMORY_MAX:-2G}"
+AGENT_TASKS_MAX="${PIPELINE_AGENT_TASKS_MAX:-512}"
+SCOPE_PREFIX=""
+if command -v systemd-run >/dev/null 2>&1 \
+   && systemd-run --user --scope --quiet -- true >/dev/null 2>&1; then
+  # Trailing `-- ` (with a space) so concatenation with the timeout line yields
+  # `systemd-run … -- timeout …`; empty otherwise collapses to a clean `timeout …`.
+  SCOPE_PREFIX="systemd-run --user --scope -p MemoryMax=${AGENT_MEMORY_MAX} -p TasksMax=${AGENT_TASKS_MAX} -- "
+else
+  echo "WARNING: systemd-run --user unavailable; launching agent UNBOUNDED (no MemoryMax/TasksMax cgroup ceiling). See /pipeline:doctor for the recommended host seatbelt." >&2
+fi
+
 # Set up logging
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
@@ -363,6 +396,9 @@ if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
   echo "RUNS_LOG_LINE=$(tail -1 "$RUNS_LOG")"
   echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
   echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
+  echo "AGENT_MEMORY_MAX=$AGENT_MEMORY_MAX"
+  echo "AGENT_TASKS_MAX=$AGENT_TASKS_MAX"
+  echo "SCOPE_PREFIX=$SCOPE_PREFIX"
   echo "=== BUILD_ARGV ==="
   echo "$BUILD_ARGV"
   echo "=== END BUILD_ARGV ==="
@@ -487,7 +523,11 @@ INNER=\$(printf ' %q' "\${LAUNCH_CMD[@]}" "\${CLAUDE_ARGV[@]}")
 INNER="\${INNER# }"
 # -p (print mode): Claude processes the task then exits (no interactive prompt).
 # timeout safety net: 90 min with 30s grace before SIGKILL.
-CMD="timeout --foreground --signal=TERM --kill-after=30 ${EXECUTOR_TIMEOUT} \$INNER"
+# \${SCOPE_PREFIX} (resolved in the spawning shell, interpolated as a literal)
+# wraps the whole timeout->claude tree in a systemd-run --user scope so a runaway
+# is OOM/pid-killed inside its cgroup; it ends with "-- " or is empty (graceful
+# degrade), so this collapses to a clean "timeout …" when unavailable (#918).
+CMD="${SCOPE_PREFIX}timeout --foreground --signal=TERM --kill-after=30 ${EXECUTOR_TIMEOUT} \$INNER"
 if [ "\$(uname -s)" = "Darwin" ]; then
   ${LAUNCHER_EXEC_DARWIN}
 else
