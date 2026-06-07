@@ -8,7 +8,10 @@ Provides:
 - Per-agent JSON record builder (schema_version 1)
 - fcntl-based append locking for the consolidated log
 """
-import fcntl
+try:
+    import fcntl
+except ImportError:  # POSIX-only; absent on win32
+    fcntl = None
 import json
 import os
 import re
@@ -24,19 +27,28 @@ from pathlib import Path
 def read_event_stdin(timeout: int = 5) -> dict:
     """Read+parse the hook event JSON from stdin with a bounded, fail-open
     deadline. Returns {} on timeout, EOF/empty, or malformed JSON — a guard
-    hook that cannot read its event must never wedge the session (#917)."""
+    hook that cannot read its event must never wedge the session (#917).
+    On platforms without SIGALRM (win32), the alarm is skipped and stdin is
+    read plainly (fail-open) — Claude Code closes the hook's stdin at event
+    end, so the read still terminates (#968)."""
+    _has_alarm = hasattr(signal, "SIGALRM") and hasattr(signal, "alarm")
+
     def _on_timeout(signum, frame):
         raise TimeoutError
 
-    old = signal.signal(signal.SIGALRM, _on_timeout)
+    old = None
     try:
-        signal.alarm(timeout)
+        if _has_alarm:
+            old = signal.signal(signal.SIGALRM, _on_timeout)
+            signal.alarm(timeout)
         raw = sys.stdin.read()
     except Exception:
         return {}
     finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
+        if _has_alarm:
+            signal.alarm(0)
+            if old is not None:
+                signal.signal(signal.SIGALRM, old)
     if not raw or not raw.strip():
         return {}
     try:
@@ -152,12 +164,19 @@ def build_json_record(
 def append_locked(path: Path, line: str) -> None:
     """Append a line to the given file, using fcntl.flock for atomicity.
 
-    Creates parent directories as needed.
+    Creates parent directories as needed. On platforms without fcntl (win32),
+    falls back to a plain unlocked append — a logging/locking capability gap
+    must never wedge a hook (#917/#968).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    out = line if line.endswith("\n") else line + "\n"
     with open(path, "a") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            f.write(line if line.endswith("\n") else line + "\n")
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.write(out)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        else:
+            # Fail-open: no advisory lock available on this platform (win32).
+            f.write(out)
