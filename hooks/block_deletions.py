@@ -32,6 +32,7 @@ BLOCKED = [
     r"\bcp\s+/dev/null\s+\S",                 # cp /dev/null file — overwrite target with empty content
     # dd zeroing: of=<target> combined with a null/zero source OR count=0 (order-independent)
     r"\bdd\b.*\bof=\S+.*(?:if=/dev/(?:null|zero)|count=0)|\bdd\b.*(?:if=/dev/(?:null|zero)|count=0).*\bof=\S+",
+    r"\bsed\s+(?:-[a-zA-Z]*i|--in-place)",    # sed -i / -i.bak / -ni / --in-place — in-place rewrite
 ]
 
 for pattern in BLOCKED:

@@ -84,6 +84,34 @@ class TestBlockDeletions(unittest.TestCase):
         # dd with of= but no null/zero source and no count=0 is a real copy — allow.
         self.assertAllowed("dd if=/dev/" + "sda of=backup.img")
 
+    # --- in-place rewrite (issue #965) ---
+    def test_sed_inplace_blocked(self):
+        for cmd in ("sed -i 's/a/b/' file.txt", "sed -i.bak 's/a/b/' file.txt",
+                    "sed --in-place 's/a/b/' file.txt", "sed -ni 's/a/b/' file.txt"):
+            with self.subTest(cmd=cmd):
+                self.assertBlocked(cmd)
+
+    def test_sed_stream_allowed(self):
+        # sed WITHOUT -i is a stream filter (output redirected) — must NOT block.
+        self.assertAllowed("sed 's/a/b/' file.txt > out.txt")
+
+    # --- escape hatch + existing-verb regressions ---
+    def test_allow_deletions_escape_hatch(self):
+        # ALLOW_DELETIONS=true short-circuits at module top for NEW patterns too.
+        self.assertEqual(run_hook("truncate -s 0 file.txt", allow_deletions=True), 0)
+        self.assertEqual(run_hook("rm -rf build", allow_deletions=True), 0)
+
+    def test_existing_deletion_verbs_still_blocked(self):
+        for cmd in ("rm -rf build", "rm -r dir", "git clean -fd",
+                    "git reset --hard HEAD~1"):
+            with self.subTest(cmd=cmd):
+                self.assertBlocked(cmd)
+
+    def test_benign_commands_allowed(self):
+        for cmd in ("make build", "python3 -c 'print(1)'", "ls -la"):
+            with self.subTest(cmd=cmd):
+                self.assertAllowed(cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
