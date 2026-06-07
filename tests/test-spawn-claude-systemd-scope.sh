@@ -361,6 +361,28 @@ else
   fail_msg "example: PIPELINE_AGENT_TASKS_MAX default 512 not visible"
 fi
 
+# #961: the browser cap knob must be declared (commented) with its 4G default.
+inc
+if grep -Eq '^[[:space:]]*#?[[:space:]]*PIPELINE_AGENT_MEMORY_MAX_BROWSER=' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER documented"
+else
+  fail_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER missing from pipeline.config.example"
+fi
+inc
+if grep -Eq 'PIPELINE_AGENT_MEMORY_MAX_BROWSER=.*4G' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER default 4G visible"
+else
+  fail_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER default 4G not visible"
+fi
+# #961: the new prose MUST NOT reintroduce the literal `needs-browser` token into
+# pipeline.config.example (mirrors tests/test-pipeline-config-needs-browser-doc.sh).
+inc
+if ! grep -qF -- 'needs-browser' "$EXAMPLE"; then
+  pass_msg "example: literal 'needs-browser' token absent (browser/Playwright phrasing used)"
+else
+  fail_msg "example: literal 'needs-browser' token leaked into pipeline.config.example"
+fi
+
 # ---------------------------------------------------------------------------
 # Case 6 (Task 4): skills/doctor/SKILL.md documents the agent_resource_caps row.
 # ---------------------------------------------------------------------------

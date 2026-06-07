@@ -197,6 +197,16 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # and fork() fails inside the scope, leaving siblings + host pid space intact.
 # Default 512, single-sourced at the read site (${VAR:-512}).
 #PIPELINE_AGENT_TASKS_MAX=512
+#
+# PIPELINE_AGENT_MEMORY_MAX_BROWSER is the MemoryMax ceiling applied INSTEAD of
+# PIPELINE_AGENT_MEMORY_MAX for spawned agents that run browser/Playwright work
+# under --spawn. Chromium plus a loaded page can exceed the 2G default and get
+# OOM-killed inside the cgroup scope (a spurious visual-proof failure), so the
+# browser default is higher. Default 4G, single-sourced at the read site
+# (${VAR:-4G}); independent of PIPELINE_AGENT_MEMORY_MAX (lowering the base knob
+# does NOT clamp browser agents). Only the --spawn transport is affected; the
+# default inline path does not go through this scope.
+#PIPELINE_AGENT_MEMORY_MAX_BROWSER=4G
 
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
