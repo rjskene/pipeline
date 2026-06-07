@@ -27,19 +27,28 @@ from pathlib import Path
 def read_event_stdin(timeout: int = 5) -> dict:
     """Read+parse the hook event JSON from stdin with a bounded, fail-open
     deadline. Returns {} on timeout, EOF/empty, or malformed JSON — a guard
-    hook that cannot read its event must never wedge the session (#917)."""
+    hook that cannot read its event must never wedge the session (#917).
+    On platforms without SIGALRM (win32), the alarm is skipped and stdin is
+    read plainly (fail-open) — Claude Code closes the hook's stdin at event
+    end, so the read still terminates (#968)."""
+    _has_alarm = hasattr(signal, "SIGALRM") and hasattr(signal, "alarm")
+
     def _on_timeout(signum, frame):
         raise TimeoutError
 
-    old = signal.signal(signal.SIGALRM, _on_timeout)
+    old = None
     try:
-        signal.alarm(timeout)
+        if _has_alarm:
+            old = signal.signal(signal.SIGALRM, _on_timeout)
+            signal.alarm(timeout)
         raw = sys.stdin.read()
     except Exception:
         return {}
     finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
+        if _has_alarm:
+            signal.alarm(0)
+            if old is not None:
+                signal.signal(signal.SIGALRM, old)
     if not raw or not raw.strip():
         return {}
     try:
