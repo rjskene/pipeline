@@ -61,10 +61,14 @@ BODY="$(printf '%s' "$RAW" | jq -r '.body // ""' 2>/dev/null)" || emit high-blas
 LABELS="$(printf '%s' "$RAW" | jq -r '[.labels[].name] | join(" ")' 2>/dev/null)" || LABELS=""
 
 # --- Browser/UI carve-out (issue #960) --------------------------------------
-# needs-browser (and browser/web-eval/visual/playwright signals) force high-blast:
-# the #950 Sonnet-on-execute pilot validated SHELL-helper fixtures only and said
-# "do not widen ... without a separate pilot." Browser/UI execute was never
-# measured, so a needs-browser issue must stay on Opus for execute.
+# needs-browser / web-eval / playwright signals force high-blast: the #950
+# Sonnet-on-execute pilot validated SHELL-helper fixtures only and said "do not
+# widen ... without a separate pilot." Browser/UI execute was never measured, so
+# a needs-browser issue must stay on Opus for execute.
+# The primary signal is the `needs-browser` LABEL; `web-eval`/`playwright` are
+# jargon tokens precise enough to match in TITLE/BODY too. The bare words
+# `browser`/`visual` are INTENTIONALLY excluded from the regex to avoid false
+# positives on common prose (e.g. "visual diff", "browser tab").
 # INTENTIONAL DIVERGENCE from classify-issue's high-uncertainty vocabulary:
 # classify's carve-out gates B->D DOWN-routing (correctness uncertainty); this is
 # a MODEL-TIER gate. Browser is added HERE only — adding it to classify would
