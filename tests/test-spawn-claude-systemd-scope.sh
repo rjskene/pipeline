@@ -60,8 +60,14 @@ EOF
 # SCOPE_PREFIX is built) without ever creating a real scope.
 STUB_DIR="$WORKDIR/stub"
 mkdir -p "$STUB_DIR"
+# gh stub: emits the newline-separated STUB_LABELS (so the spawn-claude
+# `gh issue view … --json labels` scan can see a `needs-browser` label and set
+# HAS_NEEDS_BROWSER=1). With STUB_LABELS unset it prints nothing — the original
+# no-label behavior (HAS_NEEDS_BROWSER stays 0). Modeled on the gh stub in
+# tests/test-spawn-claude-mcp-gating.sh.
 cat > "$STUB_DIR/gh" <<'EOF'
 #!/bin/bash
+printf '%s\n' "${STUB_LABELS:-}"
 exit 0
 EOF
 cat > "$STUB_DIR/claude" <<'EOF'
@@ -242,6 +248,68 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 3b (#961): browser agents get the higher PIPELINE_AGENT_MEMORY_MAX_BROWSER
+# cap (default 4G) selected AFTER HAS_NEEDS_BROWSER detection. Non-browser agents
+# keep the 2G default; the browser knob is honored when set and is independent of
+# the base knob (setting only PIPELINE_AGENT_MEMORY_MAX must NOT clamp browser
+# agents). The gh stub emits `needs-browser` via STUB_LABELS so the label branch
+# in spawn-claude.sh runs (SKILL defaults to execute-issue-plan → SKILL_ALIAS set).
+# ---------------------------------------------------------------------------
+echo "Case 3b (#961): browser cap selection"
+
+# Assertion A: needs-browser → MemoryMax=4G (the new browser default).
+OUT="$(run_dry "$STUB_DIR" STUB_LABELS=needs-browser)"
+inc
+if echo "$OUT" | grep -E '^SCOPE_PREFIX=' | grep -q -- '-p MemoryMax=4G'; then
+  pass_msg "case3b-A: needs-browser agent gets MemoryMax=4G"
+else
+  fail_msg "case3b-A: needs-browser agent did not get MemoryMax=4G"
+  echo "$OUT" | grep -E '^SCOPE_PREFIX=' | sed 's/^/    /'
+fi
+
+# Assertion B (guard): no labels → MemoryMax=2G unchanged (default not regressed).
+OUT="$(run_dry "$STUB_DIR")"
+inc
+if echo "$OUT" | grep -E '^SCOPE_PREFIX=' | grep -q -- '-p MemoryMax=2G'; then
+  pass_msg "case3b-B: non-browser agent keeps MemoryMax=2G"
+else
+  fail_msg "case3b-B: non-browser agent MemoryMax regressed (expected 2G)"
+  echo "$OUT" | grep -E '^SCOPE_PREFIX=' | sed 's/^/    /'
+fi
+
+# Assertion C: needs-browser + PIPELINE_AGENT_MEMORY_MAX_BROWSER=8G → 8G honored.
+OUT="$(run_dry "$STUB_DIR" STUB_LABELS=needs-browser PIPELINE_AGENT_MEMORY_MAX_BROWSER=8G)"
+inc
+if echo "$OUT" | grep -E '^SCOPE_PREFIX=' | grep -q -- '-p MemoryMax=8G'; then
+  pass_msg "case3b-C: PIPELINE_AGENT_MEMORY_MAX_BROWSER override (8G) honored"
+else
+  fail_msg "case3b-C: browser cap override not honored"
+  echo "$OUT" | grep -E '^SCOPE_PREFIX=' | sed 's/^/    /'
+fi
+
+# Assertion D: needs-browser + base override (PIPELINE_AGENT_MEMORY_MAX=2G) but
+# browser knob UNSET → browser default (4G) still applies; the base knob must NOT
+# clamp the browser cap.
+OUT="$(run_dry "$STUB_DIR" STUB_LABELS=needs-browser PIPELINE_AGENT_MEMORY_MAX=2G)"
+inc
+if echo "$OUT" | grep -E '^SCOPE_PREFIX=' | grep -q -- '-p MemoryMax=4G'; then
+  pass_msg "case3b-D: browser default (4G) not clamped by base PIPELINE_AGENT_MEMORY_MAX=2G"
+else
+  fail_msg "case3b-D: browser cap was clamped to the base knob (expected 4G)"
+  echo "$OUT" | grep -E '^SCOPE_PREFIX=' | sed 's/^/    /'
+fi
+
+# Assertion E: the new knob is observable in the dry-run dump.
+OUT="$(run_dry "$STUB_DIR" STUB_LABELS=needs-browser)"
+inc
+if echo "$OUT" | grep -Eq '^AGENT_MEMORY_MAX_BROWSER=4G$'; then
+  pass_msg "case3b-E: dry-run dump echoes AGENT_MEMORY_MAX_BROWSER=4G"
+else
+  fail_msg "case3b-E: dry-run dump missing AGENT_MEMORY_MAX_BROWSER line"
+  echo "$OUT" | grep -E '^AGENT_MEMORY_MAX' | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
 # Case 4 (Task 2): static heredoc shape — the tmux-mode CMD line must place
 # ${SCOPE_PREFIX} BEFORE `timeout` so the scope is the OUTER process. An empty
 # SCOPE_PREFIX must collapse to a clean leading `timeout …` (no stray `--`).
@@ -291,6 +359,28 @@ if grep -Eq 'PIPELINE_AGENT_TASKS_MAX=.*512' "$EXAMPLE"; then
   pass_msg "example: PIPELINE_AGENT_TASKS_MAX default 512 visible"
 else
   fail_msg "example: PIPELINE_AGENT_TASKS_MAX default 512 not visible"
+fi
+
+# #961: the browser cap knob must be declared (commented) with its 4G default.
+inc
+if grep -Eq '^[[:space:]]*#?[[:space:]]*PIPELINE_AGENT_MEMORY_MAX_BROWSER=' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER documented"
+else
+  fail_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER missing from pipeline.config.example"
+fi
+inc
+if grep -Eq 'PIPELINE_AGENT_MEMORY_MAX_BROWSER=.*4G' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER default 4G visible"
+else
+  fail_msg "example: PIPELINE_AGENT_MEMORY_MAX_BROWSER default 4G not visible"
+fi
+# #961: the new prose MUST NOT reintroduce the literal `needs-browser` token into
+# pipeline.config.example (mirrors tests/test-pipeline-config-needs-browser-doc.sh).
+inc
+if ! grep -qF -- 'needs-browser' "$EXAMPLE"; then
+  pass_msg "example: literal 'needs-browser' token absent (browser/Playwright phrasing used)"
+else
+  fail_msg "example: literal 'needs-browser' token leaked into pipeline.config.example"
 fi
 
 # ---------------------------------------------------------------------------
