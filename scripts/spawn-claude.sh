@@ -102,8 +102,8 @@ AGENT_MEMORY_MAX_BROWSER="${PIPELINE_AGENT_MEMORY_MAX_BROWSER:-4G}"
 AGENT_TASKS_MAX="${PIPELINE_AGENT_TASKS_MAX:-512}"
 # Probe systemd-run availability now, but DEFER building SCOPE_PREFIX until after
 # HAS_NEEDS_BROWSER is known (below), so the MemoryMax ceiling can be chosen from
-# the label (#961). presence on PATH alone is insufficient (a Git-Bash host may
-# have the binary but no user manager), so the probe AND-s a cheap live smoke.
+# the label (#961). The probe AND-s `command -v` with a cheap live smoke per the
+# block comment above.
 SCOPE_PREFIX=""
 SYSTEMD_SCOPE_OK=0
 if command -v systemd-run >/dev/null 2>&1 \
