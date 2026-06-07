@@ -247,3 +247,34 @@ adding a column to a write that is already wrapped in `if pipeline_logging_enabl
 default `PIPELINE_LOGS_ENABLED=false` ⇒ logging off ⇒ no line ⇒ no crud). The
 test is "does this add a new file / new write path / consumer-visible artifact,"
 not "does this touch a shipped file."
+
+## 10. Browser agents under `--spawn` can OOM the 2G cap
+
+The #918 per-agent seatbelt wraps each `--spawn` agent in a transient
+`systemd-run --user --scope` with a `MemoryMax=2G` cgroup ceiling. A
+`needs-browser` agent launched under `--spawn` runs chromium (via the Playwright
+MCP server), and chromium plus a loaded page can exceed 2G — the kernel then
+OOM-kills the scope mid-eval. The failure mode is sneaky: the visual-proof loop
+reports an `unsatisfied` predicate that **looks like a real predicate failure**
+(the page never finished loading because the browser was killed), not like a
+resource cap. If a `needs-browser` `--spawn` agent reports a spurious
+`unsatisfied` and `journalctl --user -u 'run-*.scope'` (or `dmesg`) shows an OOM
+kill on the scope, this is the cause.
+
+Fix (#961): browser agents get a higher cap. `spawn-claude.sh` selects
+`PIPELINE_AGENT_MEMORY_MAX_BROWSER` (default **4G**) for the `MemoryMax` ceiling
+when the issue carries the `needs-browser` label, instead of the 2G base
+`PIPELINE_AGENT_MEMORY_MAX`. The selection happens AFTER label detection, so it
+keys off the same `HAS_NEEDS_BROWSER` flag the MCP gating uses.
+
+Tuning:
+- Heavy pages still OOM at 4G? Raise `PIPELINE_AGENT_MEMORY_MAX_BROWSER` (e.g.
+  `6G`/`8G`) in `pipeline.config`.
+- The browser knob is **independent** of the base knob — lowering
+  `PIPELINE_AGENT_MEMORY_MAX` for non-browser agents does NOT clamp browser
+  agents; they stay at the browser default unless you set the browser knob.
+- Non-browser agents are tuned via `PIPELINE_AGENT_MEMORY_MAX` (default 2G).
+
+Scope: **only the `--spawn` transport is affected.** The default inline `Agent`
+dispatch path does not invoke `spawn-claude.sh`/`systemd-run`, so it never enters
+a cgroup scope and is unaffected (hence the issue's Low severity).
