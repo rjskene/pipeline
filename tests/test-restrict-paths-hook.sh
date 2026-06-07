@@ -164,5 +164,84 @@ run_hook_set \
   2 \
   "BLOCKED: cannot modify protected file"
 
+# ---------------------------------------------------------------------------
+# Block 4 — Bash-branch protected-file coverage (issue #964).
+# The protected-file check used to be gated to Write/Edit only, so an inline
+# Bash command (sed -i, >, cp-onto) could disarm a guard in place. These pin
+# the three layered fixes: ungate the protected check for all extracted paths,
+# scan the raw command string for relative protected targets, and add a 4th
+# PROTECTED_PATTERN for the plugin's own cache hooks dir. Plus regression pins
+# that worktree-destination copies and benign refs are NOT over-blocked.
+# ---------------------------------------------------------------------------
+
+# Task 1 — plugin's own cache hooks dir IS protected. Build a path under $HOME
+# (real allowed root) so is_allowed passes and only is_protected decides.
+H1_PAYLOAD=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s/.claude/plugins/cache/x/pipeline/0.0.0/hooks/restrict_paths.py"}}' "$HOME")
+run_hook_set \
+  "plugin-cache hooks dir is protected (Write blocked)" \
+  "$H1_PAYLOAD" \
+  2 \
+  "BLOCKED: cannot modify protected file"
+
+# Task 2 — Bash command with an ABSOLUTE in-project protected path is blocked.
+# Write a real file first so the absolute+exists extractor sees it, then the
+# (now-ungated) protected loop must block it. Use printf-into-settings.json.
+H2_PAYLOAD=$(printf '{"tool_name":"Bash","tool_input":{"command":"printf x > %s/.claude/settings.json"}}' "$REPO_ROOT")
+run_hook_set \
+  "Bash absolute in-project protected path blocked (.claude/settings.json)" \
+  "$H2_PAYLOAD" \
+  2 \
+  "BLOCKED: cannot modify protected file"
+
+# Task 3.1 — in-place RELATIVE disarm of settings.json is blocked by the
+# command-string scan (the absolute+exists extractor never sees relative
+# targets).
+run_hook_set \
+  "Bash relative in-place disarm of .claude/settings.json blocked" \
+  '{"tool_name":"Bash","tool_input":{"command":"sed -i s/a/b/ .claude/settings.json"}}' \
+  2 \
+  "BLOCKED: cannot modify protected file"
+
+# Task 3.2 — in-place RELATIVE disarm of a hooks file is blocked.
+run_hook_set \
+  "Bash relative in-place disarm of .claude/hooks/ blocked" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo \"\" > .claude/hooks/restrict_paths.py"}}' \
+  2 \
+  "BLOCKED: cannot modify protected file"
+
+# Task 3.3 — worktree-DESTINATION copy is ALLOWED (the sync carve-out).
+# Build <parent>/<prefix>-<N>-... where <parent> is dirname of REPO_ROOT and
+# <prefix> is the default PIPELINE_WORKTREE_PREFIX (wt).
+WT_PARENT="$(dirname "$REPO_ROOT")"
+H33_PAYLOAD=$(printf '{"tool_name":"Bash","tool_input":{"command":"cp .claude/hooks/restrict_paths.py %s/wt-42-x/.claude/hooks/restrict_paths.py"}}' "$WT_PARENT")
+run_hook_set \
+  "Bash cp to worktree-destination hooks file ALLOWED (sync carve-out)" \
+  "$H33_PAYLOAD" \
+  0 \
+  --no-grep
+
+# Task 4.1 — worktree-sync wrapper invocation is NOT over-blocked (hook only
+# sees the wrapper, never the inner cp).
+run_hook_set \
+  "Bash bash scripts/sync-worktrees.sh not over-blocked" \
+  '{"tool_name":"Bash","tool_input":{"command":"bash scripts/sync-worktrees.sh"}}' \
+  0 \
+  --no-grep
+
+# Task 4.2 — benign protected-adjacent read of .claude/logs/ is allowed
+# (.claude/logs/ is not protected).
+run_hook_set \
+  "Bash cat .claude/logs/run.json not over-blocked" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat .claude/logs/run.json"}}' \
+  0 \
+  --no-grep
+
+# Task 4.3 — benign grep mentioning 'settings' under .claude/scratch/ allowed.
+run_hook_set \
+  "Bash grep settings .claude/scratch/x not over-blocked" \
+  '{"tool_name":"Bash","tool_input":{"command":"grep settings .claude/scratch/x"}}' \
+  0 \
+  --no-grep
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
