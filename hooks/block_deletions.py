@@ -27,6 +27,8 @@ BLOCKED = [
     r"\bdel\s+/[fsq]",                   # del /f /s /q
     r"\brd\s+/s",                        # rd /s
     r"\btruncate\s+(?:-s|--size=?)\s*0\b",   # truncate -s 0 / -s0 / --size=0 / --size 0
+    r"(?:^|;|&&|\|\||\n|\()\s*:\s*>\s*\S",   # ": > file" — colon no-op then truncate-clobber
+    r">\|\s*\S",                              # ">| file" — bash forced clobber of an explicit target
 ]
 
 for pattern in BLOCKED:

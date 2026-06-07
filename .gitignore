@@ -7,6 +7,8 @@
 /.claude/settings.local.json
 /pipeline.config
 hooks/__pycache__/
+__pycache__/
+*.pyc
 
 /dev/audits/
 mock-web-eval/target/.env.mock-web-eval

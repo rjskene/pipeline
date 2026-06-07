@@ -47,6 +47,25 @@ class TestBlockDeletions(unittest.TestCase):
         # -s 100M GROWS/sizes a sparse file — not zeroing, must NOT block.
         self.assertAllowed("truncate -s 100M sparse.img")
 
+    # --- explicit clobber idioms (issue #965) ---
+    def test_colon_noop_truncate_blocked(self):
+        for cmd in (": > config.json", ":> config.json", "echo done && : > log.txt"):
+            with self.subTest(cmd=cmd):
+                self.assertBlocked(cmd)
+
+    def test_force_clobber_blocked(self):
+        for cmd in ("cat foo >| out.txt", "foo >|out.txt"):
+            with self.subTest(cmd=cmd):
+                self.assertBlocked(cmd)
+
+    def test_plain_redirection_allowed(self):
+        # CORE TENSION: plain `>` / `>>` redirection is ubiquitous & legit — NEVER block.
+        for cmd in ("foo > out.txt", "echo hi > log.txt", "echo hi >> log.txt",
+                    "cat a.txt > b.txt", "grep x file | sort > sorted.txt",
+                    "ls -la > listing.txt"):
+            with self.subTest(cmd=cmd):
+                self.assertAllowed(cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
