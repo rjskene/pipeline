@@ -66,6 +66,24 @@ class TestBlockDeletions(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertAllowed(cmd)
 
+    # --- overwrite-with-empty / zero-fill (issue #965) ---
+    def test_cp_devnull_blocked(self):
+        self.assertBlocked("cp " + DEVNULL + " tracked.txt")
+
+    def test_cp_normal_allowed(self):
+        self.assertAllowed("cp source.txt dest.txt")
+
+    def test_dd_zeroing_blocked(self):
+        for cmd in ("dd if=" + DEVNULL + " of=file.bin",
+                    "dd of=file.bin if=" + DEVZERO + " count=0",
+                    "dd if=" + DEVZERO + " of=disk.img count=0"):
+            with self.subTest(cmd=cmd):
+                self.assertBlocked(cmd)
+
+    def test_dd_disk_copy_allowed(self):
+        # dd with of= but no null/zero source and no count=0 is a real copy — allow.
+        self.assertAllowed("dd if=/dev/" + "sda of=backup.img")
+
 
 if __name__ == "__main__":
     unittest.main()

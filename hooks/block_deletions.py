@@ -29,6 +29,9 @@ BLOCKED = [
     r"\btruncate\s+(?:-s|--size=?)\s*0\b",   # truncate -s 0 / -s0 / --size=0 / --size 0
     r"(?:^|;|&&|\|\||\n|\()\s*:\s*>\s*\S",   # ": > file" — colon no-op then truncate-clobber
     r">\|\s*\S",                              # ">| file" — bash forced clobber of an explicit target
+    r"\bcp\s+/dev/null\s+\S",                 # cp /dev/null file — overwrite target with empty content
+    # dd zeroing: of=<target> combined with a null/zero source OR count=0 (order-independent)
+    r"\bdd\b.*\bof=\S+.*(?:if=/dev/(?:null|zero)|count=0)|\bdd\b.*(?:if=/dev/(?:null|zero)|count=0).*\bof=\S+",
 ]
 
 for pattern in BLOCKED:
