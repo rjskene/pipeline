@@ -189,6 +189,29 @@ export GH_EVAL_BODY="$(make_eval Flagged)"
 export GH_ROLLUP="$(make_rollup success MERGEABLE CLEAN)"
 check "default mode still blocks on Flagged verdict" "block-verdict" "$(run_gate)"
 
+echo "=== Superseded check run (issue #962: stale FAILURE + fresh SUCCESS same name) ==="
+# Simulates: PR title was wrong → lint-pr-title:FAILURE. Title corrected →
+# lint-pr-title:SUCCESS re-run. Both runs are attached to the same SHA.
+# The gate must dedupe by check name (take latest = SUCCESS) and return green,
+# not block-ci.
+unset MANUAL_MERGE
+unset NO_VERDICT
+export GH_LABELS=""
+export GH_BASE_REF="staging"
+export GH_EVAL_BODY="$(make_eval Approved)"
+# Two entries with the same name: stale FAILURE first, then fresh SUCCESS.
+export GH_ROLLUP='{"statusCheckRollup":[{"name":"lint-pr-title","conclusion":"FAILURE"},{"name":"lint-pr-title","conclusion":"SUCCESS"}],"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'
+check "superseded FAILURE + fresh SUCCESS → green (dedupe by name)" "green" "$(run_gate)"
+
+# Sanity: two entries, same name, latest is FAILURE => block-ci.
+export GH_ROLLUP='{"statusCheckRollup":[{"name":"lint-pr-title","conclusion":"SUCCESS"},{"name":"lint-pr-title","conclusion":"FAILURE"}],"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'
+check "superseded SUCCESS + fresh FAILURE → block-ci" "block-ci" "$(run_gate)"
+
+# Mixed: two distinct checks, one has stale FAILURE superseded by SUCCESS,
+# other is a single SUCCESS => green overall.
+export GH_ROLLUP='{"statusCheckRollup":[{"name":"lint-pr-title","conclusion":"FAILURE"},{"name":"lint-pr-title","conclusion":"SUCCESS"},{"name":"ci","conclusion":"SUCCESS"}],"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'
+check "superseded FAILURE + SUCCESS + other SUCCESS → green" "green" "$(run_gate)"
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1
