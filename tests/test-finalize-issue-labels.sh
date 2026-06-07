@@ -53,6 +53,12 @@ case "$sub1 $sub2" in
     done
     exit "$rc"
     ;;
+  "issue view")
+    # Simulate `gh issue view <N> --repo R --json labels --jq '.labels[].name'`.
+    # Print the present labels (one per line) derived from $LABELS (comma-separated).
+    printf '%s\n' "${LABELS:-}" | tr ',' '\n' | sed '/^$/d'
+    exit 0
+    ;;
   "repo view")
     # Simulate `gh repo view --json nameWithOwner -q .nameWithOwner`.
     # FALLBACK_REPO empty => simulate gh failure (exit 1, no stdout).
@@ -249,6 +255,32 @@ else
   echo "    stderr:"; sed 's/^/      /' "$J/stderr"
 fi
 unset FORCE_EDIT_FAIL
+
+# ---- Case K: subset strip — only pr-open present → exactly merged, accurate count, no 422 ----
+echo "Case K: subset strip — only pr-open present → exactly merged, accurate count, no 422"
+inc
+K="$TMP/case-k"; reset_case "$K"
+export LABELS="pr-open"   # strict subset of the strip-set
+if bash "$HELPER" 963 >"$K/stdout" 2>"$K/stderr"; then
+  ok=1
+  grep -qF -- '--add-label merged' "$SHIM_LOG" || { ok=0; fail_msg "subset: no --add-label merged recorded"; }
+  grep -qF -- '--remove-label pr-open' "$SHIM_LOG" || { ok=0; fail_msg "subset: present label pr-open not removed"; }
+  # Absent strip-set labels must NOT be passed to gh (that is what 422s the whole call).
+  for l in plan-pending plan-reviewed in-progress quick-fix docs-only multi-task priority/P0; do
+    if grep -qF -- "--remove-label $l" "$SHIM_LOG"; then
+      ok=0; fail_msg "subset: absent label $l was passed to gh (re-introduces the 422)"
+    fi
+  done
+  # stripped= must report the ACTUAL count (1), not the hardcoded array length (13).
+  grep -qE 'FINALIZED: issue=963 labels=merged stripped=1$' "$K/stdout" \
+    || { ok=0; fail_msg "subset: stripped count is not the actual removal count (expected stripped=1)"; }
+  [ "$ok" = "1" ] && pass_msg "subset: only present labels removed, ends with merged, stripped=1, no 422"
+  [ "$ok" = "1" ] || { sed 's/^/    /' "$SHIM_LOG"; sed 's/^/    out: /' "$K/stdout"; }
+else
+  rc=$?
+  fail_msg "subset: helper exited $rc; expected 0"
+  echo "    stderr:"; sed 's/^/      /' "$K/stderr"
+fi
 
 # ---- Grep-guards: the three call sites delegate to the helper ----
 echo "Case G: call sites delegate to the shared helper"
