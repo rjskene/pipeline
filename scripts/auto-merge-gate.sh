@@ -100,7 +100,7 @@ auto_merge_should_fire() {
   local rollup mergeable mergestate
   rollup=$(gh pr view "$pr" --repo "$PIPELINE_REPO" \
     --json statusCheckRollup,mergeable,mergeStateStatus 2>/dev/null)
-  if ! echo "$rollup" | jq -e '.statusCheckRollup | length == 0 or all(.conclusion == "SUCCESS")' >/dev/null 2>&1; then
+  if ! echo "$rollup" | jq -e '.statusCheckRollup | length == 0 or (group_by(.name) | all(last.conclusion == "SUCCESS"))' >/dev/null 2>&1; then
     echo block-ci
     return 1
   fi
