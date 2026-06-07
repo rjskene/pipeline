@@ -81,11 +81,40 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    **Phase 1 — Plan compliance.** For each plan item: verify "Files to change" were modified and match descriptions; verify "DB schema / API / Frontend / Test changes" were made or correctly skipped; flag scope creep (implemented but not planned) and missing work (planned but not implemented).
 
-   **Phase 2 — Code quality.** Run checks and review the diff:
+   **Phase 2 — Code quality.** Run checks and review the diff. **Resolve CI status (Step 5) BEFORE deciding whether to run tests** — the test-execution decision keys off the already-settled rollup, so Step 5b's `--watch` is the single source of the settled verdict and Phase 2 never issues a second `--watch`/`--wait`.
+
+   **Typecheck always runs** (cheap; not covered by the CI-suite-trust rationale):
    ```bash
    $PIPELINE_TYPECHECK_CMD 2>&1 | head -50
-   $PIPELINE_TEST_CMD 2>&1 | tail -30
    ```
+
+   **Test execution is CI-aware (green-CI short-circuit, issue #957).** Read the settled `statusCheckRollup` verdict once — reuse the same all-SUCCESS jq predicate as `scripts/auto-merge-gate.sh` (`length > 0 and all(.conclusion == "SUCCESS")`); do NOT re-run the watch/wait (Step 5b already settled the checks):
+   ```bash
+   ROLLUP_GREEN=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup \
+     --jq '.statusCheckRollup | length > 0 and all(.conclusion == "SUCCESS")')
+   if [ "$ROLLUP_GREEN" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]; then
+     echo "CI: green rollup — trusting CI suite verdict; skipping full local PIPELINE_TEST_CMD re-run (issue #957)"
+     # SKIP the full-suite invocation. The green CI rollup ran the same suite; re-running it
+     # locally is pure duplication. Typecheck (above), diff-vs-plan review, acceptance checks,
+     # and adversarial code-quality review all still run — only the blanket suite re-run is removed.
+   else
+     # Fallback — CI rollup not green, empty/no-CI, or PIPELINE_CI_CHECK_ENABLED disabled:
+     # run tests locally, SCOPED TO TOUCHED TESTS rather than the whole suite. Derive the
+     # touched test files from the PR diff and run only those; if none were touched, fall back
+     # to the full $PIPELINE_TEST_CMD (never skip testing when CI is untrusted).
+     TOUCHED_TESTS=$(gh pr diff $PR_NUM --repo $PIPELINE_REPO --name-only | grep -E '(^|/)tests?/' || true)
+     if [ -n "$TOUCHED_TESTS" ]; then
+       while IFS= read -r t; do [ -f "$t" ] && timeout 300 bash "$t" </dev/null; done <<< "$TOUCHED_TESTS"
+     else
+       timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null 2>&1 | tail -30
+     fi
+   fi
+   ```
+
+   **Dedup guard (hard constraint).** The full-suite `$PIPELINE_TEST_CMD` is invoked **at most once** per eval and **never via `run_in_background`** — no overlapping/duplicate full-suite sweeps (the harness auto-backgrounding that caused the #955/#956 duplicate sweeps). It always runs synchronously in the foreground, mirroring the Step 5b `--watch` no-`run_in_background` rule.
+
+   **Trust boundary (assumption).** The short-circuit trusts that the green CI suite is the SAME suite as `$PIPELINE_TEST_CMD`. This holds for the dogfood repo (CI runs the identical `tests/test*.sh` sweep). Consumers with divergent CI should understand this trust boundary.
+
    Look for: leftover debug code / console.logs / TODOs; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type-safety issues `tsc` missed; test coverage for every implemented feature.
 
 <!-- BEGIN CI_CHECK -->
