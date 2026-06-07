@@ -31,6 +31,10 @@ TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
 mkdir -p "$TMP/bin"
 
 # Shim:
+# - gh issue view <N> --json labels --jq ...
+#     -> record; print the present labels (one per line) from $LABELS so the
+#        finalize-issue-labels.sh query-then-remove-intersection flow (#963) can
+#        see which strip-set labels are present.
 # - gh issue edit <N> [--add-label A] [--remove-label B]...
 #     -> record full invocation; for each --remove-label X not present in
 #        $LABELS (comma-separated), exit 1 (simulate gh's absent-label 422).
@@ -59,6 +63,14 @@ case "$sub1 $sub2" in
       shift
     done
     exit "$rc"
+    ;;
+  "issue view")
+    # Simulate `gh issue view <N> --repo R --json labels --jq '.labels[].name'`.
+    # finalize-issue-labels.sh (delegated to by finish-manual-merge.sh) queries
+    # the present labels first, then strips only the intersection (#963), so the
+    # shim must serve the present labels (one per line) from $LABELS.
+    printf '%s\n' "${LABELS:-}" | tr ',' '\n' | sed '/^$/d'
+    exit 0
     ;;
   "issue close")
     if [ "${STATE:-OPEN}" = "CLOSED" ]; then exit 1; fi
