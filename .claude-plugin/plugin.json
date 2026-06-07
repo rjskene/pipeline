@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "pipeline",
-  "version": "0.23.3",
+  "version": "0.23.4",
   "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
   "author": {
     "name": "rjskene",

@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.23.4](https://github.com/rjskene/pipeline/compare/v0.23.3...v0.23.4) (2026-06-07)
+
+
+### Features
+
+* **spawn:** raise MemoryMax cap for browser agents under --spawn ([#961](https://github.com/rjskene/pipeline/issues/961)) ([8549b17](https://github.com/rjskene/pipeline/commit/8549b1700527629c5795f23984460e5585a7fe5b))
+
+
+### Bug Fixes
+
+* **auto-merge-gate:** dedupe statusCheckRollup by name to ignore superseded runs ([e2c49a2](https://github.com/rjskene/pipeline/commit/e2c49a20574b8c4686f11f13be206e7c858305da)), closes [#962](https://github.com/rjskene/pipeline/issues/962)
+* **auto-merge-gate:** superseded check run blocks merge after PR-title edit (block-ci false positive) ([d9afd7e](https://github.com/rjskene/pipeline/commit/d9afd7e0bb5316981e436fb2f7c0f85158ef4a9d))
+* **dynamic-effort:** exempt needs-browser from PATH B Sonnet execute downshift ([bcb29cf](https://github.com/rjskene/pipeline/commit/bcb29cfecf4c29e799bb99262b3db010533a62ac))
+* **dynamic-effort:** exempt needs-browser issues from the Sonnet execute downshift ([0017cd3](https://github.com/rjskene/pipeline/commit/0017cd33f99ee307a82e11e915cecee7bdb5e736))
+* **dynamic-effort:** mirror needs-browser execute exemption for PATH D in fullsend ([0119a39](https://github.com/rjskene/pipeline/commit/0119a394230bede94e6e18a0b052f08d049c7b0f))
+* **hooks:** block ': &gt;' and '&gt;|' clobber idioms, keep plain '&gt;' allowed ([#965](https://github.com/rjskene/pipeline/issues/965)) ([6fa8dea](https://github.com/rjskene/pipeline/commit/6fa8dea99cc66370296aac4955fd7e0f460dddf8))
+* **hooks:** block 'cp /dev/null' and 'dd of=' zeroing in block_deletions ([#965](https://github.com/rjskene/pipeline/issues/965)) ([d73da68](https://github.com/rjskene/pipeline/commit/d73da68976cb33f09059759b601c09caad176b1d))
+* **hooks:** block 'sed -i' in-place rewrite; cover escape hatch + regressions ([#965](https://github.com/rjskene/pipeline/issues/965)) ([99c4a5c](https://github.com/rjskene/pipeline/commit/99c4a5ce836e3f894df1a83f260beccd67b6525c))
+* **hooks:** block truncate -s 0 content-destruction in block_deletions ([#965](https://github.com/rjskene/pipeline/issues/965)) ([a79a492](https://github.com/rjskene/pipeline/commit/a79a492d027ac6641d4205d82023646bf7cb2133))
+* **hooks:** block_deletions misses destructive rewrites/truncation (truncate, sed -i, cp /dev/null, : &gt;) ([43c3b36](https://github.com/rjskene/pipeline/commit/43c3b36e4b37e3bec3e5dc6f862951157b05cb55))
+* **hooks:** close restrict_paths Bash-branch protected-file bypass ([#964](https://github.com/rjskene/pipeline/issues/964)) ([27e5bb7](https://github.com/rjskene/pipeline/commit/27e5bb7235174a43420ae136fc7e5a51d8d91e2a))
+* **hooks:** guard fcntl import in subagent_log_utils, fail-open append_locked on win32 ([4ea2d2b](https://github.com/rjskene/pipeline/commit/4ea2d2b78e42ffa03b10e161d6d5a180eb1153c2))
+* **hooks:** restrict_paths protected-file check is bypassable via Bash (Write/Edit-only) ([c4b306b](https://github.com/rjskene/pipeline/commit/c4b306b5b11e10b11eb079aad14d78ca6b523bfc))
+* **hooks:** skip SIGALRM alarm in read_event_stdin on platforms without it ([c434a83](https://github.com/rjskene/pipeline/commit/c434a8344770b114ec506c5cb729464aaa760ddd))
+* **hooks:** subagent_log_utils is POSIX-only (fcntl + SIGALRM) — Stop hooks traceback on Windows ([c39941f](https://github.com/rjskene/pipeline/commit/c39941f5dd2af0b3dd5a16dbc6a93a391cd4f325))
+* **review:** align browser carve-out comment with the actual regex ([ebe5df4](https://github.com/rjskene/pipeline/commit/ebe5df43707a252b9ab920219c5d286f97e562fc))
+* **review:** drop duplicated probe-comment line in spawn-claude ([#961](https://github.com/rjskene/pipeline/issues/961)) ([5d29802](https://github.com/rjskene/pipeline/commit/5d29802a79a7d8663ae515410281ac6da4cb13c3))
+* **scripts:** finalize-issue-labels.sh stripped= count is fictitious and combined gh issue edit 422s, leaving stale labels ([7f4a60c](https://github.com/rjskene/pipeline/commit/7f4a60cbfe42baeb16365e83c89e0a5c23e976dc))
+* **scripts:** query-then-remove labels in finalize-issue-labels so absent labels don't 422 the strip ([#963](https://github.com/rjskene/pipeline/issues/963)) ([3925b65](https://github.com/rjskene/pipeline/commit/3925b655b873afbbce4916163b3d6e7f8a56005b))
+
+
+### Performance Improvements
+
+* **evaluate-issue-pr:** trust green CI instead of re-running the full local suite — ~30min redundant eval ([273080c](https://github.com/rjskene/pipeline/commit/273080ce3538f3df06bf666049ddc2c7040b1594))
+* **evaluate-issue-pr:** trust green CI rollup, skip full local suite re-run ([#957](https://github.com/rjskene/pipeline/issues/957)) ([ef6990e](https://github.com/rjskene/pipeline/commit/ef6990e70d83a7f243810c073db222b2bb17f4d1))
+
 ## [0.23.3](https://github.com/rjskene/pipeline/compare/v0.23.2...v0.23.3) (2026-06-04)
 
 
