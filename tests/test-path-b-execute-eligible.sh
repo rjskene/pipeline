@@ -137,6 +137,13 @@ FIX_G=$(make_fixture "fix(scripts): multi-file single module" "$BODY_G" '[]')
 assert_token "(g) single-module + 3 src files (2-6) no signal" \
   "low-blast" "single-module" "$(run_helper "$FIX_G")"
 
+# (g2) needs-browser label, otherwise low-blast (single module, no other signal)
+#      -> high-blast needs-browser (issue #960: browser/UI execute never validated on Sonnet).
+BODY_G2=$'## Affected areas\n- `scripts/foo.sh`\n'
+FIX_G2=$(make_fixture "fix(ui): tweak admin events table" "$BODY_G2" '[{"name":"needs-browser"}]')
+assert_token "(g2) needs-browser label single src -> browser carve-out" \
+  "high-blast" "needs-browser" "$(run_helper "$FIX_G2")"
+
 # (h) gh failure / parse error -> high-blast indeterminate (fail-closed).
 # Simulate by pointing the stub at a missing fixture so jq fails.
 inc
