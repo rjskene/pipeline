@@ -155,6 +155,20 @@ else
   fail_msg "skill: missing the estimate-not-diff rationale in the block"
 fi
 
+# 12. needs-browser PATH D suppresses model= (issue #960 — browser/UI execute
+#     never validated on Sonnet). PATH D is otherwise unconditional.
+inc
+if awk '
+  /Per-path execute MODEL routing/ { inblock = 1 }
+  inblock && /^## / { inblock = 0 }
+  inblock && /PATH D/ && /needs-browser/ && (/NO[[:space:]].*model=/ || /no[[:space:]].*model=/ || /suppress/) { f = 1 }
+  END { exit (f ? 0 : 1) }
+' "$SKILL"; then
+  pass_msg "skill: needs-browser PATH D suppresses model= (browser carve-out)"
+else
+  fail_msg "skill: needs-browser PATH D model= suppression missing from the block"
+fi
+
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="
 [ "$FAIL" -eq 0 ]

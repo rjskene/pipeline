@@ -7,9 +7,11 @@
 # `finish-manual-merge.sh`, and the worktree teardown `cleanup-worktree.sh`.
 # Each one used to inline its own (divergent) `--add-label merged --remove-label
 # ...` flip, so the set of labels actually stripped DRIFTED between sites. This
-# helper centralizes that flip: add `merged`, remove every pipeline-managed
-# lifecycle / path / priority label, and tolerate gh's absent-label 422. The
-# three call sites pass only the issue number, so the strip-set cannot drift.
+# helper centralizes that flip: add `merged`, then remove only the intersection
+# of the present labels with the pipeline-managed lifecycle / path / priority
+# strip-set — querying the issue's present labels first so an absent label can
+# never 422 the whole edit (issues #963/#967). The three call sites pass only the
+# issue number, so the strip-set cannot drift.
 #
 # STRIP-SET CONTRACT (asserted by tests/test-finalize-issue-labels.sh):
 #   IN  — all lifecycle labels (plan-pending, plan-reviewed, plan-approved,
@@ -32,6 +34,8 @@
 #
 # Emits one audit line to stdout:
 #   FINALIZED: issue=<N> labels=merged stripped=<count>
+# where <count> is the ACTUAL number of strip-set labels removed (the present
+# intersection size), not the strip-set size — and 0 on a combined-edit failure.
 set -euo pipefail
 
 REPO="${PIPELINE_REPO:-}"
@@ -81,26 +85,34 @@ STRIP_LABELS=(
   priority/P0 priority/P1 priority/P2 priority/P3
 )
 
-# Build a single combined `gh issue edit` adding `merged` and removing every
-# strip-set label. The `|| ... --add-label merged || true` fallback mirrors the
-# proven shape from finish-manual-merge.sh: gh 422s the WHOLE combined call if
-# any single removed label is already absent, so the fallback re-runs only the
-# `merged` add to guarantee it is never swallowed (the present labels are not
-# removed on that run, but the flip is idempotent on re-run). On a fully-stripped
-# (idempotent) issue this means exit 0 with `merged` preserved.
+# Query the labels actually present, then strip ONLY the intersection with the
+# strip-set. gh applies a combined `--remove-label` set all-or-nothing and 422s
+# the WHOLE edit if ANY single target is already absent (issues #963/#967), so
+# we never pass an absent label: we read the present labels first and remove only
+# those that are both present AND in the strip-set. The intersection size IS the
+# accurate `stripped=` count (no longer the fictitious hardcoded array length).
+# PRESENT holds one present label per line; REMOVE_ARGS is the intersection.
+PRESENT="$(gh issue view "$ISSUE" --repo "$REPO" --json labels --jq '.labels[].name' 2>/dev/null || true)"
 REMOVE_ARGS=()
+STRIPPED=0
 for l in "${STRIP_LABELS[@]}"; do
-  REMOVE_ARGS+=(--remove-label "$l")
+  if printf '%s\n' "$PRESENT" | grep -qxF "$l"; then
+    REMOVE_ARGS+=(--remove-label "$l")
+    STRIPPED=$((STRIPPED + 1))
+  fi
 done
 
-# Attempt the combined add+strip. gh 422s the WHOLE call if any removed label
-# is already absent, so on failure we retry the `merged` add alone (idempotent).
-# Unlike before, the fallback's stderr is captured: a genuine total failure
-# (bad repo, API error) now surfaces a WARN instead of a silent no-op (#888).
+# Single edit: always add `merged`; remove only the present strip-set labels.
+# Because every --remove-label target is known-present, this no longer 422s on
+# absent labels. A genuine failure (bad repo, API error) still surfaces a WARN
+# via the merged-only fallback so the strip is never silently swallowed (#888):
+# the strip count resets to 0 (nothing was removed), and the fallback re-runs the
+# `merged` add alone so the terminal marker is never dropped (idempotent re-run).
 if ! gh issue edit "$ISSUE" --repo "$REPO" --add-label merged "${REMOVE_ARGS[@]}" 2>/dev/null; then
-  EDIT_ERR="$(gh issue edit "$ISSUE" --repo "$REPO" --add-label merged 2>&1)" || {
-    echo "WARN: finalize-issue-labels: label finalization failed for issue=${ISSUE} repo=${REPO}; labels may be stale. gh: ${EDIT_ERR}" >&2
-  }
+  STRIPPED=0
+  EDIT_ERR="$(gh issue edit "$ISSUE" --repo "$REPO" --add-label merged 2>&1)" \
+    && echo "WARN: finalize-issue-labels: combined add+strip failed for issue=${ISSUE} repo=${REPO}; applied 'merged' only, lifecycle labels may be stale." >&2 \
+    || echo "WARN: finalize-issue-labels: label finalization failed for issue=${ISSUE} repo=${REPO}; labels may be stale. gh: ${EDIT_ERR}" >&2
 fi
 
-echo "FINALIZED: issue=${ISSUE} labels=merged stripped=${#STRIP_LABELS[@]}"
+echo "FINALIZED: issue=${ISSUE} labels=merged stripped=${STRIPPED}"

@@ -92,14 +92,23 @@ TMUX_WINDOW="issue-${ISSUE_NUM}"
 # probe is `command -v systemd-run` AND a cheap live `systemd-run --user`
 # smoke, because presence on PATH alone is insufficient (a Git-Bash host may
 # have the binary but no user manager).
+#   MemoryMax (browser) — needs-browser spawned agents run chromium, which plus a
+#               loaded page can exceed the 2G default and get OOM-killed inside the
+#               scope (a spurious visual-proof failure). They get a higher ceiling
+#               via PIPELINE_AGENT_MEMORY_MAX_BROWSER (default 4G) selected AFTER
+#               label detection (issue #961).
 AGENT_MEMORY_MAX="${PIPELINE_AGENT_MEMORY_MAX:-2G}"
+AGENT_MEMORY_MAX_BROWSER="${PIPELINE_AGENT_MEMORY_MAX_BROWSER:-4G}"
 AGENT_TASKS_MAX="${PIPELINE_AGENT_TASKS_MAX:-512}"
+# Probe systemd-run availability now, but DEFER building SCOPE_PREFIX until after
+# HAS_NEEDS_BROWSER is known (below), so the MemoryMax ceiling can be chosen from
+# the label (#961). The probe AND-s `command -v` with a cheap live smoke per the
+# block comment above.
 SCOPE_PREFIX=""
+SYSTEMD_SCOPE_OK=0
 if command -v systemd-run >/dev/null 2>&1 \
    && systemd-run --user --scope --quiet -- true >/dev/null 2>&1; then
-  # Trailing `-- ` (with a space) so concatenation with the timeout line yields
-  # `systemd-run … -- timeout …`; empty otherwise collapses to a clean `timeout …`.
-  SCOPE_PREFIX="systemd-run --user --scope -p MemoryMax=${AGENT_MEMORY_MAX} -p TasksMax=${AGENT_TASKS_MAX} -- "
+  SYSTEMD_SCOPE_OK=1
 else
   echo "WARNING: systemd-run --user unavailable; launching agent UNBOUNDED (no MemoryMax/TasksMax cgroup ceiling). See /pipeline:doctor for the recommended host seatbelt." >&2
 fi
@@ -192,6 +201,21 @@ if [ -n "$SKILL_ALIAS" ] && [ -n "$ISSUE_NUM" ]; then
   else
     echo "[spawn-claude] WARN: gh issue view failed for issue #$ISSUE_NUM, defaulting to PATH B" >&2
   fi
+fi
+
+# --- Build SCOPE_PREFIX now that HAS_NEEDS_BROWSER is known (issue #961) ---
+# needs-browser agents run chromium and need a higher MemoryMax than the 2G
+# default; pick PIPELINE_AGENT_MEMORY_MAX_BROWSER (default 4G) for them, the base
+# PIPELINE_AGENT_MEMORY_MAX (default 2G) otherwise. The browser default is
+# independent of the base knob: setting only PIPELINE_AGENT_MEMORY_MAX does NOT
+# clamp browser agents. SYSTEMD_SCOPE_OK was probed above; when 0, SCOPE_PREFIX
+# stays empty (the graceful-degrade unbounded launch + WARNING already emitted).
+EFFECTIVE_MEMORY_MAX="$AGENT_MEMORY_MAX"
+[ "${HAS_NEEDS_BROWSER:-0}" = "1" ] && EFFECTIVE_MEMORY_MAX="$AGENT_MEMORY_MAX_BROWSER"
+if [ "$SYSTEMD_SCOPE_OK" = "1" ]; then
+  # Trailing `-- ` (with a space) so concatenation with the timeout line yields
+  # `systemd-run … -- timeout …`; empty otherwise collapses to a clean `timeout …`.
+  SCOPE_PREFIX="systemd-run --user --scope -p MemoryMax=${EFFECTIVE_MEMORY_MAX} -p TasksMax=${AGENT_TASKS_MAX} -- "
 fi
 
 # --- Label-gated MCP attachment (issue #347) ---
@@ -397,6 +421,7 @@ if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
   echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
   echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
   echo "AGENT_MEMORY_MAX=$AGENT_MEMORY_MAX"
+  echo "AGENT_MEMORY_MAX_BROWSER=$AGENT_MEMORY_MAX_BROWSER"
   echo "AGENT_TASKS_MAX=$AGENT_TASKS_MAX"
   echo "SCOPE_PREFIX=$SCOPE_PREFIX"
   echo "=== BUILD_ARGV ==="
