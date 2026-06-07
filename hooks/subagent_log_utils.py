@@ -8,7 +8,10 @@ Provides:
 - Per-agent JSON record builder (schema_version 1)
 - fcntl-based append locking for the consolidated log
 """
-import fcntl
+try:
+    import fcntl
+except ImportError:  # POSIX-only; absent on win32
+    fcntl = None
 import json
 import os
 import re
@@ -152,12 +155,19 @@ def build_json_record(
 def append_locked(path: Path, line: str) -> None:
     """Append a line to the given file, using fcntl.flock for atomicity.
 
-    Creates parent directories as needed.
+    Creates parent directories as needed. On platforms without fcntl (win32),
+    falls back to a plain unlocked append — a logging/locking capability gap
+    must never wedge a hook (#917/#968).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    out = line if line.endswith("\n") else line + "\n"
     with open(path, "a") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            f.write(line if line.endswith("\n") else line + "\n")
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.write(out)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        else:
+            # Fail-open: no advisory lock available on this platform (win32).
+            f.write(out)
