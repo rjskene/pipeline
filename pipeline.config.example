@@ -11,6 +11,23 @@ set -a
 
 PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
 PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: staging — dev trunk; override per-repo if needed)
+
+# --- Codex dual-target harness (issue #980; spec docs/superpowers/specs/2026-06-08-codex-dual-target-design.md) ---
+#
+# Harness selector consumed by scripts/platform.sh. Detection precedence:
+#   1. this explicit override (claude|codex); 2. env sniff (CODEX_HOME present
+#   -> codex, else CLAUDE_PLUGIN_ROOT present -> claude); 3. default claude.
+# Operators rarely set this — the env sniff covers normal Claude Code and Codex
+# CLI sessions. Single source of platform divergence (every later branch keys
+# off this one var).
+#PIPELINE_HARNESS="claude"
+#
+# Optional override for the Codex plugin-bundle glob that
+# scripts/_resolve-plugin-root.sh scans under $CODEX_HOME (parallel to
+# PIPELINE_PLUGIN_CACHE_DIR for the Claude cache). Defaults to
+# "$CODEX_HOME/plugins/claude-pipeline/pipeline"; set only if your Codex install
+# bundles plugins elsewhere.
+#PIPELINE_CODEX_BUNDLE_GLOB=""
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
