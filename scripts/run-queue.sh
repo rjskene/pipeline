@@ -64,8 +64,18 @@ if [ "${1:-}" = "--ci-fix" ]; then
   SLUG=$(basename "$WT_PATH" | sed -n "s/^${PIPELINE_WORKTREE_PREFIX}-${CI_FIX_ISSUE}-\(.*\)/\1/p")
   SLUG="${SLUG:-issue-${CI_FIX_ISSUE}}"
   export PIPELINE_CI_FIX_CONTEXT="$CI_FIX_LOG"
-  : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling spawn-claude.sh}"
-  exec bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh" \
+  : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling spawn scripts}"
+  # Harness-keyed transport selection (issue #983): resolve the spawn script via
+  # dispatch-leaf.sh transport-script so PIPELINE_HARNESS=codex picks
+  # spawn-codex.sh. PURE INDIRECTION — with PIPELINE_HARNESS=claude/unset this
+  # resolves to spawn-claude.sh, byte-equivalent to the legacy direct call.
+  # Fail-safe: missing seam / failed call falls back to spawn-claude.sh (CC path).
+  _CI_FIX_TRANSPORT=""
+  if [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-leaf.sh" ]; then
+    _CI_FIX_TRANSPORT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-leaf.sh" transport-script 2>/dev/null) || _CI_FIX_TRANSPORT=""
+  fi
+  [ -n "$_CI_FIX_TRANSPORT" ] || _CI_FIX_TRANSPORT="${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh"
+  exec bash "$_CI_FIX_TRANSPORT" \
     --dangerously-skip-permissions \
     --skill execute-issue-plan \
     "$WT_PATH" "$CI_FIX_ISSUE" "$SLUG" tmux
@@ -155,6 +165,25 @@ STATUS_INTERVAL="${STATUS_INTERVAL:-3}"
 REPO_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 : "${CLAUDE_PLUGIN_ROOT:?ERROR: CLAUDE_PLUGIN_ROOT unset; cannot resolve sibling scripts (spawn-claude.sh, queue-status.sh)}"
 SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT}/scripts"
+# Harness-keyed transport selection (issue #983): resolve the spawn script once
+# per run via dispatch-leaf.sh transport-script so PIPELINE_HARNESS=codex picks
+# spawn-codex.sh. PURE INDIRECTION — with PIPELINE_HARNESS=claude/unset this
+# resolves to ${SCRIPT_DIR}/spawn-claude.sh, byte-equivalent to the legacy
+# hard-coded launch_agent path. PIPELINE_HARNESS is stable for the whole queue,
+# so resolving once (not per launch_agent) is correct.
+# Fail-safe: when dispatch-leaf.sh is absent (partial install / isolated test
+# copy) or the call fails, fall back to the legacy spawn-claude.sh path so the CC
+# behavior is preserved exactly. The fallback can never select codex — that
+# requires the seam — which is the safe default.
+resolve_spawn_transport() {
+  local t=""
+  if [ -f "${SCRIPT_DIR}/dispatch-leaf.sh" ]; then
+    t=$(bash "${SCRIPT_DIR}/dispatch-leaf.sh" transport-script 2>/dev/null) || t=""
+  fi
+  [ -n "$t" ] || t="${SCRIPT_DIR}/spawn-claude.sh"
+  printf '%s' "$t"
+}
+SPAWN_TRANSPORT=$(resolve_spawn_transport)
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/_logging.sh"
 LOG_DIR="${REPO_ROOT}/.claude/logs"
@@ -503,7 +532,9 @@ launch_agent() {
   log "[$(date +%H:%M:%S)] [$(date +%s)] Launching agent for issue #${issue} (${slug}, mode=${mode})..."
   log "EVENT: agent-launched issue=${issue} mode=${mode} slug=${slug} worktree=${wt_path}"
 
-  bash "${SCRIPT_DIR}/spawn-claude.sh" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$wt_path" "$issue" "$slug" tmux
+  # $SPAWN_TRANSPORT is the harness-correct spawn script resolved once at startup
+  # via dispatch-leaf.sh transport-script (issue #983); CC path == spawn-claude.sh.
+  bash "$SPAWN_TRANSPORT" $SKIP_PERMS $SKILL_FLAG $MANUAL_MERGE_FLAG "$wt_path" "$issue" "$slug" tmux
 
   ACTIVE[$issue]="$wt_path"
   RESULTS[$issue]="running"
