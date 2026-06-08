@@ -1150,6 +1150,46 @@ fi
 unset _arc_mem _arc_tasks
 
 # --------------------------------------------------------------------------
+# Codex-mode checks (#985) — ALL gated behind PIPELINE_HARNESS=codex.
+# Claude Code runs (the default) emit ZERO codex_* CHECK lines, so the existing
+# doctor tests stay green by construction (the "additive, gated" invariant).
+#
+# Harness resolution: source scripts/platform.sh if present (#980 ships it);
+# otherwise fall back to the explicit pipeline.config override with a `claude`
+# default. platform.sh reads PIPELINE_HARNESS from pipeline.config by grep (it
+# must not source the config — it carries host-specific $(...)), so the value is
+# authoritative either way.
+#
+# All Codex config reads honor PIPELINE_CODEX_CONFIG (fixture-override idiom,
+# mirrors PIPELINE_INSTALLED_PLUGINS_JSON); else they read the user config TOML
+# under ${CODEX_HOME:-$HOME/.codex} and, for the repo-local manifest, .codex/
+# config.toml in the project root.
+# --------------------------------------------------------------------------
+if [ -f "$RESOLVER_DIR/platform.sh" ]; then
+  # shellcheck disable=SC1091
+  source "$RESOLVER_DIR/platform.sh" 2>/dev/null || true
+fi
+PIPELINE_HARNESS="${PIPELINE_HARNESS:-claude}"
+
+if [ "$PIPELINE_HARNESS" = "codex" ]; then
+  # User-level Codex config (config.toml under CODEX_HOME / ~/.codex), with a
+  # fixture override. Used by multi_agent / MCP / (fallback) hook-trust reads.
+  _cx_user_config="${PIPELINE_CODEX_CONFIG:-${CODEX_HOME:-$HOME/.codex}/config.toml}"
+  # Repo-local committed manifest (the pipeline's OWN .codex/ bundle), used by
+  # the hooks-wired check. Always project-relative.
+  _cx_repo_config=".codex/config.toml"
+
+  # ---- codex_installed -----------------------------------------------------
+  if command -v codex >/dev/null 2>&1; then
+    record codex_installed pass "codex CLI on PATH"
+  else
+    record codex_installed fail "codex CLI not found on PATH (PIPELINE_HARNESS=codex) — install the Codex CLI (see docs/codex-dogfood-setup.md)"
+  fi
+
+  unset _cx_user_config _cx_repo_config
+fi
+
+# --------------------------------------------------------------------------
 # Summary table + exit code.
 # --------------------------------------------------------------------------
 echo
