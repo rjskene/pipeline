@@ -22,6 +22,7 @@ if not PLUGIN_ROOT:
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
+from _tool_input import _tool_input_paths  # noqa: E402
 from subagent_log_utils import read_event_stdin  # noqa: E402
 
 data = read_event_stdin()
@@ -152,7 +153,16 @@ def extract_paths() -> list[str]:
     """Extract file paths from tool input based on tool type."""
     paths = []
 
-    if tool_name in ("Read", "Write", "Edit"):
+    # Edit/write surface — CC Write/Edit AND Codex apply_patch — resolves to its
+    # target path(s) via the shared helper (issue #981), one extraction code path
+    # across both harnesses. The helper returns the file_path for a CC edit and
+    # every file named in a V4A apply_patch envelope (source AND rename
+    # destination), so the boundary/protected checks below vet Codex edits too.
+    # The helper owns ONLY the edit/write surface; the read-side CC tools below
+    # (Read/Glob/Grep) it returns [] for, so their boundary checks stay intact.
+    paths.extend(_tool_input_paths(data))
+
+    if tool_name == "Read":
         p = tool_input.get("file_path", "")
         if p:
             paths.append(p)
