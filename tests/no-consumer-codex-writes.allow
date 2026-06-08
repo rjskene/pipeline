@@ -1,0 +1,23 @@
+# Allow-list for scripts/check-no-consumer-codex-writes.sh
+# One repo-relative path per line. Blank lines and `#` comments ignored.
+# Each entry must explain WHY it is exempt. The Codex namespace boundary is the
+# consumer's per-user ~/.codex/ / $CODEX_HOME surface — the pipeline writes
+# nothing there; entries here are files that legitimately MENTION the namespace
+# as a STRING (path patterns the script reads/matches), never as a write target.
+
+# The guard's own forbidden-regex names the ~/.codex/{hooks,prompts,agents}/ and
+# ~/.codex/config.toml namespaces as STRINGS so it can detect violations — the
+# references are inherent to the check's purpose.
+scripts/check-no-consumer-codex-writes.sh
+
+# Doctor's Codex-mode checks (PIPELINE_HARNESS=codex) READ the user config TOML
+# under ~/.codex (and $CODEX_HOME) as a path pattern to validate the operator's
+# Codex install — multi_agent, hooks-wired, MCP-reachable. Every ~/.codex/...
+# literal in doctor.sh is a read/scan target, never a write (#985).
+scripts/doctor.sh
+
+# Path-agnostic hook launcher. Its header doc-comment names the committed
+# repo-local .codex manifest (the pipeline's OWN artifact, Leg 2) to explain why
+# hooks are referenced by bare script name — a description of the committed file,
+# never a consumer ~/.codex/ write (#981/#985).
+hooks/_run.sh
