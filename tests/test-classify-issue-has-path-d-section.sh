@@ -18,7 +18,8 @@ grep -qF '#698' "$FILE" || { echo "FAIL: blast-radius boundary exemplar #698 mis
 # trust` section); 250 -> 270 by #707 (blast-radius rule + high-uncertainty
 # carve-out + two exemplar tables, ~25 lines); 270 -> 290 by #759 (advisory
 # path-hint overridable-prior step 3d + parse block + step-4 prior + override
-# rationale; parse block condensed to keep the delta ~14 lines).
+# rationale; parse block condensed to keep the delta ~14 lines); 290 -> 294 by
+# #984 (Codex tool-vocab `## Platform` pointer line added to all 17 skills, +3).
 LINES=$(wc -l < "$FILE")
-[ "$LINES" -le 290 ] || { echo "FAIL: $FILE has $LINES lines (cap is 290)"; exit 1; }
-echo "PASS: PATH D section + sentinels present, ${LINES}/290 lines"
+[ "$LINES" -le 294 ] || { echo "FAIL: $FILE has $LINES lines (cap is 294)"; exit 1; }
+echo "PASS: PATH D section + sentinels present, ${LINES}/294 lines"
