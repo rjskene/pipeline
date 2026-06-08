@@ -1258,6 +1258,31 @@ if [ "$PIPELINE_HARNESS" = "codex" ]; then
   fi
   unset _cx_hooks_files _cx_hooks_wired _cx_hf _cx_lb _cx_home _cx_trusted
 
+  # ---- codex_mcp_reachable -------------------------------------------------
+  # WARN-grade (MCP gates only visual-proof-from-plan; absence is non-fatal,
+  # mirroring the CC plugin_loaded / agent_resource_caps WARN-for-optional
+  # severity). Static-validation only: scan the user config (and repo-local)
+  # for an [mcp_servers.*] TOML table — do NOT attempt a live connect (out of
+  # scope, mirrors CI's static-validation-only stance).
+  _cx_mcp_files=()
+  [ -f "$_cx_user_config" ] && _cx_mcp_files+=("$_cx_user_config")
+  [ -f "$_cx_repo_config" ] && _cx_mcp_files+=("$_cx_repo_config")
+  _cx_mcp=0
+  if [ "${#_cx_mcp_files[@]}" -gt 0 ]; then
+    for _cx_mf in "${_cx_mcp_files[@]}"; do
+      if grep -qE '^\s*\[mcp_servers\.' "$_cx_mf" 2>/dev/null; then
+        _cx_mcp=1
+        break
+      fi
+    done
+  fi
+  if [ "$_cx_mcp" = "1" ]; then
+    record codex_mcp_reachable pass "playwright MCP server configured ([mcp_servers.*] in Codex config)"
+  else
+    record codex_mcp_reachable warn "no Codex MCP server configured — visual-proof-from-plan unavailable; add [mcp_servers.playwright] to config.toml (see docs/codex-dogfood-setup.md)"
+  fi
+  unset _cx_mcp_files _cx_mcp _cx_mf
+
   unset _cx_user_config _cx_repo_config
 fi
 

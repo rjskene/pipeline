@@ -268,6 +268,86 @@ else
   echo "$out" | grep -E 'codex_hooks_trusted' | sed 's/^/    /' || true
 fi
 
+# ===========================================================================
+# Task 6 — codex_mcp_reachable
+# ===========================================================================
+
+# --- (6a) [mcp_servers.playwright] present → mcp_reachable=pass --------------
+echo "Case 6a: [mcp_servers.playwright] present → codex_mcp_reachable=pass"
+ROOT=$(fresh_fx fx-6a-mcp codex)
+cat > "$ROOT/codex-home/config.toml" <<'TOML'
+[features]
+multi_agent = true
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@0.0.75"]
+TOML
+run_doctor "$ROOT" "PIPELINE_CODEX_CONFIG=$ROOT/codex-home/config.toml"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_mcp_reachable status=pass' <<<"$out"; then
+  pass_msg "(6a) MCP block present → codex_mcp_reachable=pass"
+else
+  fail_msg "(6a) expected codex_mcp_reachable=pass"
+  echo "$out" | grep -E 'codex_mcp_reachable' | sed 's/^/    /' || true
+fi
+
+# --- (6b) no MCP block → mcp_reachable=warn (optional; never fail) -----------
+echo "Case 6b: no MCP block → codex_mcp_reachable=warn"
+ROOT=$(fresh_fx fx-6b-nomcp codex)
+cat > "$ROOT/codex-home/config.toml" <<'TOML'
+[features]
+multi_agent = true
+TOML
+run_doctor "$ROOT" "PIPELINE_CODEX_CONFIG=$ROOT/codex-home/config.toml"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_mcp_reachable status=warn' <<<"$out"; then
+  pass_msg "(6b) no MCP block → codex_mcp_reachable=warn"
+else
+  fail_msg "(6b) expected codex_mcp_reachable=warn"
+  echo "$out" | grep -E 'codex_mcp_reachable' | sed 's/^/    /' || true
+fi
+# codex_mcp_reachable must NEVER be fail-grade (MCP gates only visual-proof).
+if grep -qE '^CHECK: codex_mcp_reachable status=fail' <<<"$out"; then
+  fail_msg "(6b) codex_mcp_reachable must never be fail-grade"
+else
+  pass_msg "(6b) codex_mcp_reachable is never fail-grade"
+fi
+
+# ===========================================================================
+# Regression — the full doctor run under harness=codex must still exit 0 when
+# every Codex check is pass/warn (no fail). Confirms the codex gate composes
+# with the rest of the doctor summary/exit logic.
+# ===========================================================================
+echo "Case Z: full codex-mode run, all checks satisfied → doctor exit 0"
+ROOT=$(fresh_fx fx-z-allgreen codex)
+write_repo_hooks "$ROOT/proj"
+cat > "$ROOT/codex-home/config.toml" <<'TOML'
+[features]
+multi_agent = true
+
+[mcp_servers.playwright]
+command = "npx"
+TOML
+echo '{"trusted": true}' > "$ROOT/codex-home/trusted_hooks.json"
+(
+  cd "$ROOT/proj"
+  env PATH="$TMP/bin:$PATH" \
+      CLAUDE_PLUGIN_ROOT="$ROOT/plugin" \
+      CODEX_HOME="$ROOT/codex-home" \
+      PIPELINE_CODEX_CONFIG="$ROOT/codex-home/config.toml" \
+      bash "$DOCTOR"
+) > "$ROOT/out" 2>&1
+z_rc=$?
+out="$(cat "$ROOT/out")"
+# No codex_* check should be fail when fully configured.
+if grep -qE '^CHECK: codex_[a-z_]+ status=fail' <<<"$out"; then
+  fail_msg "(Z) no codex_* check should fail when fully configured"
+  echo "$out" | grep -E '^CHECK: codex_.* status=fail' | sed 's/^/    /' || true
+else
+  pass_msg "(Z) all codex_* checks pass/warn when fully configured"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
