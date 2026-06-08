@@ -1209,6 +1209,55 @@ if [ "$PIPELINE_HARNESS" = "codex" ]; then
     record codex_multi_agent_enabled fail "[features] multi_agent not enabled in $_cx_user_config — required for PATH C spawn_agent dispatch (see docs/codex-dogfood-setup.md)"
   fi
 
+  # ---- codex_hooks_wired ---------------------------------------------------
+  # The committed repo-local .codex/config.toml is the Codex twin of the
+  # plugin manifest's PreToolUse wirings. Pass when it carries ≥1 [[hooks.*]]
+  # table-array header AND references ≥1 load-bearing enforcement hook basename
+  # (reuse LOAD_BEARING_HOOKS). Mirrors the CC base_branch_enforcement shape
+  # (file-present + matcher-wired) for the TOML manifest. The user config
+  # (CODEX_HOME) is also accepted as a wiring site.
+  _cx_hooks_files=()
+  [ -f "$_cx_repo_config" ] && _cx_hooks_files+=("$_cx_repo_config")
+  [ -f "$_cx_user_config" ] && _cx_hooks_files+=("$_cx_user_config")
+  _cx_hooks_wired=0
+  if [ "${#_cx_hooks_files[@]}" -gt 0 ]; then
+    for _cx_hf in "${_cx_hooks_files[@]}"; do
+      if grep -qE '^\s*\[\[hooks\.' "$_cx_hf" 2>/dev/null; then
+        for _cx_lb in "${LOAD_BEARING_HOOKS[@]}"; do
+          if grep -qF "$_cx_lb" "$_cx_hf" 2>/dev/null; then
+            _cx_hooks_wired=1
+            break 2
+          fi
+        done
+      fi
+    done
+  fi
+  if [ "$_cx_hooks_wired" = "1" ]; then
+    record codex_hooks_wired pass "load-bearing enforcement hooks wired in Codex config ([[hooks.*]])"
+  else
+    record codex_hooks_wired fail "no load-bearing Codex hooks wired (expected [[hooks.*]] entries invoking the enforcement scripts in $_cx_repo_config — see docs/codex-dogfood-setup.md)"
+  fi
+
+  # ---- codex_hooks_trusted -------------------------------------------------
+  # WARN-grade probe (NEVER fail): Codex keys hook trust to the script HASH and
+  # revokes it on every wired-script edit, so dogfood trust thrashes — a fail
+  # here would block a correctly-configured host. Pass only when a managed/
+  # trusted marker is detectable on disk; otherwise warn with the one-time
+  # /hooks re-trust + --dangerously-bypass-hook-trust remediation.
+  _cx_home="${CODEX_HOME:-$HOME/.codex}"
+  _cx_trusted=0
+  if [ -f "$_cx_home/trusted_hooks.json" ] || [ -f "$_cx_home/hooks_trust.json" ]; then
+    _cx_trusted=1
+  elif [ -f "$_cx_user_config" ] && grep -qE '^\s*(hooks_)?trusted\s*=\s*true' "$_cx_user_config" 2>/dev/null; then
+    _cx_trusted=1
+  fi
+  if [ "$_cx_trusted" = "1" ]; then
+    record codex_hooks_trusted pass "Codex hook-trust marker present under $_cx_home"
+  else
+    record codex_hooks_trusted warn "Codex hooks may be untrusted; run the one-time /hooks re-trust, or pass --dangerously-bypass-hook-trust for codex exec automation (see docs/codex-dogfood-setup.md)"
+  fi
+  unset _cx_hooks_files _cx_hooks_wired _cx_hf _cx_lb _cx_home _cx_trusted
+
   unset _cx_user_config _cx_repo_config
 fi
 

@@ -183,6 +183,91 @@ else
   echo "$out" | grep -E 'codex_multi_agent_enabled' | sed 's/^/    /' || true
 fi
 
+# ===========================================================================
+# Task 5 — codex_hooks_wired + codex_hooks_trusted
+# ===========================================================================
+
+# Helper: write a repo-local .codex/config.toml that wires the load-bearing
+# enforcement hooks via the _run.sh launcher (array-form command), mirroring the
+# committed manifest shape.
+write_repo_hooks() {
+  local proj="$1"
+  mkdir -p "$proj/.codex"
+  cat > "$proj/.codex/config.toml" <<'TOML'
+[[hooks.PreToolUse]]
+matcher = "Bash"
+command = ["hooks/_run.sh", "enforce-base-branch.py"]
+
+[[hooks.PreToolUse]]
+matcher = "apply_patch"
+command = ["hooks/_run.sh", "enforce-path-c-delegation.py"]
+TOML
+}
+
+# --- (5a) hooks wired in repo-local .codex/config.toml → wired=pass ---------
+echo "Case 5a: load-bearing hooks wired → codex_hooks_wired=pass"
+ROOT=$(fresh_fx fx-5a-wired codex)
+write_repo_hooks "$ROOT/proj"
+run_doctor "$ROOT"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_hooks_wired status=pass' <<<"$out"; then
+  pass_msg "(5a) hooks wired → codex_hooks_wired=pass"
+else
+  fail_msg "(5a) expected codex_hooks_wired=pass"
+  echo "$out" | grep -E 'codex_hooks_wired' | sed 's/^/    /' || true
+fi
+
+# --- (5b) no [[hooks.*]] entries → wired=fail -------------------------------
+echo "Case 5b: no hooks wired → codex_hooks_wired=fail"
+ROOT=$(fresh_fx fx-5b-nohooks codex)
+# .codex/config.toml exists but wires no enforcement hooks.
+cat > "$ROOT/proj/.codex/config.toml" <<'TOML'
+[mcp_servers.playwright]
+command = "npx"
+TOML
+run_doctor "$ROOT"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_hooks_wired status=fail' <<<"$out"; then
+  pass_msg "(5b) no hooks → codex_hooks_wired=fail"
+else
+  fail_msg "(5b) expected codex_hooks_wired=fail"
+  echo "$out" | grep -E 'codex_hooks_wired' | sed 's/^/    /' || true
+fi
+
+# --- (5c) trust unconfirmable → codex_hooks_trusted=warn (never fail) -------
+echo "Case 5c: no trust marker → codex_hooks_trusted=warn"
+ROOT=$(fresh_fx fx-5c-untrusted codex)
+write_repo_hooks "$ROOT/proj"
+run_doctor "$ROOT"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_hooks_trusted status=warn' <<<"$out"; then
+  pass_msg "(5c) trust unconfirmable → codex_hooks_trusted=warn"
+else
+  fail_msg "(5c) expected codex_hooks_trusted=warn"
+  echo "$out" | grep -E 'codex_hooks_trusted' | sed 's/^/    /' || true
+fi
+# codex_hooks_trusted must NEVER be fail-grade (trust thrashes on dogfood).
+if grep -qE '^CHECK: codex_hooks_trusted status=fail' <<<"$out"; then
+  fail_msg "(5c) codex_hooks_trusted must never be fail-grade"
+else
+  pass_msg "(5c) codex_hooks_trusted is never fail-grade"
+fi
+
+# --- (5d) trust marker present → codex_hooks_trusted=pass -------------------
+echo "Case 5d: trust marker present → codex_hooks_trusted=pass"
+ROOT=$(fresh_fx fx-5d-trusted codex)
+write_repo_hooks "$ROOT/proj"
+# A managed/trusted marker under CODEX_HOME.
+echo '{"trusted": true}' > "$ROOT/codex-home/trusted_hooks.json"
+run_doctor "$ROOT"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_hooks_trusted status=pass' <<<"$out"; then
+  pass_msg "(5d) trust marker → codex_hooks_trusted=pass"
+else
+  fail_msg "(5d) expected codex_hooks_trusted=pass"
+  echo "$out" | grep -E 'codex_hooks_trusted' | sed 's/^/    /' || true
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
