@@ -1,0 +1,38 @@
+{
+  "name": "pipeline",
+  "version": "0.23.4",
+  "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
+  "author": {
+    "name": "rjskene",
+    "url": "https://github.com/rjskene/pipeline"
+  },
+  "homepage": "https://github.com/rjskene/pipeline",
+  "repository": "https://github.com/rjskene/pipeline",
+  "license": "MIT",
+  "keywords": [
+    "pipeline",
+    "github-issues",
+    "automation",
+    "ci",
+    "claude-code"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Claude Pipeline",
+    "shortDescription": "CI workflow for automating code updates through GitHub issues",
+    "longDescription": "Claude Pipeline manages the full lifecycle of GitHub-issue-driven code changes: issue creation, planning, plan review, execution in isolated worktrees, and PR evaluation.",
+    "developerName": "rjskene",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Run the pipeline over my approved issues.",
+      "Plan an implementation for this GitHub issue."
+    ],
+    "websiteURL": "https://github.com/rjskene/pipeline",
+    "screenshots": []
+  }
+}

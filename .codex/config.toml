@@ -1,0 +1,14 @@
+# Claude Pipeline — Codex config template.
+#
+# Operators merge the blocks below into their personal ~/.codex/config.toml.
+# This file is the Codex-side equivalent of the Claude Code .mcp.json at the
+# repo root; the [mcp_servers.playwright] block mirrors that server so the
+# pipeline's browser-driven verification works identically under Codex.
+#
+# (Leg 2 of the dual-target migration will add Codex hook wiring to this same
+# file — additively.)
+
+# Playwright MCP server — mirrors .mcp.json mcpServers.playwright.
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@0.0.75"]
