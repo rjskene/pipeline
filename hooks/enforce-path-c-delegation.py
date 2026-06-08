@@ -24,6 +24,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
+from _tool_input import _tool_input_paths  # noqa: E402
 from subagent_log_utils import read_event_stdin  # noqa: E402
 
 
@@ -231,16 +232,21 @@ def main() -> int:
 
     data = read_event_stdin()
 
-    tool_name = data.get("tool_name", "")
-    if tool_name not in ("Edit", "Write"):
+    # Edit-target path(s) across both harnesses via the shared helper (#981): CC
+    # Edit/Write -> [file_path]; Codex apply_patch -> every file in the V4A
+    # envelope (a multi-file patch yields many). Non-edit tools / empty payloads
+    # yield [] -> nothing to enforce.
+    paths = _tool_input_paths(data)
+    if not paths:
         return 0
 
-    tool_input = data.get("tool_input") or {}
-    file_path = tool_input.get("file_path", "")
-    if not file_path:
-        return 0
-
-    if is_allowlisted(file_path):
+    # Allowlisted paths (tests/docs/config/logs/tmp) need no dispatch. If EVERY
+    # edited path is allowlisted, allow with no further I/O — matching the old
+    # single-file `is_allowlisted -> return 0` short-circuit. Otherwise enforce
+    # against the non-allowlisted remainder (an apply_patch that touches one impl
+    # file alongside docs must still require delegation for that impl file).
+    candidates = [p for p in paths if not is_allowlisted(p)]
+    if not candidates:
         return 0
 
     session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID", "unknown")
@@ -249,21 +255,23 @@ def main() -> int:
         return 0
 
     authorized = collect_authorized_dirs(session_id)
-    if is_authorized(file_path, authorized):
-        return 0
+    for file_path in candidates:
+        if is_authorized(file_path, authorized):
+            continue
+        print(
+            "BLOCKED: PATH C (multi-task issue #{n}) requires dispatching a "
+            "tdd-implementer subagent before editing impl files.\n"
+            "  File: {f}\n"
+            "  Fix: dispatch Agent(subagent_type='tdd-implementer', "
+            "prompt='target=<dir>/ ...') for the directory containing this file, "
+            "then retry the edit.\n"
+            "  Escape hatch: export ALLOW_ORCHESTRATOR_EDIT=true (audit the "
+            "log after the run).".format(n=issue_number, f=file_path),
+            file=sys.stderr,
+        )
+        return 2
 
-    print(
-        "BLOCKED: PATH C (multi-task issue #{n}) requires dispatching a "
-        "tdd-implementer subagent before editing impl files.\n"
-        "  File: {f}\n"
-        "  Fix: dispatch Agent(subagent_type='tdd-implementer', "
-        "prompt='target=<dir>/ ...') for the directory containing this file, "
-        "then retry the edit.\n"
-        "  Escape hatch: export ALLOW_ORCHESTRATOR_EDIT=true (audit the "
-        "log after the run).".format(n=issue_number, f=file_path),
-        file=sys.stderr,
-    )
-    return 2
+    return 0
 
 
 try:
