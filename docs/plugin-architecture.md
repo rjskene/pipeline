@@ -26,6 +26,27 @@ Legacy install (`install.sh`, the `.claude-pipeline/` subtree, and the subtree-d
 
 `log-tool-use.sh` and `log_subagent.py` are registered via this repo's `.claude/settings.json` only; they are not part of the published manifest. See [observability.md](observability.md).
 
+## Codex enforcement wiring
+
+The pipeline runs the same enforcement gates under Codex as under Claude Code. `.codex/config.toml` is the Codex twin of `.claude-plugin/plugin.json`'s `hooks` block: **same Python scripts under `hooks/`, new wiring** — not a reimplementation. The seven Claude Code `PreToolUse`/`Stop` wirings collapse to **six** on Codex because Claude Code's two separate file-mutation matchers (`Edit`, `Write`, both wired to `enforce-path-c-delegation.py`) map onto Codex's single `apply_patch` tool, so those two wirings merge into one `apply_patch` hook. (Architecture spec: [docs/superpowers/specs/2026-06-08-codex-dual-target-design.md](superpowers/specs/2026-06-08-codex-dual-target-design.md).)
+
+### `hooks/_run.sh` — path-agnostic launcher
+
+Every `.codex/config.toml` hook command is `["hooks/_run.sh", "<script>.py"]`, never an absolute or `${CLAUDE_PLUGIN_ROOT}` path, so the committed manifest carries no host-specific paths and stays portable across operator clones. `hooks/_run.sh` self-resolves the plugin root at run time (sourcing `scripts/_resolve-plugin-root.sh` relative to its own location when `CLAUDE_PLUGIN_ROOT` is unset — the same var-independent anchor the Boot blocks use) and `exec`s the named hook under it, forwarding stdin and propagating the hook's exit code so the `PreToolUse` block contract (exit 2 = block) is intact.
+
+### Hook trust (dogfood)
+
+Codex keys hook trust to the script's **hash** and revokes it whenever a wired script is edited. Two consequences:
+
+- **Dogfood operators** run a one-time `/hooks` re-trust after a `git pull` lands new hook code.
+- **Automation transports** (`fullsend`/`campaign` via `codex exec`) pass `--dangerously-bypass-hook-trust` so they run unattended without a persisted-trust prompt.
+
+Surfacing the Codex trust/install state in `/pipeline:doctor` is a Leg 6 follow-up, **not** part of this leg.
+
+### Parity guard
+
+`tests/test-codex-hook-parity.sh` is the linchpin: it parses both manifests, normalizes the `Edit`/`Write` → `apply_patch` collapse, and asserts the two normalized sets of `(event, matcher, script-basename)` tuples are equal — so the two harnesses' enforcement cannot silently diverge.
+
 ## Bash subshells & CLAUDE_PLUGIN_ROOT resolution
 
 `CLAUDE_PLUGIN_ROOT` is not guaranteed to be exported into the Bash tool's subshell — Claude Code does not consistently propagate it. Every consumer-facing skill sources `scripts/_resolve-plugin-root.sh` in its `## Boot` block, which (when the env var is empty) picks the highest-version directory under `~/.claude/plugins/cache/claude-pipeline/pipeline/` and exports it.

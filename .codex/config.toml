@@ -5,8 +5,61 @@
 # repo root; the [mcp_servers.playwright] block mirrors that server so the
 # pipeline's browser-driven verification works identically under Codex.
 #
-# (Leg 2 of the dual-target migration will add Codex hook wiring to this same
-# file — additively.)
+# ─────────────────────────────────────────────────────────────────────────────
+# Enforcement hooks — Codex twin of .claude-plugin/plugin.json `hooks`.
+# ─────────────────────────────────────────────────────────────────────────────
+# (i)  SAME Python scripts, new wiring. The [[hooks.*]] tables below run the
+#      IDENTICAL enforcement scripts under hooks/ that .claude-plugin/plugin.json
+#      wires for Claude Code — this is the Codex twin of that manifest, not a
+#      reimplementation. The parity test (tests/ leaf) compares the two wirings.
+#
+# (ii) Edit/Write → apply_patch collapse (7 → 6). Claude Code exposes two file-
+#      mutation tools (`Edit`, `Write`), each separately wired to
+#      enforce-path-c-delegation.py — 7 CC wirings total. Codex performs all file
+#      edits through a single `apply_patch` tool, so those two collapse into ONE
+#      `apply_patch` hook here, leaving 6 Codex wirings.
+#
+# (iii) Dogfood hook-trust note. Codex keys hook trust to the script HASH and
+#      revokes trust whenever a wired script is edited. So dogfood operators must
+#      run a one-time `/hooks` re-trust after `git pull` lands a hook change, and
+#      pipeline automation transports pass `--dangerously-bypass-hook-trust` to
+#      run unattended. Full doctor surfacing of the trust state is Leg 6.
+#
+# Every `command` invokes the path-agnostic launcher (hooks/_run.sh <script>.py)
+# rather than an absolute or ${CLAUDE_PLUGIN_ROOT} path, so this committed file is
+# host-portable: Codex resolves hooks/_run.sh relative to the repo-local .codex/
+# bundle, and _run.sh resolves the plugin root at run time.
+
+# PreToolUse :: Bash → block destructive deletions / content-zeroing.
+[[hooks.PreToolUse]]
+matcher = "Bash"
+command = ["hooks/_run.sh", "block_deletions.py"]
+
+# PreToolUse :: Bash → enforce base-branch discipline (no commits to main/release).
+[[hooks.PreToolUse]]
+matcher = "Bash"
+command = ["hooks/_run.sh", "enforce-base-branch.py"]
+
+# PreToolUse :: Bash → block CI-skip markers ([skip ci] / [ci skip]).
+[[hooks.PreToolUse]]
+matcher = "Bash"
+command = ["hooks/_run.sh", "check-ci-skip-markers.py"]
+
+# PreToolUse :: apply_patch → enforce PATH-C delegation on file edits.
+# (== Claude Code Edit + Write, collapsed into the single Codex apply_patch tool.)
+[[hooks.PreToolUse]]
+matcher = "apply_patch"
+command = ["hooks/_run.sh", "enforce-path-c-delegation.py"]
+
+# PreToolUse :: * → restrict writes/reads to allowed paths (all tools).
+[[hooks.PreToolUse]]
+matcher = "*"
+command = ["hooks/_run.sh", "restrict_paths.py"]
+
+# Stop :: * → wait for CI before yielding (no early exit while CI is pending).
+[[hooks.Stop]]
+matcher = "*"
+command = ["hooks/_run.sh", "enforce-ci-wait.py"]
 
 # Playwright MCP server — mirrors .mcp.json mcpServers.playwright.
 [mcp_servers.playwright]
