@@ -73,6 +73,14 @@ PIPELINE_CONFIG_DRIFT_ALLOWLIST
 # intentionally undocumented in pipeline.config.example.
 PIPELINE_INSTALLED_PLUGINS_JSON
 
+# #985: test-isolation env override for doctor.sh's Codex-mode checks
+# (codex_multi_agent_enabled / codex_mcp_reachable / hook-trust fallback). Points
+# the user-config TOML reads at a fixture file under mktemp -d in
+# tests/test-doctor-codex-mode.sh, mirroring the PIPELINE_INSTALLED_PLUGINS_JSON
+# idiom above. Not a user-config knob; intentionally undocumented in
+# pipeline.config.example.
+PIPELINE_CODEX_CONFIG
+
 # #857/#762: PIPELINE_FRONTEND_PORT_OFFSET was removed (0 readers repo-wide) from
 # pipeline.config.example and scripts/init.sh. The ONLY remaining occurrence of
 # the token is the negative regression-guard in tests/test-pipeline-config-prune-762.sh,

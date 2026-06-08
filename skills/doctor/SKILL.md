@@ -62,6 +62,16 @@ State table — each row names a check, the trigger that fires it, the worst-cas
 | `stdin_read_timeout_guards` | Consumer `.claude/hooks/` files reading stdin without a timeout guard (Python `json.load(sys.stdin)`/`sys.stdin.read()` with no `read_event_stdin`/`signal.alarm`/`select.select` nearby; bash `$(cat)` with no `timeout`). #917 | WARN (consumer-owned; never FAIL) | `--fix stdin-guards` |
 | `agent_resource_caps` | Per-agent `systemd-run --user` scopes available so spawned agents run under a `MemoryMax`/`TasksMax` cgroup ceiling (probed via `command -v systemd-run` + a live `--user --scope -- true` smoke; honors `PIPELINE_AGENT_MEMORY_MAX`/`PIPELINE_AGENT_TASKS_MAX`). #918 | PASS names the caps; WARN (never FAIL) when unavailable — agents run UNBOUNDED | Add swap + set `MemoryMax`/`pids.max` on the user slice, or run under a host that supports user scopes |
 
+**Codex-mode checks (gated on `PIPELINE_HARNESS=codex`).** Emitted only when `scripts/platform.sh` resolves the harness to `codex`; Claude Code runs emit zero `codex_*` lines. All config reads are static (no live connect) and honor `PIPELINE_CODEX_CONFIG`. Full bootstrap: [docs/codex-dogfood-setup.md](../../docs/codex-dogfood-setup.md). #985
+
+| Check | Trigger / what it audits | Severity | Remediation |
+|-------|-------------------------|----------|-------------|
+| `codex_installed` | `codex` CLI on PATH | FAIL | Install the Codex CLI |
+| `codex_multi_agent_enabled` | `[features] multi_agent = true` in `~/.codex/config.toml` (required for PATH C `spawn_agent`) | FAIL | Enable `multi_agent` |
+| `codex_hooks_wired` | ≥1 `[[hooks.*]]` in repo-local `.codex/config.toml` invokes a load-bearing enforcement hook (`LOAD_BEARING_HOOKS`) | FAIL | Restore the `.codex/` hook wiring |
+| `codex_hooks_trusted` | A managed/trusted hook marker is detectable on disk (trust thrashes on dogfood — hash-keyed) | WARN (never FAIL) | One-time `/hooks` re-trust; `--dangerously-bypass-hook-trust` for `codex exec` automation |
+| `codex_mcp_reachable` | An `[mcp_servers.*]` table present in `~/.codex/config.toml` (gates only `visual-proof-from-plan`) | WARN (never FAIL) | Add `[mcp_servers.playwright]` |
+
 The shared `scripts/_advisory-text.sh` helper is the single source of truth for capability-impact annotation copy surfaced by `settings_residual` — also sourced by `migrate-from-subtree.sh` so the wording matches.
 
 ## claude_plugin_root check

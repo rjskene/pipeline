@@ -1150,6 +1150,143 @@ fi
 unset _arc_mem _arc_tasks
 
 # --------------------------------------------------------------------------
+# Codex-mode checks (#985) — ALL gated behind PIPELINE_HARNESS=codex.
+# Claude Code runs (the default) emit ZERO codex_* CHECK lines, so the existing
+# doctor tests stay green by construction (the "additive, gated" invariant).
+#
+# Harness resolution: source scripts/platform.sh if present (#980 ships it);
+# otherwise fall back to the explicit pipeline.config override with a `claude`
+# default. platform.sh reads PIPELINE_HARNESS from pipeline.config by grep (it
+# must not source the config — it carries host-specific $(...)), so the value is
+# authoritative either way.
+#
+# All Codex config reads honor PIPELINE_CODEX_CONFIG (fixture-override idiom,
+# mirrors PIPELINE_INSTALLED_PLUGINS_JSON); else they read the user config TOML
+# under ${CODEX_HOME:-$HOME/.codex} and, for the repo-local manifest, .codex/
+# config.toml in the project root.
+# --------------------------------------------------------------------------
+if [ -f "$RESOLVER_DIR/platform.sh" ]; then
+  # shellcheck disable=SC1091
+  source "$RESOLVER_DIR/platform.sh" 2>/dev/null || true
+fi
+PIPELINE_HARNESS="${PIPELINE_HARNESS:-claude}"
+
+if [ "$PIPELINE_HARNESS" = "codex" ]; then
+  # User-level Codex config (config.toml under CODEX_HOME / ~/.codex), with a
+  # fixture override. Used by multi_agent / MCP / (fallback) hook-trust reads.
+  _cx_user_config="${PIPELINE_CODEX_CONFIG:-${CODEX_HOME:-$HOME/.codex}/config.toml}"
+  # Repo-local committed manifest (the pipeline's OWN .codex/ bundle), used by
+  # the hooks-wired check. Always project-relative.
+  _cx_repo_config=".codex/config.toml"
+
+  # ---- codex_installed -----------------------------------------------------
+  if command -v codex >/dev/null 2>&1; then
+    record codex_installed pass "codex CLI on PATH"
+  else
+    record codex_installed fail "codex CLI not found on PATH (PIPELINE_HARNESS=codex) — install the Codex CLI (see docs/codex-dogfood-setup.md)"
+  fi
+
+  # ---- codex_multi_agent_enabled -------------------------------------------
+  # Required for PATH C spawn_agent fan-out. Scan the user config TOML for an
+  # enabled `multi_agent = true` that sits under a `[features]` table header.
+  # The awk tracks the current TOML section so a `multi_agent = true` outside
+  # `[features]` does not false-pass.
+  if [ ! -f "$_cx_user_config" ]; then
+    record codex_multi_agent_enabled fail "[features] multi_agent not enabled — config not found at $_cx_user_config (required for PATH C spawn_agent dispatch; see docs/codex-dogfood-setup.md)"
+  elif awk '
+      /^[[:space:]]*\[/ {
+        section = $0
+        sub(/^[[:space:]]*\[/, "", section)
+        sub(/\].*$/, "", section)
+        gsub(/[[:space:]]/, "", section)
+        next
+      }
+      section == "features" && /^[[:space:]]*multi_agent[[:space:]]*=[[:space:]]*true([[:space:]]|$)/ { found = 1 }
+      END { exit (found ? 0 : 1) }
+    ' "$_cx_user_config"; then
+    record codex_multi_agent_enabled pass "[features] multi_agent = true in $_cx_user_config"
+  else
+    record codex_multi_agent_enabled fail "[features] multi_agent not enabled in $_cx_user_config — required for PATH C spawn_agent dispatch (see docs/codex-dogfood-setup.md)"
+  fi
+
+  # ---- codex_hooks_wired ---------------------------------------------------
+  # The committed repo-local .codex/config.toml is the Codex twin of the
+  # plugin manifest's PreToolUse wirings. Pass when it carries ≥1 [[hooks.*]]
+  # table-array header AND references ≥1 load-bearing enforcement hook basename
+  # (reuse LOAD_BEARING_HOOKS). Mirrors the CC base_branch_enforcement shape
+  # (file-present + matcher-wired) for the TOML manifest. The user config
+  # (CODEX_HOME) is also accepted as a wiring site.
+  _cx_hooks_files=()
+  [ -f "$_cx_repo_config" ] && _cx_hooks_files+=("$_cx_repo_config")
+  [ -f "$_cx_user_config" ] && _cx_hooks_files+=("$_cx_user_config")
+  _cx_hooks_wired=0
+  if [ "${#_cx_hooks_files[@]}" -gt 0 ]; then
+    for _cx_hf in "${_cx_hooks_files[@]}"; do
+      if grep -qE '^\s*\[\[hooks\.' "$_cx_hf" 2>/dev/null; then
+        for _cx_lb in "${LOAD_BEARING_HOOKS[@]}"; do
+          if grep -qF "$_cx_lb" "$_cx_hf" 2>/dev/null; then
+            _cx_hooks_wired=1
+            break 2
+          fi
+        done
+      fi
+    done
+  fi
+  if [ "$_cx_hooks_wired" = "1" ]; then
+    record codex_hooks_wired pass "load-bearing enforcement hooks wired in Codex config ([[hooks.*]])"
+  else
+    record codex_hooks_wired fail "no load-bearing Codex hooks wired (expected [[hooks.*]] entries invoking the enforcement scripts in $_cx_repo_config — see docs/codex-dogfood-setup.md)"
+  fi
+
+  # ---- codex_hooks_trusted -------------------------------------------------
+  # WARN-grade probe (NEVER fail): Codex keys hook trust to the script HASH and
+  # revokes it on every wired-script edit, so dogfood trust thrashes — a fail
+  # here would block a correctly-configured host. Pass only when a managed/
+  # trusted marker is detectable on disk; otherwise warn with the one-time
+  # /hooks re-trust + --dangerously-bypass-hook-trust remediation.
+  _cx_home="${CODEX_HOME:-$HOME/.codex}"
+  _cx_trusted=0
+  if [ -f "$_cx_home/trusted_hooks.json" ] || [ -f "$_cx_home/hooks_trust.json" ]; then
+    _cx_trusted=1
+  elif [ -f "$_cx_user_config" ] && grep -qE '^\s*(hooks_)?trusted\s*=\s*true' "$_cx_user_config" 2>/dev/null; then
+    _cx_trusted=1
+  fi
+  if [ "$_cx_trusted" = "1" ]; then
+    record codex_hooks_trusted pass "Codex hook-trust marker present under $_cx_home"
+  else
+    record codex_hooks_trusted warn "Codex hooks may be untrusted; run the one-time /hooks re-trust, or pass --dangerously-bypass-hook-trust for codex exec automation (see docs/codex-dogfood-setup.md)"
+  fi
+  unset _cx_hooks_files _cx_hooks_wired _cx_hf _cx_lb _cx_home _cx_trusted
+
+  # ---- codex_mcp_reachable -------------------------------------------------
+  # WARN-grade (MCP gates only visual-proof-from-plan; absence is non-fatal,
+  # mirroring the CC plugin_loaded / agent_resource_caps WARN-for-optional
+  # severity). Static-validation only: scan the user config (and repo-local)
+  # for an [mcp_servers.*] TOML table — do NOT attempt a live connect (out of
+  # scope, mirrors CI's static-validation-only stance).
+  _cx_mcp_files=()
+  [ -f "$_cx_user_config" ] && _cx_mcp_files+=("$_cx_user_config")
+  [ -f "$_cx_repo_config" ] && _cx_mcp_files+=("$_cx_repo_config")
+  _cx_mcp=0
+  if [ "${#_cx_mcp_files[@]}" -gt 0 ]; then
+    for _cx_mf in "${_cx_mcp_files[@]}"; do
+      if grep -qE '^\s*\[mcp_servers\.' "$_cx_mf" 2>/dev/null; then
+        _cx_mcp=1
+        break
+      fi
+    done
+  fi
+  if [ "$_cx_mcp" = "1" ]; then
+    record codex_mcp_reachable pass "playwright MCP server configured ([mcp_servers.*] in Codex config)"
+  else
+    record codex_mcp_reachable warn "no Codex MCP server configured — visual-proof-from-plan unavailable; add [mcp_servers.playwright] to config.toml (see docs/codex-dogfood-setup.md)"
+  fi
+  unset _cx_mcp_files _cx_mcp _cx_mf
+
+  unset _cx_user_config _cx_repo_config
+fi
+
+# --------------------------------------------------------------------------
 # Summary table + exit code.
 # --------------------------------------------------------------------------
 echo

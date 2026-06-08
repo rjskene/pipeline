@@ -42,6 +42,8 @@ Pipeline operators iterate against the repo working tree on `staging` instead of
 
 Consumers continue to install `pipeline@claude-pipeline` from the GitHub marketplace as before — the dogfood install is mutually exclusive with it and is dogfood-only by convention (the `SessionStart` hook lives in `.claude/settings.json`, not the published `.claude-plugin/plugin.json`).
 
+**Codex harness.** To dogfood under Codex instead of Claude Code, set `PIPELINE_HARNESS=codex` in `pipeline.config` and follow the Codex bootstrap (enable `[features] multi_agent`, wire the repo-local `.codex/` enforcement hooks, the one-time `/hooks` re-trust, the `[mcp_servers.playwright]` block, then `/pipeline:doctor`). Full guide: [docs/codex-dogfood-setup.md](docs/codex-dogfood-setup.md).
+
 ## Namespace discipline
 
 The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json`. All plugin assets live under `~/.claude/plugins/claude-pipeline/` (read at runtime via `${CLAUDE_PLUGIN_ROOT}`).
@@ -52,6 +54,8 @@ The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks
 - `.claude/scratch/` — ephemeral evidence ingested from issue/comment attachments by `scripts/fetch-issue-attachments.sh` (slate-gated by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; never run from worktrees). Gitignored by default; auto-pruning is a follow-up.
 
 Everything else under consumer `.claude/` is consumer-owned. CI enforces this via `scripts/check-no-consumer-claude-writes.sh` — adding any new source reference to `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` requires an explicit entry in `tests/no-consumer-claude-writes.allow` with a justification comment. Allow-list entries are the audit trail for legacy code waiting to be retired.
+
+The same boundary applies to the **Codex harness**: the pipeline writes nothing to the consumer's per-user `~/.codex/{hooks,prompts,agents}/` or the user config under `~/.codex/` (doctor only reads them to validate the install). CI enforces this via the Codex twin `scripts/check-no-consumer-codex-writes.sh` — new source references to the consumer Codex namespace require a justified entry in `tests/no-consumer-codex-writes.allow`. The repo-local `.codex/` bundle is the pipeline's OWN committed manifest and is exempt. See [docs/codex-dogfood-setup.md](docs/codex-dogfood-setup.md).
 
 For plugin layout, `CLAUDE_PLUGIN_ROOT` resolution, and doctor states, see [docs/plugin-architecture.md](docs/plugin-architecture.md).
 
