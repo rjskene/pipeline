@@ -26,7 +26,11 @@ want "$RQ" "--manual-merge case in parser"           '--manual-merge\)'
 # Post-#685 there is a single, unified dispatch site (the poll-loop launch_agent);
 # the former single-issue short-circuit dispatch was removed, so its `"$WT_PATH"`
 # assertion is gone — a 1-issue queue now flows through this same loop dispatch.
-want "$RQ" "propagated to spawn-claude (loop)"       'spawn-claude\.sh.*\$MANUAL_MERGE_FLAG.*"\$wt_path"'
+# Post-#983 the hard-coded `spawn-claude.sh` literal on this line was replaced by
+# the harness-keyed `$SPAWN_TRANSPORT` indirection (resolved once at startup via
+# dispatch-leaf.sh transport-script). Behavior is unchanged — $MANUAL_MERGE_FLAG
+# is still threaded ahead of "$wt_path" — so the assertion tracks the new shape.
+want "$RQ" "propagated to spawn transport (loop)"    '\$SPAWN_TRANSPORT.*\$MANUAL_MERGE_FLAG.*"\$wt_path"'
 
 echo "=== spawn-claude.sh ==="
 want "$SC" "--manual-merge case in parser"           '--manual-merge\)'

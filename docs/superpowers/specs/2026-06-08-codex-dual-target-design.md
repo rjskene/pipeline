@@ -54,9 +54,9 @@ Both ship a single source projected per-platform. **Superpowers explicitly exclu
 | 4 | 6 enforcement hooks (7 wirings) in `plugin.json` | `.codex/config.toml` `[[hooks.*]]` | new committed file | new wiring, same scripts |
 | 5 | `restrict_paths`, `enforce-path-c-delegation` | `Edit`/`Write` → `apply_patch` matcher + tool-name | 2 hook scripts | widen branching |
 | 6 | observability hooks (dogfood `.claude/settings.json`, **not** `plugin.json`) | `PostToolUse`/`SubagentStop` | 3 log scripts | +branch, opt-in |
-| 7 | `Agent` tool dispatch | `spawn_agent`/`wait_agent`/`close_agent` | skill prose + dispatch scripts | tool-neutral + branch |
-| 8 | `--spawn` (`claude -p`) | `codex exec` | new `spawn-codex.sh`, generalize caller | +transport |
-| 9 | `tdd-implementer.md` agent | Codex subagent (prompt passed at spawn) | agent ref in skills | verify mechanism |
+| 7 | `Agent` tool dispatch | `spawn_agent`/`wait_agent`/`close_agent` | skill prose + dispatch scripts | tool-neutral + branch — **Landed (#983)** (`scripts/dispatch-leaf.sh`) |
+| 8 | `--spawn` (`claude -p`) | `codex exec` | new `spawn-codex.sh`, generalize caller | +transport — **Landed (#983)** (`dispatch-leaf.sh transport-script`) |
+| 9 | `tdd-implementer.md` agent | Codex subagent (prompt passed at spawn) | agent ref in skills | verify mechanism — **Landed (#983):** body passed inline as `spawn_agent` instructions (named-registry only if Codex exposes one) |
 | 10 | `.mcp.json` (playwright) | `config.toml [mcp_servers.playwright]` | new Codex MCP block | reshape JSON→TOML |
 | 11 | tool names in prose (Read/Bash/Grep…) | native + `references/codex-tools.md` | skill bodies | tool-neutral phrasing |
 | 12 | `CLAUDE.md` | `AGENTS.md` (+ Codex preamble) | new file | new |
@@ -83,9 +83,9 @@ Both ship a single source projected per-platform. **Superpowers explicitly exclu
 ### L3 — Dispatch
 
 - **PATH A/B/D (inline):** the Codex orchestrator session executes the skill directly (no separate dispatch). Prose goes tool-neutral.
-- **PATH C fan-out:** the per-leaf worktree split (`path-c-split-worktree.sh`) + cherry-pick reassembly are **unchanged bash/git**. Only the dispatch *call* branches — CC `Agent` ↔ Codex `spawn_agent` (collect with `wait_agent`, free with `close_agent`). Requires `[features] multi_agent = true` (added to install). Encapsulate the branch in one `dispatch-leaf` abstraction keyed on `PIPELINE_HARNESS`.
-- **`--spawn` escape hatch:** add `scripts/spawn-codex.sh` → `codex exec` (non-interactive; sandbox/approval flags for autonomy; `--dangerously-bypass-hook-trust` as needed). The run-queue/caller selects transport by `PIPELINE_HARNESS` (CC keeps `spawn-claude.sh`).
-- **tdd-implementer (#9):** its body is system-prompt/instructions prose → portable verbatim. Pass it as the `spawn_agent` instructions inline; register a named Codex subagent type only if Codex supports a registry (VERIFY).
+- **PATH C fan-out:** the per-leaf worktree split (`path-c-split-worktree.sh`) + cherry-pick reassembly are **unchanged bash/git**. Only the dispatch *call* branches — CC `Agent` ↔ Codex `spawn_agent` (collect with `wait_agent`, free with `close_agent`). Requires `[features] multi_agent = true` (added to install). Encapsulate the branch in one `dispatch-leaf` abstraction keyed on `PIPELINE_HARNESS`. **Landed (#983):** `scripts/dispatch-leaf.sh dispatch` keeps the setup → reassemble → teardown lifecycle harness-invariant and branches only the per-leaf verb.
+- **`--spawn` escape hatch:** add `scripts/spawn-codex.sh` → `codex exec` (non-interactive; sandbox/approval flags for autonomy; `--dangerously-bypass-hook-trust` as needed). The run-queue/caller selects transport by `PIPELINE_HARNESS` (CC keeps `spawn-claude.sh`). **Landed (#983):** the run-queue spawn sites route through `dispatch-leaf.sh transport-script`.
+- **tdd-implementer (#9):** its body is system-prompt/instructions prose → portable verbatim. Pass it as the `spawn_agent` instructions inline; register a named Codex subagent type only if Codex supports a registry (VERIFY). **Landed (#983):** inline-prompt fallback is the shipped default (portable verbatim); a named Codex subagent-type registry is wired only if Codex exposes one.
 
 ### L4 — Skills & tool vocabulary
 
@@ -130,7 +130,7 @@ Ordered legs; **each keeps CC green (additive)** and is independently testable:
 ## Known-unknowns to verify during planning (none are blockers)
 
 1. **#1 detection signal** — exactly which env var Codex exports to hook/shell subprocesses. *Fallback:* explicit `PIPELINE_HARNESS` flag in `pipeline.config`.
-2. **#9 subagent definition** — whether Codex consumes a named-agent registry or only inline `spawn_agent` instructions. *Fallback:* inline prompt (portable regardless).
+2. **#9 subagent definition** — whether Codex consumes a named-agent registry or only inline `spawn_agent` instructions. *Fallback:* inline prompt (portable regardless). **Resolved (#983):** the `tdd-implementer` body is passed as `spawn_agent` instructions inline (verbatim portable) — the inline-prompt fallback is the shipped default; a named Codex subagent-type registry is used only if Codex supports one.
 3. **#13 repo-local managed hooks** — whether Codex allows a repo-local managed-hook dir (auto-trusted). *Fallback:* documented `/hooks` trust + bypass flag for automation.
 4. **#10 apply_patch `tool_input` shape** — exact JSON for extracting target paths. Confirm against a live Codex `PreToolUse` payload before finalizing `_tool_input_paths()`.
 
