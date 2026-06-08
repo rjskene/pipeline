@@ -8,10 +8,9 @@ links the canonical project doc.
 ## Codex preamble
 
 - **Tool map.** Codex tool names and their Claude-Code equivalents are documented
-  in `codex-tools.md` (created in a later leg of the dual-target migration; the
-  pointer here is intentional so this entry is wired up ahead of that file).
-  Consult it for the Read/Write/Edit/Bash and MCP tool mappings when running the
-  pipeline under Codex.
+  in [`skills/references/codex-tools.md`](skills/references/codex-tools.md).
+  Consult it for the `Task`/`Agent`→`spawn_agent`, `Edit`/`Write`→`apply_patch`,
+  and MCP tool mappings when running the pipeline under Codex.
 - **Multi-agent.** PATH C (multi-task) fans out one leaf executor per
   `target=<dir>`. Running it under Codex requires `multi_agent = true` in your
   Codex configuration so the orchestrator may dispatch leaf agents.

@@ -79,6 +79,16 @@ CHECK: codex_mcp_reachable status=pass|warn ...
 
 `codex_hooks_trusted` and `codex_mcp_reachable` may legitimately read `warn` (trust undetectable; MCP optional) without blocking — only `fail` rows red the run.
 
+### 7. First-run validation — confirm the gates actually BLOCK (issue #994)
+
+A green doctor confirms the hooks are *wired*, not that they *block*. Codex's PreToolUse contract treats **exit 2** as the block signal, but two ported Bash gates — `block_deletions.py` and `enforce-base-branch.py` — currently exit **1**. Before relying on enforcement under Codex, prove each gate blocks a real attempt:
+
+- a destructive command (e.g. `rm -rf …` or a clobbering `>`) → `block_deletions` must block;
+- a `git push` / PR against the wrong base → `enforce-base-branch` must block;
+- an out-of-boundary or protected-path `apply_patch` → `restrict_paths` must block.
+
+If the exit-1 gates do **not** block on Codex, that is the **#994** parity gap: they must be aligned to the exit-2 (or `{"decision":"block"}`) contract before Codex enforcement is trustworthy. The exit-2 gates (`restrict_paths`, `enforce-path-c-delegation`, `enforce-ci-wait`) are unaffected.
+
 ## Namespace boundary
 
 The same boundary discipline the pipeline enforces for the consumer's `.claude/` applies to the consumer's per-user Codex surface. The pipeline writes **nothing** to `~/.codex/{hooks,prompts,agents}/` or the user config under `~/.codex/` — doctor only **reads** those to validate the install. CI enforces this via `scripts/check-no-consumer-codex-writes.sh` (the Codex twin of `check-no-consumer-claude-writes.sh`); any source reference to the consumer Codex namespace requires a justified entry in `tests/no-consumer-codex-writes.allow`. The repo-local `.codex/` bundle is the pipeline's OWN committed artifact and is exempt.
