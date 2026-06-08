@@ -13,6 +13,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: consumer-.claude/ write lint
         run: bash scripts/check-no-consumer-claude-writes.sh
+      - name: consumer-~/.codex/ write lint
+        run: bash scripts/check-no-consumer-codex-writes.sh
 
   # changes — detect whether the PR touches code (vs docs/skill-prose only). Drives
   # the path-filter on the heavy `tests` job below without letting the required
