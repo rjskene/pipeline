@@ -86,5 +86,15 @@ assert ".github/workflows/ci.yml references the codex lint" \
 assert "CLAUDE.md documents the codex namespace guard" \
   "grep -qF 'check-no-consumer-codex-writes.sh' \"$REPO_ROOT/CLAUDE.md\""
 
+# (j) Codex dogfood guide exists and covers the bootstrap keywords.
+assert "docs/codex-dogfood-setup.md exists" \
+  "[ -f \"$REPO_ROOT/docs/codex-dogfood-setup.md\" ]"
+assert "codex-dogfood-setup.md covers multi_agent" \
+  "grep -qF 'multi_agent' \"$REPO_ROOT/docs/codex-dogfood-setup.md\""
+assert "codex-dogfood-setup.md covers the /hooks re-trust step" \
+  "grep -qF '/hooks' \"$REPO_ROOT/docs/codex-dogfood-setup.md\""
+assert "codex-dogfood-setup.md covers mcp_servers" \
+  "grep -qF 'mcp_servers' \"$REPO_ROOT/docs/codex-dogfood-setup.md\""
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
