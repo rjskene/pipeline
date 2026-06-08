@@ -144,6 +144,45 @@ else
   pass_msg "(3c) harness=claude emits zero codex_* checks"
 fi
 
+# ===========================================================================
+# Task 4 — codex_multi_agent_enabled
+# ===========================================================================
+
+# --- (4a) [features] multi_agent = true → pass ------------------------------
+echo "Case 4a: [features] multi_agent = true → codex_multi_agent_enabled=pass"
+ROOT=$(fresh_fx fx-4a-on codex)
+cat > "$ROOT/codex-home/config.toml" <<'TOML'
+[features]
+multi_agent = true
+TOML
+run_doctor "$ROOT" "PIPELINE_CODEX_CONFIG=$ROOT/codex-home/config.toml"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_multi_agent_enabled status=pass' <<<"$out"; then
+  pass_msg "(4a) multi_agent=true → codex_multi_agent_enabled=pass"
+else
+  fail_msg "(4a) expected codex_multi_agent_enabled=pass"
+  echo "$out" | grep -E 'codex_multi_agent_enabled' | sed 's/^/    /' || true
+fi
+
+# --- (4b) multi_agent absent/false → fail naming [features] multi_agent -----
+echo "Case 4b: multi_agent = false → codex_multi_agent_enabled=fail"
+ROOT=$(fresh_fx fx-4b-off codex)
+cat > "$ROOT/codex-home/config.toml" <<'TOML'
+[features]
+multi_agent = false
+
+[mcp_servers.playwright]
+command = "npx"
+TOML
+run_doctor "$ROOT" "PIPELINE_CODEX_CONFIG=$ROOT/codex-home/config.toml"
+out="$(cat "$ROOT/out")"
+if grep -qE '^CHECK: codex_multi_agent_enabled status=fail.*\[features\] multi_agent' <<<"$out"; then
+  pass_msg "(4b) multi_agent=false → fail naming [features] multi_agent"
+else
+  fail_msg "(4b) expected codex_multi_agent_enabled=fail mentioning '[features] multi_agent'"
+  echo "$out" | grep -E 'codex_multi_agent_enabled' | sed 's/^/    /' || true
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

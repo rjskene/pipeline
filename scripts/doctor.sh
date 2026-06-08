@@ -1186,6 +1186,29 @@ if [ "$PIPELINE_HARNESS" = "codex" ]; then
     record codex_installed fail "codex CLI not found on PATH (PIPELINE_HARNESS=codex) — install the Codex CLI (see docs/codex-dogfood-setup.md)"
   fi
 
+  # ---- codex_multi_agent_enabled -------------------------------------------
+  # Required for PATH C spawn_agent fan-out. Scan the user config TOML for an
+  # enabled `multi_agent = true` that sits under a `[features]` table header.
+  # The awk tracks the current TOML section so a `multi_agent = true` outside
+  # `[features]` does not false-pass.
+  if [ ! -f "$_cx_user_config" ]; then
+    record codex_multi_agent_enabled fail "[features] multi_agent not enabled — config not found at $_cx_user_config (required for PATH C spawn_agent dispatch; see docs/codex-dogfood-setup.md)"
+  elif awk '
+      /^[[:space:]]*\[/ {
+        section = $0
+        sub(/^[[:space:]]*\[/, "", section)
+        sub(/\].*$/, "", section)
+        gsub(/[[:space:]]/, "", section)
+        next
+      }
+      section == "features" && /^[[:space:]]*multi_agent[[:space:]]*=[[:space:]]*true([[:space:]]|$)/ { found = 1 }
+      END { exit (found ? 0 : 1) }
+    ' "$_cx_user_config"; then
+    record codex_multi_agent_enabled pass "[features] multi_agent = true in $_cx_user_config"
+  else
+    record codex_multi_agent_enabled fail "[features] multi_agent not enabled in $_cx_user_config — required for PATH C spawn_agent dispatch (see docs/codex-dogfood-setup.md)"
+  fi
+
   unset _cx_user_config _cx_repo_config
 fi
 
