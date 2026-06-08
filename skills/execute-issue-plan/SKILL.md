@@ -22,6 +22,10 @@ source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 
 State (slate, base branch, repo) is inherited from `/pipeline:fullsend`; if these variables fail to resolve, **STOP** — preconditions live in `skills/fullsend/SKILL.md`.
 
+## Platform
+
+Skills use Claude Code tool names; on Codex see [references/codex-tools.md](../references/codex-tools.md) for equivalents.
+
 ## Lifecycle
 
 ```

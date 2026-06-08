@@ -24,6 +24,10 @@ The bash blocks below reference `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELI
 
 # Pipeline Status
 
+## Platform
+
+Skills use Claude Code tool names; on Codex see [references/codex-tools.md](../references/codex-tools.md) for equivalents.
+
 ## What `/pipeline:status` does
 
 Read-only survey: `housekeeping → discover → status table`. The orchestrator surveys open issues, renders the prioritization+grouping status table, and reports. It does NOT propose actions, dispatch agents, or merge PRs — autonomous advancement lives in `/pipeline:fullsend`.

@@ -22,6 +22,10 @@ source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 
 The bash blocks below reference `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time.
 
+## Platform
+
+Skills use Claude Code tool names; on Codex see [references/codex-tools.md](../references/codex-tools.md) for equivalents.
+
 # Deprecated alias
 
 `/pipeline:run` has been renamed to `/pipeline:status`. This skill is a thin deprecated alias that forwards to it unchanged.
