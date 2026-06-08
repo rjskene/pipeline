@@ -68,6 +68,64 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
+# Codex bundle branch (#980, Leg 1 of the Codex dual-target migration). Gated on
+# CODEX_HOME presence: a Claude session never sets CODEX_HOME, so it skips this
+# block entirely and every branch below stays byte-stable (regression-tested).
+# On a Codex host, $CODEX_HOME/plugins/claude-pipeline/pipeline/<ver>/ mirrors the
+# Claude cache layout, so we pick the highest STABLE version the same way the
+# cache scan does (rc < stable, numeric rc ordering) and export it as
+# CLAUDE_PLUGIN_ROOT — the var every skill Boot block still reads. The bundle glob
+# defaults to ${CODEX_HOME}/plugins/claude-pipeline/pipeline and is overridable via
+# PIPELINE_CODEX_BUNDLE_GLOB (parallel to PIPELINE_PLUGIN_CACHE_DIR) so tests pin a
+# deterministic layout. The exact $CODEX_HOME bundle path is a known-unknown
+# (spec #2) confirmed in a later leg; the override knob absorbs any correction.
+if [ -n "${CODEX_HOME:-}" ]; then
+  _rpr_codex_glob="${PIPELINE_CODEX_BUNDLE_GLOB:-${CODEX_HOME}/plugins/claude-pipeline/pipeline}"
+  if [ -d "$_rpr_codex_glob" ]; then
+    _rpr_codex_pick() {
+      # Mirror _rpr_pick's 5-field numeric sort key
+      # (major.minor.patch.pre_rank.pre_num): stable (rank=1) beats prerelease
+      # (rank=0) at the same M.m.p; rc index sorts numerically. Skip any dirname
+      # that is not MAJOR.MINOR.PATCH[-rc.N] so a stray dir never wins.
+      local d base major minor patch pre_rank pre_num
+      local -a rows=()
+      for d in "$_rpr_codex_glob"/*/; do
+        [ -d "$d" ] || continue
+        base="$(basename "$d")"
+        if [[ "$base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-rc\.([0-9]+))?$ ]]; then
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          if [ -n "${BASH_REMATCH[4]}" ]; then
+            pre_rank=0
+            pre_num="${BASH_REMATCH[5]}"
+          else
+            pre_rank=1
+            pre_num=0
+          fi
+          rows+=("${major}.${minor}.${patch}.${pre_rank}.${pre_num}	${base}")
+        fi
+      done
+      [ "${#rows[@]}" -gt 0 ] || return 0
+      printf '%s\n' "${rows[@]}" \
+        | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n \
+        | tail -n 1 \
+        | cut -f2
+    }
+    # `|| true` keeps exit status 0 (this resolver is sourced under `set -e`).
+    _rpr_codex_latest="$(_rpr_codex_pick || true)"
+    unset -f _rpr_codex_pick
+    if [ -n "$_rpr_codex_latest" ]; then
+      export CLAUDE_PLUGIN_ROOT="$_rpr_codex_glob/$_rpr_codex_latest"
+      unset _rpr_codex_glob _rpr_codex_latest
+      return 0 2>/dev/null || exit 0
+    fi
+    unset _rpr_codex_latest
+  fi
+  unset _rpr_codex_glob
+  # No matching bundle version → fall through to the existing branches below.
+fi
+
 # Default-mode dogfood tie-break (#625): when running inside a project that has
 # the local-marketplace install (pipeline@claude-pipeline-local) ENABLED, prefer
 # its installPath (a symlink to the repo working tree) over any published copy

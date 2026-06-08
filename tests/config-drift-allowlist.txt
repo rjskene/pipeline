@@ -98,3 +98,9 @@ PIPELINE_STALL_SAMPLES_PER_POLL
 PIPELINE_STALL_SAMPLE_INTERVAL_SEC
 PIPELINE_SUBTREE_BRANCH
 PIPELINE_SUBTREE_REMOTE
+
+# #980: test fixture in tests/test-platform-sh.sh — the test writes a literal
+# config line `PIPELINE_EXAMPLE_PATH=$(exit 7)` to prove scripts/platform.sh
+# GREPS pipeline.config rather than sourcing it (a sourced $(...) would execute
+# and change the exit status). Synthetic token, not a real config knob.
+PIPELINE_EXAMPLE_PATH
