@@ -22,6 +22,10 @@ source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 
 # Classify Issue
 
+## Platform
+
+Skills use Claude Code tool names; on Codex see [references/codex-tools.md](../references/codex-tools.md) for equivalents.
+
 ## Paths
 
 The pipeline dispatches on one of four paths; this SKILL owns their definitions.

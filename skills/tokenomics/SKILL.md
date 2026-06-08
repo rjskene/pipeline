@@ -22,6 +22,10 @@ source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 
 If `CLAUDE_PLUGIN_ROOT` fails to resolve, **STOP** — the backfill and report scripts live under it.
 
+## Platform
+
+Skills use Claude Code tool names; on Codex see [references/codex-tools.md](../references/codex-tools.md) for equivalents.
+
 # Tokenomics
 
 ```

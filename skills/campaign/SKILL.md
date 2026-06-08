@@ -22,6 +22,10 @@ source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 
 The bash code blocks referenced below resolve `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_CAMPAIGN_MAX_BC`, `PIPELINE_CAMPAIGN_MAX_AD`, etc. from the sourced config — not from envsubst at install time.
 
+## Platform
+
+Skills use Claude Code tool names; on Codex see [references/codex-tools.md](../references/codex-tools.md) for equivalents.
+
 # Campaign — the coordinated-leg entry point
 
 `/pipeline:campaign` runs the coordinated-leg **OUTER loop** over a slate of approved issues: it classifies/plans/eval-plans the ENTIRE set batched-under-caps, approves all up front, partitions the approved set into ordered per-leg batches via `scripts/plan-campaign.sh` (honoring `PIPELINE_CAMPAIGN_MAX_BC` / `PIPELINE_CAMPAIGN_MAX_AD`, overridable per-invocation via `--max-bc=N` / `--max-ad=N`), then runs each leg through the existing wave-by-wave execute → eval-pr → greenlight-merge machinery — advancing the base tip between legs and folding/filing campaign-surfaced bug signals at the end. This spends the global rate-limit budget in bounded batches rather than a single flat blast of the whole set.
