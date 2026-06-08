@@ -28,6 +28,12 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 # "$CODEX_HOME/plugins/claude-pipeline/pipeline"; set only if your Codex install
 # bundles plugins elsewhere.
 #PIPELINE_CODEX_BUNDLE_GLOB=""
+#
+# Codex PATH C fan-out (issue #983): the per-leaf dispatch uses Codex's
+# spawn_agent/wait_agent/close_agent agent-control surface, which requires
+# [features] multi_agent = true in the operator's ~/.codex/config.toml. No
+# pipeline.config var configures this — it is a Codex-host setting. (Claude
+# Code uses its native in-session Agent tool and needs no equivalent flag.)
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
