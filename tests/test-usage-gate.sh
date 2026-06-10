@@ -313,6 +313,21 @@ if grep -q 'pause-5h' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles p
 if grep -q 'halt-7d' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles halt-7d"; else fail_msg "fullsend SKILL missing halt-7d handling"; fi
 if grep -q 'CronCreate' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL schedules resume via CronCreate"; else fail_msg "fullsend SKILL missing CronCreate resume scheduling"; fi
 
+# --- Scenario 14: status SKILL.md advisory-only relay (prose guard) ---
+inc_scenario "Scenario 14: status SKILL.md relays the gate line ADVISORY-only"
+
+STATUS_SKILL="$REPO_ROOT/skills/status/SKILL.md"
+if grep -q 'usage-gate.sh' "$STATUS_SKILL"; then
+  pass_msg "status SKILL references usage-gate.sh"
+else
+  fail_msg "status SKILL missing usage-gate.sh reference"
+fi
+if grep -q 'ADVISORY' "$STATUS_SKILL"; then
+  pass_msg "status SKILL marks the gate relay ADVISORY"
+else
+  fail_msg "status SKILL missing ADVISORY marker for the gate relay"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
