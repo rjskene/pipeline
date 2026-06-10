@@ -214,8 +214,78 @@ assert_gate_line "malformed"
 assert_field "malformed" "decision=skip reason=parse-error"
 assert_field "malformed" "resume_at=--"
 
-# --- Scenario 11: token-leak canary (all modes above) ---
-inc_scenario "Scenario 11: token-leak canary across all exercised modes"
+# --- Scenario 11: live-fetch error mapping via PATH-stubbed curl ---
+inc_scenario "Scenario 11: live fetch (PATH-stubbed curl) -> http-<code>/fetch-error/proceed"
+
+mkdir -p "$TMP/bin"
+CURL_ARGV_LOG="$TMP/curl-argv.log"
+
+# write_curl_stub <body-of-stub> — installs $TMP/bin/curl that logs its argv
+# (so the test can prove the bearer token never reaches process argv), drains
+# stdin (the --config - payload), then runs the case-specific behavior.
+write_curl_stub() {
+  cat > "$TMP/bin/curl" <<STUB
+#!/bin/bash
+printf '%s\n' "\$@" >> "$CURL_ARGV_LOG"
+# locate the -o target
+OUT_TARGET=""
+prev=""
+for a in "\$@"; do
+  [ "\$prev" = "-o" ] && OUT_TARGET="\$a"
+  prev="\$a"
+done
+cat > /dev/null  # drain stdin (--config -)
+$1
+STUB
+  chmod +x "$TMP/bin/curl"
+}
+
+# run_gate_live <label> — run with NO --fixture and the stub curl on PATH.
+run_gate_live() {
+  OUT="$(PATH="$TMP/bin:$PATH" bash "$HELPER" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+  RC=$?
+  ERR="$(cat "$TMP/err.txt")"
+  { printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+}
+
+# 12a: HTTP 429 -> skip reason=http-429.
+write_curl_stub '[ -n "$OUT_TARGET" ] && printf "{}" > "$OUT_TARGET"
+printf "429"
+exit 0'
+run_gate_live
+assert_gate_line "http-429"
+assert_field "http-429" "decision=skip reason=http-429"
+
+# 12b: curl hard failure (rc=7) -> skip reason=fetch-error.
+write_curl_stub 'exit 7'
+run_gate_live
+assert_gate_line "fetch-error"
+assert_field "fetch-error" "decision=skip reason=fetch-error"
+
+# 12c: HTTP 200 + valid body -> live path parses the same shape -> proceed.
+write_curl_stub "[ -n \"\$OUT_TARGET\" ] && cat \"$FIXTURE_DIR/under-threshold.json\" > \"\$OUT_TARGET\"
+printf \"200\"
+exit 0"
+run_gate_live
+assert_gate_line "live-200"
+assert_field "live-200" "decision=proceed"
+assert_field "live-200" "five_hour=20%"
+assert_field "live-200" "seven_day=27%"
+
+# 12d: bearer token never reaches curl argv (passed via --config on stdin).
+if [ -s "$CURL_ARGV_LOG" ]; then
+  pass_msg "curl stub captured argv across live modes"
+else
+  fail_msg "curl argv log empty — argv canary would be vacuous"
+fi
+if grep -qF "$CANARY_TOKEN" "$CURL_ARGV_LOG"; then
+  fail_msg "BEARER TOKEN visible on curl argv (would leak via /proc/*/cmdline)"
+else
+  pass_msg "bearer token absent from curl argv (stdin --config holds it)"
+fi
+
+# --- Scenario 12: token-leak canary (all modes above) ---
+inc_scenario "Scenario 12: token-leak canary across all exercised modes"
 
 if [ -s "$CANARY_TRANSCRIPT" ]; then
   pass_msg "canary transcript captured stdout+stderr across all modes"
