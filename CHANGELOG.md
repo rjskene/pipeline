@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.23.6](https://github.com/rjskene/pipeline/compare/v0.23.5...v0.23.6) (2026-06-10)
+
+
+### Features
+
+* **fullsend:** usage-gate pre-flight + wave/leg boundary pause-resume ([#969](https://github.com/rjskene/pipeline/issues/969)) ([c5c1008](https://github.com/rjskene/pipeline/commit/c5c10080b242f745d82e5a5b7090322a32165365))
+* **status:** relay usage-gate line advisory-only in housekeeping ([#969](https://github.com/rjskene/pipeline/issues/969)) ([2e89ca8](https://github.com/rjskene/pipeline/commit/2e89ca8e047c357ff625b7de3aeb77e1be8ca0a1))
+* **usage-gate:** decision core — proceed/pause-5h/halt-7d over fixture signal ([#969](https://github.com/rjskene/pipeline/issues/969)) ([5a73b94](https://github.com/rjskene/pipeline/commit/5a73b94d505995d9247d4d918e6f04ec4e36cd76))
+* **usage-gate:** fail-open skip paths + token-leak guard ([#969](https://github.com/rjskene/pipeline/issues/969)) ([c26cd21](https://github.com/rjskene/pipeline/commit/c26cd21a0d303b0a51b610a3e0e2fb7f5e8bac2c))
+* **usage-gate:** live OAuth fetch with http-code/fetch-error mapping ([#969](https://github.com/rjskene/pipeline/issues/969)) ([d55669f](https://github.com/rjskene/pipeline/commit/d55669ffdf08652467b3a8ca3aca70eaca7922f2))
+* **usage-gate:** pause at usage threshold, cron-resume after 5h reset; halt on 7d ([e4f4798](https://github.com/rjskene/pipeline/commit/e4f4798c58d9a37407363904aff9be296b46c19d))
+
+
+### Bug Fixes
+
+* **config:** declare PIPELINE_USAGE_GATE_ENABLED/THRESHOLD_PCT; unblock config-drift ([#969](https://github.com/rjskene/pipeline/issues/969)) ([d24da34](https://github.com/rjskene/pipeline/commit/d24da34b9f17735dc8064f29f566f4ae9e476fc0))
+* **plan-waves:** hoist FILE_PATH_RE to catch bare paths, reject backticked reason symbols ([f92b708](https://github.com/rjskene/pipeline/commit/f92b70891655defc6a72e9333bc29c0e1dcb7c52))
+* **plan-waves:** hoist FILE_PATH_RE to catch bare paths, reject backticked reason symbols ([1884504](https://github.com/rjskene/pipeline/commit/188450471c2f8481e229617e66e9a6c162f51120)), closes [#1006](https://github.com/rjskene/pipeline/issues/1006)
+* **review:** degrade to skip when HOME is unset under set -u ([#969](https://github.com/rjskene/pipeline/issues/969)) ([3f410dd](https://github.com/rjskene/pipeline/commit/3f410dda4b22c5cee5b31608b4f8d51c7ac68864))
+
 ## [0.23.5](https://github.com/rjskene/pipeline/compare/v0.23.4...v0.23.5) (2026-06-10)
 
 
