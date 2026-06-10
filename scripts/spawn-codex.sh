@@ -11,7 +11,7 @@ set -euo pipefail
 #     --manual-merge, --classifier-passthrough=<token>
 #   - same PIPELINE_SPAWN_DRY_RUN=1 dump hook (PATH_LETTER / GENERATED_SESSION_ID /
 #     RUNS_LOG / BUILD_ARGV / PAYLOAD)
-#   - same runs.log / --session-id emission shape (TSV row, 1:1 join key)
+#   - same runs.log shape (TSV row, 1:1 join key via GENERATED_SESSION_ID)
 #
 # DIVERGENT parts vs spawn-claude.sh (the only intended differences):
 #   - launch verb is `codex exec`, NOT `claude -p`.
@@ -20,12 +20,13 @@ set -euo pipefail
 #   - --dangerously-bypass-hook-trust: automation paths run hooks WITHOUT a
 #     persisted trust prompt (the orchestrator already vetted the worktree).
 #
-# KNOWN-UNKNOWN: the EXACT Codex CLI flag NAMES are not yet pinned. The literal
-# tokens below are best-guess placeholders; what is load-bearing here — and what
-# the acceptance suite asserts — is the env/argv SHAPE: the `codex exec` verb,
-# the presence of an autonomy/sandbox-bypass token, and the
-# --dangerously-bypass-hook-trust token. Re-pin the literals when the Codex CLI
-# surface is finalized; keep the shape.
+# Flag literals verified against codex-cli 0.139.0
+# (`npx -y @openai/codex exec --help`, issue #995):
+#   --sandbox danger-full-access              ✓ valid
+#   --dangerously-bypass-approvals-and-sandbox ✓ valid (replaces --ask-for-approval never)
+#   --dangerously-bypass-hook-trust            ✓ valid
+#   --session-id                               ✗ NOT a codex CLI flag (removed)
+#   --append-system-prompt                     ✗ NOT a codex CLI flag (removed)
 
 # Run from the consumer repo root (so `$(pwd)/pipeline.config` resolves), or
 # export PIPELINE_PROJECT_ROOT to override the lookup directory.
@@ -178,16 +179,18 @@ if [ "$SYSTEMD_SCOPE_OK" = "1" ]; then
   SCOPE_PREFIX="systemd-run --user --scope -p MemoryMax=${EFFECTIVE_MEMORY_MAX} -p TasksMax=${AGENT_TASKS_MAX} -- "
 fi
 
-# --- Generate session id and bind to CLI via --session-id flag ---
+# --- Generate session id for runs.log join key ---
 # Same UUID-as-join-key contract as spawn-claude.sh: emit the same UUID into
-# runs.log AND pass it to the CLI via --session-id so the three logs join 1:1.
+# runs.log as the join key. Note: unlike spawn-claude.sh, this UUID is NOT
+# passed to the codex CLI (--session-id is not a valid codex exec flag;
+# verified against codex-cli 0.139.0, issue #995).
 PROC_UUID="/proc/sys/kernel/random/uuid"
 if command -v uuidgen >/dev/null 2>&1; then
   GENERATED_SESSION_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 elif [ -r "$PROC_UUID" ]; then
   GENERATED_SESSION_ID="$(cat "$PROC_UUID")"
 else
-  echo "ERROR: neither uuidgen nor the kernel random-uuid pseudo-file is available; cannot generate a valid UUID for --session-id" >&2
+  echo "ERROR: neither uuidgen nor the kernel random-uuid pseudo-file is available; cannot generate a valid UUID for the runs.log join key" >&2
   echo "       On Git-Bash install uuidgen via the Git-for-Windows SDK; on Linux install util-linux." >&2
   exit 1
 fi
@@ -286,15 +289,13 @@ fi
 # --dangerously-bypass-hook-trust tokens are appended UNCONDITIONALLY because an
 # unattended automation run has no interactive approval surface.
 #
-# KNOWN-UNKNOWN: the literal flag tokens below are best-guess placeholders for
-# the real Codex CLI surface; the SHAPE (verb + bypass tokens) is what is
-# contractually asserted. Re-pin the literals when the surface is finalized.
+# Flag literals verified against codex-cli 0.139.0 (issue #995):
+#   --sandbox danger-full-access               -> disable the filesystem sandbox for autonomy
+#   --dangerously-bypass-approvals-and-sandbox -> skip all confirmation prompts AND sandbox
+#   --dangerously-bypass-hook-trust            -> run hooks without a persisted trust prompt
 #
-# Codex autonomy tokens (best-guess literals; re-pin when finalized):
-#   --sandbox danger-full-access  -> disable the filesystem sandbox for autonomy
-#   --ask-for-approval never      -> never block on an interactive approval prompt
-#   --dangerously-bypass-hook-trust -> run hooks without a persisted trust prompt
-CODEX_AUTONOMY_ARGV=(--sandbox danger-full-access --ask-for-approval never --dangerously-bypass-hook-trust)
+# Note: --ask-for-approval is NOT valid for `codex exec` (interactive mode only).
+CODEX_AUTONOMY_ARGV=(--sandbox danger-full-access --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust)
 _launch_cmd_quoted="codex exec"
 _autonomy_argv_lines=""
 for tok in ${CODEX_AUTONOMY_ARGV[@]+"${CODEX_AUTONOMY_ARGV[@]}"}; do
@@ -312,11 +313,10 @@ declare -a LAUNCH_CMD=('"$_launch_cmd_quoted"')
 export CLAUDE_PIPELINE_ISSUE_NUMBER='"$ISSUE_NUM"'
 export CLAUDE_PIPELINE_SKILL='"$SKILL"'
 echo "[spawn-codex-canary] CLAUDE_PIPELINE_ISSUE_NUMBER=${CLAUDE_PIPELINE_ISSUE_NUMBER:-UNSET} CLAUDE_PIPELINE_SKILL=${CLAUDE_PIPELINE_SKILL:-UNSET}" >&2
+# Note: --append-system-prompt and --session-id are NOT valid codex CLI flags
+# (verified against codex-cli 0.139.0, issue #995). GENERATED_SESSION_ID is
+# still emitted to runs.log as the join key but NOT passed to codex exec.
 SYSPROMPT_FILE="'"$APPEND_PROMPT_FILE"'"
-if [ -n "$SYSPROMPT_FILE" ] && [ -f "$SYSPROMPT_FILE" ]; then
-  CODEX_ARGV+=(--append-system-prompt "$(cat "$SYSPROMPT_FILE")")
-fi
-CODEX_ARGV+=(--session-id '"'"''"$GENERATED_SESSION_ID"''"'"')
 '"$_autonomy_argv_lines$_extra_argv_lines"
 
 # Test hook: dump resolved state and exit before launching anything.

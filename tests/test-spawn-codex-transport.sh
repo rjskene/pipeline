@@ -8,11 +8,14 @@ set -euo pipefail
 #
 #   - launches `codex exec` (the Codex non-interactive verb, vs `claude -p`)
 #   - appends the Codex autonomy flags (--sandbox danger-full-access,
-#     --ask-for-approval never)
+#     --dangerously-bypass-approvals-and-sandbox) [verified against codex-cli 0.139.0]
 #   - appends --dangerously-bypass-hook-trust
 #   - threads the SAME positional argv / env SHAPE as spawn-claude.sh
 #     (worktree / issue / slug / mode -> PATH_LETTER, GENERATED_SESSION_ID,
-#      --session-id binding, runs.log TSV row, CLAUDE_PIPELINE_ISSUE_NUMBER)
+#      runs.log TSV row, CLAUDE_PIPELINE_ISSUE_NUMBER)
+#   NOTE: --session-id and --ask-for-approval are NOT valid codex exec flags
+#   (confirmed via `npx -y @openai/codex exec --help`, codex-cli 0.139.0);
+#   GENERATED_SESSION_ID is still emitted to runs.log as the join key.
 #
 # Follows tests/test-spawn-claude-runs-log.sh harness conventions: stub-on-PATH
 # gh, PIPELINE_SPAWN_DRY_RUN dump hook, pass_msg/fail_msg/inc counters,
@@ -111,7 +114,10 @@ fi
 
 # -------------------------------------------------------------------------
 # Test 2: Codex autonomy flags appended (--sandbox danger-full-access,
-#         --ask-for-approval never)
+#         --dangerously-bypass-approvals-and-sandbox)
+# Verified against codex-cli 0.139.0 (`npx -y @openai/codex exec --help`):
+#   --ask-for-approval is NOT a valid `codex exec` flag (interactive-mode only).
+#   --dangerously-bypass-approvals-and-sandbox is the correct bypass for exec.
 # -------------------------------------------------------------------------
 echo "Test 2: Codex autonomy flags present in argv"
 inc
@@ -124,12 +130,19 @@ else
 fi
 
 inc
-if echo "$BUILD_BLOCK" | grep -qF "CODEX_ARGV+=(--ask-for-approval)" \
-   && echo "$BUILD_BLOCK" | grep -qF "CODEX_ARGV+=(never)"; then
-  pass_msg "--ask-for-approval never appended to CODEX_ARGV"
+if echo "$BUILD_BLOCK" | grep -qF "CODEX_ARGV+=(--dangerously-bypass-approvals-and-sandbox)"; then
+  pass_msg "--dangerously-bypass-approvals-and-sandbox appended to CODEX_ARGV"
 else
-  fail_msg "--ask-for-approval never not appended to CODEX_ARGV"
+  fail_msg "--dangerously-bypass-approvals-and-sandbox not appended to CODEX_ARGV"
   echo "$BUILD_BLOCK" | sed 's/^/    /'
+fi
+
+inc
+if echo "$BUILD_BLOCK" | grep -qF "CODEX_ARGV+=(--ask-for-approval)"; then
+  fail_msg "--ask-for-approval present in CODEX_ARGV (NOT a valid codex exec flag)"
+  echo "$BUILD_BLOCK" | sed 's/^/    /'
+else
+  pass_msg "--ask-for-approval absent from CODEX_ARGV (not valid for codex exec)"
 fi
 
 # -------------------------------------------------------------------------
@@ -147,7 +160,9 @@ fi
 # -------------------------------------------------------------------------
 # Test 4: positional/env SHAPE mirrors spawn-claude.sh
 #   - PATH_LETTER derived from labels (empty labels -> B)
-#   - GENERATED_SESSION_ID is a valid UUID and bound via --session-id
+#   - GENERATED_SESSION_ID is a valid UUID (emitted to runs.log as join key)
+#   - --session-id is NOT passed to codex (not a valid codex CLI flag;
+#     confirmed via `npx -y @openai/codex exec --help`, codex-cli 0.139.0)
 #   - issue threaded into CLAUDE_PIPELINE_ISSUE_NUMBER
 # -------------------------------------------------------------------------
 echo "Test 4: positional/env SHAPE mirrors spawn-claude (issue/session threaded)"
@@ -162,18 +177,17 @@ fi
 inc
 UUID_VALUE=$(echo "$OUT" | sed -n 's/^GENERATED_SESSION_ID=//p' | head -1)
 if [[ "$UUID_VALUE" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-  pass_msg "GENERATED_SESSION_ID is a valid UUID: $UUID_VALUE"
+  pass_msg "GENERATED_SESSION_ID is a valid UUID (runs.log join key): $UUID_VALUE"
 else
   fail_msg "GENERATED_SESSION_ID not a valid UUID: '$UUID_VALUE'"
 fi
 
 inc
-if [ -n "$UUID_VALUE" ] \
-   && echo "$BUILD_BLOCK" | grep -qF "CODEX_ARGV+=(--session-id '$UUID_VALUE')"; then
-  pass_msg "--session-id bound to the generated UUID (1:1 join key)"
-else
-  fail_msg "--session-id not bound to GENERATED_SESSION_ID '$UUID_VALUE'"
+if echo "$BUILD_BLOCK" | grep -qF "CODEX_ARGV+=(--session-id"; then
+  fail_msg "--session-id present in CODEX_ARGV (NOT a valid codex CLI flag)"
   echo "$BUILD_BLOCK" | sed 's/^/    /'
+else
+  pass_msg "--session-id absent from CODEX_ARGV (not valid for codex exec)"
 fi
 
 inc
