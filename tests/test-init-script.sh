@@ -366,8 +366,9 @@ grep -qE '^PIPELINE_REPO="pre/existing"' "$FX/pipeline.config" \
 
 # ---------------------------------------------------------------------------
 # Case 9: full run appends pipeline.config to .gitignore (idempotent), seeds
-#         the 16 canonical labels via doctor.sh --fix labels, and tails the
-#         read-only doctor audit (=== Summary ===).
+#         the 17 canonical labels via doctor.sh --fix labels, and tails the
+#         read-only doctor audit (=== Summary ===). 17 since #997 added
+#         needs-debug to doctor.sh LABEL_TABLE (which init delegates to).
 # ---------------------------------------------------------------------------
 echo "Case 9: gitignore + label seed + doctor tail"
 FX="$TMP/fx-full"; rm -rf "$FX"; mkdir -p "$FX"
@@ -390,9 +391,9 @@ out="$(cat "$FX/out")"
 grep -Fxq "pipeline.config" "$FX/.gitignore" 2>/dev/null \
   && pass_msg "full: pipeline.config appended to .gitignore" \
   || { fail_msg "full: .gitignore missing pipeline.config"; cat "$FX/.gitignore" 2>/dev/null | sed 's/^/    /'; }
-# label seeding fired 16 create calls.
+# label seeding fired 17 create calls.
 count=$(grep -c '|' "$FX/shim.log" 2>/dev/null || echo 0)
-[ "$count" = "16" ] && pass_msg "full: 16 gh label create calls" || { fail_msg "full: got $count label create calls (want 16)"; echo "$out" | tail -25 | sed 's/^/    /'; }
+[ "$count" = "17" ] && pass_msg "full: 17 gh label create calls" || { fail_msg "full: got $count label create calls (want 17)"; echo "$out" | tail -25 | sed 's/^/    /'; }
 # doctor tail surfaced.
 grep -q '=== Summary ===' <<<"$out" \
   && pass_msg "full: doctor tail surfaced (=== Summary ===)" \

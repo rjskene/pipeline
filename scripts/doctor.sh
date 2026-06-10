@@ -44,6 +44,7 @@ LABEL_TABLE=(
   "multi-task|multi-task|5319e7|Issue too large for one PR; requires decomposition into sub-issues"
   "quick-fix|quick-fix|0E8A16|Quick-fix path — inline TDD, single failing test"
   "needs-browser|needs-browser|1F77B4|Gates Playwright MCP attachment and visual-proof-from-plan sub-skill"
+  "needs-debug|needs-debug|D93F0B|Gates root-cause diagnosis via systematic-debugging before planning"
   "manual-merge|manual-merge|F9D0C4|Suppress auto-merge for this issue; merge by hand"
   "EXCLUDED|excluded|E4E669|Excluded from pipeline"
   "LATER|later|D4C5F9|Deferred"

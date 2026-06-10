@@ -201,6 +201,7 @@ ROWS_JSON=$(jq -c \
       priority_badge: priority_badge,
       stage: stage,
       is_tracker: has_label("tracker"),
+      needs_debug: has_label("needs-debug"),
       target_base: target_base,
       path_letter: path_letter,
       blocked_by: blocked_by,
@@ -417,6 +418,7 @@ HAS_NONDEFAULT=$(printf '%s' "$NOTES_ROWS_JSON" | jq --arg base "$PIPELINE_BASE_
     (.target_base != $base)
     or (.path_letter != "B")
     or (.blocked_by != "")
+    or (.needs_debug)
     or (.att > 0)
   )
 ')
@@ -426,9 +428,9 @@ if [ "$HAS_NONDEFAULT" = "true" ]; then
   echo "NOTES (non-default)"
   echo "================================================================"
   if [ "$HAS_ATT" = "true" ]; then
-    echo " Issue  | Target Base | Path | Blocked by | att"
+    echo " Issue  | Target Base | Path | Blocked by | Dbg | att"
   else
-    echo " Issue  | Target Base | Path | Blocked by"
+    echo " Issue  | Target Base | Path | Blocked by | Dbg"
   fi
   echo "----------------------------------------------------------------"
   # Sort by issue number for stable output.
@@ -436,18 +438,18 @@ if [ "$HAS_NONDEFAULT" = "true" ]; then
     printf '%s' "$NOTES_ROWS_JSON" | jq -r --arg base "$PIPELINE_BASE_BRANCH" '
       [.[] | select(
         (.target_base != $base) or (.path_letter != "B")
-        or (.blocked_by != "") or (.att > 0)
+        or (.blocked_by != "") or (.needs_debug) or (.att > 0)
       )]
       | sort_by(.number)
-      | .[] | " #\(.number) | \(.target_base) | \(.path_letter) | \(if .blocked_by == "" then "--" else .blocked_by end) | \(.att)"
+      | .[] | " #\(.number) | \(.target_base) | \(.path_letter) | \(if .blocked_by == "" then "--" else .blocked_by end) | \(if .needs_debug then "yes" else "--" end) | \(.att)"
     '
   else
     printf '%s' "$NOTES_ROWS_JSON" | jq -r --arg base "$PIPELINE_BASE_BRANCH" '
       [.[] | select(
-        (.target_base != $base) or (.path_letter != "B") or (.blocked_by != "")
+        (.target_base != $base) or (.path_letter != "B") or (.blocked_by != "") or (.needs_debug)
       )]
       | sort_by(.number)
-      | .[] | " #\(.number) | \(.target_base) | \(.path_letter) | \(if .blocked_by == "" then "--" else .blocked_by end)"
+      | .[] | " #\(.number) | \(.target_base) | \(.path_letter) | \(if .blocked_by == "" then "--" else .blocked_by end) | \(if .needs_debug then "yes" else "--" end)"
     '
   fi
   echo "================================================================"
