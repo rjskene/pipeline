@@ -59,7 +59,10 @@ USAGE
 FIXTURE=""
 NOW=""
 THRESHOLD_FLAG=""
-CREDENTIALS="${HOME}/.claude/.credentials.json"
+# ${HOME:-} (not ${HOME}): under set -u an unset HOME (thin headless/cron env,
+# e.g. the usage-pause resume) must degrade to skip reason=no-credentials —
+# never abort, per the always-exit-0 invariant.
+CREDENTIALS="${HOME:-}/.claude/.credentials.json"
 
 while [ $# -gt 0 ]; do
   case "$1" in

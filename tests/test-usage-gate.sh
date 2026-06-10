@@ -206,6 +206,15 @@ run_gate --fixture "$FIXTURE_DIR/under-threshold.json" --now "$NOW" --credential
 assert_gate_line "tokenless-creds"
 assert_field "tokenless-creds" "decision=skip reason=no-credentials"
 
+# 9c: HOME unset (headless cron resume) must not abort under set -u — the
+# default-creds path degrades to skip reason=no-credentials, exit 0.
+OUT="$(env -u HOME bash "$HELPER" --fixture "$FIXTURE_DIR/under-threshold.json" --now "$NOW" 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "home-unset"
+assert_field "home-unset" "decision=skip reason=no-credentials"
+
 # --- Scenario 10: malformed body -> skip reason=parse-error ---
 inc_scenario "Scenario 10: malformed fixture -> skip reason=parse-error"
 
