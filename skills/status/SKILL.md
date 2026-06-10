@@ -117,6 +117,8 @@ Rendering is delegated to `scripts/render-status-table.sh`; the renderer is the 
 
 Path column shows `?` for ready issues not yet classified — classification runs on demand in `/pipeline:fullsend` when a slate is committed, not here.
 
+The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a per-issue durable signal alongside Target Base / Path / Blocked by (cell value `yes` when the issue carries the `needs-debug` label, else `--`).
+
 ## Steps
 
 0. **Housekeeping** — concerns covered before any discovery: orchestrator branch check, base-branch hook wiring advisory, `next-major-release` warning, worktree sync, release-PR discovery, stale tmux cleanup, auto-close trackers, reap stale visual-proof servers, and auto-cleanup of merged worktrees (unless `--keep-trees`). Full detail in [references/housekeeping.md](references/housekeeping.md). **Auto-cleanup placement:** detect cleanup candidates inline here (reuse the per-worktree merged-PR loop — `gh pr list --head <wt> --state merged` — so detection does not depend on Step 1 ordering), then run cleanup as Step 0's NON-BLOCKING tail pass. When `--keep-trees` is in argv, SKIP the auto-cleanup (candidates are still detected and surfaced downstream in the status table, just not acted on). The branch check must use `git pull --quiet origin "${EXPECTED_BASE}"` (quiet flag is required so the orchestrator does not pull the fast-forward file list into context). Discover release PRs with `list-release-prs.sh` (which lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL`, default `autorelease: pending`), auto-close finished trackers, sync worktrees, and reap stale visual-proof servers — all wrapped with `PIPELINE_REPO=` per Issue #288:

@@ -125,6 +125,12 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
    **6d. Visual proof loop (needs-browser issues only):** If the issue carries the needs-browser label, after each plan section invoke `Skill(skill: "pipeline:visual-proof-from-plan")` passing the plan comment body. Iterate code→proof→code per section until the sub-skill reports `unsatisfied = []`. Commit the section. Proceed to the next section. This is the executor-side TDD loop with browser predicates standing in for unit tests; it does NOT replace 6a/6b which still run.
 
+   **6e. Config-drift check.** Run the config-drift lint to catch any new `PIPELINE_*` variable introduced in this branch that is not yet documented in `pipeline.config.example` (and vice-versa):
+   ```bash
+   bash scripts/check-config-drift.sh
+   ```
+   Assert exit 0. If it exits 1 with an `UNDOCUMENTED` finding, add the new variable to `pipeline.config.example` (with a comment describing its purpose) **or** add it to `tests/config-drift-allowlist.txt` with a justification comment if it is intentionally undocumented. If it exits 1 with an `ORPHAN` finding, remove the dead knob from `pipeline.config.example` or add it to the allowlist. Fix the finding and re-run until exit 0. This catches config drift in-leaf so CI is not the first to surface it.
+
 7. **Self-review checkpoint before opening PR.** Re-read the plan from step 1 and verify every item was implemented; run `git diff --stat` to check no unintended files were modified; grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`); verify no scope creep. Fix any issues found before proceeding.
 
 8. **Pre-PR code review loop.**

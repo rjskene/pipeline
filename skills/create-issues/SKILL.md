@@ -234,6 +234,35 @@ Single combined change to `scripts/foo.sh` and its one test.
 <!-- pipeline:path-hint=B -->
 ```
 
+### needs-debug advisory (filing-time)
+
+When the drafted body reads as an **undiagnosed non-trivial defect**, prompt the operator to add the `needs-debug` label (introduced by #997 — the label, the `--debug-first` flag, and the autonomous diagnosis-before-plan step). Agent-applied prose heuristic, the **same pattern as the PATH D body-marker filing-time backstop** above — **no new script**: the drafting agent evaluates the conjunction qualitatively after brainstorming the body, since whether a cause is stated is a qualitative read the agent is already positioned to make.
+
+Run this assessment at the same point in the flow as the PATH D backstop — **after scope-check (step 3), when the body is drafted**.
+
+**Fire only when ALL of these hold** (a four-way conjunction — this is what keeps it sparse):
+
+- **Defect.** `type` is `fix(`, or the labels include `bug` or `regression`. **Never `feat` or `docs`** — there is no misbehavior to diagnose.
+- **Symptom present.** The body describes an observed wrong behavior — an error, a crash, or wrong output.
+- **Cause absent.** The body does **not** already state a root cause or prescribe a fix.
+- **At least one amplifier** — the thing that makes diagnosis genuinely hard:
+  - *non-determinism*: intermittent, flaky, sometimes, race, only on a particular environment
+  - *mystery*: not sure why, unclear, cannot figure out
+  - *resistance*: a prior fix failed, regressed after a fix, or the issue was reopened
+  - *diffuse*: cannot be localized, no affected file named, spans multiple subsystems
+
+**Never fire when a suppressor is present** (the cause is known or the fix is trivial):
+
+- a **diagnosis** is already stated — `root cause`, `because`, or the bug is pinned to a named file and line
+- a **fix** is already prescribed — `change X to Y`, or `the solution is`
+- **quick-fix vocabulary**, reusing the `classify-issue` PATH D lexicon: `typo`, `one-line`, `flip`, `swap`, `rename`, `single condition`, `obvious`, `trivial`, `~N lines of code`
+
+Because it is a four-way conjunction gated by suppressors, the typical bug issue does **not** trip it — it either names a cause, is an obvious one-liner, or lacks an amplifier. Only an undiagnosed non-trivial defect fires it.
+
+**On fire, prompt — advisory, default no, never auto-apply.** Example wording: `This reads as an undiagnosed intermittent defect — add needs-debug so the pipeline root-causes it before planning? (y/N)`. On operator confirm, apply the label at create time via the `gh issue create --label needs-debug` flag (alongside any other `--label`). The operator confirm is the final gate, consistent with the sparse intent — never apply `needs-debug` without it.
+
+> **Out of scope (separate follow-up):** the `classify-issue` parallel for externally-filed bugs that skip create-issues. `classify-issue` runs autonomously with no operator present, so it would have to auto-apply or comment rather than prompt — a more aggressive design that fights the sparse intent.
+
 ### Session summary
 
 When the user ends the session ("done", "that's all", etc.), print:
