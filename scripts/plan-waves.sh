@@ -114,6 +114,16 @@ for N in "${ISSUES[@]}"; do
   # wave discipline. Do NOT add a "skip D in conflict detection" branch here:
   # tests/test-plan-waves-unified-graph.sh locks this contract.
   if [ "$STAGE" = "execute" ]; then
+    # Path predicate (#811 + #1006): hoisted above both branches so the same
+    # predicate guards plan-comment extraction AND body-fallback extraction.
+    # A token counts as a file path only when it is a single whitespace-free
+    # path-shaped token: either a `dir/file` shape (slash + non-empty non-slash
+    # filename segment) OR an anchored known extension. This rejects bare
+    # reason-symbols like `data.map`, `next_due`, `sort` that lack a slash and
+    # have no known file extension — while catching bare paths like
+    # `assets/dashboard/pages/legal.page.js` whether or not they are backticked.
+    FILE_PATH_RE='^[^[:space:]]*/[^/[:space:]]+$|^[^[:space:]]+\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
+
     # Prefer plan-comment "**Files to change:**" bullets (exact paths from the
     # approved plan) over body-derived backticks (greedy + noisy). Fall back to
     # body detection when no plan comment exists.
@@ -122,16 +132,20 @@ for N in "${ISSUES[@]}"; do
       PLAN_BODY=$(echo "$PLAN_JSON" \
         | jq -r '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body // ""')
       if [ -n "$PLAN_BODY" ] && [ "$PLAN_BODY" != "null" ]; then
-        # `grep -oE` exits 1 when the bullets carry no backtick-wrapped paths;
-        # under `set -euo pipefail` that aborts the whole script (#730). Guard
-        # the known-empty grep so a no-match yields an empty PLAN_FILES instead.
+        # Extract bullets from the **Files to change:** block, then split each
+        # bullet on whitespace, strip backticks, and keep only FILE_PATH_RE-
+        # matching tokens (#1006). This catches bare paths (not backtick-wrapped)
+        # and rejects backticked reason symbols (no slash, no known extension).
+        # Guard the pipeline so an all-empty result yields "" not a pipefail
+        # abort (#730).
         PLAN_FILES=$( { echo "$PLAN_BODY" \
           | awk 'BEGIN{in_block=0}
                  /^\*\*Files to change:\*\*/ {in_block=1; next}
                  in_block && /^\*\*/ {in_block=0}
                  in_block && /^-/ {print}' \
-          | grep -oE '`[^`]+`' \
+          | sed 's/[[:space:]]\+/\n/g' \
           | tr -d '`' \
+          | grep -E "$FILE_PATH_RE" \
           | sort -u \
           | tr '\n' ' '; } || true)
         PLAN_FILES="${PLAN_FILES% }"
@@ -140,18 +154,6 @@ for N in "${ISSUES[@]}"; do
     if [ -n "$PLAN_FILES" ]; then
       FILES[$N]="$PLAN_FILES"
     else
-      # Path predicate (#811): a token only counts as a file path when it is a
-      # single whitespace-free path-shaped token — either a `dir/file` shape
-      # (a slash followed by a non-empty, non-slash filename segment) OR an
-      # anchored known extension. The earlier predicate accepted ANY span
-      # containing a slash, so backtick-wrapped PROSE with a slash (e.g. a
-      # "git mv <dir>" phrase, or a dot-claude skills-directory fragment quoted
-      # inside a sentence) leaked in: the span was whitespace-split and
-      # trailing-slash directory fragments re-passed the filter, fabricating
-      # false-positive paths. The `[^/[:space:]]+$` tail rejects trailing-slash
-      # dir fragments; anchoring with `^[^[:space:]]*` rejects multi-word prose
-      # phrases.
-      FILE_PATH_RE='^[^[:space:]]*/[^/[:space:]]+$|^[^[:space:]]+\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
       FROM_BACKTICKS=$( { echo "$BODY" \
         | grep -oE '`[^`]+`' \
         | tr -d '`' \
