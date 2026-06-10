@@ -18,6 +18,12 @@ _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Capture the raw invocation argv so per-invocation flags (e.g. `--debug-first`,
+# consumed in Step 3a) survive into the Bash subshell. The harness does NOT export
+# slash-command args to Bash, so YOU (the model) MUST substitute the literal flags you
+# were invoked with here — exactly the convention `/pipeline:status` uses for
+# `--analyze`/`--keep-trees` (prose-interpreted argv). Default to empty when none.
+ARGV="<the raw flags this skill was invoked with, e.g. --debug-first; empty if none>"
 ```
 
 ## Lifecycle
@@ -38,7 +44,7 @@ Receive an issue number as argument (or from context).
 
 ## Flags
 
-- `--debug-first` — one-off, per-invocation only (mirrors `--analyze` / `--keep-trees` elsewhere): forces the Step 4a root-cause diagnosis gate to run even when the `needs-debug` label is absent. There is NO persistent `pipeline.config` default — the gate otherwise fires only for `needs-debug`-labelled issues. Captured into `$ARGV` (the raw argument string) at boot and consumed in Step 3a (`DEBUG_FIRST`).
+- `--debug-first` — one-off, per-invocation only (mirrors `/pipeline:status`'s `--analyze` / `--keep-trees`): forces the Step 4a root-cause diagnosis gate to run even when the `needs-debug` label is absent. There is NO persistent `pipeline.config` default — the gate otherwise fires only for `needs-debug`-labelled issues. The harness does not export slash-command args to Bash, so the model substitutes the literal invocation flags into `$ARGV` at Boot (the prose-argv convention `--analyze`/`--keep-trees` use); Step 3a then sets `DEBUG_FIRST` from `$ARGV`.
 
 ## Steps
 
@@ -81,9 +87,11 @@ Receive an issue number as argument (or from context).
    # needs-debug resolution (mirrors the needs-browser precedent in Step 3c): the
    # root-cause diagnosis gate (Step 4a) fires when the one-off `--debug-first` flag is
    # passed OR the issue carries the `needs-debug` label. Per-invocation only — no
-   # persistent pipeline.config default.
+   # persistent pipeline.config default. `$ARGV` is the raw invocation argv captured at
+   # Boot (the model substitutes the literal flags — same prose-argv convention as
+   # `/pipeline:status` `--analyze`/`--keep-trees`); `${ARGV:-}` guards the unset case.
    DEBUG_FIRST=false
-   case " $ARGV " in *" --debug-first "*) DEBUG_FIRST=true ;; esac
+   case " ${ARGV:-} " in *" --debug-first "*) DEBUG_FIRST=true ;; esac
    if echo "$LABELS" | grep -qx "needs-debug"; then DEBUG_FIRST=true; fi
    if echo "$LABELS" | grep -qx "docs-only"; then
      PATH_LETTER=A
