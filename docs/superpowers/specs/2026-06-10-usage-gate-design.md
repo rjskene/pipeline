@@ -151,7 +151,7 @@ Fixture-driven via `--fixture` + `--now` + `--threshold`:
 10. Exit code 0 in every case above.
 
 CI has no creds → any live-path execution naturally exercises `skip`.
-New `PIPELINE_USAGE_GATE_*` vars are documented in `pipeline.config.example`,
+New `PIPELINE_USAGE_GATE_ENABLED` / `PIPELINE_USAGE_GATE_THRESHOLD_PCT` vars are documented in `pipeline.config.example`,
 satisfying `check-config-drift.sh` (no allowlist entry needed).
 
 ## Issue hygiene
