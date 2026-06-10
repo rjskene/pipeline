@@ -179,6 +179,55 @@ assert_gate_line "env-threshold"
 assert_field "env-threshold" "decision=halt-7d"
 assert_field "env-threshold" "threshold=15"
 
+# --- Scenario 8: kill switch -> skip reason=disabled ---
+inc_scenario "Scenario 8: PIPELINE_USAGE_GATE_ENABLED=false -> skip reason=disabled"
+
+OUT="$(PIPELINE_USAGE_GATE_ENABLED=false bash "$HELPER" --fixture "$FIXTURE_DIR/under-threshold.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "disabled"
+assert_field "disabled" "decision=skip reason=disabled"
+assert_field "disabled" "five_hour=--"
+assert_field "disabled" "seven_day=--"
+assert_field "disabled" "resume_at=--"
+
+# --- Scenario 9: missing creds -> skip reason=no-credentials ---
+inc_scenario "Scenario 9: missing/tokenless creds -> skip reason=no-credentials"
+
+# 9a: creds file absent.
+run_gate --fixture "$FIXTURE_DIR/under-threshold.json" --now "$NOW" --credentials "/nonexistent/creds.json"
+assert_gate_line "no-creds-file"
+assert_field "no-creds-file" "decision=skip reason=no-credentials"
+
+# 9b: creds file present but no .claudeAiOauth.accessToken.
+printf '{"someOtherKey":{"foo":"bar"}}\n' > "$TMP/tokenless-creds.json"
+run_gate --fixture "$FIXTURE_DIR/under-threshold.json" --now "$NOW" --credentials "$TMP/tokenless-creds.json"
+assert_gate_line "tokenless-creds"
+assert_field "tokenless-creds" "decision=skip reason=no-credentials"
+
+# --- Scenario 10: malformed body -> skip reason=parse-error ---
+inc_scenario "Scenario 10: malformed fixture -> skip reason=parse-error"
+
+run_gate --fixture "$FIXTURE_DIR/malformed.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "malformed"
+assert_field "malformed" "decision=skip reason=parse-error"
+assert_field "malformed" "resume_at=--"
+
+# --- Scenario 11: token-leak canary (all modes above) ---
+inc_scenario "Scenario 11: token-leak canary across all exercised modes"
+
+if [ -s "$CANARY_TRANSCRIPT" ]; then
+  pass_msg "canary transcript captured stdout+stderr across all modes"
+else
+  fail_msg "canary transcript is empty — canary grep would be vacuous"
+fi
+if grep -qF "$CANARY_TOKEN" "$CANARY_TRANSCRIPT"; then
+  fail_msg "BEARER TOKEN LEAKED into stdout/stderr (canary found in transcript)"
+else
+  pass_msg "bearer token never appears in stdout/stderr (canary absent)"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
