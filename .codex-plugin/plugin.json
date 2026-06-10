@@ -1,6 +1,6 @@
 {
   "name": "pipeline",
-  "version": "0.23.4",
+  "version": "0.23.5",
   "description": "Claude Pipeline — CI workflow for automating code updates through GitHub issues (classify → plan → review → execute → PR review).",
   "author": {
     "name": "rjskene",
