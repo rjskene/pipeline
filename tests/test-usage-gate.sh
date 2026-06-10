@@ -298,6 +298,21 @@ else
   pass_msg "bearer token never appears in stdout/stderr (canary absent)"
 fi
 
+# --- Scenario 13: fullsend SKILL.md integration (prose guard) ---
+inc_scenario "Scenario 13: fullsend SKILL.md wires the gate (prose guard)"
+
+FULLSEND_SKILL="$REPO_ROOT/skills/fullsend/SKILL.md"
+GATE_REFS="$(grep -c 'usage-gate.sh' "$FULLSEND_SKILL" 2>/dev/null)"
+GATE_REFS="${GATE_REFS:-0}"
+if [ "$GATE_REFS" -ge 2 ]; then
+  pass_msg "fullsend SKILL references usage-gate.sh >= 2 times (found $GATE_REFS)"
+else
+  fail_msg "fullsend SKILL needs >= 2 usage-gate.sh references (found $GATE_REFS)"
+fi
+if grep -q 'pause-5h' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles pause-5h"; else fail_msg "fullsend SKILL missing pause-5h handling"; fi
+if grep -q 'halt-7d' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles halt-7d"; else fail_msg "fullsend SKILL missing halt-7d handling"; fi
+if grep -q 'CronCreate' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL schedules resume via CronCreate"; else fail_msg "fullsend SKILL missing CronCreate resume scheduling"; fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
