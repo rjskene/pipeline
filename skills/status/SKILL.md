@@ -113,7 +113,7 @@ Rendering is delegated to `scripts/render-status-table.sh`; the renderer is the 
 
 Path column shows `?` for ready issues not yet classified — classification runs on demand in `/pipeline:fullsend` when a slate is committed, not here.
 
-The NOTES (non-default) footer now surfaces `needs-debug` as a `Dbg` column — a per-issue durable signal alongside Target Base / Path / Blocked by (cell value `yes` when the issue carries the `needs-debug` label, else `--`).
+The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a per-issue durable signal alongside Target Base / Path / Blocked by (cell value `yes` when the issue carries the `needs-debug` label, else `--`).
 
 ## Steps
 
