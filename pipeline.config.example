@@ -147,6 +147,14 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # Token ceiling the read-out measures headroom against. Unset disables the read-out.
 # PIPELINE_USAGE_CAP_TOKENS=
 
+# --- #969 usage gate: pause near plan limit, auto-resume after reset ---
+# Real account usage via the OAuth endpoint behind Claude Code's /usage.
+# Opt-out kill switch; fail-open on any error (skip + warn, never blocks).
+# NOT dogfood-gated (no PIPELINE_LOGS_ENABLED dependency); API-key installs
+# with no ~/.claude/.credentials.json degrade to skip reason=no-credentials.
+#PIPELINE_USAGE_GATE_ENABLED="true"        # set false to disable the gate
+#PIPELINE_USAGE_GATE_THRESHOLD_PCT="85"    # both windows; 5h→pause+resume, 7d→halt
+
 # --- Stall detection (issue #437) ---
 #
 # PIPELINE_STALL_POLL_THRESHOLD controls when the queue runner emits

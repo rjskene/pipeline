@@ -138,6 +138,9 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    # line when the cap is unset. No hold/queue/pacing is performed (#725).
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" \
      bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-surface.sh" || true
+   # Usage gate (#969) — ADVISORY-ONLY relay: report the single decision line.
+   # Status is read-only: it NEVER pauses, schedules, or stops on the gate.
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh" || true
    ```
 
    Output schema, one line per PR: `pr=<num> ci=<pass|fail|pending> title=<title>`. Empty when no release PRs are open. Release PRs are surfaced in the status table as a Release-PR block with Stage column rendering as the display-only literal `release-pending` (NOT a real GitHub label) and never enter the issue lifecycle.

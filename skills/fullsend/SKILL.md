@@ -54,6 +54,32 @@ Wave 5: classify #108 in parallel
 
 Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `false`, fullsend falls back to single-blast parallel dispatch. The same wave-by-wave discipline applies to plan-issue dispatch in Step 1b — the wave plan is reused; the planner is not re-run.
 
+## Usage gate (#969)
+
+**Single source of truth for the usage-aware pause/resume control loop.** `scripts/usage-gate.sh` reads real account usage from the OAuth endpoint behind Claude Code's `/usage` panel and emits ONE deterministic decision line; the script decides, this prose obeys (the `auto-merge-gate.sh` pattern). Call sites below reference this section — no duplicated machinery anywhere. Knobs: `PIPELINE_USAGE_GATE_ENABLED` (default `true`; `false` disables) and `PIPELINE_USAGE_GATE_THRESHOLD_PCT` (default `85`, applies to both windows). Spec: `docs/superpowers/specs/2026-06-10-usage-gate-design.md`.
+
+**Invocation (never gate-fatal):**
+
+```bash
+GATE_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh" || true)
+```
+
+Always relay `$GATE_LINE` in the run log, then branch on its `decision=` token:
+
+- **`decision=proceed` / `decision=skip`** → continue. `skip` ≡ proceed plus an auditable `reason=` (`disabled`, `no-credentials`, `http-<code>`, `fetch-error`, `parse-error`) — the gate is fail-open and NEVER blocks a run on its own failure.
+- **`decision=pause-5h`** → the five-hour window is at/over threshold; the line's `resume_at=` is `five_hour.resets_at + 5 min`:
+  1. Report the remaining slate in ONE line — the issue numbers not yet at `pr-open`/merged.
+  2. Schedule the resume: compute `delta = resume_at − now`. If `delta ≤ ~55 min` → `ScheduleWakeup(delaySeconds=delta)`; else → `CronCreate` one-shot at `resume_at` (absolute time — a five-hour reset can be up to ~5 h away). The resume prompt is self-describing and idempotent: `/pipeline:fullsend <remaining issue numbers> <original flags>` plus "resumed after usage pause; delete the usage-resume cron if present" — re-entry re-reads label state, so a blind resume is safe.
+  3. STOP the turn. Labels untouched; in-flight agents have already drained (the gate runs only BETWEEN waves — pause = do not dispatch the next wave).
+- **`decision=halt-7d`** → same stop, NO schedule (a seven-day reset can be days away — never auto-resume). Loud report: the seven-day utilization %, the reset date, and the exact manual resume command (`/pipeline:fullsend <remaining issue numbers> <original flags>`).
+
+**On resume** the pre-flight gate re-checks naturally: still over threshold → re-pause/halt again. A headless resume with an expired access token degrades fail-open (`skip reason=http-401`), the run proceeds, and the next wave boundary re-checks once the session has refreshed creds.
+
+**Call sites** (each points here; one-line references only):
+1. **Pre-flight** — before wave 1 of ANY stage (classify, plan, and execute waves all burn budget).
+2. **Top of EVERY wave iteration** — the Step 1b classify/plan waves AND the `### Execute the slate WAVE BY WAVE` loop (before Step 5).
+3. **Campaign leg boundary** — `## Campaign mode` (e)3, BESIDE the `usage-surface.sh` advisory (which stays read-only per #725; different substrate, untouched).
+
 ## Campaign mode
 
 **This section is the single source of truth for the campaign machinery.** `/pipeline:campaign` is an **equivalent standalone entry point** into the SAME loop documented here — it owns no leg-loop prose of its own and defers to this section verbatim (see `skills/campaign/SKILL.md`). `--campaign` on `/pipeline:fullsend` remains supported on an ongoing basis and is **NOT deprecated**; the two entries are interchangeable and execute identical machinery, so they can never drift.
@@ -87,6 +113,7 @@ The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PI
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" \
      bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-surface.sh" || true
    ```
+   Then run the **usage gate** at this leg boundary and obey its decision line per `## Usage gate (#969)` — unlike the read-out above (advisory, #725), the gate DOES pause (`pause-5h`) or halt (`halt-7d`) the campaign between legs.
 4. **Collect this leg's bug signals** (NO `gh issue create` per leg). Append every signal from this leg — eval-pr `block-*` flags, Step-6b CI-fix repairs, execute `FAILED`/off-plan reports, and any skipped/halted-closure issues — to the running campaign signal log as one `SIGNAL issue=#<N> kind=<...> title="<conventional-commit title>" detail="<short>"` record per signal. **Preserve the per-leg race guard:** before recording, dedup against (1) currently-open issues and (2) the running campaign-filed set, so a leg never re-records a signal a prior leg already filed (the cross-leg race guard). Actual filing is deferred to **End-of-campaign bug filing** below, after the last leg.
 5. Proceed to the next leg.
 
@@ -188,6 +215,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    The helper is idempotent — repeat invocations cost zero `gh api` calls. The `head -1` cap keeps wave-log output to one line per issue. This is the autonomous-mode ingestion site; `/pipeline:status` step 0 does NOT fetch attachments. Interactive single-issue planning fetches at `/pipeline:plan-issue` step 3b instead.
 
    **1b. Dispatch classify and plan.** Process wave by wave per the `## Wave plan (pre-think)` section above — before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh `## Classification` comment (the comment's `createdAt >= issue.updatedAt`) (dispatch in parallel, one Agent per issue). Each classify run writes the Classification comment AND applies the path label (`docs-only` or `multi-task`). Cached issues skip dispatch. Then run `/pipeline:plan-issue N` for every issue with no pipeline label (in parallel, one Agent per issue). Wait for all to complete. **PATH D exclusion.** PATH D (`quick-fix`) issues are EXCLUDED from this per-stage classify/plan dispatch — their classify+plan stages run INSIDE the single collapsed foreground inline `Agent` dispatched at execute (Step 6), emitting `## Classification`+`quick-fix` and `## Implementation Plan`+`plan-pending` as inline side-effect checkpoints. Only A/B/C issues go through this Step 1b per-stage classify/plan dispatch. (The `## Wave plan (pre-think)` ordering still includes D — only the per-stage classify/plan *dispatch* is what D skips.)
+   - **Usage gate at every wave top (#969):** before dispatching wave 1 (the pre-flight) and again at the top of EVERY classify/plan wave iteration, run the gate and obey its decision line per `## Usage gate (#969)`.
    - **Dispatch prompt contract (mandatory):** each `/pipeline:plan-issue N` Agent prompt MUST end with a directive stating the dispatched subagent's *only* valid terminal states are: (a) `bash "${CLAUDE_PLUGIN_ROOT}/scripts/post-plan.sh" N <draft-file>` exited 0 and it reports the success line, or (b) `post-plan.sh` exited non-zero and it reports the FAILED line. Returning the plan body in chat is a failure — the plan does not exist until `post-plan.sh` has posted the `## Implementation Plan` comment and applied the `plan-pending` label. A `general-purpose` subagent may never load `skills/plan-issue/SKILL.md` (it can treat `/pipeline:plan-issue N` as content rather than a skill load), so this dispatch-site directive — not the skill body — is the binding contract.
    - **`--debug-first` propagation (#997):** when fullsend was invoked with `--debug-first`, each dispatched plan-issue Agent's prompt MUST carry the flag (e.g. `/pipeline:plan-issue N --debug-first`) so the subagent runs plan-issue's Step 4a diagnosis gate. The flag is a one-off invocation toggle and does NOT live on the issue, so it has to be threaded through the dispatch explicitly. The durable `needs-debug` LABEL, by contrast, flows through for free — the dispatched plan-issue resolves it from the issue's OWN labels, so an issue already tagged `needs-debug` hits the gate with or without the flag. Propagation is therefore needed only for the one-off `--debug-first` flag, never for the label.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
@@ -222,7 +250,7 @@ PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh 
 
 Parse the emitted `EDGE #<N> blockers=<csv> files=<csv>` lines into a per-issue map. **Why a separate machine-readable pass is required:** the human-readable `Wave N:` lines print per-issue `reason` strings ONLY for single-issue waves — a blocked issue grouped into a MULTI-issue wave has its dependency edge **suppressed in stdout**. The scoped-halt dependency closure (below) MUST therefore be computed from this `--emit-edges` edge map, **NOT** from the human-readable `Wave N:` lines, because `--emit-edges` emits every issue's blockers+files regardless of wave grouping.
 
-For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against ONLY that wave's issue numbers, then perform the **inter-wave pull** before starting wave N+1.
+For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against ONLY that wave's issue numbers, then perform the **inter-wave pull** before starting wave N+1. **At the top of each execute wave (before Step 5), run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh"` and obey its decision line per `## Usage gate (#969)`** — pause/halt happens between waves, never mid-wave.
 
 5. **Set up worktrees** — for wave N, run `setup-worktree.sh` for each issue in wave N (sequentially), branched off the **current local base tip**. Full invocation signature:
 
