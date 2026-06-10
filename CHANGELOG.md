@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.23.5](https://github.com/rjskene/pipeline/compare/v0.23.4...v0.23.5) (2026-06-10)
+
+
+### Features
+
+* **create-issues:** filing-time advisory suggesting needs-debug for undiagnosed defects ([#998](https://github.com/rjskene/pipeline/issues/998)) ([85d92fd](https://github.com/rjskene/pipeline/commit/85d92fd64ccc441f3ac9aa492e10e725bceaa05d))
+* **create-issues:** filing-time needs-debug advisory for undiagnosed defects ([#998](https://github.com/rjskene/pipeline/issues/998)) ([20fa348](https://github.com/rjskene/pipeline/commit/20fa3485254bcca804d7e15220b6083c45bfc80f))
+* **fullsend:** propagate --debug-first to dispatched plan-issue stage ([#997](https://github.com/rjskene/pipeline/issues/997)) ([b6bf761](https://github.com/rjskene/pipeline/commit/b6bf761006599f4c9c038b58285f79f1ebe4bcdc))
+* **plan-issue:** add needs-debug/--debug-first root-cause diagnosis gate ([#997](https://github.com/rjskene/pipeline/issues/997)) ([4b1d4dc](https://github.com/rjskene/pipeline/commit/4b1d4dcb62295a39d4941cf27512e2f3112d7a1b))
+* **plan-issue:** needs-debug label + --debug-first root-cause diagnosis before planning ([#997](https://github.com/rjskene/pipeline/issues/997)) ([2746c55](https://github.com/rjskene/pipeline/commit/2746c55fe3fce5331f75c063d58a8723903c580b))
+* **status:** surface needs-debug Dbg column in render-status-table + seed needs-debug label in doctor ([#997](https://github.com/rjskene/pipeline/issues/997)) ([430ab79](https://github.com/rjskene/pipeline/commit/430ab79590ddf8884ac14226ca48e3a895b90021))
+
+
+### Bug Fixes
+
+* **pipeline:** run check-config-drift in execute-issue-plan Step 6 validation ([#996](https://github.com/rjskene/pipeline/issues/996)) ([55c8434](https://github.com/rjskene/pipeline/commit/55c8434b68e14ed9f99f40f24818daa23bc01869))
+* **pipeline:** run check-config-drift in execute-issue-plan Step 6 validation ([#996](https://github.com/rjskene/pipeline/issues/996)) ([adec151](https://github.com/rjskene/pipeline/commit/adec151405d6a820178f497e534abed57393ea6f))
+* **plan-issue:** wire --debug-first argv capture at Boot ([#997](https://github.com/rjskene/pipeline/issues/997)) ([0f47299](https://github.com/rjskene/pipeline/commit/0f47299a23d6bb2f333174e1c25428b5a24d41af))
+* **status:** avoid embedding 'NOTES (non-default)' layout anchor in SKILL.md ([#997](https://github.com/rjskene/pipeline/issues/997)) ([ed6190a](https://github.com/rjskene/pipeline/commit/ed6190a656060875a04d501da2cc5b5b3d6392a7))
+* **test:** scope ci-trust green-CI comment check to pipeline.config.example; live config needs only the line ([#1002](https://github.com/rjskene/pipeline/issues/1002)) ([50c031a](https://github.com/rjskene/pipeline/commit/50c031a05d71ef5f052fe177b8a56236427d678b))
+
 ## [0.23.4](https://github.com/rjskene/pipeline/compare/v0.23.3...v0.23.4) (2026-06-07)
 
 
