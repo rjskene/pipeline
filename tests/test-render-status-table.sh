@@ -304,12 +304,19 @@ else
   fi
 
   inc
-  # att column present (header includes "att")
-  if grep -qE '\|[[:space:]]*att[[:space:]]*$' "$TMP/out" \
-     || grep -qE 'Blocked by[[:space:]]*\|[[:space:]]*att' "$TMP/out"; then
+  # att column present (header trailing column is "att")
+  if grep -qE '\|[[:space:]]*att[[:space:]]*$' "$TMP/out"; then
     pass_msg "att column rendered when at least one row has att>0"
   else
     fail_msg "att column rendered when at least one row has att>0" "$(grep -A1 'NOTES' "$TMP/out")"
+  fi
+
+  inc
+  # Dbg column header present, positioned after "Blocked by", before "att" (#997).
+  if grep -qE 'Blocked by[[:space:]]*\|[[:space:]]*Dbg[[:space:]]*\|[[:space:]]*att' "$TMP/out"; then
+    pass_msg "NOTES header includes Dbg column (after Blocked by, before att)"
+  else
+    fail_msg "NOTES header includes Dbg column (after Blocked by, before att)" "$(grep -A1 'NOTES' "$TMP/out")"
   fi
 
   inc
@@ -321,18 +328,38 @@ else
   fi
 
   inc
-  # #34 NOT in NOTES table (defaults only and att=0)
+  # #34 now carries the needs-debug label, so it APPEARS in NOTES with Dbg=yes
+  # (#997). Its other metadata is all-default (Target Base=staging, Path=B,
+  # Blocked by=--, att=0) — needs-debug is the SOLE reason it surfaces, which
+  # exercises the `.needs_debug` clause of the renderer's non-default predicate.
   notes_anchor=$(grep -n '^NOTES' "$TMP/out" | head -1 | cut -d: -f1)
   if [ -n "$notes_anchor" ]; then
-    # tail from NOTES section and check #34 NOT in it
     notes_section=$(awk -v start="$notes_anchor" 'NR >= start' "$TMP/out")
-    if ! echo "$notes_section" | grep -qE '#34[[:space:]]*\|'; then
-      pass_msg "#34 (all defaults) NOT in NOTES table"
+    # Row shape: #34 | staging | B | -- | yes | 0  (Dbg column = yes)
+    if echo "$notes_section" | grep -qE '#34[[:space:]]*\|[[:space:]]*staging[[:space:]]*\|[[:space:]]*B[[:space:]]*\|[[:space:]]*--[[:space:]]*\|[[:space:]]*yes[[:space:]]*\|'; then
+      pass_msg "#34 (needs-debug, else all-default) APPEARS in NOTES with Dbg=yes"
     else
-      fail_msg "#34 (all defaults) NOT in NOTES table" "$(echo "$notes_section" | grep '#34')"
+      fail_msg "#34 (needs-debug, else all-default) APPEARS in NOTES with Dbg=yes" "$(echo "$notes_section" | grep '#34')"
+    fi
+
+    inc
+    # Non-needs-debug rows (#133, #150) render Dbg = -- in the Dbg column.
+    # #133: #133 | staging | B | #99 | -- | 3
+    if echo "$notes_section" | grep -qE '#133[[:space:]]*\|[[:space:]]*staging[[:space:]]*\|[[:space:]]*B[[:space:]]*\|[[:space:]]*#99[[:space:]]*\|[[:space:]]*--[[:space:]]*\|'; then
+      pass_msg "#133 (not needs-debug) renders Dbg = --"
+    else
+      fail_msg "#133 (not needs-debug) renders Dbg = --" "$(echo "$notes_section" | grep '#133')"
+    fi
+
+    inc
+    # #150: #150 | next | A | -- | -- | 0  — Blocked-by '--' then Dbg '--'.
+    if echo "$notes_section" | grep -qE '#150[[:space:]]*\|[[:space:]]*next[[:space:]]*\|[[:space:]]*A[[:space:]]*\|[[:space:]]*--[[:space:]]*\|[[:space:]]*--[[:space:]]*\|'; then
+      pass_msg "#150 (not needs-debug) renders Dbg = --"
+    else
+      fail_msg "#150 (not needs-debug) renders Dbg = --" "$(echo "$notes_section" | grep '#150')"
     fi
   else
-    fail_msg "#34 (all defaults) NOT in NOTES table" "no NOTES section to scan"
+    fail_msg "#34 (needs-debug) APPEARS in NOTES with Dbg=yes" "no NOTES section to scan"
   fi
 fi
 rm -rf "$PROJ_ROOT"

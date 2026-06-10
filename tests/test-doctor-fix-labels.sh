@@ -63,15 +63,16 @@ run_fix() {
 }
 
 # ---------------------------------------------------------------------------
-# Case A: all 16 canonical labels are seeded with exact color/description.
+# Case A: all 17 canonical labels are seeded with exact color/description.
+# (17 since #997 added needs-debug to doctor.sh LABEL_TABLE.)
 # ---------------------------------------------------------------------------
-echo "Case A: seeds all 16 labels"
+echo "Case A: seeds all 17 labels"
 FX=$(mk_fixture fx-a)
 run_fix "$FX"
 rc="$(cat "$FX/rc")"
 [ "$rc" = "0" ] && pass_msg "A: exit 0" || { fail_msg "A: exit $rc"; cat "$FX/out" | sed 's/^/    /'; }
 count=$(wc -l < "$FX/shim.log" | tr -d ' ')
-[ "$count" = "16" ] && pass_msg "A: 16 label create calls" || fail_msg "A: got $count label create calls"
+[ "$count" = "17" ] && pass_msg "A: 17 label create calls" || fail_msg "A: got $count label create calls"
 
 # Canonical (name, color, description) — must match doctor.sh LABEL_TABLE and README.
 expected=(
@@ -89,6 +90,7 @@ expected=(
   "human|F9D0C4|Needs human in the loop"
   "brainstorm|FEF2C0|Non-actionable discussion/exploration"
   "needs-browser|1F77B4|Gates Playwright MCP attachment and visual-proof-from-plan sub-skill"
+  "needs-debug|D93F0B|Gates root-cause diagnosis via systematic-debugging before planning"
   "tracker|0E8A16|Coordination issue rolling up child issues under a Rollout sequence checklist"
   "manual-merge|F9D0C4|Suppress auto-merge for this issue; merge by hand"
 )
