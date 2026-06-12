@@ -351,6 +351,20 @@ RC=$?; ERR="$(cat "$TMP/err.txt")"
 assert_gate_line "logs-false"
 if [ ! -f "$LOGROOT3/.claude/logs/usage-gate.jsonl" ]; then pass_msg "logs-false: no breadcrumb file"; else fail_msg "logs-false: breadcrumb file unexpectedly created"; fi
 
+# --- Scenario 17: logs enabled but unwritable dir -> decision line intact, exit 0 ---
+# (#1016 never-fatal invariant)
+inc_scenario "Scenario 17: logs enabled + unwritable logs dir -> still exits 0, single decision line"
+UNWRITABLE="$TMP/unwritable"; mkdir -p "$UNWRITABLE/.claude/logs"
+# Make .claude/logs itself unwritable so the append fails.
+chmod 000 "$UNWRITABLE/.claude/logs"
+OUT="$(PIPELINE_LOGS_ENABLED=true PIPELINE_PROJECT_ROOT="$UNWRITABLE" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?; ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+chmod 755 "$UNWRITABLE/.claude/logs"  # restore so trap cleanup can rm -rf
+assert_gate_line "unwritable-logs"
+assert_field "unwritable-logs" "decision=pause-5h"
+
 # --- Scenario 13: fullsend SKILL.md integration (prose guard) ---
 inc_scenario "Scenario 13: fullsend SKILL.md wires the gate (prose guard)"
 
