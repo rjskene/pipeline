@@ -390,6 +390,15 @@ if grep -q 'pause-5h' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles p
 if grep -q 'halt-7d' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles halt-7d"; else fail_msg "fullsend SKILL missing halt-7d handling"; fi
 if grep -q 'CronCreate' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL schedules resume via CronCreate"; else fail_msg "fullsend SKILL missing CronCreate resume scheduling"; fi
 
+# --- Scenario 19: fullsend arming prose is recurring re-check, not one-shot (#1016) ---
+# (#1016 R1-R5) Depends on $FULLSEND_SKILL from Scenario 13, so it follows it.
+inc_scenario "Scenario 19: fullsend SKILL arming uses recurring re-check cron contract"
+if grep -q 'usage-resume re-check' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL names the re-check cron marker"; else fail_msg "fullsend SKILL missing 'usage-resume re-check' marker"; fi
+if grep -qi 'recurring' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL describes a recurring cron"; else fail_msg "fullsend SKILL missing 'recurring' arming description"; fi
+if grep -q 'CronDelete' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL deletes the cron on proceed/halt"; else fail_msg "fullsend SKILL missing CronDelete in re-check contract"; fi
+if grep -q 'CronList' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL looks up the cron by marker (CronList)"; else fail_msg "fullsend SKILL missing CronList self-lookup"; fi
+if ! grep -q 'ScheduleWakeup' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL no longer arms via ScheduleWakeup one-shot"; else fail_msg "fullsend SKILL still references the dropped ScheduleWakeup branch"; fi
+
 # --- Scenario 14: status SKILL.md advisory-only relay (prose guard) ---
 inc_scenario "Scenario 14: status SKILL.md relays the gate line ADVISORY-only"
 
