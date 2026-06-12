@@ -307,6 +307,30 @@ else
   pass_msg "bearer token never appears in stdout/stderr (canary absent)"
 fi
 
+# --- Scenario 15: PIPELINE_LOGS_ENABLED=true -> one valid JSONL breadcrumb ---
+# (#1016 R6) Numbering starts at 15: scenarios 13/14 are the SKILL.md prose
+# guards below; the new breadcrumb scenarios slot in here, before them.
+inc_scenario "Scenario 15: logs enabled -> exactly one valid JSONL breadcrumb; decision line unchanged"
+LOGROOT="$TMP/logroot"; mkdir -p "$LOGROOT"
+LOGFILE="$LOGROOT/.claude/logs/usage-gate.jsonl"
+OUT="$(PIPELINE_LOGS_ENABLED=true PIPELINE_PROJECT_ROOT="$LOGROOT" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "breadcrumb-enabled"
+assert_field "breadcrumb-enabled" "decision=pause-5h"
+if [ -f "$LOGFILE" ]; then pass_msg "breadcrumb-enabled: log file created"; else fail_msg "breadcrumb-enabled: log file NOT created"; fi
+LINES="$(wc -l < "$LOGFILE" 2>/dev/null || echo 0)"
+if [ "$LINES" -eq 1 ]; then pass_msg "breadcrumb-enabled: exactly one JSONL line"; else fail_msg "breadcrumb-enabled: expected 1 line, got $LINES"; fi
+if jq -e . "$LOGFILE" >/dev/null 2>&1; then pass_msg "breadcrumb-enabled: line is valid JSON"; else fail_msg "breadcrumb-enabled: line is NOT valid JSON ($(cat "$LOGFILE" 2>/dev/null))"; fi
+if [ "$(jq -r '.decision' "$LOGFILE" 2>/dev/null)" = "pause-5h" ]; then pass_msg "breadcrumb-enabled: .decision=pause-5h"; else fail_msg "breadcrumb-enabled: .decision mismatch"; fi
+if [ "$(jq -r '.five_hour' "$LOGFILE" 2>/dev/null)" = "91%" ]; then pass_msg "breadcrumb-enabled: .five_hour=91%"; else fail_msg "breadcrumb-enabled: .five_hour mismatch"; fi
+if [ "$(jq -r '.resume_at' "$LOGFILE" 2>/dev/null)" = "2026-06-10T21:04:59Z" ]; then pass_msg "breadcrumb-enabled: .resume_at matches gate line"; else fail_msg "breadcrumb-enabled: .resume_at mismatch"; fi
+for f in ts decision reason five_hour seven_day threshold resume_at; do
+  if jq -e "has(\"$f\")" "$LOGFILE" >/dev/null 2>&1; then pass_msg "breadcrumb-enabled: field $f present"; else fail_msg "breadcrumb-enabled: field $f MISSING"; fi
+done
+
 # --- Scenario 13: fullsend SKILL.md integration (prose guard) ---
 inc_scenario "Scenario 13: fullsend SKILL.md wires the gate (prose guard)"
 
