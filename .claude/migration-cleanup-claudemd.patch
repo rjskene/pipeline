@@ -1,0 +1,11 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -33,7 +33,6 @@
+ ## Install paths
+ 
+ - **Greenfield:** `/pipeline:init` bootstraps a fresh (non-subtree) project — five phases: preflight deps → config gen → `.gitignore` → label seed → doctor tail. Inverse of `migrate-from-subtree.sh`. See [docs/getting-started.md](docs/getting-started.md).
+-- **Legacy subtree:** existing `.claude-pipeline/` consumers run `scripts/migrate-from-subtree.sh` once, then install the plugin. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md).
+ - **Dogfood:** local `file://` marketplace against the working tree (below).
+ 
+ ## Dogfood install

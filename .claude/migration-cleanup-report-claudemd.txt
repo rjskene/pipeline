@@ -1,0 +1,6 @@
+CLAUDE.md pipeline-legacy cleanup advisory
+
+Legacy paths
+------------
+CLAUDE.md:36:- **Legacy subtree:** existing `.claude-pipeline/` consumers run `scripts/migrate-from-subtree.sh` once, then install the plugin. See [docs/migration-from-subtree.md](docs/migration-from-subtree.md).
+

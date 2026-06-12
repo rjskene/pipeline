@@ -282,7 +282,7 @@ Autonomous assigner for the `needs-browser` label on **externally-filed** issues
 
 - **Fire when ALL hold:** the body targets browser-rendered UI behavior — affected areas under a frontend asset tree (e.g. a consumer dashboard `assets/`) OR a user-visible interaction claim (`click` / `keyboard` / `focus` / `layout` / `render`); AND acceptance is observable in a browser ("open page, do X, see Y").
 - **Suppressors (never fire):** pure-logic JS verifiable by unit/static assertions; server-side-only changes; docs.
-- **On fire (advisory comment, not label):** append a `## needs-browser advisory` note to the `## Classification` comment (or post a separate comment) recommending the operator add `needs-browser` so visual proof runs. Advisory only — a false positive is a no-op note, never a wrong label.
+- **On fire (advisory comment, not label):** append a `## needs-browser advisory` note to the `## Classification` comment (or post a separate comment) recommending the operator add `needs-browser` so visual proof runs. Advisory in nature — a false positive is a no-op note, never a wrong label.
 
 ## Comment trust
 
