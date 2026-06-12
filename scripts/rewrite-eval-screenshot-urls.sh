@@ -33,6 +33,16 @@ if [ -z "$PR" ] || [ -z "$SHA" ]; then
   exit 0
 fi
 
+# Self-resolve PIPELINE_REPO from pipeline.config when the eval step sourced it
+# but did not export it into this subshell (#1022). Without this the rewrite
+# fail-soft-skips below even though config is resolvable. Idempotent; no-op when
+# PIPELINE_REPO is already set.
+_res_dir="$(dirname "${BASH_SOURCE[0]}")"
+if [ -f "${_res_dir}/_resolve-config.sh" ]; then
+  # shellcheck disable=SC1090,SC1091
+  source "${_res_dir}/_resolve-config.sh"
+fi
+
 if [ -z "${PIPELINE_REPO:-}" ]; then
   echo "WARN: PIPELINE_REPO unset; skipping screenshot URL rewrite" >&2
   exit 0
