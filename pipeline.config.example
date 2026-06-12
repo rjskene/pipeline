@@ -306,7 +306,7 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # scripts/path-b-execute-eligible.sh's single-module / <=2-file gate route Sonnet.
 # Set "all" to WIDEN: every PATH B issue WITHOUT a permanent Opus carve-out (W2 —
 # high-uncertainty vocab concurrency|race|lock|deadlock|security|auth|crypto|
-# migration|data-loss, or needs-browser) routes Sonnet on execute even on a
+# migration|data-loss, or the browser-eval carve-out label #960) routes Sonnet on execute even on a
 # high-blast eligibility verdict. The eligibility script is UNCHANGED; under "all"
 # its verdict is advisory (still relayed in the run log). Kill switch = unset
 # (instant revert to low-blast). pr-eval ALWAYS stays Opus (W3).

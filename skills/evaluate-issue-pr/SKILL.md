@@ -276,7 +276,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        ```
        Parse the `SPLIT_ROLE=` token. `pass` (`REASON=additive-ok`) is **necessary** for greenlight; any `block` token (`no-red-sha`, `locked-test-modified`, `locked-test-deleted`, `suite-red`) leaves the PR for **manual merge** (same shape as the `auto-merge-gate.sh` `block-*` tokens). When `PIPELINE_PATH_B_SPLIT_ROLE` is unset/`false`, skip this gate entirely. This gate adds a precondition ONLY — **pr-eval itself STAYS Opus in all configurations (W3)**, never gated by any new knob.
 
-    3. **On `green`** (and, when split-role is enabled, `SPLIT_ROLE=pass`)**:**
+    3. **On `green`:** (when split-role is enabled, Step 11.2b's `SPLIT_ROLE=pass` is an additional precondition for this branch)
        - **TOCTOU re-check (issue #295).** Immediately before the merge, re-read `baseRefName`. A malicious or buggy actor could retarget the PR between Step 11.2's gate and the merge call.
          ```bash
          BASE_RECHECK=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json baseRefName --jq .baseRefName 2>/dev/null)
