@@ -365,6 +365,16 @@ chmod 755 "$UNWRITABLE/.claude/logs"  # restore so trap cleanup can rm -rf
 assert_gate_line "unwritable-logs"
 assert_field "unwritable-logs" "decision=pause-5h"
 
+# --- Scenario 18: token-leak canary extends to the breadcrumb log file (#1016 R6) ---
+# Depends on the log-root vars from Scenarios 15-17, so it must follow them.
+inc_scenario "Scenario 18: bearer token never lands in usage-gate.jsonl"
+LEAK_FOUND=0
+for d in "$LOGROOT" "$LOGROOT2" "$LOGROOT3" "$UNWRITABLE"; do
+  f="$d/.claude/logs/usage-gate.jsonl"
+  [ -f "$f" ] && grep -qF "$CANARY_TOKEN" "$f" && LEAK_FOUND=1
+done
+if [ "$LEAK_FOUND" -eq 0 ]; then pass_msg "canary absent from all breadcrumb files"; else fail_msg "BEARER TOKEN LEAKED into usage-gate.jsonl"; fi
+
 # --- Scenario 13: fullsend SKILL.md integration (prose guard) ---
 inc_scenario "Scenario 13: fullsend SKILL.md wires the gate (prose guard)"
 
