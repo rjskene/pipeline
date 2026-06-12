@@ -71,7 +71,7 @@ closes.
 | W2 | Permanent Opus carve-outs | Regardless of scope: high-uncertainty vocabulary (`concurrency`/`race`/`lock`/`deadlock`/`security`/`auth`/`crypto`/`migration`/`data-loss` — same list as classify's carve-out) and `needs-browser` (#960 precedent) execute on Opus. These never widen. |
 | W3 | pr-eval tier | **Opus, always, both phases.** The independent backstop is the property that makes execute-downsampling safe (#953's own framing). pr-eval-on-Sonnet remains a separate #953 experiment, out of scope here. |
 | W4 | Metrics + kill bands | Mirror #953: first-pass approval <75%, eval re-runs >0.5/PR, or any tier-traceable post-merge defect → revert the scope var. Measurement substrate: `agent-costs.jsonl` already records model per execute; no new capture needed. |
-| W5 | Phase 2 — split-role TDD | Opus authors the failing suite; Sonnet implements to green. Triggered by: (a) Phase-1 kill condition fires but the cost goal stands, OR (b) operator adoption for structural TDD compliance independent of cost. Mechanics in `## Split-role TDD (Phase 2)`. |
+| W5 | Phase 2 — split-role TDD | **Build now** (operator decision 2026-06-12): structural TDD compliance is valued independent of model mix — split-role ships even same-model. Opus authors the failing suite; the implementer model rides the existing `PIPELINE_PATH_B_MODEL_EXECUTE` (unset → Opus implementer = same-model split-role, compliance property only). Enable knob: `PIPELINE_PATH_B_SPLIT_ROLE` (default `false`). Mechanics in `## Split-role TDD (Phase 2)`. |
 | W6 | Granularity (Phase 2) | **Per-issue batched** — one Opus red commit, then Sonnet greens test-by-test with per-test commits. Interleaved/hybrid documented as fallback if batched suites fail live; no knob until the signal appears. |
 | W7 | Enforcement (Phase 2) | **Eval-time git invariant, script-decides:** `scripts/split-role-gate.sh` asserts the red commit exists and `git diff <red-sha>..HEAD --diff-filter=MD -- <test paths>` is empty (locked tests never modified/deleted; additions allowed). Write-time hook block is defense-in-depth only — Bash-level writes leak (#964/#965 class), the git invariant does not. Hook denials in the tool-use log = measured cheat-attempt rate. |
 | W8 | Plan/plan-eval tiers | Unchanged (Opus). orchDO hints Sonnet-plan + iterate works; that is a separate experiment, not bundled here. |
@@ -90,7 +90,11 @@ closes.
 
 ## Split-role TDD (Phase 2)
 
-Dispatch shape (batched per W6), within the existing PATH B worktree flow:
+Gated by `PIPELINE_PATH_B_SPLIT_ROLE="true"` (default `false`; documented in
+`pipeline.config.example` for drift coverage). Test-author is pinned Opus;
+implementer model resolves from `PIPELINE_PATH_B_MODEL_EXECUTE` exactly as
+today (W2 carve-outs force Opus implementer too). Dispatch shape (batched
+per W6), within the existing PATH B worktree flow:
 
 1. **Opus test-author** agent: reads the approved plan, authors the complete
    failing suite, runs each test and verifies it fails **for the right
