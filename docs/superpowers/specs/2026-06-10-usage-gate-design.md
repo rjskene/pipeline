@@ -17,7 +17,7 @@ auto-resume after the usage window resets.
 | # | Decision | Choice |
 |---|----------|--------|
 | D1 | Usage signal | **Real account usage** via the OAuth usage endpoint (`https://api.anthropic.com/api/oauth/usage`) — the same data Claude Code's `/usage` panel shows. NOT the local `agent-costs.jsonl` estimate, NOT a website scrape. |
-| D2 | Window policy | Gate on BOTH windows at one threshold. `five_hour` trip → pause + **auto-resume** at reset. `seven_day` trip → **halt-and-report only**, never auto-resume (reset can be days away). Both over → halt wins. |
+| D2 | Window policy | Gate on BOTH windows at one threshold. `five_hour` trip → pause + **auto-resume** at reset. `seven_day` trip → **halt-and-report only**, never auto-resume (reset can be days away). Both over → halt wins. Per-#1017, either window can be individually muted via `PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED` / `PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED` (default `true`); a muted window never trips but both utilizations are still reported, and a muted would-have-tripped window surfaces `reason=<window>-muted` (`seven-day-muted` takes precedence in the surfaced reason, mirroring halt precedence). Muting never yields `skip` — fail-open is unchanged. |
 | D3 | Enablement | **On by default (opt-out)** via `PIPELINE_USAGE_GATE_ENABLED=false` kill switch. **Fail-open**: any error (no creds, endpoint change, HTTP failure) = `skip` + warn, never blocks a run. |
 | D4 | Architecture | **Script decides.** `scripts/usage-gate.sh` emits a deterministic decision token; SKILL.md prose obeys the token and performs scheduling. Same pattern as `auto-merge-gate.sh`. Golden-file testable. |
 
@@ -50,7 +50,11 @@ Pure reader + decision. No writes, no scheduling, no label changes.
 **Inputs**
 
 - Env: `PIPELINE_USAGE_GATE_ENABLED` (default `true`),
-  `PIPELINE_USAGE_GATE_THRESHOLD_PCT` (default `85`, applies to both windows).
+  `PIPELINE_USAGE_GATE_THRESHOLD_PCT` (default `85`, applies to both windows),
+  `PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED` / `PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED`
+  (per-#1017, default `true`): set a window to `false` to MUTE it — its branch
+  never trips a halt/pause, but both utilizations are still reported and a muted
+  would-have-tripped window surfaces `reason=<window>-muted` (never `skip`).
 - Flags (testability, mirroring `usage-surface.sh`):
   - `--fixture PATH` — canned endpoint JSON response; no network.
   - `--now ISO8601` — injected clock for deterministic `resume_at` math.

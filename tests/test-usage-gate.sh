@@ -414,6 +414,57 @@ else
   fail_msg "status SKILL missing ADVISORY marker for the gate relay"
 fi
 
+# --- Scenario 20: per-window enable flags (issue #1017) ---
+# Numbering starts at 20: scenarios 15-19 are the #1016 breadcrumb work above,
+# so the new per-window-flag scenarios slot in here, before == RESULTS ==.
+inc_scenario "Scenario 20: per-window enable flags mute halt-7d / pause-5h"
+
+# run_gate_env <VAR=val ...> -- <gate args...> : run helper with extra env, same capture as run_gate.
+run_gate_env() {
+  local env_pairs=() a
+  while [ "$1" != "--" ]; do env_pairs+=("$1"); shift; done
+  shift  # drop the --
+  OUT="$(env "${env_pairs[@]}" bash "$HELPER" "$@" 2>"$TMP/err.txt")"
+  RC=$?
+  ERR="$(cat "$TMP/err.txt")"
+  { printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+}
+
+# 20a: 7d over (93) but seven-day muted, 5h under (12) -> proceed reason=seven-day-muted.
+run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/seven-day-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "7d-muted-5h-under"
+assert_field "7d-muted-5h-under" "decision=proceed"
+assert_field "7d-muted-5h-under" "reason=seven-day-muted"
+assert_field "7d-muted-5h-under" "five_hour=12%"
+assert_field "7d-muted-5h-under" "seven_day=93%"
+
+# 20b: both over (95/99), seven-day muted -> pause-5h reason=seven-day-muted (5h still gates).
+run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/both-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "7d-muted-5h-over"
+assert_field "7d-muted-5h-over" "decision=pause-5h"
+assert_field "7d-muted-5h-over" "reason=seven-day-muted"
+
+# 20c: 5h over (91), five-hour muted, 7d under (40) -> proceed reason=five-hour-muted.
+run_gate_env PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-muted-7d-under"
+assert_field "5h-muted-7d-under" "decision=proceed"
+assert_field "5h-muted-7d-under" "reason=five-hour-muted"
+
+# 20d: both over, five-hour muted -> halt-7d (7d still gates; halt wins). No muted reason needed.
+run_gate_env PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/both-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-muted-7d-over"
+assert_field "5h-muted-7d-over" "decision=halt-7d"
+
+# 20e: both windows muted, both over -> proceed (always). Surfaced reason=seven-day-muted (halt precedence).
+run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/both-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "both-muted"
+assert_field "both-muted" "decision=proceed"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

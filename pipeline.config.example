@@ -131,6 +131,11 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # with no ~/.claude/.credentials.json degrade to skip reason=no-credentials.
 #PIPELINE_USAGE_GATE_ENABLED="true"        # set false to disable the gate
 #PIPELINE_USAGE_GATE_THRESHOLD_PCT="85"    # both windows; 5h→pause+resume, 7d→halt
+# Per-window enable flags (#1017): mute one window without disabling the gate.
+# A muted window never trips its decision but is still reported, and surfaces
+# reason=<window>-muted when it would have tripped (never skip — fail-open).
+#PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED="true"  # set false to mute the 7d window (never halt-7d); 5h still gates
+#PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED="true"  # set false to mute the 5h window (never pause-5h); 7d still gates
 
 # --- Stall detection (issue #437) ---
 #
