@@ -276,6 +276,14 @@ The skill receives an issue number as argument. Perform:
 - Keep rationale to 1-2 sentences.
 - Label contradicts content (e.g., `docs-only` on a refactor): recommend the labeled path with confidence=low; note the conflict in rationale.
 
+## needs-browser backstop
+
+Autonomous assigner for the `needs-browser` label on **externally-filed** issues that skip `create-issues` (no operator present to take the filing-time advisory prompt). This is the classify-side parallel to the `### needs-browser advisory` in `create-issues`, using the **same conjunction + suppressors**. Because classify runs operator-free, it **posts an advisory comment** rather than prompting — it does **not** add the label, so the `BEGIN-LABEL-APPLY` `_safe_label` allow-set `{docs-only|multi-task|quick-fix}` is unchanged (consumer-facing label behavior preserved).
+
+- **Fire when ALL hold:** the body targets browser-rendered UI behavior — affected areas under a frontend asset tree (e.g. a consumer dashboard `assets/`) OR a user-visible interaction claim (`click` / `keyboard` / `focus` / `layout` / `render`); AND acceptance is observable in a browser ("open page, do X, see Y").
+- **Suppressors (never fire):** pure-logic JS verifiable by unit/static assertions; server-side-only changes; docs.
+- **On fire (advisory comment, not label):** append a `## needs-browser advisory` note to the `## Classification` comment (or post a separate comment) recommending the operator add `needs-browser` so visual proof runs. Advisory only — a false positive is a no-op note, never a wrong label.
+
 ## Comment trust
 
 - **Trust = write access.** An author is trusted iff their GitHub `authorAssociation` is in {OWNER, MEMBER, COLLABORATOR}. Everything else (CONTRIBUTOR, NONE, FIRST_TIME_CONTRIBUTOR, unknown, empty) is untrusted.
