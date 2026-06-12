@@ -331,6 +331,26 @@ for f in ts decision reason five_hour seven_day threshold resume_at; do
   if jq -e "has(\"$f\")" "$LOGFILE" >/dev/null 2>&1; then pass_msg "breadcrumb-enabled: field $f present"; else fail_msg "breadcrumb-enabled: field $f MISSING"; fi
 done
 
+# --- Scenario 16: logs disabled/unset -> no breadcrumb file written ---
+# (#1016 R6 gating regression guard)
+inc_scenario "Scenario 16: PIPELINE_LOGS_ENABLED unset/false -> no log file created"
+# 16a: unset (default off)
+LOGROOT2="$TMP/logroot2"; mkdir -p "$LOGROOT2"
+OUT="$(PIPELINE_PROJECT_ROOT="$LOGROOT2" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?; ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "logs-unset"
+if [ ! -f "$LOGROOT2/.claude/logs/usage-gate.jsonl" ]; then pass_msg "logs-unset: no breadcrumb file"; else fail_msg "logs-unset: breadcrumb file unexpectedly created"; fi
+# 16b: explicit false
+LOGROOT3="$TMP/logroot3"; mkdir -p "$LOGROOT3"
+OUT="$(PIPELINE_LOGS_ENABLED=false PIPELINE_PROJECT_ROOT="$LOGROOT3" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?; ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "logs-false"
+if [ ! -f "$LOGROOT3/.claude/logs/usage-gate.jsonl" ]; then pass_msg "logs-false: no breadcrumb file"; else fail_msg "logs-false: breadcrumb file unexpectedly created"; fi
+
 # --- Scenario 13: fullsend SKILL.md integration (prose guard) ---
 inc_scenario "Scenario 13: fullsend SKILL.md wires the gate (prose guard)"
 
