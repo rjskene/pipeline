@@ -117,6 +117,34 @@ run_helper() {
   ) 2>&1
 }
 
+# Regression vector for #1022: run the helper with NO pre-exported PIPELINE_REPO
+# / PIPELINE_BASE_BRANCH (the actual bug — SKILL blocks source-but-don't-export).
+# Instead, drop a `pipeline.config` + `.git` marker into $case_dir and point the
+# co-located _resolve-config.sh at it via PIPELINE_PROJECT_ROOT. If the script
+# self-resolves it must NOT abort at the line-36/37 `:?` guards and must emit a
+# normal `ACTION=` token. The fixture config carries the values the prior
+# run_helper exported inline (fake/repo + staging) so downstream behavior is
+# byte-identical to the exported path.
+run_helper_no_export() {
+  local case_dir="$1"; shift
+  local issue="$1"; shift
+  local stub_dir="$case_dir/stub"
+  cat > "$case_dir/pipeline.config" <<'CFG'
+set -a
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="staging"
+PIPELINE_WORKTREE_PREFIX="wt"
+set +a
+CFG
+  echo "gitdir: /tmp/fake" > "$case_dir/.git"
+  (
+    PATH="$stub_dir:$PATH" \
+      PIPELINE_PROJECT_ROOT="$case_dir" \
+      STUB_WT_BASE="$case_dir" \
+      bash "$SCRIPT_UNDER_TEST" "$issue"
+  ) 2>&1
+}
+
 if [ ! -f "$SCRIPT_UNDER_TEST" ]; then
   echo "FAIL: $SCRIPT_UNDER_TEST not found (helper not yet created)"
   echo ""
@@ -211,6 +239,29 @@ if [ "$rc" -eq 0 ]; then
   pass_msg "c7: helper exited 0 (ACTION token carries the verdict, not the exit code)"
 else
   fail_msg "c7: helper exited $rc (expected 0)"
+fi
+
+# ============== Case 8: self-resolve PIPELINE_* with NO pre-export (#1022) ====
+# The actual bug: the orchestrator sources pipeline.config but does NOT export
+# PIPELINE_BASE_BRANCH, so the first `bash verify-execute-completion.sh` aborts
+# at line 37 under `set -u`. Prove the script now self-resolves from config (via
+# the co-located _resolve-config.sh) and emits a normal ACTION token instead of
+# aborting. Reuse the fully-complete shape (Case 4) so the expected token is
+# `ACTION=complete` — its emission proves the guards did NOT abort.
+echo ""
+echo "Case 8: NO pre-exported PIPELINE_* -> self-resolves from config, emits ACTION (#1022)"
+C8="$ROOT/c8"; mkdir -p "$C8"; make_stubs "$C8" >/dev/null
+OUT=$(STUB_WT_ISSUE=912 STUB_WT_SLUG=foo STUB_REMOTE_HAS=1 \
+      STUB_LINKED_PR_HEAD="feature/foo" \
+      STUB_ISSUE_LABELS="pr-open" \
+      run_helper_no_export "$C8" 912)
+assert_action "c8" "$OUT" "ACTION=complete"
+# Guard: the line-37 abort message must NOT appear (proves no `set -u` abort).
+inc
+if printf '%s' "$OUT" | grep -qF "PIPELINE_BASE_BRANCH must be set"; then
+  fail_msg "c8: script still aborted on unset PIPELINE_BASE_BRANCH (self-resolve regressed): $OUT"
+else
+  pass_msg "c8: no 'PIPELINE_BASE_BRANCH must be set' abort — self-resolved from config"
 fi
 
 echo ""
