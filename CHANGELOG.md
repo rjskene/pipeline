@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.23.7](https://github.com/rjskene/pipeline/compare/v0.23.6...v0.23.7) (2026-06-12)
+
+
+### Features
+
+* **usage-gate:** per-window enable flags (PIPELINE_USAGE_GATE_{SEVEN_DAY,FIVE_HOUR}_ENABLED) ([#1017](https://github.com/rjskene/pipeline/issues/1017)) ([8d61c2a](https://github.com/rjskene/pipeline/commit/8d61c2a0adb9fc4671f0c07f225d191fb393f988))
+* **usage-gate:** per-window enable flags so the 7-day window can be muted while 5h still gates ([508796b](https://github.com/rjskene/pipeline/commit/508796b14496eba86cc291f6a0964fb98e50a362))
+* **usage-gate:** recurring re-check resume + decision breadcrumb (resets_at is an unreliable ceiling) ([dca4d8c](https://github.com/rjskene/pipeline/commit/dca4d8c63b88dc47d19e8d70afcacf6be721fe00))
+* **usage-gate:** recurring re-check resume cron replaces one-shot arming ([#1016](https://github.com/rjskene/pipeline/issues/1016)) ([b55ce4a](https://github.com/rjskene/pipeline/commit/b55ce4a5c609a172070d56432d24d0eda7b75722))
+* **usage-gate:** write gated JSONL decision breadcrumb per invocation ([#1016](https://github.com/rjskene/pipeline/issues/1016)) ([c1f3618](https://github.com/rjskene/pipeline/commit/c1f3618564bd4b61bd66edfe29097aefd3a03a32))
+
+
+### Bug Fixes
+
+* **usage-gate:** spell out per-window var names in D2 to satisfy config-drift ([1296d95](https://github.com/rjskene/pipeline/commit/1296d95cac5aece0959c80039c2d85e4660a4db9))
+
 ## [0.23.6](https://github.com/rjskene/pipeline/compare/v0.23.5...v0.23.6) (2026-06-10)
 
 
