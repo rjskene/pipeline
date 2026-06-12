@@ -90,6 +90,16 @@ if ! printf '%s' "$THRESHOLD" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
   THRESHOLD="85"
 fi
 
+# Per-window enablement (issue #1017). Default "true" -> both-enabled is the
+# byte-for-byte pre-#1017 decision logic. A window set to "false" is MUTED:
+# its branch never trips a halt/pause, but BOTH utilizations are still
+# reported (observability invariant). A muted window that WOULD have tripped
+# surfaces reason=<window>-muted. Disabled-window paths are normal
+# proceed/pause-5h — NEVER skip (skip is reserved for gate failures; fail-open
+# invariant unchanged).
+SEVEN_DAY_ENABLED="${PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED:-true}"
+FIVE_HOUR_ENABLED="${PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED:-true}"
+
 NOW="${NOW:-$(date -u +%FT%TZ)}"
 
 FIVE_HOUR_PCT="--"
@@ -193,11 +203,25 @@ FIVE_HOUR_PCT="$(awk -v v="$FIVE_HOUR_UTIL" 'BEGIN{printf "%g%%", v}')"
 SEVEN_DAY_PCT="$(awk -v v="$SEVEN_DAY_UTIL" 'BEGIN{printf "%g%%", v}')"
 
 # --- 4/5/6. decide (float compare; boundary == trips, >=) --------------------
-DECISION="$(awk -v fh="$FIVE_HOUR_UTIL" -v sd="$SEVEN_DAY_UTIL" -v t="$THRESHOLD" 'BEGIN{
-  if (sd >= t)      print "halt-7d";
-  else if (fh >= t) print "pause-5h";
-  else              print "proceed";
+# Decide + surface muted-window audit (issue #1017). Emits two tab-separated
+# fields: <decision>\t<reason>. The reason is non-empty ONLY when a muted
+# window would otherwise have tripped (seven-day-muted | five-hour-muted),
+# 7d taking precedence in the surfaced reason. Active-window precedence
+# (enabled 7d over -> halt-7d, wins over 5h) is unchanged.
+DECISION_TSV="$(awk -v fh="$FIVE_HOUR_UTIL" -v sd="$SEVEN_DAY_UTIL" -v t="$THRESHOLD" \
+  -v sd_on="$SEVEN_DAY_ENABLED" -v fh_on="$FIVE_HOUR_ENABLED" 'BEGIN{
+  decision="proceed"; reason="";
+  sd_over = (sd >= t); fh_over = (fh >= t);
+  # Active-window decisions first (7d halt wins over 5h pause).
+  if (sd_on == "true" && sd_over)      decision = "halt-7d";
+  else if (fh_on == "true" && fh_over) decision = "pause-5h";
+  # Muted-window audit (only when the muted window WOULD have tripped).
+  if (sd_on != "true" && sd_over)      reason = "seven-day-muted";
+  else if (fh_on != "true" && fh_over) reason = "five-hour-muted";
+  printf "%s\t%s", decision, reason;
 }')"
+DECISION="${DECISION_TSV%%$'\t'*}"
+DECISION_REASON="${DECISION_TSV#*$'\t'}"
 
 if [ "$DECISION" = "pause-5h" ]; then
   # resume_at = five_hour.resets_at + 5 minutes (fixed buffer, not a knob).
@@ -208,4 +232,4 @@ if [ "$DECISION" = "pause-5h" ]; then
   fi
 fi
 
-emit "$DECISION"
+emit "$DECISION" "$DECISION_REASON"
