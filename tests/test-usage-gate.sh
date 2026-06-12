@@ -307,6 +307,74 @@ else
   pass_msg "bearer token never appears in stdout/stderr (canary absent)"
 fi
 
+# --- Scenario 15: PIPELINE_LOGS_ENABLED=true -> one valid JSONL breadcrumb ---
+# (#1016 R6) Numbering starts at 15: scenarios 13/14 are the SKILL.md prose
+# guards below; the new breadcrumb scenarios slot in here, before them.
+inc_scenario "Scenario 15: logs enabled -> exactly one valid JSONL breadcrumb; decision line unchanged"
+LOGROOT="$TMP/logroot"; mkdir -p "$LOGROOT"
+LOGFILE="$LOGROOT/.claude/logs/usage-gate.jsonl"
+OUT="$(PIPELINE_LOGS_ENABLED=true PIPELINE_PROJECT_ROOT="$LOGROOT" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "breadcrumb-enabled"
+assert_field "breadcrumb-enabled" "decision=pause-5h"
+if [ -f "$LOGFILE" ]; then pass_msg "breadcrumb-enabled: log file created"; else fail_msg "breadcrumb-enabled: log file NOT created"; fi
+LINES="$(wc -l < "$LOGFILE" 2>/dev/null || echo 0)"
+if [ "$LINES" -eq 1 ]; then pass_msg "breadcrumb-enabled: exactly one JSONL line"; else fail_msg "breadcrumb-enabled: expected 1 line, got $LINES"; fi
+if jq -e . "$LOGFILE" >/dev/null 2>&1; then pass_msg "breadcrumb-enabled: line is valid JSON"; else fail_msg "breadcrumb-enabled: line is NOT valid JSON ($(cat "$LOGFILE" 2>/dev/null))"; fi
+if [ "$(jq -r '.decision' "$LOGFILE" 2>/dev/null)" = "pause-5h" ]; then pass_msg "breadcrumb-enabled: .decision=pause-5h"; else fail_msg "breadcrumb-enabled: .decision mismatch"; fi
+if [ "$(jq -r '.five_hour' "$LOGFILE" 2>/dev/null)" = "91%" ]; then pass_msg "breadcrumb-enabled: .five_hour=91%"; else fail_msg "breadcrumb-enabled: .five_hour mismatch"; fi
+if [ "$(jq -r '.resume_at' "$LOGFILE" 2>/dev/null)" = "2026-06-10T21:04:59Z" ]; then pass_msg "breadcrumb-enabled: .resume_at matches gate line"; else fail_msg "breadcrumb-enabled: .resume_at mismatch"; fi
+for f in ts decision reason five_hour seven_day threshold resume_at; do
+  if jq -e "has(\"$f\")" "$LOGFILE" >/dev/null 2>&1; then pass_msg "breadcrumb-enabled: field $f present"; else fail_msg "breadcrumb-enabled: field $f MISSING"; fi
+done
+
+# --- Scenario 16: logs disabled/unset -> no breadcrumb file written ---
+# (#1016 R6 gating regression guard)
+inc_scenario "Scenario 16: PIPELINE_LOGS_ENABLED unset/false -> no log file created"
+# 16a: unset (default off)
+LOGROOT2="$TMP/logroot2"; mkdir -p "$LOGROOT2"
+OUT="$(PIPELINE_PROJECT_ROOT="$LOGROOT2" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?; ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "logs-unset"
+if [ ! -f "$LOGROOT2/.claude/logs/usage-gate.jsonl" ]; then pass_msg "logs-unset: no breadcrumb file"; else fail_msg "logs-unset: breadcrumb file unexpectedly created"; fi
+# 16b: explicit false
+LOGROOT3="$TMP/logroot3"; mkdir -p "$LOGROOT3"
+OUT="$(PIPELINE_LOGS_ENABLED=false PIPELINE_PROJECT_ROOT="$LOGROOT3" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?; ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+assert_gate_line "logs-false"
+if [ ! -f "$LOGROOT3/.claude/logs/usage-gate.jsonl" ]; then pass_msg "logs-false: no breadcrumb file"; else fail_msg "logs-false: breadcrumb file unexpectedly created"; fi
+
+# --- Scenario 17: logs enabled but unwritable dir -> decision line intact, exit 0 ---
+# (#1016 never-fatal invariant)
+inc_scenario "Scenario 17: logs enabled + unwritable logs dir -> still exits 0, single decision line"
+UNWRITABLE="$TMP/unwritable"; mkdir -p "$UNWRITABLE/.claude/logs"
+# Make .claude/logs itself unwritable so the append fails.
+chmod 000 "$UNWRITABLE/.claude/logs"
+OUT="$(PIPELINE_LOGS_ENABLED=true PIPELINE_PROJECT_ROOT="$UNWRITABLE" bash "$HELPER" \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS" 2>"$TMP/err.txt")"
+RC=$?; ERR="$(cat "$TMP/err.txt")"
+{ printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+chmod 755 "$UNWRITABLE/.claude/logs"  # restore so trap cleanup can rm -rf
+assert_gate_line "unwritable-logs"
+assert_field "unwritable-logs" "decision=pause-5h"
+
+# --- Scenario 18: token-leak canary extends to the breadcrumb log file (#1016 R6) ---
+# Depends on the log-root vars from Scenarios 15-17, so it must follow them.
+inc_scenario "Scenario 18: bearer token never lands in usage-gate.jsonl"
+LEAK_FOUND=0
+for d in "$LOGROOT" "$LOGROOT2" "$LOGROOT3" "$UNWRITABLE"; do
+  f="$d/.claude/logs/usage-gate.jsonl"
+  [ -f "$f" ] && grep -qF "$CANARY_TOKEN" "$f" && LEAK_FOUND=1
+done
+if [ "$LEAK_FOUND" -eq 0 ]; then pass_msg "canary absent from all breadcrumb files"; else fail_msg "BEARER TOKEN LEAKED into usage-gate.jsonl"; fi
+
 # --- Scenario 13: fullsend SKILL.md integration (prose guard) ---
 inc_scenario "Scenario 13: fullsend SKILL.md wires the gate (prose guard)"
 
@@ -322,6 +390,15 @@ if grep -q 'pause-5h' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles p
 if grep -q 'halt-7d' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL handles halt-7d"; else fail_msg "fullsend SKILL missing halt-7d handling"; fi
 if grep -q 'CronCreate' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL schedules resume via CronCreate"; else fail_msg "fullsend SKILL missing CronCreate resume scheduling"; fi
 
+# --- Scenario 19: fullsend arming prose is recurring re-check, not one-shot (#1016) ---
+# (#1016 R1-R5) Depends on $FULLSEND_SKILL from Scenario 13, so it follows it.
+inc_scenario "Scenario 19: fullsend SKILL arming uses recurring re-check cron contract"
+if grep -q 'usage-resume re-check' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL names the re-check cron marker"; else fail_msg "fullsend SKILL missing 'usage-resume re-check' marker"; fi
+if grep -qi 'recurring' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL describes a recurring cron"; else fail_msg "fullsend SKILL missing 'recurring' arming description"; fi
+if grep -q 'CronDelete' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL deletes the cron on proceed/halt"; else fail_msg "fullsend SKILL missing CronDelete in re-check contract"; fi
+if grep -q 'CronList' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL looks up the cron by marker (CronList)"; else fail_msg "fullsend SKILL missing CronList self-lookup"; fi
+if ! grep -q 'ScheduleWakeup' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL no longer arms via ScheduleWakeup one-shot"; else fail_msg "fullsend SKILL still references the dropped ScheduleWakeup branch"; fi
+
 # --- Scenario 14: status SKILL.md advisory-only relay (prose guard) ---
 inc_scenario "Scenario 14: status SKILL.md relays the gate line ADVISORY-only"
 
@@ -336,6 +413,57 @@ if grep -q 'ADVISORY' "$STATUS_SKILL"; then
 else
   fail_msg "status SKILL missing ADVISORY marker for the gate relay"
 fi
+
+# --- Scenario 20: per-window enable flags (issue #1017) ---
+# Numbering starts at 20: scenarios 15-19 are the #1016 breadcrumb work above,
+# so the new per-window-flag scenarios slot in here, before == RESULTS ==.
+inc_scenario "Scenario 20: per-window enable flags mute halt-7d / pause-5h"
+
+# run_gate_env <VAR=val ...> -- <gate args...> : run helper with extra env, same capture as run_gate.
+run_gate_env() {
+  local env_pairs=() a
+  while [ "$1" != "--" ]; do env_pairs+=("$1"); shift; done
+  shift  # drop the --
+  OUT="$(env "${env_pairs[@]}" bash "$HELPER" "$@" 2>"$TMP/err.txt")"
+  RC=$?
+  ERR="$(cat "$TMP/err.txt")"
+  { printf '%s\n' "$OUT"; printf '%s\n' "$ERR"; } >> "$CANARY_TRANSCRIPT"
+}
+
+# 20a: 7d over (93) but seven-day muted, 5h under (12) -> proceed reason=seven-day-muted.
+run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/seven-day-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "7d-muted-5h-under"
+assert_field "7d-muted-5h-under" "decision=proceed"
+assert_field "7d-muted-5h-under" "reason=seven-day-muted"
+assert_field "7d-muted-5h-under" "five_hour=12%"
+assert_field "7d-muted-5h-under" "seven_day=93%"
+
+# 20b: both over (95/99), seven-day muted -> pause-5h reason=seven-day-muted (5h still gates).
+run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/both-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "7d-muted-5h-over"
+assert_field "7d-muted-5h-over" "decision=pause-5h"
+assert_field "7d-muted-5h-over" "reason=seven-day-muted"
+
+# 20c: 5h over (91), five-hour muted, 7d under (40) -> proceed reason=five-hour-muted.
+run_gate_env PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/five-hour-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-muted-7d-under"
+assert_field "5h-muted-7d-under" "decision=proceed"
+assert_field "5h-muted-7d-under" "reason=five-hour-muted"
+
+# 20d: both over, five-hour muted -> halt-7d (7d still gates; halt wins). No muted reason needed.
+run_gate_env PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/both-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-muted-7d-over"
+assert_field "5h-muted-7d-over" "decision=halt-7d"
+
+# 20e: both windows muted, both over -> proceed (always). Surfaced reason=seven-day-muted (halt precedence).
+run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/both-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "both-muted"
+assert_field "both-muted" "decision=proceed"
 
 echo ""
 echo "== RESULTS =="

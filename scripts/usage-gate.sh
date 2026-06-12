@@ -90,6 +90,16 @@ if ! printf '%s' "$THRESHOLD" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
   THRESHOLD="85"
 fi
 
+# Per-window enablement (issue #1017). Default "true" -> both-enabled is the
+# byte-for-byte pre-#1017 decision logic. A window set to "false" is MUTED:
+# its branch never trips a halt/pause, but BOTH utilizations are still
+# reported (observability invariant). A muted window that WOULD have tripped
+# surfaces reason=<window>-muted. Disabled-window paths are normal
+# proceed/pause-5h — NEVER skip (skip is reserved for gate failures; fail-open
+# invariant unchanged).
+SEVEN_DAY_ENABLED="${PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED:-true}"
+FIVE_HOUR_ENABLED="${PIPELINE_USAGE_GATE_FIVE_HOUR_ENABLED:-true}"
+
 NOW="${NOW:-$(date -u +%FT%TZ)}"
 
 FIVE_HOUR_PCT="--"
@@ -100,6 +110,31 @@ RESUME_AT="--"
 # The ONLY stdout writer in this script.
 emit() {
   local decision="$1" reason="${2:-}"
+  # Decision breadcrumb (#1016 R6): one JSONL line per invocation, gated by
+  # PIPELINE_LOGS_ENABLED=true. Written BEFORE the decision line so it captures
+  # every branch (skip/proceed/pause-5h/halt-7d) with the same field values the
+  # decision line carries. Never fatal — an unwritable/unresolvable path
+  # silently no-ops, so the always-exit-0 / single-stdout-line invariants hold.
+  # Built with `jq -nc` (not string interpolation) for guaranteed-valid JSON +
+  # correct escaping; no token material is ever included (canary extends here).
+  if [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; then
+    local _root _dir _log
+    _root="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+    _dir="${_root}/.claude/logs"
+    _log="${_dir}/usage-gate.jsonl"
+    if mkdir -p "$_dir" 2>/dev/null; then
+      jq -nc \
+        --arg ts "$NOW" \
+        --arg decision "$decision" \
+        --arg reason "$reason" \
+        --arg five_hour "$FIVE_HOUR_PCT" \
+        --arg seven_day "$SEVEN_DAY_PCT" \
+        --arg threshold "$THRESHOLD" \
+        --arg resume_at "$RESUME_AT" \
+        '{ts:$ts,decision:$decision,reason:(if $reason=="" then null else $reason end),five_hour:$five_hour,seven_day:$seven_day,threshold:$threshold,resume_at:$resume_at}' \
+        >> "$_log" 2>/dev/null || true
+    fi
+  fi
   local reason_field=""
   [ -n "$reason" ] && reason_field=" reason=${reason}"
   echo "usage-gate: decision=${decision}${reason_field} five_hour=${FIVE_HOUR_PCT} seven_day=${SEVEN_DAY_PCT} threshold=${THRESHOLD} resume_at=${RESUME_AT}"
@@ -168,11 +203,25 @@ FIVE_HOUR_PCT="$(awk -v v="$FIVE_HOUR_UTIL" 'BEGIN{printf "%g%%", v}')"
 SEVEN_DAY_PCT="$(awk -v v="$SEVEN_DAY_UTIL" 'BEGIN{printf "%g%%", v}')"
 
 # --- 4/5/6. decide (float compare; boundary == trips, >=) --------------------
-DECISION="$(awk -v fh="$FIVE_HOUR_UTIL" -v sd="$SEVEN_DAY_UTIL" -v t="$THRESHOLD" 'BEGIN{
-  if (sd >= t)      print "halt-7d";
-  else if (fh >= t) print "pause-5h";
-  else              print "proceed";
+# Decide + surface muted-window audit (issue #1017). Emits two tab-separated
+# fields: <decision>\t<reason>. The reason is non-empty ONLY when a muted
+# window would otherwise have tripped (seven-day-muted | five-hour-muted),
+# 7d taking precedence in the surfaced reason. Active-window precedence
+# (enabled 7d over -> halt-7d, wins over 5h) is unchanged.
+DECISION_TSV="$(awk -v fh="$FIVE_HOUR_UTIL" -v sd="$SEVEN_DAY_UTIL" -v t="$THRESHOLD" \
+  -v sd_on="$SEVEN_DAY_ENABLED" -v fh_on="$FIVE_HOUR_ENABLED" 'BEGIN{
+  decision="proceed"; reason="";
+  sd_over = (sd >= t); fh_over = (fh >= t);
+  # Active-window decisions first (7d halt wins over 5h pause).
+  if (sd_on == "true" && sd_over)      decision = "halt-7d";
+  else if (fh_on == "true" && fh_over) decision = "pause-5h";
+  # Muted-window audit (only when the muted window WOULD have tripped).
+  if (sd_on != "true" && sd_over)      reason = "seven-day-muted";
+  else if (fh_on != "true" && fh_over) reason = "five-hour-muted";
+  printf "%s\t%s", decision, reason;
 }')"
+DECISION="${DECISION_TSV%%$'\t'*}"
+DECISION_REASON="${DECISION_TSV#*$'\t'}"
 
 if [ "$DECISION" = "pause-5h" ]; then
   # resume_at = five_hour.resets_at + 5 minutes (fixed buffer, not a knob).
@@ -183,4 +232,4 @@ if [ "$DECISION" = "pause-5h" ]; then
   fi
 fi
 
-emit "$DECISION"
+emit "$DECISION" "$DECISION_REASON"

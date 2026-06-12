@@ -80,6 +80,21 @@ The bash stdout is NOT surfaced to the user automatically. Relay **every** table
 
 If coverage-health shows low model-attribution coverage OR a non-zero lower-bound (unreconciled) record count, lead the summary with that caveat: the cost figures are a lower bound — until those records carry a model (model-attribution) and until each inline record's subagent transcript is resolved and transcript-summed (the unreconciled count). Re-running the Step-1 backfill reconciles the unreconciled lower bounds upward once their transcripts exist.
 
+### Preferred presentation (operator base case)
+
+Operator-validated reply shape (2026-06-11 session, confirmed verbatim as the base case). Unless the user asks otherwise, present the report in exactly this order:
+
+1. **Caveat lead** (when triggered by the rule above) — one bold sentence stating the figures are a lower bound, with the unreconciled count/%, model-attribution %, and any permanently-pruned transcript count. State the window (`--since`/`--until`) here too.
+2. **Headline block** — 1–2 sentences: total captured spend, the dominant cost bucket, the biggest stage share, and the B→D savings total. The TLDR a skim-reader needs.
+3. **Every table verbatim** in its own fenced code block, each preceded by a `**Table name**` + em-dash one-line READ — the takeaway (e.g., "cache dominates: 91% of tokens"), never a prose restatement of the rows. Order: bucket → per-stage cost → structure → stage×structure → per-PATH → per-stage medians → top consumers/slowest (may share one block) → B→D breakeven → coverage-health → trend per-day → trend per-PR → task-latency.
+4. **Row trimming is allowed ONLY with disclosure** — zero-savings/all-`--` rows may be dropped from a fenced table when a parenthetical names exactly what was omitted (e.g., "(zero-savings rows omitted: #918, #923)"). Never trim silently; never trim coverage-health or trend tables.
+5. **Concurrency assessment as a prose deliverable** — its own labelled paragraph (not a fenced table): observed peak, why it is a lower bound (inline point-in-time records), the ceiling that would bind, and — when the metric is blind (all-inline week) — what the operator actually felt as the binding constraint plus what capture change would make the metric real.
+6. **Closing "Reads"** — 2–4 bullets tying the numbers to repo decisions (routing calibration, orchestrator overhead, cache economics), each anchored to an issue/doc where one exists.
+
+### Step 4 — Persist the analysis (dogfood, ongoing updates doc)
+
+After presenting, save the same entry (identical shape, including a **model-mix table** — the jq snippet lives in [docs/tokenomics/README.md](../../docs/tokenomics/README.md)) as an INDIVIDUAL timestamped doc `docs/tokenomics/YYYY-MM-DD-window-<since>-to-<until>.md` (date = analysis date, title `# Tokenomics update — YYYY-MM-DD (window <since> → <until>)`), and commit it to the base branch as `docs(tokenomics): add YYYY-MM-DD update`. One doc per analysis — do NOT append to a rolling file. This is the human-readable analysis layer; the machine layer stays `snapshot-tokenomics-history.sh` (below). Skip when the report was empty/gated-off.
+
 ## Persisted history (#832)
 
 The live `agent-costs.jsonl` is subject to transcript/log pruning — once a raw transcript is gone, the backfill can no longer reconcile that day. `scripts/snapshot-tokenomics-history.sh` rolls up a durable **per-day aggregate** that survives raw-log pruning, so the seed-doc shape is reproducible after the underlying records are gone. It is the live successor to the hand-computed seed in `docs/tokenomics-history-2026-05-29-to-06-02.md`.
