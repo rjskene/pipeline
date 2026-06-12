@@ -100,6 +100,31 @@ RESUME_AT="--"
 # The ONLY stdout writer in this script.
 emit() {
   local decision="$1" reason="${2:-}"
+  # Decision breadcrumb (#1016 R6): one JSONL line per invocation, gated by
+  # PIPELINE_LOGS_ENABLED=true. Written BEFORE the decision line so it captures
+  # every branch (skip/proceed/pause-5h/halt-7d) with the same field values the
+  # decision line carries. Never fatal — an unwritable/unresolvable path
+  # silently no-ops, so the always-exit-0 / single-stdout-line invariants hold.
+  # Built with `jq -nc` (not string interpolation) for guaranteed-valid JSON +
+  # correct escaping; no token material is ever included (canary extends here).
+  if [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; then
+    local _root _dir _log
+    _root="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+    _dir="${_root}/.claude/logs"
+    _log="${_dir}/usage-gate.jsonl"
+    if mkdir -p "$_dir" 2>/dev/null; then
+      jq -nc \
+        --arg ts "$NOW" \
+        --arg decision "$decision" \
+        --arg reason "$reason" \
+        --arg five_hour "$FIVE_HOUR_PCT" \
+        --arg seven_day "$SEVEN_DAY_PCT" \
+        --arg threshold "$THRESHOLD" \
+        --arg resume_at "$RESUME_AT" \
+        '{ts:$ts,decision:$decision,reason:(if $reason=="" then null else $reason end),five_hour:$five_hour,seven_day:$seven_day,threshold:$threshold,resume_at:$resume_at}' \
+        >> "$_log" 2>/dev/null || true
+    fi
+  fi
   local reason_field=""
   [ -n "$reason" ] && reason_field=" reason=${reason}"
   echo "usage-gate: decision=${decision}${reason_field} five_hour=${FIVE_HOUR_PCT} seven_day=${SEVEN_DAY_PCT} threshold=${THRESHOLD} resume_at=${RESUME_AT}"
