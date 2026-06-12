@@ -33,6 +33,16 @@ if [ $# -lt 1 ]; then
   exit 2
 fi
 ISSUE="$1"
+# Self-resolve PIPELINE_* from pipeline.config when callers source-but-don't-export
+# them (e.g. fullsend/SKILL.md passes PIPELINE_REPO inline but not
+# PIPELINE_BASE_BRANCH — the first-invocation abort this fixes, #1022). The
+# resolver is co-located in scripts/; it is idempotent + fail-closed, so the
+# `:?` guards below remain the final fail-closed assertion.
+_vec_dir="$(dirname "${BASH_SOURCE[0]}")"
+if [ -f "${_vec_dir}/_resolve-config.sh" ]; then
+  # shellcheck disable=SC1090,SC1091
+  source "${_vec_dir}/_resolve-config.sh"
+fi
 : "${PIPELINE_REPO:?PIPELINE_REPO must be set}"
 : "${PIPELINE_BASE_BRANCH:?PIPELINE_BASE_BRANCH must be set}"
 : "${PIPELINE_WORKTREE_PREFIX:=wt}"
