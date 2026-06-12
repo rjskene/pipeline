@@ -259,6 +259,29 @@ Because it is a four-way conjunction gated by suppressors, the typical bug issue
 
 > **Out of scope (separate follow-up):** the `classify-issue` parallel for externally-filed bugs that skip create-issues. `classify-issue` runs autonomously with no operator present, so it would have to auto-apply or comment rather than prompt — a more aggressive design that fights the sparse intent.
 
+### needs-browser advisory (filing-time)
+
+When the drafted body targets **browser-rendered UI behavior**, prompt the operator to add the `needs-browser` label (already canonical — seeded by `scripts/doctor.sh`, consumed by `visual-proof-from-plan` / `execute-issue-plan` 6d / `evaluate-issue-pr` 6b-6c — but with no assigner until now). Agent-applied prose heuristic, the **same pattern as the `### needs-debug advisory` filing-time precedent** above — **no new script**: the drafting agent evaluates the conjunction qualitatively after brainstorming the body, since whether a body targets visible UI is a read the agent is already positioned to make. This fills the same gap the needs-debug advisory fills, on the **visual-proof axis** instead of the diagnosis axis.
+
+Run this assessment at the same point in the flow as the needs-debug advisory — **after scope-check (step 3), when the body is drafted**.
+
+**Fire only when ALL of these hold** (a conjunction — this is what keeps it sparse):
+
+- **Browser-rendered UI target.** The change reaches user-visible rendered UI — affected areas live under a **frontend asset tree** (e.g. a consumer dashboard `assets/`), OR the body claims a **user-visible interaction** (`click` / `keyboard` / `focus` / `layout` / `render`).
+- **Acceptance is observable in a browser.** The acceptance criteria are naturally phrased as **"open page, do X, see Y"** — a behavior a static/unit assertion cannot witness.
+
+**Never fire when a suppressor is present** (verifiable without a browser):
+
+- **pure-logic** JS verifiable by **unit** / **static** assertions (no rendered surface, no interaction)
+- **server-side**-only changes (no client-rendered behavior)
+- **docs**
+
+Because it is a conjunction gated by suppressors, the typical non-UI issue does **not** trip it — it is pure-logic, server-side, or docs, or has no "open page / see Y" acceptance. Only an issue that genuinely targets browser UI behavior fires it.
+
+**On fire, prompt — advisory, default no, never auto-apply.** Example wording: `This targets browser-rendered UI — add needs-browser so the pipeline runs visual proof? (y/N)`. On operator confirm, apply the label at create time via the `gh issue create --label needs-browser` flag (alongside any other `--label`). The operator confirm is the final gate, consistent with the sparse intent — never apply `needs-browser` without it.
+
+> **Classify-side backstop (in scope, see `classify-issue`):** externally-filed issues that skip create-issues have no operator to prompt. `classify-issue` carries an autonomous `needs-browser` backstop using the same conjunction + suppressors; being operator-free, it posts an advisory comment rather than prompting.
+
 ### Session summary
 
 When the user ends the session ("done", "that's all", etc.), print:

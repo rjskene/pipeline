@@ -224,3 +224,9 @@ and has two callers (the **two-caller pattern**):
 
 Both callers share one `{satisfied, unsatisfied}` contract. Definition lives in
 [skills/visual-proof-from-plan/SKILL.md](../skills/visual-proof-from-plan/SKILL.md).
+
+**Assigner (#1015).** `needs-browser` now has an assigner — closing the
+"consumers but no assigner" gap: `create-issues` carries a filing-time advisory
+(default-no operator prompt) and `classify-issue` carries an autonomous
+comment-path backstop for externally-filed issues, both gated by the same
+browser-UI conjunction + suppressors (pure-logic/server-side/docs).
