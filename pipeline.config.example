@@ -297,9 +297,9 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # tier) or comment the line entirely; either restores the Opus inherit at the read site.
 # Three carve-outs ALWAYS force Opus regardless of these knobs: the W2 high-uncertainty
 # vocab (concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss), the
-# PATH D needs-browser carve-out (#960), and — the safety-critical one — pr-eval, which
-# is NEVER defaulted to Sonnet: the independent evaluator always stays on the inherited
-# Opus backstop (the W3 property that makes a cheaper-execute default safe).
+# PATH D browser-eval carve-out label (#960), and — the safety-critical one — pr-eval,
+# which is NEVER defaulted to Sonnet: the independent evaluator always stays on the
+# inherited Opus backstop (the W3 property that makes a cheaper-execute default safe).
 PIPELINE_PATH_B_MODEL_EXECUTE=sonnet
 PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 
