@@ -171,6 +171,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 9. **Open a pull request.**
 
+   Before opening the PR, run the `check-branch-cruft.sh` guard (wired below, between 9a and 9b) — a mechanical backstop for the explicit-staging Constraint; it fails the open if any cruft path reached a commit on this branch (#1028).
+
    **9a. Derive the PR title from the issue.** The PR title must be a strict Conventional-Commits string (`feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert(<scope>)?: <summary>`) so release-please can drive versioning + CHANGELOG. Issue titles are intentionally expressive (`bug(...)`, `epic(...)`, `skill: ...`) and must NOT pass through verbatim. Run the helper:
 
    ```bash
@@ -197,6 +199,14 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    | 5 | Labels include `bug` | `fix(<scope-or-general>): <summary>` |
    | 6 | Labels include `enhancement` | `feat(<scope-or-general>): <summary>` |
    | 7 | default | `chore(general): <summary>` |
+
+   **Pre-PR cruft guard (#1028).** Before `gh pr create`, run the guard against the committed branch-vs-base diff — this is the defense-in-depth backstop for the explicit-staging Constraint above (mirrors the base-branch-enforcement layering: prose directive → mechanical guard). It fails the open if any committed path on this branch is denylisted cruft (e.g. `.claude/migration-cleanup-*`):
+
+   ```bash
+   # Pre-PR cruft guard (#1028): fail if any committed path on this branch is denylisted cruft.
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-branch-cruft.sh" \
+     || { echo "ABORT: branch-vs-base diff contains cruft paths (see above); drop them from the branch before opening the PR." >&2; exit 1; }
+   ```
 
    **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
 
@@ -236,6 +246,7 @@ If `evaluate-issue-pr` flags the PR while the executor session is still active, 
 
 ## Constraints
 - Implement ONLY what the approved plan says.
+- Stage ONLY the explicit plan-related paths with `git add <path> [<path>...]`. NEVER use `git add -A`, `git add .`, or `git add -u` — these sweep pre-existing untracked repo-root cruft (e.g. `.claude/migration-cleanup-*` advisory-scanner output) into the branch (#1015/#1028). Enumerate the paths the plan changed and stage exactly those. The `scripts/check-branch-cruft.sh` pre-PR guard (Step 9) backstops this against the committed branch diff.
 - Never commit to main.
 - All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base "$PIPELINE_BASE_BRANCH"` (quoted) to `gh pr create`.
 - Never use `--no-verify` or `--force`.
