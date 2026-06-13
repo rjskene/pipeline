@@ -108,6 +108,10 @@ PIPELINE_SUBTREE_REMOTE
 PIPELINE_ALPHA
 PIPELINE_BETA
 PIPELINE_COMMENTED
+# #1051 insert-before-set+a fixture vars (PIPELINE_GAMMA for the set-a/set+a case,
+# PIPELINE_DELTA for the EOF-fallback / no-set+a case). Same exemption class.
+PIPELINE_GAMMA
+PIPELINE_DELTA
 # PIPELINE_MOCK_WEB_EVAL_* is the per-operator, host-only mock-web-eval family
 # (intentionally NOT documented in pipeline.config.example — it carries
 # per-operator paths per CLAUDE.md config-conventions). It appears here both as
