@@ -207,6 +207,20 @@ PIPELINE_CI_FIX_RETRY_BUDGET="2"
 PIPELINE_CI_FIX_LOG_LINES="200"
 PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 
+# --- Per-path execute MODEL routing (#1042: Sonnet is the DEFAULT, opt-OUT) ---
+# fullsend's execute dispatch pins this model for eligible PATH B / PATH D issues
+# (enum: sonnet | opus | haiku). These ship ACTIVE at the Sonnet default — a fresh
+# install runs Sonnet on eligible PATH B + all PATH D execute. To opt OUT, set =opus
+# (or comment the line) to restore the conservative Opus-everywhere tier. The W2
+# high-uncertainty carve-out and the PATH D needs-browser carve-out (#960) always
+# force Opus; pr-eval is NEVER defaulted to Sonnet (the W3 Opus backstop).
+PIPELINE_PATH_B_MODEL_EXECUTE=sonnet
+PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
+# Scope of the PATH B Sonnet downshift. Ships ACTIVE at "all" (#1042): every PATH B
+# issue without a W2 carve-out routes Sonnet on execute. Opt OUT with "low-blast"
+# (or comment) to restrict Sonnet to the low-blast lane only. pr-eval ALWAYS stays Opus (W3).
+PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
+
 # --- Per-model token pricing (issue #721) ---
 #
 # Per-1M-token USD rates consumed by \`scripts/cost-latency-report.sh
