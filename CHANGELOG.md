@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.11](https://github.com/rjskene/pipeline/compare/v0.23.10...v0.23.11) (2026-06-13)
+
+
+### Bug Fixes
+
+* **doctor:** insert reconciled knobs before set +a so they stay auto-exported ([#1051](https://github.com/rjskene/pipeline/issues/1051)) ([0e7428e](https://github.com/rjskene/pipeline/commit/0e7428e4cdfa5fb8d8108f9ee8d7dcc2ef609082))
+* **doctor:** insert reconciled knobs before set +a so they stay auto-exported ([#1051](https://github.com/rjskene/pipeline/issues/1051)) ([e85665a](https://github.com/rjskene/pipeline/commit/e85665ab3bbb7e1e48ac02d8394474678345a426))
+
 ## [0.23.10](https://github.com/rjskene/pipeline/compare/v0.23.9...v0.23.10) (2026-06-13)
 
 
