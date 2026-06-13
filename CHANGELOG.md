@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.23.8](https://github.com/rjskene/pipeline/compare/v0.23.7...v0.23.8) (2026-06-13)
+
+
+### Features
+
+* **classify-issue:** autonomous needs-browser backstop ([#1015](https://github.com/rjskene/pipeline/issues/1015)) ([746d7a3](https://github.com/rjskene/pipeline/commit/746d7a3b006da5ef50e1e308a4e9a8e857530205))
+* **create-issues:** filing-time needs-browser advisory ([#1015](https://github.com/rjskene/pipeline/issues/1015)) ([4170044](https://github.com/rjskene/pipeline/commit/4170044a1f079df437cf71de040b97b0368f3f66))
+* **create-issues:** filing-time needs-browser advisory + classify-issue backstop ([#1015](https://github.com/rjskene/pipeline/issues/1015)) ([ebb75fb](https://github.com/rjskene/pipeline/commit/ebb75fb353c64afb3380403d7574e37430576ad8))
+* **execute:** add check-branch-cruft pre-PR cruft guard ([#1028](https://github.com/rjskene/pipeline/issues/1028)) ([c5e63a2](https://github.com/rjskene/pipeline/commit/c5e63a203f6220540128f477516e0ce7da856614))
+* **execute:** split-role TDD lane (Opus-locked red suite) + PATH B Sonnet-widen knob ([#881](https://github.com/rjskene/pipeline/issues/881)) ([fcc0c45](https://github.com/rjskene/pipeline/commit/fcc0c45991d0ce76b55a5aaf4d7a681f052847ef))
+* **scripts:** add _resolve-config.sh shared PIPELINE_* config resolver ([5f22645](https://github.com/rjskene/pipeline/commit/5f22645634e2293d90e994fce900b81623cdee04)), closes [#1022](https://github.com/rjskene/pipeline/issues/1022)
+* **split-role:** scripts/split-role-gate.sh eval-time git-invariant gate ([#881](https://github.com/rjskene/pipeline/issues/881)) ([30cdd46](https://github.com/rjskene/pipeline/commit/30cdd4672e6999b58bd7c08abb8142ac79084f61))
+
+
+### Bug Fixes
+
+* **classify-issue:** reword needs-browser backstop to avoid 'Advisory only' grep collision ([#1015](https://github.com/rjskene/pipeline/issues/1015)) ([5da3dac](https://github.com/rjskene/pipeline/commit/5da3dac33e1bb9475c18ae12688f5211ed66facc))
+* **docs:** de-anchor README cross-links to satisfy the [#397](https://github.com/rjskene/pipeline/issues/397) no-anchored-refs guard ([#1030](https://github.com/rjskene/pipeline/issues/1030)) ([7e68279](https://github.com/rjskene/pipeline/commit/7e68279560de89a912d005bcf0737e8a7b198b3e))
+* **execute:** add check-branch-cruft pre-PR guard against repo-root cruft sweep ([#1028](https://github.com/rjskene/pipeline/issues/1028)) ([9e5b94c](https://github.com/rjskene/pipeline/commit/9e5b94c0b81291e364cdef4cc54b2bc5bb13dfe7))
+* **execute:** require explicit git add of plan paths + wire pre-PR cruft guard ([#1028](https://github.com/rjskene/pipeline/issues/1028)) ([3a45be7](https://github.com/rjskene/pipeline/commit/3a45be7fedd7525a3bf97b00d3eac7b1b5724ac9))
+* **fullsend:** carry explicit-staging directive in inline-execute dispatch contract ([#1028](https://github.com/rjskene/pipeline/issues/1028)) ([a247b0b](https://github.com/rjskene/pipeline/commit/a247b0b7c8ff7e28c4a35aacb2a3c6d57188770c))
+* **hooks:** remove vestigial CLAUDE_PLUGIN_ROOT fail-open in restrict_paths ([#966](https://github.com/rjskene/pipeline/issues/966)) ([43a5eb7](https://github.com/rjskene/pipeline/commit/43a5eb740c2c7256963c44d479bc7e8869663d51))
+* **hooks:** restrict_paths — remove vestigial CLAUDE_PLUGIN_ROOT fail-open ([#966](https://github.com/rjskene/pipeline/issues/966)) ([1e87231](https://github.com/rjskene/pipeline/commit/1e87231dc613ab171a42014b6e9a8fc288c5cc1c))
+* **scripts:** eval-screenshot + finalize-labels self-resolve PIPELINE_REPO ([03c4feb](https://github.com/rjskene/pipeline/commit/03c4feb7846b1438423c8617315a5233040f0cf6)), closes [#1022](https://github.com/rjskene/pipeline/issues/1022)
+* **scripts:** helper scripts self-resolve PIPELINE_* from pipeline.config ([#1022](https://github.com/rjskene/pipeline/issues/1022)) ([4275048](https://github.com/rjskene/pipeline/commit/4275048dba8430265106d536e0012e96be634bf9))
+* **scripts:** verify-execute-completion self-resolves PIPELINE_* from config ([4f1d211](https://github.com/rjskene/pipeline/commit/4f1d211c979b4abf26a3fba8e9d367c0c169b6b9)), closes [#1022](https://github.com/rjskene/pipeline/issues/1022)
+* **split-role:** preserve screenshot awk-anchor + drop needs-browser config token ([#881](https://github.com/rjskene/pipeline/issues/881)) ([3ab4963](https://github.com/rjskene/pipeline/commit/3ab4963624699ccbf5534d68eb5d774ea59e1224))
+
 ## [0.23.7](https://github.com/rjskene/pipeline/compare/v0.23.6...v0.23.7) (2026-06-12)
 
 
