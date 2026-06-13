@@ -98,3 +98,20 @@ PIPELINE_STALL_SAMPLES_PER_POLL
 PIPELINE_STALL_SAMPLE_INTERVAL_SEC
 PIPELINE_SUBTREE_BRANCH
 PIPELINE_SUBTREE_REMOTE
+
+# #1038 doctor --fix config / detector fixtures. The live-tree scan picks these
+# up as heredoc literals inside tests/test-doctor-fix-config.sh's synthetic
+# fixture pipeline.config.example (PIPELINE_ALPHA / _BETA / _COMMENTED are
+# fixture-only knob names that exercise append-missing / never-overwrite /
+# skip-commented). Not real config knobs — exempt so the fixtures are not
+# mis-flagged as drift.
+PIPELINE_ALPHA
+PIPELINE_BETA
+PIPELINE_COMMENTED
+# PIPELINE_MOCK_WEB_EVAL_* is the per-operator, host-only mock-web-eval family
+# (intentionally NOT documented in pipeline.config.example — it carries
+# per-operator paths per CLAUDE.md config-conventions). It appears here both as
+# the placeholder-classification glob in scripts/doctor.sh's --fix config block
+# and as a fixture key in tests/test-doctor-fix-config.sh. The bare prefix is a
+# concat-prefix wildcard covering PIPELINE_MOCK_WEB_EVAL_X and any sibling.
+PIPELINE_MOCK_WEB_EVAL_
