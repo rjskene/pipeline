@@ -229,6 +229,9 @@ Per-path concurrency caps govern a campaign (`/pipeline:fullsend --campaign`,
   mistakes. Compact after a wave's PRs merge, before kicking off the next wave —
   the wave boundary is the natural seam (mid-wave compaction risks losing
   in-flight execution state).
+- **Usage gate auto-pauses/resumes a campaign near the plan limit.** Wave/leg
+  boundaries run `scripts/usage-gate.sh`; see [docs/usage-gate.md](usage-gate.md)
+  for the pause/halt decision precedence and recurring re-check resume.
 
 ## 9. Dogfood instrumentation — no consumer crud
 

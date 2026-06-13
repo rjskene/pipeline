@@ -195,7 +195,7 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
 Caption: `--manual-merge` opt-out (flag or `manual-merge` label) stops short of
 the auto-merge gate even when all four greenlight conditions hold.
 
-Campaign mode (`/pipeline:fullsend --campaign`, or the equivalent standalone `/pipeline:campaign` — same machinery, neither deprecated): `scripts/plan-campaign.sh` partitions the approved set into ordered **legs**, each run as one wave through the flow above. Per-leg caps are `PIPELINE_CAMPAIGN_MAX_BC` (default 2 — expensive PATH-B/C) and `PIPELINE_CAMPAIGN_MAX_AD` (default 5 — cheap PATH-A/D), overridable via `--max-bc=N` / `--max-ad=N`. These two are the only knobs (no `PIPELINE_*_LEG_CAP` var). The canonical leg-loop machinery is documented once in `skills/fullsend/SKILL.md` `## Campaign mode`; `skills/campaign/SKILL.md` is a thin entry that defers to it.
+Campaign mode (`/pipeline:fullsend --campaign`, or the equivalent standalone `/pipeline:campaign` — same machinery, neither deprecated): `scripts/plan-campaign.sh` partitions the approved set into ordered **legs**, each run **in order** as one wave through the flow above (leg N completes before leg N+1 starts; inside each leg the wave-plan parallelism above still applies). Per-leg caps are `PIPELINE_CAMPAIGN_MAX_BC` (default 2 — expensive PATH-B/C) and `PIPELINE_CAMPAIGN_MAX_AD` (default 5 — cheap PATH-A/D), overridable via `--max-bc=N` / `--max-ad=N`. These two are the only knobs (no `PIPELINE_*_LEG_CAP` var). The canonical leg-loop machinery is documented once in `skills/fullsend/SKILL.md` `## Campaign mode`; `skills/campaign/SKILL.md` is a thin entry that defers to it.
 
 ## Entrypoints
 
@@ -224,3 +224,9 @@ and has two callers (the **two-caller pattern**):
 
 Both callers share one `{satisfied, unsatisfied}` contract. Definition lives in
 [skills/visual-proof-from-plan/SKILL.md](../skills/visual-proof-from-plan/SKILL.md).
+
+**Assigner (#1015).** `needs-browser` now has an assigner — closing the
+"consumers but no assigner" gap: `create-issues` carries a filing-time advisory
+(default-no operator prompt) and `classify-issue` carries an autonomous
+comment-path backstop for externally-filed issues, both gated by the same
+browser-UI conjunction + suppressors (pure-logic/server-side/docs).

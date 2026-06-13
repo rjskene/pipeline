@@ -85,6 +85,11 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels).
 
+   **PATH B split-role two-phase execute (#881 — `PIPELINE_PATH_B_SPLIT_ROLE=true`).** When split-role is enabled, PATH B execute splits the red→green discipline across two roles in this same worktree:
+   - **Phase (i) — Opus test-author authors+commits the locked suite.** The Opus test-author writes the full failing suite per the approved plan, confirms each test is red-for-the-right-reason, and makes a **single commit** carrying the literal `[split-role-red]` substring in the **commit subject**. Pre-existing-test updates (golden refresh, changed contract) belong **IN that commit** — never in a later commit.
+   - **Phase (ii) — implementer greens additive-only.** The implementer greens the suite test-by-test. It **may ADD new tests** but must **never modify or delete** a locked `[split-role-red]` test (the W7 eval-time gate, `scripts/split-role-gate.sh`, blocks the PR on `locked-test-modified` / `locked-test-deleted`).
+   - **Escalation valve.** If the implementer concludes a **locked test is WRONG**, it does NOT silently contort the implementation to satisfy it — it **STOPs and reports** (same shape as the PATH D envelope-escalation backstop above). The orchestrator then returns that test to Opus, which amends the `[split-role-red]` suite; the implementer resumes greening.
+
    **PATH C (`multi-task`) — inline orchestrator-owned fan-out with per-leaf worktrees (DEFAULT).** On PATH C the orchestrator itself reads the `## Implementation Plan` and, for each `target=<dir>` in the plan, dispatches one leaf `Agent(subagent_type='tdd-implementer', description='target=<dir>/ ...', prompt='cd <leaf-worktree>; target=<dir>/ ...')`, then handles push + `gh pr create` + label flip itself (Steps 9–10). The orchestrator MUST NOT `Edit`/`Write` impl files directly: the `enforce-path-c-delegation` hook blocks direct orchestrator Edit/Write and authorizes only files under a dispatched `target=<dir>` sentinel. `tdd-implementer` stays a hard leaf executor (the `Agent` tool is removed from its toolset) dispatched from the top level — no grandchild dispatch. Each dispatch carries a real-subdirectory `target=<dir>/` sentinel (`target=.`/`./`/`/` are rejected by the hook) and applies red→green→commit autonomously.
 
    **Per-leaf worktrees (the #896 fix — eliminates the shared-index race).** Each leaf gets its OWN worktree+branch off the feature-branch worktree HEAD, so concurrent leaves never share a git index. Without this, leaves committing in the same worktree race: transient `index.lock` collisions and one leaf's files swept into another leaf's commit (the #894 c+d collision), breaking per-target commit isolation and the per-PR CHANGELOG granularity contract. Drive it with `scripts/path-c-split-worktree.sh`:
@@ -166,6 +171,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 9. **Open a pull request.**
 
+   Before opening the PR, run the `check-branch-cruft.sh` guard (wired below, between 9a and 9b) — a mechanical backstop for the explicit-staging Constraint; it fails the open if any cruft path reached a commit on this branch (#1028).
+
    **9a. Derive the PR title from the issue.** The PR title must be a strict Conventional-Commits string (`feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert(<scope>)?: <summary>`) so release-please can drive versioning + CHANGELOG. Issue titles are intentionally expressive (`bug(...)`, `epic(...)`, `skill: ...`) and must NOT pass through verbatim. Run the helper:
 
    ```bash
@@ -192,6 +199,14 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    | 5 | Labels include `bug` | `fix(<scope-or-general>): <summary>` |
    | 6 | Labels include `enhancement` | `feat(<scope-or-general>): <summary>` |
    | 7 | default | `chore(general): <summary>` |
+
+   **Pre-PR cruft guard (#1028).** Before `gh pr create`, run the guard against the committed branch-vs-base diff — this is the defense-in-depth backstop for the explicit-staging Constraint above (mirrors the base-branch-enforcement layering: prose directive → mechanical guard). It fails the open if any committed path on this branch is denylisted cruft (e.g. `.claude/migration-cleanup-*`):
+
+   ```bash
+   # Pre-PR cruft guard (#1028): fail if any committed path on this branch is denylisted cruft.
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-branch-cruft.sh" \
+     || { echo "ABORT: branch-vs-base diff contains cruft paths (see above); drop them from the branch before opening the PR." >&2; exit 1; }
+   ```
 
    **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
 
@@ -231,6 +246,7 @@ If `evaluate-issue-pr` flags the PR while the executor session is still active, 
 
 ## Constraints
 - Implement ONLY what the approved plan says.
+- Stage ONLY the explicit plan-related paths with `git add <path> [<path>...]`. NEVER use `git add -A`, `git add .`, or `git add -u` — these sweep pre-existing untracked repo-root cruft (e.g. `.claude/migration-cleanup-*` advisory-scanner output) into the branch (#1015/#1028). Enumerate the paths the plan changed and stage exactly those. The `scripts/check-branch-cruft.sh` pre-PR guard (Step 9) backstops this against the committed branch diff.
 - Never commit to main.
 - All PRs target `PIPELINE_BASE_BRANCH` (the configured base), never `main`. Always pass `--base "$PIPELINE_BASE_BRANCH"` (quoted) to `gh pr create`.
 - Never use `--no-verify` or `--force`.

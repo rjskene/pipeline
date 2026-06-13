@@ -21,6 +21,19 @@ analysis that motivated it). Sibling of the closed-loop "dogfood measure → int
   (PATH D quick-fix + low-blast single-module PATH B), with **Opus pr-eval mandatory and never
   tier-dropped**, behind the **default-off `PIPELINE_PATH_{B,D}_MODEL_EXECUTE` gate** (PR #951).
   Do **not** widen to high-blast B / PATH C without a separate pilot.
+- **Live routing surface (as shipped).** The execute-tier decision now lives in three host vars
+  in the gitignored `pipeline.config` (all default-off / commented in `pipeline.config.example`):
+  - `PIPELINE_PATH_B_MODEL_EXECUTE` / `PIPELINE_PATH_D_MODEL_EXECUTE` — the per-path Agent `model`
+    enum (`sonnet`|`opus`|`haiku`). Unset/empty ⇒ **no** `model=` param is passed ⇒ the inline
+    subagent inherits the orchestrator's **Opus** = current behavior byte-for-byte.
+  - `PIPELINE_PATH_B_ELIGIBLE_SCOPE` (default `"low-blast"`) — the §4 predicate that decides
+    **which** PATH B issues route Sonnet (see §4). Setting `"all"` is the documented WIDEN past
+    the low-blast lane; the default keeps Sonnet on the §4 low-blast lane only.
+  - **PATH D is unconditional Sonnet** (no eligibility predicate — all D is in-lane by
+    construction) **EXCEPT** a `needs-browser` issue, which inherits Opus (#960: browser/UI
+    execute was never measured by this pilot).
+  - **Invariant: pr-eval is NEVER tier-dropped** — the independent Opus backstop is the property
+    that makes a cheaper execute safe, and no host var gates it.
 
 ---
 
@@ -144,6 +157,26 @@ savings.**
 - **Kill switch** is unsetting the flag (instant revert to Opus, zero code change); trip it on any
   §5 kill condition.
 
+**Live §4 eligibility gate (the predicate that ships).** The prose gate above moved into the
+dispatch path as `scripts/path-b-execute-eligible.sh <N>` (#955), which emits exactly one
+`ELIGIBLE=<low-blast|high-blast> ISSUE=<N> REASON=<token>` line. For **PATH B**, `model=$PIPELINE_PATH_B_MODEL_EXECUTE`
+is passed to the execute `Agent` **only when** the var is set/non-empty **AND** `ELIGIBLE=low-blast`.
+The four-part low-blast gate (ALL must hold): **≤1 source module** (excl tests/docs), **≤6 source
+files**, **≤150 added-LOC** (a dispatch-time PROXY — there is no diff yet; satisfied-by-proxy when the
+module/file bounds hold, overridable by an explicit `~N LOC` body token), and **no
+security/migration/auth/concurrency signal** (regex `concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss`).
+Any failure ⇒ `high-blast` (fail-closed to Opus — the cheaper tier is never selected on uncertain
+blast-radius; the `indeterminate` gh/parse-failure verdict also fails closed). A `needs-browser` /
+`web-eval` / `playwright` signal forces `high-blast` too (#960).
+
+**Scope-widen knob (`PIPELINE_PATH_B_ELIGIBLE_SCOPE`, #881 Phase 1).** Default `"low-blast"` =
+today's behavior (Sonnet only on the §4 low-blast lane). Setting `"all"` WIDENS: every PATH B issue
+**without a W2 carve-out** (the high-uncertainty regex above OR the `needs-browser` label) routes
+Sonnet on execute **even on a `high-blast` eligibility verdict** — the eligibility script is
+**unchanged** and its verdict becomes advisory (still relayed in the run log). W2 carve-out issues
+still inherit Opus. This is the documented path to widen past the low-blast lane that the §7 open
+questions call for; pr-eval still **always** stays Opus.
+
 ## 5. Infra delivered
 
 1. **Price vars (#770)** — Sonnet/Haiku `PIPELINE_PRICE_*` keys (host `pipeline.config`); example
@@ -155,6 +188,14 @@ savings.**
    Opus = byte-for-byte current behavior**; conditional `model=` at the fullsend execute dispatch;
    pr-eval **never** gated; documented commented-out in `pipeline.config.example`; regression guard
    `tests/test-path-model-execute-routing.sh` (9/9).
+4. **Eligibility predicate (#955)** — `scripts/path-b-execute-eligible.sh` moved the §4 low-blast gate
+   out of prose and into the PATH B dispatch path (single `ELIGIBLE=<low-blast|high-blast>` line; PATH B
+   downshifts only on `low-blast`). PATH D needs no predicate (all D is in-lane), with the `needs-browser`
+   Opus carve-out (#960). Verified by `tests/test-path-b-execute-eligible.sh`.
+5. **Scope-widen knob (#881 Phase 1)** — `PIPELINE_PATH_B_ELIGIBLE_SCOPE` (default `"low-blast"`; `"all"`
+   widens PATH B to non-W2 issues even on a high-blast verdict). Seeded commented in
+   `pipeline.config.example`; the related split-role lane (`PIPELINE_PATH_B_SPLIT_ROLE`, #881 Phase 2)
+   keeps the test-author on Opus regardless of the model knob.
 
 ## 6. Methodology caveats
 

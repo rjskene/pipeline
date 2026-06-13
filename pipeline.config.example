@@ -300,6 +300,29 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 #PIPELINE_PATH_B_MODEL_EXECUTE=
 #PIPELINE_PATH_D_MODEL_EXECUTE=
 
+# --- #881 Phase 1: PATH B execute eligibility SCOPE (Sonnet-widen knob) ---
+# Controls WHICH PATH B issues the Sonnet execute routing (PIPELINE_PATH_B_MODEL_EXECUTE
+# above) applies to. Default "low-blast" = today's behavior: only issues passing
+# scripts/path-b-execute-eligible.sh's single-module / <=2-file gate route Sonnet.
+# Set "all" to WIDEN: every PATH B issue WITHOUT a permanent Opus carve-out (W2 —
+# high-uncertainty vocab concurrency|race|lock|deadlock|security|auth|crypto|
+# migration|data-loss, or the browser-eval carve-out label #960) routes Sonnet on execute even on a
+# high-blast eligibility verdict. The eligibility script is UNCHANGED; under "all"
+# its verdict is advisory (still relayed in the run log). Kill switch = unset
+# (instant revert to low-blast). pr-eval ALWAYS stays Opus (W3).
+#PIPELINE_PATH_B_ELIGIBLE_SCOPE="low-blast"
+
+# --- #881 Phase 2: split-role TDD lane (structural test-first compliance) ---
+# When "true", PATH B execute splits into TWO sequential agents in the worktree:
+# (i) an Opus test-author (ALWAYS Opus, regardless of any model knob) authors the
+# complete failing suite and commits it once with [split-role-red] in the subject;
+# (ii) an implementer (model from PIPELINE_PATH_B_MODEL_EXECUTE; unset -> Opus =
+# same-model compliance-only mode; W2 carve-outs force Opus) greens it test-by-test,
+# additive-only (may add tests, never modify/delete the locked suite). The eval-time
+# gate scripts/split-role-gate.sh enforces the locked-test git invariant. Default
+# "false". pr-eval ALWAYS stays Opus (W3).
+#PIPELINE_PATH_B_SPLIT_ROLE=false
+
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true when unset (fullsend 6b reads colon-less ${VAR-true}); set "" to disable. Further gated by PIPELINE_CI_CHECK_ENABLED.
 #PIPELINE_CI_FIX_RETRY_BUDGET="2"     # max re-dispatches per PR before applying the human label. Default 2, single-sourced at the read site (${VAR:=2}); uncomment to override.

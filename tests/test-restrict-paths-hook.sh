@@ -71,18 +71,25 @@ run_hook_set() {
 }
 
 # ---------------------------------------------------------------------------
-# Block 1 — Fail-open when CLAUDE_PLUGIN_ROOT is unset (Task 1 of #353).
+# Block 1 — CLAUDE_PLUGIN_ROOT absent must enforce normally (#966).
 # ---------------------------------------------------------------------------
-# Acceptance: hook exits 0 with diagnostic on stderr; diagnostic references
-# both CLAUDE_PLUGIN_ROOT and #339 so consumers can self-route to the env-
-# propagation root-cause issue.
+# The old fail-open block (lines 10-21 of restrict_paths.py) has been
+# deleted. An unset CLAUDE_PLUGIN_ROOT now changes nothing — enforcement
+# runs as normal.
 
+# 1a: out-of-boundary Write path with CLAUDE_PLUGIN_ROOT unset → exit 2 + BLOCKED
 run_hook_unset \
-  "fail-open when CLAUDE_PLUGIN_ROOT unset — exit 0 with #339 diagnostic" \
-  '{"tool_name":"Bash","tool_input":{"command":"echo hi"}}' \
-  0 \
-  "CLAUDE_PLUGIN_ROOT not set" \
-  "#339"
+  "unset CLAUDE_PLUGIN_ROOT + out-of-boundary Write — must block (exit 2, BLOCKED)" \
+  '{"tool_name":"Write","tool_input":{"file_path":"/etc/shadow"}}' \
+  2 \
+  "BLOCKED"
+
+# 1b: in-boundary path with CLAUDE_PLUGIN_ROOT unset → exit 0, no spurious warning
+IB_PAYLOAD=$(printf '{"tool_name":"Read","tool_input":{"file_path":"%s/CLAUDE.md"}}' "$REPO_ROOT")
+run_hook_unset \
+  "unset CLAUDE_PLUGIN_ROOT + in-boundary Read — must allow (exit 0, no warning)" \
+  "$IB_PAYLOAD" \
+  0
 
 # ---------------------------------------------------------------------------
 # Block 2 — Skip env-var literals and // substrings in Bash command text

@@ -18,7 +18,9 @@ grep -qF '#698' "$FILE" || { echo "FAIL: blast-radius boundary exemplar #698 mis
 # trust` section); 250 -> 270 by #707 (blast-radius rule + high-uncertainty
 # carve-out + two exemplar tables, ~25 lines); 270 -> 290 by #759 (advisory
 # path-hint overridable-prior step 3d + parse block + step-4 prior + override
-# rationale; parse block condensed to keep the delta ~14 lines).
+# rationale; parse block condensed to keep the delta ~14 lines); 290 -> 300 by
+# #1015 (autonomous `## needs-browser backstop` section — comment-path assigner
+# mirroring the create-issues needs-browser advisory, ~8 lines).
 LINES=$(wc -l < "$FILE")
-[ "$LINES" -le 290 ] || { echo "FAIL: $FILE has $LINES lines (cap is 290)"; exit 1; }
-echo "PASS: PATH D section + sentinels present, ${LINES}/290 lines"
+[ "$LINES" -le 300 ] || { echo "FAIL: $FILE has $LINES lines (cap is 300)"; exit 1; }
+echo "PASS: PATH D section + sentinels present, ${LINES}/300 lines"

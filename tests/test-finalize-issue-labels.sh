@@ -100,12 +100,15 @@ else
 fi
 
 # ---- Case B: missing PIPELINE_REPO and no --repo → documented error ----
+# Run from an isolated cwd (the case dir, under mktemp -d outside any repo) so
+# the #1022 self-resolver finds NO pipeline.config up the tree — this case must
+# still hit the required-error path when no repo is resolvable from ANY tier.
 echo "Case B: missing PIPELINE_REPO → required-error"
 inc
 B="$TMP/case-b"; reset_case "$B"
-if env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$HOME" SHIM_LOG="$B/calls.log" \
+if ( cd "$B" && env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$HOME" SHIM_LOG="$B/calls.log" \
      LABELS="pr-open" \
-     bash "$HELPER" 866 >"$B/stdout" 2>"$B/stderr"; then
+     bash "$HELPER" 866 ) >"$B/stdout" 2>"$B/stderr"; then
   fail_msg "missing PIPELINE_REPO: helper exited 0 — expected non-zero"
   echo "    stderr:"; sed 's/^/      /' "$B/stderr"
 else
@@ -218,13 +221,15 @@ else
 fi
 
 # ---- Case I: REPO unset → gh repo view fallback resolves the repo ----
+# Run from an isolated cwd (no ancestor pipeline.config) so the #1022 config tier
+# yields nothing and the `gh repo view` fallback remains the resolver of record.
 echo "Case I: gh repo view fallback when PIPELINE_REPO unset"
 inc
 I="$TMP/case-i"; reset_case "$I"
-if env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$HOME" SHIM_LOG="$I/calls.log" \
+if ( cd "$I" && env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$HOME" SHIM_LOG="$I/calls.log" \
      FALLBACK_REPO="fallback/repo" \
      LABELS="$(IFS=,; echo "${STRIP_SET[*]}")" \
-     bash "$HELPER" 888 >"$I/stdout" 2>"$I/stderr"; then
+     bash "$HELPER" 888 ) >"$I/stdout" 2>"$I/stderr"; then
   if grep -qF -- '--repo fallback/repo' "$I/calls.log"; then
     pass_msg "gh repo view fallback: resolved repo threaded into gh issue edit"
   else

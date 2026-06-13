@@ -65,9 +65,19 @@ if [ -z "$ISSUE" ]; then
   exit 2
 fi
 
-# Repo resolution order: --repo flag > $PIPELINE_REPO env > gh's current-repo
-# config (the git remote). The fallback covers the Step-11.3 subshell case
-# where PIPELINE_REPO was sourced but not exported into this context (#888).
+# Repo resolution order: --repo flag > $PIPELINE_REPO env > pipeline.config
+# (self-resolved) > gh's current-repo config (the git remote). The config tier
+# self-resolves PIPELINE_REPO when the caller sourced pipeline.config but did
+# not export it into this subshell (#1022); the `gh repo view` tier remains the
+# final fallback (#888). The `--repo` flag (parsed above) still beats config.
+if [ -z "$REPO" ]; then
+  _fil_dir="$(dirname "${BASH_SOURCE[0]}")"
+  if [ -f "${_fil_dir}/_resolve-config.sh" ]; then
+    # shellcheck disable=SC1090,SC1091
+    source "${_fil_dir}/_resolve-config.sh"
+  fi
+  REPO="${PIPELINE_REPO:-}"
+fi
 if [ -z "$REPO" ]; then
   REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
 fi

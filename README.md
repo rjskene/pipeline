@@ -26,6 +26,18 @@ Full process maps in docs/process-maps.md.
 
 Full command catalogue (every skill, all flags, interaction surfaces): see [docs/skills-api.md](docs/skills-api.md).
 
+## Capabilities
+
+- **Paths A/B/C/D** — issues route to PATH A (docs-only) / B (standard TDD) / C (multi-task `tdd-implementer` fan-out) / D (quick-fix); the classifier sends each issue to the cheapest path that fits. See [docs/process-maps.md](docs/process-maps.md).
+- **Usage monitoring** — real account usage from the OAuth `/usage` endpoint gates dispatch against the live 5h/7d budget; fail-open with an opt-out kill switch, so a stale read never blocks a run. See [docs/usage-gate.md](docs/usage-gate.md).
+- **Auto-pause** — near the plan limit the run self-pauses (`pause-5h`) or hard-halts (`halt-7d`) instead of burning into a rate-limit wall (7d wins over 5h). See [docs/usage-gate.md](docs/usage-gate.md).
+- **Auto-refire** — a recurring re-check cron auto-resumes a paused run once the 5h window resets, so long campaigns ride through the budget reset unattended. See [docs/usage-gate.md](docs/usage-gate.md).
+- **Dynamic model routing** — Sonnet runs eligible low-blast PATH B / PATH D execute work (`PIPELINE_PATH_{B,D}_MODEL_EXECUTE`, gated by the `low-blast` eligibility predicate); the Opus pr-eval backstop is mandatory and never tier-dropped. See [docs/cost-architecture.md](docs/cost-architecture.md) and [docs/analysis/model-downsampling.md](docs/analysis/model-downsampling.md).
+- **Tokenomics** — `/pipeline:tokenomics` renders per-bucket / per-stage / per-structure cost and latency with the B→D breakeven over the gated `agent-costs.jsonl` log (dogfood-only). See [docs/observability.md](docs/observability.md) and [docs/tokenomics/README.md](docs/tokenomics/README.md).
+- **Campaign / wave mode** — campaign mode partitions the approved slate into cap-bounded ordered legs (expensive B/C vs cheap A/D), each run as a wave, for cost-bounded autonomous end-to-end runs. See [docs/process-maps.md](docs/process-maps.md).
+- **Split-role TDD** — Opus authors the failing suite (`[split-role-red]` commit), a cheaper implementer greens it, and `scripts/split-role-gate.sh` asserts the locked red suite was never modified/deleted and is green at HEAD before auto-merge. See [docs/split-role-tdd.md](docs/split-role-tdd.md).
+- **Hotfix lane + worktree isolation** — `/pipeline:hotfix` is the in-session emergency lane that bypasses the lifecycle gates, and every issue executes in its own git worktree so the main workspace stays clean. See [docs/architecture.md](docs/architecture.md) and [skills/hotfix/SKILL.md](skills/hotfix/SKILL.md).
+
 ## Install + first run
 
 - Marketplace add:
