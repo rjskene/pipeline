@@ -149,6 +149,8 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
 
   cfg_added=()
   cfg_needs_value=()
+  # Lines to insert (collected before writing, so we can do one atomic insert).
+  cfg_new_lines=()
 
   # Walk the example's UNCOMMENTED PIPELINE_* assignments in file order.
   while IFS= read -r ex_line; do
@@ -163,13 +165,31 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
     # Value = text after first `=`, trimmed of a trailing `  # comment`.
     ex_val="$(printf '%s' "$ex_line" | sed -E 's/^[[:space:]]*PIPELINE_[A-Z0-9_]+=//')"
     ex_val="$(printf '%s' "$ex_val" | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//')"
-    # Append KEY=value to the host config (append-only).
-    printf '%s=%s\n' "$ex_key" "$ex_val" >> "$CFG_HOST"
+    cfg_new_lines+=("$(printf '%s=%s' "$ex_key" "$ex_val")")
     cfg_added+=("$ex_key=$ex_val")
     if cfg_is_placeholder "$ex_key" "$ex_val"; then
       cfg_needs_value+=("$ex_key")
     fi
   done < <(grep -E '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$CFG_EXAMPLE" 2>/dev/null)
+
+  # Write reconciled knobs: insert BEFORE the last `set +a` line when one exists
+  # (so they stay inside the auto-export block per #801); fall back to EOF append
+  # only when no `set +a` is present.
+  if [ "${#cfg_new_lines[@]}" -gt 0 ]; then
+    if grep -q '^set +a' "$CFG_HOST"; then
+      # Find the line number of the last `set +a` and rewrite the file
+      # with the new lines inserted immediately before it.
+      _cfg_tmp="$(mktemp)"
+      _cfg_last_seta="$(grep -n '^set +a' "$CFG_HOST" | tail -1 | cut -d: -f1)"
+      awk -v insert_before="$_cfg_last_seta" \
+          -v new_lines="$(printf '%s\n' "${cfg_new_lines[@]}")" \
+          'NR == insert_before { print new_lines } { print }' \
+          "$CFG_HOST" > "$_cfg_tmp" && mv "$_cfg_tmp" "$CFG_HOST"
+    else
+      # No set +a — fall back to EOF append (original behavior).
+      printf '%s\n' "${cfg_new_lines[@]}" >> "$CFG_HOST"
+    fi
+  fi
 
   # --- Change report ---
   # Optional positional version args ($3 $4) let the detector's injected
