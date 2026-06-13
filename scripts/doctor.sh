@@ -89,6 +89,108 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "labels" ]; then
 fi
 
 # --------------------------------------------------------------------------
+# --fix config (#1038): envvar reconcile. Append every PIPELINE_* key present
+# in pipeline.config.example but ABSENT from the host pipeline.config, at the
+# example default value. KEY-LEVEL MERGE, append-only:
+#   - NEVER overwrite an existing host value (PIPELINE_REPO + per-operator
+#     paths are sacred);
+#   - preserve host comments / ordering / non-PIPELINE lines (we only append);
+#   - commented `#PIPELINE_*` example lines are documentation defaults
+#     single-sourced at the read site (${VAR:-default}), NOT required live keys
+#     — they are skipped, never force-appended;
+#   - surface placeholder / no-safe-default keys (empty default, owner/repo,
+#     /path/..., PIPELINE_MOCK_WEB_EVAL_*) as "added — needs your value".
+# Prints a per-key report. Exits 0. The example file is the source of defaults;
+# the host file is the only thing mutated (append-only).
+# --------------------------------------------------------------------------
+if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
+  CFG_DIR="$(cd "$(dirname "$0")" && pwd)"
+  CFG_EXAMPLE_DEFAULT="$(cd "$CFG_DIR/.." 2>/dev/null && pwd)/pipeline.config.example"
+  # Prefer a cwd-local example (the consumer's own copy / a test fixture);
+  # fall back to the plugin-shipped example.
+  if [ -f pipeline.config.example ]; then
+    CFG_EXAMPLE="pipeline.config.example"
+  else
+    CFG_EXAMPLE="$CFG_EXAMPLE_DEFAULT"
+  fi
+  CFG_HOST="pipeline.config"
+
+  if [ ! -f "$CFG_EXAMPLE" ]; then
+    echo "ERROR: pipeline.config.example not found (looked for ./pipeline.config.example and $CFG_EXAMPLE_DEFAULT)" >&2
+    exit 1
+  fi
+  if [ ! -f "$CFG_HOST" ]; then
+    echo "ERROR: pipeline.config not found in $(pwd) — run /pipeline:init to bootstrap" >&2
+    exit 1
+  fi
+
+  # Extract the set of PIPELINE_* keys already present (uncommented) in the host.
+  cfg_host_keys="$(grep -oE '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$CFG_HOST" 2>/dev/null \
+                   | sed -E 's/^[[:space:]]*//; s/=$//' | sort -u)"
+
+  # Decide whether an example default value has no safe default (placeholder).
+  # Empty string, owner/repo sentinel, /path/... sentinels, and the
+  # PIPELINE_MOCK_WEB_EVAL_* family are all "needs your value".
+  cfg_is_placeholder() {
+    local key="$1" val="$2"
+    case "$key" in
+      PIPELINE_MOCK_WEB_EVAL_*) return 0 ;;
+    esac
+    # Strip surrounding quotes for the value test.
+    local bare="$val"
+    bare="${bare%\"}"; bare="${bare#\"}"
+    bare="${bare%\'}"; bare="${bare#\'}"
+    case "$bare" in
+      ""|"owner/repo") return 0 ;;
+      /path/*|/path|*"<"*">"*) return 0 ;;
+    esac
+    return 1
+  }
+
+  cfg_added=()
+  cfg_needs_value=()
+
+  # Walk the example's UNCOMMENTED PIPELINE_* assignments in file order.
+  while IFS= read -r ex_line; do
+    # Capture key and the raw default value (everything after the first `=`,
+    # before any trailing inline comment). Keep quoting in the value verbatim.
+    ex_key="$(printf '%s' "$ex_line" | sed -E 's/^[[:space:]]*(PIPELINE_[A-Z0-9_]+)=.*/\1/')"
+    [ -n "$ex_key" ] || continue
+    # Already present in host (uncommented)? Skip — never overwrite.
+    if printf '%s\n' "$cfg_host_keys" | grep -Fxq "$ex_key"; then
+      continue
+    fi
+    # Value = text after first `=`, trimmed of a trailing `  # comment`.
+    ex_val="$(printf '%s' "$ex_line" | sed -E 's/^[[:space:]]*PIPELINE_[A-Z0-9_]+=//')"
+    ex_val="$(printf '%s' "$ex_val" | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//')"
+    # Append KEY=value to the host config (append-only).
+    printf '%s=%s\n' "$ex_key" "$ex_val" >> "$CFG_HOST"
+    cfg_added+=("$ex_key=$ex_val")
+    if cfg_is_placeholder "$ex_key" "$ex_val"; then
+      cfg_needs_value+=("$ex_key")
+    fi
+  done < <(grep -E '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$CFG_EXAMPLE" 2>/dev/null)
+
+  # --- Per-key report ---
+  echo "=== doctor --fix config (envvar reconcile) ==="
+  if [ "${#cfg_added[@]}" -eq 0 ]; then
+    echo "envvars added: none (host pipeline.config already has every example key)"
+  else
+    echo "envvars added:"
+    for kv in "${cfg_added[@]}"; do
+      echo "  $kv"
+    done
+  fi
+  if [ "${#cfg_needs_value[@]}" -gt 0 ]; then
+    echo "envvars still needing a value:"
+    for k in "${cfg_needs_value[@]}"; do
+      echo "  $k — added — needs your value"
+    done
+  fi
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
 # --fix stdin-guards (#917): patch consumer .claude/hooks/ files whose stdin
 # reads lack a timeout guard. Strategy split:
 #   - plugin-shipped Python duplicate (basename exists under
