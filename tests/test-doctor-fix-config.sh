@@ -124,18 +124,23 @@ else
 fi
 
 # Case 7: original host comments / ordering / non-PIPELINE lines preserved.
-# The pre-reconcile content must appear verbatim as a prefix of the result
-# (append-only means the original lines are untouched, in order).
-BEFORE_LINES="$(wc -l < "$WORK/pipeline.config.before")"
-if head -n "$BEFORE_LINES" "$HOST" | diff -q - "$WORK/pipeline.config.before" >/dev/null 2>&1; then
-  pass_msg "original host lines preserved verbatim (append-only)"
+# With insert-before-set+a behavior, reconciled knobs land BEFORE `set +a`
+# so `set +a` is no longer the last original line — all other original lines
+# must still be present, and `set +a` must still appear in the result.
+if grep -Fxq 'set +a' "$HOST"; then
+  pass_msg "set +a still present in host config after reconcile"
 else
-  fail_msg "original host lines were rewritten/reordered (not append-only)"
+  fail_msg "set +a was removed from host config"
 fi
 if grep -Fxq 'CUSTOM_NON_PIPELINE_LINE="keepme"' "$HOST"; then
   pass_msg "non-PIPELINE host line preserved"
 else
   fail_msg "non-PIPELINE host line was dropped"
+fi
+if grep -Fxq 'set -a' "$HOST"; then
+  pass_msg "set -a still present in host config after reconcile"
+else
+  fail_msg "set -a was removed from host config"
 fi
 
 # Case 8: per-key report line for the added key.
@@ -181,6 +186,63 @@ if printf '%s\n' "$OUT2" | grep -Eqi 'envvars added'; then
   pass_msg "report includes an envvars-added line"
 else
   fail_msg "report missing an envvars-added line"
+fi
+
+# --- Task 3: insert-before-set+a regression (#1051) ---
+# Fixture: host config with a set -a / set +a block; example has a key the host
+# is missing. Reconciled knob MUST land BEFORE the set +a line so it is auto-exported.
+WORK2="$(mktemp -d)"
+trap 'rm -rf "$WORK2"' EXIT
+
+cat > "$WORK2/pipeline.config.example" <<'EXEOF'
+set -a
+PIPELINE_REPO="owner/repo"
+PIPELINE_GAMMA=42
+set +a
+EXEOF
+
+cat > "$WORK2/pipeline.config" <<'HEOF'
+set -a
+PIPELINE_REPO="rjskene/pipeline"
+set +a
+HEOF
+
+cd "$WORK2" && bash "$DOCTOR" --fix config >/dev/null 2>&1
+cd "$REPO_ROOT"
+
+# Case 12: reconciled knob lands on a line BEFORE `set +a` (inside the exported block).
+HOST2="$WORK2/pipeline.config"
+seta_lineno="$(grep -n '^set +a' "$HOST2" | tail -1 | cut -d: -f1)"
+gamma_lineno="$(grep -n '^PIPELINE_GAMMA=' "$HOST2" | head -1 | cut -d: -f1)"
+if [ -n "$gamma_lineno" ] && [ -n "$seta_lineno" ] && [ "$gamma_lineno" -lt "$seta_lineno" ]; then
+  pass_msg "reconciled knob (PIPELINE_GAMMA) inserted BEFORE set +a (line $gamma_lineno < $seta_lineno)"
+else
+  fail_msg "reconciled knob not before set +a (gamma_lineno=${gamma_lineno:-missing} seta_lineno=${seta_lineno:-missing})"
+fi
+
+# --- Task 4: EOF-append fallback when no set +a present (#1051) ---
+WORK3="$(mktemp -d)"
+trap 'rm -rf "$WORK3"' EXIT
+
+cat > "$WORK3/pipeline.config.example" <<'EXEOF'
+PIPELINE_REPO="owner/repo"
+PIPELINE_DELTA=99
+EXEOF
+
+cat > "$WORK3/pipeline.config" <<'HEOF'
+PIPELINE_REPO="rjskene/pipeline"
+HEOF
+
+cd "$WORK3" && bash "$DOCTOR" --fix config >/dev/null 2>&1
+cd "$REPO_ROOT"
+
+# Case 13: no set +a present — reconciled knob appended at EOF.
+HOST3="$WORK3/pipeline.config"
+last_line="$(tail -1 "$HOST3")"
+if printf '%s\n' "$last_line" | grep -Eq '^PIPELINE_DELTA='; then
+  pass_msg "EOF-append fallback: reconciled knob is last line when no set +a present"
+else
+  fail_msg "EOF-append fallback: expected PIPELINE_DELTA at EOF, got: $last_line"
 fi
 
 echo ""
