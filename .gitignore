@@ -6,6 +6,9 @@
 /.claude/scratch/
 /.claude/settings.local.json
 /pipeline.config
+# advisory-scanner output (scripts/migration-cleanup-claudemd.sh) — runtime artifact, never tracked
+/.claude/migration-cleanup-report-claudemd.txt
+/.claude/migration-cleanup-claudemd.patch
 hooks/__pycache__/
 __pycache__/
 *.pyc
