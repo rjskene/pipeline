@@ -43,6 +43,36 @@ precedence: A > D > C > B  (when path labels collide)
 
 As of #748 those risks were accepted at A and B scope. As of #749/#891/#896 they are accepted at C scope too: the per-leaf-worktree fan-out (#896) gives each `target=<dir>` leaf an isolated git index, so concurrency is bounded by orchestrator context (max-3 foreground), not a git-index cap, and leaf returns are ~one line each (negligible context cost — the #894/#896 live branch test). `--spawn` remains the reversible escape hatch back to the legacy spawned transport.
 
+## Worktree isolation
+
+Every path executes in its own git worktree — the main orchestrator workspace stays clean (Design Principle 4: *isolation by default*). One feature worktree is created per issue by `scripts/setup-worktree.sh` (the launch transport differs by path, but worktree creation is identical across A/B/C/D — see the dispatch table above).
+
+```
+orchestrator workspace (base branch)  --- stays clean, never edited by executors
+       |
+       +-- setup-worktree.sh <branch> [issue] --> feature/<slug> worktree (one per issue)
+                |
+                +-- PATH C only: path-c-split-worktree.sh --> per-leaf worktrees
+                        (one per target=<dir>; isolated git index; cherry-pick reassemble)
+```
+
+- `scripts/setup-worktree.sh` does the atomic per-issue worktree setup (`--base <branch>` selects the base; defaults to `$PIPELINE_BASE_BRANCH`). Worktrees live under `.claude/worktrees/` (runtime allow-list, consumer-owned).
+- PATH C additionally splits each `target=<dir>` leaf into its OWN per-leaf worktree via `scripts/path-c-split-worktree.sh`, so concurrent leaves never share a git index; leaf commits are cherry-picked back onto the feature branch (disjoint targets ⇒ conflict-free, #896).
+- The orchestrator session itself never edits implementation files — a delegation hook blocks orchestrator-side Edit/Write on impl files during PATH C dispatch.
+
+## Hotfix lane (in-session emergency)
+
+`/pipeline:hotfix` is the **emergency lane**: an in-session worktree fix that bypasses ALL pipeline lifecycle gates. Distinct from PATH D — D is still a normal lifecycle issue (classified, executed, PR-evaluated); hotfix skips the lifecycle entirely and the operator observes the test/fix loop live, merging by hand. Authoritative spec: [skills/hotfix/SKILL.md](../skills/hotfix/SKILL.md).
+
+```
+parse args -> file/lookup audit-anchor issue -> setup-worktree.sh -> fix loop (red->green->commit, in-session) -> open PR -> manual merge
+```
+
+- **Runs in the current orchestrator session** (not a spawned/dispatched agent by default; `--inline`/`--subagent` selects the fix dispatch). The user watches the red→green loop live.
+- **No evaluator gates.** No classify-issue, plan-issue, evaluate-issue-plan, evaluate-issue-pr, or fullsend dispatch — and no pipeline labels (no `plan-pending`/`in-progress`/`pr-open`), so the PR is invisible to the auto-merge gate by design.
+- **Auto-merge: manual by default, opt-in CI-only.** With no flag the user merges by hand. With `--auto-merge`, Step 6.5 runs `scripts/auto-merge-gate.sh` in `NO_VERDICT=1` mode (CI-only greenlight — CI rollup SUCCESS + `mergeable == MERGEABLE` + `mergeStateStatus == CLEAN` + base `== $PIPELINE_BASE_BRANCH`, skipping the evaluator-verdict condition the emergency lane never produces). Never the default.
+- Files an audit-anchor issue (or uses an existing one) so the bypass is recorded; the PR body notes it was filed via the emergency lane.
+
 ## Full Send wave model
 
 On `/pipeline:fullsend`, the orchestrator runs `scripts/plan-waves.sh` against ready issues before dispatching any classify/plan agents.
