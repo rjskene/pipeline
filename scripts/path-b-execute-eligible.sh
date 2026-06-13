@@ -80,11 +80,14 @@ if printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" \
 fi
 
 # --- High-uncertainty carve-out (the protected axis) ------------------------
-# REUSE classify-issue's exact vocabulary (skills/classify-issue/SKILL.md
-# line 56) so the carve-out can never drift from classify's protected axis.
-# Any hit ⇒ high-blast regardless of file count (#950 §4 "no security/
-# migration/auth/concurrency signal").
-HIGH_UNCERTAINTY_RE='concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss'
+# REUSE classify-issue's exact vocabulary via the shared single source of truth
+# scripts/_high-uncertainty-match.sh (issue #1039) so the carve-out can never
+# drift from classify's protected axis — it is now structurally one pattern,
+# word-bound on the three proven-noisy short tokens (auth/lock/race). Any hit ⇒
+# high-blast regardless of file count (#950 §4 "no security/migration/auth/
+# concurrency signal").
+# shellcheck source=scripts/_high-uncertainty-match.sh
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/_high-uncertainty-match.sh"
 if printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" \
      | grep -iEq "$HIGH_UNCERTAINTY_RE"; then
   emit high-blast high-uncertainty
