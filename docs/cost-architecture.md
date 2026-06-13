@@ -16,6 +16,11 @@ decision it forced. It is the durable record behind issues #721, #723, #707,
 - **Decision: Path 2** — keep work on the subscription's *interactive pool* by running execute+pr-eval as **inline subagents from a human-attended orchestrator**, `claude -p` opt-in. As of #749/#891/#896 this now applies to PATH C as well: C execute/PR-eval fan out inline by default (one `tdd-implementer` per `target=<dir>` leaf in its own per-leaf worktree, reassembled by cherry-pick), with `--spawn` as the opt-in legacy `claude -p` worker transport. Path 1 (API-key, full automation) is the documented later-option.
 - **Two parallel workstreams, both required:** migrate to inline (#723/#707) AND drive down tokens (#648/#420/#700).
 - **Everything gates on #721** (measurement) — it also produces the execute-concurrency assessment that sizes the migration and feeds the governor.
+- **Model-tier lever (shipped, default-off):** a third axis — routing the **execute** stage to cheaper Sonnet
+  on the eligible low-blast lane — landed after this analysis. It is gated by the host vars
+  `PIPELINE_PATH_B_MODEL_EXECUTE` / `PIPELINE_PATH_D_MODEL_EXECUTE` (+ the `PIPELINE_PATH_B_ELIGIBLE_SCOPE`
+  scope knob), with **pr-eval always staying Opus**. Full decision + the ~80% execute-cost ratio in
+  [analysis/model-downsampling.md](analysis/model-downsampling.md).
 
 ---
 
@@ -242,6 +247,30 @@ These answers size #723 (migration) and configure #725 (governor), and ultimatel
 whether Path 2 holds or we flip to Path 1.
 
 ---
+
+## 9. Model-tier routing — the live execute-cost lever (#868/#950)
+
+The cost analysis above (§2) found **execute = 74% of spend**, and §1 of
+[analysis/model-downsampling.md](analysis/model-downsampling.md) showed the post-#748 residual is a
+**pure model price-multiplier on cached context**, not an output-token problem. The shipped lever drops
+the execute tier to Sonnet (1/5 of Opus across every token bucket ⇒ ~**−80% execute cost** on the eligible
+traffic) while keeping the independent evaluator on Opus. As realized in the live routing surface:
+
+- **`PIPELINE_PATH_B_MODEL_EXECUTE` / `PIPELINE_PATH_D_MODEL_EXECUTE`** — per-path Agent `model` enum
+  (`sonnet`|`opus`|`haiku`) in the gitignored `pipeline.config`. **Unset/empty ⇒ no `model=` param ⇒
+  inherit Opus = current behavior byte-for-byte.** Default-off (commented in `pipeline.config.example`).
+- **`PIPELINE_PATH_B_ELIGIBLE_SCOPE`** (default `"low-blast"`) — gates **which** PATH B issues route
+  Sonnet. Default restricts the downshift to the low-blast lane via `scripts/path-b-execute-eligible.sh`
+  (≤1 source module, ≤6 files, ≤150 added-LOC proxy, no security/migration/auth/concurrency signal);
+  `"all"` widens to every non-W2 PATH B issue. High-blast B otherwise **inherits Opus**.
+- **PATH D is unconditional Sonnet EXCEPT `needs-browser` → Opus** (#960 — browser/UI execute unmeasured).
+- **Invariant: pr-eval is NEVER tier-dropped.** No host var gates the evaluator; the Opus backstop is the
+  property that makes a cheaper execute safe (a Sonnet execute defect was caught pre-merge in the pilot —
+  see model-downsampling.md §3.3).
+
+Net cost framing: the *eligible low-blast lane's own* dollar savings are thin (the expensive executes are
+the high-blast B/C the default gate excludes); the lever's value is **de-risking the lane** and providing a
+host-flag kill switch (unset = instant Opus revert, zero code change).
 
 ## Issue map
 
