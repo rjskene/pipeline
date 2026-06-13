@@ -27,12 +27,18 @@ cd "$REPO_ROOT"
 
 # Build the file list:
 #   1) Everything under scripts/, hooks/, agents/, .claude-plugin/ (install-style
-#      source artifacts).
+#      source artifacts). Generated Python bytecode (hooks/__pycache__/*.pyc) is
+#      EXCLUDED — it is compiled output, not source, and its binary content
+#      embeds the forbidden control-file path literals from the compiled hook,
+#      which would false-positive the scan. Python materializes these `.pyc`
+#      files whenever a hook is imported at runtime, so they appear in any live
+#      worktree even though they are gitignored.
 #   2) Any *.template at repo root or up to depth 3, excluding tests/, docs/,
 #      .claude/, .git/, and node_modules/ (description, not installation).
 FILES=$(
   {
-    find scripts hooks agents .claude-plugin -type f 2>/dev/null || true
+    find scripts hooks agents .claude-plugin -type f \
+      -not -path '*/__pycache__/*' -not -name '*.pyc' 2>/dev/null || true
     find . -maxdepth 3 -name '*.template' \
       -not -path './.claude/*' \
       -not -path './tests/*' \

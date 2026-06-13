@@ -77,6 +77,19 @@ assert "allows \${CLAUDE_PLUGIN_ROOT}/skills/ references" \
   "(cd \"$SB6\" && bash scripts/check-no-consumer-claude-writes.sh >/dev/null 2>&1)"
 rm -rf "$SB6"
 
+# Generated-path exclusion: a compiled-bytecode artifact under
+# hooks/__pycache__/ is generated, not source. Its binary content embeds the
+# literal `.claude/settings.json` / `.claude/hooks/` strings from the compiled
+# Python hook, so an un-excluded scan false-positives on it. Python materializes
+# these `.pyc` files whenever a hook is imported at runtime — they appear in any
+# live worktree even though they are gitignored. The lint MUST skip them.
+SB7=$(make_sandbox)
+mkdir -p "$SB7/hooks/__pycache__"
+printf 'noise .claude/settings.json noise\n' > "$SB7/hooks/__pycache__/restrict_paths.cpython-312.pyc"
+assert "ignores generated hooks/__pycache__/*.pyc artifacts" \
+  "(cd \"$SB7\" && bash scripts/check-no-consumer-claude-writes.sh >/dev/null 2>&1)"
+rm -rf "$SB7"
+
 assert ".github/workflows/ci.yml exists and references the lint" \
   "grep -qF 'check-no-consumer-claude-writes.sh' \"$REPO_ROOT/.github/workflows/ci.yml\""
 
