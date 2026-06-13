@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.10](https://github.com/rjskene/pipeline/compare/v0.23.9...v0.23.10) (2026-06-13)
+
+
+### Bug Fixes
+
+* **doctor:** drop dead systemMessage banner; lead additionalContext relay with recognizable header ([#1047](https://github.com/rjskene/pipeline/issues/1047)) ([549fc61](https://github.com/rjskene/pipeline/commit/549fc6167ee7b1997074b18e3f7cc7bbfa007c33))
+
 ## [0.23.9](https://github.com/rjskene/pipeline/compare/v0.23.8...v0.23.9) (2026-06-13)
 
 
