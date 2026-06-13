@@ -68,11 +68,18 @@ else
 fi
 
 # 3. SKILL routing block: W2 high-uncertainty carve-out STILL forces Opus.
-#    The high-uncertainty vocabulary co-occurs with an inherit/Opus clause.
+#    The high-uncertainty vocabulary co-occurs with an inherit/Opus clause. Source
+#    the SINGLE-SOURCE-OF-TRUTH helper (scripts/_high-uncertainty-match.sh, #1039)
+#    for the regex rather than inlining a substring copy — the drift guard in
+#    tests/test-high-uncertainty-match.sh forbids any stray inline copy of the vocab.
 inc
-if routing_block | grep -Eq "concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss" \
+# shellcheck source=/dev/null
+. "$ROOT/scripts/_high-uncertainty-match.sh"
+if [ -z "${HIGH_UNCERTAINTY_RE:-}" ]; then
+  fail_msg "skill: could not source HIGH_UNCERTAINTY_RE from the shared helper"
+elif routing_block | grep -Eiq "$HIGH_UNCERTAINTY_RE" \
    && routing_block | grep -Eiq "inherit|opus"; then
-  pass_msg "skill: W2 carve-out still forces Opus (high-uncertainty vocab + inherit/Opus)"
+  pass_msg "skill: W2 carve-out still forces Opus (shared high-uncertainty regex + inherit/Opus)"
 else
   fail_msg "skill: W2 carve-out -> Opus clause missing from the routing block"
 fi
