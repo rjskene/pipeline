@@ -94,6 +94,28 @@ only when `PIPELINE_LOGS_ENABLED=true`; silent otherwise.
 The hook exits 0 on EVERY failure mode (no network, dirty tree,
 non-FF state, missing git). It MUST never block session start.
 
+## Doctor-on-update detector (#1038)
+
+The dogfood `.claude/settings.json` chain also registers the read-only
+plugin-version-change detector `hooks/doctor-on-update.sh` on BOTH
+`UserPromptSubmit` (beside `dogfood-heal-symlink.sh`) and `SessionStart`
+(beside `dogfood-refresh.sh`):
+
+```
+bash ${CLAUDE_PROJECT_DIR:-.}/hooks/doctor-on-update.sh
+```
+
+It is the same script the published manifest registers — on a plugin
+version change it injects a directive to run the `/pipeline:doctor`
+reconcile (`--fix config` envvar reconcile + `--fix labels` label seed)
+plus an operator banner, then caches the new version at
+`.claude/logs/.doctor-on-update-version`. On NO change it is a cheap
+silent no-op (string compare; no network). Fail-open everywhere; opt out
+via `PIPELINE_DOCTOR_ON_UPDATE_ENABLED=false`. See
+[plugin-architecture.md](plugin-architecture.md) for the full detector
+contract and the bootstrapping caveat (a newly-registered hook only
+activates after the reload that installs it).
+
 ## Mode swap
 
 ```bash

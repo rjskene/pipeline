@@ -22,6 +22,10 @@ From the root of your project, inside Claude Code:
 
 After init reports `bootstrap complete`, run `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) to start the workflow.
 
+### Staying current after a plugin update
+
+After you `/plugin update` and `/reload-plugins`, the read-only doctor-on-update detector (`hooks/doctor-on-update.sh`) fires on your next prompt and directs the model to run the doctor reconcile for you — `/pipeline:doctor --fix config` (append any new `PIPELINE_*` knobs from `pipeline.config.example` into your host `pipeline.config`, never overwriting your values) plus `/pipeline:doctor --fix labels` (seed any new GitHub labels). It also names any new keys that still "need your value". Opt out with `PIPELINE_DOCTOR_ON_UPDATE_ENABLED="false"`. You can always run those two commands by hand. See [plugin-architecture.md](plugin-architecture.md) for the detector contract.
+
 ## Manual `pipeline.config` fallback
 
 If you prefer to write `pipeline.config` by hand instead of running `/pipeline:init`, follow the manual-configuration steps in the README ["Install + first run"](../README.md#install--first-run) section, which lists the config keys and points to `pipeline.config.example` for the full set of options.

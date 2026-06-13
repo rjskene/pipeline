@@ -362,4 +362,20 @@ PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true when unset (fullsend 6b rea
 # Default 8080, single-sourced at the read site (${VAR:-8080}); uncomment to override.
 #PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 
+# --- Doctor-on-update detector (issue #1038) ---
+#
+# hooks/doctor-on-update.sh is a thin, READ-ONLY detector wired into
+# UserPromptSubmit (primary — fires on your next prompt, no lag after
+# /reload-plugins) + SessionStart (backstop). On a plugin version change it
+# injects a directive (the model runs the /pipeline:doctor reconcile:
+# `--fix config` envvar reconcile + `--fix labels` label seed) plus an operator
+# banner, then caches the new version under .claude/logs/. On NO change it is a
+# cheap silent no-op (string compare; no network). It mutates nothing but the
+# cached version marker — all GitHub/config changes stay in the visible doctor run.
+#
+# Set "false" to opt out of the detector injection entirely. Default "true",
+# single-sourced at the read site (${PIPELINE_DOCTOR_ON_UPDATE_ENABLED:-true}
+# in hooks/doctor-on-update.sh); uncomment to override.
+#PIPELINE_DOCTOR_ON_UPDATE_ENABLED="true"
+
 set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above)
