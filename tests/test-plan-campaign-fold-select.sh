@@ -45,4 +45,26 @@ EOF
 )
 chk "env max=1 -> #42 overflow" "OVERFLOW issue=#42 title=\"fix(b): two\"" "$(printf '%s\n' "$OUT" | sed -n 2p)"
 
+# (5) Word-bound high-uncertainty (issue #1039): benign TITLEs whose words merely
+#     SUBSTRING-contain auth/lock/race (authoring/block/trace) must FOLD (consume
+#     budget), NOT SKIP. Real signals (auth/race condition, migration, deadlock)
+#     must still SKIP without consuming budget.
+OUT=$(printf '%s\n' \
+  'SIGNAL issue=#51 kind=ci title="fix(authoring): control-plane docs" detail="x"' \
+  'SIGNAL issue=#52 kind=ci title="fix(block): unblock the sibling render" detail="x"' \
+  'SIGNAL issue=#53 kind=ci title="fix(trace): add a trace span" detail="x"' \
+  | bash "$SCRIPT" fold-select --max=3)
+chk "benign authoring FOLDs (not skipped)" "FOLD issue=#51 title=\"fix(authoring): control-plane docs\"" "$(printf '%s\n' "$OUT" | sed -n 1p)"
+chk "benign block FOLDs (not skipped)"     "FOLD issue=#52 title=\"fix(block): unblock the sibling render\"" "$(printf '%s\n' "$OUT" | sed -n 2p)"
+chk "benign trace FOLDs (not skipped)"     "FOLD issue=#53 title=\"fix(trace): add a trace span\"" "$(printf '%s\n' "$OUT" | sed -n 3p)"
+
+OUT=$(printf '%s\n' \
+  'SIGNAL issue=#61 kind=ci title="fix(auth): authentication race condition" detail="x"' \
+  'SIGNAL issue=#62 kind=ci title="fix(db): schema migration" detail="x"' \
+  'SIGNAL issue=#63 kind=ci title="fix(lock): deadlock under contention" detail="x"' \
+  | bash "$SCRIPT" fold-select --max=3)
+chk "real auth/race SKIPs (high-uncertainty)" "SKIP issue=#61 reason=high-uncertainty title=\"fix(auth): authentication race condition\"" "$(printf '%s\n' "$OUT" | sed -n 1p)"
+chk "real migration SKIPs (high-uncertainty)" "SKIP issue=#62 reason=high-uncertainty title=\"fix(db): schema migration\"" "$(printf '%s\n' "$OUT" | sed -n 2p)"
+chk "real deadlock SKIPs (high-uncertainty)"  "SKIP issue=#63 reason=high-uncertainty title=\"fix(lock): deadlock under contention\"" "$(printf '%s\n' "$OUT" | sed -n 3p)"
+
 [ "$fail" -eq 0 ] && echo "PASS: fold-select" || exit 1
