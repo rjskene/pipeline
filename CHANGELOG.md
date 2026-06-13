@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.23.9](https://github.com/rjskene/pipeline/compare/v0.23.8...v0.23.9) (2026-06-13)
+
+
+### Features
+
+* **config:** add PIPELINE_DOCTOR_ON_UPDATE_ENABLED opt-out knob ([9c82fa7](https://github.com/rjskene/pipeline/commit/9c82fa79b15039cac8253f2d9a8e2e4837868196))
+* **doctor:** add --fix config envvar reconcile (append-missing, never-overwrite) ([f03e21c](https://github.com/rjskene/pipeline/commit/f03e21c20d7d06687cab13c3c2cc8d44d63fcdb4))
+* **doctor:** assemble version-change reconcile report for --fix config ([ec2c152](https://github.com/rjskene/pipeline/commit/ec2c152b8dfce88cd10afece1e1df80dfc91f4c8))
+* **doctor:** detect plugin version-change (UserPromptSubmit) → inject doctor directive that seeds labels + reconciles envvars + reports changes ([5c091a7](https://github.com/rjskene/pipeline/commit/5c091a7837e8136bfda98af1329ab3a53269a9eb))
+* **hooks:** add read-only doctor-on-update version-change detector ([12757a0](https://github.com/rjskene/pipeline/commit/12757a083dd52082aa1ef24b67d1e576954c29a7))
+* **hooks:** register doctor-on-update on UserPromptSubmit + SessionStart ([24dbdea](https://github.com/rjskene/pipeline/commit/24dbdeaf54d8c176cee0b18ac8e27c05ac31b0cd))
+* **init:** generate Sonnet-on-execute knobs active (opt-out) in fresh config for [#1042](https://github.com/rjskene/pipeline/issues/1042) ([12618f9](https://github.com/rjskene/pipeline/commit/12618f9174e89824488738cb44b1842cd3cac032))
+* **model-routing:** add shared word-bound high-uncertainty regex helper ([8c551f6](https://github.com/rjskene/pipeline/commit/8c551f6a3d6083a71f1b2280f99adf2330b32aa4)), closes [#1039](https://github.com/rjskene/pipeline/issues/1039)
+* **model-routing:** default execute model to Sonnet (opt-out) at the fullsend read-site for [#1042](https://github.com/rjskene/pipeline/issues/1042) ([2428d1e](https://github.com/rjskene/pipeline/commit/2428d1edbecf571a5606ca8bd2d36e272dcb622c))
+* **model-routing:** ship Sonnet-on-execute as the default (opt-out), not opt-in ([7922a08](https://github.com/rjskene/pipeline/commit/7922a0812677a94a4c3bacb126f0654f0eb36e95))
+* **model-routing:** ship Sonnet-on-execute knobs active (opt-out) in config example for [#1042](https://github.com/rjskene/pipeline/issues/1042) ([5a9a24d](https://github.com/rjskene/pipeline/commit/5a9a24d42461cca9ab56d0be0d36ff170063bdd2))
+
+
+### Bug Fixes
+
+* **lint:** exclude generated __pycache__/*.pyc from no-consumer-claude-writes scan ([b4cfb63](https://github.com/rjskene/pipeline/commit/b4cfb63ac60c3fd102d3b42e8118cb0175f91e20))
+* **model-routing:** avoid forbidden needs-browser literal in [#1042](https://github.com/rjskene/pipeline/issues/1042) config example comment ([8f6a797](https://github.com/rjskene/pipeline/commit/8f6a79782a71e6042f399df4e967f17e8986dbad))
+* **model-routing:** high-uncertainty eligibility regex substring-matches (authoring→auth, block→lock) — benign PATH B/classify issues fail-closed to Opus ([9f18d1d](https://github.com/rjskene/pipeline/commit/9f18d1d4584ee2ffcaa53fcb51c23c62572e9ef2))
+* **model-routing:** source shared high-uncertainty regex in [#1042](https://github.com/rjskene/pipeline/issues/1042) test to satisfy the [#1039](https://github.com/rjskene/pipeline/issues/1039) drift guard ([6b72432](https://github.com/rjskene/pipeline/commit/6b7243283ad15bd7d3ac43e19e5887938c8e638f))
+* **model-routing:** word-bound campaign fold-select high-uncertainty regex via shared helper ([5ffd7bb](https://github.com/rjskene/pipeline/commit/5ffd7bb6d4342a94ce5b9ed2a0b71be93ab85ced)), closes [#1039](https://github.com/rjskene/pipeline/issues/1039)
+* **model-routing:** word-bound path-b high-uncertainty regex via shared helper ([0460a91](https://github.com/rjskene/pipeline/commit/0460a91ae4f540756744582913b7fb6ef7453a6d)), closes [#1039](https://github.com/rjskene/pipeline/issues/1039)
+* **review:** reconcile split-role + forward-ref prose with the [#1042](https://github.com/rjskene/pipeline/issues/1042) Sonnet-default flip ([facedb1](https://github.com/rjskene/pipeline/commit/facedb1b23e5329418d73e0230b93ae6dceb34ea))
+
 ## [0.23.8](https://github.com/rjskene/pipeline/compare/v0.23.7...v0.23.8) (2026-06-13)
 
 
