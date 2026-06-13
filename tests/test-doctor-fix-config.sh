@@ -145,6 +145,44 @@ else
   fail_msg "report does not name the added key PIPELINE_BETA"
 fi
 
+# --- Task 2: change-report assembly with optional vX vY version args. ---
+# Re-run on a fresh fixture (host already reconciled above) passing the diffed
+# versions so the detector's injected directive can relay them.
+cat > "$WORK/pipeline.config" <<'EOF'
+set -a
+PIPELINE_REPO="rjskene/pipeline"
+set +a
+EOF
+
+OUT2="$(cd "$WORK" && bash "$DOCTOR" --fix config 0.1.0 0.2.0 2>&1)"
+RC2=$?
+
+# Case 9: version args accepted (exit 0) and the report names the version delta.
+if [ "$RC2" -eq 0 ]; then
+  pass_msg "version-arg form exits 0"
+else
+  fail_msg "version-arg form expected exit 0, got $RC2"
+fi
+if printf '%s\n' "$OUT2" | grep -Eq 'version[[:space:]:]+0\.1\.0[^0-9].*0\.2\.0'; then
+  pass_msg "report shows version 0.1.0 -> 0.2.0 delta"
+else
+  fail_msg "report does not show the 0.1.0 -> 0.2.0 version delta"
+fi
+
+# Case 10: report has a labels line (added: ... OR none).
+if printf '%s\n' "$OUT2" | grep -Eqi 'labels'; then
+  pass_msg "report includes a labels line"
+else
+  fail_msg "report missing a labels line"
+fi
+
+# Case 11: report still names an envvars-added line on this run too.
+if printf '%s\n' "$OUT2" | grep -Eqi 'envvars added'; then
+  pass_msg "report includes an envvars-added line"
+else
+  fail_msg "report missing an envvars-added line"
+fi
+
 echo ""
 echo "================================"
 echo "  test-doctor-fix-config: PASS=$PASS FAIL=$FAIL"

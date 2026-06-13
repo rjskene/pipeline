@@ -171,8 +171,19 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
     fi
   done < <(grep -E '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$CFG_EXAMPLE" 2>/dev/null)
 
-  # --- Per-key report ---
+  # --- Change report ---
+  # Optional positional version args ($3 $4) let the detector's injected
+  # directive relay the diffed plugin versions (vOLD vNEW) into the report.
+  cfg_v_old="${3:-}"
+  cfg_v_new="${4:-}"
   echo "=== doctor --fix config (envvar reconcile) ==="
+  if [ -n "$cfg_v_old" ] || [ -n "$cfg_v_new" ]; then
+    echo "version: ${cfg_v_old:-?} -> ${cfg_v_new:-?}"
+  fi
+  # Labels are seeded by the companion `--fix labels` pass (idempotent upsert);
+  # this reconcile mode does not touch GitHub. Report the line so the
+  # change-report shape is complete; the model relays the `--fix labels` result.
+  echo "labels added: see /pipeline:doctor --fix labels (idempotent label seed)"
   if [ "${#cfg_added[@]}" -eq 0 ]; then
     echo "envvars added: none (host pipeline.config already has every example key)"
   else
