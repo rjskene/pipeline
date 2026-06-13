@@ -10,9 +10,15 @@
 #                   EVERY prompt, so the no-op path must be ultra-cheap.)
 #   - CHANGED    -> emit stdout-JSON injection:
 #                     hookSpecificOutput.additionalContext (model-facing
-#                       directive to run the /pipeline:doctor reconcile);
-#                     systemMessage (operator-facing banner);
+#                       directive to run the /pipeline:doctor reconcile AND lead
+#                       its operator relay with a recognizable header line);
 #                   then update the marker so it fires ONCE per update.
+#
+# NO systemMessage (#1047): Claude Code does NOT render a top-level systemMessage
+# to the operator for UserPromptSubmit/SessionStart events — for those events all
+# stdout (systemMessage included) is model-context-only. The working operator
+# surface is therefore the MODEL RELAY of additionalContext on the next prompt,
+# which we steer to lead with a recognizable '🔄 plugin updated' header.
 #
 # The hook is a DETECTOR, not a mutator: all GitHub/config mutation stays inside
 # the visible, gated /pipeline:doctor run (--fix labels + --fix config). The
@@ -86,22 +92,24 @@ fi
 [ -n "$_event" ] || _event="UserPromptSubmit"
 
 _from="${_last_ver:-none}"
-_directive="The pipeline plugin was just updated (v${_from} -> v${_cur_ver}). Run the doctor reconcile now to seed any new GitHub labels and pick up new PIPELINE_* config knobs, then relay the change report to the operator: run \`/pipeline:doctor --fix config ${_from} ${_cur_ver}\` (envvar reconcile — append-missing, never-overwrite) AND \`/pipeline:doctor --fix labels\` (idempotent label seed). Surface any 'needs your value' keys and remaining warn/fail lines."
-_banner="pipeline updated v${_from} -> v${_cur_ver} — reconciling labels + envvars; running /pipeline:doctor"
+# The operator only ever sees this via the MODEL RELAY (systemMessage/stdout is
+# model-context-only for these events — #1047), so steer the model to LEAD its
+# relay with a distinct, recognizable header line — the closest thing to a banner
+# the platform allows — then the reconcile report.
+_directive="The pipeline plugin was just updated (v${_from} -> v${_cur_ver}). Run the doctor reconcile now to seed any new GitHub labels and pick up new PIPELINE_* config knobs, then relay the change report to the operator. LEAD your relay with this exact header line on its own line: \`🔄 plugin updated v${_from} -> v${_cur_ver}\`, immediately followed by the reconcile report. To produce it, run \`/pipeline:doctor --fix config ${_from} ${_cur_ver}\` (envvar reconcile — append-missing, never-overwrite) AND \`/pipeline:doctor --fix labels\` (idempotent label seed). Surface any 'needs your value' keys and remaining warn/fail lines."
 
 # Build the JSON safely (jq when available; a hand-escaped fallback otherwise).
 if command -v jq >/dev/null 2>&1; then
   jq -cn \
     --arg event "$_event" \
     --arg ctx "$_directive" \
-    --arg banner "$_banner" \
-    '{hookSpecificOutput:{hookEventName:$event, additionalContext:$ctx}, systemMessage:$banner}' \
+    '{hookSpecificOutput:{hookEventName:$event, additionalContext:$ctx}}' \
     2>/dev/null || true
 else
   # Minimal manual JSON escaping (backslash, double-quote) for the fallback path.
   _esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
-  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"},"systemMessage":"%s"}\n' \
-    "$(_esc "$_event")" "$(_esc "$_directive")" "$(_esc "$_banner")"
+  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' \
+    "$(_esc "$_event")" "$(_esc "$_directive")"
 fi
 
 # 7. Update the marker so we fire ONCE per update. Fail-open: any error here

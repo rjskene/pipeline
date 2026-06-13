@@ -76,15 +76,24 @@ if printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); ac=
 else
   fail_msg "delta: additionalContext does not mention doctor"
 fi
-if printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("systemMessage") else 1)' 2>/dev/null; then
-  pass_msg "delta: systemMessage banner present"
+# systemMessage is dead code for UserPromptSubmit/SessionStart (Claude Code does
+# not render it to the operator for those events) — assert it is ABSENT (#1047).
+if printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if "systemMessage" not in d else 1)' 2>/dev/null; then
+  pass_msg "delta: no dead systemMessage field"
 else
-  fail_msg "delta: systemMessage banner missing"
+  fail_msg "delta: systemMessage field still present (dead channel)"
 fi
-if printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); m=d.get("systemMessage",""); sys.exit(0 if ("0.0.1" in m and "0.0.2" in m) else 1)' 2>/dev/null; then
-  pass_msg "delta: banner names the v0.0.1 -> v0.0.2 delta"
+# The working operator surface is the model relaying additionalContext, so the
+# directive must instruct a distinct, recognizable header line (#1047).
+if printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); ac=d.get("hookSpecificOutput",{}).get("additionalContext",""); sys.exit(0 if "🔄 plugin updated" in ac else 1)' 2>/dev/null; then
+  pass_msg "delta: additionalContext instructs the recognizable header"
 else
-  fail_msg "delta: banner does not name the version delta"
+  fail_msg "delta: additionalContext missing the recognizable header"
+fi
+if printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); ac=d.get("hookSpecificOutput",{}).get("additionalContext",""); sys.exit(0 if ("0.0.1" in ac and "0.0.2" in ac) else 1)' 2>/dev/null; then
+  pass_msg "delta: header names the v0.0.1 -> v0.0.2 delta"
+else
+  fail_msg "delta: header does not name the version delta"
 fi
 if [ "$(cat "$MARKER")" = "0.0.2" ]; then
   pass_msg "delta: marker updated to 0.0.2"
