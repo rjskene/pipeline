@@ -110,6 +110,35 @@ FIX_C=$(make_fixture "fix(lock): race" "$BODY_C" '[]')
 assert_token "(c) 1 src but concurrency/race signal" \
   "high-blast" "high-uncertainty" "$(run_helper "$FIX_C")"
 
+# (c2) word-bound high-uncertainty (issue #1039): benign body whose words merely
+#      SUBSTRING-contain auth/lock/race (authoring/Blocks/trace) must NOT trip the
+#      carve-out — single src, single module, no real signal -> low-blast.
+BODY_C2=$'## Summary\nControl-plane files for direct operator authoring; Blocks the sibling render. Add a trace span.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_C2=$(make_fixture "fix(foo): authoring helper, blocks sibling, trace span" "$BODY_C2" '[]')
+assert_token "(c2) benign authoring/Blocks/trace -> NOT high-uncertainty" \
+  "low-blast" "single-module" "$(run_helper "$FIX_C2")"
+
+# (c3..c6) real high-uncertainty signals (word-bound MUST-match forms) -> high-blast.
+BODY_C3=$'## Summary\nHarden the authentication path.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_C3=$(make_fixture "fix(auth): authentication" "$BODY_C3" '[]')
+assert_token "(c3) authentication signal -> high-uncertainty" \
+  "high-blast" "high-uncertainty" "$(run_helper "$FIX_C3")"
+
+BODY_C4=$'## Summary\nFix a race condition in the dispatcher.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_C4=$(make_fixture "fix(foo): dispatcher" "$BODY_C4" '[]')
+assert_token "(c4) race condition signal -> high-uncertainty" \
+  "high-blast" "high-uncertainty" "$(run_helper "$FIX_C4")"
+
+BODY_C5=$'## Summary\nApply a schema migration.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_C5=$(make_fixture "fix(foo): schema" "$BODY_C5" '[]')
+assert_token "(c5) migration signal -> high-uncertainty" \
+  "high-blast" "high-uncertainty" "$(run_helper "$FIX_C5")"
+
+BODY_C6=$'## Summary\nResolve a deadlock under contention.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_C6=$(make_fixture "fix(foo): contention" "$BODY_C6" '[]')
+assert_token "(c6) deadlock signal -> high-uncertainty" \
+  "high-blast" "high-uncertainty" "$(run_helper "$FIX_C6")"
+
 # (d) 1 src file but body contains ~200 LOC -> high-blast loc-over.
 BODY_D=$'## Affected areas\n- `scripts/foo.sh`\n\nRoughly ~200 LOC of new code.\n'
 FIX_D=$(make_fixture "feat(foo): big single file" "$BODY_D" '[]')
