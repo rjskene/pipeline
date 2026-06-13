@@ -34,6 +34,11 @@ analysis that motivated it). Sibling of the closed-loop "dogfood measure → int
     execute was never measured by this pilot).
   - **Invariant: pr-eval is NEVER tier-dropped** — the independent Opus backstop is the property
     that makes a cheaper execute safe, and no host var gates it.
+- **Superseded by #1042 (default flipped to opt-OUT).** The TL;DR above records the original staged
+  *opt-in* decision. As of #1042, Sonnet-on-execute is the **shipped default** (`scope=all`); the three
+  knobs ship **active by default (opt-out)** and the read-site unset-default resolves to `sonnet` / `all`.
+  pr-eval stays Opus (W3). The flip depended on #1039's word-bound W2 regex landing first (false-negative
+  safety once Sonnet is the default). See §4 (Update) and §5.
 
 ---
 
@@ -152,10 +157,26 @@ savings.**
 - **Enable Sonnet execute for the eligible §4 lane** (PATH D + low-blast single-module PATH B) via the
   host flag.
 - **Opus pr-eval stays the mandatory, non-tier-dropped backstop** — the property that makes this safe.
-- **Ship the gate default-off;** production opt-in is the operator setting the gitignored host flag.
+- **Ship the gate default-off** *(superseded by #1042 — see below);* the staged pilot's production opt-in
+  was the operator setting the gitignored host flag.
 - **Do NOT** widen to high-blast B or PATH C — distinct, higher-stakes; needs its own pilot.
 - **Kill switch** is unsetting the flag (instant revert to Opus, zero code change); trip it on any
   §5 kill condition.
+
+**Update (#1042) — Sonnet-on-execute flipped to the shipped DEFAULT (opt-OUT).** After the staged opt-in
+above, the polarity flipped: Sonnet-on-execute is now the **shipped default** with **`scope=all`** (not
+opt-in). A fresh install runs Sonnet for eligible PATH B + all PATH D execute; operators **opt OUT** with
+`=opus` / `scope=low-blast` / commenting the knobs. The three knobs ship **active by default (opt-out)** in
+`pipeline.config.example` and are generated active by `/pipeline:init`; the read-site unset-default in
+`skills/fullsend/SKILL.md` now resolves to `sonnet` (B/D model) and `all` (B scope). The mandatory Opus
+**pr-eval backstop is unchanged (W3)** — it is **never defaulted to Sonnet**.
+
+- **#1039 is a hard prerequisite (landed FIRST).** Once Sonnet is the default, the dangerous failure
+  direction **inverts** from false-POSITIVE (benign work costly-on-Opus, while Sonnet was opt-in) to
+  **false-NEGATIVE** (risky work silently routed to Sonnet by default, for every consumer). The W2
+  high-uncertainty regex is the **only** thing keeping risky work (security / auth / concurrency /
+  migration / data-loss) on Opus, so its word-bound correctness (#1039) had to land before the flip. This
+  default-flip (#1042) does **not** re-touch the regex.
 
 **Live §4 eligibility gate (the predicate that ships).** The prose gate above moved into the
 dispatch path as `scripts/path-b-execute-eligible.sh <N>` (#955), which emits exactly one
@@ -184,18 +205,24 @@ questions call for; pr-eval still **always** stays Opus.
 2. **Measurement substrate** — forward/retroactive **dedup on `agent_id`** (#880, `cost-latency-report.sh`)
    and **resolved-model-id capture** (`capture-agent-costs.sh` transcript-summing) were **already
    landed**; verified green (`tests/test-cost-dedup-agent-id.sh`) and validated end-to-end here.
-3. **Routing gate (net-new, PR #951)** — `PIPELINE_PATH_{B,D}_MODEL_EXECUTE`, **default empty = inherit
-   Opus = byte-for-byte current behavior**; conditional `model=` at the fullsend execute dispatch;
-   pr-eval **never** gated; documented commented-out in `pipeline.config.example`; regression guard
-   `tests/test-path-model-execute-routing.sh` (9/9).
+3. **Routing gate (net-new, PR #951; default flipped #1042)** — `PIPELINE_PATH_{B,D}_MODEL_EXECUTE`.
+   Originally **default empty = inherit Opus**; **as of #1042 the unset-default resolves to `sonnet`** at
+   the fullsend read-site and the vars ship **active by default (opt-out)** in `pipeline.config.example`
+   (an explicit `=opus` opts out, honored verbatim). Conditional `model=` at the fullsend execute dispatch;
+   pr-eval **never** gated and **never defaulted to Sonnet** (W3). Regression guards
+   `tests/test-path-model-execute-routing.sh` (flipped to opt-out polarity) +
+   `tests/test-path-b-default-sonnet-routing.sh` (#1042 default-Sonnet routing + carve-outs).
 4. **Eligibility predicate (#955)** — `scripts/path-b-execute-eligible.sh` moved the §4 low-blast gate
    out of prose and into the PATH B dispatch path (single `ELIGIBLE=<low-blast|high-blast>` line; PATH B
-   downshifts only on `low-blast`). PATH D needs no predicate (all D is in-lane), with the `needs-browser`
-   Opus carve-out (#960). Verified by `tests/test-path-b-execute-eligible.sh`.
-5. **Scope-widen knob (#881 Phase 1)** — `PIPELINE_PATH_B_ELIGIBLE_SCOPE` (default `"low-blast"`; `"all"`
-   widens PATH B to non-W2 issues even on a high-blast verdict). Seeded commented in
-   `pipeline.config.example`; the related split-role lane (`PIPELINE_PATH_B_SPLIT_ROLE`, #881 Phase 2)
-   keeps the test-author on Opus regardless of the model knob.
+   downshifts only on `low-blast` **under the `scope=low-blast` opt-out** — under the default `scope=all`
+   the verdict is advisory and Sonnet routes on non-W2 high-blast B too). PATH D needs no predicate (all D
+   is in-lane), with the `needs-browser` Opus carve-out (#960). Verified by
+   `tests/test-path-b-execute-eligible.sh`.
+5. **Scope-widen knob (#881 Phase 1; default flipped #1042)** — `PIPELINE_PATH_B_ELIGIBLE_SCOPE`.
+   Originally default `"low-blast"`; **as of #1042 the unset-default resolves to `"all"`** (widens PATH B to
+   non-W2 issues even on a high-blast verdict) and the knob ships **active by default (opt-out)** in
+   `pipeline.config.example` (opt OUT with `"low-blast"`). The related split-role lane
+   (`PIPELINE_PATH_B_SPLIT_ROLE`, #881 Phase 2) keeps the test-author on Opus regardless of the model knob.
 
 ## 6. Methodology caveats
 

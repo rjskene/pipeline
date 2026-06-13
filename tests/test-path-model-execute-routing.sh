@@ -45,23 +45,35 @@ for v in "${VARS[@]}"; do
   fi
 done
 
-# 2. Default-OFF: each var must be COMMENTED OUT in the example (an uncommented
-#    assignment would ship a behavior change to consumers).
+# 2. Default-ON / opt-OUT (#1042): Sonnet-on-execute is now the shipped DEFAULT, so
+#    each model var must be UNCOMMENTED and set to `sonnet` in the example (the
+#    polarity flipped — a commented var would no longer ship the Sonnet default).
 for v in "${VARS[@]}"; do
   inc
-  if grep -Eq "^[[:space:]]*${v}=" "$EXAMPLE"; then
-    fail_msg "example: $v is UNCOMMENTED in example (must default-off / commented)"
+  if grep -Eq "^[[:space:]]*${v}=sonnet" "$EXAMPLE"; then
+    pass_msg "example: $v is active = sonnet (shipped opt-out default)"
   else
-    pass_msg "example: $v is default-off (commented) in example"
+    fail_msg "example: $v is NOT active = sonnet (must ship the Sonnet default, #1042)"
   fi
 done
 
-# 3. The inherit/Opus default is documented near the gate.
+# 3. The Sonnet-default + opt-out framing is documented IN the model-routing knob
+#    comment block (#1042). Scope to that block (from its "per-path execute MODEL
+#    routing" header down through the model knob lines) so unrelated "opt out"
+#    comments elsewhere in the example do NOT spuriously pass. The OLD block framed
+#    the inherit/Opus default + "keep commented" — that must be reframed to opt-OUT.
+model_knob_block() {
+  awk '
+    /per-path execute MODEL routing/ { inblock = 1 }
+    inblock { print }
+    inblock && /^[[:space:]]*#?[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=/ { inblock = 0 }
+  ' "$EXAMPLE"
+}
 inc
-if grep -iEq "inherit" "$EXAMPLE" && grep -Eq "PIPELINE_PATH_[BD]_MODEL_EXECUTE" "$EXAMPLE"; then
-  pass_msg "example: inherit/Opus default is documented"
+if model_knob_block | grep -iEq "opt[ -]out"; then
+  pass_msg "example: Sonnet-default opt-out framing documented in the model knob block"
 else
-  fail_msg "example: missing 'inherit' default documentation near the gate"
+  fail_msg "example: missing 'opt-out' framing in the model knob block (#1042)"
 fi
 
 # 4. The fullsend execute dispatch wires both vars.
