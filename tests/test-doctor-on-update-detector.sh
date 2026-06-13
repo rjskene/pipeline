@@ -176,6 +176,48 @@ else
   fail_msg "bootstrap: marker not created under .claude/logs/"
 fi
 
+# ---------------------------------------------------------------------------
+# Case 7: registration — the PUBLISHED manifest registers the detector on BOTH
+# UserPromptSubmit and SessionStart, and the dogfood settings.json mirrors it.
+# ---------------------------------------------------------------------------
+MANIFEST="$REPO_ROOT/.claude-plugin/plugin.json"
+SETTINGS="$REPO_ROOT/.claude/settings.json"
+
+if command -v jq >/dev/null 2>&1; then
+  # Published manifest parses as JSON.
+  if jq -e . "$MANIFEST" >/dev/null 2>&1; then
+    pass_msg "published manifest is valid JSON"
+  else
+    fail_msg "published manifest is not valid JSON"
+  fi
+  for evt in UserPromptSubmit SessionStart; do
+    if jq -e --arg e "$evt" \
+         '.hooks[$e][]?.hooks[]?.command | select(test("doctor-on-update.sh"))' \
+         "$MANIFEST" >/dev/null 2>&1; then
+      pass_msg "manifest registers doctor-on-update.sh on $evt"
+    else
+      fail_msg "manifest does NOT register doctor-on-update.sh on $evt"
+    fi
+  done
+  # Dogfood settings mirrors both events (read via git blob if the live file is
+  # hook-protected from a plain read; here a direct jq is fine in CI).
+  if [ -f "$SETTINGS" ] && jq -e . "$SETTINGS" >/dev/null 2>&1; then
+    for evt in UserPromptSubmit SessionStart; do
+      if jq -e --arg e "$evt" \
+           '.hooks[$e][]?.hooks[]?.command | select(test("doctor-on-update.sh"))' \
+           "$SETTINGS" >/dev/null 2>&1; then
+        pass_msg "dogfood settings registers doctor-on-update.sh on $evt"
+      else
+        fail_msg "dogfood settings does NOT register doctor-on-update.sh on $evt"
+      fi
+    done
+  else
+    fail_msg "dogfood settings.json missing or invalid JSON"
+  fi
+else
+  echo "  SKIP: jq not available — registration assertions skipped"
+fi
+
 echo ""
 echo "================================"
 echo "  test-doctor-on-update-detector: PASS=$PASS FAIL=$FAIL"
