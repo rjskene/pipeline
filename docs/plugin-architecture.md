@@ -105,4 +105,22 @@ A `CLAUDE_PLUGIN_ROOT` pointing at a stale/orphaned cache version (e.g. an old
 
 ## Doctor
 
-`/pipeline:doctor` is a non-mutating validator consumers run after install. It audits `pipeline.config`, `gh` auth, plugin registration, the pipeline-stage labels on the GitHub repo, residual subtree artifacts, and the base branch's local presence + remote tracking — emitting structured `CHECK: <name> status=<pass|fail|warn> detail=<msg>` lines and a final summary table. Non-zero exit signals any `fail`. The `--fix labels` flag is the one write path: it seeds the canonical pipeline labels via `gh label create --force` (idempotent upsert) and honors `PIPELINE_LABELS_*` overrides. Entrypoint: `scripts/doctor.sh`. Skill: `skills/doctor/SKILL.md`.
+`/pipeline:doctor` is a non-mutating validator consumers run after install. It audits `pipeline.config`, `gh` auth, plugin registration, the pipeline-stage labels on the GitHub repo, residual subtree artifacts, and the base branch's local presence + remote tracking — emitting structured `CHECK: <name> status=<pass|fail|warn> detail=<msg>` lines and a final summary table. Non-zero exit signals any `fail`. The `--fix labels` flag seeds the canonical pipeline labels via `gh label create --force` (idempotent upsert) and honors `PIPELINE_LABELS_*` overrides. The `--fix config` flag (#1038) is the envvar-reconcile write path: it appends every `PIPELINE_*` key present in `pipeline.config.example` but absent from the host `pipeline.config`, at the example default value — a key-level, append-only merge that NEVER overwrites an existing host value (`PIPELINE_REPO` and per-operator paths are sacred) and preserves host comments/ordering. Keys with no safe default (empty, `owner/repo`, `/path/...`, the `PIPELINE_MOCK_WEB_EVAL_*` family) are surfaced as "added — needs your value" rather than silently running empty. It accepts optional `vOLD vNEW` positional args so the change report can name the version delta. Entrypoint: `scripts/doctor.sh`. Skill: `skills/doctor/SKILL.md`.
+
+## Doctor-on-update detector (#1038)
+
+`hooks/doctor-on-update.sh` is a thin, READ-ONLY detector that closes the "I forgot to re-run `/pipeline:doctor` after a plugin update" gap. It is registered on **two** events in the published manifest (the first `UserPromptSubmit`/`SessionStart` entries the plugin ships):
+
+- **`UserPromptSubmit` (primary, no lag).** Claude Code has **no plugin-lifecycle hook** — `/plugin install|update` and `/reload-plugins` emit no event. `UserPromptSubmit` fires on the operator's very next message, same session, immediately after `/reload-plugins`, so a version-diff check here has zero lag.
+- **`SessionStart` (backstop).** Catches fresh sessions (`startup`/`resume`/`clear`/`compact`). On its own it lags by one session and misses the in-session reload workflow, hence it is only a backstop.
+
+On every invocation the detector string-compares the resolved plugin version (`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`) against a cached marker:
+
+- **Unchanged → cheap silent no-op.** Pure string compare; NO network, no `gh`, no doctor, no marker rewrite. (`UserPromptSubmit` fires on EVERY prompt, so the hot path must be ultra-cheap.)
+- **Changed → inject + cache.** Emits stdout-JSON with `hookSpecificOutput.additionalContext` (a model-facing directive to run `/pipeline:doctor --fix config` + `--fix labels` and relay the change report) and a `systemMessage` operator banner, then writes the new version to the marker so it fires ONCE per update.
+
+The detector is a **detector, not a mutator**: the only thing it writes is the version marker at `.claude/logs/.doctor-on-update-version` (under the `.claude/logs/` runtime allow-list — already gitignored, not protected by `restrict_paths.py`, and outside the `check-no-consumer-claude-writes.sh` forbidden regex). All GitHub/config mutation stays inside the visible, gated `/pipeline:doctor` run. It **fails open everywhere** (mirrors `dev/hooks/dogfood-refresh.sh`): `set -uo pipefail` and `exit 0` on every error mode (missing `jq` — falls back to a `sed` version extractor; corrupt `plugin.json`; unset `CLAUDE_PLUGIN_ROOT`; unwritable marker dir). It must NEVER block a prompt or a session.
+
+**Opt-out:** `PIPELINE_DOCTOR_ON_UPDATE_ENABLED` (default `true`, single-sourced at the read site via `${VAR:-true}`). Set `false` to disable the injection.
+
+**Bootstrapping caveat:** the detector helps on every update *after* it ships, not the update that introduces it — a newly-registered hook only activates *after* the reload that installs it.

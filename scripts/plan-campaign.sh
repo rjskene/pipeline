@@ -138,14 +138,18 @@ if [ "${1:-}" = "fold-select" ]; then
       *) echo "plan-campaign fold-select: unexpected arg: $arg" >&2; exit 1 ;;
     esac
   done
-  HU_RE='concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss'
+  # Word-bound high-uncertainty regex from the shared single source of truth
+  # (issue #1039) — same pattern path-b-execute-eligible.sh uses, so the
+  # fold-select skip can never drift from the PATH B carve-out.
+  # shellcheck source=scripts/_high-uncertainty-match.sh
+  . "$SCRIPT_DIR/_high-uncertainty-match.sh"
   taken=0
   while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     case "$line" in "SIGNAL "*) ;; *) continue ;; esac
     issue="${line#*issue=}"; issue="${issue%% *}"; issue="${issue#\#}"
     title="${line#*title=\"}"; title="${title%%\"*}"
-    if printf '%s' "$title" | grep -qiE "$HU_RE"; then
+    if printf '%s' "$title" | grep -qiE "$HIGH_UNCERTAINTY_RE"; then
       printf 'SKIP issue=#%s reason=high-uncertainty title="%s"\n' "$issue" "$title"
       continue
     fi

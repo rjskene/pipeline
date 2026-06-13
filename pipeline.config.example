@@ -288,29 +288,32 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # PIPELINE_PATH_C_REVIEWER_EXECUTE="superpowers:code-reviewer"
 # PIPELINE_PATH_C_SKILL_ARGS_EXECUTE_SUBAGENT_DRIVEN_DEVELOPMENT="scripts/skill-args/c-execute-subagent-driven-development.txt"
 
-# --- per-path execute MODEL routing (#868 default-off gate) ---
+# --- per-path execute MODEL routing (#1042: Sonnet is the DEFAULT, opt-OUT) ---
 #
-# When set, fullsend's execute dispatch (Step 6) pins this model for eligible
-# PATH B / PATH D issues; the value is the Agent `model` enum: sonnet | opus | haiku.
-# Unset/empty = NO model= param is passed, so the inline subagent INHERITS the
-# orchestrator's model (Opus) = current behavior, byte-for-byte. Host-only override;
-# keep commented to preserve the inherit/Opus default. pr-eval dispatch is NEVER
-# gated by these — the independent evaluator always stays on the inherited Opus
-# backstop (the property that makes a cheaper-execute pilot safe, #868).
-#PIPELINE_PATH_B_MODEL_EXECUTE=
-#PIPELINE_PATH_D_MODEL_EXECUTE=
+# fullsend's execute dispatch (Step 6) pins this model for eligible PATH B / PATH D
+# issues; the value is the Agent `model` enum: sonnet | opus | haiku. The lines below
+# ship ACTIVE at the Sonnet default (#1042) — a fresh install runs Sonnet on eligible
+# PATH B + all PATH D execute. To opt OUT, set `=opus` (the conservative Opus-everywhere
+# tier) or comment the line entirely; either restores the Opus inherit at the read site.
+# Three carve-outs ALWAYS force Opus regardless of these knobs: the W2 high-uncertainty
+# vocab (concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss), the
+# PATH D browser-eval carve-out label (#960), and — the safety-critical one — pr-eval,
+# which is NEVER defaulted to Sonnet: the independent evaluator always stays on the
+# inherited Opus backstop (the W3 property that makes a cheaper-execute default safe).
+PIPELINE_PATH_B_MODEL_EXECUTE=sonnet
+PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 
-# --- #881 Phase 1: PATH B execute eligibility SCOPE (Sonnet-widen knob) ---
+# --- #881 Phase 1: PATH B execute eligibility SCOPE (#1042: defaults to `all`) ---
 # Controls WHICH PATH B issues the Sonnet execute routing (PIPELINE_PATH_B_MODEL_EXECUTE
-# above) applies to. Default "low-blast" = today's behavior: only issues passing
-# scripts/path-b-execute-eligible.sh's single-module / <=2-file gate route Sonnet.
-# Set "all" to WIDEN: every PATH B issue WITHOUT a permanent Opus carve-out (W2 —
-# high-uncertainty vocab concurrency|race|lock|deadlock|security|auth|crypto|
-# migration|data-loss, or the browser-eval carve-out label #960) routes Sonnet on execute even on a
-# high-blast eligibility verdict. The eligibility script is UNCHANGED; under "all"
-# its verdict is advisory (still relayed in the run log). Kill switch = unset
-# (instant revert to low-blast). pr-eval ALWAYS stays Opus (W3).
-#PIPELINE_PATH_B_ELIGIBLE_SCOPE="low-blast"
+# above) applies to. Ships ACTIVE at "all" (#1042): every PATH B issue WITHOUT a
+# permanent Opus carve-out (W2 — high-uncertainty vocab concurrency|race|lock|deadlock|
+# security|auth|crypto|migration|data-loss, or the browser-eval carve-out label #960)
+# routes Sonnet on execute even on a high-blast eligibility verdict. To opt OUT, set
+# "low-blast" (or comment the line) to restrict Sonnet to the §4 low-blast lane only:
+# issues passing scripts/path-b-execute-eligible.sh's single-module / <=6-file gate.
+# The eligibility script is UNCHANGED; under "all" its verdict is advisory (still
+# relayed in the run log). W2 carve-outs always inherit Opus. pr-eval ALWAYS stays Opus (W3).
+PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
 
 # --- #881 Phase 2: split-role TDD lane (structural test-first compliance) ---
 # When "true", PATH B execute splits into TWO sequential agents in the worktree:
@@ -361,5 +364,21 @@ PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true when unset (fullsend 6b rea
 # Base TCP port for the inline visual-proof loopback python http.server.
 # Default 8080, single-sourced at the read site (${VAR:-8080}); uncomment to override.
 #PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
+
+# --- Doctor-on-update detector (issue #1038) ---
+#
+# hooks/doctor-on-update.sh is a thin, READ-ONLY detector wired into
+# UserPromptSubmit (primary — fires on your next prompt, no lag after
+# /reload-plugins) + SessionStart (backstop). On a plugin version change it
+# injects a directive (the model runs the /pipeline:doctor reconcile:
+# `--fix config` envvar reconcile + `--fix labels` label seed) plus an operator
+# banner, then caches the new version under .claude/logs/. On NO change it is a
+# cheap silent no-op (string compare; no network). It mutates nothing but the
+# cached version marker — all GitHub/config changes stay in the visible doctor run.
+#
+# Set "false" to opt out of the detector injection entirely. Default "true",
+# single-sourced at the read site (${PIPELINE_DOCTOR_ON_UPDATE_ENABLED:-true}
+# in hooks/doctor-on-update.sh); uncomment to override.
+#PIPELINE_DOCTOR_ON_UPDATE_ENABLED="true"
 
 set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above)

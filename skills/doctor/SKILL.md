@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Validate consumer install state — read-only audit of pipeline.config, gh auth, GitHub labels, plugin registration, residual subtree artifacts, and base branch. `--fix labels` seeds the canonical pipeline labels idempotently. Usage: /pipeline:doctor [--fix labels]
+description: Validate consumer install state — read-only audit of pipeline.config, gh auth, GitHub labels, plugin registration, residual subtree artifacts, and base branch. `--fix labels` seeds the canonical pipeline labels idempotently; `--fix config` reconciles new PIPELINE_* knobs into the host pipeline.config (append-only, never overwriting host values). Usage: /pipeline:doctor [--fix labels | --fix config]
 disable-model-invocation: false
 allowed-tools: Bash, Read
 ---
@@ -121,6 +121,10 @@ Answers "why is each duplicate still here, and should the consumer delete it?" P
 ### `--fix labels`
 
 `/pipeline:doctor --fix labels` seeds the 10 canonical pipeline labels on `$PIPELINE_REPO` via `gh label create --force`, which is an idempotent upsert — safe to re-run. The four configurable label rows (`excluded`, `later`, `human`, `brainstorm`) honor `PIPELINE_LABELS_*` overrides from `pipeline.config`.
+
+### `--fix config`
+
+`/pipeline:doctor --fix config` reconciles the host `pipeline.config` against `pipeline.config.example` (#1038). It is a KEY-LEVEL MERGE, append-only: every `PIPELINE_*` key present (uncommented) in `pipeline.config.example` but ABSENT from the host `pipeline.config` is appended at the example default value. It NEVER overwrites an existing host value (`PIPELINE_REPO` and per-operator paths are sacred), preserves host comments/ordering/non-`PIPELINE_` lines (it only appends), and skips commented `#PIPELINE_*` example lines (those are documentation defaults single-sourced at the read site via `${VAR:-default}`, not required live keys). Keys with no safe default (empty, `owner/repo`, `/path/...`, the `PIPELINE_MOCK_WEB_EVAL_*` family) are surfaced as "added — needs your value" so you can fill them in rather than silently running empty. It accepts optional `vOLD vNEW` positional args (`--fix config vX vY`) so the change report can name the version delta — the doctor-on-update detector passes the diffed plugin versions through this way. The report lists the version delta, a labels line (pointing at the companion `--fix labels` seed), the envvars added (`key=default`), and the envvars still needing a value.
 
 ### `--fix residual`
 
