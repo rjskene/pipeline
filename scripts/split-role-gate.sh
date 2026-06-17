@@ -14,8 +14,10 @@
 # pass token:
 #   additive-ok  — red SHA found; no locked test modified/deleted; suite green.
 # block tokens:
-#   no-red-sha           — no `[split-role-red]` commit on the branch
-#                          (fail-closed: an unresolvable anchor blocks).
+#   unresolvable-base    — <base-ref> was empty or unknown in the gate subprocess
+#                          (env var not exported by caller; distinct from no-red-sha
+#                          so operators are not sent chasing a phantom missing anchor).
+#   no-red-sha           — base ref resolved but no `[split-role-red]` commit found.
 #   locked-test-modified — a test file present at the red SHA was changed.
 #   locked-test-deleted  — a test file present at the red SHA was deleted.
 #   suite-red            — red-SHA + lock checks pass but the suite is not green.
@@ -85,10 +87,20 @@ emit() {
 
 # --- Resolve the red SHA (fail-closed) --------------------------------------
 # Most recent commit on <base>..HEAD whose SUBJECT contains `[split-role-red]`.
-# Any failure to resolve a usable base/range or to find the marker blocks with
-# no-red-sha (fail-closed — never greenlight without a verified anchor).
+# An UNRESOLVABLE base ref (empty or unknown) must emit a DISTINCT token
+# (`unresolvable-base`) rather than `no-red-sha`, so operators can distinguish
+# "base ref missing from subprocess env" from "author never committed a red
+# anchor" (#1066). Fail-closed is correct; the token must be correct too.
 if [ -z "$BASE" ]; then
-  emit block no-red-sha
+  emit block unresolvable-base
+fi
+
+# Verify the base ref actually resolves in this repo before running git log.
+# An invalid/unknown ref silently produces an empty log window under set -e
+# with `|| true`, which would look identical to a missing red anchor. Detect
+# this early and emit the distinct token.
+if ! git rev-parse --verify "${BASE}" >/dev/null 2>&1; then
+  emit block unresolvable-base
 fi
 
 # git log over <base>..HEAD. Tolerate an unknown base ref (returns empty / fails)
