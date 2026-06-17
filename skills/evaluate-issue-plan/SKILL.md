@@ -87,6 +87,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    - Are there adjacent files (imports, type definitions, tests) that should also change but aren't listed?
    - If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed.
    - If the plan lists changes, verify they're consistent with existing patterns in the codebase.
+   - **README anchor guard (#397/#404):** If the plan prescribes adding any `README.md` link of the form `*.md#anchor` (regex `\.md#[A-Za-z0-9_-]+`), return **Revise** — README uses file-level links only; anchored cross-references are banned by the policy enforced in `tests/test-readme-current.sh`.
 
    **Phase 2 — Implementability.** Verify the plan is executable without guessing:
    - Are data structures, algorithms, or mode behaviors specified concretely (no ambiguous steps)?
