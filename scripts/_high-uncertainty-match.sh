@@ -8,12 +8,24 @@
 # fold-select skip). Turns the old "can never drift" comment into a structural
 # guarantee: both call sites read ONE pattern from here.
 #
-# Surgical word-bound: ONLY the three proven-noisy short tokens (auth/lock/race)
-# are \b-anchored with explicit stems; the distinctive tokens stay substrings so
+# Surgical word-bound: the proven-noisy short tokens (auth/race) are \b-anchored
+# with explicit stems; the distinctive tokens stay substrings so
 # cryptography/migrations/etc still match. The carve-out fails CLOSED to Opus —
 # substring can only over-match, never under-match — so tightening is confined to
 # where over-matching is proven noise (a too-tight regex would downshift
 # genuinely risky work to Sonnet, a false negative).
+#
+# The bare lock stem (lock/locks/locking/locked) was DROPPED for `lock(ed)`
+# polysemy (issue #1063): the concurrency-lock sense collides with benign
+# meta-prose ("locked tests"/"locked suite"/"locked down"/"the file is locked"),
+# the #1057 false-positive source. It is replaced by word-bounded concurrency
+# PHRASES + `mutex`: \block contention\b, \block-free\b, \bfile lock\b, \bmutex\b.
+# Word-bounding \bfile lock\b is load-bearing — it matches the concurrency
+# MECHANISM ("a file lock") while the benign STATE ("the file is locked"/"file
+# locked") does NOT. `deadlock` keeps matching as its own distinctive substring.
+# This narrows ONLY proven-noise tokens, preserving the fail-CLOSED-to-Opus
+# posture: genuine concurrency work (deadlock/lock contention/race/concurrency/
+# mutex) still trips the carve-out.
 #
 # The auth stem enumerates the verb forms explicitly (authenticate/authorize) AND
 # excludes the bare adjective "authentic":
@@ -26,4 +38,4 @@
 # MUST-NOT contract row.
 #
 # This file is sourceable-only: a single assignment, no shebang side-effects.
-HIGH_UNCERTAINTY_RE='concurrency|\bauth(entication|enticate[ds]?|orization|orize[ds]?|n|z)?\b|\block(s|ing|ed)?\b|deadlock|\brace(s)?\b|security|crypto|migration|data-loss'
+HIGH_UNCERTAINTY_RE='concurrency|\bauth(entication|enticate[ds]?|orization|orize[ds]?|n|z)?\b|deadlock|\block contention\b|\block-free\b|\bfile lock\b|\bmutex\b|\brace(s)?\b|race condition|security|crypto|migration|data-loss'
