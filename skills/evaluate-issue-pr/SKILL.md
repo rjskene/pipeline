@@ -79,7 +79,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
 4. **Two-phase review.** The orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR`) requires the path-specific review skills first. If the Skill tool is unavailable, run inline:
 
-   **Phase 1 — Plan compliance.** For each plan item: verify "Files to change" were modified and match descriptions; verify "DB schema / API / Frontend / Test changes" were made or correctly skipped; flag scope creep (implemented but not planned) and missing work (planned but not implemented).
+   **Phase 1 — Plan compliance.** For each plan item: verify "Files to change" were modified and match descriptions; verify "DB schema / API / Frontend / Test changes" were made or correctly skipped; flag scope creep (implemented but not planned) and missing work (planned but not implemented). Every plan Task naming a non-test artifact path must have produced a tracked file at that path (`git ls-files`-visible) — a planned-but-untracked artifact path is missing work → Flagged.
 
    **Phase 2 — Code quality.** Run checks and review the diff. **Resolve CI status (Step 5) BEFORE deciding whether to run tests** — the test-execution decision keys off the already-settled rollup, so Step 5b's `--watch` is the single source of the settled verdict and Phase 2 never issues a second `--watch`/`--wait`.
 
