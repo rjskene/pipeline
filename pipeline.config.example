@@ -322,18 +322,20 @@ PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
 
 # --- #881 Phase 2: split-role TDD lane (structural test-first compliance) ---
-# When "true", PATH B execute splits into TWO sequential agents in the worktree:
-# (i) an Opus test-author (ALWAYS Opus, regardless of any model knob) authors the
-# complete failing suite and commits it once with [split-role-red] in the subject;
-# (ii) an implementer (model from PIPELINE_PATH_B_MODEL_EXECUTE; unset -> Opus =
-# same-model compliance-only mode; W2 carve-outs force Opus) greens it test-by-test,
-# additive-only (may add tests, never modify/delete the locked suite). The eval-time
-# gate scripts/split-role-gate.sh enforces the locked-test git invariant. Default
-# "false". pr-eval ALWAYS stays Opus (W3). The dispatch SHAPE (single vs red/green
+# Ships ACTIVE at "true" (#1057): PATH B execute splits into TWO sequential agents in
+# the worktree: (i) an Opus test-author (ALWAYS Opus, regardless of any model knob)
+# authors the complete failing suite and commits it once with [split-role-red] in the
+# subject; (ii) an implementer (model from PIPELINE_PATH_B_MODEL_EXECUTE; unset ->
+# Sonnet per #1042; W2 carve-outs force Opus) greens it test-by-test, additive-only
+# (may add tests, never modify/delete the locked suite). The eval-time gate
+# scripts/split-role-gate.sh enforces the locked-test git invariant. Default "true"
+# (opt OUT with =false) — the safer test-first default that pairs with #1042's
+# Sonnet-on-execute (Opus designs the locked suite; the cheap green implements against
+# it). pr-eval ALWAYS stays Opus (W3). The dispatch SHAPE (single vs red/green
 # split pair) is resolved alongside the model in scripts/resolve-execute-dispatch.sh
 # (the #1056 single source); fullsend's Step 6a --verify-dispatch backstop asserts the
 # dispatched shape matched the resolver (a collapsed split pair surfaces as a mismatch).
-#PIPELINE_PATH_B_SPLIT_ROLE=false
+PIPELINE_PATH_B_SPLIT_ROLE=true
 
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true when unset (fullsend 6b reads colon-less ${VAR-true}); set "" to disable. Further gated by PIPELINE_CI_CHECK_ENABLED.

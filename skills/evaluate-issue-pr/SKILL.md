@@ -269,12 +269,12 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        ```
        Checks in order: `MANUAL_MERGE` env, `manual-merge` issue label, the 4 greenlight conditions above, and `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`.
 
-    2b. **Split-role gate (#881 — `PIPELINE_PATH_B_SPLIT_ROLE=true`).** When `PIPELINE_PATH_B_SPLIT_ROLE=true`, run `scripts/split-role-gate.sh` and require `SPLIT_ROLE=pass` as an **ADDITIONAL** greenlight precondition (mirrors the `auto-merge-gate.sh` block-token pattern: the script emits exactly one line and ALWAYS exits 0 — the verdict rides the token):
+    2b. **Split-role gate (#881 — `PIPELINE_PATH_B_SPLIT_ROLE`, default `true` per #1057, opt-OUT via `=false`).** When `PIPELINE_PATH_B_SPLIT_ROLE` is anything but an explicit `=false` (i.e. set to `true`, unset, or empty — all default-on), run `scripts/split-role-gate.sh` and require `SPLIT_ROLE=pass` as an **ADDITIONAL** greenlight precondition (mirrors the `auto-merge-gate.sh` block-token pattern: the script emits exactly one line and ALWAYS exits 0 — the verdict rides the token):
        ```bash
        SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/split-role-gate.sh" "$ISSUE")
        # → SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
        ```
-       Parse the `SPLIT_ROLE=` token. `pass` (`REASON=additive-ok`) is **necessary** for greenlight; any `block` token (`no-red-sha`, `locked-test-modified`, `locked-test-deleted`, `suite-red`) leaves the PR for **manual merge** (same shape as the `auto-merge-gate.sh` `block-*` tokens). When `PIPELINE_PATH_B_SPLIT_ROLE` is unset/`false`, skip this gate entirely. This gate adds a precondition ONLY — **pr-eval itself STAYS Opus in all configurations (W3)**, never gated by any new knob.
+       Parse the `SPLIT_ROLE=` token. `pass` (`REASON=additive-ok`) is **necessary** for greenlight; any `block` token (`no-red-sha`, `locked-test-modified`, `locked-test-deleted`, `suite-red`) leaves the PR for **manual merge** (same shape as the `auto-merge-gate.sh` `block-*` tokens). Skip this gate ONLY when `PIPELINE_PATH_B_SPLIT_ROLE` is explicitly set to `=false`; when unset/empty it defaults to ON (#1057) and RUNS the gate. This gate adds a precondition ONLY — **pr-eval itself STAYS Opus in all configurations (W3)**, never gated by any new knob.
 
     3. **On `green`:** (when split-role is enabled, Step 11.2b's `SPLIT_ROLE=pass` is an additional precondition for this branch)
        - **TOCTOU re-check (issue #295).** Immediately before the merge, re-read `baseRefName`. A malicious or buggy actor could retarget the PR between Step 11.2's gate and the merge call.
