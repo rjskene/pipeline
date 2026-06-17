@@ -24,6 +24,17 @@ ALLOWED_ROOTS = [PROJECT_DIR, CLAUDE_HOME]
 _WORKTREE_PREFIX = _read_config("PIPELINE_WORKTREE_PREFIX", "wt", project_dir=PROJECT_DIR)
 WORKTREE_PATTERN = re.compile(re.escape(os.path.dirname(PROJECT_DIR)) + r"/" + re.escape(_WORKTREE_PREFIX) + r"-\d+-")
 
+# Nested worktrees created by scripts/setup-worktree.sh live at
+# <project>/.claude/worktrees/<prefix>-N-<slug>/ (and PATH-C leaves at
+# <prefix>-N-<slug>-leaf-<x>/, also under .claude/worktrees/). Anchor on the
+# .claude/worktrees/ SEGMENT so this fires regardless of which dir is
+# CLAUDE_PROJECT_DIR. This is the membership signal; the LIVE main-repo path
+# <project>/.claude/hooks/ has NO .claude/worktrees/ ancestor segment, so it
+# never matches — keeping the disarm protection intact (#1058).
+NESTED_WORKTREE_PATTERN = re.compile(
+    r"/\.claude/worktrees/" + re.escape(_WORKTREE_PREFIX) + r"-\d+-[^/]*/"
+)
+
 # Protected paths — block modification of settings and hook files (in project
 # and worktrees). Enforced for Write/Edit AND for any path the Bash extractor
 # surfaces (the protected loop below is no longer gated to Write/Edit — see
@@ -54,9 +65,26 @@ PROTECTED_CMD_PATTERNS = [
 ]
 
 
+def _is_in_worktree(real: str) -> bool:
+    """True if real path is inside a recognized pipeline worktree (sibling OR nested).
+
+    Sibling: <parent-of-project>/<prefix>-N-...  (WORKTREE_PATTERN)
+    Nested:  <project>/.claude/worktrees/<prefix>-N-.../  (NESTED_WORKTREE_PATTERN)
+    Used to exempt in-worktree edits of protected paths: such edits do not take
+    effect until merge+pull, so they are not a live-guard disarm (#1058).
+    """
+    return bool(WORKTREE_PATTERN.match(real) or NESTED_WORKTREE_PATTERN.search(real))
+
+
 def is_protected(path: str) -> bool:
     """Return True if path is a settings or hook file that should not be modified."""
     real = os.path.realpath(path)
+    # In-worktree edits (sibling OR nested) of protected paths are legitimate
+    # work — the worktree copy is inert until merged+pulled — so they are NOT
+    # the live-guard disarm this check exists to prevent. The live main-repo
+    # path has no worktree ancestor and so is unaffected. (#1058)
+    if _is_in_worktree(real):
+        return False
     for pattern in PROTECTED_PATTERNS:
         if re.search(pattern, real):
             return True
@@ -64,18 +92,18 @@ def is_protected(path: str) -> bool:
 
 
 def _command_has_worktree_dest(command: str) -> bool:
-    """Return True if the command names a worktree-sibling absolute destination.
+    """Return True if the command names a worktree (sibling OR nested) absolute destination.
 
     The command-string protected-token scan (#964) blocks in-place disarm of a
     control file (`sed -i .claude/settings.json`). But a legitimate
     worktree-destination copy (`cp .claude/hooks/x <parent>/<prefix>-N-/.claude/
     hooks/x`) must still be allowed — that is the sync case, not the disarm
-    case. We detect it cheaply by reusing the existing WORKTREE_PATTERN: if any
-    absolute path token in the command matches the worktree-sibling shape, treat
-    the whole command as a destination copy and skip the protected scan.
+    case. Reuses _is_in_worktree so a copy onto either a sibling OR a nested
+    <project>/.claude/worktrees/<prefix>-N-.../ destination is recognized as a
+    sync (not a disarm) and skips the command-string protected scan. (#1058)
     """
     for m in re.finditer(r'(/[^\s"\';<>|&]+)', command):
-        if WORKTREE_PATTERN.match(m.group(1)):
+        if _is_in_worktree(m.group(1)):
             return True
     return False
 

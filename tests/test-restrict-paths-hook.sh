@@ -10,6 +10,21 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$REPO_ROOT/hooks/restrict_paths.py"
 
+# Genuine main-repo top — used by the LIVE-protected assertions so they model a
+# real consumer/orchestrator project dir whose realpath has NO
+# .claude/worktrees/<prefix>-N- ancestor segment. When the suite runs from the
+# main repo, git-common-dir is <main>/.git so MAIN_REPO == REPO_ROOT (identical
+# to the pre-#1058 behavior). When it runs from INSIDE a worktree (the executor
+# session), REPO_ROOT itself sits under .claude/worktrees/<prefix>-N- and would
+# be wrongly exempted by the new worktree carve-out — so the LIVE-protected
+# cases must root at the real main repo, not the worktree. Falls back to
+# REPO_ROOT if git is unavailable. (#1058)
+if MAIN_REPO="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
+  MAIN_REPO="$(cd "$(dirname "$MAIN_REPO")" 2>/dev/null && pwd)" || MAIN_REPO="$REPO_ROOT"
+else
+  MAIN_REPO="$REPO_ROOT"
+fi
+
 PASS=0
 FAIL=0
 
@@ -164,7 +179,9 @@ run_hook_set \
   --no-grep
 
 # Payload G: Write to .claude/settings.json — must block as protected.
-G_PAYLOAD=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s/.claude/settings.json"}}' "$REPO_ROOT")
+# Rooted at MAIN_REPO (not REPO_ROOT) so this LIVE-protected assertion holds
+# whether the suite runs from the main repo OR from inside a worktree (#1058).
+G_PAYLOAD=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s/.claude/settings.json"}}' "$MAIN_REPO")
 run_hook_set \
   "baseline: Write to .claude/settings.json blocked (protected)" \
   "$G_PAYLOAD" \
@@ -193,7 +210,7 @@ run_hook_set \
 # Task 2 — Bash command with an ABSOLUTE in-project protected path is blocked.
 # Write a real file first so the absolute+exists extractor sees it, then the
 # (now-ungated) protected loop must block it. Use printf-into-settings.json.
-H2_PAYLOAD=$(printf '{"tool_name":"Bash","tool_input":{"command":"printf x > %s/.claude/settings.json"}}' "$REPO_ROOT")
+H2_PAYLOAD=$(printf '{"tool_name":"Bash","tool_input":{"command":"printf x > %s/.claude/settings.json"}}' "$MAIN_REPO")
 run_hook_set \
   "Bash absolute in-project protected path blocked (.claude/settings.json)" \
   "$H2_PAYLOAD" \
@@ -249,6 +266,50 @@ run_hook_set \
   '{"tool_name":"Bash","tool_input":{"command":"grep settings .claude/scratch/x"}}' \
   0 \
   --no-grep
+
+# ---------------------------------------------------------------------------
+# Block 5 — Nested-worktree .claude/hooks/ edits allowed; live still blocked (#1058).
+# setup-worktree.sh creates NESTED worktrees at
+# <project>/.claude/worktrees/<prefix>-N-<slug>/. Editing a .claude/hooks/* file
+# INSIDE such a worktree is legitimate (effect only after merge+pull) and must be
+# allowed. Editing the LIVE main-repo <project>/.claude/hooks/* must STILL block.
+# ---------------------------------------------------------------------------
+WT_BASE="$(mktemp -d "$REPO_ROOT/.rp-nested-wt-test.XXXXXX")"
+trap "rm -rf '$WT_BASE'" EXIT
+# Nested worktree hooks file (real path so realpath-based is_protected resolves it).
+NESTED_WT_HOOK="$WT_BASE/.claude/worktrees/wt-516-foo/.claude/hooks/block_cross_run_reads.py"
+mkdir -p "$(dirname "$NESTED_WT_HOOK")"; echo "x" > "$NESTED_WT_HOOK"
+
+# 5a (positive, Write): editing a .claude/hooks/* file inside a nested worktree is ALLOWED.
+P5A=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "$NESTED_WT_HOOK")
+run_hook_set "nested-worktree .claude/hooks/ Write ALLOWED (#1058)" "$P5A" 0 --no-grep
+
+# 5b (positive, Edit): same path via Edit is ALLOWED.
+P5B=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$NESTED_WT_HOOK")
+run_hook_set "nested-worktree .claude/hooks/ Edit ALLOWED (#1058)" "$P5B" 0 --no-grep
+
+# 5c (SECURITY regression, Write): editing the LIVE main-repo .claude/hooks/* is STILL BLOCKED.
+# This is the disarm case the guard exists to prevent — the broadened carve-out must NOT permit it.
+# Rooted at MAIN_REPO (a genuine non-worktree project dir) so the assertion is faithful whether
+# the suite runs from the main repo OR from inside a worktree (whose own path would otherwise be
+# wrongly exempted by the worktree carve-out). (#1058)
+P5C=$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s/.claude/hooks/restrict_paths.py"}}' "$MAIN_REPO")
+run_hook_set "LIVE main-repo .claude/hooks/ Write STILL BLOCKED (#1058 security regression)" "$P5C" 2 "BLOCKED: cannot modify protected file"
+
+# 5d (positive, Bash absolute token): cp ONTO a nested-worktree hooks file ALLOWED.
+P5D=$(printf '{"tool_name":"Bash","tool_input":{"command":"cp src.py %s"}}' "$NESTED_WT_HOOK")
+run_hook_set "Bash cp to nested-worktree hooks file ALLOWED (#1058)" "$P5D" 0 --no-grep
+
+# 5e (positive, Bash command-string sync carve-out): cp to nested-worktree dest ALLOWED
+# even when a relative .claude/hooks/ source token is present (the sync case, not disarm).
+NESTED_WT_DIR="$WT_BASE/.claude/worktrees/wt-516-foo/.claude/hooks"
+P5E=$(printf '{"tool_name":"Bash","tool_input":{"command":"cp .claude/hooks/foo.py %s/foo.py"}}' "$NESTED_WT_DIR")
+run_hook_set "Bash cp relative-src to nested-worktree dest ALLOWED (#1058 sync carve-out)" "$P5E" 0 --no-grep
+
+# 5f (SECURITY regression, Bash relative in-place disarm): no worktree dest token → STILL BLOCKED.
+run_hook_set "Bash relative in-place disarm of .claude/hooks/ STILL BLOCKED (#1058 security regression)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo \"\" > .claude/hooks/restrict_paths.py"}}' \
+  2 "BLOCKED: cannot modify protected file"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
