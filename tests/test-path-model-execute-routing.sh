@@ -181,6 +181,48 @@ else
   fail_msg "skill: needs-browser PATH D model= suppression missing from the block"
 fi
 
+# --- #1056: the inline execute dispatch is routed through the single-source
+#     resolver (resolve-execute-dispatch.sh), and the post-dispatch verify is
+#     wired (verify-execute-completion.sh --verify-dispatch). The #1056 root
+#     cause was config + hand-applied SKILL prose drifting; the fix is that
+#     Step 6 SOURCES the resolver and consumes its emitted spec verbatim, and
+#     Step 6a runs the post-hoc verify. ---
+
+CAMPAIGN="$ROOT/skills/campaign/SKILL.md"
+
+# 13. Step 6 routing block references the resolver as the single source of truth.
+inc
+if grep -Eq "resolve-execute-dispatch(\.sh)?" "$SKILL"; then
+  pass_msg "skill: fullsend routes the inline execute dispatch through resolve-execute-dispatch (#1056)"
+else
+  fail_msg "skill: fullsend does NOT reference resolve-execute-dispatch.sh (#1056 single-source)"
+fi
+
+# 14. Step 6a wires the post-dispatch model/shape verify.
+inc
+if grep -Eq -- "--verify-dispatch" "$SKILL"; then
+  pass_msg "skill: fullsend Step 6a wires verify-execute-completion --verify-dispatch (#1056)"
+else
+  fail_msg "skill: fullsend does NOT reference the --verify-dispatch verify (#1056)"
+fi
+
+# 15. campaign SKILL inherits the resolver-driven dispatch by reference.
+inc
+if [ -f "$CAMPAIGN" ] && grep -Eq "resolve-execute-dispatch(\.sh)?" "$CAMPAIGN"; then
+  pass_msg "campaign: SKILL inherits the resolver-driven dispatch by reference (#1056)"
+else
+  fail_msg "campaign: SKILL does NOT note inheriting resolve-execute-dispatch by reference (#1056)"
+fi
+
+# 16. pipeline.config.example points the #1042/#881 knobs at the resolver as the
+#     single place they are applied at dispatch time.
+inc
+if grep -Eq "resolve-execute-dispatch(\.sh)?" "$EXAMPLE"; then
+  pass_msg "example: #1042/#881 knob block names resolve-execute-dispatch as the single source (#1056)"
+else
+  fail_msg "example: #1042/#881 knob block does NOT name resolve-execute-dispatch (#1056)"
+fi
+
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="
 [ "$FAIL" -eq 0 ]
