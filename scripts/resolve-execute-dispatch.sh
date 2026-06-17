@@ -59,7 +59,7 @@
 #     REFUSES any stage argument but B/D (exit 2). It therefore physically cannot
 #     emit a Sonnet model for pr-eval; the independent evaluator always inherits
 #     Opus. pr-eval is NEVER routed through this resolver.
-#   #881 split-role — read PIPELINE_PATH_B_SPLIT_ROLE (default false). PATH B +
+#   #881 split-role — read PIPELINE_PATH_B_SPLIT_ROLE (default true, #1057/#1064). PATH B +
 #     true ⇒ SPLIT_ROLE=true, ROLES=red:opus,green:<implementer-model> where the
 #     test-author is ALWAYS opus and the implementer is the resolved execute model
 #     (a W2 carve-out forces the implementer to opus too). Split-role NEVER
@@ -104,7 +104,7 @@ REPO="${PIPELINE_REPO:-}"
 
 # --- Resolve knobs (#1042 / #881 defaults) ----------------------------------
 SCOPE="${PIPELINE_PATH_B_ELIGIBLE_SCOPE:-all}"
-SPLIT_FLAG="${PIPELINE_PATH_B_SPLIT_ROLE:-false}"
+SPLIT_FLAG="${PIPELINE_PATH_B_SPLIT_ROLE:-true}"
 
 if [ "$PATH_LETTER" = "B" ]; then
   KNOB="${PIPELINE_PATH_B_MODEL_EXECUTE:-}"
