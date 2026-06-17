@@ -140,13 +140,13 @@ BODY_W2D=$'## Summary\nFix a deadlock in the concurrency path.\n'
 
 # ---- Task 1: model resolution + carve-outs ----------------------------------
 
-# (1) PATH B, knobs unset -> sonnet default, single shape, scope all.
+# (1) PATH B, knobs unset -> sonnet default, default-on split shape, scope all.
 CFG1=$(make_config_root)
 FIX1=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT1=$(run_resolver "$FIX1" "$CFG1" B)
 assert_tok "(1) B knobs unset" "MODEL=sonnet" "$OUT1"
-assert_tok "(1) B knobs unset" "SPLIT_ROLE=false" "$OUT1"
-assert_tok "(1) B knobs unset" "ROLES=single" "$OUT1"
+assert_tok "(1) B knobs unset" "SPLIT_ROLE=true" "$OUT1"
+assert_tok "(1) B knobs unset" "ROLES=red:opus,green:sonnet" "$OUT1"
 assert_tok "(1) B knobs unset" "SCOPE=all" "$OUT1"
 assert_tok "(1) B knobs unset" "PATH=B" "$OUT1"
 assert_tok "(1) B knobs unset" "ISSUE=999" "$OUT1"
@@ -260,12 +260,12 @@ FIX13=$(make_fixture "fix(auth): harden" "$BODY_W2" '[]')
 OUT13=$(run_resolver "$FIX13" "$CFG13" B)
 assert_tok "(13) B split-role W2" "ROLES=red:opus,green:opus" "$OUT13"
 
-# (14) PATH B, split-role unset -> single shape.
+# (14) PATH B, split-role unset -> default-on split shape.
 CFG14=$(make_config_root)
 FIX14=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT14=$(run_resolver "$FIX14" "$CFG14" B)
-assert_tok "(14) B split-role unset" "SPLIT_ROLE=false" "$OUT14"
-assert_tok "(14) B split-role unset" "ROLES=single" "$OUT14"
+assert_tok "(14) B split-role unset" "SPLIT_ROLE=true" "$OUT14"
+assert_tok "(14) B split-role unset" "ROLES=red:opus,green:sonnet" "$OUT14"
 
 # (15) PATH D, split-role flag set -> still single (split-role is B-only).
 CFG15=$(make_config_root 'PIPELINE_PATH_B_SPLIT_ROLE=true')
