@@ -300,6 +300,11 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # PATH D browser-eval carve-out label (#960), and — the safety-critical one — pr-eval,
 # which is NEVER defaulted to Sonnet: the independent evaluator always stays on the
 # inherited Opus backstop (the W3 property that makes a cheaper-execute default safe).
+# SINGLE SOURCE OF TRUTH (#1056): these knobs are applied at dispatch time in exactly
+# ONE place — scripts/resolve-execute-dispatch.sh — which fullsend's Step 6 sources and
+# consumes verbatim (campaign inherits by reference). Do NOT re-encode the routing in
+# SKILL prose; the resolver folding config + carve-outs into one emitted spec is what
+# keeps config and prose from drifting (that drift WAS the #1056 root cause).
 PIPELINE_PATH_B_MODEL_EXECUTE=sonnet
 PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 
@@ -313,6 +318,7 @@ PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 # issues passing scripts/path-b-execute-eligible.sh's single-module / <=6-file gate.
 # The eligibility script is UNCHANGED; under "all" its verdict is advisory (still
 # relayed in the run log). W2 carve-outs always inherit Opus. pr-eval ALWAYS stays Opus (W3).
+# Applied at dispatch in scripts/resolve-execute-dispatch.sh (the #1056 single source).
 PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
 
 # --- #881 Phase 2: split-role TDD lane (structural test-first compliance) ---
@@ -323,7 +329,10 @@ PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
 # same-model compliance-only mode; W2 carve-outs force Opus) greens it test-by-test,
 # additive-only (may add tests, never modify/delete the locked suite). The eval-time
 # gate scripts/split-role-gate.sh enforces the locked-test git invariant. Default
-# "false". pr-eval ALWAYS stays Opus (W3).
+# "false". pr-eval ALWAYS stays Opus (W3). The dispatch SHAPE (single vs red/green
+# split pair) is resolved alongside the model in scripts/resolve-execute-dispatch.sh
+# (the #1056 single source); fullsend's Step 6a --verify-dispatch backstop asserts the
+# dispatched shape matched the resolver (a collapsed split pair surfaces as a mismatch).
 #PIPELINE_PATH_B_SPLIT_ROLE=false
 
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
