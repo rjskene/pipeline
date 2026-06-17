@@ -173,6 +173,40 @@ FIX_G2=$(make_fixture "fix(ui): tweak admin events table" "$BODY_G2" '[{"name":"
 assert_token "(g2) needs-browser label single src -> browser carve-out" \
   "high-blast" "needs-browser" "$(run_helper "$FIX_G2")"
 
+# (nb-fp) needs-browser as PROSE only (no label), single src, no other signal
+#      -> low-blast (issue #1063: prose mentions of the `needs-browser` label name
+#      no longer trip the browser carve-out; only the real LABEL does).
+BODY_NBFP=$'## Summary\nMeta-issue about the needs-browser carve-out; mentions needs-browser repeatedly.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_NBFP=$(make_fixture "fix(scripts): meta needs-browser doc tweak" "$BODY_NBFP" '[]')
+assert_token "(nb-fp) prose-only needs-browser mention, no label -> NOT browser carve-out" \
+  "low-blast" "single-module" "$(run_helper "$FIX_NBFP")"
+
+# (lock-fp) locked-tests meta-prose (no label, single src) -> low-blast
+#      (issue #1063: ties Task 1's lock disambiguation into the eligibility path).
+BODY_LOCKFP=$'## Summary\nRefresh the locked tests and the locked suite for the renamed helper.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_LOCKFP=$(make_fixture "fix(scripts): refresh locked tests" "$BODY_LOCKFP" '[]')
+assert_token "(lock-fp) locked tests/suite meta-prose -> NOT high-uncertainty" \
+  "low-blast" "single-module" "$(run_helper "$FIX_LOCKFP")"
+
+# (nb-rb) real web-eval jargon in body (no label), single src -> stay high-blast.
+BODY_NBRB=$'## Summary\nWire the web-eval harness into the new view.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_NBRB=$(make_fixture "fix(scripts): web-eval harness" "$BODY_NBRB" '[]')
+assert_token "(nb-rb) real web-eval jargon, no label -> browser carve-out" \
+  "high-blast" "needs-browser" "$(run_helper "$FIX_NBRB")"
+
+# (nb-rc) real playwright jargon in body (no label), single src -> stay high-blast.
+BODY_NBRC=$'## Summary\nAdd a playwright spec covering the modal.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_NBRC=$(make_fixture "fix(scripts): playwright spec" "$BODY_NBRC" '[]')
+assert_token "(nb-rc) real playwright jargon, no label -> browser carve-out" \
+  "high-blast" "needs-browser" "$(run_helper "$FIX_NBRC")"
+
+# (nb-rd) real lock contention in body (no label), single src -> stay high-blast
+#      (issue #1063: genuine concurrency phrase still trips high-uncertainty).
+BODY_NBRD=$'## Summary\nResolve lock contention in the queue drain.\n\n## Affected areas\n- `scripts/foo.sh`\n'
+FIX_NBRD=$(make_fixture "fix(scripts): queue drain" "$BODY_NBRD" '[]')
+assert_token "(nb-rd) real lock contention, no label -> high-uncertainty" \
+  "high-blast" "high-uncertainty" "$(run_helper "$FIX_NBRD")"
+
 # (h) gh failure / parse error -> high-blast indeterminate (fail-closed).
 # Simulate by pointing the stub at a missing fixture so jq fails.
 inc
