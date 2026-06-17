@@ -264,6 +264,145 @@ else
   pass_msg "c8: no 'PIPELINE_BASE_BRANCH must be set' abort — self-resolved from config"
 fi
 
+# ============================================================================
+# #1056 — additive --verify-dispatch mode: post-hoc model + shape verify.
+#
+# After an inline execute Agent returns, the orchestrator runs
+#   verify-execute-completion.sh --verify-dispatch <N> <path>
+# to assert the dispatched model + shape MATCH what resolve-execute-dispatch.sh
+# specified — closing the "invisible cost regression" property (#1056). The mode
+# emits a parallel single-line token contract on stdout:
+#
+#   DISPATCH=match    ISSUE=<N>
+#   DISPATCH=mismatch ISSUE=<N> REASON=model:<got>!=<want>
+#   DISPATCH=mismatch ISSUE=<N> REASON=shape:single!=split-role
+#   DISPATCH=warn     ISSUE=<N> REASON=model-unrecoverable
+#
+# Inputs (threaded by the orchestrator at the call site; env-driven so the
+# existing positional ACTION-token contract stays byte-for-byte unchanged):
+#   VED_EXPECT_MODEL        — the resolver's MODEL= (sonnet|opus|haiku|inherit)
+#   VED_EXPECT_SPLIT_ROLE   — the resolver's SPLIT_ROLE= (true|false)
+#   VED_OBSERVED_MODEL      — the model actually dispatched (recorded at dispatch
+#                             for the inline path); empty => try the runs log,
+#                             else WARN (model-unrecoverable, never a spurious
+#                             match — fail-soft, the verify is a backstop).
+# Shape: when VED_EXPECT_SPLIT_ROLE=true, assert a `[split-role-red]` commit
+# exists in $PIPELINE_BASE_BRANCH..HEAD; its ABSENCE => shape mismatch (the
+# inline orchestrator silently collapsed the split pair to one agent).
+# Exit 0 in every case (token carries the verdict). Default-mode (no
+# --verify-dispatch) ACTION= contract is UNCHANGED (additivity regression guard).
+# ============================================================================
+
+echo ""
+echo "== #1056 --verify-dispatch mode =="
+
+# A real throwaway git repo fixture for the shape (git-log) checks.
+make_dispatch_repo() {
+  local d="$1"; local with_red="$2"
+  mkdir -p "$d"
+  (
+    cd "$d" || exit 1
+    git init -q -b staging
+    git config user.email t@t.t; git config user.name t
+    git commit -q --allow-empty -m "base"
+    git checkout -q -b feature/foo
+    if [ "$with_red" = "1" ]; then
+      git commit -q --allow-empty -m "test(foo): failing suite [split-role-red]"
+    fi
+    git commit -q --allow-empty -m "feat(foo): implement"
+  )
+}
+
+run_vd() {
+  # run_vd <repo-dir> <issue> <path> ; VED_* read from caller env.
+  local repo="$1" issue="$2" path="$3"
+  (
+    cd "$repo" || exit 1
+    PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+      bash "$SCRIPT_UNDER_TEST" --verify-dispatch "$issue" "$path"
+  ) 2>&1
+}
+
+# Case D1: model match (resolver sonnet, observed sonnet) -> DISPATCH=match.
+echo "Case D1: model match -> DISPATCH=match"
+D1="$ROOT/d1"; make_dispatch_repo "$D1" 0
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D1" 1056 B)
+assert_action "d1" "$OUT" "DISPATCH=match"
+assert_action "d1-issue" "$OUT" "ISSUE=1056"
+
+# Case D2: the exact #1056 bug — resolver sonnet, observed opus -> mismatch.
+echo ""
+echo "Case D2: model mismatch (the #1056 bug) -> DISPATCH=mismatch REASON=model:opus!=sonnet"
+D2="$ROOT/d2"; make_dispatch_repo "$D2" 0
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=opus VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D2" 1056 B)
+assert_action "d2" "$OUT" "DISPATCH=mismatch"
+assert_action "d2-reason" "$OUT" "REASON=model:opus!=sonnet"
+
+# Case D3: split-role expected, branch HAS a [split-role-red] commit -> match.
+echo ""
+echo "Case D3: split-role expected + [split-role-red] commit present -> DISPATCH=match"
+D3="$ROOT/d3"; make_dispatch_repo "$D3" 1
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
+      run_vd "$D3" 1056 B)
+assert_action "d3" "$OUT" "DISPATCH=match"
+
+# Case D4: split-role expected, NO [split-role-red] commit -> shape mismatch.
+echo ""
+echo "Case D4: split-role expected + NO [split-role-red] commit -> shape mismatch"
+D4="$ROOT/d4"; make_dispatch_repo "$D4" 0
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
+      run_vd "$D4" 1056 B)
+assert_action "d4" "$OUT" "DISPATCH=mismatch"
+assert_action "d4-reason" "$OUT" "REASON=shape:single!=split-role"
+
+# Case D5: no observed model recoverable -> WARN line, no spurious match.
+echo ""
+echo "Case D5: no observed model recoverable -> WARN (no spurious match)"
+D5="$ROOT/d5"; make_dispatch_repo "$D5" 0
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL="" VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D5" 1056 B)
+assert_action "d5" "$OUT" "DISPATCH=warn"
+inc
+if printf '%s' "$OUT" | grep -qF "DISPATCH=match"; then
+  fail_msg "d5: emitted a spurious DISPATCH=match on unrecoverable model: $OUT"
+else
+  pass_msg "d5: no spurious DISPATCH=match when model unrecoverable"
+fi
+
+# Case D6: --verify-dispatch exits 0 even on a mismatch (token carries verdict).
+echo ""
+echo "Case D6: --verify-dispatch exits 0 on a mismatch verdict"
+D6="$ROOT/d6"; make_dispatch_repo "$D6" 0
+( cd "$D6" && VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=opus VED_EXPECT_SPLIT_ROLE=false \
+    PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --verify-dispatch 1056 B ) >/dev/null 2>&1
+rc=$?
+inc
+if [ "$rc" -eq 0 ]; then
+  pass_msg "d6: --verify-dispatch exited 0 on mismatch (token carries the verdict)"
+else
+  fail_msg "d6: --verify-dispatch exited $rc (expected 0)"
+fi
+
+# Case D7: ADDITIVITY regression guard — the DEFAULT positional mode (no
+# --verify-dispatch) still emits its existing ACTION= contract unchanged. Reuse
+# the Case 1 shape (worktree resolves, remote absent -> recover-push).
+echo ""
+echo "Case D7: default positional mode unchanged by the additive --verify-dispatch mode"
+D7="$ROOT/d7"; mkdir -p "$D7"; make_stubs "$D7" >/dev/null
+OUT=$(STUB_WT_ISSUE=912 STUB_WT_SLUG=foo STUB_REMOTE_HAS=0 \
+      STUB_ISSUE_LABELS="in-progress" \
+      run_helper "$D7" 912)
+assert_action "d7" "$OUT" "ACTION=recover-push"
+inc
+if printf '%s' "$OUT" | grep -qF "DISPATCH="; then
+  fail_msg "d7: default mode leaked a DISPATCH= token (additivity broken): $OUT"
+else
+  pass_msg "d7: default mode emits ACTION= only (no DISPATCH= leak)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
