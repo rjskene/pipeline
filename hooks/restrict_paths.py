@@ -27,12 +27,33 @@ WORKTREE_PATTERN = re.compile(re.escape(os.path.dirname(PROJECT_DIR)) + r"/" + r
 # Nested worktrees created by scripts/setup-worktree.sh live at
 # <project>/.claude/worktrees/<prefix>-N-<slug>/ (and PATH-C leaves at
 # <prefix>-N-<slug>-leaf-<x>/, also under .claude/worktrees/). Anchor on the
-# .claude/worktrees/ SEGMENT so this fires regardless of which dir is
-# CLAUDE_PROJECT_DIR. This is the membership signal; the LIVE main-repo path
+# REAL project root (re.escape(PROJECT_DIR)) so .claude/worktrees/ must be a
+# DIRECT child of CLAUDE_PROJECT_DIR (production-faithful — setup-worktree.sh:67
+# creates $MAIN_REPO/.claude/worktrees/<prefix>-N-<slug>). The prior pattern
+# anchored on the free-floating .claude/worktrees/ SEGMENT, which matched the
+# project-dir-independent constant substring ANYWHERE in a path — letting a
+# hardcoded, non-existent token disarm the carve-out (#1067, the #1058 widening
+# of the F7 bypass). Require a NON-empty slug ([^/]+) so an empty-slug
+# `wt-12-/` token is no longer treated as a worktree. The LIVE main-repo path
 # <project>/.claude/hooks/ has NO .claude/worktrees/ ancestor segment, so it
 # never matches — keeping the disarm protection intact (#1058).
 NESTED_WORKTREE_PATTERN = re.compile(
-    r"/\.claude/worktrees/" + re.escape(_WORKTREE_PREFIX) + r"-\d+-[^/]*/"
+    re.escape(PROJECT_DIR) + r"/\.claude/worktrees/" + re.escape(_WORKTREE_PREFIX) + r"-\d+-[^/]+/"
+)
+
+# Worktree-ROOT extractors (no trailing slash) — capture the registered
+# worktree directory a path lives under, so `_command_has_worktree_dest` can
+# require THAT specific root to EXIST on disk (#1067). NESTED is the
+# PROJECT_DIR-anchored <project>/.claude/worktrees/<prefix>-N-<slug> root;
+# SIBLING is the <parent-of-project>/<prefix>-N-<slug> root. NESTED is checked
+# first (more specific): a path that claims a nested worktree dest must have
+# that nested root exist, even when the suite runs from INSIDE an outer
+# worktree whose sibling shape would otherwise match incidentally.
+NESTED_WORKTREE_ROOT_PATTERN = re.compile(
+    re.escape(PROJECT_DIR) + r"/\.claude/worktrees/" + re.escape(_WORKTREE_PREFIX) + r"-\d+-[^/]+"
+)
+SIBLING_WORKTREE_ROOT_PATTERN = re.compile(
+    re.escape(os.path.dirname(PROJECT_DIR)) + r"/" + re.escape(_WORKTREE_PREFIX) + r"-\d+-[^/]+"
 )
 
 # Protected paths — block modification of settings and hook files (in project
@@ -91,21 +112,62 @@ def is_protected(path: str) -> bool:
     return False
 
 
+def _resolved_worktree_root(real: str) -> str | None:
+    """Return the registered-worktree ROOT dir that `real` lives under, else None.
+
+    Prefers the PROJECT_DIR-anchored NESTED root (more specific): a path that
+    claims a `<project>/.claude/worktrees/<prefix>-N-<slug>/...` destination is
+    pinned to THAT nested worktree, not to whatever outer sibling worktree the
+    suite may happen to run from. Falls back to the sibling root only when the
+    path matches the sibling shape but not the nested one.
+    """
+    m = NESTED_WORKTREE_ROOT_PATTERN.match(real)
+    if m:
+        return m.group(0)
+    m = SIBLING_WORKTREE_ROOT_PATTERN.match(real)
+    if m:
+        return m.group(0)
+    return None
+
+
 def _command_has_worktree_dest(command: str) -> bool:
-    """Return True if the command names a worktree (sibling OR nested) absolute destination.
+    """True ONLY if the command's copy/move TARGET resolves to an EXISTING, registered worktree.
 
     The command-string protected-token scan (#964) blocks in-place disarm of a
-    control file (`sed -i .claude/settings.json`). But a legitimate
-    worktree-destination copy (`cp .claude/hooks/x <parent>/<prefix>-N-/.claude/
-    hooks/x`) must still be allowed — that is the sync case, not the disarm
-    case. Reuses _is_in_worktree so a copy onto either a sibling OR a nested
-    <project>/.claude/worktrees/<prefix>-N-.../ destination is recognized as a
-    sync (not a disarm) and skips the command-string protected scan. (#1058)
+    control file (`sed -i .claude/settings.json`). A legitimate
+    worktree-destination copy (`cp .claude/hooks/x <worktree>/.claude/hooks/x`)
+    must still be allowed — that is the sync case, not the disarm case.
+
+    Hardening (#1067): the prior version returned True if ANY absolute token
+    anywhere in the command matched the worktree regex — a pure string match
+    with no realpath/exists/registration check, so a hardcoded NON-EXISTENT
+    `.../.claude/worktrees/<prefix>-N-x/...` token appended anywhere disabled the
+    WHOLE protected-command scan (#1058 widened this from a sibling shape to a
+    project-dir-independent constant substring). Now a token only exempts the
+    scan when it is:
+      (i)   the POSITIONAL copy/move destination — the LAST path-shaped token
+            (the dest of cp/mv/install/rsync and of a redirect target). This
+            structurally defeats the "append a decoy token anywhere" shape: a
+            trailing `: /bogus/...` no-op IS the last token, so the existence
+            gate below is what rejects it;
+      (ii)  os.path.realpath-resolved (collapses symlinks/.. — cannot escape
+            upward); AND
+      (iii) anchored on a registered worktree ROOT (PROJECT_DIR-anchored nested,
+            else sibling) that EXISTS on disk. The dest FILE may not exist yet
+            (`cp` creates it), so existence is asserted on the worktree ROOT, not
+            the leaf — a non-existent `<prefix>-N-x` worktree tree fails because
+            its root dir does not exist, while a legit sync INTO an existing
+            worktree passes.
     """
-    for m in re.finditer(r'(/[^\s"\';<>|&]+)', command):
-        if _is_in_worktree(m.group(1)):
-            return True
-    return False
+    toks = re.findall(r'(/[^\s"\';<>|&]+)', command)
+    if not toks:
+        return False
+    target = toks[-1]
+    real = os.path.realpath(target)
+    root = _resolved_worktree_root(real)
+    if root is None:
+        return False
+    return os.path.isdir(root)
 
 
 def _worktree_pointer_allows(real: str) -> bool:
