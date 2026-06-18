@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.23.12](https://github.com/rjskene/pipeline/compare/v0.23.11...v0.23.12) (2026-06-18)
+
+
+### Features
+
+* **config:** default PIPELINE_PATH_B_SPLIT_ROLE to true (opt-OUT) ([#1057](https://github.com/rjskene/pipeline/issues/1057)) ([f9868dc](https://github.com/rjskene/pipeline/commit/f9868dc8084105b5760b1339b0e335851540e88b))
+* **config:** default PIPELINE_PATH_B_SPLIT_ROLE to true (opt-OUT) ([#1057](https://github.com/rjskene/pipeline/issues/1057)) ([b5f8220](https://github.com/rjskene/pipeline/commit/b5f82204e5751345d6c32567eafbf633cfe18b74))
+* **scripts:** add resolve-execute-dispatch single-source dispatch resolver ([#1056](https://github.com/rjskene/pipeline/issues/1056)) ([b15c1d4](https://github.com/rjskene/pipeline/commit/b15c1d49107e721bd46ca286ba25e586c6802769))
+* **scripts:** post-hoc model+shape verify in verify-execute-completion ([#1056](https://github.com/rjskene/pipeline/issues/1056)) ([a024a5c](https://github.com/rjskene/pipeline/commit/a024a5c8adb1376213748e9d991cfb63cb832b0f))
+
+
+### Bug Fixes
+
+* **eval:** flag plan tasks whose named artifact path produced no tracked file ([#1065](https://github.com/rjskene/pipeline/issues/1065)) ([0f13f78](https://github.com/rjskene/pipeline/commit/0f13f7835d44aeaf1f4ffcfde2beee8c1665ec18))
+* **fullsend:** keep unset=&gt;default-sonnet + pr-eval-never-gated wording in Step 6 routing block ([#1056](https://github.com/rjskene/pipeline/issues/1056)) ([c3935eb](https://github.com/rjskene/pipeline/commit/c3935eb62664766819cc25f64a9e76e33424b7db))
+* **fullsend:** route Step 6 inline execute dispatch through resolve-execute-dispatch ([#1056](https://github.com/rjskene/pipeline/issues/1056)) ([f53c032](https://github.com/rjskene/pipeline/commit/f53c0328ca7cc0f8fe15a2d045209bd259adf3d0))
+* **fullsend:** single-source inline execute dispatch resolver ([#1056](https://github.com/rjskene/pipeline/issues/1056)) ([0d4f01e](https://github.com/rjskene/pipeline/commit/0d4f01eb94dcb4378f70294f8ffcf8f0831a4188))
+* **hooks:** exempt in-worktree edits of protected hooks dir under nested layout ([#1058](https://github.com/rjskene/pipeline/issues/1058)) ([e9e12f7](https://github.com/rjskene/pipeline/commit/e9e12f70f47dd215d2cceaa1b432bbb22320e5c4))
+* **hooks:** exempt in-worktree edits of protected hooks dir under nested layout ([#1058](https://github.com/rjskene/pipeline/issues/1058)) ([b6d72f5](https://github.com/rjskene/pipeline/commit/b6d72f546559edd866c99019c75a8dbdcfad3cea))
+* **hooks:** gate _command_has_worktree_dest on a resolved existing registered worktree ([#1067](https://github.com/rjskene/pipeline/issues/1067)) ([f63a75c](https://github.com/rjskene/pipeline/commit/f63a75ce37592d0d2011f9cbe62148b2b22ae822))
+* **hooks:** gate _command_has_worktree_dest on a resolved existing registered worktree ([#1067](https://github.com/rjskene/pipeline/issues/1067)) ([402c928](https://github.com/rjskene/pipeline/commit/402c928b6e7b8ddb23bf8a6dab13fbcf8172505e))
+* **model-routing:** default PIPELINE_PATH_B_SPLIT_ROLE to true in resolver ([#1064](https://github.com/rjskene/pipeline/issues/1064)) ([4bb01a2](https://github.com/rjskene/pipeline/commit/4bb01a2f2a8737cae0eb21c25f886c73360c330f))
+* **model-routing:** disambiguate lock polysemy in shared high-uncertainty regex ([#1063](https://github.com/rjskene/pipeline/issues/1063)) ([f7ac842](https://github.com/rjskene/pipeline/commit/f7ac8426378a04c92ac275fafe20e62c8123e11a))
+* **model-routing:** gate path-b needs-browser carve-out on the LABEL, not prose token mentions ([#1063](https://github.com/rjskene/pipeline/issues/1063)) ([13e4c4a](https://github.com/rjskene/pipeline/commit/13e4c4a39bca317af13f12e3a0f98a54a7609a27))
+* **model-routing:** PATH B eligibility over-fires W2 on meta-issue prose (needs-browser token mentions + lock polysemy) — silently suppresses the [#1042](https://github.com/rjskene/pipeline/issues/1042) Sonnet default ([8b73c5f](https://github.com/rjskene/pipeline/commit/8b73c5f7682482359b4789d559b217921ae20ef9))
+* **model-routing:** resolve-execute-dispatch.sh still defaults split-role to false — [#1057](https://github.com/rjskene/pipeline/issues/1057) flipped docs/config but the resolver code default is nominal-only ([d44bdca](https://github.com/rjskene/pipeline/commit/d44bdca926a27041251bb2b9375d45f2acc7787f))
+* **plan-eval:** flag anchored README cross-references before plan approval ([4ea4a7f](https://github.com/rjskene/pipeline/commit/4ea4a7fcecec296b6768b07788fbccb29221aae0))
+* **plan-eval:** flag anchored README cross-references before plan approval ([c86186f](https://github.com/rjskene/pipeline/commit/c86186f58409bb6ec80c7c77f46086fc8393b886))
+* **split-role-gate:** emit unresolvable-base token when base ref absent from subprocess env ([#1066](https://github.com/rjskene/pipeline/issues/1066)) ([a6811a1](https://github.com/rjskene/pipeline/commit/a6811a1581a6faa7a0b28c490632ff13846888a4))
+* **split-role-gate:** emit unresolvable-base token when PIPELINE_BASE_BRANCH not exported ([98b0344](https://github.com/rjskene/pipeline/commit/98b03444f61ed7068d6a6cda2dfa3fc080e1204e))
+* **split-role:** carry GREEN plan-completeness scope to fullsend split-dispatch site ([#1065](https://github.com/rjskene/pipeline/issues/1065)) ([f23cba2](https://github.com/rjskene/pipeline/commit/f23cba2db3233687633dc817c2de8105f2c98321))
+* **split-role:** gate split-role precondition on path + resolved dispatch shape ([#1076](https://github.com/rjskene/pipeline/issues/1076)) ([c091cd0](https://github.com/rjskene/pipeline/commit/c091cd04fc3d0b98df82a368bf33e78aece29317))
+* **split-role:** gate split-role precondition on path + resolved dispatch shape ([#1076](https://github.com/rjskene/pipeline/issues/1076)) ([fb66e17](https://github.com/rjskene/pipeline/commit/fb66e17162db3506099705333faa1d83c60d2495))
+* **split-role:** GREEN completes all approved-plan tasks incl. non-test deliverables ([#1065](https://github.com/rjskene/pipeline/issues/1065)) ([01aadac](https://github.com/rjskene/pipeline/commit/01aadac8d178d10b57b058e28ff069bcc3a00ce9))
+* **split-role:** GREEN completes all approved-plan tasks incl. non-test deliverables ([#1065](https://github.com/rjskene/pipeline/issues/1065)) ([73d9f3c](https://github.com/rjskene/pipeline/commit/73d9f3c4ce83f369d69a0ddbe0871db9bf4df730))
+
 ## [0.23.11](https://github.com/rjskene/pipeline/compare/v0.23.10...v0.23.11) (2026-06-13)
 
 
