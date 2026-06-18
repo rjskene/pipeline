@@ -106,8 +106,32 @@ if [ "$1" = "--verify-dispatch" ]; then
   fi
 
   # --- Shape verify FIRST (a collapsed split-role pair is a definite mismatch) -
+  # Resolve the feature ref deterministically — the same cascade as the default
+  # ACTION= mode below — so the anchor scan works when the orchestrator session
+  # sits on the base branch (HEAD == base → <base>..HEAD window is empty, #1077).
+  # Cascade: worktree-porcelain → closedByPullRequestsReferences → gh pr list.
+  # Falls back to HEAD when no ref resolves (preserves original behaviour for
+  # the case where HEAD IS the feature branch, e.g. called from a worktree).
   if [ "$EXPECT_SPLIT" = "true" ]; then
-    _log="$(git log --format=%s "${VD_BASE}..HEAD" 2>/dev/null || true)"
+    _vd_wt_prefix="${PIPELINE_WORKTREE_PREFIX:-wt}"
+    _vd_feature_ref=$(git worktree list --porcelain 2>/dev/null | awk \
+      -v p="${_vd_wt_prefix}-${VD_ISSUE}" '
+      /^worktree / { base=$2; sub(/.*\//,"",base); inmatch=(base==p || base ~ "^"p"-") }
+      inmatch && /^branch / { sub(/^branch refs\/heads\//,"",$0); print $0; exit }')
+    if [ -z "$_vd_feature_ref" ]; then
+      _vd_feature_ref=$(gh issue view "$VD_ISSUE" --repo "${PIPELINE_REPO:-fake/repo}" \
+        --json closedByPullRequestsReferences \
+        --jq '.closedByPullRequestsReferences[0].headRefName // empty' 2>/dev/null || true)
+    fi
+    if [ -z "$_vd_feature_ref" ]; then
+      _vd_feature_ref=$(gh pr list --repo "${PIPELINE_REPO:-fake/repo}" \
+        --search "linked:$VD_ISSUE" \
+        --state open --json headRefName --jq '.[0].headRefName // empty' 2>/dev/null || true)
+    fi
+    # Fall back to HEAD when no ref resolved (called from a worktree with HEAD on
+    # the feature branch — the original behaviour is preserved exactly).
+    _vd_scan_ref="${_vd_feature_ref:-HEAD}"
+    _log="$(git log --format=%s "${VD_BASE}..${_vd_scan_ref}" 2>/dev/null || true)"
     if ! printf '%s\n' "$_log" | grep -qF '[split-role-red]'; then
       echo "DISPATCH=mismatch ISSUE=$VD_ISSUE REASON=shape:single!=split-role"
       exit 0
