@@ -6,7 +6,7 @@ implementation: Opus authors the failing suite, a cheaper implementer greens
 it, and an eval-time git invariant proves the locked suite was never tampered
 with in between.
 
-Gated by `PIPELINE_PATH_B_SPLIT_ROLE=true` (default `false`). The lane ships
+Gated by `PIPELINE_PATH_B_SPLIT_ROLE` (default `true`; opt OUT via `=false`). The lane ships
 even same-model — structural TDD compliance is valued independent of the model
 mix; the implementer model only changes the cost posture, not the compliance
 property.

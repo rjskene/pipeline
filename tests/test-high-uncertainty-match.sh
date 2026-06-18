@@ -82,14 +82,27 @@ assert_no_match "authored"
 assert_no_match "authority"
 assert_no_match "authentic"      # FIX 1: bare adjective MUST NOT match
 
-echo "-- lock token (word-bound stem) --"
-# MUST match: lock, locks, locking, locked, lock contention
-assert_match "lock"
-assert_match "locks"
-assert_match "locking"
-assert_match "locked"
+echo "-- lock token (disambiguated concurrency phrases, issue #1063) --"
+# Bare lock/locks/locking/locked are POLYSEMOUS ("locked tests"/"locked suite"/
+# "locked down" are benign meta-prose) — dropped per #1063. Only genuine
+# concurrency phrasings trip the carve-out now.
+# MUST match (genuine concurrency mechanism):
 assert_match "lock contention"
-# MUST NOT match: block(s), clock, unlock
+assert_match "lock-free"
+assert_match "file lock"
+assert_match "a file lock guards the cache"
+assert_match "mutex"
+# MUST NOT match (benign polysemy — the #1057 FPs):
+assert_no_match "lock"
+assert_no_match "locks"
+assert_no_match "locking"
+assert_no_match "locked"
+assert_no_match "locked tests"
+assert_no_match "locked suite"
+assert_no_match "locked down"
+assert_no_match "file locked"
+assert_no_match "locked-test invariant"
+# PRESERVE the #1039 boundary cases verbatim: block(s), clock, unlock
 assert_no_match "block"
 assert_no_match "blocks"
 assert_no_match "clock"

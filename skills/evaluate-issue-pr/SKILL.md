@@ -79,7 +79,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
 4. **Two-phase review.** The orchestrator's `--append-system-prompt` (injected by `spawn-claude.sh` based on this issue's labels — see `PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR`) requires the path-specific review skills first. If the Skill tool is unavailable, run inline:
 
-   **Phase 1 — Plan compliance.** For each plan item: verify "Files to change" were modified and match descriptions; verify "DB schema / API / Frontend / Test changes" were made or correctly skipped; flag scope creep (implemented but not planned) and missing work (planned but not implemented).
+   **Phase 1 — Plan compliance.** For each plan item: verify "Files to change" were modified and match descriptions; verify "DB schema / API / Frontend / Test changes" were made or correctly skipped; flag scope creep (implemented but not planned) and missing work (planned but not implemented). Every plan Task naming a non-test artifact path must have produced a tracked file at that path (`git ls-files`-visible) — a planned-but-untracked artifact path is missing work → Flagged.
 
    **Phase 2 — Code quality.** Run checks and review the diff. **Resolve CI status (Step 5) BEFORE deciding whether to run tests** — the test-execution decision keys off the already-settled rollup, so Step 5b's `--watch` is the single source of the settled verdict and Phase 2 never issues a second `--watch`/`--wait`.
 
@@ -269,12 +269,25 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        ```
        Checks in order: `MANUAL_MERGE` env, `manual-merge` issue label, the 4 greenlight conditions above, and `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`.
 
-    2b. **Split-role gate (#881 — `PIPELINE_PATH_B_SPLIT_ROLE=true`).** When `PIPELINE_PATH_B_SPLIT_ROLE=true`, run `scripts/split-role-gate.sh` and require `SPLIT_ROLE=pass` as an **ADDITIONAL** greenlight precondition (mirrors the `auto-merge-gate.sh` block-token pattern: the script emits exactly one line and ALWAYS exits 0 — the verdict rides the token):
+    2b. **Split-role gate (#881 — `PIPELINE_PATH_B_SPLIT_ROLE`, default `true` per #1057, opt-OUT via `=false`).** The split-role precondition applies ONLY to PRs that were actually dispatched as split-role. Before running the gate, resolve TWO guards — the issue's PATH letter and (for PATH B) the resolved dispatch shape — so the gate distinguishes "this PR was never a split-role dispatch (nothing to protect → pass/skip)" from "this split-role PR is missing its mandatory red anchor (real violation → block)" (#1076).
+
+       **PATH guard (skip for non-`B`).** Resolve the issue's PATH letter from its label: `docs-only`=A, `multi-task`=C, `quick-fix`=D, none of those=B. **PATH != B → SKIP this gate entirely** (an A/C/D PR — docs-only, multi-task, or `quick-fix` — is NEVER a split-role dispatch and never carries a `[split-role-red]` anchor; treat as pass / not-applicable and proceed to greenlight without requiring `SPLIT_ROLE=pass`). This is the deterministic interpretation that fixes the PATH-D permanent `no-red-sha` block (#1076): a PATH D `quick-fix` PR is unconditionally skipped here, NOT blocked.
+
+       **Resolver-shape guard (PATH B only).** For PATH B, the `PIPELINE_PATH_B_SPLIT_ROLE` default-on (`true`/unset/empty per #1057) only MEANS split-role if the dispatch actually resolved that way. Resolve the dispatch shape and read its `SPLIT_ROLE=` token:
        ```bash
+       SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-execute-dispatch.sh" "$ISSUE" B)
+       SPLIT_SHAPE=$(printf '%s\n' "$SPEC" | grep '^SPLIT_ROLE=' | cut -d= -f2)
+       ```
+       - `SPLIT_ROLE=false` (single-role dispatch — e.g. a W2 carve-out or `PIPELINE_PATH_B_SPLIT_ROLE=false`) → **SKIP the gate** (nothing to protect; no `[split-role-red]` anchor is expected, so a missing anchor is NOT a violation). Within PATH B, this resolver-shape guard subsumes the knob polarity (#1057): skip ONLY when the resolved shape is explicitly `SPLIT_ROLE=false`; with `PIPELINE_PATH_B_SPLIT_ROLE` unset/empty the resolver defaults the shape to `SPLIT_ROLE=true` (#1057) and the gate RUNS.
+       - `SPLIT_ROLE=true` (genuine split-role dispatch) → **RUN the gate** exactly as below; a missing red anchor or a tampered locked test MUST still hard-block.
+
+       **When the gate RUNS (PATH B + `SPLIT_ROLE=true`):** run `scripts/split-role-gate.sh` and require `SPLIT_ROLE=pass` as an **ADDITIONAL** greenlight precondition (mirrors the `auto-merge-gate.sh` block-token pattern: the script emits exactly one line and ALWAYS exits 0 — the verdict rides the token):
+       ```bash
+       export PIPELINE_BASE_BRANCH  # ensure the gate subprocess inherits the var (#1066)
        SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/split-role-gate.sh" "$ISSUE")
        # → SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
        ```
-       Parse the `SPLIT_ROLE=` token. `pass` (`REASON=additive-ok`) is **necessary** for greenlight; any `block` token (`no-red-sha`, `locked-test-modified`, `locked-test-deleted`, `suite-red`) leaves the PR for **manual merge** (same shape as the `auto-merge-gate.sh` `block-*` tokens). When `PIPELINE_PATH_B_SPLIT_ROLE` is unset/`false`, skip this gate entirely. This gate adds a precondition ONLY — **pr-eval itself STAYS Opus in all configurations (W3)**, never gated by any new knob.
+       Parse the `SPLIT_ROLE=` token. `pass` (`REASON=additive-ok`) is **necessary** for greenlight; any `block` token (`no-red-sha`, `locked-test-modified`, `locked-test-deleted`, `suite-red`, `unresolvable-base`) leaves the PR for **manual merge** (same shape as the `auto-merge-gate.sh` `block-*` tokens). The `unresolvable-base` token means the base ref could not be resolved in the gate subprocess — distinct from `no-red-sha` (author never committed a red anchor) (#1066). The gate runs ONLY for a genuine split-role PR; for that case the block semantics are unchanged — a PR dispatched `SPLIT_ROLE=true` that carries no `[split-role-red]` anchor STILL hard-blocks `no-red-sha` (the real protection #1076 preserves). The ONLY #1076 change is the PATH + resolver guard deciding WHETHER the gate runs. This gate adds a precondition ONLY — **pr-eval itself STAYS Opus in all configurations (W3)**, never gated by any new knob.
 
     3. **On `green`:** (when split-role is enabled, Step 11.2b's `SPLIT_ROLE=pass` is an additional precondition for this branch)
        - **TOCTOU re-check (issue #295).** Immediately before the merge, re-read `baseRefName`. A malicious or buggy actor could retarget the PR between Step 11.2's gate and the merge call.
