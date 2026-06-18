@@ -323,6 +323,55 @@ run_vd() {
   ) 2>&1
 }
 
+# Real-call-site fixture: HEAD stays on the BASE branch (orchestrator session),
+# the [split-role-red] anchor lives ONLY on a separate feature/foo branch that is
+# NOT checked out. Mirrors verify running from the orchestrator's staging checkout
+# while the anchor sits on the unmerged feature branch (#1077).
+make_orchestrator_repo() {
+  local d="$1"          # repo dir
+  local with_red="$2"   # 1 => anchor present on feature/foo, 0 => genuine single-role
+  mkdir -p "$d"
+  (
+    cd "$d" || exit 1
+    git init -q -b staging
+    git config user.email t@t.t; git config user.name t
+    git commit -q --allow-empty -m "base"
+    git checkout -q -b feature/foo
+    if [ "$with_red" = "1" ]; then
+      git commit -q --allow-empty -m "test(foo): failing suite [split-role-red]"
+    fi
+    git commit -q --allow-empty -m "feat(foo): implement"
+    # Return HEAD to the base branch — the orchestrator never checks out the feature branch.
+    git checkout -q staging
+  )
+}
+
+run_vd_orchestrator() {
+  # run_vd_orchestrator <repo-dir> <issue> <path> ; VED_* read from caller env.
+  # gh stub returns feature/foo as the linked-PR head so the shape branch can
+  # resolve the feature ref without a live worktree (orchestrator call site).
+  local repo="$1" issue="$2" path="$3"
+  local stub_dir="$repo/ghstub"
+  mkdir -p "$stub_dir"
+  cat > "$stub_dir/gh" <<'EOF'
+#!/bin/bash
+ARGS="$*"
+case "$1 $2" in
+  "issue view")
+    if [[ "$ARGS" == *closedByPullRequestsReferences* ]]; then printf 'feature/foo'; fi ;;
+  "pr list") printf 'feature/foo' ;;
+  *) printf '' ;;
+esac
+EOF
+  chmod +x "$stub_dir/gh"
+  (
+    cd "$repo" || exit 1
+    PATH="$stub_dir:$PATH" \
+    PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+      bash "$SCRIPT_UNDER_TEST" --verify-dispatch "$issue" "$path"
+  ) 2>&1
+}
+
 # Case D1: model match (resolver sonnet, observed sonnet) -> DISPATCH=match.
 echo "Case D1: model match -> DISPATCH=match"
 D1="$ROOT/d1"; make_dispatch_repo "$D1" 0
@@ -402,6 +451,34 @@ if printf '%s' "$OUT" | grep -qF "DISPATCH="; then
 else
   pass_msg "d7: default mode emits ACTION= only (no DISPATCH= leak)"
 fi
+
+# Case D8 (#1077): orchestrator HEAD on the BASE branch, [split-role-red] anchor
+# lives ONLY on the unmerged feature/foo branch. The OLD `<base>..HEAD` scan finds
+# no anchor (HEAD==staging) and spuriously reports shape:single!=split-role. The
+# fix resolves the feature ref and scans <base>..<feature-ref>, yielding match.
+echo ""
+echo "Case D8 (#1077): split-role pair, orchestrator on base branch -> DISPATCH=match (not spurious shape mismatch)"
+D8="$ROOT/d8"; make_orchestrator_repo "$D8" 1
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
+      run_vd_orchestrator "$D8" 1077 B)
+assert_action "d8" "$OUT" "DISPATCH=match"
+inc
+if printf '%s' "$OUT" | grep -qF "REASON=shape:single!=split-role"; then
+  fail_msg "d8: spurious shape:single mismatch — scanned base..HEAD instead of the feature ref (#1077): $OUT"
+else
+  pass_msg "d8: no spurious shape mismatch when anchor lives on the unmerged feature branch"
+fi
+
+# Case D9 (#1077): genuine single-role — NO [split-role-red] anchor on the feature
+# branch. Even with deterministic feature-ref resolution, the absence of the anchor
+# MUST still produce shape:single!=split-role (no false positive from the fix).
+echo ""
+echo "Case D9 (#1077): genuine single-role (no anchor on feature branch) -> shape mismatch preserved"
+D9="$ROOT/d9"; make_orchestrator_repo "$D9" 0
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
+      run_vd_orchestrator "$D9" 1077 B)
+assert_action "d9" "$OUT" "DISPATCH=mismatch"
+assert_action "d9-reason" "$OUT" "REASON=shape:single!=split-role"
 
 echo ""
 echo "================================"
