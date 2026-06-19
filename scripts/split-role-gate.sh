@@ -11,8 +11,13 @@
 #
 #   SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
 #
-# pass token:
-#   additive-ok  — red SHA found; no locked test modified/deleted; suite green.
+# pass tokens:
+#   additive-ok          — red SHA found; no locked test modified/deleted; suite green.
+#   additive-ok-ci-green — red SHA found; no locked test modified/deleted; the
+#                          caller exported PIPELINE_CI_ROLLUP_GREEN=true (a green
+#                          statusCheckRollup, precedent #957) so the SECONDARY
+#                          suite-green re-run is SKIPPED on trust (#1078). The
+#                          PRIMARY locked-test invariant still ran first.
 # block tokens:
 #   unresolvable-base    — <base-ref> was empty or unknown in the gate subprocess
 #                          (env var not exported by caller; distinct from no-red-sha
@@ -23,8 +28,12 @@
 #   suite-red            — red-SHA + lock checks pass but the suite is not green.
 #
 # Decision precedence (first failure wins):
-#   no-red-sha → locked-test-modified → locked-test-deleted → suite-red
+#   no-red-sha → locked-test-modified → locked-test-deleted →
+#   (PIPELINE_CI_ROLLUP_GREEN=true ? additive-ok-ci-green : suite-red)
 #   → else additive-ok.
+# The CI-trust short-circuit (additive-ok-ci-green) sits in the SECONDARY
+# suite-green block, strictly AFTER the PRIMARY locked-test invariant — it can
+# only convert the suite-green step into a trusted pass, never bypass the lock.
 #
 # `evaluate-issue-pr` reads the token: SPLIT_ROLE=pass is a necessary
 # greenlight precondition; any block-* token leaves the PR for manual merge
@@ -42,6 +51,14 @@
 # pipeline.config) — never hard-coded. When unset, the suite check is treated
 # as a no-op pass (the lock invariant is the load-bearing assertion; a repo
 # with no configured test command cannot be run by the gate).
+#
+# $PIPELINE_CI_ROLLUP_GREEN (opt-in trust signal, #1078): when set to "true" the
+# caller asserts the PR's statusCheckRollup is already green (same #957 trust
+# boundary evaluate-issue-pr uses to skip its own local re-run). The gate then
+# SKIPS the SECONDARY $PIPELINE_TEST_CMD re-run and emits additive-ok-ci-green
+# instead of re-running the ~9–11min sweep. Default-unset → gate runs its own
+# suite check exactly as before. NEVER read from pipeline.config — set only by
+# the eval-time caller from its already-resolved $ROLLUP_GREEN.
 #
 # `[split-role-red]` marker semantics (frozen contract §2): the Opus
 # test-author commits the complete failing suite ONCE, with the literal
@@ -172,10 +189,24 @@ if [ -n "$DEL_FILES" ]; then
   emit block locked-test-deleted
 fi
 
-# --- Suite-green check -------------------------------------------------------
+# --- Suite-green check (SECONDARY) -------------------------------------------
 # Run the configured test command; require success. Command comes from
 # $PIPELINE_TEST_CMD (never hard-coded). Unset → no-op pass (the repo declares
 # no runnable suite; the lock invariant above is the load-bearing assertion).
+#
+# CI-trust short-circuit (issue #1078, precedent #957). This block is SECONDARY:
+# it runs strictly AFTER the PRIMARY locked-test additive-only invariant above
+# (which has already had its chance to hard-block and is NEVER reached by this
+# short-circuit). When the caller has already resolved a green statusCheckRollup
+# and exports PIPELINE_CI_ROLLUP_GREEN=true, the green CI suite IS this suite —
+# re-running $PIPELINE_TEST_CMD here is pure duplication of the ~9–11min sweep.
+# Trust CI and emit a DETERMINISTIC pass token (additive-ok-ci-green) instead of
+# re-running the suite. Default-unset → the gate behaves exactly as before. This
+# can ONLY convert the SECONDARY suite-green step into a trusted pass; it can
+# never bypass the PRIMARY lock check (which precedes it).
+if [ "${PIPELINE_CI_ROLLUP_GREEN:-}" = "true" ]; then
+  emit pass additive-ok-ci-green
+fi
 if [ -n "${PIPELINE_TEST_CMD:-}" ]; then
   if ! bash -c "$PIPELINE_TEST_CMD" >/dev/null 2>&1; then
     emit block suite-red

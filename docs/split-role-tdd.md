@@ -54,7 +54,20 @@ What it asserts:
   locked tests were never **M**odified or **D**eleted. Additions
   (`--diff-filter=A`, new test files) are allowed and never flagged.
 - The suite is green at HEAD (using `$PIPELINE_TEST_CMD`; unset → no-op pass,
-  since a repo with no configured test command cannot be run by the gate).
+  since a repo with no configured test command cannot be run by the gate). This
+  suite-green check is **SECONDARY** — it runs strictly AFTER the PRIMARY
+  locked-test invariant above.
+  - **CI-trust short-circuit (`PIPELINE_CI_ROLLUP_GREEN`, #1078, precedent
+    #957).** When the caller exports `PIPELINE_CI_ROLLUP_GREEN=true` (asserting
+    the PR's `statusCheckRollup` is already green — the same #957 trust boundary
+    `evaluate-issue-pr` uses to skip its own local re-run), the gate SKIPS the
+    secondary `$PIPELINE_TEST_CMD` re-run and emits `additive-ok-ci-green`
+    instead of re-running the ~9–11min sweep. Opt-in / default-unset → the gate
+    runs its own suite check exactly as before. The signal can ONLY convert the
+    SECONDARY suite-green step into a trusted pass; the PRIMARY lock invariant
+    runs first and is NEVER bypassed by it. `evaluate-issue-pr` Step 11.2b sets
+    it from its already-resolved `$ROLLUP_GREEN`; it is never read from
+    `pipeline.config`.
 
 Output contract — exactly one machine-readable line on stdout, and the gate
 **ALWAYS exits 0** (the verdict rides the token, mirroring
@@ -67,8 +80,13 @@ SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
 Token precedence (first failure wins):
 
 ```
-no-red-sha → locked-test-modified → locked-test-deleted → suite-red → else additive-ok
+no-red-sha → locked-test-modified → locked-test-deleted →
+(PIPELINE_CI_ROLLUP_GREEN=true ? additive-ok-ci-green : suite-red) → else additive-ok
 ```
+
+The CI-trust short-circuit (`additive-ok-ci-green`) lives in the SECONDARY
+suite-green block, strictly AFTER the PRIMARY locked-test invariant — it never
+reorders or bypasses the lock checks above it.
 
 - `no-red-sha` — **fail-closed**: no `[split-role-red]` commit on the branch
   (an unresolvable anchor always blocks; the gate never greenlights without a
@@ -78,6 +96,11 @@ no-red-sha → locked-test-modified → locked-test-deleted → suite-red → el
 - `suite-red` — red-SHA + lock checks pass but the suite is not green.
 - `additive-ok` — pass: red SHA found, no locked test modified/deleted, suite
   green.
+- `additive-ok-ci-green` — pass: red SHA found, no locked test
+  modified/deleted, and `PIPELINE_CI_ROLLUP_GREEN=true` (#1078) so the SECONDARY
+  suite-green re-run was SKIPPED on a trusted green CI rollup (precedent #957).
+  Still `SPLIT_ROLE=pass`; `evaluate-issue-pr` keys greenlight on `pass` (any
+  reason), so this needs no call-site parser change.
 
 `evaluate-issue-pr` reads the token: `SPLIT_ROLE=pass` is a necessary
 greenlight precondition; any `block-*` token leaves the PR for manual merge.
