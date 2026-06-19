@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.23.13](https://github.com/rjskene/pipeline/compare/v0.23.12...v0.23.13) (2026-06-19)
+
+
+### Bug Fixes
+
+* **model-routing:** infer split-role shape from [split-role-red] git anchor for inline dispatch ([#1077](https://github.com/rjskene/pipeline/issues/1077)) ([b107345](https://github.com/rjskene/pipeline/commit/b107345db1b91fdb1371939b8e99832eb42bf8e1))
+* **model-routing:** infer split-role shape from [split-role-red] git anchor for inline dispatch ([#1077](https://github.com/rjskene/pipeline/issues/1077)) ([e4effd4](https://github.com/rjskene/pipeline/commit/e4effd4f20f8754b8bb53e7f29d9395858f7f537))
+* **split-role-gate:** resolve earliest [split-role-red] anchor + allow purely-additive locked-file edits ([#1084](https://github.com/rjskene/pipeline/issues/1084)) ([81f571a](https://github.com/rjskene/pipeline/commit/81f571a3d54a73419a7242cdb409062ca273b56f))
+* **split-role-gate:** resolve earliest [split-role-red] anchor + allow purely-additive locked-file edits ([#1084](https://github.com/rjskene/pipeline/issues/1084)) ([fedd9c1](https://github.com/rjskene/pipeline/commit/fedd9c1f3ec9954cfe9c123b2e18435f964692d4))
+
+
+### Performance Improvements
+
+* **split-role-gate:** trust green CI rollup to skip redundant suite-green re-run ([#1078](https://github.com/rjskene/pipeline/issues/1078)) ([948897d](https://github.com/rjskene/pipeline/commit/948897d40a8c7b0810b242ed409e15d96e71d78b))
+* **split-role-gate:** trust green CI rollup to skip redundant suite-green re-run ([#1078](https://github.com/rjskene/pipeline/issues/1078)) ([140d91f](https://github.com/rjskene/pipeline/commit/140d91f3c84c2122a02cbfab3936a3f0e25682b3))
+
 ## [0.23.12](https://github.com/rjskene/pipeline/compare/v0.23.11...v0.23.12) (2026-06-18)
 
 
