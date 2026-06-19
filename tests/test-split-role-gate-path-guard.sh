@@ -97,4 +97,28 @@ if ! printf '%s\n' "$step_2b" | grep -qi 'no-red-sha'; then
   exit 1
 fi
 
+# (d) CI-trust signal (#1078): the gate invocation in the Step 11.2b region must
+#     thread the resolved green-rollup verdict in as PIPELINE_CI_ROLLUP_GREEN so
+#     the gate's SECONDARY suite-green re-run is SKIPPED on trust (precedent #957).
+if ! printf '%s\n' "$step_2b" | grep -qiF 'PIPELINE_CI_ROLLUP_GREEN'; then
+  echo "FAIL (d): Step 11.2b missing 'PIPELINE_CI_ROLLUP_GREEN' CI-trust signal token (#1078)"
+  echo "  Expected: the gate invocation threads the green-rollup verdict in so its secondary suite-green re-run is skipped."
+  exit 1
+fi
+if ! printf '%s\n' "$step_2b" | grep -qiF 'ROLLUP_GREEN="$ROLLUP_GREEN"'; then
+  echo "FAIL (d): Step 11.2b CI-trust signal not bound to the already-resolved \$ROLLUP_GREEN (#1078)"
+  echo "  Expected: PIPELINE_CI_ROLLUP_GREEN=\"\$ROLLUP_GREEN\" — the Step 11.2 verdict reused, not recomputed."
+  exit 1
+fi
+
+# (e) no-timeout-wrapper (#1078, regression-pin against the #1065 empty-token race):
+#     the split-role-gate.sh invocation in the region must NOT be preceded by a
+#     `timeout ` wrapper. The gate always exits 0 + emits exactly one token; a
+#     timeout-wrapper expiry mid-sweep was the sole empty-token source.
+if printf '%s\n' "$step_2b" | grep -E 'timeout[[:space:]]+[0-9].*split-role-gate\.sh'; then
+  echo "FAIL (e): Step 11.2b wraps split-role-gate.sh in a 'timeout' — reintroduces the #1065 empty-token race (#1078)"
+  echo "  Expected: NO timeout wrapper around the gate call; the gate is deterministic single-token, always exit 0."
+  exit 1
+fi
+
 echo "PASS: split-role gate path + resolver-shape guard prose contract (#1076)"

@@ -284,10 +284,20 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        **When the gate RUNS (PATH B + `SPLIT_ROLE=true`):** run `scripts/split-role-gate.sh` and require `SPLIT_ROLE=pass` as an **ADDITIONAL** greenlight precondition (mirrors the `auto-merge-gate.sh` block-token pattern: the script emits exactly one line and ALWAYS exits 0 — the verdict rides the token):
        ```bash
        export PIPELINE_BASE_BRANCH  # ensure the gate subprocess inherits the var (#1066)
-       SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/split-role-gate.sh" "$ISSUE")
+       # CI-trust signal (#1078, precedent #957): thread the green-rollup verdict
+       # ALREADY resolved in Step 11.2 ($ROLLUP_GREEN — `length > 0 and all(.conclusion
+       # == "SUCCESS")`) into the gate so its SECONDARY suite-green check is SKIPPED on
+       # trust instead of re-running the ~9–11min $PIPELINE_TEST_CMD sweep a SECOND time.
+       # NO `timeout` wrapper: the gate ALWAYS exits 0 and emits exactly one token, and
+       # removing the redundant sweep removes the only slow step — a timeout-wrapper
+       # expiry mid-sweep was the sole source of the #1065 empty-token race; do not
+       # reintroduce one. The PRIMARY locked-test invariant still runs first in the gate.
+       SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" \
+         PIPELINE_CI_ROLLUP_GREEN="$ROLLUP_GREEN" \
+         bash "${CLAUDE_PLUGIN_ROOT}/scripts/split-role-gate.sh" "$ISSUE")
        # → SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
        ```
-       Parse the `SPLIT_ROLE=` token. `pass` (`REASON=additive-ok`) is **necessary** for greenlight; any `block` token (`no-red-sha`, `locked-test-modified`, `locked-test-deleted`, `suite-red`, `unresolvable-base`) leaves the PR for **manual merge** (same shape as the `auto-merge-gate.sh` `block-*` tokens). The `unresolvable-base` token means the base ref could not be resolved in the gate subprocess — distinct from `no-red-sha` (author never committed a red anchor) (#1066). The gate runs ONLY for a genuine split-role PR; for that case the block semantics are unchanged — a PR dispatched `SPLIT_ROLE=true` that carries no `[split-role-red]` anchor STILL hard-blocks `no-red-sha` (the real protection #1076 preserves). The ONLY #1076 change is the PATH + resolver guard deciding WHETHER the gate runs. This gate adds a precondition ONLY — **pr-eval itself STAYS Opus in all configurations (W3)**, never gated by any new knob.
+       Parse the `SPLIT_ROLE=` token. `pass` is **necessary** for greenlight and the parse keys on `pass` (ANY reason) — so both `REASON=additive-ok` and `REASON=additive-ok-ci-green` (#1078: emitted when `ROLLUP_GREEN=true` is threaded in, the gate trusts CI and SKIPS its secondary suite-green re-run) are accepted as a greenlight with NO parser change. Any `block` token (`no-red-sha`, `locked-test-modified`, `locked-test-deleted`, `suite-red`, `unresolvable-base`) leaves the PR for **manual merge** (same shape as the `auto-merge-gate.sh` `block-*` tokens). The `unresolvable-base` token means the base ref could not be resolved in the gate subprocess — distinct from `no-red-sha` (author never committed a red anchor) (#1066). The gate runs ONLY for a genuine split-role PR; for that case the block semantics are unchanged — a PR dispatched `SPLIT_ROLE=true` that carries no `[split-role-red]` anchor STILL hard-blocks `no-red-sha` (the real protection #1076 preserves). The ONLY #1076 change is the PATH + resolver guard deciding WHETHER the gate runs. This gate adds a precondition ONLY — **pr-eval itself STAYS Opus in all configurations (W3)**, never gated by any new knob.
 
     3. **On `green`:** (when split-role is enabled, Step 11.2b's `SPLIT_ROLE=pass` is an additional precondition for this branch)
        - **TOCTOU re-check (issue #295).** Immediately before the merge, re-read `baseRefName`. A malicious or buggy actor could retarget the PR between Step 11.2's gate and the merge call.
