@@ -88,6 +88,21 @@ run_gate() {
   set -e
 }
 
+# run_gate_ci_green <repo> — same as run_gate but ALSO exports the CI-trust
+# signal PIPELINE_CI_ROLLUP_GREEN=true into the gate subprocess (#1078). When
+# the caller has already resolved a green statusCheckRollup, the gate must trust
+# CI and SKIP the redundant secondary $PIPELINE_TEST_CMD re-run — emitting a
+# deterministic pass token instead of re-running the ~9-11min sweep. The PRIMARY
+# locked-test invariant runs first and is NEVER bypassed by this signal.
+run_gate_ci_green() {
+  local repo="$1"; shift
+  set +e
+  OUT=$( cd "$repo" && PIPELINE_TEST_CMD="$TEST_CMD" PIPELINE_CI_ROLLUP_GREEN=true \
+         bash "$GATE" "$ISSUE" "$BASE" tests 2>/dev/null )
+  CODE=$?
+  set -e
+}
+
 # assert_case <label> <expected-stdout-token-line>
 assert_case() {
   local label="$1" expected="$2"
@@ -157,6 +172,95 @@ git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl (#$ISSUE
 TEST_CMD="$FAIL_CMD"
 run_gate "$REPO"
 assert_case "e suite-red" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=suite-red"
+
+# ---------------------------------------------------------------------------
+echo "Case (f): impl commit ALSO mentions [split-role-red] → anchor resolves to EARLIER RED (#1084)"
+REPO=$(build_repo f)
+commit_red "$REPO"
+# A later impl commit whose SUBJECT also contains the literal [split-role-red]
+# substring (legitimate work ON the split-role machinery, e.g. #1077's GREEN).
+# This impl commit TAMPERS the locked test (overwrites the pre-existing line in
+# tests/test-locked.sh that existed at the real RED SHA).
+#
+# This case DISCRIMINATES the two anchor resolutions:
+#   - head-1 (newest, BUGGY): picks THIS impl commit as the anchor. The diff
+#     window <impl>..HEAD is then EMPTY (impl == HEAD), so the tamper is INVISIBLE
+#     → false-pass additive-ok.
+#   - tail-1 (earliest, CORRECT): picks the real RED commit. The diff window
+#     <red>..HEAD then SEES the tampered locked file → block locked-test-modified.
+# Expecting locked-test-modified PROVES the earlier RED anchor is resolved.
+echo "echo locked-v2-tampered-by-marker-impl" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "fix(x): infer shape from [split-role-red] anchor (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "f anchor-collision resolves earlier RED" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
+echo "Case (g): purely-additive APPEND to an existing locked test file → pass/additive-ok (#1084)"
+REPO=$(build_repo g)
+commit_red "$REPO"
+# Append a line to a test file that EXISTED at the red SHA (tests/test-locked.sh).
+# Zero existing lines removed/changed (removed == 0) → cannot weaken a RED
+# assertion → NOT a violation (today's --diff-filter=MD wrongly blocks it).
+printf 'echo locked-extra-assertion\n' >> "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, append assertion (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "g additive-append-ok" "SPLIT_ROLE=pass ISSUE=$ISSUE REASON=additive-ok"
+
+# ---------------------------------------------------------------------------
+echo "Case (h): a REMOVED/CHANGED existing line in a locked test file → block/locked-test-modified (#1084)"
+REPO=$(build_repo h)
+commit_red "$REPO"
+# Overwrite the existing locked test (the original line is removed/altered →
+# removed > 0 → tampering → still blocks).
+echo "echo locked-v2-tampered" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, alter locked line (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "h tamper-modified" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
+echo "Case (i): deleted locked test file STILL blocks → block/locked-test-deleted (#1084)"
+REPO=$(build_repo i)
+commit_red "$REPO"
+# Delete a locked test file (D) — no additive interpretation; always blocks.
+git -C "$REPO" rm -q "tests/test-locked.sh"
+git -C "$REPO" commit -qm "feat(x): green impl, drop locked test (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "i delete-blocks" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-deleted"
+
+# ---------------------------------------------------------------------------
+echo "Case (j): red + lock-clean + PIPELINE_CI_ROLLUP_GREEN=true (suite cmd would FAIL) → pass/additive-ok-ci-green (#1078)"
+REPO=$(build_repo j)
+commit_red "$REPO"
+# Lock-clean impl commit (no locked test modified/deleted). Configure a FAILING
+# suite command, but invoke the gate with the CI-trust signal asserted. The gate
+# must SHORT-CIRCUIT the secondary suite-green check: it trusts the green CI
+# rollup (precedent #957) and NEVER runs $FAIL_CMD. If the gate ignores the
+# trust signal it runs $FAIL_CMD and emits REASON=suite-red (today's behavior).
+# Expecting additive-ok-ci-green PROVES the suite re-run was SKIPPED on trust.
+echo "impl" > "$REPO/src.txt"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, ci-trusted (#$ISSUE)"
+TEST_CMD="$FAIL_CMD"
+run_gate_ci_green "$REPO"
+assert_case "j additive-ok-ci-green" "SPLIT_ROLE=pass ISSUE=$ISSUE REASON=additive-ok-ci-green"
+
+# ---------------------------------------------------------------------------
+echo "Case (k): locked test MODIFIED under PIPELINE_CI_ROLLUP_GREEN=true → STILL block/locked-test-modified (#1078)"
+REPO=$(build_repo k)
+commit_red "$REPO"
+# Tamper a locked test (overwrite the pre-existing line that existed at the red
+# SHA) AND assert the CI-trust signal. The PRIMARY locked-test additive-only
+# invariant runs BEFORE the secondary suite-green step, so CI-trust can NEVER
+# bypass it. This is a regression-pin: the lock must hard-block even when CI is
+# green. (Passes against current code — lock precedes suite-green — keep it green.)
+echo "echo locked-v2-tampered" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, alter locked line (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate_ci_green "$REPO"
+assert_case "k lock-blocks-under-ci-green" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
 
 echo ""
 echo "================================"
