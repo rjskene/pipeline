@@ -46,14 +46,28 @@
 # `[split-role-red]` marker semantics (frozen contract §2): the Opus
 # test-author commits the complete failing suite ONCE, with the literal
 # substring `[split-role-red]` in the commit SUBJECT line. The gate resolves
-# <red-sha> as the MOST RECENT such commit on the branch:
-#   git log --format='%H %s' <base>..HEAD | grep -F '[split-role-red]' | head -1
+# <red-sha> as the EARLIEST such commit on the branch:
+#   git log --format='%H %s' <base>..HEAD | grep -F '[split-role-red]' | tail -1
+# (`git log` is newest-first, so `tail -1` is the earliest match.) The RED
+# test-author always commits the locked suite FIRST; any LATER commit whose
+# subject also carries the literal `[split-role-red]` substring is an impl
+# commit doing work ON the split-role machinery (e.g. #1077's GREEN referencing
+# the anchor in its subject). Picking the earliest match avoids mis-anchoring on
+# such an impl commit (#1084).
 #
 # Locked-test invariant (frozen contract §3, W7): "locked tests" = every file
-# matching the test-path set that EXISTS at <red-sha>. The gate asserts
-#   git diff <red-sha>..HEAD --diff-filter=MD -- <test-paths>
-# is EMPTY (no Modified, no Deleted under the test paths). Additions
-# (--diff-filter=A, new test files) are allowed and NOT flagged.
+# matching the test-path set that EXISTS at <red-sha>. The invariant is
+# ADDITIVE-AWARE: the RED suite may only be ADDED to, never weakened. For each
+# Modified (M) locked test file the gate inspects
+#   git diff <red-sha>..HEAD --numstat -- <file>   (emits "<added> <removed> <file>")
+# A purely-additive edit (removed == 0) cannot weaken a RED assertion and is
+# ALLOWED. A pre-existing line deleted/altered (removed > 0), or a binary /
+# non-numeric numstat (fail-closed), is tampering → locked-test-modified.
+# Deleted (D) locked files ALWAYS block (locked-test-deleted) — no additive
+# interpretation. New test files (--diff-filter=A) are allowed and never flagged.
+# Precedence preserved: a real modified-tamper is emitted before deletion
+# (check all modified files for tampering first; only if none tampers, then
+# check deletions).
 
 set -euo pipefail
 
@@ -86,7 +100,9 @@ emit() {
 }
 
 # --- Resolve the red SHA (fail-closed) --------------------------------------
-# Most recent commit on <base>..HEAD whose SUBJECT contains `[split-role-red]`.
+# EARLIEST commit on <base>..HEAD whose SUBJECT contains `[split-role-red]`
+# (`git log` is newest-first, so `tail -1` is the earliest). The RED suite is
+# committed FIRST; a later marker-mentioning commit is an impl commit (#1084).
 # An UNRESOLVABLE base ref (empty or unknown) must emit a DISTINCT token
 # (`unresolvable-base`) rather than `no-red-sha`, so operators can distinguish
 # "base ref missing from subprocess env" from "author never committed a red
@@ -111,29 +127,49 @@ LOG_OUT="$(git log --format='%H %s' "${BASE}..HEAD" 2>/dev/null || true)"
 # would violate the always-exit-0 contract. Mirror path-b-execute-eligible.sh's
 # `$( { ...; } || true)` guard so a missing marker resolves to an empty RED_SHA
 # and the no-red-sha block below fires cleanly.
-RED_SHA="$( { printf '%s\n' "$LOG_OUT" | grep -F '[split-role-red]' | head -1 | awk '{print $1}'; } || true)"
+RED_SHA="$( { printf '%s\n' "$LOG_OUT" | grep -F '[split-role-red]' | tail -1 | awk '{print $1}'; } || true)"
 
 if [ -z "$RED_SHA" ]; then
   emit block no-red-sha
 fi
 
-# --- Locked-test invariant (W7) ---------------------------------------------
-# git diff <red-sha>..HEAD --diff-filter=MD -- <test-paths> must be empty.
-# Modified (M) and Deleted (D) under the test paths are violations; Additions
-# (A) are allowed and never surface here.  We inspect name+status so we can
-# distinguish modified from deleted for the precedence-ordered token.
-DIFF_MD="$(git diff "${RED_SHA}..HEAD" --diff-filter=MD --name-status -- "${TEST_PATHS[@]}" 2>/dev/null || true)"
+# --- Locked-test invariant (W7, additive-aware #1084) -----------------------
+# Inspect Modified (M) and Deleted (D) locked test files under the test paths.
+# Additions (A) are allowed and never surface here. We split the M and D checks:
+#   - A Modified (M) locked file is tampering ONLY if a pre-existing line was
+#     removed/altered. We read `git diff <red>..HEAD --numstat -- <file>` (emits
+#     "<added> <removed> <file>"). removed == 0 → purely additive → ALLOWED.
+#     removed > 0 → tampering → locked-test-modified. A non-numeric removed
+#     (binary `-`) is treated as tampering (fail-closed).
+#   - A Deleted (D) locked file ALWAYS blocks (locked-test-deleted) — no
+#     additive interpretation.
+# Precedence preserved (frozen §1): locked-test-modified before
+# locked-test-deleted. We scan ALL modified files for tampering FIRST; if any
+# tampers we block locked-test-modified; only if none tampers do we check
+# deletions.
+MOD_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=M --name-only -- "${TEST_PATHS[@]}" 2>/dev/null || true)"
+DEL_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=D --name-only -- "${TEST_PATHS[@]}" 2>/dev/null || true)"
 
-if [ -n "$DIFF_MD" ]; then
-  # Precedence: locked-test-modified before locked-test-deleted (frozen §1).
-  if printf '%s\n' "$DIFF_MD" | grep -qE '^M[[:space:]]'; then
-    emit block locked-test-modified
-  fi
-  if printf '%s\n' "$DIFF_MD" | grep -qE '^D[[:space:]]'; then
-    emit block locked-test-deleted
-  fi
-  # Any other MD-filtered status (defensive) still blocks as a modification.
-  emit block locked-test-modified
+# First pass: any modified locked file with removed != 0 (or non-numeric) tampers.
+if [ -n "$MOD_FILES" ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    # numstat for this one file: "<added>\t<removed>\t<file>".
+    removed="$(git diff "${RED_SHA}..HEAD" --numstat -- "$f" 2>/dev/null | awk 'NR==1{print $2}')"
+    if ! printf '%s' "$removed" | grep -qE '^[0-9]+$'; then
+      # Non-numeric (binary `-`) or empty → fail-closed tampering.
+      emit block locked-test-modified
+    fi
+    if [ "$removed" -gt 0 ]; then
+      emit block locked-test-modified
+    fi
+    # removed == 0 → purely additive → not a violation for this file.
+  done <<< "$MOD_FILES"
+fi
+
+# No modified-tamper. Now deletions always block.
+if [ -n "$DEL_FILES" ]; then
+  emit block locked-test-deleted
 fi
 
 # --- Suite-green check -------------------------------------------------------

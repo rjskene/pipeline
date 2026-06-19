@@ -158,6 +158,64 @@ TEST_CMD="$FAIL_CMD"
 run_gate "$REPO"
 assert_case "e suite-red" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=suite-red"
 
+# ---------------------------------------------------------------------------
+echo "Case (f): impl commit ALSO mentions [split-role-red] → anchor resolves to EARLIER RED (#1084)"
+REPO=$(build_repo f)
+commit_red "$REPO"
+# A later impl commit whose SUBJECT also contains the literal [split-role-red]
+# substring (legitimate work ON the split-role machinery, e.g. #1077's GREEN).
+# This impl commit TAMPERS the locked test (overwrites the pre-existing line in
+# tests/test-locked.sh that existed at the real RED SHA).
+#
+# This case DISCRIMINATES the two anchor resolutions:
+#   - head-1 (newest, BUGGY): picks THIS impl commit as the anchor. The diff
+#     window <impl>..HEAD is then EMPTY (impl == HEAD), so the tamper is INVISIBLE
+#     → false-pass additive-ok.
+#   - tail-1 (earliest, CORRECT): picks the real RED commit. The diff window
+#     <red>..HEAD then SEES the tampered locked file → block locked-test-modified.
+# Expecting locked-test-modified PROVES the earlier RED anchor is resolved.
+echo "echo locked-v2-tampered-by-marker-impl" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "fix(x): infer shape from [split-role-red] anchor (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "f anchor-collision resolves earlier RED" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
+echo "Case (g): purely-additive APPEND to an existing locked test file → pass/additive-ok (#1084)"
+REPO=$(build_repo g)
+commit_red "$REPO"
+# Append a line to a test file that EXISTED at the red SHA (tests/test-locked.sh).
+# Zero existing lines removed/changed (removed == 0) → cannot weaken a RED
+# assertion → NOT a violation (today's --diff-filter=MD wrongly blocks it).
+printf 'echo locked-extra-assertion\n' >> "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, append assertion (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "g additive-append-ok" "SPLIT_ROLE=pass ISSUE=$ISSUE REASON=additive-ok"
+
+# ---------------------------------------------------------------------------
+echo "Case (h): a REMOVED/CHANGED existing line in a locked test file → block/locked-test-modified (#1084)"
+REPO=$(build_repo h)
+commit_red "$REPO"
+# Overwrite the existing locked test (the original line is removed/altered →
+# removed > 0 → tampering → still blocks).
+echo "echo locked-v2-tampered" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, alter locked line (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "h tamper-modified" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
+echo "Case (i): deleted locked test file STILL blocks → block/locked-test-deleted (#1084)"
+REPO=$(build_repo i)
+commit_red "$REPO"
+# Delete a locked test file (D) — no additive interpretation; always blocks.
+git -C "$REPO" rm -q "tests/test-locked.sh"
+git -C "$REPO" commit -qm "feat(x): green impl, drop locked test (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "i delete-blocks" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-deleted"
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
