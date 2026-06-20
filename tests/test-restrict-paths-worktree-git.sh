@@ -92,6 +92,18 @@ else
   fail_msg "per-worktree hooks/ write blocked (Write file_path of pre-commit)" "rc=$RC, out=$OUT"
 fi
 
+# --- negative-hooks-symlink: a symlink (sneaky -> hooks) cannot launder a write
+# past the deny. is_allowed realpath's the target, so .../sneaky/pre-commit
+# normalizes to .../hooks/pre-commit before the deny check. The pre-commit file
+# already exists (created above) so the Bash extractor surfaces it. (#1070) ---
+ln -s hooks "$GITDIR/sneaky"
+run_hook "$WT" "touch $GITDIR/sneaky/pre-commit"
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'BLOCKED'; then
+  pass_msg "symlinked per-worktree hooks/ write still blocked (sneaky -> hooks)"
+else
+  fail_msg "symlinked per-worktree hooks/ write still blocked (sneaky -> hooks)" "rc=$RC, out=$OUT"
+fi
+
 # --- negative-external: .git/worktrees path with no back-link into the project ---
 # An unrelated external dir simulating a hostile or stray .git. No `gitdir`
 # back-link points into the current project, so it must STILL block.
