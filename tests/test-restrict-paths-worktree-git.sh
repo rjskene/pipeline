@@ -34,6 +34,17 @@ run_hook(){ # <project_dir> <command> -> sets RC/OUT
   set -e
 }
 
+run_hook_filepath(){ # <project_dir> <tool_name> <file_path> -> sets RC/OUT
+  # Drives the Write/Edit branch of extract_paths (tool_input.file_path), which
+  # — unlike the Bash extractor — has no exists gate, so it surfaces a
+  # not-yet-existing target. (#1070)
+  set +e
+  OUT="$(printf '{"tool_name":"%s","tool_input":{"file_path":"%s"}}' "$2" "$3" \
+    | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$1" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" python3 "$HOOK" 2>&1)"
+  RC=$?
+  set -e
+}
+
 # Single trap covering the whole scaffold (hygiene: a second trap would clobber
 # the first and leak the first temp dir).
 BASE="$(mktemp -d "$REPO_ROOT/.rp-worktree-test.XXXXXX")"
@@ -52,6 +63,58 @@ touch "$GITDIR/index.lock"
 run_hook "$WT" "touch $GITDIR/index.lock"
 if [ "$RC" -eq 0 ]; then pass_msg "linked-worktree git-dir path allowed via back-link"
 else fail_msg "linked-worktree git-dir path allowed via back-link" "rc=$RC, out=$OUT"; fi
+
+# --- negative-hooks-bash: per-worktree .git/worktrees/<slug>/hooks/ is a
+# code-exec surface (git runs pre-commit at git-time, invisible to this hook).
+# Even though the back-link resolves into an allowed root, the hooks/ segment
+# must be denied so an agent cannot plant/overwrite an executable pre-commit.
+# The Bash absolute-path extractor only surfaces EXISTING targets (it `continue`s
+# on a path that does not exist on disk), so this case asserts the deny via the
+# overwrite-an-existing-hook shape; the not-yet-existing plant is covered by the
+# Write/Edit `file_path` case below, whose extractor has no exists gate. (#1070) ---
+mkdir -p "$GITDIR/hooks"
+touch "$GITDIR/hooks/pre-commit"
+run_hook "$WT" "touch $GITDIR/hooks/pre-commit"
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'BLOCKED'; then
+  pass_msg "per-worktree hooks/ write blocked (Bash touch existing pre-commit)"
+else
+  fail_msg "per-worktree hooks/ write blocked (Bash touch existing pre-commit)" "rc=$RC, out=$OUT"
+fi
+
+# --- negative-hooks-write: a Write/Edit whose file_path targets the
+# per-worktree hooks/ dir must block even when the file does not yet exist (the
+# plant-a-new-pre-commit shape). The Write/Edit extractor has no exists gate, so
+# this exercises the deny on a fresh path. (#1070) ---
+run_hook_filepath "$WT" "Write" "$GITDIR/hooks/pre-commit"
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'BLOCKED'; then
+  pass_msg "per-worktree hooks/ write blocked (Write file_path of pre-commit)"
+else
+  fail_msg "per-worktree hooks/ write blocked (Write file_path of pre-commit)" "rc=$RC, out=$OUT"
+fi
+
+# --- negative-hooks-symlink: a symlink (sneaky -> hooks) cannot launder a write
+# past the deny. is_allowed realpath's the target, so .../sneaky/pre-commit
+# normalizes to .../hooks/pre-commit before the deny check. The pre-commit file
+# already exists (created above) so the Bash extractor surfaces it. (#1070) ---
+ln -s hooks "$GITDIR/sneaky"
+run_hook "$WT" "touch $GITDIR/sneaky/pre-commit"
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'BLOCKED'; then
+  pass_msg "symlinked per-worktree hooks/ write still blocked (sneaky -> hooks)"
+else
+  fail_msg "symlinked per-worktree hooks/ write still blocked (sneaky -> hooks)" "rc=$RC, out=$OUT"
+fi
+
+# --- regression-positive: the hooks/ deny is anchored to gitdir+"/hooks" only,
+# so a sibling per-worktree control file (HEAD) is still allowed via the
+# back-link — the deny must not over-narrow to the whole git dir. The index.lock
+# positive above already guards the in-session recovery write-need. (#1070) ---
+touch "$GITDIR/HEAD"
+run_hook "$WT" "touch $GITDIR/HEAD"
+if [ "$RC" -eq 0 ]; then
+  pass_msg "per-worktree HEAD write still allowed (deny anchored to hooks/ only)"
+else
+  fail_msg "per-worktree HEAD write still allowed (deny anchored to hooks/ only)" "rc=$RC, out=$OUT"
+fi
 
 # --- negative-external: .git/worktrees path with no back-link into the project ---
 # An unrelated external dir simulating a hostile or stray .git. No `gitdir`
