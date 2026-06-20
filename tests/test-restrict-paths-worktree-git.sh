@@ -104,6 +104,18 @@ else
   fail_msg "symlinked per-worktree hooks/ write still blocked (sneaky -> hooks)" "rc=$RC, out=$OUT"
 fi
 
+# --- regression-positive: the hooks/ deny is anchored to gitdir+"/hooks" only,
+# so a sibling per-worktree control file (HEAD) is still allowed via the
+# back-link — the deny must not over-narrow to the whole git dir. The index.lock
+# positive above already guards the in-session recovery write-need. (#1070) ---
+touch "$GITDIR/HEAD"
+run_hook "$WT" "touch $GITDIR/HEAD"
+if [ "$RC" -eq 0 ]; then
+  pass_msg "per-worktree HEAD write still allowed (deny anchored to hooks/ only)"
+else
+  fail_msg "per-worktree HEAD write still allowed (deny anchored to hooks/ only)" "rc=$RC, out=$OUT"
+fi
+
 # --- negative-external: .git/worktrees path with no back-link into the project ---
 # An unrelated external dir simulating a hostile or stray .git. No `gitdir`
 # back-link points into the current project, so it must STILL block.
