@@ -48,13 +48,15 @@ split_role_block() {
   ' "$EXAMPLE"
 }
 
-# 1. pipeline.config.example: the read-site line is ACTIVE at the true default
-#    (uncommented `PIPELINE_PATH_B_SPLIT_ROLE=true`, NOT commented, NOT =false).
+# 1. pipeline.config.example: #1052 (defaults-in-code) — the knob is now COMMENTED at
+#    its true default (`#PIPELINE_PATH_B_SPLIT_ROLE=true`, NOT =false). The "true"
+#    default is single-sourced at the ${VAR:-true} read site, so --fix config must NOT
+#    seed it. Assert it is documented as a commented `=true` knob (not =false).
 inc
-if grep -Eq '^[[:space:]]*PIPELINE_PATH_B_SPLIT_ROLE=true' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_PATH_B_SPLIT_ROLE=true active"
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_SPLIT_ROLE=true' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_PATH_B_SPLIT_ROLE=true documented (commented) per #1052"
 else
-  fail_msg "example: PIPELINE_PATH_B_SPLIT_ROLE=true NOT active (still commented / =false?)"
+  fail_msg "example: PIPELINE_PATH_B_SPLIT_ROLE=true not documented as commented =true (#1052)"
 fi
 
 # 2. pipeline.config.example: NO commented `#PIPELINE_PATH_B_SPLIT_ROLE=false` residue.

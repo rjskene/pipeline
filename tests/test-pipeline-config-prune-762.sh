@@ -19,10 +19,12 @@ set -uo pipefail
 #      commented form so it stays discoverable. Mirrors the Sonnet/Haiku price
 #      block precedent (#PIPELINE_PRICE_CLAUDE_SONNET_..._INPUT=3).
 #
-# OUT-OF-SCOPE GUARD (the #857-vs-#858 boundary): PIPELINE_CI_CHECK_ENABLED and
-# PIPELINE_CI_FIX_LOOP_ENABLED are KEEP per the #762 audit — doc default "true"
-# != code fallback :-false until #858 reconciles them, so demoting them would
-# silently flip the feature OFF. They MUST stay live + uncommented here.
+# CI TOGGLES: PIPELINE_CI_CHECK_ENABLED stays live + uncommented (the #762 KEEP holds;
+# NOT in the #1052 reclassify set). PIPELINE_CI_FIX_LOOP_ENABLED was the other #762 KEEP,
+# but #1052 (defaults-in-code) is the reconciliation the original "until #858 reconciles
+# them" caveat anticipated: its "true" default is now single-sourced at the colon-less
+# ${VAR-true} read site (semantics unchanged, NOT flipped off), so it is demoted to a
+# COMMENTED escape-hatch here (no longer live) — see section 3 below.
 #
 # Dual-scan per CLAUDE.md: pipeline.config.example is always present;
 # pipeline.config is gitignored and host-only (no-op in CI). All $LIVE
@@ -132,14 +134,18 @@ if [ -f "$LIVE" ]; then
   done
 fi
 
-# --- 3. OUT-OF-SCOPE GUARD: CI toggles stay live + uncommented (#858 boundary) ---
-KEEP_VARS=(
-  PIPELINE_CI_CHECK_ENABLED
-  PIPELINE_CI_FIX_LOOP_ENABLED
-)
-for var in "${KEEP_VARS[@]}"; do
-  assert_var_live "$var" "$EXAMPLE" "example"
-done
+# --- 3. CI toggles ---
+# PIPELINE_CI_CHECK_ENABLED stays live + uncommented (NOT in the #1052 reclassify set).
+# PIPELINE_CI_FIX_LOOP_ENABLED was reclassified by #1052 (defaults-in-code): the #858
+# doc-vs-code reconciliation anticipated by the original #857 KEEP guard. Its "true"
+# default is single-sourced at the colon-less ${VAR-true} read site, so it is now a
+# COMMENTED escape-hatch (not seeded by --fix config), like the DEMOTED_VARS above.
+assert_var_live PIPELINE_CI_CHECK_ENABLED "$EXAMPLE" "example"
+assert_var_not_live PIPELINE_CI_FIX_LOOP_ENABLED "$EXAMPLE" "example"
+assert_var_commented_present PIPELINE_CI_FIX_LOOP_ENABLED "$EXAMPLE" "example"
+if [ -f "$LIVE" ]; then
+  assert_var_not_live PIPELINE_CI_FIX_LOOP_ENABLED "$LIVE" "live"
+fi
 
 echo ""
 echo "================================"

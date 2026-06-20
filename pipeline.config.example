@@ -305,8 +305,13 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # consumes verbatim (campaign inherits by reference). Do NOT re-encode the routing in
 # SKILL prose; the resolver folding config + carve-outs into one emitted spec is what
 # keeps config and prose from drifting (that drift WAS the #1056 root cause).
-PIPELINE_PATH_B_MODEL_EXECUTE=sonnet
-PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
+# Override anchors (#1052): defaults-in-code — the Sonnet default lives at the read
+# site (scripts/resolve-execute-dispatch.sh resolves unset -> sonnet per #1042), so
+# these stay COMMENTED and `--fix config` does NOT seed them. Seeding would PIN the
+# current default and defeat central default evolution on plugin upgrade. Uncomment
+# only to override (e.g. =opus for the conservative Opus-everywhere tier).
+#PIPELINE_PATH_B_MODEL_EXECUTE=sonnet
+#PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 
 # --- #881 Phase 1: PATH B execute eligibility SCOPE (#1042: defaults to `all`) ---
 # Controls WHICH PATH B issues the Sonnet execute routing (PIPELINE_PATH_B_MODEL_EXECUTE
@@ -319,7 +324,10 @@ PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 # The eligibility script is UNCHANGED; under "all" its verdict is advisory (still
 # relayed in the run log). W2 carve-outs always inherit Opus. pr-eval ALWAYS stays Opus (W3).
 # Applied at dispatch in scripts/resolve-execute-dispatch.sh (the #1056 single source).
-PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
+# Override anchor (#1052): defaults-in-code — the "all" default lives at the read site
+# (${PIPELINE_PATH_B_ELIGIBLE_SCOPE:-all}), so this stays COMMENTED and `--fix config`
+# does NOT seed it. Uncomment only to override (e.g. ="low-blast").
+#PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
 
 # --- #881 Phase 2: split-role TDD lane (structural test-first compliance) ---
 # Ships ACTIVE at "true" (#1057): PATH B execute splits into TWO sequential agents in
@@ -335,10 +343,16 @@ PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
 # split pair) is resolved alongside the model in scripts/resolve-execute-dispatch.sh
 # (the #1056 single source); fullsend's Step 6a --verify-dispatch backstop asserts the
 # dispatched shape matched the resolver (a collapsed split pair surfaces as a mismatch).
-PIPELINE_PATH_B_SPLIT_ROLE=true
+# Override anchor (#1052): defaults-in-code — the "true" default lives at the read site
+# (${PIPELINE_PATH_B_SPLIT_ROLE:-true}), so this stays COMMENTED and `--fix config`
+# does NOT seed it. Uncomment only to override (=false to opt OUT of the split-role lane).
+#PIPELINE_PATH_B_SPLIT_ROLE=true
 
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
-PIPELINE_CI_FIX_LOOP_ENABLED="true"   # default true when unset (fullsend 6b reads colon-less ${VAR-true}); set "" to disable. Further gated by PIPELINE_CI_CHECK_ENABLED.
+# Override anchor (#1052): defaults-in-code — default true lives at the read site
+# (fullsend 6b reads colon-less ${VAR-true}), so this stays COMMENTED and `--fix config`
+# does NOT seed it. Uncomment + set "" to disable. Further gated by PIPELINE_CI_CHECK_ENABLED.
+#PIPELINE_CI_FIX_LOOP_ENABLED="true"
 #PIPELINE_CI_FIX_RETRY_BUDGET="2"     # max re-dispatches per PR before applying the human label. Default 2, single-sourced at the read site (${VAR:=2}); uncomment to override.
 #PIPELINE_CI_FIX_LOG_LINES="200"      # tail size when injecting CI failure log into executor context. Default 200, single-sourced at the read site (${VAR:=200}); uncomment to override.
 # Path to the CI-failure log injected into the CI-fix executor's
