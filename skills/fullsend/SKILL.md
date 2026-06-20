@@ -52,6 +52,11 @@ Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `fals
 
 ## Usage gate (#969)
 
+> **RED FLAGS — read before acting on any `pause-5h`:**
+> 1. **Auto-resume is the DEFAULT on `pause-5h`.** NEVER stop-and-ask the operator "should I resume?" — arm the cron and yield; the cron resumes the campaign on its own.
+> 2. **NEVER `ScheduleWakeup`** (or any delay-based one-shot) at `resume_at` — a one-shot is turn-coupled, can fire while still throttled, and is silently superseded by intervening conversation (R2/R3).
+> 3. **The ONLY resume mechanism is a recurring `CronCreate` on `13,38 * * * *`** — turn-independent, fires on wall-clock regardless of conversation activity.
+
 **Single source of truth for the usage-aware pause/resume control loop.** `scripts/usage-gate.sh` reads real account usage from the OAuth endpoint behind Claude Code's `/usage` panel and emits ONE deterministic decision line; the script decides, this prose obeys (the `auto-merge-gate.sh` pattern). Call sites below reference this section — no duplicated machinery anywhere. Knobs: `PIPELINE_USAGE_GATE_ENABLED` (default `true`; `false` disables) and `PIPELINE_USAGE_GATE_THRESHOLD_PCT` (default `85`, applies to both windows). Spec: `docs/superpowers/specs/2026-06-10-usage-gate-design.md`.
 
 **Invocation (never gate-fatal):**
@@ -63,10 +68,20 @@ GATE_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh" || true)
 Always relay `$GATE_LINE` in the run log, then branch on its `decision=` token:
 
 - **`decision=proceed` / `decision=skip`** → continue. `skip` ≡ proceed plus an auditable `reason=` (`disabled`, `no-credentials`, `http-<code>`, `fetch-error`, `parse-error`) — the gate is fail-open and NEVER blocks a run on its own failure.
-- **`decision=pause-5h`** → the five-hour window is at/over threshold; the line's `resume_at=` is `five_hour.resets_at + 5 min` — treated as a **reporting ceiling + blind backstop only**, NOT a resume time (the endpoint over-states recovery; see spec #1016 R1):
+- **`decision=pause-5h`** → the five-hour window is at/over threshold; the outcome is **arm the recurring re-check cron and yield** (the campaign auto-resumes — this is NOT a stop-and-ask). The line's `resume_at=` is `five_hour.resets_at + 5 min` — treated as a **reporting ceiling + blind backstop only**, NOT a resume time (the endpoint over-states recovery; see spec #1016 R1):
   1. Report the remaining slate in ONE line — the issue numbers not yet at `pr-open`/merged.
-  2. **Arm ONE recurring re-check cron** via a single `CronCreate` on a fixed ~25-min off-minute cadence (e.g. `13,38 * * * *` — fixed, NOT a knob; same precedent as the +5 min buffer). Single mechanism — NO delay-based one-shot wakeup branch, NO one-shot at `resume_at` (R2/R3). The cron prompt is the **re-check firing contract** below; embed in it the gate script path, the marker `usage-resume re-check` (the cron id does not exist until `CronCreate` returns, so "delete self" means `CronList` → match the marker → `CronDelete`), the `resume_at` value from this gate line, and the self-describing resume command `/pipeline:fullsend <remaining issue numbers> <original flags>` plus "resumed after usage pause; delete the usage-resume cron if present" (idempotent — re-entry re-reads label state). Report: remaining slate + "worst-case resume by `<resume_at>`" + the cron id.
+  2. **Emit the arming spec deterministically, then transcribe it into ONE `CronCreate` call.** Run:
+
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/arm-usage-resume-cron.sh" \
+       --resume-command "<the exact /pipeline:fullsend command you are running>" \
+       --resume-at <resume_at from this gate line>
+     ```
+
+     then make ONE `CronCreate` call with EXACTLY its emitted args. **Do NOT hand-reconstruct the schedule/marker/prompt** — the script now SOURCES those tokens (fixed `13,38 * * * *` cadence, marker `usage-resume re-check`, the fully-assembled **re-check firing contract** prompt, the `resume_at` value, the `/pipeline:fullsend <remaining issue numbers> <original flags>` resume command form, and the "resumed after usage pause; delete the usage-resume cron if present" idempotency note). The cron id does not exist until `CronCreate` returns, so "delete self" means `CronList` → match the marker → `CronDelete`. Report: remaining slate + "worst-case resume by `<resume_at>`" + the cron id.
   3. STOP the turn. Labels untouched; in-flight agents have already drained (the gate runs only BETWEEN waves — pause = do not dispatch the next wave).
+
+  **`ScheduleWakeup` is NEVER the resume mechanism.** Do not arm a `ScheduleWakeup` (or any delay-based one-shot) at `resume_at` — a one-shot can fire while still throttled and is turn-coupled, so intervening conversation silently supersedes it (R2/R3). The recurring `CronCreate` above is the single, turn-independent mechanism.
 
   **Re-check firing contract** (each cron firing is a deliberately tiny turn): run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh"`, relay the line, then branch on its `decision=`:
   - **`proceed`** → `CronList` → match marker `usage-resume re-check` → `CronDelete` self, then fire the resume command.
