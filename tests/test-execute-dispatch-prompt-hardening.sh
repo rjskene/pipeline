@@ -71,6 +71,56 @@ for site in "${DISPATCH_SITES[@]}"; do
   done
 done
 
+# 2) #1093 split-role phase directives ride the line-299 dispatch-prompt contract.
+#    The line-299 binding contract forbids the dispatched
+#    `general-purpose`/`tdd-implementer` subagent from loading
+#    skills/execute-issue-plan/SKILL.md (it treats `/pipeline:execute-issue-plan N`
+#    as content, not a skill load), so the two-phase split-role discipline is NOT
+#    inherited from that skill body — it MUST ride the dispatch-site prompt, the
+#    same way the #764 terminal-state directive does. Under SPLIT_ROLE=true the
+#    RED-author prompt must direct the Opus agent to commit the failing suite with
+#    the literal `[split-role-red]` substring in the subject; the contract must be
+#    SPLIT_ROLE-aware. These assertions are ADDED alongside (not replacing) the
+#    #764 `valid terminal states are` key above — the canonical key is preserved.
+#
+#    CRITICAL scoping: the directives must live INSIDE the "Inline execute dispatch
+#    prompt contract" paragraph itself — NOT merely somewhere in the file (the
+#    resolver section + the `--verify-dispatch` block already mention `SPLIT_ROLE`
+#    and `[split-role-red]` elsewhere, so a whole-file grep would pass spuriously
+#    on the pre-fix prose). Extract the contract paragraph (from its bold header up
+#    to the next `   **` sub-heading) and assert co-occurrence WITHIN it.
+contract_paragraph() {
+  awk '
+    /\*\*Inline execute dispatch prompt contract \(mandatory\)\.\*\*/ { inblock = 1; print; next }
+    inblock && /^   \*\*/ { inblock = 0 }
+    inblock { print }
+  ' "$ROOT/skills/fullsend/SKILL.md"
+}
+contract_flat() { contract_paragraph | tr "\n" " "; }
+
+# 2a) The contract paragraph still anchors on the #764 key (preserved in scope).
+inc
+if contract_flat | grep -Fq 'valid terminal states are'; then
+  pass_msg "split-role-scope: contract paragraph preserves the #764 'valid terminal states are' key"
+else
+  fail_msg "split-role-scope: contract paragraph lost the #764 'valid terminal states are' key"
+fi
+# 2b) The contract paragraph is SPLIT_ROLE-aware.
+inc
+if contract_flat | grep -Fq 'SPLIT_ROLE'; then
+  pass_msg "split-role-scope: contract paragraph is SPLIT_ROLE-aware"
+else
+  fail_msg "split-role-scope: contract paragraph is NOT SPLIT_ROLE-aware (single-shape prompt only)"
+fi
+# 2c) The RED-author phase directive names the `[split-role-red]` commit anchor
+#     WITHIN the contract paragraph.
+inc
+if contract_flat | grep -Fq '[split-role-red]'; then
+  pass_msg "split-role-scope: contract paragraph carries the [split-role-red] RED-author directive"
+else
+  fail_msg "split-role-scope: contract paragraph missing the [split-role-red] RED-author directive"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
