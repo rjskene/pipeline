@@ -34,6 +34,17 @@ run_hook(){ # <project_dir> <command> -> sets RC/OUT
   set -e
 }
 
+run_hook_filepath(){ # <project_dir> <tool_name> <file_path> -> sets RC/OUT
+  # Drives the Write/Edit branch of extract_paths (tool_input.file_path), which
+  # — unlike the Bash extractor — has no exists gate, so it surfaces a
+  # not-yet-existing target. (#1070)
+  set +e
+  OUT="$(printf '{"tool_name":"%s","tool_input":{"file_path":"%s"}}' "$2" "$3" \
+    | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$1" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" python3 "$HOOK" 2>&1)"
+  RC=$?
+  set -e
+}
+
 # Single trap covering the whole scaffold (hygiene: a second trap would clobber
 # the first and leak the first temp dir).
 BASE="$(mktemp -d "$REPO_ROOT/.rp-worktree-test.XXXXXX")"
@@ -68,6 +79,17 @@ if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'BLOCKED'; then
   pass_msg "per-worktree hooks/ write blocked (Bash touch existing pre-commit)"
 else
   fail_msg "per-worktree hooks/ write blocked (Bash touch existing pre-commit)" "rc=$RC, out=$OUT"
+fi
+
+# --- negative-hooks-write: a Write/Edit whose file_path targets the
+# per-worktree hooks/ dir must block even when the file does not yet exist (the
+# plant-a-new-pre-commit shape). The Write/Edit extractor has no exists gate, so
+# this exercises the deny on a fresh path. (#1070) ---
+run_hook_filepath "$WT" "Write" "$GITDIR/hooks/pre-commit"
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'BLOCKED'; then
+  pass_msg "per-worktree hooks/ write blocked (Write file_path of pre-commit)"
+else
+  fail_msg "per-worktree hooks/ write blocked (Write file_path of pre-commit)" "rc=$RC, out=$OUT"
 fi
 
 # --- negative-external: .git/worktrees path with no back-link into the project ---
