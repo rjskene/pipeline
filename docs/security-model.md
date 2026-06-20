@@ -69,8 +69,11 @@ primitive **unreachable**, shrinking blast radius to near-zero.
 ## Where hardening IS worth it
 
 Tightening an **allowlist** is the model that works, so over-broad *allow*
-exemptions are worth fixing (unlike denylist evasions). Tracked: **#1070** —
-`_worktree_pointer_allows` grants WRITE (incl. a git `pre-commit` hook → code
-exec) into the main repo's per-worktree `.git` dir; narrowing it to read-only /
-the specific files git needs is bounded, achievable work. Confined to the
-operator's own tree (back-link forgery into fresh OOB dirs is already blocked).
+exemptions are worth fixing (unlike denylist evasions). Resolved: **#1070** —
+`_worktree_pointer_allows` previously granted WRITE (incl. a git `pre-commit`
+hook → code exec) into the main repo's per-worktree `.git` dir. Now the
+per-worktree `hooks/` segment is denied before the trust-return block (anchored
+exactly to `gitdir + "/hooks"` on the already-realpath'd path), killing the
+code-exec vector while preserving the in-session recovery write-need (e.g.
+`index.lock`, `HEAD`). Was confined to the operator's own tree (back-link
+forgery into fresh OOB dirs is already blocked).
