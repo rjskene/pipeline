@@ -72,6 +72,16 @@ In plan-issue / evaluate-issue-plan, flag any new test that (a) greps the whole
 repo without excluding generated paths, or (b) compares a version field to a
 literal.
 
+**Defaulted `PIPELINE_*` knobs ship a changed default automatically — no config
+migration (#1052).** A knob with a read-site `${VAR:-default}` is COMMENTED in
+`pipeline.config.example` and owned by its read-site default (the defaults-in-code
+model — see the `--fix config` section of `skills/doctor/SKILL.md`). Changing such a
+default ships via plugin upgrade and applies on the next run to any host that has not
+explicitly overridden it — there is nothing to seed and no migration to run. Only
+no-safe-default keys (`PIPELINE_REPO`, per-operator paths, the `PIPELINE_MOCK_WEB_EVAL_*`
+family) are seeded by `--fix config`. The golden guard `tests/test-doctor-golden-seed-set.sh`
+pins the seeded set so a newly-added uncommented-defaulted knob can't silently slip in.
+
 ## Migration & rollback
 
 This repo flipped from squash to merge-commits on 2026-05-24 via #459. Baseline before-picture: `.claude/logs/issue-459-baseline.md` (gitignored; on the dogfood host).
