@@ -190,6 +190,18 @@ def _worktree_pointer_allows(real: str) -> bool:
             target is itself a blocked write. A worktree-side pointer the agent
             could rewrite under PROJECT_DIR is never consulted — only the
             target-side back-link is.
+
+    Per-worktree hooks/ deny (#1070):
+      The per-worktree git dir's `hooks/` subdir is the only execute-at-git-time
+      surface here — git runs `<gitdir>/hooks/pre-commit` (etc.) inside the git
+      subprocess, INVISIBLE to this PreToolUse hook. A trusted back-link would
+      otherwise exempt that dir, letting an agent plant an executable pre-commit
+      and gain code-exec at the next git op. So `<gitdir>/hooks` (and anything
+      under it) is denied BEFORE the trust-return block, gating BOTH return-True
+      sites with one guard. The check runs on `real` (already realpath'd by the
+      caller `is_allowed`), so symlink/`..` forms normalize first. The anchor is
+      the exact `gitdir + "/hooks"`, not a loose `'/hooks/'` substring, so
+      `refs/…`, `logs/…`, and rebase/merge state writes are unaffected.
     No existing protected/blocked pattern is widened.
     """
     m = re.search(r"^(.*/\.git/worktrees/[^/]+)(?:/|$)", real)
@@ -203,6 +215,9 @@ def _worktree_pointer_allows(real: str) -> bool:
         pointer = os.path.realpath(open(backlink, encoding="utf-8").read().strip())
     except OSError:
         return False
+    hooks_dir = gitdir + "/hooks"
+    if real == hooks_dir or real.startswith(hooks_dir + "/"):
+        return False  # never exempt per-worktree hooks/ → kills pre-commit code-exec (#1070)
     for root in ALLOWED_ROOTS:
         if pointer == root or pointer.startswith(root + os.sep):
             return True

@@ -53,6 +53,23 @@ run_hook "$WT" "touch $GITDIR/index.lock"
 if [ "$RC" -eq 0 ]; then pass_msg "linked-worktree git-dir path allowed via back-link"
 else fail_msg "linked-worktree git-dir path allowed via back-link" "rc=$RC, out=$OUT"; fi
 
+# --- negative-hooks-bash: per-worktree .git/worktrees/<slug>/hooks/ is a
+# code-exec surface (git runs pre-commit at git-time, invisible to this hook).
+# Even though the back-link resolves into an allowed root, the hooks/ segment
+# must be denied so an agent cannot plant/overwrite an executable pre-commit.
+# The Bash absolute-path extractor only surfaces EXISTING targets (it `continue`s
+# on a path that does not exist on disk), so this case asserts the deny via the
+# overwrite-an-existing-hook shape; the not-yet-existing plant is covered by the
+# Write/Edit `file_path` case below, whose extractor has no exists gate. (#1070) ---
+mkdir -p "$GITDIR/hooks"
+touch "$GITDIR/hooks/pre-commit"
+run_hook "$WT" "touch $GITDIR/hooks/pre-commit"
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'BLOCKED'; then
+  pass_msg "per-worktree hooks/ write blocked (Bash touch existing pre-commit)"
+else
+  fail_msg "per-worktree hooks/ write blocked (Bash touch existing pre-commit)" "rc=$RC, out=$OUT"
+fi
+
 # --- negative-external: .git/worktrees path with no back-link into the project ---
 # An unrelated external dir simulating a hostile or stray .git. No `gitdir`
 # back-link points into the current project, so it must STILL block.
