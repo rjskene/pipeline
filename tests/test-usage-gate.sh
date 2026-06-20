@@ -397,7 +397,19 @@ if grep -q 'usage-resume re-check' "$FULLSEND_SKILL"; then pass_msg "fullsend SK
 if grep -qi 'recurring' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL describes a recurring cron"; else fail_msg "fullsend SKILL missing 'recurring' arming description"; fi
 if grep -q 'CronDelete' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL deletes the cron on proceed/halt"; else fail_msg "fullsend SKILL missing CronDelete in re-check contract"; fi
 if grep -q 'CronList' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL looks up the cron by marker (CronList)"; else fail_msg "fullsend SKILL missing CronList self-lookup"; fi
-if ! grep -q 'ScheduleWakeup' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL no longer arms via ScheduleWakeup one-shot"; else fail_msg "fullsend SKILL still references the dropped ScheduleWakeup branch"; fi
+# ScheduleWakeup may appear ONLY as an explicit ban (#1041 hardening makes the
+# dropped one-shot a NAMED forbidden mechanism so the orchestrator cannot regress
+# to it). Every mention must be negated (never/not); an un-negated mention is a
+# positive-arming regression — the thing this still guards against.
+SW_LINES="$(grep -n 'ScheduleWakeup' "$FULLSEND_SKILL" || true)"
+SW_BAD="$(printf '%s\n' "$SW_LINES" | sed '/^$/d' | grep -ivE 'never|not ' || true)"
+if [ -z "$SW_LINES" ]; then
+  pass_msg "fullsend SKILL does not reference ScheduleWakeup"
+elif [ -z "$SW_BAD" ]; then
+  pass_msg "fullsend SKILL references ScheduleWakeup only as an explicit ban (no positive arming)"
+else
+  fail_msg "fullsend SKILL has a non-negated ScheduleWakeup mention (possible positive arming): $SW_BAD"
+fi
 
 # --- Scenario 14: status SKILL.md advisory-only relay (prose guard) ---
 inc_scenario "Scenario 14: status SKILL.md relays the gate line ADVISORY-only"
