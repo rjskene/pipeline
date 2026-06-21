@@ -2222,6 +2222,48 @@ else
 fi
 rm -rf "$TMP45B"
 
+# --- Scenario 46: --emit-day-json survives a large capture (no ARG_MAX breach, #1099) ---
+# When the capture log grows large, CAPTURE_JSON and CAPTURE_ALL may exceed the
+# kernel's ARG_MAX (~2MB on Linux). The old code passed them as argv to python3;
+# this test generates a fixture large enough to trip that limit and asserts that
+# --emit-day-json exits 0 and emits at least one JSON line. The fix (stdin / temp
+# files) must make this scenario green.
+inc_scenario "Scenario 46: --emit-day-json survives large capture (no ARG_MAX breach #1099)"
+
+TMP46="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP46/" 2>/dev/null
+printf '%s\n' '[{"number":146,"title":"feat: argmax test","additions":300,"deletions":100,"body":"Closes #246","mergedAt":"2026-05-13T12:00:00Z","labels":[]}]' > "$TMP46/prs.json"
+printf '%s\n' '{"number":146,"additions":300,"deletions":100,"comments":[]}' > "$TMP46/pr-146.json"
+printf '%s\n' '{"number":246,"labels":[],"comments":[]}' > "$TMP46/issue-246.json"
+
+# Generate a capture.jsonl with enough records to push CAPTURE_JSON over 2 MB
+# (Linux ARG_MAX is typically 2,097,152 bytes). Each record is ~270 bytes; 8000
+# records = ~2.2 MB, reliably exceeding ARG_MAX on the test host.
+{
+  for i in $(seq 1 8000); do
+    day="2026-05-$(printf '%02d' $((  (i % 28) + 1  )))"
+    printf '{"schema_version":1,"issue":"246","stage":"execute","session_id":"s46-%d","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K246-%d","ts_start":"%sT10:00:00Z","tokens":{"input":1000,"output":500,"cache_creation":0,"cache_read":200,"total":1700},"duration_ms":1000,"usage_complete":true}\n' \
+      "$i" "$i" "$day"
+  done
+} > "$TMP46/capture.jsonl"
+
+DAY46="$(bash "$HELPER" --fixture "$TMP46" --emit-day-json 2>/dev/null)"
+RC46=$?
+if [ "$RC46" -eq 0 ]; then
+  pass_msg "--emit-day-json exits 0 with large capture (no ARG_MAX breach)"
+else
+  fail_msg "--emit-day-json failed (rc=$RC46) — likely Argument list too long (#1099)"
+fi
+
+# Must emit at least one JSON line with a 'date' field (records span many days).
+LINES46="$(printf '%s\n' "$DAY46" | grep -c '"date"' 2>/dev/null; true)"
+if [ "${LINES46:-0}" -ge 1 ]; then
+  pass_msg "--emit-day-json emits at least 1 day record with large capture ($LINES46 days)"
+else
+  fail_msg "--emit-day-json emitted 0 day records — snapshot would write 0 days (#1099)"
+fi
+rm -rf "$TMP46"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
