@@ -60,6 +60,23 @@
 # suite check exactly as before. NEVER read from pipeline.config — set only by
 # the eval-time caller from its already-resolved $ROLLUP_GREEN.
 #
+# $PIPELINE_SPLIT_ROLE_SHARED_TESTS (opt-in exemption, #1089, Direction 3):
+# A space- or newline-separated list of EXACT repo-relative test file paths that
+# the approved `## Implementation Plan`'s `**Shared tests (split-role):**` section
+# sanctioned for green-role modification. A Modified (M) locked test file whose
+# EXACT path is listed here is EXEMPT from the additive-only invariant — a
+# plan-sanctioned green edit (e.g. hardening an assertion/failure-message) is no
+# longer a violation. Exemption is MODIFY-ONLY: a Deleted (D) locked test always
+# blocks (locked-test-deleted) regardless of this list. Exact-path match only —
+# no prefix/glob/directory match (a `tests/` blanket exemption is impossible).
+# Default-unset/empty → gate behavior is BYTE-IDENTICAL to the pre-#1089 state
+# (default-deny; all existing cases a–k remain unchanged). Set ONLY by the
+# eval-time caller from the resolved approved plan — NEVER read from pipeline.config
+# (reading from config would make a host-global exemption, defeating per-issue
+# scoping). This var is evaluated inside the first-pass modified-file loop,
+# BEFORE the tamper check; a listed file is skipped (continue) so the deletion
+# check below still runs normally on D files.
+#
 # `[split-role-red]` marker semantics (frozen contract §2): the Opus
 # test-author commits the complete failing suite ONCE, with the literal
 # substring `[split-role-red]` in the commit SUBJECT line. The gate resolves
@@ -168,9 +185,30 @@ MOD_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=M --name-only -- "${TEST_
 DEL_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=D --name-only -- "${TEST_PATHS[@]}" 2>/dev/null || true)"
 
 # First pass: any modified locked file with removed != 0 (or non-numeric) tampers.
+# SHARED-TEST allow-list (#1089): if $PIPELINE_SPLIT_ROLE_SHARED_TESTS is set,
+# a Modified (M) locked file whose EXACT path is listed is EXEMPT from the
+# tamper check (the green role has plan-sanctioned permission to modify it).
+# Deletion (D) is NEVER exempt — that check is handled separately below.
+SHARED_TESTS="${PIPELINE_SPLIT_ROLE_SHARED_TESTS:-}"
 if [ -n "$MOD_FILES" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # SHARED-TEST exemption: exact-path match against the allow-list.
+    # If this file is listed, skip the tamper check (it's plan-sanctioned).
+    if [ -n "$SHARED_TESTS" ]; then
+      _exempt=0
+      # Iterate over space/newline-separated paths in the allow-list.
+      while IFS= read -r _shared_path; do
+        [ -n "$_shared_path" ] || continue
+        if [ "$f" = "$_shared_path" ]; then
+          _exempt=1
+          break
+        fi
+      done <<< "$(printf '%s\n' $SHARED_TESTS)"
+      if [ "$_exempt" -eq 1 ]; then
+        continue  # Plan-sanctioned shared edit — not a violation for this file.
+      fi
+    fi
     # numstat for this one file: "<added>\t<removed>\t<file>".
     removed="$(git diff "${RED_SHA}..HEAD" --numstat -- "$f" 2>/dev/null | awk 'NR==1{print $2}')"
     if ! printf '%s' "$removed" | grep -qE '^[0-9]+$'; then
