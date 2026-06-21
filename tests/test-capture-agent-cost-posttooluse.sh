@@ -551,4 +551,80 @@ if rec["tokens"]["total"] != 100:
     raise SystemExit("tokens.total=%r expected 100" % rec["tokens"]["total"])
 PY
 
+# ---------------------------------------------------------------------------
+# Case 6 (#1098): split-role role attribution on the forward hook.
+#   - a `split-role RED` PostToolUse(Agent) payload with NO resolvable
+#     transcript/session-model yields role=red AND model containing 'opus'
+#     (the opus-red fallback);
+#   - a `split-role GREEN` payload yields role=green (and is NOT forced to the
+#     opus-red fallback);
+#   - a normal non-split execute payload yields role=single.
+# build_record is called directly (mirrors cases 3/4a/5*) so the role parse +
+# opus-red fallback are exercised without the durable-transcript adopt path.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" <<'PY' || fail "case6: split-role role/opus-red attribution wrong"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+def rec_for(desc):
+    payload = {
+        "session_id": "s6",
+        "description": desc,
+        "usage": {
+            "input_tokens": 100, "output_tokens": 0,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+        },
+        "tool_input": {"subagent_type": "tdd-implementer"},
+    }
+    r = mod.build_record(payload)
+    if r is None:
+        raise SystemExit("build_record returned None for %r" % desc)
+    return r
+
+# RED: role=red, model falls back to opus (no transcript/session model resolved).
+red = rec_for("execute-issue-plan #642 split-role RED (PATH B inline)")
+if red.get("role") != "red":
+    raise SystemExit("RED role=%r expected 'red'" % red.get("role"))
+if "opus" not in red.get("model", ""):
+    raise SystemExit("RED model=%r expected to contain 'opus' (opus-red fallback)" % red.get("model"))
+
+# GREEN: role=green, NOT forced to the opus-red fallback (model stays "").
+green = rec_for("execute-issue-plan #642 split-role GREEN (PATH B inline)")
+if green.get("role") != "green":
+    raise SystemExit("GREEN role=%r expected 'green'" % green.get("role"))
+if "opus" in green.get("model", ""):
+    raise SystemExit("GREEN model=%r must NOT inherit the opus-red fallback" % green.get("model"))
+
+# Non-split execute: role=single.
+single = rec_for("execute-issue-plan #642")
+if single.get("role") != "single":
+    raise SystemExit("non-split role=%r expected 'single'" % single.get("role"))
+PY
+
+# ---------------------------------------------------------------------------
+# Case 6b (#1098): build_stop_record (orchestrator) records are role=single.
+# An orchestrator record is never a TDD split-role lane.
+# ---------------------------------------------------------------------------
+python3 - "$HOOK" "$WORK" <<'PY' || fail "case6b: orchestrator stop record not role=single"
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("capture_agent_cost", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+import tempfile
+logs_dir = tempfile.mkdtemp(dir=sys.argv[2])
+transcript = os.path.join(logs_dir, "transcript-6b.jsonl")
+with open(transcript, "w") as fh:
+    fh.write('{"type":"assistant","timestamp":"2026-05-30T11:00:01.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":300,"output_tokens":60,"cache_read_input_tokens":15,"cache_creation_input_tokens":9}}}\n')
+
+payload = {"session_id": "s6b", "transcript_path": transcript}
+rec = mod.build_stop_record(payload, logs_dir)
+if rec is None:
+    raise SystemExit("build_stop_record returned None (expected a record)")
+if rec.get("role") != "single":
+    raise SystemExit("orchestrator role=%r expected 'single'" % rec.get("role"))
+PY
+
 echo "PASS: test-capture-agent-cost-posttooluse.sh"

@@ -72,10 +72,11 @@ stderr1="$(HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" 
 [ -f "$out" ] || fail "enabled: expected output file to exist"
 pass "enabled: output file written"
 
-# record count: 1 headless + 8 inline (analyze line skipped) = 9
+# record count: 1 headless + 10 inline (analyze line skipped; +2 split-role
+# RED/GREEN execute lines for #899) = 11
 n="$(wc -l < "$out" | tr -d ' ')"
-[ "$n" = "9" ] || fail "expected 9 records, got $n"
-pass "enabled: 9 records (1 headless + 8 inline, non-stage skipped)"
+[ "$n" = "11" ] || fail "expected 11 records, got $n"
+pass "enabled: 11 records (1 headless + 10 inline, non-stage skipped)"
 
 # missing-transcript skip counter surfaced on stderr
 case "$stderr1" in
@@ -133,7 +134,7 @@ assert h["record_key"] == rk, "record_key derivation: %r != %r" % (h["record_key
 
 # inline rows
 il = by_kind["inline"]
-assert len(il) == 8, "expected 8 inline rows, got %d" % len(il)
+assert len(il) == 10, "expected 10 inline rows, got %d" % len(il)
 for r in il:
     assert r["session_id"] == "sess-inline", "inline session_id: %r" % r["session_id"]
 
@@ -148,6 +149,8 @@ expect = sorted([
     ("pr-eval","626"),
     ("plan","310"),        # Re-plan #310
     ("classify","777"),    # Classify + plan + evaluate #777
+    ("execute","899"),     # split-role RED #899  -> own execute record
+    ("execute","899"),     # split-role GREEN #899 -> own execute record
 ])
 assert pairs == expect, "inline (stage,issue) pairs:\n got %r\n exp %r" % (pairs, expect)
 
@@ -173,9 +176,67 @@ for r in p310:
 # non-stage 'analyze' line must NOT appear
 assert not any(r.get("agent_type")=="pipeline:issue-analyzer" for r in rows), \
     "non-stage analyze line must be skipped"
+
+# ---------------------------------------------------------------------------
+# split-role role attribution (#1098): the two split-role execute lines for
+# #899 each become their OWN execute record, tagged role=red / role=green; the
+# RED record's model falls back to opus when its sidecar resolves no model.
+# Every OTHER record (non-split execute, classify/plan/eval stages, headless)
+# is role=single.
+# ---------------------------------------------------------------------------
+# Every emitted record carries a 'role' field.
+for r in rows:
+    assert "role" in r, "record missing 'role' field: %r" % r
+    assert r["role"] in ("red","green","single"), "role taxonomy: %r" % r["role"]
+
+# The two #899 execute records are the split-role pair.
+e899 = [r for r in il if r["stage"]=="execute" and str(r["issue"])=="899"]
+assert len(e899) == 2, "expected 2 execute records for #899, got %d" % len(e899)
+
+red899 = [r for r in e899 if r["role"]=="red"]
+green899 = [r for r in e899 if r["role"]=="green"]
+assert len(red899) == 1, "expected exactly 1 role=red #899 record, got %d" % len(red899)
+assert len(green899) == 1, "expected exactly 1 role=green #899 record, got %d" % len(green899)
+
+# RED's model falls back to opus when the sidecar/transcript resolves none.
+assert "opus" in red899[0]["model"], \
+    "split-role RED model must contain 'opus' (opus-red fallback), got %r" % red899[0]["model"]
+
+# GREEN is NOT forced to opus by the fallback (sidecar resolved no model -> "").
+assert "opus" not in green899[0]["model"], \
+    "split-role GREEN must NOT inherit the opus-red fallback, got %r" % green899[0]["model"]
+
+# Two distinct records (the fix tags, it does not collapse).
+assert red899[0]["record_key"] != green899[0]["record_key"], \
+    "split-role RED/GREEN must be two distinct records"
+
+# Every NON-split record is role=single (headless + all the classify/plan/eval inline rows).
+non_split = [r for r in rows if not (r["stage"]=="execute" and str(r["issue"])=="899")]
+assert non_split, "expected some non-split records"
+for r in non_split:
+    assert r["role"] == "single", \
+        "non-split record must be role=single: stage=%r issue=%r role=%r" % (r["stage"], r["issue"], r["role"])
+
 print("python field assertions OK")
 PY
 pass "field + schema + record_key assertions OK"
+
+# ---------------------------------------------------------------------------
+# Shared bash helper mirror (#1098): tu_role_from_description parses the same
+# split-role regex as the inline python, parallel to tu_stage_from_description
+# / tu_issue_from_description.
+# ---------------------------------------------------------------------------
+type tu_role_from_description >/dev/null 2>&1 \
+  || fail "tu_role_from_description helper not defined in _token-usage-lib.sh"
+[ "$(tu_role_from_description 'execute-issue-plan #899 split-role RED (PATH B inline)')" = "red" ] \
+  || fail "tu_role_from_description: split-role RED -> red"
+[ "$(tu_role_from_description 'execute-issue-plan #899 split-role GREEN (PATH B inline)')" = "green" ] \
+  || fail "tu_role_from_description: split-role GREEN -> green"
+[ "$(tu_role_from_description 'some split role red space-variant lowercase')" = "red" ] \
+  || fail "tu_role_from_description: case-insensitive + space variant -> red"
+[ "$(tu_role_from_description 'Execute issue plan for #642')" = "single" ] \
+  || fail "tu_role_from_description: non-split description -> single"
+pass "tu_role_from_description helper mirrors the split-role regex"
 
 # ---------------------------------------------------------------------------
 # Idempotency: re-run adds NO new records
@@ -183,7 +244,7 @@ pass "field + schema + record_key assertions OK"
 HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
   bash "$SCRIPT" >/dev/null 2>&1 || true
 n2="$(wc -l < "$out" | tr -d ' ')"
-[ "$n2" = "9" ] || fail "idempotency: re-run changed record count $n -> $n2"
+[ "$n2" = "11" ] || fail "idempotency: re-run changed record count $n -> $n2"
 pass "idempotency: re-run produced no duplicate record_keys"
 
 # unique record_keys

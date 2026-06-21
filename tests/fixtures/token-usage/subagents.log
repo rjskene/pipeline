@@ -7,3 +7,5 @@
 2026-05-30T12:06:00Z	sess-inline	Re-plan #310	3000	0	0	agent-replan-310.json
 2026-05-30T12:07:00Z	sess-inline	Classify + plan + evaluate #777	4000	0	0	agent-multi-777.json
 2026-05-30T12:08:00Z	sess-inline	analyze open-issue hygiene shortlist	500	0	0	agent-analyze.json
+2026-05-30T12:09:00Z	sess-inline	execute-issue-plan #899 split-role RED (PATH B inline)	3600	0	0	agent-split-red-899.json
+2026-05-30T12:10:00Z	sess-inline	execute-issue-plan #899 split-role GREEN (PATH B inline)	5200	0	0	agent-split-green-899.json
