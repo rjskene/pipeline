@@ -294,15 +294,17 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        # reintroduce one. The PRIMARY locked-test invariant still runs first in the gate.
        #
        # Shared-test exemption (#1089, Direction 3): parse the approved plan's optional
-       # `**Shared tests (split-role):**` section (bullet/path lines until the next
-       # `**…:**` header) into a newline-separated path list and thread it into the gate
-       # as PIPELINE_SPLIT_ROLE_SHARED_TESTS. These are the EXACT repo-relative test
-       # file paths the plan sanctioned for green-role modification. Trust anchor: $PLAN
-       # is already trust-gated (OWNER/MEMBER/COLLABORATOR) from Step 1. Absent section
-       # → empty list → gate default-deny unchanged (fail-closed). Set on the gate
+       # `**Shared tests (split-role):**` section into a newline-separated path list and
+       # thread it into the gate as PIPELINE_SPLIT_ROLE_SHARED_TESTS. Two supported forms:
+       #   header-inline: `**Shared tests (split-role):** tests/test-foo.sh`  (#1107)
+       #   following-bullet: `**Shared tests (split-role):**\n- tests/test-foo.sh`
+       # Parser reads until the next `**…:**` header. These are the EXACT repo-relative
+       # test file paths the plan sanctioned for green-role modification. Trust anchor:
+       # $PLAN is already trust-gated (OWNER/MEMBER/COLLABORATOR) from Step 1. Absent
+       # section → empty list → gate default-deny unchanged (fail-closed). Set on the gate
        # invocation ONLY — never read from pipeline.config (per-issue scoping).
        SHARED_TESTS_RAW=$(printf '%s\n' "$PLAN" \
-         | awk '/^\*\*Shared tests \(split-role\):\*\*/{found=1;next} found && /^\*\*[^*].*:\*\*/{found=0} found && /^[- ]/{gsub(/^[-  `]+|`[ ]*$/,"",$0); if($0!="") print $0}')
+         | awk '/^\*\*Shared tests \(split-role\):\*\*/{found=1; rest=substr($0, index($0,":**")+3); gsub(/^[ `]+|`[ ]*$/,"",rest); if(rest!="") print rest; next} found && /^\*\*[^*].*:\*\*/{found=0} found && /^[- ]/{gsub(/^[-  `]+|`[ ]*$/,"",$0); if($0!="") print $0}')
        SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" \
          PIPELINE_CI_ROLLUP_GREEN="$ROLLUP_GREEN" \
          PIPELINE_SPLIT_ROLE_SHARED_TESTS="$SHARED_TESTS_RAW" \
