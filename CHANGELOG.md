@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.23.14](https://github.com/rjskene/pipeline/compare/v0.23.13...v0.23.14) (2026-06-21)
+
+
+### Features
+
+* add arm-usage-resume-cron spec-emitter for [#969](https://github.com/rjskene/pipeline/issues/969) resume contract ([#1041](https://github.com/rjskene/pipeline/issues/1041)) ([6fffdce](https://github.com/rjskene/pipeline/commit/6fffdce9bee74d2fcb028ec01679e03ec374b8b1))
+* **split-role:** exempt plan-sanctioned shared test files from W7 lock ([#1089](https://github.com/rjskene/pipeline/issues/1089)) ([f9adad6](https://github.com/rjskene/pipeline/commit/f9adad65b39bffba32bc0c03458077c1df39570e))
+* **split-role:** exempt plan-sanctioned shared test files from W7 lock ([#1089](https://github.com/rjskene/pipeline/issues/1089)) ([3bd3431](https://github.com/rjskene/pipeline/commit/3bd3431652a2ba4e39bd18589f3305e3967bb3a1))
+
+
+### Bug Fixes
+
+* **doctor:** defaults-in-code / overrides-only for --fix config ([#1052](https://github.com/rjskene/pipeline/issues/1052)) ([6994949](https://github.com/rjskene/pipeline/commit/699494910a5d7624b4361dc77867c98654eded32))
+* **doctor:** stop --fix config seeding defaulted knobs; comment 5 in example ([#1052](https://github.com/rjskene/pipeline/issues/1052)) ([2ca893d](https://github.com/rjskene/pipeline/commit/2ca893d9105ad9361c210e9bfffeadcdb95c48c9))
+* evaluation fixes for [#1089](https://github.com/rjskene/pipeline/issues/1089) — allowlist PIPELINE_SPLIT_ROLE_SHARED_TESTS (config-drift) ([bfd56b7](https://github.com/rjskene/pipeline/commit/bfd56b7e8199341141477c6b2cbe8ce8169a2a22))
+* evaluation fixes for [#1093](https://github.com/rjskene/pipeline/issues/1093) — align line-455 green clause to 'approved-plan task' token ([f1d7613](https://github.com/rjskene/pipeline/commit/f1d76138ccec1c0a09817be59737e92394f7c2af))
+* **fullsend:** drive two-phase split-role dispatch for inline PATH B execute ([#1093](https://github.com/rjskene/pipeline/issues/1093)) ([87584f6](https://github.com/rjskene/pipeline/commit/87584f63e4b32027be2bbb7d1f12bb41effbae40))
+* **fullsend:** drive two-phase split-role dispatch for inline PATH B execute ([#1093](https://github.com/rjskene/pipeline/issues/1093)) ([3f3f71d](https://github.com/rjskene/pipeline/commit/3f3f71d9fbfbb0010e94883a8a2d2da1fbcb808f))
+* **hooks:** deny per-worktree .git hooks/ in _worktree_pointer_allows ([#1070](https://github.com/rjskene/pipeline/issues/1070)) ([4243c5f](https://github.com/rjskene/pipeline/commit/4243c5fcee6b0e4ed248472adb50fbb0a5f6ad39))
+* **hooks:** deny per-worktree .git hooks/ in _worktree_pointer_allows ([#1070](https://github.com/rjskene/pipeline/issues/1070)) ([6e7d409](https://github.com/rjskene/pipeline/commit/6e7d4096323cc979b961df2b74689318b23ae11d))
+
 ## [0.23.13](https://github.com/rjskene/pipeline/compare/v0.23.12...v0.23.13) (2026-06-19)
 
 
