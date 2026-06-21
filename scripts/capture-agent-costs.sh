@@ -34,6 +34,12 @@
 #     agent_type:   skill name (headless) | sidecar subagent_type (inline),
 #     session_id:   <string>,
 #     model:        <string>,
+#     role:         one of {red, green, single} — split-role TDD lane (#1098).
+#                   "red"    = split-role RED (Opus test-author),
+#                   "green"  = split-role GREEN (implementer),
+#                   "single" = non-split-role execute, orchestrator, or any
+#                              non-execute stage. Absent field → treated as
+#                              "single" by consumers (legacy/fixture compat).
 #     tokens: { input, output, cache_read, cache_creation, total },
 #     duration_ms:  (ts_end - ts_start) in ms, 0 when timestamps absent/equal,
 #     ts_start:     <iso8601|"">,
@@ -143,6 +149,18 @@ def issue_from_description(d):
     return m.group(1) if m else ""
 
 
+def role_from_description(d):
+    # Maps dispatch description to role in {red, green, single}. (#1098)
+    # Mirrors tu_role_from_description in scripts/_token-usage-lib.sh and
+    # role_from_description in hooks/capture_agent_cost.py.
+    # Regex: split[- ]role\s+(red|green), case-insensitive.
+    if re.search(r"split[- ]role\s+red", d, re.IGNORECASE):
+        return "red"
+    if re.search(r"split[- ]role\s+green", d, re.IGNORECASE):
+        return "green"
+    return "single"
+
+
 def worktree_slug(path):
     return re.sub(r"[/.]", "-", path)
 
@@ -211,7 +229,7 @@ def record_key(source, agent_kind, session_id, issue, stage, ts_start):
 
 
 def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
-                tokens, ts_start, ts_end, usage_complete, agent_id=""):
+                tokens, ts_start, ts_end, usage_complete, agent_id="", role="single"):
     total = sum(tokens[k] for k in ("input", "output", "cache_read", "cache_creation"))
     source = "retroactive"
     return {
@@ -228,6 +246,11 @@ def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
         # has no subagent id and defaults to "".
         "agent_id": agent_id,
         "model": model,
+        # role: split-role TDD lane attribution (#1098). "red" / "green" / "single".
+        # Derived from dispatch description by role_from_description; "single" is
+        # the default for non-split-role executes, headless records, and all
+        # non-execute stages. Consumers treat absent field as "single".
+        "role": role,
         "tokens": {
             "input": tokens["input"],
             "output": tokens["output"],
@@ -334,6 +357,7 @@ if os.path.exists(subagents_log):
             if not stage:
                 continue
             issue = issue_from_description(description)
+            role = role_from_description(description)
             agent_type = "unknown"
             agent_id = ""
             usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
@@ -384,6 +408,13 @@ if os.path.exists(subagents_log):
                         if summ["model"]:
                             model = summ["model"]
 
+            # Opus-red model fallback (#1098): when role=red and model is still ""
+            # (transcript didn't resolve a model), stamp claude-opus-4-8 — the
+            # RED test-author is ALWAYS Opus per resolve-execute-dispatch.sh
+            # `red:opus`. This is a FALLBACK only; a transcript-resolved model wins.
+            if role == "red" and not model:
+                model = "claude-opus-4-8"
+
             # RECONCILIATION (#830): suppress a stranded lower-bound when a
             # durable usage_complete=true record already covers this logical
             # agent finish at the (session, issue, stage) grain — the same grain
@@ -398,7 +429,7 @@ if os.path.exists(subagents_log):
                 issue=issue, stage=stage, agent_kind="inline", agent_type=agent_type,
                 session_id=session, model=model,
                 tokens=usage, ts_start=ts, ts_end=ts,
-                usage_complete=usage_complete, agent_id=agent_id)
+                usage_complete=usage_complete, agent_id=agent_id, role=role)
             if rec["record_key"] in seen:
                 continue
             seen.add(rec["record_key"])

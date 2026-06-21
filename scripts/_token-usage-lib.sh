@@ -132,3 +132,26 @@ m = re.search(r"#(\d+)", d)
 print(m.group(1) if m else "")
 PY
 }
+
+# tu_role_from_description <description>
+#   Maps a free-text agent dispatch description to a role in {red, green, single}.
+#   Mirrors the inline python role_from_description in scripts/capture-agent-costs.sh
+#   and hooks/capture_agent_cost.py (same regex, same convention as
+#   tu_stage_from_description / tu_issue_from_description). (#1098)
+#
+#   "split-role RED"   → "red"
+#   "split-role GREEN" → "green"
+#   anything else      → "single"
+tu_role_from_description() {
+  local desc="$1"
+  python3 - "$desc" <<'PY'
+import re, sys
+d = sys.argv[1]
+if re.search(r"split[- ]role\s+red", d, re.IGNORECASE):
+    print("red")
+elif re.search(r"split[- ]role\s+green", d, re.IGNORECASE):
+    print("green")
+else:
+    print("single")
+PY
+}
