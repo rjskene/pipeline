@@ -103,6 +103,24 @@ run_gate_ci_green() {
   set -e
 }
 
+# run_gate_shared <repo> <shared-list> — same as run_gate but ALSO exports the
+# SHARED-TEST allow-list PIPELINE_SPLIT_ROLE_SHARED_TESTS into the gate subprocess
+# (#1089, Direction 3). The eval-time caller resolves this list from the approved
+# `## Implementation Plan`'s `**Shared tests (split-role):**` section; it names the
+# EXACT repo-relative test paths the green role is sanctioned to modify. A listed
+# Modified (M) locked test is exempt from the additive-only invariant; deletions (D)
+# STILL always block; default-unset/empty exempts NOTHING (fail-closed default-deny).
+# Same threading shape as run_gate_ci_green.
+run_gate_shared() {
+  local repo="$1"; shift
+  local shared="$1"; shift
+  set +e
+  OUT=$( cd "$repo" && PIPELINE_TEST_CMD="$TEST_CMD" PIPELINE_SPLIT_ROLE_SHARED_TESTS="$shared" \
+         bash "$GATE" "$ISSUE" "$BASE" tests 2>/dev/null )
+  CODE=$?
+  set -e
+}
+
 # assert_case <label> <expected-stdout-token-line>
 assert_case() {
   local label="$1" expected="$2"
@@ -261,6 +279,74 @@ git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, alter l
 TEST_CMD="$PASS_CMD"
 run_gate_ci_green "$REPO"
 assert_case "k lock-blocks-under-ci-green" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
+echo "Case (l): shared-listed locked test MODIFIED (removed > 0) → exempt → pass/additive-ok (#1089)"
+REPO=$(build_repo l)
+commit_red "$REPO"
+# Overwrite the existing locked test (the original line is removed/altered →
+# removed > 0). This is the EXACT shape case (h)/(b) hard-block as
+# locked-test-modified today. But tests/test-locked.sh is named in the
+# operator-approved shared set, so the additive-only invariant is LIFTED for it:
+# a plan-sanctioned green edit to a red-authored test file (e.g. hardening an
+# assertion/failure-message) is no longer a violation. Expecting additive-ok
+# PROVES the exemption converts the would-be locked-test-modified into a pass —
+# the exempted edit rides the EXISTING additive-ok token (no new token).
+echo "echo locked-v2-hardened-message" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, harden shared locked assertion (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate_shared "$REPO" "tests/test-locked.sh"
+assert_case "l shared-modified-ok" "SPLIT_ROLE=pass ISSUE=$ISSUE REASON=additive-ok"
+
+# ---------------------------------------------------------------------------
+echo "Case (m): shared-listed locked test DELETED → STILL block/locked-test-deleted (#1089)"
+REPO=$(build_repo m)
+commit_red "$REPO"
+# Delete a locked test file that IS in the shared allow-list. A deletion removes
+# coverage and can never be "hardening" — the exemption is scoped to Modified (M)
+# files ONLY; the separate Deleted (D) block is UNCHANGED. Even with the file
+# named in PIPELINE_SPLIT_ROLE_SHARED_TESTS, a deletion still hits
+# locked-test-deleted. PROVES the carve-out is mod-only, never delete.
+git -C "$REPO" rm -q "tests/test-locked.sh"
+git -C "$REPO" commit -qm "feat(x): green impl, drop shared locked test (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate_shared "$REPO" "tests/test-locked.sh"
+assert_case "m shared-deleted-still-blocks" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-deleted"
+
+# ---------------------------------------------------------------------------
+echo "Case (n): NON-shared locked test MODIFIED (shared list names a DIFFERENT file) → block/locked-test-modified (#1089)"
+REPO=$(build_repo n)
+commit_red "$REPO"
+# Tamper the locked test (removed > 0) but point the shared allow-list at a
+# DIFFERENT file (tests/test-other.sh, which is never touched). The tampered file
+# tests/test-locked.sh is NOT in the allow-list, so the exemption does NOT apply.
+# PROVES the exemption is EXACT-PATH-scoped + default-deny: a non-listed file
+# still hard-blocks (no prefix/glob/directory match, no vacuous pass). This guards
+# against a `tests/` blanket exemption.
+echo "echo locked-v2-tampered" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, tamper non-shared locked test (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate_shared "$REPO" "tests/test-other.sh"
+assert_case "n non-shared-modified-still-blocks" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
+# Doc-contract guard (Task 3): the eval-time wiring is prose in
+# skills/evaluate-issue-pr/SKILL.md, not gate code, so pin BOTH ends of the
+# contract literally — the env-var transport name AND the plan section name the
+# parser keys on. The SKILL must reference both so the resolved shared set is
+# threaded into the gate. Expected FAIL until the Task-3 SKILL edits land.
+echo "Doc-contract: evaluate-issue-pr/SKILL.md threads PIPELINE_SPLIT_ROLE_SHARED_TESTS from the **Shared tests (split-role):** plan section"
+EVAL_SKILL="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
+inc
+if [ ! -f "$EVAL_SKILL" ]; then
+  fail_msg "doc-contract: $EVAL_SKILL missing"
+elif ! grep -qF 'PIPELINE_SPLIT_ROLE_SHARED_TESTS' "$EVAL_SKILL"; then
+  fail_msg "doc-contract: evaluate-issue-pr/SKILL.md does not reference the literal PIPELINE_SPLIT_ROLE_SHARED_TESTS"
+elif ! grep -qF '**Shared tests (split-role):**' "$EVAL_SKILL"; then
+  fail_msg "doc-contract: evaluate-issue-pr/SKILL.md does not reference the literal section name **Shared tests (split-role):**"
+else
+  pass_msg "doc-contract: evaluate-issue-pr/SKILL.md references both contract literals"
+fi
 
 echo ""
 echo "================================"
