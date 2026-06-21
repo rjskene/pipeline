@@ -189,12 +189,15 @@ Receive an issue number as argument (or from context).
    **Frontend changes:** (or "None")
    **Predicates:** (required for needs-browser-labeled issues)
    **Test changes:** (or "None")
+   **Shared tests (split-role):** (optional — PATH B split-role only; omit when not applicable)
    **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
    **Risks/unknowns:** (or "None")
    **Estimated effort:** X hours
    ```
 
    **IMPORTANT — the GitHub comment IS the plan.** `/pipeline:execute-issue-plan` reads ONLY the comment; it has no access to local `.claude/plans/` files. Include ALL design detail directly (data structures, tier tables, formulas, mode behaviors). Never summarize and point to a local file. Fold Claude plan-mode content into the comment before posting.
+
+   **`**Shared tests (split-role):**` section (PATH B split-role only, optional).** Use ONLY when a plan deliverable legitimately requires the green implementer to modify an existing test file that the red author committed (e.g., hardening an assertion or updating an expected failure message). Format: one EXACT repo-relative path per bullet line, no globs, no directories. Scope warning: this section is default-deny — an absent or empty section exempts NOTHING. List ONLY the specific test files sanctioned for green-role modification; a `tests/` directory or any prefix/glob entry is never honored (exact-path match only). Deletions of a listed file STILL block (`locked-test-deleted`); the exemption is modify-only. The `evaluate-issue-pr` stage parses this section and threads the resolved paths into the W7 gate (`scripts/split-role-gate.sh`) as `PIPELINE_SPLIT_ROLE_SHARED_TESTS` — the plan's OWNER/MEMBER/COLLABORATOR approval is the trust anchor (#1089).
 
    ### Per-path Task 0 — copy the block matching `PATH_LETTER`; structure Tasks 1..N-1 in the same path's format.
 
