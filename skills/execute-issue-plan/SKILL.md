@@ -208,6 +208,14 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
      || { echo "ABORT: branch-vs-base diff contains cruft paths (see above); drop them from the branch before opening the PR." >&2; exit 1; }
    ```
 
+   **Pre-PR config-drift guard (#1102).** After the cruft guard and before `gh pr create`, run the whole-tree config-drift lint — the same check CI runs — so undocumented `PIPELINE_*` vars are caught in-session rather than as a CI-fail → evaluator-re-watch loop:
+
+   ```bash
+   # Pre-PR config-drift guard (#1102): fail if any PIPELINE_* var is undocumented.
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-config-drift.sh" \
+     || { echo "ABORT: undocumented PIPELINE_* drift detected (see above); add the allowlist entry or document in pipeline.config.example before opening the PR." >&2; exit 1; }
+   ```
+
    **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
 
    ```bash
