@@ -119,3 +119,13 @@ PIPELINE_DELTA
 # and as a fixture key in tests/test-doctor-fix-config.sh. The bare prefix is a
 # concat-prefix wildcard covering PIPELINE_MOCK_WEB_EVAL_X and any sibling.
 PIPELINE_MOCK_WEB_EVAL_
+
+# #1089 split-role shared-test exemption. PIPELINE_SPLIT_ROLE_SHARED_TESTS is an
+# eval-caller-set-ONLY var: evaluate-issue-pr resolves the approved plan's
+# `**Shared tests (split-role):**` section and threads the paths into
+# scripts/split-role-gate.sh on the invocation. Like its sibling
+# PIPELINE_CI_ROLLUP_GREEN (covered by the PIPELINE_CI_ prefix above), it is
+# NEVER read from pipeline.config — reading it from config would make a
+# host-global exemption, defeating per-issue scoping. Intentionally undocumented
+# in pipeline.config.example; exact-match exempt here.
+PIPELINE_SPLIT_ROLE_SHARED_TESTS

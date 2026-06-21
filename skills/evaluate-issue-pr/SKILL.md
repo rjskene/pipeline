@@ -292,8 +292,20 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        # removing the redundant sweep removes the only slow step — a timeout-wrapper
        # expiry mid-sweep was the sole source of the #1065 empty-token race; do not
        # reintroduce one. The PRIMARY locked-test invariant still runs first in the gate.
+       #
+       # Shared-test exemption (#1089, Direction 3): parse the approved plan's optional
+       # `**Shared tests (split-role):**` section (bullet/path lines until the next
+       # `**…:**` header) into a newline-separated path list and thread it into the gate
+       # as PIPELINE_SPLIT_ROLE_SHARED_TESTS. These are the EXACT repo-relative test
+       # file paths the plan sanctioned for green-role modification. Trust anchor: $PLAN
+       # is already trust-gated (OWNER/MEMBER/COLLABORATOR) from Step 1. Absent section
+       # → empty list → gate default-deny unchanged (fail-closed). Set on the gate
+       # invocation ONLY — never read from pipeline.config (per-issue scoping).
+       SHARED_TESTS_RAW=$(printf '%s\n' "$PLAN" \
+         | awk '/^\*\*Shared tests \(split-role\):\*\*/{found=1;next} found && /^\*\*[^*].*:\*\*/{found=0} found && /^[- ]/{gsub(/^[-  `]+|`[ ]*$/,"",$0); if($0!="") print $0}')
        SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" \
          PIPELINE_CI_ROLLUP_GREEN="$ROLLUP_GREEN" \
+         PIPELINE_SPLIT_ROLE_SHARED_TESTS="$SHARED_TESTS_RAW" \
          bash "${CLAUDE_PLUGIN_ROOT}/scripts/split-role-gate.sh" "$ISSUE")
        # → SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
        ```
