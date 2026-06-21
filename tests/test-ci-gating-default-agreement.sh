@@ -53,10 +53,14 @@ else
   fail_msg "example: PIPELINE_CI_CHECK_ENABLED not declared \"true\""
 fi
 inc
-if grep -Eq '^PIPELINE_CI_FIX_LOOP_ENABLED="true"' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_CI_FIX_LOOP_ENABLED declared \"true\""
+# #1052 (defaults-in-code): PIPELINE_CI_FIX_LOOP_ENABLED is now COMMENTED in the example
+# (documentation default; the colon-less ${VAR-true} read site below owns the default),
+# so `--fix config` does NOT seed it. Assert it is documented as a commented "true" knob
+# rather than a live line.
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_CI_FIX_LOOP_ENABLED="true"' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_CI_FIX_LOOP_ENABLED documented (commented) \"true\" per #1052"
 else
-  fail_msg "example: PIPELINE_CI_FIX_LOOP_ENABLED not declared \"true\""
+  fail_msg "example: PIPELINE_CI_FIX_LOOP_ENABLED not documented as commented \"true\" (#1052)"
 fi
 
 # --- Assertion 2: read site pins the colon-LESS `${VAR-true}` form ---

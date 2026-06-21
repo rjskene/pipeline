@@ -45,15 +45,17 @@ for v in "${VARS[@]}"; do
   fi
 done
 
-# 2. Default-ON / opt-OUT (#1042): Sonnet-on-execute is now the shipped DEFAULT, so
-#    each model var must be UNCOMMENTED and set to `sonnet` in the example (the
-#    polarity flipped — a commented var would no longer ship the Sonnet default).
+# 2. #1052 (defaults-in-code) supersedes the #1042 "ship active" polarity for the
+#    example: the Sonnet default lives at the scripts/resolve-execute-dispatch.sh read
+#    site (unset -> sonnet), so each model var is now COMMENTED in the example and
+#    --fix config does NOT seed it. The shipped Sonnet default is unchanged (asserted at
+#    the resolver read site); the example carries the documented default in commented form.
 for v in "${VARS[@]}"; do
   inc
-  if grep -Eq "^[[:space:]]*${v}=sonnet" "$EXAMPLE"; then
-    pass_msg "example: $v is active = sonnet (shipped opt-out default)"
+  if grep -Eq "^[[:space:]]*#[[:space:]]*${v}=sonnet" "$EXAMPLE"; then
+    pass_msg "example: $v documented (commented) = sonnet per #1052"
   else
-    fail_msg "example: $v is NOT active = sonnet (must ship the Sonnet default, #1042)"
+    fail_msg "example: $v not documented as commented = sonnet (#1052)"
   fi
 done
 

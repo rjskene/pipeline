@@ -105,24 +105,28 @@ else
   fail_msg "skill: missing the 'pr-eval not gated' W3 invariant"
 fi
 
-# 6. pipeline.config.example: the three knobs are UNCOMMENTED at the Sonnet defaults.
+# 6. pipeline.config.example: #1052 (defaults-in-code) — the three knobs are now
+#    COMMENTED at their documented defaults (the Sonnet/all default is single-sourced
+#    at the scripts/resolve-execute-dispatch.sh read site, so --fix config must NOT seed
+#    them). Assert each is documented as a commented knob (NOT a live line). The Sonnet
+#    default itself is asserted at the SKILL/resolver read site by the checks above.
 inc
-if grep -Eq '^[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet active"
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet documented (commented) per #1052"
 else
-  fail_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet NOT active (still commented?)"
+  fail_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet not documented as commented (#1052)"
 fi
 inc
-if grep -Eq '^[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=sonnet active"
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=sonnet documented (commented) per #1052"
 else
-  fail_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=sonnet NOT active (still commented?)"
+  fail_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=sonnet not documented as commented (#1052)"
 fi
 inc
-if grep -Eq '^[[:space:]]*PIPELINE_PATH_B_ELIGIBLE_SCOPE="?all"?' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_PATH_B_ELIGIBLE_SCOPE=all active"
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_ELIGIBLE_SCOPE="?all"?' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_PATH_B_ELIGIBLE_SCOPE=all documented (commented) per #1052"
 else
-  fail_msg "example: PIPELINE_PATH_B_ELIGIBLE_SCOPE=all NOT active (still commented?)"
+  fail_msg "example: PIPELINE_PATH_B_ELIGIBLE_SCOPE=all not documented as commented (#1052)"
 fi
 
 # 7. pipeline.config.example: the model-routing knob comment block reads as opt-OUT,
