@@ -931,17 +931,28 @@ fi
 # JSON Lines sorted ascending by date, then exits 0.
 if [ "$EMIT_DAY_JSON" -eq 1 ]; then
   DAY_COST_FILE="$(mktemp)"
+  CAP_JSON_FILE="$(mktemp)"
+  CAP_ALL_FILE="$(mktemp)"
+  trap 'rm -f "$ROWS_TSV" "$DAY_COST_FILE" "$CAP_JSON_FILE" "$CAP_ALL_FILE"' EXIT
   priced_day_bucket_cost_tsv > "$DAY_COST_FILE"
-  python3 - "$CAPTURE_JSON" "$CAPTURE_ALL" "$ROWS_TSV" "$DAY_COST_FILE" <<'PY'
+  # Write CAPTURE_JSON and CAPTURE_ALL to temp files to avoid ARG_MAX limits
+  # when the capture log is large (>2 MB). (#1099)
+  printf '%s' "$CAPTURE_JSON" > "$CAP_JSON_FILE"
+  printf '%s' "$CAPTURE_ALL" > "$CAP_ALL_FILE"
+  python3 - "$CAP_JSON_FILE" "$CAP_ALL_FILE" "$ROWS_TSV" "$DAY_COST_FILE" <<'PY'
 import json, sys
 from collections import defaultdict
 
-capture_json, capture_all_json, rows_tsv, cost_file = sys.argv[1:5]
+cap_file, cap_all_file, rows_tsv, cost_file = sys.argv[1:5]
 with open(cost_file) as _cf:
     cost_lines = _cf.read().splitlines()
 
-cap = json.loads(capture_json) if capture_json.strip() else []
-allrecs = json.loads(capture_all_json) if capture_all_json.strip() else []
+with open(cap_file) as _f:
+    _raw = _f.read().strip()
+cap = json.loads(_raw) if _raw else []
+with open(cap_all_file) as _f:
+    _raw = _f.read().strip()
+allrecs = json.loads(_raw) if _raw else []
 
 BUCKETS = ("input", "output", "cache_creation", "cache_read")
 
