@@ -49,4 +49,25 @@ fi
 grep -q "header-inline" "$SKILL" \
   || { echo "FAIL(e): $SKILL missing header-inline documentation"; exit 1; }
 
+# (f) following-bullet with a trailing reason: "- path — reason" => bare path (#1121).
+# Plans write shared-test bullets in the same `path — one-line reason` convention
+# as **Files to change:**. The parser must strip the trailing ` — reason` so the
+# gate's exact-path match fires. Current code captures the whole "path — reason".
+result_f=$(printf '%s\n' \
+  "**Shared tests (split-role):**" \
+  "- tests/test_widen_results_tsv.py — index correction" \
+  | awk "$AWK_PROG")
+if [ "$result_f" != "tests/test_widen_results_tsv.py" ]; then
+  echo "FAIL(f): trailing-reason following-bullet not stripped; got: '$result_f'"
+  exit 1
+fi
+
+# (g) header-inline with a trailing reason => bare path (#1121).
+result_g=$(printf '%s\n' "**Shared tests (split-role):** tests/test_widen_results_tsv.py — index correction" \
+  | awk "$AWK_PROG")
+if [ "$result_g" != "tests/test_widen_results_tsv.py" ]; then
+  echo "FAIL(g): trailing-reason header-inline not stripped; got: '$result_g'"
+  exit 1
+fi
+
 echo "ok"

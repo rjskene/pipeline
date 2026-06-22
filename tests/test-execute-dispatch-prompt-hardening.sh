@@ -121,6 +121,22 @@ else
   fail_msg "split-role-scope: contract paragraph missing the [split-role-red] RED-author directive"
 fi
 
+# 2d) #1122 worktree-index staging precondition. The #615/#617 leak: a split-role
+#     execute subagent's `git add` hit the MAIN checkout index instead of its own
+#     worktree index, leaving staged edits that aborted the inter-leg
+#     `git pull --ff-only`. The #1106 git-anchoring sentence pins `git -C` for
+#     commit + branch-assert but has NO positive precondition that `git add` stages
+#     into the WORKTREE index. Assert the contract paragraph now carries a
+#     worktree-index staging precondition (stable substring `worktree index`),
+#     scoped to the extracted paragraph — a whole-file grep would pass spuriously
+#     because `--verify-dispatch`/resolver prose elsewhere may mention worktrees.
+inc
+if contract_flat | grep -Fq 'worktree index'; then
+  pass_msg "split-role-scope: contract paragraph carries the #1122 worktree-index staging precondition"
+else
+  fail_msg "split-role-scope: contract paragraph missing the #1122 worktree-index staging precondition ('worktree index')"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"

@@ -304,7 +304,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        # section → empty list → gate default-deny unchanged (fail-closed). Set on the gate
        # invocation ONLY — never read from pipeline.config (per-issue scoping).
        SHARED_TESTS_RAW=$(printf '%s\n' "$PLAN" \
-         | awk '/^\*\*Shared tests \(split-role\):\*\*/{found=1; rest=substr($0, index($0,":**")+3); gsub(/^[ `]+|`[ ]*$/,"",rest); if(rest!="") print rest; next} found && /^\*\*[^*].*:\*\*/{found=0} found && /^[- ]/{gsub(/^[-  `]+|`[ ]*$/,"",$0); if($0!="") print $0}')
+         | awk '/^\*\*Shared tests \(split-role\):\*\*/{found=1; rest=substr($0, index($0,":**")+3); gsub(/^[ `]+|`[ ]*$/,"",rest); sub(/[ \t]+[—-][ \t].*$/,"",rest); sub(/[ \t]+#.*$/,"",rest); gsub(/[ `]+$/,"",rest); if(rest!="") print rest; next} found && /^\*\*[^*].*:\*\*/{found=0} found && /^[- ]/{gsub(/^[-  `]+|`[ ]*$/,"",$0); sub(/[ \t]+[—-][ \t].*$/,"",$0); sub(/[ \t]+#.*$/,"",$0); gsub(/[ `]+$/,"",$0); if($0!="") print $0}')
        SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" \
          PIPELINE_CI_ROLLUP_GREEN="$ROLLUP_GREEN" \
          PIPELINE_SPLIT_ROLE_SHARED_TESTS="$SHARED_TESTS_RAW" \
