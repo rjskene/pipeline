@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.23.15](https://github.com/rjskene/pipeline/compare/v0.23.14...v0.23.15) (2026-06-22)
+
+
+### Features
+
+* **guard:** add base-ref drift safety-net script ([#1106](https://github.com/rjskene/pipeline/issues/1106)) ([2b2ffaf](https://github.com/rjskene/pipeline/commit/2b2ffafdf98fa60db8701fc295fb05ab5bca569b))
+* **observability:** attribute split-role RED/GREEN cost records ([#1098](https://github.com/rjskene/pipeline/issues/1098)) ([8e207ec](https://github.com/rjskene/pipeline/commit/8e207ec3acdf41e3d95cdf7583840c0f8de8ac40))
+* **observability:** render split-role red/green cost split under --tokenomics ([68424e4](https://github.com/rjskene/pipeline/commit/68424e48c0bfd0950bbbacad3164a004548fc668))
+* **observability:** tag split-role role + opus-red model on retroactive cost records ([982db61](https://github.com/rjskene/pipeline/commit/982db6100e88b3cae4418d08313075a7aef3a07b))
+* **observability:** tag split-role role on forward cost-capture hook ([d727931](https://github.com/rjskene/pipeline/commit/d7279319c7a44a82beee9a6c434d1d0b3b9f1307))
+
+
+### Bug Fixes
+
+* **evaluate-issue-pr:** capture header-inline shared-tests path in Step 11.2b parser ([#1107](https://github.com/rjskene/pipeline/issues/1107)) ([2f068b2](https://github.com/rjskene/pipeline/commit/2f068b28de7483377936b19f9c2f455462ea7fc5))
+* **evaluate-issue-pr:** capture header-inline shared-tests path in Step 11.2b parser ([#1107](https://github.com/rjskene/pipeline/issues/1107)) ([cecf6af](https://github.com/rjskene/pipeline/commit/cecf6afb5545e0edbe9c13e412a4431d43a2a0e0))
+* **execute:** wire check-config-drift.sh as a pre-PR guard so undocumented PIPELINE_* drift is caught at execute-time, not CI ([d4dcf32](https://github.com/rjskene/pipeline/commit/d4dcf32d185521a773512a67bf348fe3841adb6e))
+* **execute:** wire check-config-drift.sh as pre-PR guard in Step 9 ([#1102](https://github.com/rjskene/pipeline/issues/1102)) ([ae44237](https://github.com/rjskene/pipeline/commit/ae442377d9881f0f4fbec88990c35cb3df040b3a))
+* **split-role:** guard against base-ref drift during execute dispatch ([#1106](https://github.com/rjskene/pipeline/issues/1106)) ([c0de4a8](https://github.com/rjskene/pipeline/commit/c0de4a8b5c1a18b5b486c8b924d5c568e084e59b))
+* **split-role:** require green role to run the full suite before opening the PR ([#1108](https://github.com/rjskene/pipeline/issues/1108)) ([225c712](https://github.com/rjskene/pipeline/commit/225c71279da3fcea3a681a3fc76a670dfa517e04))
+* **split-role:** require green role to run the full suite before opening the PR ([#1108](https://github.com/rjskene/pipeline/issues/1108)) ([7175781](https://github.com/rjskene/pipeline/commit/7175781ceb35085f0951ce0dbaecd639458cd4e9))
+* **tests:** convert test-ci-fix-loop assertions to here-strings to kill SIGPIPE flake ([#1112](https://github.com/rjskene/pipeline/issues/1112)) ([23e5dd7](https://github.com/rjskene/pipeline/commit/23e5dd75a02bd10a0158fa519f558d5bef82c5b2))
+* **tests:** convert test-ci-fix-loop assertions to here-strings to kill SIGPIPE flake ([#1112](https://github.com/rjskene/pipeline/issues/1112)) ([037533a](https://github.com/rjskene/pipeline/commit/037533a329fa707539e430ccc4ffd8799a1315ca))
+* **tests:** drop unnecessary git commit from reap-test sandbox (CI lacks git identity) ([#1114](https://github.com/rjskene/pipeline/issues/1114)) ([bb34362](https://github.com/rjskene/pipeline/commit/bb343629dcadefbdc5a2af496b3877dd9d988f36))
+* **tests:** sandbox reap-stale-visual-proof-servers test so it cannot touch live worktrees ([#1114](https://github.com/rjskene/pipeline/issues/1114)) ([10eaca6](https://github.com/rjskene/pipeline/commit/10eaca650f084e1fa9b393556a805052f93fff28))
+* **tests:** sandbox reap-stale-visual-proof-servers test so it cannot touch live worktrees ([#1114](https://github.com/rjskene/pipeline/issues/1114)) ([9551522](https://github.com/rjskene/pipeline/commit/9551522e4e7fcf6243baf51ad1edac8c68eea7f8))
+* **tokenomics:** pass capture JSON via temp files to avoid ARG_MAX in --emit-day-json ([#1099](https://github.com/rjskene/pipeline/issues/1099)) ([c480c4b](https://github.com/rjskene/pipeline/commit/c480c4b36158f169890bcb83ec1ac2b2c3cfa30f))
+* **tokenomics:** pass capture JSON via temp files to avoid ARG_MAX in --emit-day-json ([#1099](https://github.com/rjskene/pipeline/issues/1099)) ([e3b9124](https://github.com/rjskene/pipeline/commit/e3b91244977707740cfb666172cb827613ef950f))
+
 ## [0.23.14](https://github.com/rjskene/pipeline/compare/v0.23.13...v0.23.14) (2026-06-21)
 
 
