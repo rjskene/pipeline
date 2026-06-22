@@ -152,6 +152,34 @@ if [ "$1" = "--verify-dispatch" ]; then
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# --clean-main <main-repo-dir>
+#
+# Additive mode (#1122): report whether the orchestrator main checkout has
+# staged or unstaged changes. Emits a single token on stdout:
+#
+#   CLEAN=ok    DIR=<dir>   — index and working tree are both clean
+#   CLEAN=dirty DIR=<dir>   — staged OR unstaged changes detected
+#
+# Exits 0 in every case (the token, not the exit code, carries the verdict).
+# `git status --porcelain` is the cleanliness probe: empty iff index AND
+# working tree are both clean; any output (staged, unstaged, tracked drift)
+# means dirty — catching the #1122 staged-but-uncommitted `git add` leak.
+# ---------------------------------------------------------------------------
+if [ "$1" = "--clean-main" ]; then
+  if [ $# -lt 2 ]; then
+    echo "Usage: $0 --clean-main <main-repo-dir>" >&2
+    exit 2
+  fi
+  CM_DIR="$2"
+  if [ -n "$(git -C "$CM_DIR" status --porcelain 2>/dev/null)" ]; then
+    echo "CLEAN=dirty DIR=$CM_DIR"
+  else
+    echo "CLEAN=ok DIR=$CM_DIR"
+  fi
+  exit 0
+fi
+
 ISSUE="$1"
 # Self-resolve PIPELINE_* from pipeline.config when callers source-but-don't-export
 # them (e.g. fullsend/SKILL.md passes PIPELINE_REPO inline but not

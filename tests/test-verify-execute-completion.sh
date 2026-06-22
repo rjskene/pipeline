@@ -480,6 +480,108 @@ OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=tr
 assert_action "d9" "$OUT" "DISPATCH=mismatch"
 assert_action "d9-reason" "$OUT" "REASON=shape:single!=split-role"
 
+# ============================================================================
+# #1122 — additive --clean-main <main-repo-dir> mode: orchestrator main-checkout
+# cleanliness guard.
+#
+# A split-role execute subagent (#615/#617) ran `git add` against the MAIN repo
+# index instead of its own worktree index, leaving STAGED edits in the
+# orchestrator main checkout. That staged-but-uncommitted leak aborted the
+# inter-leg `git pull --ff-only origin <base>` base advance with
+# "Your local changes ... would be overwritten by merge". check-base-ref-drift.sh
+# cannot catch this (it compares committed base SHAs only — a leaked-but-uncommitted
+# `git add` produces no stray commit).
+#
+# The post-wave guard lives here as an ADDITIVE `--clean-main <dir>` mode, mirroring
+# the additive `--verify-dispatch` mode: its own single-line token contract on
+# stdout, exits 0 in every case (the token, not the exit code, carries the verdict):
+#
+#   CLEAN=ok    DIR=<dir>
+#   CLEAN=dirty DIR=<dir>
+#
+# `git status --porcelain` is the cleanliness probe: empty output iff working tree
+# AND index are both clean; any output (staged, unstaged, or tracked drift) => dirty.
+# The default positional ACTION= and --verify-dispatch DISPATCH= contracts stay
+# byte-unchanged (additivity regression guard, parallel to Case D7).
+# ============================================================================
+
+echo ""
+echo "== #1122 --clean-main mode =="
+
+# A real throwaway git repo fixture (mirrors make_dispatch_repo: git init -q -b
+# staging, user.email/name, one --allow-empty base commit).
+make_clean_repo() {
+  local d="$1"
+  mkdir -p "$d"
+  (
+    cd "$d" || exit 1
+    git init -q -b staging
+    git config user.email t@t.t; git config user.name t
+    git commit -q --allow-empty -m "base"
+  )
+}
+
+run_clean_main() {
+  # run_clean_main <main-repo-dir> ; emits the helper's stdout+stderr.
+  local repo="$1"
+  (
+    PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+      bash "$SCRIPT_UNDER_TEST" --clean-main "$repo"
+  ) 2>&1
+}
+
+# Case CM1: a clean main checkout -> CLEAN=ok.
+echo "Case CM1: clean main checkout -> CLEAN=ok"
+CM1="$ROOT/cm1"; make_clean_repo "$CM1"
+OUT=$(run_clean_main "$CM1")
+assert_action "cm1" "$OUT" "CLEAN=ok"
+
+# Case CM2: the #1122 leak — a staged file in the main checkout index -> CLEAN=dirty.
+echo ""
+echo "Case CM2: staged leak in main checkout index -> CLEAN=dirty"
+CM2="$ROOT/cm2"; make_clean_repo "$CM2"
+touch "$CM2/leak.txt" && git -C "$CM2" add leak.txt
+OUT=$(run_clean_main "$CM2")
+assert_action "cm2" "$OUT" "CLEAN=dirty"
+
+# Case CM3: an UNSTAGED tracked modification also reports dirty (porcelain probe
+# catches working-tree drift, not just the index).
+echo ""
+echo "Case CM3: unstaged tracked modification in main checkout -> CLEAN=dirty"
+CM3="$ROOT/cm3"; make_clean_repo "$CM3"
+( cd "$CM3" && printf 'one\n' > tracked.txt && git add tracked.txt && git commit -q -m "add tracked" && printf 'two\n' >> tracked.txt )
+OUT=$(run_clean_main "$CM3")
+assert_action "cm3" "$OUT" "CLEAN=dirty"
+
+# Case CM4: --clean-main exits 0 regardless of verdict (token carries the result).
+echo ""
+echo "Case CM4: --clean-main exits 0 even on a dirty verdict (token carries the verdict)"
+CM4="$ROOT/cm4"; make_clean_repo "$CM4"
+touch "$CM4/leak.txt" && git -C "$CM4" add leak.txt
+( PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main "$CM4" ) >/dev/null 2>&1
+rc=$?
+inc
+if [ "$rc" -eq 0 ]; then
+  pass_msg "cm4: --clean-main exited 0 on dirty (token carries the verdict, not the exit code)"
+else
+  fail_msg "cm4: --clean-main exited $rc (expected 0)"
+fi
+
+# Case CM5: ADDITIVITY regression guard — a --clean-main run must NOT emit any
+# ACTION= or DISPATCH= token (parallel to Case D7). The default positional mode
+# and the --verify-dispatch mode are unchanged by the additive --clean-main mode.
+echo ""
+echo "Case CM5: --clean-main emits CLEAN= only (no ACTION=/DISPATCH= leak)"
+CM5="$ROOT/cm5"; make_clean_repo "$CM5"
+OUT=$(run_clean_main "$CM5")
+inc
+if printf '%s' "$OUT" | grep -qE "ACTION=|DISPATCH="; then
+  fail_msg "cm5: --clean-main leaked an ACTION=/DISPATCH= token (additivity broken): $OUT"
+else
+  pass_msg "cm5: --clean-main emits CLEAN= only (no ACTION=/DISPATCH= leak)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
