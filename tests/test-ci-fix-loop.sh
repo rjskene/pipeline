@@ -234,22 +234,22 @@ echo "Fixture A: CI success -> ACTION=green"
 fa=$(run_fixture A 4201 \
   "conclusion=success" "pr=42" "run_id=0" "retries=0")
 out_a=$(cat "$fa/helper.out")
-if echo "$out_a" | grep -q "^ACTION=green ISSUE=4201"; then pass_msg "A green"; else fail_msg "A green: $out_a"; fi
+if grep -q "^ACTION=green ISSUE=4201" <<<"$out_a"; then pass_msg "A green"; else fail_msg "A green: $out_a"; fi
 
 # ---- Fixture B: pending -------------------------------------------------
 echo "Fixture B: CI pending -> ACTION=pending"
 fb=$(run_fixture B 4202 \
   "conclusion=pending" "pr=42" "run_id=0" "retries=0")
 out_b=$(cat "$fb/helper.out")
-if echo "$out_b" | grep -q "^ACTION=pending ISSUE=4202"; then pass_msg "B pending"; else fail_msg "B pending: $out_b"; fi
+if grep -q "^ACTION=pending ISSUE=4202" <<<"$out_b"; then pass_msg "B pending"; else fail_msg "B pending: $out_b"; fi
 
 # ---- Fixture C: failure, no prior retries -> red-retry RETRIES=1 -------
 echo "Fixture C: CI failure, no prior retry -> ACTION=red-retry RETRIES=1"
 fc=$(run_fixture C 4203 \
   "conclusion=failure" "pr=42" "run_id=999" "retries=0" "fail_log=boom")
 out_c=$(cat "$fc/helper.out")
-if echo "$out_c" | grep -q "ACTION=red-retry "; then pass_msg "C action"; else fail_msg "C action: $out_c"; fi
-if echo "$out_c" | grep -q "RETRIES=1 BUDGET=2"; then pass_msg "C retries=1 budget=2"; else fail_msg "C retries: $out_c"; fi
+if grep -q "ACTION=red-retry " <<<"$out_c"; then pass_msg "C action"; else fail_msg "C action: $out_c"; fi
+if grep -q "RETRIES=1 BUDGET=2" <<<"$out_c"; then pass_msg "C retries=1 budget=2"; else fail_msg "C retries: $out_c"; fi
 if grep -q "issue comment 4203" "$fc/gh.log" && grep -q "pipeline.ci-retries" "$fc/gh.log"; then
   pass_msg "C retry comment posted"
 else
@@ -261,7 +261,7 @@ echo "Fixture D: budget exhausted -> ACTION=red-budget-exhausted + human label"
 fd=$(run_fixture D 4204 \
   "conclusion=failure" "pr=42" "run_id=999" "retries=2" "fail_log=boom")
 out_d=$(cat "$fd/helper.out")
-if echo "$out_d" | grep -q "ACTION=red-budget-exhausted "; then pass_msg "D action"; else fail_msg "D action: $out_d"; fi
+if grep -q "ACTION=red-budget-exhausted " <<<"$out_d"; then pass_msg "D action"; else fail_msg "D action: $out_d"; fi
 if grep -q "issue edit 4204" "$fd/gh.log" && grep -q -- "--add-label human" "$fd/gh.log"; then
   pass_msg "D human label applied"
 else
@@ -361,14 +361,14 @@ set -e
 
 PAYLOAD_F=$(echo "$OUT" | sed -n '/^=== PAYLOAD ===/,/^=== END PAYLOAD ===/p' | sed '1d;$d')
 
-if echo "$PAYLOAD_F" | grep -q "CI-FIX MODE"; then
+if grep -q "CI-FIX MODE" <<<"$PAYLOAD_F"; then
   pass_msg "F payload contains 'CI-FIX MODE'"
 else
   fail_msg "F missing CI-FIX MODE; payload was:
 $PAYLOAD_F"
 fi
 inc
-if echo "$PAYLOAD_F" | grep -q "/tmp/fake.log"; then
+if grep -q "/tmp/fake.log" <<<"$PAYLOAD_F"; then
   pass_msg "F payload references /tmp/fake.log"
 else
   fail_msg "F missing /tmp/fake.log; payload was:
@@ -522,13 +522,13 @@ run_h() {
 # Issue 838 MUST resolve to its own PR 906, NOT the trap 907.
 inc
 out_h838=$(run_h 838)
-if echo "$out_h838" | grep -q "ISSUE=838 PR=906"; then
+if grep -q "ISSUE=838 PR=906" <<<"$out_h838"; then
   pass_msg "H 838 -> own PR 906"
 else
   fail_msg "H 838 expected PR=906, got: $out_h838"
 fi
 inc
-if echo "$out_h838" | grep -q "PR=907"; then
+if grep -q "PR=907" <<<"$out_h838"; then
   fail_msg "H 838 MISROUTED to trap PR 907: $out_h838"
 else
   pass_msg "H 838 never picks the latest-open-pr trap (907)"
@@ -537,7 +537,7 @@ fi
 # Issue 888 MUST resolve to its own PR 907.
 inc
 out_h888=$(run_h 888)
-if echo "$out_h888" | grep -q "ISSUE=888 PR=907"; then
+if grep -q "ISSUE=888 PR=907" <<<"$out_h888"; then
   pass_msg "H 888 -> own PR 907"
 else
   fail_msg "H 888 expected PR=907, got: $out_h888"
@@ -547,7 +547,7 @@ fi
 # (proves no lossy feature/$SLUG reconstruction).
 inc
 out_h555=$(run_h 555)
-if echo "$out_h555" | grep -q "ISSUE=555 PR=555"; then
+if grep -q "ISSUE=555 PR=555" <<<"$out_h555"; then
   pass_msg "H 555 (fix/ branch) -> PR 555 via full ref (no feature/ rebuild)"
 else
   fail_msg "H 555 expected PR=555, got: $out_h555"

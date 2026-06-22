@@ -96,6 +96,22 @@ def issue_from_description(d):
     return m.group(1) if m else ""
 
 
+def role_from_description(d):
+    """Map dispatch description to role in {red, green, single}. (#1098)
+
+    Mirrors tu_role_from_description in scripts/_token-usage-lib.sh and
+    role_from_description in scripts/capture-agent-costs.sh (same regex).
+    "split-role RED"   -> "red"
+    "split-role GREEN" -> "green"
+    anything else      -> "single"
+    """
+    if re.search(r"split[- ]role\s+red", d, re.IGNORECASE):
+        return "red"
+    if re.search(r"split[- ]role\s+green", d, re.IGNORECASE):
+        return "green"
+    return "single"
+
+
 def duration_from_timestamps(ts_start, ts_end):
     def parse(t):
         if not t:
@@ -323,6 +339,8 @@ def build_stop_record(payload, logs_dir):
         # collapse (#880).
         "agent_id": "",
         "model": summ["model"],
+        # Orchestrator records are never a split-role TDD lane (#1098).
+        "role": "single",
         "tokens": tokens,
         # duration_ms is null by design: the main-session transcript's
         # ts_start/ts_end span the whole calendar session (idle gaps between
@@ -433,6 +451,7 @@ def build_record(payload, logs_dir=None):
     if not stage:
         return None  # non-pipeline agent: emit nothing
     issue = issue_from_description(description)
+    role = role_from_description(description)
 
     usage, usage_is_cumulative = _extract_usage(payload)
     if usage is None:
@@ -537,6 +556,13 @@ def build_record(payload, logs_dir=None):
             if summ["model"]:
                 model = summ["model"]
 
+    # Opus-red model fallback (#1098): when role=red and model is still ""
+    # (transcript + sidecar session model both unresolved), stamp claude-opus-4-8.
+    # The RED test-author is ALWAYS Opus per resolve-execute-dispatch.sh `red:opus`.
+    # FALLBACK only — a transcript-resolved model always wins.
+    if role == "red" and not model:
+        model = "claude-opus-4-8"
+
     return {
         "schema_version": 1,
         # Seed the idempotency key off ts_start (now non-empty after the backfill
@@ -558,6 +584,10 @@ def build_record(payload, logs_dir=None):
         # back to (session, issue, stage)).
         "agent_id": agent_id or "",
         "model": model,
+        # role: split-role TDD lane attribution (#1098). "red" / "green" / "single".
+        # Derived from description by role_from_description; "single" covers
+        # non-split-role executes. Absent field → treated as "single" by consumers.
+        "role": role,
         "tokens": tokens,
         "duration_ms": duration_ms,
         "ts_start": ts_start,

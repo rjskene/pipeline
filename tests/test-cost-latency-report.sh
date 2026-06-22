@@ -2124,6 +2124,146 @@ HELP44="$(bash "$HELPER" --help 2>&1 || true)"
 if printf '%s' "$HELP44" | grep -q -- '--emit-day-json'; then pass_msg "--help documents --emit-day-json"; else fail_msg "--help missing --emit-day-json"; fi
 if printf '%s' "$HELP44" | grep -q -- '--history'; then pass_msg "--help documents --history"; else fail_msg "--help missing --history"; fi
 
+# --- Scenario 45: --tokenomics split-role red/green cost split (#1098) ---
+# Under --tokenomics, emit a role-split table (red vs green vs single) reading
+# the new schema-v1 `role` field. Records with no `role` bucket as `single`.
+#   RED   (opus,   output 1,000,000) → $75.00
+#   GREEN (sonnet, output 1,000,000) → $15.00
+# Assert: the role-split section renders a 'red' row with $75 and a 'green' row
+# with $15; the section is ABSENT (or carries no red/green rows) without
+# split-role records; and DEFAULT (no --tokenomics) output never shows it.
+inc_scenario "Scenario 45: --tokenomics split-role red/green cost split (#1098)"
+
+TMP45="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP45/" 2>/dev/null
+# One eligible PATH B feature PR → issue #245 with a split-role RED + GREEN pair.
+printf '%s\n' '[
+  {"number":145,"title":"feat: split-role cost split issue","additions":300,"deletions":100,"body":"Closes #245","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP45/prs.json"
+printf '%s\n' '{"number":145,"additions":300,"deletions":100,"comments":[]}' > "$TMP45/pr-145.json"
+printf '%s\n' '{"number":245,"labels":[],"comments":[]}' > "$TMP45/issue-245.json"
+{
+  echo '{"schema_version":1,"issue":"245","stage":"execute","session_id":"s45r","model":"claude-opus-4-8","role":"red","agent_kind":"inline","record_key":"K245R","tokens":{"input":0,"output":1000000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"245","stage":"execute","session_id":"s45g","model":"claude-sonnet-4-6","role":"green","agent_kind":"inline","record_key":"K245G","tokens":{"input":0,"output":1000000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":2000}'
+} > "$TMP45/capture.jsonl"
+
+# Default (no --tokenomics): NO role-split table.
+DEF45="$(bash "$HELPER" --fixture "$TMP45" 2>/dev/null)"
+if printf '%s' "$DEF45" | grep -qiE 'ROLE.*(SPLIT|cost)'; then
+  fail_msg "default output (no --tokenomics) leaked a ROLE split table"
+else
+  pass_msg "default output has no role-split table (gated behind --tokenomics)"
+fi
+
+TOK45="$(bash "$HELPER" --fixture "$TMP45" --tokenomics 2>/dev/null)"
+
+# Role-split section header present under --tokenomics.
+if printf '%s' "$TOK45" | grep -qiE 'ROLE.*(SPLIT|cost)'; then
+  pass_msg "--tokenomics renders a split-role cost table"
+else
+  fail_msg "--tokenomics missing split-role cost table header"
+fi
+
+# Locate the role-split block (after its header) so 'red'/'green' rows don't
+# collide with any other table that might happen to contain those words.
+ROLE_BLOCK45="$(printf '%s\n' "$TOK45" | awk 'BEGIN{IGNORECASE=1} /ROLE/{f=1} f')"
+RED_ROW45="$(printf '%s\n' "$ROLE_BLOCK45" | grep -E '^red[[:space:]]*\|' | head -1)"
+GREEN_ROW45="$(printf '%s\n' "$ROLE_BLOCK45" | grep -E '^green[[:space:]]*\|' | head -1)"
+
+if [ -n "$RED_ROW45" ]; then
+  pass_msg "role-split table has a 'red' row"
+else
+  fail_msg "role-split table missing 'red' row (block: $ROLE_BLOCK45)"
+fi
+if [ -n "$GREEN_ROW45" ]; then
+  pass_msg "role-split table has a 'green' row"
+else
+  fail_msg "role-split table missing 'green' row (block: $ROLE_BLOCK45)"
+fi
+
+# The red row carries its $75.00 (opus output) and green its $15.00 (sonnet output).
+case "$RED_ROW45" in
+  *75*) pass_msg "role-split 'red' row carries its priced \$ (75)" ;;
+  *) fail_msg "role-split 'red' row missing priced \$75 (row: $RED_ROW45)" ;;
+esac
+case "$GREEN_ROW45" in
+  *15*) pass_msg "role-split 'green' row carries its priced \$ (15)" ;;
+  *) fail_msg "role-split 'green' row missing priced \$15 (row: $GREEN_ROW45)" ;;
+esac
+rm -rf "$TMP45"
+
+# --- Scenario 45b: role-split absent / single-only without split-role records ---
+# A fixture whose priced records carry NO `role` field must bucket entirely as
+# 'single' — no 'red' or 'green' rows in the role-split table. Legacy/fixture
+# compat (absent role → single), mirroring the model:"" → unpriced convention.
+inc_scenario "Scenario 45b: no red/green rows when records carry no role"
+
+TMP45B="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP45B/" 2>/dev/null
+printf '%s\n' '[
+  {"number":146,"title":"feat: no-role record issue","additions":300,"deletions":100,"body":"Closes #246","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP45B/prs.json"
+printf '%s\n' '{"number":146,"additions":300,"deletions":100,"comments":[]}' > "$TMP45B/pr-146.json"
+printf '%s\n' '{"number":246,"labels":[],"comments":[]}' > "$TMP45B/issue-246.json"
+# No `role` field at all.
+printf '%s\n' '{"schema_version":1,"issue":"246","stage":"execute","session_id":"s46","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K246","tokens":{"input":0,"output":1000000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}' > "$TMP45B/capture.jsonl"
+
+TOK45B="$(bash "$HELPER" --fixture "$TMP45B" --tokenomics 2>/dev/null)"
+ROLE_BLOCK45B="$(printf '%s\n' "$TOK45B" | awk 'BEGIN{IGNORECASE=1} /ROLE/{f=1} f')"
+if printf '%s\n' "$ROLE_BLOCK45B" | grep -qE '^red[[:space:]]*\|'; then
+  fail_msg "role-split table rendered a 'red' row for a no-role record (block: $ROLE_BLOCK45B)"
+else
+  pass_msg "no 'red' row when records carry no role (absent role → single)"
+fi
+if printf '%s\n' "$ROLE_BLOCK45B" | grep -qE '^green[[:space:]]*\|'; then
+  fail_msg "role-split table rendered a 'green' row for a no-role record (block: $ROLE_BLOCK45B)"
+else
+  pass_msg "no 'green' row when records carry no role (absent role → single)"
+fi
+rm -rf "$TMP45B"
+
+# --- Scenario 46: --emit-day-json survives a large capture (no ARG_MAX breach, #1099) ---
+# When the capture log grows large, CAPTURE_JSON and CAPTURE_ALL may exceed the
+# kernel's ARG_MAX (~2MB on Linux). The old code passed them as argv to python3;
+# this test generates a fixture large enough to trip that limit and asserts that
+# --emit-day-json exits 0 and emits at least one JSON line. The fix (stdin / temp
+# files) must make this scenario green.
+inc_scenario "Scenario 46: --emit-day-json survives large capture (no ARG_MAX breach #1099)"
+
+TMP46="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP46/" 2>/dev/null
+printf '%s\n' '[{"number":146,"title":"feat: argmax test","additions":300,"deletions":100,"body":"Closes #246","mergedAt":"2026-05-13T12:00:00Z","labels":[]}]' > "$TMP46/prs.json"
+printf '%s\n' '{"number":146,"additions":300,"deletions":100,"comments":[]}' > "$TMP46/pr-146.json"
+printf '%s\n' '{"number":246,"labels":[],"comments":[]}' > "$TMP46/issue-246.json"
+
+# Generate a capture.jsonl with enough records to push CAPTURE_JSON over 2 MB
+# (Linux ARG_MAX is typically 2,097,152 bytes). Each record is ~270 bytes; 8000
+# records = ~2.2 MB, reliably exceeding ARG_MAX on the test host.
+{
+  for i in $(seq 1 8000); do
+    day="2026-05-$(printf '%02d' $((  (i % 28) + 1  )))"
+    printf '{"schema_version":1,"issue":"246","stage":"execute","session_id":"s46-%d","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K246-%d","ts_start":"%sT10:00:00Z","tokens":{"input":1000,"output":500,"cache_creation":0,"cache_read":200,"total":1700},"duration_ms":1000,"usage_complete":true}\n' \
+      "$i" "$i" "$day"
+  done
+} > "$TMP46/capture.jsonl"
+
+DAY46="$(bash "$HELPER" --fixture "$TMP46" --emit-day-json 2>/dev/null)"
+RC46=$?
+if [ "$RC46" -eq 0 ]; then
+  pass_msg "--emit-day-json exits 0 with large capture (no ARG_MAX breach)"
+else
+  fail_msg "--emit-day-json failed (rc=$RC46) — likely Argument list too long (#1099)"
+fi
+
+# Must emit at least one JSON line with a 'date' field (records span many days).
+LINES46="$(printf '%s\n' "$DAY46" | grep -c '"date"' 2>/dev/null; true)"
+if [ "${LINES46:-0}" -ge 1 ]; then
+  pass_msg "--emit-day-json emits at least 1 day record with large capture ($LINES46 days)"
+else
+  fail_msg "--emit-day-json emitted 0 day records — snapshot would write 0 days (#1099)"
+fi
+rm -rf "$TMP46"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

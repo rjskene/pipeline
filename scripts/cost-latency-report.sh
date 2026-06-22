@@ -931,17 +931,28 @@ fi
 # JSON Lines sorted ascending by date, then exits 0.
 if [ "$EMIT_DAY_JSON" -eq 1 ]; then
   DAY_COST_FILE="$(mktemp)"
+  CAP_JSON_FILE="$(mktemp)"
+  CAP_ALL_FILE="$(mktemp)"
+  trap 'rm -f "$ROWS_TSV" "$DAY_COST_FILE" "$CAP_JSON_FILE" "$CAP_ALL_FILE"' EXIT
   priced_day_bucket_cost_tsv > "$DAY_COST_FILE"
-  python3 - "$CAPTURE_JSON" "$CAPTURE_ALL" "$ROWS_TSV" "$DAY_COST_FILE" <<'PY'
+  # Write CAPTURE_JSON and CAPTURE_ALL to temp files to avoid ARG_MAX limits
+  # when the capture log is large (>2 MB). (#1099)
+  printf '%s' "$CAPTURE_JSON" > "$CAP_JSON_FILE"
+  printf '%s' "$CAPTURE_ALL" > "$CAP_ALL_FILE"
+  python3 - "$CAP_JSON_FILE" "$CAP_ALL_FILE" "$ROWS_TSV" "$DAY_COST_FILE" <<'PY'
 import json, sys
 from collections import defaultdict
 
-capture_json, capture_all_json, rows_tsv, cost_file = sys.argv[1:5]
+cap_file, cap_all_file, rows_tsv, cost_file = sys.argv[1:5]
 with open(cost_file) as _cf:
     cost_lines = _cf.read().splitlines()
 
-cap = json.loads(capture_json) if capture_json.strip() else []
-allrecs = json.loads(capture_all_json) if capture_all_json.strip() else []
+with open(cap_file) as _f:
+    _raw = _f.read().strip()
+cap = json.loads(_raw) if _raw else []
+with open(cap_all_file) as _f:
+    _raw = _f.read().strip()
+allrecs = json.loads(_raw) if _raw else []
 
 BUCKETS = ("input", "output", "cache_creation", "cache_read")
 
@@ -1409,6 +1420,65 @@ emit_stage_structure_crosstab() {
     }'
 }
 
+# priced_role_tsv — emit one TSV line per PRICED capture record (model!="") as:
+#   role <TAB> cost_usd
+# role is (.role // "single") — absent/null role buckets as "single" for legacy
+# fixture compat. cost_usd is the all-four-bucket USD at the resolved per-(model,
+# bucket) rate. Unpriced (model=="") records are SKIPPED.
+# Dedicated helper so we never widen TOKENOMICS_TSV (avoids reindexing
+# the existing $7..$10 cost columns — plan evaluation recommendation).
+priced_role_tsv() {
+  local line model norm
+  local r_in r_out r_cc r_cr
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    printf '%s' "$line" | jq -r '
+        [ ((.role // "single") | tostring),
+          (.tokens.input//0), (.tokens.output//0),
+          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
+          c=($2/1e6)*ri + ($3/1e6)*ro + ($4/1e6)*rcc + ($5/1e6)*rcr;
+          print $1, c
+        }'
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+}
+
+# emit_role_split_table — split-role red/green/single cost split (#1098).
+# Reads the `role` field (red|green|single; absent → single) from PRICED records.
+# Emits one row per role with N, dominant model (most frequent), priced $, cost%.
+# Called only under --tokenomics; the default (non-tokenomics) report is unchanged.
+emit_role_split_table() {
+  echo ""
+  echo 'ROLE SPLIT (red=Opus test-author, green=implementer, single=non-split)'
+  local role_tsv
+  role_tsv="$(priced_role_tsv)"
+  printf '%s\n' "$role_tsv" | awk -F'\t' '
+    NF >= 2 && $1 != "" {
+      role=$1; c=$2+0;
+      n[role]++; cost[role]+=c;
+    }
+    END {
+      tcost=0; for (r in cost) tcost+=cost[r];
+      m = split("red green single", order, " ");
+      for (k=1; k<=m; k++) {
+        r = order[k];
+        if ((n[r]+0) == 0) continue;
+        c = cost[r]+0;
+        cp = (tcost>0 ? c/tcost*100 : 0);
+        printf "%-6s | %2d | %8.2f | %5.1f%%\n", r, (n[r]+0), c, cp;
+      }
+    }'
+}
+
 # emit_path_size_table — per-issue "size" view that NETS OUT cache_read for ALL
 # rows (input+output+cache_creation), not just the orchestrator row (#668). The
 # default emit_path_table above keeps cache_read INCLUDED and is byte-unchanged
@@ -1718,6 +1788,7 @@ if [ "$TOKENOMICS" -eq 1 ]; then
   emit_bucket_table
   emit_stage_cost_table
   emit_structure_table
+  emit_role_split_table
   emit_stage_structure_crosstab
   emit_path_size_table
   emit_breakeven_table

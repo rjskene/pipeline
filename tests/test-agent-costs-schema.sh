@@ -29,7 +29,7 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-EXPECTED_TOP='agent_id agent_kind agent_type duration_ms issue model record_key schema_version session_id source stage tokens ts_end ts_start usage_complete'
+EXPECTED_TOP='agent_id agent_kind agent_type duration_ms issue model record_key role schema_version session_id source stage tokens ts_end ts_start usage_complete'
 EXPECTED_TOKENS='cache_creation cache_read input output total'
 
 # --- drive the RETROACTIVE producer against the fixtures ------------------
