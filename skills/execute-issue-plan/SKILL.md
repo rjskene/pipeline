@@ -105,6 +105,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
    `spawn-claude.sh`'s `--append-system-prompt` may inject path-specific skill invocations via `PIPELINE_PATH_<X>_SKILLS_EXECUTE` + `PIPELINE_PATH_<X>_SKILL_ARGS_EXECUTE_*`. Step 8 below owns the review flow explicitly, so leave `PIPELINE_PATH_<X>_REVIEWER_EXECUTE` unset; if set, the end-of-session dispatch becomes a harmless redundancy.
 
+   When a test inits a temp git repo (`mktemp` + `git init`) and commits, stamp an identity — call `git_init_sandbox` from `tests/_lib/git-sandbox.sh`, or use inline `git -c user.email=… -c user.name=… commit`. A bare `git commit` in a temp repo passes locally but fails CI with exit 128 (no global identity).
+
    In all cases: implement ONLY what the plan specifies (no scope creep); never commit to main; never use `--no-verify` or `--force`. If the plan/issue references a GH Actions CI-blocking marker (bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`), do NOT propagate the literal marker into any `git commit -m`, `gh pr create --title`, or `--body` — substitute a safe form: backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` (no brackets). The `check-ci-skip-markers` PreToolUse hook blocks the literal form.
 
 6. **Validate — types, tests, server, and UI.** Fix any failures at each sub-step before proceeding.
