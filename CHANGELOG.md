@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.23.16](https://github.com/rjskene/pipeline/compare/v0.23.15...v0.23.16) (2026-06-22)
+
+
+### Bug Fixes
+
+* **evaluate-issue-pr:** strip trailing reason from shared-tests parser paths ([#1121](https://github.com/rjskene/pipeline/issues/1121)) ([57c698b](https://github.com/rjskene/pipeline/commit/57c698be6e486e6c4375bd4d14440012d8dc00ba))
+* **execute:** worktree-index staging precondition + --clean-main guard ([#1122](https://github.com/rjskene/pipeline/issues/1122)) ([f66b9b6](https://github.com/rjskene/pipeline/commit/f66b9b662fd56a640924c1b7edbd8b8ca7bec932))
+* **execute:** worktree-index staging precondition + --clean-main guard ([#1122](https://github.com/rjskene/pipeline/issues/1122)) ([87d9ad0](https://github.com/rjskene/pipeline/commit/87d9ad0b04d32f1985217a3d22a26c19744e820e))
+* **split-role-gate:** allow only red-authored self-edits to locked tests by commit+file origin ([#1121](https://github.com/rjskene/pipeline/issues/1121)) ([677076e](https://github.com/rjskene/pipeline/commit/677076e963b0eebf4d811b9ac910cd7f595ca043))
+* **split-role-gate:** two false-positive block-split-role cases (multi-commit RED; plan-authorized green test edit) ([ad49a62](https://github.com/rjskene/pipeline/commit/ad49a627d349a61234f5315abf060a8ade396692))
+
 ## [0.23.15](https://github.com/rjskene/pipeline/compare/v0.23.14...v0.23.15) (2026-06-22)
 
 
