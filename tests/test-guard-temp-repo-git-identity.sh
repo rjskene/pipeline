@@ -24,6 +24,48 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ---------------------------------------------------------------------------
+# scan_file <path>
+# Returns 0 (exit 0) if the file is SAFE (not flagged), non-zero if FLAGGED.
+# A file is FLAGGED iff ALL of:
+#   (a) contains a `git … init` invocation
+#   (b) contains a `mktemp` invocation
+#   (c) contains an EXECUTED `git … commit` (comment lines and JSON payload
+#       lines are excluded)
+#   AND provides NO identity anywhere in the file.
+# ---------------------------------------------------------------------------
+scan_file() {
+  local f="$1"
+
+  # (a) has git init?
+  grep -qE 'git[^\n]*\binit\b' "$f" || return 0
+
+  # (b) has mktemp?
+  grep -q 'mktemp' "$f" || return 0
+
+  # (c) has an EXECUTED git commit? (strip comment lines + JSON payload lines)
+  local commit_lines
+  commit_lines=$(grep -nE 'git[^\n]*\bcommit\b' "$f" \
+    | grep -vE '^[0-9]+:[[:space:]]*#' \
+    | grep -vE '"command"[[:space:]]*:')
+  [ -n "$commit_lines" ] || return 0
+
+  # identity present anywhere in the file? (any one shape => safe)
+  if grep -qE '-c[[:space:]]+user\.(email|name)' "$f"; then return 0; fi
+  if grep -qE 'config[[:space:]]+user\.(email|name)' "$f"; then return 0; fi
+  if grep -qE 'GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)' "$f"; then return 0; fi
+
+  # Flagged — print diagnostics to stdout
+  echo "FLAGGED: $f"
+  echo "  Executed-commit lines:"
+  while IFS= read -r line; do
+    echo "    $line"
+  done <<< "$commit_lines"
+  echo "  Remediation: use git_init_sandbox from tests/_lib/git-sandbox.sh,"
+  echo "  or inline 'git -c user.email=… -c user.name=… commit'."
+  return 1
+}
 TESTS_DIR="$SCRIPT_DIR"
 SELF_BASENAME="$(basename "$0")"
 
