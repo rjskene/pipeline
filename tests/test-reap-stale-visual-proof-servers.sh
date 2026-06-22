@@ -31,6 +31,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ---- Sandbox harness ----
+# Temp git repo so the reaper's `git worktree list` never reads the real repo.
+# No commit is made: `git worktree list` works on a freshly-init'd repo, and a
+# `git commit` would need a configured identity (which CI runners lack → exit
+# 128). The reaper also swallows worktree-list errors, so an empty repo is safe.
+REAP_REPO="$TMP/repo"
+mkdir -p "$REAP_REPO"
+git -C "$REAP_REPO" init -q
+
+# Stub dir: the stub `pgrep` placed here shadows the real one for the reaper.
+STUB="$TMP/stub"
+mkdir -p "$STUB"
+
 # ---- Case A: helper exists and is executable-ish ----
 echo "Case A: helper file is present"
 inc
@@ -48,8 +61,9 @@ fi
 # ---- Case B: no servers running → prints "(no stale servers)" and exits 0 ----
 echo "Case B: no matching processes → quiet success"
 inc
-# We can't guarantee no http.server is running, so just check exit code is 0.
-if bash "$HELPER" >"$TMP/b.out" 2>"$TMP/b.err"; then
+# Stub pgrep emits nothing → reaper sees no servers.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/pgrep"; chmod +x "$STUB/pgrep"
+if PIPELINE_REPO_ROOT="$REAP_REPO" PATH="$STUB:$PATH" bash "$HELPER" >"$TMP/b.out" 2>"$TMP/b.err"; then
   pass_msg "helper exits 0 with no work to do (or only live servers)"
 else
   rc=$?
@@ -86,8 +100,13 @@ fi
 # walk fails and the worktree-list cross-check classifies it as stale.
 rm -rf "$STALE_DIR"
 
-# Run the reaper.
-bash "$HELPER" >"$TMP/c.out" 2>"$TMP/c.err" || {
+# Stub pgrep emits exactly this test's server line so the reaper sees it
+# (and only it) — never enumerating real host processes.
+printf '#!/usr/bin/env bash\necho "%s python3 -m http.server 0 --directory %s --bind 127.0.0.1"\n' \
+  "$SERVER_PID" "$STALE_DIR" > "$STUB/pgrep"; chmod +x "$STUB/pgrep"
+
+# Run the reaper with sandboxed pgrep + isolated git repo.
+PIPELINE_REPO_ROOT="$REAP_REPO" PATH="$STUB:$PATH" bash "$HELPER" >"$TMP/c.out" 2>"$TMP/c.err" || {
   rc=$?
   fail_msg "helper exited $rc; expected 0"
   echo "    stderr:"; sed 's/^/      /' "$TMP/c.err"
