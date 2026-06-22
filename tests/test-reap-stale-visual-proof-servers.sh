@@ -33,10 +33,12 @@ trap cleanup EXIT
 
 # ---- Sandbox harness ----
 # Temp git repo so the reaper's `git worktree list` never reads the real repo.
+# No commit is made: `git worktree list` works on a freshly-init'd repo, and a
+# `git commit` would need a configured identity (which CI runners lack → exit
+# 128). The reaper also swallows worktree-list errors, so an empty repo is safe.
 REAP_REPO="$TMP/repo"
 mkdir -p "$REAP_REPO"
 git -C "$REAP_REPO" init -q
-git -C "$REAP_REPO" commit --allow-empty -qm init
 
 # Stub dir: the stub `pgrep` placed here shadows the real one for the reaper.
 STUB="$TMP/stub"
