@@ -167,6 +167,18 @@ if [ -z "$RED_SHA" ]; then
   emit block no-red-sha
 fi
 
+# Red-commit SHA set: ALL [split-role-red]-subject commits in <base>..HEAD
+# (same #1084 marker detection used to resolve RED_SHA; one SHA per line). Used
+# by the two-dimensional red-authorship test below (#1121): a removal in a
+# modified locked file is RED's own self-revision (allowed) ONLY if the removing
+# commit is a marker commit AND the file was first-added in-window by a marker
+# commit. `|| true` is load-bearing under `set -euo pipefail` (a no-match grep
+# would otherwise abort before any later emit).
+RED_SHAS="$( { printf '%s\n' "$LOG_OUT" | grep -F '[split-role-red]' | awk '{print $1}'; } || true)"
+_is_red_sha() {  # _is_red_sha <sha> → 0 (true) iff <sha> is a marker commit
+  case " $(printf '%s ' $RED_SHAS) " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
 # --- Locked-test invariant (W7, additive-aware #1084) -----------------------
 # Inspect Modified (M) and Deleted (D) locked test files under the test paths.
 # Additions (A) are allowed and never surface here. We split the M and D checks:
@@ -209,16 +221,38 @@ if [ -n "$MOD_FILES" ]; then
         continue  # Plan-sanctioned shared edit — not a violation for this file.
       fi
     fi
-    # numstat for this one file: "<added>\t<removed>\t<file>".
-    removed="$(git diff "${RED_SHA}..HEAD" --numstat -- "$f" 2>/dev/null | awk 'NR==1{print $2}')"
-    if ! printf '%s' "$removed" | grep -qE '^[0-9]+$'; then
-      # Non-numeric (binary `-`) or empty → fail-closed tampering.
-      emit block locked-test-modified
-    fi
-    if [ "$removed" -gt 0 ]; then
-      emit block locked-test-modified
-    fi
-    # removed == 0 → purely additive → not a violation for this file.
+    # Two-dimensional red-authorship test (#1121). A removal (removed > 0) in a
+    # locked file is RED's own self-revision (ALLOWED) ONLY if BOTH:
+    #   (1) the removing commit carries `[split-role-red]` in its subject, AND
+    #   (2) the file is red-authored — first ADDED within <base>..HEAD by a
+    #       marker commit (a base-origin / pre-existing locked file is NEVER
+    #       red-authored, so any removal in it is green tampering).
+    # Otherwise the removal is green tampering → locked-test-modified. This
+    # narrows the prior single-dimension `removed > 0` check so a multi-commit
+    # RED suite (a later red commit revising an earlier red-authored test) is no
+    # longer a false positive, while base-origin tampering (case f/h/p) and a
+    # non-marker green commit weakening a red-added test (case q) still block.
+    _f_add_sha="$(git log --diff-filter=A --format='%H' "${BASE}..HEAD" -- "$f" 2>/dev/null | tail -1)"
+    _f_red_authored=0
+    if [ -n "$_f_add_sha" ] && _is_red_sha "$_f_add_sha"; then _f_red_authored=1; fi
+    # Walk every commit in <red>..HEAD that touches $f; inspect its per-file
+    # removal count. Fail-closed on a binary/non-numeric numstat (preserved).
+    while IFS= read -r _csha; do
+      [ -n "$_csha" ] || continue
+      _r="$(git show "$_csha" --numstat --format='' -- "$f" 2>/dev/null | awk 'NR==1{print $2}')"
+      if ! printf '%s' "$_r" | grep -qE '^[0-9]+$'; then
+        emit block locked-test-modified   # binary/non-numeric numstat → fail-closed
+      fi
+      if [ "$_r" -gt 0 ]; then
+        if _is_red_sha "$_csha" && [ "$_f_red_authored" -eq 1 ]; then
+          : # RED revising its own red-authored suite — not a violation.
+        else
+          emit block locked-test-modified
+        fi
+      fi
+      # removed == 0 → purely additive in this commit → not a violation here.
+    done <<< "$(git log --format='%H' "${RED_SHA}..HEAD" -- "$f" 2>/dev/null)"
+    # No green-authored removal in this file → not a violation for this file.
   done <<< "$MOD_FILES"
 fi
 

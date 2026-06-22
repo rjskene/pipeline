@@ -330,6 +330,53 @@ run_gate_shared "$REPO" "tests/test-other.sh"
 assert_case "n non-shared-modified-still-blocks" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
 
 # ---------------------------------------------------------------------------
+echo "Case (o): multi-commit RED self-edit (a LATER [split-role-red] commit modifies an EARLIER red-authored test), green touches no test → pass/additive-ok (#1121)"
+REPO=$(build_repo o)
+commit_red "$REPO"                                              # red 1: adds tests/test-red.sh (red-authored)
+echo "echo red-suite-fixsweep" > "$REPO/tests/test-red.sh"      # red 2 MODIFIES the red-authored test (removed>0)
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "test(x): fix-sweep red suite [split-role-red] (#$ISSUE)"
+echo "impl" > "$REPO/src.txt"                                   # green: zero test files
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, no test touch (#$ISSUE)"
+# A later red commit revising an EARLIER red commit's OWN red-authored test is
+# RED self-revision, NOT green tampering. Current code computes `removed` over
+# git diff <earliest-red>..HEAD -- tests/test-red.sh, sees the second red commit's
+# removal, and falsely emits block/locked-test-modified. The two-dimensional
+# red-authorship fix (removing commit is a marker commit AND the file was
+# red-added) must classify this as an allowed self-edit → additive-ok.
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "o multi-red-self-edit-ok" "SPLIT_ROLE=pass ISSUE=$ISSUE REASON=additive-ok"
+
+# ---------------------------------------------------------------------------
+echo "Case (p): NON-marker green commit alters a base-origin locked test line → still block/locked-test-modified (#1121)"
+REPO=$(build_repo p)
+commit_red "$REPO"
+# Green tampers a BASE-origin locked file (tests/test-locked.sh, seeded on base —
+# NOT red-added). A pre-existing locked test is never green's to alter. Pins the
+# file-origin dimension: even after the fix, a removal in a base-origin locked
+# file still blocks. (Passes against current code — regression-pin for the
+# dimension the fix must preserve.)
+echo "echo locked-v2-tampered" > "$REPO/tests/test-locked.sh"
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, alter locked line (#$ISSUE)"
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "p green-tamper-base-origin-blocks" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
+echo "Case (q): NON-marker green commit alters a RED-ADDED test line → still block/locked-test-modified (#1121)"
+REPO=$(build_repo q)
+commit_red "$REPO"                                             # red adds tests/test-red.sh
+echo "echo red-suite-weakened" > "$REPO/tests/test-red.sh"     # green (non-marker) WEAKENS the red-authored test
+git -C "$REPO" add -A && git -C "$REPO" commit -qm "feat(x): green impl, weaken red test (#$ISSUE)"
+# Pins the removing-commit-must-be-red dimension: file-origin alone is NOT
+# sufficient. A green (non-marker) commit may not weaken a red-authored test
+# either — the removing commit fails dimension 1 → blocks. (Passes against
+# current code — regression-pin for the dimension the fix must preserve.)
+TEST_CMD="$PASS_CMD"
+run_gate "$REPO"
+assert_case "q green-tamper-red-added-blocks" "SPLIT_ROLE=block ISSUE=$ISSUE REASON=locked-test-modified"
+
+# ---------------------------------------------------------------------------
 # Doc-contract guard (Task 3): the eval-time wiring is prose in
 # skills/evaluate-issue-pr/SKILL.md, not gate code, so pin BOTH ends of the
 # contract literally — the env-var transport name AND the plan section name the
