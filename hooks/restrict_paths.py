@@ -18,6 +18,23 @@ tool_input = data.get("tool_input", {})
 PROJECT_DIR = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 CLAUDE_HOME = os.path.realpath(os.path.expanduser("~/.claude"))
 
+
+def _resolve(path: str) -> str:
+    """Anchor relative paths on PROJECT_DIR before realpath.
+
+    A relative path is anchored on the project root (CLAUDE_PROJECT_DIR), not
+    the hook process CWD.  This matters when the hook runs from a shell whose
+    CWD is outside the project (e.g. an outer terminal); an in-repo relative
+    path like `.venv-host/Scripts/python.exe` must resolve IN-project, not
+    against the outer CWD.  Absolute paths and ``..``-escapes that climb
+    outside PROJECT_DIR are unaffected — they still resolve to their real
+    location via os.path.realpath, and the boundary check rejects anything
+    that lands outside ALLOWED_ROOTS.  (Bug 1 fix — issue #1136.)
+    """
+    if not os.path.isabs(path):
+        path = os.path.join(PROJECT_DIR, path)
+    return os.path.realpath(path)
+
 ALLOWED_ROOTS = [PROJECT_DIR, CLAUDE_HOME]
 
 # Also allow worktrees that live outside the project dir (sibling dirs like <prefix>-<N>-*)
@@ -99,7 +116,7 @@ def _is_in_worktree(real: str) -> bool:
 
 def is_protected(path: str) -> bool:
     """Return True if path is a settings or hook file that should not be modified."""
-    real = os.path.realpath(path)
+    real = _resolve(path)
     # In-worktree edits (sibling OR nested) of protected paths are legitimate
     # work — the worktree copy is inert until merged+pulled — so they are NOT
     # the live-guard disarm this check exists to prevent. The live main-repo
@@ -226,10 +243,92 @@ def _worktree_pointer_allows(real: str) -> bool:
     return False
 
 
+def _protected_write_context(command: str) -> bool:
+    """Return True ONLY if a protected control-file appears in a WRITE/MODIFY position.
+
+    Write positions covered:
+    - redirect target: ``>``, ``>>``, ``>|`` (optionally fd-prefixed)
+    - in-place / overwrite mutators: ``sed -i``, ``perl -i``, ``tee``,
+      ``chmod``, ``chown``
+    - ``dd of=<protected>`` keyword form
+    - ``truncate`` with a protected positional
+    - copy/move DESTINATION (last positional of cp/mv/install/rsync/ln)
+
+    Reads/references (cat, grep, ls, find, cp <protected> <dest>) have no
+    write position and return False — the guard no longer fires on them.
+
+    IMPORTANT: the cp/mv/install/rsync/ln destination detection tokenizes
+    RELATIVE positionals, NOT just ``/``-anchored absolute tokens.  Reusing
+    ``_command_has_worktree_dest``'s ``re.findall(r'(/[^\\s\\"\\';|&]+)')``
+    regex would silently miss ``cp evil.json .claude/settings.json`` (relative
+    dest).  See Task-3 mandate in the approved plan for issue #1136.
+    (Bug 2 fix — issue #1136.)
+    """
+
+    def _has_protected_token() -> bool:
+        for pat in PROTECTED_CMD_PATTERNS:
+            if re.search(pat, command):
+                return True
+        return False
+
+    # 1. Redirect target: optional fd digit + >, >>, >| + optional spaces
+    #    + protected path.  Covers: `echo x > .claude/settings.json`,
+    #    `printf x > /abs/.claude/settings.json`, etc.
+    if re.search(
+        r"\d*>>?\|?\s*(?:\./)?(?:[^\s'\";<>|&]*/)?\.claude/",
+        command,
+    ):
+        return True
+
+    # 2. In-place / overwrite mutators that act on a named argument.
+    #    tee writes its stdin to the named file; sed/perl -i edits in place.
+    if re.search(
+        r"\b(?:tee|sed\s+(?:-\w*i|--in-place)|perl\s+-\w*i|chmod|chown)\b",
+        command,
+    ):
+        if _has_protected_token():
+            return True
+
+    # 3. dd of=<protected>
+    if re.search(r"\bdd\b", command) and re.search(
+        r"\bof=(?:\./)?(?:[^\s'\";<>|&]*/)?\.claude/",
+        command,
+    ):
+        return True
+
+    # 4. truncate with a protected positional.
+    if re.search(r"\btruncate\b", command) and _has_protected_token():
+        return True
+
+    # 5. Copy/move DESTINATION — last positional of cp/mv/install/rsync/ln.
+    #    Must use relative-aware tokenization so that a relative protected
+    #    dest (`.claude/settings.json`) is caught, not just absolute ones.
+    if re.search(r"\b(?:cp|mv|install|rsync|ln)\b", command):
+        _CMD_NAMES = {"cp", "mv", "install", "rsync", "ln", "sudo", "env", "command"}
+        raw_toks = re.split(r"[\s;|&<>]+", command)
+        positionals = []
+        for tok in raw_toks:
+            tok = tok.strip("\"'")
+            if not tok:
+                continue
+            if re.match(r"^-", tok):      # flags: -r, -f, --flag, etc.
+                continue
+            if tok in _CMD_NAMES:
+                continue
+            positionals.append(tok)
+        if positionals:
+            dest = positionals[-1]
+            for pat in PROTECTED_CMD_PATTERNS:
+                if re.search(pat, dest):
+                    return True
+
+    return False
+
+
 def is_allowed(path: str) -> bool:
     if not path:
         return True
-    real = os.path.realpath(path)
+    real = _resolve(path)
     for root in ALLOWED_ROOTS:
         if real == root or real.startswith(root + os.sep):
             return True
@@ -291,24 +390,30 @@ def extract_paths() -> list[str]:
 
 paths = extract_paths()
 
-# Check for protected file edits. Runs for ALL extracted paths regardless of
-# tool (not just Write/Edit) so the Bash absolute-path extractor output is
-# checked too — closing the in-place inline-disarm gap (#964).
-for path in paths:
-    if is_protected(path):
-        print(
-            f"BLOCKED: cannot modify protected file: {path}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+# Check for protected file edits — Write/Edit only.  Reads (Read/Glob/Grep)
+# are legitimately allowed to name protected paths; the inline-disarm threat
+# (#964) is covered for Bash by the write-aware command-string scan below.
+# (Bug 2 fix — gating on actual write tools — issue #1136.)
+if tool_name in ("Write", "Edit"):
+    for path in paths:
+        if is_protected(path):
+            print(
+                f"BLOCKED: cannot modify protected file: {path}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
 # Bash command-string protected-token scan (#964): the absolute+exists
 # extractor never sees RELATIVE disarm targets, so scan the raw command for
-# protected control-file references. Skipped when the command names a
-# worktree-sibling destination (the legit sync/destination-copy carve-out).
+# protected control-file references.  Now gated on _protected_write_context
+# so reads/references (cat, grep, ls, cp-source) are no longer blocked —
+# only genuine write positions (redirects, in-place mutators, copy/move
+# destinations, dd of=, truncate) trigger the block.  Skipped when the
+# command names an existing worktree destination (the legit sync carve-out).
+# (Bug 2 fix — issue #1136.)
 if tool_name == "Bash":
     command = tool_input.get("command", "")
-    if not _command_has_worktree_dest(command):
+    if not _command_has_worktree_dest(command) and _protected_write_context(command):
         for pat in PROTECTED_CMD_PATTERNS:
             if re.search(pat, command):
                 print(
