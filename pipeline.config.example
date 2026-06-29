@@ -11,6 +11,8 @@ set -a
 
 PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
 PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: staging — dev trunk; override per-repo if needed)
+#PIPELINE_NEXT_BRANCH="next"   # Next-integration branch for breaking-change work (default: next, read-site ${VAR:-next}; uncomment to override)
+#PIPELINE_NEXT_LABEL="next"    # Label routing an issue onto PIPELINE_NEXT_BRANCH (default next; legacy alias next-major-release also honored)
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)

@@ -113,6 +113,50 @@ else
   fail_msg "Case F: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
 fi
 
+# --- Next-branch routing (#1128) -------------------------------------------
+# The hook is branch-agnostic: it reads whatever setup-worktree.sh wrote into
+# .claude/base-branch as EXPECTED_BASE. For a next-labelled worktree that file
+# contains `next`, so --base next is the only allowed create target. EXPECTED_BASE
+# resolves at hook import, so each case runs in a FRESH hook process against a
+# project whose base-branch is `next`.
+NEXT_PROJ="$WORKDIR/proj-next"
+mkdir -p "$NEXT_PROJ/.claude"
+printf 'next\n' > "$NEXT_PROJ/.claude/base-branch"
+printf 'PIPELINE_BASE_BRANCH="staging"\n' > "$NEXT_PROJ/pipeline.config"
+
+run_hook_in() {
+  local proj="$1" command="$2"
+  local payload
+  payload=$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' "$command")
+  set +e
+  echo "$payload" | env -i \
+    HOME="$HOME" \
+    PATH="/usr/bin:/bin" \
+    CLAUDE_PROJECT_DIR="$proj" \
+    python3 "$HOOK" >"$WORKDIR/out" 2>"$WORKDIR/err"
+  local rc=$?
+  set -e
+  echo "$rc"
+}
+
+echo "Case G: next-routing — gh pr create --base next allows (base-branch=next)"
+inc
+rc=$(run_hook_in "$NEXT_PROJ" 'gh pr create --base next --title T --body B')
+if [ "$rc" = "0" ]; then
+  pass_msg "Case G: --base next allowed when .claude/base-branch=next"
+else
+  fail_msg "Case G: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case H: next-routing — gh pr create --base staging blocks (base-branch=next)"
+inc
+rc=$(run_hook_in "$NEXT_PROJ" 'gh pr create --base staging --title T --body B')
+if [ "$rc" != "0" ]; then
+  pass_msg "Case H: --base staging blocked when .claude/base-branch=next"
+else
+  fail_msg "Case H: expected rc!=0, got rc=$rc"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"

@@ -63,16 +63,17 @@ run_fix() {
 }
 
 # ---------------------------------------------------------------------------
-# Case A: all 17 canonical labels are seeded with exact color/description.
-# (17 since #997 added needs-debug to doctor.sh LABEL_TABLE.)
+# Case A: all 18 canonical labels are seeded with exact color/description.
+# (18 since #1128 added next to doctor.sh LABEL_TABLE; 17 came from #997's
+# needs-debug row.)
 # ---------------------------------------------------------------------------
-echo "Case A: seeds all 17 labels"
+echo "Case A: seeds all 18 labels"
 FX=$(mk_fixture fx-a)
 run_fix "$FX"
 rc="$(cat "$FX/rc")"
 [ "$rc" = "0" ] && pass_msg "A: exit 0" || { fail_msg "A: exit $rc"; cat "$FX/out" | sed 's/^/    /'; }
 count=$(wc -l < "$FX/shim.log" | tr -d ' ')
-[ "$count" = "17" ] && pass_msg "A: 17 label create calls" || fail_msg "A: got $count label create calls"
+[ "$count" = "18" ] && pass_msg "A: 18 label create calls" || fail_msg "A: got $count label create calls"
 
 # Canonical (name, color, description) — must match doctor.sh LABEL_TABLE and README.
 expected=(
@@ -93,6 +94,7 @@ expected=(
   "needs-debug|D93F0B|Gates root-cause diagnosis via systematic-debugging before planning"
   "tracker|0E8A16|Coordination issue rolling up child issues under a Rollout sequence checklist"
   "manual-merge|F9D0C4|Suppress auto-merge for this issue; merge by hand"
+  "next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH) before the base branch"
 )
 for row in "${expected[@]}"; do
   if grep -Fxq "$row" "$FX/shim.log"; then

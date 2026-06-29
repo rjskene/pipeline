@@ -1,0 +1,16 @@
+[
+  {
+    "number": 700,
+    "title": "feat(core): breaking refactor routed onto next",
+    "labels": [{"name": "priority/P1"}, {"name": "next"}],
+    "body": "carries the configurable next label",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  },
+  {
+    "number": 701,
+    "title": "feat(core): legacy alias still routes onto next",
+    "labels": [{"name": "priority/P2"}, {"name": "next-major-release"}],
+    "body": "carries the legacy next-major-release alias",
+    "updatedAt": "2026-05-21T00:00:00Z"
+  }
+]

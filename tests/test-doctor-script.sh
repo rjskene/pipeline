@@ -81,7 +81,8 @@ ALL_LABELS_JSON='[
   {"name":"needs-browser","color":"1F77B4","description":"Gates Playwright MCP attachment and visual-proof-from-plan sub-skill"},
   {"name":"needs-debug","color":"D93F0B","description":"Gates root-cause diagnosis via systematic-debugging before planning"},
   {"name":"tracker","color":"0E8A16","description":"Coordination issue rolling up child issues under a Rollout sequence checklist"},
-  {"name":"manual-merge","color":"F9D0C4","description":"Suppress auto-merge for this issue; merge by hand"}
+  {"name":"manual-merge","color":"F9D0C4","description":"Suppress auto-merge for this issue; merge by hand"},
+  {"name":"next","color":"FBCA04","description":"Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH) before the base branch"}
 ]'
 
 # Build a fresh fixture project dir. Initializes git and creates a local
@@ -228,12 +229,12 @@ grep -qE '^CHECK: gh_repo_reachable status=fail.*not reachable' <<<"$out" \
 # ---------------------------------------------------------------------------
 # Case 5: labels_exist
 # ---------------------------------------------------------------------------
-echo "Case 5a: all 17 labels present"
+echo "Case 5a: all 18 labels present"
 FX=$(fresh_fx fx-labels-pass)
 run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: labels_exist status=pass detail=17/17' <<<"$out" \
-  && pass_msg "labels-pass: 17/17 detail" \
+grep -qE '^CHECK: labels_exist status=pass detail=18/18' <<<"$out" \
+  && pass_msg "labels-pass: 18/18 detail" \
   || { fail_msg "labels-pass: wrong detail"; echo "$out" | sed 's/^/    /'; }
 
 echo "Case 5b: two labels missing"
@@ -265,11 +266,12 @@ OVERRIDE_JSON='[
   {"name":"in-progress"},{"name":"pr-open"},{"name":"merged"},
   {"name":"skip"},{"name":"later"},{"name":"human"},{"name":"brainstorm"},
   {"name":"docs-only"},{"name":"multi-task"},{"name":"quick-fix"},
-  {"name":"needs-browser"},{"name":"needs-debug"},{"name":"tracker"},{"name":"manual-merge"}
+  {"name":"needs-browser"},{"name":"needs-debug"},{"name":"tracker"},{"name":"manual-merge"},
+  {"name":"next"}
 ]'
 run_helper "$FX" LABELS_JSON="$OVERRIDE_JSON"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: labels_exist status=pass detail=17/17' <<<"$out" \
+grep -qE '^CHECK: labels_exist status=pass detail=18/18' <<<"$out" \
   && pass_msg "labels-override: pass when PIPELINE_LABELS_EXCLUDED=skip" \
   || { fail_msg "labels-override: failed"; echo "$out" | sed 's/^/    /'; }
 

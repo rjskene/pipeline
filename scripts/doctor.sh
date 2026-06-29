@@ -50,6 +50,7 @@ LABEL_TABLE=(
   "LATER|later|D4C5F9|Deferred"
   "HUMAN|human|F9D0C4|Needs human in the loop"
   "BRAINSTORM|brainstorm|FEF2C0|Non-actionable discussion/exploration"
+  "NEXT|next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH) before the base branch"
 )
 
 # Resolve the effective label name for a row, honoring PIPELINE_LABELS_<KEY> overrides
@@ -61,6 +62,7 @@ resolve_label_name() {
     LATER)      echo "${PIPELINE_LABELS_LATER:-$default}" ;;
     HUMAN)      echo "${PIPELINE_LABELS_HUMAN:-$default}" ;;
     BRAINSTORM) echo "${PIPELINE_LABELS_BRAINSTORM:-$default}" ;;
+    NEXT)       echo "${PIPELINE_NEXT_LABEL:-$default}" ;;
     *)          echo "$default" ;;
   esac
 }
@@ -556,6 +558,9 @@ fi
 # rather than crashing.
 PIPELINE_REPO="${PIPELINE_REPO:-}"
 PIPELINE_BASE_BRANCH="${PIPELINE_BASE_BRANCH:-staging}"
+# Next-branch routing default (#1128): the integration branch for next-labelled
+# work, overridable via pipeline.config. Mirrors the read-site ${VAR:-next}.
+: "${PIPELINE_NEXT_BRANCH:=next}"
 
 # --------------------------------------------------------------------------
 # Check: gh_auth
