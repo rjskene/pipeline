@@ -612,32 +612,67 @@ priced_day_cost_tsv() {
 # Shared substrate for the --emit-day-json per-bucket cost aggregation (#832):
 # this keeps a SINGLE pricing path (price_rate) so day-JSON cost matches the
 # human tables exactly. Aggregation (sum per day) happens in the emit branch.
+#
+# Implementation: uses TWO jq invocations for the whole CAPTURE_JSON — one to
+# get distinct models (for rate pre-computation), one to stream (model, day,
+# token buckets) as TSV — then a SINGLE awk to compute per-record costs using
+# a pre-built in-process price table. This replaces the old per-line jq spawn
+# loop (one jq per record) that took ~52s for a >ARG_MAX capture (#1125).
 priced_day_bucket_cost_tsv() {
-  local line model norm day
-  local r_in r_out r_cc r_cr
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
-    if [ -z "$model" ] || [ "$model" = "null" ]; then
-      continue
-    fi
-    day="$(printf '%s' "$line" | jq -r '(.ts_start // "")' 2>/dev/null | cut -c1-10)"
-    if [ -z "$day" ] || ! printf '%s' "$day" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
-      continue
-    fi
+  local model norm r_in r_out r_cc r_cr _price_map
+
+  # Step 1: collect distinct models and pre-compute their rates in bash
+  # (O(distinct_models * 4) price_rate calls — typically 1-3 models, very cheap).
+  _price_map=""
+  while IFS= read -r model; do
+    [ -z "$model" ] && continue
     norm="$(price_model_normalize "$model")"
     r_in="$(price_rate "$norm" INPUT)"
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
     r_cr="$(price_rate "$norm" CACHE_READ)"
-    printf '%s' "$line" | jq -r '
-        [ (.tokens.input//0), (.tokens.output//0),
-          (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
-      | awk -F'\t' -v d="$day" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
-          printf "%s\t%.10f\t%.10f\t%.10f\t%.10f\n", d,
-            ($1/1e6)*ri, ($2/1e6)*ro, ($3/1e6)*rcc, ($4/1e6)*rcr
-        }'
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+    _price_map="${_price_map}${model}	${r_in}	${r_out}	${r_cc}	${r_cr}
+"
+  done < <(printf '%s' "$CAPTURE_JSON" | jq -r '
+    [.[] | select((.model // "") != "" and (.model // "") != "null") | .model] | unique[]
+  ' 2>/dev/null)
+
+  # Step 2: single jq pass to stream (model, day, tokens) as TSV; awk applies
+  # the pre-built price table in-process — no per-line jq spawning.
+  printf '%s' "$CAPTURE_JSON" | jq -r '
+    .[] |
+    select((.model // "") != "" and (.model // "") != "null") |
+    (.ts_start // "")[0:10] as $day |
+    select($day | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) |
+    [.model, $day,
+     (.tokens.input//0), (.tokens.output//0),
+     (.tokens.cache_creation//0), (.tokens.cache_read//0)] | @tsv
+  ' 2>/dev/null | awk -F'\t' -v price_map="$_price_map" '
+    BEGIN {
+      OFS="\t"
+      # Parse price_map lines: "model<TAB>ri<TAB>ro<TAB>rcc<TAB>rcr"
+      n = split(price_map, lines, "\n")
+      for (i = 1; i <= n; i++) {
+        if (lines[i] == "") continue
+        m = split(lines[i], f, "\t")
+        if (m >= 5) {
+          ri[f[1]] = f[2]; ro[f[1]] = f[3]; rcc[f[1]] = f[4]; rcr[f[1]] = f[5]
+        }
+      }
+      # Opus-rate fallback (conservative upper bound for unknown models).
+      OPU_RI="15"; OPU_RO="75"; OPU_RCC="18.75"; OPU_RCR="1.50"
+    }
+    {
+      model=$1; day=$2; in_t=$3; out_t=$4; cc_t=$5; cr_t=$6
+      if (!(model in ri)) {
+        ri[model]=OPU_RI; ro[model]=OPU_RO; rcc[model]=OPU_RCC; rcr[model]=OPU_RCR
+      }
+      printf "%s\t%.10f\t%.10f\t%.10f\t%.10f\n",
+        day,
+        (in_t/1e6)*ri[model],  (out_t/1e6)*ro[model],
+        (cc_t/1e6)*rcc[model], (cr_t/1e6)*rcr[model]
+    }
+  '
 }
 
 # priced_duration_tsv — emit one TSV line per PRICED capture record (model!="")
@@ -712,24 +747,34 @@ RAW_PR_LIST_JSON="$(load_pr_list)" || exit 1
 # in-progress append to the #642 log) is SKIPPED with a warning rather than
 # silently zeroing the whole report. Empty / all-invalid input → empty array.
 load_capture_array() {
-  local line dropped=0
-  local lines=()
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    if printf '%s' "$line" | jq -e 'type == "object"' >/dev/null 2>&1; then
-      lines+=("$line")
-    else
-      dropped=$((dropped + 1))
-    fi
-  done < <(load_capture)
+  local capture_input valid_json total_non_empty kept dropped
+  # Read the full capture JSONL once into a variable, then do ALL validation in a
+  # SINGLE bulk `jq -R` pass (one process, not one per line). This replaces the
+  # former per-line `while read / jq -e` loop that spawned ~1 jq process per
+  # record — for a >ARG_MAX fixture (~8000 records) that was ~52s; the bulk pass
+  # is ~0.026s for the same input (~2000x faster). Fixes #1125.
+  capture_input="$(load_capture)"
+
+  # Count non-empty input lines (for dropped-count computation). Note: $()
+  # assignment strips trailing newlines, so printf '%s\n' re-adds exactly one;
+  # grep -c . counts lines that contain at least one character (skips blanks).
+  total_non_empty="$(printf '%s\n' "$capture_input" | grep -c . 2>/dev/null || echo 0)"
+
+  # Bulk filter: split on newlines, parse each non-empty element as JSON, keep
+  # only objects, collect into a compact JSON array. Empty lines and non-object
+  # lines (arrays, scalars, invalid JSON) are silently dropped by
+  # `fromjson? | select(type=="object")`. jq -Rs slurps the whole input as a
+  # single raw string; split("\n") then iterates the lines in-process — ONE jq
+  # invocation for the entire capture, not one per line.
+  valid_json="$(printf '%s\n' "$capture_input" | jq -Rs 'split("\n") | [.[] | select(length>0) | fromjson? | select(type=="object")]' 2>/dev/null)"
+  [ -z "$valid_json" ] && valid_json='[]'
+
+  kept="$(printf '%s\n' "$valid_json" | jq 'length' 2>/dev/null || echo 0)"
+  dropped=$(( total_non_empty - kept ))
   if [ "$dropped" -gt 0 ]; then
     echo "cost-latency-report: WARN: skipped $dropped malformed capture line(s)" >&2
   fi
-  if [ "${#lines[@]}" -eq 0 ]; then
-    echo '[]'
-  else
-    printf '%s\n' "${lines[@]}" | jq -cs '.'
-  fi
+  printf '%s\n' "$valid_json"
 }
 CAPTURE_JSON="$(load_capture_array)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'

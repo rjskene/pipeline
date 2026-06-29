@@ -2264,6 +2264,146 @@ else
 fi
 rm -rf "$TMP46"
 
+# --- Scenario 47: regression-guard — capture validation is bulk, not per-line (#1125) ---
+# Root cause of the Scenario-46 exit-124-under-load flake: load_capture_array()
+# validated the capture JSONL by spawning ONE `jq` process per line (a
+# `while IFS= read -r line; do ... jq ... done` loop). For a >ARG_MAX fixture
+# (~8000 records) that is ~52s single-process and, under sibling-worktree CPU
+# contention, blew past the outer `timeout 300 bash "$t"` budget. The fix
+# replaces the per-line spawn with a SINGLE bulk `jq` pass (~0.026s for the
+# same input — ~2000x faster), which removes the slow leg at its source.
+#
+# This guard asserts the STRUCTURAL/bounded behavior (per the issue's explicit
+# guidance: NOT a wall-clock-on-load threshold):
+#   (a) load_capture_array() does NOT run jq once-per-line in a read loop
+#       (the slow leg is gone);
+#   (b) a >ARG_MAX capture with one torn (non-object) line, validated under a
+#       generous internal `timeout`, exits 0 (NOT 124) — i.e. the bounded
+#       scenario completes well inside the timeout;
+#   (c) the torn line is still DROPPED (WARN emitted) and the valid records
+#       still emit >=1 day record (malformed-line tolerance preserved);
+#   (d) an empty / all-invalid capture still yields the `[]`-equivalent
+#       (exits 0, 0 day rows).
+# The fixture is built with a FAST vectorized generator (single awk stream),
+# NOT an 8000-iteration bash `for` loop, so this guard does not itself
+# reintroduce a slow leg.
+inc_scenario "Scenario 47: capture validation is bulk (single jq pass), not per-line (#1125)"
+
+# (a) Structural assertion: the load_capture_array() function body must NOT
+#     spawn jq inside a per-line `while read` loop. We isolate the function
+#     body (from `load_capture_array() {` to the next top-level `}`) and assert
+#     that it does NOT contain a `while ... read ... line` construct AND that it
+#     references jq with the bulk slurp/raw-input form (`jq -R` and/or `jq -cs`
+#     / `jq -s`) — the bulk validation shape the fix introduces.
+LCA_BODY="$(awk '/^load_capture_array\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$HELPER")"
+if [ -z "$LCA_BODY" ]; then
+  fail_msg "could not isolate load_capture_array() body from $HELPER (function shape changed?)"
+fi
+# The per-line jq spawn lives inside a `while ... read ... line` loop reading
+# from `< <(load_capture)`. The bulk fix has no such per-line read loop over
+# load_capture.
+if printf '%s\n' "$LCA_BODY" | grep -Eq 'while[[:space:]].*read[[:space:]].*line'; then
+  fail_msg "load_capture_array() still uses a per-line 'while read line' loop — the load-amplified slow leg is present (#1125)"
+else
+  pass_msg "load_capture_array() has no per-line 'while read line' validation loop (slow leg removed)"
+fi
+# The bulk validation must use jq's raw-input mode (`jq -R`) to fromjson each
+# line in a single process, sliced into an array (`jq -cs`/`-s`). Require the
+# raw-input form to be present (the structural shape the fix introduces).
+if printf '%s\n' "$LCA_BODY" | grep -Eq 'jq[[:space:]]+-R|jq[[:space:]]+-[a-zA-Z]*R'; then
+  pass_msg "load_capture_array() validates with a bulk 'jq -R' raw-input pass"
+else
+  fail_msg "load_capture_array() does not use a bulk 'jq -R' raw-input validation pass (#1125)"
+fi
+
+# (b)+(c) Behavioral guard: >ARG_MAX capture with one torn line, under an
+#         internal timeout. Build the fixture with a fast vectorized awk
+#         generator (NOT a bash for-loop). Each record is ~270 bytes; emit
+#         enough to exceed getconf ARG_MAX so the ARG_MAX axis stays covered.
+TMP47="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP47/" 2>/dev/null
+printf '%s\n' '[{"number":146,"title":"feat: argmax bulk-validate test","additions":300,"deletions":100,"body":"Closes #246","mergedAt":"2026-05-13T12:00:00Z","labels":[]}]' > "$TMP47/prs.json"
+printf '%s\n' '{"number":146,"additions":300,"deletions":100,"comments":[]}' > "$TMP47/pr-146.json"
+printf '%s\n' '{"number":246,"labels":[],"comments":[]}' > "$TMP47/issue-246.json"
+
+ARG_MAX47="$(getconf ARG_MAX 2>/dev/null || echo 2097152)"
+# Vectorized generator: a single awk process emits N valid object lines, then we
+# append ONE torn (non-object) line. N chosen so the file comfortably exceeds
+# ARG_MAX (~270 bytes/record → ceil(ARG_MAX/200)+2000 records is generous).
+N47=$(( (ARG_MAX47 / 200) + 2000 ))
+awk -v n="$N47" 'BEGIN{
+  for (i = 1; i <= n; i++) {
+    d = (i % 28) + 1
+    day = sprintf("2026-05-%02d", d)
+    printf("{\"schema_version\":1,\"issue\":\"246\",\"stage\":\"execute\",\"session_id\":\"s47-%d\",\"model\":\"claude-opus-4-8\",\"agent_kind\":\"headless\",\"record_key\":\"K247-%d\",\"ts_start\":\"%sT10:00:00Z\",\"tokens\":{\"input\":1000,\"output\":500,\"cache_creation\":0,\"cache_read\":200,\"total\":1700},\"duration_ms\":1000,\"usage_complete\":true}\n", i, i, day)
+  }
+}' > "$TMP47/capture.jsonl"
+# Interleave exactly ONE torn / non-object line (a bare scalar, not a JSON object).
+printf 'this-is-a-torn-non-object-line\n' >> "$TMP47/capture.jsonl"
+
+FIXTURE_BYTES47="$(wc -c < "$TMP47/capture.jsonl" | tr -d ' ')"
+if [ "${FIXTURE_BYTES47:-0}" -gt "$ARG_MAX47" ]; then
+  pass_msg "Scenario 47 fixture exceeds getconf ARG_MAX ($FIXTURE_BYTES47 > $ARG_MAX47) — ARG_MAX axis covered"
+else
+  fail_msg "Scenario 47 fixture ($FIXTURE_BYTES47 bytes) did not exceed getconf ARG_MAX ($ARG_MAX47) — regenerate"
+fi
+
+# Run --emit-day-json under a GENEROUS internal timeout. The bulk-jq fix
+# completes this in well under a second; the per-line jq loop takes ~50s+ for
+# this many records, so a 30s bound makes a slow-leg regression fail FAST and
+# attributable to THIS scenario (rc 124) instead of being absorbed silently into
+# the whole-file `timeout 300` budget under load. We capture BOTH stdout (day
+# JSON) and stderr (the dropped-line WARN).
+DAY47_ERR="$(mktemp)"
+DAY47="$(timeout 30 bash "$HELPER" --fixture "$TMP47" --emit-day-json 2>"$DAY47_ERR")"
+RC47=$?
+if [ "$RC47" -eq 124 ]; then
+  fail_msg "Scenario 47 --emit-day-json hit the internal 30s timeout (rc=124) — the load-amplified slow leg is present (#1125)"
+elif [ "$RC47" -eq 0 ]; then
+  pass_msg "Scenario 47 --emit-day-json exits 0 within the internal timeout (no slow leg)"
+else
+  fail_msg "Scenario 47 --emit-day-json exited rc=$RC47 (expected 0)"
+fi
+
+# (c) torn line still dropped (WARN emitted) and >=1 day record still emitted.
+if grep -q 'skipped 1 malformed capture line' "$DAY47_ERR"; then
+  pass_msg "Scenario 47 still drops the single torn line with the WARN (malformed-line tolerance preserved)"
+else
+  fail_msg "Scenario 47 did not emit the 'skipped 1 malformed capture line' WARN (got: $(head -1 "$DAY47_ERR"))"
+fi
+LINES47="$(printf '%s\n' "$DAY47" | grep -c '"date"' 2>/dev/null; true)"
+if [ "${LINES47:-0}" -ge 1 ]; then
+  pass_msg "Scenario 47 emits >=1 day record despite the torn line ($LINES47 days)"
+else
+  fail_msg "Scenario 47 emitted 0 day records — valid records were lost (#1125)"
+fi
+rm -f "$DAY47_ERR"
+rm -rf "$TMP47"
+
+# (d) empty / all-invalid capture → []-equivalent: exits 0, 0 day rows.
+TMP47B="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP47B/" 2>/dev/null
+printf '%s\n' '[{"number":146,"title":"feat: all-invalid capture","additions":300,"deletions":100,"body":"Closes #246","mergedAt":"2026-05-13T12:00:00Z","labels":[]}]' > "$TMP47B/prs.json"
+printf '%s\n' '{"number":146,"additions":300,"deletions":100,"comments":[]}' > "$TMP47B/pr-146.json"
+printf '%s\n' '{"number":246,"labels":[],"comments":[]}' > "$TMP47B/issue-246.json"
+# All-invalid capture: only non-object / torn lines, no valid records.
+printf '%s\n%s\n%s\n' 'not-json-at-all' '[1,2,3]' '"a-bare-string"' > "$TMP47B/capture.jsonl"
+
+DAY47B="$(timeout 30 bash "$HELPER" --fixture "$TMP47B" --emit-day-json 2>/dev/null)"
+RC47B=$?
+if [ "$RC47B" -eq 0 ]; then
+  pass_msg "Scenario 47 all-invalid capture still exits 0 ([]-equivalent)"
+else
+  fail_msg "Scenario 47 all-invalid capture exited rc=$RC47B (expected 0)"
+fi
+LINES47B="$(printf '%s\n' "$DAY47B" | grep -c '"date"' 2>/dev/null; true)"
+if [ "${LINES47B:-0}" -eq 0 ]; then
+  pass_msg "Scenario 47 all-invalid capture emits 0 day records ([]-equivalent)"
+else
+  fail_msg "Scenario 47 all-invalid capture emitted $LINES47B day records (expected 0)"
+fi
+rm -rf "$TMP47B"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
