@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.18](https://github.com/rjskene/pipeline/compare/v0.23.17...v0.23.18) (2026-06-29)
+
+
+### Bug Fixes
+
+* **hooks:** gate protected-file guard on writes, anchor relative paths on project root ([b31abf4](https://github.com/rjskene/pipeline/commit/b31abf4bb134fa1ef804318bcae2e77a03ab1497))
+* **hooks:** resolve relative paths on project root and gate protected guard on writes ([#1136](https://github.com/rjskene/pipeline/issues/1136)) ([aeb9e34](https://github.com/rjskene/pipeline/commit/aeb9e34168c92ff26782cd33db572adc0085abf9))
+
 ## [0.23.17](https://github.com/rjskene/pipeline/compare/v0.23.16...v0.23.17) (2026-06-29)
 
 
