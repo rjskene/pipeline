@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.23.17](https://github.com/rjskene/pipeline/compare/v0.23.16...v0.23.17) (2026-06-29)
+
+
+### Features
+
+* **base-routing:** actuate next routing in skills + docs ([f6af8b5](https://github.com/rjskene/pipeline/commit/f6af8b5d497723d42c9d621a7c6ba1d2e1fa78f4))
+* **base-routing:** actuate the next label onto a configurable next-branch ([d1859f2](https://github.com/rjskene/pipeline/commit/d1859f2adedd3c742670d7f0919f4f88b3e6ee50))
+* **base-routing:** doctor next-branch knob/actuation ([29063de](https://github.com/rjskene/pipeline/commit/29063de9edcd010a6d7bc78a68ba2521819ae598))
+* **base-routing:** init emits commented PIPELINE_NEXT_* knobs ([2409422](https://github.com/rjskene/pipeline/commit/240942254ce65f68e2821f81ce6a7056cbe951d9))
+* **base-routing:** render-status-table next-branch knob/actuation ([3519581](https://github.com/rjskene/pipeline/commit/3519581dce0dc7620c5483267eb8d622bc33cdda))
+* **base-routing:** seed PIPELINE_NEXT_* knobs in config template ([d94c918](https://github.com/rjskene/pipeline/commit/d94c918ddc53302703dbd09610ffa63b5f7faf37)), closes [#1128](https://github.com/rjskene/pipeline/issues/1128)
+* **base-routing:** setup-worktree --base actuation for next-branch ([08ff9ca](https://github.com/rjskene/pipeline/commit/08ff9ca5ea00d8c589410d48153dac01fd630e78))
+
+
+### Bug Fixes
+
+* **cost-latency:** bulk-jq capture validation + single-pass pricing to fix parallel-load timeout ([9ea107e](https://github.com/rjskene/pipeline/commit/9ea107e49682991f524ed2d2678f845eab2954e0)), closes [#1125](https://github.com/rjskene/pipeline/issues/1125)
+* **cost-latency:** bulk-jq capture validation to fix parallel-load timeout ([b56a56e](https://github.com/rjskene/pipeline/commit/b56a56ecbc8750c279f961823bdd8838ecd87926))
+
 ## [0.23.16](https://github.com/rjskene/pipeline/compare/v0.23.15...v0.23.16) (2026-06-22)
 
 
