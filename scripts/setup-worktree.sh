@@ -76,20 +76,53 @@ echo "  Repo:     $MAIN_REPO"
 echo "  Worktree: $WORKTREE_PATH"
 echo ""
 
+# Resolve the orchestrator's current local branch — used to decide whether
+# --base ACTUATES (fetch + cut from origin/<base>) or stays metadata-only.
+CURRENT_LOCAL_BRANCH=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+
+# Next-branch routing actuation (#1128). When --base names a branch OTHER than
+# the orchestrator's current local branch (the next-branch case), the worktree
+# must be cut from origin/<base>'s tip — NOT MAIN_REPO's local HEAD — so
+# next-labelled work actually lands ON the next-branch. If origin/<base> does
+# not exist anywhere, auto-create it from PIPELINE_BASE_BRANCH.
+#
+# The DEFAULT path (no --base, or --base == current local branch) is UNCHANGED:
+# it cuts from LOCAL HEAD and relies on the inter-wave pull (#626). The
+# fetch/cut below is gated strictly on --base naming a non-current branch.
+ACTUATE_BASE=0
+if [ -n "$BASE_BRANCH" ] && [ "$BASE_BRANCH" != "$CURRENT_LOCAL_BRANCH" ]; then
+  ACTUATE_BASE=1
+fi
+
 # Step 1: Create worktree (skip if exists)
 if git -C "$MAIN_REPO" worktree list | grep -q "$WORKTREE_PATH"; then
   echo "[1/6] Worktree already exists — skipping creation"
+elif git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  # The feature branch already exists locally — reattach it as-is (resumption).
+  echo "[1/6] Creating worktree (existing branch)..."
+  git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" "$BRANCH"
+elif [ "$ACTUATE_BASE" = "1" ]; then
+  # Next-branch routing: fetch origin/<base> and cut the worktree from its tip.
+  echo "[1/6] Creating worktree off origin/$BASE_BRANCH (--base actuation)..."
+  if git -C "$MAIN_REPO" fetch --quiet origin "$BASE_BRANCH" 2>/dev/null \
+     && git -C "$MAIN_REPO" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
+    git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH" "origin/$BASE_BRANCH"
+  else
+    # origin/<base> does not exist anywhere — auto-create it from
+    # PIPELINE_BASE_BRANCH (the active dev trunk), push it, then cut from it.
+    echo "  origin/$BASE_BRANCH absent — auto-creating from PIPELINE_BASE_BRANCH='$PIPELINE_BASE_BRANCH'..."
+    git -C "$MAIN_REPO" fetch --quiet origin "$PIPELINE_BASE_BRANCH"
+    git -C "$MAIN_REPO" branch -f "$BASE_BRANCH" "origin/$PIPELINE_BASE_BRANCH"
+    git -C "$MAIN_REPO" push -u origin "$BASE_BRANCH"
+    git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH" "$BASE_BRANCH"
+  fi
 else
   echo "[1/6] Creating worktree..."
   # Branches off MAIN_REPO's LOCAL HEAD -- NOT origin/<base>. $BASE_BRANCH below
   # is metadata/remote-existence only. Wave-running callers (fullsend) MUST
   # `git pull --ff-only origin <base>` on MAIN_REPO between waves so a later
   # wave's worktree inherits prior waves' merged-on-remote work (#626).
-  if git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-    git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" "$BRANCH"
-  else
-    git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH"
-  fi
+  git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH"
 fi
 
 # Step 2: Sync untracked .claude/ files (settings.local.json, untracked hooks, .env files, venvs)
