@@ -129,3 +129,15 @@ PIPELINE_MOCK_WEB_EVAL_
 # host-global exemption, defeating per-issue scoping. Intentionally undocumented
 # in pipeline.config.example; exact-match exempt here.
 PIPELINE_SPLIT_ROLE_SHARED_TESTS
+
+# #1128 next-branch routing knobs. PIPELINE_NEXT_BRANCH / PIPELINE_NEXT_LABEL are
+# defaults-in-code (#1052): COMMENTED in pipeline.config.example + the init heredoc
+# with read-site ${VAR:-next} defaults at every consumer (render-status-table.sh,
+# setup-worktree.sh, doctor.sh, housekeeping.md, fullsend Step 5). Commenting keeps
+# test-doctor-golden-seed-set.sh green (a seeded knob would pin its value and defeat
+# central default evolution), so the drift lint sees them as referenced-but-undeclared.
+# Same intentionally-undocumented class as PIPELINE_SPLIT_ROLE_SHARED_TESTS above. The
+# PIPELINE_NEXT_ prefix wildcard covers both *_BRANCH/*_LABEL; PIPELINE_NEXT exact-matches
+# the bare-prefix token the scan extracts.
+PIPELINE_NEXT
+PIPELINE_NEXT_
