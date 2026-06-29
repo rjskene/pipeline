@@ -46,7 +46,7 @@ State table — each row names a check, the trigger that fires it, the worst-cas
 | `pipeline_config` | `pipeline.config` exists at project root + `PIPELINE_REPO` set | FAIL | `/pipeline:init` (or copy `pipeline.config.example` and edit) |
 | `claude_plugin_root` | `CLAUDE_PLUGIN_ROOT` resolves to a real plugin install (4 env-states) | varies | See sub-section below |
 | `plugin_loaded` | `claude plugin list` includes `claude-pipeline` | WARN if `claude` not on PATH | `/plugin install pipeline@claude-pipeline` |
-| `labels_exist` | All 10 pipeline labels present (honors `PIPELINE_LABELS_*` overrides) | FAIL | `/pipeline:init` seeds labels, or `--fix labels` (idempotent upsert) |
+| `labels_exist` | All 18 pipeline labels present (honors `PIPELINE_LABELS_*` and `PIPELINE_NEXT_LABEL` overrides) | FAIL | `/pipeline:init` seeds labels, or `--fix labels` (idempotent upsert) |
 | `no_residual_subtree` | No `.claude-pipeline/` or `.pipeline-managed` markers from the retired subtree installer | FAIL | `scripts/migrate-from-subtree.sh` |
 | `claude_md_residual` | Legacy section headers / `.claude-pipeline/` paths / dangling `.claude/{scripts,hooks,skills}/` refs / unprefixed slash commands (delegates to `migration-cleanup-claudemd.sh`; on-disk path verification) | WARN | `migrate-from-subtree.sh --keep-referenced` |
 | `settings_residual` | Pipeline-owned hook entries in `.claude/settings.json`; capability-impact annotation from `_advisory-text.sh` | WARN (jq required) | `--fix residual` (interactive) |
@@ -120,7 +120,7 @@ Answers "why is each duplicate still here, and should the consumer delete it?" P
 
 ### `--fix labels`
 
-`/pipeline:doctor --fix labels` seeds the 10 canonical pipeline labels on `$PIPELINE_REPO` via `gh label create --force`, which is an idempotent upsert — safe to re-run. The four configurable label rows (`excluded`, `later`, `human`, `brainstorm`) honor `PIPELINE_LABELS_*` overrides from `pipeline.config`.
+`/pipeline:doctor --fix labels` seeds the 18 canonical pipeline labels on `$PIPELINE_REPO` via `gh label create --force`, which is an idempotent upsert — safe to re-run. The four configurable label rows (`excluded`, `later`, `human`, `brainstorm`) honor `PIPELINE_LABELS_*` overrides from `pipeline.config`; the `next` row (#1128) honors `PIPELINE_NEXT_LABEL` (default `next`; legacy `next-major-release` alias is still recognized by the renderer/housekeeping). Next-branch routing is configured by two overrides-only knobs, both defaulting to `next` at their read sites (`${VAR:-next}`): `PIPELINE_NEXT_BRANCH` (the integration branch next-labelled work is cut from and targeted at) and `PIPELINE_NEXT_LABEL` (the label that triggers the route).
 
 ### `--fix config`
 
