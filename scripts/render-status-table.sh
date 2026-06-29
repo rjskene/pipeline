@@ -106,6 +106,11 @@ fi
 : "${PIPELINE_LABELS_LATER:=later}"
 : "${PIPELINE_LABELS_HUMAN:=human}"
 : "${PIPELINE_LABELS_BRAINSTORM:=brainstorm}"
+# Next-branch routing (#1128): an issue carrying $PIPELINE_NEXT_LABEL (or the
+# retained legacy `next-major-release` alias) targets $PIPELINE_NEXT_BRANCH
+# instead of the base branch. Both default to `next`; override via env/config.
+: "${PIPELINE_NEXT_LABEL:=next}"
+: "${PIPELINE_NEXT_BRANCH:=next}"
 
 # ----- per-row metadata projection (issues.json → flat rows) ---------
 #
@@ -127,7 +132,9 @@ ROWS_JSON=$(jq -c \
   --arg later     "$PIPELINE_LABELS_LATER" \
   --arg human     "$PIPELINE_LABELS_HUMAN" \
   --arg brainst   "$PIPELINE_LABELS_BRAINSTORM" \
-  --arg base      "$PIPELINE_BASE_BRANCH" '
+  --arg base      "$PIPELINE_BASE_BRANCH" \
+  --arg nextlabel "$PIPELINE_NEXT_LABEL" \
+  --arg nextbranch "$PIPELINE_NEXT_BRANCH" '
   def labelnames: [(.labels // [])[].name];
   def has_label(n): labelnames | any(. == n);
   def priority_tier:
@@ -181,7 +188,7 @@ ROWS_JSON=$(jq -c \
       elif $t == "feat"  then 3
       else 9 end;
   def target_base:
-    if has_label("next-major-release") then "next" else $base end;
+    if (has_label($nextlabel) or has_label("next-major-release")) then $nextbranch else $base end;
   def path_letter:
     ([has_label("docs-only"), has_label("quick-fix"), has_label("multi-task")]) as $p |
     ($p | map(if . then 1 else 0 end) | add) as $count |

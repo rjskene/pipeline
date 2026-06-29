@@ -291,6 +291,8 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    The script defaults to `PIPELINE_BASE_BRANCH` from `pipeline.config`; pass `--base` only if you need to override (e.g., orchestrator running on a non-default branch).
 
+   **Next-branch routing (#1128).** Before invoking `setup-worktree.sh`, resolve the issue's labels. If the issue carries `${PIPELINE_NEXT_LABEL:-next}` OR the legacy `next-major-release` alias, prepend `--base "${PIPELINE_NEXT_BRANCH:-next}"` so the worktree is cut from — and the PR targets — the next-integration branch (`setup-worktree.sh` fetches/creates it; see the actuation in `scripts/setup-worktree.sh`). For unlabelled issues, omit `--base` (the default base-tip behavior below is unchanged). Example for a next-labelled issue: `setup-worktree.sh --base next feature/<slug> <issue-number>`.
+
    **Do NOT invoke with only the issue number** — the script will reject it as of #350. A bare integer like `setup-worktree.sh 81` fails the branch-prefix guard because `81` is not a `feature/<slug>` shape; without that guard, the worktree would silently land on a branch literally named `81` and every downstream stage would break.
 
    **Base-tip note (the #626 fix).** `setup-worktree.sh` adds the worktree via `git worktree add -b`, which **branches off the main repo's LOCAL HEAD, not `origin/<base>`**; the `--base` / `$BASE_BRANCH` value there is only metadata, not a remote fetch. So a wave's worktrees inherit exactly whatever the orchestrator's local base tip points at *at the moment Step 5 runs*. That is why the inter-wave pull (below) is mandatory between waves.

@@ -30,25 +30,30 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-base-branch-hook-wiring.sh" \
   --expected-base "${EXPECTED_BASE}" || true
 ```
 
-## 3. `next-major-release` warning
+## 3. Next-branch routing
 
-Check for `next-major-release` issues in the open pipeline set. These should be processed from the `next` branch by convention:
+Surface open issues routed onto the next-integration branch. Routing is now **actuated** (#1128): the execute path passes `--base "$NEXT_BRANCH"` to `setup-worktree.sh` for these issues automatically (see `skills/fullsend/SKILL.md` Step 5), so they land on — and their PRs target — the next-branch. This pass is a status surface, not a manual gate.
+
+Resolve the configurable label/branch (defaults `next`/`next`) and query the union of the configured next-label AND the retained legacy `next-major-release` alias (so already-labelled issues keep routing without re-labelling):
 
 ```bash
-NEXT_ISSUES=$(gh issue list --repo $PIPELINE_REPO --state open \
-  --label next-major-release --json number,title \
-  --jq '.[] | "#\(.number) \(.title)"')
-if [ -n "$NEXT_ISSUES" ] && [ "$CURRENT_BRANCH" != "next" ]; then
+NEXT_LABEL="${PIPELINE_NEXT_LABEL:-next}"
+NEXT_BRANCH="${PIPELINE_NEXT_BRANCH:-next}"
+NEXT_ISSUES=$( { \
+  gh issue list --repo "$PIPELINE_REPO" --state open \
+    --label "$NEXT_LABEL" --json number,title --jq '.[] | "#\(.number) \(.title)"'; \
+  gh issue list --repo "$PIPELINE_REPO" --state open \
+    --label next-major-release --json number,title --jq '.[] | "#\(.number) \(.title)"'; \
+} | sort -u)
+if [ -n "$NEXT_ISSUES" ]; then
   echo ""
-  echo "WARNING: The following open issues are labeled 'next-major-release':"
+  echo "Next-branch routing: the following open issues route onto '$NEXT_BRANCH' (label '$NEXT_LABEL' or legacy 'next-major-release'):"
   echo "$NEXT_ISSUES" | sed 's/^/  /'
-  echo ""
-  echo "These should be processed from the 'next' branch. You are currently on '$CURRENT_BRANCH'."
-  echo "Switch to 'next' before proceeding (if you intend to work on those issues)."
+  echo "  The execute path passes --base \"$NEXT_BRANCH\" for these automatically."
 fi
 ```
 
-Do not auto-switch. Proceed with the run; the user decides.
+The orchestrator session itself is not force-switched — only each next-labelled issue's worktree is cut from the next-branch.
 
 ## 4. Worktree sync
 

@@ -307,6 +307,24 @@ if [ -f "$FX/pipeline.config" ]; then
   [ "$price_all_commented" -eq 1 ] \
     && pass_msg "cfg: all PIPELINE_PRICE_* lines commented (opt-in; no behavior change)" \
     || { fail_msg "cfg: a PIPELINE_PRICE_* line is live/uncommented"; echo "$cfg" | grep -iE '^[[:space:]]*PIPELINE_PRICE' | sed 's/^/    /'; }
+
+  # --- issue #1128: generated config seeds COMMENTED PIPELINE_NEXT_* knobs ---
+  # Read-site defaults (${VAR:-next}) make these overrides-only; like the PRICE
+  # block they must be present-but-commented so --fix config does NOT seed them
+  # and the golden-seed set stays unchanged.
+  next_keys=(PIPELINE_NEXT_BRANCH PIPELINE_NEXT_LABEL)
+  next_all_present=1
+  next_all_commented=1
+  for k in "${next_keys[@]}"; do
+    grep -qE "^[[:space:]]*#?[[:space:]]*${k}=" <<<"$cfg" || next_all_present=0
+    if grep -qE "^[[:space:]]*${k}=" <<<"$cfg"; then next_all_commented=0; fi
+  done
+  [ "$next_all_present" -eq 1 ] \
+    && pass_msg "cfg: PIPELINE_NEXT_BRANCH + PIPELINE_NEXT_LABEL present" \
+    || { fail_msg "cfg: missing PIPELINE_NEXT_* knobs"; echo "$cfg" | grep -iE 'PIPELINE_NEXT' | sed 's/^/    /'; }
+  [ "$next_all_commented" -eq 1 ] \
+    && pass_msg "cfg: PIPELINE_NEXT_* lines commented (overrides-only; not seeded)" \
+    || { fail_msg "cfg: a PIPELINE_NEXT_* line is live/uncommented"; echo "$cfg" | grep -iE '^[[:space:]]*PIPELINE_NEXT' | sed 's/^/    /'; }
 else
   fail_msg "cfg: pipeline.config NOT written (rc=$rc)"; cat "$FX/err" | sed 's/^/    /'
 fi
@@ -366,9 +384,10 @@ grep -qE '^PIPELINE_REPO="pre/existing"' "$FX/pipeline.config" \
 
 # ---------------------------------------------------------------------------
 # Case 9: full run appends pipeline.config to .gitignore (idempotent), seeds
-#         the 17 canonical labels via doctor.sh --fix labels, and tails the
-#         read-only doctor audit (=== Summary ===). 17 since #997 added
-#         needs-debug to doctor.sh LABEL_TABLE (which init delegates to).
+#         the 18 canonical labels via doctor.sh --fix labels, and tails the
+#         read-only doctor audit (=== Summary ===). 18 since #1128 added
+#         next to doctor.sh LABEL_TABLE (which init delegates to); 17 came
+#         from #997's needs-debug row.
 # ---------------------------------------------------------------------------
 echo "Case 9: gitignore + label seed + doctor tail"
 FX="$TMP/fx-full"; rm -rf "$FX"; mkdir -p "$FX"
@@ -391,9 +410,9 @@ out="$(cat "$FX/out")"
 grep -Fxq "pipeline.config" "$FX/.gitignore" 2>/dev/null \
   && pass_msg "full: pipeline.config appended to .gitignore" \
   || { fail_msg "full: .gitignore missing pipeline.config"; cat "$FX/.gitignore" 2>/dev/null | sed 's/^/    /'; }
-# label seeding fired 17 create calls.
+# label seeding fired 18 create calls.
 count=$(grep -c '|' "$FX/shim.log" 2>/dev/null || echo 0)
-[ "$count" = "17" ] && pass_msg "full: 17 gh label create calls" || { fail_msg "full: got $count label create calls (want 17)"; echo "$out" | tail -25 | sed 's/^/    /'; }
+[ "$count" = "18" ] && pass_msg "full: 18 gh label create calls" || { fail_msg "full: got $count label create calls (want 18)"; echo "$out" | tail -25 | sed 's/^/    /'; }
 # doctor tail surfaced.
 grep -q '=== Summary ===' <<<"$out" \
   && pass_msg "full: doctor tail surfaced (=== Summary ===)" \

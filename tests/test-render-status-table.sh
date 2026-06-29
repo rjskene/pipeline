@@ -623,6 +623,110 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Issue #1128: next-branch routing — configurable PIPELINE_NEXT_LABEL /
+# PIPELINE_NEXT_BRANCH with the legacy `next-major-release` alias retained.
+# ----------------------------------------------------------------------
+
+# N.1 — default knobs: an issue carrying the `next` label renders Target Base
+# = `next` (default PIPELINE_NEXT_BRANCH), and the legacy `next-major-release`
+# alias still routes to `next`. Both appear in the NOTES (non-default) block
+# because their Target Base differs from PIPELINE_BASE_BRANCH (staging).
+inc
+PROJ_ROOT_N=$(mktemp -d)
+PIPELINE_PROJECT_ROOT="$PROJ_ROOT_N" bash "$HELPER" \
+  --issues "$FIXTURES/next-label-issues.json" \
+  --today 2026-05-21 \
+  >"$TMP/outN" 2>"$TMP/errN"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "N.1 next-label render exits 0" "rc=$rc, stderr=$(cat "$TMP/errN")"
+else
+  pass_msg "N.1 next-label render exits 0"
+
+  inc
+  # #700 carries the configurable `next` label → Target Base = next.
+  if grep -qE '#700[[:space:]]*\|[[:space:]]*next[[:space:]]*\|' "$TMP/outN"; then
+    pass_msg "N.1 #700 (next label) NOTES row: Target Base = next"
+  else
+    fail_msg "N.1 #700 (next label) NOTES row: Target Base = next" "$(grep '#700' "$TMP/outN")"
+  fi
+
+  inc
+  # #701 carries the legacy `next-major-release` alias → still Target Base = next.
+  if grep -qE '#701[[:space:]]*\|[[:space:]]*next[[:space:]]*\|' "$TMP/outN"; then
+    pass_msg "N.1 #701 (legacy alias) NOTES row: Target Base = next"
+  else
+    fail_msg "N.1 #701 (legacy alias) NOTES row: Target Base = next" "$(grep '#701' "$TMP/outN")"
+  fi
+fi
+rm -rf "$PROJ_ROOT_N"
+
+# N.2 — branch override: with PIPELINE_NEXT_BRANCH=integration in env, a
+# next-labelled issue renders Target Base = integration, NOT the literal `next`.
+inc
+PROJ_ROOT_N2=$(mktemp -d)
+PIPELINE_PROJECT_ROOT="$PROJ_ROOT_N2" PIPELINE_NEXT_BRANCH=integration bash "$HELPER" \
+  --issues "$FIXTURES/next-label-issues.json" \
+  --today 2026-05-21 \
+  >"$TMP/outN2" 2>"$TMP/errN2"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "N.2 override render exits 0" "rc=$rc, stderr=$(cat "$TMP/errN2")"
+else
+  inc
+  if grep -qE '#700[[:space:]]*\|[[:space:]]*integration[[:space:]]*\|' "$TMP/outN2"; then
+    pass_msg "N.2 PIPELINE_NEXT_BRANCH=integration overrides the literal next for #700"
+  else
+    fail_msg "N.2 PIPELINE_NEXT_BRANCH=integration overrides the literal next for #700" "$(grep '#700' "$TMP/outN2")"
+  fi
+
+  inc
+  # The override must replace `next` entirely for the next-labelled rows — the
+  # literal `next` must not leak as a Target Base value.
+  if grep -qE '#700[[:space:]]*\|[[:space:]]*next[[:space:]]*\|' "$TMP/outN2"; then
+    fail_msg "N.2 literal next must not leak as Target Base under override" "$(grep '#700' "$TMP/outN2")"
+  else
+    pass_msg "N.2 literal next does NOT leak as Target Base under override"
+  fi
+fi
+rm -rf "$PROJ_ROOT_N2"
+
+# N.3 — label override: with PIPELINE_NEXT_LABEL=ship-next, an issue carrying
+# `ship-next` routes to next, while the legacy `next-major-release` alias is
+# STILL honored (union, not replacement).
+inc
+cat >"$TMP/next-custom-label.json" <<'JSON'
+[
+  {"number": 800, "title": "feat(core): custom next label", "labels": [{"name": "priority/P1"}, {"name": "ship-next"}], "body": "", "updatedAt": "2026-05-21T00:00:00Z"},
+  {"number": 801, "title": "feat(core): legacy alias under custom label", "labels": [{"name": "priority/P2"}, {"name": "next-major-release"}], "body": "", "updatedAt": "2026-05-21T00:00:00Z"}
+]
+JSON
+PROJ_ROOT_N3=$(mktemp -d)
+PIPELINE_PROJECT_ROOT="$PROJ_ROOT_N3" PIPELINE_NEXT_LABEL=ship-next bash "$HELPER" \
+  --issues "$TMP/next-custom-label.json" \
+  --today 2026-05-21 \
+  >"$TMP/outN3" 2>"$TMP/errN3"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "N.3 custom-label render exits 0" "rc=$rc, stderr=$(cat "$TMP/errN3")"
+else
+  inc
+  if grep -qE '#800[[:space:]]*\|[[:space:]]*next[[:space:]]*\|' "$TMP/outN3"; then
+    pass_msg "N.3 PIPELINE_NEXT_LABEL=ship-next routes #800 to next"
+  else
+    fail_msg "N.3 PIPELINE_NEXT_LABEL=ship-next routes #800 to next" "$(grep '#800' "$TMP/outN3")"
+  fi
+
+  inc
+  if grep -qE '#801[[:space:]]*\|[[:space:]]*next[[:space:]]*\|' "$TMP/outN3"; then
+    pass_msg "N.3 legacy next-major-release alias still honored under custom label"
+  else
+    fail_msg "N.3 legacy next-major-release alias still honored under custom label" "$(grep '#801' "$TMP/outN3")"
+  fi
+fi
+rm -rf "$PROJ_ROOT_N3"
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""
