@@ -463,17 +463,29 @@ if tool_name in ("Write", "Edit"):
 # destinations, dd of=, truncate) trigger the block.  Skipped when the
 # command names an existing worktree destination (the legit sync carve-out).
 # (Bug 2 fix — issue #1136.)
+#
+# _protected_write_context is THE authoritative write-position detector: every
+# branch that returns True has already matched a protected control file in a
+# real write position (its cp/mv/install/ln branch isolates the `-t<dir>` /
+# `--target-directory=` destination and matches THAT token against
+# PROTECTED_CMD_PATTERNS directly). So we block on its result alone. The prior
+# code re-scanned the FULL command string against PROTECTED_CMD_PATTERNS as a
+# second gate — but that anchor `(?:^|[\s=>'"|&;(])` needs a delimiter before
+# `.claude/`, which the NO-SPACE glued `-t.claude/hooks/` form does NOT have
+# (the protected token is preceded by the `t` of `-t`), so the re-scan failed
+# and the glued disarm slipped through to exit 0 (#1138). The re-scan was
+# strictly redundant for every non-glued write position (each already carries a
+# delimiter-anchored protected token), so dropping it is byte-for-byte for those
+# paths and closes ONLY the glued-dest gap. (Bug 1138 re-tighten — issue #1138.)
 if tool_name == "Bash":
     command = tool_input.get("command", "")
     if not _command_has_worktree_dest(command) and _protected_write_context(command):
-        for pat in PROTECTED_CMD_PATTERNS:
-            if re.search(pat, command):
-                print(
-                    "BLOCKED: cannot modify protected file "
-                    "(Bash command targets a protected control file)",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
+        print(
+            "BLOCKED: cannot modify protected file "
+            "(Bash command targets a protected control file)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 # Check for path boundary violations
 for path in paths:
