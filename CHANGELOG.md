@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.23.19](https://github.com/rjskene/pipeline/compare/v0.23.18...v0.23.19) (2026-06-30)
+
+
+### Features
+
+* **verify:** add check-cross-cutting-guards.sh aggregator ([#1132](https://github.com/rjskene/pipeline/issues/1132)) ([bd8ca26](https://github.com/rjskene/pipeline/commit/bd8ca26332f60a45924071cce2dbf8f8d3e3e33a))
+* **verify:** cross-cutting-guards lint aggregator + pre-PR/eval wiring ([#1132](https://github.com/rjskene/pipeline/issues/1132)) ([4340cff](https://github.com/rjskene/pipeline/commit/4340cff4b79b7d6309b5cebc41fdce2d7c4299d3))
+* **verify:** run cross-cutting guards pre-PR in execute-issue-plan ([#1132](https://github.com/rjskene/pipeline/issues/1132)) ([4b8ecfb](https://github.com/rjskene/pipeline/commit/4b8ecfb8a9346e32755b13c4dd47dcb1778f4882))
+* **verify:** wire cross-cutting guards into pr-eval + fullsend dispatch ([#1132](https://github.com/rjskene/pipeline/issues/1132)) ([d530f6a](https://github.com/rjskene/pipeline/commit/d530f6af3594282aa37daa99f06f1a23e3792fb2))
+
+
+### Bug Fixes
+
+* **hooks:** admit in-repo .venv-host/Scripts paths in restrict_paths boundary check ([7086334](https://github.com/rjskene/pipeline/commit/70863342184231baf7510e0c620ecb3b9620e42d))
+* **hooks:** admit in-repo .venv-host/Scripts paths in restrict_paths boundary check [#1135](https://github.com/rjskene/pipeline/issues/1135) ([ebecfd0](https://github.com/rjskene/pipeline/commit/ebecfd08eaa3539a5354aee5dad91460b2b3d440))
+* **hooks:** block dest-via-flag + interpreter-inline writes in restrict_paths ([003f99d](https://github.com/rjskene/pipeline/commit/003f99d1380c9065200e452a7a940179f37e2752))
+* **hooks:** block dest-via-flag + interpreter-inline writes in restrict_paths ([ce86275](https://github.com/rjskene/pipeline/commit/ce8627566bdf2ebde15a2c78f14c4706fa8ed0cf)), closes [#1138](https://github.com/rjskene/pipeline/issues/1138)
+* **hooks:** block no-space glued -t&lt;protected&gt; dest in restrict_paths emit path [#1138](https://github.com/rjskene/pipeline/issues/1138) ([88f3e90](https://github.com/rjskene/pipeline/commit/88f3e905a67af911828faedf1da133da5ec31fdc))
+
 ## [0.23.18](https://github.com/rjskene/pipeline/compare/v0.23.17...v0.23.18) (2026-06-29)
 
 
