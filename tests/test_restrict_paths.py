@@ -46,6 +46,15 @@ over-blocks (exit 2) — that is the RED state these tests pin. The #1138 pins
 (dest-last `cp evil -t <dir>`, `mv evil -t <dir>`, and the `perl -e` redirect
 form) already block today and MUST keep blocking post-fix.
 
+Re-tighten (PR-evaluator gap): the NO-SPACE glued `-t<dir>` dest form (e.g.
+`cp -t<protected> evil`) ALSO slips (exit 0) — flag-dest derivation matches the
+glued target, but the final outer Bash block re-scans the FULL command with
+PROTECTED_CMD_PATTERNS, whose leading-delimiter class is unsatisfied when the
+protected token is glued to the `t` of `-t`, so the hook falls through. The
+spaced `-t <dir>` (space delimiter) and `--target-directory=<dir>` (`=`
+delimiter) forms already block and MUST keep blocking; the glued-form BLOCK
+cases below are RED against the current hook.
+
 Hermeticity note: the hook is driven against a freshly created temp project
 directory (NOT this worktree's own path). A worktree's own directory is
 "sibling-worktree shaped" relative to its parent, which would make the hook's
@@ -284,6 +293,42 @@ class TestRestrictPaths(unittest.TestCase):
         # protected file is the read SOURCE; the -t dest is non-protected → ALLOW
         # (currently RED — pre-fix keys the dest on the last positional = SET).
         self.assertAllowed("Bash", {"command": "cp -t backupdir/ " + SET})
+
+    # --- glued NO-SPACE dest-via-flag (`-t<protected>`) — #1138 re-tighten ----
+    # NEW BLOCK — the NO-SPACE concatenated `-t<protected-dir>` form is the real
+    # disarm vector the PR evaluator found. The hook's flag-dest derivation DOES
+    # set flag_dest=<protected> for this shape (the glued `-t<dir>` branch), so
+    # `_protected_write_context` returns True — but the FINAL outer Bash block
+    # then re-scans the FULL command with PROTECTED_CMD_PATTERNS, whose leading
+    # delimiter class `(?:^|[\s=>'"|&;(])` is NOT satisfied: in `cp -t.claude/…`
+    # the protected token is preceded by the `t` of `-t` (not a delimiter, not
+    # start-of-string), so no full-command pattern matches and the hook FALLS
+    # THROUGH to exit 0. The glued form therefore SLIPS today (exit 0) — RED.
+    # The spaced `-t <dir>` form has a space delimiter and already blocks (pinned
+    # above); the `--target-directory=<dir>` form has an `=` delimiter and also
+    # already blocks. Do NOT touch those — these ADD the glued-form blocks.
+    def test_bug1138_block_cp_glued_t_hooks_dir(self):
+        # `cp -t<hooks> evil.py` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "cp -t" + HK + " evil.py"})
+
+    def test_bug1138_block_install_glued_t_hooks_dir(self):
+        # `install -t<hooks> evil` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "install -t" + HK + " evil"})
+
+    def test_bug1138_block_ln_glued_t_hooks_dir(self):
+        # `ln -t<hooks> evil` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "ln -t" + HK + " evil"})
+
+    def test_bug1138_block_cp_glued_t_settings_file(self):
+        # `cp -t<settings.json> evil` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "cp -t" + SET + " evil"})
+
+    # NEW ALLOW (anchoring) — a benign glued `-t<dir>` whose target is NOT a
+    # protected dir stays ALLOWED, so the eventual fix can't degrade into a
+    # blanket "glued -t blocks everything". `.backupdir/` is not protected; the
+    # leading dot mirrors the protected shape to lock the anchoring precisely.
+    def test_bug1138_allow_cp_glued_t_nonprotected_dir(self):
+        self.assertAllowed("Bash", {"command": "cp -t.backupdir/ evil.json"})
 
     # ======================================================================
     # Bug 1138.2 — interpreter inline-script write (python -c / node -e / …)
