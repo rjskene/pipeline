@@ -300,27 +300,79 @@ def _protected_write_context(command: str) -> bool:
     if re.search(r"\btruncate\b", command) and _has_protected_token():
         return True
 
-    # 5. Copy/move DESTINATION — last positional of cp/mv/install/rsync/ln.
-    #    Must use relative-aware tokenization so that a relative protected
-    #    dest (`.claude/settings.json`) is caught, not just absolute ones.
+    # 5. Copy/move DESTINATION — cp/mv/install/rsync/ln.
+    #    Two destination shapes are recognized:
+    #    (a) dest-via-flag (Bug 1138.1) — `-t <dir>` / `-t<dir>` /
+    #        `--target-directory[=| ]<dir>` for the cp/mv/install/ln family
+    #        ONLY (NOT rsync, whose `-t` is `--times`, not a target directory).
+    #        The real write destination lives in a FLAG (or its argument), which
+    #        the last-positional scan would otherwise drop. When such a
+    #        `flag_dest` is present it IS the destination (all positionals become
+    #        sources), so ONLY `flag_dest` is checked — a protected file used as
+    #        a cp SOURCE alongside a safe `-t` dest therefore stays allowed.
+    #    (b) last positional (when no flag_dest) — byte-for-byte the #1136
+    #        check. Relative-aware tokenization so that a relative protected
+    #        dest (`.claude/settings.json`) is caught, not just absolute ones.
     if re.search(r"\b(?:cp|mv|install|rsync|ln)\b", command):
         _CMD_NAMES = {"cp", "mv", "install", "rsync", "ln", "sudo", "env", "command"}
         raw_toks = re.split(r"[\s;|&<>]+", command)
-        positionals = []
-        for tok in raw_toks:
-            tok = tok.strip("\"'")
-            if not tok:
-                continue
-            if re.match(r"^-", tok):      # flags: -r, -f, --flag, etc.
-                continue
-            if tok in _CMD_NAMES:
-                continue
-            positionals.append(tok)
-        if positionals:
-            dest = positionals[-1]
+        flag_dest = None
+        if re.search(r"\b(?:cp|mv|install|ln)\b", command):
+            stripped = [t.strip("\"'") for t in raw_toks]
+            for idx, tok in enumerate(stripped):
+                if not tok:
+                    continue
+                if tok in ("-t", "--target-directory"):
+                    nxt = next((s for s in stripped[idx + 1:] if s), None)
+                    if nxt is not None:
+                        flag_dest = nxt
+                    break
+                if tok.startswith("--target-directory="):
+                    flag_dest = tok.split("=", 1)[1]
+                    break
+                if tok.startswith("-t") and not tok.startswith("--") and len(tok) > 2:
+                    flag_dest = tok[2:]
+                    break
+        if flag_dest is not None:
             for pat in PROTECTED_CMD_PATTERNS:
-                if re.search(pat, dest):
+                if re.search(pat, flag_dest):
                     return True
+        else:
+            positionals = []
+            for tok in raw_toks:
+                tok = tok.strip("\"'")
+                if not tok:
+                    continue
+                if re.match(r"^-", tok):      # flags: -r, -f, --flag, etc.
+                    continue
+                if tok in _CMD_NAMES:
+                    continue
+                positionals.append(tok)
+            if positionals:
+                dest = positionals[-1]
+                for pat in PROTECTED_CMD_PATTERNS:
+                    if re.search(pat, dest):
+                        return True
+
+    # 6. Interpreter inline-script write (Bug 1138.2). An inline interpreter
+    #    body (`python -c`, `python3 -c`, `node -e`, `perl -e`/`-pe`/`-ne`,
+    #    `ruby -e`, `--eval`) can write a protected control file without ever
+    #    naming it as a shell-level positional, so every scan above is blind to
+    #    it. Key on the (interpreter-inline ∧ protected-token) signal: when an
+    #    interpreter word is followed (across leading flags only) by an
+    #    inline-eval flag AND a protected control-file token appears anywhere in
+    #    the command, BLOCK. The match is ANCHORED to the inline-eval flag so a
+    #    real script run that merely passes args (`python script.py -e foo`) has
+    #    a POSITIONAL, not a flag, after the interpreter and is therefore NOT
+    #    treated as an inline eval — it stays allowed. Residual porosity (a path
+    #    built dynamically inside the body, or hidden in an external script
+    #    file) is unchanged — the same #964 limit as the boundary check.
+    if re.search(
+        r"\b(?:python[0-9.]*|node|perl|ruby)\b(?:\s+-\S+)*?"
+        r"\s+(?:-[A-Za-z]*[ceE]\b|--eval\b)",
+        command,
+    ) and _has_protected_token():
+        return True
 
     return False
 
@@ -364,7 +416,20 @@ def extract_paths() -> list[str]:
         # $1, $?, $@ that can't be paths anyway. See #353.
         scrubbed = re.sub(r"\$\{[A-Z_][A-Z0-9_]*\}", "", command)
         scrubbed = re.sub(r"\$[A-Z_][A-Z0-9_]*", "", scrubbed)
-        for m in re.finditer(r'(?:"|\')?(/[^\s"\';<>|&]+)(?:"|\')?', scrubbed):
+        # Anchor the leading `/` at a real TOKEN BOUNDARY (start-of-string or a
+        # preceding whitespace / shell-delimiter / quote) so a `/`-substring in
+        # the MIDDLE of a token is NOT captured. Without this, an in-repo
+        # RELATIVE path like `.venv-host/Scripts/python.exe` yields the mid-word
+        # capture `/Scripts/python.exe`, which — on a host where that substring
+        # exists OUTSIDE the project — is wrongly flagged
+        # `BLOCKED: path outside project boundary`. `.venv-host/` is the
+        # documented gitignored host venv at the repo root (inside the project).
+        # A genuine out-of-repo absolute path begins at a delimiter (e.g.
+        # `cat /etc/passwd`, leading `//etc/passwd`) and so still matches and
+        # still blocks. (Issue #1135.)
+        for m in re.finditer(
+            r'(?:^|(?<=[\s"\'`;<>|&=(]))(/[^\s"\';<>|&]+)', scrubbed
+        ):
             candidate = m.group(1)
             # Skip the bare jq alternative-operator token ("//" with nothing
             # after, captured when surrounded by whitespace as in
@@ -411,17 +476,29 @@ if tool_name in ("Write", "Edit"):
 # destinations, dd of=, truncate) trigger the block.  Skipped when the
 # command names an existing worktree destination (the legit sync carve-out).
 # (Bug 2 fix — issue #1136.)
+#
+# _protected_write_context is THE authoritative write-position detector: every
+# branch that returns True has already matched a protected control file in a
+# real write position (its cp/mv/install/ln branch isolates the `-t<dir>` /
+# `--target-directory=` destination and matches THAT token against
+# PROTECTED_CMD_PATTERNS directly). So we block on its result alone. The prior
+# code re-scanned the FULL command string against PROTECTED_CMD_PATTERNS as a
+# second gate — but that anchor `(?:^|[\s=>'"|&;(])` needs a delimiter before
+# `.claude/`, which the NO-SPACE glued `-t.claude/hooks/` form does NOT have
+# (the protected token is preceded by the `t` of `-t`), so the re-scan failed
+# and the glued disarm slipped through to exit 0 (#1138). The re-scan was
+# strictly redundant for every non-glued write position (each already carries a
+# delimiter-anchored protected token), so dropping it is byte-for-byte for those
+# paths and closes ONLY the glued-dest gap. (Bug 1138 re-tighten — issue #1138.)
 if tool_name == "Bash":
     command = tool_input.get("command", "")
     if not _command_has_worktree_dest(command) and _protected_write_context(command):
-        for pat in PROTECTED_CMD_PATTERNS:
-            if re.search(pat, command):
-                print(
-                    "BLOCKED: cannot modify protected file "
-                    "(Bash command targets a protected control file)",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
+        print(
+            "BLOCKED: cannot modify protected file "
+            "(Bash command targets a protected control file)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 # Check for path boundary violations
 for path in paths:

@@ -28,6 +28,15 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # failing test, even with a high exit code, still reds the run). It already
 # wraps each test in `timeout 300 ... </dev/null`, so no extra hang-guard needed:
 #   PIPELINE_TEST_CMD='bash scripts/run-test-suite.sh'
+# Why this matters for the agent (issue #1132): the serial
+# `for t in tests/test*.sh; do ...; done` sweep over the full suite exceeds the
+# agent's Bash-tool timeout (hundreds of sequential test files), so the executor /
+# green / PR-eval stages fall back to verifying an affected-tests-only subset and
+# lean on CI as the full-suite gate. The parallel runner above fits the agent
+# Bash budget (~2.5 min) while keeping STRICT aggregate fail, so it is the
+# RECOMMENDED local full-suite form. The fast diff-independent floor
+# (scripts/check-cross-cutting-guards.sh, also #1132) always runs pre-PR
+# regardless of the suite form.
 # Optionally cap the runner's fan-out width (defaults to `nproc`):
 # PIPELINE_TEST_PARALLELISM=4
 # NOTE: the live, host-only pipeline.config is GITIGNORED and cannot ship in a PR
