@@ -103,11 +103,35 @@ class TestRestrictPaths(unittest.TestCase):
         cls._out_tmp = tempfile.mkdtemp(prefix="rp-outside-")
         cls.PROJECT = os.path.realpath(cls._proj_tmp)
         cls.OUTSIDE = os.path.realpath(cls._out_tmp)
+        # issue #1135: a real EXISTING out-of-project dir whose
+        # `<dir>/Scripts/python.exe` exists on disk. Used to make the mid-word
+        # `/`-capture bug deterministic: glued as a suffix to a prefix word, the
+        # substring the extractor captures from the first `/` resolves to this
+        # existing out-of-project path. The extractor must NOT capture it from
+        # mid-word (token-boundary anchor); a true leading-delimiter reference to
+        # it must still BLOCK. Created under /tmp is fine — these are NOT passed
+        # as the candidate directly (the /tmp skip only short-circuits tokens
+        # that BEGIN with /tmp; a mid-word glued capture begins with the realpath
+        # of this dir, which is under /tmp but the captured substring is the
+        # whole `<realpath>/Scripts/python.exe`, still /tmp-prefixed). To avoid
+        # the extractor's `/tmp` skip masking the assertion, anchor it OUTSIDE
+        # /tmp under the home dir.
+        cls._midword_tmp = tempfile.mkdtemp(
+            prefix=".rp-midword-", dir=os.path.expanduser("~")
+        )
+        cls.MIDWORD_EXISTS = os.path.realpath(cls._midword_tmp)
+        os.makedirs(os.path.join(cls.MIDWORD_EXISTS, "Scripts"), exist_ok=True)
+        with open(
+            os.path.join(cls.MIDWORD_EXISTS, "Scripts", "python.exe"), "w",
+            encoding="utf-8",
+        ) as fh:
+            fh.write("")
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls._proj_tmp, ignore_errors=True)
         shutil.rmtree(cls._out_tmp, ignore_errors=True)
+        shutil.rmtree(cls._midword_tmp, ignore_errors=True)
 
     # --- subprocess driver -------------------------------------------------
     def run_hook(self, tool_name, tool_input, *, cwd=None, project_dir=None):
@@ -372,6 +396,63 @@ class TestRestrictPaths(unittest.TestCase):
         # a real script invocation carrying an unrelated -e arg, NOT an inline
         # eval → ALLOW (locks the inline-regex anchoring).
         self.assertAllowed("Bash", {"command": "python script.py -e foo"})
+
+    # ======================================================================
+    # Issue #1135 — Bash extractor must not capture a `/`-substring from the
+    # MIDDLE of a relative in-repo path token.
+    # ======================================================================
+    # The Bash-branch path extractor regex `(/[^\s"';<>|&]+)` matches a `/`
+    # ANYWHERE in the command text, so for an in-repo RELATIVE token like
+    # `.venv-host/Scripts/python.exe` it captures the mid-word substring
+    # `/Scripts/python.exe`. That captured substring is then `os.path.exists`-
+    # checked and boundary-checked — on a host where a `/Scripts/...` (or any
+    # captured `/abs/...` substring) exists OUTSIDE the project, the hook emits
+    # `BLOCKED: path outside project boundary` for the in-repo `.venv-host`
+    # interpreter. `.venv-host/` is the documented gitignored host venv AT the
+    # repo root — inside the project. The fix anchors the extractor `/`-capture
+    # at a real token boundary (start-of-string, whitespace, or a shell
+    # delimiter/quote) so a relative token surfaces NO absolute candidate.
+    def test_issue1135_allow_bash_venv_host_scripts_python_exe(self):
+        # `.venv-host/Scripts/python.exe -m pytest` — the documented in-repo
+        # host-venv interpreter. The relative token must NOT yield a captured
+        # mid-word `/Scripts/...` candidate. ALLOWED.
+        self.assertAllowed("Bash", {"command": SCRIPTS_EXE + " -m pytest"})
+
+    def test_issue1135_allow_bash_ls_venv_host_scripts_dir(self):
+        # `ls .venv-host/Scripts/` — even a plain listing of the dir. ALLOWED.
+        self.assertAllowed("Bash", {"command": "ls " + SCRIPTS_DIR})
+
+    # The deterministic mid-word-capture pin: glue the relative `.venv-host`
+    # token to a prefix word such that the substring captured from the FIRST `/`
+    # points at a real EXISTING absolute path OUTSIDE the project. Against the
+    # CURRENT hook this captured substring is `os.path.exists`-true and
+    # out-of-boundary → BLOCK (exit 2), which is the RED state. Post-fix the
+    # token-boundary anchor refuses to capture mid-word, so no candidate is
+    # surfaced → ALLOWED. (The out-of-project existing dir is created in
+    # setUpClass as cls.MIDWORD_EXISTS so the assertion is hermetic.)
+    def test_issue1135_allow_midword_slash_not_captured_from_relative_token(self):
+        cmd = "venvprefix" + self.MIDWORD_EXISTS + "/Scripts/python.exe -m pytest"
+        self.assertAllowed("Bash", {"command": cmd})
+
+    # still-BLOCK — a genuine out-of-repo ABSOLUTE path (token-boundary leading
+    # `/`) and a `..`-escape stay blocked. These pass now AND post-fix; pinned
+    # so the fix cannot widen the genuine guard.
+    def test_issue1135_block_bash_absolute_out_of_repo(self):
+        # A real token-boundary absolute path to a known existing out-of-repo
+        # file → BLOCK.
+        self.assertBlocked("Bash", {"command": "cat /etc/passwd"})
+
+    def test_issue1135_block_bash_absolute_out_of_repo_scripts_python(self):
+        # The captured token starts at a true delimiter (leading space) and
+        # resolves OUTSIDE the project → BLOCK. Uses the real existing
+        # out-of-project dir created in setUpClass.
+        cmd = "cat " + self.MIDWORD_EXISTS + "/Scripts/python.exe"
+        self.assertBlocked("Bash", {"command": cmd})
+
+    def test_issue1135_block_bash_dotdot_escape_outside_repo(self):
+        # A `..`-escape that resolves OUTSIDE the repo via the Read tool stays
+        # blocked (the genuine guard is untouched).
+        self.assertBlocked("Read", {"file_path": "../../../../etc/passwd"})
 
 
 if __name__ == "__main__":

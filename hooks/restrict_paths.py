@@ -416,7 +416,20 @@ def extract_paths() -> list[str]:
         # $1, $?, $@ that can't be paths anyway. See #353.
         scrubbed = re.sub(r"\$\{[A-Z_][A-Z0-9_]*\}", "", command)
         scrubbed = re.sub(r"\$[A-Z_][A-Z0-9_]*", "", scrubbed)
-        for m in re.finditer(r'(?:"|\')?(/[^\s"\';<>|&]+)(?:"|\')?', scrubbed):
+        # Anchor the leading `/` at a real TOKEN BOUNDARY (start-of-string or a
+        # preceding whitespace / shell-delimiter / quote) so a `/`-substring in
+        # the MIDDLE of a token is NOT captured. Without this, an in-repo
+        # RELATIVE path like `.venv-host/Scripts/python.exe` yields the mid-word
+        # capture `/Scripts/python.exe`, which — on a host where that substring
+        # exists OUTSIDE the project — is wrongly flagged
+        # `BLOCKED: path outside project boundary`. `.venv-host/` is the
+        # documented gitignored host venv at the repo root (inside the project).
+        # A genuine out-of-repo absolute path begins at a delimiter (e.g.
+        # `cat /etc/passwd`, leading `//etc/passwd`) and so still matches and
+        # still blocks. (Issue #1135.)
+        for m in re.finditer(
+            r'(?:^|(?<=[\s"\'`;<>|&=(]))(/[^\s"\';<>|&]+)', scrubbed
+        ):
             candidate = m.group(1)
             # Skip the bare jq alternative-operator token ("//" with nothing
             # after, captured when surrounded by whitespace as in
