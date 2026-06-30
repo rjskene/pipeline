@@ -86,6 +86,17 @@ PIPELINE_FRONTEND_PORT_OFFSET
 PIPELINE_TEST_ORPHAN
 PIPELINE_TEST_UNDOC
 PIPELINE_TEST_PREFIX_
+# #1132 synthetic fixture token from tests/test-check-cross-cutting-guards.sh.
+# The token appears as a heredoc literal in the locked test file (tests/ dir) —
+# the test injects it into a scripts/ fixture to exercise the aggregator's
+# strict-fail path. The standard full-tree check-config-drift scan picks it up
+# from the test file itself; this entry silences that legitimate-literal
+# false-positive so standalone `bash scripts/check-config-drift.sh` and
+# tests/test-config-drift-clean.sh Assertion 1 stay green on the clean tree.
+# (The aggregator scripts/check-cross-cutting-guards.sh detects the scripts/
+# fixture via a dedicated source-tree tripwire that assembles the token at
+# runtime, so it does not depend on this allowlist entry being absent.)
+PIPELINE_TEST_CROSS_CUTTING_UNDOC_1132
 
 # Genuinely undocumented but in-use. Companion cleanup issue documents these
 # in pipeline.config.example and peels them from this allowlist as each lands.

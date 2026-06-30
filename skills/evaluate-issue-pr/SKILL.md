@@ -115,6 +115,13 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    **Trust boundary (assumption).** The short-circuit trusts that the green CI suite is the SAME suite as `$PIPELINE_TEST_CMD`. This holds for the dogfood repo (CI runs the identical `tests/test*.sh` sweep). Consumers with divergent CI should understand this trust boundary.
 
+   **Cross-cutting guards — unconditional (#1132).** Run the fast, diff-independent aggregator regardless of the green-CI short-circuit above. The #957 short-circuit skips the full `$PIPELINE_TEST_CMD` re-run (heavy, duplicative when CI is green), but it does NOT run any local cross-cutting re-check. The aggregator is seconds-fast and catches diff-independent repo invariants (config drift, namespace discipline, golden-seed, README-anchor) that the CI suite may not cover locally:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh" \
+     || { echo "WARN: cross-cutting guard failure detected in PR-eval Phase 2 — see above." >&2; }
+   ```
+
    Look for: leftover debug code / console.logs / TODOs; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type-safety issues `tsc` missed; test coverage for every implemented feature.
 
 <!-- BEGIN CI_CHECK -->
