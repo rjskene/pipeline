@@ -132,6 +132,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    ```
    Assert exit 0. If it exits 1 with an `UNDOCUMENTED` finding, add the new variable to `pipeline.config.example` (with a comment describing its purpose) **or** add it to `tests/config-drift-allowlist.txt` with a justification comment if it is intentionally undocumented. If it exits 1 with an `ORPHAN` finding, remove the dead knob from `pipeline.config.example` or add it to the allowlist. Fix the finding and re-run until exit 0. This catches config drift in-leaf so CI is not the first to surface it.
 
+   **Always-run cross-cutting guards note (#1132).** Even when only an affected-tests subset was verified in 6b (because the full suite exceeded the Bash timeout), the cross-cutting guards subset — `scripts/check-cross-cutting-guards.sh` — ALWAYS runs pre-PR (Step 9, below). It catches diff-independent repo invariants (config drift, namespace discipline, golden-seed, README-anchor) in seconds regardless of whether the diff touches those surfaces. Do NOT skip it under an "only touched tests" exemption: the #1128 miss was exactly this class.
+
 7. **Self-review checkpoint before opening PR.** Re-read the plan from step 1 and verify every item was implemented; run `git diff --stat` to check no unintended files were modified; grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`); verify no scope creep. Fix any issues found before proceeding.
 
 8. **Pre-PR code review loop.**
@@ -216,6 +218,14 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    # Pre-PR config-drift guard (#1102): fail if any PIPELINE_* var is undocumented.
    bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-config-drift.sh" \
      || { echo "ABORT: undocumented PIPELINE_* drift detected (see above); add the allowlist entry or document in pipeline.config.example before opening the PR." >&2; exit 1; }
+   ```
+
+   **Pre-PR cross-cutting guards (#1132).** After the config-drift guard and before `gh pr create`, run the fast, diff-independent aggregator — catches config-drift, namespace-discipline, golden-seed, and README-anchor invariants in seconds, always, even when only an affected-tests subset was verified in Step 6b (the #1128 miss class). The aggregator already includes the cruft and config-drift guards above; running it here as the single call site avoids double-invocation:
+
+   ```bash
+   # Pre-PR cross-cutting guards (#1132): fast always-run floor for diff-independent invariants.
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh" \
+     || { echo "ABORT: cross-cutting guard failure — see above; fix before opening the PR." >&2; exit 1; }
    ```
 
    **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
