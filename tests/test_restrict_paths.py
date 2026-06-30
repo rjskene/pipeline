@@ -22,6 +22,39 @@ still-BLOCK cases (out-of-boundary reads, `..`-escape, `//`-collapse, inline
 disarm, and the copy/move/dd/truncate DESTINATION cases) pass now and MUST keep
 passing post-fix.
 
+Issue #1138 extends this RED suite with two further evasions that #1136's
+write-position scan (keyed on the last non-flag positional) incidentally
+re-opened — this is a RE-TIGHTENING (it only ADDS blocks; no PROTECTED pattern
+is widened):
+
+  Bug 1138.1 — dest-via-flag: a protected dir handed to the copy/move family via
+               `-t <dir>` / `-t<dir>` / `--target-directory[=| ]<dir>` is the
+               real write destination but lives in a FLAG (or its argument), so
+               the last-positional check never sees it. Fix derives an explicit
+               flag-dest for cp/mv/install/ln (NOT rsync — its `-t` is
+               `--times`); when set it IS the dest and positionals are sources
+               (so a protected cp-SOURCE with a safe `-t` dest stays ALLOWED).
+  Bug 1138.2 — interpreter inline-script write: `python -c` / `node -e` /
+               `perl -e` / `ruby -e` can write a protected file without naming it
+               as a shell positional. Fix blocks an interpreter-inline
+               invocation that NAMES a protected token, while a normal script run
+               carrying an unrelated `-e`-looking arg stays ALLOWED.
+
+Against the CURRENT hook the #1138 real-miss BLOCK cases SLIP (exit 0 where a
+block/exit-2 is expected) and the cp-protected-SOURCE-with-`-t`-dest ALLOW guard
+over-blocks (exit 2) — that is the RED state these tests pin. The #1138 pins
+(dest-last `cp evil -t <dir>`, `mv evil -t <dir>`, and the `perl -e` redirect
+form) already block today and MUST keep blocking post-fix.
+
+Re-tighten (PR-evaluator gap): the NO-SPACE glued `-t<dir>` dest form (e.g.
+`cp -t<protected> evil`) ALSO slips (exit 0) — flag-dest derivation matches the
+glued target, but the final outer Bash block re-scans the FULL command with
+PROTECTED_CMD_PATTERNS, whose leading-delimiter class is unsatisfied when the
+protected token is glued to the `t` of `-t`, so the hook falls through. The
+spaced `-t <dir>` (space delimiter) and `--target-directory=<dir>` (`=`
+delimiter) forms already block and MUST keep blocking; the glued-form BLOCK
+cases below are RED against the current hook.
+
 Hermeticity note: the hook is driven against a freshly created temp project
 directory (NOT this worktree's own path). A worktree's own directory is
 "sibling-worktree shaped" relative to its parent, which would make the hook's
@@ -216,6 +249,129 @@ class TestRestrictPaths(unittest.TestCase):
 
     def test_bug2_block_truncate_protected(self):
         self.assertBlocked("Bash", {"command": "truncate -s0 " + SET})
+
+    # ======================================================================
+    # Bug 1138.1 — dest-via-flag bypass (cp/mv/install/ln -t/--target-directory)
+    # ======================================================================
+    # NEW BLOCK — the protected dir is the real write DESTINATION but lives in a
+    # `-t`/`--target-directory` flag, so #1136's last-non-flag-positional scan
+    # never sees it. The first/eq/install cases SLIP (exit 0) against the CURRENT
+    # hook — that is the RED miss this re-tightening closes. rsync is deliberately
+    # NOT in this family (its `-t` is `--times`, not a target dir).
+    def test_bug1138_block_cp_dest_via_t_flag_first(self):
+        # dest in the -t flag, SOURCE last → currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "cp -t " + HK + " evil.py"})
+
+    def test_bug1138_block_install_dest_via_t_flag(self):
+        # currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "install -t " + HK + " evil"})
+
+    def test_bug1138_block_cp_target_directory_eq(self):
+        # --target-directory=<dir>: the whole flag token is dropped → ALLOWED.
+        self.assertBlocked("Bash", {"command": "cp --target-directory=" + HK + " evil"})
+
+    def test_bug1138_block_cp_dest_via_t_flag_last(self):
+        # dest-last ordering blocks today by coincidence (flag-arg lands last) —
+        # pin it so the explicit flag-dest derivation keeps it blocked.
+        self.assertBlocked("Bash", {"command": "cp evil -t " + HK})
+
+    def test_bug1138_block_mv_dest_via_t_flag(self):
+        # pin (dest-last coincidence today).
+        self.assertBlocked("Bash", {"command": "mv evil -t " + HK})
+
+    # NEW ALLOW — the flag-dest fix must not over-block a non-protected `-t`
+    # target, and a protected file used as the cp SOURCE (with a safe `-t` dest)
+    # stays ALLOWED. The protected-SOURCE guard is currently RED: pre-fix branch 5
+    # keys the dest on the last positional (= the protected SOURCE) → over-blocks.
+    def test_bug1138_allow_cp_t_nonprotected_dir(self):
+        self.assertAllowed("Bash", {"command": "cp -t backupdir/ evil.json"})
+
+    def test_bug1138_allow_cp_target_directory_nonprotected(self):
+        self.assertAllowed("Bash", {"command": "cp --target-directory=backupdir/ evil.json"})
+
+    def test_bug1138_allow_cp_protected_source_t_dest(self):
+        # protected file is the read SOURCE; the -t dest is non-protected → ALLOW
+        # (currently RED — pre-fix keys the dest on the last positional = SET).
+        self.assertAllowed("Bash", {"command": "cp -t backupdir/ " + SET})
+
+    # --- glued NO-SPACE dest-via-flag (`-t<protected>`) — #1138 re-tighten ----
+    # NEW BLOCK — the NO-SPACE concatenated `-t<protected-dir>` form is the real
+    # disarm vector the PR evaluator found. The hook's flag-dest derivation DOES
+    # set flag_dest=<protected> for this shape (the glued `-t<dir>` branch), so
+    # `_protected_write_context` returns True — but the FINAL outer Bash block
+    # then re-scans the FULL command with PROTECTED_CMD_PATTERNS, whose leading
+    # delimiter class `(?:^|[\s=>'"|&;(])` is NOT satisfied: in `cp -t.claude/…`
+    # the protected token is preceded by the `t` of `-t` (not a delimiter, not
+    # start-of-string), so no full-command pattern matches and the hook FALLS
+    # THROUGH to exit 0. The glued form therefore SLIPS today (exit 0) — RED.
+    # The spaced `-t <dir>` form has a space delimiter and already blocks (pinned
+    # above); the `--target-directory=<dir>` form has an `=` delimiter and also
+    # already blocks. Do NOT touch those — these ADD the glued-form blocks.
+    def test_bug1138_block_cp_glued_t_hooks_dir(self):
+        # `cp -t<hooks> evil.py` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "cp -t" + HK + " evil.py"})
+
+    def test_bug1138_block_install_glued_t_hooks_dir(self):
+        # `install -t<hooks> evil` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "install -t" + HK + " evil"})
+
+    def test_bug1138_block_ln_glued_t_hooks_dir(self):
+        # `ln -t<hooks> evil` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "ln -t" + HK + " evil"})
+
+    def test_bug1138_block_cp_glued_t_settings_file(self):
+        # `cp -t<settings.json> evil` — currently ALLOWED (the real miss).
+        self.assertBlocked("Bash", {"command": "cp -t" + SET + " evil"})
+
+    # NEW ALLOW (anchoring) — a benign glued `-t<dir>` whose target is NOT a
+    # protected dir stays ALLOWED, so the eventual fix can't degrade into a
+    # blanket "glued -t blocks everything". `.backupdir/` is not protected; the
+    # leading dot mirrors the protected shape to lock the anchoring precisely.
+    def test_bug1138_allow_cp_glued_t_nonprotected_dir(self):
+        self.assertAllowed("Bash", {"command": "cp -t.backupdir/ evil.json"})
+
+    # ======================================================================
+    # Bug 1138.2 — interpreter inline-script write (python -c / node -e / …)
+    # ======================================================================
+    # NEW BLOCK — an interpreter inline script (-c/-e/--eval) can write a
+    # protected control file without ever naming it as a shell positional, so the
+    # command-string scan is blind to it. The python/node cases SLIP (exit 0)
+    # against the CURRENT hook — the real miss. Post-fix the
+    # (interpreter-inline ∧ protected-token) signal BLOCKS.
+    def test_bug1138_block_python_c_write_protected(self):
+        # currently ALLOWED (the real miss).
+        cmd = "python -c " + 'open("' + SET + '","w").write("x")'
+        self.assertBlocked("Bash", {"command": cmd})
+
+    def test_bug1138_block_node_e_write_protected(self):
+        # currently ALLOWED (the real miss).
+        cmd = "node -e " + 'fs.writeFileSync("' + SET + '","x")'
+        self.assertBlocked("Bash", {"command": cmd})
+
+    def test_bug1138_block_perl_e_write_protected(self):
+        # blocks today via the redirect-`>` branch; pin so branch-6's
+        # interpreter-inline signal keeps it blocked.
+        cmd = "perl -e " + 'open(F,">' + SET + '")'
+        self.assertBlocked("Bash", {"command": cmd})
+
+    def test_bug1138_block_python3_c_hooks_dir(self):
+        # covers `python3` + the hooks dir; currently ALLOWED (the real miss).
+        cmd = "python3 -c " + 'open("' + HK + 'x","w")'
+        self.assertBlocked("Bash", {"command": cmd})
+
+    # NEW ALLOW — branch 6 fires ONLY on a NAMED protected token, and the
+    # inline-flag match is anchored to the interpreter word so a normal script
+    # run carrying an unrelated `-e` arg is NOT treated as an inline eval.
+    def test_bug1138_allow_python_c_no_protected_token(self):
+        self.assertAllowed("Bash", {"command": "python -c " + "print(1)"})
+
+    def test_bug1138_allow_python_c_nonprotected_path(self):
+        self.assertAllowed("Bash", {"command": "python -c " + 'open("notes.txt","w")'})
+
+    def test_bug1138_allow_python_script_with_e_arg(self):
+        # a real script invocation carrying an unrelated -e arg, NOT an inline
+        # eval → ALLOW (locks the inline-regex anchoring).
+        self.assertAllowed("Bash", {"command": "python script.py -e foo"})
 
 
 if __name__ == "__main__":
