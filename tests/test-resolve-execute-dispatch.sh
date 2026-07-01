@@ -109,8 +109,17 @@ make_config_root() {
 # stdout (multi-line token block).
 run_resolver() {
   local fixture="$1" cfgroot="$2" pathletter="$3"
+  # Hermeticity (#1144): a dogfood host exports PIPELINE_REPO+PIPELINE_BASE_BRANCH
+  # (run-test-suite.sh sources the live config), which trips _resolve-config.sh's
+  # early-return so the temp make_config_root config is never sourced. Scrub every
+  # PATH-*-knob the resolver reads so each case's cfgroot (or its intentional
+  # absence => shipped default) is authoritative, not the ambient live value.
   PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
     PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$cfgroot" \
+    env -u PIPELINE_PATH_B_MODEL_EXECUTE \
+        -u PIPELINE_PATH_D_MODEL_EXECUTE \
+        -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
+        -u PIPELINE_PATH_B_SPLIT_ROLE \
     bash "$HELPER" 999 "$pathletter" 2>/dev/null
 }
 
@@ -216,6 +225,10 @@ for bad in A C pr-eval; do
   FIXX=$(make_fixture "x" "$BODY_LOW" '[]')
   ERR=$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIXX" \
         PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$CFGX" \
+        env -u PIPELINE_PATH_B_MODEL_EXECUTE \
+            -u PIPELINE_PATH_D_MODEL_EXECUTE \
+            -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
+            -u PIPELINE_PATH_B_SPLIT_ROLE \
         bash "$HELPER" 999 "$bad" 2>&1 >/dev/null)
   rc=$?
   if [ "$rc" -eq 2 ] && printf '%s' "$ERR" | grep -qiE 'usage|B\|D|B or D'; then
@@ -231,6 +244,10 @@ CFGE=$(make_config_root)
 FIXE=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIXE" \
   PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$CFGE" \
+  env -u PIPELINE_PATH_B_MODEL_EXECUTE \
+      -u PIPELINE_PATH_D_MODEL_EXECUTE \
+      -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
+      -u PIPELINE_PATH_B_SPLIT_ROLE \
   bash "$HELPER" 999 B >/dev/null 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then
