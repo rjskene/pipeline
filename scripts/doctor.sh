@@ -50,7 +50,7 @@ LABEL_TABLE=(
   "LATER|later|D4C5F9|Deferred"
   "HUMAN|human|F9D0C4|Needs human in the loop"
   "BRAINSTORM|brainstorm|FEF2C0|Non-actionable discussion/exploration"
-  "NEXT|next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH) before the base branch"
+  "NEXT|next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH)"
 )
 
 # Resolve the effective label name for a row, honoring PIPELINE_LABELS_<KEY> overrides

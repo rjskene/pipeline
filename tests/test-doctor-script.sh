@@ -82,7 +82,7 @@ ALL_LABELS_JSON='[
   {"name":"needs-debug","color":"D93F0B","description":"Gates root-cause diagnosis via systematic-debugging before planning"},
   {"name":"tracker","color":"0E8A16","description":"Coordination issue rolling up child issues under a Rollout sequence checklist"},
   {"name":"manual-merge","color":"F9D0C4","description":"Suppress auto-merge for this issue; merge by hand"},
-  {"name":"next","color":"FBCA04","description":"Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH) before the base branch"}
+  {"name":"next","color":"FBCA04","description":"Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH)"}
 ]'
 
 # Build a fresh fixture project dir. Initializes git and creates a local
