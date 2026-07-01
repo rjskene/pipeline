@@ -94,7 +94,7 @@ expected=(
   "needs-debug|D93F0B|Gates root-cause diagnosis via systematic-debugging before planning"
   "tracker|0E8A16|Coordination issue rolling up child issues under a Rollout sequence checklist"
   "manual-merge|F9D0C4|Suppress auto-merge for this issue; merge by hand"
-  "next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH) before the base branch"
+  "next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH)"
 )
 for row in "${expected[@]}"; do
   if grep -Fxq "$row" "$FX/shim.log"; then
