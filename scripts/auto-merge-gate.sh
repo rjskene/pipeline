@@ -15,6 +15,10 @@
 #       - block-base-mismatch fires when the PR's baseRefName !=
 #         $PIPELINE_BASE_BRANCH — eval-time defense-in-depth for the
 #         enforce-base-branch hook (see #295, dev/audits/295-root-cause.md).
+#         Next-branch aware (#1148): baseRefName == $PIPELINE_NEXT_BRANCH
+#         (default `next`) is ALSO accepted when the PR's issue carries
+#         ${PIPELINE_NEXT_LABEL:-next} or the legacy alias
+#         `next-major-release`; otherwise a `next` base still blocks.
 #   parse_manual_merge_argv <args>...
 #       - sets MANUAL_MERGE=1 when --manual-merge appears in argv at any
 #         position; prints the remaining args (one per line) to stdout.
@@ -92,9 +96,33 @@ auto_merge_should_fire() {
   local base
   base=$(gh pr view "$pr" --repo "$PIPELINE_REPO" --json baseRefName \
     --jq .baseRefName 2>/dev/null)
-  if [ -z "$base" ] || [ "$base" != "$PIPELINE_BASE_BRANCH" ]; then
+  if [ -z "$base" ]; then
     echo block-base-mismatch
     return 1
+  fi
+  if [ "$base" != "$PIPELINE_BASE_BRANCH" ]; then
+    # Next-branch aware acceptance (#1148): a PR targeting
+    # $PIPELINE_NEXT_BRANCH (default `next`) is a valid base ONLY when the
+    # PR's issue is next-routed — carries ${PIPELINE_NEXT_LABEL:-next} or
+    # the legacy alias `next-major-release` (see #1128 execute-side
+    # routing). This mirrors setup-worktree.sh's next-branch actuation so
+    # the autonomous greenlight gate does not block every next-routed PR.
+    # A PR targeting `next` for a NON-next issue still block-base-mismatch.
+    local next_branch="${PIPELINE_NEXT_BRANCH:-next}"
+    if [ "$base" = "$next_branch" ]; then
+      local next_label="${PIPELINE_NEXT_LABEL:-next}"
+      local issue_labels
+      issue_labels=$(gh issue view "$issue" --repo "$PIPELINE_REPO" --json labels \
+        --jq '[.labels[].name]' 2>/dev/null)
+      if ! printf '%s' "$issue_labels" | jq -e --arg l "$next_label" \
+           'index($l) != null or index("next-major-release") != null' >/dev/null 2>&1; then
+        echo block-base-mismatch
+        return 1
+      fi
+    else
+      echo block-base-mismatch
+      return 1
+    fi
   fi
 
   local rollup mergeable mergestate
