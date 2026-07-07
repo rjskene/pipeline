@@ -10,6 +10,11 @@
 #     hookSpecificOutput.additionalContext (model-facing directive to run the
 #     /pipeline:doctor reconcile) AND systemMessage (operator banner), then
 #     update the marker so it fires once per update;
+#   - on a DOWNGRADE / cache flip-flop (resolved version OLDER than the cached
+#     marker — e.g. two coexisting installs where the loader resolved the older
+#     one), emit NO injection and NEVER a reversed `--fix config`; still refresh
+#     the marker to the current version so the detector cannot spam (sort -V
+#     monotonicity gate, #1152);
 #   - honor PIPELINE_DOCTOR_ON_UPDATE_ENABLED (default true); false -> no-op;
 #   - FAIL OPEN: exit 0 on EVERY error (corrupt plugin.json, missing marker
 #     dir, unset CLAUDE_PLUGIN_ROOT) and NEVER block a prompt/session.
@@ -225,6 +230,83 @@ if command -v jq >/dev/null 2>&1; then
   fi
 else
   echo "  SKIP: jq not available — registration assertions skipped"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 8 (#1152): DOWNGRADE / cache flip-flop — the resolved plugin version is
+# OLDER than the cached marker (two coexisting installs; the loader resolved the
+# older one while a prior session wrote the marker as the newer). This must NOT
+# be dressed up as an update:
+#   - NO injection at all (silent no-op),
+#   - NEVER a reversed `--fix config 0.0.3 0.0.2` (newer,older) or a backwards
+#     `v0.0.3 -> v0.0.2` header, and
+#   - the marker MUST be refreshed to the current (older) version so the
+#     detector cannot re-fire on every prompt.
+# ---------------------------------------------------------------------------
+write_plugin_version "0.0.2"
+printf '0.0.3' > "$MARKER"          # marker holds the NEWER version
+OUT8="$(run_hook '{"hook_event_name":"UserPromptSubmit","prompt":"downgrade"}')"
+RC8=$?
+[ "$RC8" -eq 0 ] && pass_msg "downgrade: exit 0" || fail_msg "downgrade: expected exit 0, got $RC8"
+
+# (b) No injection whatsoever on a backwards version change.
+if printf '%s' "$OUT8" | grep -q 'additionalContext\|hookSpecificOutput\|systemMessage'; then
+  fail_msg "downgrade: injection emitted on a backwards version change (must be a silent no-op)"
+else
+  pass_msg "downgrade: no injection emitted on a backwards version change"
+fi
+# (c) Never a reversed `--fix config` (newer,older) or a backwards header.
+if printf '%s' "$OUT8" | grep -q -- '--fix config 0.0.3 0.0.2'; then
+  fail_msg "downgrade: reversed '--fix config 0.0.3 0.0.2' (newer,older) emitted"
+else
+  pass_msg "downgrade: no reversed '--fix config 0.0.3 0.0.2'"
+fi
+if printf '%s' "$OUT8" | grep -q 'v0.0.3 -> v0.0.2'; then
+  fail_msg "downgrade: backwards 'v0.0.3 -> v0.0.2' header emitted"
+else
+  pass_msg "downgrade: no backwards 'v0.0.3 -> v0.0.2' header"
+fi
+# (d) Marker refreshed to the current (older) version so it cannot re-fire.
+if [ "$(cat "$MARKER")" = "0.0.2" ]; then
+  pass_msg "downgrade: marker refreshed to 0.0.2 (re-fire loop broken)"
+else
+  fail_msg "downgrade: marker not refreshed to current (got '$(cat "$MARKER")')"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 9 (#1152): flip-flop back UP — after the downgrade no-op (marker now
+# 0.0.2), the loader resolves the NEWER install again. This IS a genuine
+# upgrade: the injection SHOULD fire, and both the `--fix config` args and the
+# header MUST be (older, newer) — 0.0.2 then 0.0.3 — and NEVER reversed. The
+# marker advances to 0.0.3. Proves the guard leaves normal upgrades intact and
+# pins the (older,newer) arg-ordering invariant.
+# ---------------------------------------------------------------------------
+# (marker is 0.0.2 from Case 8)
+write_plugin_version "0.0.3"
+OUT9="$(run_hook '{"hook_event_name":"UserPromptSubmit","prompt":"flip-up"}')"
+RC9=$?
+[ "$RC9" -eq 0 ] && pass_msg "flip-flop-up: exit 0" || fail_msg "flip-flop-up: expected exit 0, got $RC9"
+
+if printf '%s' "$OUT9" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("hookSpecificOutput",{}).get("additionalContext") else 1)' 2>/dev/null; then
+  pass_msg "flip-flop-up: injection re-emitted on genuine upgrade"
+else
+  fail_msg "flip-flop-up: no injection on genuine upgrade back to newer"
+fi
+# (older, newer): 0.0.2 FIRST, 0.0.3 SECOND — never reversed.
+if printf '%s' "$OUT9" | python3 -c 'import json,sys; d=json.load(sys.stdin); ac=d.get("hookSpecificOutput",{}).get("additionalContext",""); sys.exit(0 if "--fix config 0.0.2 0.0.3" in ac else 1)' 2>/dev/null; then
+  pass_msg "flip-flop-up: --fix config args are (older,newer) 0.0.2 0.0.3"
+else
+  fail_msg "flip-flop-up: --fix config args not (older,newer) 0.0.2 0.0.3"
+fi
+if printf '%s' "$OUT9" | python3 -c 'import json,sys; d=json.load(sys.stdin); ac=d.get("hookSpecificOutput",{}).get("additionalContext",""); sys.exit(0 if ("v0.0.2 -> v0.0.3" in ac and "v0.0.3 -> v0.0.2" not in ac) else 1)' 2>/dev/null; then
+  pass_msg "flip-flop-up: header names v0.0.2 -> v0.0.3 (never reversed)"
+else
+  fail_msg "flip-flop-up: header not (older,newer) v0.0.2 -> v0.0.3"
+fi
+if [ "$(cat "$MARKER")" = "0.0.3" ]; then
+  pass_msg "flip-flop-up: marker advanced to 0.0.3"
+else
+  fail_msg "flip-flop-up: marker not advanced (got '$(cat "$MARKER")')"
 fi
 
 echo ""
