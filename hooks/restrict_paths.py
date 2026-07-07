@@ -3,6 +3,7 @@ PreToolUse hook — restricts file operations to the project directory and ~/.cl
 Exits 2 (blocked) if a tool targets a path outside those boundaries.
 """
 import os
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -17,6 +18,75 @@ tool_input = data.get("tool_input", {})
 
 PROJECT_DIR = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 CLAUDE_HOME = os.path.realpath(os.path.expanduser("~/.claude"))
+
+# Raw (pre-realpath) project/home roots — used ONLY to build the Windows/MSYS
+# canonical comparison keys below. os.path.realpath() mangles a Windows-shaped
+# root on POSIX (e.g. realpath("C:\\Users\\u\\repo") -> "<cwd>/C:\Users\u\repo";
+# realpath("/c/...") does not map to a drive letter at all), so the Windows
+# canonical key MUST be derived from the raw env value, never the realpath'd
+# one. (Issue #1153.)
+_RAW_PROJECT_DIR = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+_RAW_CLAUDE_HOME = os.path.expanduser("~/.claude")
+
+
+def _looks_windows(p: str) -> bool:
+    """True if `p` is shaped like a Windows or MSYS path.
+
+    Matches a leading drive letter (``C:\\...`` / ``C:/...``), an MSYS drive
+    prefix (``/c/...``), or any backslash appearing anywhere in the string.
+    The MSYS ``^/[A-Za-z]/`` shape deliberately requires a full ``/x/``
+    two-segment prefix, so it does NOT match bare branch-name-shaped
+    fragments like ``/rerate-after-edits`` or ``/Reject`` (#353). (Issue
+    #1153.)
+    """
+    if not p:
+        return False
+    if re.match(r"^[A-Za-z]:[\\/]", p):
+        return True
+    if re.match(r"^/[A-Za-z]/", p):
+        return True
+    if "\\" in p:
+        return True
+    return False
+
+
+def _canon(p: str) -> str:
+    """Canonicalize a Windows/MSYS-shaped path string for boundary comparison.
+
+    A pure string transform — never touches the filesystem (os.path.realpath
+    mangles Windows-shaped input on POSIX, see `_looks_windows` docstring):
+    backslashes become forward slashes, an MSYS drive prefix ``/x/...``
+    becomes ``x:/...``, `posixpath.normpath` collapses ``..``/``.`` segments
+    (preserving the ``..``-escape tripwire), then the result is casefolded
+    (NTFS is case-insensitive). Safe to call on POSIX-shaped input too — used
+    below to build the project/home canonical root keys. (Issue #1153.)
+    """
+    q = p.replace("\\", "/")
+    m = re.match(r"^/([A-Za-z])/(.*)$", q)
+    if m:
+        q = f"{m.group(1)}:/{m.group(2)}"
+    q = posixpath.normpath(q)
+    return q.casefold()
+
+
+# Canonical comparison keys for the project root and ~/.claude, built from the
+# RAW (pre-realpath) values so a Windows-shaped CLAUDE_PROJECT_DIR canonicalizes
+# to a real drive-letter key instead of a realpath-mangled one. (Issue #1153.)
+_ALLOWED_CANON_KEYS = [_canon(_RAW_PROJECT_DIR), _canon(_RAW_CLAUDE_HOME)]
+
+
+def _is_session_scratchpad(canon_key: str) -> bool:
+    """True if a Windows-canonicalized path key falls under the Claude session
+    scratchpad root.
+
+    The harness-advertised session scratchpad lives at
+    ``.../Temp/claude/<project-slug>/<session-id>/scratchpad/...`` (per the
+    Claude Code system prompt). Scoped narrowly to the ``Temp/claude/``
+    subtree — NOT all of Temp — a deliberate, bounded widen of the boundary to
+    Claude's own session temp root, not a general Temp allowlist. (Issue
+    #1153, fingerprint 1.)
+    """
+    return "/temp/claude/" in canon_key
 
 
 def _resolve(path: str) -> str:
@@ -380,6 +450,23 @@ def _protected_write_context(command: str) -> bool:
 def is_allowed(path: str) -> bool:
     if not path:
         return True
+    # Windows/MSYS-shaped paths bypass the POSIX realpath/relative-join branch
+    # entirely: os.path.isabs("C:\\...") is False on POSIX, so `_resolve` would
+    # otherwise join it AS RELATIVE under PROJECT_DIR — landing in-tree
+    # regardless of whether the real Windows path is in- or out-of-tree (a
+    # latent over-allow). Instead compare a canonical string key: exact match
+    # or a proper sub-path of the project/home root, or the Claude session
+    # scratchpad. Pure-POSIX paths never take this branch, so Linux behavior
+    # (symlink/`..`-escape/`//`-collapse/worktree handling below) is
+    # byte-for-byte unchanged. (Issue #1153.)
+    if _looks_windows(path):
+        k = _canon(path)
+        for key in _ALLOWED_CANON_KEYS:
+            if k == key or k.startswith(key + "/"):
+                return True
+        if _is_session_scratchpad(k):
+            return True
+        return False
     real = _resolve(path)
     for root in ALLOWED_ROOTS:
         if real == root or real.startswith(root + os.sep):
@@ -414,7 +501,24 @@ def extract_paths() -> list[str]:
         # residue. Uppercase + underscore matches conventional env-var
         # naming and avoids consuming shell positional/special params like
         # $1, $?, $@ that can't be paths anyway. See #353.
-        scrubbed = re.sub(r"\$\{[A-Z_][A-Z0-9_]*\}", "", command)
+        # Var-as-path-prefix scrub (Issue #1153, fingerprint 3): when an
+        # uppercase $VAR/${VAR} is IMMEDIATELY followed by `/`, replace the
+        # var reference with a NON-delimiter sentinel (NUL — not in the
+        # token-boundary class below, and not `/`) BEFORE the scrub-to-empty
+        # passes. This makes the trailing `/frag` land MID-WORD (preceded by
+        # the sentinel, not a real delimiter), so the token-boundary-anchored
+        # capture below never surfaces it as a candidate absolute path — e.g.
+        # `"$VENV/Scripts/python.exe"` no longer yields the spurious
+        # `/Scripts/python.exe` candidate, and `"$X/../../.."` no longer
+        # yields `/../../..`. A standalone $VAR NOT followed by `/` (no
+        # lookahead match here) falls through to the scrub-to-empty passes
+        # below unchanged, preserving the #353 behavior for cases like
+        # `${CLAUDE_PLUGIN_ROOT}/hooks/...` and `$HOME/anything` (same
+        # end-result ALLOW, now via never-capturing rather than
+        # capture-then-drop).
+        scrubbed = re.sub(r"\$\{[A-Z_][A-Z0-9_]*\}(?=/)", "\x00", command)
+        scrubbed = re.sub(r"\$[A-Z_][A-Z0-9_]*(?=/)", "\x00", scrubbed)
+        scrubbed = re.sub(r"\$\{[A-Z_][A-Z0-9_]*\}", "", scrubbed)
         scrubbed = re.sub(r"\$[A-Z_][A-Z0-9_]*", "", scrubbed)
         # Anchor the leading `/` at a real TOKEN BOUNDARY (start-of-string or a
         # preceding whitespace / shell-delimiter / quote) so a `/`-substring in
@@ -427,8 +531,14 @@ def extract_paths() -> list[str]:
         # A genuine out-of-repo absolute path begins at a delimiter (e.g.
         # `cat /etc/passwd`, leading `//etc/passwd`) and so still matches and
         # still blocks. (Issue #1135.)
+        # Exclude backslash from the captured token class (Issue #1153,
+        # fingerprint 3): a Windows backslash token (e.g. `..\\..\\python.exe`)
+        # has no `/`-leading form to begin with, but excluding `\` from the
+        # class also keeps a backslash-containing token from spanning past a
+        # separator and manufacturing a `/`-anchored sub-fragment. No in-repo
+        # POSIX path literal contains a backslash, so this is Linux-safe.
         for m in re.finditer(
-            r'(?:^|(?<=[\s"\'`;<>|&=(]))(/[^\s"\';<>|&]+)', scrubbed
+            r'(?:^|(?<=[\s"\'`;<>|&=(]))(/[^\s"\';<>|&\\]+)', scrubbed
         ):
             candidate = m.group(1)
             # Skip the bare jq alternative-operator token ("//" with nothing
@@ -444,9 +554,22 @@ def extract_paths() -> list[str]:
                 continue
             if candidate.startswith("/tmp"):
                 continue
-            # Skip fragments that aren't real paths (e.g. branch names
-            # like /rerate-after-edits or commit message fragments like /Reject)
-            if not os.path.exists(candidate):
+            # Skip a pure relative-traversal fragment (only `.`/`..` segments,
+            # e.g. `/../../..`) — never a real absolute path, just the
+            # collapsed residue of a `$VAR/../../..`-shaped fragment after the
+            # var scrub. Belt-and-suspenders alongside the var-as-path-prefix
+            # sentinel scrub above. (Issue #1153, fingerprint 3.)
+            if re.match(r"^/(?:\.\.?/)*\.\.?$", candidate):
+                continue
+            # Windows/MSYS-shaped tokens (e.g. an MSYS `/c/...` repo-root
+            # reference) never exist on the POSIX CI host, so the exists()
+            # check below would always drop them before the boundary check
+            # ever runs — masking the real over-/under-block. Let them
+            # through to `is_allowed`/`_canon` instead. Non-Windows fragments
+            # (branch names, commit-message fragments, #1135 mid-word
+            # residue) are still dropped here exactly as before. (Issue
+            # #1153, fingerprint 2.)
+            if not _looks_windows(candidate) and not os.path.exists(candidate):
                 continue
             paths.append(candidate)
 
