@@ -92,6 +92,37 @@ SCRIPTS_DIR = ".venv-host/Scri" + "pts/"
 BLOCK = 2   # restrict_paths exits 2 when it blocks
 ALLOW = 0
 
+# ---------------------------------------------------------------------------
+# Issue #1153 — Windows/MSYS host over-block simulations.
+#
+# The hook over-blocks legitimate work on Windows-host consumers via three
+# fingerprints: (1) the Claude session scratchpad under Temp/claude/ is outside
+# the boundary; (2) MSYS `/c/…` / backslash `C:\…` repo-root references are not
+# normalized before the boundary compare; (3) the Bash token-extractor surfaces
+# spurious absolute paths from var-prefixed / relative / backslash fragments.
+#
+# These simulations are HERMETIC on the POSIX CI host: Windows-shaped path
+# strings drive the hook's pure-string canonicalization, never the filesystem.
+# WIN_ROOT is a Windows-form project root; the subprocess cwd stays the real
+# temp PROJECT (see _win_allow/_win_block) so subprocess.run can launch — the
+# Windows root does not exist on disk here.
+# ---------------------------------------------------------------------------
+WIN_ROOT = "C:" + "\\Users\\u\\repo"          # a Windows-form project root
+_WSLUG = "myproj"
+_WSESS = "sess-abc"
+# Session scratchpad under the harness-advertised Temp/claude/ session root, in
+# both MSYS (`/c/…`) and backslash (`C:\…`) forms.
+SCRATCH_MSYS = (
+    "/c/Users/u/AppData/Local/Temp/claude/" + _WSLUG + "/" + _WSESS
+    + "/scratchpad/note.txt"
+)
+SCRATCH_BSL = (
+    "C:\\Users\\u\\AppData\\Local\\Temp\\claude\\" + _WSLUG + "\\" + _WSESS
+    + "\\scratchpad\\note.txt"
+)
+# A Temp path that is NOT under the Temp/claude/ session root (must stay blocked).
+NON_CLAUDE_TEMP_MSYS = "/c/Users/u/AppData/Local/Temp/other/x.txt"
+
 
 class TestRestrictPaths(unittest.TestCase):
     @classmethod
@@ -453,6 +484,140 @@ class TestRestrictPaths(unittest.TestCase):
         # A `..`-escape that resolves OUTSIDE the repo via the Read tool stays
         # blocked (the genuine guard is untouched).
         self.assertBlocked("Read", {"file_path": "../../../../etc/passwd"})
+
+    # ======================================================================
+    # Issue #1153 — Windows/MSYS host over-block (three fingerprints)
+    # ======================================================================
+    # Windows-shaped paths must canonicalize (MSYS `/c/…` ↔ backslash `C:\…`)
+    # before the boundary compare, the Claude session scratchpad must be
+    # allowlisted, and the Bash token-extractor must stop manufacturing spurious
+    # absolute paths from var-prefixed / relative / backslash fragments — WITHOUT
+    # relaxing any genuine block. Each new case carries its empirically-verified
+    # CURRENT-hook exit code so a "RED" case that already passes today is caught
+    # as a planning defect (the earlier Revise failure).
+    #
+    # project_dir is a Windows-form root; cwd stays the real temp PROJECT so
+    # subprocess.run can launch (the Windows root does not exist on the POSIX
+    # host). The subprocess-cwd value is otherwise irrelevant — the fix keys the
+    # project canonical key off the RAW CLAUDE_PROJECT_DIR, not realpath (which
+    # mangles a Windows-shaped root on POSIX).
+    def _win_allow(self, tool_name, tool_input):
+        self.assertAllowed(tool_name, tool_input, project_dir=WIN_ROOT, cwd=self.PROJECT)
+
+    def _win_block(self, tool_name, tool_input):
+        self.assertBlocked(tool_name, tool_input, project_dir=WIN_ROOT, cwd=self.PROJECT)
+
+    # --- Fingerprint 2: MSYS/Windows canonicalization + boundary reconcile --
+    # RED today (exit 2): an MSYS `/c/…` reference to the repo root is a raw
+    # string mismatch vs the realpath'd project dir → over-blocked. Post-fix the
+    # canonical key (`c:/users/u/repo`) matches the project root → ALLOWED.
+    def test_win_allow_msys_repo_root_read(self):
+        self._win_allow("Read", {"file_path": "/c/Users/u/repo/sub/x.txt"})
+
+    # RED today (exit 0 → NEW BLOCK): the Bash-branch exists-guard drops the
+    # non-existent `/d/…` MSYS token BEFORE canonicalization, so a WRONG-DRIVE
+    # reference slips (exit 0) today. Post-fix the guard is narrowed for
+    # Windows-shaped tokens so the token reaches _canon and BLOCKS (wrong drive
+    # → out of tree). This is the hermetic proof that a Bash-surfaced MSYS token
+    # actually reaches the boundary check past the exists-guard.
+    def test_win_block_msys_wrong_drive_bash(self):
+        self._win_block("Bash", {"command": "cat /d/Users/u/repo/x.txt"})
+
+    # RED today (exit 0 → NEW BLOCK): a backslash `C:\…` path is not absolute on
+    # POSIX, so `_resolve` joins it UNDER the project dir and it lands in-tree →
+    # wrongly ALLOWED, whether in-tree OR out-of-tree. Pins the latent
+    # over-allow: an OUT-of-tree backslash path must BLOCK post-fix (the Windows
+    # branch replaces the mis-firing relative-join with a canonical-key compare).
+    def test_win_block_out_of_tree_backslash_read(self):
+        self._win_block("Read", {"file_path": "C:\\Windows\\System32\\cmd.exe"})
+
+    # KEEP (green today AND post-fix): an in-tree backslash path is ALLOWED
+    # today by the accidental relative-join; post-fix it is ALLOWED via the
+    # canonical-key compare — same end result, different code path.
+    def test_win_allow_backslash_in_tree_read(self):
+        self._win_allow("Read", {"file_path": "C:\\Users\\u\\repo\\sub\\x.txt"})
+
+    # KEEP (green today AND post-fix): `git -C /c/…/repo` is ALLOWED today
+    # because the `/c/…` token is DROPPED at the exists-guard (not canonicalized);
+    # post-fix it is ALLOWED via _canon. Pins that narrowing the exists-guard
+    # does NOT start over-blocking the in-tree MSYS repo root.
+    def test_win_allow_msys_repo_root_bash_git(self):
+        self._win_allow("Bash", {"command": "git -C /c/Users/u/repo status"})
+
+    # KEEP (green-block today AND post-fix): a WRONG-TREE MSYS Read is blocked
+    # today (string mismatch) and must stay blocked (canon lands out of tree).
+    def test_win_block_msys_wrong_tree_read(self):
+        self._win_block("Read", {"file_path": "/c/Users/u/OTHER/x.txt"})
+
+    # KEEP (green-block today AND post-fix): a WRONG-DRIVE MSYS Read is blocked
+    # today and must stay blocked post-fix.
+    def test_win_block_msys_wrong_drive_read(self):
+        self._win_block("Read", {"file_path": "/d/Users/u/repo/x.txt"})
+
+    # --- Fingerprint 1: session-scratchpad allowlist -----------------------
+    # RED today (exit 2): the Claude session scratchpad under Temp/claude/ is
+    # outside the project boundary → over-blocked. Post-fix the `/temp/claude/`
+    # session root is allowlisted → ALLOWED.
+    def test_win_allow_msys_scratchpad_read(self):
+        self._win_allow("Read", {"file_path": SCRATCH_MSYS})
+
+    # KEEP (green today, red vs the Task-1 tip): the backslash scratchpad Write
+    # is ALLOWED today by the accidental relative-join. After canonicalization
+    # (Fingerprint 2) it would land out-of-repo and block; the scratchpad
+    # allowlist (Fingerprint 1) re-allows it. Net effect: ALLOWED today AND
+    # post-fix — pins that the backslash→canon path also feeds the scratchpad
+    # check (a GREEN that allowlisted only the MSYS form would fail this).
+    def test_win_allow_backslash_scratchpad_write(self):
+        self._win_allow("Write", {"file_path": SCRATCH_BSL})
+
+    # still-BLOCK (green-block today AND post-fix): a Temp path NOT under the
+    # Temp/claude/ session root stays blocked — the allowlist is scoped to
+    # Claude's own session temp root, not all of Temp.
+    def test_win_block_non_claude_temp_read(self):
+        self._win_block("Read", {"file_path": NON_CLAUDE_TEMP_MSYS})
+
+    # --- Fingerprint 3: Bash token-extractor hardening ---------------------
+    # RED today (exit 2): an unsubstituted `$VAR/…` prefix is scrubbed to empty,
+    # surfacing the trailing `<existing-out-of-tree>/Scripts/python.exe` fragment
+    # as an absolute path → over-blocked. Anchored on the existing out-of-tree
+    # MIDWORD_EXISTS fixture (test_restrict_paths.py:setUpClass) so it reproduces
+    # deterministically on the POSIX host. Post-fix the var-as-path-prefix scrub
+    # makes the trailing `/…` mid-word → not captured → ALLOWED.
+    def test_issue1153_allow_var_prefix_no_spurious_abs(self):
+        cmd = 'run "$VENV' + self.MIDWORD_EXISTS + '/Scripts/python.exe" -m pytest'
+        self.assertAllowed("Bash", {"command": cmd})
+
+    # RED today (exit 2): `echo "$X/../../.."` scrubs to `/../../..`, which the
+    # extractor captures and realpath-collapses to `/` → out of boundary →
+    # over-blocked. Post-fix a pure relative-traversal fragment is not treated as
+    # an absolute path → ALLOWED.
+    def test_issue1153_allow_var_relative_dotdot(self):
+        self.assertAllowed("Bash", {"command": 'echo "$X/../../.."'})
+
+    # KEEP (green today AND post-fix): a `$VAR/…` prefix whose trailing fragment
+    # does NOT exist on disk is dropped both ways (the exists-guard). Pins that
+    # the standalone-`$VAR` scrub behavior is preserved.
+    def test_issue1153_allow_var_prefix_nonexistent_frag(self):
+        self.assertAllowed(
+            "Bash", {"command": 'run "$VENV/Scripts/python.exe" -m pytest'}
+        )
+
+    # KEEP (green today AND post-fix): a quoted backslash relative traversal has
+    # no `/`-leading token, so no absolute candidate is surfaced. Pins that
+    # excluding backslash from the extractor token class does not start capturing
+    # a backslash path token.
+    def test_issue1153_allow_quoted_backslash_relative(self):
+        cmd = r'cd .venv-host && "..\\..\\python.exe" --version'
+        self.assertAllowed("Bash", {"command": cmd})
+
+    # still-BLOCK (green-block today AND post-fix): a GENUINE token-boundary
+    # out-of-repo absolute path (anchored on the existing MIDWORD_EXISTS fixture)
+    # must stay BLOCKED — the extractor hardening must NOT widen the genuine
+    # guard. (`cat /etc/passwd` and `cat //etc/passwd` are already pinned by the
+    # #353/#1135 cases above.)
+    def test_issue1153_block_genuine_out_of_repo_abs(self):
+        cmd = "cat " + self.MIDWORD_EXISTS + "/Scripts/python.exe"
+        self.assertBlocked("Bash", {"command": cmd})
 
 
 if __name__ == "__main__":
