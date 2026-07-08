@@ -727,6 +727,66 @@ fi
 rm -rf "$PROJ_ROOT_N3"
 
 # ----------------------------------------------------------------------
+# Issue #1158: CRLF-jq seam — Git-for-Windows jq (msvcrt) emits \r\n on every
+# output line. Command-sub / `read` strip the \n but leave the \r, poisoning
+# every jq→shell boundary in the renderer: the tracker shape check sees
+# `object\r` (!= "object" → exits 2), and past it the assoc keys / grep -qx
+# carry \r so EVERY tracker collapses to "(all children closed)" while its open
+# children fall through to ORPHANS. A fake jq earlier on PATH reproduces the
+# msvcrt CR faithfully on an LF-only CI host. Guard: children still render
+# indented; no stray CR.
+# ----------------------------------------------------------------------
+# shellcheck source=_lib/crlf-jq-seam.sh
+source "$SCRIPT_DIR/_lib/crlf-jq-seam.sh"
+CRLF_BIN="$TMP/crlfbin"
+if make_crlf_jq_bin "$CRLF_BIN"; then
+  PATH="$CRLF_BIN:$PATH" bash "$HELPER" \
+    --issues "$FIXTURES/epics-issues.json" \
+    --trackers "$FIXTURES/epics-trackers.json" \
+    --today 2026-05-21 \
+    >"$TMP/crlf_out" 2>"$TMP/crlf_err"
+  crlf_rc=$?
+
+  inc
+  if [ "$crlf_rc" -eq 0 ]; then
+    pass_msg "CRLF-seam: epics render exits 0 under Windows CRLF jq"
+  else
+    fail_msg "CRLF-seam: epics render exits 0 under Windows CRLF jq" \
+      "rc=$crlf_rc, stderr=$(cat "$TMP/crlf_err")"
+  fi
+
+  inc
+  # child #144 still renders indented 8 spaces with its (plan-approved) stage,
+  # i.e. tracker #120 did NOT collapse to the "all children closed" placeholder.
+  if grep -qE '^        #144[[:space:]]+—.*\(plan-approved\)' "$TMP/crlf_out"; then
+    pass_msg "CRLF-seam: child #144 renders indented under tracker #120 (not collapsed)"
+  else
+    fail_msg "CRLF-seam: child #144 renders indented under tracker #120 (not collapsed)" \
+      "$(cat "$TMP/crlf_out")"
+  fi
+
+  inc
+  # #144 appears exactly once (in EPICS) — it must NOT ALSO leak into ORPHANS.
+  crlf_c144=$(grep -c '#144' "$TMP/crlf_out")
+  if [ "$crlf_c144" -eq 1 ]; then
+    pass_msg "CRLF-seam: child #144 deduplicated (appears once, in EPICS)"
+  else
+    fail_msg "CRLF-seam: child #144 deduplicated (appears once, in EPICS)" "count=$crlf_c144"
+  fi
+
+  inc
+  # No msvcrt CR bytes must survive into the rendered table.
+  if ! grep -q $'\r' "$TMP/crlf_out"; then
+    pass_msg "CRLF-seam: no stray CR in rendered output"
+  else
+    fail_msg "CRLF-seam: no stray CR in rendered output" "$(grep -n $'\r' "$TMP/crlf_out" | head)"
+  fi
+else
+  inc
+  fail_msg "CRLF-seam: fake-jq seam setup failed (non-vacuity guard)" "make_crlf_jq_bin returned non-zero"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""

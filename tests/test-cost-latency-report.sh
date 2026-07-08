@@ -614,6 +614,69 @@ case "$COST16" in
 esac
 rm -rf "$TMP16"
 
+# --- Scenario 16b: CRLF-jq seam variant of Scenario 16 (issue #1158) ---
+# Git-for-Windows jq (msvcrt) emits \r\n on every output line. `model` is read
+# via `jq -r '.model // ""'`; under CRLF jq the empty-model (#699 INLINE) record
+# becomes a lone `\r`, so `[ -z "$model" ]` is FALSE → the record is NOT skipped
+# (unpriced_count drops to 0) and its tokens leak; meanwhile the priced record's
+# `model` gains a trailing \r and misses the awk price-table LOOKUP KEY, so it
+# falls off its Opus rate. Observed pre-fix under the seam: priced_cost_usd=0.00,
+# unpriced_count=0 (both wrong) with a trailing CR — all three assertions below
+# FAIL. A jqr() CR-stripping wrapper over every jq boundary restores 192.00 / 1.
+# A fake jq earlier on PATH reproduces the msvcrt CR faithfully on an LF-only host.
+inc_scenario "Scenario 16b: CRLF-jq seam — pricing survives Windows CRLF jq"
+
+CRLF_JQ_LIB="$REPO_ROOT/tests/_lib/crlf-jq-seam.sh"
+# shellcheck source=_lib/crlf-jq-seam.sh
+source "$CRLF_JQ_LIB"
+TMP16C="$(mktemp -d)"
+CRLF_BIN16="$(mktemp -d)"
+if make_crlf_jq_bin "$CRLF_BIN16/bin"; then
+  cp "$FIXTURE_DIR"/*.json "$TMP16C/" 2>/dev/null
+  printf '%s\n' '[
+    {"number":106,"title":"feat: priced record issue","additions":300,"deletions":100,"body":"Closes #206","mergedAt":"2026-05-13T12:00:00Z","labels":[]},
+    {"number":107,"title":"feat: unpriced record issue","additions":50,"deletions":20,"body":"Closes #207","mergedAt":"2026-05-13T13:00:00Z","labels":[]}
+  ]' > "$TMP16C/prs.json"
+  printf '%s\n' '{"number":106,"additions":300,"deletions":100,"comments":[]}' > "$TMP16C/pr-106.json"
+  printf '%s\n' '{"number":206,"labels":[],"comments":[]}' > "$TMP16C/issue-206.json"
+  printf '%s\n' '{"number":107,"additions":50,"deletions":20,"comments":[]}' > "$TMP16C/pr-107.json"
+  printf '%s\n' '{"number":207,"labels":[],"comments":[]}' > "$TMP16C/issue-207.json"
+  {
+    echo '{"schema_version":1,"issue":"206","stage":"execute","session_id":"sP","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K206","tokens":{"input":2000000,"output":1000000,"cache_read":8000000,"cache_creation":4000000,"total":15000000},"duration_ms":1000}'
+    echo '{"schema_version":1,"issue":"207","stage":"execute","session_id":"sU","model":"","agent_kind":"inline","record_key":"K207","tokens":{"input":500000,"output":500000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":900}'
+  } > "$TMP16C/capture.jsonl"
+
+  PRICING16C="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT \
+                   -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
+                   -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION \
+                   -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
+               PATH="$CRLF_BIN16/bin:$PATH" bash "$HELPER" --fixture "$TMP16C" --emit-pricing-json 2>/dev/null)"
+
+  COST16C="$(printf '%s' "$PRICING16C" | jq -r '.priced_cost_usd' 2>/dev/null)"
+  if [ "$COST16C" = "192.00" ] || [ "$COST16C" = "192" ] || [ "$COST16C" = "192.0" ]; then
+    pass_msg "CRLF-seam: priced_cost_usd == 192.00 (model lookup survives CRLF jq)"
+  else
+    fail_msg "CRLF-seam: priced_cost_usd should be 192.00, got '$COST16C' (CRLF poisoned the model lookup key)"
+  fi
+
+  UNPRICED16C="$(printf '%s' "$PRICING16C" | jq -r '.unpriced_count' 2>/dev/null)"
+  if [ "$UNPRICED16C" = "1" ]; then
+    pass_msg "CRLF-seam: unpriced_count == 1 (empty-model record still detected under CRLF jq)"
+  else
+    fail_msg "CRLF-seam: unpriced_count should be 1, got '$UNPRICED16C' (empty-model \r escaped the [ -z ] test)"
+  fi
+
+  # No msvcrt CR bytes must survive into the emitted pricing JSON.
+  if ! printf '%s' "$PRICING16C" | grep -q $'\r'; then
+    pass_msg "CRLF-seam: no stray CR in --emit-pricing-json output"
+  else
+    fail_msg "CRLF-seam: no stray CR in --emit-pricing-json output (trailing CR from msvcrt jq)"
+  fi
+else
+  fail_msg "CRLF-seam: fake-jq seam setup failed (non-vacuity guard)"
+fi
+rm -rf "$TMP16C" "$CRLF_BIN16"
+
 # --- Scenario 17: --tokenomics bucket table (token-share vs cost-share) (#721) ---
 # Under --tokenomics, emit a per-bucket (input/output/cache_creation/cache_read)
 # table with: total tokens, priced $ (Opus default rates over priced records),
