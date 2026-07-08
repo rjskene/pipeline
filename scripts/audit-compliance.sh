@@ -106,7 +106,7 @@ while IFS= read -r f; do
   if _is_source_file "$f"; then
     SRC_COUNT=$((SRC_COUNT + 1))
   fi
-done < <(echo "$FILES_BODY" | jq -r '.[]')
+done < <(echo "$FILES_BODY" | jq -r '.[]' | tr -d '\r')
 
 # Derive commit ordering. The commits array is in chronological commit order
 # (the live load_pr_commits join in compliance-backfill.sh walks
@@ -124,7 +124,7 @@ while IFS= read -r cfiles; do
     [ -z "$f" ] && continue
     if [ "$shit" = "0" ] && _is_source_file "$f"; then shit=1; fi
     if [ "$thit" = "0" ] && _is_test_file "$f"; then thit=1; fi
-  done < <(echo "$cfiles" | jq -r '.[]')
+  done < <(echo "$cfiles" | jq -r '.[]' | tr -d '\r')
   if [ "$shit" = "1" ] && [ "$FIRST_SRC_IDX" = "-1" ]; then FIRST_SRC_IDX=$idx; fi
   if [ "$thit" = "1" ] && [ "$FIRST_TEST_IDX" = "-1" ]; then FIRST_TEST_IDX=$idx; fi
   idx=$((idx + 1))
