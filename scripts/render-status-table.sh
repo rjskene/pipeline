@@ -71,12 +71,22 @@ if [ -n "$TRACKERS_FILE" ] && [ ! -r "$TRACKERS_FILE" ]; then
   exit 2
 fi
 
+# ----- CRLF-jq boundary hardening (#1158) ----------------------------
+#
+# Git-for-Windows jq (msvcrt text-mode) terminates every output line with
+# \r\n. Command substitution and `read` strip the trailing \n but leave the
+# \r, poisoning every jq->shell boundary below (assoc-array keys, grep -qx
+# exact matches, the --trackers shape check, etc.). Route ALL jq output
+# through this wrapper (except jq's own invocation inside jqr itself) so a
+# CRLF-emitting jq is neutralized; on LF-only Linux tr -d '\r' is a no-op.
+jqr() { jq "$@" | tr -d '\r'; }
+
 # Fail loud on wrong trackers.json shape — the renderer expects
 # {"<num>": "<body>", ...}. An array (gh issue list output) or any other
 # top-level type silently fell through to "all children closed" for every
 # tracker before #416.
 if [ -n "$TRACKERS_FILE" ]; then
-  _t_type=$(jq -r 'type' "$TRACKERS_FILE" 2>/dev/null)
+  _t_type=$(jqr -r 'type' "$TRACKERS_FILE" 2>/dev/null)
   if [ "$_t_type" != "object" ]; then
     echo "render-status-table.sh: --trackers must be a JSON object {\"<num>\": \"<body>\", ...}, got ${_t_type:-unparseable}" >&2
     exit 2
@@ -128,7 +138,7 @@ fi
 # retained for the within-tracker child re-sort and back-compat. The legacy
 # `scope` def is retained for compatibility but no longer drives orphan
 # grouping.
-ROWS_JSON=$(jq -c \
+ROWS_JSON=$(jqr -c \
   --arg later     "$PIPELINE_LABELS_LATER" \
   --arg human     "$PIPELINE_LABELS_HUMAN" \
   --arg brainst   "$PIPELINE_LABELS_BRAINSTORM" \
@@ -246,13 +256,13 @@ declare -A SECOND_TRACKER_FOR_CHILD=()
 declare -A IS_CHILD=()
 MULTI_TRACKER_LINES=()
 
-OPEN_NUMBERS=$(printf '%s' "$ROWS_JSON" | jq -r '.[].number' | sort -u)
+OPEN_NUMBERS=$(printf '%s' "$ROWS_JSON" | jqr -r '.[].number' | sort -u)
 
 if [ -n "$TRACKERS_FILE" ]; then
   # Iterate tracker keys in the JSON map.
   while IFS= read -r tracker_num; do
     [ -n "$tracker_num" ] || continue
-    body=$(jq -r --arg k "$tracker_num" '.[$k] // ""' "$TRACKERS_FILE")
+    body=$(jqr -r --arg k "$tracker_num" '.[$k] // ""' "$TRACKERS_FILE")
     [ -n "$body" ] || continue
     raw_children=$(printf '%s\n' "$body" | bash "$PARSE_CHILDREN" -)
     open_children=""
@@ -271,7 +281,7 @@ if [ -n "$TRACKERS_FILE" ]; then
     done
     # shellcheck disable=SC2086
     CHILDREN_BY_TRACKER["$tracker_num"]=$(echo $open_children | tr ' ' '\n' | awk 'NF' | paste -sd ' ' -)
-  done < <(jq -r 'keys[]' "$TRACKERS_FILE")
+  done < <(jqr -r 'keys[]' "$TRACKERS_FILE")
 fi
 
 # Build WARN lines (one per duplicated child) — emitted by Task 5.
@@ -285,7 +295,7 @@ done
 CHILD_NUMBERS_JSON='[]'
 if [ "${#IS_CHILD[@]}" -gt 0 ]; then
   CHILD_NUMBERS_JSON=$(printf '%s\n' "${!IS_CHILD[@]}" \
-    | jq -R 'tonumber' | jq -s '.')
+    | jqr -R 'tonumber' | jqr -s '.')
 fi
 
 # ----- ORPHANS section -----------------------------------------------
@@ -297,7 +307,7 @@ fi
 # then the #871 within-bucket tiebreak — conventional-commit type
 # (chore→docs→fix→feat→other), then tier, then number. No scope bucketing.
 ORPHAN_ROWS_JSON=$(printf '%s' "$ROWS_JSON" \
-  | jq -c --argjson children "$CHILD_NUMBERS_JSON" \
+  | jqr -c --argjson children "$CHILD_NUMBERS_JSON" \
       '[.[] | select((.is_tracker | not) and ((.number as $n | $children | index($n)) == null))]')
 
 # ----- RELEASE PRs section (rendered ABOVE PIPELINE STATUS) ----------
@@ -338,17 +348,17 @@ echo "================================================================"
 # Each open child appears indented 8 spaces with the stage right-padded
 # in parens. A tracker whose checklist children are ALL closed collapses
 # to a single "(all children closed — pending auto-close)" placeholder.
-TRACKER_ROWS_JSON=$(printf '%s' "$ROWS_JSON" | jq -c '[.[] | select(.is_tracker)] | sort_by(.priority_tier, .number)')
-TRACKER_COUNT=$(printf '%s' "$TRACKER_ROWS_JSON" | jq 'length')
+TRACKER_ROWS_JSON=$(printf '%s' "$ROWS_JSON" | jqr -c '[.[] | select(.is_tracker)] | sort_by(.priority_tier, .number)')
+TRACKER_COUNT=$(printf '%s' "$TRACKER_ROWS_JSON" | jqr 'length')
 if [ "$TRACKER_COUNT" -gt 0 ]; then
   echo "EPICS"
   echo "================================================================"
   # Iterate tracker rows in priority order.
   while IFS= read -r row_json; do
     [ -n "$row_json" ] || continue
-    t_num=$(printf '%s' "$row_json" | jq -r '.number')
-    t_badge=$(printf '%s' "$row_json" | jq -r '.priority_badge')
-    t_title=$(printf '%s' "$row_json" | jq -r '.title')
+    t_num=$(printf '%s' "$row_json" | jqr -r '.number')
+    t_badge=$(printf '%s' "$row_json" | jqr -r '.priority_badge')
+    t_title=$(printf '%s' "$row_json" | jqr -r '.title')
     printf '    %s #%s — %s\n' "$t_badge" "$t_num" "$t_title"
     open_children="${CHILDREN_BY_TRACKER[$t_num]:-}"
     if [ -z "$open_children" ]; then
@@ -360,25 +370,25 @@ if [ "$TRACKER_COUNT" -gt 0 ]; then
     # non-empty here (short-circuited above), so $ns is always a valid JSON
     # array of integers.
     sorted_children=$(printf '%s' "$ROWS_JSON" \
-      | jq -r --argjson ns "[$(echo $open_children | tr ' ' ',' | sed 's/^,//;s/,$//')]" '
+      | jqr -r --argjson ns "[$(echo $open_children | tr ' ' ',' | sed 's/^,//;s/,$//')]" '
           [.[] | select(.number as $n | $ns | index($n))]
           | sort_by(.stage_rank, .priority_tier, .number)
           | .[].number')
     for c in $sorted_children; do
       child_row=$(printf '%s' "$ROWS_JSON" \
-        | jq -c --argjson n "$c" '.[] | select(.number == $n)')
+        | jqr -c --argjson n "$c" '.[] | select(.number == $n)')
       if [ -z "$child_row" ]; then
         continue
       fi
-      c_title=$(printf '%s' "$child_row" | jq -r '.title')
-      c_stage=$(printf '%s' "$child_row" | jq -r '.stage')
+      c_title=$(printf '%s' "$child_row" | jqr -r '.title')
+      c_stage=$(printf '%s' "$child_row" | jqr -r '.stage')
       printf '        #%s — %s  (%s)\n' "$c" "$c_title" "$c_stage"
     done
-  done < <(printf '%s' "$TRACKER_ROWS_JSON" | jq -c '.[]')
+  done < <(printf '%s' "$TRACKER_ROWS_JSON" | jqr -c '.[]')
   echo "================================================================"
 fi
 
-ORPHAN_COUNT=$(printf '%s' "$ORPHAN_ROWS_JSON" | jq 'length')
+ORPHAN_COUNT=$(printf '%s' "$ORPHAN_ROWS_JSON" | jqr 'length')
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   echo "ORPHANS"
   echo "================================================================"
@@ -388,7 +398,7 @@ if [ "$ORPHAN_COUNT" -gt 0 ]; then
   # brainstorm → later, #883); priority_tier is the string "0".."9", so
   # tonumber keeps the tiebreak numeric.
   printf '%s' "$ORPHAN_ROWS_JSON" \
-    | jq -r '
+    | jqr -r '
         sort_by(.orphan_stage_rank, .cc_type_rank, (.priority_tier | tonumber), .number)
         | .[] | "    \(.priority_badge) #\(.number) — \(.title)  (\(.stage))"
       '
@@ -408,19 +418,19 @@ NOTES_PROJECT_ROOT="${PIPELINE_PROJECT_ROOT:-$_PROJECT_ROOT}"
 # Augment every row with att count (computed on-disk, not from JSON).
 NOTES_ROWS_TMP=$(mktemp)
 trap 'rm -f "$NOTES_ROWS_TMP"' EXIT INT TERM
-printf '%s' "$ROWS_JSON" | jq -c '.[]' | while IFS= read -r row; do
-  n=$(printf '%s' "$row" | jq -r '.number')
+printf '%s' "$ROWS_JSON" | jqr -c '.[]' | while IFS= read -r row; do
+  n=$(printf '%s' "$row" | jqr -r '.number')
   att=0
   if [ -d "$NOTES_PROJECT_ROOT/.claude/scratch/issue-$n" ]; then
     att=$(find "$NOTES_PROJECT_ROOT/.claude/scratch/issue-$n" -maxdepth 1 -type f 2>/dev/null | wc -l)
   fi
-  printf '%s\n' "$row" | jq -c --argjson a "$att" '. + {att: $a}'
+  printf '%s\n' "$row" | jqr -c --argjson a "$att" '. + {att: $a}'
 done > "$NOTES_ROWS_TMP"
 
-NOTES_ROWS_JSON=$(jq -s '.' < "$NOTES_ROWS_TMP")
+NOTES_ROWS_JSON=$(jqr -s '.' < "$NOTES_ROWS_TMP")
 
 # Decide whether NOTES block + att column render.
-HAS_NONDEFAULT=$(printf '%s' "$NOTES_ROWS_JSON" | jq --arg base "$PIPELINE_BASE_BRANCH" '
+HAS_NONDEFAULT=$(printf '%s' "$NOTES_ROWS_JSON" | jqr --arg base "$PIPELINE_BASE_BRANCH" '
   any(.[];
     (.target_base != $base)
     or (.path_letter != "B")
@@ -429,7 +439,7 @@ HAS_NONDEFAULT=$(printf '%s' "$NOTES_ROWS_JSON" | jq --arg base "$PIPELINE_BASE_
     or (.att > 0)
   )
 ')
-HAS_ATT=$(printf '%s' "$NOTES_ROWS_JSON" | jq 'any(.[]; .att > 0)')
+HAS_ATT=$(printf '%s' "$NOTES_ROWS_JSON" | jqr 'any(.[]; .att > 0)')
 
 if [ "$HAS_NONDEFAULT" = "true" ]; then
   echo "NOTES (non-default)"
@@ -442,7 +452,7 @@ if [ "$HAS_NONDEFAULT" = "true" ]; then
   echo "----------------------------------------------------------------"
   # Sort by issue number for stable output.
   if [ "$HAS_ATT" = "true" ]; then
-    printf '%s' "$NOTES_ROWS_JSON" | jq -r --arg base "$PIPELINE_BASE_BRANCH" '
+    printf '%s' "$NOTES_ROWS_JSON" | jqr -r --arg base "$PIPELINE_BASE_BRANCH" '
       [.[] | select(
         (.target_base != $base) or (.path_letter != "B")
         or (.blocked_by != "") or (.needs_debug) or (.att > 0)
@@ -451,7 +461,7 @@ if [ "$HAS_NONDEFAULT" = "true" ]; then
       | .[] | " #\(.number) | \(.target_base) | \(.path_letter) | \(if .blocked_by == "" then "--" else .blocked_by end) | \(if .needs_debug then "yes" else "--" end) | \(.att)"
     '
   else
-    printf '%s' "$NOTES_ROWS_JSON" | jq -r --arg base "$PIPELINE_BASE_BRANCH" '
+    printf '%s' "$NOTES_ROWS_JSON" | jqr -r --arg base "$PIPELINE_BASE_BRANCH" '
       [.[] | select(
         (.target_base != $base) or (.path_letter != "B") or (.blocked_by != "") or (.needs_debug)
       )]
@@ -472,8 +482,8 @@ done
 
 # Counts: epics = unique trackers; children = unique child numbers (deduped
 # across trackers); orphans = non-tracker, non-child rows. open = sum.
-EPICS_N=$(printf '%s' "$ROWS_JSON" | jq '[.[] | select(.is_tracker)] | length')
+EPICS_N=$(printf '%s' "$ROWS_JSON" | jqr '[.[] | select(.is_tracker)] | length')
 CHILDREN_N="${#IS_CHILD[@]}"
-ORPHANS_N=$(printf '%s' "$ORPHAN_ROWS_JSON" | jq 'length')
+ORPHANS_N=$(printf '%s' "$ORPHAN_ROWS_JSON" | jqr 'length')
 OPEN_N=$((EPICS_N + CHILDREN_N + ORPHANS_N))
 printf '%s\n' "${EPICS_N} epics + ${CHILDREN_N} children + ${ORPHANS_N} orphans = ${OPEN_N} open"
