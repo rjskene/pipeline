@@ -13,7 +13,11 @@
 #
 # Default mode recognizes lines matching `- [ ] **#<N> [-—]` (ASCII hyphen or
 # en-dash), including the `[x]` checked variant. Bounded to the section starting
-# with `## Rollout sequence` and ending at the next `## ` heading.
+# with `## Rollout sequence` — optionally decorated with a trailing parenthetical
+# (e.g. `## Rollout sequence (design approved … — spec: …)`), which operators add
+# naturally (#1157) — and ending at the next `## ` heading. A continuation-word
+# heading like `## Rollout sequence appendix` is a DIFFERENT section, not the
+# rollout section.
 #
 # `--fallback-mentions` mode (#491): ignores section bounds entirely and scans
 # the WHOLE body for `#<N>` mentions — deduped, in order of first appearance,
@@ -63,7 +67,7 @@ if [ "$FALLBACK" = "1" ]; then
   '
 else
   printf '%s\n' "$input" | awk '
-    /^## Rollout sequence[[:space:]]*$/ { inrs=1; next }
+    /^## Rollout sequence[[:space:]]*(\(|$)/ { inrs=1; next }
     /^## / { inrs=0 }
     inrs {
       if (match($0, /^- \[[ x]\] \*\*#[0-9]+[[:space:]]*[-—]/)) {
