@@ -508,6 +508,104 @@ if [ -f "$shortlist18" ]; then
   fi
 fi
 
+# --- Scenario 19: CRLF-jq seam — tracker fits survive Windows CRLF jq (#1158) ---
+# Git-for-Windows jq (msvcrt) emits \r\n on every output line. `tnum`/`inum` are
+# read via `jq -r '.number'`; under CRLF jq `tnum="60\r"`, so the body-reference
+# probe `grep -qE "#${tnum}([^0-9]|$)"` embeds a literal \r and the #50→#60 fit
+# never emits (Scenario 4 breaks). Scope-match (Sc3) and already-in-rollout
+# (Sc9) are CR-tolerant here (symmetric CR / awk numeric compare), so they still
+# hold — the two `.number` strips must keep them green while restoring Sc4. A
+# fake jq earlier on PATH reproduces the msvcrt CR faithfully on an LF-only host.
+inc_scenario "Scenario 19: CRLF-jq seam — scope-match + body-reference + rollout-exclusion"
+
+# shellcheck source=_lib/crlf-jq-seam.sh
+source "$SCRIPT_DIR/_lib/crlf-jq-seam.sh"
+CRLF_BIN19="$TMP/crlfbin"
+run_helper_seam() {
+  local fixture="$1"
+  mkdir -p "$TMP/.claude/logs"
+  ( cd "$TMP" && PATH="$CRLF_BIN19:$PATH" bash "$HELPER" --fixture "$fixture" )
+}
+
+if make_crlf_jq_bin "$CRLF_BIN19"; then
+  # Sc3 fixture (scope-match): #99 fits #60 by conventional-commit scope.
+  FIX19S="$TMP/fix19s"; mkdir -p "$FIX19S"
+  cat > "$FIX19S/issues.json" <<'J'
+[
+  {"number":60,"title":"epic(pipeline): rollout","body":"## Rollout sequence\n- [ ] **#34 — child A\n- [x] **#35 — child B\n","labels":[{"name":"tracker"}]},
+  {"number":34,"title":"feat(pipeline): child task A","body":"x","labels":[]},
+  {"number":35,"title":"feat(pipeline): child task B","body":"x","labels":[]},
+  {"number":99,"title":"feat(pipeline): polish thing","body":"Just polish.","labels":[]}
+]
+J
+  cat > "$FIX19S/issue-60.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#34 — child A\n- [x] **#35 — child B\n"}
+J
+  out19s=$(run_helper_seam "$FIX19S" 2>&1)
+  shortlist19s=$(echo "$out19s" | tail -n 1)
+  if [ -f "$shortlist19s" ]; then
+    m99=$(jq -r '[.tracker_fits[] | select(.issue == 99 and .tracker == 60 and .reason == "scope-match")] | length' "$shortlist19s" 2>/dev/null)
+    if [ "$m99" = "1" ]; then
+      pass_msg "CRLF-seam: #99 emits scope-match fit to #60 (Sc3 survives CRLF jq)"
+    else
+      fail_msg "CRLF-seam: #99 scope-match fit to #60 (matches=$m99)"
+    fi
+  else
+    fail_msg "CRLF-seam: Sc3 shortlist missing (out=$out19s)"
+  fi
+
+  # Sc4 fixture (body-reference): #50 references #60 in its body.
+  FIX19B="$TMP/fix19b"; mkdir -p "$FIX19B"
+  cat > "$FIX19B/issues.json" <<'J'
+[
+  {"number":60,"title":"epic(pipeline): rollout","body":"## Rollout sequence\n- [ ] **#34 — child A\n","labels":[{"name":"tracker"}]},
+  {"number":34,"title":"feat(pipeline): child task A","body":"x","labels":[]},
+  {"number":50,"title":"feat(other): unrelated scope","body":"Related to #60 in the discussion.","labels":[]}
+]
+J
+  cat > "$FIX19B/issue-60.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#34 — child A\n"}
+J
+  out19b=$(run_helper_seam "$FIX19B" 2>&1)
+  shortlist19b=$(echo "$out19b" | tail -n 1)
+  if [ -f "$shortlist19b" ]; then
+    m50=$(jq -r '[.tracker_fits[] | select(.issue == 50 and .tracker == 60 and .reason == "body-reference")] | length' "$shortlist19b" 2>/dev/null)
+    if [ "$m50" = "1" ]; then
+      pass_msg "CRLF-seam: #50 emits body-reference fit to #60 (Sc4 survives CRLF jq)"
+    else
+      fail_msg "CRLF-seam: #50 body-reference fit to #60 (matches=$m50; CRLF \r in #tnum regex)"
+    fi
+  else
+    fail_msg "CRLF-seam: Sc4 shortlist missing (out=$out19b)"
+  fi
+
+  # Sc9 fixture (already-in-rollout): #81 is a child of tracker #80 → no fit.
+  FIX19R="$TMP/fix19r"; mkdir -p "$FIX19R"
+  cat > "$FIX19R/issues.json" <<'J'
+[
+  {"number":80,"title":"epic(redline): rollout","body":"## Rollout sequence\n- [ ] **#81 — first child\n","labels":[{"name":"tracker"}]},
+  {"number":81,"title":"feat(redline): first child","body":"Child of #80 — references parent tracker #80 for context.","labels":[]}
+]
+J
+  cat > "$FIX19R/issue-80.json" <<'J'
+{"body":"## Rollout sequence\n- [ ] **#81 — first child\n"}
+J
+  out19r=$(run_helper_seam "$FIX19R" 2>&1)
+  shortlist19r=$(echo "$out19r" | tail -n 1)
+  if [ -f "$shortlist19r" ]; then
+    f81=$(jq -r '[.tracker_fits[] | select(.issue == 81 and .tracker == 80)] | length' "$shortlist19r" 2>/dev/null)
+    if [ "$f81" = "0" ]; then
+      pass_msg "CRLF-seam: (81,80) NOT in tracker_fits — already in rollout (Sc9 survives CRLF jq)"
+    else
+      fail_msg "CRLF-seam: (81,80) re-surfaced as a fit (got $f81; CRLF broke child-index lookup)"
+    fi
+  else
+    fail_msg "CRLF-seam: Sc9 shortlist missing (out=$out19r)"
+  fi
+else
+  fail_msg "CRLF-seam: fake-jq seam setup failed (non-vacuity guard)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -30,6 +30,19 @@ set -uo pipefail
 #   bash scripts/cost-latency-report.sh --help
 #
 
+# ----- CRLF-jq boundary hardening (#1158) ----------------------------
+#
+# Git-for-Windows jq (msvcrt text-mode) terminates every output line with
+# \r\n. Command substitution and `read` strip the trailing \n but leave the
+# \r, poisoning any jq->shell boundary that meets a CR-free comparand
+# (exact-match model lookup keys, [ -z ] emptiness tests, literal string
+# compares). Route ALL jq output through this wrapper (except jq's own
+# invocation inside jqr itself) so a CRLF-emitting jq is neutralized; on
+# LF-only Linux tr -d '\r' is a no-op. set -uo pipefail (line 2) propagates
+# jq's exit status through the wrapper, so `jq -e ... >/dev/null` boolean
+# checks still work.
+jqr() { jq "$@" | tr -d '\r'; }
+
 LIMIT=50
 FIXTURE_DIR=""
 DRY_RUN=0
@@ -187,7 +200,7 @@ render_history() {
   echo "HISTORY (persisted per-day)"
   printf '%-12s %5s %14s %12s %12s %10s %12s %8s\n' \
     "DATE" "N" "TOTAL_TOK" "\$_TOTAL" "\$/N" "ACT_LOC" "\$/LOC" "FLOOR"
-  jq -rs 'sort_by(.date)[] |
+  jqr -rs 'sort_by(.date)[] |
     [ (.date // "--"),
       (.n // 0),
       (.tokens.total // 0),
@@ -361,11 +374,11 @@ extract_linked_issue() {
 #   else       → B
 derive_path() {
   local labels_json="$1"
-  if printf '%s' "$labels_json" | jq -e 'any(.[]; .name == "docs-only")' >/dev/null 2>&1; then
+  if printf '%s' "$labels_json" | jqr -e 'any(.[]; .name == "docs-only")' >/dev/null 2>&1; then
     echo "A"
-  elif printf '%s' "$labels_json" | jq -e 'any(.[]; .name == "quick-fix")' >/dev/null 2>&1; then
+  elif printf '%s' "$labels_json" | jqr -e 'any(.[]; .name == "quick-fix")' >/dev/null 2>&1; then
     echo "D"
-  elif printf '%s' "$labels_json" | jq -e 'any(.[]; .name == "multi-task")' >/dev/null 2>&1; then
+  elif printf '%s' "$labels_json" | jqr -e 'any(.[]; .name == "multi-task")' >/dev/null 2>&1; then
     echo "C"
   else
     echo "B"
@@ -378,7 +391,7 @@ derive_path() {
 has_block() {
   local comments="$1"
   local heading="$2"
-  if printf '%s' "$comments" | jq -e --arg h "$heading" \
+  if printf '%s' "$comments" | jqr -e --arg h "$heading" \
       'any(.[]; .body | test("(?m)^## " + ($h | gsub("[.\\\\+*?^$()\\[\\]{}|]"; "\\\\\\0"))))' \
       >/dev/null 2>&1; then
     echo 1
@@ -475,7 +488,7 @@ compute_pricing() {
   # happens in bash; float arithmetic is delegated to awk per record.
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    model="$(printf '%s' "$line" | jqr -r '.model // ""' 2>/dev/null)"
     if [ -z "$model" ] || [ "$model" = "null" ]; then
       unpriced=$((unpriced + 1))
       continue
@@ -485,12 +498,12 @@ compute_pricing() {
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
     r_cr="$(price_rate "$norm" CACHE_READ)"
-    total="$(printf '%s' "$line" | jq -r '
+    total="$(printf '%s' "$line" | jqr -r '
         .tokens // {} | [(.input//0),(.output//0),(.cache_creation//0),(.cache_read//0)] | @tsv' 2>/dev/null \
       | awk -v t="$total" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" -F'\t' '
           { t += ($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr }
           END { printf "%.10f", t }')"
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
   printf '%s %s' "$(awk -v t="$total" 'BEGIN { printf "%.2f", t }')" "$unpriced"
 }
 
@@ -507,7 +520,7 @@ priced_records_tsv() {
   local r_in r_out r_cc r_cr
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    model="$(printf '%s' "$line" | jqr -r '.model // ""' 2>/dev/null)"
     if [ -z "$model" ] || [ "$model" = "null" ]; then
       continue
     fi
@@ -516,7 +529,7 @@ priced_records_tsv() {
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
     r_cr="$(price_rate "$norm" CACHE_READ)"
-    printf '%s' "$line" | jq -r '
+    printf '%s' "$line" | jqr -r '
         [ (.stage // ""), (.agent_kind // ""),
           (.tokens.input//0), (.tokens.output//0),
           (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
@@ -524,7 +537,7 @@ priced_records_tsv() {
           ci=($3/1e6)*ri; co=($4/1e6)*ro; cc=($5/1e6)*rcc; cr=($6/1e6)*rcr;
           print $1,$2,$3,$4,$5,$6,ci,co,cc,cr
         }'
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
 }
 
 # priced_issue_stage_cost_tsv — emit one TSV line per PRICED capture record
@@ -541,7 +554,7 @@ priced_issue_stage_cost_tsv() {
   local r_in r_out r_cc r_cr
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    model="$(printf '%s' "$line" | jqr -r '.model // ""' 2>/dev/null)"
     if [ -z "$model" ] || [ "$model" = "null" ]; then
       continue
     fi
@@ -550,7 +563,7 @@ priced_issue_stage_cost_tsv() {
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
     r_cr="$(price_rate "$norm" CACHE_READ)"
-    printf '%s' "$line" | jq -r '
+    printf '%s' "$line" | jqr -r '
         [ (.issue // "" | tostring), (.stage // ""),
           (.tokens.input//0), (.tokens.output//0),
           (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
@@ -560,7 +573,7 @@ priced_issue_stage_cost_tsv() {
           # so CONSUMERS see: issue=$1 stage=$2 cost=$3 input=$4 output=$5 cache_read=$6
           printf "%s\t%s\t%.10f\t%d\t%d\t%d\n", $1, $2, c, $3, $4, $6
         }'
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
 }
 
 # priced_day_cost_tsv — emit one TSV line per PRICED capture record (model!="")
@@ -577,12 +590,12 @@ priced_day_cost_tsv() {
   local r_in r_out r_cc r_cr
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    model="$(printf '%s' "$line" | jqr -r '.model // ""' 2>/dev/null)"
     if [ -z "$model" ] || [ "$model" = "null" ]; then
       continue
     fi
     # YYYY-MM-DD prefix of ts_start; skip empty/absent.
-    day="$(printf '%s' "$line" | jq -r '(.ts_start // "")' 2>/dev/null | cut -c1-10)"
+    day="$(printf '%s' "$line" | jqr -r '(.ts_start // "")' 2>/dev/null | cut -c1-10)"
     if [ -z "$day" ] || ! printf '%s' "$day" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
       continue
     fi
@@ -591,7 +604,7 @@ priced_day_cost_tsv() {
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
     r_cr="$(price_rate "$norm" CACHE_READ)"
-    printf '%s' "$line" | jq -r '
+    printf '%s' "$line" | jqr -r '
         [ (.tokens.input//0), (.tokens.output//0),
           (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
       | awk -F'\t' -v d="$day" -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" 'BEGIN{OFS="\t"} {
@@ -601,7 +614,7 @@ priced_day_cost_tsv() {
           # so CONSUMERS see: date=$1 cost_all=$2 cost_output=$3 input=$4 output=$5 cache_read=$6
           printf "%s\t%.10f\t%.10f\t%d\t%d\t%d\n", d, call, cout, $1, $2, $4
         }'
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
 }
 
 # priced_day_bucket_cost_tsv — emit one TSV line per PRICED capture record
@@ -633,13 +646,13 @@ priced_day_bucket_cost_tsv() {
     r_cr="$(price_rate "$norm" CACHE_READ)"
     _price_map="${_price_map}${model}	${r_in}	${r_out}	${r_cc}	${r_cr}
 "
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -r '
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -r '
     [.[] | select((.model // "") != "" and (.model // "") != "null") | .model] | unique[]
   ' 2>/dev/null)
 
   # Step 2: single jq pass to stream (model, day, tokens) as TSV; awk applies
   # the pre-built price table in-process — no per-line jq spawning.
-  printf '%s' "$CAPTURE_JSON" | jq -r '
+  printf '%s' "$CAPTURE_JSON" | jqr -r '
     .[] |
     select((.model // "") != "" and (.model // "") != "null") |
     (.ts_start // "")[0:10] as $day |
@@ -684,14 +697,14 @@ priced_duration_tsv() {
   local line model
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    model="$(printf '%s' "$line" | jqr -r '.model // ""' 2>/dev/null)"
     if [ -z "$model" ] || [ "$model" = "null" ]; then
       continue
     fi
-    printf '%s' "$line" | jq -r '
+    printf '%s' "$line" | jqr -r '
         select((.duration_ms // null) != null)
         | [ (.agent_kind // ""), (.stage // ""), (.duration_ms) ] | @tsv' 2>/dev/null
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
 }
 
 # inline_duration_tsv — emit one TSV line per INLINE (agent_kind != "headless")
@@ -701,7 +714,7 @@ priced_duration_tsv() {
 # substrate for the INLINE task-latency row: live inline carries model="" so the
 # priced-gated source would drop every live inline record and zero the median.
 inline_duration_tsv() {
-  printf '%s' "$CAPTURE_JSON" | jq -r '
+  printf '%s' "$CAPTURE_JSON" | jqr -r '
     .[]
     | select((.agent_kind // "") != "headless")
     | select((.duration_ms // null) != null)
@@ -720,18 +733,18 @@ execute_headless_intervals_tsv() {
   local line ts_s ts_e ep_s ep_e
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    ts_s="$(printf '%s' "$line" | jq -r '
+    ts_s="$(printf '%s' "$line" | jqr -r '
         select((.stage // "") == "execute" and (.agent_kind // "") == "headless")
         | (.ts_start // "")' 2>/dev/null)"
     [ -z "$ts_s" ] && continue
-    ts_e="$(printf '%s' "$line" | jq -r '(.ts_end // "")' 2>/dev/null)"
+    ts_e="$(printf '%s' "$line" | jqr -r '(.ts_end // "")' 2>/dev/null)"
     [ -z "$ts_e" ] && continue
     ep_s="$(date -d "$ts_s" +%s 2>/dev/null)" || continue
     ep_e="$(date -d "$ts_e" +%s 2>/dev/null)" || continue
     [ -z "$ep_s" ] && continue
     [ -z "$ep_e" ] && continue
     printf '%s\t%s\n' "$ep_s" "$ep_e"
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
 }
 
 # --- temp files ---
@@ -766,10 +779,10 @@ load_capture_array() {
   # `fromjson? | select(type=="object")`. jq -Rs slurps the whole input as a
   # single raw string; split("\n") then iterates the lines in-process — ONE jq
   # invocation for the entire capture, not one per line.
-  valid_json="$(printf '%s\n' "$capture_input" | jq -Rs 'split("\n") | [.[] | select(length>0) | fromjson? | select(type=="object")]' 2>/dev/null)"
+  valid_json="$(printf '%s\n' "$capture_input" | jqr -Rs 'split("\n") | [.[] | select(length>0) | fromjson? | select(type=="object")]' 2>/dev/null)"
   [ -z "$valid_json" ] && valid_json='[]'
 
-  kept="$(printf '%s\n' "$valid_json" | jq 'length' 2>/dev/null || echo 0)"
+  kept="$(printf '%s\n' "$valid_json" | jqr 'length' 2>/dev/null || echo 0)"
   dropped=$(( total_non_empty - kept ))
   if [ "$dropped" -gt 0 ]; then
     echo "cost-latency-report: WARN: skipped $dropped malformed capture line(s)" >&2
@@ -788,7 +801,7 @@ CAPTURE_JSON="$(load_capture_array)"
 # NO record_key are passed through untouched — each keyless record is its own
 # group (they are NOT collapsed into a single "absent key" bucket), preserving
 # every legacy keyless capture line.
-CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
+CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jqr -c '
   ([ .[] | select(has("record_key") and .record_key != null) ]
      | group_by(.record_key) | map(.[-1]))
   + [ .[] | select((has("record_key") | not) or .record_key == null) ]
@@ -820,7 +833,7 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
 #       session_id (or null) are passed through UNTOUCHED — each is its own group
 #       (NOT collapsed by (null,issue,stage)), mirroring how the record_key pass
 #       partitions keyless records.
-CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
+CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jqr -c '
   ([ .[] | select((.agent_id // "") != "") ]
      | group_by(.agent_id) | map(max_by(.tokens.total)))
   + ([ .[] | select((.agent_id // "") == "")
@@ -845,36 +858,36 @@ CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '
 # counts what the usage_complete filter removed, for the coverage-health
 # disclosure line.
 CAPTURE_ALL="$CAPTURE_JSON"
-CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c '[ .[] | select(.usage_complete != false) ]' 2>/dev/null)"
+CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jqr -c '[ .[] | select(.usage_complete != false) ]' 2>/dev/null)"
 [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 if [ -n "$SINCE" ]; then
-  CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg since "$SINCE" '
+  CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jqr -c --arg since "$SINCE" '
     [ .[] | select(((.ts_start // "") | .[0:10]) >= $since and (.ts_start // "") != "") ]' 2>/dev/null)"
   [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 fi
 if [ -n "$UNTIL" ]; then
-  CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg until "$UNTIL" '
+  CAPTURE_JSON="$(printf '%s' "$CAPTURE_JSON" | jqr -c --arg until "$UNTIL" '
     [ .[] | select(((.ts_start // "") | .[0:10]) <= $until and (.ts_start // "") != "") ]' 2>/dev/null)"
   [ -z "$CAPTURE_JSON" ] && CAPTURE_JSON='[]'
 fi
-EXCLUDED_LOWER_BOUND="$(printf '%s' "$CAPTURE_ALL" | jq -r '[ .[] | select(.usage_complete == false) ] | length' 2>/dev/null)"
+EXCLUDED_LOWER_BOUND="$(printf '%s' "$CAPTURE_ALL" | jqr -r '[ .[] | select(.usage_complete == false) ] | length' 2>/dev/null)"
 [ -z "$EXCLUDED_LOWER_BOUND" ] && EXCLUDED_LOWER_BOUND=0
 
 # --- emit aggregate pricing as JSON (debug; feeds Task-3 tokenomics) ---
 if [ "$EMIT_PRICING_JSON" -eq 1 ]; then
   read -r _priced_cost _unpriced_count < <(compute_pricing)
-  jq -cn --arg cost "$_priced_cost" --argjson unpriced "${_unpriced_count:-0}" \
+  jqr -cn --arg cost "$_priced_cost" --argjson unpriced "${_unpriced_count:-0}" \
     '{priced_cost_usd: $cost, unpriced_count: $unpriced}'
   exit 0
 fi
 
 # Partition raw list into release PRs (excluded) and eligible feature PRs.
-RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
-PR_LIST_JSON="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_JQ | not)]" 2>/dev/null || echo '[]')"
-PR_COUNT="$(printf '%s' "$PR_LIST_JSON" | jq 'length' 2>/dev/null || echo 0)"
+RELEASE_PR_COUNT="$(printf '%s' "$RAW_PR_LIST_JSON" | jqr "[.[] | select($RELEASE_PR_JQ)] | length" 2>/dev/null || echo 0)"
+PR_LIST_JSON="$(printf '%s' "$RAW_PR_LIST_JSON" | jqr "[.[] | select($RELEASE_PR_JQ | not)]" 2>/dev/null || echo '[]')"
+PR_COUNT="$(printf '%s' "$PR_LIST_JSON" | jqr 'length' 2>/dev/null || echo 0)"
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf '%s' "$PR_LIST_JSON" | jq -r '.[].number' | while read -r n; do
+  printf '%s' "$PR_LIST_JSON" | jqr -r '.[].number' | while read -r n; do
     echo "would-fetch: PR #$n"
   done
   exit 0
@@ -886,10 +899,10 @@ fi
 # no capture records (distinct from a real 0).
 SKIPPED_NO_LINK=0
 while read -r pr; do
-      pr_num=$(printf '%s' "$pr" | jq -r '.number')
-      pr_body=$(printf '%s' "$pr" | jq -r '.body // ""')
-      pr_additions=$(printf '%s' "$pr" | jq -r '.additions // 0')
-      pr_deletions=$(printf '%s' "$pr" | jq -r '.deletions // 0')
+      pr_num=$(printf '%s' "$pr" | jqr -r '.number')
+      pr_body=$(printf '%s' "$pr" | jqr -r '.body // ""')
+      pr_additions=$(printf '%s' "$pr" | jqr -r '.additions // 0')
+      pr_deletions=$(printf '%s' "$pr" | jqr -r '.deletions // 0')
       loc=$((pr_additions + pr_deletions))
 
       issue_num="$(extract_linked_issue "$pr_body")"
@@ -901,11 +914,11 @@ while read -r pr; do
       pr_view="$(load_pr_view "$pr_num" 2>/dev/null)" || continue
       issue_view="$(load_issue_view "$issue_num" 2>/dev/null)" || continue
 
-      issue_labels="$(printf '%s' "$issue_view" | jq -c '.labels // []')"
+      issue_labels="$(printf '%s' "$issue_view" | jqr -c '.labels // []')"
       path="$(derive_path "$issue_labels")"
 
-      issue_comments="$(printf '%s' "$issue_view" | jq -c '.comments // []')"
-      pr_comments="$(printf '%s' "$pr_view"    | jq -c '.comments // []')"
+      issue_comments="$(printf '%s' "$issue_view" | jqr -c '.comments // []')"
+      pr_comments="$(printf '%s' "$pr_view"    | jqr -c '.comments // []')"
 
       # ceremony = 1 iff issue has both ## Implementation Plan and ## Plan
       # Evaluation comments AND the PR has a ## Evaluation comment.
@@ -920,14 +933,14 @@ while read -r pr; do
 
       # Sum tokens_total + duration_ms across ALL capture records for this issue.
       # No records → literal "null".
-      sums="$(printf '%s' "$CAPTURE_JSON" | jq -c --arg n "$issue_num" '
+      sums="$(printf '%s' "$CAPTURE_JSON" | jqr -c --arg n "$issue_num" '
         [.[] | select((.issue|tostring) == $n)] as $recs
         | if ($recs | length) == 0 then {tokens: null, dur: null}
           else {tokens: ([$recs[] | .tokens.total] | add),
                 dur:    ([$recs[] | .duration_ms] | add)}
           end' 2>/dev/null)"
-      tokens_total="$(printf '%s' "$sums" | jq -r '.tokens // "null"' 2>/dev/null)"
-      duration_ms="$(printf '%s' "$sums" | jq -r '.dur // "null"' 2>/dev/null)"
+      tokens_total="$(printf '%s' "$sums" | jqr -r '.tokens // "null"' 2>/dev/null)"
+      duration_ms="$(printf '%s' "$sums" | jqr -r '.dur // "null"' 2>/dev/null)"
       [ -z "$tokens_total" ] && tokens_total="null"
       [ -z "$duration_ms" ] && duration_ms="null"
 
@@ -941,7 +954,7 @@ while read -r pr; do
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$issue_num" "$path" "$loc" "$ceremony" "$tokens_total" "$duration_ms" "$over_served" "$pr_num" \
         >> "$ROWS_TSV"
-done < <(printf '%s' "$PR_LIST_JSON" | jq -c '.[]')
+done < <(printf '%s' "$PR_LIST_JSON" | jqr -c '.[]')
 
 if [ "$SKIPPED_NO_LINK" -gt 0 ]; then
   echo "cost-latency-report: $SKIPPED_NO_LINK non-release PRs skipped for missing Closes/Fixes/Resolves marker" >&2
@@ -1115,7 +1128,7 @@ fi
 
 # In-window issue numbers (column 1 of the row TSV), as a JSON array — used to
 # filter capture records into the per-stage aggregate.
-INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq -cs '.' 2>/dev/null)"
+INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jqr -R 'select(length>0)' 2>/dev/null | jqr -cs '.' 2>/dev/null)"
 [ -z "$INWINDOW_JSON" ] && INWINDOW_JSON='[]'
 
 # Per-(issue,stage) capture sums for in-window issues:
@@ -1133,7 +1146,7 @@ INWINDOW_JSON="$(cut -f1 "$ROWS_TSV" | jq -R 'select(length>0)' 2>/dev/null | jq
 # (priced + unpriced — neither model- nor interval-gated), so an UNPRICED
 # (model="") stage still shows REAL per-bucket token counts (#789). They mirror
 # the all-records substrate emit_path_size_table uses.
-STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" '
+STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jqr -r --argjson win "$INWINDOW_JSON" '
   [.[] | select(
       (.stage == "orchestrator" and .duration_ms == null)
       or ((.issue|tostring) as $i | $win | index($i))
@@ -1161,8 +1174,8 @@ STAGE_TSV="$(printf '%s' "$CAPTURE_JSON" | jq -r --argjson win "$INWINDOW_JSON" 
 
 emit_banner() {
   local oldest newest
-  oldest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | min // "?"')"
-  newest="$(printf '%s' "$PR_LIST_JSON" | jq -r '[.[].mergedAt // empty] | max // "?"')"
+  oldest="$(printf '%s' "$PR_LIST_JSON" | jqr -r '[.[].mergedAt // empty] | min // "?"')"
+  newest="$(printf '%s' "$PR_LIST_JSON" | jqr -r '[.[].mergedAt // empty] | max // "?"')"
   if [ "$RELEASE_PR_COUNT" -gt 0 ]; then
     printf 'COST/LATENCY REPORT — last %s feature PRs (window: %s to %s; %s release PRs excluded)\n\n' \
       "$PR_COUNT" "$oldest" "$newest" "$RELEASE_PR_COUNT"
@@ -1183,7 +1196,7 @@ emit_path_table() {
   # source so unpriced inline issues still contribute real per-bucket tokens.
   #   issue <TAB> input <TAB> output <TAB> cache_creation <TAB> cache_read
   local issue_buckets
-  issue_buckets="$(printf '%s' "$CAPTURE_JSON" | jq -r '
+  issue_buckets="$(printf '%s' "$CAPTURE_JSON" | jqr -r '
     group_by(.issue|tostring)
     | map([ (.[0].issue|tostring),
             ([.[] | (.tokens.input//0)] | add),
@@ -1329,7 +1342,7 @@ emit_bucket_table() {
   # (CAPTURE_JSON length); LOC = total merged-PR LOC across the window (sum of
   # ROWS_TSV col3). Both substrates are populated before the --tokenomics block.
   local bt_n bt_loc
-  bt_n="$(printf '%s' "$CAPTURE_JSON" | jq -r 'length' 2>/dev/null)"; [ -z "$bt_n" ] && bt_n=0
+  bt_n="$(printf '%s' "$CAPTURE_JSON" | jqr -r 'length' 2>/dev/null)"; [ -z "$bt_n" ] && bt_n=0
   bt_loc="$(awk -F'\t' '{s+=$3} END{print s+0}' "$ROWS_TSV")"
   echo ""
   echo 'BUCKET     | tokens       | $        | cost%  | token% |      tok/N |    $/N |    tok/LOC |  $/LOC'
@@ -1389,7 +1402,7 @@ emit_stage_cost_table() {
 # on model — this is the all-records substrate so an UNPRICED (model="") in-session
 # row still shows REAL per-bucket token counts (#789), mirroring emit_path_size_table.
 structure_buckets_tsv() {
-  printf '%s' "$CAPTURE_JSON" | jq -r '
+  printf '%s' "$CAPTURE_JSON" | jqr -r '
     .[]
     | [ (if (.agent_kind // "") == "headless" then "spawn" else "in-session" end),
         (.tokens.input//0), (.tokens.output//0),
@@ -1477,7 +1490,7 @@ priced_role_tsv() {
   local r_in r_out r_cc r_cr
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    model="$(printf '%s' "$line" | jq -r '.model // ""' 2>/dev/null)"
+    model="$(printf '%s' "$line" | jqr -r '.model // ""' 2>/dev/null)"
     if [ -z "$model" ] || [ "$model" = "null" ]; then
       continue
     fi
@@ -1486,7 +1499,7 @@ priced_role_tsv() {
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
     r_cr="$(price_rate "$norm" CACHE_READ)"
-    printf '%s' "$line" | jq -r '
+    printf '%s' "$line" | jqr -r '
         [ ((.role // "single") | tostring),
           (.tokens.input//0), (.tokens.output//0),
           (.tokens.cache_creation//0), (.tokens.cache_read//0) ] | @tsv' 2>/dev/null \
@@ -1494,7 +1507,7 @@ priced_role_tsv() {
           c=($2/1e6)*ri + ($3/1e6)*ro + ($4/1e6)*rcc + ($5/1e6)*rcr;
           print $1, c
         }'
-  done < <(printf '%s' "$CAPTURE_JSON" | jq -c '.[]' 2>/dev/null)
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
 }
 
 # emit_role_split_table — split-role red/green/single cost split (#1098).
@@ -1539,7 +1552,7 @@ emit_path_size_table() {
     # Four per-issue token sums over ALL records (priced + unpriced): it is a
     # token count, not a $ figure. net total nets OUT cache_read (input+output+
     # cache_creation), unchanged from the prior single-column value.
-    cells="$(printf '%s' "$CAPTURE_JSON" | jq -r --arg n "$issue" '
+    cells="$(printf '%s' "$CAPTURE_JSON" | jqr -r --arg n "$issue" '
       [.[] | select((.issue|tostring) == $n)] as $recs
       | if ($recs | length) == 0 then "--\t--\t--\t--"
         else
@@ -1621,9 +1634,9 @@ emit_coverage_health() {
   # excluded, so it must keep counting the usage_complete=false lower-bounds it
   # reports. Cost/token MAGNITUDE tables read the reconciled $CAPTURE_JSON.
   local exec_n total_n priced_n
-  exec_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select(.stage == "execute")] | length' 2>/dev/null)"
-  total_n="$(printf '%s' "$CAPTURE_ALL" | jq -r 'length' 2>/dev/null)"
-  priced_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select((.model // "") != "")] | length' 2>/dev/null)"
+  exec_n="$(printf '%s' "$CAPTURE_ALL" | jqr -r '[.[] | select(.stage == "execute")] | length' 2>/dev/null)"
+  total_n="$(printf '%s' "$CAPTURE_ALL" | jqr -r 'length' 2>/dev/null)"
+  priced_n="$(printf '%s' "$CAPTURE_ALL" | jqr -r '[.[] | select((.model // "") != "")] | length' 2>/dev/null)"
   [ -z "$exec_n" ] && exec_n=0
   [ -z "$total_n" ] && total_n=0
   [ -z "$priced_n" ] && priced_n=0
@@ -1648,7 +1661,7 @@ emit_coverage_health() {
   # token totals read as a LOWER BOUND, not the real cost. Re-running the
   # capture backfill once the transcript exists reconciles them upward.
   local lb_n
-  lb_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select(.usage_complete == false)] | length' 2>/dev/null)"
+  lb_n="$(printf '%s' "$CAPTURE_ALL" | jqr -r '[.[] | select(.usage_complete == false)] | length' 2>/dev/null)"
   [ -z "$lb_n" ] && lb_n=0
   awk -v lb="$lb_n" -v t="$total_n" 'BEGIN {
     pct = (t > 0 ? lb/t*100 : 0);
@@ -1811,7 +1824,7 @@ emit_concurrency_assessment() {
   # records present"), not a cost magnitude, so explicit usage_complete=false
   # inline rows must still be counted rather than silently dropped.
   local inline_n
-  inline_n="$(printf '%s' "$CAPTURE_ALL" | jq -r '[.[] | select((.agent_kind // "") != "headless")] | length' 2>/dev/null)"
+  inline_n="$(printf '%s' "$CAPTURE_ALL" | jqr -r '[.[] | select((.agent_kind // "") != "headless")] | length' 2>/dev/null)"
   [ -z "$inline_n" ] && inline_n=0
   printf 'inline agents are point-in-time (ts_start==ts_end) under the current capture shape → not interval-measurable; peak above is a LOWER BOUND that excludes inline overlap (%s inline records present).\n' "$inline_n"
 

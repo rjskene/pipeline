@@ -132,12 +132,12 @@ auto_merge_should_fire() {
     echo block-ci
     return 1
   fi
-  mergeable=$(echo "$rollup" | jq -r '.mergeable' 2>/dev/null)
+  mergeable=$(echo "$rollup" | jq -r '.mergeable' 2>/dev/null | tr -d '\r')
   if [ "$mergeable" != "MERGEABLE" ]; then
     echo block-mergeable
     return 1
   fi
-  mergestate=$(echo "$rollup" | jq -r '.mergeStateStatus' 2>/dev/null)
+  mergestate=$(echo "$rollup" | jq -r '.mergeStateStatus' 2>/dev/null | tr -d '\r')
   if [ "$mergestate" != "CLEAN" ]; then
     echo block-mergestate
     return 1
