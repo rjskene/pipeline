@@ -410,6 +410,29 @@ else
   echo "    stderr:"; sed 's/^/      /' "$CL/stderr"
 fi
 
+# ---- Case M: merged PR child reports MERGED, not CLOSED → all-closed (#1156) ----
+# A tracker checklist may legitimately reference a PR (e.g. a design-doc PR).
+# A merged PR reports state MERGED, not CLOSED; auto-close must treat MERGED as
+# done alongside CLOSED, else a tracker whose sole remaining child is a merged
+# PR never qualifies for auto-close (observed: work-orchestrator tracker #732 /
+# child #746).
+echo "Case M: merged PR child (state MERGED) → all-closed"
+inc
+CM="$TMP/case-m"; reset_case "$CM"
+export STATES="101=CLOSED 102=CLOSED 103=MERGED"
+if bash "$HELPER" >"$CM/stdout" 2>"$CM/stderr"; then
+  if grep -qE '^STATUS: all-closed tracker=999' "$CM/stdout"; then
+    pass_msg "merged PR child: MERGED treated as done; all-closed emitted"
+  else
+    fail_msg "merged PR child: expected all-closed, got:"
+    sed 's/^/    /' "$CM/stdout"
+  fi
+else
+  rc=$?
+  fail_msg "merged PR child: helper exited $rc; expected 0"
+  echo "    stderr:"; sed 's/^/      /' "$CM/stderr"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
