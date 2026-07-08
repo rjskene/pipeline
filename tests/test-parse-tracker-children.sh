@@ -130,6 +130,58 @@ else
   fail_msg "Case E: expected '$expected' got '$out'"
 fi
 
+# ---- Case M: decorated heading with parenthetical suffix → children extracted (#1157) ----
+# Operators decorate the heading naturally (ship-order notes, spec links). The old
+# exact-match anchor `^## Rollout sequence[[:space:]]*$` rejected these and returned
+# ZERO children for a tracker with a full open checklist.
+echo "Case M: decorated '## Rollout sequence (…)' heading parses children"
+inc
+M="$TMP/body-m.md"
+cat > "$M" <<'BODY'
+## Context
+Some prose.
+
+## Rollout sequence (design approved 2026-07-06 — spec: docs/foo.md)
+
+- [ ] **#942 — first decorated child**
+- [ ] **#943 — second decorated child**
+
+## Notes
+- [ ] **#999 — outside the rollout section, should be ignored**
+BODY
+
+out=$(bash "$HELPER" "$M" 2>"$TMP/err-m") || { fail_msg "Case M: exit non-zero"; cat "$TMP/err-m"; }
+expected=$'942\n943'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case M: decorated-heading children parsed in order"
+else
+  fail_msg "Case M: expected '$expected' got '$out'"
+fi
+
+# ---- Case N: a continuation-word heading is NOT the rollout section (#1157 guard) ----
+# The loosened anchor must accept a parenthetical/plain decoration but must NOT treat
+# `## Rollout sequence appendix` (a different section whose title merely starts with
+# the same words) as the rollout section — this is what keeps Case C green and rules
+# out an over-broad `\b`-style loosening.
+echo "Case N: '## Rollout sequence appendix' continuation heading yields no children"
+inc
+N="$TMP/body-n.md"
+cat > "$N" <<'BODY'
+## Rollout sequence appendix (note: different section)
+
+- [ ] **#801 — must NOT be treated as a rollout child**
+BODY
+
+if out=$(bash "$HELPER" "$N" 2>"$TMP/err-n"); then
+  if [ -z "$out" ]; then
+    pass_msg "Case N: continuation-word heading yields no children"
+  else
+    fail_msg "Case N: expected empty output, got '$out'"
+  fi
+else
+  fail_msg "Case N: helper exited non-zero ($?), expected 0"
+fi
+
 # ============================================================================
 # --fallback-mentions mode (#491): scan the WHOLE body for `#NNN` mentions,
 # ignoring `## Rollout sequence` bounds, deduping, preserving first-appearance
