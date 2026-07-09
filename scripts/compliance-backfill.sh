@@ -256,7 +256,7 @@ echo '[]' > "$ROWS_JSON_TMP"
 
 SKIPPED_NO_LINK=0
 while read -r pr; do
-  pr_num=$(printf '%s' "$pr" | jq -r '.number')
+  pr_num=$(printf '%s' "$pr" | jq -r '.number' | tr -d '\r')
   pr_body=$(printf '%s' "$pr" | jq -r '.body // ""')
 
   issue_num="$(extract_linked_issue "$pr_body")"
