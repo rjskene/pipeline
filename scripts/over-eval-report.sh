@@ -228,10 +228,10 @@ fi
 # counter (and any future counters) persist in the parent shell.
 SKIPPED_NO_LINK=0
 while read -r pr; do
-      pr_num=$(printf '%s' "$pr" | jq -r '.number')
+      pr_num=$(printf '%s' "$pr" | jq -r '.number' | tr -d '\r')
       pr_body=$(printf '%s' "$pr" | jq -r '.body // ""')
-      pr_additions=$(printf '%s' "$pr" | jq -r '.additions // 0')
-      pr_deletions=$(printf '%s' "$pr" | jq -r '.deletions // 0')
+      pr_additions=$(printf '%s' "$pr" | jq -r '.additions // 0' | tr -d '\r')
+      pr_deletions=$(printf '%s' "$pr" | jq -r '.deletions // 0' | tr -d '\r')
       loc=$((pr_additions + pr_deletions))
 
       issue_num="$(extract_linked_issue "$pr_body")"

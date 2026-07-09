@@ -63,7 +63,7 @@ if [ -z "$EVAL" ] || [ "$EVAL" = "null" ]; then
 fi
 
 BODY="$(printf '%s' "$EVAL" | jq -r '.body')"
-URL="$(printf '%s' "$EVAL" | jq -r '.url')"
+URL="$(printf '%s' "$EVAL" | jq -r '.url' | tr -d '\r')"
 COMMENT_ID="${URL##*issuecomment-}"
 if [ -z "$COMMENT_ID" ] || [ "$COMMENT_ID" = "$URL" ]; then
   echo "WARN: could not derive comment id from URL '${URL}'; skipping rewrite" >&2
