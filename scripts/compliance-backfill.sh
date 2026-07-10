@@ -245,7 +245,7 @@ PR_LIST_JSON="$(printf '%s' "$RAW_PR_LIST_JSON" | jq "[.[] | select($RELEASE_PR_
 PR_COUNT="$(printf '%s' "$PR_LIST_JSON" | jq 'length' 2>/dev/null || echo 0)"
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf '%s' "$PR_LIST_JSON" | jq -r '.[].number' | while read -r n; do
+  printf '%s' "$PR_LIST_JSON" | jq -r '.[].number' | tr -d '\r' | while read -r n; do
     echo "would-fetch: PR #$n"
   done
   exit 0
@@ -256,7 +256,7 @@ echo '[]' > "$ROWS_JSON_TMP"
 
 SKIPPED_NO_LINK=0
 while read -r pr; do
-  pr_num=$(printf '%s' "$pr" | jq -r '.number')
+  pr_num=$(printf '%s' "$pr" | jq -r '.number' | tr -d '\r')
   pr_body=$(printf '%s' "$pr" | jq -r '.body // ""')
 
   issue_num="$(extract_linked_issue "$pr_body")"

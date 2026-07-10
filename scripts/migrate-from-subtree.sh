@@ -559,7 +559,7 @@ if [ "$MODE" = patch_settings ]; then
     if grep -Fxq "$_ps_bn" "$_ps_known_tmp" 2>/dev/null; then
       printf '%s\n' "$_ps_cmd" >> "$_ps_removed_tmp"
     fi
-  done < <(jq -r '.hooks // {} | to_entries[]? | .value[]? | .hooks[]? | .command // empty' "$_ps_settings" 2>/dev/null || true)
+  done < <(jq -r '.hooks // {} | to_entries[]? | .value[]? | .hooks[]? | .command // empty' "$_ps_settings" 2>/dev/null | tr -d '\r' || true)
 
   _ps_n=$(wc -l < "$_ps_removed_tmp" | tr -d '[:space:]')
   _ps_n="${_ps_n:-0}"

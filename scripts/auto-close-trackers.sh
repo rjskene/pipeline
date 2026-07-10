@@ -75,7 +75,11 @@ for tracker in $trackers; do
   for c in $children; do
     csv="${csv:+$csv,}$c"
     state=$(gh issue view "$c" --repo "$REPO" --json state --jq .state) || state="OPEN"
-    if [ "$state" != "CLOSED" ]; then
+    # A tracker checklist may reference a PR (e.g. a design-doc PR), not only an
+    # issue. A merged PR reports state MERGED, not CLOSED, so treat MERGED as
+    # done alongside CLOSED — else a tracker whose sole remaining child is a
+    # merged PR never qualifies for auto-close (#1156).
+    if [ "$state" != "CLOSED" ] && [ "$state" != "MERGED" ]; then
       open_children="${open_children:+$open_children,}$c"
     fi
   done

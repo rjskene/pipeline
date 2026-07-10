@@ -178,7 +178,7 @@ TRACKERS=$(printf '%s' "$ENRICHED" | jq '[.[] | select(.is_tracker == true)]')
 
 while IFS= read -r tline; do
   [ -z "$tline" ] && continue
-  tnum=$(printf '%s' "$tline" | jq -r '.number')
+  tnum=$(printf '%s' "$tline" | jq -r '.number' | tr -d '\r')
   tscope=$(printf '%s' "$tline" | jq -r '.scope')
   tbody=$(fetch_tracker_body "$tnum")
   children=$(printf '%s\n' "$tbody" | bash "$PARSE_CHILDREN_SCRIPT" - | paste -sd, -)
@@ -307,7 +307,7 @@ lookup_child_tracker() {
 
 while IFS= read -r iline; do
   [ -z "$iline" ] && continue
-  inum=$(printf '%s' "$iline" | jq -r '.number')
+  inum=$(printf '%s' "$iline" | jq -r '.number' | tr -d '\r')
   iscope=$(printf '%s' "$iline" | jq -r '.scope')
   ibody=$(printf '%s' "$iline" | jq -r '.body // ""')
   # Already-in-rollout: skip every (inum, parent_tracker) pair regardless of which

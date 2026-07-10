@@ -57,6 +57,14 @@ chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
 export PIPELINE_REPO="rjskene/pipeline"
 
+# Hermeticity (#1144): pin the campaign caps every default-cap case asserts
+# against, so a dogfood host's live pipeline.config (e.g. MAX_BC=1/MAX_AD=2)
+# sourced by run-test-suite.sh cannot leak in and flip Cases 1/2/7. Cases 6/6b
+# set these explicitly per-case and are unaffected.
+export PIPELINE_CAMPAIGN_MAX_BC=2
+export PIPELINE_CAMPAIGN_MAX_AD=5
+export PIPELINE_CAMPAIGN_MAX_FOLD=3
+
 # Helper: write a canned issue JSON.
 # Args: dir, number, path_label (docs-only|quick-fix|multi-task|"" for B), body
 write_issue() {

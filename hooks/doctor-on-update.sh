@@ -8,11 +8,21 @@
 #   - UNCHANGED  -> CHEAP silent no-op. Pure string compare, NO network, no gh,
 #                   no doctor, no marker rewrite. (UserPromptSubmit fires on
 #                   EVERY prompt, so the no-op path must be ultra-cheap.)
-#   - CHANGED    -> emit stdout-JSON injection:
-#                     hookSpecificOutput.additionalContext (model-facing
-#                       directive to run the /pipeline:doctor reconcile AND lead
-#                       its operator relay with a recognizable header line);
-#                   then update the marker so it fires ONCE per update.
+#   - CHANGED    -> a `sort -V` monotonicity gate (#1152) decides which way:
+#                     - UPGRADE (cur strictly newer than the marker, or first
+#                       run) -> emit stdout-JSON injection:
+#                         hookSpecificOutput.additionalContext (model-facing
+#                           directive to run the /pipeline:doctor reconcile AND
+#                           lead its operator relay with a recognizable header
+#                           line, ALWAYS naming the delta as (older, newer) —
+#                           never reversed);
+#                       then update the marker so it fires ONCE per update.
+#                     - DOWNGRADE / cache flip-flop (cur older than the marker
+#                       — e.g. two coexisting plugin installs where the loader
+#                       resolves the older one) -> SILENT no-op, no injection,
+#                       NEVER a reversed `--fix config`; the marker is still
+#                       refreshed to cur so the detector cannot re-fire on
+#                       every prompt.
 #
 # NO systemMessage (#1047): Claude Code does NOT render a top-level systemMessage
 # to the operator for UserPromptSubmit/SessionStart events — for those events all
@@ -79,6 +89,20 @@ if [ -f "$_marker" ]; then
   _last_ver="$(cat "$_marker" 2>/dev/null || true)"
 fi
 if [ "$_last_ver" = "$_cur_ver" ]; then
+  exit 0
+fi
+
+# 5b. Monotonicity gate (#1152): the equal case was handled above. A downgrade
+#     or cache flip-flop (cur < last — e.g. two coexisting installs where the
+#     loader resolves the OLDER one while the marker holds the newer) must NOT
+#     fire a backwards "update" or a reversed `--fix config`. Refresh the
+#     marker to break any re-fire loop, then silent no-op. sort -V picks the
+#     newest of the pair; only treat this as an update when cur IS the newest
+#     (this also covers first-run, where _last_ver is empty: an empty line
+#     sorts before any real version, so cur is always the newest there).
+_newest="$(printf '%s\n%s\n' "$_last_ver" "$_cur_ver" | sort -V | tail -1)"
+if [ "$_cur_ver" != "$_newest" ]; then
+  { mkdir -p "$_marker_dir" && printf '%s' "$_cur_ver" > "$_marker"; } 2>/dev/null || true
   exit 0
 fi
 

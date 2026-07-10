@@ -50,7 +50,7 @@ LABEL_TABLE=(
   "LATER|later|D4C5F9|Deferred"
   "HUMAN|human|F9D0C4|Needs human in the loop"
   "BRAINSTORM|brainstorm|FEF2C0|Non-actionable discussion/exploration"
-  "NEXT|next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH) before the base branch"
+  "NEXT|next|FBCA04|Routes work onto the configurable next-integration branch (PIPELINE_NEXT_BRANCH)"
 )
 
 # Resolve the effective label name for a row, honoring PIPELINE_LABELS_<KEY> overrides
@@ -426,7 +426,7 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "residual" ]; then
         has_settings_findings=1
         break
       fi
-    done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null || true)
+    done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null | tr -d '\r' || true)
     rm -f "$_sr_known_tmp"
   fi
 
@@ -696,7 +696,7 @@ else
     if grep -Fxq "$_sr_bn" "$_sr_known_tmp"; then
       _sr_findings+=("$_sr_bn")
     fi
-  done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null || true)
+  done < <(jq -r '.hooks | to_entries[] | .value[]? | .hooks[]? | .command' "$_sr_settings" 2>/dev/null | tr -d '\r' || true)
   rm -f "$_sr_known_tmp"
 
   _sr_n="${#_sr_findings[@]}"

@@ -259,6 +259,39 @@ else
   pass_msg "unknown flag exits non-zero"
 fi
 
+# --- Scenario 9: CRLF-jq seam — dry-run number sweep has no stray CR (#1158) ---
+# Git-for-Windows jq (msvcrt) emits \r\n on every output line. The --dry-run
+# loop reads `jq -r '.[].number' | while read -r n` and echoes `would-fetch:
+# PR #$n`; under CRLF jq `n="101\r"`, so every line trails a carriage return.
+# This is the representative guard for the byte-identical cosmetic sweep class
+# (late-error / over-eval / compliance-backfill). A fake jq earlier on PATH
+# reproduces the msvcrt CR faithfully on an LF-only host.
+inc_scenario "Scenario 9: CRLF-jq seam — dry-run 'would-fetch' lines carry no CR"
+
+# shellcheck source=_lib/crlf-jq-seam.sh
+source "$REPO_ROOT/tests/_lib/crlf-jq-seam.sh"
+CRLF_BIN9="$(mktemp -d)"
+if make_crlf_jq_bin "$CRLF_BIN9/bin"; then
+  DRY9="$(PATH="$CRLF_BIN9/bin:$PATH" bash "$HELPER" --fixture "$FIXTURE_DIR" --dry-run 2>/dev/null || true)"
+
+  # PR numbers must still be the eligible feature PRs (101-104; release PRs excluded).
+  if printf '%s\n' "$DRY9" | grep -Eq '^would-fetch: PR #101' \
+     && printf '%s\n' "$DRY9" | grep -Eq '^would-fetch: PR #104'; then
+    pass_msg "CRLF-seam: dry-run still lists the eligible feature PRs (#101..#104)"
+  else
+    fail_msg "CRLF-seam: dry-run PR numbers unexpected (got: $DRY9)"
+  fi
+
+  if ! printf '%s' "$DRY9" | grep -q $'\r'; then
+    pass_msg "CRLF-seam: no stray CR in dry-run 'would-fetch' output"
+  else
+    fail_msg "CRLF-seam: 'would-fetch' lines carry a trailing CR under CRLF jq"
+  fi
+else
+  fail_msg "CRLF-seam: fake-jq seam setup failed (non-vacuity guard)"
+fi
+rm -rf "$CRLF_BIN9"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
