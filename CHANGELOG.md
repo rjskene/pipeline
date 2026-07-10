@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.23.20](https://github.com/rjskene/pipeline/compare/v0.23.19...v0.23.20) (2026-07-10)
+
+
+### Bug Fixes
+
+* **analyze-issues:** strip CR on jq -r .number reads so Windows CRLF jq no longer breaks child-index lookup and body-reference tracker fits ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([34440bf](https://github.com/rjskene/pipeline/commit/34440bf4f56afcb511441e510a9458a1f5e6b1ac))
+* **audit-compliance:** strip CR on jq -r file-path reads so Windows CRLF jq no longer zeroes SRC_COUNT/indices and misjudges the TDD verdict ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([f91bfc5](https://github.com/rjskene/pipeline/commit/f91bfc5f451ce49126b9ab6b83484bdd038d4cd2))
+* **auto-close-trackers:** merged PR child reports MERGED not CLOSED — tracker never auto-closes ([a6c5d8f](https://github.com/rjskene/pipeline/commit/a6c5d8f716bc2d80d377ed9cf052ff5985615256))
+* **auto-close-trackers:** treat merged PR child as done alongside CLOSED ([bfdf17d](https://github.com/rjskene/pipeline/commit/bfdf17d0672c0df9f89f5606502d26f39e99147e)), closes [#1156](https://github.com/rjskene/pipeline/issues/1156)
+* **auto-merge-gate:** strip CR on jq -r mergeable/mergeStateStatus so Windows CRLF jq no longer blocks every green PR ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([82f5727](https://github.com/rjskene/pipeline/commit/82f572730421084a38f9e4215838acd22737f763))
+* **auto-merge:** make the greenlight base check next-branch aware ([2eeb160](https://github.com/rjskene/pipeline/commit/2eeb1605344b42f83446b72ca6393bff7d600538))
+* **auto-merge:** make the greenlight base check next-branch aware ([f64e276](https://github.com/rjskene/pipeline/commit/f64e276f4e6e5c9165e178da98905680349b3bdb)), closes [#1148](https://github.com/rjskene/pipeline/issues/1148)
+* **cost-latency-report:** route jq through a CR-stripping wrapper so Windows CRLF jq no longer misprices/miscounts records (unpriced leak, model lookup miss) ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([6309bf1](https://github.com/rjskene/pipeline/commit/6309bf108ff9e9a1fc35a373fddd42537c414df3))
+* **doctor-on-update:** guard version downgrades/flip-flops with a sort -V monotonicity gate ([3e9cdc9](https://github.com/rjskene/pipeline/commit/3e9cdc9009280d58def50e20239add6ba19b6f66))
+* **doctor-on-update:** guard version downgrades/flip-flops with a sort -V monotonicity gate ([9f539f3](https://github.com/rjskene/pipeline/commit/9f539f34444bf0d13e327963b786ac0a7f462ac4)), closes [#1152](https://github.com/rjskene/pipeline/issues/1152)
+* **doctor:** strip CR on jq -r hook-command reads so Windows CRLF jq no longer falsely reports "no pipeline hook entries" in settings_residual ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([05dd52d](https://github.com/rjskene/pipeline/commit/05dd52d016d9e07e1bd4bac5dff05cbedc4e7660))
+* **doctor:** trim next label description under GitHub 100-char max ([197f3ff](https://github.com/rjskene/pipeline/commit/197f3ffdf1575a34400ba3766c2b7b1a06baee8d))
+* **doctor:** trim next label description under GitHub 100-char max ([c801758](https://github.com/rjskene/pipeline/commit/c801758c3e2121a2e6286fe0195540941c2b9731)), closes [#1147](https://github.com/rjskene/pipeline/issues/1147)
+* **hooks:** resolve Windows/MSYS restrict_paths over-block ([d24c0e7](https://github.com/rjskene/pipeline/commit/d24c0e708c132b66a721178f44e94fae89f26108))
+* **hooks:** resolve Windows/MSYS restrict_paths over-block ([#1153](https://github.com/rjskene/pipeline/issues/1153)) ([91c8a28](https://github.com/rjskene/pipeline/commit/91c8a28b5fd58616b37ee1efd327a50337d5510d))
+* **migrate-from-subtree:** strip CR on jq -r hook-command read so Windows CRLF jq no longer skips residual hook removal under --patch settings ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([0afeaba](https://github.com/rjskene/pipeline/commit/0afeaba581dae250fa5ca3913ffaa23b59f7b3db))
+* **parse-tracker-children:** accept decorated '## Rollout sequence (…)' heading ([2c1ea28](https://github.com/rjskene/pipeline/commit/2c1ea2827e4dde84beefd70f9070ad2a272dbfb2)), closes [#1157](https://github.com/rjskene/pipeline/issues/1157)
+* **parse-tracker-children:** exact heading anchor rejects decorated '## Rollout sequence (…)' — tracker parses zero children ([17a676e](https://github.com/rjskene/pipeline/commit/17a676e7284152081a9119c17eb6320a52e0a53f))
+* **render-status-table:** strip CR at jq-&gt;shell boundaries so Windows CRLF jq no longer collapses every tracker to "all children closed" ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([ca8c916](https://github.com/rjskene/pipeline/commit/ca8c9164e853f663529679c223f43f5bb78e0ac0))
+* **reports/rewrite-eval:** strip CR on live-gh jq reads (Windows CRLF, same class as [#1158](https://github.com/rjskene/pipeline/issues/1158)) ([04dde63](https://github.com/rjskene/pipeline/commit/04dde6369686ba9ee4db12abe3d5959760edc422))
+* **reports/rewrite-eval:** strip CR on live-gh jq reads (Windows CRLF) ([41d7aa4](https://github.com/rjskene/pipeline/commit/41d7aa444ec28b22897382b6c02dd6111e25b3e4))
+* **reports:** strip CR on jq -r number-list dry-run loops (Windows CRLF cosmetic sweep) ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([6bfcde9](https://github.com/rjskene/pipeline/commit/6bfcde9c7cc8346c05f52194735b124623ad498b))
+* **scripts:** strip CR at jq-&gt;shell boundaries — Windows CRLF jq hardening ([#1158](https://github.com/rjskene/pipeline/issues/1158)) ([f2100cb](https://github.com/rjskene/pipeline/commit/f2100cbb240f7cdef1612d70cc305f582bd37387))
+
 ## [0.23.19](https://github.com/rjskene/pipeline/compare/v0.23.18...v0.23.19) (2026-06-30)
 
 
