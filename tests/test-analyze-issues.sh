@@ -606,6 +606,47 @@ else
   fail_msg "CRLF-seam: fake-jq seam setup failed (non-vacuity guard)"
 fi
 
+# --- Scenario 20: CRLF-jq seam — scopeless issue NOT false-matched to scopeless tracker (#1165) ---
+# Git-for-Windows jq (msvcrt) emits \r\n on every output line. Unlike `.number`
+# (stripped at lines ~181/310), `.scope` is read via `jq -r '.scope'` WITHOUT a CR
+# strip at the tracker-index boundary (line ~182) and the tracker-fits boundary
+# (line ~311); `.body` is likewise unstripped at line ~312. When an issue AND a
+# tracker are BOTH scope-less (title without a `verb(scope):` prefix), jq yields
+# scope="" for each — but under CRLF jq the command substitution captures a lone
+# `\r`. `[ -n "$iscope" ]` then reads TRUE (a CR is a non-empty string) and
+# `[ "$iscope" = "$tscope" ]` compares $'\r' == $'\r' → a BOGUS scope-match fit.
+# On LF (and after CR is stripped at the .scope/.body seam) both are empty, so
+# `[ -n "" ]` is false and no fit emits. This asserts the false positive is gone.
+inc_scenario "Scenario 20: CRLF-jq seam — scopeless issue not false-matched to scopeless tracker (#1165)"
+
+if make_crlf_jq_bin "$CRLF_BIN19"; then
+  FIX20="$TMP/fix20"; mkdir -p "$FIX20"
+  cat > "$FIX20/issues.json" <<'J'
+[
+  {"number":400,"title":"Coordinate the umbrella rollout","body":"Umbrella tracker prose with no child references.","labels":[{"name":"tracker"}]},
+  {"number":401,"title":"Investigate a flaky startup path","body":"Standalone task, no scope prefix and no tracker reference.","labels":[]}
+]
+J
+  cat > "$FIX20/issue-400.json" <<'J'
+{"body":"Umbrella tracker prose with no child references."}
+J
+  out20=$(run_helper_seam "$FIX20" 2>&1)
+  shortlist20=$(echo "$out20" | tail -n 1)
+  if [ -f "$shortlist20" ]; then
+    bogus20=$(jq -r '[.tracker_fits[] | select(.issue == 401 and .tracker == 400 and .reason == "scope-match")] | length' "$shortlist20" 2>/dev/null)
+    if [ "$bogus20" = "0" ]; then
+      pass_msg "CRLF-seam: scopeless #401 NOT false-matched to scopeless tracker #400 (.scope CR stripped)"
+    else
+      fail_msg "CRLF-seam: scopeless #401 falsely scope-matched to #400 (got $bogus20; CR in .scope poisoned [ -n ]/string compare)"
+      jq '.tracker_fits' "$shortlist20" | sed 's/^/      /'
+    fi
+  else
+    fail_msg "CRLF-seam: Sc20 shortlist missing (out=$out20)"
+  fi
+else
+  fail_msg "CRLF-seam: Sc20 fake-jq seam setup failed (non-vacuity guard)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
