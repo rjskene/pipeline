@@ -179,7 +179,7 @@ TRACKERS=$(printf '%s' "$ENRICHED" | jq '[.[] | select(.is_tracker == true)]')
 while IFS= read -r tline; do
   [ -z "$tline" ] && continue
   tnum=$(printf '%s' "$tline" | jq -r '.number' | tr -d '\r')
-  tscope=$(printf '%s' "$tline" | jq -r '.scope')
+  tscope=$(printf '%s' "$tline" | jq -r '.scope' | tr -d '\r')  # strip MSYS jq CR (#1165)
   tbody=$(fetch_tracker_body "$tnum")
   children=$(printf '%s\n' "$tbody" | bash "$PARSE_CHILDREN_SCRIPT" - | paste -sd, -)
   printf '%s\t%s\t%s\n' "$tnum" "$tscope" "$children"
@@ -308,8 +308,8 @@ lookup_child_tracker() {
 while IFS= read -r iline; do
   [ -z "$iline" ] && continue
   inum=$(printf '%s' "$iline" | jq -r '.number' | tr -d '\r')
-  iscope=$(printf '%s' "$iline" | jq -r '.scope')
-  ibody=$(printf '%s' "$iline" | jq -r '.body // ""')
+  iscope=$(printf '%s' "$iline" | jq -r '.scope' | tr -d '\r')      # strip MSYS jq CR (#1165)
+  ibody=$(printf '%s' "$iline" | jq -r '.body // ""' | tr -d '\r')  # strip MSYS jq CR (#1165)
   # Already-in-rollout: skip every (inum, parent_tracker) pair regardless of which
   # tracker we're scoring against. Equivalent to the previous per-tracker is_child
   # check, expressed via the unified child→tracker index.
