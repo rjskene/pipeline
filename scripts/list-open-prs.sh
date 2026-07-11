@@ -85,7 +85,7 @@ gh pr list --repo "$PIPELINE_REPO" --state open \
       ) as $review |
       (
         [ ($pr.body // "")
-          | scan("(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ \t]+#([0-9]+)"; "i") ]
+          | scan("\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ \t]+#([0-9]+)"; "i") ]
         | flatten | first // ""
       ) as $body_issue |
       # Unit-separator () delimited handoff to the shell resolver. A NON
