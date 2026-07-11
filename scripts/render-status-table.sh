@@ -6,6 +6,7 @@
 #   render-status-table.sh --issues <issues.json> \
 #                          [--trackers <trackers.json>] \
 #                          [--release-prs <release-prs.txt>] \
+#                          [--open-prs <open-prs.txt>] \
 #                          [--today YYYY-MM-DD]
 #
 # Inputs are FILES (no live `gh` calls). All three input shapes are produced
@@ -15,6 +16,10 @@
 #   release-prs.txt — one line per release PR in the format
 #                       pr=<num> ci=<pass|fail|pending> title=<title>
 #                     (already emitted by scripts/list-release-prs.sh).
+#   open-prs.txt    — one line per OPEN PR in the format
+#                       pr=<num> base=<base> draft=<t|f> ci=<..> review=<..> \
+#                         issue=<N|--> title=<title>
+#                     (already emitted by scripts/list-open-prs.sh).
 #
 # Writes the canonical status table to stdout. Exit codes:
 #   0 — success (incl. empty input that yields a minimally-headered table)
@@ -32,6 +37,7 @@ usage() {
 usage: render-status-table.sh --issues <issues.json>
                               [--trackers <trackers.json>]
                               [--release-prs <release-prs.txt>]
+                              [--open-prs <open-prs.txt>]
                               [--today YYYY-MM-DD]
 USAGE
 }
@@ -39,6 +45,7 @@ USAGE
 ISSUES_FILE=""
 TRACKERS_FILE=""
 RELEASE_PRS_FILE=""
+OPEN_PRS_FILE=""
 TODAY=""
 
 while [ $# -gt 0 ]; do
@@ -46,6 +53,7 @@ while [ $# -gt 0 ]; do
     --issues)      ISSUES_FILE="${2:-}"; shift 2 ;;
     --trackers)    TRACKERS_FILE="${2:-}"; shift 2 ;;
     --release-prs) RELEASE_PRS_FILE="${2:-}"; shift 2 ;;
+    --open-prs)    OPEN_PRS_FILE="${2:-}"; shift 2 ;;
     --today)       TODAY="${2:-}"; shift 2 ;;
     -h|--help)     usage; exit 0 ;;
     *)             echo "render-status-table.sh: unknown argument: $1" >&2; usage; exit 2 ;;
@@ -95,6 +103,11 @@ fi
 
 if [ -n "$RELEASE_PRS_FILE" ] && [ ! -r "$RELEASE_PRS_FILE" ]; then
   echo "render-status-table.sh: --release-prs file not found: $RELEASE_PRS_FILE" >&2
+  exit 2
+fi
+
+if [ -n "$OPEN_PRS_FILE" ] && [ ! -r "$OPEN_PRS_FILE" ]; then
+  echo "render-status-table.sh: --open-prs file not found: $OPEN_PRS_FILE" >&2
   exit 2
 fi
 
@@ -335,6 +348,53 @@ if [ -n "$RELEASE_PRS_DATA" ]; then
     title=$(printf '%s' "$line" | sed -n 's/.*title=\(.*\)$/\1/p')
     printf ' #%-5s %-34s %-17s %s\n' "$pr_num" "$title" "release-pending" "$ci_status"
   done <<< "$RELEASE_PRS_DATA"
+  echo "================================================================"
+fi
+
+# ----- UNMERGED PRs section (rendered ABOVE PIPELINE STATUS) ----------
+#
+# Advisory, read-only ledger of ALL open PRs (fed by scripts/list-open-prs.sh
+# via --open-prs). Parallel to the RELEASE PRs block above and placed in the
+# same family (above PIPELINE STATUS). Each line is:
+#   pr=<num> base=<base> draft=<t|f> ci=<..> review=<..> issue=<N|--> title=<..>
+# Fields before title are single space-free tokens in fixed order; a bash regex
+# splits them so a `title` containing `base=`/`ci=` etc. cannot mis-parse.
+#
+# CRLF discipline (#1165): strip \r from the slurped feed (a native
+# Windows/MSYS jq emitting the feed appends \r\n) so PR numbers / key tokens
+# are not poisoned. Slurp first (like RELEASE_PRS_DATA) so non-empty input is
+# detected even when --open-prs is a process substitution (/dev/fd/N).
+OPEN_PRS_DATA=""
+if [ -n "$OPEN_PRS_FILE" ]; then
+  OPEN_PRS_DATA=$(cat "$OPEN_PRS_FILE" | tr -d '\r')
+fi
+if [ -n "$OPEN_PRS_DATA" ]; then
+  echo "UNMERGED PRs"
+  echo "================================================================"
+  echo " PR     Title                          Base         Draft CI      Issue  Review"
+  echo "----------------------------------------------------------------"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if [[ "$line" =~ ^pr=([^ ]+)\ base=([^ ]+)\ draft=([^ ]+)\ ci=([^ ]+)\ review=([^ ]+)\ issue=([^ ]+)\ title=(.*)$ ]]; then
+      pr_num="${BASH_REMATCH[1]}"
+      base="${BASH_REMATCH[2]}"
+      draft="${BASH_REMATCH[3]}"
+      ci="${BASH_REMATCH[4]}"
+      review="${BASH_REMATCH[5]}"
+      issue="${BASH_REMATCH[6]}"
+      title="${BASH_REMATCH[7]}"
+    else
+      continue
+    fi
+    # Numeric linked issue renders as #N; the `--` sentinel renders verbatim.
+    if [[ "$issue" =~ ^[0-9]+$ ]]; then
+      issue_disp="#$issue"
+    else
+      issue_disp="$issue"
+    fi
+    printf ' #%-5s %-30s %-12s %-5s %-7s %-6s %s\n' \
+      "$pr_num" "$title" "$base" "$draft" "$ci" "$issue_disp" "$review"
+  done <<< "$OPEN_PRS_DATA"
   echo "================================================================"
 fi
 

@@ -109,7 +109,7 @@ If the user asks to "just fix" an issue or work on it directly, remind them that
 
 ## Status table
 
-Rendering is delegated to `scripts/render-status-table.sh`; the renderer is the single source of truth for column widths, ordering, header lines, and footer formats — future tweaks ship as script changes plus golden-file updates, not prompt edits. Full input-file assembly, renderer invocation, and a labeled ASCII example (release-PR row, dated header, tracker section, orphan section, NOTES block, counts footer) in [references/status-table.md](references/status-table.md).
+Rendering is delegated to `scripts/render-status-table.sh`; the renderer is the single source of truth for column widths, ordering, header lines, and footer formats — future tweaks ship as script changes plus golden-file updates, not prompt edits. Full input-file assembly, renderer invocation, and a labeled ASCII example (release-PR row, unmerged-PR ledger row, dated header, tracker section, orphan section, NOTES block, counts footer) in [references/status-table.md](references/status-table.md).
 
 Path column shows `?` for ready issues not yet classified — classification runs on demand in `/pipeline:fullsend` when a slate is committed, not here.
 
@@ -121,6 +121,10 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
 
    ```bash
    RELEASE_PRS=$(PIPELINE_REPO="$PIPELINE_REPO" bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)
+   # Advisory open-PR ledger (#1168): every open PR, issue-linked or not
+   # (dependabot / manual / release / hotfix). Read-only; never enters the
+   # issue lifecycle. Rendered as the UNMERGED PRs section via --open-prs.
+   OPEN_PRS=$(PIPELINE_REPO="$PIPELINE_REPO" bash "$CLAUDE_PLUGIN_ROOT/scripts/list-open-prs.sh" 2>/dev/null || true)
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/auto-close-trackers.sh" --apply || \
      echo "[status] WARN: auto-close-trackers.sh exited non-zero (continuing)"
    PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-worktrees.sh
@@ -140,6 +144,8 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    ```
 
    Output schema, one line per PR: `pr=<num> ci=<pass|fail|pending> title=<title>`. Empty when no release PRs are open. Release PRs are surfaced in the status table as a Release-PR block with Stage column rendering as the display-only literal `release-pending` (NOT a real GitHub label) and never enter the issue lifecycle.
+
+   The `list-open-prs.sh` feed (`OPEN_PRS`) is the parallel advisory ledger of **all** open PRs — one line per PR: `pr=<num> base=<base> draft=<true|false> ci=<pass|fail|pending> review=<approved|changes|none> issue=<N|--> title=<title>`. Empty when no PRs are open. It is surfaced as the **UNMERGED PRs** block (columns `PR# | Title | Base | Draft | CI | Issue | Review`), rendered above `PIPELINE STATUS` in the same family as the Release-PR block. Read-only / advisory: it never enters the issue lifecycle and never triggers an action. Intentional overlap with `pr-open` issue rows is fine — the `Issue` column cross-references; issue-less PRs (dependabot / manual / release / hotfix, which resolve to `issue=--`) are the net-new value. Linked-issue resolution prefers a `feature/…-<N>` branch slug, then a body `Closes #N`/`Fixes #N`, else `--`.
 
 1. **Discover pipeline issues** — fetch all open AND recently closed issues, plus per-worktree merged PRs:
 
@@ -196,7 +202,7 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    done
    ```
 
-   See `references/status-table.md` for the full contract (release-prs feed, invocation block, NOTES rendering, example output).
+   See `references/status-table.md` for the full contract (release-prs feed, open-prs feed, invocation block, NOTES rendering, example output).
 
    Path column shows `?` for ready issues not yet classified — classification is a `/pipeline:fullsend` concern, not a status concern.
 

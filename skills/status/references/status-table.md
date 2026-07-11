@@ -31,6 +31,8 @@ The renderer pipes each tracker body through `${CLAUDE_PLUGIN_ROOT}/scripts/pars
 
 The third input — `release-prs.txt` — is the verbatim line block emitted by `scripts/list-release-prs.sh` (already captured into `$RELEASE_PRS` in Step 0; one line per release PR: `pr=<num> ci=<pass|fail|pending> title=<title>`). Feed it via bash process substitution; the renderer reads `--release-prs` with `[ -r ]` so a `/dev/fd/N` path works.
 
+The fourth input — `open-prs.txt` — is the verbatim line block emitted by `scripts/list-open-prs.sh` (already captured into `$OPEN_PRS` in Step 0; one line per open PR: `pr=<num> base=<base> draft=<true|false> ci=<pass|fail|pending> review=<approved|changes|none> issue=<N|--> title=<title>`). This is the advisory **UNMERGED PRs** ledger — every open PR, issue-linked or not (dependabot / manual / release / hotfix). It is read-only and never enters the issue lifecycle. Feed it via `--open-prs` with the same `[ -r ]` / process-substitution contract as `--release-prs`. The linked-issue (`issue=`) column resolves from a `feature/…-<N>` branch slug, then a body `Closes #N`/`Fixes #N`, else `--` (it degrades to `--`, never a wrong link).
+
 ## Invocation
 
 Print the renderer's stdout verbatim:
@@ -41,17 +43,38 @@ PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_BASE_BRANCH="$PIPELINE_BASE_BRANCH" \
   bash "${CLAUDE_PLUGIN_ROOT}/scripts/render-status-table.sh" \
     --issues "$ISSUES_JSON" \
     --trackers "$TRACKERS_JSON" \
-    --release-prs <(printf '%s\n' "$RELEASE_PRS")
+    --release-prs <(printf '%s\n' "$RELEASE_PRS") \
+    --open-prs <(printf '%s\n' "$OPEN_PRS")
 rm -f "$ISSUES_JSON" "$TRACKERS_JSON"
 ```
 
+`--open-prs` feeds the advisory UNMERGED PRs ledger captured in Step 0. The
+process-substitution above is equivalent to feeding the helper directly, e.g.
+`--open-prs <(bash "${CLAUDE_PLUGIN_ROOT}/scripts/list-open-prs.sh")`.
+
 Bash tool stdout is hidden inside a folded tool call, so after invoking the renderer the orchestrator MUST paste the renderer's EXACT stdout verbatim into a single fenced code block in its next assistant message — byte-for-byte, with nothing added or removed around the rows. **Contract violation:** reformatting the table, restating rows in prose, narrating per-row, or substituting a "here's the gist" summary for the rendered output. The renderer stays the single deterministic source of truth (golden-file guaranteed) — do NOT re-render the table from JSON in the model and do NOT route it through a file; paste the renderer's stdout verbatim.
 
-The renderer emits the canonical status table to stdout: a release-PR block (only when the release-prs file is non-empty; Stage column renders as the display-only literal `release-pending`, NOT a real GitHub label), then the dated status header, then a tracker section (with each open child indented, or a placeholder for trackers whose children are all closed), then a flat orphan section sorted by readiness (ready first) then conventional-commit type (chore→docs→fix→feat), then a non-default-metadata block (Target Base / Path / Blocked by / Dbg / on-disk attachments — the `Dbg` column renders `yes` when the issue carries `needs-debug`, else `--`, and sits AFTER `Blocked by` and before `att`), then any multi-tracker WARN lines, then a counts footer (`N epics + N children + N orphans = T open`). See `scripts/render-status-table.sh` and `tests/test-render-status-table.sh` for the canonical format and per-rule contract; `att` is sourced from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` and is populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch attachments at discovery time.
+The renderer emits the canonical status table to stdout: a release-PR block (only when the release-prs file is non-empty; Stage column renders as the display-only literal `release-pending`, NOT a real GitHub label), then an UNMERGED PRs block (only when the open-prs file is non-empty; columns `PR# | Title | Base | Draft | CI | Issue | Review` — the advisory ledger of all open PRs, read-only, never lifecycle-affecting), then the dated status header, then a tracker section (with each open child indented, or a placeholder for trackers whose children are all closed), then a flat orphan section sorted by readiness (ready first) then conventional-commit type (chore→docs→fix→feat), then a non-default-metadata block (Target Base / Path / Blocked by / Dbg / on-disk attachments — the `Dbg` column renders `yes` when the issue carries `needs-debug`, else `--`, and sits AFTER `Blocked by` and before `att`), then any multi-tracker WARN lines, then a counts footer (`N epics + N children + N orphans = T open`). See `scripts/render-status-table.sh` and `tests/test-render-status-table.sh` for the canonical format and per-rule contract; `att` is sourced from `$PIPELINE_PROJECT_ROOT/.claude/scratch/issue-<N>/` and is populated upstream by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b — the run skill does NOT re-fetch attachments at discovery time.
 
 ## Example output
 
-A labeled ~10-line ASCII example covering release-PR row, tracker section, orphan section, NOTES block, and counts footer:
+A labeled ~10-line ASCII example covering release-PR row, unmerged-PR ledger, tracker section, orphan section, NOTES block, and counts footer:
+
+### UNMERGED PRs ledger (rendered above PIPELINE STATUS)
+
+```
+UNMERGED PRs
+================================================================
+ PR     Title                          Base         Draft CI      Issue  Review
+----------------------------------------------------------------
+ #1168  feat(status): unmerged PR ledger  staging    false pass    #1168  approved
+ #1201  chore(deps): bump lodash          staging    true  pending --     none
+================================================================
+```
+
+The `Issue` column cross-references the linked issue (`#N`) or shows `--` for
+issue-less PRs (dependabot / manual / release / hotfix) — those are the net-new
+value the ledger surfaces beyond the `pr-open` issue rows.
 
 ### Grouped layout
 
