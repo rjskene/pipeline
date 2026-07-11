@@ -787,6 +787,127 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Issue #1168: UNMERGED PRs section — advisory ledger of all open PRs, fed
+# via --open-prs (mirror of the RELEASE PRs / --release-prs surface). The
+# feed line format is emitted by scripts/list-open-prs.sh:
+#   pr=<num> base=<base> draft=<t|f> ci=<..> review=<..> issue=<N|--> title=<..>
+# Columns rendered: PR# | Title | Base | Draft | CI | Issue | Review.
+# Structural assertions only (header + representative rows) — NOT a byte-golden
+# for the new section, so a conforming renderer greens without editing this test.
+# ----------------------------------------------------------------------
+
+# U.1 — --open-prs fixture renders an UNMERGED PRs section ABOVE PIPELINE STATUS.
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/all-defaults-issues.json" \
+  --open-prs "$FIXTURES/open-prs.txt" \
+  --today 2026-05-21 \
+  >"$TMP/uout" 2>"$TMP/uerr"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "U.1 open-prs render exits 0" "rc=$rc, stderr=$(cat "$TMP/uerr")"
+else
+  pass_msg "U.1 open-prs render exits 0"
+
+  inc
+  unmerged_line=$(grep -n '^UNMERGED PRs' "$TMP/uout" | head -1 | cut -d: -f1)
+  pipe_line=$(grep -n '^PIPELINE STATUS' "$TMP/uout" | head -1 | cut -d: -f1)
+  if [ -n "$unmerged_line" ] && [ -n "$pipe_line" ] && [ "$unmerged_line" -lt "$pipe_line" ]; then
+    pass_msg "U.1 UNMERGED PRs section appears above PIPELINE STATUS"
+  else
+    fail_msg "U.1 UNMERGED PRs section appears above PIPELINE STATUS" "unmerged=$unmerged_line pipe=$pipe_line"
+  fi
+
+  inc
+  # Representative row for an issue-linked, approved, passing PR. Columns in
+  # order: PR# Title Base Draft CI Issue Review.
+  if grep -qE '#501.*staging.*false.*pass.*#1168.*approved' "$TMP/uout"; then
+    pass_msg "U.1 PR #501 row: base=staging draft=false ci=pass issue=#1168 review=approved"
+  else
+    fail_msg "U.1 PR #501 row: base=staging draft=false ci=pass issue=#1168 review=approved" "$(grep '#501' "$TMP/uout")"
+  fi
+
+  inc
+  # Issue-less PR renders `--` in the Issue column (the net-new value: dependabot
+  # / manual / release / hotfix PRs with no linked issue).
+  if grep -qE '#502.*staging.*true.*pending.*--.*none' "$TMP/uout"; then
+    pass_msg "U.1 PR #502 (issue-less) row: draft=true ci=pending issue=-- review=none"
+  else
+    fail_msg "U.1 PR #502 (issue-less) row: draft=true ci=pending issue=-- review=none" "$(grep '#502' "$TMP/uout")"
+  fi
+fi
+
+# U.2 — empty --open-prs → NO UNMERGED PRs section rendered (mirror RELEASE).
+inc
+: > "$TMP/open-prs-empty.txt"
+bash "$HELPER" \
+  --issues "$FIXTURES/all-defaults-issues.json" \
+  --open-prs "$TMP/open-prs-empty.txt" \
+  --today 2026-05-21 \
+  >"$TMP/uout2" 2>"$TMP/uerr2"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail_msg "U.2 empty open-prs render exits 0" "rc=$rc, stderr=$(cat "$TMP/uerr2")"
+elif grep -q '^UNMERGED PRs' "$TMP/uout2"; then
+  fail_msg "U.2 empty open-prs render OMITS UNMERGED PRs section" "$(cat "$TMP/uout2")"
+else
+  pass_msg "U.2 empty open-prs render OMITS UNMERGED PRs section"
+fi
+
+# U.3 — process substitution accepted for --open-prs (the canonical SKILL.md
+# invocation feeds --open-prs <(bash scripts/list-open-prs.sh) → /dev/fd/N).
+inc
+bash "$HELPER" \
+  --issues "$FIXTURES/all-defaults-issues.json" \
+  --open-prs <(printf 'pr=777 base=staging draft=false ci=pass review=none issue=-- title=chore: proc-sub\n') \
+  --today 2026-05-21 \
+  >"$TMP/uout3" 2>"$TMP/uerr3"
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q '#777' "$TMP/uout3"; then
+  pass_msg "U.3 process substitution accepted for --open-prs"
+else
+  fail_msg "U.3 process substitution accepted for --open-prs" "rc=$rc, stderr=$(cat "$TMP/uerr3"), stdout=$(cat "$TMP/uout3")"
+fi
+
+# U.4 — CRLF seam: a CRLF-terminated --open-prs feed (as native Windows/MSYS jq
+# would emit from list-open-prs.sh) still renders the section, AND running under
+# the fake CRLF-emitting jq (renderer's own jq boundary) leaves no stray CR.
+if make_crlf_jq_bin "$TMP/crlfbin2"; then
+  printf 'pr=601 base=staging draft=false ci=pass review=approved issue=88 title=feat: crlf seam row\r\n' \
+    > "$TMP/open-prs-crlf.txt"
+  PATH="$TMP/crlfbin2:$PATH" bash "$HELPER" \
+    --issues "$FIXTURES/all-defaults-issues.json" \
+    --open-prs "$TMP/open-prs-crlf.txt" \
+    --today 2026-05-21 \
+    >"$TMP/uout4" 2>"$TMP/uerr4"
+  urc=$?
+
+  inc
+  if [ "$urc" -eq 0 ]; then
+    pass_msg "U.4 CRLF-seam: open-prs render exits 0 under Windows CRLF jq"
+  else
+    fail_msg "U.4 CRLF-seam: open-prs render exits 0 under Windows CRLF jq" "rc=$urc, stderr=$(cat "$TMP/uerr4")"
+  fi
+
+  inc
+  if grep -q '^UNMERGED PRs' "$TMP/uout4" && grep -qE '#601.*#88' "$TMP/uout4"; then
+    pass_msg "U.4 CRLF-seam: UNMERGED PRs section + row #601 render from CRLF feed"
+  else
+    fail_msg "U.4 CRLF-seam: UNMERGED PRs section + row #601 render from CRLF feed" "$(cat "$TMP/uout4")"
+  fi
+
+  inc
+  if ! grep -q $'\r' "$TMP/uout4"; then
+    pass_msg "U.4 CRLF-seam: no stray CR in rendered output"
+  else
+    fail_msg "U.4 CRLF-seam: no stray CR in rendered output" "$(grep -n $'\r' "$TMP/uout4" | head)"
+  fi
+else
+  inc
+  fail_msg "U.4 CRLF-seam: fake-jq seam setup failed (non-vacuity guard)" "make_crlf_jq_bin returned non-zero"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 echo ""
