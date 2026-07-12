@@ -87,6 +87,9 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 # That emergency-diagnosis stream is intentionally ungated.
 PIPELINE_LOGS_ENABLED=false
 
+# Out dir for /pipeline:visualize renders (default .claude/scratch/visuals/, read-site ${PIPELINE_VISUALS_DIR:-.claude/scratch/visuals/}; uncomment to override).
+#PIPELINE_VISUALS_DIR=".claude/scratch/visuals/"
+
 # --- Per-model token pricing (issue #721) ---
 #
 # Per-1M-token USD rates consumed by `scripts/cost-latency-report.sh
