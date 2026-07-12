@@ -116,6 +116,26 @@ legacy escape hatch (formerly C-only).
 | C    | inline `Agent(tdd-implementer)` per `target=<dir>` leaf, each in its own per-leaf worktree + cherry-pick reassemble (#896); `--spawn` = legacy run-queue | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
 | D    | inline `Agent(tdd-implementer)`    | Inline `tdd-implementer` in the orchestrator session. Skips the pre-PR review loop in `execute-issue-plan` Step 8.|
 
+## Pre-PR guards
+
+Before `gh pr create`, execute runs a set of fast, diff-independent repo-invariant
+guards so CI is never the first to surface a cross-cutting break. These run
+regardless of PATH and regardless of whether the diff touched the guarded surface
+(the #1128 "only touched tests" miss class).
+
+- **Cross-cutting guards aggregator (#1132/#1143).** `scripts/check-cross-cutting-guards.sh`
+  is the always-run floor — it bundles config-drift, namespace-discipline,
+  golden-seed, and README-anchor invariants and runs in seconds. It is wired
+  pre-PR in `execute-issue-plan` (Step 9) and also into the `evaluate-issue-pr`
+  and `fullsend` dispatch paths, so the same invariant floor is enforced at both
+  execute-time and eval-time.
+- **Config-drift pre-PR guard (#1103).** `scripts/check-config-drift.sh` catches
+  any new `PIPELINE_*` variable introduced on the branch that is not yet
+  documented in `pipeline.config.example` (and vice-versa) at execute-time, so an
+  undocumented knob is fixed in-session rather than as a CI-fail → re-watch loop.
+  The aggregator above already includes this guard; the standalone call is the
+  in-leaf early check.
+
 ## Wave-plan flow
 
 What `fullsend` does across a slate of issues — file-conflict serialization,
@@ -201,7 +221,7 @@ Campaign mode (`/pipeline:fullsend --campaign`, or the equivalent standalone `/p
 
 Top-level slash commands that drive the maps above:
 
-- `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) — orchestrator session: prioritize, group, and dispatch the action queue.
+- `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) — orchestrator session: prioritize, group, and dispatch the action queue. It also renders an **UNMERGED PRs advisory ledger** (#1168/#1172) — a full open-PR view sourced from `scripts/list-open-prs.sh` and emitted by a dedicated renderer section, so open PRs that are not tied to a queued action are still visible at a glance.
 - `/pipeline:fullsend` — wave-plan flow across a slate of issues (the map above).
 - `/pipeline:analyze-issues` — read-only hygiene pass over the open-issue set; see [skills/analyze-issues/SKILL.md](../skills/analyze-issues/SKILL.md). `/pipeline:status --analyze` delegates to `/pipeline:analyze-issues` for back-compat.
 
