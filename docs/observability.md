@@ -34,3 +34,10 @@ Report-surface flags (forwarded to `cost-latency-report.sh`):
 - **Per-day windowing** — `--since DATE` / `--until DATE` form a closed `[since, until]` window over `ts_start`; `--per-day` walks it day-by-day (default: last 5 days, UTC), one report block per `=== DAY YYYY-MM-DD ===`.
 - **Token columns** — per-stage / per-structure / per-PATH tables carry per-N token-bucket columns (input / output / cache_creation / cache_read) from the reconciled substrate; the trend table adds per-N and per-LOC cost columns.
 - **Durable history** — `scripts/snapshot-tokenomics-history.sh` upserts a per-day aggregate into `.claude/logs/tokenomics-history.jsonl` (keyed by date, last-write-wins) so a day survives raw-log pruning; `--emit-day-json` is its machine-mode source, and `--history [PATH]` renders the report from the persisted store (no PR join, no `gh`) once the live log is gone.
+
+**Split-role RED/GREEN cost attribution (#1098/#1104).** Split-role PATH B runs
+now emit role-attributed cost records — the Opus RED test-author and the cheaper
+GREEN implementer are captured as distinct roles in `agent-costs.jsonl` — so
+`/pipeline:tokenomics` can break the per-issue cost down by split-role role. This
+makes the cost posture of the two-model lane (expensive authorship vs. cheap
+greening) directly measurable rather than lumped into a single PATH B figure.
