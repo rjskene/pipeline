@@ -107,6 +107,51 @@ greenlight precondition; any `block-*` token leaves the PR for manual merge.
 The gate only **ADDS** a precondition to the green/merge branch — **pr-eval
 itself stays Opus in every configuration (W3)**.
 
+### Shared-tests exemption (#1089/#1096)
+
+The additive-only lock is absolute by default: the green implementer touches
+NOTHING under `tests/`. The one sanctioned exception is a plan-authorized
+**shared test** — a test file the green role must legitimately edit to green the
+suite (a shared fixture, a contract test whose golden the plan changes).
+
+- The approved plan declares these in a `**Shared tests (split-role):**` section
+  that threads exact repo-relative paths into `PIPELINE_SPLIT_ROLE_SHARED_TESTS`.
+- The carve-out is **exact-path match only** — no globs, no directory prefixes —
+  and **modify-only**: a listed file may be `M`odified, but **deleting** a listed
+  file still blocks with `locked-test-deleted`.
+- The trust anchor is plan approval: only an OWNER/MEMBER/COLLABORATOR-approved
+  plan can widen the lock, so the exemption inherits the human plan-gate rather
+  than being self-declared by the implementer.
+
+### Full-suite green before the PR (#1111)
+
+Before opening the PR, the green role runs the FULL local suite green — not just
+the locked `[split-role-red]` files — so a green-introduced break in a
+non-locked test is caught locally, not in CI. The CI-green-rollup fast-path
+(`PIPELINE_CI_ROLLUP_GREEN`, #1078, described above) is the only way the
+SECONDARY suite-green step is skipped, and only on an already-green CI rollup.
+
+### Execute-time base-ref drift guard (#1106/#1110)
+
+During execute dispatch the split-role gate resolves `<base-ref>..HEAD` against
+the branch the executor actually committed on. A base-ref that drifted (e.g. a
+RED commit that landed on `staging` because an initial `cd <worktree>` did not
+hold across Bash calls) is caught by the git-anchoring + branch-assert contract
+in `execute-issue-plan`, so the red-anchor resolves against the correct feature
+branch rather than a stale base.
+
+### False-positive fixes (#1124)
+
+Two legitimate patterns that the naive lock check flagged and no longer do:
+
+- **Multi-commit RED.** The red author's suite may span more than one commit; the
+  gate resolves the most recent `[split-role-red]` commit as the anchor and
+  diffs from there, so a multi-commit red authorship is not misread as a locked
+  modification.
+- **Plan-authorized green test edit.** A green edit to a file listed under
+  `**Shared tests (split-role):**` (the exemption above) is a sanctioned
+  modification, not a `locked-test-modified` block.
+
 ## Design provenance
 
 Promoted from the design spec
