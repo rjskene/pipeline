@@ -37,6 +37,31 @@ Graduating to 1.0 (future, not now): set both flags to `false` and push to `main
 
 - Container-isolation opt-ins and the pre-spawn eval-classifier hook were removed in #514 (see that PR for the full list of retired `pipeline.config` knobs) — web-eval is now inline-only via the `needs-browser` label.
 
+### Next-branch base routing (#1131)
+
+Breaking-change / next-integration work does not target `staging` directly — it
+routes onto a dedicated `next` integration branch so a breaking change can bake
+against other next-work before it reaches the release trunk.
+
+- **Label-driven routing.** An issue carrying the `next` label
+  (`PIPELINE_NEXT_LABEL`, default `next`; the legacy alias `next-major-release`
+  is also honored) has its feature PR base rewritten to `PIPELINE_NEXT_BRANCH`
+  (default `next`, read-site `${VAR:-next}`) instead of `PIPELINE_BASE_BRANCH`.
+  Both knobs are commented-defaulted in `pipeline.config.example` (lines 14–15)
+  — nothing to seed; the read-site default owns them.
+- **Next-aware auto-merge greenlight (#1151).** The `auto-merge-gate.sh` base
+  check is next-branch-aware: a PR whose base is `next` greenlights only when its
+  issue actually carries the `next` label (or the legacy alias); an unlabelled
+  PR against `next` still blocks. This keeps the base-branch enforcement invariant
+  intact for the second base.
+- **Doctor 100-char cap trim (#1149).** `doctor --fix labels` trims the `next`
+  label's description to stay under GitHub's 100-character label-description cap
+  when it seeds the canonical label set.
+- **Doctor-on-update monotonicity gate (#1152/#1154).** Doctor's on-update config
+  reconciliation guards against version downgrades / flip-flops with a `sort -V`
+  monotonicity gate — a reconcile pass never rewrites a host to an older version
+  than it already runs.
+
 ## Release gotchas
 
 **GitHub Actions PR permission (first-run install).** release-please (and any
