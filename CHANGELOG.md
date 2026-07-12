@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.23.21](https://github.com/rjskene/pipeline/compare/v0.23.20...v0.23.21) (2026-07-12)
+
+
+### Features
+
+* **status:** add an UNMERGED PRs ledger table to /pipeline:status (full open-PR view) ([7e5a5d2](https://github.com/rjskene/pipeline/commit/7e5a5d2f871581ecc3efb722aa46ae0a0276d63c))
+* **status:** UNMERGED PRs advisory ledger (list-open-prs.sh + renderer section) ([#1168](https://github.com/rjskene/pipeline/issues/1168)) ([e1645a8](https://github.com/rjskene/pipeline/commit/e1645a8bb9040d5816ca9ff3d0e4606907d27f06))
+* **visualize:** add /pipeline:visualize — document/diff → self-contained HTML (local render) ([05593de](https://github.com/rjskene/pipeline/commit/05593de4f119c7eedab6b1a91213c4bf4bec1a74))
+* **visualize:** add /pipeline:visualize skill — document/diff → self-contained HTML ([0b7a195](https://github.com/rjskene/pipeline/commit/0b7a195557365e82106a6d512d743e60a539503f)), closes [#1174](https://github.com/rjskene/pipeline/issues/1174)
+
+
+### Bug Fixes
+
+* **analyze-issues:** strip CR at .scope/.body jq boundaries for Windows CRLF jq ([#1165](https://github.com/rjskene/pipeline/issues/1165)) ([8ef5579](https://github.com/rjskene/pipeline/commit/8ef557980a595af57aaefcfa0a866d1a084b1a16))
+* **analyze-issues:** strip CR at .scope/.body jq boundaries for Windows CRLF jq ([#1165](https://github.com/rjskene/pipeline/issues/1165)) ([a1173f5](https://github.com/rjskene/pipeline/commit/a1173f5d036aecfca2feb70a73b0a2c8b4997fde))
+* **parse-tracker-children:** accept punctuation-decorated Rollout-sequence heading ([#1164](https://github.com/rjskene/pipeline/issues/1164)) ([834e479](https://github.com/rjskene/pipeline/commit/834e47951d068886c660ab5780a16b7adc4d2a54))
+* **review:** anchor body closing-keyword scan with word boundary ([#1168](https://github.com/rjskene/pipeline/issues/1168)) ([b429738](https://github.com/rjskene/pipeline/commit/b429738ba6da8d355cbf40d434a72d64eda2b704))
+* **status:** parse-tracker-children default mode drops children when Rollout-sequence heading has trailing text ([8a18bef](https://github.com/rjskene/pipeline/commit/8a18bef3c95119e22328ca81a5b8800887074c91))
+
 ## [0.23.20](https://github.com/rjskene/pipeline/compare/v0.23.19...v0.23.20) (2026-07-10)
 
 
