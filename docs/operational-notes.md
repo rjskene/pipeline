@@ -52,6 +52,20 @@ Known trip-wires and the way around each:
   `/<repo>/scripts/derive-pr-title.sh`) is blocked. Call the worktree-local copy
   (`./scripts/derive-pr-title.sh <N>`); every worktree mirrors `scripts/`.
 
+- **Later hardening sweep.** The hook was tightened along three axes without
+  widening the false-positive surface:
+  - **Project-root anchoring + write-gated protected-file guard (#1136/#1137).**
+    Relative paths are resolved against the project root before the boundary
+    comparison, and the protected-file guard fires only on *write* tools — a read
+    of a protected path is no longer over-blocked.
+  - **Dest-via-flag / interpreter-inline / glued `-t<protected>` write blocks
+    (#1138/#1141).** A protected-path write smuggled through a destination flag,
+    an inline interpreter invocation, or a glued short flag like `-t<protected>`
+    is now caught, closing the routes around the naive substring check.
+  - **In-repo `.venv-host/Scripts` admitted (#1135/#1142).** An in-repo
+    `.venv-host/Scripts` path (the Windows venv layout) is recognized as inside
+    the boundary rather than blocked as a stray absolute-looking token.
+
 ## 2. Executor wedge classes & recovery
 
 Dispatched executors (`claude -p` workers and inline `Agent` subagents) wedge in
@@ -281,3 +295,25 @@ Tuning:
 Scope: **only the `--spawn` transport is affected.** The default inline `Agent`
 dispatch path does not invoke `spawn-claude.sh`/`systemd-run`, so it never enters
 a cgroup scope and is unaffected (hence the issue's Low severity).
+
+## 11. Windows/MSYS CRLF-jq gotcha
+
+On Windows/MSYS, `jq` emits a trailing carriage return (`\r`) at every
+`jq -r` → shell boundary. A value captured with `VAR=$(... | jq -r ...)` then
+carries an invisible trailing `\r`, which silently corrupts downstream numeric
+comparisons, `case`/`[ = ]` status reads, label matches, and path
+concatenations — the failure looks like a logic bug, not an encoding bug, because
+the CR is invisible in most output. This bit many scripts across the tree.
+
+- **Convention: strip-CR at every `jq → shell` boundary.** Any value that crosses
+  from `jq -r` into a shell variable or `case`/test must be CR-stripped (e.g.
+  `tr -d '\r'`, `${VAR%$'\r'}`, or an equivalent) right at the capture site — not
+  later, and not only in the one script that happened to fail. The #1158 sweep
+  applied this convention across the affected scripts; #1153/#1155/#1161/#1163/#1171
+  were the incremental hardening PRs that closed the remaining `jq → shell`
+  boundaries one surface at a time.
+- **Where it hides.** Numeric/status/label reads are the usual victims: a status
+  token that should equal `pass` compares unequal because it is actually
+  `pass\r`; a PR-number arithmetic step fails because the number is `123\r`. When
+  a comparison that "should" hold fails only on the Windows/MSYS host, suspect a
+  CR before suspecting the logic.

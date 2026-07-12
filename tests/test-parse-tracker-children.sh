@@ -182,6 +182,108 @@ else
   fail_msg "Case N: helper exited non-zero ($?), expected 0"
 fi
 
+# ---- Case N1: hyphen-decorated heading → children extracted (#1164) ----
+# Non-paren trailing decoration (dash) must open the rollout section just like a
+# parenthetical does. The old `(\(|$)` anchor rejected these, dropping children.
+echo "Case N1: '## Rollout sequence - …' (hyphen) heading parses children"
+inc
+N1="$TMP/body-n1.md"
+cat > "$N1" <<'BODY'
+## Rollout sequence - design approved
+
+- [ ] **#511 — first child**
+- [ ] **#512 — second child**
+BODY
+
+out=$(bash "$HELPER" "$N1" 2>"$TMP/err-n1") || { fail_msg "Case N1: exit non-zero"; cat "$TMP/err-n1"; }
+expected=$'511\n512'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case N1: hyphen-decorated heading children parsed"
+else
+  fail_msg "Case N1: expected '$expected' got '$out'"
+fi
+
+# ---- Case N2: em-dash + colon decorated heading → children extracted (#1164) ----
+echo "Case N2: '## Rollout sequence — spec: …' (em-dash) heading parses children"
+inc
+N2="$TMP/body-n2.md"
+cat > "$N2" <<'BODY'
+## Rollout sequence — spec: docs/x.md
+
+- [ ] **#521 — first child**
+- [ ] **#522 — second child**
+BODY
+
+out=$(bash "$HELPER" "$N2" 2>"$TMP/err-n2") || { fail_msg "Case N2: exit non-zero"; cat "$TMP/err-n2"; }
+expected=$'521\n522'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case N2: em-dash-decorated heading children parsed"
+else
+  fail_msg "Case N2: expected '$expected' got '$out'"
+fi
+
+# ---- Case N3: colon-decorated heading (no space) → children extracted (#1164) ----
+echo "Case N3: '## Rollout sequence: notes' (colon) heading parses children"
+inc
+N3="$TMP/body-n3.md"
+cat > "$N3" <<'BODY'
+## Rollout sequence: notes
+
+- [ ] **#531 — first child**
+- [ ] **#532 — second child**
+BODY
+
+out=$(bash "$HELPER" "$N3" 2>"$TMP/err-n3") || { fail_msg "Case N3: exit non-zero"; cat "$TMP/err-n3"; }
+expected=$'531\n532'
+if [ "$out" = "$expected" ]; then
+  pass_msg "Case N3: colon-decorated heading children parsed"
+else
+  fail_msg "Case N3: expected '$expected' got '$out'"
+fi
+
+# ---- Case N4: '## Rollout sequence appendix' continuation heading → no children (#1164 exclusion) ----
+# The loosened anchor must accept punctuation decoration but must NOT treat a
+# following alnum word (`appendix`) as the rollout section — keeps Case C green.
+echo "Case N4: '## Rollout sequence appendix' yields no children"
+inc
+N4="$TMP/body-n4.md"
+cat > "$N4" <<'BODY'
+## Rollout sequence appendix
+
+- [ ] **#541 — must NOT be treated as a rollout child**
+BODY
+
+if out=$(bash "$HELPER" "$N4" 2>"$TMP/err-n4"); then
+  if [ -z "$out" ]; then
+    pass_msg "Case N4: appendix continuation heading yields no children"
+  else
+    fail_msg "Case N4: expected empty output, got '$out'"
+  fi
+else
+  fail_msg "Case N4: helper exited non-zero ($?), expected 0"
+fi
+
+# ---- Case N5: '## Rollout sequencer' word-continuation heading → no children (#1164 exclusion) ----
+# No separator at all (bare word continuation) must also stay excluded.
+echo "Case N5: '## Rollout sequencer' yields no children"
+inc
+N5="$TMP/body-n5.md"
+cat > "$N5" <<'BODY'
+## Rollout sequencer
+
+- [ ] **#551 — must NOT be treated as a rollout child**
+BODY
+
+if out=$(bash "$HELPER" "$N5" 2>"$TMP/err-n5"); then
+  if [ -z "$out" ]; then
+    pass_msg "Case N5: sequencer word-continuation heading yields no children"
+  else
+    fail_msg "Case N5: expected empty output, got '$out'"
+  fi
+else
+  fail_msg "Case N5: helper exited non-zero ($?), expected 0"
+fi
+
 # ============================================================================
 # --fallback-mentions mode (#491): scan the WHOLE body for `#NNN` mentions,
 # ignoring `## Rollout sequence` bounds, deduping, preserving first-appearance
