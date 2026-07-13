@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.22](https://github.com/rjskene/pipeline/compare/v0.23.21...v0.23.22) (2026-07-13)
+
+
+### Bug Fixes
+
+* **evaluate-issue-pr:** treat None/N/A shared-tests sentinel as empty allow-list ([4d308fb](https://github.com/rjskene/pipeline/commit/4d308fb5f2de97dfd201da1d4f97d7e9c6d357a6))
+* **evaluate-issue-pr:** treat None/N/A shared-tests sentinel as empty allow-list ([5a9ba73](https://github.com/rjskene/pipeline/commit/5a9ba73ab3869c2fb42050285031ba965611ce0f))
+
 ## [0.23.21](https://github.com/rjskene/pipeline/compare/v0.23.20...v0.23.21) (2026-07-12)
 
 
