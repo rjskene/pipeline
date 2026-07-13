@@ -70,4 +70,23 @@ if [ "$result_g" != "tests/test_widen_results_tsv.py" ]; then
   exit 1
 fi
 
+# (h) header-inline empty-section sentinel `None` => empty output (#1178).
+# A plan whose Shared-tests section is written as the literal `None` sentinel
+# must yield an EMPTY allow-list, not the phantom path "None".
+result_h=$(printf '%s\n' "**Shared tests (split-role):** None" | awk "$AWK_PROG")
+if [ -n "$result_h" ]; then
+  echo "FAIL(h): header-inline None sentinel should yield empty; got: '$result_h'"
+  exit 1
+fi
+
+# (i) following-bullet empty-section sentinel `- None` => empty output (#1178).
+result_i=$(printf '%s\n' \
+  "**Shared tests (split-role):**" \
+  "- None" \
+  | awk "$AWK_PROG")
+if [ -n "$result_i" ]; then
+  echo "FAIL(i): following-bullet None sentinel should yield empty; got: '$result_i'"
+  exit 1
+fi
+
 echo "ok"
