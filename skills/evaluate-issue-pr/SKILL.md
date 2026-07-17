@@ -312,9 +312,16 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        # invocation ONLY — never read from pipeline.config (per-issue scoping).
        SHARED_TESTS_RAW=$(printf '%s\n' "$PLAN" \
          | awk '/^\*\*Shared tests \(split-role\):\*\*/{found=1; rest=substr($0, index($0,":**")+3); gsub(/^[ `]+|`[ ]*$/,"",rest); sub(/[ \t]+[—-][ \t].*$/,"",rest); sub(/[ \t]+#.*$/,"",rest); gsub(/[ `]+$/,"",rest); sen=tolower(rest); sub(/\.$/,"",sen); if(rest!="" && sen!="none" && sen!="n/a") print rest; next} found && /^\*\*[^*].*:\*\*/{found=0} found && /^[- ]/{gsub(/^[-  `]+|`[ ]*$/,"",$0); sub(/[ \t]+[—-][ \t].*$/,"",$0); sub(/[ \t]+#.*$/,"",$0); gsub(/[ `]+$/,"",$0); sen=tolower($0); sub(/\.$/,"",sen); if($0!="" && sen!="none" && sen!="n/a") print $0}')
+       # PIPELINE_TEST_ROOTS (#1182): the gate never sources pipeline.config, so the
+       # caller must export/pass the consumer's real test roots (same reason
+       # PIPELINE_BASE_BRANCH is explicitly exported above) — without it, a repo
+       # whose tests do not live under tests/ gets a vacuous lock scope (nothing
+       # found ⇒ additive-only check trivially passes even when locked tests were
+       # tampered).
        SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" \
          PIPELINE_CI_ROLLUP_GREEN="$ROLLUP_GREEN" \
          PIPELINE_SPLIT_ROLE_SHARED_TESTS="$SHARED_TESTS_RAW" \
+         PIPELINE_TEST_ROOTS="$PIPELINE_TEST_ROOTS" \
          bash "${CLAUDE_PLUGIN_ROOT}/scripts/split-role-gate.sh" "$ISSUE")
        # → SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
        ```
