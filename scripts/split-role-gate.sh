@@ -45,7 +45,22 @@
 #     <issue-N>     issue number, echoed back in the decision line.
 #     <base-ref>    base ref the feature branch forked from; the red-SHA scan
 #                   window is <base-ref>..HEAD. Default: $PIPELINE_BASE_BRANCH.
-#     <test-path>   one or more test paths to lock. Default: tests/.
+#     <test-path>   one or more test paths to lock. Default: $PIPELINE_TEST_ROOTS
+#                   if set, else tests/.
+#
+# $PIPELINE_TEST_ROOTS (issue #1182): consulted ONLY when no positional
+# <test-path>... args are given (positional args always win — see the
+# three-tier resolution below). Default: tests/. Space/newline-separated for
+# multiple roots. A repo whose tests do NOT live under tests/ (e.g.
+# work-orchestrator's subagents/*/testing/) MUST set this or the W7 lock scope
+# defaults to tests/, finds nothing, and the additive-only check vacuously
+# passes. Glob roots (e.g. subagents/*/testing/) are shell-EXPANDED against the
+# gate's CWD at eval time, so they must resolve to existing dirs — git's own
+# pathspec `*` does not cross `/` and a trailing-slash wildcard pathspec
+# matches nothing, so pre-expansion (not a literal git pathspec) is required.
+# Use exact dir paths if the glob would not resolve at gate-eval time. NEVER
+# read from pipeline.config by the gate itself — the caller must export/pass
+# it (same as PIPELINE_BASE_BRANCH).
 #
 # Test command (suite-green check) comes from $PIPELINE_TEST_CMD (sourced from
 # pipeline.config) — never hard-coded. When unset, the suite check is treated
@@ -120,9 +135,19 @@ if [ $# -ge 1 ]; then
   shift
 fi
 
-# Remaining args are <test-path>...; default to tests/.
+# Remaining args are <test-path>...; three-tier scope precedence (#1182):
+#   1. explicit positional <test-path>... args (highest — keeps every existing
+#      run_gate* helper byte-identical; they already pass `tests`).
+#   2. else $PIPELINE_TEST_ROOTS, if non-empty: shell word-split + glob-EXPANDED
+#      (globbing ON — NOT `set -f`). git's own pathspec `*` does not cross `/`,
+#      and a trailing-slash wildcard pathspec (e.g. `subagents/*/testing/`)
+#      matches nothing as a literal git pathspec — so a wildcard root MUST be
+#      shell-expanded here into the real dirs git can then prefix-match.
+#   3. else default to tests/ (unset-knob behavior is byte-identical to before).
 if [ $# -ge 1 ]; then
   TEST_PATHS=("$@")
+elif [ -n "${PIPELINE_TEST_ROOTS:-}" ]; then
+  TEST_PATHS=( $PIPELINE_TEST_ROOTS )
 else
   TEST_PATHS=("tests/")
 fi
