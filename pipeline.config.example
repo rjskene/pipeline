@@ -135,6 +135,14 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_OUTPUT=5
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION=1.25
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ=0.10
+# Fable 5 (#1186 — matches baked defaults; uncomment to override). The
+# stage-model pins design puts the orchestrator session and the PATH C plan
+# stage on Fable, so Fable records enter the capture stream; without these rates
+# Fable falls through to the unknown-model Opus fallback and is mis-priced.
+#PIPELINE_PRICE_CLAUDE_FABLE_5_INPUT=10
+#PIPELINE_PRICE_CLAUDE_FABLE_5_OUTPUT=50
+#PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_CREATION=12.50
+#PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_READ=1.00
 
 # --- Rolling-window usage read-out (issue #725, dogfood-only phase 1) ---
 #
