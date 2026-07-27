@@ -93,8 +93,9 @@ esac
 
 # --- Self-resolve config (export-on-source) ---------------------------------
 # Same pattern as resolve-execute-dispatch.sh: source the co-located
-# _resolve-config.sh so PIPELINE_STAGE_MODEL_* / PIPELINE_PATH_C_MODEL_PLAN are
-# available even when callers source-but-don't-export them.
+# _resolve-config.sh so PIPELINE_STAGE_MODEL_PR_EVAL /
+# PIPELINE_STAGE_MODEL_PLAN_EVAL / PIPELINE_PATH_C_MODEL_PLAN are available even
+# when callers source-but-don't-export them.
 _rsm_dir="$(dirname "${BASH_SOURCE[0]:-$0}")"
 if [ -f "${_rsm_dir}/_resolve-config.sh" ]; then
   # shellcheck disable=SC1090,SC1091

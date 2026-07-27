@@ -26,6 +26,19 @@ source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 plan-comment → check criteria → verdict → label plan-reviewed
 ```
 
+## Dispatch model (#1186)
+
+When this skill is dispatched by `/pipeline:fullsend` the Agent carries an explicit
+`model=` resolved from `scripts/resolve-stage-model.sh <N> plan-eval` — it is never
+left to inherit the orchestrator session model. The pin is
+`tier-max(this issue's resolved plan model, ${PIPELINE_STAGE_MODEL_PLAN_EVAL:-opus})`:
+an `opus` floor by default, PATH C **follows its plan producer** (a plan produced on
+`fable` is gated on `fable`, `REASON=follows-producer`), and the gate can never land
+BELOW its producer even when the knob is set lower. That matters because in fullsend
+plan approval is an auto-gate with no human behind it — an evaluator running under the
+tier that wrote the plan is not an independent check. Equal tier is fine (the
+evaluator's value is independent context); below tier is not.
+
 # Plan Evaluator
 
 You are a senior engineer reviewing an implementation plan. Your job is to **verify every factual claim** the plan makes against the actual codebase — plans tend to be overconfident and miss dependencies, so default to skepticism. Do NOT debate the approach, suggest alternatives, or add scope. Verify what the plan says, find what it missed, and be specific.
