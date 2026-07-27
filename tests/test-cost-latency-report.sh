@@ -1691,6 +1691,61 @@ case "$COST27" in
 esac
 rm -rf "$TMP27"
 
+# --- Scenario 27b: Fable 5 baked defaults (#1186) ---
+# The stage-model pins design moves the ORCHESTRATOR session (and PATH C plan)
+# onto Fable 5, so Fable records now appear in the capture stream. Fable is an
+# UNKNOWN model to price_default(), which falls back to Opus 4.8 rates (15/75/
+# 18.75/1.50) — a conservative upper bound that MIS-prices Fable's actual list
+# price (10/50/12.50/1.00), so the tokenomics report would over-state the very
+# line item this design is spending against. Fable needs its own baked case.
+#
+# One priced record with round 1,000,000 tokens per bucket so the golden $ is
+# exact at the baked Fable rates:
+#   Fable (10/50/12.50/1.00):  1*10 + 1*50 + 1*12.50 + 1*1.00 = $73.50
+# At the Opus fallback the SAME record prices at 15+75+18.75+1.50 = $110.25.
+# Assert == 73.50 AND != 110.* so this fails RED against current code for the
+# RIGHT reason (the unknown-model Opus fallback applied to a known model).
+inc_scenario "Scenario 27b: Fable 5 baked defaults (prices at own rates, not the Opus fallback)"
+
+TMP27B="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP27B/" 2>/dev/null
+printf '%s\n' '[
+  {"number":129,"title":"feat: fable record issue","additions":300,"deletions":100,"body":"Closes #229","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP27B/prs.json"
+printf '%s\n' '{"number":129,"additions":300,"deletions":100,"comments":[]}' > "$TMP27B/pr-129.json"
+printf '%s\n' '{"number":229,"labels":[],"comments":[]}' > "$TMP27B/issue-229.json"
+{
+  echo '{"schema_version":1,"issue":"229","stage":"plan","session_id":"s27f","model":"claude-fable-5","agent_kind":"headless","record_key":"K229","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}'
+} > "$TMP27B/capture.jsonl"
+
+# Drive with env -u of every Fable PIPELINE_PRICE_* key so the assertion
+# exercises BAKED defaults, not ambient env (mirror Scenario 27).
+PRICING27B="$(env -u PIPELINE_PRICE_CLAUDE_FABLE_5_INPUT \
+                  -u PIPELINE_PRICE_CLAUDE_FABLE_5_OUTPUT \
+                  -u PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_CREATION \
+                  -u PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_READ \
+              bash "$HELPER" --fixture "$TMP27B" --emit-pricing-json 2>/dev/null)"
+
+if printf '%s' "$PRICING27B" | jq -e . >/dev/null 2>&1; then
+  pass_msg "--emit-pricing-json output parses as JSON"
+else
+  fail_msg "--emit-pricing-json output is not valid JSON (got: $(printf '%s' "$PRICING27B" | head -1))"
+fi
+
+COST27B="$(printf '%s' "$PRICING27B" | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST27B" = "73.50" ] || [ "$COST27B" = "73.5" ]; then
+  pass_msg "priced_cost_usd == 73.50 (Fable 5 baked rates 10/50/12.50/1.00)"
+else
+  fail_msg "priced_cost_usd should be 73.50 (Fable 5 baked defaults), got $COST27B"
+fi
+
+# Guard: prove the unknown-model Opus fallback did NOT price this record.
+case "$COST27B" in
+  110*) fail_msg "priced_cost_usd applied the unknown-model Opus fallback to Fable (110.25)" ;;
+  *) pass_msg "priced_cost_usd did NOT apply the Opus fallback to Fable (110.25 rejected)" ;;
+esac
+rm -rf "$TMP27B"
+
 # --- Scenario 28: backfill reconciliation (no double-count) + coverage lower-bound count (#773) ---
 # Two facets of the inline-cost backfill landing at render time:
 #   (a) For the SAME (session_id, issue, stage), a forward lower-bound record

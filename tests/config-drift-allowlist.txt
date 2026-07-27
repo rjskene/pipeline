@@ -152,3 +152,16 @@ PIPELINE_SPLIT_ROLE_SHARED_TESTS
 # the bare-prefix token the scan extracts.
 PIPELINE_NEXT
 PIPELINE_NEXT_
+
+# #1186 stage-model pins: PIPELINE_STAGE_MODEL_CLASSIFY is NOT a knob — it is the
+# named follow-up in the design spec's Open items (classify is deliberately left
+# INHERITING; the resolver already has the shape for it if tokenomics shows the
+# cheap stage is worth pinning). The token exists in the tree only as that
+# documentation prose in docs/superpowers/specs/2026-07-27-stage-model-pins-design.md,
+# so the live-tree scan reports it as referenced-but-undeclared. Same
+# deliberately-absent-knob class as PIPELINE_FRONTEND_PORT_OFFSET above. Exact-match
+# (NOT a prefix wildcard) so the two REAL stage knobs shipped by #1186 —
+# PIPELINE_STAGE_MODEL_PLAN_EVAL / PIPELINE_STAGE_MODEL_PR_EVAL — stay covered by
+# the lint via their pipeline.config.example declarations. Peel this entry when the
+# follow-up lands a real read-site + declaration.
+PIPELINE_STAGE_MODEL_CLASSIFY

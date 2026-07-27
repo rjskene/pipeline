@@ -26,17 +26,21 @@
 # Fail-closed: any check that cannot confirm a satisfied terminal state emits a
 # recover token, never `complete`.
 #
-# #1056 — ADDITIVE `--verify-dispatch <N> <B|D>` mode (post-hoc model + shape
+# #1056 — ADDITIVE `--verify-dispatch <N> <A|B|C|D>` mode (post-hoc model + shape
 # verify): asserts the dispatched model + dispatch shape match what
 # scripts/resolve-execute-dispatch.sh specified, closing the invisible
 # cost-regression property. It emits its OWN `DISPATCH=` token contract and never
 # alters the default-mode `ACTION=` output above. See the dispatch block below.
+# #1186 widened the accepted path set to A|B|C|D alongside the resolver: PATH A
+# execute and every PATH C leaf now carry a real resolved `model=`, so their
+# dispatches are verifiable rather than merely declared. Stage words (pr-eval)
+# stay refused — the W3 structural guard is widened, not removed.
 
 set -uo pipefail
 
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <issue-number>" >&2
-  echo "       $0 --verify-dispatch <issue-number> <B|D>" >&2
+  echo "       $0 --verify-dispatch <issue-number> <A|B|C|D>" >&2
   exit 2
 fi
 
@@ -62,7 +66,8 @@ fi
 #
 # Expected spec + observed model are threaded by the orchestrator at the call
 # site via env (so the positional contract is untouched):
-#   VED_EXPECT_MODEL       — resolver MODEL= (sonnet|opus|haiku|inherit)
+#   VED_EXPECT_MODEL       — resolver MODEL= (sonnet|opus|haiku|fable; #1186
+#                            retired `inherit` — MODEL= is always named)
 #   VED_EXPECT_SPLIT_ROLE  — resolver SPLIT_ROLE= (true|false)
 #   VED_OBSERVED_MODEL     — the model actually dispatched; recorded at dispatch
 #                            for the inline path. Empty => try the spawn-claude
@@ -70,15 +75,18 @@ fi
 #                            else WARN.
 if [ "$1" = "--verify-dispatch" ]; then
   if [ $# -lt 3 ]; then
-    echo "Usage: $0 --verify-dispatch <issue-number> <B|D>" >&2
+    echo "Usage: $0 --verify-dispatch <issue-number> <A|B|C|D>" >&2
     exit 2
   fi
   VD_ISSUE="$2"
   VD_PATH="$3"
+  # #1186: accept every path letter the execute resolver resolves. The shape
+  # scan keys off VED_EXPECT_SPLIT_ROLE, which is false for A/C/D, so those are
+  # a pure model check. Stage words still exit 2 (W3).
   case "$VD_PATH" in
-    B|D) ;;
+    A|B|C|D) ;;
     *)
-      echo "Usage: $0 --verify-dispatch <issue-number> <B|D>" >&2
+      echo "Usage: $0 --verify-dispatch <issue-number> <A|B|C|D>" >&2
       exit 2
       ;;
   esac

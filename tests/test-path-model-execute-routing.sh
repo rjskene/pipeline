@@ -72,7 +72,7 @@ model_knob_block() {
   ' "$EXAMPLE"
 }
 inc
-if model_knob_block | grep -iEq "opt[ -]out"; then
+if model_knob_block | grep -iE "opt[ -]out" >/dev/null; then
   pass_msg "example: Sonnet-default opt-out framing documented in the model knob block"
 else
   fail_msg "example: missing 'opt-out' framing in the model knob block (#1042)"
@@ -88,20 +88,32 @@ for v in "${VARS[@]}"; do
   fi
 done
 
-# 5. The gate is conditional (model= passed ONLY WHEN SET → unset inherits Opus).
+# 5. #1186 flips the read-site rule from CONDITIONAL to UNCONDITIONAL: the
+#    resolver now always emits a NAMED model, so the "pass model= only when the
+#    resolved spec is non-inherit" special case is retired and every execute
+#    dispatch carries `model=$MODEL`. Assert the ALWAYS-pass rule.
 inc
-if grep -iEq "only when .*set|when .*is set|when set" "$SKILL"; then
-  pass_msg "skill: gate is conditional (model passed only when the var is set)"
+if grep -iE "always" "$SKILL" | grep -i "pass .*model=" >/dev/null; then
+  pass_msg "skill: read-site rule is ALWAYS pass model=\$MODEL (#1186 pin contract)"
 else
-  fail_msg "skill: gate not documented as conditional ('only when set')"
+  fail_msg "skill: missing the 'ALWAYS pass model=' rule (#1186 retired the only-when-set gate)"
 fi
 
-# 6. pr-eval dispatch is explicitly NOT gated (stays on Opus backstop).
+# 6. pr-eval dispatch stays Opus. #1186 keeps the invariant but changes its
+#    MECHANISM: it is no longer an un-gated inheritance side-effect, it is an
+#    explicit PIN. 6a accepts either phrasing (the invariant itself); 6b asserts
+#    the pin mechanism is named at the read site.
 inc
-if grep -iEq "pr-eval dispatch is (not|never) gated|pr-eval .* not gated|pr-eval stays on .*opus" "$SKILL"; then
-  pass_msg "skill: pr-eval dispatch explicitly NOT gated (stays Opus)"
+if grep -iEq "pr-eval dispatch is (not|never) gated|pr-eval .* not gated|pr-eval stays on .*opus|pr-eval .*pinned .*opus|pinned .*opus.*pr-eval" "$SKILL"; then
+  pass_msg "skill: pr-eval dispatch stays Opus (never gated / pinned opus)"
 else
-  fail_msg "skill: missing the 'pr-eval not gated' invariant near the gate"
+  fail_msg "skill: missing the pr-eval-stays-Opus invariant near the gate"
+fi
+inc
+if grep -q "PIPELINE_STAGE_MODEL_PR_EVAL" "$SKILL" && grep -Eq "resolve-stage-model(\.sh)?" "$SKILL"; then
+  pass_msg "skill: pr-eval Opus is an explicit PIN (PIPELINE_STAGE_MODEL_PR_EVAL via resolve-stage-model.sh)"
+else
+  fail_msg "skill: pr-eval Opus not pinned — no PIPELINE_STAGE_MODEL_PR_EVAL / resolve-stage-model.sh read site (#1186)"
 fi
 
 # --- #955: PATH B execute model= is eligibility-gated to the #950 low-blast lane ---
@@ -128,17 +140,23 @@ else
   fail_msg "skill: missing 'low-blast' + 'PATH B' gating in the routing block"
 fi
 
-# 9. High-blast PATH B is documented to inherit Opus / pass NO model=.
+# 9. High-blast PATH B under scope=low-blast now PINS opus (#1186) — it passes
+#    `model=opus`, it no longer "passes NO model= and inherits Opus". Same
+#    protective effect, named instead of assumed (an unpinned dispatch under a
+#    Fable-ceiling session would have silently become Fable, not Opus).
 inc
 if awk '
   /Per-path execute MODEL routing/ { inblock = 1 }
   inblock && /^## / { inblock = 0 }
-  inblock && /high-blast/ && (/inherit/ || /NO[[:space:]].*model=/ || /no[[:space:]].*model=/) { f = 1 }
+  inblock && /high-blast/ {
+    l = tolower($0)
+    if (l ~ /model=opus/ || l ~ /pins opus/ || l ~ /pinned opus/ || l ~ /pin opus/) f = 1
+  }
   END { exit (f ? 0 : 1) }
 ' "$SKILL"; then
-  pass_msg "skill: high-blast PATH B inherits Opus (passes NO model=)"
+  pass_msg "skill: high-blast PATH B pins opus (model=opus, not an inherit)"
 else
-  fail_msg "skill: high-blast PATH B not documented to inherit Opus / pass no model="
+  fail_msg "skill: high-blast PATH B still documented as inherit/no-model= (#1186 pin contract)"
 fi
 
 # 10. PATH D stays UNCONDITIONAL — the eligibility predicate does NOT gate D.
@@ -169,18 +187,22 @@ else
   fail_msg "skill: missing the estimate-not-diff rationale in the block"
 fi
 
-# 12. needs-browser PATH D suppresses model= (issue #960 — browser/UI execute
-#     never validated on Sonnet). PATH D is otherwise unconditional.
+# 12. needs-browser PATH D (issue #960 — browser/UI execute never validated on
+#     Sonnet). #1186 keeps the carve-out and changes only its emission: it now
+#     PINS `model=opus` instead of suppressing model= and inheriting.
 inc
 if awk '
   /Per-path execute MODEL routing/ { inblock = 1 }
   inblock && /^## / { inblock = 0 }
-  inblock && /PATH D/ && /needs-browser/ && (/NO[[:space:]].*model=/ || /no[[:space:]].*model=/ || /suppress/) { f = 1 }
+  inblock && /PATH D/ && /needs-browser/ {
+    l = tolower($0)
+    if (l ~ /model=opus/ || l ~ /pins opus/ || l ~ /pinned opus/ || l ~ /pin opus/) f = 1
+  }
   END { exit (f ? 0 : 1) }
 ' "$SKILL"; then
-  pass_msg "skill: needs-browser PATH D suppresses model= (browser carve-out)"
+  pass_msg "skill: needs-browser PATH D pins opus (browser carve-out, named model)"
 else
-  fail_msg "skill: needs-browser PATH D model= suppression missing from the block"
+  fail_msg "skill: needs-browser PATH D still suppresses model=/inherits (#1186 pin contract)"
 fi
 
 # --- #1056: the inline execute dispatch is routed through the single-source
@@ -223,6 +245,102 @@ if grep -Eq "resolve-execute-dispatch(\.sh)?" "$EXAMPLE"; then
   pass_msg "example: #1042/#881 knob block names resolve-execute-dispatch as the single source (#1056)"
 else
   fail_msg "example: #1042/#881 knob block does NOT name resolve-execute-dispatch (#1056)"
+fi
+
+# --- #1186: per-stage model PINS. Every quality-critical dispatch carries an
+#     explicit `model=`; `inherit` is retired at dispatch sites. The session
+#     model is reserved for the orchestrator loop itself. Under a Fable-ceiling
+#     session the old "inherits the orchestrator's Opus" assumption is simply
+#     false — the unpinned sites silently become Fable (2× the cost, and the
+#     refusal-prone lane for exactly the W2 security work the carve-out selects).
+
+SKILLS_DIR="$ROOT/skills"
+STAGE_RESOLVER="$ROOT/scripts/resolve-stage-model.sh"
+PLAN_EVAL_SKILL="$ROOT/skills/evaluate-issue-plan/SKILL.md"
+PR_EVAL_SKILL="$ROOT/skills/evaluate-issue-pr/SKILL.md"
+
+# 17. PROSE-DRIFT REGRESSION (the spec's named guard): the retired assumption
+#     "inherits the orchestrator's Opus" must be GONE from skills/ entirely.
+#     It documented a property that stopped being true the moment the session
+#     model left Opus.
+inc
+DRIFT_HITS="$(grep -rn "inherits the orchestrator's Opus" "$SKILLS_DIR" 2>/dev/null || true)"
+if [ -z "$DRIFT_HITS" ]; then
+  pass_msg "skills/: retired phrase \"inherits the orchestrator's Opus\" is gone (#1186)"
+else
+  fail_msg "skills/: retired phrase \"inherits the orchestrator's Opus\" still present:
+$DRIFT_HITS"
+fi
+
+# 18. The five stage-model knobs are documented (commented — defaults-in-code at
+#     the read site per #1052, so `--fix config` must NOT seed them).
+STAGE_VARS=(
+  PIPELINE_STAGE_MODEL_PLAN_EVAL
+  PIPELINE_STAGE_MODEL_PR_EVAL
+  PIPELINE_PATH_C_MODEL_PLAN
+  PIPELINE_PATH_A_MODEL_EXECUTE
+  PIPELINE_PATH_C_MODEL_EXECUTE
+)
+for v in "${STAGE_VARS[@]}"; do
+  inc
+  if grep -Eq "^[[:space:]]*#[[:space:]]*${v}=" "$EXAMPLE"; then
+    pass_msg "example: $v documented (commented) per #1052"
+  else
+    fail_msg "example: $v not documented as a commented knob (#1186)"
+  fi
+done
+
+# 19. CONFIG-DRIFT SYMMETRY: each newly-declared knob gets a REAL read-site in
+#     the same PR, so check-config-drift.sh's ORPHAN group stays empty (a knob
+#     documented but never read is a dead config knob).
+for v in "${STAGE_VARS[@]}"; do
+  inc
+  if grep -rq "$v" "$ROOT/scripts" 2>/dev/null; then
+    pass_msg "read-site: $v is read under scripts/ (no ORPHAN drift)"
+  else
+    fail_msg "read-site: $v declared but never read under scripts/ (ORPHAN drift, #1186)"
+  fi
+done
+
+# 20. check-config-drift.sh stays green with the new knobs + pricing rows in
+#     play (symmetric ORPHAN/UNDOCUMENTED lint over the whole tree).
+inc
+if bash "$ROOT/scripts/check-config-drift.sh" >/dev/null 2>&1; then
+  pass_msg "check-config-drift.sh exits 0 (declared/referenced symmetry holds)"
+else
+  fail_msg "check-config-drift.sh reports drift with the #1186 knobs in play"
+fi
+
+# 21. The stage resolver is the single source for the plan/plan-eval/pr-eval
+#     pins, and fullsend consumes it (the #1056 lesson applied to the stages
+#     that had NO resolver at all).
+inc
+if [ -f "$STAGE_RESOLVER" ]; then
+  pass_msg "scripts/resolve-stage-model.sh exists (single-source stage-model resolver)"
+else
+  fail_msg "scripts/resolve-stage-model.sh MISSING (#1186 single-source stage resolver)"
+fi
+inc
+if grep -Eq "resolve-stage-model(\.sh)?" "$SKILL"; then
+  pass_msg "skill: fullsend routes stage dispatches through resolve-stage-model.sh"
+else
+  fail_msg "skill: fullsend does NOT reference resolve-stage-model.sh (#1186)"
+fi
+
+# 22. The evaluator skills document their own pin (they are auto-gates with no
+#     human behind them in fullsend, so "gate never below producer" has to be
+#     written down where the evaluator is defined).
+inc
+if [ -f "$PLAN_EVAL_SKILL" ] && grep -Eq "resolve-stage-model(\.sh)?|PIPELINE_STAGE_MODEL_PLAN_EVAL" "$PLAN_EVAL_SKILL"; then
+  pass_msg "evaluate-issue-plan: dispatch-model note names the plan-eval pin (#1186)"
+else
+  fail_msg "evaluate-issue-plan: missing the plan-eval dispatch-model note (#1186)"
+fi
+inc
+if [ -f "$PR_EVAL_SKILL" ] && grep -q "PIPELINE_STAGE_MODEL_PR_EVAL" "$PR_EVAL_SKILL"; then
+  pass_msg "evaluate-issue-pr: W3 reframed as an explicit PIPELINE_STAGE_MODEL_PR_EVAL pin (#1186)"
+else
+  fail_msg "evaluate-issue-pr: W3 still an inheritance side-effect, not a pin (#1186)"
 fi
 
 echo ""

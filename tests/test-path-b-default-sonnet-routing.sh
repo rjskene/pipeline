@@ -51,7 +51,7 @@ routing_block() {
 #    OLD un-flipped wording ("when unset/empty ... inherits Opus") does NOT spuriously
 #    pass on the strewn-across-the-block presence of those words.
 inc
-if routing_block | grep -Eiq "(unset|empty)[^.]*(default[s]?)[^.]*sonnet|(default[s]?)[^.]*(unset|empty)[^.]*sonnet|sonnet[^.]*(default[s]?)[^.]*(unset|empty)"; then
+if routing_block | grep -Ei "(unset|empty)[^.]*(default[s]?)[^.]*sonnet|(default[s]?)[^.]*(unset|empty)[^.]*sonnet|sonnet[^.]*(default[s]?)[^.]*(unset|empty)" >/dev/null; then
   pass_msg "skill: routing block documents unset B/D model => default sonnet"
 else
   fail_msg "skill: routing block does NOT document unset => default sonnet"
@@ -61,7 +61,7 @@ fi
 #    Require the scope var, "default", and "all" to co-occur on the SAME line, so the
 #    OLD "(default low-blast)" wording fails for the right reason.
 inc
-if routing_block | grep -Eiq "PIPELINE_PATH_B_ELIGIBLE_SCOPE[^.]*default[^.]*\<all\>|default[^.]*\<all\>[^.]*PIPELINE_PATH_B_ELIGIBLE_SCOPE"; then
+if routing_block | grep -Ei "PIPELINE_PATH_B_ELIGIBLE_SCOPE[^.]*default[^.]*\<all\>|default[^.]*\<all\>[^.]*PIPELINE_PATH_B_ELIGIBLE_SCOPE" >/dev/null; then
   pass_msg "skill: routing block documents PIPELINE_PATH_B_ELIGIBLE_SCOPE default => all"
 else
   fail_msg "skill: routing block does NOT document scope default => all"
@@ -77,23 +77,30 @@ inc
 . "$ROOT/scripts/_high-uncertainty-match.sh"
 if [ -z "${HIGH_UNCERTAINTY_RE:-}" ]; then
   fail_msg "skill: could not source HIGH_UNCERTAINTY_RE from the shared helper"
-elif routing_block | grep -Eiq "$HIGH_UNCERTAINTY_RE" \
-   && routing_block | grep -Eiq "inherit|opus"; then
+elif routing_block | grep -Ei "$HIGH_UNCERTAINTY_RE" >/dev/null \
+   && routing_block | grep -Ei "inherit|opus" >/dev/null; then
   pass_msg "skill: W2 carve-out still forces Opus (shared high-uncertainty regex + inherit/Opus)"
 else
   fail_msg "skill: W2 carve-out -> Opus clause missing from the routing block"
 fi
 
-# 4. SKILL routing block: PATH D needs-browser carve-out (#960) STILL forces Opus
-#    (passes NO model= / suppress / inherit).
+# 4. SKILL routing block: PATH D needs-browser carve-out (#960) STILL forces Opus.
+#    #1186 changes the MECHANISM, not the carve-out: the branch now PINS the named
+#    `model=opus` instead of suppressing model= and inheriting the session model
+#    (which, under a Fable-ceiling session, would have upshifted browser/UI execute
+#    to Fable — the opposite of the #960 intent). The old NO-model=/suppress/inherit
+#    phrasings are no longer accepted.
 inc
 if routing_block | awk '
-  /PATH D/ && /needs-browser/ && (/NO[[:space:]].*model=/ || /no[[:space:]].*model=/ || /suppress/ || /inherit/) { f = 1 }
+  /PATH D/ && /needs-browser/ {
+    l = tolower($0)
+    if (l ~ /model=opus/ || l ~ /pins opus/ || l ~ /pinned opus/ || l ~ /pin opus/) f = 1
+  }
   END { exit (f ? 0 : 1) }
 '; then
-  pass_msg "skill: PATH D needs-browser carve-out still forces Opus (#960)"
+  pass_msg "skill: PATH D needs-browser carve-out pins opus (#960 preserved, #1186 named)"
 else
-  fail_msg "skill: PATH D needs-browser -> Opus carve-out missing from the block"
+  fail_msg "skill: PATH D needs-browser -> pinned-opus carve-out missing from the block (#1186)"
 fi
 
 # 5. SKILL routing block: pr-eval is NEVER gated / stays Opus (W3 backstop).
@@ -141,13 +148,13 @@ routing_knob_block() {
   ' "$EXAMPLE"
 }
 inc
-if routing_knob_block | grep -Eiq "opt[ -]out"; then
+if routing_knob_block | grep -Ei "opt[ -]out" >/dev/null; then
   pass_msg "example: routing knob comments reframed as opt-OUT"
 else
   fail_msg "example: routing knob comments do NOT use opt-out framing"
 fi
 inc
-if routing_knob_block | grep -Eiq "opus" && routing_knob_block | grep -Eq "low-blast"; then
+if routing_knob_block | grep -Ei "opus" >/dev/null && routing_knob_block | grep -E "low-blast" >/dev/null; then
   pass_msg "example: both opt-out values named (opus and low-blast) in the routing knob block"
 else
   fail_msg "example: opt-out values (opus / low-blast) not both named in the routing knob block"
@@ -163,19 +170,19 @@ heredoc_body() {
   ' "$INIT"
 }
 inc
-if heredoc_body | grep -Eq '^[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet'; then
+if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet' >/dev/null; then
   pass_msg "init.sh: heredoc emits PIPELINE_PATH_B_MODEL_EXECUTE=sonnet"
 else
   fail_msg "init.sh: heredoc does NOT emit PIPELINE_PATH_B_MODEL_EXECUTE=sonnet"
 fi
 inc
-if heredoc_body | grep -Eq '^[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet'; then
+if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet' >/dev/null; then
   pass_msg "init.sh: heredoc emits PIPELINE_PATH_D_MODEL_EXECUTE=sonnet"
 else
   fail_msg "init.sh: heredoc does NOT emit PIPELINE_PATH_D_MODEL_EXECUTE=sonnet"
 fi
 inc
-if heredoc_body | grep -Eq '^[[:space:]]*PIPELINE_PATH_B_ELIGIBLE_SCOPE="?all"?'; then
+if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_B_ELIGIBLE_SCOPE="?all"?' >/dev/null; then
   pass_msg "init.sh: heredoc emits PIPELINE_PATH_B_ELIGIBLE_SCOPE=all"
 else
   fail_msg "init.sh: heredoc does NOT emit PIPELINE_PATH_B_ELIGIBLE_SCOPE=all"

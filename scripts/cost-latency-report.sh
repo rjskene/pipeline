@@ -454,6 +454,16 @@ price_default() {
         INPUT) printf '1' ;; OUTPUT) printf '5' ;;
         CACHE_CREATION) printf '1.25' ;; CACHE_READ) printf '0.10' ;;
       esac ;;
+    # #1186: the stage-model pins design puts the orchestrator session (and the
+    # PATH C plan stage) on Fable 5, so Fable records enter the capture stream.
+    # Without its own case Fable falls through to the unknown-model Opus
+    # fallback and is mis-priced — the report would mis-state the very line item
+    # this design deliberately spends against.
+    CLAUDE_FABLE_5)
+      case "$bucket" in
+        INPUT) printf '10' ;; OUTPUT) printf '50' ;;
+        CACHE_CREATION) printf '12.50' ;; CACHE_READ) printf '1.00' ;;
+      esac ;;
     *)
       # conservative upper-bound fallback for unknown models: Opus rates.
       case "$bucket" in
