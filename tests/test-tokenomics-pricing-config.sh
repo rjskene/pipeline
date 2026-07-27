@@ -42,6 +42,14 @@ PRICE_KEYS=(
   PIPELINE_PRICE_CLAUDE_HAIKU_4_5_OUTPUT
   PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION
   PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ
+  # Fable 5 (#1186): the stage-model pins design puts the orchestrator session
+  # and PATH C plan on Fable, so Fable records enter the capture stream. Without
+  # its own rows Fable prices at the unknown-model Opus fallback. Same
+  # commented-anchor shape as the Opus/Sonnet/Haiku blocks above.
+  PIPELINE_PRICE_CLAUDE_FABLE_5_INPUT
+  PIPELINE_PRICE_CLAUDE_FABLE_5_OUTPUT
+  PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_CREATION
+  PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_READ
 )
 
 assert_key_present() {
