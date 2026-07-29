@@ -1,6 +1,30 @@
 """
 PreToolUse hook — restricts file operations to the project directory and ~/.claude/.
 Exits 2 (blocked) if a tool targets a path outside those boundaries.
+
+Issue #1188 — cd-escape gate: the Bash command-string extractor below only
+lifts `/`-anchored ABSOLUTE tokens, so it has no model of the shell working
+directory. `cd <anywhere> && <write to a plain relative path>` therefore left
+the project boundary with nothing to extract — the string is benign, the
+SHELL is what makes it point outside (e.g. `cd ../../.. && mkdir -p
+volumes/x`). The gate at the tail of the Bash flow resolves a COMMAND-POSITION
+leading `cd` operand against the event-payload `cwd` (only when that is
+itself in-boundary — otherwise PROJECT_DIR) and blocks the whole command when
+the resolved target lands outside the boundary. `is_allowed()` is reused
+verbatim as the comparator, so the `/tmp` carve-out, `~/.claude`,
+sibling/nested worktrees, and the Windows/MSYS `_canon` branch (#1153) are
+inherited for free. Operand grammar: `cd -` (needs OLDPWD) and any
+`$VAR`/backtick/glob-bearing operand are unresolvable without shell state and
+fail open; bare `cd` and `cd --` (nothing following) are bash's `cd $HOME`;
+`--` is treated as POSIX end-of-options, not an operand. `cd` is detected only
+after `^`, `;`, `&`, `|`, `(`, `{` — deliberately NOT after a newline (heredoc
+bodies and later lines of a multi-line script are script TEXT, not a command
+being run — including `\n` would turn ordinary script-authoring into a new
+over-block class) and NOT inside quotes (adding quote chars would fire on
+`echo "cd .."` / `ssh host "cd …"`, re-opening the #1135/#1151 false-positive
+family). Explicit non-goals, same as the rest of this hook's "best-effort"
+scope: no shell emulation, no `pushd`/subshell/`$VAR` tracking, and an
+in-project `cd` does not re-anchor the absolute-token scan.
 """
 import os
 import posixpath
@@ -15,6 +39,11 @@ from subagent_log_utils import read_event_stdin  # noqa: E402
 data = read_event_stdin()
 tool_name = data.get("tool_name", "")
 tool_input = data.get("tool_input", {})
+# Event-payload `cwd` (issue #1188) — the harness-supplied shell working
+# directory at invocation time. Consulted ONLY by the cd-escape gate below
+# (never by `_resolve`/`is_allowed` generally) as the anchor for a relative
+# `cd` operand.
+EVENT_CWD = data.get("cwd") or ""
 
 PROJECT_DIR = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 CLAUDE_HOME = os.path.realpath(os.path.expanduser("~/.claude"))
@@ -478,6 +507,64 @@ def is_allowed(path: str) -> bool:
     return False
 
 
+def _cd_anchor() -> str:
+    """Resolve the anchor for a relative `cd` operand (issue #1188).
+
+    Prefers the event-payload `cwd` (EVENT_CWD, harness-supplied), but ONLY
+    when it is itself in-boundary (`is_allowed(EVENT_CWD)`) — falling back on
+    an out-of-project payload cwd would resurrect the #1136 over-block class:
+    an ordinary in-repo `cd sub` could resolve outside if the payload cwd were
+    an untrusted outer-terminal path. Falls back to PROJECT_DIR otherwise,
+    matching `_resolve`'s existing anchor.
+    """
+    if EVENT_CWD and is_allowed(EVENT_CWD):
+        return os.path.realpath(EVENT_CWD)
+    return PROJECT_DIR
+
+
+# Command-position leading `cd` target (issue #1188). Fires only when `cd`
+# starts the command, or immediately follows a command separator (`;`, `&`,
+# `|`) or a subshell/group opener (`(`, `{`) — deliberately NOT after a
+# newline (see module docstring) and NOT inside quotes (would fire on
+# `echo "cd .."` / `ssh host "cd …"`, re-opening #1135/#1151).
+#
+# Flags group is `-{1,2}[A-Za-z]+` — one-or-more letters, NOT `[A-Za-z]*` —
+# so `cd -` is never consumed as a flag (with `*` the group would eat the
+# bare `-`, leaving operand None and misrouting `cd -` into the bare-`cd` `~`
+# branch). `--` is a SEPARATE leading alternative (POSIX end-of-options): the
+# word after it is the operand, not swallowed as a flag; `cd -- ../../..`
+# must still yield the real target.
+_CD_RE = re.compile(
+    r"(?:^|(?<=[;&|({]))\s*cd(?=\s|$)"
+    r"((?:\s+--(?=\s|$)|\s+-{1,2}[A-Za-z]+)*)"
+    r"(?:\s+(\"[^\"]*\"|'[^']*'|[^\s;&|<>]+))?"
+)
+
+
+def _iter_cd_targets(command: str):
+    """Yield each command-position `cd` operand in `command` (issue #1188).
+
+    A match with no operand (bare `cd`, or `cd --` with nothing following) is
+    bash's `cd $HOME` and yields the sentinel `"~"`. A quoted operand is
+    dequoted. An operand that is unresolvable without shell state — an
+    unsubstituted `$VAR`/`` ` ``/glob metachar, or the literal `-` for `cd -`
+    (needs OLDPWD, which this hook does not have) — is skipped: fail open,
+    per the #917 doctrine, rather than guessed at.
+    """
+    for m in _CD_RE.finditer(command):
+        operand = m.group(2)
+        if operand is None:
+            yield "~"
+            continue
+        if len(operand) >= 2 and operand[0] == operand[-1] and operand[0] in "\"'":
+            operand = operand[1:-1]
+        if operand == "-":
+            continue
+        if any(ch in operand for ch in "$`*?["):
+            continue
+        yield operand
+
+
 def extract_paths() -> list[str]:
     """Extract file paths from tool input based on tool type."""
     paths = []
@@ -631,3 +718,36 @@ for path in paths:
             file=sys.stderr,
         )
         sys.exit(2)
+
+# cd-escape gate (issue #1188). Placed LAST in the Bash flow, strictly
+# ADDITIVE to everything above: it can only ADD blocks, and every existing
+# `BLOCKED: path outside project boundary: …` message above stays
+# byte-for-byte unchanged, so no pre-existing stderr grep shifts. Wrapped in
+# try/except so a guard hook that cannot parse/resolve its input never wedges
+# the session (#917 fail-open doctrine) — any unexpected error here falls
+# through to ALLOW, same as the rest of this best-effort hook.
+if tool_name == "Bash":
+    try:
+        command = tool_input.get("command", "")
+        for target in _iter_cd_targets(command):
+            t = os.path.expanduser(target)
+            if _looks_windows(t):
+                resolved = t
+            else:
+                if not os.path.isabs(t):
+                    t = os.path.join(_cd_anchor(), t)
+                resolved = os.path.realpath(t)
+            # /tmp carve-out parity with extract_paths()'s existing skip —
+            # tests/test-restrict-paths-worktree-git.sh documents this as an
+            # invariant many mktemp-based flows depend on.
+            if resolved.startswith("/tmp"):
+                continue
+            if not is_allowed(resolved):
+                print(
+                    f"BLOCKED: cd target outside project boundary: {target} "
+                    f"(resolves to {resolved})",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+    except Exception:
+        pass
