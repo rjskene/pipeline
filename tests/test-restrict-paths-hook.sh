@@ -373,5 +373,56 @@ run_hook_set "Bash non-existent PROJECT_DIR worktree token does NOT skip scan (#
 P6D=$(printf '{"tool_name":"Bash","tool_input":{"command":"cp .claude/hooks/foo.py %s/foo.py"}}' "$NESTED_WT_DIR")
 run_hook_set "Bash cp into EXISTING registered worktree still ALLOWED (#1067 sync preserved)" "$P6D" 0 --no-grep
 
+# ---------------------------------------------------------------------------
+# Block 7 — cd-escape (#1188).
+# The Bash extractor lifts only `/`-anchored ABSOLUTE tokens from the command
+# string, so `cd <anywhere> && <relative write>` leaves the project boundary
+# with nothing to evaluate — the string is benign and the SHELL is what makes it
+# point outside. 7a is the RED case (exit 0 today); 7b–7e are pins that are
+# green today AND must stay green post-fix, so the fix cannot degrade into a
+# blanket "any cd blocks".
+#
+# NOTE: every payload here carries the FULL event envelope
+# {"tool_name":"Bash","tool_input":{"command":"…"}} — with a bare
+# {"command":…} form tool_name is "", the Bash branch never runs, and 7a would
+# return 0 even against a correct implementation while 7b–7e passed vacuously.
+# ---------------------------------------------------------------------------
+
+# 7a (RED today, exit 0): a `..` chain that clears the project root followed by
+# an ordinary relative mkdir must BLOCK with a message naming the cd target.
+# The chain is 7 levels deep so it collapses to `/` whether the suite runs from
+# the main repo or from inside a nested worktree checkout.
+run_hook_set "Bash cd ..-escape + relative mkdir must BLOCK (#1188)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd ../../../../../../.. && mkdir -p volumes/x"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 7b (pin, green today AND post-fix): an ordinary in-project descent stays open.
+run_hook_set "Bash cd into in-project subdir still ALLOWED (#1188 pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd scripts && ls"}}' \
+  0 --no-grep
+
+# 7c (pin, green today AND post-fix): the /tmp carve-out survives — the
+# extractor already skips /tmp candidates unconditionally and the cd gate must
+# reach parity (see tests/test-restrict-paths-worktree-git.sh:14-18).
+run_hook_set "Bash cd /tmp still ALLOWED (#1188 /tmp carve-out parity)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd /tmp && ls"}}' \
+  0 --no-grep
+
+# 7d (pin, green today AND post-fix): an unsubstituted $VAR target is
+# unresolvable → fail open (#917 doctrine).
+run_hook_set "Bash cd \"\$VAR\" target fails open (#1188 pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd \"$WORKTREE\" && ls"}}' \
+  0 --no-grep
+
+# 7e (pin, green today AND post-fix): a `cd` on a LATER LINE of a multi-line
+# body is NOT in command position for this gate — `\n` is deliberately excluded
+# from the delimiter class so heredoc bodies and multi-line scripts are not
+# scanned (that would be a new over-block class on an extractor that has already
+# shipped four over-block regressions). The JSON `\n` escapes decode to real
+# newlines. Cross-checks the python-layer pin 24 at the shell layer.
+run_hook_set "Bash cd on a later line of a multi-line body fails open (#1188 pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"set -e\ncd ../..\nls"}}' \
+  0 --no-grep
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
