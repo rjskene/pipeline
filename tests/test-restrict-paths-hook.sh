@@ -424,5 +424,60 @@ run_hook_set "Bash cd on a later line of a multi-line body fails open (#1188 pin
   '{"tool_name":"Bash","tool_input":{"command":"set -e\ncd ../..\nls"}}' \
   0 --no-grep
 
+# ---------------------------------------------------------------------------
+# Block 8 — quoted-region masking (#1190).
+# #1188's command-position lookbehind (`;`, `&`, `|`, `(`, `{`) has no notion of
+# quoting, so a separator INSIDE a quoted string opens a command position and a
+# change-directory word after it is read as a real command — blocking ordinary
+# quoted prose (commit messages, payloads, variable assignments). 8a/8b are the
+# RED cases (exit 2 today, must be 0 post-fix); 8c–8e are keep-block pins that
+# are green today AND must stay green, so the fix cannot under-block.
+#
+# Authoring notes, same three hazards as Block 7:
+#   (i)   every payload carries the FULL {"tool_name":"Bash","tool_input":{…}}
+#         envelope — with a bare {"command":…} form tool_name is "", the Bash
+#         branch never runs, and every case here would pass vacuously;
+#   (ii)  the payload is a single-quoted shell string holding JSON, so an
+#         embedded `"` is written `\"` (Task-3.2 / 5f precedent);
+#   (iii) the `..` chains are 7 levels deep so they collapse to `/` whether the
+#         suite runs from the main repo or from inside a nested worktree
+#         checkout — a 1-deep `..` can land back in-boundary and pass vacuously.
+# 8d's command value legitimately carries ONE unbalanced `"`; the JSON string
+# itself stays valid.
+# ---------------------------------------------------------------------------
+
+# 8a (RED today, exit 2): a commit message that merely DESCRIBES the traversal.
+run_hook_set "Bash quoted commit message with a separator + cd must ALLOW (#1190)" \
+  '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"narrows the scan; cd ../../../../../../.. is misread\""}}' \
+  0 --no-grep
+
+# 8b (RED today, exit 2): the verbatim live-session repro — a variable
+# assignment holding quoted English prose, `|` as the separator.
+run_hook_set "Bash quoted var assignment with a separator + cd must ALLOW (#1190)" \
+  '{"tool_name":"Bash","tool_input":{"command":"MSG=\"the cd scan| cd ../../../../../../.. bug\""}}' \
+  0 --no-grep
+
+# 8c (pin, green today AND post-fix): a REAL cd escape AFTER a balanced quoted
+# region still blocks — masking is length-preserving and must not swallow the
+# tail. Cross-checks the python-layer K2 at the shell layer.
+run_hook_set "Bash real cd-escape after a quoted region STILL BLOCKS (#1190 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo \"note\" ; cd ../../../../../../.. && mkdir -p volumes/x"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 8d (pin, fail-CLOSED): an UNTERMINATED quote falls back to scanning the RAW
+# command — exactly today's behavior, never fewer blocks. Masking to
+# end-of-string would be a one-character bypass.
+run_hook_set "Bash unterminated quote fails CLOSED (#1190 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo \"oops; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 8e (pin, SCOPE GUARD): a QUOTED absolute out-of-boundary path still blocks via
+# the pre-existing extractor, with the byte-identical PATH message. The mask
+# must stay inside the cd path — masking the string `extract_paths()` scans
+# would blind it to every quoted absolute token.
+run_hook_set "Bash quoted absolute /etc path STILL BLOCKS with the path message (#1190 scope guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat \"/etc/passwd\""}}' \
+  2 "BLOCKED: path outside project boundary"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

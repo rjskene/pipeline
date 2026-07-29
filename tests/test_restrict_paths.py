@@ -77,6 +77,24 @@ is expected) — that is the RED state. The #1188 ALLOW / KEEP-BLOCK pins pass
 today AND must keep passing post-fix; they exist so the GREEN implementation
 cannot degrade into a blanket "any `cd` blocks".
 
+Issue #1190 narrows that same #1188 scan. Its command-position lookbehind
+(`;`, `&`, `|`, `(`, `{`) has NO notion of quoting, so a separator that appears
+INSIDE a quoted string still opens a command position: any benign quoted text
+that happens to carry a separator followed by a change-directory word and a
+relative parent — a commit message, a `printf` payload, a variable assignment
+holding prose — is parsed as a real command and BLOCKED. The post-fix hook
+masks quoted regions (length-preserving, delimiters kept) before the scan and
+slices operands from the ORIGINAL string.
+
+Against the CURRENT hook every #1190 ALLOW case (`test_issue1190_allow_*`,
+except the two explicitly labelled non-RED) FAILS with exit 2 and
+`BLOCKED: cd target outside project boundary` — that, precisely, is the #1190
+defect and the RED state. The `test_issue1190_block_*` cases pass TODAY and
+must keep passing: they are the anti-under-block floor (a real `cd` beside a
+decoy quoted region, a real `cd` after a balanced quoted region, a quoted
+TARGET, unterminated quotes failing CLOSED, a backslash-escaped quote outside
+quotes) plus the scope guard that masking must never reach `extract_paths()`.
+
 Hermeticity note: the hook is driven against a freshly created temp project
 directory (NOT this worktree's own path). A worktree's own directory is
 "sibling-worktree shaped" relative to its parent, which would make the hook's
@@ -158,6 +176,11 @@ MSYS_VOL = "/c" + "/volumes"            # MSYS drive-root target
 # the pre-existing `BLOCKED: path outside project boundary` string, which the
 # additive-placement discipline leaves byte-for-byte unchanged.
 CD_BLOCK_MSG = "BLOCKED: cd target outside project boundary"
+# The pre-existing absolute-token extractor's fingerprint. Named here because
+# the #1190 scope guard (K7) asserts that masking does NOT reach
+# `extract_paths()` — a quoted absolute out-of-boundary token must still emit
+# THIS message, not the cd-gate one.
+PATH_BLOCK_MSG = "BLOCKED: path outside project boundary"
 
 
 class TestRestrictPaths(unittest.TestCase):
@@ -918,6 +941,187 @@ class TestRestrictPaths(unittest.TestCase):
     #     project boundary: /c/volumes`). It must stay blocked.
     def test_issue1188_block_cd_msys_drive_root_keep(self):
         self._win_block("Bash", {"command": "cd " + MSYS_VOL + " && mkdir x"})
+
+    # ======================================================================
+    # Issue #1190 — quoted-region masking before the cd command-position scan
+    # ======================================================================
+    # #1188's `_CD_RE` opens a command position after `;`, `&`, `|`, `(` or `{`
+    # via a lookbehind character class with NO notion of quoting. A separator
+    # sitting INSIDE a quoted string therefore opens a command position, and any
+    # change-directory word that follows it is read as a real command — so
+    # ordinary quoted PROSE that merely DESCRIBES directory traversal (a commit
+    # message, a `printf` payload, a variable assignment) is blocked. Observed
+    # live in the orchestrator session minutes after #1188 merged.
+    #
+    # Post-fix the hook masks quoted regions (single AND double) in a
+    # LENGTH-PRESERVING copy — delimiters kept, interior replaced — scans THAT
+    # copy, and slices operands from the ORIGINAL string, so the existing
+    # dequote / `-` skip / `$`-backtick-glob fail-open all keep seeing real text.
+    #
+    # Every case runs against the $HOME-anchored `self.P1188` fixture and reuses
+    # the `_cd_allow` / `_cd_block` helpers above — `self.PROJECT` is /tmp-rooted
+    # and the unconditional /tmp carve-out would make each relative assertion
+    # pass for the wrong reason.
+
+    # --- RED today (exit 2, `BLOCKED: cd target outside project boundary`) ---
+    # Each must become exit 0 post-fix. If any of these PASSES against the
+    # unfixed hook it is vacuous — see the `..\"` operand accident noted at
+    # A13 — and must be rewritten rather than trusted.
+
+    # A1. The commit-message shape: a `;` inside `-m "…"` opens a command
+    #     position and the following `cd ..` is resolved for real.
+    def test_issue1190_allow_dq_commit_message_semicolon(self):
+        self._cd_allow('git commit -m "narrows the scan; cd .. is misread"')
+
+    # A2. The verbatim live-session repro from the issue body — a plain variable
+    #     assignment whose value is quoted English prose, `|` as the separator.
+    def test_issue1190_allow_dq_var_assignment_pipe(self):
+        self._cd_allow('MSG="the cd scan| cd .. bug"')
+
+    # A3. SINGLE-quoted payload — masking must cover `'…'`, not just `"…"`.
+    def test_issue1190_allow_sq_payload_semicolon(self):
+        self._cd_allow("echo 'x; cd .. done'")
+
+    # A4. `&` member of the lookbehind class, inside quotes.
+    def test_issue1190_allow_dq_ampersand_separator(self):
+        self._cd_allow('echo "a && cd .. b"')
+
+    # A5. The `(` and `{` members — a quoted shell-function snippet is the
+    #     everyday shape that carries both.
+    def test_issue1190_allow_dq_brace_paren_opener(self):
+        self._cd_allow('echo "f() { cd .. ; }"')
+
+    # A6. `~` operand inside quoted prose ($HOME is out of boundary, so this
+    #     blocks today via the bare-`~` branch, not the `..` branch).
+    def test_issue1190_allow_dq_tilde_operand(self):
+        self._cd_allow('git commit -m "s; cd ~ then build"')
+
+    # A7. A deep `..` chain inside quoted prose — the operand is a real escape
+    #     shape, so only quote-awareness (not the operand grammar) can allow it.
+    def test_issue1190_allow_dq_deep_chain_operand(self):
+        self._cd_allow('printf %s "step; cd ../../.. then make"')
+
+    # A8. An apostrophe INSIDE a double-quoted region must NOT open a
+    #     single-quote region (which would terminate the double-quoted region
+    #     early and re-expose the separator).
+    def test_issue1190_allow_apostrophe_inside_dq(self):
+        self._cd_allow("git commit -m \"it's; cd .. bug\"")
+
+    # A9. A double quote nested INSIDE a single-quoted region is ordinary text.
+    def test_issue1190_allow_dq_nested_in_sq(self):
+        self._cd_allow("printf '%s' 'say \"x; cd .. y\"'")
+
+    # A10. A backslash-escaped `\"` inside a double-quoted region must NOT close
+    #      it — otherwise the tail is read as unquoted and the separator fires.
+    def test_issue1190_allow_escaped_dq_inside_dq(self):
+        self._cd_allow(r'echo "a \" b; cd .. c"')
+
+    # A11. A REAL newline inside the quoted region: the mask must stay
+    #      line-aligned with the original (newline preserved, not replaced), and
+    #      the region must span the newline the way the shell does.
+    def test_issue1190_allow_multiline_quoted_prose(self):
+        self._cd_allow('echo "line1; cd ..\nline2"')
+
+    # A14. ADJACENT quoted regions glued into one shell word (`"a"b"c…"`): the
+    #      separator lives in the SECOND region. A naive "strip from the first
+    #      quote to the last quote" mask happens to allow this too, but a mask
+    #      that toggles state per delimiter is the only one that also keeps K1–K3
+    #      blocking. (Evaluator recommendation 3 on the approved plan.)
+    def test_issue1190_allow_adjacent_quoted_regions(self):
+        self._cd_allow('echo "a"b"c; cd .. done"')
+
+    # --- NON-RED allow pins (green TODAY and post-fix) ---------------------
+
+    # A12. The quoted variant of `test_issue1188_allow_cd_var_target`: a quoted
+    #      `$VAR` operand is unresolvable without shell state → fail open.
+    #      NOT a discriminator for operand-slicing (a masked-copy slice yields
+    #      `xxxxxxxx`, which joins IN-project and still exits 0) — that failure
+    #      mode is pinned by K3 + `test_issue1188_block_cd_quoted_target`, which
+    #      both flip to ALLOW under a masked-copy slice. Kept as the fail-open
+    #      pin it actually is.
+    def test_issue1190_allow_quoted_var_operand(self):
+        self._cd_allow('cd "$HOME/x" && ls')
+
+    # A13. Green TODAY only by ACCIDENT, and green post-fix for the right
+    #      reason. `_CD_RE`'s unquoted-operand class `[^\s;&|<>]+` does not
+    #      exclude quote chars, so the operand here is captured as `..\"` — one
+    #      nonexistent IN-project component that resolves in-boundary. Do not
+    #      mistake this shape for quote coverage: append any word after the `..`
+    #      (A3, A14) and the same string blocks. Labelled non-RED so the red
+    #      author does not chase a phantom failure.
+    def test_issue1190_allow_operand_at_end_of_quote(self):
+        self._cd_allow('echo "x; cd .."')
+
+    # --- KEEP-BLOCK guards (blocked TODAY, must stay blocked post-fix) -----
+    # The anti-under-block floor. A fix that reintroduces any escape shape is
+    # worse than the false positive it removes, so each of these is an
+    # adversarial shape a sloppy mask would break.
+
+    # K1. A REAL leading `cd` escape with a DECOY quoted region after it: the
+    #     mask must not let the decoy suppress the genuine command position.
+    def test_issue1190_block_real_cd_with_decoy_quoted_region(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": 'cd .. && echo "; cd /safe"'},
+            project_dir=self.P1188,
+        )
+
+    # K2. A real `cd` escape AFTER a balanced quoted region: masking must be
+    #     length-preserving, or the spans shift and the tail is mis-sliced.
+    def test_issue1190_block_real_cd_after_quoted_region(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": 'echo "note" ; cd ../../.. && ls'},
+            project_dir=self.P1188,
+        )
+
+    # K3. A quoted TARGET after a quoted region — #1188 case 5 in the presence
+    #     of masking. Survives only if the mask preserves the quote DELIMITERS
+    #     (so `_CD_RE`'s `"[^"]*"` alternative still matches) AND the operand is
+    #     sliced from the ORIGINAL string (so the dequote sees `../../..`, not
+    #     `xxxxxxxx`). This case + `test_issue1188_block_cd_quoted_target` are
+    #     what actually pin the masked-copy-slice failure mode.
+    def test_issue1190_block_quoted_target_after_quoted_region(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": 'echo "note" && cd "../../.."'},
+            project_dir=self.P1188,
+        )
+
+    # K4. UNTERMINATED double quote → fail CLOSED: the scan must fall back to
+    #     the RAW command (today's #1188 behavior, never fewer blocks).
+    #     Masking to end-of-string would hand over a one-character bypass.
+    def test_issue1190_block_unterminated_dq_fails_closed(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": 'echo "oops; cd ../../..'},
+            project_dir=self.P1188,
+        )
+
+    # K5. Same, single quote.
+    def test_issue1190_block_unterminated_sq_fails_closed(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": "echo 'oops; cd ../../.."},
+            project_dir=self.P1188,
+        )
+
+    # K6. A BACKSLASH-ESCAPED quote OUTSIDE any quoted region must not open a
+    #     region — otherwise the real, unquoted escape that follows is masked
+    #     away and silently allowed.
+    def test_issue1190_block_escaped_quote_outside_quotes(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": r"echo don\'t ; cd ../../.."},
+            project_dir=self.P1188,
+        )
+
+    # K7. SCOPE GUARD for where the mask may live. `extract_paths()` scans a
+    #     DIFFERENT string (the `$VAR`-scrubbed copy) with a token-boundary class
+    #     that deliberately INCLUDES the quote chars — which is exactly why a
+    #     quoted absolute out-of-boundary token blocks today. Masking that string
+    #     (or hoisting one shared masked copy) would blind the extractor to every
+    #     quoted absolute path. The mask must stay inside the cd path, and this
+    #     command must keep emitting the PATH message, not the cd one.
+    def test_issue1190_block_quoted_absolute_path_scope_guard(self):
+        self.assertBlockedWith(
+            PATH_BLOCK_MSG, "Bash", {"command": 'cat "' + ETC + '/passwd"'},
+            project_dir=self.P1188,
+        )
 
 
 if __name__ == "__main__":

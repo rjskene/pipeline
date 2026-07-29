@@ -20,11 +20,41 @@ fail open; bare `cd` and `cd --` (nothing following) are bash's `cd $HOME`;
 after `^`, `;`, `&`, `|`, `(`, `{` — deliberately NOT after a newline (heredoc
 bodies and later lines of a multi-line script are script TEXT, not a command
 being run — including `\n` would turn ordinary script-authoring into a new
-over-block class) and NOT inside quotes (adding quote chars would fire on
-`echo "cd .."` / `ssh host "cd …"`, re-opening the #1135/#1151 false-positive
-family). Explicit non-goals, same as the rest of this hook's "best-effort"
-scope: no shell emulation, no `pushd`/subshell/`$VAR` tracking, and an
-in-project `cd` does not re-anchor the absolute-token scan.
+over-block class). The quote chars are likewise NOT in that class, so a
+`cd` that merely appears inside a quoted word (`echo "cd .."`,
+`ssh host "cd …"`) is never a command position — including one in the
+#1135/#1151 false-positive family.
+
+Issue #1190 — quoted-region masking: that lookbehind class had no notion of
+quoting, so a separator sitting INSIDE a quoted string still opened a command
+position and any change-directory word after it was resolved for real. Ordinary
+quoted PROSE that merely DESCRIBES traversal (a `git commit -m` subject, a
+`printf` payload, a variable assignment) was therefore blocked — observed live
+minutes after #1188 merged. `_iter_cd_targets` now scans a LENGTH-PRESERVING
+masked copy (`_mask_quoted_regions`) in which every character strictly inside a
+quoted region is neutralised while the quote DELIMITERS and newlines survive,
+and slices each operand from the ORIGINAL string via the match span — so the
+dequote / `cd -` skip / `$`-backtick-glob fail-open all keep seeing real text.
+Masking can only REMOVE command positions that are provably inside a quoted
+region; every position outside quotes is byte-for-byte unchanged, so the change
+is strictly additive to the #1188 escape set. An UNTERMINATED quote fails
+CLOSED (the raw command is scanned instead — exactly #1188's behavior, never
+fewer blocks); masking to end-of-string would be a one-character bypass. The
+mask is scoped to this gate ONLY and must never reach `extract_paths()`'s
+scrubbed string, whose token-boundary class deliberately INCLUDES the quote
+chars — masking that would blind the extractor to every quoted absolute
+out-of-boundary token (`cat "/etc/passwd"`).
+
+Explicit non-goals, same as the rest of this hook's "best-effort" scope: no
+shell emulation, no `pushd`/subshell/`$VAR` tracking, and an in-project `cd`
+does not re-anchor the absolute-token scan. Known residuals of that scope:
+`$'…'` ANSI-C quoting, heredoc BODIES and the inner text of a nested shell
+string (`bash -c "…"`) are unmodelled — a separator inside such an inner
+string is masked like any other quoted region, so `bash -c "true; cd ../../..
+&& mkdir x"` is now allowed (its previous block was accidental and already
+inconsistent with the separator-free `bash -c "cd ../../.. && mkdir x"`, which
+#1188 allowed); an UNQUOTED heredoc body line containing `; cd ..` still opens
+a command position, since #1188 excluded `\n` from the lookbehind, not `;`.
 """
 import os
 import posixpath
@@ -525,8 +555,11 @@ def _cd_anchor() -> str:
 # Command-position leading `cd` target (issue #1188). Fires only when `cd`
 # starts the command, or immediately follows a command separator (`;`, `&`,
 # `|`) or a subshell/group opener (`(`, `{`) — deliberately NOT after a
-# newline (see module docstring) and NOT inside quotes (would fire on
-# `echo "cd .."` / `ssh host "cd …"`, re-opening #1135/#1151).
+# newline (see module docstring). The quote chars are not in the class either,
+# so `echo "cd .."` / `ssh host "cd …"` never match (that would re-open
+# #1135/#1151); and per #1190 this regex is run over a quote-MASKED copy of the
+# command (see `_mask_quoted_regions`), so a separator INSIDE a quoted region
+# cannot open a command position at all.
 #
 # Flags group is `-{1,2}[A-Za-z]+` — one-or-more letters, NOT `[A-Za-z]*` —
 # so `cd -` is never consumed as a flag (with `*` the group would eat the
@@ -541,6 +574,78 @@ _CD_RE = re.compile(
 )
 
 
+# Neutral filler for masked characters (issue #1190). Any char that is not a
+# `_CD_RE` metacharacter works; `x` is a plain word char, so a masked region
+# reads as ordinary text to the scan and can never open a command position.
+_MASK_CHAR = "x"
+
+
+def _mask_quoted_regions(command: str):
+    """Return a length-preserving copy of `command` with quoted interiors masked.
+
+    Issue #1190. Every character strictly INSIDE a single- or double-quoted
+    region is replaced with `_MASK_CHAR`; the quote DELIMITERS themselves and
+    any newline are preserved verbatim. Length preservation is load-bearing —
+    it is what makes a `_CD_RE` match span computed on the masked copy valid as
+    a slice into the ORIGINAL string. Preserving the delimiters is likewise
+    load-bearing: `_CD_RE`'s `"[^"]*"` / `'[^']*'` operand alternatives must
+    still match a quoted `cd` TARGET (#1188 case 5).
+
+    Scanner rules — deliberately not a shell parser (see module docstring).
+    Outside a region: `\\` escapes the next character, so `don\\'t` does NOT
+    open a region; an unescaped `"` or `'` opens one. Inside `"…"`: `\\X` masks
+    BOTH characters, so `\\"` does not close the region, and a `'` is ordinary
+    text. Inside `'…'`: only `'` closes, and a backslash is literal (POSIX).
+
+    Returns None when the scan ends still inside a region — an unterminated
+    quote FAILS CLOSED, and the caller scans the raw command instead (exactly
+    #1188's behavior, never fewer blocks). Masking such a string to its end
+    would hand over a one-character bypass.
+    """
+    out = []
+    quote = ""
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if not quote:
+            if ch == "\\":
+                # Escapes the next char, whatever it is — including a quote,
+                # which therefore does NOT open a region.
+                out.append(ch)
+                if i + 1 < n:
+                    out.append(command[i + 1])
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if ch in "\"'":
+                quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        # Inside a quoted region.
+        if quote == '"' and ch == "\\":
+            out.append(_MASK_CHAR)
+            if i + 1 < n:
+                nxt = command[i + 1]
+                out.append("\n" if nxt == "\n" else _MASK_CHAR)
+                i += 2
+            else:
+                i += 1
+            continue
+        if ch == quote:
+            quote = ""
+            out.append(ch)
+            i += 1
+            continue
+        out.append("\n" if ch == "\n" else _MASK_CHAR)
+        i += 1
+    if quote:
+        return None
+    return "".join(out)
+
+
 def _iter_cd_targets(command: str):
     """Yield each command-position `cd` operand in `command` (issue #1188).
 
@@ -550,12 +655,20 @@ def _iter_cd_targets(command: str):
     unsubstituted `$VAR`/`` ` ``/glob metachar, or the literal `-` for `cd -`
     (needs OLDPWD, which this hook does not have) — is skipped: fail open,
     per the #917 doctrine, rather than guessed at.
+
+    Issue #1190: the scan runs over the quote-MASKED copy (falling back to the
+    raw command when a quote is unterminated — fail closed), but each operand
+    is sliced from the ORIGINAL string via the match span, so the dequote and
+    the fail-open checks below see real text rather than mask filler.
     """
-    for m in _CD_RE.finditer(command):
-        operand = m.group(2)
-        if operand is None:
+    masked = _mask_quoted_regions(command)
+    scan = command if masked is None else masked
+    for m in _CD_RE.finditer(scan):
+        if m.group(2) is None:
             yield "~"
             continue
+        start, end = m.span(2)
+        operand = command[start:end]
         if len(operand) >= 2 and operand[0] == operand[-1] and operand[0] in "\"'":
             operand = operand[1:-1]
         if operand == "-":
