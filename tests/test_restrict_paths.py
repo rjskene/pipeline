@@ -55,6 +55,28 @@ spaced `-t <dir>` (space delimiter) and `--target-directory=<dir>` (`=`
 delimiter) forms already block and MUST keep blocking; the glued-form BLOCK
 cases below are RED against the current hook.
 
+Issue #1188 extends this suite again with the `cd`-escape class: the Bash
+extractor scans the command string for `/`-anchored absolute tokens and has NO
+model of the shell working directory, so `cd <anywhere> && <write to a plain
+relative path>` leaves the project boundary with nothing to extract. The
+post-fix hook resolves a COMMAND-POSITION leading `cd` operand against the
+event-payload `cwd` (when that is itself in-boundary) or PROJECT_DIR, and blocks
+the whole command when the target lands outside the boundary — reusing
+`is_allowed` verbatim so the `/tmp` carve-out, `~/.claude`, sibling/nested
+worktrees, and the Windows/MSYS `_canon` branch all come along for free.
+
+Fixture anchoring is LOAD-BEARING for the #1188 cases: `cls.PROJECT` is a
+`/tmp`-rooted mkdtemp, and `cd ..` from there lands on `/tmp`, which the
+extractor exempts unconditionally — every relative-`cd` BLOCK assertion would
+then pass/fail for the wrong reason. So the #1188 cases run against a separate
+`$HOME`-anchored project fixture (`cls.P1188`), mirroring the MIDWORD_EXISTS
+precedent in setUpClass.
+
+Against the CURRENT hook every #1188 NEW-BLOCK case SLIPS (exit 0 where exit 2
+is expected) — that is the RED state. The #1188 ALLOW / KEEP-BLOCK pins pass
+today AND must keep passing post-fix; they exist so the GREEN implementation
+cannot degrade into a blanket "any `cd` blocks".
+
 Hermeticity note: the hook is driven against a freshly created temp project
 directory (NOT this worktree's own path). A worktree's own directory is
 "sibling-worktree shaped" relative to its parent, which would make the hook's
@@ -123,6 +145,20 @@ SCRATCH_BSL = (
 # A Temp path that is NOT under the Temp/claude/ session root (must stay blocked).
 NON_CLAUDE_TEMP_MSYS = "/c/Users/u/AppData/Local/Temp/other/x.txt"
 
+# ---------------------------------------------------------------------------
+# Issue #1188 — `cd`-escape literals, built from fragments (the
+# `DEVNULL = "/dev/" + "null"` convention above) so this test SOURCE never
+# carries a bare out-of-boundary absolute literal that a future source scan
+# could trip on.
+# ---------------------------------------------------------------------------
+ETC = "/e" + "tc"                       # an out-of-boundary absolute cd target
+WIN_VOL = "C:" + "\\volumes"            # backslash Windows drive-root target
+MSYS_VOL = "/c" + "/volumes"            # MSYS drive-root target
+# The stderr fingerprint the #1188 gate must emit — deliberately DISTINCT from
+# the pre-existing `BLOCKED: path outside project boundary` string, which the
+# additive-placement discipline leaves byte-for-byte unchanged.
+CD_BLOCK_MSG = "BLOCKED: cd target outside project boundary"
+
 
 class TestRestrictPaths(unittest.TestCase):
     @classmethod
@@ -158,24 +194,64 @@ class TestRestrictPaths(unittest.TestCase):
         ) as fh:
             fh.write("")
 
+        # issue #1188 — a SEPARATE project fixture anchored under $HOME, NOT
+        # /tmp. MANDATORY: `cls.PROJECT` above is `/tmp/rp-proj-*`, so `cd ..`
+        # from it lands on /tmp, which the extractor exempts unconditionally
+        # (restrict_paths.py `candidate.startswith("/tmp")`). Every relative-`cd`
+        # escape assertion would then pass/fail for the wrong reason. Same
+        # reasoning as the MIDWORD_EXISTS $HOME anchor directly above.
+        #
+        # Layout:
+        #   <home-tmp>/proj                       -> cls.P1188 (the project root)
+        #   <home-tmp>/proj/sub/deep              -> in-project cd targets
+        #   <home-tmp>/proj/.claude/worktrees/wt-42-x -> NESTED_WORKTREE_PATTERN
+        #   <home-tmp>/wt-42-x                    -> SIBLING worktree
+        #                                            (WORKTREE_PATTERN)
+        # The sibling is built from os.path.dirname(cls.P1188) — NOT the
+        # non-realpath'd mkdtemp result — because WORKTREE_PATTERN is anchored on
+        # os.path.dirname(PROJECT_DIR) where PROJECT_DIR is realpath'd. On a host
+        # whose $HOME traverses a symlink the two diverge and the sibling pin
+        # would fail for the wrong reason.
+        cls._h1188 = tempfile.mkdtemp(prefix=".rp-1188-", dir=os.path.expanduser("~"))
+        cls.P1188 = os.path.realpath(os.path.join(cls._h1188, "proj"))
+        os.makedirs(os.path.join(cls.P1188, "sub", "deep"), exist_ok=True)
+        os.makedirs(
+            os.path.join(cls.P1188, ".claude", "worktrees", "wt-42-x"), exist_ok=True
+        )
+        os.makedirs(
+            os.path.join(os.path.dirname(cls.P1188), "wt-42-x"), exist_ok=True
+        )
+
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls._proj_tmp, ignore_errors=True)
         shutil.rmtree(cls._out_tmp, ignore_errors=True)
         shutil.rmtree(cls._midword_tmp, ignore_errors=True)
+        shutil.rmtree(cls._h1188, ignore_errors=True)
 
     # --- subprocess driver -------------------------------------------------
-    def run_hook(self, tool_name, tool_input, *, cwd=None, project_dir=None):
-        """Invoke the real hook; return its exit code.
+    def run_hook(self, tool_name, tool_input, *, cwd=None, project_dir=None,
+                 payload_cwd=None):
+        """Invoke the real hook; return (exit code, stderr).
 
         The hook resolves the project boundary from CLAUDE_PROJECT_DIR and
         resolves relative paths against the process CWD (the bug). We control
         both so the Bug-1 cases can put CWD outside the project.
+
+        `payload_cwd` (issue #1188) adds the harness-supplied `cwd` key to the
+        EVENT payload — distinct from the subprocess cwd. The current hook reads
+        only `tool_name` / `tool_input` and never consults it; the #1188 `cd`
+        gate anchors relative `cd` operands on it (when it is itself
+        in-boundary), so the key must be omitted entirely when None to keep the
+        pre-#1188 payload shape byte-for-byte for every other case.
         """
         proj = project_dir or self.PROJECT
         env = dict(os.environ)
         env["CLAUDE_PROJECT_DIR"] = proj
-        payload = json.dumps({"tool_name": tool_name, "tool_input": tool_input})
+        event = {"tool_name": tool_name, "tool_input": tool_input}
+        if payload_cwd is not None:
+            event["cwd"] = payload_cwd
+        payload = json.dumps(event)
         proc = subprocess.run(
             [sys.executable, str(HOOK)],
             input=payload, capture_output=True, text=True, env=env,
@@ -183,18 +259,48 @@ class TestRestrictPaths(unittest.TestCase):
         )
         return proc.returncode, proc.stderr
 
-    def assertAllowed(self, tool_name, tool_input, *, cwd=None, project_dir=None):
-        rc, err = self.run_hook(tool_name, tool_input, cwd=cwd, project_dir=project_dir)
+    def assertAllowed(self, tool_name, tool_input, *, cwd=None, project_dir=None,
+                      payload_cwd=None):
+        rc, err = self.run_hook(
+            tool_name, tool_input, cwd=cwd, project_dir=project_dir,
+            payload_cwd=payload_cwd,
+        )
         self.assertEqual(
             rc, ALLOW,
             f"expected ALLOW (exit 0) for {tool_name} {tool_input!r}; got {rc}; stderr={err!r}",
         )
 
-    def assertBlocked(self, tool_name, tool_input, *, cwd=None, project_dir=None):
-        rc, err = self.run_hook(tool_name, tool_input, cwd=cwd, project_dir=project_dir)
+    def assertBlocked(self, tool_name, tool_input, *, cwd=None, project_dir=None,
+                      payload_cwd=None):
+        rc, err = self.run_hook(
+            tool_name, tool_input, cwd=cwd, project_dir=project_dir,
+            payload_cwd=payload_cwd,
+        )
         self.assertEqual(
             rc, BLOCK,
             f"expected BLOCK (exit 2) for {tool_name} {tool_input!r}; got {rc}; stderr={err!r}",
+        )
+
+    def assertBlockedWith(self, substr, tool_name, tool_input, *, cwd=None,
+                          project_dir=None, payload_cwd=None):
+        """BLOCK (exit 2) AND stderr naming `substr` (issue #1188).
+
+        Pins the operator-facing message, not just the exit code: the point of
+        the #1188 gate is that the block names the RESOLVED destination, so the
+        agent can tell a cd-escape block apart from the pre-existing
+        `BLOCKED: path outside project boundary` string.
+        """
+        rc, err = self.run_hook(
+            tool_name, tool_input, cwd=cwd, project_dir=project_dir,
+            payload_cwd=payload_cwd,
+        )
+        self.assertEqual(
+            rc, BLOCK,
+            f"expected BLOCK (exit 2) for {tool_name} {tool_input!r}; got {rc}; stderr={err!r}",
+        )
+        self.assertIn(
+            substr, err,
+            f"expected stderr for {tool_input!r} to contain {substr!r}; got {err!r}",
         )
 
     # ======================================================================
@@ -618,6 +724,200 @@ class TestRestrictPaths(unittest.TestCase):
     def test_issue1153_block_genuine_out_of_repo_abs(self):
         cmd = "cat " + self.MIDWORD_EXISTS + "/Scripts/python.exe"
         self.assertBlocked("Bash", {"command": cmd})
+
+    # ======================================================================
+    # Issue #1188 — cd-escape: the guard has no model of the shell cwd
+    # ======================================================================
+    # `extract_paths()`'s Bash branch lifts only `/`-anchored ABSOLUTE tokens
+    # from the command string. A `cd <anywhere>` followed by a write to a plain
+    # RELATIVE path therefore leaves the project boundary with nothing for the
+    # guard to extract: the string is benign, the *shell* is what makes it point
+    # outside. Confirmed in the field (issue #1188): `cd ../../.. && mkdir -p
+    # volumes/output/visuals/promotions` created dirs at the drive root with no
+    # prompt, while the follow-up cleanup — which had to name the same location
+    # ABSOLUTELY — blocked instantly.
+    #
+    # Post-fix the hook resolves a COMMAND-POSITION leading `cd` operand against
+    # the event-payload `cwd` (only when that is itself in-boundary) or
+    # PROJECT_DIR, and blocks the whole command when the target lands outside —
+    # `is_allowed` is reused verbatim, so `/tmp`, `~/.claude`, sibling/nested
+    # worktrees and the Windows `_canon` branch are inherited for free.
+    #
+    # Every case below runs against the $HOME-anchored `self.P1188` fixture, NOT
+    # `self.PROJECT` (/tmp-rooted): `cd ..` out of a /tmp project lands on /tmp,
+    # which the hook exempts unconditionally, so the assertion could not fail
+    # for the right reason. See the fixture comment in setUpClass.
+
+    # --- helpers ----------------------------------------------------------
+    def _cd_block(self, command, **kw):
+        """A #1188 NEW-BLOCK case: exits 0 TODAY (RED), must exit 2 post-fix."""
+        self.assertBlocked(
+            "Bash", {"command": command}, project_dir=self.P1188, **kw
+        )
+
+    def _cd_allow(self, command, **kw):
+        """A #1188 ALLOW pin: green today AND post-fix."""
+        self.assertAllowed(
+            "Bash", {"command": command}, project_dir=self.P1188, **kw
+        )
+
+    # --- NEW BLOCKS (RED today — the hook has no cd model, all exit 0) -----
+    # 1. The literal issue repro: a `..`-chain that clears the project root,
+    #    then an ordinary relative mkdir. Nothing absolute anywhere.
+    def test_issue1188_block_cd_dotdot_escape_relative_write(self):
+        self._cd_block("cd ../../.. && mkdir -p volumes/output/visuals/promotions")
+
+    # 2. `;` separator, single level out — the gate must not key on `&&`.
+    def test_issue1188_block_cd_single_dotdot_semicolon(self):
+        self._cd_block("cd ..; ls")
+
+    # 3. `cd ~` — $HOME is outside the project boundary.
+    def test_issue1188_block_cd_tilde_home(self):
+        self._cd_block("cd ~ && touch f")
+
+    # 4. The `cd` is not at position 0 — command position after `&&` counts.
+    def test_issue1188_block_cd_mid_chain(self):
+        self._cd_block("ls && cd ../../.. && touch x")
+
+    # 5. Quoted operand must be dequoted before resolution.
+    def test_issue1188_block_cd_quoted_target(self):
+        self._cd_block('cd "../../.." && ls')
+
+    # 6. Option words (`-P`/`-L`) are skipped; the OPERAND is the target.
+    def test_issue1188_block_cd_dash_p_flag(self):
+        self._cd_block("cd -P ../../.. && ls")
+
+    # 7. Bare `cd` with no operand is `cd $HOME` in bash → out of boundary.
+    def test_issue1188_block_bare_cd_no_operand(self):
+        self._cd_block("cd && ls")
+
+    # 8. The EVENT-payload `cwd` is the anchor when present and in-boundary:
+    #    from <P1188>/sub/deep, `cd ../../..` resolves to dirname(P1188) →
+    #    outside. Anchoring on PROJECT_DIR alone would resolve elsewhere, so
+    #    this is the proof that the payload cwd is actually consulted (the hook
+    #    reads only tool_name/tool_input today).
+    def test_issue1188_block_cd_relative_from_payload_cwd(self):
+        self._cd_block(
+            "cd ../../..",
+            payload_cwd=os.path.join(self.P1188, "sub", "deep"),
+        )
+
+    # 9. Windows/MSYS host shape (the reporter's `C:\volumes`): no leading `/`,
+    #    so the extractor never sees it. Post-fix `_looks_windows` → `_canon`
+    #    puts it out of tree. Uses the existing Windows-root simulation helper.
+    def test_issue1188_block_cd_windows_backslash_root(self):
+        self._win_block("Bash", {"command": "cd " + WIN_VOL + " && mkdir x"})
+
+    # 10. The block MESSAGE must name the resolved destination and be distinct
+    #     from the pre-existing path-boundary string (additive placement).
+    def test_issue1188_block_message_names_resolved_dest(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": "cd ../../.. && ls"},
+            project_dir=self.P1188,
+        )
+
+    # 11. POSIX `--` end-of-options: the FOLLOWING word is the operand, so it
+    #     must be gated (a naive flags-only regex yields operand `--`, which
+    #     joins in-project and silently fails open).
+    def test_issue1188_block_cd_double_dash_terminator(self):
+        self._cd_block("cd -- ../../.. && ls")
+
+    # 12. `cd --` with nothing after is `cd $HOME`, same as bare `cd`.
+    def test_issue1188_block_cd_double_dash_no_operand(self):
+        self._cd_block("cd -- && ls")
+
+    # --- ALLOW pins (green TODAY and post-fix) -----------------------------
+    # These exist so the GREEN implementation cannot degrade into a blanket
+    # "any cd blocks". Each is labelled with why it must stay open.
+
+    # 13. pin (green today AND post-fix) — ordinary in-project descent.
+    def test_issue1188_allow_cd_in_project_subdir(self):
+        self._cd_allow("cd sub && ls")
+
+    # 14. pin (green today AND post-fix) — `./`-prefixed in-project descent.
+    def test_issue1188_allow_cd_dot_slash_subdir(self):
+        self._cd_allow("cd ./sub/deep && ls")
+
+    # 15. pin (green today AND post-fix) — the /tmp carve-out must survive; the
+    #     extractor already skips /tmp candidates unconditionally and the cd
+    #     gate must reach parity (mktemp-based flows depend on it, and
+    #     tests/test-restrict-paths-worktree-git.sh documents the invariant).
+    def test_issue1188_allow_cd_tmp(self):
+        self._cd_allow("cd /tmp && ls")
+
+    # 16. pin (green today AND post-fix) — an unsubstituted $VAR target is
+    #     unresolvable → fail open. (#917 fail-open doctrine.)
+    def test_issue1188_allow_cd_var_target(self):
+        self._cd_allow("cd $HOME/x && ls")
+
+    # 17. pin (green today AND post-fix) — command substitution is likewise
+    #     unresolvable without running the shell → fail open.
+    def test_issue1188_allow_cd_command_substitution_target(self):
+        self._cd_allow('cd "$(git rev-parse --show-toplevel)" && ls')
+
+    # 18. pin (green today AND post-fix) — `cd -` needs shell history (OLDPWD),
+    #     which the hook does not have → fail open. The operand here is the
+    #     literal `-`; a flags group that can match empty would eat the `-` and
+    #     silently turn this into a bare-`cd` → `~` BLOCK.
+    def test_issue1188_allow_cd_dash(self):
+        self._cd_allow("cd - && ls")
+
+    # 19. pin (green today AND post-fix) — the word `cd` as an ARGUMENT is not
+    #     in command position. Broadening the delimiter class to quotes would
+    #     re-open the #1135/#1151 false-positive family.
+    def test_issue1188_allow_cd_not_command_position(self):
+        self._cd_allow("echo cd ../../..")
+
+    # 20. pin (green today AND post-fix) — a SIBLING worktree
+    #     (<parent-of-project>/wt-N-slug) is allowed via WORKTREE_PATTERN, which
+    #     the cd gate inherits by reusing is_allowed. This is the case that
+    #     keeps in-worktree sessions workable.
+    def test_issue1188_allow_cd_sibling_worktree(self):
+        self._cd_allow("cd ../wt-42-x && ls")
+
+    # 21. pin (green today AND post-fix) — the nested worktree layout
+    #     (<project>/.claude/worktrees/wt-N-slug) stays reachable.
+    def test_issue1188_allow_cd_nested_worktree(self):
+        self._cd_allow("cd .claude/worktrees/wt-42-x && ls")
+
+    # 22. pin (green today AND post-fix) — the payload-cwd anchor must not
+    #     OVER-block: from <P1188>/sub/deep, `cd ..` is still inside P1188.
+    def test_issue1188_allow_cd_relative_within_payload_cwd(self):
+        self._cd_allow(
+            "cd ..", payload_cwd=os.path.join(self.P1188, "sub", "deep")
+        )
+
+    # 23. pin (green today AND post-fix) — a `cd` inside a HEREDOC BODY is
+    #     script TEXT being authored, not a command being run. `\n` is
+    #     deliberately excluded from the command-position delimiter class so
+    #     this never matches; including it would convert an everyday operation
+    #     in this repo into a new over-block class (#1135/#1136/#1151/#1153 are
+    #     four shipped over-block regressions on this same extractor).
+    def test_issue1188_allow_cd_inside_heredoc_body(self):
+        cmd = "cat > s.sh <<'EOF'\ncd ../../..\nmake\nEOF"
+        self._cd_allow(cmd)
+
+    # 24. pin (green today AND post-fix) — a `cd` on a LATER LINE of an ordinary
+    #     multi-line Bash body is likewise not gated (documented residual
+    #     porosity, same family as `bash -c "cd .."`). Cross-checked at the
+    #     shell layer by case 7e in tests/test-restrict-paths-hook.sh.
+    def test_issue1188_allow_cd_on_later_line_of_multiline_body(self):
+        self._cd_allow("set -e\ncd ../..\nls")
+
+    # --- KEEP-BLOCK pins (blocked today by the absolute-token extractor) ---
+    # 25. pin (blocked today AND post-fix) — an ABSOLUTE out-of-boundary cd
+    #     target already blocks via the existing extractor. The additive
+    #     placement of the cd gate (LAST in the Bash flow) means this still
+    #     emits the byte-identical `BLOCKED: path outside project boundary`
+    #     message, so no existing stderr grep shifts.
+    def test_issue1188_block_cd_absolute_etc_keep(self):
+        self._cd_block("cd " + ETC + " && cat passwd")
+
+    # 26. pin (blocked today AND post-fix) — the MSYS drive-root form is the
+    #     one the reporter's cleanup command hit (`BLOCKED: path outside
+    #     project boundary: /c/volumes`). It must stay blocked.
+    def test_issue1188_block_cd_msys_drive_root_keep(self):
+        self._win_block("Bash", {"command": "cd " + MSYS_VOL + " && mkdir x"})
 
 
 if __name__ == "__main__":
