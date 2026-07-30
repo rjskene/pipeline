@@ -182,6 +182,25 @@ CD_BLOCK_MSG = "BLOCKED: cd target outside project boundary"
 # THIS message, not the cd-gate one.
 PATH_BLOCK_MSG = "BLOCKED: path outside project boundary"
 
+# ---------------------------------------------------------------------------
+# Issue #1192 — nested shell strings, heredoc bodies, ANSI-C quoting.
+# ---------------------------------------------------------------------------
+# A SEVEN-deep `..` chain. Every #1192 cd case uses this rather than a literal
+# `../..`: the `self.P1188` fixture sits a few levels under $HOME, so a shallow
+# chain can normalize back to a path the boundary check still accepts and the
+# assertion then passes for the wrong reason. Seven levels collapse to `/` from
+# any realistic fixture depth (same reasoning as the 7-deep chains in
+# tests/test-restrict-paths-hook.sh Block 7/8).
+UP7 = "/".join([".."] * 7)
+# `/dev/null` as a fragment (the `DEVNULL = "/dev/" + "null"` convention) — used
+# by the two-heredocs-on-one-line case as a second redirect target.
+DEVNULL = "/dev/" + "null"
+# The protected-write guard's fingerprint. Named here because #1192's heredoc
+# mask must leave a REAL redirect into a protected control file blocked with
+# THIS message, while it must stop firing for a protected-looking token that
+# merely lives inside a heredoc BODY.
+PROT_BLOCK_MSG = "cannot modify protected file"
+
 
 class TestRestrictPaths(unittest.TestCase):
     @classmethod
@@ -1122,6 +1141,364 @@ class TestRestrictPaths(unittest.TestCase):
             PATH_BLOCK_MSG, "Bash", {"command": 'cat "' + ETC + '/passwd"'},
             project_dir=self.P1188,
         )
+
+
+    # ======================================================================
+    # Issue #1192 — nested shell strings, heredoc bodies, ANSI-C quoting
+    # ======================================================================
+    # Three residuals the #1188 cd gate and the #1190 quote mask leave behind,
+    # surfaced by the differential drive on PR #1191:
+    #
+    #   shape 1 — `bash -c "cd …"`: a real UNDER-block. The inner shell string
+    #             is masked as an ordinary quoted region, so the
+    #             change-directory command inside it is never scanned.
+    #   shape 2 — heredoc BODIES: manifests today as an OVER-block. #1188
+    #             dropped `\n` from the command-position class, but not `;`, so
+    #             a body line reading `echo a; cd ..` still opens a command
+    #             position; and a protected-looking token in a body still trips
+    #             the protected-write scan.
+    #   shape 3 — `$'…'` ANSI-C quoting: also an OVER-block today. The mask does
+    #             not know the `$'` opener, so an escaped `\'` inside the region
+    #             closes it early and re-exposes the tail as unquoted text.
+    #
+    # The direction of each change is deliberately partitioned, so a regression
+    # in either direction is attributable to one commit: the ANSI-C and heredoc
+    # cases can only REMOVE blocks; the nested `-c` scan can only ADD them. Per
+    # #1190 every new block case is paired with an allow case.
+    #
+    # Shared authoring conventions for every case below:
+    #   * operands use `UP7` (a seven-deep `..` chain) — a 1-deep `..` can land
+    #     back in-boundary and pass vacuously;
+    #   * the project fixture is `self.P1188` via `_cd_allow` / `_cd_block`;
+    #     `self.PROJECT` is /tmp-rooted and the unconditional /tmp carve-out
+    #     would make every relative-`cd` assertion pass for the wrong reason;
+    #   * protected / absolute literals are built from the `SET` / `HK` / `ETC`
+    #     fragments so this test SOURCE never carries one verbatim.
+
+    # --- Task 1: ANSI-C quoting (`$'…'`), shape 3 -------------------------
+    # REMOVAL-ONLY. `_mask_quoted_regions` must learn the `$'` opener, inside
+    # which a backslash escapes the following character (POSIX `$'…'`
+    # semantics), unlike a plain `'…'` region where a backslash is literal.
+
+    # RED today (exit 2, CD_BLOCK_MSG): the `\'` closes the region early, so the
+    # tail `b ; cd <UP7>'` is scanned as unquoted text and the `;` opens a
+    # command position. The operand the gate reports reads `<UP7>'` — the
+    # trailing quote is the tell that the region ended in the wrong place.
+    def test_issue1192_allow_ansi_c_escaped_quote_prose(self):
+        self._cd_allow(r"echo $'a\'b ; cd " + UP7 + "'")
+
+    # KEEP-BLOCK (blocked today AND post-fix): the same ANSI-C region, CLOSED
+    # before the separator — the `cd` that follows is a genuine command position
+    # and must stay blocked. This is the pin that stops the Task-1 fix from
+    # degrading into "everything after a `$'` is quoted".
+    def test_issue1192_block_ansi_c_real_escape_after_close(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": r"echo $'a\'b' ; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK: the simplest closed-then-real-cd shape, with no escape inside
+    # the region at all.
+    def test_issue1192_block_ansi_c_closed_then_real_cd(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash", {"command": "echo $'x' ; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-ALLOW (green today AND post-fix): an ANSI-C region with no escape
+    # inside it is already covered — the plain `'` opener masks it. Pinned so
+    # the new `$'` arm cannot regress the shape it is grafted onto.
+    def test_issue1192_allow_ansi_c_plain_no_escape(self):
+        self._cd_allow("echo $'x ; cd " + UP7 + "'")
+
+    # --- Task 2: heredoc bodies are DATA, shape 2 -------------------------
+    # REMOVAL-ONLY. A heredoc body is stdin DATA, not a command being run — so
+    # it is masked out of the cd scan AND the protected-write scan. The single
+    # exception is a body owned by an INTERPRETER command word (`bash`, `sh`,
+    # `python`, … reached through `env`/`nohup`-style wrappers): that body IS
+    # executed and stays scanned, fail closed.
+
+    # RED today (exit 2, CD_BLOCK_MSG): authoring a shell script with a heredoc
+    # is an everyday operation in this repo; the `;` on the body line currently
+    # opens a command position.
+    def test_issue1192_allow_heredoc_body_semicolon_cd(self):
+        self._cd_allow("cat > s.sh <<'EOF'\necho a; cd " + UP7 + "\nEOF")
+
+    # RED today: the same shape with a longer filename. This is the regression
+    # pin for the interpreter carve-out — `\bsh\b` MATCHES inside `script.sh`
+    # (the `.` supplies a word boundary), so a line-wide search for an
+    # interpreter word would exempt exactly the shape this task exists to fix.
+    # The carve-out must key on the segment's COMMAND WORD (`cat`), never a
+    # line-wide search.
+    def test_issue1192_allow_heredoc_body_dot_sh_name_not_interpreter(self):
+        self._cd_allow("cat > script.sh <<'EOF'\necho a; cd " + UP7 + "\nEOF")
+
+    # RED today: an apostrophe in ordinary body prose leaves the quote scanner
+    # unterminated, so `_mask_quoted_regions` returns None and the RAW command
+    # is scanned — the #1190 fail-closed path. Masking the body FIRST is what
+    # removes the stray apostrophe before the quote scanner ever sees it.
+    def test_issue1192_allow_heredoc_body_unbalanced_apostrophe(self):
+        self._cd_allow("cat > s.sh <<'EOF'\ndon't stop; cd " + UP7 + "\nEOF")
+
+    # RED today: the `<<-` tab-stripping form, whose terminator line may be
+    # indented with tabs. A masker that compares the terminator line verbatim
+    # would never find the end and would mask the rest of the command.
+    def test_issue1192_allow_heredoc_dash_tab_terminator(self):
+        self._cd_allow("cat > s.sh <<-'EOF'\n\techo a; cd " + UP7 + "\n\tEOF")
+
+    # RED today: TWO heredocs opened on ONE line. Bash reads their bodies in
+    # order, so the masker needs a FIFO queue of pending delimiters, not a
+    # single pending one.
+    def test_issue1192_allow_heredoc_two_bodies_one_line(self):
+        self._cd_allow(
+            "cat > a.txt <<'A' > " + DEVNULL + " <<'B'\nx; cd " + UP7
+            + "\nA\ny\nB"
+        )
+
+    # RED today: an UNTERMINATED body (no terminator line at all) is still all
+    # body — the mask must run to end-of-string rather than giving up.
+    def test_issue1192_allow_heredoc_unterminated_body(self):
+        self._cd_allow("cat > s.sh <<'EOF'\necho a; cd " + UP7)
+
+    # RED today (exit 2, PROT_BLOCK_MSG — NOT the cd message): the second half
+    # of shape 2. Authoring HTML/prose whose text merely NAMES the protected
+    # hooks dir currently trips `_protected_write_context`, because the `>`
+    # redirect and the protected-looking token share one command string. The
+    # body is data, so the protected-write scan must not see it either.
+    def test_issue1192_allow_heredoc_body_protected_token_html(self):
+        cmd = (
+            'cat > out.html <<EOF\n<span class="path">' + HK
+            + 'x.py</span>\nEOF'
+        )
+        self.assertAllowed("Bash", {"command": cmd}, project_dir=self.P1188)
+
+    # KEEP-BLOCK (blocked today AND post-fix) — the interpreter carve-out. A
+    # body fed to a shell on stdin IS executed, so it stays scanned.
+    def test_issue1192_block_heredoc_fed_to_bash(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK: same, `sh` with a QUOTED delimiter.
+    def test_issue1192_block_heredoc_fed_to_sh(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "sh <<'EOF'\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK: the interpreter reached through an `env` wrapper plus a
+    # `NAME=value` assignment — the command-word resolver must skip both.
+    def test_issue1192_block_heredoc_fed_to_bash_via_env_wrapper(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "env FOO=1 bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK: the interpreter is the command word of the LAST pipeline
+    # segment, not of the line — a resolver that reads the first word of the
+    # line would see `echo` and wrongly mask this body.
+    def test_issue1192_block_heredoc_fed_to_bash_after_pipe(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "echo x | bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK: the heredoc OPERATOR line is a real command line. A `cd`
+    # after a `;` on that line is a genuine command position and must survive —
+    # the mask starts at the NEXT line, not at the operator.
+    def test_issue1192_block_cd_on_heredoc_operator_line(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "cat <<EOF > s.txt; cd " + UP7 + "\nhi\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK, non-vacuous: a real escape AFTER the terminator line. A mask
+    # that over-runs the terminator (never pops the queue) flips this to exit 0,
+    # so it is the pin for the body-end boundary.
+    def test_issue1192_block_cd_after_heredoc_terminator(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "cat > s.sh <<'EOF'\nhi\nEOF\ntrue; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK, non-vacuous only in this MULTI-LINE form: a HERESTRING
+    # (`<<<`) opens no body at all. An operator regex of `<<(?!<)` still matches
+    # at offset 1 of `<<<`, takes `x` as the delimiter, and masks every
+    # following line — flipping this to exit 0. The lookBEHIND `(?<!<)` is what
+    # keeps it blocked. A single-line herestring pin is exit 2 under BOTH
+    # regexes and would prove nothing.
+    def test_issue1192_block_herestring_multiline_not_heredoc(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'cat <<< "x"\ntrue; cd ' + UP7},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-BLOCK: a REAL redirect into a protected control file on the heredoc
+    # OPERATOR line still blocks with the protected-write message. Masking the
+    # body must not blind the guard to the write it is actually performing.
+    def test_issue1192_block_redirect_protected_before_heredoc(self):
+        self.assertBlockedWith(
+            PROT_BLOCK_MSG, "Bash",
+            {"command": "cat > " + SET + " <<EOF\nhi\nEOF"},
+        )
+
+    # KEEP-BLOCK — SCOPE GUARD, the #1190 K7 discipline restated for the new
+    # mask. `extract_paths()` scans a DIFFERENT string and must never see the
+    # heredoc mask: a body naming an ABSOLUTE out-of-boundary token still emits
+    # the PATH message, not the cd one. This is also why the operational-notes
+    # amendment for this issue is narrow — `--body-file` stays the workaround
+    # for absolute-looking tokens even inside a heredoc body.
+    def test_issue1192_block_heredoc_body_absolute_token_scope_guard(self):
+        self.assertBlockedWith(
+            PATH_BLOCK_MSG, "Bash",
+            {"command": "cat > s.txt <<'EOF'\nsee " + ETC + "/passwd here\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-ALLOW (green today AND post-fix): pin 23's shape restated under the
+    # new masker — a body line that STARTS with `cd` was already open because
+    # `\n` is not in the command-position class, and must stay open.
+    def test_issue1192_allow_heredoc_body_line_start_cd(self):
+        self._cd_allow("cat > s.sh <<'EOF'\ncd " + UP7 + "\nmake\nEOF")
+
+    # --- Task 3: one level into a nested `-c` shell string, shape 1 -------
+    # ADDITION-ONLY. A recognized `<shell> -c '<fully quoted string>'` is
+    # scanned ONE level deep. The recognizer requires a known shell word AND a
+    # `c`-bearing flag AND a fully quoted argument, and it runs over the MASKED
+    # copy — so quoted prose that merely NAMES the shape is not a command
+    # position (that is the #1190 over-block class, verbatim).
+
+    # RED today (exit 0): the literal shape from the issue.
+    def test_issue1192_block_bash_c_nested_cd_escape(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'bash -c "cd ' + UP7 + ' && mkdir x"'},
+            project_dir=self.P1188,
+        )
+
+    # RED today: the inner `cd` is not first — the inner scan must be a full
+    # command-position scan, not a "starts with cd" test.
+    def test_issue1192_block_bash_c_nested_after_separator(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'bash -c "true; cd ' + UP7 + ' && mkdir x"'},
+            project_dir=self.P1188,
+        )
+
+    # RED today: `sh` as the shell word. `\bsh\b` must match here and must NOT
+    # match inside `ssh` (there is no word boundary between the two `s`).
+    def test_issue1192_block_sh_c_nested_cd_escape(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'sh -c "cd ' + UP7 + ' && ls"'},
+            project_dir=self.P1188,
+        )
+
+    # RED today: reached through an `env` wrapper with an assignment.
+    def test_issue1192_block_env_bash_c_nested(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'env FOO=1 bash -c "cd ' + UP7 + ' && ls"'},
+            project_dir=self.P1188,
+        )
+
+    # RED today: the `ssh <host> bash -c "…"` form — bare `ssh` stays allowed
+    # (see the pin below), but an explicit shell word carrying a `-c` flag is
+    # the recognized shape wherever it appears.
+    def test_issue1192_block_ssh_bash_c_nested(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'ssh h bash -c "cd ' + UP7 + ' && ls"'},
+            project_dir=self.P1188,
+        )
+
+    # RED today: GLUED flag letters (`-lc`). A recognizer keyed on the exact
+    # token `-c` misses this.
+    def test_issue1192_block_bash_lc_glued_flag(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'bash -lc "cd ' + UP7 + '"'},
+            project_dir=self.P1188,
+        )
+
+    # RED today: a SINGLE-quoted `-c` argument, the more idiomatic form.
+    def test_issue1192_block_bash_c_single_quoted_arg(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "bash -c 'cd " + UP7 + " && ls'"},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-ALLOW (green today AND post-fix) — the anti-false-positive floor.
+
+    # `ssh host "cd …"` carries NO `-c` flag and is named in the hook docstring
+    # as a member of the #1135/#1151 false-positive family. Deliberately out of
+    # scope; requiring a `c`-bearing flag is what keeps it open.
+    def test_issue1192_allow_ssh_bare_quoted_cd(self):
+        self._cd_allow('ssh h "cd ' + UP7 + ' && ls"')
+
+    # A `-c` flag on a NON-shell command word (`ssh -c <cipher>`) must not turn
+    # the trailing quoted string into a shell script.
+    def test_issue1192_allow_ssh_dash_c_cipher_flag(self):
+        self._cd_allow('ssh -c aes128-ctr h "cd ' + UP7 + ' && ls"')
+
+    # Same for `git -c key=value` — `git` is not a shell word, so its `-c` is
+    # unaffected. This is the most common `-c` in this repo.
+    def test_issue1192_allow_git_dash_c_config(self):
+        self._cd_allow('git -c user.name=x commit -m "a; cd ' + UP7 + '"')
+
+    # A nested `-c` whose target is IN-project is an ordinary operation.
+    def test_issue1192_allow_bash_c_in_project_target(self):
+        self._cd_allow('bash -c "cd sub && ls"')
+
+    # The inner string inherits quote masking: a decoy `cd` inside a quoted
+    # region of the inner script is not a command position at depth 1 either.
+    def test_issue1192_allow_bash_c_quoted_decoy_inside(self):
+        self._cd_allow("bash -c \"echo 'z; cd " + UP7 + "'\"")
+
+    # The inner string inherits the `$VAR` fail-open (#917 doctrine).
+    def test_issue1192_allow_bash_c_var_target(self):
+        self._cd_allow('bash -c "cd $WORKTREE && ls"')
+
+    # The DOCUMENTED depth cap: depth-2 nesting is explicitly out of scope.
+    # Recursively parsing arbitrary nested shell strings is the unbounded work
+    # #1188 ruled out; this pin is what keeps the cap deliberate.
+    def test_issue1192_allow_bash_c_depth_two(self):
+        self._cd_allow("bash -c \"bash -c 'cd " + UP7 + "'\"")
+
+    # An UNTERMINATED inner quote is not a fully quoted argument — the
+    # recognizer requires one, so this falls open rather than guessing where the
+    # argument ends.
+    def test_issue1192_allow_bash_c_unterminated_inner(self):
+        self._cd_allow('bash -c "cd ' + UP7)
+
+    # The three PROSE pins: text that merely NAMES the nested-shell shape must
+    # stay allowed. Running the recognizer over the ORIGINAL command string
+    # instead of the masked copy re-opens the #1190 over-block class verbatim,
+    # and these are the cases that catch it.
+    def test_issue1192_allow_nested_shell_shape_in_commit_message(self):
+        self._cd_allow(
+            'git commit -m "note: bash -c \'cd ' + UP7 + '\' escapes"'
+        )
+
+    def test_issue1192_allow_nested_shell_shape_in_gh_body(self):
+        self._cd_allow(
+            'gh issue comment 9 --body "shape: sh -c \'cd ' + UP7
+            + '\' is an escape"'
+        )
+
+    # …including inside a heredoc body, where Task 2's mask and Task 3's
+    # recognizer compose.
+    def test_issue1192_allow_nested_shell_shape_in_heredoc_body(self):
+        self._cd_allow("cat > s.sh <<'EOF'\nbash -c \"cd " + UP7 + "\"\nEOF")
 
 
 if __name__ == "__main__":

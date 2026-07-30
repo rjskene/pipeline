@@ -479,5 +479,98 @@ run_hook_set "Bash quoted absolute /etc path STILL BLOCKS with the path message 
   '{"tool_name":"Bash","tool_input":{"command":"cat \"/etc/passwd\""}}' \
   2 "BLOCKED: path outside project boundary"
 
+# ---------------------------------------------------------------------------
+# Block 9 — nested shell strings, heredoc bodies, ANSI-C quoting (#1192).
+# The three escape/over-block residuals left by #1188 + #1190:
+#   shape 1 `bash -c "cd …"` — a real UNDER-block (9h is the RED case: exit 0
+#           today, must be 2 post-fix; 9i/9j are the anti-FP pins);
+#   shape 2 heredoc BODIES   — an OVER-block today (9c is RED: exit 2 today,
+#           must be 0 post-fix; 9d–9g are keep-block pins);
+#   shape 3 `$'…'` ANSI-C    — an OVER-block today (9a is RED; 9b is the
+#           keep-block pin).
+#
+# Authoring notes — the three Block 7/8 hazards still apply (full
+# {"tool_name":"Bash","tool_input":{…}} envelope or every case passes
+# vacuously; `\"` for an embedded double quote inside the single-quoted shell
+# payload; 7-deep `..` chains so they collapse to `/` from a worktree checkout
+# too) PLUS a fourth that is new here:
+#   (iv) several of these commands carry a REAL single quote (the ANSI-C
+#        regions and the nested-shell prose pins). Inside the single-quoted
+#        shell string holding the JSON that must be written `'\''`, and the
+#        backslash of an ANSI-C `\'` must survive as JSON `\\` so the hook
+#        receives one literal backslash.
+# ---------------------------------------------------------------------------
+
+# 9a (RED today, exit 2): an ANSI-C region whose `\'` escape currently closes
+# the region early, exposing `b ; cd <UP>'` as unquoted text. Decodes to
+# `echo $'a\'b ; cd ../../../../../../..'`.
+run_hook_set "Bash ANSI-C \$'…' region with an escaped quote must ALLOW (#1192)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $'\''a\\'\''b ; cd ../../../../../../..'\''"}}' \
+  0 --no-grep
+
+# 9b (pin, green today AND post-fix): the same region CLOSED before the
+# separator — the `cd` after it is a genuine command position. Decodes to
+# `echo $'a\'b' ; cd ../../../../../../..`. Cross-checks the python-layer
+# keep-block at the shell layer.
+run_hook_set "Bash real cd-escape after a CLOSED ANSI-C region STILL BLOCKS (#1192 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $'\''a\\'\''b'\'' ; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9c (RED today, exit 2): authoring a shell script with a heredoc. The body is
+# stdin DATA, but the `;` on the body line still opens a command position
+# because #1188 excluded `\n` from the lookbehind class, not `;`.
+run_hook_set "Bash heredoc body with a separator + cd must ALLOW (#1192)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat > s.sh <<'\''EOF'\''\necho a; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 9d (pin, green today AND post-fix): the interpreter carve-out — a body fed to
+# a shell on stdin IS executed, so it stays scanned and keeps blocking.
+run_hook_set "Bash heredoc body fed to bash STILL BLOCKS (#1192 interpreter carve-out)" \
+  '{"tool_name":"Bash","tool_input":{"command":"bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9e (pin, green today AND post-fix): a HERESTRING (`<<<`) opens no body at all.
+# Non-vacuous only in this MULTI-LINE form — an operator regex of `<<(?!<)`
+# matches at offset 1 of `<<<`, takes `x` as the delimiter and masks the rest,
+# flipping this to exit 0. The lookBEHIND is what keeps it blocked.
+run_hook_set "Bash multi-line herestring is not a heredoc — cd STILL BLOCKS (#1192 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat <<< \"x\"\ntrue; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9f (pin, SCOPE GUARD): the heredoc mask must never reach `extract_paths()` —
+# a body naming an ABSOLUTE out-of-boundary token still blocks with the
+# byte-identical PATH message, not the cd one. Cross-checks the python-layer
+# scope guard; this is why the operational-notes amendment stays narrow.
+run_hook_set "Bash heredoc body naming an absolute /etc path STILL BLOCKS with the path message (#1192 scope guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat > s.txt <<'\''EOF'\''\nsee /etc/passwd here\nEOF"}}' \
+  2 "BLOCKED: path outside project boundary"
+
+# 9g (pin, green today AND post-fix): a real escape AFTER the terminator line.
+# A mask that over-runs the terminator flips this to exit 0, so this is the pin
+# for the body-end boundary.
+run_hook_set "Bash cd-escape after the heredoc terminator STILL BLOCKS (#1192 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat > s.sh <<'\''EOF'\''\nhi\nEOF\ntrue; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9h (RED today, exit 0): the shape-1 under-block. The inner shell string is
+# masked as an ordinary quoted region today, so the cd inside it is invisible.
+run_hook_set "Bash nested bash -c cd-escape must BLOCK (#1192)" \
+  '{"tool_name":"Bash","tool_input":{"command":"bash -c \"cd ../../../../../../.. && mkdir x\""}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9i (pin, green today AND post-fix): `ssh host "cd …"` carries NO `-c` flag and
+# is the #1135/#1151 false-positive family the hook docstring names. Requiring a
+# `c`-bearing flag after a known shell word is what keeps it open.
+run_hook_set "Bash ssh host \"cd …\" without -c stays ALLOWED (#1192 anti-FP pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"ssh h \"cd ../../../../../../.. && ls\""}}' \
+  0 --no-grep
+
+# 9j (pin, green today AND post-fix): quoted PROSE that merely NAMES the
+# nested-shell shape. Running the recognizer over the ORIGINAL command string
+# instead of the masked copy re-opens the #1190 over-block class verbatim.
+run_hook_set "Bash commit message naming the bash -c shape stays ALLOWED (#1192 anti-FP pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"note: bash -c '\''cd ../../../../../../..'\'' escapes\""}}' \
+  0 --no-grep
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

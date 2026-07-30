@@ -45,16 +45,39 @@ scrubbed string, whose token-boundary class deliberately INCLUDES the quote
 chars — masking that would blind the extractor to every quoted absolute
 out-of-boundary token (`cat "/etc/passwd"`).
 
+Issue #1192 — nested shell strings, heredoc bodies, ANSI-C quoting. Three
+residuals surfaced by the #1191 differential drive, resolved as follows.
+
+IN scope (scanned/masked): `$'…'` ANSI-C regions are masked in
+`_mask_quoted_regions` exactly like any other quoted region (a backslash
+escapes the following char, per POSIX `$'…'` semantics, unlike a plain
+`'…'` region where a backslash is literal). Heredoc BODIES are masked as
+stdin DATA — via `_mask_heredoc_bodies` — in both the cd gate and the
+protected-write scan, EXCEPT when the owning pipeline segment's COMMAND WORD
+(`_segment_command_word`, never a line-wide search — see that function's
+docstring for why) resolves to a known interpreter (`bash`/`sh`/`zsh`/`dash`/
+`ksh`/`python*`/`node`/`perl`/`ruby`, reached through `env`/`nohup`/`sudo`-
+style wrapper words): such a body IS executed, so it stays scanned, fail
+closed. ONE level of a recognized `<shell> -c '<fully quoted string>'` is
+scanned by `_NESTED_SHELL_RE` via a `depth`-capped recursive call into
+`_iter_cd_targets`, so the inner string inherits quote masking, heredoc
+masking, the `cd -` skip and the `$`/backtick/glob fail-open for free; the
+recognizer runs over the MASKED `scan`, not the raw command, so quoted prose
+that merely NAMES the shape (a commit message, a `gh issue comment --body`)
+is never mistaken for a command position — that would be the #1190
+over-block class verbatim.
+
+OUT of scope, stated plainly: depth-2+ nesting (`bash -c "bash -c '…'"`) —
+a hard cap, not unbounded recursion, per #1188's explicit non-goal below; a
+non-`-c` remote-shell string (`ssh host "cd …"`) — deliberately preserved as
+the #1135/#1151 false-positive family, since requiring a `c`-bearing flag on
+a known shell word is what keeps it open; a heredoc body later `eval`'d or
+piped to a shell out-of-line; a heredoc whose delimiter coincides with an
+ordinary body line by coincidence; anything requiring real shell emulation.
+
 Explicit non-goals, same as the rest of this hook's "best-effort" scope: no
 shell emulation, no `pushd`/subshell/`$VAR` tracking, and an in-project `cd`
-does not re-anchor the absolute-token scan. Known residuals of that scope:
-`$'…'` ANSI-C quoting, heredoc BODIES and the inner text of a nested shell
-string (`bash -c "…"`) are unmodelled — a separator inside such an inner
-string is masked like any other quoted region, so `bash -c "true; cd ../../..
-&& mkdir x"` is now allowed (its previous block was accidental and already
-inconsistent with the separator-free `bash -c "cd ../../.. && mkdir x"`, which
-#1188 allowed); an UNQUOTED heredoc body line containing `; cd ..` still opens
-a command position, since #1188 excluded `\n` from the lookbehind, not `;`.
+does not re-anchor the absolute-token scan.
 """
 import os
 import posixpath
@@ -392,7 +415,18 @@ def _protected_write_context(command: str) -> bool:
     regex would silently miss ``cp evil.json .claude/settings.json`` (relative
     dest).  See Task-3 mandate in the approved plan for issue #1136.
     (Bug 2 fix — issue #1136.)
+
+    Issue #1192: `command` is rebound to its heredoc-body-masked copy as the
+    very first statement, so every branch below (and the nested
+    `_has_protected_token()`, which closes over the same name) sees the
+    masked copy — a protected-looking token that merely appears inside a
+    heredoc BODY (prose or HTML naming `.claude/hooks/`) no longer trips this
+    guard, while a real redirect into a protected file on the heredoc's own
+    OPERATOR line still does (that line is never masked). Safe to rebind:
+    this function only ever whole-string `re.search`s `command`, it never
+    slices a span computed against it.
     """
+    command = _mask_heredoc_bodies(command)
 
     def _has_protected_token() -> bool:
         for pat in PROTECTED_CMD_PATTERNS:
@@ -619,12 +653,38 @@ def _mask_quoted_regions(command: str):
                 else:
                     i += 1
                 continue
+            if ch == "$" and command[i + 1:i + 2] == "'":
+                # ANSI-C opener (issue #1192). Emit both chars verbatim and
+                # enter the two-char "$'" quote mode below.
+                out.append(ch)
+                out.append(command[i + 1])
+                quote = "$'"
+                i += 2
+                continue
             if ch in "\"'":
                 quote = ch
             out.append(ch)
             i += 1
             continue
         # Inside a quoted region.
+        if quote == "$'" and ch == "\\":
+            # ANSI-C region: a backslash escapes the next char (mirrors the
+            # double-quote arm below, including newline preservation).
+            out.append(_MASK_CHAR)
+            if i + 1 < n:
+                nxt = command[i + 1]
+                out.append("\n" if nxt == "\n" else _MASK_CHAR)
+                i += 2
+            else:
+                i += 1
+            continue
+        if quote == "$'" and ch == "'":
+            # Closes the ANSI-C region. The generic `ch == quote` test below
+            # can never fire here since `quote` is the two-char "$'".
+            quote = ""
+            out.append(ch)
+            i += 1
+            continue
         if quote == '"' and ch == "\\":
             out.append(_MASK_CHAR)
             if i + 1 < n:
@@ -646,7 +706,159 @@ def _mask_quoted_regions(command: str):
     return "".join(out)
 
 
-def _iter_cd_targets(command: str):
+# Heredoc-body masking (issue #1192). `_HEREDOC_OP_RE`'s `(?<!<)...(?!<)`
+# lookaround excludes a `<<<` herestring (which opens no body at all) from
+# ever matching as a heredoc operator — a plain `<<(?!<)` still matches at
+# offset 1 of `<<<`. Group 1 is the `-` of a `<<-` tab-stripping form; group 2
+# is the optional quote char around the delimiter word (its own group so the
+# `\2` backreference can require a matching close quote); group 3 is the
+# delimiter word itself.
+_HEREDOC_OP_RE = re.compile(r"(?<!<)<<(?!<)(-?)\s*([\"']?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+# A heredoc body owned by one of these command words IS executed (fed to an
+# interpreter on stdin), not merely stored as data — so it stays scanned,
+# fail closed.
+_INTERP_WORD_RE = re.compile(r"^(?:bash|sh|zsh|dash|ksh|python[0-9.]*|node|perl|ruby)$")
+
+# Wrapper words that pass an interpreter through unchanged as far as the
+# heredoc carve-out is concerned (`env FOO=1 bash <<EOF`, `sudo bash <<EOF`).
+_WRAPPER_WORDS = {"env", "nohup", "command", "sudo", "timeout", "stdbuf", "exec", "time"}
+
+# Pipeline-segment separator class (command / pipeline segments) used to
+# isolate the LAST segment of a line before resolving its command word
+# (`echo x | bash <<EOF` must resolve to `bash`, the segment that owns the
+# heredoc operator, not `echo`).
+_SEG_SPLIT_RE = re.compile(r"\|\||&&|[;&|(){]")
+
+
+def _segment_command_word(prefix: str) -> str:
+    """Return the resolved command word of the LAST pipeline segment in `prefix`.
+
+    Used by `_mask_heredoc_bodies` to decide whether a heredoc body is DATA
+    (masked) or an interpreter's stdin script (left scanned). Splits `prefix`
+    on `_SEG_SPLIT_RE` and takes the LAST segment, so `echo x | bash <<EOF`
+    resolves relative to `bash`, not `echo`. Within that segment, walks
+    whitespace tokens left to right, skipping `NAME=value` assignments and
+    leading flags (`-x`, `--long`) — so `env FOO=1 bash <<EOF` skips both
+    `FOO=1` and (via the wrapper-word skip below) `env` itself. Each
+    surviving token is basenamed (`tok.strip("\"'").rsplit("/", 1)[-1]`, so
+    `/bin/bash` resolves to `bash`) and, if it names a wrapper word, skipped
+    too. Returns the first true survivor, or `""` when none is found.
+
+    Deliberately anchored on the COMMAND WORD, never a line-wide search: a
+    line-wide `\\bsh\\b` search would match inside `script.sh` (the `.`
+    supplies a word boundary) and wrongly exempt an everyday
+    `cat > script.sh <<'EOF'` script-authoring heredoc from being masked.
+    """
+    segments = _SEG_SPLIT_RE.split(prefix)
+    segment = segments[-1] if segments else prefix
+    for tok in segment.split():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
+            continue
+        if tok.startswith("-"):
+            continue
+        word = tok.strip("\"'").rsplit("/", 1)[-1]
+        if word in _WRAPPER_WORDS:
+            continue
+        return word
+    return ""
+
+
+def _mask_heredoc_bodies(command: str) -> str:
+    """Return a length-preserving copy of `command` with heredoc BODIES masked.
+
+    Issue #1192. A heredoc body is stdin DATA for the command that opened it,
+    not a command being run — masking it out of the cd-scan and the
+    protected-write scan removes the residual where an ordinary `;`-bearing
+    body line (`echo a; cd ../..`) or a protected-looking body token (HTML or
+    prose text merely NAMING `.claude/hooks/`) opened a false command
+    position or a false protected-write match. The single exception is a body
+    owned by an INTERPRETER command word (`bash`, `sh`, `python`, … reached
+    through `env`/`sudo`-style wrapper words, per `_segment_command_word`):
+    that body IS executed, so it stays scanned, fail CLOSED.
+
+    Line-by-line algorithm. A line currently inside a pending heredoc body is
+    BODY: if it equals the queued delimiter (leading tabs stripped first when
+    the `<<-` form was used) it is the TERMINATOR — emitted verbatim, and the
+    FIFO queue advances to the next pending delimiter (bash consumes multiple
+    bodies opened on one operator line in left-to-right order); otherwise the
+    whole line is replaced with `_MASK_CHAR` fill. A line NOT inside a
+    pending body is an ordinary command line: emitted verbatim (so a real
+    command position on the OPERATOR line itself, e.g. `cat <<EOF > s.txt; cd
+    ..`, is unaffected), then probed for heredoc operators via a per-line
+    quote PROBE (`_mask_quoted_regions(line)`, falling back to the raw line
+    when that returns None — monotone, so probing can only find the SAME OR
+    FEWER operators than a raw scan of the line, i.e. it cannot introduce a
+    new class of missed operator) and `_HEREDOC_OP_RE.finditer` over that
+    probe, so a `<<` sitting inside a quoted string on the line (`echo "a <<
+    EOF"`) is not mistaken for a real operator. Each match's delimiter is
+    read from the ORIGINAL line (the probe may have masked the delimiter's
+    interior when it is quoted) via the match span. If the owning segment's
+    command word resolves to a known interpreter, the body IS code: the
+    pending-queue accumulation for this line stops immediately (`break`) and
+    nothing from this operator onward is queued — so every following line up
+    to the next already-open body (or end of command) is left UNMASKED,
+    fail-closed, rather than silently truncating the return value (both masks
+    must stay length-preserving for the span-slice contract `_iter_cd_targets`
+    depends on). Otherwise every operator on the line queues its
+    `(delimiter, dash)` pair.
+
+    No heredoc operator anywhere in `command` is a byte-for-byte no-op. This
+    function raises no exceptions — plain string operations only, since
+    `_protected_write_context` (unlike the cd gate) has no `try/except`
+    wrapper around it.
+    """
+    if "<<" not in command:
+        return command
+    lines = command.split("\n")
+    out_lines = []
+    queue: list[tuple[str, bool]] = []
+    for line in lines:
+        if queue:
+            delimiter, dash = queue[0]
+            content = line.lstrip("\t") if dash else line
+            if content == delimiter:
+                out_lines.append(line)
+                queue.pop(0)
+            else:
+                out_lines.append(_MASK_CHAR * len(line))
+            continue
+        out_lines.append(line)
+        probe = _mask_quoted_regions(line)
+        if probe is None:
+            probe = line
+        for m in _HEREDOC_OP_RE.finditer(probe):
+            dash = m.group(1) == "-"
+            delimiter = line[m.start(3):m.end(3)]
+            word = _segment_command_word(line[:m.start()])
+            if _INTERP_WORD_RE.match(word):
+                queue = []
+                break
+            queue.append((delimiter, dash))
+    return "\n".join(out_lines)
+
+
+# One level into a recognized `<shell> -c '<fully quoted string>'` (issue
+# #1192). `\b(?:bash|sh|zsh|dash|ksh)\b` cannot match inside `ssh` — there is
+# no word boundary between the two `s` characters — so a bare
+# `ssh host "cd .."` (no `-c`) never matches; requiring the literal
+# `c`-bearing flag is likewise what keeps `ssh -c <cipher>` and
+# `git -c key=value` unaffected (neither `ssh` nor `git` is a shell word in
+# the alternation, and a NON-`c` flag on a shell word, if any existed, would
+# not match `-[A-Za-z]*c(?=\s)` either). The optional
+# `(?:\s+-{1,2}[A-Za-z-]+)*?` group absorbs any flags BEFORE the `-c`-bearing
+# one (`bash -x -c '...'`); the `-c`-bearing flag itself may carry glued
+# letters (`-lc`). The operand alternatives `"[^"]*"` / `'[^']*'` are the same
+# non-nesting approximation `_CD_RE` already uses for a quoted `cd` operand —
+# a fully quoted argument is required, so an unterminated inner quote simply
+# does not match (fail open, no guess at where the argument ends).
+_NESTED_SHELL_RE = re.compile(
+    r"\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-{1,2}[A-Za-z-]+)*?"
+    r"\s+-[A-Za-z]*c(?=\s)\s+(\"[^\"]*\"|'[^']*')"
+)
+
+
+def _iter_cd_targets(command: str, depth: int = 0):
     """Yield each command-position `cd` operand in `command` (issue #1188).
 
     A match with no operand (bare `cd`, or `cd --` with nothing following) is
@@ -660,9 +872,33 @@ def _iter_cd_targets(command: str):
     raw command when a quote is unterminated — fail closed), but each operand
     is sliced from the ORIGINAL string via the match span, so the dequote and
     the fail-open checks below see real text rather than mask filler.
+
+    Issue #1192: the quote mask runs on top of the heredoc-body mask, not the
+    raw command — heredoc-FIRST is what removes a stray body apostrophe
+    (`don't stop`) that would otherwise force the quote scanner's
+    unterminated-quote fail-CLOSED fallback. Both masks are length-preserving,
+    so their composition remains a valid source of match spans into the
+    ORIGINAL `command`.
+
+    Issue #1192, depth-capped nested-shell scan: at `depth == 0`, after the
+    ordinary `_CD_RE` pass, also run `_NESTED_SHELL_RE` over the SAME masked
+    `scan` (never the raw `command` — running it over the raw command would
+    reopen the #1190 over-block class, matching quoted PROSE that merely
+    NAMES the `bash -c '...'` shape, e.g. inside a commit message). Each
+    match's quoted argument is sliced from the ORIGINAL `command` (both masks
+    preserve quote delimiters and length, so the span is a valid slice),
+    dequoted, and — for the double-quoted form only — unescaped (`\\"` → `"`,
+    `\\\\` → `\\`). The inner string then recurses through this SAME function
+    at `depth=1`, so it inherits quote masking, heredoc masking, the `cd -`
+    skip and the `$`/backtick/glob fail-open for free, rather than needing a
+    bespoke inner scanner. `depth >= 1` returns immediately without a nested
+    scan of its own — a hard cap, so `bash -c "bash -c '...'"` is a
+    documented gap, not unbounded recursion (#1188 ruled out full shell
+    emulation).
     """
-    masked = _mask_quoted_regions(command)
-    scan = command if masked is None else masked
+    hd = _mask_heredoc_bodies(command)
+    masked = _mask_quoted_regions(hd)
+    scan = hd if masked is None else masked
     for m in _CD_RE.finditer(scan):
         if m.group(2) is None:
             yield "~"
@@ -676,6 +912,17 @@ def _iter_cd_targets(command: str):
         if any(ch in operand for ch in "$`*?["):
             continue
         yield operand
+
+    if depth:
+        return
+    for m in _NESTED_SHELL_RE.finditer(scan):
+        start, end = m.span(1)
+        arg = command[start:end]
+        quote_char = arg[0]
+        inner = arg[1:-1]
+        if quote_char == '"':
+            inner = inner.replace('\\"', '"').replace("\\\\", "\\")
+        yield from _iter_cd_targets(inner, depth=1)
 
 
 def extract_paths() -> list[str]:
