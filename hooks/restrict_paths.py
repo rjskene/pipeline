@@ -724,9 +724,10 @@ _INTERP_WORD_RE = re.compile(r"^(?:bash|sh|zsh|dash|ksh|python[0-9.]*|node|perl|
 # heredoc carve-out is concerned (`env FOO=1 bash <<EOF`, `sudo bash <<EOF`).
 _WRAPPER_WORDS = {"env", "nohup", "command", "sudo", "timeout", "stdbuf", "exec", "time"}
 
-# Command/pipeline-segment separator class used to isolate the LAST segment
-# of a line before resolving its command word (`echo x | bash <<EOF` must
-# resolve to `bash`, the segment that owns the heredoc operator, not `echo`).
+# Pipeline-segment separator class (command / pipeline segments) used to
+# isolate the LAST segment of a line before resolving its command word
+# (`echo x | bash <<EOF` must resolve to `bash`, the segment that owns the
+# heredoc operator, not `echo`).
 _SEG_SPLIT_RE = re.compile(r"\|\||&&|[;&|(){]")
 
 
