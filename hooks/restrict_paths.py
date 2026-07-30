@@ -722,13 +722,51 @@ _INTERP_WORD_RE = re.compile(r"^(?:bash|sh|zsh|dash|ksh|python[0-9.]*|node|perl|
 
 # Wrapper words that pass an interpreter through unchanged as far as the
 # heredoc carve-out is concerned (`env FOO=1 bash <<EOF`, `sudo bash <<EOF`).
-_WRAPPER_WORDS = {"env", "nohup", "command", "sudo", "timeout", "stdbuf", "exec", "time"}
+# `nice` (issue #1194) was previously absent entirely.
+_WRAPPER_WORDS = {
+    "env", "nohup", "command", "sudo", "timeout", "stdbuf", "exec", "time",
+    "nice",
+}
+
+# Issue #1194 — per-wrapper arity model. Each wrapper's OPTIONS that consume a
+# SEPARATE following token (as opposed to a glued spelling like `-oL`/`-n5`/
+# `--unset=FOO`, which the exact-match compare in `_segment_command_word`
+# below never touches). A wrapper absent from this mapping, or an option not
+# listed for its wrapper, is treated as taking no separate argument.
+_WRAPPER_ARG_OPTS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "sudo": {
+        "-u", "--user", "-g", "--group", "-p", "--prompt",
+        "-C", "--close-from", "-D", "--chdir", "-R", "--chroot",
+        "-h", "--host", "-U", "--other-user", "-r", "--role",
+        "-t", "--type", "-T", "--command-timeout",
+    },
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+    "stdbuf": {"-i", "--input", "-o", "--output", "-e", "--error"},
+    "nice": {"-n", "--adjustment"},
+    "exec": {"-a"},
+    "time": {"-o", "--output", "-f", "--format"},
+    "nohup": set(),
+    "command": set(),
+}
+
+# Positionals a wrapper consumes BEFORE its command word (`timeout <duration>
+# <command>`). Every wrapper not listed here takes zero.
+_WRAPPER_POSITIONALS = {"timeout": 1}
 
 # Pipeline-segment separator class (command / pipeline segments) used to
 # isolate the LAST segment of a line before resolving its command word
 # (`echo x | bash <<EOF` must resolve to `bash`, the segment that owns the
 # heredoc operator, not `echo`).
 _SEG_SPLIT_RE = re.compile(r"\|\||&&|[;&|(){]")
+
+
+def _basename_word(tok: str) -> str:
+    """Dequote-strip and basename a raw whitespace token (`"bash` -> `bash`,
+    `/bin/bash` -> `bash`). Shared by `_segment_command_word`'s wrapper-word
+    check and its interpreter guard so both see the same normalized word.
+    """
+    return tok.strip("\"'").rsplit("/", 1)[-1]
 
 
 def _segment_command_word(prefix: str) -> str:
@@ -738,12 +776,43 @@ def _segment_command_word(prefix: str) -> str:
     (masked) or an interpreter's stdin script (left scanned). Splits `prefix`
     on `_SEG_SPLIT_RE` and takes the LAST segment, so `echo x | bash <<EOF`
     resolves relative to `bash`, not `echo`. Within that segment, walks
-    whitespace tokens left to right, skipping `NAME=value` assignments and
-    leading flags (`-x`, `--long`) — so `env FOO=1 bash <<EOF` skips both
-    `FOO=1` and (via the wrapper-word skip below) `env` itself. Each
-    surviving token is basenamed (`tok.strip("\"'").rsplit("/", 1)[-1]`, so
-    `/bin/bash` resolves to `bash`) and, if it names a wrapper word, skipped
-    too. Returns the first true survivor, or `""` when none is found.
+    whitespace tokens left to right, skipping `NAME=value` assignments.
+
+    Issue #1194 — per-wrapper ARITY walk, replacing the old "skip every
+    `-`-leading flag, skip every wrapper word" loop. A wrapper's argument can
+    be POSITIONAL (`timeout 300 bash`) or a separate OPTION argument
+    (`sudo -u root bash`, `env -u FOO bash`) — either shape used to leave the
+    walk terminating on the wrapper's own argument instead of the wrapped
+    interpreter, an under-block. The walk now tracks the MOST RECENTLY SEEN
+    wrapper and a pending positional budget (`_WRAPPER_POSITIONALS`, default
+    0), consulting `_WRAPPER_ARG_OPTS[wrapper]` to decide whether a
+    `-`-leading token consumes the NEXT token too. The option-argument compare
+    is EXACT (`tok in _WRAPPER_ARG_OPTS.get(wrapper, ())`), never a prefix
+    test — that is what keeps the glued forms (`-oL`, `-n5`, `-k5`,
+    `--unset=FOO`, `nice`'s bare `-5` adjustment) from wrongly eating their
+    successor.
+
+    The INTERPRETER GUARD (evaluator gap, issuecomment-5127926105): neither
+    consume-arm above is allowed to swallow a token that basenames to an
+    `_INTERP_WORD_RE` word. An interpreter is never a `timeout` duration, a
+    `sudo` username, or an `env -S` non-command argument — `env -S bash`
+    genuinely execs bash, and `timeout --preserve-status bash` has no
+    duration at all. Without the guard the arity walk is NOT monotone: the
+    token it newly steps over can BE the interpreter, silently turning a
+    block into an allow (`env -S bash <<EOF`, `timeout --preserve-status bash
+    <<EOF`, `sudo -u bash id <<EOF`, `stdbuf -o bash <<EOF` all regress to
+    exit 0 without it). With the guard, the walk only ever skips a
+    NON-interpreter token, so a word this function would have returned before
+    is still returned — new blocks only, never new allows (measured 0
+    block-to-allow flips across 7,857 driven rows + 578,808 in-process walk
+    prefixes; see issuecomment-5128283503).
+
+    On a POSITIONAL (non-`-`-leading) token: its basename is computed FIRST,
+    then the pending-positional budget is decremented only when it is
+    NON-interpreter (interpreter guard) and the budget is nonzero — otherwise
+    the token is checked against `_WRAPPER_WORDS` (recording it as the new
+    current wrapper and loading its budget) or, failing that, RETURNED as the
+    resolved command word.
 
     Deliberately anchored on the COMMAND WORD, never a line-wide search: a
     line-wide `\\bsh\\b` search would match inside `script.sh` (the `.`
@@ -752,13 +821,32 @@ def _segment_command_word(prefix: str) -> str:
     """
     segments = _SEG_SPLIT_RE.split(prefix)
     segment = segments[-1] if segments else prefix
-    for tok in segment.split():
+    toks = segment.split()
+    n = len(toks)
+    wrapper = None
+    pending_positionals = 0
+    i = 0
+    while i < n:
+        tok = toks[i]
+        i += 1
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
             continue
         if tok.startswith("-"):
+            if (
+                wrapper is not None
+                and tok in _WRAPPER_ARG_OPTS.get(wrapper, ())
+                and i < n
+                and not _INTERP_WORD_RE.match(_basename_word(toks[i]))
+            ):
+                i += 1
             continue
-        word = tok.strip("\"'").rsplit("/", 1)[-1]
+        word = _basename_word(tok)
+        if pending_positionals > 0 and not _INTERP_WORD_RE.match(word):
+            pending_positionals -= 1
+            continue
         if word in _WRAPPER_WORDS:
+            wrapper = word
+            pending_positionals = _WRAPPER_POSITIONALS.get(word, 0)
             continue
         return word
     return ""
