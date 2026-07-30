@@ -814,7 +814,27 @@ def _mask_heredoc_bodies(command: str) -> str:
     return "\n".join(out_lines)
 
 
-def _iter_cd_targets(command: str):
+# One level into a recognized `<shell> -c '<fully quoted string>'` (issue
+# #1192). `\b(?:bash|sh|zsh|dash|ksh)\b` cannot match inside `ssh` — there is
+# no word boundary between the two `s` characters — so a bare
+# `ssh host "cd .."` (no `-c`) never matches; requiring the literal
+# `c`-bearing flag is likewise what keeps `ssh -c <cipher>` and
+# `git -c key=value` unaffected (neither `ssh` nor `git` is a shell word in
+# the alternation, and a NON-`c` flag on a shell word, if any existed, would
+# not match `-[A-Za-z]*c(?=\s)` either). The optional
+# `(?:\s+-{1,2}[A-Za-z-]+)*?` group absorbs any flags BEFORE the `-c`-bearing
+# one (`bash -x -c '...'`); the `-c`-bearing flag itself may carry glued
+# letters (`-lc`). The operand alternatives `"[^"]*"` / `'[^']*'` are the same
+# non-nesting approximation `_CD_RE` already uses for a quoted `cd` operand —
+# a fully quoted argument is required, so an unterminated inner quote simply
+# does not match (fail open, no guess at where the argument ends).
+_NESTED_SHELL_RE = re.compile(
+    r"\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-{1,2}[A-Za-z-]+)*?"
+    r"\s+-[A-Za-z]*c(?=\s)\s+(\"[^\"]*\"|'[^']*')"
+)
+
+
+def _iter_cd_targets(command: str, depth: int = 0):
     """Yield each command-position `cd` operand in `command` (issue #1188).
 
     A match with no operand (bare `cd`, or `cd --` with nothing following) is
@@ -835,6 +855,22 @@ def _iter_cd_targets(command: str):
     unterminated-quote fail-CLOSED fallback. Both masks are length-preserving,
     so their composition remains a valid source of match spans into the
     ORIGINAL `command`.
+
+    Issue #1192, depth-capped nested-shell scan: at `depth == 0`, after the
+    ordinary `_CD_RE` pass, also run `_NESTED_SHELL_RE` over the SAME masked
+    `scan` (never the raw `command` — running it over the raw command would
+    reopen the #1190 over-block class, matching quoted PROSE that merely
+    NAMES the `bash -c '...'` shape, e.g. inside a commit message). Each
+    match's quoted argument is sliced from the ORIGINAL `command` (both masks
+    preserve quote delimiters and length, so the span is a valid slice),
+    dequoted, and — for the double-quoted form only — unescaped (`\\"` → `"`,
+    `\\\\` → `\\`). The inner string then recurses through this SAME function
+    at `depth=1`, so it inherits quote masking, heredoc masking, the `cd -`
+    skip and the `$`/backtick/glob fail-open for free, rather than needing a
+    bespoke inner scanner. `depth >= 1` returns immediately without a nested
+    scan of its own — a hard cap, so `bash -c "bash -c '...'"` is a
+    documented gap, not unbounded recursion (#1188 ruled out full shell
+    emulation).
     """
     hd = _mask_heredoc_bodies(command)
     masked = _mask_quoted_regions(hd)
@@ -852,6 +888,17 @@ def _iter_cd_targets(command: str):
         if any(ch in operand for ch in "$`*?["):
             continue
         yield operand
+
+    if depth:
+        return
+    for m in _NESTED_SHELL_RE.finditer(scan):
+        start, end = m.span(1)
+        arg = command[start:end]
+        quote_char = arg[0]
+        inner = arg[1:-1]
+        if quote_char == '"':
+            inner = inner.replace('\\"', '"').replace("\\\\", "\\")
+        yield from _iter_cd_targets(inner, depth=1)
 
 
 def extract_paths() -> list[str]:
