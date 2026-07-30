@@ -1500,6 +1500,453 @@ class TestRestrictPaths(unittest.TestCase):
     def test_issue1192_allow_nested_shell_shape_in_heredoc_body(self):
         self._cd_allow("cat > s.sh <<'EOF'\nbash -c \"cd " + UP7 + "\"\nEOF")
 
+    # ======================================================================
+    # Issue #1194 — wrapper ARITY, arithmetic `<<`, and POSIX `--`
+    # ======================================================================
+    # Three residuals the #1192 heredoc mask and nested-shell recognizer leave
+    # behind, surfaced by the differential drive on PR #1193:
+    #
+    #   shape 1 — a WRAPPER word whose argument is POSITIONAL (or a separate
+    #             option argument) defeats the interpreter carve-out.
+    #             `_segment_command_word` skips `NAME=value`, `-`-leading
+    #             flags, and `_WRAPPER_WORDS`, then returns the FIRST survivor
+    #             — so `timeout 300 bash <<EOF` resolves to `300`, not `bash`,
+    #             and a body that IS executed gets masked as DATA. A real
+    #             UNDER-block, in both the cd scan and the protected-write
+    #             scan. `nice` is not in `_WRAPPER_WORDS` at all.
+    #   shape 2 — an arithmetic left-shift is read as a heredoc OPERATOR.
+    #             `_HEREDOC_OP_RE` matches `<<` whose RHS is an identifier, so
+    #             `echo $((x << y))` opens a phantom heredoc with delimiter
+    #             `y` and masks every following line. Also a real UNDER-block.
+    #             A numeric RHS (`$((1 << 2))`) never matched — `2` fails the
+    #             `[A-Za-z_]` class — so that shape is a keep-BLOCK, not a fix.
+    #   shape 3b — POSIX `--` end-of-options. `_NESTED_SHELL_RE`'s flag group
+    #             `[A-Za-z-]+` accepts a lone `-`, so `--` is absorbed as a
+    #             flag and the following `-c` still matches — but after a `--`
+    #             the `-c` is a script FILENAME and no `cd` runs. An
+    #             OVER-block.
+    #
+    # Direction of change, partitioned per commit so a regression is
+    # attributable: shape 1 and shape 2 can only ADD blocks; shape 3b can only
+    # REMOVE them. Shape 3a (`echo bash -c "cd …"`, an unquoted PROSE mention)
+    # is DOCUMENTED, not fixed — a command-position anchor on
+    # `_NESTED_SHELL_RE` was measured to drop SEVEN wrapper-reached shapes
+    # (`xargs`/`find -exec`/`ssh host`/`timeout 5`/`sudo`/`env`/`nohup` +
+    # `bash -c`) from exit 2 to exit 0, four of them the very shapes shape 1
+    # exists to protect. It is pinned below as a keep-BLOCK so the trade-off
+    # stays deliberate.
+    #
+    # Three KINDS of pin live in this section; the labels matter when reading a
+    # failure:
+    #   * BLOCK / ALLOW pins that are RED at HEAD — the new behavior.
+    #   * KEEP-BLOCK pins for the FLIP class — green at HEAD, and green
+    #     post-fix ONLY IF the arity walk carries the interpreter guard. They
+    #     are the executable statement that no token which basenames to an
+    #     `_INTERP_WORD_RE` word is ever consumed as someone else's option
+    #     argument or positional. An UNguarded arity walk turns all seven red.
+    #   * PAIRED ALLOW pins — the #1190 guard: every new block ships with an
+    #     allow that must stay open.
+    #
+    # Shared authoring conventions are #1192's, unchanged: `UP7` operands,
+    # the `self.P1188` $HOME-anchored fixture, and protected literals built
+    # from the `SET` fragment.
+
+    # --- Task 1: wrapper arity + the interpreter guard, shape 1 -----------
+    # ADDITION-ONLY. `_segment_command_word` gains a per-wrapper arity model
+    # (`_WRAPPER_ARG_OPTS` — options that consume a SEPARATE following token;
+    # `_WRAPPER_POSITIONALS` — positionals consumed before the command word,
+    # `timeout: 1`, every other wrapper 0) plus the interpreter guard.
+
+    # RED today (exit 0): the literal issue repro. `timeout`'s duration is a
+    # positional, so the walk terminates on `300` and never reaches `bash`.
+    def test_issue1194_block_heredoc_timeout_duration_positional(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "timeout 300 bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: `-k` takes a SEPARATE argument AND the duration positional
+    # still follows — two tokens to step over before `bash`.
+    def test_issue1194_block_heredoc_timeout_k_and_duration(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "timeout -k 5 30 bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: the same shape with a NON-numeric option argument, so the fix
+    # cannot degrade into "skip a token that looks like a number".
+    def test_issue1194_block_heredoc_timeout_s_signal_and_duration(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "timeout -s KILL 30 bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: `sudo -u <user>` — a zero-positional wrapper whose option
+    # argument is the token the walk currently returns.
+    def test_issue1194_block_heredoc_sudo_u_user(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "sudo -u root bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: `nice` is absent from `_WRAPPER_WORDS` entirely, so the walk
+    # stops on `nice` itself — and `-n 5` would stop it again once added.
+    def test_issue1194_block_heredoc_nice_n_adjustment(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "nice -n 5 bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: bare `nice` with no options — the membership half of the fix,
+    # isolated from the arity half.
+    def test_issue1194_block_heredoc_nice_bare_wrapper(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "nice bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: `env -u NAME` — the SPACED form of an option `env` already
+    # models in its glued `--unset=NAME` spelling.
+    def test_issue1194_block_heredoc_env_u_unset(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "env -u FOO bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: `stdbuf -o L` spaced. The GLUED spelling `-oL` already
+    # resolves correctly today, which is why the arg-option match must be an
+    # EXACT token compare rather than a prefix test.
+    def test_issue1194_block_heredoc_stdbuf_o_separate_arg(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "stdbuf -o L bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: a LONG no-argument flag plus the duration positional — the
+    # valid form of the flip-class shape pinned as a keep-BLOCK below.
+    def test_issue1194_block_heredoc_timeout_long_flag_and_duration(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "timeout --preserve-status 30 bash <<EOF\ntrue; cd "
+                        + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today (exit 0, PROT message post-fix — NOT the cd one): the second
+    # scan wired to the heredoc mask. A body that writes a protected control
+    # file IS executed under a wrapper-reached interpreter.
+    def test_issue1194_block_heredoc_timeout_protected_write(self):
+        self.assertBlockedWith(
+            PROT_BLOCK_MSG, "Bash",
+            {"command": "timeout 300 bash <<EOF\necho x > " + SET + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # RED today: same, through the zero-positional `sudo -u` shape.
+    def test_issue1194_block_heredoc_sudo_protected_write(self):
+        self.assertBlockedWith(
+            PROT_BLOCK_MSG, "Bash",
+            {"command": "sudo -u root bash <<EOF\necho x > " + SET + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # --- Task 1 KEEP-BLOCK pins: the flip-class interpreter guard ---------
+    # All seven are green at HEAD. They go RED against an arity walk that
+    # lacks the interpreter guard, because the token the walk newly consumes
+    # IS the interpreter — a block silently becoming an allow. `env -S bash`
+    # is the genuine escape of the group (it really does exec bash); the
+    # `timeout` rows are invalid invocations, but a silent regression either
+    # way. Measured: HEAD 2 → unguarded 0 → guarded 2.
+
+    # `env -S <command>` really execs its argument, so `bash` here is the
+    # interpreter, not an option argument to be stepped over.
+    def test_issue1194_keepblock_env_dash_s_bash(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "env -S bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # The same escape with `env -S`'s split-string spelling — the interpreter
+    # word is QUOTED and carries its own flag, so the guard's basename step
+    # (`tok.strip("\"'").rsplit("/", 1)[-1]`) has to run before the compare.
+    def test_issue1194_keepblock_env_dash_s_quoted_bash_x(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'env -S "bash -x" <<EOF\ntrue; cd ' + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # The flip class restated on the protected-write scan, so the guard is
+    # pinned on BOTH consumers of the heredoc mask.
+    def test_issue1194_keepblock_env_dash_s_bash_protected_write(self):
+        self.assertBlockedWith(
+            PROT_BLOCK_MSG, "Bash",
+            {"command": "env -S bash <<EOF\necho x > " + SET + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # `timeout --preserve-status` with NO duration: the 1-positional budget is
+    # still pending when `bash` arrives, so the positional arm is the one the
+    # guard has to protect here (contrast with `-v` below, the option arm).
+    def test_issue1194_keepblock_timeout_preserve_status_bash(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "timeout --preserve-status bash <<EOF\ntrue; cd "
+                        + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # Short-flag spelling of the same pending-positional shape.
+    def test_issue1194_keepblock_timeout_v_bash(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "timeout -v bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # `sudo -u bash id` — `bash` sits exactly where `sudo`'s `-u` argument
+    # goes. The guard refuses to consume it, so the walk returns `bash` and
+    # this stays blocked (fail closed on an ambiguous shape).
+    def test_issue1194_keepblock_sudo_u_bash_id(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "sudo -u bash id <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # Same shape on `stdbuf -o`, whose argument is a buffering mode.
+    def test_issue1194_keepblock_stdbuf_o_bash(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "stdbuf -o bash <<EOF\ntrue; cd " + UP7 + "\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # --- Task 1 PAIRED ALLOW pins (the #1190 guard) -----------------------
+    # Green at HEAD AND post-fix. A wrapper-reached NON-interpreter still owns
+    # a DATA body, and the everyday `cat > file <<EOF` idiom stays open.
+
+    def test_issue1194_allow_timeout_duration_cat_heredoc(self):
+        self._cd_allow("timeout 300 cat > s.txt <<EOF\ntrue; cd " + UP7 + "\nEOF")
+
+    def test_issue1194_allow_nice_adjustment_cat_heredoc(self):
+        self._cd_allow("nice -n 5 cat > s.txt <<EOF\ntrue; cd " + UP7 + "\nEOF")
+
+    def test_issue1194_allow_sudo_user_tee_heredoc(self):
+        self._cd_allow("sudo -u root tee s.txt <<EOF\ntrue; cd " + UP7 + "\nEOF")
+
+    # The next three are the option-(b)-rejection guard. "Any token in the
+    # segment that basenames to an interpreter word" would flip all of them to
+    # exit 2 — the #1190 over-block class reopened on the most common heredoc
+    # idiom in this repo. The interpreter guard must never PROMOTE a
+    # non-command-position token to the command word, only refuse to CONSUME
+    # one as somebody else's argument.
+    def test_issue1194_allow_echo_bash_heredoc(self):
+        self._cd_allow("echo bash <<EOF\ntrue; cd " + UP7 + "\nEOF")
+
+    def test_issue1194_allow_grep_bash_heredoc(self):
+        self._cd_allow("grep bash <<EOF\ntrue; cd " + UP7 + "\nEOF")
+
+    def test_issue1194_allow_timeout_grep_bash_heredoc(self):
+        self._cd_allow("timeout 30 grep bash <<EOF\ntrue; cd " + UP7 + "\nEOF")
+
+    # The protected-write half of the paired-allow guard: prose in a DATA body
+    # that merely NAMES a protected control file stays open.
+    def test_issue1194_allow_timeout_cat_protected_prose_heredoc(self):
+        self.assertAllowed(
+            "Bash",
+            {"command": "timeout 5 cat > s.txt <<EOF\nedit " + SET
+                        + " by hand\nEOF"},
+            project_dir=self.P1188,
+        )
+
+    # The paired allows for the two NEW guard classes: an `env -S` whose
+    # argument is NOT an interpreter, and a `timeout` long flag whose
+    # positional is consumed by an ordinary command.
+    def test_issue1194_allow_env_dash_s_echo_heredoc(self):
+        self._cd_allow("env -S echo <<EOF\ntrue; cd " + UP7 + "\nEOF")
+
+    def test_issue1194_allow_timeout_preserve_status_cat_heredoc(self):
+        self._cd_allow(
+            "timeout --preserve-status cat > s.txt <<EOF\ntrue; cd " + UP7
+            + "\nEOF"
+        )
+
+    # --- Task 2: arithmetic `<<` is not a heredoc operator, shape 2 -------
+    # ADDITION-ONLY. A new `_mask_arith_regions(line)` blanks the interior of
+    # `$(( … ))` (any position) and of `(( … ))` (command position only —
+    # start of line, or after `;&|(){`, or after `if|while|until|elif|then|do`)
+    # before `_HEREDOC_OP_RE` probes the line, so a left-shift never queues a
+    # phantom delimiter. Narrowing the operator recognizer can only recognize
+    # FEWER heredocs, i.e. mask FEWER bodies, i.e. scan MORE — fail closed.
+
+    # RED today (exit 0): the literal shape. `y` satisfies `[A-Za-z_]`, so
+    # `<< y` queues a phantom heredoc and the whole next line is masked.
+    def test_issue1194_block_arith_shift_then_cd(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "echo $((x << y))\ntrue; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # RED today: the protected-write half — the phantom body swallows a real
+    # redirect into a control file.
+    def test_issue1194_block_arith_shift_then_protected_write(self):
+        self.assertBlockedWith(
+            PROT_BLOCK_MSG, "Bash",
+            {"command": "echo $((x << y))\necho x > " + SET},
+            project_dir=self.P1188,
+        )
+
+    # RED today: no spaces around the operator, inside an assignment — the
+    # mask must key on the `$((`/`))` region, not on surrounding whitespace.
+    def test_issue1194_block_arith_shift_in_assignment_then_cd(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "x=$((a<<b))\ntrue; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # RED today: the bare `(( … ))` arithmetic COMMAND at start of line.
+    def test_issue1194_block_bare_arith_command_then_cd(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "((x << y))\ntrue; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # RED today: `((` after the `if` keyword — the command-position anchor for
+    # the bare form has to admit the keyword prefixes, not just `^` and the
+    # `;&|(){` class.
+    def test_issue1194_block_arith_shift_in_if_then_cd(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "if ((a << b)); then :; fi\ntrue; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # --- Task 2 keep pins -------------------------------------------------
+
+    # KEEP-ALLOW: a REAL heredoc on a later line still masks its body. The
+    # arithmetic mask is applied to the operator PROBE only — the delimiter is
+    # still sliced from the ORIGINAL line and `_segment_command_word` still
+    # walks the raw prefix.
+    def test_issue1194_allow_numeric_shift_then_real_heredoc(self):
+        self._cd_allow(
+            "echo $((1 << 2))\ncat <<EOF\ntrue; cd " + UP7 + "\nEOF"
+        )
+
+    # KEEP-ALLOW: a heredoc opened inside a SUBSHELL. `(cat <<EOF` has a
+    # single `(`, so the command-position `((` arm must not fire on it — the
+    # body stays masked and this stays open.
+    def test_issue1194_allow_subshell_heredoc_still_masked(self):
+        self._cd_allow("(cat <<EOF\ntrue; cd " + UP7 + "\nEOF\n)")
+
+    # KEEP-ALLOW: an ordinary arithmetic COMPARISON (single `<`) on a line
+    # before a real heredoc. Masking the `(( … ))` interior must not disturb
+    # the following line's real operator.
+    def test_issue1194_allow_arith_compare_then_real_heredoc(self):
+        self._cd_allow(
+            "if ((n < 2)); then :; fi\ncat <<EOF\ntrue; cd " + UP7 + "\nEOF"
+        )
+
+    # KEEP-BLOCK: a NUMERIC right-hand side was never a phantom operator (`2`
+    # fails `_HEREDOC_OP_RE`'s `[A-Za-z_]` class), so this line already leaves
+    # the next line scanned and must keep doing so. The pin that stops the
+    # arithmetic mask from being mistaken for a change in this direction.
+    def test_issue1194_keepblock_numeric_shift_then_cd(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": "echo $((1 << 2))\ntrue; cd " + UP7},
+            project_dir=self.P1188,
+        )
+
+    # KEEP-ALLOW — the DOCUMENTED fail-open (OUT-list item 4). An UNBALANCED
+    # arithmetic region has no knowable end, so the mask skips that region
+    # rather than guessing: the phantom heredoc still opens and the following
+    # line stays masked. Deliberate, matching the hook's existing fail-open
+    # doctrine for unresolvable state; pinned so it cannot drift silently.
+    def test_issue1194_allow_unbalanced_arith_fails_open(self):
+        self._cd_allow("echo $((a << b\ntrue; cd " + UP7)
+
+    # --- Task 3: POSIX `--` end-of-options, shape 3b ----------------------
+    # REMOVAL-ONLY. `_NESTED_SHELL_RE`'s flag group becomes
+    # `(?:\s+-{1,2}[A-Za-z][A-Za-z-]*)*?` — a flag must start with a LETTER
+    # after its dashes — so a bare `--` no longer satisfies it.
+
+    # RED today (exit 2): after `--`, bash reads `-c` as a script FILENAME, so
+    # no `cd` runs and the quoted string is an ordinary argument.
+    def test_issue1194_allow_bash_double_dash_end_of_options(self):
+        self._cd_allow('bash -- -c "cd ' + UP7 + '"')
+
+    # RED today: the same with `sh`.
+    def test_issue1194_allow_sh_double_dash_end_of_options(self):
+        self._cd_allow('sh -- -c "cd ' + UP7 + '"')
+
+    # --- Task 3 KEEP-BLOCK pins ------------------------------------------
+    # Green at HEAD AND post-fix — the tightening must not widen into a miss.
+
+    # A LONG flag still starts with a letter after its dashes.
+    def test_issue1194_keepblock_bash_posix_long_flag_c(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'bash --posix -c "cd ' + UP7 + '"'},
+            project_dir=self.P1188,
+        )
+
+    # GLUED flag letters are unaffected by the flag-group change.
+    def test_issue1194_keepblock_bash_lc_glued_flag(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'bash -lc "cd ' + UP7 + '"'},
+            project_dir=self.P1188,
+        )
+
+    # The next four are the shape-3a trade-off, pinned. A command-position
+    # anchor on `_NESTED_SHELL_RE` would drop these from 2 to 0 — the measured
+    # cost of "fixing" the unquoted-prose over-block, and why that stays
+    # DOCUMENTED instead.
+    def test_issue1194_keepblock_xargs_bash_c(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'xargs bash -c "cd ' + UP7 + '"'},
+            project_dir=self.P1188,
+        )
+
+    def test_issue1194_keepblock_find_exec_bash_c(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'find . -exec bash -c "cd ' + UP7 + '" \\;'},
+            project_dir=self.P1188,
+        )
+
+    def test_issue1194_keepblock_ssh_host_bash_c(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'ssh host bash -c "cd ' + UP7 + '"'},
+            project_dir=self.P1188,
+        )
+
+    # The documented OVER-block itself (OUT-list item 6): UNQUOTED prose that
+    # names the nested-shell shape blocks. Pinned as a BLOCK so the decision to
+    # document rather than anchor is executable, not implied. Contrast the
+    # #1192 pins above, where QUOTED prose in a commit message stays allowed.
+    def test_issue1194_keepblock_echo_bash_c_documented_overblock(self):
+        self.assertBlockedWith(
+            CD_BLOCK_MSG, "Bash",
+            {"command": 'echo bash -c "cd ' + UP7 + '"'},
+            project_dir=self.P1188,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

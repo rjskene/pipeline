@@ -572,5 +572,111 @@ run_hook_set "Bash commit message naming the bash -c shape stays ALLOWED (#1192 
   '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"note: bash -c '\''cd ../../../../../../..'\'' escapes\""}}' \
   0 --no-grep
 
+# ---------------------------------------------------------------------------
+# Block 10 — wrapper ARITY, arithmetic `<<`, POSIX `--` (#1194).
+# The three residuals left by #1192's heredoc mask and nested-shell
+# recognizer, surfaced by the differential drive on PR #1193:
+#   shape 1  a WRAPPER whose argument is POSITIONAL (or a separate option
+#            argument) defeats the interpreter carve-out — `timeout 300 bash`
+#            resolves to `300`, so an EXECUTED body is masked as data. A real
+#            UNDER-block (10a–10c are RED: exit 0 today, must be 2 post-fix).
+#            10d/10e are the flip-class KEEP-BLOCK pins — green today, and
+#            green post-fix ONLY IF the arity walk carries the interpreter
+#            guard (an UNguarded walk consumes `bash` as the wrapper's own
+#            argument and both flip to exit 0). 10f/10g are the paired ALLOW
+#            pins (#1190 guard); 10g additionally rejects option (b), "any
+#            token in the segment that basenames to an interpreter word".
+#   shape 2  an arithmetic left-shift is read as a heredoc OPERATOR, so
+#            `echo $((x << y))` opens a phantom heredoc with delimiter `y`
+#            and masks every following line (10h is RED; 10i is the pin that
+#            a REAL heredoc still masks).
+#   shape 3b POSIX `--` end-of-options — `[A-Za-z-]+` lets a lone `-` satisfy
+#            the flag group, so `--` is absorbed and `-c` still matches, even
+#            though after `--` the `-c` is a script FILENAME. An OVER-block
+#            (10j is RED: exit 2 today, must be 0 post-fix; 10k is the
+#            keep-block pin — it is one of the SEVEN wrapper-reached shapes a
+#            command-position anchor on `_NESTED_SHELL_RE` would silently
+#            drop, which is why shape 3a stays documented rather than fixed).
+#
+# Authoring notes — the four Block 7/8/9 hazards still apply (full
+# {"tool_name":"Bash","tool_input":{…}} envelope or every case passes
+# vacuously; `\"` for an embedded double quote inside the single-quoted shell
+# payload; 7-deep `..` chains so they collapse to `/` from a worktree checkout
+# too; `'\''` for a real single quote). The `$((…))` payloads below sit inside
+# a single-quoted shell string, so the `$` reaches the hook literally.
+# ---------------------------------------------------------------------------
+
+# 10a (RED today, exit 0): the literal issue repro — `timeout`'s duration is a
+# positional, so the walk terminates on `300` and never reaches `bash`.
+run_hook_set "Bash heredoc fed to bash via timeout <duration> must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"timeout 300 bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10b (RED today, exit 0): a zero-positional wrapper whose OPTION argument is
+# the token the walk currently returns.
+run_hook_set "Bash heredoc fed to bash via sudo -u <user> must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"sudo -u root bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10c (RED today, exit 0): `nice` is absent from `_WRAPPER_WORDS` entirely.
+run_hook_set "Bash heredoc fed to bash via nice -n <adj> must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"nice -n 5 bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10d (KEEP-BLOCK, flip class): `env -S <command>` really execs its argument,
+# so `bash` is the interpreter, not an option argument to step over. Green
+# today; RED against an arity walk that lacks the interpreter guard.
+run_hook_set "Bash heredoc under env -S bash STILL BLOCKS (#1194 interpreter guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"env -S bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10e (KEEP-BLOCK, flip class): `timeout --preserve-status` with NO duration —
+# the 1-positional budget is still pending when `bash` arrives, so this pins
+# the guard on the POSITIONAL arm (10d pins the option arm).
+run_hook_set "Bash heredoc under timeout --preserve-status bash STILL BLOCKS (#1194 interpreter guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"timeout --preserve-status bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10f (paired ALLOW, green today AND post-fix): a wrapper-reached NON-
+# interpreter still owns a DATA body — the everyday `cat > file <<EOF` idiom.
+run_hook_set "Bash heredoc under timeout 300 cat stays ALLOWED (#1194 paired allow)" \
+  '{"tool_name":"Bash","tool_input":{"command":"timeout 300 cat > s.txt <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 10g (paired ALLOW + option-(b) rejection): an interpreter word appearing as
+# an ARGUMENT of a non-interpreter command word. Resolving the command word by
+# "any token that basenames to an interpreter" would flip this to exit 2 — the
+# #1190 over-block class reopened on the most common heredoc idiom here.
+run_hook_set "Bash heredoc under echo bash stays ALLOWED (#1194 option-b rejection pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 10h (RED today, exit 0): an arithmetic left-shift whose RHS is an identifier
+# satisfies `_HEREDOC_OP_RE`, opening a phantom heredoc with delimiter `y`.
+run_hook_set "Bash arithmetic << is not a heredoc — following cd must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $((x << y))\ntrue; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10i (pin, green today AND post-fix): a REAL heredoc on a later line still
+# masks its body. The arithmetic mask applies to the operator PROBE only — the
+# delimiter is still sliced from the ORIGINAL line.
+run_hook_set "Bash real heredoc after an arithmetic line still masks its body (#1194 keep-allow)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $((1 << 2))\ncat <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 10j (RED today, exit 2): after `--`, bash reads `-c` as a script FILENAME,
+# so no cd runs and the quoted string is an ordinary argument.
+run_hook_set "Bash bash -- -c \"cd …\" is end-of-options, must ALLOW (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"bash -- -c \"cd ../../../../../../..\""}}' \
+  0 --no-grep
+
+# 10k (pin, green today AND post-fix): requiring a LETTER after the dashes must
+# not widen into a miss. This is also one of the SEVEN wrapper-reached shapes a
+# command-position anchor on `_NESTED_SHELL_RE` would drop to exit 0 — the
+# measured cost that keeps shape 3a documented rather than fixed.
+run_hook_set "Bash xargs bash -c cd-escape STILL BLOCKS (#1194 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"xargs bash -c \"cd ../../../../../../..\""}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
