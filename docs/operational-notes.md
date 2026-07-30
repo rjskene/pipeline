@@ -55,6 +55,16 @@ Known trip-wires and the way around each:
     workaround for both absolute-token sub-bullets above (the `gh issue
     comment` case and the shebang case) and for any path-like text that is
     NOT inside a heredoc body.
+    **Narrowed further by #1194:** the "operator line's command word is not
+    an interpreter" check now resolves through a wrapper's own OPTION or
+    POSITIONAL argument (`timeout 300 bash <<EOF`, `sudo -u root bash
+    <<EOF`, `env -u FOO bash <<EOF`, `nice -n 5 bash <<EOF` all now correctly
+    resolve to `bash` and stay scanned — previously the walk terminated on
+    the wrapper's own argument and the body was wrongly masked as data). A
+    left-shift inside `$(( … ))` or a command-position `(( … ))` (`echo
+    $((x << y))`) is also no longer read as a heredoc operator, so it can no
+    longer open a phantom heredoc that masks every following line. See the
+    module docstring's `Issue #1194` section for the full IN/OUT list.
 
 - **`/tmp` is blocked.** Reads/writes under `/tmp` are outside the boundary.
   Write scratch under `.claude/scratch/` instead. This is the root cause of the

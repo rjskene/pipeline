@@ -75,6 +75,71 @@ a known shell word is what keeps it open; a heredoc body later `eval`'d or
 piped to a shell out-of-line; a heredoc whose delimiter coincides with an
 ordinary body line by coincidence; anything requiring real shell emulation.
 
+Issue #1194 — wrapper ARITY, arithmetic `<<`, and POSIX `--`. Three residuals
+the #1192 heredoc mask and nested-shell recognizer left behind, surfaced by
+the differential drive on PR #1193.
+
+IN scope (scanned/masked, or corrected): `_segment_command_word`'s walk now
+carries a per-wrapper ARITY model (`_WRAPPER_ARG_OPTS` — options that consume
+a SEPARATE following token; `_WRAPPER_POSITIONALS` — positionals consumed
+before the command word, `timeout: 1`, every other wrapper 0), so a
+wrapper's own argument — positional (`timeout 300 bash <<EOF`) or a separate
+option argument (`sudo -u root bash <<EOF`, `env -u FOO bash <<EOF`) — is
+stepped over instead of being mistaken for the command word; `nice` is added
+to `_WRAPPER_WORDS` (previously absent entirely). Neither consume-arm may
+swallow a token that basenames to an `_INTERP_WORD_RE` word (the
+INTERPRETER GUARD) — an interpreter is never a `timeout` duration, a `sudo`
+username, or an `env -S` non-command argument, so `env -S bash <<EOF`,
+`timeout --preserve-status bash <<EOF`, `sudo -u bash id <<EOF`, and
+`stdbuf -o bash <<EOF` all still resolve to `bash` and stay scanned. A new
+`_mask_arith_regions` blanks the interior of `$(( … ))` (any position) and of
+command-position `(( … ))` (start of line, after `;&|(){`, or after
+`if`/`while`/`until`/`elif`/`then`/`do`) before the heredoc-operator probe
+runs, so an arithmetic left-shift (`echo $((x << y))`, `((x << y))`) is never
+mistaken for a heredoc operator opening a phantom body. `_NESTED_SHELL_RE`'s
+flag group now requires a LETTER immediately after its dashes, so a bare
+POSIX `--` end-of-options marker (`bash -- -c "cd …"`) is no longer absorbed
+as a vacuous flag with `-c` still matching — `--posix`, `--norc`, `-lc`, and
+`-x -c` are unaffected.
+
+OUT of scope, stated plainly:
+  - An unknown arg-taking option on a ZERO-positional wrapper still
+    terminates the walk on its argument: `sudo --made-up X bash <<EOF` and
+    `env --made-up X bash <<EOF` stay allowed. This does NOT hold for
+    `timeout` — its 1-positional budget absorbs `X`, so
+    `timeout --made-up X bash <<EOF` BLOCKS.
+  - Wrapper words outside `_WRAPPER_WORDS` are unmodelled: `flock`,
+    `ionice`, `setsid`, `unbuffer`, `chrt`, `taskset`, `doas`
+    (`flock /tmp/l bash <<EOF` stays allowed).
+  - `xargs` is DELIBERATELY excluded — its stdin is the argument list, not
+    the child's script, so a heredoc under `xargs bash …` genuinely is data.
+  - An UNBALANCED arithmetic region fails OPEN: `echo $((a << b` followed by
+    a `cd` on the next line stays allowed (the phantom heredoc still opens).
+    Deliberate — no guess at where an unbalanced region ends, matching this
+    hook's existing fail-open doctrine for unresolvable state.
+  - A non-command-position `((` is not masked — `for ((i=0;i<n;i++))` and
+    any other unanchored `((`.
+  - Unquoted prose naming the nested-shell shape over-blocks:
+    `echo bash -c "cd …"` stays blocked. Documented, not fixed — a
+    command-position anchor on `_NESTED_SHELL_RE` was measured to drop SEVEN
+    wrapper-reached shapes (`xargs`/`find -exec`/`ssh host`/`timeout`/`sudo`/
+    `env`/`nohup` + `bash -c`) from blocked to allowed, four of them the very
+    shapes the wrapper-arity fix above exists to protect — trading real
+    under-blocks for one contrived over-block is the wrong direction for a
+    containment tripwire.
+  - `((cat <<EOF) && (true))` over-blocks (accepted, block-direction — a real
+    heredoc operator inside an arithmetic-shaped grouping is masked away).
+  - `timeout 300 python script.py <<EOF` now resolves to `python` and its
+    body is scanned — identical in kind to the pre-existing unwrapped
+    `python script.py <<EOF` behavior, not a new class.
+  - The arity tables are a maintenance surface: a wrapper option added
+    upstream that this hook does not yet know about silently reverts to the
+    old under-block for that one form.
+  - Unchanged #1192 OUT items (above) still apply: depth-2+ nesting, a
+    non-`-c` remote-shell string, a herestring, an out-of-line `eval`'d
+    heredoc body, a delimiter that coincides with an ordinary body line, and
+    anything requiring real shell emulation.
+
 Explicit non-goals, same as the rest of this hook's "best-effort" scope: no
 shell emulation, no `pushd`/subshell/`$VAR` tracking, and an in-project `cd`
 does not re-anchor the absolute-token scan.
