@@ -75,6 +75,71 @@ a known shell word is what keeps it open; a heredoc body later `eval`'d or
 piped to a shell out-of-line; a heredoc whose delimiter coincides with an
 ordinary body line by coincidence; anything requiring real shell emulation.
 
+Issue #1194 — wrapper ARITY, arithmetic `<<`, and POSIX `--`. Three residuals
+the #1192 heredoc mask and nested-shell recognizer left behind, surfaced by
+the differential drive on PR #1193.
+
+IN scope (scanned/masked, or corrected): `_segment_command_word`'s walk now
+carries a per-wrapper ARITY model (`_WRAPPER_ARG_OPTS` — options that consume
+a SEPARATE following token; `_WRAPPER_POSITIONALS` — positionals consumed
+before the command word, `timeout: 1`, every other wrapper 0), so a
+wrapper's own argument — positional (`timeout 300 bash <<EOF`) or a separate
+option argument (`sudo -u root bash <<EOF`, `env -u FOO bash <<EOF`) — is
+stepped over instead of being mistaken for the command word; `nice` is added
+to `_WRAPPER_WORDS` (previously absent entirely). Neither consume-arm may
+swallow a token that basenames to an `_INTERP_WORD_RE` word (the
+INTERPRETER GUARD) — an interpreter is never a `timeout` duration, a `sudo`
+username, or an `env -S` non-command argument, so `env -S bash <<EOF`,
+`timeout --preserve-status bash <<EOF`, `sudo -u bash id <<EOF`, and
+`stdbuf -o bash <<EOF` all still resolve to `bash` and stay scanned. A new
+`_mask_arith_regions` blanks the interior of `$(( … ))` (any position) and of
+command-position `(( … ))` (start of line, after `;&|(){`, or after
+`if`/`while`/`until`/`elif`/`then`/`do`) before the heredoc-operator probe
+runs, so an arithmetic left-shift (`echo $((x << y))`, `((x << y))`) is never
+mistaken for a heredoc operator opening a phantom body. `_NESTED_SHELL_RE`'s
+flag group now requires a LETTER immediately after its dashes, so a bare
+POSIX `--` end-of-options marker (`bash -- -c "cd …"`) is no longer absorbed
+as a vacuous flag with `-c` still matching — `--posix`, `--norc`, `-lc`, and
+`-x -c` are unaffected.
+
+OUT of scope, stated plainly:
+  - An unknown arg-taking option on a ZERO-positional wrapper still
+    terminates the walk on its argument: `sudo --made-up X bash <<EOF` and
+    `env --made-up X bash <<EOF` stay allowed. This does NOT hold for
+    `timeout` — its 1-positional budget absorbs `X`, so
+    `timeout --made-up X bash <<EOF` BLOCKS.
+  - Wrapper words outside `_WRAPPER_WORDS` are unmodelled: `flock`,
+    `ionice`, `setsid`, `unbuffer`, `chrt`, `taskset`, `doas`
+    (`flock /tmp/l bash <<EOF` stays allowed).
+  - `xargs` is DELIBERATELY excluded — its stdin is the argument list, not
+    the child's script, so a heredoc under `xargs bash …` genuinely is data.
+  - An UNBALANCED arithmetic region fails OPEN: `echo $((a << b` followed by
+    a `cd` on the next line stays allowed (the phantom heredoc still opens).
+    Deliberate — no guess at where an unbalanced region ends, matching this
+    hook's existing fail-open doctrine for unresolvable state.
+  - A non-command-position `((` is not masked — `for ((i=0;i<n;i++))` and
+    any other unanchored `((`.
+  - Unquoted prose naming the nested-shell shape over-blocks:
+    `echo bash -c "cd …"` stays blocked. Documented, not fixed — a
+    command-position anchor on `_NESTED_SHELL_RE` was measured to drop SEVEN
+    wrapper-reached shapes (`xargs`/`find -exec`/`ssh host`/`timeout`/`sudo`/
+    `env`/`nohup` + `bash -c`) from blocked to allowed, four of them the very
+    shapes the wrapper-arity fix above exists to protect — trading real
+    under-blocks for one contrived over-block is the wrong direction for a
+    containment tripwire.
+  - `((cat <<EOF) && (true))` over-blocks (accepted, block-direction — a real
+    heredoc operator inside an arithmetic-shaped grouping is masked away).
+  - `timeout 300 python script.py <<EOF` now resolves to `python` and its
+    body is scanned — identical in kind to the pre-existing unwrapped
+    `python script.py <<EOF` behavior, not a new class.
+  - The arity tables are a maintenance surface: a wrapper option added
+    upstream that this hook does not yet know about silently reverts to the
+    old under-block for that one form.
+  - Unchanged #1192 OUT items (above) still apply: depth-2+ nesting, a
+    non-`-c` remote-shell string, a herestring, an out-of-line `eval`'d
+    heredoc body, a delimiter that coincides with an ordinary body line, and
+    anything requiring real shell emulation.
+
 Explicit non-goals, same as the rest of this hook's "best-effort" scope: no
 shell emulation, no `pushd`/subshell/`$VAR` tracking, and an in-project `cd`
 does not re-anchor the absolute-token scan.
@@ -722,13 +787,51 @@ _INTERP_WORD_RE = re.compile(r"^(?:bash|sh|zsh|dash|ksh|python[0-9.]*|node|perl|
 
 # Wrapper words that pass an interpreter through unchanged as far as the
 # heredoc carve-out is concerned (`env FOO=1 bash <<EOF`, `sudo bash <<EOF`).
-_WRAPPER_WORDS = {"env", "nohup", "command", "sudo", "timeout", "stdbuf", "exec", "time"}
+# `nice` (issue #1194) was previously absent entirely.
+_WRAPPER_WORDS = {
+    "env", "nohup", "command", "sudo", "timeout", "stdbuf", "exec", "time",
+    "nice",
+}
+
+# Issue #1194 — per-wrapper arity model. Each wrapper's OPTIONS that consume a
+# SEPARATE following token (as opposed to a glued spelling like `-oL`/`-n5`/
+# `--unset=FOO`, which the exact-match compare in `_segment_command_word`
+# below never touches). A wrapper absent from this mapping, or an option not
+# listed for its wrapper, is treated as taking no separate argument.
+_WRAPPER_ARG_OPTS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "sudo": {
+        "-u", "--user", "-g", "--group", "-p", "--prompt",
+        "-C", "--close-from", "-D", "--chdir", "-R", "--chroot",
+        "-h", "--host", "-U", "--other-user", "-r", "--role",
+        "-t", "--type", "-T", "--command-timeout",
+    },
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+    "stdbuf": {"-i", "--input", "-o", "--output", "-e", "--error"},
+    "nice": {"-n", "--adjustment"},
+    "exec": {"-a"},
+    "time": {"-o", "--output", "-f", "--format"},
+    "nohup": set(),
+    "command": set(),
+}
+
+# Positionals a wrapper consumes BEFORE its command word (`timeout <duration>
+# <command>`). Every wrapper not listed here takes zero.
+_WRAPPER_POSITIONALS = {"timeout": 1}
 
 # Pipeline-segment separator class (command / pipeline segments) used to
 # isolate the LAST segment of a line before resolving its command word
 # (`echo x | bash <<EOF` must resolve to `bash`, the segment that owns the
 # heredoc operator, not `echo`).
 _SEG_SPLIT_RE = re.compile(r"\|\||&&|[;&|(){]")
+
+
+def _basename_word(tok: str) -> str:
+    """Dequote-strip and basename a raw whitespace token (`"bash` -> `bash`,
+    `/bin/bash` -> `bash`). Shared by `_segment_command_word`'s wrapper-word
+    check and its interpreter guard so both see the same normalized word.
+    """
+    return tok.strip("\"'").rsplit("/", 1)[-1]
 
 
 def _segment_command_word(prefix: str) -> str:
@@ -738,12 +841,43 @@ def _segment_command_word(prefix: str) -> str:
     (masked) or an interpreter's stdin script (left scanned). Splits `prefix`
     on `_SEG_SPLIT_RE` and takes the LAST segment, so `echo x | bash <<EOF`
     resolves relative to `bash`, not `echo`. Within that segment, walks
-    whitespace tokens left to right, skipping `NAME=value` assignments and
-    leading flags (`-x`, `--long`) — so `env FOO=1 bash <<EOF` skips both
-    `FOO=1` and (via the wrapper-word skip below) `env` itself. Each
-    surviving token is basenamed (`tok.strip("\"'").rsplit("/", 1)[-1]`, so
-    `/bin/bash` resolves to `bash`) and, if it names a wrapper word, skipped
-    too. Returns the first true survivor, or `""` when none is found.
+    whitespace tokens left to right, skipping `NAME=value` assignments.
+
+    Issue #1194 — per-wrapper ARITY walk, replacing the old "skip every
+    `-`-leading flag, skip every wrapper word" loop. A wrapper's argument can
+    be POSITIONAL (`timeout 300 bash`) or a separate OPTION argument
+    (`sudo -u root bash`, `env -u FOO bash`) — either shape used to leave the
+    walk terminating on the wrapper's own argument instead of the wrapped
+    interpreter, an under-block. The walk now tracks the MOST RECENTLY SEEN
+    wrapper and a pending positional budget (`_WRAPPER_POSITIONALS`, default
+    0), consulting `_WRAPPER_ARG_OPTS[wrapper]` to decide whether a
+    `-`-leading token consumes the NEXT token too. The option-argument compare
+    is EXACT (`tok in _WRAPPER_ARG_OPTS.get(wrapper, ())`), never a prefix
+    test — that is what keeps the glued forms (`-oL`, `-n5`, `-k5`,
+    `--unset=FOO`, `nice`'s bare `-5` adjustment) from wrongly eating their
+    successor.
+
+    The INTERPRETER GUARD (evaluator gap, issuecomment-5127926105): neither
+    consume-arm above is allowed to swallow a token that basenames to an
+    `_INTERP_WORD_RE` word. An interpreter is never a `timeout` duration, a
+    `sudo` username, or an `env -S` non-command argument — `env -S bash`
+    genuinely execs bash, and `timeout --preserve-status bash` has no
+    duration at all. Without the guard the arity walk is NOT monotone: the
+    token it newly steps over can BE the interpreter, silently turning a
+    block into an allow (`env -S bash <<EOF`, `timeout --preserve-status bash
+    <<EOF`, `sudo -u bash id <<EOF`, `stdbuf -o bash <<EOF` all regress to
+    exit 0 without it). With the guard, the walk only ever skips a
+    NON-interpreter token, so a word this function would have returned before
+    is still returned — new blocks only, never new allows (measured 0
+    block-to-allow flips across 7,857 driven rows + 578,808 in-process walk
+    prefixes; see issuecomment-5128283503).
+
+    On a POSITIONAL (non-`-`-leading) token: its basename is computed FIRST,
+    then the pending-positional budget is decremented only when it is
+    NON-interpreter (interpreter guard) and the budget is nonzero — otherwise
+    the token is checked against `_WRAPPER_WORDS` (recording it as the new
+    current wrapper and loading its budget) or, failing that, RETURNED as the
+    resolved command word.
 
     Deliberately anchored on the COMMAND WORD, never a line-wide search: a
     line-wide `\\bsh\\b` search would match inside `script.sh` (the `.`
@@ -752,16 +886,120 @@ def _segment_command_word(prefix: str) -> str:
     """
     segments = _SEG_SPLIT_RE.split(prefix)
     segment = segments[-1] if segments else prefix
-    for tok in segment.split():
+    toks = segment.split()
+    n = len(toks)
+    wrapper = None
+    pending_positionals = 0
+    i = 0
+    while i < n:
+        tok = toks[i]
+        i += 1
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
             continue
         if tok.startswith("-"):
+            if (
+                wrapper is not None
+                and tok in _WRAPPER_ARG_OPTS.get(wrapper, ())
+                and i < n
+                and not _INTERP_WORD_RE.match(_basename_word(toks[i]))
+            ):
+                i += 1
             continue
-        word = tok.strip("\"'").rsplit("/", 1)[-1]
+        word = _basename_word(tok)
+        if pending_positionals > 0 and not _INTERP_WORD_RE.match(word):
+            pending_positionals -= 1
+            continue
         if word in _WRAPPER_WORDS:
+            wrapper = word
+            pending_positionals = _WRAPPER_POSITIONALS.get(word, 0)
             continue
         return word
     return ""
+
+
+# Issue #1194, shape 2 — arithmetic-expansion / arithmetic-command masking.
+# `_HEREDOC_OP_RE` has no notion of arithmetic context, so a left-shift
+# operator (`$((x << y))`, `((x << y))`) whose RHS happens to be an
+# identifier satisfies the delimiter class `[A-Za-z_][A-Za-z0-9_]*` and is
+# read as a real heredoc operator, opening a phantom body that masks every
+# following line — a real UNDER-block. `_KEYWORD_BEFORE_ARITH_RE` recognizes
+# the COMMAND-POSITION anchor for the bare `((` form only: start of line, one
+# of `;&|(){`, or one of the compound-command keywords that can precede an
+# arithmetic command (`if`/`while`/`until`/`elif`/`then`/`do`). `$((` is
+# always eligible regardless of position (it is expansion syntax, not a
+# command).
+_KEYWORD_BEFORE_ARITH_RE = re.compile(
+    r"(?:^|[;&|(){]|\b(?:if|while|until|elif|then|do))\s*$"
+)
+
+
+def _mask_arith_regions(line: str) -> str:
+    """Return a length-preserving copy of `line` with arithmetic-expression
+    interiors blanked, so `_HEREDOC_OP_RE` never mistakes an arithmetic `<<`
+    (or any other character inside `$(( … ))` / command-position `(( … ))`)
+    for a heredoc operator.
+
+    Nesting-aware via paren-depth counting: scans left to right for a `((`
+    token, decides eligibility (always for `$((`; command-position only,
+    per `_KEYWORD_BEFORE_ARITH_RE`, for a bare `((`), then walks forward
+    counting `(`/`)` until the two initial opens are balanced back to zero.
+    On a match, the ENTIRE region — both delimiters and interior — is
+    replaced with `_MASK_CHAR`, so a `<<` sitting anywhere inside (or
+    straddling the parens themselves) cannot survive the probe.
+
+    Fails OPEN on an unbalanced region: if no matching close is found, that
+    `((` is left completely unmasked and the scan resumes just past it —
+    only the unbalanced region is skipped, not the rest of the line, and not
+    the whole mask operation. This is deliberate (issue #1194 OUT list): an
+    unbalanced arithmetic region has no knowable end, so guessing where it
+    stops is worse than leaving it scanned, matching this hook's existing
+    fail-open doctrine for unresolvable state elsewhere (`cd -`, unsubstituted
+    `$VAR`).
+
+    Applied to the per-line heredoc-operator PROBE only (`_mask_heredoc_bodies`)
+    — never to the line used for the delimiter slice or to the prefix
+    `_segment_command_word` walks — so narrowing the operator recognizer can
+    only recognize FEWER heredocs, i.e. mask FEWER bodies, i.e. scan MORE:
+    the fail-closed direction. A non-command-position `((` (`for ((i=0;...))`)
+    is intentionally left unmasked (OUT list) — the anchor is what keeps the
+    masked surface to genuine arithmetic-command shapes.
+    """
+    if "((" not in line:
+        return line
+    out = list(line)
+    n = len(line)
+    i = 0
+    while i < n - 1:
+        if line[i] == "(" and line[i + 1] == "(":
+            dollar = i > 0 and line[i - 1] == "$"
+            eligible = dollar or bool(
+                _KEYWORD_BEFORE_ARITH_RE.search(line[:i])
+            )
+            if eligible:
+                depth = 2
+                j = i + 2
+                matched = False
+                while j < n:
+                    if line[j] == "(":
+                        depth += 1
+                    elif line[j] == ")":
+                        depth -= 1
+                        if depth == 0:
+                            matched = True
+                            break
+                    j += 1
+                if matched:
+                    for k in range(i, j + 1):
+                        if out[k] != "\n":
+                            out[k] = _MASK_CHAR
+                    i = j + 1
+                    continue
+            # Not eligible, or eligible but unbalanced (fail open): skip past
+            # this "((" without masking so the outer scan cannot loop forever.
+            i += 2
+            continue
+        i += 1
+    return "".join(out)
 
 
 def _mask_heredoc_bodies(command: str) -> str:
@@ -827,6 +1065,7 @@ def _mask_heredoc_bodies(command: str) -> str:
         probe = _mask_quoted_regions(line)
         if probe is None:
             probe = line
+        probe = _mask_arith_regions(probe)
         for m in _HEREDOC_OP_RE.finditer(probe):
             dash = m.group(1) == "-"
             delimiter = line[m.start(3):m.end(3)]
@@ -846,14 +1085,22 @@ def _mask_heredoc_bodies(command: str) -> str:
 # `git -c key=value` unaffected (neither `ssh` nor `git` is a shell word in
 # the alternation, and a NON-`c` flag on a shell word, if any existed, would
 # not match `-[A-Za-z]*c(?=\s)` either). The optional
-# `(?:\s+-{1,2}[A-Za-z-]+)*?` group absorbs any flags BEFORE the `-c`-bearing
-# one (`bash -x -c '...'`); the `-c`-bearing flag itself may carry glued
-# letters (`-lc`). The operand alternatives `"[^"]*"` / `'[^']*'` are the same
-# non-nesting approximation `_CD_RE` already uses for a quoted `cd` operand —
-# a fully quoted argument is required, so an unterminated inner quote simply
-# does not match (fail open, no guess at where the argument ends).
+# `(?:\s+-{1,2}[A-Za-z][A-Za-z-]*)*?` group absorbs any flags BEFORE the
+# `-c`-bearing one (`bash -x -c '...'`); the `-c`-bearing flag itself may
+# carry glued letters (`-lc`). Issue #1194, shape 3b: a flag must start with
+# a LETTER after its dashes, so a bare POSIX `--` end-of-options marker no
+# longer satisfies the flag class and gets absorbed into it — previously
+# `[A-Za-z-]+` accepted a lone `-`, so `bash -- -c '...'` matched with `--`
+# consumed as a (vacuous) flag and `-c` still recognized, even though after a
+# real `--` bash reads `-c` as a script FILENAME and runs no `-c` string at
+# all (an over-block). `--posix`, `--norc`, `-lc`, `-x -c` all still start
+# with a letter right after their dashes and are unaffected. The operand
+# alternatives `"[^"]*"` / `'[^']*'` are the same non-nesting approximation
+# `_CD_RE` already uses for a quoted `cd` operand — a fully quoted argument is
+# required, so an unterminated inner quote simply does not match (fail open,
+# no guess at where the argument ends).
 _NESTED_SHELL_RE = re.compile(
-    r"\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-{1,2}[A-Za-z-]+)*?"
+    r"\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-{1,2}[A-Za-z][A-Za-z-]*)*?"
     r"\s+-[A-Za-z]*c(?=\s)\s+(\"[^\"]*\"|'[^']*')"
 )
 
