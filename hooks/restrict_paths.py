@@ -1020,14 +1020,22 @@ def _mask_heredoc_bodies(command: str) -> str:
 # `git -c key=value` unaffected (neither `ssh` nor `git` is a shell word in
 # the alternation, and a NON-`c` flag on a shell word, if any existed, would
 # not match `-[A-Za-z]*c(?=\s)` either). The optional
-# `(?:\s+-{1,2}[A-Za-z-]+)*?` group absorbs any flags BEFORE the `-c`-bearing
-# one (`bash -x -c '...'`); the `-c`-bearing flag itself may carry glued
-# letters (`-lc`). The operand alternatives `"[^"]*"` / `'[^']*'` are the same
-# non-nesting approximation `_CD_RE` already uses for a quoted `cd` operand —
-# a fully quoted argument is required, so an unterminated inner quote simply
-# does not match (fail open, no guess at where the argument ends).
+# `(?:\s+-{1,2}[A-Za-z][A-Za-z-]*)*?` group absorbs any flags BEFORE the
+# `-c`-bearing one (`bash -x -c '...'`); the `-c`-bearing flag itself may
+# carry glued letters (`-lc`). Issue #1194, shape 3b: a flag must start with
+# a LETTER after its dashes, so a bare POSIX `--` end-of-options marker no
+# longer satisfies the flag class and gets absorbed into it — previously
+# `[A-Za-z-]+` accepted a lone `-`, so `bash -- -c '...'` matched with `--`
+# consumed as a (vacuous) flag and `-c` still recognized, even though after a
+# real `--` bash reads `-c` as a script FILENAME and runs no `-c` string at
+# all (an over-block). `--posix`, `--norc`, `-lc`, `-x -c` all still start
+# with a letter right after their dashes and are unaffected. The operand
+# alternatives `"[^"]*"` / `'[^']*'` are the same non-nesting approximation
+# `_CD_RE` already uses for a quoted `cd` operand — a fully quoted argument is
+# required, so an unterminated inner quote simply does not match (fail open,
+# no guess at where the argument ends).
 _NESTED_SHELL_RE = re.compile(
-    r"\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-{1,2}[A-Za-z-]+)*?"
+    r"\b(?:bash|sh|zsh|dash|ksh)\b(?:\s+-{1,2}[A-Za-z][A-Za-z-]*)*?"
     r"\s+-[A-Za-z]*c(?=\s)\s+(\"[^\"]*\"|'[^']*')"
 )
 
