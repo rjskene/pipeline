@@ -45,16 +45,39 @@ scrubbed string, whose token-boundary class deliberately INCLUDES the quote
 chars — masking that would blind the extractor to every quoted absolute
 out-of-boundary token (`cat "/etc/passwd"`).
 
+Issue #1192 — nested shell strings, heredoc bodies, ANSI-C quoting. Three
+residuals surfaced by the #1191 differential drive, resolved as follows.
+
+IN scope (scanned/masked): `$'…'` ANSI-C regions are masked in
+`_mask_quoted_regions` exactly like any other quoted region (a backslash
+escapes the following char, per POSIX `$'…'` semantics, unlike a plain
+`'…'` region where a backslash is literal). Heredoc BODIES are masked as
+stdin DATA — via `_mask_heredoc_bodies` — in both the cd gate and the
+protected-write scan, EXCEPT when the owning pipeline segment's COMMAND WORD
+(`_segment_command_word`, never a line-wide search — see that function's
+docstring for why) resolves to a known interpreter (`bash`/`sh`/`zsh`/`dash`/
+`ksh`/`python*`/`node`/`perl`/`ruby`, reached through `env`/`nohup`/`sudo`-
+style wrapper words): such a body IS executed, so it stays scanned, fail
+closed. ONE level of a recognized `<shell> -c '<fully quoted string>'` is
+scanned by `_NESTED_SHELL_RE` via a `depth`-capped recursive call into
+`_iter_cd_targets`, so the inner string inherits quote masking, heredoc
+masking, the `cd -` skip and the `$`/backtick/glob fail-open for free; the
+recognizer runs over the MASKED `scan`, not the raw command, so quoted prose
+that merely NAMES the shape (a commit message, a `gh issue comment --body`)
+is never mistaken for a command position — that would be the #1190
+over-block class verbatim.
+
+OUT of scope, stated plainly: depth-2+ nesting (`bash -c "bash -c '…'"`) —
+a hard cap, not unbounded recursion, per #1188's explicit non-goal below; a
+non-`-c` remote-shell string (`ssh host "cd …"`) — deliberately preserved as
+the #1135/#1151 false-positive family, since requiring a `c`-bearing flag on
+a known shell word is what keeps it open; a heredoc body later `eval`'d or
+piped to a shell out-of-line; a heredoc whose delimiter coincides with an
+ordinary body line by coincidence; anything requiring real shell emulation.
+
 Explicit non-goals, same as the rest of this hook's "best-effort" scope: no
 shell emulation, no `pushd`/subshell/`$VAR` tracking, and an in-project `cd`
-does not re-anchor the absolute-token scan. Known residuals of that scope:
-`$'…'` ANSI-C quoting, heredoc BODIES and the inner text of a nested shell
-string (`bash -c "…"`) are unmodelled — a separator inside such an inner
-string is masked like any other quoted region, so `bash -c "true; cd ../../..
-&& mkdir x"` is now allowed (its previous block was accidental and already
-inconsistent with the separator-free `bash -c "cd ../../.. && mkdir x"`, which
-#1188 allowed); an UNQUOTED heredoc body line containing `; cd ..` still opens
-a command position, since #1188 excluded `\n` from the lookbehind, not `;`.
+does not re-anchor the absolute-token scan.
 """
 import os
 import posixpath
