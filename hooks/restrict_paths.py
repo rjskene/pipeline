@@ -852,6 +852,91 @@ def _segment_command_word(prefix: str) -> str:
     return ""
 
 
+# Issue #1194, shape 2 — arithmetic-expansion / arithmetic-command masking.
+# `_HEREDOC_OP_RE` has no notion of arithmetic context, so a left-shift
+# operator (`$((x << y))`, `((x << y))`) whose RHS happens to be an
+# identifier satisfies the delimiter class `[A-Za-z_][A-Za-z0-9_]*` and is
+# read as a real heredoc operator, opening a phantom body that masks every
+# following line — a real UNDER-block. `_KEYWORD_BEFORE_ARITH_RE` recognizes
+# the COMMAND-POSITION anchor for the bare `((` form only: start of line, one
+# of `;&|(){`, or one of the compound-command keywords that can precede an
+# arithmetic command (`if`/`while`/`until`/`elif`/`then`/`do`). `$((` is
+# always eligible regardless of position (it is expansion syntax, not a
+# command).
+_KEYWORD_BEFORE_ARITH_RE = re.compile(
+    r"(?:^|[;&|(){]|\b(?:if|while|until|elif|then|do))\s*$"
+)
+
+
+def _mask_arith_regions(line: str) -> str:
+    """Return a length-preserving copy of `line` with arithmetic-expression
+    interiors blanked, so `_HEREDOC_OP_RE` never mistakes an arithmetic `<<`
+    (or any other character inside `$(( … ))` / command-position `(( … ))`)
+    for a heredoc operator.
+
+    Nesting-aware via paren-depth counting: scans left to right for a `((`
+    token, decides eligibility (always for `$((`; command-position only,
+    per `_KEYWORD_BEFORE_ARITH_RE`, for a bare `((`), then walks forward
+    counting `(`/`)` until the two initial opens are balanced back to zero.
+    On a match, the ENTIRE region — both delimiters and interior — is
+    replaced with `_MASK_CHAR`, so a `<<` sitting anywhere inside (or
+    straddling the parens themselves) cannot survive the probe.
+
+    Fails OPEN on an unbalanced region: if no matching close is found, that
+    `((` is left completely unmasked and the scan resumes just past it —
+    only the unbalanced region is skipped, not the rest of the line, and not
+    the whole mask operation. This is deliberate (issue #1194 OUT list): an
+    unbalanced arithmetic region has no knowable end, so guessing where it
+    stops is worse than leaving it scanned, matching this hook's existing
+    fail-open doctrine for unresolvable state elsewhere (`cd -`, unsubstituted
+    `$VAR`).
+
+    Applied to the per-line heredoc-operator PROBE only (`_mask_heredoc_bodies`)
+    — never to the line used for the delimiter slice or to the prefix
+    `_segment_command_word` walks — so narrowing the operator recognizer can
+    only recognize FEWER heredocs, i.e. mask FEWER bodies, i.e. scan MORE:
+    the fail-closed direction. A non-command-position `((` (`for ((i=0;...))`)
+    is intentionally left unmasked (OUT list) — the anchor is what keeps the
+    masked surface to genuine arithmetic-command shapes.
+    """
+    if "((" not in line:
+        return line
+    out = list(line)
+    n = len(line)
+    i = 0
+    while i < n - 1:
+        if line[i] == "(" and line[i + 1] == "(":
+            dollar = i > 0 and line[i - 1] == "$"
+            eligible = dollar or bool(
+                _KEYWORD_BEFORE_ARITH_RE.search(line[:i])
+            )
+            if eligible:
+                depth = 2
+                j = i + 2
+                matched = False
+                while j < n:
+                    if line[j] == "(":
+                        depth += 1
+                    elif line[j] == ")":
+                        depth -= 1
+                        if depth == 0:
+                            matched = True
+                            break
+                    j += 1
+                if matched:
+                    for k in range(i, j + 1):
+                        if out[k] != "\n":
+                            out[k] = _MASK_CHAR
+                    i = j + 1
+                    continue
+            # Not eligible, or eligible but unbalanced (fail open): skip past
+            # this "((" without masking so the outer scan cannot loop forever.
+            i += 2
+            continue
+        i += 1
+    return "".join(out)
+
+
 def _mask_heredoc_bodies(command: str) -> str:
     """Return a length-preserving copy of `command` with heredoc BODIES masked.
 
@@ -915,6 +1000,7 @@ def _mask_heredoc_bodies(command: str) -> str:
         probe = _mask_quoted_regions(line)
         if probe is None:
             probe = line
+        probe = _mask_arith_regions(probe)
         for m in _HEREDOC_OP_RE.finditer(probe):
             dash = m.group(1) == "-"
             delimiter = line[m.start(3):m.end(3)]
