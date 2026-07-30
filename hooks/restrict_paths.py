@@ -619,12 +619,38 @@ def _mask_quoted_regions(command: str):
                 else:
                     i += 1
                 continue
+            if ch == "$" and command[i + 1:i + 2] == "'":
+                # ANSI-C opener (issue #1192). Emit both chars verbatim and
+                # enter the two-char "$'" quote mode below.
+                out.append(ch)
+                out.append(command[i + 1])
+                quote = "$'"
+                i += 2
+                continue
             if ch in "\"'":
                 quote = ch
             out.append(ch)
             i += 1
             continue
         # Inside a quoted region.
+        if quote == "$'" and ch == "\\":
+            # ANSI-C region: a backslash escapes the next char (mirrors the
+            # double-quote arm below, including newline preservation).
+            out.append(_MASK_CHAR)
+            if i + 1 < n:
+                nxt = command[i + 1]
+                out.append("\n" if nxt == "\n" else _MASK_CHAR)
+                i += 2
+            else:
+                i += 1
+            continue
+        if quote == "$'" and ch == "'":
+            # Closes the ANSI-C region. The generic `ch == quote` test below
+            # can never fire here since `quote` is the two-char "$'".
+            quote = ""
+            out.append(ch)
+            i += 1
+            continue
         if quote == '"' and ch == "\\":
             out.append(_MASK_CHAR)
             if i + 1 < n:
