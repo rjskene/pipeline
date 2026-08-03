@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.23.23](https://github.com/rjskene/pipeline/compare/v0.23.22...v0.23.23) (2026-08-03)
+
+
+### Features
+
+* **model-routing:** add resolve-stage-model.sh single-source stage-model resolver ([#1186](https://github.com/rjskene/pipeline/issues/1186)) ([a96de93](https://github.com/rjskene/pipeline/commit/a96de933b0652d7a03c0e206ed08bbb065cdd528))
+* **model-routing:** execute resolver emits named models only; accept PATH A/C ([#1186](https://github.com/rjskene/pipeline/issues/1186)) ([d61e9f0](https://github.com/rjskene/pipeline/commit/d61e9f002b763f01b96307062a20a6c92797dee9))
+* **model-routing:** explicit per-stage model pins; retire `inherit` at dispatch sites ([#1186](https://github.com/rjskene/pipeline/issues/1186)) ([074c930](https://github.com/rjskene/pipeline/commit/074c9303bea503f5d66534105a27a95c496431b5))
+* **model-routing:** pin stage models at every dispatch read-site; retire inherit prose ([#1186](https://github.com/rjskene/pipeline/issues/1186)) ([8c36dd1](https://github.com/rjskene/pipeline/commit/8c36dd156c186e4bef9409f1854fe69c0823a4c9))
+* **model-routing:** verify-dispatch accepts PATH A/C dispatch specs ([#1186](https://github.com/rjskene/pipeline/issues/1186)) ([8edaa65](https://github.com/rjskene/pipeline/commit/8edaa65dd5ec508c59fb7ec49948821300419a78))
+* **tokenomics:** bake Fable 5 list-price defaults + config anchors ([#1186](https://github.com/rjskene/pipeline/issues/1186)) ([a237a37](https://github.com/rjskene/pipeline/commit/a237a374c666426b028f0c7b3a37d55f820447da))
+
+
+### Bug Fixes
+
+* **hooks:** mask ANSI-C quoted regions in the cd command-position scan ([92e1837](https://github.com/rjskene/pipeline/commit/92e1837ee5d0ac5fcc6194e0efbf2d71f972e0c7)), closes [#1192](https://github.com/rjskene/pipeline/issues/1192)
+* **hooks:** mask quoted regions before the cd command-position scan ([#1190](https://github.com/rjskene/pipeline/issues/1190)) ([6be0a30](https://github.com/rjskene/pipeline/commit/6be0a309733cf757096d632e8e908af762c8337b))
+* **hooks:** mask quoted regions before the cd command-position scan ([#1190](https://github.com/rjskene/pipeline/issues/1190)) ([d6245ad](https://github.com/rjskene/pipeline/commit/d6245ad0592be3ef9c68216e1e8dd6985ab24902))
+* **hooks:** resolve a wrapper's option/positional argument before the interpreter word ([#1194](https://github.com/rjskene/pipeline/issues/1194)) ([479c893](https://github.com/rjskene/pipeline/commit/479c8938508718e38b0c25c0cec1207d888e151e))
+* **hooks:** resolve leading cd target against the project boundary ([c5f7653](https://github.com/rjskene/pipeline/commit/c5f765349d697efedfc6f527fc1b3ef6e0bd7f9b))
+* **hooks:** resolve leading cd target against the project boundary ([#1188](https://github.com/rjskene/pipeline/issues/1188)) ([a5bd7a1](https://github.com/rjskene/pipeline/commit/a5bd7a142daece2e82a443d5e09db4538d8fc2b4))
+* **hooks:** reword a comment to stop tripping the slash-command namespace guard ([1773ea5](https://github.com/rjskene/pipeline/commit/1773ea59e342ced44fdfb3e889becfd8c09e2cf1)), closes [#1192](https://github.com/rjskene/pipeline/issues/1192)
+* **hooks:** scan nested shell -c strings and mask heredoc/ANSI-C regions ([#1192](https://github.com/rjskene/pipeline/issues/1192)) ([3363685](https://github.com/rjskene/pipeline/commit/33636856f9b2cea6e92c5c5523d3eaf468fe5335))
+* **hooks:** scan one level into a nested shell -c string for cd escapes ([3b5e8bc](https://github.com/rjskene/pipeline/commit/3b5e8bc4b951a50a16cb215472565867c3254b6d)), closes [#1192](https://github.com/rjskene/pipeline/issues/1192)
+* **hooks:** stop reading an arithmetic left-shift as a heredoc operator ([#1194](https://github.com/rjskene/pipeline/issues/1194)) ([e4d8f27](https://github.com/rjskene/pipeline/commit/e4d8f27738e409003c57b42c843a98dc8ca0213f))
+* **hooks:** treat a bare -- as end-of-options in the nested-shell recognizer ([#1194](https://github.com/rjskene/pipeline/issues/1194)) ([119cd38](https://github.com/rjskene/pipeline/commit/119cd38b15caadeff30f74dc0c67b919acb92ef7))
+* **hooks:** treat heredoc bodies as data in the cd and protected-write scans ([7319ef9](https://github.com/rjskene/pipeline/commit/7319ef9450b2b2673a58ce519d3a9bc857ca78ae)), closes [#1192](https://github.com/rjskene/pipeline/issues/1192)
+* **hooks:** wrapper arity + interpreter guard, arithmetic &lt;&lt; masking, POSIX -- ([#1194](https://github.com/rjskene/pipeline/issues/1194)) ([966717a](https://github.com/rjskene/pipeline/commit/966717abf8d518c0e4d891793fce127b14acaf0e))
+* **split-role-gate:** scope locked-tests via PIPELINE_TEST_ROOTS ([#1182](https://github.com/rjskene/pipeline/issues/1182)) ([ac8d46c](https://github.com/rjskene/pipeline/commit/ac8d46cfbc89004523486ededc6d43827ed10623))
+* **split-role-gate:** scope locked-tests via PIPELINE_TEST_ROOTS ([#1182](https://github.com/rjskene/pipeline/issues/1182)) ([6f85f40](https://github.com/rjskene/pipeline/commit/6f85f4045a3de7104f3156ac792f011c07c3cb31))
+
 ## [0.23.22](https://github.com/rjskene/pipeline/compare/v0.23.21...v0.23.22) (2026-07-13)
 
 
