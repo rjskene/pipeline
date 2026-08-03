@@ -44,6 +44,17 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # to your live pipeline.config by HAND on the operator host — this example file is
 # the only tracked surface a PR can land on.
 PIPELINE_TEST_CMD="npm test"                       # Test command
+# PIPELINE_TEST_ROOTS (issue #1182): test-path roots the split-role W7 gate
+# (scripts/split-role-gate.sh) locks against green-role tampering. Default
+# (unset): tests/. Space/newline-separated for multiple roots. Glob roots are
+# SHELL-EXPANDED against the gate's CWD at eval time (git's own pathspec `*`
+# does not cross `/`, so they must resolve to existing dirs at that time —
+# otherwise use exact dir paths). Consumers whose tests do NOT live under
+# tests/ (e.g. work-orchestrator: subagents/*/testing/ testing/) MUST set this
+# or the split-role W7 lock scope is vacuous (nothing found under tests/ ⇒ the
+# additive-only check trivially passes even when a locked test was tampered).
+# Only relevant when PIPELINE_PATH_B_SPLIT_ROLE is enabled.
+#PIPELINE_TEST_ROOTS="subagents/*/testing/ testing/"
 PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
 PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read
 PIPELINE_SYNC_ENVS=""                              # Space-separated .env files to sync to worktrees
@@ -124,6 +135,14 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_OUTPUT=5
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_CREATION=1.25
 #PIPELINE_PRICE_CLAUDE_HAIKU_4_5_CACHE_READ=0.10
+# Fable 5 (#1186 — matches baked defaults; uncomment to override). The
+# stage-model pins design puts the orchestrator session and the PATH C plan
+# stage on Fable, so Fable records enter the capture stream; without these rates
+# Fable falls through to the unknown-model Opus fallback and is mis-priced.
+#PIPELINE_PRICE_CLAUDE_FABLE_5_INPUT=10
+#PIPELINE_PRICE_CLAUDE_FABLE_5_OUTPUT=50
+#PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_CREATION=12.50
+#PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_READ=1.00
 
 # --- Rolling-window usage read-out (issue #725, dogfood-only phase 1) ---
 #
@@ -305,15 +324,18 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # --- per-path execute MODEL routing (#1042: Sonnet is the DEFAULT, opt-OUT) ---
 #
 # fullsend's execute dispatch (Step 6) pins this model for eligible PATH B / PATH D
-# issues; the value is the Agent `model` enum: sonnet | opus | haiku. The lines below
+# issues; the value is the Agent `model` enum: sonnet | opus | haiku | fable. The lines below
 # ship ACTIVE at the Sonnet default (#1042) — a fresh install runs Sonnet on eligible
 # PATH B + all PATH D execute. To opt OUT, set `=opus` (the conservative Opus-everywhere
-# tier) or comment the line entirely; either restores the Opus inherit at the read site.
+# tier) or comment the line entirely; either restores the pinned Opus tier at the read site.
 # Three carve-outs ALWAYS force Opus regardless of these knobs: the W2 high-uncertainty
 # vocab (concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss), the
 # PATH D browser-eval carve-out label (#960), and — the safety-critical one — pr-eval,
-# which is NEVER defaulted to Sonnet: the independent evaluator always stays on the
-# inherited Opus backstop (the W3 property that makes a cheaper-execute default safe).
+# which is NEVER defaulted to Sonnet: the independent evaluator is PINNED opus via
+# PIPELINE_STAGE_MODEL_PR_EVAL (the W3 property that makes a cheaper-execute default safe).
+# #1186: the carve-outs force opus as a NAMED model — `inherit` is RETIRED as a resolver
+# emission, because an unpinned dispatch silently rides whatever the session model is
+# (under a Fable-ceiling session that upshifted every carve-out to Fable, not Opus).
 # SINGLE SOURCE OF TRUTH (#1056): these knobs are applied at dispatch time in exactly
 # ONE place — scripts/resolve-execute-dispatch.sh — which fullsend's Step 6 sources and
 # consumes verbatim (campaign inherits by reference). Do NOT re-encode the routing in
@@ -336,7 +358,8 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # "low-blast" (or comment the line) to restrict Sonnet to the §4 low-blast lane only:
 # issues passing scripts/path-b-execute-eligible.sh's single-module / <=6-file gate.
 # The eligibility script is UNCHANGED; under "all" its verdict is advisory (still
-# relayed in the run log). W2 carve-outs always inherit Opus. pr-eval ALWAYS stays Opus (W3).
+# relayed in the run log). W2 carve-outs always pin opus (#1186 — named, never inherit).
+# pr-eval ALWAYS stays Opus (W3), pinned via PIPELINE_STAGE_MODEL_PR_EVAL.
 # Applied at dispatch in scripts/resolve-execute-dispatch.sh (the #1056 single source).
 # Override anchor (#1052): defaults-in-code — the "all" default lives at the read site
 # (${PIPELINE_PATH_B_ELIGIBLE_SCOPE:-all}), so this stays COMMENTED and `--fix config`
@@ -361,6 +384,34 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # (${PIPELINE_PATH_B_SPLIT_ROLE:-true}), so this stays COMMENTED and `--fix config`
 # does NOT seed it. Uncomment only to override (=false to opt OUT of the split-role lane).
 #PIPELINE_PATH_B_SPLIT_ROLE=true
+
+# --- per-stage model PINS (#1186: explicit pins; `inherit` retired at dispatch) ---
+#
+# Every quality-critical dispatched stage carries an explicit `model=`; the session
+# model is reserved for the orchestrator loop itself. Before #1186 plan / plan-eval /
+# pr-eval passed NO `model=` at all, so the load-bearing W3 property ("pr-eval is
+# always Opus") was an INHERITANCE SIDE-EFFECT — true only while the session model
+# happened to be Opus. Under a Fable-ceiling session every unpinned site silently
+# upshifted: 2x the cost on the most expensive lanes, and the security-adjacent W2
+# carve-out routed onto the model most likely to return `stop_reason: refusal`
+# mid-gate. An auto-merge gate that can refuse mid-verdict is a broken gate.
+# SINGLE SOURCE OF TRUTH: scripts/resolve-stage-model.sh <N> <plan|plan-eval|pr-eval>
+# resolves the plan/plan-eval/pr-eval pins; scripts/resolve-execute-dispatch.sh
+# <N> <A|B|C|D> resolves execute (A/C joined B/D in #1186). Do NOT re-encode the
+# routing in SKILL prose — that drift WAS the #1056 root cause.
+# Two invariants the resolver encodes: (1) GATE NEVER BELOW PRODUCER — plan-eval is
+# tier-max(plan model, knob), and a pr-eval knob below the resolved execute tier is
+# honored but emits a stderr WARN (override allowed, silence is not); (2) the W2
+# high-uncertainty carve-out forces opus on plan/plan-eval too, overriding both the
+# PATH C fable default AND an explicit knob (refusal risk wins).
+# Override anchors (#1052): defaults-in-code — every default below lives at the read
+# site, so these stay COMMENTED and `--fix config` does NOT seed them. Seeding would
+# PIN the current default and defeat central default evolution on plugin upgrade.
+#PIPELINE_STAGE_MODEL_PLAN_EVAL=opus     # evaluator floor; PATH C follows its plan model
+#PIPELINE_STAGE_MODEL_PR_EVAL=opus       # W3 as an explicit pin — NEVER below execute tier
+#PIPELINE_PATH_C_MODEL_PLAN=fable        # cross-unit meshing; W2 carve-out forces opus
+#PIPELINE_PATH_A_MODEL_EXECUTE=opus      # docs-only execute; was a silent inherit
+#PIPELINE_PATH_C_MODEL_EXECUTE=opus      # tdd-implementer leaves; was a silent inherit
 
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 # Override anchor (#1052): defaults-in-code — default true lives at the read site

@@ -41,6 +41,30 @@ Known trip-wires and the way around each:
   - A `#!/bin/bash` shebang inside Bash *content* (e.g. a `cat <<'EOF'` heredoc
     that writes a script) is extracted as `/bin/bash` and blocked — use an
     `awk`/`sed` rewrite with no shebang instead.
+  - **Narrow exception (#1192):** as of #1192, a heredoc **BODY** (the lines
+    between `<<'EOF'` and its terminator, when the operator line's command
+    word is not an interpreter like `bash`/`sh`/`python`) is masked as stdin
+    DATA rather than scanned. This fixes the two RELATIVE cases only:
+    script-authoring a `.sh` file whose body contains a `; cd ../..`-shaped
+    line, and HTML/prose bodies that merely NAME a relative protected-control
+    token (`.claude/hooks/…`). It does **not** cover an ABSOLUTE
+    out-of-boundary token — the heredoc mask is deliberately kept off
+    `extract_paths()`, so a body naming an absolute path (e.g. `/etc/passwd`,
+    or the `skills/run/`-resolving-to-`/run` case above) still blocks with
+    `path outside project boundary`. `--body-file` therefore remains the
+    workaround for both absolute-token sub-bullets above (the `gh issue
+    comment` case and the shebang case) and for any path-like text that is
+    NOT inside a heredoc body.
+    **Narrowed further by #1194:** the "operator line's command word is not
+    an interpreter" check now resolves through a wrapper's own OPTION or
+    POSITIONAL argument (`timeout 300 bash <<EOF`, `sudo -u root bash
+    <<EOF`, `env -u FOO bash <<EOF`, `nice -n 5 bash <<EOF` all now correctly
+    resolve to `bash` and stay scanned — previously the walk terminated on
+    the wrapper's own argument and the body was wrongly masked as data). A
+    left-shift inside `$(( … ))` or a command-position `(( … ))` (`echo
+    $((x << y))`) is also no longer read as a heredoc operator, so it can no
+    longer open a phantom heredoc that masks every following line. See the
+    module docstring's `Issue #1194` section for the full IN/OUT list.
 
 - **`/tmp` is blocked.** Reads/writes under `/tmp` are outside the boundary.
   Write scratch under `.claude/scratch/` instead. This is the root cause of the

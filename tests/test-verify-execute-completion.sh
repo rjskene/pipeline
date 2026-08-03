@@ -480,6 +480,58 @@ OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=tr
 assert_action "d9" "$OUT" "DISPATCH=mismatch"
 assert_action "d9-reason" "$OUT" "REASON=shape:single!=split-role"
 
+# Case D10 (#1186): PATH A is now a REAL dispatch spec. Before #1186 the PATH A
+# execute Agent carried no `model=` at all (no knob existed), so there was
+# nothing to verify and the mode refused the path letter with exit 2 + usage.
+# resolve-execute-dispatch.sh now resolves A (opus default), so the post-dispatch
+# verify must accept it. Shape scan is inert for A/C (VED_EXPECT_SPLIT_ROLE=false
+# — split-role is PATH B only), so this is a pure model check.
+echo ""
+echo "Case D10 (#1186): --verify-dispatch accepts PATH A -> DISPATCH=match"
+D10="$ROOT/d10"; make_dispatch_repo "$D10" 0
+OUT=$(VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=opus VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D10" 1186 A)
+assert_action "d10" "$OUT" "DISPATCH=match"
+assert_action "d10-issue" "$OUT" "ISSUE=1186"
+inc
+if printf '%s' "$OUT" | grep -qiF "usage"; then
+  fail_msg "d10: PATH A still rejected with a usage error (path guard not widened): $OUT"
+else
+  pass_msg "d10: PATH A accepted (no usage error)"
+fi
+
+# Case D11 (#1186): PATH C leaf dispatch, observed model DRIFTED off the resolved
+# spec (a leaf silently rode a cheaper/hotter model) -> mismatch, same REASON
+# shape as the B/D model check. This is the property that makes the new A/C pins
+# verifiable rather than merely declared.
+echo ""
+echo "Case D11 (#1186): --verify-dispatch accepts PATH C + catches model drift"
+D11="$ROOT/d11"; make_dispatch_repo "$D11" 0
+OUT=$(VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D11" 1186 C)
+assert_action "d11" "$OUT" "DISPATCH=mismatch"
+assert_action "d11-reason" "$OUT" "REASON=model:sonnet!=opus"
+
+# Case D12 (#1186): a genuinely invalid path letter STILL exits 2 + usage — the
+# guard widened to A|B|C|D, it did not disappear (pr-eval stays refused: the W3
+# structural guard that pr-eval is never routed through the execute resolver).
+echo ""
+echo "Case D12 (#1186): invalid path letters still rejected (guard widened, not removed)"
+D12="$ROOT/d12"; make_dispatch_repo "$D12" 0
+for bad in E pr-eval; do
+  inc
+  ERR=$( ( cd "$D12" && VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=opus \
+             VED_EXPECT_SPLIT_ROLE=false \
+             PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+             bash "$SCRIPT_UNDER_TEST" --verify-dispatch 1186 "$bad" ) 2>&1 >/dev/null )
+  rc=$?
+  if [ "$rc" -eq 2 ] && printf '%s' "$ERR" | grep -qiF "usage"; then
+    pass_msg "d12: invalid path '$bad' -> exit 2 + usage"
+  else
+    fail_msg "d12: invalid path '$bad': expected exit 2 + usage, got rc=$rc err='$ERR'"
+  fi
+done
+
 # ============================================================================
 # #1122 — additive --clean-main <main-repo-dir> mode: orchestrator main-checkout
 # cleanliness guard.

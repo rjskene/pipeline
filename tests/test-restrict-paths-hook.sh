@@ -373,5 +373,310 @@ run_hook_set "Bash non-existent PROJECT_DIR worktree token does NOT skip scan (#
 P6D=$(printf '{"tool_name":"Bash","tool_input":{"command":"cp .claude/hooks/foo.py %s/foo.py"}}' "$NESTED_WT_DIR")
 run_hook_set "Bash cp into EXISTING registered worktree still ALLOWED (#1067 sync preserved)" "$P6D" 0 --no-grep
 
+# ---------------------------------------------------------------------------
+# Block 7 — cd-escape (#1188).
+# The Bash extractor lifts only `/`-anchored ABSOLUTE tokens from the command
+# string, so `cd <anywhere> && <relative write>` leaves the project boundary
+# with nothing to evaluate — the string is benign and the SHELL is what makes it
+# point outside. 7a is the RED case (exit 0 today); 7b–7e are pins that are
+# green today AND must stay green post-fix, so the fix cannot degrade into a
+# blanket "any cd blocks".
+#
+# NOTE: every payload here carries the FULL event envelope
+# {"tool_name":"Bash","tool_input":{"command":"…"}} — with a bare
+# {"command":…} form tool_name is "", the Bash branch never runs, and 7a would
+# return 0 even against a correct implementation while 7b–7e passed vacuously.
+# ---------------------------------------------------------------------------
+
+# 7a (RED today, exit 0): a `..` chain that clears the project root followed by
+# an ordinary relative mkdir must BLOCK with a message naming the cd target.
+# The chain is 7 levels deep so it collapses to `/` whether the suite runs from
+# the main repo or from inside a nested worktree checkout.
+run_hook_set "Bash cd ..-escape + relative mkdir must BLOCK (#1188)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd ../../../../../../.. && mkdir -p volumes/x"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 7b (pin, green today AND post-fix): an ordinary in-project descent stays open.
+run_hook_set "Bash cd into in-project subdir still ALLOWED (#1188 pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd scripts && ls"}}' \
+  0 --no-grep
+
+# 7c (pin, green today AND post-fix): the /tmp carve-out survives — the
+# extractor already skips /tmp candidates unconditionally and the cd gate must
+# reach parity (see tests/test-restrict-paths-worktree-git.sh:14-18).
+run_hook_set "Bash cd /tmp still ALLOWED (#1188 /tmp carve-out parity)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd /tmp && ls"}}' \
+  0 --no-grep
+
+# 7d (pin, green today AND post-fix): an unsubstituted $VAR target is
+# unresolvable → fail open (#917 doctrine).
+run_hook_set "Bash cd \"\$VAR\" target fails open (#1188 pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cd \"$WORKTREE\" && ls"}}' \
+  0 --no-grep
+
+# 7e (pin, green today AND post-fix): a `cd` on a LATER LINE of a multi-line
+# body is NOT in command position for this gate — `\n` is deliberately excluded
+# from the delimiter class so heredoc bodies and multi-line scripts are not
+# scanned (that would be a new over-block class on an extractor that has already
+# shipped four over-block regressions). The JSON `\n` escapes decode to real
+# newlines. Cross-checks the python-layer pin 24 at the shell layer.
+run_hook_set "Bash cd on a later line of a multi-line body fails open (#1188 pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"set -e\ncd ../..\nls"}}' \
+  0 --no-grep
+
+# ---------------------------------------------------------------------------
+# Block 8 — quoted-region masking (#1190).
+# #1188's command-position lookbehind (`;`, `&`, `|`, `(`, `{`) has no notion of
+# quoting, so a separator INSIDE a quoted string opens a command position and a
+# change-directory word after it is read as a real command — blocking ordinary
+# quoted prose (commit messages, payloads, variable assignments). 8a/8b are the
+# RED cases (exit 2 today, must be 0 post-fix); 8c–8e are keep-block pins that
+# are green today AND must stay green, so the fix cannot under-block.
+#
+# Authoring notes, same three hazards as Block 7:
+#   (i)   every payload carries the FULL {"tool_name":"Bash","tool_input":{…}}
+#         envelope — with a bare {"command":…} form tool_name is "", the Bash
+#         branch never runs, and every case here would pass vacuously;
+#   (ii)  the payload is a single-quoted shell string holding JSON, so an
+#         embedded `"` is written `\"` (Task-3.2 / 5f precedent);
+#   (iii) the `..` chains are 7 levels deep so they collapse to `/` whether the
+#         suite runs from the main repo or from inside a nested worktree
+#         checkout — a 1-deep `..` can land back in-boundary and pass vacuously.
+# 8d's command value legitimately carries ONE unbalanced `"`; the JSON string
+# itself stays valid.
+# ---------------------------------------------------------------------------
+
+# 8a (RED today, exit 2): a commit message that merely DESCRIBES the traversal.
+run_hook_set "Bash quoted commit message with a separator + cd must ALLOW (#1190)" \
+  '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"narrows the scan; cd ../../../../../../.. is misread\""}}' \
+  0 --no-grep
+
+# 8b (RED today, exit 2): the verbatim live-session repro — a variable
+# assignment holding quoted English prose, `|` as the separator.
+run_hook_set "Bash quoted var assignment with a separator + cd must ALLOW (#1190)" \
+  '{"tool_name":"Bash","tool_input":{"command":"MSG=\"the cd scan| cd ../../../../../../.. bug\""}}' \
+  0 --no-grep
+
+# 8c (pin, green today AND post-fix): a REAL cd escape AFTER a balanced quoted
+# region still blocks — masking is length-preserving and must not swallow the
+# tail. Cross-checks the python-layer K2 at the shell layer.
+run_hook_set "Bash real cd-escape after a quoted region STILL BLOCKS (#1190 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo \"note\" ; cd ../../../../../../.. && mkdir -p volumes/x"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 8d (pin, fail-CLOSED): an UNTERMINATED quote falls back to scanning the RAW
+# command — exactly today's behavior, never fewer blocks. Masking to
+# end-of-string would be a one-character bypass.
+run_hook_set "Bash unterminated quote fails CLOSED (#1190 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo \"oops; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 8e (pin, SCOPE GUARD): a QUOTED absolute out-of-boundary path still blocks via
+# the pre-existing extractor, with the byte-identical PATH message. The mask
+# must stay inside the cd path — masking the string `extract_paths()` scans
+# would blind it to every quoted absolute token.
+run_hook_set "Bash quoted absolute /etc path STILL BLOCKS with the path message (#1190 scope guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat \"/etc/passwd\""}}' \
+  2 "BLOCKED: path outside project boundary"
+
+# ---------------------------------------------------------------------------
+# Block 9 — nested shell strings, heredoc bodies, ANSI-C quoting (#1192).
+# The three escape/over-block residuals left by #1188 + #1190:
+#   shape 1 `bash -c "cd …"` — a real UNDER-block (9h is the RED case: exit 0
+#           today, must be 2 post-fix; 9i/9j are the anti-FP pins);
+#   shape 2 heredoc BODIES   — an OVER-block today (9c is RED: exit 2 today,
+#           must be 0 post-fix; 9d–9g are keep-block pins);
+#   shape 3 `$'…'` ANSI-C    — an OVER-block today (9a is RED; 9b is the
+#           keep-block pin).
+#
+# Authoring notes — the three Block 7/8 hazards still apply (full
+# {"tool_name":"Bash","tool_input":{…}} envelope or every case passes
+# vacuously; `\"` for an embedded double quote inside the single-quoted shell
+# payload; 7-deep `..` chains so they collapse to `/` from a worktree checkout
+# too) PLUS a fourth that is new here:
+#   (iv) several of these commands carry a REAL single quote (the ANSI-C
+#        regions and the nested-shell prose pins). Inside the single-quoted
+#        shell string holding the JSON that must be written `'\''`, and the
+#        backslash of an ANSI-C `\'` must survive as JSON `\\` so the hook
+#        receives one literal backslash.
+# ---------------------------------------------------------------------------
+
+# 9a (RED today, exit 2): an ANSI-C region whose `\'` escape currently closes
+# the region early, exposing `b ; cd <UP>'` as unquoted text. Decodes to
+# `echo $'a\'b ; cd ../../../../../../..'`.
+run_hook_set "Bash ANSI-C \$'…' region with an escaped quote must ALLOW (#1192)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $'\''a\\'\''b ; cd ../../../../../../..'\''"}}' \
+  0 --no-grep
+
+# 9b (pin, green today AND post-fix): the same region CLOSED before the
+# separator — the `cd` after it is a genuine command position. Decodes to
+# `echo $'a\'b' ; cd ../../../../../../..`. Cross-checks the python-layer
+# keep-block at the shell layer.
+run_hook_set "Bash real cd-escape after a CLOSED ANSI-C region STILL BLOCKS (#1192 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $'\''a\\'\''b'\'' ; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9c (RED today, exit 2): authoring a shell script with a heredoc. The body is
+# stdin DATA, but the `;` on the body line still opens a command position
+# because #1188 excluded `\n` from the lookbehind class, not `;`.
+run_hook_set "Bash heredoc body with a separator + cd must ALLOW (#1192)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat > s.sh <<'\''EOF'\''\necho a; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 9d (pin, green today AND post-fix): the interpreter carve-out — a body fed to
+# a shell on stdin IS executed, so it stays scanned and keeps blocking.
+run_hook_set "Bash heredoc body fed to bash STILL BLOCKS (#1192 interpreter carve-out)" \
+  '{"tool_name":"Bash","tool_input":{"command":"bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9e (pin, green today AND post-fix): a HERESTRING (`<<<`) opens no body at all.
+# Non-vacuous only in this MULTI-LINE form — an operator regex of `<<(?!<)`
+# matches at offset 1 of `<<<`, takes `x` as the delimiter and masks the rest,
+# flipping this to exit 0. The lookBEHIND is what keeps it blocked.
+run_hook_set "Bash multi-line herestring is not a heredoc — cd STILL BLOCKS (#1192 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat <<< \"x\"\ntrue; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9f (pin, SCOPE GUARD): the heredoc mask must never reach `extract_paths()` —
+# a body naming an ABSOLUTE out-of-boundary token still blocks with the
+# byte-identical PATH message, not the cd one. Cross-checks the python-layer
+# scope guard; this is why the operational-notes amendment stays narrow.
+run_hook_set "Bash heredoc body naming an absolute /etc path STILL BLOCKS with the path message (#1192 scope guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat > s.txt <<'\''EOF'\''\nsee /etc/passwd here\nEOF"}}' \
+  2 "BLOCKED: path outside project boundary"
+
+# 9g (pin, green today AND post-fix): a real escape AFTER the terminator line.
+# A mask that over-runs the terminator flips this to exit 0, so this is the pin
+# for the body-end boundary.
+run_hook_set "Bash cd-escape after the heredoc terminator STILL BLOCKS (#1192 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"cat > s.sh <<'\''EOF'\''\nhi\nEOF\ntrue; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9h (RED today, exit 0): the shape-1 under-block. The inner shell string is
+# masked as an ordinary quoted region today, so the cd inside it is invisible.
+run_hook_set "Bash nested bash -c cd-escape must BLOCK (#1192)" \
+  '{"tool_name":"Bash","tool_input":{"command":"bash -c \"cd ../../../../../../.. && mkdir x\""}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 9i (pin, green today AND post-fix): `ssh host "cd …"` carries NO `-c` flag and
+# is the #1135/#1151 false-positive family the hook docstring names. Requiring a
+# `c`-bearing flag after a known shell word is what keeps it open.
+run_hook_set "Bash ssh host \"cd …\" without -c stays ALLOWED (#1192 anti-FP pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"ssh h \"cd ../../../../../../.. && ls\""}}' \
+  0 --no-grep
+
+# 9j (pin, green today AND post-fix): quoted PROSE that merely NAMES the
+# nested-shell shape. Running the recognizer over the ORIGINAL command string
+# instead of the masked copy re-opens the #1190 over-block class verbatim.
+run_hook_set "Bash commit message naming the bash -c shape stays ALLOWED (#1192 anti-FP pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"note: bash -c '\''cd ../../../../../../..'\'' escapes\""}}' \
+  0 --no-grep
+
+# ---------------------------------------------------------------------------
+# Block 10 — wrapper ARITY, arithmetic `<<`, POSIX `--` (#1194).
+# The three residuals left by #1192's heredoc mask and nested-shell
+# recognizer, surfaced by the differential drive on PR #1193:
+#   shape 1  a WRAPPER whose argument is POSITIONAL (or a separate option
+#            argument) defeats the interpreter carve-out — `timeout 300 bash`
+#            resolves to `300`, so an EXECUTED body is masked as data. A real
+#            UNDER-block (10a–10c are RED: exit 0 today, must be 2 post-fix).
+#            10d/10e are the flip-class KEEP-BLOCK pins — green today, and
+#            green post-fix ONLY IF the arity walk carries the interpreter
+#            guard (an UNguarded walk consumes `bash` as the wrapper's own
+#            argument and both flip to exit 0). 10f/10g are the paired ALLOW
+#            pins (#1190 guard); 10g additionally rejects option (b), "any
+#            token in the segment that basenames to an interpreter word".
+#   shape 2  an arithmetic left-shift is read as a heredoc OPERATOR, so
+#            `echo $((x << y))` opens a phantom heredoc with delimiter `y`
+#            and masks every following line (10h is RED; 10i is the pin that
+#            a REAL heredoc still masks).
+#   shape 3b POSIX `--` end-of-options — `[A-Za-z-]+` lets a lone `-` satisfy
+#            the flag group, so `--` is absorbed and `-c` still matches, even
+#            though after `--` the `-c` is a script FILENAME. An OVER-block
+#            (10j is RED: exit 2 today, must be 0 post-fix; 10k is the
+#            keep-block pin — it is one of the SEVEN wrapper-reached shapes a
+#            command-position anchor on `_NESTED_SHELL_RE` would silently
+#            drop, which is why shape 3a stays documented rather than fixed).
+#
+# Authoring notes — the four Block 7/8/9 hazards still apply (full
+# {"tool_name":"Bash","tool_input":{…}} envelope or every case passes
+# vacuously; `\"` for an embedded double quote inside the single-quoted shell
+# payload; 7-deep `..` chains so they collapse to `/` from a worktree checkout
+# too; `'\''` for a real single quote). The `$((…))` payloads below sit inside
+# a single-quoted shell string, so the `$` reaches the hook literally.
+# ---------------------------------------------------------------------------
+
+# 10a (RED today, exit 0): the literal issue repro — `timeout`'s duration is a
+# positional, so the walk terminates on `300` and never reaches `bash`.
+run_hook_set "Bash heredoc fed to bash via timeout <duration> must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"timeout 300 bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10b (RED today, exit 0): a zero-positional wrapper whose OPTION argument is
+# the token the walk currently returns.
+run_hook_set "Bash heredoc fed to bash via sudo -u <user> must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"sudo -u root bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10c (RED today, exit 0): `nice` is absent from `_WRAPPER_WORDS` entirely.
+run_hook_set "Bash heredoc fed to bash via nice -n <adj> must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"nice -n 5 bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10d (KEEP-BLOCK, flip class): `env -S <command>` really execs its argument,
+# so `bash` is the interpreter, not an option argument to step over. Green
+# today; RED against an arity walk that lacks the interpreter guard.
+run_hook_set "Bash heredoc under env -S bash STILL BLOCKS (#1194 interpreter guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"env -S bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10e (KEEP-BLOCK, flip class): `timeout --preserve-status` with NO duration —
+# the 1-positional budget is still pending when `bash` arrives, so this pins
+# the guard on the POSITIONAL arm (10d pins the option arm).
+run_hook_set "Bash heredoc under timeout --preserve-status bash STILL BLOCKS (#1194 interpreter guard)" \
+  '{"tool_name":"Bash","tool_input":{"command":"timeout --preserve-status bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10f (paired ALLOW, green today AND post-fix): a wrapper-reached NON-
+# interpreter still owns a DATA body — the everyday `cat > file <<EOF` idiom.
+run_hook_set "Bash heredoc under timeout 300 cat stays ALLOWED (#1194 paired allow)" \
+  '{"tool_name":"Bash","tool_input":{"command":"timeout 300 cat > s.txt <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 10g (paired ALLOW + option-(b) rejection): an interpreter word appearing as
+# an ARGUMENT of a non-interpreter command word. Resolving the command word by
+# "any token that basenames to an interpreter" would flip this to exit 2 — the
+# #1190 over-block class reopened on the most common heredoc idiom here.
+run_hook_set "Bash heredoc under echo bash stays ALLOWED (#1194 option-b rejection pin)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo bash <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 10h (RED today, exit 0): an arithmetic left-shift whose RHS is an identifier
+# satisfies `_HEREDOC_OP_RE`, opening a phantom heredoc with delimiter `y`.
+run_hook_set "Bash arithmetic << is not a heredoc — following cd must BLOCK (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $((x << y))\ntrue; cd ../../../../../../.."}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
+# 10i (pin, green today AND post-fix): a REAL heredoc on a later line still
+# masks its body. The arithmetic mask applies to the operator PROBE only — the
+# delimiter is still sliced from the ORIGINAL line.
+run_hook_set "Bash real heredoc after an arithmetic line still masks its body (#1194 keep-allow)" \
+  '{"tool_name":"Bash","tool_input":{"command":"echo $((1 << 2))\ncat <<EOF\ntrue; cd ../../../../../../..\nEOF"}}' \
+  0 --no-grep
+
+# 10j (RED today, exit 2): after `--`, bash reads `-c` as a script FILENAME,
+# so no cd runs and the quoted string is an ordinary argument.
+run_hook_set "Bash bash -- -c \"cd …\" is end-of-options, must ALLOW (#1194)" \
+  '{"tool_name":"Bash","tool_input":{"command":"bash -- -c \"cd ../../../../../../..\""}}' \
+  0 --no-grep
+
+# 10k (pin, green today AND post-fix): requiring a LETTER after the dashes must
+# not widen into a miss. This is also one of the SEVEN wrapper-reached shapes a
+# command-position anchor on `_NESTED_SHELL_RE` would drop to exit 0 — the
+# measured cost that keeps shape 3a documented rather than fixed.
+run_hook_set "Bash xargs bash -c cd-escape STILL BLOCKS (#1194 keep-block)" \
+  '{"tool_name":"Bash","tool_input":{"command":"xargs bash -c \"cd ../../../../../../..\""}}' \
+  2 "BLOCKED: cd target outside project boundary"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
