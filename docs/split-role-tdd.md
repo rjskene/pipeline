@@ -50,9 +50,13 @@ What it asserts:
 
 - The red commit exists — the most recent `[split-role-red]` commit on
   `<base-ref>..HEAD`.
-- `git diff <red-sha>..HEAD --diff-filter=MD -- <test paths>` is **empty**:
-  locked tests were never **M**odified or **D**eleted. Additions
-  (`--diff-filter=A`, new test files) are allowed and never flagged.
+- `git diff <red-sha>..HEAD --diff-filter=MD -- <test paths>` is **empty** over
+  the **locked-test scope** — every file under `<test paths>` whose basename
+  matches the discoverable-test glob set (`$PIPELINE_TEST_FILE_GLOBS`, #1201;
+  see below): locked tests were never **M**odified or **D**eleted. A data
+  fixture/golden/schema under a test root that does not match the glob set is
+  not locked. Additions (`--diff-filter=A`, new test files) are allowed and
+  never flagged.
 - The suite is green at HEAD (using `$PIPELINE_TEST_CMD`; unset → no-op pass,
   since a repo with no configured test command cannot be run by the gate). This
   suite-green check is **SECONDARY** — it runs strictly AFTER the PRIMARY
@@ -138,6 +142,42 @@ with `REASON=no-test-root` / `no-test-files` rather than passing vacuously, so a
 misconfigured test root is surfaced as a **Revise** instead of a silent clean
 sweep (the #1182 lesson). Before #1200 no such sweep existed and each evaluator
 improvised its own grep, which caught keysets but missed literals.
+
+### Test-file lock scope (#1201)
+
+The W7 gate originally compared the RED anchor to HEAD over **every path**
+under the resolved test roots, not just the test files themselves. A GREEN
+commit whose only testing-root delta was a plan-sanctioned **data fixture
+regen** (observed live: a JSON schema fixture under a `subagents/*/testing/`
+root, a 1-line-added / 1-line-removed diff) tripped
+`SPLIT_ROLE=block REASON=locked-test-modified` even though every RED-locked
+`test_*.py` file was byte-identical. CI was green and the auto-merge gate was
+green — the false positive forced a manual-merge override.
+
+The fix narrows the locked set to **discoverable test files**: a basename
+classifier matches each modified/deleted path under the test roots against a
+default glob set (`test_*.py *_test.py conftest.py test*.sh *_test.sh
+*_test.go *.test.{js,jsx,ts,tsx} *.spec.{js,jsx,ts,tsx} test_*.rb *_spec.rb
+*Test.java`); only matches are locked. `conftest.py` stays in the default set
+deliberately — it is an executable fixture module that can neuter assertions,
+not inert data.
+
+`$PIPELINE_TEST_FILE_GLOBS` (space-separated, matched against the basename
+only) **replaces** the built-in default set wholesale when set — it is not
+additive. Unset or empty falls back to the default. `evaluate-issue-pr`
+threads it into the gate invocation the same way it threads
+`PIPELINE_TEST_ROOTS` (#1182); the gate never reads `pipeline.config` itself.
+`pipeline.config.example` declares the knob (commented) next to
+`PIPELINE_TEST_ROOTS`.
+
+**Residual risk:** loosening a tamper-detection gate is not free — a
+golden/expected-output file under a test root is no longer locked by default,
+so a green implementer could in principle regenerate one to match buggy
+output. This is mitigated by the suite still needing to be green, by
+`evaluate-issue-pr` (Opus) reviewing the diff regardless, and by the knob
+itself: a repo whose goldens **are** its assertions should name them in
+`PIPELINE_TEST_FILE_GLOBS` (e.g. `PIPELINE_TEST_FILE_GLOBS="test_*.py
+*.golden.json"`) to keep them locked.
 
 ### Full-suite green before the PR (#1111)
 
