@@ -132,7 +132,13 @@ if [ "$OUT" = "D" ]; then pass_msg "quick-fix -> D"; else fail_msg "quick-fix ->
 
 inc
 ERR=$(run_picker_stderr "quick-fix")
-if echo "$ERR" | grep -qi "warning"; then
+# Narrowed match: only the collision-warning emitter's messages contain
+# "picking PATH" (see spawn-claude.sh lines ~196/198). A bare "warning" grep
+# is too broad — it also matches the unrelated systemd-run --user graceful-
+# degrade WARNING (issue #918), which fires on any host lacking a user
+# systemd session regardless of label collisions, producing a false
+# positive here.
+if echo "$ERR" | grep -qi "picking PATH"; then
   fail_msg "quick-fix alone should NOT emit a collision warning; got:"
   echo "$ERR" | sed 's/^/    /'
 else
