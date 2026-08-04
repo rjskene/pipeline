@@ -53,7 +53,11 @@ PIPELINE_TEST_CMD="npm test"                       # Test command
 # tests/ (e.g. work-orchestrator: subagents/*/testing/ testing/) MUST set this
 # or the split-role W7 lock scope is vacuous (nothing found under tests/ ⇒ the
 # additive-only check trivially passes even when a locked test was tampered).
-# Only relevant when PIPELINE_PATH_B_SPLIT_ROLE is enabled.
+# Two consumers read this knob: the split-role W7 gate above, and the plan-time
+# exact-match guard sweep (scripts/exact-match-guard-sweep.sh, issue #1200) run
+# by plan-issue + evaluate-issue-plan. The sweep FAILS LOUD (exit 3,
+# REASON=no-test-root/no-test-files) rather than passing vacuously, so setting
+# this correctly matters even when PIPELINE_PATH_B_SPLIT_ROLE is disabled.
 #PIPELINE_TEST_ROOTS="subagents/*/testing/ testing/"
 PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
 PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read

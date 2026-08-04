@@ -101,6 +101,19 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    - If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed.
    - If the plan lists changes, verify they're consistent with existing patterns in the codebase.
    - **README anchor guard (#397/#404):** If the plan prescribes adding any `README.md` link of the form `*.md#anchor` (regex `\.md#[A-Za-z0-9_-]+`), return **Revise** — README uses file-level links only; anchored cross-references are banned by the policy enforced in `tests/test-readme-current.sh`.
+   - **Exact-match guard sweep (#1200):** Run the mechanical sweep, never an improvised `grep`. Improvisation is what produced the consumer's keyset-caught / literal-missed asymmetry: an undeclared `assertEqual(msgs, [{...}])` contradicted the RED-authored suite and stalled the GREEN implementer mid-leg.
+
+     First resolve split-role applicability MECHANICALLY — fetch the labels rather than inferring the path from the title (`gh issue view <N> --repo $PIPELINE_REPO --json labels`). Split-role applies when the issue is PATH B (none of `docs-only` / `quick-fix` / `multi-task` present) AND `${PIPELINE_PATH_B_SPLIT_ROLE:-true}` is not `false`. Then run the sweep from the project root, threading the test roots explicitly — the helper NEVER sources `pipeline.config` (same contract as `split-role-gate.sh`):
+
+     ```bash
+     gh issue view <N> --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(" ")'
+     PIPELINE_TEST_ROOTS="${PIPELINE_TEST_ROOTS:-}" \
+       bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"; echo "rc=$?"
+     ```
+
+     - **Non-zero exit is BLOCKING.** `REASON=no-test-root` or `REASON=no-test-files` (exit 3) means the host's `PIPELINE_TEST_ROOTS` is unset or misconfigured and the sweep proved nothing — a vacuous sweep is NEVER a clean pass. Report it under `**Spec gaps:**` and return **Revise** with the fix (set `PIPELINE_TEST_ROOTS` to the consumer's real test roots, e.g. `subagents/*/testing/ testing/`).
+     - For each `EXACT_MATCH_GUARD=` line, decide whether the planned change alters the keyset/literal it pins — i.e. does the plan add, rename, or remove a key/field/element reachable by the `SUBJECT` expression or exercised by the `SYMBOL` under test? If yes AND `FILE` is not already listed under the plan's `**Shared tests (split-role):**` section, return **Revise**, quote `FILE:LINE`, and give the exact bullet to add.
+     - When split-role is NOT applicable (PATH A/C/D, or the knob is `false`), hits are advisory only: report them under `**Missing files:**` and do not block.
 
    **Phase 2 — Implementability.** Verify the plan is executable without guessing:
    - Are data structures, algorithms, or mode behaviors specified concretely (no ambiguous steps)?
