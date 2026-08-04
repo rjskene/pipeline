@@ -128,15 +128,29 @@ ALL_OUT_FILE="$WORKDIR/all-dispatch-outputs.txt"
 run_resolver() {
   local fixture="$1" cfgroot="$2" pathletter="$3"
   local out
-  # Hermeticity (#1144): a dogfood host exports PIPELINE_REPO+PIPELINE_BASE_BRANCH
-  # (run-test-suite.sh sources the live config), which trips _resolve-config.sh's
-  # early-return so the temp make_config_root config is never sourced. Scrub every
-  # PATH-*-knob the resolver reads so each case's cfgroot (or its intentional
-  # absence => shipped default) is authoritative, not the ambient live value.
+  # Hermeticity (#1144, #1199): a dogfood host exports PIPELINE_REPO+
+  # PIPELINE_BASE_BRANCH (run-test-suite.sh sources the live config). This
+  # function itself re-sets PIPELINE_REPO="owner/repo" below, so once
+  # PIPELINE_BASE_BRANCH is ALSO non-empty (inherited from the host), BOTH
+  # halves of _resolve-config.sh's early-return predicate
+  # (`[ -n "$PIPELINE_REPO" ] && [ -n "$PIPELINE_BASE_BRANCH" ]`) are true and
+  # it no-ops — the temp make_config_root config is never sourced, so every
+  # case's cfgroot is silently skipped in favor of shipped defaults (#1199).
+  # PIPELINE_BASE_BRANCH is NOT just another leaked knob like the PATH-*
+  # ones below: it is one of the two PREDICATE vars that gate whether the
+  # fixture config is read AT ALL. Scrubbing the PATH-* knobs alone (the
+  # #1144 remedy) cannot fix this — only unsetting PIPELINE_BASE_BRANCH (or
+  # PIPELINE_REPO) restores the predicate to false so _resolve-config.sh
+  # sources the cfgroot config, whose own PIPELINE_REPO/PIPELINE_BASE_BRANCH
+  # lines (see make_config_root) then apply. If a future author adds a new
+  # PIPELINE_PATH_* or PIPELINE_STAGE_* knob to this scrub list, that is
+  # necessary for THAT knob's value but does nothing for this mechanism —
+  # PIPELINE_BASE_BRANCH must stay scrubbed regardless of knob churn.
   # #1186 adds PIPELINE_PATH_{A,C}_MODEL_EXECUTE to the scrub set.
   out="$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
     PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$cfgroot" \
-    env -u PIPELINE_PATH_A_MODEL_EXECUTE \
+    env -u PIPELINE_BASE_BRANCH \
+        -u PIPELINE_PATH_A_MODEL_EXECUTE \
         -u PIPELINE_PATH_B_MODEL_EXECUTE \
         -u PIPELINE_PATH_C_MODEL_EXECUTE \
         -u PIPELINE_PATH_D_MODEL_EXECUTE \
