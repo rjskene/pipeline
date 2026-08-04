@@ -134,13 +134,24 @@ ALL_OUT_FILE="$WORKDIR/all-stage-outputs.txt"
 
 # Shared env scrub: every knob the resolver (and its internal execute-tier
 # delegation) reads.
+#
+# PIPELINE_BASE_BRANCH (#1199): this function re-sets PIPELINE_REPO=
+# "owner/repo" below, so once PIPELINE_BASE_BRANCH is ALSO non-empty
+# (inherited from a dogfood host's sourced pipeline.config), BOTH halves of
+# _resolve-config.sh's early-return predicate are true and it no-ops — the
+# temp make_config_root config is never sourced. PIPELINE_BASE_BRANCH is one
+# of the two PREDICATE vars that gate whether the fixture config is read at
+# all, not just another leaked knob like the PATH_*/STAGE_* ones below —
+# scrubbing knobs alone cannot fix this; PIPELINE_BASE_BRANCH must stay in
+# this list regardless of which knobs are added later.
 run_stage_raw() {
   # run_stage_raw <fixture> <cfgroot> <stage> <redirect-mode: out|err>
   local fixture="$1" cfgroot="$2" stage="$3" mode="$4"
   if [ "$mode" = "err" ]; then
     PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
       PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$cfgroot" \
-      env -u PIPELINE_STAGE_MODEL_PLAN_EVAL \
+      env -u PIPELINE_BASE_BRANCH \
+          -u PIPELINE_STAGE_MODEL_PLAN_EVAL \
           -u PIPELINE_STAGE_MODEL_PR_EVAL \
           -u PIPELINE_PATH_C_MODEL_PLAN \
           -u PIPELINE_PATH_A_MODEL_EXECUTE \
@@ -153,7 +164,8 @@ run_stage_raw() {
   else
     PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
       PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$cfgroot" \
-      env -u PIPELINE_STAGE_MODEL_PLAN_EVAL \
+      env -u PIPELINE_BASE_BRANCH \
+          -u PIPELINE_STAGE_MODEL_PLAN_EVAL \
           -u PIPELINE_STAGE_MODEL_PR_EVAL \
           -u PIPELINE_PATH_C_MODEL_PLAN \
           -u PIPELINE_PATH_A_MODEL_EXECUTE \
