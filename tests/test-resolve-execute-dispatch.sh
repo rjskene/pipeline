@@ -426,6 +426,24 @@ else
   fail_msg "(20b) non-named MODEL= emissions: '${BAD_MODELS:-<no output captured>}'"
 fi
 
+# (21) Suite hermeticity regression guard (#1199): with PIPELINE_BASE_BRANCH
+#      exported in THIS test process's own environment (simulating a dogfood
+#      host that has sourced the live pipeline.config into the calling
+#      shell), a representative explicit-knob case must still resolve from
+#      its make_config_root fixture, not silently fall back to the shipped
+#      default. Before #1199, run_resolver() re-set PIPELINE_REPO but never
+#      scrubbed the inherited PIPELINE_BASE_BRANCH, so BOTH halves of
+#      _resolve-config.sh's early-return predicate were true, the fixture
+#      config was never sourced, and this case's MODEL=opus fell back to
+#      MODEL=sonnet (the shipped PATH B default) instead.
+export PIPELINE_BASE_BRANCH="staging"
+CFG21=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
+FIX21=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT21=$(run_resolver "$FIX21" "$CFG21" B)
+unset PIPELINE_BASE_BRANCH
+assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "MODEL=opus" "$OUT21"
+assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "REASON=explicit-knob" "$OUT21"
+
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="
 [ "$FAIL" -eq 0 ]
