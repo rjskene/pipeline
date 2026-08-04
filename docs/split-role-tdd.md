@@ -123,6 +123,22 @@ suite (a shared fixture, a contract test whose golden the plan changes).
   plan can widen the lock, so the exemption inherits the human plan-gate rather
   than being self-declared by the implementer.
 
+**Plan-time producer of the declaration (#1200).** Everything above is the
+*consumption* side — the W7 gate reads a declaration someone already wrote. The
+producer is `scripts/exact-match-guard-sweep.sh`, a mechanical sweep run by
+`plan-issue` (Step 4, at authoring time) and re-run by `evaluate-issue-plan`
+(Step 3 Phase 1, as a check on the author). It scans the roots resolved from
+`PIPELINE_TEST_ROOTS` and emits one `EXACT_MATCH_GUARD=` line per exact-match
+assertion — `keyset` (`assertEqual(set(x), {...})`) and `literal`
+(`assertEqual(x, [...])` / `{...}`) — with `FILE`, `LINE`, `SYMBOL` and
+`SUBJECT`. Any hit the planned change would break must be listed under
+`**Shared tests (split-role):**`; otherwise the green implementer meets a
+contradiction it cannot legally resolve and stops mid-leg. The sweep exits 3
+with `REASON=no-test-root` / `no-test-files` rather than passing vacuously, so a
+misconfigured test root is surfaced as a **Revise** instead of a silent clean
+sweep (the #1182 lesson). Before #1200 no such sweep existed and each evaluator
+improvised its own grep, which caught keysets but missed literals.
+
 ### Full-suite green before the PR (#1111)
 
 Before opening the PR, the green role runs the FULL local suite green — not just

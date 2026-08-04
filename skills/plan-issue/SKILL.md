@@ -137,6 +137,15 @@ Receive an issue number as argument (or from context).
 
    **README anchor guard (#397/#404):** Do NOT prescribe adding anchored cross-references to `README.md` (links of the form `*.md#anchor`, regex `\.md#[A-Za-z0-9_-]+`). README uses file-level links only; anchored refs are banned by the policy enforced in `tests/test-readme-current.sh`. If the issue asks for such a link, redirect to a file-level reference or a pointer to the relevant doc file instead.
 
+   **Exact-match guard sweep (#1200):** Before drafting, run the mechanical sweep so the plan DECLARES the shared tests instead of leaving plan-eval (or, worse, a stalled GREEN implementer) to discover them:
+
+   ```bash
+   PIPELINE_TEST_ROOTS="${PIPELINE_TEST_ROOTS:-}" \
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"; echo "rc=$?"
+   ```
+
+   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Shared tests (split-role):**` in the plan. Without that declaration the split-role GREEN implementer may not legally edit the test and STOPS mid-leg. A non-zero exit (`REASON=no-test-root` / `no-test-files`) means the sweep proved nothing: fix `PIPELINE_TEST_ROOTS` for the host before relying on a `None` declaration.
+
 4a. **Root-cause diagnosis gate.** Run this step ONLY when the issue carries `needs-debug` (resolved in Step 3a) OR `--debug-first` was passed (`DEBUG_FIRST=true`); otherwise this step is a no-op — skip straight to Step 5. The gate establishes the root cause BEFORE planning so the plan's design decisions + first task target the diagnosed cause, not the reported symptom. The diagnosis is autonomous — there is NO human gate (parallel to classify), distinct from the plan-approval gate downstream.
 
    **Idempotency (consume-or-produce).** Grep the trusted working set `$TRUSTED` from Step 1 (NEVER a raw `gh ... --json comments` fetch) for an existing `## Root-Cause Diagnosis` comment. If one is present AND non-stale — its `createdAt >= issue.updatedAt`, mirroring fullsend's Classification-freshness test (`skills/fullsend/SKILL.md` Step 1b) — CONSUME it as `$DIAGNOSIS` and do NOT re-run the debugger. A diagnosis whose `createdAt` predates the issue's `updatedAt` is stale (the issue changed under it) and is re-produced.
