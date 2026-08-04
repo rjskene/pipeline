@@ -318,10 +318,17 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
        # whose tests do not live under tests/ gets a vacuous lock scope (nothing
        # found ⇒ additive-only check trivially passes even when locked tests were
        # tampered).
+       # PIPELINE_TEST_FILE_GLOBS (#1201): same reason as PIPELINE_TEST_ROOTS — the
+       # gate never sources pipeline.config, so the caller must pass the consumer's
+       # discoverable-test-file glob set. It scopes the W7 lock to TEST FILES
+       # (basename match) within the resolved test roots, so a plan-sanctioned
+       # GREEN-phase data-fixture/golden regen under a test root no longer trips
+       # locked-test-modified/-deleted. Unset ⇒ the gate's built-in default glob set.
        SPLIT_ROLE_LINE=$(PIPELINE_REPO="$PIPELINE_REPO" \
          PIPELINE_CI_ROLLUP_GREEN="$ROLLUP_GREEN" \
          PIPELINE_SPLIT_ROLE_SHARED_TESTS="$SHARED_TESTS_RAW" \
          PIPELINE_TEST_ROOTS="$PIPELINE_TEST_ROOTS" \
+         PIPELINE_TEST_FILE_GLOBS="$PIPELINE_TEST_FILE_GLOBS" \
          bash "${CLAUDE_PLUGIN_ROOT}/scripts/split-role-gate.sh" "$ISSUE")
        # → SPLIT_ROLE=<pass|block> ISSUE=<N> REASON=<token>
        ```
