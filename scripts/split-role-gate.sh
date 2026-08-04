@@ -104,9 +104,14 @@
 # the anchor in its subject). Picking the earliest match avoids mis-anchoring on
 # such an impl commit (#1084).
 #
-# Locked-test invariant (frozen contract §3, W7): "locked tests" = every file
-# matching the test-path set that EXISTS at <red-sha>. The invariant is
-# ADDITIVE-AWARE: the RED suite may only be ADDED to, never weakened. For each
+# Locked-test invariant (frozen contract §3, W7; narrowed #1201): "locked
+# tests" = every file under the test-path set whose BASENAME matches the
+# discoverable-test glob set ($PIPELINE_TEST_FILE_GLOBS, default set above)
+# and that EXISTS at <red-sha>. A data fixture/golden/schema living under a
+# test root but NOT matching a discoverable-test basename pattern is not a
+# locked test — it falls out of scope by default (re-lockable per repo via
+# the knob). The invariant is ADDITIVE-AWARE: the RED suite may only be ADDED
+# to, never weakened. For each
 # Modified (M) locked test file the gate inspects
 #   git diff <red-sha>..HEAD --numstat -- <file>   (emits "<added> <removed> <file>")
 # A purely-additive edit (removed == 0) cannot weaken a RED assertion and is
@@ -151,6 +156,42 @@ elif [ -n "${PIPELINE_TEST_ROOTS:-}" ]; then
 else
   TEST_PATHS=("tests/")
 fi
+
+# $PIPELINE_TEST_FILE_GLOBS (issue #1201): scopes the locked-test invariant to
+# DISCOVERABLE TEST FILES, not every path under the resolved test roots. A
+# plan-sanctioned GREEN-phase data-fixture/golden regen (e.g. a JSON schema
+# fixture under a test root) is not itself a test and must not trip
+# locked-test-modified/-deleted. Patterns are matched against the file
+# BASENAME only (directory scoping is already handled by the test-path
+# resolution above / PIPELINE_TEST_ROOTS) via a `case` glob, never against the
+# filesystem — so word-splitting below happens with globbing OFF (`set -f`);
+# glob-expanding these patterns against the gate's CWD would let a decoy file
+# there silently narrow the match set. Setting the knob REPLACES the built-in
+# default wholesale (not additive) — the default's `:-` form is fail-safe: an
+# explicitly-empty override would otherwise make the whole lock vacuous. NEVER
+# read from pipeline.config by the gate itself — the caller must export it
+# (same as PIPELINE_TEST_ROOTS).
+DEFAULT_TEST_FILE_GLOBS='test_*.py *_test.py conftest.py test*.sh *_test.sh *_test.go
+*.test.js *.test.jsx *.test.ts *.test.tsx *.spec.js *.spec.jsx *.spec.ts *.spec.tsx
+test_*.rb *_spec.rb *Test.java'
+set -f
+TEST_FILE_GLOBS=( ${PIPELINE_TEST_FILE_GLOBS:-$DEFAULT_TEST_FILE_GLOBS} )
+set +f
+_is_test_file() {  # _is_test_file <repo-relative-path> → 0 iff basename matches a glob
+  local base="${1##*/}" g
+  for g in "${TEST_FILE_GLOBS[@]}"; do
+    case "$base" in $g) return 0 ;; esac   # $g deliberately UNQUOTED (pattern match)
+  done
+  return 1
+}
+_filter_test_files() {  # stdin: newline paths → stdout: only test-FILE paths
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _is_test_file "$p" && printf '%s\n' "$p"
+  done
+  return 0                                 # load-bearing under set -e (last _is_test_file
+}                                           # may return 1 and would abort the pipeline)
 
 emit() {
   # emit <pass|block> <reason>
@@ -218,8 +259,8 @@ _is_red_sha() {  # _is_red_sha <sha> → 0 (true) iff <sha> is a marker commit
 # locked-test-deleted. We scan ALL modified files for tampering FIRST; if any
 # tampers we block locked-test-modified; only if none tampers do we check
 # deletions.
-MOD_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=M --name-only -- "${TEST_PATHS[@]}" 2>/dev/null || true)"
-DEL_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=D --name-only -- "${TEST_PATHS[@]}" 2>/dev/null || true)"
+MOD_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=M --name-only -- "${TEST_PATHS[@]}" 2>/dev/null | _filter_test_files || true)"
+DEL_FILES="$(git diff "${RED_SHA}..HEAD" --diff-filter=D --name-only -- "${TEST_PATHS[@]}" 2>/dev/null | _filter_test_files || true)"
 
 # First pass: any modified locked file with removed != 0 (or non-numeric) tampers.
 # SHARED-TEST allow-list (#1089): if $PIPELINE_SPLIT_ROLE_SHARED_TESTS is set,

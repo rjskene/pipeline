@@ -59,6 +59,15 @@ PIPELINE_TEST_CMD="npm test"                       # Test command
 # REASON=no-test-root/no-test-files) rather than passing vacuously, so setting
 # this correctly matters even when PIPELINE_PATH_B_SPLIT_ROLE is disabled.
 #PIPELINE_TEST_ROOTS="subagents/*/testing/ testing/"
+# PIPELINE_TEST_FILE_GLOBS (issue #1201): basename globs identifying DISCOVERABLE
+# TEST FILES inside PIPELINE_TEST_ROOTS. Only files matching one of these are locked
+# by the split-role W7 gate; data fixtures / goldens / schemas living under a test
+# root are NOT locked, so a plan-sanctioned GREEN fixture regen no longer trips
+# locked-test-modified. Setting this REPLACES the built-in default set
+# (test_*.py *_test.py conftest.py test*.sh *_test.sh *_test.go *.test.{js,jsx,ts,tsx}
+# *.spec.{js,jsx,ts,tsx} test_*.rb *_spec.rb *Test.java) — list your test patterns AND
+# any golden you want kept under lock. Space-separated; matched against the BASENAME.
+#PIPELINE_TEST_FILE_GLOBS="test_*.py *_test.py conftest.py *.golden.json"
 PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
 PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read
 PIPELINE_SYNC_ENVS=""                              # Space-separated .env files to sync to worktrees
