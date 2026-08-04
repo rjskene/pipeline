@@ -29,8 +29,9 @@ fi
 
 # Slice step 2 (cache check): from "2. " to "3. ".
 GATE_TMP=""
+CT_TMP=""
 STEP2_TMP="$(mktemp)"
-trap 'rm -f "$STEP2_TMP" "$GATE_TMP"' EXIT
+trap 'rm -f "$STEP2_TMP" "$GATE_TMP" "$CT_TMP"' EXIT
 awk '/^2\. / { inblock = 1 } /^3\. / { inblock = 0 } inblock { print }' "$SKILL_FILE" > "$STEP2_TMP"
 
 # --- Task 4: helper-routed body/comment fetch + cache-check ---
@@ -148,6 +149,50 @@ if grep -qF "#545" "$SKILL_FILE" || grep -qF "filter-trusted-comments.sh" "$SKIL
   pass_msg "dependency on #545 / filter-trusted-comments.sh named"
 else
   fail_msg "missing #545 / filter-trusted-comments.sh dependency reference"
+fi
+
+# --- Issue #1196: the refusal must be idempotent and terminal ---
+#
+# The step-0a refusal aftermath moves into the shared helper
+# scripts/refuse-untrusted-opener.sh (executable coverage lives in
+# tests/test-refuse-untrusted-opener.sh). The gate itself is unchanged —
+# Tests 4-10 above still hold.
+
+echo "Test 14: step 0a routes the refusal through refuse-untrusted-opener.sh"
+inc
+if grep -qF "scripts/refuse-untrusted-opener.sh" "$GATE_TMP"; then
+  pass_msg "0a block invokes scripts/refuse-untrusted-opener.sh"
+else
+  fail_msg "0a block does not invoke scripts/refuse-untrusted-opener.sh"
+fi
+
+echo "Test 15: no bare 'gh issue comment' remains in the 0a refusal branch"
+inc
+if grep -qF 'gh issue comment <N>' "$GATE_TMP" \
+   || grep -qF 'gh issue comment "$N"' "$GATE_TMP"; then
+  fail_msg "bare 'gh issue comment' still present in the 0a refusal branch (non-idempotent)"
+else
+  pass_msg "refusal comment no longer posted by a bare unconditional gh issue comment"
+fi
+
+echo "Test 16: 0a prose states the refusal is idempotent and applies the human label"
+inc
+if grep -qiE "idempotent|no duplicate|duplicate|already (present|posted)" "$GATE_TMP" \
+   && grep -qE 'PIPELINE_LABELS_HUMAN|`human`' "$GATE_TMP"; then
+  pass_msg "0a prose names idempotency AND the PIPELINE_LABELS_HUMAN/\`human\` label"
+else
+  fail_msg "0a prose missing idempotency and/or PIPELINE_LABELS_HUMAN/\`human\` label outcome"
+fi
+
+echo "Test 17: '## Comment trust' section documents the durable human-label outcome"
+inc
+CT_TMP="$(mktemp)"
+awk '/^## Comment trust/ { inblock = 1; next } /^## / { inblock = 0 } inblock { print }' "$SKILL_FILE" > "$CT_TMP"
+if grep -qE 'PIPELINE_LABELS_HUMAN|`human`' "$CT_TMP" \
+   && grep -qiE "idempotent|no duplicate|duplicate|already (present|posted)" "$CT_TMP"; then
+  pass_msg "'Comment trust' section states the refusal is idempotent and labels the issue"
+else
+  fail_msg "'Comment trust' section missing idempotency / human-label outcome"
 fi
 
 echo ""
