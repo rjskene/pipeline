@@ -143,7 +143,7 @@ run_resolver() {
   # PIPELINE_REPO) restores the predicate to false so _resolve-config.sh
   # sources the cfgroot config, whose own PIPELINE_REPO/PIPELINE_BASE_BRANCH
   # lines (see make_config_root) then apply. If a future author adds a new
-  # PIPELINE_PATH_* or PIPELINE_STAGE_* knob to this scrub list, that is
+  # per-path or per-stage knob to this scrub list, that is
   # necessary for THAT knob's value but does nothing for this mechanism —
   # PIPELINE_BASE_BRANCH must stay scrubbed regardless of knob churn.
   # #1186 adds PIPELINE_PATH_{A,C}_MODEL_EXECUTE to the scrub set.
