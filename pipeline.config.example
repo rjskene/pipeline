@@ -28,6 +28,7 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # failing test, even with a high exit code, still reds the run). It already
 # wraps each test in `timeout 300 ... </dev/null`, so no extra hang-guard needed:
 #   PIPELINE_TEST_CMD='bash scripts/run-test-suite.sh'
+#   bash scripts/run-test-suite.sh --chunk 1/4   # … --chunk 4/4: foreground chunks (#1208)
 # Why this matters for the agent (issue #1132): the serial
 # `for t in tests/test*.sh; do ...; done` sweep over the full suite exceeds the
 # agent's Bash-tool timeout (hundreds of sequential test files), so the executor /
