@@ -123,6 +123,10 @@ DOT = ".claude/"
 SET = DOT + "settings.json"            # a protected control file (relative)
 SETL = DOT + "settings.local.json"     # a protected control file (relative)
 HK = DOT + "hooks/"                     # the protected hooks dir (relative)
+# Issue #1212 — gitignored scratch dir (NOT protected) and a plugin cache
+# hooks dir shape (protected, 4th PROTECTED_CMD_PATTERNS entry).
+SCRATCH = DOT + "scratch/"
+CACHE_HOOKS = DOT + "plugins/cache/mkt/pipeline/1.0.0/hooks/"
 
 # A relative in-repo path with a `Scripts/` segment (Bug 1 reproducer). Built
 # from fragments to keep the literal from looking like anything special.
@@ -575,6 +579,91 @@ class TestRestrictPaths(unittest.TestCase):
         # a real script invocation carrying an unrelated -e arg, NOT an inline
         # eval → ALLOW (locks the inline-regex anchoring).
         self.assertAllowed("Bash", {"command": "python script.py -e foo"})
+
+    # ======================================================================
+    # Issue #1212 — `_protected_write_context` branch 1 (redirect-target scan)
+    # matches ANY path containing `.claude/`, not just the protected control
+    # files in PROTECTED_PATTERNS. A redirect into the gitignored, inert
+    # `.claude/scratch/` dir (the agent commit-message scratchpad idiom) is
+    # therefore over-blocked. Fix: isolate the redirect TARGET token and match
+    # it against PROTECTED_PATTERNS instead of the bare `.claude/` prefix.
+    # Against the CURRENT (unfixed) hook the 5 scratch cases below are RED
+    # (exit 2 where 0 is expected); the still-BLOCK cases pass now AND
+    # post-fix; the quoted-settings case is RED in the other direction (exit
+    # 0 where 2 is expected — the bonus fix for the pre-existing quoted-target
+    # bypass).
+    # ======================================================================
+
+    # --- newly-ALLOWED: redirect into the gitignored scratch dir -----------
+    def test_1212_allow_heredoc_scratch_cmsg(self):
+        # The "write a multi-line commit message, then commit with it" idiom.
+        cmd = (
+            "cat > " + SCRATCH + "cmsg.txt <<'EOF' && git commit -F " + SCRATCH + "cmsg.txt\n"
+            "fix: something\n"
+            "EOF"
+        )
+        self.assertAllowed("Bash", {"command": cmd})
+
+    def test_1212_allow_printf_scratch(self):
+        # Exact reproduction from the issue.
+        self.assertAllowed("Bash", {"command": "printf x > " + SCRATCH + "cmsg.txt"})
+
+    def test_1212_allow_combo_scratch_and_add(self):
+        self.assertAllowed(
+            "Bash", {"command": "printf 'x' > " + SCRATCH + "c.txt && git add foo.py"}
+        )
+
+    def test_1212_allow_scratch_append(self):
+        self.assertAllowed("Bash", {"command": "printf 'x' >> " + SCRATCH + "log.txt"})
+
+    def test_1212_allow_scratch_abs(self):
+        # Absolute path into the scratch dir (e.g. a worktree-anchored path).
+        cmd = "printf x > " + self.PROJECT + "/" + SCRATCH + "x.txt"
+        self.assertAllowed("Bash", {"command": cmd})
+
+    # --- still-BLOCK: genuine disarm shapes stay blocked --------------------
+    def test_1212_block_settings_redirect(self):
+        self.assertBlocked("Bash", {"command": "echo x > " + SET})
+
+    def test_1212_block_settings_local_redirect(self):
+        self.assertBlocked("Bash", {"command": "echo x > " + SETL})
+
+    def test_1212_block_settings_append(self):
+        self.assertBlocked("Bash", {"command": "echo x >> " + SET})
+
+    def test_1212_block_hooks_redirect(self):
+        self.assertBlocked("Bash", {"command": "echo x > " + HK + "foo.py"})
+
+    def test_1212_block_abs_hooks_redirect(self):
+        cmd = "echo x > " + self.PROJECT + "/" + HK + "foo.py"
+        self.assertBlocked("Bash", {"command": cmd})
+
+    def test_1212_block_fd_prefixed_redirect(self):
+        self.assertBlocked("Bash", {"command": "echo x 2> " + SET})
+
+    def test_1212_block_clobber_redirect(self):
+        self.assertBlocked("Bash", {"command": "echo x >| " + SET})
+
+    def test_1212_block_truncate_colon_redirect(self):
+        self.assertBlocked("Bash", {"command": ": > " + SET})
+
+    def test_1212_block_hooks_sed_inplace(self):
+        # Not branch 1 — pinned to confirm the fix doesn't disturb branch 2.
+        self.assertBlocked("Bash", {"command": "sed -i s/a/b/ " + HK + "foo.py"})
+
+    def test_1212_block_cp_onto_hooks(self):
+        # Not branch 1 — pinned to confirm the fix doesn't disturb branch 5.
+        self.assertBlocked("Bash", {"command": "cp evil.py " + HK + "foo.py"})
+
+    def test_1212_block_plugins_cache_hooks_redirect(self):
+        self.assertBlocked("Bash", {"command": "echo x > " + CACHE_HOOKS + "x.py"})
+
+    # --- newly-BLOCKED (bonus fix): quoted redirect target ------------------
+    def test_1212_block_quoted_settings_redirect(self):
+        # Pre-fix, the leading quote stops the bare `.claude/` prefix match
+        # dead — this ALLOWS today. Post-fix the optional `['"]?` closes the
+        # hole.
+        self.assertBlocked("Bash", {"command": 'echo x > "' + SET + '"'})
 
     # ======================================================================
     # Issue #1135 — Bash extractor must not capture a `/`-substring from the
