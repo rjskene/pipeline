@@ -512,8 +512,16 @@ def _protected_write_context(command: str) -> bool:
     #    ".claude/settings.json"`) previously slipped past the bare-prefix
     #    match entirely (nothing in the old prefix group could span the
     #    opening quote).
+    #
+    #    The TARGET-tail class additionally excludes `(`, `)` and a backtick:
+    #    two of the PROTECTED_PATTERNS are `$`-anchored (`…/settings\.json$`),
+    #    so a trailing subshell / command-substitution delimiter swallowed into
+    #    the captured token would defeat the anchor and let
+    #    `(echo x > .claude/settings.json)` through — a shape the pre-#1212
+    #    bare-prefix match blocked.  Those chars can never be part of the
+    #    redirect target word anyway.
     for _m in re.finditer(
-        r"""\d*>>?\|?\s*['"]?((?:\./)?(?:[^\s'\";<>|&]*/)?\.claude/[^\s'\";<>|&]*)""",
+        r"""\d*>>?\|?\s*['"]?((?:\./)?(?:[^\s'\";<>|&]*/)?\.claude/[^\s'\";<>|&()`]*)""",
         command,
     ):
         _target = _m.group(1)

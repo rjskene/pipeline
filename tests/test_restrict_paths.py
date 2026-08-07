@@ -665,6 +665,29 @@ class TestRestrictPaths(unittest.TestCase):
         # hole.
         self.assertBlocked("Bash", {"command": 'echo x > "' + SET + '"'})
 
+    # --- keep-BLOCK: trailing subshell / cmd-subst delimiter ----------------
+    # Two PROTECTED_PATTERNS entries are `$`-anchored (`…/settings\.json$`), so
+    # a `)` or backtick swallowed into the captured target token would defeat
+    # the anchor and re-open a redirect shape the PRE-#1212 bare-prefix match
+    # blocked. The target-tail class excludes those delimiters for that reason.
+    def test_1212_block_subshell_paren_settings_redirect(self):
+        self.assertBlocked("Bash", {"command": "(echo x > " + SET + ")"})
+
+    def test_1212_block_cmdsubst_paren_settings_redirect(self):
+        self.assertBlocked("Bash", {"command": "y=$(echo x > " + SET + ")"})
+
+    def test_1212_block_backtick_settings_redirect(self):
+        bt = chr(96)
+        self.assertBlocked("Bash", {"command": "y=" + bt + "echo x > " + SET + bt})
+
+    def test_1212_block_subshell_paren_settings_local_redirect(self):
+        self.assertBlocked("Bash", {"command": "(echo x > " + SETL + ")"})
+
+    def test_1212_allow_subshell_paren_scratch_redirect(self):
+        # Paired allow — the delimiter exclusion must not re-broaden branch 1
+        # back onto the gitignored scratch dir.
+        self.assertAllowed("Bash", {"command": "(printf x > " + SCRATCH + "c.txt)"})
+
     # ======================================================================
     # Issue #1135 — Bash extractor must not capture a `/`-substring from the
     # MIDDLE of a relative in-repo path token.
