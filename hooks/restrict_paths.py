@@ -499,14 +499,35 @@ def _protected_write_context(command: str) -> bool:
                 return True
         return False
 
-    # 1. Redirect target: optional fd digit + >, >>, >| + optional spaces
-    #    + protected path.  Covers: `echo x > .claude/settings.json`,
+    # 1. Redirect target: optional fd digit + >, >>, >| + optional spaces +
+    #    optional quote + protected path.  Covers: `echo x > .claude/settings.json`,
     #    `printf x > /abs/.claude/settings.json`, etc.
-    if re.search(
-        r"\d*>>?\|?\s*(?:\./)?(?:[^\s'\";<>|&]*/)?\.claude/",
+    #
+    #    Issue #1212: isolate the redirect TARGET token and match it against
+    #    PROTECTED_PATTERNS (the path-shaped list) instead of returning True
+    #    on the bare `.claude/` prefix — the prior version blocked EVERY
+    #    redirect into a `.claude/` subtree, including the gitignored, inert
+    #    `.claude/scratch/` dir. The optional leading `['"]?` also closes a
+    #    pre-existing bypass: a QUOTED redirect target (`echo x >
+    #    ".claude/settings.json"`) previously slipped past the bare-prefix
+    #    match entirely (nothing in the old prefix group could span the
+    #    opening quote).
+    #
+    #    The TARGET-tail class additionally excludes `(`, `)` and a backtick:
+    #    two of the PROTECTED_PATTERNS are `$`-anchored (`…/settings\.json$`),
+    #    so a trailing subshell / command-substitution delimiter swallowed into
+    #    the captured token would defeat the anchor and let
+    #    `(echo x > .claude/settings.json)` through — a shape the pre-#1212
+    #    bare-prefix match blocked.  Those chars can never be part of the
+    #    redirect target word anyway.
+    for _m in re.finditer(
+        r"""\d*>>?\|?\s*['"]?((?:\./)?(?:[^\s'\";<>|&]*/)?\.claude/[^\s'\";<>|&()`]*)""",
         command,
     ):
-        return True
+        _target = _m.group(1)
+        for _p in PROTECTED_PATTERNS:
+            if re.search(_p, _target):
+                return True
 
     # 2. In-place / overwrite mutators that act on a named argument.
     #    tee writes its stdin to the named file; sed/perl -i edits in place.
