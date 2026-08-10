@@ -76,21 +76,22 @@ echo "  Repo:     $MAIN_REPO"
 echo "  Worktree: $WORKTREE_PATH"
 echo ""
 
-# Resolve the orchestrator's current local branch — used to decide whether
-# --base ACTUATES (fetch + cut from origin/<base>) or stays metadata-only.
+# Resolve the orchestrator's current local branch — used inside the --base
+# actuation body to pick between the auto-create and LOCAL-HEAD-fallback cases.
 CURRENT_LOCAL_BRANCH=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 
-# Next-branch routing actuation (#1128). When --base names a branch OTHER than
-# the orchestrator's current local branch (the next-branch case), the worktree
-# must be cut from origin/<base>'s tip — NOT MAIN_REPO's local HEAD — so
-# next-labelled work actually lands ON the next-branch. If origin/<base> does
-# not exist anywhere, auto-create it from PIPELINE_BASE_BRANCH.
+# --base actuation (#1214, supersedes the #1128 next-branch-only gate). An
+# explicit --base is now an ACTUATING DECLARATION, not a next-branch-only
+# override: it fetches origin/<base> and cuts the worktree from THAT remote
+# tip, regardless of whether <base> happens to equal the orchestrator's
+# current local branch. This is what lets a fetch-only inter-wave base
+# refresh (a single `git fetch`, no `checkout`, no `pull` against MAIN_REPO)
+# actually land wave N+1's worktree on wave N's merged-on-remote work.
 #
-# The DEFAULT path (no --base, or --base == current local branch) is UNCHANGED:
-# it cuts from LOCAL HEAD and relies on the inter-wave pull (#626). The
-# fetch/cut below is gated strictly on --base naming a non-current branch.
+# The DEFAULT path (no --base at all) is UNCHANGED: it cuts from MAIN_REPO's
+# LOCAL HEAD, exactly as before.
 ACTUATE_BASE=0
-if [ -n "$BASE_BRANCH" ] && [ "$BASE_BRANCH" != "$CURRENT_LOCAL_BRANCH" ]; then
+if [ -n "$BASE_BRANCH" ]; then
   ACTUATE_BASE=1
 fi
 
@@ -102,26 +103,37 @@ elif git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
   echo "[1/6] Creating worktree (existing branch)..."
   git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" "$BRANCH"
 elif [ "$ACTUATE_BASE" = "1" ]; then
-  # Next-branch routing: fetch origin/<base> and cut the worktree from its tip.
-  echo "[1/6] Creating worktree off origin/$BASE_BRANCH (--base actuation)..."
+  # --base actuation: fetch origin/<base> and cut the worktree from its tip.
+  # Three cases, in order:
   if git -C "$MAIN_REPO" fetch --quiet origin "$BASE_BRANCH" 2>/dev/null \
      && git -C "$MAIN_REPO" show-ref --verify --quiet "refs/remotes/origin/$BASE_BRANCH"; then
+    # (i) origin/<base> resolves — the common case. Cut from its remote tip.
+    # Never touches MAIN_REPO's own checked-out branch, HEAD, or any local ref.
+    echo "[1/6] Creating worktree off origin/$BASE_BRANCH (--base actuation)..."
     git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH" "origin/$BASE_BRANCH"
-  else
-    # origin/<base> does not exist anywhere — auto-create it from
-    # PIPELINE_BASE_BRANCH (the active dev trunk), push it, then cut from it.
+  elif [ "$BASE_BRANCH" != "$CURRENT_LOCAL_BRANCH" ]; then
+    # (ii) origin/<base> is absent anywhere AND <base> is NOT the branch
+    # MAIN_REPO is standing on — safe to auto-create it from
+    # PIPELINE_BASE_BRANCH (the active dev trunk), push it, then cut from it
+    # (#1128, verbatim).
+    echo "[1/6] Creating worktree off origin/$BASE_BRANCH (--base actuation)..."
     echo "  origin/$BASE_BRANCH absent — auto-creating from PIPELINE_BASE_BRANCH='$PIPELINE_BASE_BRANCH'..."
     git -C "$MAIN_REPO" fetch --quiet origin "$PIPELINE_BASE_BRANCH"
     git -C "$MAIN_REPO" branch -f "$BASE_BRANCH" "origin/$PIPELINE_BASE_BRANCH"
     git -C "$MAIN_REPO" push -u origin "$BASE_BRANCH"
     git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH" "$BASE_BRANCH"
+  else
+    # (iii) origin/<base> is absent anywhere AND <base> IS the branch
+    # MAIN_REPO is currently standing on. The auto-create path in (ii) would
+    # `git branch -f` (and push) the checked-out branch, which is either
+    # illegal (rc=128) or destructive — never do that. Fall back to the
+    # LOCAL-HEAD default instead, mutating NOTHING on the primary checkout.
+    echo "[1/6] Creating worktree off LOCAL HEAD (origin/$BASE_BRANCH absent and '$BASE_BRANCH' is the checked-out branch — no ref mutation)..."
+    git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH"
   fi
 else
   echo "[1/6] Creating worktree..."
-  # Branches off MAIN_REPO's LOCAL HEAD -- NOT origin/<base>. $BASE_BRANCH below
-  # is metadata/remote-existence only. Wave-running callers (fullsend) MUST
-  # `git pull --ff-only origin <base>` on MAIN_REPO between waves so a later
-  # wave's worktree inherits prior waves' merged-on-remote work (#626).
+  # No --base given. Branches off MAIN_REPO's LOCAL HEAD -- NOT origin/<base>.
   git -C "$MAIN_REPO" worktree add "$WORKTREE_PATH" -b "$BRANCH"
 fi
 
