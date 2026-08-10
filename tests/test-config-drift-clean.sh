@@ -41,6 +41,11 @@ done
 DECLARED_VARS=(
   PIPELINE_ANALYZE_MIN_AGE_HOURS
   PIPELINE_CI_FIX_CONTEXT
+  # #1215: reclassified from "per-spawn injected var" to operator knob — it is
+  # read as ${PIPELINE_PROJECT_ROOT:-...} by setup-worktree.sh, spawn-claude.sh,
+  # render-status-table.sh, _resolve-config.sh, prune-checkpoints.sh and
+  # review-logs.sh, whose error text tells the operator to set it.
+  PIPELINE_PROJECT_ROOT
   PIPELINE_QUEUE_DRY_RUN
   PIPELINE_REPO_CONSUMERS
 )
