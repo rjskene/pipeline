@@ -29,13 +29,20 @@ fi
 RENDERED="$SKILL_FILE"
 
 # Extract the content of a "#### Task 0 — PATH X" section up to the next
-# "#### " heading (or end of file). Returns the block text on stdout.
+# block boundary. Returns the block text on stdout.
+#
+# The boundary is the next "#### " path heading, ANY "## " section heading, or
+# the next numbered step line (e.g. `6. **Write the plan ...`). A "#### "-only
+# terminator is NOT sufficient: PATH D is the LAST "#### " heading in the file,
+# so BLOCK_D would run to EOF and swallow ## Revision handling / ## Comment
+# trust / ## Constraints — letting an unrelated match below the block satisfy a
+# PATH D assertion (notably Test 12's do-NOT clause).
 extract_section() {
   local letter="$1"
   awk -v start="^#### Task 0 — PATH ${letter}" '
-    $0 ~ start              { inblock = 1; print; next }
-    inblock && /^#### /     { inblock = 0 }
-    inblock                 { print }
+    $0 ~ start                            { inblock = 1; print; next }
+    inblock && /^(#### |## |[0-9]+\. )/   { inblock = 0 }
+    inblock                               { print }
   ' "$RENDERED"
 }
 
