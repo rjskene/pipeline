@@ -1,10 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Prose-grep contract for issue #626: skills/fullsend/SKILL.md must restructure
-# its execute stage (Steps 5-7) into a per-wave EXECUTION loop with:
-#   (a) an explicit inter-wave `git pull` that advances the orchestrator's LOCAL
-#       base tip so wave N+1's worktrees inherit wave N's merged work, and
+# Prose-grep contract for issue #626, retargeted by #1214: skills/fullsend/SKILL.md
+# must restructure its execute stage (Steps 5-7) into a per-wave EXECUTION loop with:
+#   (a) a FETCH-ONLY inter-wave base refresh — a single
+#       `git -C "$MAIN_REPO" fetch --quiet origin <base>` plus an ALWAYS-explicit
+#       `--base` on setup-worktree.sh — so wave N+1's worktrees are cut from
+#       `origin/<base>`'s tip and still inherit wave N's merged work, WITHOUT the
+#       orchestrator ever checking out or pulling the operator's primary checkout
+#       (#1214: the checkout+pull pair strands operator work and is not atomic), and
 #   (b) a scoped halt whose dependency closure is computed from the
 #       machine-readable `plan-waves.sh --stage=execute --emit-edges` output
 #       (NOT from the human-readable `Wave N:` lines, which suppress per-issue
@@ -62,8 +66,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. A per-wave loop marker AND a phrase about setting up worktrees for a wave
-#    off the CURRENT (local) base tip.
+# 2. A per-wave loop marker AND a phrase that each wave's worktrees are CUT FROM
+#    `origin/<base>`'s tip — and NOT off the CURRENT (local) base tip, which is
+#    the pre-#1214 mechanism the explicit `--base` actuation supersedes.
 # ---------------------------------------------------------------------------
 inc
 if grep -qiE 'wave by wave|for each wave|wave N\b' <<< "$EXEC_REGION"; then
@@ -73,10 +78,11 @@ else
 fi
 
 inc
-if grep -qiE 'off the current.*base tip|current local base tip|current local base' <<< "$EXEC_REGION"; then
-  pass_msg "execute region phrases setting up a wave off the current local base tip"
+if grep -qiE 'cut from \*{0,2}`?origin/<base>' <<< "$EXEC_REGION" \
+   && ! grep -qiE 'off the current.*base tip|current local base tip|current local base' <<< "$EXEC_REGION"; then
+  pass_msg "execute region states each wave's worktrees are cut from origin/<base>'s tip (local-base-tip phrasing retired)"
 else
-  fail_msg "execute region lacks 'off the current base tip' (current-local-base-tip) phrasing"
+  fail_msg "execute region must state worktrees are 'cut from origin/<base>'s tip' AND must NOT retain the current-local-base-tip phrasing (#1214)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -91,38 +97,45 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. The literal inter-wave pull: git pull --ff-only --quiet origin AND a
-#    git -C "$MAIN_REPO" checkout token AND a phrase that this advances the
-#    orchestrator's LOCAL base tip so the next wave's worktrees inherit merged
-#    work. ALSO: prose explicitly states setup-worktree.sh branches off LOCAL
-#    HEAD (not origin/<base>), which is why the pull is required.
+# 4. The #1214 fetch-only inter-wave base refresh. The literal
+#    `git -C "$MAIN_REPO" fetch --quiet origin` MUST be present, and every
+#    primary-checkout-mutating token / LOCAL-HEAD rationale MUST be gone:
+#      - `git pull --ff-only --quiet origin`      (the non-atomic pull half)
+#      - `git -C "$MAIN_REPO" checkout`           (the ref-mutating checkout half)
+#      - "advances the orchestrator's LOCAL base tip"  (the retired mechanism)
+#      - "branches off LOCAL HEAD" / "only metadata, not a remote fetch"
+#        (the pre-#1214 branch-point rationale that an explicit `--base` supersedes)
+#    The surviving rationale is that wave N+1 INHERITS wave N's MERGED WORK —
+#    that clause must stay, otherwise the loop's purpose is undocumented.
 # ---------------------------------------------------------------------------
 inc
-if grep -qF 'git pull --ff-only --quiet origin' <<< "$EXEC_REGION"; then
-  pass_msg "execute region has the literal 'git pull --ff-only --quiet origin' inter-wave pull"
+if grep -qF 'git -C "$MAIN_REPO" fetch --quiet origin' <<< "$EXEC_REGION" \
+   && ! grep -qF 'git pull --ff-only --quiet origin' <<< "$EXEC_REGION"; then
+  pass_msg "execute region advances the base with the literal 'git -C \"\$MAIN_REPO\" fetch --quiet origin' and no longer pulls"
 else
-  fail_msg "execute region lacks the literal 'git pull --ff-only --quiet origin' token"
+  fail_msg "execute region must carry 'git -C \"\$MAIN_REPO\" fetch --quiet origin' AND must NOT carry 'git pull --ff-only --quiet origin' (#1214)"
 fi
 
 inc
 if grep -qF 'git -C "$MAIN_REPO" checkout' <<< "$EXEC_REGION"; then
-  pass_msg "execute region has the 'git -C \"\$MAIN_REPO\" checkout' main-repo base checkout"
+  fail_msg "execute region still mutates the primary checkout via 'git -C \"\$MAIN_REPO\" checkout' — banned by #1214"
 else
-  fail_msg "execute region lacks a 'git -C \"\$MAIN_REPO\" checkout' main-repo base checkout token"
+  pass_msg "execute region never checks out the orchestrator's primary checkout"
 fi
 
 inc
-if grep -qiE "advances? the orchestrator.?s local base tip|inherit.*merged work|advances? .*local base tip so the next wave" <<< "$EXEC_REGION"; then
-  pass_msg "execute region states the pull advances the orchestrator's LOCAL base tip so the next wave inherits merged work"
+if grep -qiE "inherit.*merged work" <<< "$EXEC_REGION" \
+   && ! grep -qiE "advances? the orchestrator.?s local base tip" <<< "$EXEC_REGION"; then
+  pass_msg "execute region keeps the 'wave N+1 inherits merged work' rationale without sanctioning the retired LOCAL-base-tip advance"
 else
-  fail_msg "execute region lacks a 'advances the orchestrator's LOCAL base tip ... inherit merged work' phrasing"
+  fail_msg "execute region must keep an 'inherit ... merged work' clause AND must NOT claim it 'advances the orchestrator's LOCAL base tip' (#1214)"
 fi
 
 inc
-if grep -qiE "branches? off (the )?LOCAL HEAD|off LOCAL HEAD.*not .?origin|not .?origin/<base>" <<< "$EXEC_REGION"; then
-  pass_msg "execute region states setup-worktree.sh branches off LOCAL HEAD (not origin/<base>)"
+if grep -qiE "branches? off (the )?(main repo.s )?LOCAL HEAD|only metadata, not a remote fetch" <<< "$EXEC_REGION"; then
+  fail_msg "execute region still documents the LOCAL-HEAD / metadata-only branch point — superseded by the explicit --base actuation (#1214)"
 else
-  fail_msg "execute region lacks an explicit 'setup-worktree.sh branches off LOCAL HEAD (not origin/<base>)' statement"
+  pass_msg "execute region no longer claims setup-worktree.sh branches off LOCAL HEAD or that --base is metadata-only"
 fi
 
 # ---------------------------------------------------------------------------
