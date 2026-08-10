@@ -11,14 +11,21 @@
 #   BASE=recovered                drifted, but every stray commit in
 #                                 origin/<base>..<local-base> is reachable
 #                                 from at least one passed feature branch ->
-#                                 git reset --hard origin/<base>.
+#                                 the base ref is moved to origin/<base>
+#                                 (#1214: HEAD-aware — `git reset --hard` when
+#                                 HEAD is ON <base>, else `git branch -f`
+#                                 <base> so HEAD and the checked-out feature
+#                                 branch are never touched).
 #   BASE=drift-unsafe ORPHANS=<shas>
 #                                 a stray commit is on NO feature branch ->
 #                                 do NOT reset (would orphan committed work);
 #                                 scoped halt + report.
-#   BASE=error REASON=<...>       bad args / unresolvable ref; no mutation.
-#                                 Fail-open: orchestrator relays advisory
-#                                 without halting.
+#   BASE=error REASON=<...>       bad args / unresolvable ref; or the base ref
+#                                 could not be moved (neither `reset --hard`
+#                                 nor `branch -f` was legal, e.g. <base> is
+#                                 checked out in another linked worktree) ->
+#                                 no mutation. Fail-open: orchestrator relays
+#                                 advisory without halting.
 #
 # Reachability predicate: stray commit C is safe iff
 #   git merge-base --is-ancestor C <feature-branch>
@@ -109,9 +116,29 @@ if [ "${#ORPHANS[@]}" -gt 0 ]; then
 fi
 
 # Every stray is reachable from a feature branch — safe to recover.
-git reset --hard "origin/${BASE_BRANCH}" >/dev/null 2>&1 || {
-  echo "BASE=error REASON=reset-failed"
-  exit 0
-}
+#
+# #1214: HEAD-aware recovery. `git reset --hard` moves WHATEVER BRANCH HEAD IS
+# ON, which is only <base> when the caller is standing on it. Now that the
+# campaign/wave loop no longer checks the primary checkout out onto the base
+# branch before calling this guard, recovery must select its mechanism from
+# HEAD so it never moves HEAD or a checked-out feature branch:
+#   HEAD is ON <base>   -> git reset --hard origin/<base>   (unchanged path)
+#   HEAD is elsewhere   -> git branch -f <base> origin/<base>  (moves only the
+#                          <base> ref; never touches HEAD, the index, or the
+#                          checked-out feature branch)
+#   neither is legal    -> BASE=error REASON=reset-failed (fail-open; reuses
+#                          the EXISTING token, no new token enters the contract)
+CUR_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [ "$CUR_BRANCH" = "$BASE_BRANCH" ]; then
+  git reset --hard "origin/${BASE_BRANCH}" >/dev/null 2>&1 || {
+    echo "BASE=error REASON=reset-failed"
+    exit 0
+  }
+else
+  git branch -f "$BASE_BRANCH" "origin/${BASE_BRANCH}" >/dev/null 2>&1 || {
+    echo "BASE=error REASON=reset-failed"
+    exit 0
+  }
+fi
 echo "BASE=recovered"
 exit 0
