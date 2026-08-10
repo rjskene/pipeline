@@ -553,6 +553,18 @@ else
   fi
 fi
 
+# --------------------------------------------------------------------------
+# Check: project_root — PIPELINE_PROJECT_ROOT should be a deliberate choice,
+# not an implicit $(pwd) fallback (#1215).
+# --------------------------------------------------------------------------
+if [ -z "${PIPELINE_PROJECT_ROOT:-}" ]; then
+  record project_root warn "PIPELINE_PROJECT_ROOT unset - orchestrator checkout resolves via the \$(pwd) fallback ($(pwd)); set it in pipeline.config to pin it explicitly"
+elif [ -f "$PIPELINE_PROJECT_ROOT/pipeline.config" ] && { [ -d "$PIPELINE_PROJECT_ROOT/.git" ] || [ -f "$PIPELINE_PROJECT_ROOT/.git" ]; }; then
+  record project_root pass "PIPELINE_PROJECT_ROOT=$PIPELINE_PROJECT_ROOT"
+else
+  record project_root fail "PIPELINE_PROJECT_ROOT=$PIPELINE_PROJECT_ROOT does not contain both pipeline.config and a .git entry"
+fi
+
 # Below this point, several checks need PIPELINE_REPO / PIPELINE_BASE_BRANCH.
 # If they're missing, the checks degrade to fail/warn with a clear detail
 # rather than crashing.

@@ -18,6 +18,10 @@ _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Orchestrator's own checkout root — the target of every `git -C "$MAIN_REPO" ...`
+# in this skill. Mirrors scripts/setup-worktree.sh so skill and script resolve
+# identically. Empty PIPELINE_PROJECT_ROOT falls back to the Bash tool's cwd (#1215).
+MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 ```
 
 The bash code blocks below reference these variables via `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time. When prose refers to a config value by name (e.g., "the base branch is `PIPELINE_BASE_BRANCH`"), look it up in the sourced config.
@@ -127,6 +131,7 @@ The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PI
 2. **Base advance** — perform a fetch-only base refresh: a single `git -C "$MAIN_REPO" fetch --quiet origin "$PIPELINE_BASE_BRANCH"` so the next leg's worktrees (via Step 5's always-explicit `--base "$PIPELINE_BASE_BRANCH"`) are cut from `origin/<base>`'s tip and inherit this leg's merged work (same #626 reason as the `### Inter-wave base refresh`). This is one atomic command: it moves no local ref, no HEAD, and writes nothing to the working tree — the orchestrator's primary checkout is NEVER checked out or pulled (#1214).
 2a. **Leg-boundary base-ref drift guard (#1106 — Layer 2).** After the base advance and beside the usage gate below, snapshot `BASE0` before this leg's dispatch (at the START of step 1 above, `BASE0=$(git -C "$MAIN_REPO" rev-parse "$PIPELINE_BASE_BRANCH")`), then call the guard with the leg's feature branches:
    ```bash
+   # Required env: BASE0 (base-tip sha snapshotted before this leg's dispatch, step 1).
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-base-ref-drift.sh" \
      "$PIPELINE_BASE_BRANCH" "$BASE0" <leg-feature-branches...>
    ```
@@ -144,6 +149,7 @@ The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PI
 
 1. **Select up to `PIPELINE_CAMPAIGN_MAX_FOLD` (default 3) signals, FIFO.** Pipe the running campaign signal log through the mechanical selector, which walks records in filing (FIFO) order, applies the ceiling, and skips high-uncertainty TITLE-keyword hits without consuming budget:
    ```bash
+   # Required env: CAMPAIGN_SIGNALS (bash array of this campaign's collected signal lines).
    printf '%s\n' "${CAMPAIGN_SIGNALS[@]}" \
      | PIPELINE_REPO="$PIPELINE_REPO" \
        PIPELINE_CAMPAIGN_MAX_FOLD="${PIPELINE_CAMPAIGN_MAX_FOLD:-3}" \
@@ -359,6 +365,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
    **Post-dispatch model/shape verify (#1056, WARN-level).** For each dispatched **PATH A / PATH B / PATH C / PATH D** issue (#1186 widened this from B/D — A and C now carry real resolved pins, so their dispatches are verifiable too), alongside the `ACTION=` completion check above, also run the additive `--verify-dispatch` mode so a silent model/shape regression becomes VISIBLE in the run log (the #1056 invisible-cost gap — the inline path dispatched every PATH B/D execute WITHOUT a `model=`, inheriting Opus when config said Sonnet, with no signal). Thread the resolver's spec (the `MODEL=`/`SPLIT_ROLE=` the orchestrator just consumed in Step 6) and the model actually dispatched:
 
    ```bash
+   # Required env: MODEL SPLIT_ROLE (tokens consumed verbatim from resolve-execute-dispatch.sh).
    VED_EXPECT_MODEL="$MODEL" VED_EXPECT_SPLIT_ROLE="$SPLIT_ROLE" VED_OBSERVED_MODEL="<model-dispatched>" \
      PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-execute-completion.sh" --verify-dispatch <N> <A|B|C|D>
    ```
@@ -448,7 +455,7 @@ git -C "$MAIN_REPO" fetch --quiet origin "$PIPELINE_BASE_BRANCH"
 
 The inter-wave step is a single `git fetch --quiet origin` of the base branch, run against the main repo (`git -C "$MAIN_REPO" ...`).
 
-**Why this is mandatory (the #626 fix, refreshed by #1214).** PR merges land on the **remote**, so wave N+1's branch point must be `origin/<base>`'s tip — which Step 5's always-explicit `--base` actuation reads directly (`setup-worktree.sh` fetches `origin/<base>` itself and cuts the worktree from that remote tip). This inter-wave step's fetch refreshes that remote-tracking ref so Step 5 sees wave N's merged work. The advance is a **single command**: atomic, moves no local ref, no HEAD, and writes nothing to the working tree — nothing for a mid-sequence failure to strand. `--quiet` keeps the fetch's ref-update list out of orchestrator context. The orchestrator's LOCAL base branch is deliberately left behind — it is the operator's own checkout, and the autonomous lane never mutates it (the pre-#1214 `checkout` + `pull --ff-only` pair stranded operator work and was not atomic across the two commands). `$MAIN_REPO` is the orchestrator's own checkout root; `run-queue.sh` / `setup-worktree.sh` operate inside worktrees, so the orchestrator is free to fetch on the main repo between waves without disturbing any in-flight worktree.
+**Why this is mandatory (the #626 fix, refreshed by #1214).** PR merges land on the **remote**, so wave N+1's branch point must be `origin/<base>`'s tip — which Step 5's always-explicit `--base` actuation reads directly (`setup-worktree.sh` fetches `origin/<base>` itself and cuts the worktree from that remote tip). This inter-wave step's fetch refreshes that remote-tracking ref so Step 5 sees wave N's merged work. The advance is a **single command**: atomic, moves no local ref, no HEAD, and writes nothing to the working tree — nothing for a mid-sequence failure to strand. `--quiet` keeps the fetch's ref-update list out of orchestrator context. The orchestrator's LOCAL base branch is deliberately left behind — it is the operator's own checkout, and the autonomous lane never mutates it (the pre-#1214 `checkout` + `pull --ff-only` pair stranded operator work and was not atomic across the two commands). `$MAIN_REPO` is assigned in the `## Boot` block above (`${PIPELINE_PROJECT_ROOT:-$(pwd)}`) — the orchestrator's own checkout root; `run-queue.sh` / `setup-worktree.sh` operate inside worktrees, so the orchestrator is free to fetch on the main repo between waves without disturbing any in-flight worktree.
 
 ### Scoped halt-and-report (closure sourced from `--emit-edges`)
 

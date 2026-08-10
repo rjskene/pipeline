@@ -18,6 +18,10 @@ _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+# Orchestrator's own checkout root — the target of every `git -C "$MAIN_REPO" ...`
+# in this skill. Mirrors scripts/setup-worktree.sh so skill and script resolve
+# identically. Empty PIPELINE_PROJECT_ROOT falls back to the Bash tool's cwd (#1215).
+MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 ```
 
 The bash code blocks referenced below resolve `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_CAMPAIGN_MAX_BC`, `PIPELINE_CAMPAIGN_MAX_AD`, etc. from the sourced config — not from envsubst at install time.
