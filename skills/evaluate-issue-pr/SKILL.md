@@ -146,6 +146,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    For each failed check, fetch the first error line. Parse RUN_ID from `detailsUrl`; if parsing yields empty/non-numeric, use the `gh run list` fallback:
    ```bash
+   # Required env: DETAILS_URL (the failed check's .detailsUrl from the rollup query above).
    RUN_ID=$(echo "$DETAILS_URL" | sed 's|.*/runs/\([0-9]*\)/.*|\1|')
    if ! [[ "$RUN_ID" =~ ^[0-9]+$ ]]; then
      BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -199,6 +200,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
    **6c. Inline-mode visual proof setup** (issue #517, #527 — applies when invoked via the inline Agent dispatch for browser-eval, dispatch mode #3 above). Before any `browser_navigate` / `browser_evaluate` call, bootstrap the loopback server via the single-responsibility helper `scripts/visual-proof-server-start.sh` (composes the port broker + starts `python3 -m http.server --directory <target> --bind 127.0.0.1` + readiness probe). The helper allocates the port itself, so this path no longer depends on the orchestrator pre-resolving `$PORT`:
    ```bash
+   # Required env: TARGET_DIR (abs path under the worktree, from PIPELINE_VISUAL_PROOF_TARGET_DIR).
    SERVER_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/visual-proof-server-start.sh" \
                    "${SLATE_INDEX:-0}" "$TARGET_DIR" 2>&1) \
      || { echo "$SERVER_LINE"; exit 1; }   # block-server-start: ... on stderr

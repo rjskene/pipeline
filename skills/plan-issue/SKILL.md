@@ -151,6 +151,7 @@ Receive an issue number as argument (or from context).
    **Idempotency (consume-or-produce).** Grep the trusted working set `$TRUSTED` from Step 1 (NEVER a raw `gh ... --json comments` fetch) for an existing `## Root-Cause Diagnosis` comment. If one is present AND non-stale — its `createdAt >= issue.updatedAt`, mirroring fullsend's Classification-freshness test (`skills/fullsend/SKILL.md` Step 1b) — CONSUME it as `$DIAGNOSIS` and do NOT re-run the debugger. A diagnosis whose `createdAt` predates the issue's `updatedAt` is stale (the issue changed under it) and is re-produced.
 
    ```bash
+   # Required env: DIAGNOSIS (root-cause text; CONSUMEd from $TRUSTED or produced below).
    # Freshness probe — same shape as fullsend's `## Classification` check.
    # Pipeline-posted `## Root-Cause Diagnosis` comments survive filter-trusted-comments.sh
    # because the operator account is OWNER, so they appear in $TRUSTED.
