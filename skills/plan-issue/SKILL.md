@@ -194,7 +194,7 @@ Receive an issue number as argument (or from context).
    **Tasks (ordered):**
    - Task 0: <per-path directive — copy the block matching $PATH_LETTER below>
    - Task 1..N-1: <code work, structured per path>
-   - Task N: invoke `superpowers:requesting-code-review` to self-verify plan requirements are met and tests are green before opening the PR
+   - Task N: PATH A/B/C — invoke `superpowers:requesting-code-review` to self-verify plan requirements are met and tests are green before opening the PR. PATH D — use the PATH D Task N substitute in the PATH D block below instead; do NOT use this directive for PATH D.
 
    **DB schema changes:** (or "None")
    **API changes:** (or "None")
@@ -229,6 +229,7 @@ Receive an issue number as argument (or from context).
    PATH D plans collapse to a **single inline tdd task** — no subagent dispatch, no multi-task list. The implementer IS the `tdd-implementer` (executor applies red→green→commit directly inline). This is the contract `execute-issue-plan` Step 5 expects when it sees the `quick-fix` label.
    `Task 0: you ARE tdd-implementer (single-instance inline). Apply red→green→commit discipline directly in this session: write one failing test → run $PIPELINE_TEST_CMD → watch it fail for the RIGHT reason → write minimum impl → run $PIPELINE_TEST_CMD → watch it pass → commit. No subagent dispatch. No spawn-claude. No tmux. The evaluate-issue-pr stage is the sole review gate.`
    Code-task format: single bullet — same five steps as PATH B but inline without the `superpowers:test-driven-development` bookend.
+   `Task N (PATH D substitute): re-run $PIPELINE_TEST_CMD inline as a final self-check before opening the PR. Do NOT invoke superpowers:requesting-code-review — it dispatches a subagent, which the PATH D envelope forbids; evaluate-issue-pr is the sole review gate.`
 
 6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool (not heredoc, not `echo`) to create the draft file at the path below; YOU MUST NOT return the plan body in your final message for the caller to write.
    ```bash
