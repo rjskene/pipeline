@@ -13,6 +13,7 @@ PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
 PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: staging — dev trunk; override per-repo if needed)
 #PIPELINE_NEXT_BRANCH="next"   # Next-integration branch for breaking-change work (default: next, read-site ${VAR:-next}; uncomment to override)
 #PIPELINE_NEXT_LABEL="next"    # Label routing an issue onto PIPELINE_NEXT_BRANCH (default next; legacy alias next-major-release also honored)
+#PIPELINE_PROJECT_ROOT=""     # Orchestrator checkout root. Unset => read sites fall back to $(pwd) (correct only because the Bash tool resets cwd to the project root). Set to an absolute path to make the target explicit (#1215).
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
@@ -28,6 +29,7 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # failing test, even with a high exit code, still reds the run). It already
 # wraps each test in `timeout 300 ... </dev/null`, so no extra hang-guard needed:
 #   PIPELINE_TEST_CMD='bash scripts/run-test-suite.sh'
+#   bash scripts/run-test-suite.sh --chunk 1/4   # … --chunk 4/4: foreground chunks (#1208)
 # Why this matters for the agent (issue #1132): the serial
 # `for t in tests/test*.sh; do ...; done` sweep over the full suite exceeds the
 # agent's Bash-tool timeout (hundreds of sequential test files), so the executor /
@@ -53,8 +55,21 @@ PIPELINE_TEST_CMD="npm test"                       # Test command
 # tests/ (e.g. work-orchestrator: subagents/*/testing/ testing/) MUST set this
 # or the split-role W7 lock scope is vacuous (nothing found under tests/ ⇒ the
 # additive-only check trivially passes even when a locked test was tampered).
-# Only relevant when PIPELINE_PATH_B_SPLIT_ROLE is enabled.
+# Two consumers read this knob: the split-role W7 gate above, and the plan-time
+# exact-match guard sweep (scripts/exact-match-guard-sweep.sh, issue #1200) run
+# by plan-issue + evaluate-issue-plan. The sweep FAILS LOUD (exit 3,
+# REASON=no-test-root/no-test-files) rather than passing vacuously, so setting
+# this correctly matters even when PIPELINE_PATH_B_SPLIT_ROLE is disabled.
 #PIPELINE_TEST_ROOTS="subagents/*/testing/ testing/"
+# PIPELINE_TEST_FILE_GLOBS (issue #1201): basename globs identifying DISCOVERABLE
+# TEST FILES inside PIPELINE_TEST_ROOTS. Only files matching one of these are locked
+# by the split-role W7 gate; data fixtures / goldens / schemas living under a test
+# root are NOT locked, so a plan-sanctioned GREEN fixture regen no longer trips
+# locked-test-modified. Setting this REPLACES the built-in default set
+# (test_*.py *_test.py conftest.py test*.sh *_test.sh *_test.go *.test.{js,jsx,ts,tsx}
+# *.spec.{js,jsx,ts,tsx} test_*.rb *_spec.rb *Test.java) — list your test patterns AND
+# any golden you want kept under lock. Space-separated; matched against the BASENAME.
+#PIPELINE_TEST_FILE_GLOBS="test_*.py *_test.py conftest.py *.golden.json"
 PIPELINE_TYPECHECK_CMD="npx tsc --noEmit"          # Type check command
 PIPELINE_CONTEXT_FILES="CLAUDE.md"                 # Space-separated list of CLAUDE.md files to read
 PIPELINE_SYNC_ENVS=""                              # Space-separated .env files to sync to worktrees

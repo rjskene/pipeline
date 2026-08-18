@@ -166,13 +166,17 @@ fi
 # Additive mode (#1122): report whether the orchestrator main checkout has
 # staged or unstaged changes. Emits a single token on stdout:
 #
-#   CLEAN=ok    DIR=<dir>   — index and working tree are both clean
-#   CLEAN=dirty DIR=<dir>   — staged OR unstaged changes detected
+#   CLEAN=ok             DIR=<dir>  — index clean, no tracked drift, no untracked paths
+#   CLEAN=untracked-only DIR=<dir>  — ONLY untracked paths present (#1207): advisory,
+#                                     NOT the #1122 index leak; callers must NOT stash
+#   CLEAN=dirty          DIR=<dir>  — staged index entries and/or modified tracked files
 #
 # Exits 0 in every case (the token, not the exit code, carries the verdict).
 # `git status --porcelain` is the cleanliness probe: empty iff index AND
-# working tree are both clean; any output (staged, unstaged, tracked drift)
-# means dirty — catching the #1122 staged-but-uncommitted `git add` leak.
+# working tree are both clean. Non-empty output is CLASSIFIED rather than read
+# as uniformly dirty (#1207): a `??` entry is untracked, any other XY field is
+# an index or tracked-worktree change — the #1122 staged-but-uncommitted
+# `git add` leak the guard exists to catch.
 # ---------------------------------------------------------------------------
 if [ "$1" = "--clean-main" ]; then
   if [ $# -lt 2 ]; then
@@ -180,10 +184,17 @@ if [ "$1" = "--clean-main" ]; then
     exit 2
   fi
   CM_DIR="$2"
-  if [ -n "$(git -C "$CM_DIR" status --porcelain 2>/dev/null)" ]; then
+  # #1207: classify porcelain output rather than treating ANY output as dirty.
+  # An entry is untracked iff its XY status field is `??`; every other XY
+  # (`A `, `M `, ` M`, `R `, `D `, `UU`, ...) is an index or tracked-worktree
+  # change — the #1122 leak condition. Ignored paths never appear (no --ignored).
+  CM_STATUS="$(git -C "$CM_DIR" status --porcelain 2>/dev/null || true)"
+  if [ -z "$CM_STATUS" ]; then
+    echo "CLEAN=ok DIR=$CM_DIR"
+  elif printf '%s\n' "$CM_STATUS" | grep -q -v -e '^??'; then
     echo "CLEAN=dirty DIR=$CM_DIR"
   else
-    echo "CLEAN=ok DIR=$CM_DIR"
+    echo "CLEAN=untracked-only DIR=$CM_DIR"
   fi
   exit 0
 fi

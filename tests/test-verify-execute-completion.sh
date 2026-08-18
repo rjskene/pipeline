@@ -634,6 +634,59 @@ else
   pass_msg "cm5: --clean-main emits CLEAN= only (no ACTION=/DISPATCH= leak)"
 fi
 
+# Case CM6 (#1207): untracked-ONLY main checkout -> CLEAN=untracked-only, NOT dirty.
+# The #1122 guard targets a STAGED/index leak; long-standing operator-owned
+# untracked paths (mock-web/, scratchpad/, local notes) are not that condition
+# and must never trigger the Step 6a stash recovery.
+echo ""
+echo "Case CM6: untracked-only main checkout -> CLEAN=untracked-only"
+CM6="$ROOT/cm6"; make_clean_repo "$CM6"
+touch "$CM6/.orphaned_at" "$CM6/scratchpad.md"
+mkdir -p "$CM6/mock-web" && touch "$CM6/mock-web/index.html"
+OUT=$(run_clean_main "$CM6")
+assert_action "cm6" "$OUT" "CLEAN=untracked-only"
+inc
+if printf '%s' "$OUT" | grep -qF "CLEAN=dirty"; then
+  fail_msg "cm6: untracked-only reported CLEAN=dirty (the #1207 false positive)"
+else
+  pass_msg "cm6: untracked-only did NOT report CLEAN=dirty"
+fi
+
+# Case CM7 (#1207): untracked files PLUS a staged index entry -> still CLEAN=dirty.
+# Narrowing must not blind the guard to a genuine leak that coexists with scratch files.
+echo ""
+echo "Case CM7: untracked + staged index leak -> CLEAN=dirty"
+CM7="$ROOT/cm7"; make_clean_repo "$CM7"
+touch "$CM7/operator-scratch.md"
+touch "$CM7/leak.txt" && git -C "$CM7" add leak.txt
+OUT=$(run_clean_main "$CM7")
+assert_action "cm7" "$OUT" "CLEAN=dirty"
+
+# Case CM8 (#1207): untracked files PLUS a modified TRACKED file -> still CLEAN=dirty.
+echo ""
+echo "Case CM8: untracked + modified tracked file -> CLEAN=dirty"
+CM8="$ROOT/cm8"; make_clean_repo "$CM8"
+( cd "$CM8" && printf 'one\n' > tracked.txt && git add tracked.txt \
+  && git commit -q -m "add tracked" && printf 'two\n' >> tracked.txt \
+  && touch operator-scratch.md )
+OUT=$(run_clean_main "$CM8")
+assert_action "cm8" "$OUT" "CLEAN=dirty"
+
+# Case CM9 (#1207): untracked-only still exits 0 (token carries the verdict).
+echo ""
+echo "Case CM9: --clean-main exits 0 on the untracked-only verdict"
+CM9="$ROOT/cm9"; make_clean_repo "$CM9"
+touch "$CM9/operator-scratch.md"
+( PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main "$CM9" ) >/dev/null 2>&1
+rc=$?
+inc
+if [ "$rc" -eq 0 ]; then
+  pass_msg "cm9: --clean-main exited 0 on untracked-only"
+else
+  fail_msg "cm9: --clean-main exited $rc (expected 0)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"

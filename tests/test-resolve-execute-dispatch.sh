@@ -128,15 +128,29 @@ ALL_OUT_FILE="$WORKDIR/all-dispatch-outputs.txt"
 run_resolver() {
   local fixture="$1" cfgroot="$2" pathletter="$3"
   local out
-  # Hermeticity (#1144): a dogfood host exports PIPELINE_REPO+PIPELINE_BASE_BRANCH
-  # (run-test-suite.sh sources the live config), which trips _resolve-config.sh's
-  # early-return so the temp make_config_root config is never sourced. Scrub every
-  # PATH-*-knob the resolver reads so each case's cfgroot (or its intentional
-  # absence => shipped default) is authoritative, not the ambient live value.
+  # Hermeticity (#1144, #1199): a dogfood host exports PIPELINE_REPO+
+  # PIPELINE_BASE_BRANCH (run-test-suite.sh sources the live config). This
+  # function itself re-sets PIPELINE_REPO="owner/repo" below, so once
+  # PIPELINE_BASE_BRANCH is ALSO non-empty (inherited from the host), BOTH
+  # halves of _resolve-config.sh's early-return predicate
+  # (`[ -n "$PIPELINE_REPO" ] && [ -n "$PIPELINE_BASE_BRANCH" ]`) are true and
+  # it no-ops — the temp make_config_root config is never sourced, so every
+  # case's cfgroot is silently skipped in favor of shipped defaults (#1199).
+  # PIPELINE_BASE_BRANCH is NOT just another leaked knob like the PATH-*
+  # ones below: it is one of the two PREDICATE vars that gate whether the
+  # fixture config is read AT ALL. Scrubbing the PATH-* knobs alone (the
+  # #1144 remedy) cannot fix this — only unsetting PIPELINE_BASE_BRANCH (or
+  # PIPELINE_REPO) restores the predicate to false so _resolve-config.sh
+  # sources the cfgroot config, whose own PIPELINE_REPO/PIPELINE_BASE_BRANCH
+  # lines (see make_config_root) then apply. If a future author adds a new
+  # per-path or per-stage knob to this scrub list, that is
+  # necessary for THAT knob's value but does nothing for this mechanism —
+  # PIPELINE_BASE_BRANCH must stay scrubbed regardless of knob churn.
   # #1186 adds PIPELINE_PATH_{A,C}_MODEL_EXECUTE to the scrub set.
   out="$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
     PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$cfgroot" \
-    env -u PIPELINE_PATH_A_MODEL_EXECUTE \
+    env -u PIPELINE_BASE_BRANCH \
+        -u PIPELINE_PATH_A_MODEL_EXECUTE \
         -u PIPELINE_PATH_B_MODEL_EXECUTE \
         -u PIPELINE_PATH_C_MODEL_EXECUTE \
         -u PIPELINE_PATH_D_MODEL_EXECUTE \
@@ -411,6 +425,24 @@ if [ "$MODEL_LINES" -ge 18 ] && [ -z "$BAD_MODELS" ]; then
 else
   fail_msg "(20b) non-named MODEL= emissions: '${BAD_MODELS:-<no output captured>}'"
 fi
+
+# (21) Suite hermeticity regression guard (#1199): with PIPELINE_BASE_BRANCH
+#      exported in THIS test process's own environment (simulating a dogfood
+#      host that has sourced the live pipeline.config into the calling
+#      shell), a representative explicit-knob case must still resolve from
+#      its make_config_root fixture, not silently fall back to the shipped
+#      default. Before #1199, run_resolver() re-set PIPELINE_REPO but never
+#      scrubbed the inherited PIPELINE_BASE_BRANCH, so BOTH halves of
+#      _resolve-config.sh's early-return predicate were true, the fixture
+#      config was never sourced, and this case's MODEL=opus fell back to
+#      MODEL=sonnet (the shipped PATH B default) instead.
+export PIPELINE_BASE_BRANCH="staging"
+CFG21=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
+FIX21=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT21=$(run_resolver "$FIX21" "$CFG21" B)
+unset PIPELINE_BASE_BRANCH
+assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "MODEL=opus" "$OUT21"
+assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "REASON=explicit-knob" "$OUT21"
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="

@@ -22,6 +22,19 @@ set -uo pipefail
 #                                     -> NO reset (would orphan work); halt.
 #     BASE=error REASON=<...>         bad args / unresolvable ref; no mutation.
 #
+# #1214 extension — recovery must be HEAD-AWARE. `git reset --hard` moves
+# WHATEVER BRANCH HEAD IS ON, which is only the base branch when the caller was
+# standing on it. Now that the campaign/wave loop no longer checks the primary
+# checkout out onto the base branch before calling this guard, recovery has to
+# select its mechanism from HEAD:
+#     HEAD is ON <base>   -> git reset --hard origin/<base>   (unchanged path)
+#     HEAD is elsewhere   -> git branch -f <base> origin/<base>
+#                            (never touches HEAD, the index, or the checked-out
+#                            feature branch)
+#     neither is legal    -> BASE=error REASON=reset-failed   (fail-open; the
+#                            EXISTING token, no new token enters the contract)
+# Cases (f) and (g) pin those two new behaviours.
+#
 # Fixture convention mirrors tests/test-split-role-gate.sh: an isolated mktemp
 # repo per case with a real local `origin` remote (so `origin/<base>` resolves),
 # trap-cleaned even on failure, with PASS/FAIL counters; this suite only exits
@@ -223,6 +236,78 @@ else
     fail_msg "d2: ref mutated on an error path ($BEFORE -> $AFTER)"
   else
     pass_msg "d2: BASE=error REASON=..., exit 0, no mutation on unresolvable ref"
+  fi
+fi
+
+# ===========================================================================
+echo "Case (f): recover while HEAD is on a feature branch -> base moved, HEAD + feature branch untouched"
+inc
+if [ "$GUARD_PRESENT" -eq 0 ]; then
+  fail_msg "f: guard script missing ($GUARD) — cannot evaluate HEAD-aware recovery"
+else
+  REPO=$(build_repo f)
+  B0=$(sha "$REPO" "$BASE")
+  # Stray commit S lands on local $BASE (origin/$BASE still B0)...
+  echo strayS > "$REPO/stray.txt"
+  git -C "$REPO" add stray.txt
+  git -C "$REPO" commit -qm "S stray work"
+  S=$(sha "$REPO" "$BASE")
+  # ...and is also reachable from feature/x, so the drift is RECOVERABLE.
+  git -C "$REPO" branch feature/x "$S"
+  # The caller is NOT standing on the base branch — this is the #1214 shape:
+  # the campaign loop no longer checks the primary checkout out onto <base>.
+  git -C "$REPO" checkout -q feature/x
+  run_guard "$REPO" "$BASE" "$B0" feature/x
+  AFTER=$(sha "$REPO" "$BASE")
+  ORIGIN=$(sha "$REPO" "origin/$BASE")
+  HEAD_REF=$(git -C "$REPO" symbolic-ref --short HEAD 2>/dev/null || echo "DETACHED")
+  FX=$(sha "$REPO" feature/x)
+  if [ "$CODE" -ne 0 ]; then
+    fail_msg "f: expected exit 0, got exit $CODE (out='$OUT')"
+  elif [ "$OUT" != "BASE=recovered" ]; then
+    fail_msg "f: expected token 'BASE=recovered', got '$OUT'"
+  elif [ "$AFTER" != "$ORIGIN" ]; then
+    fail_msg "f: local '$BASE' not moved to origin/$BASE (base=$AFTER origin=$ORIGIN) — reset --hard moved HEAD's branch instead"
+  elif [ "$HEAD_REF" != "feature/x" ]; then
+    fail_msg "f: HEAD left feature/x (now '$HEAD_REF') — recovery must never move HEAD"
+  elif [ "$FX" != "$S" ]; then
+    fail_msg "f: feature/x was force-moved ($S -> $FX) — recovery destroyed the checked-out feature branch"
+  else
+    pass_msg "f: BASE=recovered via a HEAD-aware base move; HEAD and feature/x both intact"
+  fi
+fi
+
+# ===========================================================================
+echo "Case (g): base ref cannot be moved -> BASE=error REASON=reset-failed, no mutation"
+inc
+if [ "$GUARD_PRESENT" -eq 0 ]; then
+  fail_msg "g: guard script missing ($GUARD) — cannot evaluate the fail-open path"
+else
+  REPO=$(build_repo g)
+  B0=$(sha "$REPO" "$BASE")
+  echo strayS > "$REPO/stray.txt"
+  git -C "$REPO" add stray.txt
+  git -C "$REPO" commit -qm "S stray work"
+  S=$(sha "$REPO" "$BASE")
+  git -C "$REPO" branch feature/x "$S"
+  git -C "$REPO" checkout -q feature/x
+  # $BASE is additionally checked out in a LINKED worktree, so `git branch -f`
+  # refuses it (rc=128). Neither recovery mechanism is legal: the guard must
+  # fail OPEN on the existing token rather than claim a recovery it did not do.
+  git -C "$REPO" worktree add -q "$WORKDIR/g-linked" "$BASE"
+  run_guard "$REPO" "$BASE" "$B0" feature/x
+  AFTER=$(sha "$REPO" "$BASE")
+  HEAD_REF=$(git -C "$REPO" symbolic-ref --short HEAD 2>/dev/null || echo "DETACHED")
+  if [ "$CODE" -ne 0 ]; then
+    fail_msg "g: expected exit 0 (fail-open), got exit $CODE (out='$OUT')"
+  elif [ "$OUT" != "BASE=error REASON=reset-failed" ]; then
+    fail_msg "g: expected exactly 'BASE=error REASON=reset-failed', got '$OUT' (a false recovery claim)"
+  elif [ "$AFTER" != "$S" ]; then
+    fail_msg "g: '$BASE' mutated on the fail-open path ($S -> $AFTER)"
+  elif [ "$HEAD_REF" != "feature/x" ]; then
+    fail_msg "g: HEAD left feature/x (now '$HEAD_REF') on the fail-open path"
+  else
+    pass_msg "g: BASE=error REASON=reset-failed, exit 0, nothing mutated"
   fi
 fi
 

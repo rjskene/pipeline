@@ -27,8 +27,12 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc_scenario() { echo ""; echo "-- $1 --"; }
 
-# Isolate from any operator env (pipeline.config may set these).
-unset PIPELINE_USAGE_GATE_ENABLED PIPELINE_USAGE_GATE_THRESHOLD_PCT
+# Isolate from any operator env (pipeline.config may set these). #1199:
+# PIPELINE_LOGS_ENABLED is included because Scenario 16a relies on the
+# helper's own default (false) with no per-invocation override — a dogfood
+# host that sources pipeline.config with PIPELINE_LOGS_ENABLED=true leaks
+# through and the "no breadcrumb file" assertion fails.
+unset PIPELINE_USAGE_GATE_ENABLED PIPELINE_USAGE_GATE_THRESHOLD_PCT PIPELINE_LOGS_ENABLED
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

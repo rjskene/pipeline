@@ -29,13 +29,20 @@ fi
 RENDERED="$SKILL_FILE"
 
 # Extract the content of a "#### Task 0 — PATH X" section up to the next
-# "#### " heading (or end of file). Returns the block text on stdout.
+# block boundary. Returns the block text on stdout.
+#
+# The boundary is the next "#### " path heading, ANY "## " section heading, or
+# the next numbered step line (e.g. `6. **Write the plan ...`). A "#### "-only
+# terminator is NOT sufficient: PATH D is the LAST "#### " heading in the file,
+# so BLOCK_D would run to EOF and swallow ## Revision handling / ## Comment
+# trust / ## Constraints — letting an unrelated match below the block satisfy a
+# PATH D assertion (notably Test 12's do-NOT clause).
 extract_section() {
   local letter="$1"
   awk -v start="^#### Task 0 — PATH ${letter}" '
-    $0 ~ start              { inblock = 1; print; next }
-    inblock && /^#### /     { inblock = 0 }
-    inblock                 { print }
+    $0 ~ start                            { inblock = 1; print; next }
+    inblock && /^(#### |## |[0-9]+\. )/   { inblock = 0 }
+    inblock                               { print }
   ' "$RENDERED"
 }
 
@@ -158,6 +165,19 @@ if grep -qE "PATH_LETTER=D" "$RENDERED" \
   pass_msg "PATH D detected from quick-fix label; cached-comment fallback widened to A|B|C|D"
 else
   fail_msg "rendered skill missing PATH_LETTER=D branch / quick-fix label / A|B|C|D fallback"
+fi
+
+# --- Test 12: PATH D block explicitly forbids requesting-code-review ---
+echo "Test 12: PATH D Task N substitute forbids superpowers:requesting-code-review"
+inc
+if [ -z "$BLOCK_D" ]; then
+  fail_msg "no '#### Task 0 — PATH D' section found"
+elif echo "$BLOCK_D" | grep -qiF "do NOT invoke superpowers:requesting-code-review" \
+   && echo "$BLOCK_D" | grep -qi "dispatches a subagent" \
+   && echo "$BLOCK_D" | grep -qi "PATH D envelope forbids"; then
+  pass_msg "PATH D block explicitly forbids requesting-code-review dispatch with rationale"
+else
+  fail_msg "PATH D block missing explicit 'do NOT invoke superpowers:requesting-code-review' clause with subagent/envelope rationale"
 fi
 
 echo ""

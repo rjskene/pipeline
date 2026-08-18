@@ -14,7 +14,8 @@
 #   3. tests/test-doctor-golden-seed-set.sh   (hermetic golden-seed invariant)
 #   4. tests/test-config-drift-clean.sh       (live-tree drift-clean assertion)
 #   5. tests/test-readme-anchor-guard-prose.sh (README-anchor policy invariant)
-#   6. check-branch-cruft.sh            (#1028 — worktree-only; SKIP with note from repo root)
+#   6. check-branch-cruft.sh            (#1028 — requires PIPELINE_BASE_BRANCH
+#      resolvable + caller inside a git work tree; INERT with note otherwise, #1217)
 #
 # INTENTIONALLY EXCLUDED:
 #   check-conventional-title.sh — needs the PR title (not yet known at verification
@@ -28,17 +29,31 @@
 # Mirrors the scripts/run-test-suite.sh sentinel pattern.
 #
 # Usage: bash scripts/check-cross-cutting-guards.sh
-#   (runs from the repo root or any worktree; check-branch-cruft.sh is
-#   conditional on PIPELINE_BASE_BRANCH + being inside a git worktree)
+#   (runs from the repo root or any worktree, including a consumer install
+#   invoking a plugin-root copy by absolute path — PIPELINE_BASE_BRANCH is
+#   resolved from the CALLER's own repo via scripts/_resolve-config.sh, #1217.
+#   check-branch-cruft.sh is conditional on that resolution succeeding + the
+#   caller being inside a git work tree.)
 
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Best-effort source pipeline.config for PIPELINE_BASE_BRANCH.
+# Best-effort source pipeline.config for PIPELINE_BASE_BRANCH — covers the
+# dogfood/dev-checkout case where REPO_ROOT IS the caller's own repo (its
+# pipeline.config lives right here).
 if [ -f "$REPO_ROOT/pipeline.config" ]; then
   # shellcheck source=/dev/null
   source "$REPO_ROOT/pipeline.config" 2>/dev/null || true
+fi
+
+# Consumer-install case (#1217): REPO_ROOT is the PLUGIN root, which never
+# ships a local pipeline.config (only pipeline.config.example) — resolve
+# PIPELINE_BASE_BRANCH from the CALLER's own repo instead, via the shared
+# tier-3 walk-up helper (#1022). No-clobber: an already-set value still wins.
+if [ -f "$REPO_ROOT/scripts/_resolve-config.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/scripts/_resolve-config.sh"
 fi
 
 FAILED=0
@@ -77,15 +92,19 @@ run_guard "test-config-drift-clean.sh" bash "$REPO_ROOT/tests/test-config-drift-
 # 5. README-anchor policy invariant (#397/#404)
 run_guard "test-readme-anchor-guard-prose.sh" bash "$REPO_ROOT/tests/test-readme-anchor-guard-prose.sh"
 
-# 6. branch-cruft guard (#1028) — conditional: requires PIPELINE_BASE_BRANCH + worktree
+# 6. branch-cruft guard (#1028) — conditional: requires PIPELINE_BASE_BRANCH +
+# the CALLER to be inside a git work tree (not REPO_ROOT — REPO_ROOT is the
+# plugin root in a consumer install, which is never itself a git work tree;
+# run_guard below inherits the caller's cwd, so the gate must match that).
 CRUFT_LABEL="check-branch-cruft.sh"
 if [ -z "${PIPELINE_BASE_BRANCH:-}" ]; then
-  echo "  SKIP: $CRUFT_LABEL (PIPELINE_BASE_BRANCH unset — not in a configured worktree)" >&2
-elif ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "  SKIP: $CRUFT_LABEL (not inside a git work tree)" >&2
+  echo "  INERT: $CRUFT_LABEL (PIPELINE_BASE_BRANCH unresolved) — this guard did NOT run" >&2
+elif ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "  INERT: $CRUFT_LABEL (caller cwd is not inside a git work tree) — this guard did NOT run" >&2
 else
   # check-branch-cruft.sh uses : "${PIPELINE_BASE_BRANCH:?}" — it will self-abort
-  # if the base ref is unresolvable; run from REPO_ROOT so the worktree cwd is correct.
+  # if the base ref is unresolvable. It sources ./pipeline.config from the
+  # caller's cwd itself, so it correctly inherits run_guard's cwd (the caller's).
   run_guard "$CRUFT_LABEL" bash "$REPO_ROOT/scripts/check-branch-cruft.sh"
 fi
 
