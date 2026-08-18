@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.23.24](https://github.com/rjskene/pipeline/compare/v0.23.23...v0.23.24) (2026-08-18)
+
+
+### Features
+
+* **doctor:** warn when PIPELINE_PROJECT_ROOT is unset ([#1215](https://github.com/rjskene/pipeline/issues/1215)) ([a34ed14](https://github.com/rjskene/pipeline/commit/a34ed14d42ded44db511846d0e4385270fa45303))
+* **evaluate:** require executable verification + negative control for guard claims ([#1218](https://github.com/rjskene/pipeline/issues/1218)) ([12f946e](https://github.com/rjskene/pipeline/commit/12f946e6ede8bb2f57af7d175476efdc8c3351da))
+* **evaluate:** require executable verification + negative control for guard claims ([#1218](https://github.com/rjskene/pipeline/issues/1218)) ([a7efb81](https://github.com/rjskene/pipeline/commit/a7efb8199ff365e046b0abe5f27ebe831f47e73d))
+* **plan-eval:** add mechanical exact-match guard sweep ([#1200](https://github.com/rjskene/pipeline/issues/1200)) ([f29db2c](https://github.com/rjskene/pipeline/commit/f29db2c6d806b7d180f224e0186cb70e7dab8479))
+* **plan-eval:** run exact-match guard sweep in Phase 1 ([#1200](https://github.com/rjskene/pipeline/issues/1200)) ([4fe2eb4](https://github.com/rjskene/pipeline/commit/4fe2eb4408be26748f6bb93059b448c4242fbef9))
+* **run-test-suite:** add --chunk k/n foreground chunk mode ([#1208](https://github.com/rjskene/pipeline/issues/1208)) ([bc74807](https://github.com/rjskene/pipeline/commit/bc748076c1f60ec07c98fb2d41b5d252280d1436))
+* **scripts:** add exact-match assertion guard sweep ([#1200](https://github.com/rjskene/pipeline/issues/1200)) ([f848325](https://github.com/rjskene/pipeline/commit/f848325d342f4901b7d2912566787eec7523474d))
+* **split-role-gate:** thread PIPELINE_TEST_FILE_GLOBS from eval caller + config ([#1201](https://github.com/rjskene/pipeline/issues/1201)) ([9718841](https://github.com/rjskene/pipeline/commit/9718841bc6a95e38188c5004dfdfaa0bf7c7513d))
+
+
+### Bug Fixes
+
+* **campaign:** advance the base by fetch + --base, never by mutating the primary checkout ([#1214](https://github.com/rjskene/pipeline/issues/1214)) ([73488b3](https://github.com/rjskene/pipeline/commit/73488b3378346249a456ab237ebbef56f537b05f))
+* **campaign:** advance the base by fetch + explicit --base, never by mutating the primary checkout ([4bd187e](https://github.com/rjskene/pipeline/commit/4bd187e853052b54d591fbb85fc78fc1f997a52b))
+* **comment-trust:** make untrusted-opener refusal idempotent and terminal ([9924906](https://github.com/rjskene/pipeline/commit/9924906763d54e2f8491307015d76463cf652b70))
+* **comment-trust:** make untrusted-opener refusal idempotent and terminal ([db5d39e](https://github.com/rjskene/pipeline/commit/db5d39eeae2614ac0b8466df43b0503e7ca25bd9))
+* **drift-guard:** recover the base ref without moving HEAD or the checked-out branch ([#1214](https://github.com/rjskene/pipeline/issues/1214)) ([4582de4](https://github.com/rjskene/pipeline/commit/4582de4af183fa49ca32329a34313e49ac74a40e))
+* evaluation fixes for [#1212](https://github.com/rjskene/pipeline/issues/1212) — exclude subshell/backtick delimiters from redirect target token ([da0098c](https://github.com/rjskene/pipeline/commit/da0098ca4003b0f59921a7e15acfa328fd4812bf))
+* evaluation fixes for [#1216](https://github.com/rjskene/pipeline/issues/1216) — scope extract_section to the PATH D block ([6d7b539](https://github.com/rjskene/pipeline/commit/6d7b53993badb84a381cc763ea3ee04553ecf4a2))
+* **execute-dispatch:** ban run_in_background test runs, orchestrator-owned recovery ([#1208](https://github.com/rjskene/pipeline/issues/1208)) ([89dd870](https://github.com/rjskene/pipeline/commit/89dd8706fa2dcf5b4eb8ca47cd8a82c48b365848))
+* **execute-dispatch:** ban run_in_background test runs, orchestrator-owned recovery ([#1208](https://github.com/rjskene/pipeline/issues/1208)) ([18ff160](https://github.com/rjskene/pipeline/commit/18ff1607dfdb05c202500eb3a83f05febd81430e))
+* **fullsend:** assign MAIN_REPO in Boot and guard unassigned skill vars ([#1215](https://github.com/rjskene/pipeline/issues/1215)) ([d4a9acc](https://github.com/rjskene/pipeline/commit/d4a9accb962a893dd939cdcf437133280d018c6d))
+* **fullsend:** assign MAIN_REPO in Boot and guard unassigned skill vars ([#1215](https://github.com/rjskene/pipeline/issues/1215)) ([9ba205f](https://github.com/rjskene/pipeline/commit/9ba205fe41b4425ea25dac42bcf6c90971588f2d))
+* **guards:** resolve PIPELINE_BASE_BRANCH from caller repo in cross-cutting aggregator ([af53241](https://github.com/rjskene/pipeline/commit/af532411878096ededc836240f1a86a098ad8f3f))
+* **guards:** resolve PIPELINE_BASE_BRANCH from caller repo in cross-cutting aggregator ([a81cdce](https://github.com/rjskene/pipeline/commit/a81cdce400865f35d4de45351ed77787b8fac04b)), closes [#1217](https://github.com/rjskene/pipeline/issues/1217)
+* **hooks:** restrict_paths redirect scan blocks every .claude/ target, not just protected control files ([dbe6dba](https://github.com/rjskene/pipeline/commit/dbe6dbab72d7042602e9a36b5f8c65b4cdd2487d))
+* **hooks:** scope restrict_paths redirect-target scan to protected patterns ([#1212](https://github.com/rjskene/pipeline/issues/1212)) ([af07b7c](https://github.com/rjskene/pipeline/commit/af07b7c398d776654600657dc7cf9e1220c81920))
+* **plan-issue:** make canonical Task N wording path-aware for PATH D ([59dceca](https://github.com/rjskene/pipeline/commit/59dceca3bb223a0dab4168c3b6a58026eb5fbd2e))
+* **plan-issue:** make canonical Task N wording path-aware for PATH D ([d9d4a2e](https://github.com/rjskene/pipeline/commit/d9d4a2e5de15081a7ac5b66e472a53187d8dff27)), closes [#1216](https://github.com/rjskene/pipeline/issues/1216)
+* **split-role-gate:** lock only discoverable test files, not test-root data fixtures ([#1201](https://github.com/rjskene/pipeline/issues/1201)) ([524118a](https://github.com/rjskene/pipeline/commit/524118a37f4568b74d3175328796b879c4387eb0))
+* **split-role-gate:** narrow W7 lock scope to test files, not test-root fixtures ([#1201](https://github.com/rjskene/pipeline/issues/1201)) ([ba2e53a](https://github.com/rjskene/pipeline/commit/ba2e53a87ffad3dac39a22d8fcb712a1d5c9ba3c))
+* **tests:** drop glob-style var mention tripping check-config-drift ([62d2f72](https://github.com/rjskene/pipeline/commit/62d2f728050dd45cf793223cc6a03bef9ae96f53)), closes [#1199](https://github.com/rjskene/pipeline/issues/1199)
+* **tests:** narrow quick-fix collision-warning assertion to avoid systemd-run false positive ([4788ed4](https://github.com/rjskene/pipeline/commit/4788ed4e6d5dc6184f2389c96389977131667f14))
+* **tests:** narrow quick-fix collision-warning assertion to avoid systemd-run false positive ([88c63d7](https://github.com/rjskene/pipeline/commit/88c63d7d6feef5f4f91a074472322d6ee2ef0560)), closes [#1206](https://github.com/rjskene/pipeline/issues/1206)
+* **tests:** resolver test hermeticity misses PIPELINE_BASE_BRANCH scrub ([930e6cf](https://github.com/rjskene/pipeline/commit/930e6cfc51bb8c77df914c0226bee14776aaa3ee))
+* **tests:** scrub PIPELINE_BASE_BRANCH in test-resolve-execute-dispatch hermeticity wrapper ([2c8ac0d](https://github.com/rjskene/pipeline/commit/2c8ac0d519067f009c76fba6e3e35b124837ea50)), closes [#1199](https://github.com/rjskene/pipeline/issues/1199)
+* **tests:** scrub PIPELINE_BASE_BRANCH in test-resolve-stage-model hermeticity wrapper ([d0f0c5a](https://github.com/rjskene/pipeline/commit/d0f0c5a0e242e283d30b474543bb1a2a24b94b90)), closes [#1199](https://github.com/rjskene/pipeline/issues/1199)
+* **tests:** scrub PIPELINE_LOGS_ENABLED in test-usage-gate hermeticity setup ([5eb2867](https://github.com/rjskene/pipeline/commit/5eb28676fa7a4659a18934379107adbd502cf87f)), closes [#1199](https://github.com/rjskene/pipeline/issues/1199)
+* **verify-execute-completion:** emit CLEAN=untracked-only instead of dirty ([e08e856](https://github.com/rjskene/pipeline/commit/e08e85652bc2dab7c727923d821e3d82c3b49e8a)), closes [#1207](https://github.com/rjskene/pipeline/issues/1207)
+* **verify-execute-completion:** emit CLEAN=untracked-only so --clean-main stops flagging untracked-only checkouts as dirty ([da20e5f](https://github.com/rjskene/pipeline/commit/da20e5f48db465a233454d8dfc643bb32921c832))
+* **worktree:** actuate explicit --base from origin tip, never mutate the checked-out branch ([#1214](https://github.com/rjskene/pipeline/issues/1214)) ([48e9547](https://github.com/rjskene/pipeline/commit/48e9547b6069ca0b0cbba310cbf9cf5ee761b5c6))
+
 ## [0.23.23](https://github.com/rjskene/pipeline/compare/v0.23.22...v0.23.23) (2026-08-03)
 
 
