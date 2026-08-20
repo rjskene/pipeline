@@ -8,10 +8,10 @@ set -euo pipefail
 # pipeline.config (or env).
 #
 # Input:   issue numbers via argv (space-separated) OR stdin (newline-separated).
-# Output:  one line per wave on stdout:
-#            Wave 1: classify #A, #B in parallel
-#            Wave 2: classify #C (serial — shares <file> with #A)
-#            Wave 3: classify #D (serial — blocked by #C)
+# Output:  one line per wave on stdout, verb reflecting --stage (classify|plan|execute):
+#            Wave 1: <stage> #A, #B in parallel
+#            Wave 2: <stage> #C (serial — shares <file> with #A)
+#            Wave 3: <stage> #D (serial — blocked by #C)
 
 usage() {
   cat >&2 <<EOF
@@ -370,15 +370,15 @@ for W in $(seq 1 "$LAST_WAVE"); do
   done
 
   if [ "$COUNT" -ge 2 ]; then
-    echo "Wave $W: classify $LIST in parallel"
+    echo "Wave $W: $STAGE $LIST in parallel"
   else
     # Single issue in wave — append reason (if any) in parens.
     only=$ISSUES_IN_WAVE
     r="${REASON[$only]:-}"
     if [ -n "$r" ]; then
-      echo "Wave $W: classify #$only (serial — $r)"
+      echo "Wave $W: $STAGE #$only (serial — $r)"
     else
-      echo "Wave $W: classify #$only in parallel"
+      echo "Wave $W: $STAGE #$only in parallel"
     fi
   fi
 done
