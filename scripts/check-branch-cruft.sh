@@ -17,12 +17,23 @@ set -euo pipefail
 [ -f pipeline.config ] && source ./pipeline.config 2>/dev/null || true
 : "${PIPELINE_BASE_BRANCH:?check-branch-cruft: PIPELINE_BASE_BRANCH unset}"
 
+# Resolve the comparison ref. The pipeline's inter-wave/inter-leg base advance is
+# deliberately fetch-only (#1214) — it moves refs/remotes/origin/<base> but never
+# the local refs/heads/<base>, precisely so the autonomous lane never mutates the
+# operator's own checkout. So after wave 1, the local base ref is stale while
+# origin/<base> carries the just-merged work. Prefer the remote-tracking ref when
+# it exists; fall back to the local/bare ref for single-checkout/offline use (#1231).
+BASE_REF="$PIPELINE_BASE_BRANCH"
+if git rev-parse --verify --quiet "refs/remotes/origin/${PIPELINE_BASE_BRANCH}" >/dev/null 2>&1; then
+  BASE_REF="origin/${PIPELINE_BASE_BRANCH}"
+fi
+
 # Compute the committed branch-vs-base diff. If the base ref is unresolvable
 # (detached/odd state), fall back to inspecting only the HEAD commit and note it.
-if CHANGED=$(git diff --name-only "$PIPELINE_BASE_BRANCH"..HEAD 2>/dev/null); then
+if CHANGED=$(git diff --name-only "$BASE_REF"..HEAD 2>/dev/null); then
   :
 else
-  echo "check-branch-cruft: NOTE base ref '$PIPELINE_BASE_BRANCH' unresolvable; inspecting HEAD commit only (degraded mode)." >&2
+  echo "check-branch-cruft: NOTE base ref '$BASE_REF' unresolvable; inspecting HEAD commit only (degraded mode)." >&2
   CHANGED=$(git diff-tree -r --name-only --no-commit-id HEAD)
 fi
 
@@ -58,5 +69,5 @@ if [ "${#VIOLATIONS[@]}" -gt 0 ]; then
   exit 1
 fi
 
-echo "check-branch-cruft: OK ($N changed paths vs $PIPELINE_BASE_BRANCH, no cruft)"
+echo "check-branch-cruft: OK ($N changed paths vs $BASE_REF, no cruft)"
 exit 0
