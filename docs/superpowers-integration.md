@@ -17,7 +17,7 @@ Where pipeline stages invoke superpowers skills. Companion to `CLAUDE.md` § "Pi
 |----------------|--------------------|-----------------|
 | `create-issues` | `superpowers:brainstorming` | `skills/create-issues/SKILL.md` § Step 2 "Refine the idea" |
 | `plan-issue` | `superpowers:writing-plans` | `skills/plan-issue/SKILL.md` § Step 5 "Generate the implementation plan" |
-| `plan-issue` | `superpowers:requesting-code-review` | `skills/plan-issue/SKILL.md` § Step 5 (emitted as final Task N in plan output) |
+| `plan-issue` | `superpowers:requesting-code-review` | `skills/plan-issue/SKILL.md` § Step 5 (emitted as final Task N, attributed to the PR-opening role; orchestrator-owned on PATH C) |
 | `execute-issue-plan` (PATH B) | `superpowers:test-driven-development` | `skills/execute-issue-plan/SKILL.md` § Step 5 (Task 0 directive) |
 | `execute-issue-plan` (PATH C) | `superpowers:test-driven-development` | `skills/execute-issue-plan/SKILL.md` § Step 5 (via `tdd-implementer` subagent dispatch with `target=<dir>` sentinel) |
 | `execute-issue-plan` (PATH D) | `superpowers:test-driven-development` (inline) | `skills/execute-issue-plan/SKILL.md` § Step 5 (executor IS tdd-implementer; no subagent) |
@@ -57,4 +57,5 @@ How to add a new superpower dependency to a pipeline skill.
   - PATH D: no subagent dispatch — inline only. Hook-equivalent enforcement lives in `skills/execute-issue-plan/SKILL.md` Step 5.
   - Base-branch enforcement: any superpower that opens PRs must pass `--base "$PIPELINE_BASE_BRANCH"` (defense-in-depth at eval-time gate, skill-level, and PreToolUse hook).
 - Do NOT introduce superpower invocations from pipeline scripts (`scripts/*.sh`) — superpowers are session-level skills and must be invoked from skill markdown only.
+- A `Skill(...)`/`Agent(...)` step must never be emitted as a `tdd-implementer` leaf task (PATH C leaves, PATH D) — `tdd-implementer` has neither tool, so attribute the step to the PR-opening role instead (#1225).
 - Out of scope for this doc: graceful-degradation behavior when a superpower is not installed (see `CLAUDE.md` design principle #3); instrumentation to verify agents actually invoke documented superpowers (separate issue).
