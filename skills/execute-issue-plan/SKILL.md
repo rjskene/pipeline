@@ -142,6 +142,8 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
    For all other paths, Step 8 runs BEFORE `gh pr create` to catch plan-compliance gaps and real bugs while the branch is still local-only.
 
+   **Step 8 owner — the role that opens the PR (#1225).** Step 8's `Skill(...)`/`Agent(...)` calls require tools a leaf executor does not have, so Step 8 is owned by the PR-opening role: on PATH A/B the inline execute `Agent` (`general-purpose`); on PATH C the ORCHESTRATOR, after every `tdd-implementer` leaf has returned and `path-c-split-worktree.sh reassemble` has run, and before `gh pr create` (Step 9). A `tdd-implementer` leaf NEVER runs Step 8; a leaf handed a Step 8-shaped task refuses loudly with `CAPABILITY-REFUSED:` per `agents/tdd-implementer.md` rather than substituting a self-review.
+
    **8a. Author self-check.** Invoke `superpowers:requesting-code-review` with the plan comment body (from step 1) as context. The skill verifies plan requirements are met, tests pass, and CI-equivalent checks are green locally. Fix any gaps and re-run step 6 before continuing.
    ```
    Skill(skill: "superpowers:requesting-code-review")

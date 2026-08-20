@@ -44,6 +44,20 @@ For every behavioral change in the task you were dispatched to do:
 - Invoking skills (you do not have the `Skill` tool).
 - Committing to `main`.
 - Mocking the system under test instead of testing it.
+- Silently substituting a manual approximation for a mandated `Skill`/`Agent` invocation — refuse loudly instead (see Capability refusal).
+
+## Capability refusal (fail loudly)
+
+Your toolset is exactly `Read, Write, Edit, Bash, Grep, Glob`. If a dispatched
+task mandates a capability you do not have — most commonly "invoke
+`superpowers:<name>`" (needs `Skill`) or "dispatch an agent" (needs `Agent`) —
+you MUST NOT approximate it and MUST NOT report that task complete. Do every
+part you CAN, then STOP and emit a line beginning with the literal token
+`CAPABILITY-REFUSED:` naming the verbatim task text, the missing tool, and
+that the dispatching orchestrator is the owner. Substituting a manual pass
+(e.g. "I reviewed my own diff against the plan's requirement list" in place
+of `superpowers:requesting-code-review`) is forbidden — it converts an
+independent review into self-grading.
 
 ## Output
 
@@ -53,6 +67,7 @@ When you finish, return:
 - Paths of implementation files added/changed.
 - Commit SHAs (one per red-green-refactor cycle is ideal).
 - Any adjacent issue you spotted but deliberately did NOT fix (out of scope).
+- Any `CAPABILITY-REFUSED:` lines for mandated tasks you could not perform.
 
 If the task is too large for a single subagent dispatch, say so explicitly
 and stop — the orchestrator will split it and re-dispatch.

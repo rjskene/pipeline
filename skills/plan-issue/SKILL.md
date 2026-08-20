@@ -195,7 +195,7 @@ Receive an issue number as argument (or from context).
    **Tasks (ordered):**
    - Task 0: <per-path directive — copy the block matching $PATH_LETTER below>
    - Task 1..N-1: <code work, structured per path>
-   - Task N: PATH A/B/C — invoke `superpowers:requesting-code-review` to self-verify plan requirements are met and tests are green before opening the PR. PATH D — use the PATH D Task N substitute in the PATH D block below instead; do NOT use this directive for PATH D.
+   - Task N: PATH A/B — the inline execute agent (`general-purpose`, which HAS the `Skill` tool) invokes `superpowers:requesting-code-review` to self-verify plan requirements are met and tests are green before opening the PR. PATH C — the ORCHESTRATOR runs that same review after every `tdd-implementer` leaf has returned and been reassembled, before `gh pr create`; NEVER emit it as a `target=<dir>` leaf task, because the leaf `tdd-implementer` has no `Skill` tool. PATH D — use the PATH D Task N substitute in the PATH D block below instead; do NOT use this directive for PATH D.
 
    **DB schema changes:** (or "None")
    **API changes:** (or "None")
@@ -227,6 +227,8 @@ Receive an issue number as argument (or from context).
    - **The inverse:** a control pinned to a post-change value IS red at the RED commit; do not call it vacuously green because it is a control.
    - The ledger is a PREDICTION to verify, not a script to satisfy — an executor observing a different state reports the divergence instead of bending the test to match.
    - PATH A (docs-only) carries no test deliverable: the section is the single word `None`.
+
+   **Executor-capability rule (#1225).** A plan task MUST NOT mandate a capability the assigned executor lacks. `tdd-implementer` is a leaf executor whose toolset is exactly `Read, Write, Edit, Bash, Grep, Glob` — no `Skill`, no `Agent`. So NO task that will be dispatched to a `tdd-implementer` — every PATH C `target=<dir>` leaf task, and every PATH D task — may name a `Skill(...)` or `Agent(...)` invocation (including any `superpowers:*` skill). A task that needs a skill is OWNED BY THE PR-OPENING ROLE — the inline execute agent on PATH A/B, the orchestrator on PATH C (`execute-issue-plan` Step 8) — and the task text must say so. This is the planner-side half of the contract; the executor-side half is the loud-refusal rule in `agents/tdd-implementer.md`, where a leaf handed a task it cannot perform reports `CAPABILITY-REFUSED:` instead of silently substituting a manual approximation.
 
    ### Per-path Task 0 — copy the block matching `PATH_LETTER`; structure Tasks 1..N-1 in the same path's format.
 
