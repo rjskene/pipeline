@@ -72,6 +72,52 @@ declare -A PRIORITY        # P0|P1|P2|P3
 declare -A BLOCKERS        # space-separated issue numbers
 declare -A FILES           # space-separated file paths
 
+# Path normalization + junk-token rejection (#1230). Extracted tokens are
+# resolved to repo-root-relative form so a shallow reference
+# (`plan-issue/SKILL.md`) and its deep counterpart (`skills/plan-issue/SKILL.md`)
+# compare equal for conflict detection, and prose/cross-repo shapes
+# (`**RED/GREEN`, `rjskene/work-orchestrator`, `rjskene/work-orchestrator#1537`)
+# are dropped rather than harvested as file paths. See the plan comment on
+# #1230 for the full design-decision writeup.
+FILE_EXT_RE='\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
+_PW_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+TREE_INDEX=""
+if [ -n "$_PW_ROOT" ]; then
+  TREE_INDEX=$(git -C "$_PW_ROOT" ls-files 2>/dev/null || true)
+fi
+
+normalize_file_tokens() {
+  local tok clean cands n
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    clean="${tok//\`/}"
+    clean=$(printf '%s' "$clean" | sed -E 's/^[*_([]+//; s/[]*_,.;:)]+$//')
+    clean="${clean#./}"
+    [ -n "$clean" ] || continue
+    case "$clean" in
+      *'#'*) continue ;;
+      */)    continue ;;
+    esac
+    if [ -n "$TREE_INDEX" ] && printf '%s\n' "$TREE_INDEX" | grep -Fxq -- "$clean"; then
+      printf '%s\n' "$clean"; continue
+    fi
+    case "$clean" in
+      */*)
+        cands=""
+        if [ -n "$TREE_INDEX" ]; then
+          cands=$(printf '%s\n' "$TREE_INDEX" \
+            | awk -v s="/$clean" 'length($0)>length(s) && substr($0, length($0)-length(s)+1)==s' || true)
+        fi
+        n=$(printf '%s' "$cands" | grep -c . || true)
+        if [ "${n:-0}" = "1" ]; then printf '%s\n' "$cands"; continue; fi
+        ;;
+    esac
+    if printf '%s' "$clean" | grep -qE "$FILE_EXT_RE"; then
+      printf '%s\n' "$clean"; continue
+    fi
+  done
+}
+
 # Fetch + parse each issue.
 for N in "${ISSUES[@]}"; do
   if ! JSON=$(gh issue view "$N" --repo "$REPO" --json number,title,body,labels 2>/dev/null); then
@@ -146,6 +192,7 @@ for N in "${ISSUES[@]}"; do
           | sed 's/[[:space:]]\+/\n/g' \
           | tr -d '`' \
           | grep -E "$FILE_PATH_RE" \
+          | normalize_file_tokens \
           | sort -u \
           | tr '\n' ' '; } || true)
         PLAN_FILES="${PLAN_FILES% }"
@@ -166,6 +213,7 @@ for N in "${ISSUES[@]}"; do
       FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
         | sed 's/[[:space:]]\+/\n/g' \
         | grep -E "$FILE_PATH_RE" \
+        | normalize_file_tokens \
         | sort -u \
         | tr '\n' ' '; } || true)
       FILES[$N]="${FLIST% }"
