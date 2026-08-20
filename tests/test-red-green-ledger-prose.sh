@@ -48,13 +48,27 @@
 # short-circuiting on a failed precondition, and Cases D/E/F/G each itemise a
 # non-vacuity control). Report divergence; do not bend the test to match.
 #
-# Env overrides (used by the Case C/D/E/G machinery, which builds mutants and
+# Env overrides (used by the Case C/D/E/G/H machinery, which builds mutants and
 # re-invokes this file in inner mode):
 #   SKILL_PI  path to plan-issue/SKILL.md
 #   SKILL_EP  path to evaluate-issue-plan/SKILL.md
 #   SKILL_PR  path to evaluate-issue-pr/SKILL.md   (Case F awk source)
-#   LEDGER_INNER=1     inner mode: Case A ONLY, never recurses
-#   LEDGER_NOOP_REPS   Case G repetitions (default 10)
+#   LEDGER_INNER=1        inner mode: Case A ONLY, never recurses
+#   LEDGER_NOOP_REPS      Case G repetitions (default 10)
+#   LEDGER_SKIP_CASE_H=1  skip Case H's own recursive full-suite dispatch —
+#                         set by Case H itself on the child invocation it
+#                         spawns, so the fence-rename mutant (which already
+#                         lacks a ```markdown fence) does not recurse forever
+#                         trying to rename a fence that is no longer there.
+#
+# #1232 (Case H / Case I, below): unbalanced literal backticks inside a
+# double-quoted pass_msg/fail_msg string are parsed as command substitution,
+# which can swallow an entire `else` branch at PARSE time — the branch's
+# fail_msg call is never invoked, `inc` still runs, and PASS+FAIL silently
+# under-reports relative to TESTS. Case H is the fence-rename regression for
+# the specific D(0) defect; Case I is the general self-accounting invariant
+# (PASS + FAIL == TESTS) that generalises to any other dead branch of this
+# shape.
 
 set -uo pipefail
 
@@ -75,6 +89,7 @@ SKILL_PR="${SKILL_PR:-$SCRIPT_DIR/../skills/evaluate-issue-pr/SKILL.md}"
 
 INNER="${LEDGER_INNER:-0}"
 NOOP_REPS="${LEDGER_NOOP_REPS:-10}"
+SKIP_CASE_H="${LEDGER_SKIP_CASE_H:-0}"
 
 # FIXED labels for the Case A failure line. Deliberately NOT "$SKILL_PI" — the
 # mutation machinery points that variable at copies under $TMP, and a $TMP path
@@ -252,6 +267,28 @@ run_inner() {
   printf '%s' "$rc"
 }
 
+# Parse the trailing "<N> cases: <P> passed, <F> failed" / "PASS=<P> FAIL=<F>"
+# summary lines out of a captured full-run <outfile>. Echoes "TESTS|PASS|FAIL"
+# (empty fields if the summary was never printed, e.g. the child crashed).
+# Pure bash — no pipe, so it cannot itself SIGPIPE under pipefail.
+parse_run_totals() {
+  local outfile="$1" line rest tests_n="" pass_n="" fail_n=""
+  while IFS= read -r line; do
+    case "$line" in
+      *' cases: '*' passed, '*' failed'*)
+        rest="${line#"${line%%[![:space:]]*}"}"
+        tests_n="${rest%% cases:*}"
+        ;;
+      *'PASS='*'FAIL='*)
+        rest="${line#*PASS=}"
+        pass_n="${rest%% FAIL=*}"
+        fail_n="${rest##*FAIL=}"
+        ;;
+    esac
+  done < "$outfile"
+  printf '%s|%s|%s' "$tests_n" "$pass_n" "$fail_n"
+}
+
 # ---------------------------------------------------------------------------
 echo "Case A: every ledger anchor is present in the BODY of both skills"
 case_a
@@ -398,9 +435,9 @@ case_d() {
   # reason and make D(3) pass vacuously.
   inc
   if [ -n "$tmpl" ] && str_has "$tmpl" '## Implementation Plan'; then
-    pass_msg "D(0): canonical ```markdown plan template extracted from the plan-issue body"
+    pass_msg "D(0): canonical \`\`\`markdown plan template extracted from the plan-issue body"
   else
-    fail_msg "D(0): could not extract the canonical ```markdown plan template — Case D cannot run"
+    fail_msg "D(0): could not extract the canonical \`\`\`markdown plan template — Case D cannot run"
   fi
 
   inc
@@ -571,6 +608,80 @@ case_g() {
   fi
 }
 case_g
+
+# ---------------------------------------------------------------------------
+echo ""
+echo "Case H: fence-rename mutant — D(0)'s else branch must be reachable (#1232)"
+# #1232: literal backticks in D(0)'s pass_msg/fail_msg were parsed as command
+# substitution, which swallowed the `else` clause at PARSE time — D(0) always
+# reported PASS regardless of whether extract_impl_template actually
+# succeeded, and its fail_msg call was dead code. A fence-rename mutant
+# (renaming the ```markdown fence so extract_impl_template returns "") must
+# produce a genuine `FAIL: D(0)` line, and that child run's own accounting
+# must balance: PASS + FAIL == TESTS.
+#
+# Recurses via LEDGER_SKIP_CASE_H=1 so the child (whose SKILL_PI already
+# lacks a ```markdown fence) does not try to rename a fence that is no longer
+# there and recurse forever.
+case_h() {
+  local mut out result tests_n pass_n fail_n rest
+
+  mut="$TMP/h-fence-rename.md"
+  sed 's/```markdown/```renamed-fence/' "$SKILL_PI" > "$mut"
+
+  inc
+  if diff -q "$SKILL_PI" "$mut" > /dev/null 2>&1; then
+    fail_msg "H(0): fence-rename mutant is vacuous — byte-identical to the original, nothing was renamed"
+  else
+    pass_msg "H(0): fence-rename mutant applied — the \`\`\`markdown fence was renamed"
+  fi
+
+  out="$TMP/h-run.out"
+  SKILL_PI="$mut" LEDGER_SKIP_CASE_H=1 bash "$SELF" > "$out" 2>&1
+
+  inc
+  if out_has "$out" 'FAIL: D(0)'; then
+    pass_msg "H(1): D(0)'s else branch is reachable — a real FAIL: D(0) line was printed under the fence-rename mutant"
+  else
+    fail_msg "H(1): D(0)'s else branch is DEAD — no FAIL: D(0) line under the fence-rename mutant (the #1232 defect)"
+  fi
+
+  result="$(parse_run_totals "$out")"
+  tests_n="${result%%|*}"
+  rest="${result#*|}"
+  pass_n="${rest%%|*}"
+  fail_n="${rest##*|}"
+
+  inc
+  if [ -n "$tests_n" ] && [ -n "$pass_n" ] && [ -n "$fail_n" ] && [ "$((pass_n + fail_n))" -eq "$tests_n" ]; then
+    pass_msg "H(2): fence-rename run's own accounting balances — PASS($pass_n) + FAIL($fail_n) == TESTS($tests_n)"
+  else
+    fail_msg "H(2): fence-rename run's own accounting is UNBALANCED — PASS($pass_n) + FAIL($fail_n) != TESTS($tests_n) (the #1232 defect: a dead branch under-reports)"
+  fi
+}
+if [ "$SKIP_CASE_H" != "1" ]; then
+  case_h
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
+echo "Case I: suite self-accounting — PASS + FAIL must equal TESTS"
+# The general invariant that caught #1232: any case whose parse error
+# swallows an `else` branch calls inc() without a matching pass_msg/fail_msg,
+# silently under-reporting PASS+FAIL relative to TESTS. This checks it on
+# THIS run's own live counters (snapshotted before this check's own inc call),
+# so it generalises to any future dead branch of the same shape, anywhere in
+# this suite — not just Case H's fence-rename fixture.
+case_i() {
+  local snap_tests="$TESTS" snap_pass="$PASS" snap_fail="$FAIL"
+  inc
+  if [ "$((snap_pass + snap_fail))" -eq "$snap_tests" ]; then
+    pass_msg "I: self-accounting holds — PASS($snap_pass) + FAIL($snap_fail) == TESTS($snap_tests)"
+  else
+    fail_msg "I: self-accounting BROKEN — PASS($snap_pass) + FAIL($snap_fail) != TESTS($snap_tests) — a case incremented TESTS without a matching pass_msg/fail_msg"
+  fi
+}
+case_i
 
 echo ""
 echo "================================"
