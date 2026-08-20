@@ -8,10 +8,10 @@ set -euo pipefail
 # pipeline.config (or env).
 #
 # Input:   issue numbers via argv (space-separated) OR stdin (newline-separated).
-# Output:  one line per wave on stdout:
-#            Wave 1: classify #A, #B in parallel
-#            Wave 2: classify #C (serial — shares <file> with #A)
-#            Wave 3: classify #D (serial — blocked by #C)
+# Output:  one line per wave on stdout, verb reflecting --stage (classify|plan|execute):
+#            Wave 1: <stage> #A, #B in parallel
+#            Wave 2: <stage> #C (serial — shares <file> with #A)
+#            Wave 3: <stage> #D (serial — blocked by #C)
 
 usage() {
   cat >&2 <<EOF
@@ -71,6 +71,52 @@ fi
 declare -A PRIORITY        # P0|P1|P2|P3
 declare -A BLOCKERS        # space-separated issue numbers
 declare -A FILES           # space-separated file paths
+
+# Path normalization + junk-token rejection (#1230). Extracted tokens are
+# resolved to repo-root-relative form so a shallow reference
+# (`plan-issue/SKILL.md`) and its deep counterpart (`skills/plan-issue/SKILL.md`)
+# compare equal for conflict detection, and prose/cross-repo shapes
+# (`**RED/GREEN`, `rjskene/work-orchestrator`, `rjskene/work-orchestrator#1537`)
+# are dropped rather than harvested as file paths. See the plan comment on
+# #1230 for the full design-decision writeup.
+FILE_EXT_RE='\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
+_PW_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+TREE_INDEX=""
+if [ -n "$_PW_ROOT" ]; then
+  TREE_INDEX=$(git -C "$_PW_ROOT" ls-files 2>/dev/null || true)
+fi
+
+normalize_file_tokens() {
+  local tok clean cands n
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    clean="${tok//\`/}"
+    clean=$(printf '%s' "$clean" | sed -E 's/^[*_([]+//; s/[]*_,.;:)]+$//')
+    clean="${clean#./}"
+    [ -n "$clean" ] || continue
+    case "$clean" in
+      *'#'*) continue ;;
+      */)    continue ;;
+    esac
+    if [ -n "$TREE_INDEX" ] && printf '%s\n' "$TREE_INDEX" | grep -Fxq -- "$clean"; then
+      printf '%s\n' "$clean"; continue
+    fi
+    case "$clean" in
+      */*)
+        cands=""
+        if [ -n "$TREE_INDEX" ]; then
+          cands=$(printf '%s\n' "$TREE_INDEX" \
+            | awk -v s="/$clean" 'length($0)>length(s) && substr($0, length($0)-length(s)+1)==s' || true)
+        fi
+        n=$(printf '%s' "$cands" | grep -c . || true)
+        if [ "${n:-0}" = "1" ]; then printf '%s\n' "$cands"; continue; fi
+        ;;
+    esac
+    if printf '%s' "$clean" | grep -qE "$FILE_EXT_RE"; then
+      printf '%s\n' "$clean"; continue
+    fi
+  done
+}
 
 # Fetch + parse each issue.
 for N in "${ISSUES[@]}"; do
@@ -146,6 +192,7 @@ for N in "${ISSUES[@]}"; do
           | sed 's/[[:space:]]\+/\n/g' \
           | tr -d '`' \
           | grep -E "$FILE_PATH_RE" \
+          | normalize_file_tokens \
           | sort -u \
           | tr '\n' ' '; } || true)
         PLAN_FILES="${PLAN_FILES% }"
@@ -166,6 +213,7 @@ for N in "${ISSUES[@]}"; do
       FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
         | sed 's/[[:space:]]\+/\n/g' \
         | grep -E "$FILE_PATH_RE" \
+        | normalize_file_tokens \
         | sort -u \
         | tr '\n' ' '; } || true)
       FILES[$N]="${FLIST% }"
@@ -322,15 +370,15 @@ for W in $(seq 1 "$LAST_WAVE"); do
   done
 
   if [ "$COUNT" -ge 2 ]; then
-    echo "Wave $W: classify $LIST in parallel"
+    echo "Wave $W: $STAGE $LIST in parallel"
   else
     # Single issue in wave — append reason (if any) in parens.
     only=$ISSUES_IN_WAVE
     r="${REASON[$only]:-}"
     if [ -n "$r" ]; then
-      echo "Wave $W: classify #$only (serial — $r)"
+      echo "Wave $W: $STAGE #$only (serial — $r)"
     else
-      echo "Wave $W: classify #$only in parallel"
+      echo "Wave $W: $STAGE #$only in parallel"
     fi
   fi
 done

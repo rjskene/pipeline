@@ -93,7 +93,7 @@ write_issue "$A" 2 "priority/P2" "Touches \`scripts/b.sh\` only."
 write_issue "$A" 3 "priority/P2" "Touches \`scripts/c.sh\` only."
 
 if OUT=$(run_helper 1 2 3 2>"$A/stderr"); then
-  if echo "$OUT" | grep -qE "^Wave 1: classify #1, #2, #3 in parallel$" \
+  if echo "$OUT" | grep -qE "^Wave 1: execute #1, #2, #3 in parallel$" \
      && ! echo "$OUT" | grep -qE "^Wave 2:"; then
     pass_msg "Case A: emitted single parallel Wave 1"
   else
@@ -115,8 +115,8 @@ write_issue "$B" 2 "priority/P2" "Affects \`shared/common.sh\` here."
 write_issue "$B" 3 "priority/P2" "Also affects \`shared/common.sh\` (conflict)."
 
 if OUT=$(run_helper 1 2 3 2>"$B/stderr"); then
-  if echo "$OUT" | grep -qE "^Wave 1: classify #1, #2 in parallel$" \
-     && echo "$OUT" | grep -qE "^Wave 2: classify #3.*shares.*shared/common.sh.*#2"; then
+  if echo "$OUT" | grep -qE "^Wave 1: execute #1, #2 in parallel$" \
+     && echo "$OUT" | grep -qE "^Wave 2: execute #3.*shares.*shared/common.sh.*#2"; then
     pass_msg "Case B: #3 serialized into Wave 2 due to shared file"
   else
     fail_msg "Case B: unexpected output"
@@ -136,8 +136,8 @@ write_issue "$C" 1 "priority/P2" "Touches \`a.sh\` only."
 write_issue "$C" 2 "priority/P2" "Touches \`b.sh\`. blocked by #1 for the migration."
 
 if OUT=$(run_helper 1 2 2>"$C/stderr"); then
-  if echo "$OUT" | grep -qE "^Wave 1: classify #1 in parallel$|^Wave 1: classify #1$" \
-     && echo "$OUT" | grep -qE "^Wave 2: classify #2.*blocked by #1"; then
+  if echo "$OUT" | grep -qE "^Wave 1: execute #1 in parallel$|^Wave 1: execute #1$" \
+     && echo "$OUT" | grep -qE "^Wave 2: execute #2.*blocked by #1"; then
     pass_msg "Case C: #2 deferred to Wave 2 with 'blocked by #1' reason"
   else
     fail_msg "Case C: unexpected output"
@@ -158,8 +158,8 @@ write_issue "$D" 2 "priority/P2" "Touches \`p2b.sh\`."
 write_issue "$D" 3 "priority/P0" "Touches \`p0.sh\` urgently."
 
 if OUT=$(run_helper 1 2 3 2>"$D/stderr"); then
-  if echo "$OUT" | grep -qE "^Wave 1: classify #3" \
-     && echo "$OUT" | grep -qE "^Wave 2: classify #1, #2 in parallel$"; then
+  if echo "$OUT" | grep -qE "^Wave 1: execute #3" \
+     && echo "$OUT" | grep -qE "^Wave 2: execute #1, #2 in parallel$"; then
     pass_msg "Case D: P0 #3 in Wave 1, P2 #1+#2 parallel in Wave 2"
   else
     fail_msg "Case D: unexpected output"
@@ -178,7 +178,7 @@ E="$TMP/case-e"; mkdir -p "$E"; export GH_ISSUE_DIR="$E"
 write_issue "$E" 1 "priority/P2" "Touches \`only.sh\`. blocked by #99 (external)."
 
 if OUT=$(run_helper 1 2>"$E/stderr"); then
-  if echo "$OUT" | grep -qE "^Wave 1: classify #1"; then
+  if echo "$OUT" | grep -qE "^Wave 1: execute #1"; then
     pass_msg "Case E: dangling blocker treated as satisfied; #1 placed in Wave 1"
   else
     fail_msg "Case E: unexpected output"
@@ -233,7 +233,7 @@ write_comments "$G" 2 "## Implementation Plan
 "
 
 if OUT=$(run_helper --stage=execute 1 2 2>"$G/stderr"); then
-  if echo "$OUT" | grep -qE "^Wave 1: classify #1, #2 in parallel$"; then
+  if echo "$OUT" | grep -qE "^Wave 1: execute #1, #2 in parallel$"; then
     pass_msg "Case G: plan-comment exact-match supersedes body cross-references"
   else
     fail_msg "Case G: unexpected output (expected parallel Wave 1)"
@@ -254,8 +254,8 @@ write_issue "$H" 2 "priority/P2" "Also affects \`shared/common.sh\` (conflict)."
 # no .comments.json → falls back to body-derived detection
 
 if OUT=$(run_helper 1 2 2>"$H/stderr"); then
-  if echo "$OUT" | grep -qE "^Wave 1: classify #1" \
-     && echo "$OUT" | grep -qE "^Wave 2: classify #2.*shares.*shared/common.sh.*#1"; then
+  if echo "$OUT" | grep -qE "^Wave 1: execute #1" \
+     && echo "$OUT" | grep -qE "^Wave 2: execute #2.*shares.*shared/common.sh.*#1"; then
     pass_msg "Case H: default stage preserves existing serialization behavior"
   else
     fail_msg "Case H: unexpected output"

@@ -101,8 +101,8 @@ if OUT=$(run_helper --stage=execute 1 2 2>"$S/stderr1"); then
   W1=$(echo "$OUT" | grep -nE '^Wave [0-9]+: .*#1( |,|$)' | head -1 | cut -d: -f1 || true)
   W2=$(echo "$OUT" | grep -nE '^Wave [0-9]+: .*#2( |,|$)' | head -1 | cut -d: -f1 || true)
   # #1 must be in Wave 1; #2 must NOT share Wave 1 (it is deferred to Wave 2+).
-  if echo "$OUT" | grep -qE '^Wave 1: classify #1' \
-     && echo "$OUT" | grep -qE '^Wave 2: classify #2.*shares.*scripts/shared\.sh.*#1' \
+  if echo "$OUT" | grep -qE '^Wave 1: execute #1' \
+     && echo "$OUT" | grep -qE '^Wave 2: execute #2.*shares.*scripts/shared\.sh.*#1' \
      && ! echo "$OUT" | grep -qE '^Wave 1:.*#2'; then
     pass_msg "Case 1: #2 (D) deferred to Wave 2 sharing scripts/shared.sh with #1 (B)"
   else
