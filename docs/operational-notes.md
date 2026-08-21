@@ -200,18 +200,25 @@ stopping:
 - Pass `PIPELINE_REPO` explicitly to helpers that need it
   (`PIPELINE_REPO=<owner>/<repo> ./scripts/derive-pr-title.sh <N>`).
 
-## 6. PATH C delegation hook namespacing bug
+## 6. PATH C delegation hook namespacing bug (root cause (1) fixed by #1238)
 
 When `/pipeline:execute-issue-plan` runs **in-session** (interactive, not via
 spawn-claude) on a PATH C (`multi-task`) issue, `hooks/enforce-path-c-delegation.py`
-(PreToolUse) blocks the `tdd-implementer` subagent's edits to any
-**non-allowlisted** file. Root causes: (1) the hook hard-matches
-`subagent_type == "tdd-implementer"` but the installed agent is namespaced
-`pipeline:tdd-implementer`, so no directory is ever authorized; (2) `log_subagent.py`
-writes the dispatch record AFTER the Agent finishes (PostToolUse timing), so the
-sentinel never exists during its own edits; (3) `is_authorized` compares an
-absolute `file_path` against the sentinel verbatim, so the sentinel must name an
-absolute dir.
+(PreToolUse) could previously block the `tdd-implementer` subagent's edits to any
+**non-allowlisted** file. Root causes: (1) **FIXED by #1238** — the hook used to
+hard-match `subagent_type == "tdd-implementer"`, but the plugin-registered agent
+dispatches as the namespaced `pipeline:tdd-implementer`, so no directory was ever
+authorized; the hook now suffix-matches
+(`_stype.rsplit(":", 1)[-1] != "tdd-implementer"`), accepting both the bare and
+the namespaced form. The SAME namespacing defect independently hit
+`scripts/review-audits.sh`'s PATH C dispatch counter — every real PATH C run
+reported a false `tdd-implementer: MISSING (enforcement required since #327)`
+because its `[ "$st" = "tdd-implementer" ]` exact-equality check had the
+identical bug; it is fixed by the same suffix-match shape (`${st##*:}`). Still
+open: (2) `log_subagent.py` writes the dispatch record AFTER the Agent finishes
+(PostToolUse timing), so the sentinel never exists during its own edits; (3)
+`is_authorized` compares an absolute `file_path` against the sentinel verbatim,
+so the sentinel must name an absolute dir.
 
 - **Allowlisted (slip through, no seed needed):** extensions
   `.md .txt .yml .yaml .toml .lock .json`, plus `tests/`, `.github/`,
@@ -221,14 +228,16 @@ absolute dir.
   `{"session_id":"<orchestrator session>","subagent_type":"tdd-implementer","prompt":"target=<ABSOLUTE dir>/ ..."}`
   before re-dispatching; verify with
   `echo '<Edit payload>' | python3 hooks/enforce-path-c-delegation.py` (exit 0 =
-  authorized). Root-level files can't use a subdir sentinel (`target=.`/`/`/`./`
-  are trivial-rejected) — use the ABSOLUTE WORKTREE ROOT as the sentinel (broadly
-  authorizes the tree; acceptable for a config one-off, the edit is still done by
-  a real dispatch). The `ALLOW_ORCHESTRATOR_EDIT=true` hatch is worse — it
-  abandons delegation rather than enabling it.
-- **Real fix candidates (worth filing):** hook should match `*:tdd-implementer` /
-  `endswith("tdd-implementer")`, and normalize `file_path` against
-  `CLAUDE_PROJECT_DIR`.
+  authorized). The sample record above still works as-is post-fix — the hook
+  now accepts either the bare or the `pipeline:`-namespaced form. Root-level
+  files can't use a subdir sentinel (`target=.`/`/`/`./` are trivial-rejected) —
+  use the ABSOLUTE WORKTREE ROOT as the sentinel (broadly authorizes the tree;
+  acceptable for a config one-off, the edit is still done by a real dispatch).
+  The `ALLOW_ORCHESTRATOR_EDIT=true` hatch is worse — it abandons delegation
+  rather than enabling it.
+- **Real fix candidates (worth filing):** normalize `file_path` against
+  `CLAUDE_PROJECT_DIR`. (The `*:tdd-implementer` / `endswith("tdd-implementer")`
+  suffix-match candidate is DONE — see root cause (1) above.)
 
 ## 7. `doctor.sh` LABEL_TABLE — two test files
 
