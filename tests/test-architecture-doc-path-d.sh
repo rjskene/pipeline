@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 # Guard: docs/architecture.md must document PATH D (quick-fix inline TDD path)
-# with BARE tdd-implementer subagent and A > D > C > B routing precedence.
+# with the PLUGIN-NAMESPACED pipeline:tdd-implementer subagent (#1238 — the bare
+# `tdd-implementer` string is not a registered agent type and hard-fails the
+# dispatch) and A > D > C > B routing precedence.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOC="$REPO_ROOT/docs/architecture.md"
@@ -39,8 +41,10 @@ assert_contains "skips Step 8" "documents skipping Step 8 of execute-issue-plan"
 assert_contains "skips evaluate-issue-plan" "documents skipping evaluate-issue-plan stage"
 assert_contains "A > D > C > B" "documents routing precedence A > D > C > B"
 
-# BARE subagent name only — no namespaced pipeline:tdd-implementer
-assert_not_contains "pipeline:tdd-implementer" "uses BARE tdd-implementer (no pipeline: prefix)"
+# #1238: the dispatch value must be the PLUGIN-NAMESPACED form. Flipped from an
+# assert_not_contains — the bare form was never a resolvable agent type for a
+# plugin-registered agent, so the doc must show what actually dispatches.
+assert_contains "subagent_type=pipeline:tdd-implementer" "uses plugin-namespaced pipeline:tdd-implementer (#1238)"
 
 echo ""
 echo "================================"
