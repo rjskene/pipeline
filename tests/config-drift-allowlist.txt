@@ -140,6 +140,17 @@ PIPELINE_MOCK_WEB_EVAL_
 # in pipeline.config.example; exact-match exempt here.
 PIPELINE_SPLIT_ROLE_SHARED_TESTS
 
+# #1233 capability-refusal sentinel source knob. PIPELINE_CAPABILITY_REFUSAL_SOURCES
+# is an eval-caller-set-ONLY var: evaluate-issue-pr's Step 11.2 resolves the
+# default dogfood-only subagent log dir at the auto_merge_should_fire call site
+# and threads it into scripts/check-capability-refusal.sh via
+# scripts/auto-merge-gate.sh. Same shape as its sibling
+# PIPELINE_SPLIT_ROLE_SHARED_TESTS above — NEVER read from pipeline.config
+# (a host-global value would invite scanning the operator's real
+# .claude/logs/subagents/ nondeterministically, defeating per-issue scoping).
+# Intentionally undocumented in pipeline.config.example; exact-match exempt here.
+PIPELINE_CAPABILITY_REFUSAL_SOURCES
+
 # #1128 next-branch routing knobs. PIPELINE_NEXT_BRANCH / PIPELINE_NEXT_LABEL are
 # defaults-in-code (#1052): COMMENTED in pipeline.config.example + the init heredoc
 # with read-site ${VAR:-next} defaults at every consumer (render-status-table.sh,
