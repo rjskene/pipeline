@@ -104,32 +104,16 @@ if printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" \
   emit high-blast high-uncertainty
 fi
 
-# --- Source-file extraction (REUSE plan-waves.sh parser, do NOT reinvent) ----
-# Same `## Affected areas` awk slice + FILE_PATH_RE copied from
-# scripts/plan-waves.sh (lines 154-169).
-FILE_PATH_RE='^[^[:space:]]*/[^/[:space:]]+$|^[^[:space:]]+\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
+# --- Source-file extraction (shared with plan-waves.sh, do NOT reinvent) ----
+# The `## Affected areas` awk slice + FILE_PATH_RE + path-normalization/
+# junk-rejection (#1230) are SOURCED from the shared helper (#1239) — this
+# call site no longer carries its own copy, so it inherits normalization
+# (`plan-issue/SKILL.md` <-> `skills/plan-issue/SKILL.md`) and junk-token
+# rejection (`**RED/GREEN`, `rjskene/work-orchestrator`) for free.
+# shellcheck source=scripts/_extract-body-paths.sh
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/_extract-body-paths.sh"
 
-FROM_BACKTICKS=$( { printf '%s' "$BODY" \
-  | grep -oE '`[^`]+`' \
-  | tr -d '`' \
-  | grep -E "$FILE_PATH_RE"; } || true)
-FROM_AFFECTED=$(printf '%s' "$BODY" \
-  | awk 'BEGIN{IGNORECASE=1; in_block=0}
-         /^##[[:space:]]+Affected areas/ {in_block=1; next}
-         in_block && /^##/ {in_block=0}
-         in_block && NF>0 {print}')
-# Strip surrounding markdown list/backtick punctuation before the regex pass:
-# `## Affected areas` lines are commonly `- `dir/file.ext`` (backtick-wrapped),
-# and backticks are non-whitespace so they survive the whitespace-split and
-# corrupt the leading path segment (the module). Drop backticks + leading list
-# bullets so a backtick-wrapped affected-area path normalizes to the same bare
-# token as plan-waves.sh's FROM_BACKTICKS stream.
-ALL_PATHS=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
-  | tr -d '`' \
-  | sed -E 's/^[[:space:]]*[-*][[:space:]]+//' \
-  | sed 's/[[:space:]]\+/\n/g' \
-  | grep -E "$FILE_PATH_RE" \
-  | sort -u; } || true)
+ALL_PATHS=$( { bp_body_paths "$BODY"; } || true)
 
 # Empty Affected areas / no parseable paths ⇒ fail-closed (indeterminate).
 if [ -z "$ALL_PATHS" ]; then

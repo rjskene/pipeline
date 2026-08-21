@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# shellcheck source=scripts/_extract-body-paths.sh
+. "$(dirname "${BASH_SOURCE[0]:-$0}")/_extract-body-paths.sh"
+
 # plan-waves.sh — given a list of GitHub issue numbers, fetch each issue's
 # metadata and emit a wave plan honoring (1) priority tiers, (2) explicit
 # "blocked by #N" / "depends on #N" annotations, and (3) shared-file conflicts
@@ -72,51 +75,15 @@ declare -A PRIORITY        # P0|P1|P2|P3
 declare -A BLOCKERS        # space-separated issue numbers
 declare -A FILES           # space-separated file paths
 
-# Path normalization + junk-token rejection (#1230). Extracted tokens are
-# resolved to repo-root-relative form so a shallow reference
-# (`plan-issue/SKILL.md`) and its deep counterpart (`skills/plan-issue/SKILL.md`)
-# compare equal for conflict detection, and prose/cross-repo shapes
-# (`**RED/GREEN`, `rjskene/work-orchestrator`, `rjskene/work-orchestrator#1537`)
-# are dropped rather than harvested as file paths. See the plan comment on
-# #1230 for the full design-decision writeup.
-FILE_EXT_RE='\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
-_PW_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-TREE_INDEX=""
-if [ -n "$_PW_ROOT" ]; then
-  TREE_INDEX=$(git -C "$_PW_ROOT" ls-files 2>/dev/null || true)
-fi
-
-normalize_file_tokens() {
-  local tok clean cands n
-  while IFS= read -r tok; do
-    [ -n "$tok" ] || continue
-    clean="${tok//\`/}"
-    clean=$(printf '%s' "$clean" | sed -E 's/^[*_([]+//; s/[]*_,.;:)]+$//')
-    clean="${clean#./}"
-    [ -n "$clean" ] || continue
-    case "$clean" in
-      *'#'*) continue ;;
-      */)    continue ;;
-    esac
-    if [ -n "$TREE_INDEX" ] && printf '%s\n' "$TREE_INDEX" | grep -Fxq -- "$clean"; then
-      printf '%s\n' "$clean"; continue
-    fi
-    case "$clean" in
-      */*)
-        cands=""
-        if [ -n "$TREE_INDEX" ]; then
-          cands=$(printf '%s\n' "$TREE_INDEX" \
-            | awk -v s="/$clean" 'length($0)>length(s) && substr($0, length($0)-length(s)+1)==s' || true)
-        fi
-        n=$(printf '%s' "$cands" | grep -c . || true)
-        if [ "${n:-0}" = "1" ]; then printf '%s\n' "$cands"; continue; fi
-        ;;
-    esac
-    if printf '%s' "$clean" | grep -qE "$FILE_EXT_RE"; then
-      printf '%s\n' "$clean"; continue
-    fi
-  done
-}
+# Path normalization + junk-token rejection (#1230) is provided by the
+# shared scripts/_extract-body-paths.sh helper (sourced above) — FILE_PATH_RE,
+# FILE_EXT_RE, and bp_normalize_tokens all come from there now, so a shallow
+# reference (`plan-issue/SKILL.md`) and its deep counterpart
+# (`skills/plan-issue/SKILL.md`) compare equal for conflict detection, and
+# prose/cross-repo shapes (`**RED/GREEN`, `rjskene/work-orchestrator`,
+# `rjskene/work-orchestrator#1537`) are dropped rather than harvested as file
+# paths. See the plan comment on #1230 for the full design-decision writeup,
+# and #1239 for the extraction of this logic into the shared helper.
 
 # Fetch + parse each issue.
 for N in "${ISSUES[@]}"; do
@@ -168,7 +135,7 @@ for N in "${ISSUES[@]}"; do
     # reason-symbols like `data.map`, `next_due`, `sort` that lack a slash and
     # have no known file extension — while catching bare paths like
     # `assets/dashboard/pages/legal.page.js` whether or not they are backticked.
-    FILE_PATH_RE='^[^[:space:]]*/[^/[:space:]]+$|^[^[:space:]]+\.(md|sh|py|json|yml|yaml|ts|tsx|js|jsx|go)$'
+    # FILE_PATH_RE itself is sourced from scripts/_extract-body-paths.sh above.
 
     # Prefer plan-comment "**Files to change:**" bullets (exact paths from the
     # approved plan) over body-derived backticks (greedy + noisy). Fall back to
@@ -180,42 +147,17 @@ for N in "${ISSUES[@]}"; do
       if [ -n "$PLAN_BODY" ] && [ "$PLAN_BODY" != "null" ]; then
         # Extract bullets from the **Files to change:** block, then split each
         # bullet on whitespace, strip backticks, and keep only FILE_PATH_RE-
-        # matching tokens (#1006). This catches bare paths (not backtick-wrapped)
-        # and rejects backticked reason symbols (no slash, no known extension).
-        # Guard the pipeline so an all-empty result yields "" not a pipefail
-        # abort (#730).
-        PLAN_FILES=$( { echo "$PLAN_BODY" \
-          | awk 'BEGIN{in_block=0}
-                 /^\*\*Files to change:\*\*/ {in_block=1; next}
-                 in_block && /^\*\*/ {in_block=0}
-                 in_block && /^-/ {print}' \
-          | sed 's/[[:space:]]\+/\n/g' \
-          | tr -d '`' \
-          | grep -E "$FILE_PATH_RE" \
-          | normalize_file_tokens \
-          | sort -u \
-          | tr '\n' ' '; } || true)
+        # matching tokens (#1006), normalized + deduped (#1230). Sourced from
+        # the shared helper (#1239). Guard the pipeline so an all-empty result
+        # yields "" not a pipefail abort (#730).
+        PLAN_FILES=$( { bp_plan_files "$PLAN_BODY" | tr '\n' ' '; } || true)
         PLAN_FILES="${PLAN_FILES% }"
       fi
     fi
     if [ -n "$PLAN_FILES" ]; then
       FILES[$N]="$PLAN_FILES"
     else
-      FROM_BACKTICKS=$( { echo "$BODY" \
-        | grep -oE '`[^`]+`' \
-        | tr -d '`' \
-        | grep -E "$FILE_PATH_RE"; } || true)
-      FROM_AFFECTED=$(echo "$BODY" \
-        | awk 'BEGIN{IGNORECASE=1; in_block=0}
-               /^##[[:space:]]+Affected areas/ {in_block=1; next}
-               in_block && /^##/ {in_block=0}
-               in_block && NF>0 {print}')
-      FLIST=$( { printf '%s\n%s\n' "$FROM_BACKTICKS" "$FROM_AFFECTED" \
-        | sed 's/[[:space:]]\+/\n/g' \
-        | grep -E "$FILE_PATH_RE" \
-        | normalize_file_tokens \
-        | sort -u \
-        | tr '\n' ' '; } || true)
+      FLIST=$( { bp_body_paths "$BODY" | tr '\n' ' '; } || true)
       FILES[$N]="${FLIST% }"
     fi
   else
