@@ -331,6 +331,42 @@ PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id
 RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
 if [ "$RC" = "2" ]; then pass_msg "exit 2 (direct orchestrator Edit still blocked)"; else fail_msg "expected exit 2, got $RC"; fi
 
+# --- Test 20 (#1238): PLUGIN-NAMESPACED dispatch authorizes ---
+# hooks/log_subagent.py records the RAW runtime subagent_type, and in this
+# environment the plugin-registered agent resolves as `pipeline:tdd-implementer`.
+# An exact-equality match against the bare literal drops every such record, so
+# collect_authorized_dirs() returns empty and the leaf's own edits are blocked
+# no matter how correctly the orchestrator dispatched. The matcher must be
+# suffix-tolerant and accept the namespaced form.
+echo "Test 20 (#1238): namespaced dispatch (pipeline:tdd-implementer) authorizes web/foo.sh -> exit 0"
+inc
+reset_state
+write_dispatch "sess-ns" "pipeline:tdd-implementer" "target=web/" "Add foo"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.sh"},"session_id":"sess-ns"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (namespaced dispatch authorizes)"; else fail_msg "expected exit 0 for pipeline:tdd-implementer dispatch, got $RC"; fi
+
+# --- Test 21 (#1238): negative control — unrelated subagent_type still denied ---
+# Proves the suffix match did not degrade into a wildcard.
+echo "Test 21 (#1238): unrelated subagent_type (general-purpose) still denied -> exit 2"
+inc
+reset_state
+write_dispatch "sess-gp" "general-purpose" "target=web/" "Add foo"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.sh"},"session_id":"sess-gp"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (general-purpose dispatch does not authorize)"; else fail_msg "expected exit 2 for general-purpose dispatch, got $RC"; fi
+
+# --- Test 22 (#1238): negative control — impostor suffix still denied ---
+# `evil:tdd-implementer-x` shares a prefix of the agent name but is a different
+# agent; a substring/prefix-tolerant matcher would wrongly accept it.
+echo "Test 22 (#1238): impostor subagent_type (evil:tdd-implementer-x) still denied -> exit 2"
+inc
+reset_state
+write_dispatch "sess-evil" "evil:tdd-implementer-x" "target=web/" "Add foo"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.sh"},"session_id":"sess-evil"}'
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (impostor suffix does not authorize)"; else fail_msg "expected exit 2 for evil:tdd-implementer-x dispatch, got $RC"; fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

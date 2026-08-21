@@ -241,7 +241,7 @@ Receive an issue number as argument (or from context).
    Code-task format: each impl task lists all five steps explicitly — test file path, exact test command, expected FAIL, impl sketch, expected PASS, commit message. Skipping red→green is a planning defect.
 
 #### Task 0 — PATH C (multi-task)
-   `Task 0: dispatch Agent(subagent_type='tdd-implementer', description='target=<first-dir>/ ...', prompt='target=<first-dir>/ implement <first-task>') — one tdd-implementer dispatch per distinct target directory. The orchestrator must NOT Write/Edit impl files directly; the enforce-path-c-delegation hook will block unauthorized edits.`
+   `Task 0: dispatch Agent(subagent_type='pipeline:tdd-implementer', description='target=<first-dir>/ ...', prompt='target=<first-dir>/ implement <first-task>') — one tdd-implementer dispatch per distinct target directory. The orchestrator must NOT Write/Edit impl files directly; the enforce-path-c-delegation hook will block unauthorized edits.`
    Code-task format: every code task is a single `tdd-implementer` dispatch with a `target=<dir>/` sentinel (real subdirectory — `target=.`, `target=./`, `target=/` are rejected by the delegation hook) and a prompt detailed enough for autonomous execution. Non-overlapping targets may run in parallel.
 
 #### Task 0 — PATH D (quick-fix)
