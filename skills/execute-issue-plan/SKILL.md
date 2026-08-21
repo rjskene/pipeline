@@ -57,8 +57,9 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 1. **Fetch the approved plan** — find the latest comment containing `## Implementation Plan` (latest wins, supports revisions). **PATH D skip:** the collapsed inline D agent carries the classify+plan context forward and does NOT re-read the plan comment (see the Collapsed inline D contract above) — skip this fetch on PATH D and use the in-context plan.
    ```bash
+   # (#1247) heading-anchored selector — see scripts/select-plan-comment.sh
    gh issue view <N> --repo $PIPELINE_REPO --json comments \
-     --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body'
+     | bash "${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-comment.sh"
    ```
    If empty/`null`, **STOP**: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
 
