@@ -5,9 +5,20 @@
 #   auto_merge_should_fire <issue> <pr>
 #       - prints exactly one reason token, returns 0 only when token == green.
 #       - Tokens: green, block-flag, block-label, block-verdict,
-#         block-base-mismatch, block-ci, block-mergeable, block-mergestate.
+#         block-capability-refused, block-base-mismatch, block-ci,
+#         block-mergeable, block-mergestate.
 #       - Order: env (MANUAL_MERGE=1) > label (manual-merge on issue) >
-#         verdict > base-mismatch > CI rollup > mergeable > mergeStateStatus.
+#         verdict > block-capability-refused > base-mismatch > CI rollup >
+#         mergeable > mergeStateStatus.
+#       - block-capability-refused (#1233) fires when
+#         $PIPELINE_CAPABILITY_REFUSAL_SOURCES is non-empty AND
+#         scripts/check-capability-refusal.sh resolves CAPABILITY_REFUSAL=block
+#         for this issue over those sources — a leaf emitted the
+#         CAPABILITY-REFUSED: sentinel (#1225's contract) and the work is
+#         incomplete. Unset/empty knob is byte-identical to the pre-#1233
+#         gate (arm skipped entirely). An unproven clear (REASON=no-sources or
+#         no-leaf-output) is deliberately NON-blocking but emits a stderr WARN
+#         so the gate never silently claims teeth it does not have.
 #       - NO_VERDICT=1 skips ONLY the verdict step (for the /pipeline:hotfix
 #         --auto-merge emergency lane, which never produces an evaluator
 #         verdict — issue #659). Every other check is unchanged, and the
@@ -59,6 +70,31 @@ auto_merge_should_fire() {
     if [ "$verdict" != "Approved" ]; then
       echo block-verdict
       return 1
+    fi
+  fi
+
+  # Capability-refusal sentinel (issue #1233): a leaf that emitted the
+  # CAPABILITY-REFUSED: sentinel (#1225's contract) means the WORK is
+  # incomplete — more fundamental than a base/CI/merge-state property, but
+  # still after the two operator opt-outs and the human evaluator verdict
+  # above (which is what makes the within-issue-history block self-clearing
+  # via Step 11.4's manual-merge auto-apply). Runs ONLY when the caller
+  # threaded $PIPELINE_CAPABILITY_REFUSAL_SOURCES — unset/empty is
+  # byte-identical to the pre-#1233 gate.
+  if [ -n "${PIPELINE_CAPABILITY_REFUSAL_SOURCES:-}" ]; then
+    local _amg_cr_dir _amg_cr_line _amg_cr_verdict _amg_cr_reason _amg_cr_scanned _amg_cr_with_output
+    _amg_cr_dir="$(dirname "${BASH_SOURCE[0]}")"
+    _amg_cr_line=$(bash "$_amg_cr_dir/check-capability-refusal.sh" "$issue" 2>/dev/null)
+    _amg_cr_verdict=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'CAPABILITY_REFUSAL=[a-z]+' | cut -d= -f2)
+    _amg_cr_reason=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'REASON=[a-z-]+' | cut -d= -f2)
+    if [ "$_amg_cr_verdict" = "block" ]; then
+      echo block-capability-refused
+      return 1
+    fi
+    if [ "$_amg_cr_reason" = "no-sources" ] || [ "$_amg_cr_reason" = "no-leaf-output" ]; then
+      _amg_cr_scanned=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'SCANNED=[0-9]+' | cut -d= -f2)
+      _amg_cr_with_output=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'WITH_OUTPUT=[0-9]+' | cut -d= -f2)
+      echo "[auto-merge-gate] WARN: capability-refusal check unproven (REASON=${_amg_cr_reason} SCANNED=${_amg_cr_scanned} WITH_OUTPUT=${_amg_cr_with_output})" >&2
     fi
   fi
 
