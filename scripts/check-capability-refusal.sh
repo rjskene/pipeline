@@ -87,12 +87,64 @@
 # Self-reference safety: the sentinel is assembled at runtime from two
 # fragments so this script's own source is never itself a scan false-positive
 # (precedent: scripts/check-cross-cutting-guards.sh:121 FIXTURE_TOKEN).
+#
+# --resolve-sources [<start-dir>] (#1246) — additive mode, ALWAYS exit 0,
+# EXACTLY ONE stdout line:
+#
+#   SOURCES=<resolved|no-log-dir|unresolvable-root> ROOT=<root-or-empty> DIR=<dir-or-empty>
+#
+# Resolves the subagent-log source dir against the MAIN checkout (worktree-
+# aware), never $(pwd) of a linked worktree, which has no .claude/ of its own.
+# <start-dir> defaults to $PWD. Root-resolution precedence (first usable wins):
+#   1. $PIPELINE_PROJECT_ROOT when non-empty AND -d (#1215 operator override).
+#      Non-empty-but-not-a-dir falls THROUGH to tier 2 (a stale override must
+#      not re-dormant the gate).
+#   2. `git -C <start-dir> rev-parse --git-common-dir`, normalized against
+#      <start-dir> when relative, then its parent directory. --git-common-dir
+#      resolves the MAIN checkout's .git even from a linked worktree, where
+#      --show-toplevel would return the worktree itself (donor idiom:
+#      scripts/capture-agent-costs.sh, scripts/_resolve-plugin-root.sh).
+#   3. neither -> SOURCES=unresolvable-root (defensive; ROOT/DIR empty).
+# Never resolves from $BASH_SOURCE — on a consumer install this script lives
+# under ~/.claude/plugins/claude-pipeline/, which is NOT the project.
+# DIR := <root>/.claude/logs/subagents; -d DIR -> resolved, else -> no-log-dir
+# (ROOT stays populated, DIR empty) — the legitimate PIPELINE_LOGS_ENABLED=false
+# consumer case, deliberately distinguishable from unresolvable-root.
 
 set -uo pipefail
 
 if [ "$#" -lt 1 ]; then
   echo "Usage: $0 <issue-N> [<source>...]" >&2
   exit 2
+fi
+
+if [ "$1" = "--resolve-sources" ]; then
+  shift
+  RS_START="${1:-$PWD}"
+  RS_ROOT=""
+  if [ -n "${PIPELINE_PROJECT_ROOT:-}" ] && [ -d "${PIPELINE_PROJECT_ROOT}" ]; then
+    RS_ROOT="$PIPELINE_PROJECT_ROOT"
+  else
+    RS_COMMON="$(git -C "$RS_START" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -n "$RS_COMMON" ]; then
+      case "$RS_COMMON" in
+        /*) : ;;
+        *) RS_COMMON="$RS_START/$RS_COMMON" ;;
+      esac
+      RS_ROOT="$(cd "$RS_COMMON/.." 2>/dev/null && pwd -P || true)"
+    fi
+  fi
+  if [ -z "$RS_ROOT" ]; then
+    echo "SOURCES=unresolvable-root ROOT= DIR="
+    exit 0
+  fi
+  RS_DIR="$RS_ROOT/.claude/logs/subagents"
+  if [ -d "$RS_DIR" ]; then
+    echo "SOURCES=resolved ROOT=${RS_ROOT} DIR=${RS_DIR}"
+  else
+    echo "SOURCES=no-log-dir ROOT=${RS_ROOT} DIR="
+  fi
+  exit 0
 fi
 
 ISSUE="$1"

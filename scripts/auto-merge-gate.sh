@@ -19,6 +19,11 @@
 #         gate (arm skipped entirely). An unproven clear (REASON=no-sources or
 #         no-leaf-output) is deliberately NON-blocking but emits a stderr WARN
 #         so the gate never silently claims teeth it does not have.
+#       - The gate itself does NOT resolve $PIPELINE_CAPABILITY_REFUSAL_SOURCES
+#         (#1246) — it only reads the knob. The call site MUST thread it via
+#         the worktree-aware `check-capability-refusal.sh --resolve-sources`
+#         mode (pr-eval always runs from a feature worktree, which has no
+#         .claude/logs/ of its own), and export it ONLY on SOURCES=resolved.
 #       - NO_VERDICT=1 skips ONLY the verdict step (for the /pipeline:hotfix
 #         --auto-merge emergency lane, which never produces an evaluator
 #         verdict — issue #659). Every other check is unchanged, and the
@@ -94,7 +99,7 @@ auto_merge_should_fire() {
     if [ "$_amg_cr_reason" = "no-sources" ] || [ "$_amg_cr_reason" = "no-leaf-output" ]; then
       _amg_cr_scanned=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'SCANNED=[0-9]+' | cut -d= -f2)
       _amg_cr_with_output=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'WITH_OUTPUT=[0-9]+' | cut -d= -f2)
-      echo "[auto-merge-gate] WARN: capability-refusal check unproven (REASON=${_amg_cr_reason} SCANNED=${_amg_cr_scanned} WITH_OUTPUT=${_amg_cr_with_output})" >&2
+      echo "[auto-merge-gate] WARN: capability-refusal check unproven (REASON=${_amg_cr_reason} SCANNED=${_amg_cr_scanned} WITH_OUTPUT=${_amg_cr_with_output}) SOURCES=${PIPELINE_CAPABILITY_REFUSAL_SOURCES}" >&2
     fi
   fi
 
