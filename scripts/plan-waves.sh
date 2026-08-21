@@ -142,8 +142,9 @@ for N in "${ISSUES[@]}"; do
     # body detection when no plan comment exists.
     PLAN_FILES=""
     if PLAN_JSON=$(gh issue view "$N" --repo "$REPO" --json comments 2>/dev/null); then
-      PLAN_BODY=$(echo "$PLAN_JSON" \
-        | jq -r '[.comments[] | select(.body | contains("## Implementation Plan"))] | last | .body // ""')
+      # (#1240) heading-anchored selector — see scripts/select-plan-comment.sh
+      PLAN_BODY=$(printf '%s' "$PLAN_JSON" \
+        | bash "$(dirname "${BASH_SOURCE[0]:-$0}")/select-plan-comment.sh" || true)
       if [ -n "$PLAN_BODY" ] && [ "$PLAN_BODY" != "null" ]; then
         # Extract bullets from the **Files to change:** block, then split each
         # bullet on whitespace, strip backticks, and keep only FILE_PATH_RE-
