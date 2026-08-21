@@ -140,6 +140,20 @@ if [ $# -ge 1 ]; then
   shift
 fi
 
+# Resolve the comparison ref against origin/<base> when that remote-tracking
+# ref exists (#1237, same fix shape as scripts/check-branch-cruft.sh #1234
+# `53862e9`). The pipeline's inter-wave/inter-leg base advance is deliberately
+# fetch-only (#1214) — it moves refs/remotes/origin/<base> but never the local
+# refs/heads/<base>, so on every wave after the first the local base ref goes
+# stale while origin/<base> carries the just-merged work. Resolving RED_SHA
+# against the stale local ref sweeps an earlier, already-merged wave's
+# [split-role-red] anchor into the scan window, false-blocking on
+# locked-test-modified. Prefer origin/<BASE> when it resolves; fall back to
+# the bare/local ref for single-checkout/offline use.
+if [ -n "$BASE" ] && git rev-parse --verify --quiet "refs/remotes/origin/${BASE}" >/dev/null 2>&1; then
+  BASE="origin/${BASE}"
+fi
+
 # Remaining args are <test-path>...; three-tier scope precedence (#1182):
 #   1. explicit positional <test-path>... args (highest — keeps every existing
 #      run_gate* helper byte-identical; they already pass `tests`).
