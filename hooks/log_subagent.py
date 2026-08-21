@@ -23,6 +23,7 @@ from subagent_log_utils import (
     build_json_record,
     consolidated_log_path,
     error_log_path,
+    extract_result_text,
     read_event_stdin,
     sanitize_slug,
     subagents_dir,
@@ -62,7 +63,8 @@ try:
     subagent_type = tool_input.get("subagent_type", "general-purpose")
     prompt = tool_input.get("prompt", "")
 
-    result = tool_response.get("result", "")
+    result = extract_result_text(tool_response)
+    status = tool_response.get("status", "")
     usage = tool_response.get("usage") or {}
     total_tokens = tool_response.get("total_tokens", 0)
     # Wall-clock duration lives at the payload TOP LEVEL as `duration_ms` in
@@ -103,6 +105,7 @@ try:
         total_duration_ms=total_duration_ms,
         num_turns=num_turns,
         jsonl_path_hint=jsonl_path_hint,
+        status=status,
     )
 
     with open(json_path, "w") as f:
