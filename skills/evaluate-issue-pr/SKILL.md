@@ -298,12 +298,14 @@ A guard that passes is not evidence until you have seen it fail on something.
 
     1. **Flag parsing.** `--manual-merge` may appear anywhere in argv — before or after the issue number; the parser is loop-based, not positional. Also honored via env: `MANUAL_MERGE=1` (exported by `spawn-claude.sh` when the spawn carried `--manual-merge`) is equivalent. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
 
-    2. **Source the helper and run the gate.**
+    2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233) on the invocation: resolve the default dogfood-only subagent log dir at the call site and export it only when it exists — absent/empty is byte-identical to the pre-#1233 gate (consumer installs with `PIPELINE_LOGS_ENABLED=false` never set this dir up).
        ```bash
        source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
+       CAPABILITY_REFUSAL_DIR="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/logs/subagents"
+       [ -d "$CAPABILITY_REFUSAL_DIR" ] && export PIPELINE_CAPABILITY_REFUSAL_SOURCES="$CAPABILITY_REFUSAL_DIR"
        REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
        ```
-       Checks in order: `MANUAL_MERGE` env, `manual-merge` issue label, the 4 greenlight conditions above, and `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`.
+       Checks in order: `MANUAL_MERGE` env, `manual-merge` issue label, the 4 greenlight conditions above, capability-refusal (#1233), and `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`.
 
     2b. **Split-role gate (#881 — `PIPELINE_PATH_B_SPLIT_ROLE`, default `true` per #1057, opt-OUT via `=false`).** The split-role precondition applies ONLY to PRs that were actually dispatched as split-role. Before running the gate, resolve TWO guards — the issue's PATH letter and (for PATH B) the resolved dispatch shape — so the gate distinguishes "this PR was never a split-role dispatch (nothing to protect → pass/skip)" from "this split-role PR is missing its mandatory red anchor (real violation → block)" (#1076).
 
@@ -428,6 +430,8 @@ Run \`\$CLAUDE_PLUGIN_ROOT/scripts/retarget-pr.sh $PR_NUM $PIPELINE_BASE_BRANCH\
        gh issue edit "$ISSUE" --repo "$PIPELINE_REPO" --add-label "manual-merge" 2>/dev/null || true
        ```
        The label flip is what lets the runner (`scripts/run-queue.sh` `evaluator_finished_terminal()`) free the queue slot immediately instead of waiting for the per-agent 90-min timeout. Fails OPEN on `gh` error — the worst case is the pre-#489 behaviour (queue waits for the timeout). The label is permanent post-merge (`cleanup-worktree.sh` leaves it as a historical "this PR did not auto-merge" signal).
+
+       **`block-capability-refused` remediation (#1233).** No new arm is needed — the ANY-`block-*` handling above already posts the skip comment and applies `manual-merge`. The remediation is: re-dispatch the refused task to the PR-opening role (the inline execute `Agent` on PATH A/B, the orchestrator on PATH C) per `execute-issue-plan` Step 8's owner rule, then re-run this evaluation.
 
     Release-please PRs are out of scope for this gate — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of `run/SKILL.md`.
 
