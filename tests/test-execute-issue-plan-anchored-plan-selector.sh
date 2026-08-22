@@ -64,7 +64,14 @@ fi
 
 echo "Test 4: Step 1 block reuses scripts/select-plan-comment.sh"
 inc
-if printf '%s\n' "$STEP1_BLOCK" | grep -qF 'scripts/select-plan-comment.sh'; then
+# (#1251) The predicate must see an INVOCATION, not a mention: the plain
+# `grep -qF 'scripts/select-plan-comment.sh'` this replaced was satisfied by
+# the block's own `# (#1247) heading-anchored selector — see
+# scripts/select-plan-comment.sh` COMMENT line alone, so it passed on a block
+# stripped of the actual call. Strip comment lines first, then require the
+# `bash "${CLAUDE_PLUGIN_ROOT}/...` call form.
+if printf '%s\n' "$STEP1_BLOCK" | grep -vE '^[[:space:]]*#' \
+     | grep -qE 'bash[[:space:]]+"?\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts/select-plan-comment\.sh'; then
   pass_msg "Step 1 block invokes scripts/select-plan-comment.sh"
 else
   fail_msg "Step 1 block does not invoke scripts/select-plan-comment.sh"
