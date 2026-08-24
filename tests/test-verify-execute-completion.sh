@@ -68,10 +68,18 @@ if [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
   exit 0
 fi
 if [ "$1" = "ls-remote" ]; then
-  # `git ls-remote --heads origin <branch>` — non-empty iff configured.
+  # `git ls-remote --heads origin <branch>` — non-empty iff configured. SHA is
+  # $STUB_REMOTE_SHA (default abc123) so it can be made to differ from the local
+  # tip (#1258 — stale-but-present remote ref).
   if [ "${STUB_REMOTE_HAS:-0}" = "1" ]; then
-    echo "abc123	refs/heads/${!#}"
+    echo "${STUB_REMOTE_SHA:-abc123}	refs/heads/${!#}"
   fi
+  exit 0
+fi
+if [ "$1" = "rev-parse" ]; then
+  # `git rev-parse refs/heads/<branch>` — local tip SHA (#1258). Default matches
+  # the default remote SHA so pre-existing cases are unaffected.
+  echo "${STUB_LOCAL_SHA:-abc123}"
   exit 0
 fi
 exit 0
@@ -262,6 +270,32 @@ if printf '%s' "$OUT" | grep -qF "PIPELINE_BASE_BRANCH must be set"; then
   fail_msg "c8: script still aborted on unset PIPELINE_BASE_BRANCH (self-resolve regressed): $OUT"
 else
   pass_msg "c8: no 'PIPELINE_BASE_BRANCH must be set' abort — self-resolved from config"
+fi
+
+# ============== Case 9 (#1258): stale-but-present remote ref, no open PR, label
+# not in-progress -> recover-push, NOT recover-label ==========================
+# Reproduces the exact reported shape: the branch was pushed once (remote ref
+# exists) but a later local commit was never re-pushed (remote SHA != local
+# SHA). `closedByPullRequestsReferences` resolves a stale (non-open) PR
+# reference so Check 2's PR_HEAD is non-empty, and `gh pr list --state open`
+# shows nothing. The issue is labelled `plan-approved` (not `in-progress`, not
+# `pr-open`). Before the fix this fell through to Check 3 and emitted
+# `recover-label`; the unpushed-local-commit case must win regardless of the
+# PR/label state.
+echo ""
+echo "Case 9 (#1258): remote ref stale (behind local tip), no open PR, label not in-progress -> recover-push"
+C9="$ROOT/c9"; mkdir -p "$C9"; make_stubs "$C9" >/dev/null
+OUT=$(STUB_WT_ISSUE=1258 STUB_WT_SLUG=foo STUB_REMOTE_HAS=1 \
+      STUB_REMOTE_SHA="0dd98f4" STUB_LOCAL_SHA="db8738e" \
+      STUB_LINKED_PR_HEAD="feature/foo" STUB_PR_LIST_HEAD="" \
+      STUB_ISSUE_LABELS="plan-approved" \
+      run_helper "$C9" 1258)
+assert_action "c9" "$OUT" "ACTION=recover-push"
+inc
+if printf '%s' "$OUT" | grep -qF "ACTION=recover-label"; then
+  fail_msg "c9: emitted recover-label instead of recover-push (the #1258 bug)"
+else
+  pass_msg "c9: did not emit recover-label"
 fi
 
 # ============================================================================

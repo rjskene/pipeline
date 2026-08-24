@@ -254,6 +254,22 @@ if [ -z "$REMOTE_REF" ]; then
   exit 0
 fi
 
+# ---- Check 1b (#1258): remote ref present but STALE ---------------------------
+# A prior push created the remote ref; work then continued locally without a
+# follow-up push. Existence alone (Check 1 above) doesn't catch this — compare
+# the local tip SHA against the remote ref SHA. This MUST run before Check 2/3
+# below, so an unpushed local commit always wins over recover-pr/recover-label
+# regardless of PR or label state (the reported bug: this case was previously
+# falling through to Check 2's PR resolution — which can resolve a stale/closed
+# PR reference via closedByPullRequestsReferences — and then to Check 3,
+# wrongly emitting recover-label).
+REMOTE_SHA=$(printf '%s\n' "$REMOTE_REF" | awk '{print $1; exit}')
+LOCAL_SHA=$(git rev-parse "refs/heads/$BRANCH" 2>/dev/null || true)
+if [ -n "$LOCAL_SHA" ] && [ -n "$REMOTE_SHA" ] && [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "ACTION=recover-push ISSUE=$ISSUE REASON=branch-unpushed"
+  exit 0
+fi
+
 # ---- Check 2: PR open ---------------------------------------------------------
 PR_HEAD=$(gh issue view "$ISSUE" --repo "$PIPELINE_REPO" \
   --json closedByPullRequestsReferences \
