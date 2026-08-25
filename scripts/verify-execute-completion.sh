@@ -271,9 +271,30 @@ if [ -n "$LOCAL_SHA" ] && [ -n "$REMOTE_SHA" ] && [ "$LOCAL_SHA" != "$REMOTE_SHA
 fi
 
 # ---- Check 2: PR open ---------------------------------------------------------
-PR_HEAD=$(gh issue view "$ISSUE" --repo "$PIPELINE_REPO" \
+# #1260: `closedByPullRequestsReferences[0]` does NOT carry `headRefName`/`state`
+# in gh's fixed query shape for that connection (confirmed against gh 2.91.0's
+# api/query_builder.go: it requests only id/number/url/repository{...} for this
+# field) — so a direct `.headRefName` read here never actually resolves in
+# production. It DOES carry `number`; resolve the referenced PR's real state +
+# headRefName via `gh pr view <number>` and require state == OPEN before
+# trusting its head. A CLOSED/MERGED reference is treated as no-PR — falling
+# through to the already open-scoped `gh pr list` fallback (unchanged) and then
+# recover-pr — so recover-label can never fire against a stale/closed PR
+# reference (the reported #1258/#1260 gap).
+PR_REF_NUM=$(gh issue view "$ISSUE" --repo "$PIPELINE_REPO" \
   --json closedByPullRequestsReferences \
-  --jq '.closedByPullRequestsReferences[0].headRefName // empty' 2>/dev/null || true)
+  --jq '.closedByPullRequestsReferences[0].number // empty' 2>/dev/null || true)
+PR_HEAD=""
+if [ -n "$PR_REF_NUM" ]; then
+  PR_REF_INFO=$(gh pr view "$PR_REF_NUM" --repo "$PIPELINE_REPO" \
+    --json state,headRefName \
+    --jq '(.state // "") + "|" + (.headRefName // "")' 2>/dev/null || true)
+  PR_REF_STATE="${PR_REF_INFO%%|*}"
+  PR_REF_HEAD="${PR_REF_INFO#*|}"
+  if [ "$PR_REF_STATE" = "OPEN" ]; then
+    PR_HEAD="$PR_REF_HEAD"
+  fi
+fi
 if [ -z "$PR_HEAD" ]; then
   PR_HEAD=$(gh pr list --repo "$PIPELINE_REPO" --search "linked:$ISSUE" \
     --state open --json headRefName --jq '.[0].headRefName // empty' 2>/dev/null || true)
