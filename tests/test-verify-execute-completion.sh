@@ -49,7 +49,11 @@ trap 'rm -rf "$ROOT"' EXIT
 # worktree block, exercising the linked-PR / stranded fallbacks). The git stub
 # also answers `git ls-remote --heads origin <branch>`: non-empty iff
 # $STUB_REMOTE_HAS == 1. The gh stub answers `issue view ... labels`,
-# `issue view ... closedByPullRequestsReferences`, and `pr list`.
+# `issue view ... closedByPullRequestsReferences` (disambiguated by the
+# `--jq` expression substring in $ARGS: `.headRefName` for the deterministic
+# branch-resolution read elsewhere in the script vs `.number` for Check 2's
+# PR-reference lookup, #1260), `pr list`, and `pr view <number>` (Check 2's
+# state+headRefName lookup for the referenced PR, #1260).
 make_stubs() {
   local case_dir="$1"
   local stub_dir="$case_dir/stub"
@@ -91,15 +95,24 @@ EOF
 ARGS="$*"
 case "$1 $2" in
   "issue view")
-    if [[ "$ARGS" == *closedByPullRequestsReferences* ]]; then
-      # headRefName cascade: linked PR head, empty when no linked PR.
+    if [[ "$ARGS" == *"closedByPullRequestsReferences[0].headRefName"* ]]; then
+      # Deterministic branch-resolution read (unrelated to Check 2, #1260):
+      # linked PR head, empty when no linked PR.
       printf '%s' "${STUB_LINKED_PR_HEAD:-}"
+    elif [[ "$ARGS" == *"closedByPullRequestsReferences[0].number"* ]]; then
+      # Check 2's PR-reference lookup (#1260): the referenced PR's number,
+      # empty when no reference resolves.
+      printf '%s' "${STUB_LINKED_PR_NUM:-}"
     elif [[ "$ARGS" == *labels* ]]; then
       printf '%s' "${STUB_ISSUE_LABELS:-}"
     fi
     ;;
   "pr list")
     printf '%s' "${STUB_PR_LIST_HEAD:-}"
+    ;;
+  "pr view")
+    # Check 2's state+headRefName lookup for the referenced PR (#1260).
+    printf '%s|%s' "${STUB_PR_VIEW_STATE:-}" "${STUB_PR_VIEW_HEAD:-}"
     ;;
   *) printf '' ;;
 esac
@@ -197,7 +210,7 @@ echo ""
 echo "Case 3: branch pushed + PR open + label still in-progress -> recover-label"
 C3="$ROOT/c3"; mkdir -p "$C3"; make_stubs "$C3" >/dev/null
 OUT=$(STUB_WT_ISSUE=912 STUB_WT_SLUG=foo STUB_REMOTE_HAS=1 \
-      STUB_LINKED_PR_HEAD="feature/foo" \
+      STUB_LINKED_PR_NUM="42" STUB_PR_VIEW_STATE="OPEN" STUB_PR_VIEW_HEAD="feature/foo" \
       STUB_ISSUE_LABELS="in-progress" \
       run_helper "$C3" 912)
 assert_action "c3" "$OUT" "ACTION=recover-label"
@@ -207,7 +220,7 @@ echo ""
 echo "Case 4: branch pushed + PR open + pr-open label -> complete"
 C4="$ROOT/c4"; mkdir -p "$C4"; make_stubs "$C4" >/dev/null
 OUT=$(STUB_WT_ISSUE=912 STUB_WT_SLUG=foo STUB_REMOTE_HAS=1 \
-      STUB_LINKED_PR_HEAD="feature/foo" \
+      STUB_LINKED_PR_NUM="42" STUB_PR_VIEW_STATE="OPEN" STUB_PR_VIEW_HEAD="feature/foo" \
       STUB_ISSUE_LABELS="pr-open" \
       run_helper "$C4" 912)
 assert_action "c4" "$OUT" "ACTION=complete"
@@ -231,6 +244,7 @@ echo "Case 6: no worktree but linked PR head resolves branch + remote present ->
 C6="$ROOT/c6"; mkdir -p "$C6"; make_stubs "$C6" >/dev/null
 OUT=$(STUB_WT_ISSUE=912 STUB_WT_SLUG="" STUB_REMOTE_HAS=1 \
       STUB_LINKED_PR_HEAD="feature/foo" \
+      STUB_PR_LIST_HEAD="feature/foo" \
       STUB_ISSUE_LABELS="pr-open" \
       run_helper "$C6" 912)
 assert_action "c6" "$OUT" "ACTION=complete"
@@ -260,7 +274,7 @@ echo ""
 echo "Case 8: NO pre-exported PIPELINE_* -> self-resolves from config, emits ACTION (#1022)"
 C8="$ROOT/c8"; mkdir -p "$C8"; make_stubs "$C8" >/dev/null
 OUT=$(STUB_WT_ISSUE=912 STUB_WT_SLUG=foo STUB_REMOTE_HAS=1 \
-      STUB_LINKED_PR_HEAD="feature/foo" \
+      STUB_LINKED_PR_NUM="42" STUB_PR_VIEW_STATE="OPEN" STUB_PR_VIEW_HEAD="feature/foo" \
       STUB_ISSUE_LABELS="pr-open" \
       run_helper_no_export "$C8" 912)
 assert_action "c8" "$OUT" "ACTION=complete"
@@ -296,6 +310,36 @@ if printf '%s' "$OUT" | grep -qF "ACTION=recover-label"; then
   fail_msg "c9: emitted recover-label instead of recover-push (the #1258 bug)"
 else
   pass_msg "c9: did not emit recover-label"
+fi
+
+# ============== Case 10 (#1260): closedByPullRequestsReferences resolves a
+# CLOSED (non-open) PR reference, no open PR via `gh pr list`, issue not at
+# pr-open -> recover-pr, NOT recover-label =====================================
+# Reproduces the residual #1258 scope item: the branch is pushed and IN SYNC
+# with the remote (Check 1b does not fire), so Check 2's PR resolution is
+# reached. closedByPullRequestsReferences[0] resolves PR #99, but that PR's
+# actual state (fetched via `gh pr view`, since gh's fixed
+# closedByPullRequestsReferences query shape never includes state/headRefName
+# directly) is CLOSED, not OPEN — so it must be treated as no-PR. `gh pr list
+# --state open` (the existing open-scoped fallback) also finds nothing. Before
+# the fix, Check 2 trusted the closed reference's headRefName directly and
+# Check 3 wrongly emitted recover-label; the fix requires state == OPEN before
+# trusting the reference, falling through to recover-pr instead.
+echo ""
+echo "Case 10 (#1260): closedByPullRequestsReferences resolves a CLOSED PR, no open PR -> recover-pr, NOT recover-label"
+C10="$ROOT/c10"; mkdir -p "$C10"; make_stubs "$C10" >/dev/null
+OUT=$(STUB_WT_ISSUE=1260 STUB_WT_SLUG=foo STUB_REMOTE_HAS=1 \
+      STUB_LINKED_PR_HEAD="feature/foo" \
+      STUB_LINKED_PR_NUM="99" STUB_PR_VIEW_STATE="CLOSED" STUB_PR_VIEW_HEAD="feature/foo" \
+      STUB_PR_LIST_HEAD="" \
+      STUB_ISSUE_LABELS="plan-approved" \
+      run_helper "$C10" 1260)
+assert_action "c10" "$OUT" "ACTION=recover-pr"
+inc
+if printf '%s' "$OUT" | grep -qF "ACTION=recover-label"; then
+  fail_msg "c10: emitted recover-label instead of recover-pr (the #1260 bug — closed PR ref trusted as open)"
+else
+  pass_msg "c10: did not emit recover-label"
 fi
 
 # ============================================================================
