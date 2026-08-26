@@ -496,6 +496,15 @@ This issue edits the fullsend machinery the pipeline itself runs. This is a self
 
 This section consolidates the per-path dispatch contract for the autonomous flow — the canonical home for the routing detail that previously lived in `/pipeline:run`. `/pipeline:status` is read-only and no longer dispatches; fullsend owns all dispatch.
 
+**Agent `subagent_type` namespacing convention (#1238/#1262 — settle it once, not per line).** Every `Agent(...)` shape below names an agent type. Whether that name carries a `<plugin>:` prefix is NOT a style choice and NOT a coin-flip per line — it is decided by ONE axis: **built-in vs plugin-provided**. State it here once so a newly-added dispatch shape does not have to re-guess it:
+
+- **Harness built-ins are BARE.** `general-purpose`, `Explore`, `Plan`, `statusline-setup` and the other agent types the harness itself registers carry NO prefix. Every `general-purpose` dispatch documented below is correct exactly as written — do NOT "settle" the convention by namespacing them.
+- **Plugin-provided agents are NAMESPACED.** An agent shipped by a plugin — i.e. declared in that plugin's `.claude-plugin/plugin.json` `agents[]` array — is registered ONLY under `<plugin manifest \`name\`>:<agent frontmatter \`name\`>`. For this plugin that key is `pipeline:tdd-implementer`. The bare form is absent from the registry, so a dispatch that uses it hard-fails at dispatch time (#1238) — the PATH D collapsed-execute failure that motivated this rule.
+- **Third-party plugin agents obey the same rule** — e.g. `superpowers:code-reviewer`. There is no per-plugin exception.
+- **Resolution rule — DERIVE, never guess.** Read the namespace segment off the providing plugin's `.claude-plugin/plugin.json` `name` field, and the agent segment off that agent's own file frontmatter `name:` field. Never infer either from the filename, the directory, or a nearby prose mention.
+- **This is NOT host-dependent.** Any host that loads the plugin registers it under the same `<plugin>:<agent>` key, so there is no per-host variant to detect and no fallback form to try. One key, derived from the two manifest/frontmatter fields above.
+- **Guard:** `tests/test-dispatch-namespace-convention.sh` pins this convention and sweeps the tree for bare dispatches of any agent declared in `agents[]` — the forbidden-name set is derived from the manifest, so adding a second agent extends coverage automatically. `tests/test-subagent-type-namespace.sh` pins the `pipeline:`-prefixed literal itself.
+
 **For PR evaluation (pr-open → evaluated).** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed. Read each PR-open issue's labels and route by tier. **Every** shape below carries `model=$MODEL` from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`) — the W3 pin, #1186:
    - **PATH A** (`docs-only`): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. Reuse the existing `<worktree-path>`:
      ```
