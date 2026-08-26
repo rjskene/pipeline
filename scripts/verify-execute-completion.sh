@@ -41,6 +41,8 @@ set -uo pipefail
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <issue-number>" >&2
   echo "       $0 --verify-dispatch <issue-number> <A|B|C|D>" >&2
+  echo "       $0 --clean-main <main-repo-dir> [--since <baseline-file>] [--issue <N>]" >&2
+  echo "       $0 --clean-main-baseline <main-repo-dir> <baseline-file>" >&2
   exit 2
 fi
 
@@ -177,25 +179,149 @@ fi
 # as uniformly dirty (#1207): a `??` entry is untracked, any other XY field is
 # an index or tracked-worktree change — the #1122 staged-but-uncommitted
 # `git add` leak the guard exists to catch.
+#
+# #1262 — PER-DISPATCH ATTRIBUTION (additive, `--since`-gated):
+#
+#   --clean-main <main-repo-dir> [--since <baseline-file>] [--issue <N>]
+#       CLEAN=ok | CLEAN=untracked-only            (unchanged verdicts)
+#       CLEAN=pre-existing DIR=<dir> [ISSUE=<N>]   dirty, but nothing NEW since
+#                                                  the baseline — NOT this
+#                                                  agent's doing
+#       CLEAN=leak DIR=<dir> [ISSUE=<N>] PATHS=<comma-joined delta>
+#       CLEAN=error DIR=<dir> [ISSUE=<N>] REASON=missing-baseline
+#
+#   --clean-main-baseline <main-repo-dir> <baseline-file>
+#       BASELINE=captured DIR=<dir> PATHS=<line-count>
+#       BASELINE=error    DIR=<dir> REASON=not-a-repo
+#
+# The #1122 boundary check runs at the WAVE/LEG boundary — structurally too late
+# to ATTRIBUTE a leak, because the agent whose mis-anchored `git add` caused it
+# has already returned. Running the check per dispatch needs a DELTA, not a
+# snapshot: a bare post-dispatch `--clean-main` would blame the agent that just
+# returned for dirt that predated it. Hence the baseline. `CLEAN=pre-existing`
+# is a distinct token precisely so "dirty but not yours" never reads as an
+# accusation.
+#
+# ADDITIVITY is the hard constraint: with NO `--since`, the `--clean-main`
+# branch is behaviourally unchanged and can never emit `leak`/`pre-existing`.
+# The helper NEVER chooses the baseline path itself — the caller names the file,
+# keeping this script namespace-neutral w.r.t. the consumer `.claude/`
+# allow-list (`.claude/logs/` is `PIPELINE_LOGS_ENABLED`-gated and defaults to
+# no-write, so a baseline written there would silently vanish).
 # ---------------------------------------------------------------------------
+
+# _cm_dirty_paths <dir> -> one TRACKED/index-dirty path per line, sorted+unique.
+# Untracked (`??`) entries are dropped, so the #1207 `untracked-only` property
+# survives into the delta. A porcelain rename (`R  a.txt -> c.txt`) collapses to
+# its DESTINATION path — the raw arrow form is not a path and must never reach
+# the `PATHS=` field.
+_cm_dirty_paths() {
+  local _cm_d="$1"
+  git -C "$_cm_d" status --porcelain 2>/dev/null \
+    | grep -v -e '^??' \
+    | cut -c4- \
+    | sed -e 's/^.* -> //' \
+    | LC_ALL=C sort -u
+}
+
 if [ "$1" = "--clean-main" ]; then
   if [ $# -lt 2 ]; then
-    echo "Usage: $0 --clean-main <main-repo-dir>" >&2
+    echo "Usage: $0 --clean-main <main-repo-dir> [--since <baseline-file>] [--issue <N>]" >&2
     exit 2
   fi
   CM_DIR="$2"
+  shift 2
+  CM_SINCE=""
+  CM_ISSUE=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --since)
+        shift
+        CM_SINCE="${1:-}"
+        [ $# -gt 0 ] && shift
+        ;;
+      --issue)
+        shift
+        CM_ISSUE="${1:-}"
+        [ $# -gt 0 ] && shift
+        ;;
+      *) shift ;;
+    esac
+  done
+
   # #1207: classify porcelain output rather than treating ANY output as dirty.
   # An entry is untracked iff its XY status field is `??`; every other XY
   # (`A `, `M `, ` M`, `R `, `D `, `UU`, ...) is an index or tracked-worktree
   # change — the #1122 leak condition. Ignored paths never appear (no --ignored).
   CM_STATUS="$(git -C "$CM_DIR" status --porcelain 2>/dev/null || true)"
-  if [ -z "$CM_STATUS" ]; then
-    echo "CLEAN=ok DIR=$CM_DIR"
-  elif printf '%s\n' "$CM_STATUS" | grep -q -v -e '^??'; then
-    echo "CLEAN=dirty DIR=$CM_DIR"
-  else
-    echo "CLEAN=untracked-only DIR=$CM_DIR"
+
+  # ---- Default (#1122/#1207) contract — unchanged when no baseline is named --
+  if [ -z "$CM_SINCE" ]; then
+    if [ -z "$CM_STATUS" ]; then
+      echo "CLEAN=ok DIR=$CM_DIR"
+    elif printf '%s\n' "$CM_STATUS" | grep -q -v -e '^??'; then
+      echo "CLEAN=dirty DIR=$CM_DIR"
+    else
+      echo "CLEAN=untracked-only DIR=$CM_DIR"
+    fi
+    exit 0
   fi
+
+  # ---- #1262 attribution mode (delta against the caller-named baseline) ------
+  CM_ISSUE_FIELD=""
+  [ -n "$CM_ISSUE" ] && CM_ISSUE_FIELD=" ISSUE=$CM_ISSUE"
+
+  if [ ! -r "$CM_SINCE" ]; then
+    # Advisory, never a wrong verdict: without the baseline there is no delta to
+    # compute, and guessing one would misattribute pre-existing dirt.
+    echo "CLEAN=error DIR=$CM_DIR${CM_ISSUE_FIELD} REASON=missing-baseline"
+    exit 0
+  fi
+  if [ -z "$CM_STATUS" ]; then
+    echo "CLEAN=ok DIR=$CM_DIR${CM_ISSUE_FIELD}"
+    exit 0
+  fi
+  if ! printf '%s\n' "$CM_STATUS" | grep -q -v -e '^??'; then
+    echo "CLEAN=untracked-only DIR=$CM_DIR${CM_ISSUE_FIELD}"
+    exit 0
+  fi
+
+  CM_NOW="$(_cm_dirty_paths "$CM_DIR" || true)"
+  CM_DELTA="$(comm -13 "$CM_SINCE" <(printf '%s\n' "$CM_NOW") 2>/dev/null || true)"
+  CM_DELTA="$(printf '%s\n' "$CM_DELTA" | grep -v '^[[:space:]]*$' || true)"
+  if [ -z "$CM_DELTA" ]; then
+    echo "CLEAN=pre-existing DIR=$CM_DIR${CM_ISSUE_FIELD}"
+    exit 0
+  fi
+  CM_PATHS="$(printf '%s\n' "$CM_DELTA" | tr '\n' ',' | sed -e 's/,*$//')"
+  echo "CLEAN=leak DIR=$CM_DIR${CM_ISSUE_FIELD} PATHS=$CM_PATHS"
+  exit 0
+fi
+
+if [ "$1" = "--clean-main-baseline" ]; then
+  if [ $# -lt 3 ]; then
+    echo "Usage: $0 --clean-main-baseline <main-repo-dir> <baseline-file>" >&2
+    exit 2
+  fi
+  CMB_DIR="$2"
+  CMB_OUT="$3"
+  if ! git -C "$CMB_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "BASELINE=error DIR=$CMB_DIR REASON=not-a-repo"
+    exit 0
+  fi
+  CMB_PARENT="$(dirname "$CMB_OUT")"
+  [ -d "$CMB_PARENT" ] || mkdir -p "$CMB_PARENT" 2>/dev/null || true
+  if ! _cm_dirty_paths "$CMB_DIR" > "$CMB_OUT" 2>/dev/null; then
+    # A clean repo yields an empty pipeline (grep exits 1) — that is the SUCCESS
+    # case and leaves a legitimate zero-length baseline. Only a genuinely absent
+    # file is an error.
+    if [ ! -f "$CMB_OUT" ]; then
+      echo "BASELINE=error DIR=$CMB_DIR REASON=write-failed"
+      exit 0
+    fi
+  fi
+  CMB_COUNT="$(wc -l < "$CMB_OUT" 2>/dev/null | tr -d '[:space:]')"
+  echo "BASELINE=captured DIR=$CMB_DIR PATHS=${CMB_COUNT:-0}"
   exit 0
 fi
 
