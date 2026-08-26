@@ -765,6 +765,313 @@ else
   fail_msg "cm9: --clean-main exited $rc (expected 0)"
 fi
 
+# ============================================================================
+# #1262 — PER-DISPATCH clean-main ATTRIBUTION.
+#
+# The #1122 `--clean-main` guard above runs at the WAVE/LEG BOUNDARY. That is
+# structurally too late to ATTRIBUTE a leak: by the time `CLEAN=dirty` surfaces,
+# the agent whose mis-anchored `git add` caused it has already returned and its
+# context is gone, so the orchestrator learns only that SOMETHING in the wave
+# leaked. #1262(b) asks for the check to run per dispatch — baseline BEFORE each
+# execute `Agent`, delta check IMMEDIATELY AFTER it returns.
+#
+# A bare post-dispatch `--clean-main` cannot do that either: it would blame the
+# current agent for dirt that predated it (operator-owned edits, an earlier leak
+# that was never cleared). The verdict has to be a DELTA, which needs a baseline.
+# Two additive extensions:
+#
+#   --clean-main-baseline <main-repo-dir> <baseline-file>
+#       BASELINE=captured DIR=<dir> PATHS=<line-count>
+#       BASELINE=error    DIR=<dir> REASON=not-a-repo
+#
+#   --clean-main <main-repo-dir> [--since <baseline-file>] [--issue <N>]
+#       CLEAN=ok | CLEAN=untracked-only          (unchanged verdicts)
+#       CLEAN=pre-existing DIR=<dir> [ISSUE=<N>] (dirty, but nothing NEW)
+#       CLEAN=leak         DIR=<dir> [ISSUE=<N>] PATHS=<comma-joined delta>
+#       CLEAN=error        DIR=<dir> REASON=missing-baseline
+#
+# The baseline records only TRACKED/index dirt (untracked `??` entries are
+# dropped), so the #1207 `untracked-only` property survives the new mode.
+# Rename entries collapse to the DESTINATION path, never the raw `a -> b` form.
+#
+# ADDITIVITY is the hard constraint: without `--since`, the `--clean-main` branch
+# is byte-unchanged and can never emit `leak`/`pre-existing` — CM1-CM9 keep
+# passing untouched (PD7/PD11 pin that). Exit code stays 0 in every verdict; the
+# token, not the exit code, carries the result (PD8).
+#
+# The helper NEVER chooses the baseline path itself — the caller names the file.
+# That keeps the script namespace-neutral w.r.t. the consumer `.claude/`
+# allow-list (`.claude/logs/` is `PIPELINE_LOGS_ENABLED`-gated and defaults to
+# no-write, so a baseline written there would silently vanish on a default host).
+# ============================================================================
+
+echo ""
+echo "== #1262 per-dispatch clean-main attribution =="
+
+# `gh` PATH stub. Before the fix, `--clean-main-baseline` is an UNRECOGNISED mode:
+# the script falls through to the positional `ISSUE="$1"` branch, which shells out
+# to `gh`. Stubbing it keeps the pre-fix run hermetic and fast (no network) while
+# leaving `git` real — the fixtures below are real throwaway repos.
+PD_STUB="$ROOT/pd-stub"
+mkdir -p "$PD_STUB"
+printf '%s\n' '#!/bin/bash' 'exit 1' > "$PD_STUB/gh"
+chmod +x "$PD_STUB/gh"
+
+# run_baseline <main-repo-dir> <baseline-file> ; emits stdout+stderr.
+run_baseline() {
+  local repo="$1" out="$2"
+  (
+    cd "$repo" 2>/dev/null || cd "$ROOT" || exit 1
+    PATH="$PD_STUB:$PATH" PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+      bash "$SCRIPT_UNDER_TEST" --clean-main-baseline "$repo" "$out"
+  ) 2>&1
+}
+
+# run_clean_main_since <main-repo-dir> <baseline-file> [<issue>] ; stdout+stderr.
+run_clean_main_since() {
+  local repo="$1" base="$2" issue="${3:-}"
+  (
+    cd "$repo" 2>/dev/null || cd "$ROOT" || exit 1
+    export PATH="$PD_STUB:$PATH" PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging"
+    if [ -n "$issue" ]; then
+      bash "$SCRIPT_UNDER_TEST" --clean-main "$repo" --since "$base" --issue "$issue"
+    else
+      bash "$SCRIPT_UNDER_TEST" --clean-main "$repo" --since "$base"
+    fi
+  ) 2>&1
+}
+
+# paths_field <token-line> -> everything after the LAST `PATHS=` (the delta list).
+paths_field() {
+  printf '%s' "$1" | sed -n 's/.*PATHS=//p' | head -n1
+}
+
+# refute <label> <output> <needle> — asserts the needle is ABSENT.
+refute() {
+  local label="$1" out="$2" needle="$3"
+  inc
+  if printf '%s' "$out" | grep -F -q -- "$needle"; then
+    fail_msg "$label: output must NOT contain \"$needle\": $out"
+  else
+    pass_msg "$label: output does not contain \"$needle\""
+  fi
+}
+
+# ---- Case PD1: baseline capture on a CLEAN repo -----------------------------
+echo "Case PD1: --clean-main-baseline on a clean repo -> BASELINE=captured + zero-line file"
+PD1="$ROOT/pd1"; make_clean_repo "$PD1"
+PD1_BASE="$ROOT/pd1.baseline"
+OUT=$(run_baseline "$PD1" "$PD1_BASE")
+assert_action "pd1" "$OUT" "BASELINE=captured"
+inc
+if [ -f "$PD1_BASE" ] && [ "$(wc -l < "$PD1_BASE" 2>/dev/null | tr -d ' ')" = "0" ]; then
+  pass_msg "pd1: baseline file exists and holds ZERO lines (clean repo)"
+else
+  fail_msg "pd1: expected an existing zero-line baseline at $PD1_BASE (exists=$([ -f "$PD1_BASE" ] && echo yes || echo no))"
+fi
+
+# ---- Case PD2: baseline capture records pre-existing tracked dirt ------------
+echo ""
+echo "Case PD2: --clean-main-baseline on a repo with one staged file -> that path recorded"
+PD2="$ROOT/pd2"; make_clean_repo "$PD2"
+touch "$PD2/a.txt" && git -C "$PD2" add a.txt
+PD2_BASE="$ROOT/pd2.baseline"
+OUT=$(run_baseline "$PD2" "$PD2_BASE")
+assert_action "pd2" "$OUT" "BASELINE=captured"
+inc
+PD2_CONTENT="$(cat "$PD2_BASE" 2>/dev/null || true)"
+if [ "$PD2_CONTENT" = "a.txt" ]; then
+  pass_msg "pd2: baseline holds exactly the one pre-existing staged path (a.txt)"
+else
+  fail_msg "pd2: expected baseline to hold exactly 'a.txt', got '$(printf '%s' "$PD2_CONTENT" | tr '\n' ' ')'"
+fi
+
+# ---- Case PD3: the #1262 leak — new dirt after a clean baseline --------------
+echo ""
+echo "Case PD3: clean baseline, then a staged leak -> CLEAN=leak + ISSUE= + PATHS="
+PD3="$ROOT/pd3"; make_clean_repo "$PD3"
+PD3_BASE="$ROOT/pd3.baseline"
+run_baseline "$PD3" "$PD3_BASE" >/dev/null 2>&1
+touch "$PD3/b.txt" && git -C "$PD3" add b.txt
+OUT=$(run_clean_main_since "$PD3" "$PD3_BASE" 1262)
+assert_action "pd3" "$OUT" "CLEAN=leak"
+assert_action "pd3" "$OUT" "ISSUE=1262"
+inc
+PD3_PATHS="$(paths_field "$OUT")"
+if printf '%s' "$PD3_PATHS" | grep -F -q 'b.txt'; then
+  pass_msg "pd3: PATHS= names the leaked path (b.txt)"
+else
+  fail_msg "pd3: PATHS= does not name b.txt (got PATHS='$PD3_PATHS' from: $OUT)"
+fi
+
+# ---- Case PD4: dirty, but nothing NEW -> pre-existing, never leak -------------
+# `CLEAN=pre-existing` is a distinct token precisely so "dirty but not yours"
+# never reads as an accusation against the agent that just returned.
+echo ""
+echo "Case PD4: dirt captured in the baseline and unchanged since -> CLEAN=pre-existing"
+PD4="$ROOT/pd4"; make_clean_repo "$PD4"
+touch "$PD4/a.txt" && git -C "$PD4" add a.txt
+PD4_BASE="$ROOT/pd4.baseline"
+run_baseline "$PD4" "$PD4_BASE" >/dev/null 2>&1
+OUT=$(run_clean_main_since "$PD4" "$PD4_BASE")
+assert_action "pd4" "$OUT" "CLEAN=pre-existing"
+refute "pd4" "$OUT" "CLEAN=leak"
+
+# ---- Case PD5: THE ATTRIBUTION PROPERTY — delta only -------------------------
+echo ""
+echo "Case PD5: pre-existing a.txt + new b.txt -> CLEAN=leak naming ONLY b.txt"
+PD5="$ROOT/pd5"; make_clean_repo "$PD5"
+touch "$PD5/a.txt" && git -C "$PD5" add a.txt
+PD5_BASE="$ROOT/pd5.baseline"
+run_baseline "$PD5" "$PD5_BASE" >/dev/null 2>&1
+touch "$PD5/b.txt" && git -C "$PD5" add b.txt
+OUT=$(run_clean_main_since "$PD5" "$PD5_BASE" 1262)
+assert_action "pd5" "$OUT" "CLEAN=leak"
+PD5_PATHS="$(paths_field "$OUT")"
+inc
+if printf '%s' "$PD5_PATHS" | grep -F -q 'b.txt'; then
+  pass_msg "pd5: PATHS= names the newly-leaked path (b.txt)"
+else
+  fail_msg "pd5: PATHS= does not name b.txt (got PATHS='$PD5_PATHS' from: $OUT)"
+fi
+inc
+if printf '%s' "$PD5_PATHS" | grep -F -q 'a.txt'; then
+  fail_msg "pd5: PATHS= also names the PRE-EXISTING a.txt — the verdict is a snapshot, not a delta, so it misattributes operator-owned dirt to the dispatched agent (PATHS='$PD5_PATHS')"
+else
+  pass_msg "pd5: PATHS= excludes the pre-existing a.txt (delta only)"
+fi
+
+# ---- Case PD6: #1207 property survives the new mode --------------------------
+echo ""
+echo "Case PD6: untracked-only checkout with a --since baseline -> CLEAN=untracked-only"
+PD6="$ROOT/pd6"; make_clean_repo "$PD6"
+PD6_BASE="$ROOT/pd6.baseline"
+run_baseline "$PD6" "$PD6_BASE" >/dev/null 2>&1
+touch "$PD6/operator-scratch.md"
+mkdir -p "$PD6/mock-web" && touch "$PD6/mock-web/index.html"
+OUT=$(run_clean_main_since "$PD6" "$PD6_BASE" 1262)
+assert_action "pd6" "$OUT" "CLEAN=untracked-only"
+refute "pd6" "$OUT" "CLEAN=leak"
+
+# ---- Case PD7: ADDITIVITY — no --since means byte-compat with CM1-CM9 --------
+echo ""
+echo "Case PD7: --clean-main with NO --since -> CLEAN=dirty only (no new tokens)"
+PD7="$ROOT/pd7"; make_clean_repo "$PD7"
+touch "$PD7/b.txt" && git -C "$PD7" add b.txt
+OUT=$(run_clean_main "$PD7")
+assert_action "pd7" "$OUT" "CLEAN=dirty"
+refute "pd7" "$OUT" "CLEAN=leak"
+refute "pd7" "$OUT" "CLEAN=pre-existing"
+refute "pd7" "$OUT" "BASELINE="
+
+# ---- Case PD8: the TOKEN carries the verdict, not the exit code ---------------
+echo ""
+echo "Case PD8: exit 0 for --clean-main-baseline AND for --clean-main --since on a leak"
+PD8="$ROOT/pd8"; make_clean_repo "$PD8"
+PD8_BASE="$ROOT/pd8.baseline"
+(
+  cd "$PD8" || exit 1
+  PATH="$PD_STUB:$PATH" PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main-baseline "$PD8" "$PD8_BASE"
+) >/dev/null 2>&1
+rc_base=$?
+touch "$PD8/b.txt" && git -C "$PD8" add b.txt
+(
+  cd "$PD8" || exit 1
+  PATH="$PD_STUB:$PATH" PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main "$PD8" --since "$PD8_BASE" --issue 1262
+) >/dev/null 2>&1
+rc_leak=$?
+inc
+if [ "$rc_base" -eq 0 ] && [ "$rc_leak" -eq 0 ]; then
+  pass_msg "pd8: both modes exited 0 (the token, not the exit code, carries the verdict)"
+else
+  fail_msg "pd8: expected exit 0 from both modes, got baseline=$rc_base leak=$rc_leak"
+fi
+
+# ---- Case PD9: a missing baseline is advisory, not a wrong verdict ------------
+echo ""
+echo "Case PD9: --since pointing at a non-existent file -> CLEAN=error REASON=missing-baseline"
+PD9="$ROOT/pd9"; make_clean_repo "$PD9"
+touch "$PD9/b.txt" && git -C "$PD9" add b.txt
+OUT=$(run_clean_main_since "$PD9" "$ROOT/pd9-does-not-exist.baseline" 1262)
+assert_action "pd9" "$OUT" "CLEAN=error"
+assert_action "pd9" "$OUT" "REASON=missing-baseline"
+(
+  cd "$PD9" || exit 1
+  PATH="$PD_STUB:$PATH" PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main "$PD9" --since "$ROOT/pd9-does-not-exist.baseline"
+) >/dev/null 2>&1
+rc=$?
+inc
+if [ "$rc" -eq 0 ]; then
+  pass_msg "pd9: missing baseline still exits 0 (advisory, not fatal)"
+else
+  fail_msg "pd9: missing baseline exited $rc (expected 0)"
+fi
+
+# ---- Case PD10: arg guard mirrors the existing --clean-main guard -------------
+echo ""
+echo "Case PD10: --clean-main-baseline with fewer than 2 operands -> usage on stderr, exit 2"
+PD10="$ROOT/pd10"; make_clean_repo "$PD10"
+for form in "one-operand" "no-operand"; do
+  if [ "$form" = "one-operand" ]; then
+    ERR=$( ( cd "$ROOT" || exit 1
+             PATH="$PD_STUB:$PATH" PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+               bash "$SCRIPT_UNDER_TEST" --clean-main-baseline "$PD10" ) 2>&1 >/dev/null )
+  else
+    ERR=$( ( cd "$ROOT" || exit 1
+             PATH="$PD_STUB:$PATH" PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+               bash "$SCRIPT_UNDER_TEST" --clean-main-baseline ) 2>&1 >/dev/null )
+  fi
+  rc=$?
+  inc
+  if [ "$rc" -eq 2 ] && printf '%s' "$ERR" | grep -qiF "usage"; then
+    pass_msg "pd10 ($form): exit 2 + usage on stderr"
+  else
+    fail_msg "pd10 ($form): expected exit 2 + usage on stderr, got rc=$rc err='$ERR'"
+  fi
+done
+
+# ---- Case PD11: ADDITIVITY, mirrors CM5 --------------------------------------
+echo ""
+echo "Case PD11: --clean-main-baseline emits BASELINE= only (no ACTION=/DISPATCH=/CLEAN= leak)"
+PD11="$ROOT/pd11"; make_clean_repo "$PD11"
+PD11_BASE="$ROOT/pd11.baseline"
+OUT=$(run_baseline "$PD11" "$PD11_BASE")
+inc
+if printf '%s' "$OUT" | grep -qE "ACTION=|DISPATCH=|CLEAN="; then
+  fail_msg "pd11: --clean-main-baseline leaked an ACTION=/DISPATCH=/CLEAN= token (additivity broken): $OUT"
+else
+  pass_msg "pd11: --clean-main-baseline emits BASELINE= only"
+fi
+
+# ---- Case PD12: rename entries collapse to the destination path ---------------
+# `git status --porcelain` reports a staged rename as `R  a.txt -> c.txt`. The raw
+# arrow form is not a path and must never reach the PATHS= delta.
+echo ""
+echo "Case PD12: staged rename after a clean baseline -> PATHS= names the destination only"
+PD12="$ROOT/pd12"; make_clean_repo "$PD12"
+( cd "$PD12" && printf 'one\n' > a.txt && git add a.txt && git commit -q -m "add a" )
+PD12_BASE="$ROOT/pd12.baseline"
+run_baseline "$PD12" "$PD12_BASE" >/dev/null 2>&1
+git -C "$PD12" mv a.txt c.txt
+OUT=$(run_clean_main_since "$PD12" "$PD12_BASE" 1262)
+assert_action "pd12" "$OUT" "CLEAN=leak"
+PD12_PATHS="$(paths_field "$OUT")"
+inc
+if printf '%s' "$PD12_PATHS" | grep -F -q 'c.txt'; then
+  pass_msg "pd12: PATHS= names the rename destination (c.txt)"
+else
+  fail_msg "pd12: PATHS= does not name c.txt (got PATHS='$PD12_PATHS' from: $OUT)"
+fi
+inc
+if printf '%s' "$PD12_PATHS" | grep -F -q ' -> '; then
+  fail_msg "pd12: PATHS= carries the raw porcelain arrow form (' -> ') instead of the destination path (PATHS='$PD12_PATHS')"
+else
+  pass_msg "pd12: PATHS= carries no raw ' -> ' arrow form"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
