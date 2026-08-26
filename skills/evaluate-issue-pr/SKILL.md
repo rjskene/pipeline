@@ -357,8 +357,24 @@ A guard that passes is not evidence until you have seen it fail on something.
        # $PLAN is already trust-gated (OWNER/MEMBER/COLLABORATOR) from Step 1. Absent
        # section → empty list → gate default-deny unchanged (fail-closed). Set on the gate
        # invocation ONLY — never read from pipeline.config (per-issue scoping).
+       # Parse-contract hardening (#1263): (1) an unconditional leading CRLF
+       # strip so a trailing \r never survives into a parsed path (a surviving
+       # \r would silently defeat the gate's exact-string match below,
+       # reintroducing a false block by a different vector); (2) the armed
+       # bullet region now closes on ANY non-bullet line — an ATX heading,
+       # prose, or another bold "**...:**" header — so unrelated content later
+       # in the same comment is never swept in as a bogus shared-test path.
+       # A BLANK line closes the region only once the section has "started"
+       # (`started` = the header line carried an inline value, or a bullet was
+       # already consumed). That keeps the common markdown shape
+       # `**Shared tests (split-role):**\n\n- tests/foo.sh` — a blank line
+       # between a header-ONLY line and its own bullet list — parsing to the
+       # declared path instead of an empty carve-out (an empty carve-out would
+       # fail closed into exactly the false `locked-test-modified` block this
+       # issue exists to remove), while still bounding a header-INLINE section
+       # at the first blank line.
        SHARED_TESTS_RAW=$(printf '%s\n' "$PLAN" \
-         | awk '/^\*\*Shared tests \(split-role\):\*\*/{found=1; rest=substr($0, index($0,":**")+3); gsub(/^[ `]+|`[ ]*$/,"",rest); sub(/[ \t]+[—-][ \t].*$/,"",rest); sub(/[ \t]+#.*$/,"",rest); gsub(/[ `]+$/,"",rest); sen=tolower(rest); sub(/\.$/,"",sen); if(rest!="" && sen!="none" && sen!="n/a") print rest; next} found && /^\*\*[^*].*:\*\*/{found=0} found && /^[- ]/{gsub(/^[-  `]+|`[ ]*$/,"",$0); sub(/[ \t]+[—-][ \t].*$/,"",$0); sub(/[ \t]+#.*$/,"",$0); gsub(/[ `]+$/,"",$0); sen=tolower($0); sub(/\.$/,"",sen); if($0!="" && sen!="none" && sen!="n/a") print $0}')
+         | awk '{sub(/\r$/,"",$0)} /^\*\*Shared tests \(split-role\):\*\*/{found=1; rest=substr($0, index($0,":**")+3); gsub(/^[ `]+|`[ ]*$/,"",rest); sub(/[ \t]+[—-][ \t].*$/,"",rest); sub(/[ \t]+#.*$/,"",rest); gsub(/[ `]+$/,"",rest); sen=tolower(rest); sub(/\.$/,"",sen); started=(rest!=""); if(rest!="" && sen!="none" && sen!="n/a") print rest; next} found && /^[[:space:]]*$/{if(started) found=0; next} found && !/^[- ]/{found=0} found && /^[- ]/{started=1; gsub(/^[-  `]+|`[ ]*$/,"",$0); sub(/[ \t]+[—-][ \t].*$/,"",$0); sub(/[ \t]+#.*$/,"",$0); gsub(/[ `]+$/,"",$0); sen=tolower($0); sub(/\.$/,"",sen); if($0!="" && sen!="none" && sen!="n/a") print $0}')
        # PIPELINE_TEST_ROOTS (#1182): the gate never sources pipeline.config, so the
        # caller must export/pass the consumer's real test roots (same reason
        # PIPELINE_BASE_BRANCH is explicitly exported above) — without it, a repo

@@ -89,4 +89,80 @@ if [ -n "$result_i" ]; then
   exit 1
 fi
 
+# (j) CRLF fragility (#1263): a CRLF-terminated following-bullet path must not
+# retain a trailing \r byte -- a surviving \r silently defeats the gate's exact
+# -path match, reintroducing a false-block by a different vector than #1263's
+# selector defect. Also, a CRLF-terminated header-only line (no inline path)
+# must not spuriously emit a \r-only garbage "path".
+result_j=$(printf '%s\r\n%s\r\n' \
+  "**Shared tests (split-role):**" \
+  "- tests/test-crlf.sh" \
+  | awk "$AWK_PROG")
+expected_j=$'tests/test-crlf.sh'
+if [ "$result_j" != "$expected_j" ]; then
+  echo "FAIL(j): CRLF-terminated bullet path not cleaned; got: $(printf '%s' "$result_j" | cat -A)"
+  exit 1
+fi
+
+# (k) unbounded armed-bullet region (#1263): the region must close on a blank
+# line or an ATX heading, not ONLY on another bold "**...:**" header -- else an
+# unrelated bullet later in the same comment (after the shared-tests section)
+# is swept in as a bogus shared-test path.
+result_k=$(printf '%s\n' \
+  "**Shared tests (split-role):**" \
+  "- tests/test-bar.sh" \
+  "" \
+  "## Notes" \
+  "- some unrelated bullet that must NOT be captured" \
+  | awk "$AWK_PROG")
+if [ "$result_k" != "tests/test-bar.sh" ]; then
+  echo "FAIL(k): armed bullet region not bounded by blank line/heading; got:"
+  printf '%s\n' "$result_k" | sed 's/^/    /'
+  exit 1
+fi
+
+# (l) blank line between a header-ONLY line and its own bullet list (#1263
+# eval fix): bounding the armed region must NOT narrow the previously-supported
+# `**Shared tests (split-role):**\n\n- path` markdown shape. Dropping it yields
+# an EMPTY carve-out, which fails closed into exactly the false
+# `SPLIT_ROLE=block REASON=locked-test-modified` this issue exists to remove.
+result_l=$(printf '%s\n' \
+  "**Shared tests (split-role):**" \
+  "" \
+  "- tests/test-gap.sh" \
+  "" \
+  "**Estimated effort:** 1 hour" \
+  | awk "$AWK_PROG")
+if [ "$result_l" != "tests/test-gap.sh" ]; then
+  echo "FAIL(l): blank line after a header-only line dropped the bullet; got: '$result_l'"
+  exit 1
+fi
+
+# (m) header-INLINE sections stay bounded at the first blank line: an unrelated
+# bullet further down the same comment must NOT be swept in (the region-bound
+# protection must survive case (l)'s relaxation).
+result_m=$(printf '%s\n' \
+  "**Shared tests (split-role):** tests/test-inline.sh" \
+  "" \
+  "- some unrelated bullet that must NOT be captured" \
+  | awk "$AWK_PROG")
+if [ "$result_m" != "tests/test-inline.sh" ]; then
+  echo "FAIL(m): header-inline region not bounded at the first blank line; got:"
+  printf '%s\n' "$result_m" | sed 's/^/    /'
+  exit 1
+fi
+
+# (n) prose closes the armed region too (not only headings/bold headers).
+result_n=$(printf '%s\n' \
+  "**Shared tests (split-role):**" \
+  "- tests/test-prose.sh" \
+  "Some unrelated prose paragraph." \
+  "- another unrelated bullet" \
+  | awk "$AWK_PROG")
+if [ "$result_n" != "tests/test-prose.sh" ]; then
+  echo "FAIL(n): prose did not close the armed bullet region; got:"
+  printf '%s\n' "$result_n" | sed 's/^/    /'
+  exit 1
+fi
+
 echo "ok"
