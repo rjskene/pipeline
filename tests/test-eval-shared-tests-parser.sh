@@ -89,4 +89,36 @@ if [ -n "$result_i" ]; then
   exit 1
 fi
 
+# (j) CRLF fragility (#1263): a CRLF-terminated following-bullet path must not
+# retain a trailing \r byte -- a surviving \r silently defeats the gate's exact
+# -path match, reintroducing a false-block by a different vector than #1263's
+# selector defect. Also, a CRLF-terminated header-only line (no inline path)
+# must not spuriously emit a \r-only garbage "path".
+result_j=$(printf '%s\r\n%s\r\n' \
+  "**Shared tests (split-role):**" \
+  "- tests/test-crlf.sh" \
+  | awk "$AWK_PROG")
+expected_j=$'tests/test-crlf.sh'
+if [ "$result_j" != "$expected_j" ]; then
+  echo "FAIL(j): CRLF-terminated bullet path not cleaned; got: $(printf '%s' "$result_j" | cat -A)"
+  exit 1
+fi
+
+# (k) unbounded armed-bullet region (#1263): the region must close on a blank
+# line or an ATX heading, not ONLY on another bold "**...:**" header -- else an
+# unrelated bullet later in the same comment (after the shared-tests section)
+# is swept in as a bogus shared-test path.
+result_k=$(printf '%s\n' \
+  "**Shared tests (split-role):**" \
+  "- tests/test-bar.sh" \
+  "" \
+  "## Notes" \
+  "- some unrelated bullet that must NOT be captured" \
+  | awk "$AWK_PROG")
+if [ "$result_k" != "tests/test-bar.sh" ]; then
+  echo "FAIL(k): armed bullet region not bounded by blank line/heading; got:"
+  printf '%s\n' "$result_k" | sed 's/^/    /'
+  exit 1
+fi
+
 echo "ok"
