@@ -189,6 +189,9 @@ fi
 #                                                  agent's doing
 #       CLEAN=leak DIR=<dir> [ISSUE=<N>] PATHS=<comma-joined delta>
 #       CLEAN=error DIR=<dir> [ISSUE=<N>] REASON=missing-baseline
+#       CLEAN=error DIR=<dir> [ISSUE=<N>] REASON=unrecognized-arg:<token>
+#                                          (#1266 — an unrecognised option-loop
+#                                          token, never silently dropped)
 #
 #   --clean-main-baseline <main-repo-dir> <baseline-file>
 #       BASELINE=captured DIR=<dir> PATHS=<line-count>
@@ -239,6 +242,7 @@ if [ "$1" = "--clean-main" ]; then
   CM_SINCE=""
   CM_SINCE_SEEN=0
   CM_ISSUE=""
+  CM_BADARG=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --since)
@@ -255,9 +259,26 @@ if [ "$1" = "--clean-main" ]; then
         CM_ISSUE="${1:-}"
         [ $# -gt 0 ] && shift
         ;;
-      *) shift ;;
+      *)
+        # #1266: an unrecognised token (typo'd flag, stale flag from a
+        # mismatched checkout, an orphaned value) must NEVER be silently
+        # dropped — a dropped `--since` degrades the run to the legacy
+        # un-attributed `CLEAN=dirty` verdict with no signal that the
+        # requested attribution mode was never armed. Record it and stop
+        # parsing; same contract as the missing-baseline path below: a
+        # single emitted token, exit 0, verdict rides the token.
+        CM_BADARG="$1"
+        break
+        ;;
     esac
   done
+
+  if [ -n "$CM_BADARG" ]; then
+    CM_ISSUE_FIELD=""
+    [ -n "$CM_ISSUE" ] && CM_ISSUE_FIELD=" ISSUE=$CM_ISSUE"
+    echo "CLEAN=error DIR=$CM_DIR${CM_ISSUE_FIELD} REASON=unrecognized-arg:$CM_BADARG"
+    exit 0
+  fi
 
   # #1207: classify porcelain output rather than treating ANY output as dirty.
   # An entry is untracked iff its XY status field is `??`; every other XY
