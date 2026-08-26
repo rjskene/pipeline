@@ -194,6 +194,11 @@ fi
 #       BASELINE=captured DIR=<dir> PATHS=<line-count>
 #       BASELINE=error    DIR=<dir> REASON=not-a-repo
 #
+# SCOPE: the delta is a PATH SET, not file content. A leak onto a path that was
+# ALREADY dirty at baseline therefore reports `pre-existing`, not `leak` — the
+# path set is unchanged. That is the deliberate fail-quiet direction: the mode
+# never accuses an agent of dirt it may not have caused.
+#
 # The #1122 boundary check runs at the WAVE/LEG boundary — structurally too late
 # to ATTRIBUTE a leak, because the agent whose mis-anchored `git add` caused it
 # has already returned. Running the check per dispatch needs a DELTA, not a
@@ -232,10 +237,15 @@ if [ "$1" = "--clean-main" ]; then
   CM_DIR="$2"
   shift 2
   CM_SINCE=""
+  CM_SINCE_SEEN=0
   CM_ISSUE=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --since)
+        # Track the FLAG, not its value: `--since` with a missing/empty operand
+        # must report `missing-baseline`, never silently degrade to the legacy
+        # un-attributed `CLEAN=dirty` verdict.
+        CM_SINCE_SEEN=1
         shift
         CM_SINCE="${1:-}"
         [ $# -gt 0 ] && shift
@@ -256,7 +266,7 @@ if [ "$1" = "--clean-main" ]; then
   CM_STATUS="$(git -C "$CM_DIR" status --porcelain 2>/dev/null || true)"
 
   # ---- Default (#1122/#1207) contract — unchanged when no baseline is named --
-  if [ -z "$CM_SINCE" ]; then
+  if [ "$CM_SINCE_SEEN" -eq 0 ]; then
     if [ -z "$CM_STATUS" ]; then
       echo "CLEAN=ok DIR=$CM_DIR"
     elif printf '%s\n' "$CM_STATUS" | grep -q -v -e '^??'; then
@@ -271,7 +281,7 @@ if [ "$1" = "--clean-main" ]; then
   CM_ISSUE_FIELD=""
   [ -n "$CM_ISSUE" ] && CM_ISSUE_FIELD=" ISSUE=$CM_ISSUE"
 
-  if [ ! -r "$CM_SINCE" ]; then
+  if [ -z "$CM_SINCE" ] || [ ! -r "$CM_SINCE" ]; then
     # Advisory, never a wrong verdict: without the baseline there is no delta to
     # compute, and guessing one would misattribute pre-existing dirt.
     echo "CLEAN=error DIR=$CM_DIR${CM_ISSUE_FIELD} REASON=missing-baseline"
@@ -287,7 +297,13 @@ if [ "$1" = "--clean-main" ]; then
   fi
 
   CM_NOW="$(_cm_dirty_paths "$CM_DIR" || true)"
-  CM_DELTA="$(comm -13 "$CM_SINCE" <(printf '%s\n' "$CM_NOW") 2>/dev/null || true)"
+  # LC_ALL=C on `comm` is LOAD-BEARING, not hygiene: both inputs are written by
+  # `_cm_dirty_paths` under `LC_ALL=C sort -u`, so a `comm` running under any
+  # other collation (e.g. en_US.UTF-8, where `B.txt` sorts before `a.txt`)
+  # considers its input unsorted and re-emits BASELINE lines as delta — turning
+  # the operator's own pre-existing dirt into a false `CLEAN=leak` that Step 6's
+  # recovery would then `restore --staged` + `stash push`.
+  CM_DELTA="$(LC_ALL=C comm -13 "$CM_SINCE" <(printf '%s\n' "$CM_NOW") 2>/dev/null || true)"
   CM_DELTA="$(printf '%s\n' "$CM_DELTA" | grep -v '^[[:space:]]*$' || true)"
   if [ -z "$CM_DELTA" ]; then
     echo "CLEAN=pre-existing DIR=$CM_DIR${CM_ISSUE_FIELD}"
