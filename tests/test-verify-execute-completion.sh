@@ -1072,6 +1072,80 @@ else
   pass_msg "pd12: PATHS= carries no raw ' -> ' arrow form"
 fi
 
+# ============================================================================
+# #1266 — the --clean-main option loop must not silently swallow an
+# unrecognised argument. Before the fix, the catch-all `*) shift ;;` consumes
+# any unknown token (a typo'd `--since`, a stale flag) and the run degrades to
+# the legacy un-attributed CLEAN=ok/dirty/untracked-only verdict with no signal
+# that the requested attribution mode was never armed. After the fix, an
+# unrecognised token emits `CLEAN=error ... REASON=unrecognized-arg:<token>`,
+# exit 0 — same shape as the existing missing-baseline path.
+# ============================================================================
+
+echo ""
+echo "== #1266 --clean-main strict argument parsing =="
+
+# ---- Case AP1: the exact silent-degrade scenario — a typo'd --since on a
+# DIRTY repo must never fall through to the plain CLEAN=dirty verdict. -------
+echo "Case AP1: typo'd --since flag on a dirty repo -> CLEAN=error, never CLEAN=dirty"
+AP1="$ROOT/ap1"; make_clean_repo "$AP1"
+touch "$AP1/leak.txt" && git -C "$AP1" add leak.txt
+OUT=$( (PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main "$AP1" --sicne "$ROOT/ap1.baseline" --issue 1266) 2>&1 )
+assert_action "ap1" "$OUT" "CLEAN=error"
+assert_action "ap1" "$OUT" "REASON=unrecognized-arg:--sicne"
+refute "ap1" "$OUT" "CLEAN=dirty"
+
+# ---- Case AP2: an unrecognised flag on a CLEAN repo must not report CLEAN=ok -
+echo ""
+echo "Case AP2: unrecognised flag on a clean repo -> CLEAN=error, never CLEAN=ok"
+AP2="$ROOT/ap2"; make_clean_repo "$AP2"
+OUT=$( (PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main "$AP2" --bogus) 2>&1 )
+assert_action "ap2" "$OUT" "CLEAN=error"
+assert_action "ap2" "$OUT" "REASON=unrecognized-arg:--bogus"
+refute "ap2" "$OUT" "CLEAN=ok"
+
+# ---- Case AP3: the error verdict still exits 0 (token carries the verdict) --
+echo ""
+echo "Case AP3: unrecognised flag still exits 0"
+inc
+( PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
+    bash "$SCRIPT_UNDER_TEST" --clean-main "$AP2" --bogus ) >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "ap3: exited 0 on the unrecognized-arg verdict"
+else
+  fail_msg "ap3: exited $rc (expected 0)"
+fi
+
+# ---- Negative controls: every currently-valid invocation is unaffected -----
+echo ""
+echo "Case AP4 (negative control): bare positional --clean-main <dir> unaffected"
+AP4="$ROOT/ap4"; make_clean_repo "$AP4"
+OUT=$(run_clean_main "$AP4")
+assert_action "ap4" "$OUT" "CLEAN=ok"
+refute "ap4" "$OUT" "CLEAN=error"
+
+echo ""
+echo "Case AP5 (negative control): --clean-main <dir> --since <baseline> --issue <N> unaffected"
+AP5="$ROOT/ap5"; make_clean_repo "$AP5"
+AP5_BASE="$ROOT/ap5.baseline"
+run_baseline "$AP5" "$AP5_BASE" >/dev/null 2>&1
+touch "$AP5/b.txt" && git -C "$AP5" add b.txt
+OUT=$(run_clean_main_since "$AP5" "$AP5_BASE" 1266)
+assert_action "ap5" "$OUT" "CLEAN=leak"
+assert_action "ap5" "$OUT" "ISSUE=1266"
+refute "ap5" "$OUT" "CLEAN=error"
+
+echo ""
+echo "Case AP6 (negative control): --clean-main-baseline <dir> <file> unaffected"
+AP6="$ROOT/ap6"; make_clean_repo "$AP6"
+AP6_BASE="$ROOT/ap6.baseline"
+OUT=$(run_baseline "$AP6" "$AP6_BASE")
+assert_action "ap6" "$OUT" "BASELINE=captured"
+refute "ap6" "$OUT" "CLEAN=error"
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
