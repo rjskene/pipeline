@@ -23,6 +23,7 @@ set -uo pipefail
 #   bash scripts/arm-usage-resume-cron.sh \
 #     --resume-command "/pipeline:fullsend 1041 1042 --campaign" \
 #     --resume-at 2026-06-13T18:05Z
+#   bash scripts/arm-usage-resume-cron.sh --resume-command "/pipeline:evolve resume" --resume-at 2026-06-13T18:05Z
 #   bash scripts/arm-usage-resume-cron.sh --help
 #
 
@@ -45,11 +46,14 @@ Usage: arm-usage-resume-cron.sh --resume-command <str> --resume-at <iso> [--help
   the emitted args into one CronCreate call.
 
   Required:
-    --resume-command <str>  The verbatim /pipeline:fullsend command being run
-                            (e.g. "/pipeline:fullsend 1041 1042 --campaign").
+    --resume-command <str>  The verbatim resume command to fire on
+                            decision=proceed — the exact slash command you are
+                            running (e.g. "/pipeline:fullsend 1041 1042
+                            --campaign" or "/pipeline:evolve resume").
                             Hand over what you are running, NOT a curated
-                            "remaining" snapshot — fullsend is label-driven +
-                            idempotent, so re-entry skips already-merged work.
+                            "remaining" snapshot — pipeline commands are
+                            label-driven + idempotent, so re-entry skips
+                            already-merged work.
     --resume-at <iso>       The gate line's resume_at value (ISO). Carried in
                             the prompt for the R5 blind-backstop branch only.
 

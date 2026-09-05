@@ -206,6 +206,7 @@ Top-level slash commands that drive the maps above:
 - `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) — orchestrator session: prioritize, group, and dispatch the action queue. It also renders an **UNMERGED PRs advisory ledger** (#1168/#1172) — a full open-PR view sourced from `scripts/list-open-prs.sh` and emitted by a dedicated renderer section, so open PRs that are not tied to a queued action are still visible at a glance.
 - `/pipeline:fullsend` — wave-plan flow across a slate of issues (the map above).
 - `/pipeline:analyze-issues` — read-only hygiene pass over the open-issue set; see [skills/analyze-issues/SKILL.md](../skills/analyze-issues/SKILL.md). `/pipeline:status --analyze` delegates to `/pipeline:analyze-issues` for back-compat.
+- `/pipeline:evolve start|stop|pause|resume|status` — harness-evolve loop driver on the `evolve` integration branch (dogfood, run from the loop clone); see [skills/evolve/SKILL.md](../skills/evolve/SKILL.md) and the spec `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md`.
 
 `analyze-issues` surfaces four detection categories (no mutations): duplicate candidates, standalones that fit an existing tracker, issues with missing labels, and merged-PR supersession candidates.
 
