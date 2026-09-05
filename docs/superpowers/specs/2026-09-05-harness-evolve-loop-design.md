@@ -281,7 +281,10 @@ Filed and run through fullsend on `evolve`; no harness behaviour changes yet.
    working tree is on `staging`) — in the clone it fires at SessionStart on `evolve` and would
    silently fast-forward `evolve` onto staging until the branches diverge. `dogfood-symlink-swap.sh`
    is already safe in the clone: it keys on the `installed_plugins.json` entry whose `projectPath`
-   is the clone, and there is none.
+   is the clone, and there is none. Also: `scripts/doctor.sh` treats `PIPELINE_LABELS_EXCLUDED` as a
+   single label name, so with `excluded|evolve` the main checkout's doctor reports a missing label
+   literally named `excluded|evolve` and `--fix labels` would create it — teach doctor to split on
+   `|` (do not run `--fix labels` in the main checkout until then).
 
 Cycle 0 is the only cycle whose issues are exempt from the "must move a scorecard row" rule; they
 are measured by the mass row (net prose ≤ 0 after the self-audit deletion) and by simply working in
