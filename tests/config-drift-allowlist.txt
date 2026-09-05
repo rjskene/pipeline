@@ -175,3 +175,13 @@ PIPELINE_NEXT_
 # the lint via their pipeline.config.example declarations. Peel this entry when the
 # follow-up lands a real read-site + declaration.
 PIPELINE_STAGE_MODEL_CLASSIFY
+
+# #1275 spec-only knob. PIPELINE_TRUST_PROFILE is named in the evolve-loop design
+# spec (docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §12) as a
+# FUTURE trust-profile knob (strict|lean); no read site exists anywhere in the
+# tree. check-config-drift.sh scans docs/, so that prose mention reads as
+# referenced-but-undeclared and reds the clean-tree suite. Same
+# documented-but-not-yet-implemented class as PIPELINE_STAGE_MODEL_CLASSIFY above.
+# Exact-match (NOT a prefix wildcard). Peel this entry when the trust-profile
+# issue lands a real read-site + a pipeline.config.example declaration.
+PIPELINE_TRUST_PROFILE
