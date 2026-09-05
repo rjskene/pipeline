@@ -14,6 +14,23 @@ set -uo pipefail
 # Snapshot CLAUDE_PLUGIN_ROOT BEFORE sourcing the resolver so the
 # claude_plugin_root check can tell pre-set (pass or warn-if-invalid) from self-resolved (pass).
 _CLAUDE_PLUGIN_ROOT_PRE_RESOLVE="${CLAUDE_PLUGIN_ROOT:-}"
+
+# Hoist PIPELINE_USE_LOCAL_PLUGIN from pipeline.config (when present) BEFORE the
+# initial resolver source, so a config-file knob is visible to the very first
+# resolve — not just the recompute later in this script. Read only the knob via
+# a subshell source (no config side effects in doctor's own shell, no
+# reordering of the pipeline_config check's own `bash -n` validation below).
+# The leading CLAUDE_PLUGIN_ROOT check is load-bearing: _resolve-plugin-root.sh
+# exports the working tree in its PIPELINE_USE_LOCAL_PLUGIN=true branch BEFORE
+# the CLAUDE_PLUGIN_ROOT-set short-circuit, so hoisting the knob unguarded
+# would let a config file override an explicit env var.
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${PIPELINE_USE_LOCAL_PLUGIN:-}" ] \
+    && [ -f pipeline.config ] && bash -n pipeline.config 2>/dev/null; then
+  _dr_knob="$( set +u; . ./pipeline.config >/dev/null 2>&1; printf '%s' "${PIPELINE_USE_LOCAL_PLUGIN:-}" )"
+  [ -n "$_dr_knob" ] && export PIPELINE_USE_LOCAL_PLUGIN="$_dr_knob"
+  unset _dr_knob
+fi
+
 RESOLVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 [ -f "$RESOLVER_DIR/_resolve-plugin-root.sh" ] \
