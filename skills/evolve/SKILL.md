@@ -28,12 +28,14 @@ TMP="$MAIN_REPO/.claude/scratch/evolve-tracker-body.md"; mkdir -p "$(dirname "$T
 
 If `CLAUDE_PLUGIN_ROOT` fails to resolve, **STOP** — every step below calls a script under it.
 
+Bash-tool shell state does NOT persist between calls, so re-run fences 1+2 at the head of EVERY Bash call that runs a later fence (same-call composition). `HARNESS_ROOT` is therefore captured per call; a later fence run on its own would see it empty and emit a spurious `--plugin-dir` STOP.
+
 ## Subcommands
 
 - `start [--cycles N]` — run cycles from Step 0 until `CYCLES` is reached (when non-zero), the `paused` label appears, or diminishing returns fires.
 - `stop` — fence 3 with `MODE_NEW=paused` plus `gh issue edit "$TRACKER" --repo "$PIPELINE_REPO" --add-label paused`; one-line report; never touches an in-flight fullsend.
 - `pause` — finish or abort the in-flight cycle, forward-sync, open the merge-back PR, then `paused`.
-- `resume` — run Step 0 in full, then continue at the recorded step (`done` → next cycle).
+- `resume` — invoking `resume` IS the un-pause, so it FIRST clears the kill switch with `gh issue edit "$TRACKER" --repo "$PIPELINE_REPO" --remove-label paused`, then runs Step 0 in full, then continues at the recorded step (`done` → next cycle). Without that removal Step 0's `paused` check would STOP every resume.
 - `status` — print the `## Mode` line, then (behind an `[ -x ]` guard) `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" --cycle "$N" --tracker "$TRACKER" | grep -E '^(cycle-issues|pending-verdicts):'`, then the current `usage-gate.sh` line.
 
 ## Durable state (tracker body)
@@ -52,7 +54,7 @@ MODE_LINE=$(awk '/^## Mode/{f=1;next} f&&/^`/{print;exit}' "$TMP")
 MODE=$(sed -nE 's/^`([a-z]+)`.*/\1/p' <<<"$MODE_LINE")
 N=$(sed -nE 's/.*cycle ([0-9]+).*/\1/p' <<<"$MODE_LINE"); N=${N:-0}
 STEP=$(sed -nE 's/.*step ([0-9]+|done).*/\1/p' <<<"$MODE_LINE"); STEP=${STEP:-done}
-ISSUES=$(grep -oE '#[0-9]+' <<<"${MODE_LINE#*issues}" | tr '\n' ' ')
+case "$MODE_LINE" in *"· issues "*) ISSUES=$(grep -oE '#[0-9]+' <<<"${MODE_LINE#*· issues }" | tr '\n' ' '); ISSUES="${ISSUES% }" ;; *) ISSUES="" ;; esac
 ```
 
 Write — called at every step transition with `STEP_NEW=<0..7|done>` and, for stop/pause/halt, `MODE_NEW=paused`; `ISSUES` is updated by Step 3:
@@ -67,17 +69,20 @@ Comments are read ONLY via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-c
 
 ## Step 0 — gate
 
-Run after fence 2. Each check is a one-line STOP carrying its reason:
+Run after fence 2. Each check is a one-line STOP carrying its reason and sets `STOP=1`; the forward-sync runs ONLY when every check passed, so a failed gate never mutates the working tree:
 
 ```bash
+STOP=""
 HEAD_BRANCH=$(git -C "$MAIN_REPO" symbolic-ref --short HEAD)
-[ "$HEAD_BRANCH" = "$PIPELINE_BASE_BRANCH" ] && [ "$PIPELINE_BASE_BRANCH" = evolve ] || echo "STOP: branch=$HEAD_BRANCH base=$PIPELINE_BASE_BRANCH (need evolve/evolve)"
-[ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] || echo "STOP: PIPELINE_USE_LOCAL_PLUGIN=true missing from the clone pipeline.config (Bash-side resolver would run the published cache)"
-[ "$HARNESS_ROOT" = "$(git -C "$MAIN_REPO" rev-parse --show-toplevel)" ] || echo "STOP: session not started with --plugin-dir <clone> (harness root=$HARNESS_ROOT)"
-gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json labels --jq '.labels[].name' | grep -qx paused && echo "STOP: tracker carries paused (kill switch)"
-grep -qE '^\| staging isolation \|.*PIPELINE_LABELS_EXCLUDED="[^"]*evolve[^"]*"' "$TMP" || echo "STOP: staging-isolation attestation missing from tracker ## Runtime (need PIPELINE_LABELS_EXCLUDED=\"…evolve…\")"
-git -C "$MAIN_REPO" fetch --quiet origin staging
-git -C "$MAIN_REPO" merge-base --is-ancestor origin/staging HEAD || git -C "$MAIN_REPO" merge --no-edit origin/staging   # forward-sync; conflicts → resolve in-session, then continue
+[ "$HEAD_BRANCH" = "$PIPELINE_BASE_BRANCH" ] && [ "$PIPELINE_BASE_BRANCH" = evolve ] || { echo "STOP: branch=$HEAD_BRANCH base=$PIPELINE_BASE_BRANCH (need evolve/evolve)"; STOP=1; }
+[ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] || { echo "STOP: PIPELINE_USE_LOCAL_PLUGIN=true missing from the clone pipeline.config (Bash-side resolver would run the published cache)"; STOP=1; }
+[ "$HARNESS_ROOT" = "$(git -C "$MAIN_REPO" rev-parse --show-toplevel)" ] || { echo "STOP: session not started with --plugin-dir <clone> (harness root=$HARNESS_ROOT)"; STOP=1; }
+gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json labels --jq '.labels[].name' | grep -qx paused && { echo "STOP: tracker carries paused (kill switch)"; STOP=1; }
+grep -qE '^\| staging isolation \|.*PIPELINE_LABELS_EXCLUDED="[^"]*evolve[^"]*"' "$TMP" || { echo "STOP: staging-isolation attestation missing from tracker ## Runtime (need PIPELINE_LABELS_EXCLUDED=\"…evolve…\")"; STOP=1; }
+if [ -n "$STOP" ]; then echo "STOP: gate failed — abort the turn, do not run Step 1"; else
+  git -C "$MAIN_REPO" fetch --quiet origin staging
+  git -C "$MAIN_REPO" merge-base --is-ancestor origin/staging HEAD || git -C "$MAIN_REPO" merge --no-edit origin/staging   # forward-sync; conflicts → resolve in-session, then continue
+fi
 ```
 
 `HARNESS_ROOT` is the path the harness substituted into this skill at load, so a session that loaded the published cache or the main checkout instead of `--plugin-dir <clone>` fails that compare — an unsubstituted or unset token is empty and fails too, which is the fail-closed behaviour we want. The main checkout's `pipeline.config` is outside the clone's `restrict_paths.py` boundary, so the exclusion knob is read as the operator's attestation in the tracker `## Runtime` row `staging isolation`, never as a file read (spec §3.3).
@@ -112,11 +117,11 @@ Branch on `$DECISION` exactly as `skills/fullsend/SKILL.md` `## Usage gate (#969
 
 Each transition calls fence 3.
 
-1. **observe** — `RETRO=$(printf '%s/docs/retros/cycle-%02d.md' "$MAIN_REPO" "$N")`; `[ -x "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" ] && bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" --cycle "$N" --tracker "$TRACKER" --write "$RETRO" || echo "run-retro.sh absent (#1272 not merged) — skipping retro"`. Relay the ≤60-line stdout; never paste plan/PR/eval bodies.
+1. **observe** — `RETRO=$(printf '%s/docs/retros/cycle-%02d.md' "$MAIN_REPO" "$N")`; then `if [ -x "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" ]; then bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" --cycle "$N" --tracker "$TRACKER" --write "$RETRO"; else echo "run-retro.sh absent (#1272 not merged) — skipping retro"; fi` — `if`/`else`, never `&&`/`||`, which would misreport a non-zero run-retro exit as "absent". Relay the ≤60-line stdout; never paste plan/PR/eval bodies.
 2. **diagnose** — resolve the `pending-verdicts:` issues from cycle N−1 (`confirmed` / `no-effect` / `regressed` per spec §7 thresholds; real-work cost/latency deltas under 30% are `no-effect`); rank the tracker `## Hypothesis backlog`; pick ≤3 issues, ≤1 PATH C; append `## Diagnose` (verdicts + why this slate) to `$RETRO`.
 3. **file** — one `gh issue create --repo "$PIPELINE_REPO" --label evolve --title "<type>(<scope>): …" --body-file <tmp>` per issue, body = the create-issues template (Context / Scope / Affected areas / Notes) + the mandatory `## Evolve` block (spec §6: Cycle, Hypothesis, Metric · expected delta, Measured by, Prose budget) + `<!-- pipeline:path-hint=A|B|C|D -->`. Disallowed content (`restrict_paths.py`, `block_deletions.py`, auth/credential surfaces, prose-pinning tests) is filed with `--label human` instead of `evolve`. Append `- #<n> — <title>` lines under `Cycle <N> …:` in the tracker `## Cycle issues` (edit `$TMP`, then fence 3 with `ISSUES="#a #b #c"` and `STEP_NEW=3`).
 4. **run** — re-run fence 5, then `Skill(skill: "pipeline:fullsend", args: "<the cycle's issue numbers>")`. Explicit numbers only, never bare fullsend.
-5. **measure** — `[ -x … ] && bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" --cycle "$N" --tracker "$TRACKER" --post` → mass + friction verdicts now; its `verdict-candidates:` lines are the cost/latency/escape verdicts, deferred to cycle N+1 step 2 unless the issue said `Measured by: calibration run`.
+5. **measure** — same `if [ -x … ]; then … ; else …; fi` guard around `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" --cycle "$N" --tracker "$TRACKER" --post` → mass + friction verdicts now; its `verdict-candidates:` lines are the cost/latency/escape verdicts, deferred to cycle N+1 step 2 unless the issue said `Measured by: calibration run`.
 6. **decide** — `regressed` → `Skill(skill: "pipeline:hotfix", args: "\"revert #<issue>: <one-line reason>\" --auto-merge")` with the revert commit, re-filing a follow-up only if the hypothesis still holds. `no-effect` → move the backlog entry to the bottom of `## Hypothesis backlog`. `confirmed` → replace the matching `## Scorecard baseline` row value. Both edits go through `$TMP` + fence 3.
 7. **log** — append `## Post` (step 5 output + verdicts) to `$RETRO`; `git -C "$MAIN_REPO" add "$RETRO" && git -C "$MAIN_REPO" commit -m "$(printf 'docs(evolve): cycle %02d retro' "$N")" && git -C "$MAIN_REPO" push origin evolve`; post the cycle comment (shape below) with `gh issue comment "$TRACKER" --repo "$PIPELINE_REPO" --body-file <tmp>`; fence 3 with `STEP_NEW=done`. Diminishing returns: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" "$TRACKER" | grep -E '^- verdicts:' | tail -2` — two lines and neither contains `confirmed` → fence 3 `MODE_NEW=paused`, `--add-label paused`, post `need new hypotheses` on the tracker, STOP. Else, `CYCLES` not reached (or 0) → `N=$((N+1))` and the next cycle starts at Step 0.
 
@@ -149,7 +154,7 @@ timeout 590 gh pr checks "$PR" --repo "$PIPELINE_REPO" --watch --interval 30 && 
 
 Then fence 3 with `MODE_NEW=paused` and hand back — the release cut stays the manual `docs/release-cadence.md` step and `--delete-branch` is never passed. That REST call is the loop's only cross-base PR: `enforce-base-branch.py` pins `gh pr create --base` to `PIPELINE_BASE_BRANCH=evolve`, correct for every feature PR and wrong only for this deliberate `evolve → staging` merge-back.
 
-`resume`: Step 0 in full (fences 2, 4, 5), then continue at `STEP` (`done` → next cycle). `stop`: fence 3 with `MODE_NEW=paused` plus `--add-label paused`, then a one-line report.
+`resume`: `gh issue edit "$TRACKER" --repo "$PIPELINE_REPO" --remove-label paused` FIRST (the invocation is the un-pause), then Step 0 in full (fences 2, 4, 5), then continue at `STEP` (`done` → next cycle). `stop`: fence 3 with `MODE_NEW=paused` plus `--add-label paused`, then a one-line report.
 
 ## Guardrails
 
