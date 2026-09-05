@@ -17,10 +17,32 @@ ISSUES_JSON=$(mktemp)
 gh issue list --repo "$PIPELINE_REPO" --state open \
   --json number,title,labels,body,updatedAt --limit 100 > "$ISSUES_JSON"
 
+# 1a) --label filter (#1269). When --label appears in $ARGV, scope the
+#     fetched set via scripts/filter-issues-by-label.sh BEFORE assembling the
+#     render input. Repeated --label is a UNION (OR) — differs from
+#     `gh issue list --label a --label b` (AND), which cannot express a union
+#     at all; that is why filtering happens HERE, not as a `gh issue list`
+#     argument. No --label in $ARGV → unconditional identity passthrough.
+LABEL_ARGS=()
+while read -r _l; do
+  [ -n "$_l" ] && LABEL_ARGS+=(--label "$_l")
+done < <(printf '%s\n' "${ARGV:-}" | grep -oE -- '--label +("[^"]*"|[^ ]+)' | sed -E 's/^--label +//; s/^"//; s/"$//')
+
+FILTERED_ISSUES_JSON=$(mktemp)
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-issues-by-label.sh" \
+  --issues "$ISSUES_JSON" "${LABEL_ARGS[@]}" > "$FILTERED_ISSUES_JSON"
+SURVIVING_TRACKERS=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-issues-by-label.sh" \
+  --issues "$ISSUES_JSON" "${LABEL_ARGS[@]}" --emit trackers)
+ISSUES_JSON="$FILTERED_ISSUES_JSON"
+
 # 2) trackers.json — JSON object {"<tracker_number>": "<body string>", ...}.
-#    For each tracker in TRACKER_ISSUES, fetch the body and assemble the map.
+#    Built from SURVIVING_TRACKERS (identical to TRACKER_ISSUES when --label
+#    is absent) — a hidden tracker's body must NOT be carried forward, since
+#    the map only supplies bodies for child extraction and a stale entry
+#    would still claim children via IS_CHILD and suppress them from the
+#    orphan rows.
 TRACKERS_JSON=$(mktemp); echo '{}' > "$TRACKERS_JSON"
-for tracker in $TRACKER_ISSUES; do
+for tracker in $SURVIVING_TRACKERS; do
   body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
   TRACKERS_JSON_NEXT=$(jq --arg k "$tracker" --arg v "$body" '. + {($k): $v}' "$TRACKERS_JSON")
   printf '%s' "$TRACKERS_JSON_NEXT" > "$TRACKERS_JSON"
