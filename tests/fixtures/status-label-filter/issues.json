@@ -1,0 +1,74 @@
+[
+  {
+    "number": 900,
+    "title": "tracker: redline rollout",
+    "labels": [
+      {
+        "name": "tracker"
+      }
+    ],
+    "body": "Tracker for the redline rollout.\n\n## Rollout sequence\n\n- [ ] **#901 — child one**\n- [ ] **#902 — child two**\n",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  },
+  {
+    "number": 901,
+    "title": "feat(redline): child one",
+    "labels": [
+      {
+        "name": "redline"
+      }
+    ],
+    "body": "",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  },
+  {
+    "number": 902,
+    "title": "feat(mailroom): child two",
+    "labels": [],
+    "body": "",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  },
+  {
+    "number": 910,
+    "title": "tracker: mailroom rollout",
+    "labels": [
+      {
+        "name": "tracker"
+      }
+    ],
+    "body": "Tracker for the mailroom rollout.\n\n## Rollout sequence\n\n- [ ] **#911 — child three**\n- [ ] **#912 — child four**\n",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  },
+  {
+    "number": 911,
+    "title": "feat(mailroom): child three",
+    "labels": [],
+    "body": "",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  },
+  {
+    "number": 912,
+    "title": "chore(mailroom): child four",
+    "labels": [],
+    "body": "",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  },
+  {
+    "number": 920,
+    "title": "fix(redline): orphan on redline",
+    "labels": [
+      {
+        "name": "redline"
+      }
+    ],
+    "body": "",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  },
+  {
+    "number": 921,
+    "title": "fix(mailroom): orphan off redline",
+    "labels": [],
+    "body": "",
+    "updatedAt": "2026-05-20T12:00:00Z"
+  }
+]
