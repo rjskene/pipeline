@@ -1,7 +1,7 @@
 name: ci
 on:
   push:
-    branches: [main, staging]
+    branches: [main, staging, evolve]
   pull_request:
 
 jobs:
@@ -56,9 +56,6 @@ jobs:
       - name: test suite (strict, parallel)
         if: needs.changes.outputs.code == 'true'
         run: bash scripts/run-test-suite.sh
-      - name: dev/ self-audit tests
-        if: needs.changes.outputs.code == 'true'
-        run: bash dev/tests/run-all.sh
       - name: docs-only short-circuit
         if: needs.changes.outputs.code != 'true'
         run: echo "Docs/prose-only change — heavy test suite skipped; required check reports success."

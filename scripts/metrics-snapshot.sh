@@ -16,7 +16,7 @@ set -uo pipefail
 # Row schema (locked, see issue #576 plan task 2-A..2-D):
 #   {
 #     "date":                       "YYYY-MM-DD",        # UTC
-#     "pipeline_version":           "<PIPELINE_VERSION or 'unknown'>",
+#     "pipeline_version":           "<PIPELINE_VERSION, else .claude-plugin/plugin.json .version, else 'unknown'>",
 #     "over_eval_count":            <int|null>,          # count of PRs with pr_eval/loc > 0.5
 #     "late_error_count_by_stage":  {issue, plan, plan-eval, pr-eval : int},
 #     "compliance_pass_rate":       <float|null>,        # STRICT: PASS / (PASS + WEAK + SKIP)
@@ -88,7 +88,18 @@ fi
 # Source pipeline.config for PIPELINE_VERSION if set; tolerate absence.
 # shellcheck disable=SC1091
 if [ -f "${REPO_ROOT}/pipeline.config" ]; then set -a; source "${REPO_ROOT}/pipeline.config" 2>/dev/null || true; set +a; fi
-VERSION="${PIPELINE_VERSION:-unknown}"
+# pipeline_version resolution order (#1274 scope 2): PIPELINE_VERSION (explicit
+# knob) -> .claude-plugin/plugin.json .version (manifest) -> "unknown". Missing
+# jq, a missing/malformed manifest, or a null/empty .version all fall through
+# to "unknown" rather than erroring the snapshot.
+if [ -n "${PIPELINE_VERSION:-}" ]; then
+  VERSION="$PIPELINE_VERSION"
+elif [ -f "${REPO_ROOT}/.claude-plugin/plugin.json" ] && command -v jq >/dev/null 2>&1; then
+  VERSION="$(jq -r '.version // empty' "${REPO_ROOT}/.claude-plugin/plugin.json" 2>/dev/null)"
+  [ -n "$VERSION" ] || VERSION="unknown"
+else
+  VERSION="unknown"
+fi
 DATE_UTC="$(date -u +%Y-%m-%d)"
 
 OVER_EVAL_BIN="${REPO_ROOT}/scripts/over-eval-report.sh"
