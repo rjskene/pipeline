@@ -94,7 +94,7 @@ claude-pipeline/
 
 ## Where to look
 
-- `docs/` — system reference (process maps, architecture, release cadence, plugin architecture, observability, self-audit, migration-from-subtree).
+- `docs/` — system reference (process maps, architecture, release cadence, plugin architecture, observability, migration-from-subtree).
 - `docs/skills-api.md` — full command catalogue: every skill, all flags, and interaction surfaces (labels, config knobs, body markers).
 - `skills/<name>/SKILL.md` — authoritative behavior for each slash command.
 - `CLAUDE.md` — working instructions for this repo (branches, namespace discipline, configuration conventions).

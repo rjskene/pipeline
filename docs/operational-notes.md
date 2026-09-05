@@ -195,8 +195,8 @@ stopping:
 - `PIPELINE_REPO` from `git remote -v`.
 - `PIPELINE_BASE_BRANCH` from the worktree's `.claude/base-branch` file.
 - Test cmd: shell repo, no `package.json` — CI runs
-  `scripts/check-no-consumer-claude-writes.sh`, the `tests/test*.sh` loop, and
-  `dev/tests/run-all.sh`. No separate typecheck step.
+  `scripts/check-no-consumer-claude-writes.sh` and the `tests/test*.sh` loop.
+  No separate typecheck step.
 - Pass `PIPELINE_REPO` explicitly to helpers that need it
   (`PIPELINE_REPO=<owner>/<repo> ./scripts/derive-pr-title.sh <N>`).
 
