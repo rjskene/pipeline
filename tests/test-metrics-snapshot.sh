@@ -253,6 +253,41 @@ else
   fail_msg "--dry-run stdout is not valid JSON"
 fi
 
+# --- Scenario 6: pipeline_version resolution (#1274 scope 2) ---
+inc_scenario "Scenario 6: pipeline_version resolution order"
+
+# PIPELINE_VERSION is set nowhere in the repo (not in pipeline.config, not in
+# pipeline.config.example, not exported by any script), so the old
+# `${PIPELINE_VERSION:-unknown}` made the column permanently `unknown` — every
+# row unattributable to a plugin version. Resolution order must be
+# PIPELINE_VERSION -> .claude-plugin/plugin.json .version -> unknown.
+MANIFEST="$REPO_ROOT/.claude-plugin/plugin.json"
+MANIFEST_VERSION="$(jq -r '.version // empty' "$MANIFEST" 2>/dev/null)"
+if [ -n "$MANIFEST_VERSION" ]; then
+  pass_msg "fixture sanity: .claude-plugin/plugin.json declares a version"
+else
+  fail_msg "fixture sanity: .claude-plugin/plugin.json declares a version"
+fi
+
+# Expectation is COMPUTED from the manifest, never a hardcoded literal — a
+# release bump must not red this case.
+VER_OUT=$(env -u PIPELINE_VERSION bash "$HELPER" --fixture "$FIXTURE_ROOT" --out "$TMPDIR_T/metrics-ver.jsonl" --dry-run 2>/dev/null)
+GOT_VER=$(printf '%s' "$VER_OUT" | jq -r '.pipeline_version' 2>/dev/null)
+if [ -n "$MANIFEST_VERSION" ] && [ "$GOT_VER" = "$MANIFEST_VERSION" ]; then
+  pass_msg "pipeline_version falls back to plugin.json .version ($MANIFEST_VERSION)"
+else
+  fail_msg "pipeline_version expected the manifest version '$MANIFEST_VERSION', got '$GOT_VER'"
+fi
+
+# Control: an explicit PIPELINE_VERSION must still outrank the new fallback.
+OVR_OUT=$(PIPELINE_VERSION=9.9.9-test bash "$HELPER" --fixture "$FIXTURE_ROOT" --out "$TMPDIR_T/metrics-ver.jsonl" --dry-run 2>/dev/null)
+GOT_OVR=$(printf '%s' "$OVR_OUT" | jq -r '.pipeline_version' 2>/dev/null)
+if [ "$GOT_OVR" = "9.9.9-test" ]; then
+  pass_msg "explicit PIPELINE_VERSION still outranks the plugin.json fallback"
+else
+  fail_msg "expected pipeline_version '9.9.9-test', got '$GOT_OVR'"
+fi
+
 # --- Summary ---
 echo ""
 echo "=================================="

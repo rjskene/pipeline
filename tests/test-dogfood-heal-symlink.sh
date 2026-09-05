@@ -16,6 +16,8 @@ set -uo pipefail
 #   6. Happy-path: cache install dir replaced with symlink to REPO_ROOT, exit 0.
 #   7. Mid-session re-removal heal: delete symlink, re-run, symlink restored.
 #   8. Fail-open: missing installed_plugins.json → exit 0, no crash.
+#   9. Settings registration + retirement of the audit-on-pipeline-run.sh entry.
+#  10. The dead self-audit substrate is gone; the surviving dogfood hooks are not.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -168,7 +170,10 @@ rm -rf "$T"
 trap - EXIT
 
 # 9. Settings registration: .claude/settings.json wires the heal wrapper on
-#    UserPromptSubmit, and the existing audit-on-pipeline-run.sh entry survives.
+#    UserPromptSubmit. The self-audit inner/outer loop was retired in #1274
+#    (dead since 2026-06), so its audit-on-pipeline-run.sh entry must be GONE —
+#    while doctor-on-update.sh must still be registered on the same event, which
+#    proves the UserPromptSubmit array was PRUNED, not emptied.
 SETTINGS="$REPO_ROOT/.claude/settings.json"
 if command -v jq >/dev/null 2>&1; then
   if jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("dogfood-heal-symlink.sh"))' \
@@ -180,13 +185,56 @@ if command -v jq >/dev/null 2>&1; then
 
   if jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("audit-on-pipeline-run.sh"))' \
        "$SETTINGS" >/dev/null 2>&1; then
-    pass_msg "settings.json preserves the audit-on-pipeline-run.sh UserPromptSubmit entry"
+    fail_msg "settings.json still registers the retired audit-on-pipeline-run.sh UserPromptSubmit entry"
   else
-    fail_msg "settings.json preserves the audit-on-pipeline-run.sh UserPromptSubmit entry"
+    pass_msg "settings.json no longer registers audit-on-pipeline-run.sh on UserPromptSubmit"
+  fi
+
+  if jq -e '.hooks.UserPromptSubmit[].hooks[].command | select(test("doctor-on-update.sh"))' \
+       "$SETTINGS" >/dev/null 2>&1; then
+    pass_msg "settings.json still registers doctor-on-update.sh on UserPromptSubmit (array pruned, not emptied)"
+  else
+    fail_msg "settings.json still registers doctor-on-update.sh on UserPromptSubmit (array pruned, not emptied)"
   fi
 else
   pass_msg "jq absent — settings-registration assertions skipped"
   pass_msg "jq absent — settings-registration assertions skipped"
+  pass_msg "jq absent — settings-registration assertions skipped"
+fi
+
+# 10. Retirement of the self-audit substrate (#1274 scope 1). The inner/outer
+#     loop, its dev/ test suite, its hook and its design doc are all removed;
+#     CI no longer runs the deleted dev/tests/run-all.sh step.
+for retired in \
+  dev/self-audit \
+  dev/tests \
+  dev/hooks/audit-on-pipeline-run.sh \
+  docs/self-audit.md
+do
+  if [ -e "$REPO_ROOT/$retired" ]; then
+    fail_msg "retired self-audit path still present: $retired"
+  else
+    pass_msg "retired self-audit path absent: $retired"
+  fi
+done
+
+# The surviving dogfood hooks must NOT be collateral damage.
+for kept in \
+  dev/hooks/dogfood-heal-symlink.sh \
+  dev/hooks/dogfood-symlink-swap.sh \
+  dev/hooks/dogfood-refresh.sh
+do
+  if [ -f "$REPO_ROOT/$kept" ]; then
+    pass_msg "surviving dogfood hook kept: $kept"
+  else
+    fail_msg "surviving dogfood hook was deleted: $kept"
+  fi
+done
+
+if grep -q 'dev/tests/run-all.sh' "$REPO_ROOT/.github/workflows/ci.yml"; then
+  fail_msg "ci.yml still runs the deleted dev/tests/run-all.sh"
+else
+  pass_msg "ci.yml no longer runs dev/tests/run-all.sh"
 fi
 
 echo "PASS=$PASS FAIL=$FAIL"
