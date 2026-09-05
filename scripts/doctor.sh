@@ -81,12 +81,17 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "labels" ]; then
     echo "ERROR: PIPELINE_REPO is empty in pipeline.config" >&2
     exit 1
   fi
+  seeded=0
   for row in "${LABEL_TABLE[@]}"; do
     IFS='|' read -r key default color desc <<<"$row"
-    name="$(resolve_label_name "$key" "$default")"
-    gh label create "$name" --repo "$PIPELINE_REPO" --color "$color" --description "$desc" --force
+    IFS='|' read -r -a names <<<"$(resolve_label_name "$key" "$default")"
+    for name in "${names[@]}"; do
+      [ -n "$name" ] || continue
+      gh label create "$name" --repo "$PIPELINE_REPO" --color "$color" --description "$desc" --force
+      seeded=$((seeded + 1))
+    done
   done
-  echo "Seeded ${#LABEL_TABLE[@]} labels on $PIPELINE_REPO (idempotent — safe to re-run)."
+  echo "Seeded $seeded labels on $PIPELINE_REPO (idempotent — safe to re-run)."
   exit 0
 fi
 
@@ -600,7 +605,11 @@ fi
 expected_labels=()
 for row in "${LABEL_TABLE[@]}"; do
   IFS='|' read -r key default _ _ <<<"$row"
-  expected_labels+=("$(resolve_label_name "$key" "$default")")
+  IFS='|' read -r -a _resolved_names <<<"$(resolve_label_name "$key" "$default")"
+  for _resolved_name in "${_resolved_names[@]}"; do
+    [ -n "$_resolved_name" ] || continue
+    expected_labels+=("$_resolved_name")
+  done
 done
 
 if [ -z "$PIPELINE_REPO" ]; then
