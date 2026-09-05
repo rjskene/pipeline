@@ -54,56 +54,74 @@ These numbers are cycle 0's scorecard baseline; `run-retro.sh` recomputes them e
 
 ### 3.1 Session mode
 
-The loop runs in the orchestrator session, in this working tree, with `/pipeline:fullsend` executing
-each slate inline exactly as today. Cycles run back to back inside one invocation
-(`/pipeline:evolve [--cycles N]`). State is durable on GitHub (tracker issue + labels) and in
-`docs/retros/`, so auto-compaction or a killed session is recoverable with `/pipeline:evolve resume`.
+The loop runs in an attended orchestrator session **opened from a dedicated clone**
+(`~/claude-pipeline-evolve`, §3.2), with `/pipeline:fullsend` executing each slate inline exactly as
+today. Cycles run back to back inside one invocation (`/pipeline:evolve [--cycles N]`). State is
+durable on GitHub (cycle-log issue + labels) and in `docs/retros/`, so auto-compaction or a killed
+session is recoverable with `/pipeline:evolve resume`.
 
-### 3.2 Integration branch `evolve`
+### 3.2 Integration branch `evolve` and the loop clone
 
 All loop work lands on a dedicated integration branch cut from `origin/staging` tip. The existing
-`next` branch is **not** reused — it carries 52 unmerged codex-plugin commits and is routed by the
-`next`-label machinery (#1131/#1148), which the loop does not need.
+`next` branch is **not** reused — it carries 52 unmerged codex-plugin commits (tracker #987) and is
+routed by the `next`-label machinery (#1131/#1148), which the loop does not need.
 
 - **Branch:** `evolve`, created once from `origin/staging`, pushed, never deleted at merge-back.
-- **Base flip:** while the loop is active the live `pipeline.config` has `PIPELINE_BASE_BRANCH=evolve`
-  and the working tree is checked out on `evolve`. Every existing mechanism follows the base
-  variable — `setup-worktree.sh --base`, the `.claude/base-branch` file `enforce-base-branch.py`
-  reads, `auto-merge-gate.sh`'s `baseRefName == $PIPELINE_BASE_BRANCH` check, fullsend's inter-wave
-  pull, the status branch check. No label routing, no per-issue special case.
+- **Clone:** `git clone https://github.com/rjskene/pipeline.git ~/claude-pipeline-evolve` checked out
+  on `evolve`. It carries its own gitignored `pipeline.config` (copied from the main checkout, then
+  `PIPELINE_BASE_BRANCH="evolve"`, `PIPELINE_LOGS_ENABLED=true`) and its own gitignored
+  `.claude/settings.local.json` with `{"enabledPlugins": {"pipeline@claude-pipeline": false}}`.
+  Worktrees, logs and scratch live under the clone. The main checkout is never modified by the loop
+  and nothing has to be restored at merge-back.
+- **Harness under test:** the loop session is started as
+  `cd ~/claude-pipeline-evolve && claude --plugin-dir ~/claude-pipeline-evolve`. `--plugin-dir`
+  loads the clone as the `pipeline` plugin *for that session only*, so `${CLAUDE_PLUGIN_ROOT}`
+  resolves to the clone and every change merged to `evolve` is live in the next cycle. No marketplace
+  entry, no cache symlink, nothing shared with any other session. (A second `claude-pipeline-local`
+  style install would collide: cache dirs are keyed by marketplace/plugin/version and `evolve` shares
+  staging's version string, so its symlink would be the main checkout's symlink.) Bootstrap verifies
+  `echo $CLAUDE_PLUGIN_ROOT` inside the clone session, the dogfood-setup.md check.
+- **Base:** every existing mechanism follows `PIPELINE_BASE_BRANCH` — `setup-worktree.sh --base`, the
+  `.claude/base-branch` file `enforce-base-branch.py` reads, `auto-merge-gate.sh`'s
+  `baseRefName == $PIPELINE_BASE_BRANCH` check, fullsend's inter-wave pull, the status branch check.
+  No label routing, no per-issue special case.
 - **CI:** `ci.yml`'s `pull_request` trigger has no base filter, so PRs into `evolve` get the full
   check rollup the auto-merge gate requires. Pushes to `evolve` do not run CI; cycle 0 adds `evolve`
   to the push trigger so the post-merge base is exercised too.
 - **Releases:** release-please tracks `main` only. Nothing on `evolve` can cut a release.
-- **Forward-sync:** at step 0 of every cycle, `git merge origin/staging` into `evolve` when staging
-  has advanced. Conflicts are resolved in-session immediately; small and frequent beats large and
-  rare at merge-back. (`dev/hooks/dogfood-refresh.sh` runs `merge --ff-only origin/staging` at
-  SessionStart; on a diverged `evolve` that is a silent no-op, before divergence it is the same
-  forward-sync — harmless either way.)
+- **Forward-sync:** at step 0 of every cycle, `git merge origin/staging` into `evolve` in the clone
+  when staging has advanced. Conflicts are resolved in-session immediately; small and frequent beats
+  large and rare at merge-back. (`dev/hooks/dogfood-refresh.sh` runs `merge --ff-only origin/staging`
+  at SessionStart; on a diverged `evolve` that is a silent no-op.)
 - **Merge-back** (`/pipeline:evolve pause`): finish or cleanly abort the in-flight cycle → forward-sync
   → open PR `evolve → staging` whose body lists the cycles' merged PRs and the scorecard delta →
-  `gh pr merge --merge` (merge-commit per #459, **no** `--delete-branch`) → restore
-  `PIPELINE_BASE_BRANCH=staging` → `git checkout staging && git pull --ff-only` → hand back to the
-  operator (release cut stays a manual `docs/release-cadence.md` step). Resuming later starts with a
-  forward-sync.
+  `gh pr merge --merge` (merge-commit per #459, **no** `--delete-branch`) → hand back to the operator
+  (release cut stays a manual `docs/release-cadence.md` step; the main checkout picks the changes up
+  on its next pull of staging). Resuming later starts with a forward-sync.
 
-### 3.3 Shared plugin root — operator preconditions
+### 3.3 Coexistence with the nightly campaign — shared repo, separate everything else
 
-The dogfood install is a symlink (`~/.claude/plugins/cache/claude-pipeline-local/pipeline/0.23.24 →
-/home/rjskene/claude-pipeline`). **Whatever branch this working tree has checked out is the harness
-for every session on this host.** Two consequences the operator must handle before the loop starts;
-both are outside the pipeline repo boundary, so the loop reports them rather than editing them:
+Plugin enablement is project-scoped on this host: only sessions opened from
+`/home/rjskene/claude-pipeline` use the `claude-pipeline-local` working-tree install
+(`.claude/settings.local.json` there disables the published plugin); work-orchestrator, bomon-* and
+campaign-orchestrator sessions run the published `pipeline@claude-pipeline` cache (0.23.22–0.23.24).
+The loop's harness therefore never reaches them, and the nightly `40-pipeline` slate keeps operating
+the main checkout on `staging` undisturbed. The only shared surface is the GitHub repo
+`rjskene/pipeline`. Three rules keep the lanes apart:
 
-1. **`~/campaign-orchestrator/repos/40-pipeline.conf` must be `ENABLED=false` while the loop is
-   active.** Its `run-one-campaign.sh` runs `git checkout staging && git pull` *in this directory* at
-   22:00 CT, which would yank the working tree off `evolve` mid-loop.
-2. **Other slates (work-orchestrator, bomon-*) will run on the `evolve` harness** while the loop is
-   active. Either accept them as live canaries (the retro reads their outcomes read-only) or disable
-   them for the duration. Operator's call; the loop's own fullsend runs and the calibration slate are
-   the primary canaries regardless.
+1. **Slate exclusion.** Main checkout `pipeline.config`: `PIPELINE_LABELS_EXCLUDED="excluded|evolve"`
+   (the value is spliced into the `^(…)$` alternation the tracker filter builds). The nightly's
+   `all ready issues` never picks up a loop issue; the loop only ever hands explicit issue numbers to
+   fullsend, so it never picks up a nightly issue.
+2. **The cycle-log issue is not a `tracker`.** Labels `evolve` + `excluded`; children listed under
+   `## Cycle issues`, not `## Rollout sequence`. `auto-close-trackers.sh` scans `tracker`-labelled
+   issues only, so the log cannot be auto-closed between cycles when a cycle's children are all closed.
+3. **Two changers, one repo.** Each lane merges to its own base; forward-sync absorbs the overlap
+   every cycle. Disabling `~/campaign-orchestrator/repos/40-pipeline.conf` for the loop's duration
+   is optional — it only reduces merge-back conflicts, it is no longer a collision precondition.
 
-`/pipeline:evolve` step 0 checks both: it refuses to start if the `40-pipeline` conf is enabled, and
-prints the canary status of the others.
+Step 0 checks (read-only — the clone must not edit the main checkout) that the exclusion knob is
+present in `/home/rjskene/claude-pipeline/pipeline.config` and refuses to start without it.
 
 ## 4. Cycle
 
@@ -112,7 +130,7 @@ prints the canary status of the others.
             forward-sync evolve from origin/staging. read tracker: pending verdicts, backlog.
 1 observe   bash scripts/run-retro.sh --cycle N   (≤60 lines: scorecard, deltas, friction, pending verdicts)
 2 diagnose  resolve pending verdicts from cycle N-1 (§7). rank backlog vs scorecard. pick ≤3.
-3 file      create-issues body template + required fields (§6). labels: evolve, cycle:N, path hint.
+3 file      create-issues body template + required fields (§6). label: evolve, path hint.
 4 run       /pipeline:fullsend <issues>            (usage gate governs waves as today)
 5 measure   run-retro.sh --cycle N --post: mass + friction now; cost/latency/escape verdicts
             deferred to cycle N+1 step 2 unless the issue requested a calibration run (§8).
@@ -159,7 +177,7 @@ Notes) plus a mandatory `## Evolve` block:
 <!-- pipeline:path-hint=A|B|C|D -->
 ```
 
-Labels: `evolve`, `cycle:N`. Caps per cycle: ≤3 issues, ≤1 PATH C. Disallowed: new tests that grep
+Label: `evolve` (the cycle number lives in the `## Evolve` block). Caps per cycle: ≤3 issues, ≤1 PATH C. Disallowed: new tests that grep
 `SKILL.md`/`CLAUDE.md` prose (behaviour tests only); any change to `hooks/restrict_paths.py`,
 `hooks/block_deletions.py`, or auth/credential surfaces — those route to the `human` label via the
 existing W2 carve-out and wait for the operator.
@@ -235,10 +253,10 @@ and doubles as the end-to-end regression suite the 405 unit tests are not (the
 
 ## 10. Durable state
 
-- **Tracker issue** `evolve: harness loop — cycle log` (label `tracker`, excluded from the action
-  queue like every tracker). Body: current mode (`active`/`paused`), scorecard baseline, `## Hypothesis
-  backlog` (ranked), `## Rollout sequence` (cycle issues as they are filed). One comment per cycle:
-  issues, verdicts, usage snapshot, friction lines.
+- **Cycle-log issue** `evolve: harness loop — cycle log` (labels `evolve` + `excluded`; deliberately
+  NOT `tracker`, see §3.3). Body: current mode (`active`/`paused`), scorecard baseline, `## Hypothesis
+  backlog` (ranked), `## Cycle issues` (as they are filed). One comment per cycle: issues, verdicts,
+  usage snapshot, friction lines.
 - **`docs/retros/cycle-NN.md`** on `evolve`: the retro summary plus the diagnose reasoning, so a
   future reader can see why each slate was chosen.
 - **Resume:** `/pipeline:evolve resume` reads the tracker and continues at the recorded step.
@@ -251,9 +269,9 @@ Filed and run through fullsend on `evolve`; no harness behaviour changes yet.
    (`agent-costs.jsonl`, verdict comments, git, transcripts for `BLOCKED` and compaction counts),
    `--cycle N` / `--post` modes, bounded output. `docs/retros/` layout.
 2. `skills/evolve/SKILL.md`: the cycle above, thin — every step is a script call or a fullsend
-   invocation; the skill body targets ≤3k tokens. Start/stop/pause/resume/status subcommands; the
-   `pipeline.config` base flip with a backup and a `status` that reports current mode; the
-   `40-pipeline.conf` precondition check.
+   invocation; the skill body targets ≤3k tokens. Start/stop/pause/resume/status subcommands; a
+   `status` that reports current mode; the bootstrap checks of §3.2/§3.3 (`CLAUDE_PLUGIN_ROOT` is the
+   clone, base is `evolve`, exclusion knob present in the main checkout config).
 3. Friction capture: the `HARNESS-FRICTION:` instruction in the dispatch prompts; the tracker comment
    shape.
 4. Housekeeping the analysis found: delete the dead self-audit inner/outer loop stubs
@@ -290,9 +308,12 @@ Ranked by leverage against the baseline; the loop re-ranks each cycle.
 
 ## 13. Risks and open items
 
-- **Shared plugin root** (§3.3): a broken `evolve` harness affects every session on the host until
-  reverted. Mitigation: each cycle's fullsend run is itself an end-to-end test; calibration; auto-revert.
-  Residual risk accepted by the operator when enabling the loop with other slates live.
+- **`--plugin-dir` semantics** (§3.2): session-only load is exactly what isolates the loop, but two
+  things are verified at bootstrap rather than assumed — `${CLAUDE_PLUGIN_ROOT}` expands to the clone
+  in skill bodies, and the plugin-manifest hooks register (the repo's `.claude/settings.json` hooks are
+  project-level and register regardless). A broken `evolve` harness affects only the loop session
+  until reverted; each cycle's fullsend run is itself an end-to-end test, calibration and auto-revert
+  cover the rest.
 - **Forward-sync conflicts** on skill prose if staging keeps moving. Mitigation: per-cycle sync.
 - **Verdict noise** on real-work cost/latency. Mitigation: calibration for any claimed effect; real-work
   deltas treated as `no-effect` unless >30%.
