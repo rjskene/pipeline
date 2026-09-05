@@ -69,8 +69,12 @@ routed by the `next`-label machinery (#1131/#1148), which the loop does not need
 - **Branch:** `evolve`, created once from `origin/staging`, pushed, never deleted at merge-back.
 - **Clone:** `git clone https://github.com/rjskene/pipeline.git ~/claude-pipeline-evolve` checked out
   on `evolve`. It carries its own gitignored `pipeline.config` (copied from the main checkout, then
-  `PIPELINE_BASE_BRANCH="evolve"`, `PIPELINE_LOGS_ENABLED=true`) and its own gitignored
-  `.claude/settings.local.json` with `{"enabledPlugins": {"pipeline@claude-pipeline": false}}`.
+  `PIPELINE_BASE_BRANCH="evolve"`, `PIPELINE_LOGS_ENABLED=true`, `PIPELINE_USE_LOCAL_PLUGIN=true` —
+  so `scripts/_resolve-plugin-root.sh` returns the clone; without it the Bash-side resolver falls
+  through to the published cache while the harness-substituted `${CLAUDE_PLUGIN_ROOT}` already points
+  at the clone (found at bootstrap 2026-09-05) — and `PIPELINE_PROJECT_ROOT=<clone path>`) and its own
+  gitignored `.claude/settings.local.json` with
+  `{"enabledPlugins": {"pipeline@claude-pipeline": false}}`.
   Worktrees, logs and scratch live under the clone. The main checkout is never modified by the loop
   and nothing has to be restored at merge-back.
 - **Harness under test:** the loop session is started as
@@ -101,10 +105,10 @@ routed by the `next`-label machinery (#1131/#1148), which the loop does not need
 
 ### 3.3 Coexistence with the nightly campaign — shared repo, separate everything else
 
-Plugin enablement is project-scoped on this host: only sessions opened from
-`/home/rjskene/claude-pipeline` use the `claude-pipeline-local` working-tree install
-(`.claude/settings.local.json` there disables the published plugin); work-orchestrator, bomon-* and
-campaign-orchestrator sessions run the published `pipeline@claude-pipeline` cache (0.23.22–0.23.24).
+Plugin enablement is project-scoped on this host: only sessions opened from the main checkout use the
+`claude-pipeline-local` working-tree install (its `.claude/settings.local.json` disables the published
+plugin); work-orchestrator, bomon-* and campaign-orchestrator sessions run the published
+`pipeline@claude-pipeline` cache (0.23.22–0.23.24).
 The loop's harness therefore never reaches them, and the nightly `40-pipeline` slate keeps operating
 the main checkout on `staging` undisturbed. The only shared surface is the GitHub repo
 `rjskene/pipeline`. Three rules keep the lanes apart:
@@ -120,8 +124,12 @@ the main checkout on `staging` undisturbed. The only shared surface is the GitHu
    every cycle. Disabling `~/campaign-orchestrator/repos/40-pipeline.conf` for the loop's duration
    is optional — it only reduces merge-back conflicts, it is no longer a collision precondition.
 
-Step 0 checks (read-only — the clone must not edit the main checkout) that the exclusion knob is
-present in `/home/rjskene/claude-pipeline/pipeline.config` and refuses to start without it.
+Step 0 checks (read-only — the clone must not edit the main checkout) that the operator has attested
+to slate exclusion. The main checkout's `pipeline.config` lives outside the clone's
+`hooks/restrict_paths.py` boundary, so reading it from the loop session is blocked. Step 0 therefore
+reads the operator's attestation instead: the tracker body's `## Runtime` table must carry a
+`staging isolation` row quoting `PIPELINE_LABELS_EXCLUDED="…evolve…"` (the quoted value is what is
+checked). The loop refuses to start without that row, and never edits the main checkout.
 
 ## 4. Cycle
 
@@ -271,7 +279,7 @@ Filed and run through fullsend on `evolve`; no harness behaviour changes yet.
 2. `skills/evolve/SKILL.md`: the cycle above, thin — every step is a script call or a fullsend
    invocation; the skill body targets ≤3k tokens. Start/stop/pause/resume/status subcommands; a
    `status` that reports current mode; the bootstrap checks of §3.2/§3.3 (`CLAUDE_PLUGIN_ROOT` is the
-   clone, base is `evolve`, exclusion knob present in the main checkout config).
+   clone, base is `evolve`, staging-isolation attestation present in the tracker Runtime table).
 3. Friction capture: the `HARNESS-FRICTION:` instruction in the dispatch prompts; the tracker comment
    shape.
 4. Housekeeping the analysis found: delete the dead self-audit inner/outer loop stubs
@@ -332,3 +340,8 @@ Ranked by leverage against the baseline; the loop re-ranks each cycle.
 - **`arm-usage-resume-cron.sh`** — verified 2026-09-05: passes an arbitrary `--resume-command`
   through verbatim (`/pipeline:evolve resume` lands in the emitted re-check prompt). Only its `--help`
   banner still says fullsend; cosmetic, folded into cycle 0 item 2.
+- **`enforce-base-branch.py` pins `gh pr create --base` to `PIPELINE_BASE_BRANCH`**, which in the clone
+  is `evolve` — so the §3.2 merge-back cannot open its `evolve → staging` PR with `gh pr create`. It
+  uses the REST form instead (`gh api repos/<repo>/pulls`), the loop's only cross-base PR, documented
+  in `skills/evolve/SKILL.md`. Follow-up: teach the hook an explicit allow for `--base staging` when
+  `--head evolve`, so the exception stops being a hook bypass.
