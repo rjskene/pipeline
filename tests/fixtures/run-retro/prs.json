@@ -1,0 +1,84 @@
+[
+  {
+    "number": 2001,
+    "title": "feat(evolve): run-retro.sh scorecard",
+    "headRefName": "feature/run-retro-scorecard",
+    "body": "Closes #1272",
+    "mergedAt": "2026-09-05T18:00:00Z",
+    "labels": [],
+    "files": [
+      "scripts/run-retro.sh",
+      "tests/test-run-retro.sh"
+    ]
+  },
+  {
+    "number": 2002,
+    "title": "feat(evolve): evolve skill",
+    "headRefName": "feature/evolve-skill",
+    "body": "Closes #1273",
+    "mergedAt": "2026-09-05T19:00:00Z",
+    "labels": [
+      {
+        "name": "manual-merge"
+      }
+    ],
+    "files": [
+      "skills/evolve/SKILL.md"
+    ]
+  },
+  {
+    "number": 2003,
+    "title": "chore(evolve): housekeeping",
+    "headRefName": "feature/evolve-housekeeping",
+    "body": "Closes #1274",
+    "mergedAt": "2026-09-05T20:00:00Z",
+    "labels": [],
+    "files": [
+      "scripts/doctor.sh"
+    ]
+  },
+  {
+    "number": 2101,
+    "title": "fix(evolve): run-retro median off-by-one",
+    "headRefName": "feature/run-retro-median",
+    "body": "Closes #1281",
+    "mergedAt": "2026-09-12T18:00:00Z",
+    "labels": [],
+    "files": [
+      "scripts/run-retro.sh"
+    ]
+  },
+  {
+    "number": 2102,
+    "title": "docs(evolve): cycle 1 notes",
+    "headRefName": "feature/evolve-notes",
+    "body": "Closes #1282",
+    "mergedAt": "2026-09-12T19:00:00Z",
+    "labels": [],
+    "files": [
+      "docs/retros/cycle-01.md"
+    ]
+  },
+  {
+    "number": 2103,
+    "title": "fix(hotfix): unwedge the dogfood refresh",
+    "headRefName": "feature/hotfix-1283",
+    "body": "Closes #1283",
+    "mergedAt": "2026-09-12T20:00:00Z",
+    "labels": [],
+    "files": [
+      "scripts/dogfood-refresh.sh"
+    ]
+  },
+  {
+    "number": 2104,
+    "title": "revert: feat(evolve): evolve skill",
+    "headRefName": "feature/revert-1273",
+    "body": "Reverts #2002",
+    "mergedAt": "2026-09-12T21:00:00Z",
+    "labels": [],
+    "files": [
+      "skills/evolve/SKILL.md"
+    ]
+  }
+]

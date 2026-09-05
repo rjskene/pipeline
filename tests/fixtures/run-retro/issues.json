@@ -1,0 +1,151 @@
+[
+  {
+    "number": 1272,
+    "labels": [
+      {
+        "name": "evolve"
+      }
+    ],
+    "body": "## Scope\nrun-retro.sh\n\n## Evolve\n- Cycle: 0\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: immediate (works in cycle 1)\n- Prose budget: net skill-prose tokens <= 0\n",
+    "comments": [
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "HARNESS-FRICTION: doctor.sh documented a single excluded label | PIPELINE_LABELS_EXCLUDED is pipe-separated",
+        "createdAt": "2026-09-01T08:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Plan Evaluation\n\n**Verdict:** Revise\n\nRound 1 findings.",
+        "createdAt": "2026-09-05T10:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Plan Evaluation\n\n**Verdict:** Approve\n\nRound 2 clean.",
+        "createdAt": "2026-09-05T11:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Evaluation\n\n**Verdict:** Flagged\n\nTest hermeticity concern.",
+        "createdAt": "2026-09-05T12:00:00Z"
+      }
+    ]
+  },
+  {
+    "number": 1273,
+    "labels": [
+      {
+        "name": "evolve"
+      }
+    ],
+    "body": "## Scope\nevolve skill\n\n## Evolve\n- Cycle: 0\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: retro (next cycle)\n- Prose budget: net skill-prose tokens <= 0\n",
+    "comments": [
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Plan Evaluation\n\n**Verdict:** Approve",
+        "createdAt": "2026-09-05T10:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "HARNESS-FRICTION: the SessionStart refresh hook claimed staging | the evolve clone runs the evolve branch",
+        "createdAt": "2026-09-04T08:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Evaluation\n\n**Verdict:** Approved",
+        "createdAt": "2026-09-05T12:00:00Z"
+      }
+    ]
+  },
+  {
+    "number": 1274,
+    "labels": [
+      {
+        "name": "evolve"
+      },
+      {
+        "name": "human"
+      }
+    ],
+    "body": "## Scope\nhousekeeping\n\n## Evolve\n- Cycle: 0\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: retro (next cycle)\n- Prose budget: net skill-prose tokens <= 0\n",
+    "comments": [
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Plan Evaluation\n\n**Verdict:** Approve",
+        "createdAt": "2026-09-05T10:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Evaluation\n\n**Verdict:** Approved",
+        "createdAt": "2026-09-05T12:00:00Z"
+      }
+    ]
+  },
+  {
+    "number": 1281,
+    "labels": [
+      {
+        "name": "evolve"
+      }
+    ],
+    "body": "## Scope\nmedian fix\n\n## Evolve\n- Cycle: 1\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: retro (next cycle)\n- Prose budget: net skill-prose tokens <= 0\n",
+    "comments": [
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Plan Evaluation\n\n**Verdict:** Approve",
+        "createdAt": "2026-09-12T10:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Evaluation\n\n**Verdict:** Approved",
+        "createdAt": "2026-09-12T12:00:00Z"
+      }
+    ]
+  },
+  {
+    "number": 1282,
+    "labels": [
+      {
+        "name": "evolve"
+      }
+    ],
+    "body": "## Scope\ncycle 1 notes\n\n## Evolve\n- Cycle: 1\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: immediate\n- Prose budget: net skill-prose tokens <= 0\n",
+    "comments": [
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Plan Evaluation\n\n**Verdict:** Approve",
+        "createdAt": "2026-09-12T10:00:00Z"
+      },
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Evaluation\n\n**Verdict:** Approved",
+        "createdAt": "2026-09-12T12:00:00Z"
+      }
+    ]
+  }
+]

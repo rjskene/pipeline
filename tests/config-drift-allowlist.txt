@@ -185,3 +185,16 @@ PIPELINE_STAGE_MODEL_CLASSIFY
 # Exact-match (NOT a prefix wildcard). Peel this entry when the trust-profile
 # issue lands a real read-site + a pipeline.config.example declaration.
 PIPELINE_TRUST_PROFILE
+
+# #1272 fixture-prose-only knob. PIPELINE_SUPERPOWERS_* is a HYPOTHETICAL per-stage
+# superpowers gate named only in the evolve-loop tracker's `## Hypothesis backlog`
+# (item 11: "per-stage `PIPELINE_SUPERPOWERS_*` knob or trust-profile row"). That
+# tracker body is mirrored VERBATIM into tests/fixtures/run-retro/tracker*.md — the
+# fixtures are a byte-for-byte copy by test contract, so the prose cannot be edited
+# out. check-config-drift.sh scans tests/, so the mention reads as
+# referenced-but-undeclared and reds the clean-tree suite. No read site exists
+# anywhere in the tree. Same spec-only class as PIPELINE_TRUST_PROFILE above, but a
+# concat-prefix wildcard (the backlog names the family with a `*`, so this covers
+# every PIPELINE_SUPERPOWERS_* spelling). Peel when the knob is implemented and
+# documented in pipeline.config.example.
+PIPELINE_SUPERPOWERS_
