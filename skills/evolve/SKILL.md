@@ -83,7 +83,9 @@ gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json labels --jq '.labels[].n
 grep -qE '^\| staging isolation \|.*PIPELINE_LABELS_EXCLUDED="[^"]*evolve[^"]*"' "$TMP" || { echo "STOP: staging-isolation attestation missing from tracker ## Runtime (need PIPELINE_LABELS_EXCLUDED=\"…evolve…\")"; STOP=1; }
 if [ -n "$STOP" ]; then echo "STOP: gate failed — abort the turn, do not run Step 1"; else
   git -C "$MAIN_REPO" fetch --quiet origin staging
+  SYNC_BEFORE=$(git -C "$MAIN_REPO" rev-parse HEAD)
   git -C "$MAIN_REPO" merge-base --is-ancestor origin/staging HEAD || git -C "$MAIN_REPO" merge --no-edit origin/staging   # forward-sync; conflicts → resolve in-session, then continue
+  [ "$SYNC_BEFORE" = "$(git -C "$MAIN_REPO" rev-parse HEAD)" ] || git -C "$MAIN_REPO" push origin evolve   # publish a productive forward-sync so cycle worktrees (cut from origin/evolve) see it
 fi
 ```
 
