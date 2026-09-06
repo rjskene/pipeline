@@ -71,13 +71,19 @@ NOW=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)          print_usage; exit 0 ;;
-    --tracker)          TRACKER="${2:-}"; shift 2 ;;
+    # `shift 2 2>/dev/null || shift`: a value-taking flag passed as the LAST
+    # arg has $#=1, so a bare `shift 2` fails (shift count out of range) and
+    # leaves $# unchanged, spinning the loop forever on the same $1 — a hang
+    # that would contradict this script's own always-exit-0 (fail-open)
+    # contract. The fallback `shift` still consumes the flag so the loop
+    # terminates; the value stays "${2:-}" (empty).
+    --tracker)          TRACKER="${2:-}"; shift 2 2>/dev/null || shift ;;
     --tracker=*)        TRACKER="${1#--tracker=}"; shift ;;
-    --gate-line)        GATE_LINE="${2:-}"; shift 2 ;;
+    --gate-line)        GATE_LINE="${2:-}"; shift 2 2>/dev/null || shift ;;
     --gate-line=*)      GATE_LINE="${1#--gate-line=}"; shift ;;
-    --comments-file)    COMMENTS_FILE="${2:-}"; shift 2 ;;
+    --comments-file)    COMMENTS_FILE="${2:-}"; shift 2 2>/dev/null || shift ;;
     --comments-file=*)  COMMENTS_FILE="${1#--comments-file=}"; shift ;;
-    --now)              NOW="${2:-}"; shift 2 ;;
+    --now)              NOW="${2:-}"; shift 2 2>/dev/null || shift ;;
     --now=*)            NOW="${1#--now=}"; shift ;;
     *)
       echo "evolve-projection: WARN: unknown arg: $1 (ignored)" >&2
