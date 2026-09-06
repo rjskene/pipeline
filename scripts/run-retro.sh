@@ -312,6 +312,7 @@ PRS_FILE=""
 ROWS_FILE=""
 TOOLOG=""
 USAGE_FILE=""
+CALIB_FILE=""
 
 if [ -n "$FIXTURE_DIR" ]; then
   TRACKER_FILE="$FIXTURE_DIR/tracker.md"
@@ -320,6 +321,7 @@ if [ -n "$FIXTURE_DIR" ]; then
   ROWS_FILE="$FIXTURE_DIR/rows.json"
   TOOLOG="$FIXTURE_DIR/tool-use.log"
   USAGE_FILE="$FIXTURE_DIR/usage-gate.jsonl"
+  CALIB_FILE="$FIXTURE_DIR/calib.txt"
 else
   LIVE_TMP="$(mktemp -d)"
   trap 'rm -rf "$LIVE_TMP"' EXIT
@@ -345,6 +347,8 @@ else
   ROWS_FILE="$LIVE_TMP/rows.json"
   TOOLOG="$REPO_ROOT/.claude/logs/tool-use.log"
   USAGE_FILE="$REPO_ROOT/.claude/logs/usage-gate.jsonl"
+  # Newest calibration block tee'd by scripts/calibration-run.sh --run (#1280).
+  CALIB_FILE="$(ls -1t "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | head -1)"
 fi
 
 TRACKER_BODY=""
@@ -378,6 +382,64 @@ declare -A EXTRA_COMP_VAL=()
 declare -A EXTRA_COMP_UNIT=()
 
 MISSING_ROW_ISSUES=""
+
+# Task 3a — calibration slate (#1280, spec §8)
+#
+# scripts/calibration-run.sh --run tees a block of
+#   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
+#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n>
+# to docs/retros/calib/<UTC date>.txt. Two retro rows read it: the weak-model
+# guarantee (a k/n over the `reftest=` atoms) and the path-B $ median (over the
+# `cost=` atoms of the `path=B` rows only — the fixed slate is the ONLY place
+# this harness has a per-issue dollar figure, since the rows JSON carries none).
+# Degradation contract: a missing / CALIB-row-free file leaves both reasons
+# exactly as they render with no calibration substrate at all.
+CALIB_WEAK="n/a (no calibration slate; spec §8 cycle-1 deliverable)"
+CALIB_USD="n/a (no per-issue cost in rows JSON)"
+
+compute_calib() {
+  local f="${1:-}"
+  [ -n "$f" ] || return 0
+  [ -f "$f" ] || return 0
+
+  local line atom pass=0 total=0 path="" cost="" b_costs=""
+  while IFS= read -r line; do
+    case "$line" in
+      "CALIB issue="*) ;;
+      *) continue ;;
+    esac
+    path=""; cost=""
+    for atom in $line; do
+      case "$atom" in
+        path=*)    path="${atom#path=}" ;;
+        cost=*)    cost="${atom#cost=}"; cost="${cost#\$}" ;;
+        reftest=*)
+          total=$((total + 1))
+          [ "${atom#reftest=}" = "pass" ] && pass=$((pass + 1))
+          ;;
+      esac
+    done
+    case "$path" in
+      B|b) is_numeric "$cost" && b_costs="$b_costs $cost" ;;
+    esac
+  done < "$f"
+
+  [ "$total" -gt 0 ] && CALIB_WEAK="$pass/$total"
+
+  if [ -n "$b_costs" ]; then
+    local med
+    med="$(printf '%s\n' $b_costs | sort -n | awk '
+      { v[NR] = $1 }
+      END {
+        if (NR == 0) exit 1
+        if (NR % 2) printf "%.2f", v[(NR + 1) / 2]
+        else printf "%.2f", (v[NR / 2] + v[NR / 2 + 1]) / 2
+      }')"
+    if is_numeric "$med"; then CALIB_USD="$(clean_num "$med")"; fi
+  fi
+}
+
+compute_calib "$CALIB_FILE"
 
 compute_cost_latency() {
   local rows_file="$1"
@@ -431,7 +493,7 @@ compute_cost_latency() {
   JOIN_COMP_VAL["median path b pr/tokens"]="$tokens";      JOIN_COMP_UNIT["median path b pr/tokens"]=""
   JOIN_COMP_VAL["median path b pr/tokens/loc"]="$tpl";     JOIN_COMP_UNIT["median path b pr/tokens/loc"]=""
   JOIN_COMP_VAL["median path b pr/min"]="$minutes";        JOIN_COMP_UNIT["median path b pr/min"]=""
-  JOIN_COMP_VAL["median path b pr/usd"]="n/a (no per-issue cost in rows JSON)"
+  JOIN_COMP_VAL["median path b pr/usd"]="$CALIB_USD"
   JOIN_COMP_UNIT["median path b pr/usd"]=""
 }
 
@@ -789,7 +851,7 @@ build_full_report() {
   echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
 
   echo ""
-  echo "weak-model pass: n/a (no calibration slate; spec §8 cycle-1 deliverable)"
+  echo "weak-model pass: $CALIB_WEAK"
 
   echo ""
   echo "usage: $USAGE_LINE"
