@@ -554,7 +554,14 @@ detect_abort() {
   case "$last" in
     *\?) ABORT_REASON="held"; return 0 ;;
   esac
-  n="$(printf '%s' "$PRS_JSON" | jq -r 'length' 2>/dev/null)"
+  # SCOPED TO THIS RUN'S SLATE, not `length` of the whole PR set: cmd_reset
+  # reaps the slate issues and rewinds the base tag, but it never removes PRs,
+  # so `gh pr list --state all` stays non-empty forever once the sandbox has
+  # had one real run. An unscoped count therefore makes `no-pr` unfireable
+  # from run two onward, and a silent finish that opened nothing grades as a
+  # `0/5` regression. Same body-references-#<issue> scoping as merged_pr_field.
+  n="$(printf '%s' "$PRS_JSON" | jq -r --arg ids "$ISSUE_IDS" \
+    '[.[] | select((.body // "") | test("#(" + ($ids | split(" ") | join("|")) + ")\\b"))] | length' 2>/dev/null)"
   case "$n" in
     ''|0) ABORT_REASON="no-pr" ;;
   esac

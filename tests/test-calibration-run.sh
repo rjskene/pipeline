@@ -815,6 +815,31 @@ run_helper --run --harness "$HARNESS"
 expect_sub "a clean finish that opened no PR reports CALIB-ABORT reason=no-pr" \
   "$OUT" "CALIB-ABORT reason=no-pr"
 
+# The sandbox is never wiped clean: --reset reaps the slate ISSUES and rewinds
+# the base tag, but the PRs of every earlier run survive forever, so
+# `gh pr list --state all` is non-empty from the second real run onward. A
+# detector that counts the WHOLE PR set can therefore never fire `no-pr` again
+# — a silent finish that opened nothing falls through to a normal `0/5` grade,
+# exactly the "harness regressed on all five" misreading the abort exists to
+# prevent. The count has to be scoped to THIS run's slate ids, the same
+# scoping merged_pr_field() already applies.
+cat > "$TMP/prs-stale.json" <<'STALE'
+[
+  {"number":8001,"body":"Closes #4001","headRefName":"feature/calib-4001","mergedAt":"2026-09-01T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8002,"body":"Closes #4002","headRefName":"feature/calib-4002","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8003,"body":"Closes #4003","headRefName":"feature/calib-4003","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8004,"body":"Closes #4004","headRefName":"feature/calib-4004","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8005,"body":"Closes #4005","headRefName":"feature/calib-4005","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]}
+]
+STALE
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_PRS_JSON="$TMP/prs-stale.json"
+run_helper --run --harness "$HARNESS"
+expect_sub "PRs from an EARLIER slate never mask this run's no-pr abort" \
+  "$OUT" "CALIB-ABORT reason=no-pr"
+refute_sub "a run masked by stale PRs is never graded as a failed slate" \
+  "$OUT" "reftest-pass=0/5"
+
 # ---------------------------------------------------------------------------
 scenario "Scenario 13: a run held AFTER a partial merge grades only what merged"
 # ---------------------------------------------------------------------------
