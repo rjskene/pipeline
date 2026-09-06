@@ -797,11 +797,54 @@ verdict_candidates() {  # <issues_file> <ids_json> -> space-separated issue numb
   ' "$issues_file" 2>/dev/null
 }
 
+# prev_cycle_comment <issues_file> <tracker> <prev cycle N> -> the tracker
+# issue's LAST comment whose body opens `## Cycle <prev cycle N>` (#1281).
+prev_cycle_comment() {
+  local issues_file="$1" tracker="$2" prev_n="$3"
+  [ -f "$issues_file" ] || return 0
+  jq -r --arg tracker "$tracker" --arg hdr "^## Cycle ${prev_n}\\b" '
+    [.[] | select((.number|tostring) == $tracker) | .comments[]?.body
+      | select(test($hdr))] | last // empty
+  ' "$issues_file" 2>/dev/null
+}
+
+# resolved_verdicts <comment body> -> space-separated issue numbers the
+# comment's `- verdicts:` line already records a verdict for (#1281). Only
+# `#N <verdict-word>` pairs count — the same comment's `(reverted by PR #p)`
+# and `| pending: #q (retro next cycle)` fragments carry no verdict word
+# right after the `#`, so they are excluded by construction.
+resolved_verdicts() {
+  local body="$1" line
+  [ -n "$body" ] || { printf ''; return 0; }
+  line="$(printf '%s\n' "$body" | grep '^- verdicts:')"
+  [ -n "$line" ] || { printf ''; return 0; }
+  printf '%s\n' "$line" \
+    | grep -oE '#[0-9]+ +(confirmed|no-effect|regressed)' \
+    | sed -E 's/^#([0-9]+).*/\1/' \
+    | tr '\n' ' ' | sed -E 's/[[:space:]]+$//'
+}
+
 VERDICT_CANDIDATES="$(verdict_candidates "$ISSUES_FILE" "$CUR_IDS_JSON")"
 
 PENDING_VERDICTS=""
 if [ "$CYCLE" -gt 0 ] && [ -n "$PREV_ISSUES" ]; then
   PENDING_VERDICTS="$(verdict_candidates "$ISSUES_FILE" "$PREV_IDS_JSON")"
+
+  PREV_CYCLE_COMMENT_BODY="$(prev_cycle_comment "$ISSUES_FILE" "$TRACKER" $((CYCLE - 1)))"
+  if [ -n "$PREV_CYCLE_COMMENT_BODY" ]; then
+    RESOLVED_VERDICTS="$(resolved_verdicts "$PREV_CYCLE_COMMENT_BODY")"
+    if [ -n "$PENDING_VERDICTS" ] && [ -n "$RESOLVED_VERDICTS" ]; then
+      REMAINING=""
+      for n in $PENDING_VERDICTS; do
+        skip=0
+        for r in $RESOLVED_VERDICTS; do
+          [ "$n" = "$r" ] && { skip=1; break; }
+        done
+        [ "$skip" -eq 0 ] && REMAINING="$REMAINING $n"
+      done
+      PENDING_VERDICTS="${REMAINING# }"
+    fi
+  fi
 fi
 
 declare -A PREV_COMP_VAL=()
