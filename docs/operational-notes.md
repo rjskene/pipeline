@@ -360,3 +360,12 @@ applies the documented default, logs one
 `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continues;
 see `skills/fullsend/SKILL.md` for the full contract. Interactive mode (the
 knob unset or false) is unchanged — the operator prompts stay.
+
+## 13. Skill fences carry no awk field references (issue #1287)
+
+The harness rewrites `$0`-`$9` at skill load, so ANY field reference inside a
+bash fence in a SKILL.md arrives garbled — cycle-1 observed
+`awk '{sub(/\r$/,"",1281)}'` in the pr-eval fence. Anything needing `$<n>`
+lives in a script (e.g. `scripts/parse-shared-tests.sh`,
+`scripts/evolve-projection.sh`), which the harness never rewrites. The guard
+is `tests/test-skill-fence-positional-args.sh`.

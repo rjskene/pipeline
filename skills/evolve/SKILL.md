@@ -93,21 +93,14 @@ fi
 
 ## Usage gate + projection
 
-Run at Step 0 and again before Step 4:
+Run at Step 0 and again before Step 4. `scripts/evolve-projection.sh` (#1287) computes EST5/EST7 — the median of the last three non-negative per-cycle usage deltas from trusted cycle comments, defaulting to 30 / 8 (spec §5) — and folds a `proceed` → `pause-5h` flip into its one-line `PROJECTION …` output, which this fence parses with `sed -nE` (no awk field references, since the harness rewrites `$0`-`$9` at skill load):
 
 ```bash
 GATE_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh" || true); echo "$GATE_LINE"
-DECISION=$(sed -nE 's/.*decision=([a-z0-9-]+).*/\1/p' <<<"$GATE_LINE")
-FIVE=$(sed -nE 's/.*five_hour=([0-9]+)(\.[0-9]+)?%.*/\1/p' <<<"$GATE_LINE"); SEVEN=$(sed -nE 's/.*seven_day=([0-9]+)(\.[0-9]+)?%.*/\1/p' <<<"$GATE_LINE")
-THRESH=$(sed -nE 's/.*threshold=([0-9]+).*/\1/p' <<<"$GATE_LINE"); THRESH=${THRESH:-85}
-RESUME_AT=$(sed -nE 's/.*resume_at=([^ ]+).*/\1/p' <<<"$GATE_LINE")
-# EST5/EST7 = median of the last three non-negative per-cycle deltas from trusted cycle comments; defaults 30 / 8 (spec §5)
-DELTAS=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" "$TRACKER" 2>/dev/null \
-  | awk '/^- usage: start five_hour=/{gsub(/[a-z_]+=/,""); split($0,f," "); d5=f[7]-f[4]; d7=f[8]-f[5]; if(d5>=0&&d7>=0) print d5, d7}' | tail -3)
-MED='{v[NR]=$0} END{if(NR==0)print d; else if(NR%2)print v[(NR+1)/2]; else print int((v[NR/2]+v[NR/2+1]+1)/2)}'
-EST5=$(awk 'NF{split($0,f," "); print f[1]}' <<<"$DELTAS" | sort -n | awk -v d=30 "$MED")
-EST7=$(awk 'NF{split($0,f," "); print f[2]}' <<<"$DELTAS" | sort -n | awk -v d=8 "$MED")
-if [ "$DECISION" = proceed ] && [ -n "$FIVE" ] && [ -n "$SEVEN" ] && { [ $((FIVE+EST5)) -gt "$THRESH" ] || [ $((SEVEN+EST7)) -gt "$THRESH" ]; }; then DECISION=pause-5h; RESUME_AT=$(date -u -d '+5 hours' +%FT%TZ); fi
+PROJ=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/evolve-projection.sh" --tracker "$TRACKER" --gate-line "$GATE_LINE" || true); echo "$PROJ"
+DECISION=$(sed -nE 's/.*decision=([a-z0-9-]+).*/\1/p' <<<"$PROJ")
+FIVE=$(sed -nE 's/.* five=([0-9]+).*/\1/p' <<<"$PROJ"); SEVEN=$(sed -nE 's/.* seven=([0-9]+).*/\1/p' <<<"$PROJ")
+RESUME_AT=$(sed -nE 's/.*resume_at=([^ ]+).*/\1/p' <<<"$PROJ")
 ```
 
 Branch on `$DECISION` exactly as `skills/fullsend/SKILL.md` `## Usage gate (#969)` prescribes — that section is the single source of truth, do not restate it here:
