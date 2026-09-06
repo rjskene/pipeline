@@ -62,15 +62,21 @@ the sandbox clone it came from is reset to `calib-base` on the next run.
 `run-retro.sh` ingests the newest `docs/retros/calib/*.txt` (by filename date)
 into two spots in the cycle report:
 
-- `weak-model pass:` — the `reftest-pass=<n>/<n>` ratio from `CALIB-TOTAL`,
-  with the profile/model of the run; `n/a (no calibration slate; ...)` when no
-  artifact exists.
-- `median path b pr/usd` — the median `cost=` across the `path=B` `CALIB`
-  lines, which is otherwise `n/a (no per-issue cost in rows JSON)`.
+- `weak-model pass:` — a `<pass>/<rows>` ratio counted over the `reftest=` atoms
+  of the per-issue `CALIB` rows; the `CALIB-TOTAL` line is not parsed.
+  `n/a (no calibration slate; ...)` when no artifact exists.
+- `median path b pr/usd` — the median `cost=` across the `path=B` rows only
+  (other paths are skipped), which is otherwise
+  `n/a (no per-issue cost in rows JSON)`. Each `cost=` is
+  apportioned from the run's priced total by token share, so the median is an
+  estimate, not a measured per-issue charge.
 
-Ingest is newest-wins and does not expire: a cycle with no fresh run keeps
-citing the last artifact, so the report names its date. Full operator guide
-(modes, knobs, cost band, triggers): `docs/calibration.md`.
+Both rows render as bare values: the CALIB grammar carries no profile, model or
+run-date atom, so nothing in the cycle report says which run produced them or
+how old it is. Ingest is newest-wins and does not expire, so a cycle with no
+fresh run keeps citing the last artifact — read the filenames in this directory
+to date the evidence. Full operator guide (modes, knobs, cost band, triggers):
+`docs/calibration.md`.
 
 ## Index
 

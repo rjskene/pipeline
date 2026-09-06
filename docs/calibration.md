@@ -75,6 +75,10 @@ to ask. Consequences:
   produces a partial, non-comparable result and still bills for what it used.
 - `--bootstrap`, `--reset` and `--dry-run` are free — use them freely.
 
+Only the run total is a priced figure. The per-issue `cost=` on each `CALIB`
+line is apportioned out of that total by token share (see Output), so any
+per-issue dollar number — including the retro's path-B median — is approximate.
+
 ## When to run
 
 Two triggers, and only these two:
@@ -99,6 +103,10 @@ CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>
 
 - `path` — the PATH letter the harness actually routed to (compare against the
   slate's expected path; a mismatch is a routing regression).
+- `cost` — the issue's **apportioned** share of the run's priced total, split by
+  that issue's share of the run's total tokens. The rows JSON carries no
+  per-issue dollar figure, so this is an estimate, not a measured per-issue charge.
+  Only `CALIB-TOTAL cost` is a real priced number.
 - `verdicts` — plan-eval and pr-eval verdicts, slash-separated.
 - `reftest` — the sandbox issue's reference test after the PR lands.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
@@ -118,15 +126,24 @@ destroys its history every run.
 `scripts/run-retro.sh` reads the **newest** `docs/retros/calib/*.txt` by filename
 date and feeds two places in the cycle report:
 
-- **`weak-model pass:`** — the spec section 7 row. Without an artifact it reports
-  `n/a (no calibration slate; ...)`; with one it reports the `reftest-pass=<n>/<n>`
-  ratio from `CALIB-TOTAL` plus the profile/model the run used.
+- **`weak-model pass:`** — the spec section 7 row, counted over the `reftest=`
+  atoms of the per-issue `CALIB` rows: the rows reading `reftest=pass`, over the
+  number of `CALIB` rows read. The `CALIB-TOTAL` line is not parsed at all; its
+  `reftest-pass` field is a convenience for human readers that happens to count
+  the same rows. Without an artifact the row reports
+  `n/a (no calibration slate; ...)`.
 - **`median path b pr/usd`** — the computed value that is otherwise
-  `n/a (no per-issue cost in rows JSON)`, because ordinary rows JSON carries no
-  per-issue dollar cost. The median of the `cost=` fields on the `CALIB` lines whose
-  `path=B` supplies it, and the baseline delta then joins as normal.
+  `n/a (no per-issue cost in rows JSON)`. It is the median of the `cost=` atoms
+  of the `path=B` rows only — rows on every other path are skipped — and the
+  baseline delta then joins as normal. Because `cost=` is apportioned, that
+  median is approximate: it estimates the typical path-B share of the run, not a
+  billed per-PR amount.
 
-Because ingest is newest-artifact-wins, a stale artifact keeps being reported until
-a newer run replaces it — the report names the artifact's date so the reader can
-see how old the calibration evidence is. See `docs/retros/README.md` for the
-retro-file layout.
+Both rows render as bare values. The CALIB grammar carries no profile, model or
+run-date atom, so the cycle report cannot state which `--profile`/`--model`
+produced a ratio, or when. Ingest is newest-artifact-wins and never expires, so
+a stale artifact keeps being cited until a newer run replaces it, and nothing in
+the report says how old it is — read the filenames under `docs/retros/calib/` to
+date the evidence yourself. Surfacing provenance in the row would mean adding
+atoms to the CALIB grammar; that is a follow-up, not current behaviour. See
+`docs/retros/README.md` for the retro-file layout.

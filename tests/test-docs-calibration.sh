@@ -6,6 +6,13 @@ set -euo pipefail
 # band + headless-billing note, the two spec triggers, the CALIB summary-line
 # grammar, and the harness-rooted tee target. docs/retros/README.md must point
 # at the calib substrate directory.
+#
+# Both files must describe run-retro.sh's ingest AS IMPLEMENTED (#1280 review):
+# the weak-model ratio is counted from the per-issue `reftest=` atoms (the
+# CALIB-TOTAL line is not parsed), the row carries no profile/model/date
+# because the grammar has no such atom, the path-B median reads `path=B` rows
+# only, and the per-issue `cost=` is a token-share apportionment of the run's
+# priced total (an estimate, not a measured per-issue charge).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOC="$REPO_ROOT/docs/calibration.md"
@@ -31,6 +38,16 @@ assert_matches() {
     pass_msg "$label"
   else
     fail_msg "$label (no match: $pattern)"
+  fi
+}
+
+assert_not_matches() {
+  local file="$1" pattern="$2" label="$3"
+  TESTS=$((TESTS + 1))
+  if [ -f "$file" ] && grep -qiE -- "$pattern" "$file"; then
+    fail_msg "$label (unexpected match: $pattern)"
+  else
+    pass_msg "$label"
   fi
 }
 
@@ -81,6 +98,33 @@ assert_contains "$DOC" '$HARNESS/docs/retros/calib/<date>.txt' "harness-rooted t
 assert_contains "$DOC" 'run-retro.sh' "names the retro ingest script"
 assert_contains "$DOC" 'weak-model pass' "ingest: weak-model pass row"
 assert_contains "$DOC" 'median path b pr/usd' "ingest: median path b pr/usd computed value"
+
+echo ""
+echo "ingest described as implemented — weak-model pass"
+for f in "$DOC" "$RETRO_README"; do
+  n="$(basename "$(dirname "$f")")/$(basename "$f")"
+  assert_matches "$f" 'count(ed|s)?[^.]*reftest=' \
+    "$n: ratio is counted from the per-issue reftest= atoms"
+  assert_not_matches "$f" 'ratio from [^.]*CALIB-TOTAL' \
+    "$n: does not claim the ratio is read off CALIB-TOTAL"
+  assert_matches "$f" 'CALIB-TOTAL.? (line )?is not parsed' \
+    "$n: says the CALIB-TOTAL line is not parsed"
+  assert_matches "$f" 'grammar carries no profile' \
+    "$n: says the CALIB grammar has no profile/model/date atom"
+  assert_not_matches "$f" 'report (names|reports|surfaces|carries)[^.]*(date|profile|model)' \
+    "$n: does not claim the report surfaces run provenance"
+done
+
+echo ""
+echo "ingest described as implemented — median path b pr/usd"
+for f in "$DOC" "$RETRO_README"; do
+  n="$(basename "$(dirname "$f")")/$(basename "$f")"
+  assert_matches "$f" 'path=B.? rows only' "$n: median reads path=B rows only"
+  assert_matches "$f" 'apportion(ed|s|ment)[^.]*token' \
+    "$n: cost= is a token-share apportionment of the priced total"
+  assert_matches "$f" 'estimate, not a measured per-issue charge' \
+    "$n: the per-issue dollar figure is flagged approximate"
+done
 
 echo ""
 echo "docs/calibration.md — no anchored cross-references"
