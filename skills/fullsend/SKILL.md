@@ -105,10 +105,10 @@ Always relay `$GATE_LINE` in the run log, then branch on its `decision=` token:
 
 When `PIPELINE_HEADLESS=true` (read `${PIPELINE_HEADLESS:-false}`; set by the calibration launcher, #1285), fullsend and every dispatched stage MUST NOT end a turn on a question — at each operator-decision site below, apply the named default, emit one run-log line matching `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>`, and continue.
 
-- **merge-policy** overrides Step 9's *"Wait for explicit user confirmation before any non-greenlight merge."* `HEADLESS-DEFAULT: merge-policy decision=apply-greenlight-gate reason=flag-is-the-answer` — apply the greenlight gate to the green subset and continue (`--manual-merge` opts out); leave non-greenlight PRs unmerged with their `block-*` token, reported.
+- **merge-policy** overrides only the ASKING in Step 9's *"Wait for explicit user confirmation before any non-greenlight merge"* — not the merge policy itself. `HEADLESS-DEFAULT: merge-policy decision=apply-greenlight-gate reason=flag-is-the-answer` — apply the greenlight gate to the green subset and continue (`--manual-merge` or a `manual-merge` label opts out); leave non-greenlight PRs unmerged with their `block-*` token, reported.
 - **unread-config-knob** covers any config key with no read site anywhere in the tree (run #2's worked example: the calibration template's inert auto-merge flag). `HEADLESS-DEFAULT: unread-config-knob decision=ignore-and-continue reason=not-a-contradiction` — ignore it, log the line, continue.
 - **stall-triage** covers Step 6/7's four-option `agent-stalled` prompt. `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the same timeout budget remaining.
-- **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — fire the autonomous-mode retry; on exhaustion, mark Flagged and continue the wave.
+- **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — fire the autonomous-mode retry; on exhaustion, mark Flagged, skip `evaluate-issue-pr` for that issue, and continue the wave.
 
 Interactive mode (knob unset or false) is unchanged — the operator prompts stay.
 
