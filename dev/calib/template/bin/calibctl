@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+#
+# calibctl — a very small task ledger.
+#
+#   calibctl add "write the thing" --priority high --tag docs,urgent
+#   calibctl list --status open --priority high
+#   calibctl complete 3
+#   calibctl report
+#   calibctl auth issue|show|revoke
+#
+# Exit codes:
+#   0  success
+#   1  no matching records
+#   2  usage / validation error
+#   3  could not acquire a lock
+#   4  no such task
+#   6  auth token missing
+#
+set -uo pipefail
+
+CALIB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/store.sh
+. "$CALIB_ROOT/lib/store.sh"
+# shellcheck source=../lib/lock.sh
+. "$CALIB_ROOT/lib/lock.sh"
+# shellcheck source=../lib/validate.sh
+. "$CALIB_ROOT/lib/validate.sh"
+# shellcheck source=../lib/auth.sh
+. "$CALIB_ROOT/lib/auth.sh"
+# shellcheck source=../lib/report.sh
+. "$CALIB_ROOT/lib/report.sh"
+
+CALIB_VERSION="0.4.0"
+CALIB_RC_EMPTY=1
+CALIB_RC_NOTFOUND=4
+
+die_usage() {
+  printf 'calibctl: %s\n' "$1" >&2
+  printf 'try `calibctl help`\n' >&2
+  exit "$CALIB_RC_USAGE"
+}
+
+cmd_help() {
+  cat <<'HELP'
+calibctl <command> [options]
+
+Commands:
+  add <title> [--priority low|med|high] [--tag a,b]
+                        Add a task. Prints the new task id.
+  list [--status open|done|all] [--priority low|med|high]
+                        List tasks. Defaults to --status open.
+  complete <id>         Mark a task done.
+  report                Print a summary of the ledger.
+  auth <issue|show|revoke>
+                        Manage the API token.
+  version               Print the calibctl version.
+  help                  Print this message.
+
+Environment:
+  CALIB_HOME            State directory (default: ./.calib)
+  CALIB_LOCK_TIMEOUT    Seconds to wait for a lock (default: 5)
+  CALIB_LOCK_STALE      Seconds before a lock is reclaimed (default: 30)
+HELP
+}
+
+print_row() {
+  local row="$1"
+  printf '#%-4s %-5s %-5s %s\n' \
+    "$(store_field "$row" 1)" \
+    "$(store_field "$row" 2)" \
+    "$(store_field "$row" 3)" \
+    "$(store_field "$row" 6)"
+}
+
+cmd_add() {
+  local title="" priority="med" tags=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --priority) [ $# -ge 2 ] || die_usage "--priority needs a value"; priority="$2"; shift 2 ;;
+      --tag|--tags) [ $# -ge 2 ] || die_usage "--tag needs a value"; tags="$2"; shift 2 ;;
+      --*) die_usage "unknown option for add: $1" ;;
+      *) [ -z "$title" ] || die_usage "add takes a single title"; title="$1"; shift ;;
+    esac
+  done
+  validate_title "$title" || exit $?
+  validate_priority "$priority" || exit $?
+  validate_tags "$tags" || exit $?
+  store_add "$title" "$priority" "$tags"
+}
+
+cmd_list() {
+  local status="open" priority="" rows
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --status) [ $# -ge 2 ] || die_usage "--status needs a value"; status="$2"; shift 2 ;;
+      --priority) [ $# -ge 2 ] || die_usage "--priority needs a value"; priority="$2"; shift 2 ;;
+      *) die_usage "unknown option for list: $1" ;;
+    esac
+  done
+  validate_status "$status" || exit $?
+  if [ -n "$priority" ]; then
+    validate_priority "$priority" || exit $?
+  fi
+  store_init
+  rows="$(store_rows "$status" "$priority")"
+  if [ -z "$rows" ]; then
+    printf 'no matching tasks\n'
+    return "$CALIB_RC_EMPTY"
+  fi
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    print_row "$row"
+  done <<< "$rows"
+}
+
+cmd_complete() {
+  local id="${1:-}"
+  [ -n "$id" ] || die_usage "complete needs a task id"
+  validate_id "$id" || exit $?
+  store_init
+  if ! store_get "$id" >/dev/null; then
+    printf 'calibctl: no such task: %s\n' "$id" >&2
+    exit "$CALIB_RC_NOTFOUND"
+  fi
+  store_set_status "$id" "$CALIB_STATUS_DONE" || exit $?
+  printf 'completed #%s\n' "$id"
+}
+
+cmd_report() {
+  store_init
+  report_render
+}
+
+cmd_auth() {
+  local sub="${1:-}"
+  case "$sub" in
+    issue)
+      store_init
+      auth_issue_token
+      ;;
+    show)
+      auth_read_token || {
+        printf 'calibctl: no token issued\n' >&2
+        exit "$CALIB_RC_AUTH"
+      }
+      ;;
+    revoke)
+      auth_revoke_token || {
+        printf 'calibctl: no token issued\n' >&2
+        exit "$CALIB_RC_AUTH"
+      }
+      printf 'token revoked\n'
+      ;;
+    *) die_usage "auth needs one of: issue, show, revoke" ;;
+  esac
+}
+
+main() {
+  local cmd="${1:-help}"
+  [ $# -gt 0 ] && shift
+  case "$cmd" in
+    add) cmd_add "$@" ;;
+    list) cmd_list "$@" ;;
+    complete) cmd_complete "$@" ;;
+    report) cmd_report "$@" ;;
+    auth) cmd_auth "$@" ;;
+    version) printf 'calibctl %s\n' "$CALIB_VERSION" ;;
+    help|--help|-h) cmd_help ;;
+    *) die_usage "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"

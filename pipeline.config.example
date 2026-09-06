@@ -14,6 +14,16 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 #PIPELINE_NEXT_BRANCH="next"   # Next-integration branch for breaking-change work (default: next, read-site ${VAR:-next}; uncomment to override)
 #PIPELINE_NEXT_LABEL="next"    # Label routing an issue onto PIPELINE_NEXT_BRANCH (default next; legacy alias next-major-release also honored)
 #PIPELINE_PROJECT_ROOT=""     # Orchestrator checkout root. Unset => read sites fall back to $(pwd) (correct only because the Bash tool resets cwd to the project root). Set to an absolute path to make the target explicit (#1215).
+# --- Calibration slate (issue #1280) — env seams read by scripts/calibration-run.sh.
+# All optional; every default is single-sourced at the read site, so these stay
+# COMMENTED (`--fix config` does not seed commented lines). Uncomment to override.
+#PIPELINE_CALIB_REPO="rjskene/pipeline-calib"       # Sandbox repo slug the slate runs against (default rjskene/pipeline-calib; read site ${VAR:-rjskene/pipeline-calib}).
+#PIPELINE_CALIB_DIR="$HOME/.claude/calib/pipeline-calib"  # Local sandbox clone dir (default $HOME/.claude/calib/pipeline-calib; read site ${VAR:-$HOME/.claude/calib/pipeline-calib}).
+#PIPELINE_CALIB_TIMEOUT=5400                        # Headless run cap in seconds (default 5400 = 90 min; read site ${VAR:-5400}).
+#PIPELINE_CALIB_REMOTE=""                           # Explicit git URL to clone the sandbox from. Empty (default) => `gh repo clone`; read site ${VAR:-}.
+#PIPELINE_CALIB_BASE_TAG="calib-base"               # Tag --reset rewinds the sandbox to (default calib-base; read site ${VAR:-calib-base}).
+#PIPELINE_CALIB_ISSUE_IDS=""                        # Pre-resolved slate issue ids. Empty (default) => whatever --reset resolved; read site ${VAR:-}.
+#PIPELINE_CALIB_PROFILE="strict"                    # Profile the sandbox session runs under (strict|lean, default strict). EXPORTED into the headless run by calibration-run.sh from --profile; never read back by it.
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)

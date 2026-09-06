@@ -50,6 +50,34 @@ evolve skill's diagnose reasoning appended below it:
 `cycle-<NN>.md`, `issues.json`, `prs.json`) and the numbers the test suite
 pins.
 
+## Calibration substrate
+
+Calibration-run artifacts live beside the cycle files, in `docs/retros/calib/`,
+one file per run named `<date>.txt` (e.g. `2026-09-12.txt`). Each is the teed
+stdout of `bash scripts/calibration-run.sh --run` — one `CALIB issue=... ` line
+per slate issue plus a final `CALIB-TOTAL ...` line. The directory is
+harness-rooted on purpose: the artifact measures *this* harness version, while
+the sandbox clone it came from is reset to `calib-base` on the next run.
+
+`run-retro.sh` ingests the newest `docs/retros/calib/*.txt` (by filename date)
+into two spots in the cycle report:
+
+- `weak-model pass:` — a `<pass>/<rows>` ratio counted over the `reftest=` atoms
+  of the per-issue `CALIB` rows; the `CALIB-TOTAL` line is not parsed.
+  `n/a (no calibration slate; ...)` when no artifact exists.
+- `median path b pr/usd` — the median `cost=` across the `path=B` rows only
+  (other paths are skipped), which is otherwise
+  `n/a (no per-issue cost in rows JSON)`. Each `cost=` is
+  apportioned from the run's priced total by token share, so the median is an
+  estimate, not a measured per-issue charge.
+
+Both rows render as bare values: the CALIB grammar carries no profile, model or
+run-date atom, so nothing in the cycle report says which run produced them or
+how old it is. Ingest is newest-wins and does not expire, so a cycle with no
+fresh run keeps citing the last artifact — read the filenames in this directory
+to date the evidence. Full operator guide (modes, knobs, cost band, triggers):
+`docs/calibration.md`.
+
 ## Index
 
 No cycles have been posted yet (issue #1272 is the cycle-0 tooling

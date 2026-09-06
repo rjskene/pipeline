@@ -1,0 +1,547 @@
+#!/bin/bash
+set -uo pipefail
+#
+# Tests for scripts/calibration-run.sh — the §8 calibration-slate driver
+# (issue #1280, spec docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §8).
+#
+# HERMETIC BY CONSTRUCTION. Nothing here touches the network, the real
+# rjskene/pipeline-calib sandbox, or ~/.claude/calib:
+#   * `gh` and `claude` are STUBS on PATH that append to a call log; the
+#     `claude` stub additionally fails loudly, so any accidental launch is a
+#     hard test failure rather than a silent 90-minute headless run.
+#   * the "remote" is a local BARE git repo created in mktemp -d, injected via
+#     $PIPELINE_CALIB_REMOTE, so clone/push/tag are exercised for real.
+#   * the harness under --harness is a synthetic tree carrying
+#     dev/calib/template/, dev/calib/slate/*/ and a scripts/doctor.sh stub.
+#
+# BEHAVIOUR TESTS ONLY — nothing greps SKILL.md / CLAUDE.md prose.
+#
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HELPER="$ROOT/scripts/calibration-run.sh"
+
+PASS=0
+FAIL=0
+pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
+fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
+scenario() { echo ""; echo "-- $1 --"; }
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# ---------------------------------------------------------------------------
+# Synthetic harness (the "pipeline repo under test")
+# ---------------------------------------------------------------------------
+HARNESS="$TMP/harness"
+mkdir -p "$HARNESS/scripts" "$HARNESS/dev/calib/template/docs"
+
+echo "# calib sandbox" > "$HARNESS/dev/calib/template/README.md"
+echo "PIPELINE_REPO=owner/pipeline-calib" > "$HARNESS/dev/calib/template/pipeline.config"
+echo "stale line" > "$HARNESS/dev/calib/template/docs/guide.md"
+printf '{"permissions":{"allow":["Bash"]}}\n' \
+  > "$HARNESS/dev/calib/template/claude-settings.local.json"
+
+i=1
+for name in 01-stale-doc 02-script-bug 03-small-feature 04-race-vocab 05-two-dir; do
+  d="$HARNESS/dev/calib/slate/$name"
+  mkdir -p "$d"
+  echo "calib: $name" > "$d/title.txt"
+  printf 'Body for %s.\n' "$name" > "$d/body.md"
+  # Graded against the sandbox WORKING TREE (issue_reftest runs it with the
+  # sandbox as cwd): passes only once the merged fix has been pulled back.
+  printf '#!/bin/bash\ngrep -qx fixed docs/guide.md\n' > "$d/reference-test.sh"
+  echo "docs/guide.md" > "$d/expected-files.txt"
+  # A DECOY. `path=` must report the routing the run actually chose, never a
+  # slate-declared expectation, so any driver that reads this file reports `X`
+  # and fails the CALIB path assertions below.
+  echo X > "$d/path.txt"
+  i=$((i + 1))
+done
+
+# The harness's cost/latency reporter. Records the environment it is invoked
+# with: it joins PRs against issue numbers, so an invocation carrying the
+# HARNESS's PIPELINE_REPO would join the WRONG repo's PRs against sandbox issue
+# ids (#1280). Emits whatever rows / pricing JSON the scenario staged.
+cat > "$HARNESS/scripts/cost-latency-report.sh" <<'CLR'
+#!/bin/bash
+echo "clr $* cwd=$PWD PIPELINE_REPO=${PIPELINE_REPO:-unset}" >> "$CALIB_TEST_CALLS"
+case "$*" in
+  *--emit-rows-json*)    cat "${CALIB_TEST_ROWS_JSON:-/dev/null}" 2>/dev/null ;;
+  *--emit-pricing-json*) cat "${CALIB_TEST_PRICING_JSON:-/dev/null}" 2>/dev/null ;;
+esac
+exit 0
+CLR
+chmod +x "$HARNESS/scripts/cost-latency-report.sh"
+
+cat > "$HARNESS/scripts/doctor.sh" <<'DOC'
+#!/bin/bash
+echo "doctor stub: $* (project root=${PIPELINE_PROJECT_ROOT:-unset})"
+# Record the exact environment the label-seed step runs with. The real
+# doctor.sh --fix labels reads ./pipeline.config from its CWD and seeds
+# $PIPELINE_REPO, so both are load-bearing: seeding the harness repo instead
+# of the sandbox is the #1280 defect this recording exists to catch.
+if [ -n "${CALIB_TEST_DOCTOR_ENV:-}" ]; then
+  {
+    echo "cwd=$PWD"
+    echo "PIPELINE_REPO=${PIPELINE_REPO:-unset}"
+    echo "PIPELINE_PROJECT_ROOT=${PIPELINE_PROJECT_ROOT:-unset}"
+  } > "$CALIB_TEST_DOCTOR_ENV"
+fi
+DOC
+chmod +x "$HARNESS/scripts/doctor.sh"
+
+# ---------------------------------------------------------------------------
+# Local bare "remote" + PATH stubs
+# ---------------------------------------------------------------------------
+REMOTE="$TMP/remote/pipeline-calib.git"
+mkdir -p "$TMP/remote"
+git init --quiet --bare "$REMOTE"
+
+SANDBOX="$TMP/sandbox/pipeline-calib"
+CALLS="$TMP/calls.log"
+DOCTOR_ENV="$TMP/doctor-env.txt"
+STUB_BIN="$TMP/bin"
+mkdir -p "$STUB_BIN"
+
+cat > "$STUB_BIN/gh" <<'GH'
+#!/bin/bash
+echo "gh $*" >> "$CALIB_TEST_CALLS"
+case "$*" in
+  # `gh repo view --json nameWithOwner` (no repo arg) = "what repo is this
+  # checkout?" — the slug the --reset blast-radius guard compares against.
+  "repo view --json"*) echo "${CALIB_TEST_OWN_SLUG:-rjskene/pipeline}" ;;
+  "repo view"*)   exit 1 ;;                      # sandbox repo absent -> create
+  "repo create"*) echo "created"; exit 0 ;;
+  # <number>TAB<title>, the shape the title-scoped reap reads. 4001 carries a
+  # slate title (reapable); 4777 is an unrelated issue that must survive.
+  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
+  "issue close"*|"issue delete"*) exit 0 ;;
+  "issue create"*)
+    n="$(cat "$CALIB_TEST_COUNTER" 2>/dev/null || echo 4100)"
+    n=$((n + 1)); echo "$n" > "$CALIB_TEST_COUNTER"
+    echo "https://github.com/owner/pipeline-calib/issues/$n"
+    ;;
+  *) exit 0 ;;
+esac
+GH
+chmod +x "$STUB_BIN/gh"
+
+# Default: fail loudly, so an accidental launch is a hard failure rather than a
+# silent 90-minute headless run. $CALIB_TEST_CLAUDE_SCRIPT swaps in a scripted
+# stand-in for the ONE scenario that needs the launch to "do the work".
+cat > "$STUB_BIN/claude" <<'CL'
+#!/bin/bash
+echo "claude $*" >> "$CALIB_TEST_CALLS"
+if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
+  exec "$CALIB_TEST_CLAUDE_SCRIPT" "$@"
+fi
+echo "FATAL: calibration test launched a real claude session" >&2
+exit 97
+CL
+chmod +x "$STUB_BIN/claude"
+
+# run_helper <args...> — runs the helper IN THE CURRENT SHELL (never a command
+# substitution, so $RC / $OUT actually propagate) and sets $OUT + $RC.
+#
+# `timeout 20` is load-bearing, not belt-and-braces: an arg-parse bug that
+# fails to consume its token spins the `while [ $# -gt 0 ]` loop forever with
+# no output, which without the cap wedges the whole suite instead of failing
+# it (rc=124).
+RC=0
+OUT=""
+run_helper() {
+  OUT="$(PATH="$STUB_BIN:$PATH" \
+        CALIB_TEST_CALLS="$CALLS" \
+        CALIB_TEST_COUNTER="$TMP/issue-counter" \
+        CALIB_TEST_DOCTOR_ENV="$DOCTOR_ENV" \
+        PIPELINE_REPO="rjskene/pipeline" \
+        PIPELINE_CALIB_REPO="${CALIB_TEST_REPO_OVERRIDE:-owner/pipeline-calib}" \
+        PIPELINE_CALIB_DIR="$SANDBOX" \
+        PIPELINE_CALIB_REMOTE="$REMOTE" \
+        PIPELINE_CALIB_ISSUE_IDS="8001 8002 8003 8004 8005" \
+        GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+        GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+        timeout 20 bash "$HELPER" "$@" 2>&1)"
+  RC=$?
+}
+
+expect_sub() { # <label> <text> <substring>
+  if printf '%s\n' "$2" | grep -qF -- "$3"; then pass_msg "$1"; else fail_msg "$1 (missing: $3)"; fi
+}
+expect_rc() { # <label> <want>
+  if [ "$RC" -eq "$2" ]; then pass_msg "$1"; else fail_msg "$1 (want rc=$2, got rc=$RC)"; fi
+}
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 1: --help prints a usage banner and exits 0"
+# ---------------------------------------------------------------------------
+run_helper --help
+expect_rc "--help exits 0" 0
+expect_sub "--help prints a usage banner" "$OUT" "Usage: scripts/calibration-run.sh"
+expect_sub "--help documents the four modes" "$OUT" "--bootstrap"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 2: argument validation exits 2"
+# ---------------------------------------------------------------------------
+run_helper --bogus
+expect_rc "unknown flag exits 2" 2
+expect_sub "unknown flag names itself on stderr" "$OUT" "--bogus"
+
+run_helper --dry-run --run
+expect_rc "--dry-run + --run is rejected" 2
+expect_sub "mutual-exclusion error is named" "$OUT" "mutually exclusive"
+
+run_helper --bootstrap --reset
+expect_rc "--bootstrap + --reset is rejected" 2
+
+run_helper --dry-run --profile turbo
+expect_rc "--profile turbo is rejected" 2
+expect_sub "--profile error names the allowed values" "$OUT" "strict|lean"
+
+run_helper --dry-run --model gpt
+expect_rc "--model gpt is rejected" 2
+expect_sub "--model error names the allowed values" "$OUT" "sonnet|opus"
+
+run_helper --dry-run --profile lean --model opus
+expect_rc "--profile lean --model opus is accepted" 0
+
+# A value-taking flag in LAST position has no value to shift: `shift 2` with
+# $#=1 fails, the token is never consumed, and the parser spins forever with
+# no output. Must be a usage error, never a hang (rc=124 from run_helper's cap).
+for flag in --profile --model --harness; do
+  run_helper --dry-run "$flag"
+  expect_rc "trailing $flag exits 2 (never spins)" 2
+  expect_sub "trailing $flag reports the missing value" "$OUT" "$flag requires a value"
+done
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 3: --dry-run previews the launch and touches nothing"
+# ---------------------------------------------------------------------------
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS"
+expect_rc "--dry-run exits 0" 0
+
+N_LAUNCH="$(printf '%s\n' "$OUT" | grep -c '^CALIB-LAUNCH ')"
+if [ "$N_LAUNCH" -eq 1 ]; then
+  pass_msg "--dry-run prints exactly one CALIB-LAUNCH line"
+else
+  fail_msg "--dry-run must print exactly one CALIB-LAUNCH line (got $N_LAUNCH)"
+fi
+LAUNCH="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+
+expect_sub "launch line runs claude headless" "$LAUNCH" "claude -p"
+expect_sub "launch line drives /pipeline:fullsend" "$LAUNCH" "/pipeline:fullsend"
+for id in 8001 8002 8003 8004 8005; do
+  expect_sub "launch line carries issue id $id" "$LAUNCH" "$id"
+done
+expect_sub "launch line passes --plugin-dir <harness>" "$LAUNCH" "--plugin-dir $HARNESS"
+expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$HARNESS"
+expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dangerously-skip-permissions"
+expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
+
+if [ -s "$CALLS" ]; then
+  fail_msg "--dry-run made a network / launch call: $(tr '\n' ';' < "$CALLS")"
+else
+  pass_msg "--dry-run performs no gh call and no claude launch"
+fi
+if [ -e "$SANDBOX" ]; then
+  fail_msg "--dry-run created the sandbox dir"
+else
+  pass_msg "--dry-run does not materialize the sandbox"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 4: --bootstrap is idempotent"
+# ---------------------------------------------------------------------------
+rm -f "$CALLS"
+run_helper --bootstrap --harness "$HARNESS"
+OUT1="$OUT"
+RC1=$RC
+if [ "$RC1" -eq 0 ]; then
+  pass_msg "first --bootstrap exits 0"
+else
+  fail_msg "first --bootstrap exits 0 (got rc=$RC1): $OUT1"
+fi
+
+if [ -d "$SANDBOX/.git" ]; then
+  pass_msg "--bootstrap clones the sandbox"
+else
+  fail_msg "--bootstrap clones the sandbox (no .git at sandbox)"
+fi
+if [ -f "$SANDBOX/README.md" ]; then
+  pass_msg "--bootstrap syncs the template into the sandbox"
+else
+  fail_msg "--bootstrap syncs the template into the sandbox"
+fi
+if [ -f "$SANDBOX/.claude/settings.local.json" ]; then
+  pass_msg "--bootstrap materializes the flat claude local-settings file"
+else
+  fail_msg "--bootstrap materializes the flat claude local-settings file"
+fi
+if [ -e "$SANDBOX/claude-settings.local.json" ]; then
+  fail_msg "flat template settings file left behind in the sandbox root"
+else
+  pass_msg "flat template settings file is consumed, not left in the sandbox root"
+fi
+expect_sub "--bootstrap seeds labels through doctor --fix labels" "$OUT1" "doctor stub: --fix labels"
+
+# The label seed must target the SANDBOX repo. Regression guard for #1280: the
+# harness pipeline.config leaks PIPELINE_REPO=<harness slug> into the
+# environment (run_helper exports it, exactly as the real dogfood shell does),
+# and doctor.sh --fix labels honours both an already-set PIPELINE_REPO and the
+# pipeline.config sitting in its CWD — so an unscoped seed step silently seeds
+# the harness repo and leaves the sandbox with only GitHub's default labels.
+SEED_ENV="$(cat "$DOCTOR_ENV" 2>/dev/null)"
+if printf '%s\n' "$SEED_ENV" | grep -qxF "PIPELINE_REPO=owner/pipeline-calib"; then
+  pass_msg "label seed runs with PIPELINE_REPO pinned to the sandbox repo"
+else
+  fail_msg "label seed must run with PIPELINE_REPO=owner/pipeline-calib (got: $(printf '%s' "$SEED_ENV" | grep '^PIPELINE_REPO=' || echo none))"
+fi
+if printf '%s\n' "$SEED_ENV" | grep -qxF "PIPELINE_REPO=rjskene/pipeline"; then
+  fail_msg "label seed leaked the harness repo slug into PIPELINE_REPO"
+else
+  pass_msg "label seed never inherits the harness repo slug"
+fi
+if printf '%s\n' "$SEED_ENV" | grep -qxF "cwd=$SANDBOX"; then
+  pass_msg "label seed runs with the sandbox as cwd (doctor reads ./pipeline.config)"
+else
+  fail_msg "label seed must run with cwd=$SANDBOX (got: $(printf '%s' "$SEED_ENV" | grep '^cwd=' || echo none))"
+fi
+if printf '%s\n' "$SEED_ENV" | grep -qxF "PIPELINE_PROJECT_ROOT=$SANDBOX"; then
+  pass_msg "label seed runs with PIPELINE_PROJECT_ROOT=<sandbox>"
+else
+  fail_msg "label seed must run with PIPELINE_PROJECT_ROOT=$SANDBOX"
+fi
+expect_sub "--bootstrap names the repo it actually seeded" "$OUT1" "labels seeded on owner/pipeline-calib"
+
+TAGS1="$(git -C "$SANDBOX" tag -l 'calib-base' | wc -l | tr -d ' ')"
+RTAGS1="$(git -C "$REMOTE" tag -l 'calib-base' | wc -l | tr -d ' ')"
+if [ "$TAGS1" = "1" ] && [ "$RTAGS1" = "1" ]; then
+  pass_msg "--bootstrap tags calib-base locally and on the remote"
+else
+  fail_msg "--bootstrap tags calib-base (local=$TAGS1 remote=$RTAGS1)"
+fi
+
+HEAD1="$(git -C "$SANDBOX" rev-parse HEAD)"
+run_helper --bootstrap --harness "$HARNESS"
+OUT2="$OUT"
+RC2=$RC
+if [ "$RC2" -eq 0 ]; then
+  pass_msg "second --bootstrap exits 0 (idempotent)"
+else
+  fail_msg "second --bootstrap exits 0 (got rc=$RC2): $OUT2"
+fi
+HEAD2="$(git -C "$SANDBOX" rev-parse HEAD)"
+if [ "$HEAD1" = "$HEAD2" ]; then
+  pass_msg "second --bootstrap creates no new commit"
+else
+  fail_msg "second --bootstrap moved HEAD ($HEAD1 -> $HEAD2)"
+fi
+TAGS2="$(git -C "$SANDBOX" tag -l 'calib-base' | wc -l | tr -d ' ')"
+RTAGS2="$(git -C "$REMOTE" tag -l 'calib-base' | wc -l | tr -d ' ')"
+if [ "$TAGS2" = "1" ] && [ "$RTAGS2" = "1" ]; then
+  pass_msg "second --bootstrap does not duplicate the calib-base tag"
+else
+  fail_msg "second --bootstrap duplicated calib-base (local=$TAGS2 remote=$RTAGS2)"
+fi
+if grep -q '^claude ' "$CALLS" 2>/dev/null; then
+  fail_msg "--bootstrap launched claude"
+else
+  pass_msg "--bootstrap never launches claude"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 5: --reset recreates the five slate issues"
+# ---------------------------------------------------------------------------
+rm -f "$CALLS" "$TMP/issue-counter"
+echo "drift" >> "$SANDBOX/README.md"
+git -C "$SANDBOX" commit --quiet -a -m "drift commit" 2>/dev/null
+
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset exits 0" 0
+ISSUE_LINE="$(printf '%s\n' "$OUT" | grep '^CALIB-ISSUES ' | head -1)"
+N_IDS="$(printf '%s\n' "$ISSUE_LINE" | tr ' ' '\n' | grep -c '^[0-9][0-9]*$')"
+if [ "$N_IDS" -eq 5 ]; then
+  pass_msg "--reset prints CALIB-ISSUES with five issue numbers"
+else
+  fail_msg "--reset must print CALIB-ISSUES with five numbers (got: $ISSUE_LINE)"
+fi
+if grep -q '^gh issue close ' "$CALLS" 2>/dev/null; then
+  pass_msg "--reset closes stale calib issues"
+else
+  fail_msg "--reset closes stale calib issues"
+fi
+if [ "$(git -C "$SANDBOX" rev-parse HEAD)" = "$(git -C "$SANDBOX" rev-parse calib-base)" ]; then
+  pass_msg "--reset returns the sandbox worktree to calib-base"
+else
+  fail_msg "--reset returns the sandbox worktree to calib-base"
+fi
+if grep -q '^claude ' "$CALLS" 2>/dev/null; then
+  fail_msg "--reset launched claude"
+else
+  pass_msg "--reset never launches claude"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 6: --reset refuses to nuke a non-sandbox repo"
+# ---------------------------------------------------------------------------
+# --reset force-pushes a branch back to a tag and DELETES issues. Pointed at
+# the harness repo (a one-character config slip) that is unrecoverable, so the
+# refusal is asserted from both directions: the exported PIPELINE_REPO and the
+# slug of the checkout the driver is running in.
+
+rm -f "$CALLS"
+CALIB_TEST_REPO_OVERRIDE="rjskene/pipeline" run_helper --reset --harness "$HARNESS"
+expect_rc "--reset dies when the sandbox repo is PIPELINE_REPO" 1
+expect_sub "the refusal names the repo it refused" "$OUT" "rjskene/pipeline"
+if [ -s "$CALLS" ]; then
+  fail_msg "--reset dispatched before refusing: $(tr '\n' ';' < "$CALLS")"
+else
+  pass_msg "--reset refuses before any gh dispatch"
+fi
+
+rm -f "$CALLS"
+CALIB_TEST_REPO_OVERRIDE="owner/harness-checkout" CALIB_TEST_OWN_SLUG="owner/harness-checkout" \
+  run_helper --reset --harness "$HARNESS"
+expect_rc "--reset dies when the sandbox repo is this checkout's own repo" 1
+if grep -q '^gh issue ' "$CALLS" 2>/dev/null; then
+  fail_msg "--reset touched issues on its own repo: $(grep '^gh issue ' "$CALLS" | tr '\n' ';')"
+else
+  pass_msg "--reset touches no issue on its own repo"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 7: the reap is bounded and scoped to the slate"
+# ---------------------------------------------------------------------------
+rm -f "$CALLS" "$TMP/issue-counter"
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset exits 0 against the sandbox repo" 0
+
+LIST_CALL="$(grep -m1 '^gh issue list ' "$CALLS" 2>/dev/null)"
+expect_sub "the reap bounds gh issue list (default 30 silently truncates)" "$LIST_CALL" "--limit 200"
+
+if grep -qE '^gh issue (close|delete) 4001 ' "$CALLS" 2>/dev/null; then
+  pass_msg "the reap closes an issue carrying a slate title"
+else
+  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc')"
+fi
+if grep -qE '^gh issue (close|delete) 4777 ' "$CALLS" 2>/dev/null; then
+  fail_msg "the reap deleted an unrelated issue (4777)"
+else
+  pass_msg "the reap leaves non-slate issues alone"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 8: --run grades the MERGED sandbox tree, scoped to the sandbox"
+# ---------------------------------------------------------------------------
+# Still hermetic: `claude` is a scripted stand-in for the headless run and the
+# "remote" is the local bare repo. The stand-in does what the real run does —
+# it lands the fix ON THE REMOTE (the pipeline merges PRs there; this clone was
+# hard-reset to calib-base by --reset moments earlier). So a driver that never
+# pulls the merged tree back grades the UNFIXED sandbox and reports 0/5.
+
+PUSHER="$TMP/pusher"
+git clone --quiet "$REMOTE" "$PUSHER"
+
+cat > "$TMP/claude-merge.sh" <<'MERGE'
+#!/bin/bash
+set -e
+git -C "$CALIB_TEST_PUSHER" fetch --quiet origin
+git -C "$CALIB_TEST_PUSHER" checkout --quiet -B main origin/main
+printf 'fixed\n' > "$CALIB_TEST_PUSHER/docs/guide.md"
+git -C "$CALIB_TEST_PUSHER" add docs/guide.md
+git -C "$CALIB_TEST_PUSHER" commit --quiet -m "merge: slate fix"
+git -C "$CALIB_TEST_PUSHER" push --quiet origin main
+MERGE
+chmod +x "$TMP/claude-merge.sh"
+
+# --reset assigns the ids, so pin the stub's counter and stage the rows JSON
+# against the ids it will hand out (5001..5005). 5001/5003 have rows (routing
+# is known); 5002 has none and no labels (routing unknown -> `?`).
+echo 5000 > "$TMP/issue-counter"
+cat > "$TMP/rows.json" <<'ROWS'
+[
+  {"issue":5001,"path":"A","loc":10,"tokens_total":1000,"duration_ms":60000},
+  {"issue":5003,"path":"B","loc":90,"tokens_total":2000,"duration_ms":180000}
+]
+ROWS
+printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing.json"
+
+export CALIB_TEST_PUSHER="$PUSHER"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-merge.sh"
+export CALIB_TEST_ROWS_JSON="$TMP/rows.json"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run exits 0" 0
+
+TOTAL_LINE="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "every reference test passes against the merged sandbox tree" \
+  "$TOTAL_LINE" "reftest-pass=5/5"
+
+SANDBOX_HEAD="$(git -C "$SANDBOX" rev-parse HEAD)"
+REMOTE_HEAD="$(git -C "$REMOTE" rev-parse main)"
+if [ "$SANDBOX_HEAD" = "$REMOTE_HEAD" ]; then
+  pass_msg "--run syncs the sandbox to the remote before grading"
+else
+  fail_msg "--run must pull the merged tree back (sandbox=$SANDBOX_HEAD remote=$REMOTE_HEAD)"
+fi
+
+CLR_CALL="$(grep -m1 '^clr .*--emit-rows-json' "$CALLS" 2>/dev/null)"
+expect_sub "the cost report is scoped to the SANDBOX repo" \
+  "$CLR_CALL" "PIPELINE_REPO=owner/pipeline-calib"
+expect_sub "the cost report runs with the sandbox as cwd" "$CLR_CALL" "cwd=$SANDBOX"
+
+expect_sub "path= comes from the routing the rows JSON recorded (A)" \
+  "$OUT" "CALIB issue=5001 path=A "
+expect_sub "path= comes from the routing the rows JSON recorded (B)" \
+  "$OUT" "CALIB issue=5003 path=B "
+expect_sub "an unrouted issue reports path=? rather than a slate guess" \
+  "$OUT" "CALIB issue=5002 path=? "
+if printf '%s\n' "$OUT" | grep -q '^CALIB issue=5001 .*cost=\$n/a'; then
+  fail_msg "--run reported no cost for 5001 despite a priced rows substrate"
+else
+  pass_msg "--run apportions the priced total onto the slate issues"
+fi
+
+CALIB_ARTIFACT="$HARNESS/docs/retros/calib/$(date -u +%Y-%m-%d).txt"
+if [ -f "$CALIB_ARTIFACT" ]; then
+  pass_msg "--run tees the CALIB block to docs/retros/calib/<UTC date>.txt"
+else
+  fail_msg "--run must tee the CALIB block to $CALIB_ARTIFACT"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 9: a same-day re-run replaces the artifact, never appends"
+# ---------------------------------------------------------------------------
+# run-retro.sh's compute_calib() sums the `reftest=` atoms of every CALIB line
+# in the newest artifact. Two runs on the same UTC day appending to one file
+# double-count: 5/5 becomes 10/10, and a fixed slate silently reports twice
+# its size. One artifact per day, last run wins.
+
+run_helper --run --harness "$HARNESS"
+expect_rc "the same-day re-run exits 0" 0
+
+N_TOTAL="$(grep -c '^CALIB-TOTAL ' "$CALIB_ARTIFACT" 2>/dev/null)"
+if [ "$N_TOTAL" = "1" ]; then
+  pass_msg "the day's artifact holds exactly one CALIB-TOTAL line"
+else
+  fail_msg "two runs on one UTC day must leave one CALIB-TOTAL line (got $N_TOTAL)"
+fi
+N_ROWS="$(grep -c '^CALIB issue=' "$CALIB_ARTIFACT" 2>/dev/null)"
+if [ "$N_ROWS" = "5" ]; then
+  pass_msg "the day's artifact holds exactly one row per slate issue"
+else
+  fail_msg "the day's artifact must hold 5 CALIB rows, not an accumulation (got $N_ROWS)"
+fi
+
+unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+echo ""
+echo "================================"
+echo "PASS: $PASS  FAIL: $FAIL"
+echo "================================"
+[ "$FAIL" -eq 0 ] || exit 1
+exit 0

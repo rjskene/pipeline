@@ -1,0 +1,15 @@
+{
+  "$comment": "Copied into the calibration sandbox as .claude/settings.local.json. Both marketplace installs of the pipeline plugin are disabled so the sandbox only ever runs the plugin build under calibration.",
+  "enabledPlugins": {
+    "pipeline@claude-pipeline": false,
+    "pipeline@claude-pipeline-local": false
+  },
+  "permissions": {
+    "allow": [
+      "Bash(bash tests/run.sh)",
+      "Bash(bash tests/run.sh:*)",
+      "Bash(bash bin/calibctl:*)"
+    ],
+    "deny": []
+  }
+}

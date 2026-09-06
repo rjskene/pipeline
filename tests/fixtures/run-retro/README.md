@@ -15,6 +15,23 @@ so `tests/test-run-retro.sh` never touches live data.
 | `cycle-<NN>.md` | `docs/retros/cycle-<NN>.md` (previous-cycle retro) |
 | `issues.json` | `gh issue list --json number,labels,body,comments` |
 | `prs.json` | `gh pr list --json number,title,headRefName,body,mergedAt,labels,files` |
+| `calib.txt` | latest `docs/retros/calib/<date>.txt` CALIB block (`scripts/calibration-run.sh --run`) |
+
+### The `calib.txt` CALIB grammar
+
+Outside `--fixture` mode `run-retro.sh` resolves this substrate itself, newest-first by
+filename date, from `docs/retros/calib/*.txt`. The block is one line per calibration
+slate issue plus one total:
+
+```
+CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>
+```
+
+`compute_calib()` reads three atoms off the `CALIB` lines only: `reftest=` (the
+`weak-model pass` k/n), plus `cost=` filtered by `path=B` (the `median path b pr/usd`
+median). A missing `calib.txt`, or one carrying no `CALIB ` rows, degrades to the
+`n/a (...)` reasons instead of failing. Grammar reference: `docs/calibration.md`.
 
 ## Variant files (the test copies these OVER a canonical name in a temp copy)
 
