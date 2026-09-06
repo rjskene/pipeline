@@ -57,6 +57,13 @@ PIPELINE_SPAWN_DRY_RUN
 PIPELINE_RUNS_LOG_OVERRIDE
 PIPELINE_TEST_TMPDIRS
 PIPELINE_VERSION
+# #1285: PIPELINE_HEADLESS is exported by scripts/calibration-run.sh into the
+# headless sandbox session (calibration-run launch env), not read from
+# pipeline.config; its consumer is the fullsend headless contract (#1286). Peel
+# this entry once #1286's commented declaration of PIPELINE_HEADLESS in
+# pipeline.config.example lands — the declaration then documents it and the
+# lint sees it as declared.
+PIPELINE_HEADLESS
 
 # Test-isolation env override for check-config-drift.sh itself (points the
 # lint at a fixture allowlist under mktemp -d during sub-case 4). Not a

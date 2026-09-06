@@ -11,8 +11,10 @@ set -uo pipefail
 #     hard test failure rather than a silent 90-minute headless run.
 #   * the "remote" is a local BARE git repo created in mktemp -d, injected via
 #     $PIPELINE_CALIB_REMOTE, so clone/push/tag are exercised for real.
-#   * the harness under --harness is a synthetic tree carrying
-#     dev/calib/template/, dev/calib/slate/*/ and a scripts/doctor.sh stub.
+#   * the harness under --harness is a synthetic GIT CHECKOUT (non-bare)
+#     carrying dev/calib/template/, dev/calib/slate/*/ and a scripts/doctor.sh
+#     stub, plus an untracked pipeline.config — the shape --run's harness
+#     staging needs (a commit to detach at, a host-specific config to copy).
 #
 # BEHAVIOUR TESTS ONLY — nothing greps SKILL.md / CLAUDE.md prose.
 #
@@ -90,6 +92,21 @@ fi
 DOC
 chmod +x "$HARNESS/scripts/doctor.sh"
 
+# The harness is a REAL (non-bare) checkout, not a loose tree: --run stages the
+# harness HEAD as a detached worktree, which needs a commit to detach at, and
+# copies the harness's pipeline.config across. That config is UNTRACKED here on
+# purpose — the real one is gitignored and host-specific, so a staging step
+# that relied on `git checkout` alone would leave the staged tree without it.
+# GIT_* identity is set explicitly for the same reason run_helper sets it: the
+# test host may have no git identity configured at all.
+printf 'PIPELINE_CALIB_REPO=owner/pipeline-calib\n' > "$HARNESS/pipeline.config"
+printf 'pipeline.config\ndocs/retros/\n' > "$HARNESS/.gitignore"
+git init --quiet "$HARNESS"
+git -C "$HARNESS" add .gitignore scripts dev
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$HARNESS" commit --quiet -m "calib: synthetic harness"
+
 # ---------------------------------------------------------------------------
 # Local bare "remote" + PATH stubs
 # ---------------------------------------------------------------------------
@@ -98,8 +115,12 @@ mkdir -p "$TMP/remote"
 git init --quiet --bare "$REMOTE"
 
 SANDBOX="$TMP/sandbox/pipeline-calib"
+# Where --run stages the harness: a sibling of the sandbox clone inside the
+# calib dir. Derived from PIPELINE_CALIB_DIR, so it needs no knob of its own.
+STAGE="$TMP/sandbox/harness"
 CALLS="$TMP/calls.log"
 DOCTOR_ENV="$TMP/doctor-env.txt"
+LAUNCH_ENV="$TMP/launch-env.txt"
 STUB_BIN="$TMP/bin"
 mkdir -p "$STUB_BIN"
 
@@ -112,6 +133,12 @@ case "$*" in
   "repo view --json"*) echo "${CALIB_TEST_OWN_SLUG:-rjskene/pipeline}" ;;
   "repo view"*)   exit 1 ;;                      # sandbox repo absent -> create
   "repo create"*) echo "created"; exit 0 ;;
+  # ONE fetch per PR set and ONE per issue, both reduced with jq INSIDE the
+  # driver — so this stub stays pure transport: it cats whatever JSON the
+  # scenario staged and never interprets --json / --jq itself.
+  "pr list"*)     cat "${CALIB_TEST_PRS_JSON:-}" 2>/dev/null || echo '[]' ;;
+  # `gh issue view <n> --repo R --json ...` — the number is the third token.
+  "issue view"*)  cat "${CALIB_TEST_ISSUES_DIR:-}/$3.json" 2>/dev/null || echo '{}' ;;
   # <number>TAB<title>, the shape the title-scoped reap reads. 4001 carries a
   # slate title (reapable); 4777 is an unrelated issue that must survive.
   "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
@@ -132,6 +159,18 @@ chmod +x "$STUB_BIN/gh"
 cat > "$STUB_BIN/claude" <<'CL'
 #!/bin/bash
 echo "claude $*" >> "$CALIB_TEST_CALLS"
+# Record the environment the launch actually hands the sandbox session. Two
+# things must be true of it and neither is visible in the argv: the delegation
+# hook has to be LIVE inside the measured run (so the loop session's
+# ALLOW_ORCHESTRATOR_EDIT must not be inherited), and the session has to know
+# it is headless.
+if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
+  {
+    echo "ALLOW_ORCHESTRATOR_EDIT=${ALLOW_ORCHESTRATOR_EDIT:-unset}"
+    echo "PIPELINE_HEADLESS=${PIPELINE_HEADLESS:-unset}"
+    echo "CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-unset}"
+  } > "$CALIB_TEST_LAUNCH_ENV"
+fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
   exec "$CALIB_TEST_CLAUDE_SCRIPT" "$@"
 fi
@@ -154,6 +193,9 @@ run_helper() {
         CALIB_TEST_CALLS="$CALLS" \
         CALIB_TEST_COUNTER="$TMP/issue-counter" \
         CALIB_TEST_DOCTOR_ENV="$DOCTOR_ENV" \
+        CALIB_TEST_LAUNCH_ENV="$LAUNCH_ENV" \
+        HOME="${CALIB_TEST_HOME:-$HOME}" \
+        ALLOW_ORCHESTRATOR_EDIT="true" \
         PIPELINE_REPO="rjskene/pipeline" \
         PIPELINE_CALIB_REPO="${CALIB_TEST_REPO_OVERRIDE:-owner/pipeline-calib}" \
         PIPELINE_CALIB_DIR="$SANDBOX" \
@@ -170,6 +212,13 @@ expect_sub() { # <label> <text> <substring>
 }
 expect_rc() { # <label> <want>
   if [ "$RC" -eq "$2" ]; then pass_msg "$1"; else fail_msg "$1 (want rc=$2, got rc=$RC)"; fi
+}
+refute_sub() { # <label> <text> <substring>
+  if printf '%s\n' "$2" | grep -qF -- "$3"; then
+    fail_msg "$1 (unexpectedly present: $3)"
+  else
+    pass_msg "$1"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -234,9 +283,18 @@ expect_sub "launch line drives /pipeline:fullsend" "$LAUNCH" "/pipeline:fullsend
 for id in 8001 8002 8003 8004 8005; do
   expect_sub "launch line carries issue id $id" "$LAUNCH" "$id"
 done
-expect_sub "launch line passes --plugin-dir <harness>" "$LAUNCH" "--plugin-dir $HARNESS"
-expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$HARNESS"
+# The session loads the STAGED harness, not the checkout under test: its own
+# restrict_paths hook allows only the sandbox project dir and ~/.claude, so a
+# plugin dir anywhere else is unreadable from inside the run.
+expect_sub "launch line passes --plugin-dir <staged harness>" "$LAUNCH" "--plugin-dir $STAGE"
+expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<staged harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$STAGE"
 expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dangerously-skip-permissions"
+# The loop session that drives this script exports ALLOW_ORCHESTRATOR_EDIT;
+# inheriting it would disable the delegation hook inside the very run being
+# measured, so the launch strips it back out.
+expect_sub "launch line strips the loop session's ALLOW_ORCHESTRATOR_EDIT" \
+  "$LAUNCH" "env -u ALLOW_ORCHESTRATOR_EDIT"
+expect_sub "launch line tells the session it is headless" "$LAUNCH" "PIPELINE_HEADLESS=true"
 expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
 
 if [ -s "$CALLS" ]; then
@@ -249,6 +307,21 @@ if [ -e "$SANDBOX" ]; then
 else
   pass_msg "--dry-run does not materialize the sandbox"
 fi
+if [ -e "$STAGE" ]; then
+  fail_msg "--dry-run created the staged harness dir"
+else
+  pass_msg "--dry-run computes the staged harness path without creating it"
+fi
+
+# Control: a harness that ALREADY lives under ~/.claude is readable from inside
+# the session, so it is launched IN PLACE — staging is not unconditional.
+mkdir -p "$TMP/home/.claude/h"
+CALIB_TEST_HOME="$TMP/home" run_helper --dry-run --harness "$TMP/home/.claude/h"
+LAUNCH_NS="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "a harness already under ~/.claude is launched in place" \
+  "$LAUNCH_NS" "--plugin-dir $TMP/home/.claude/h"
+expect_sub "a harness already under ~/.claude keeps its own CLAUDE_PLUGIN_ROOT" \
+  "$LAUNCH_NS" "CLAUDE_PLUGIN_ROOT=$TMP/home/.claude/h"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 4: --bootstrap is idempotent"
@@ -455,22 +528,54 @@ git -C "$CALIB_TEST_PUSHER" push --quiet origin main
 MERGE
 chmod +x "$TMP/claude-merge.sh"
 
-# --reset assigns the ids, so pin the stub's counter and stage the rows JSON
-# against the ids it will hand out (5001..5005). 5001/5003 have rows (routing
-# is known); 5002 has none and no labels (routing unknown -> `?`).
+# --reset assigns the ids, so pin the stub's counter and stage the substrate
+# against the ids it will hand out (5001..5005). The rows JSON's `path` field
+# is a DECOY, exactly like each slate dir's path.txt: it is derived from the
+# merged PR's labels, which post-merge are just `merged`. 5001 is classified A
+# and its row says X, so any driver still reading the rows reports X.
 echo 5000 > "$TMP/issue-counter"
 cat > "$TMP/rows.json" <<'ROWS'
 [
-  {"issue":5001,"path":"A","loc":10,"tokens_total":1000,"duration_ms":60000},
+  {"issue":5001,"path":"X","loc":10,"tokens_total":1000,"duration_ms":60000},
   {"issue":5003,"path":"B","loc":90,"tokens_total":2000,"duration_ms":180000}
 ]
 ROWS
 printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing.json"
 
+# One blob per issue, byte-for-byte what `gh issue view <n> --json
+# comments,createdAt` returns. 5001/5003/5004 carry a `## Classification`
+# comment (A / B / D); 5002 and 5005 were never classified, so `path=?` is the
+# honest answer. Compact single-line JSON on purpose: a driver that forgets to
+# reduce the blob locally still emits one line per row, so the row-count
+# assertions below stay meaningful while the path assertions fail.
+ISSUES_DIR="$TMP/issues"
+mkdir -p "$ISSUES_DIR"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** A\n- rationale: single doc file"},{"body":"**Verdict:** Approve"}]}' > "$ISSUES_DIR/5001.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** B\n"}]}' > "$ISSUES_DIR/5003.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** D\n"}]}' > "$ISSUES_DIR/5004.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[]}' > "$ISSUES_DIR/5002.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[]}' > "$ISSUES_DIR/5005.json"
+
+# The PR set the run produced: one merged PR per issue, each carrying the
+# PR-eval verdict comment. 5001 merges 30 minutes after its issue was filed
+# (wall=1800); the rest an hour after. The rows JSON's duration_ms for 5001 is
+# 60000 -> a driver reading THAT reports wall=60.
+cat > "$TMP/prs.json" <<'PRS'
+[
+  {"number":9001,"body":"Closes #5001","headRefName":"feature/calib-5001","mergedAt":"2026-09-06T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9002,"body":"Closes #5002","headRefName":"feature/calib-5002","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9003,"body":"Closes #5003","headRefName":"feature/calib-5003","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9004,"body":"Closes #5004","headRefName":"feature/calib-5004","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9005,"body":"Closes #5005","headRefName":"feature/calib-5005","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]}
+]
+PRS
+
 export CALIB_TEST_PUSHER="$PUSHER"
 export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-merge.sh"
 export CALIB_TEST_ROWS_JSON="$TMP/rows.json"
 export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+export CALIB_TEST_ISSUES_DIR="$ISSUES_DIR"
+export CALIB_TEST_PRS_JSON="$TMP/prs.json"
 
 rm -f "$CALLS"
 run_helper --run --harness "$HARNESS"
@@ -493,12 +598,22 @@ expect_sub "the cost report is scoped to the SANDBOX repo" \
   "$CLR_CALL" "PIPELINE_REPO=owner/pipeline-calib"
 expect_sub "the cost report runs with the sandbox as cwd" "$CLR_CALL" "cwd=$SANDBOX"
 
-expect_sub "path= comes from the routing the rows JSON recorded (A)" \
+expect_sub "path= comes from the ## Classification comment (5001)" \
   "$OUT" "CALIB issue=5001 path=A "
-expect_sub "path= comes from the routing the rows JSON recorded (B)" \
+expect_sub "path= comes from the ## Classification comment (5003)" \
   "$OUT" "CALIB issue=5003 path=B "
-expect_sub "an unrouted issue reports path=? rather than a slate guess" \
+expect_sub "path= comes from the ## Classification comment (5004)" \
+  "$OUT" "CALIB issue=5004 path=D "
+expect_sub "an unclassified issue reports path=? rather than a label guess" \
   "$OUT" "CALIB issue=5002 path=? "
+
+ROW_5001="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
+expect_sub "wall= spans the issue createdAt -> merging PR mergedAt" \
+  "$ROW_5001" "wall=1800 "
+expect_sub "verdicts= pair the plan-eval and the merged PR's own comments" \
+  "$ROW_5001" "verdicts=Approve/Approved "
+refute_sub "a run that produced merged PRs emits no CALIB-ABORT line" \
+  "$OUT" "CALIB-ABORT"
 if printf '%s\n' "$OUT" | grep -q '^CALIB issue=5001 .*cost=\$n/a'; then
   fail_msg "--run reported no cost for 5001 despite a priced rows substrate"
 else
@@ -535,6 +650,275 @@ if [ "$N_ROWS" = "5" ]; then
 else
   fail_msg "the day's artifact must hold 5 CALIB rows, not an accumulation (got $N_ROWS)"
 fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 10: --run stages the harness as a detached worktree"
+# ---------------------------------------------------------------------------
+# Asserted against the --run Scenarios 8/9 just performed. The sandbox
+# session's restrict_paths hook allows only its own project dir and ~/.claude,
+# so a harness outside ~/.claude has its own scripts blocked from inside the
+# run. --run therefore stages the harness HEAD beside the sandbox clone and
+# launches THAT, while every other harness role (template, slate, doctor,
+# artifacts) keeps pointing at the ORIGINAL checkout.
+
+if [ -e "$STAGE/.git" ]; then
+  pass_msg "--run stages the harness at <calib dir>/harness"
+else
+  fail_msg "--run must stage the harness at $STAGE"
+fi
+if [ "$(git -C "$STAGE" rev-parse HEAD 2>/dev/null)" = "$(git -C "$HARNESS" rev-parse HEAD)" ]; then
+  pass_msg "the staged harness sits at the harness HEAD"
+else
+  fail_msg "the staged harness must sit at the harness HEAD (uncommitted edits are not under test)"
+fi
+if git -C "$STAGE" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  fail_msg "the staged harness must be DETACHED, never on a branch"
+else
+  pass_msg "the staged harness is detached"
+fi
+if [ -f "$STAGE/pipeline.config" ] && cmp -s "$STAGE/pipeline.config" "$HARNESS/pipeline.config"; then
+  pass_msg "the harness pipeline.config (untracked, host-specific) is copied in"
+else
+  fail_msg "the staged harness must carry the harness's pipeline.config"
+fi
+if [ -f "$STAGE/scripts/doctor.sh" ]; then
+  pass_msg "the staged harness carries the harness's tracked content"
+else
+  fail_msg "the staged harness must carry the harness's tracked content"
+fi
+if [ -f "$CALIB_ARTIFACT" ] && [ ! -e "$STAGE/docs/retros/calib/$(date -u +%Y-%m-%d).txt" ]; then
+  pass_msg "the run's artifact lands in the ORIGINAL harness, not the staged copy"
+else
+  fail_msg "the artifact must stay at $CALIB_ARTIFACT and never appear under $STAGE"
+fi
+
+# A second run REFRESHES the stage to the new harness HEAD — it must not leave
+# a stale copy behind, and must not accumulate a worktree per run.
+echo "# refreshed" >> "$HARNESS/scripts/doctor.sh"
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$HARNESS" commit --quiet -a -m "harness: move HEAD"
+cat > "$TMP/claude-noop.sh" <<'NOOP'
+#!/bin/bash
+exit 0
+NOOP
+chmod +x "$TMP/claude-noop.sh"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+run_helper --run --harness "$HARNESS"
+expect_rc "the refreshing --run exits 0" 0
+
+if [ "$(git -C "$STAGE" rev-parse HEAD 2>/dev/null)" = "$(git -C "$HARNESS" rev-parse HEAD)" ]; then
+  pass_msg "a second --run refreshes the staged harness to the new HEAD"
+else
+  fail_msg "the staged harness must be refreshed to the harness HEAD on every run"
+fi
+# The environment the session was actually handed, recorded by the stub during
+# the --run above: what the launch line PREVIEWS must be what the launch DOES.
+LAUNCH_ENV_TXT="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+for want in "ALLOW_ORCHESTRATOR_EDIT=unset" "PIPELINE_HEADLESS=true" "CLAUDE_PLUGIN_ROOT=$STAGE"; do
+  if printf '%s\n' "$LAUNCH_ENV_TXT" | grep -qxF -- "$want"; then
+    pass_msg "the launched session's environment carries $want"
+  else
+    fail_msg "the launched session's environment must carry $want (got: $(printf '%s' "$LAUNCH_ENV_TXT" | tr '\n' ' '))"
+  fi
+done
+
+N_WT="$(git -C "$HARNESS" worktree list --porcelain 2>/dev/null | grep -c '^worktree .*/sandbox/harness$')"
+if [ "$N_WT" = "1" ]; then
+  pass_msg "the stage is ONE worktree, refreshed in place"
+else
+  fail_msg "the harness must register exactly one stage worktree (got $N_WT)"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 11: a run that stops to ask a question aborts, never grades 0/n"
+# ---------------------------------------------------------------------------
+# Run #1's observed shape: the headless session ended its final message on a
+# question ("your call on auto-merge?"), nobody answered, and it pushed
+# nothing. The driver graded that as reftest-pass=0/5 — indistinguishable in
+# the retro from "the harness regressed on all five issues", when in fact the
+# harness never started. The run must self-report the abort instead.
+
+# Rewind the "remote" to the unfixed base first: Scenario 8's stand-in landed
+# the fix there, and a run that merges nothing must grade against a sandbox
+# that carries no fix — otherwise the n/a assertions below could pass for the
+# wrong reason (a tree that happens to be green).
+git -C "$REMOTE" update-ref refs/heads/main "$(git -C "$REMOTE" rev-parse calib-base)"
+
+cat > "$TMP/claude-held.sh" <<'HELD'
+#!/bin/bash
+echo "Wave 1 merged. Your call on auto-merge for the rest?"
+HELD
+chmod +x "$TMP/claude-held.sh"
+printf '[]\n' > "$TMP/prs-empty.json"
+
+# --reset hands out fresh issue ids on every run, so re-pin the counter: the
+# staged issue substrate is keyed on 5001..5005.
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-held.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs-empty.json"
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "a run that merged nothing still exits 0" 0
+expect_sub "a session that ends on a question reports CALIB-ABORT reason=held" \
+  "$OUT" "CALIB-ABORT reason=held"
+
+ABORT_LN="$(printf '%s\n' "$OUT" | grep -n '^CALIB-ABORT ' | head -1 | cut -d: -f1)"
+ROW_LN="$(printf '%s\n' "$OUT" | grep -n '^CALIB issue=' | head -1 | cut -d: -f1)"
+if [ -n "$ABORT_LN" ] && [ -n "$ROW_LN" ] && [ "$ABORT_LN" -lt "$ROW_LN" ]; then
+  pass_msg "the CALIB-ABORT line comes before the first CALIB row"
+else
+  fail_msg "CALIB-ABORT must lead the block (abort line=${ABORT_LN:-none} first row=${ROW_LN:-none})"
+fi
+
+N_NA="$(printf '%s\n' "$OUT" | grep -c '^CALIB issue=.* reftest=n/a ')"
+if [ "$N_NA" = "5" ]; then
+  pass_msg "every row of a run that reached no issue reports reftest=n/a"
+else
+  fail_msg "an aborted run must report reftest=n/a for all 5 rows (got $N_NA)"
+fi
+TOTAL_HELD="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the total refuses to score an aborted run" "$TOTAL_HELD" "reftest-pass=n/a"
+refute_sub "an aborted run never reports a failed slate" "$OUT" "reftest-pass=0/5"
+
+RUN_LOG_FILE="$HARNESS/docs/retros/calib/$(date -u +%Y-%m-%d).log"
+if [ -f "$RUN_LOG_FILE" ] && grep -qF 'auto-merge for the rest?' "$RUN_LOG_FILE"; then
+  pass_msg "--run tees the session output to docs/retros/calib/<UTC date>.log"
+else
+  fail_msg "--run must tee the question it stopped on to $RUN_LOG_FILE"
+fi
+
+# That tee lands INSIDE docs/retros/calib/, which is tracked (the <date>.txt
+# artifact lives there and is committed). The session log is a per-run runtime
+# transcript, never a tracked artifact, so the repo must ignore it by name —
+# without an ignore rule every --run leaves the harness checkout dirty and the
+# next commit sweeps a raw session transcript into the repo.
+if git -C "$ROOT" check-ignore -q docs/retros/calib/x.log 2>/dev/null; then
+  pass_msg "the repo ignores docs/retros/calib/*.log"
+else
+  fail_msg "docs/retros/calib/*.log must be gitignored (the per-run session log)"
+fi
+if git -C "$ROOT" check-ignore -q docs/retros/calib/x.txt 2>/dev/null; then
+  fail_msg "the CALIB artifact docs/retros/calib/*.txt must stay TRACKED"
+else
+  pass_msg "the ignore rule spares the tracked <date>.txt artifact"
+fi
+
+# A `-p` session writes to BOTH streams and --run tees them merged (2>&1), so
+# the question it stopped on is routinely not the very last line: one stderr
+# line after it (a limit notice, a stray warning) defeated a detector that
+# read the last line alone and the held run silently regraded. Scan the tail.
+cat > "$TMP/claude-held-stderr.sh" <<'HELD2'
+#!/bin/bash
+echo "Wave 1 merged. Your call on auto-merge for the rest?"
+echo "note: session limit approaching" >&2
+HELD2
+chmod +x "$TMP/claude-held-stderr.sh"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-held-stderr.sh"
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_sub "a trailing stderr line after the question still reports reason=held" \
+  "$OUT" "CALIB-ABORT reason=held"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 12: the abort reason separates a timeout from a silent finish"
+# ---------------------------------------------------------------------------
+cat > "$TMP/claude-timeout.sh" <<'TO'
+#!/bin/bash
+echo "working on it"
+exit 124
+TO
+chmod +x "$TMP/claude-timeout.sh"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-timeout.sh"
+run_helper --run --harness "$HARNESS"
+expect_rc "a timed-out run still exits 0" 0
+expect_sub "hitting the timeout cap reports CALIB-ABORT reason=timeout" \
+  "$OUT" "CALIB-ABORT reason=timeout"
+
+cat > "$TMP/claude-quiet.sh" <<'QUIET'
+#!/bin/bash
+echo "done."
+QUIET
+chmod +x "$TMP/claude-quiet.sh"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-quiet.sh"
+run_helper --run --harness "$HARNESS"
+expect_sub "a clean finish that opened no PR reports CALIB-ABORT reason=no-pr" \
+  "$OUT" "CALIB-ABORT reason=no-pr"
+
+# The sandbox is never wiped clean: --reset reaps the slate ISSUES and rewinds
+# the base tag, but the PRs of every earlier run survive forever, so
+# `gh pr list --state all` is non-empty from the second real run onward. A
+# detector that counts the WHOLE PR set can therefore never fire `no-pr` again
+# — a silent finish that opened nothing falls through to a normal `0/5` grade,
+# exactly the "harness regressed on all five" misreading the abort exists to
+# prevent. The count has to be scoped to THIS run's slate ids, the same
+# scoping merged_pr_field() already applies.
+cat > "$TMP/prs-stale.json" <<'STALE'
+[
+  {"number":8001,"body":"Closes #4001","headRefName":"feature/calib-4001","mergedAt":"2026-09-01T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8002,"body":"Closes #4002","headRefName":"feature/calib-4002","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8003,"body":"Closes #4003","headRefName":"feature/calib-4003","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8004,"body":"Closes #4004","headRefName":"feature/calib-4004","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":8005,"body":"Closes #4005","headRefName":"feature/calib-4005","mergedAt":"2026-09-01T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]}
+]
+STALE
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_PRS_JSON="$TMP/prs-stale.json"
+run_helper --run --harness "$HARNESS"
+expect_sub "PRs from an EARLIER slate never mask this run's no-pr abort" \
+  "$OUT" "CALIB-ABORT reason=no-pr"
+refute_sub "a run masked by stale PRs is never graded as a failed slate" \
+  "$OUT" "reftest-pass=0/5"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 13: a run held AFTER a partial merge grades only what merged"
+# ---------------------------------------------------------------------------
+# Run #2's observed shape: wave 1 merged, then the orchestrator stopped to ask
+# about the rest. The merged issues carry real evidence and must be graded for
+# real; the ones the run never reached must not be graded at all.
+
+cat > "$TMP/claude-partial.sh" <<'PART'
+#!/bin/bash
+"$CALIB_TEST_MERGE_SCRIPT"
+echo "Wave 1 merged. Want me to auto-merge the rest?"
+PART
+chmod +x "$TMP/claude-partial.sh"
+
+# 5001/5003/5004 merged; 5002/5005 have an OPEN PR (mergedAt null), so the set
+# is non-empty — the reason must be `held`, not `no-pr`.
+cat > "$TMP/prs-partial.json" <<'PARTPRS'
+[
+  {"number":9001,"body":"Closes #5001","headRefName":"feature/calib-5001","mergedAt":"2026-09-06T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9003,"body":"Closes #5003","headRefName":"feature/calib-5003","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9004,"body":"Closes #5004","headRefName":"feature/calib-5004","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9002,"body":"Closes #5002","headRefName":"feature/calib-5002","mergedAt":null,"files":[],"comments":[]},
+  {"number":9005,"body":"Closes #5005","headRefName":"feature/calib-5005","mergedAt":null,"files":[],"comments":[]}
+]
+PARTPRS
+
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_MERGE_SCRIPT="$TMP/claude-merge.sh"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-partial.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs-partial.json"
+run_helper --run --harness "$HARNESS"
+expect_rc "a partially-merged held run still exits 0" 0
+expect_sub "a held run with open PRs is held, not no-pr" "$OUT" "CALIB-ABORT reason=held"
+for n in 5001 5003 5004; do
+  expect_sub "issue $n merged, so its reference test is graded for real" \
+    "$OUT" "CALIB issue=$n path=" 
+  ROW="$(printf '%s\n' "$OUT" | grep -m1 "^CALIB issue=$n ")"
+  expect_sub "issue $n reports a real reftest verdict" "$ROW" "reftest=pass "
+done
+for n in 5002 5005; do
+  ROW="$(printf '%s\n' "$OUT" | grep -m1 "^CALIB issue=$n ")"
+  expect_sub "issue $n never merged, so its reference test is n/a" "$ROW" "reftest=n/a "
+done
+TOTAL_PARTIAL="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "a partially-graded run still refuses a k/n total" "$TOTAL_PARTIAL" "reftest-pass=n/a"
+refute_sub "a partially-graded run never reports 3/5" "$OUT" "reftest-pass=3/5"
 
 unset CALIB_TEST_CLAUDE_SCRIPT
 

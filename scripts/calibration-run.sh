@@ -19,10 +19,15 @@ set -uo pipefail
 #                issues, recreate the five slate issues. Prints `CALIB-ISSUES`.
 #   --dry-run    Print the headless launch command that --run would execute
 #                and exit 0. Makes NO network call and launches NO claude.
-#   --run        --reset, then run the launch for real under `timeout`, then
-#                emit the per-issue `CALIB` block + `CALIB-TOTAL`, tee'd to
+#   --run        --reset, stage the harness for the session to load, then run
+#                the launch for real under `timeout`, then emit the per-issue
+#                `CALIB` block + `CALIB-TOTAL`, tee'd to
 #                $HARNESS/docs/retros/calib/<UTC date>.txt for the retro to
-#                ingest (scripts/run-retro.sh).
+#                ingest (scripts/run-retro.sh). The session's own output is
+#                tee'd beside it as <UTC date>.log. A run that never really
+#                started (no PR, stopped to ask, hit the cap) leads the block
+#                with `CALIB-ABORT reason=<no-pr|held|timeout>` and reports no
+#                score rather than grading the failure as a regression.
 #
 # EVERY network / launch call goes through the single dispatch() seam below,
 # which --dry-run replaces with a printf. That is what makes the test suite
@@ -38,7 +43,11 @@ set -uo pipefail
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
 # Plus PIPELINE_CALIB_PROFILE, which this script EXPORTS (never reads) into the
 # headless run's environment so the sandbox session knows which profile is
-# under test.
+# under test. That launch environment also sets PIPELINE_HEADLESS=true (the
+# seam the fullsend headless contract reads; nothing consumes it yet, which is
+# why it is an injected var rather than a knob) and UNSETS
+# ALLOW_ORCHESTRATOR_EDIT, which the loop session driving this script exports —
+# inheriting it would disable the delegation hook inside the measured run.
 #
 # Usage:
 #   bash scripts/calibration-run.sh --bootstrap
@@ -74,6 +83,10 @@ Options:
                    CLAUDE_PLUGIN_ROOT and --plugin-dir for the headless run.
                    Default: the repo containing this script.
   --help           Print this banner and exit 0.
+
+The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
+delegation hook is live inside the measured run, and with PIPELINE_HEADLESS=true
+so the session knows nobody is there to answer a question.
 USAGE
 }
 
@@ -151,6 +164,34 @@ TEMPLATE_DIR="$HARNESS/dev/calib/template"
 SLATE_DIR="$HARNESS/dev/calib/slate"
 CALIB_OUT_DIR="$HARNESS/docs/retros/calib"
 
+# abs_path <dir> — the resolved, symlink-free path of a directory; the input
+# unchanged when it does not exist. Avoids depending on `realpath`.
+abs_path() { ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"; }
+
+# needs_staging — TRUE when the harness lives OUTSIDE ~/.claude. The sandbox
+# session's own restrict_paths hook allows exactly two roots: the session's
+# project dir (the sandbox) and ~/.claude. A --plugin-dir anywhere else has its
+# own scripts blocked from inside the run — run #1 died 87 s in that way. See
+# stage_harness().
+needs_staging() {
+  local h c
+  h="$(abs_path "$HARNESS")"
+  c="$(abs_path "$HOME/.claude")"
+  case "$h/" in "$c"/*) return 1 ;; esac
+  return 0
+}
+
+# TWO HARNESS ROLES, one variable each. HARNESS is the ORIGINAL checkout and
+# stays the source of the template, the slate, doctor.sh,
+# cost-latency-report.sh and CALIB_OUT_DIR — which is why the run's .txt/.log
+# substrate lands in the original by construction. LAUNCH_HARNESS is only what
+# the sandbox session loads. The stage is a sibling of the sandbox clone inside
+# the calib dir (default $HOME/.claude/calib/harness), derived rather than
+# configured so it needs no knob and follows PIPELINE_CALIB_DIR in tests.
+STAGE_DIR="$(dirname "$SANDBOX")/harness"
+LAUNCH_HARNESS="$HARNESS"
+needs_staging && LAUNCH_HARNESS="$STAGE_DIR"
+
 # The template ships the sandbox's Claude local-settings file FLAT (a normal
 # tracked file); --bootstrap materializes it under the sandbox's own .claude/
 # dir. Destination is composed from $SANDBOX at runtime — never a literal path.
@@ -181,10 +222,14 @@ build_launch() {
   if [ -z "$ids" ]; then
     ids="N1 N2 N3 N4 N5"   # --dry-run preview before --reset has resolved ids
   fi
-  LAUNCH=(env "CLAUDE_PLUGIN_ROOT=$HARNESS" "PIPELINE_CALIB_PROFILE=$PROFILE"
+  # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
+  # exports it, and inheriting it would disable the delegation hook inside the
+  # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
+  LAUNCH=(env -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
+          "PIPELINE_CALIB_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
-          --plugin-dir "$HARNESS" --model "$MODEL" --dangerously-skip-permissions)
+          --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" --dangerously-skip-permissions)
 }
 
 # ---------------------------------------------------------------------------
@@ -376,13 +421,64 @@ cmd_reset() {
 }
 
 # ---------------------------------------------------------------------------
+# --run harness staging
+# ---------------------------------------------------------------------------
+
+# stage_harness — materialize the harness under the calib dir as a DETACHED
+# worktree at the harness's current HEAD, so the sandbox session can actually
+# read the plugin tree it is measuring (see needs_staging).
+#
+# A worktree rather than a copy: it shares the harness's object store, so the
+# refresh is one `checkout --force --detach` and the stage can never drift into
+# a stale copy of something. Consequence, and it is the point: UNCOMMITTED
+# harness edits are NOT under test — commit first.
+#
+# Called by --run only. --dry-run computes the staged PATH (LAUNCH_HARNESS
+# above) but creates nothing; --bootstrap / --reset never launch a session.
+stage_harness() {
+  needs_staging || return 0
+  local sha stage_common harness_common
+  sha="$(git -C "$HARNESS" rev-parse HEAD 2>/dev/null)"
+  [ -n "$sha" ] || die_run "harness staging needs --harness to be a git checkout: $HARNESS"
+  git -C "$HARNESS" worktree prune 2>/dev/null
+  if [ -e "$STAGE_DIR/.git" ]; then
+    # Adopt an existing checkout ONLY if it is a worktree of this same clone
+    # (the operator may already have made one by hand at this path). Anything
+    # else is somebody's repo: refuse by name, never rm -rf.
+    stage_common="$( cd "$STAGE_DIR" 2>/dev/null && abs_path "$(git rev-parse --git-common-dir 2>/dev/null)" )"
+    harness_common="$( cd "$HARNESS" 2>/dev/null && abs_path "$(git rev-parse --git-common-dir 2>/dev/null)" )"
+    if [ -z "$stage_common" ] || [ "$stage_common" != "$harness_common" ]; then
+      die_run "$STAGE_DIR is a checkout of a different repo — remove it and re-run"
+    fi
+    git -C "$STAGE_DIR" checkout --quiet --force --detach "$sha" \
+      || die_run "could not refresh the staged harness at $STAGE_DIR"
+  elif [ -d "$STAGE_DIR" ] && [ -n "$(ls -A "$STAGE_DIR" 2>/dev/null)" ]; then
+    die_run "$STAGE_DIR exists and is not a git checkout — remove it and re-run"
+  else
+    mkdir -p "$(dirname "$STAGE_DIR")" || die_run "could not create $(dirname "$STAGE_DIR")"
+    git -C "$HARNESS" worktree add --quiet --detach "$STAGE_DIR" "$sha" \
+      || die_run "could not stage the harness worktree at $STAGE_DIR"
+  fi
+  # pipeline.config is gitignored and host-specific, so no checkout carries it.
+  # Without this copy the staged harness runs with no config at all.
+  [ -f "$HARNESS/pipeline.config" ] && cp -f "$HARNESS/pipeline.config" "$STAGE_DIR/"
+  echo "calib: staged harness $sha at $STAGE_DIR"
+}
+
+# ---------------------------------------------------------------------------
 # --run reporting helpers
 # ---------------------------------------------------------------------------
 
 CAPTURE_LOG=""
+RUN_LOG=""
+RUN_RC=0
+ABORT_REASON=""
 ROWS_JSON=""
 PRICING_TOTAL=""
-MERGED_PRS_JSON=""
+PRS_JSON=""
+MERGED_JSON=""
+ISSUE_JSON="{}"
+ISSUE_JSON_FOR=""
 
 load_run_substrate() {
   CAPTURE_LOG="$SANDBOX/.claude/logs/agent-costs.jsonl"
@@ -402,9 +498,76 @@ load_run_substrate() {
       bash "$clr" --emit-pricing-json --capture-log "$CAPTURE_LOG" 2>/dev/null \
       | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
   fi
-  MERGED_PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state merged \
-    --json number,body,headRefName,files --limit 50 2>/dev/null)"
-  [ -n "$MERGED_PRS_JSON" ] || MERGED_PRS_JSON="[]"
+  # ONE PR fetch for the whole run. `--state all` because "this run opened no
+  # PR at all" is a distinct, load-bearing observation (see the abort detector)
+  # that a merged-only query cannot make; the merged subset is taken locally.
+  # mergedAt carries both the merged filter and each issue's wall-clock end;
+  # comments carry the PR-eval verdict — so no second round trip per PR.
+  PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state all --limit 50 \
+    --json number,body,headRefName,files,mergedAt,comments 2>/dev/null)"
+  [ -n "$PRS_JSON" ] || PRS_JSON="[]"
+  MERGED_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.mergedAt != null)]' 2>/dev/null)"
+  [ -n "$MERGED_JSON" ] || MERGED_JSON="[]"
+}
+
+# load_issue_json <issue> — ONE `gh issue view` per issue, cached and fetched
+# WITHOUT --jq so all three readers below (path, wall, verdicts) share it.
+# emit_calib_block calls this from its loop body, not the readers alone: each
+# reader runs inside a command substitution, so a cache filled there would die
+# with the subshell and take the one-fetch-per-issue property with it.
+load_issue_json() {
+  local issue="$1"
+  [ "$ISSUE_JSON_FOR" = "$issue" ] && return 0
+  ISSUE_JSON="$(dispatch gh issue view "$issue" --repo "$CALIB_REPO" \
+    --json comments,createdAt 2>/dev/null)"
+  [ -n "$ISSUE_JSON" ] || ISSUE_JSON="{}"
+  ISSUE_JSON_FOR="$issue"
+}
+
+# merged_pr_field <issue> <field> — <field> of the FIRST merged PR whose body
+# references #<issue>, else empty.
+merged_pr_field() {
+  printf '%s' "$MERGED_JSON" | jq -r --arg n "$1" --arg f "$2" \
+    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {} | .[$f] // empty' 2>/dev/null
+}
+
+# detect_abort — did the run FAIL TO START (or fail to finish) rather than do
+# the work badly? Sets ABORT_REASON, empty when the run really ran.
+#
+# Both observed failures graded as regressions instead of aborts: run #1's
+# session ended on a question nobody answered and pushed nothing (`0/5`), run
+# #2 merged wave 1 and then stopped to ask about the rest (`3/5`). A slate
+# score is only meaningful for work the harness actually attempted.
+#
+# Precedence, most specific first:
+#   timeout  the launch hit the cap (rc 124) — it was still working
+#   held     the session's last non-blank line ends on `?`; a `-p` session that
+#            stops to ask ends its final message on the question, and nobody is
+#            there to answer. A heuristic: a run that stops on a statement
+#            falls through to no-pr or grades normally.
+#   no-pr    the run opened no PR AT ALL (any state) — nothing to grade
+detect_abort() {
+  local n
+  ABORT_REASON=""
+  if [ "${RUN_RC:-0}" -eq 124 ]; then ABORT_REASON="timeout"; return 0; fi
+  # The LAST FIVE non-blank lines, not the last one: the log is tee'd 2>&1, so
+  # a single stderr line emitted after the question (a limit notice, a stray
+  # warning) would otherwise defeat the test and regrade a held run.
+  if sed -e 's/[[:space:]]*$//' "$RUN_LOG" 2>/dev/null | grep -v '^$' | tail -5 \
+     | grep -q '?$'; then
+    ABORT_REASON="held"; return 0
+  fi
+  # SCOPED TO THIS RUN'S SLATE, not `length` of the whole PR set: cmd_reset
+  # reaps the slate issues and rewinds the base tag, but it never removes PRs,
+  # so `gh pr list --state all` stays non-empty forever once the sandbox has
+  # had one real run. An unscoped count therefore makes `no-pr` unfireable
+  # from run two onward, and a silent finish that opened nothing grades as a
+  # `0/5` regression. Same body-references-#<issue> scoping as merged_pr_field.
+  n="$(printf '%s' "$PRS_JSON" | jq -r --arg ids "$ISSUE_IDS" \
+    '[.[] | select((.body // "") | test("#(" + ($ids | split(" ") | join("|")) + ")\\b"))] | length' 2>/dev/null)"
+  case "$n" in
+    ''|0) ABORT_REASON="no-pr" ;;
+  esac
 }
 
 # row_field <issue> <jq field> — echoes the rows-JSON field or empty.
@@ -427,50 +590,59 @@ issue_cost() {
   awk -v t="$tok" -v s="$sum" -v p="$PRICING_TOTAL" 'BEGIN{ printf "%.2f", p * t / s }'
 }
 
-# issue_wall <issue> — wall-clock seconds from the rows JSON, else empty.
+# issue_wall <issue> — the issue's WALL-CLOCK span: from its own createdAt to
+# the mergedAt of the first merged PR that references it. Not the rows JSON's
+# duration_ms, which is the capture log's agent time (one run #2 issue read
+# `wall=60` for half an hour of clock). Degrades to empty -> `n/a` when the
+# issue never merged, or when `date -d` is not GNU coreutils; never errors.
 issue_wall() {
-  local ms
-  ms="$(row_field "$1" duration_ms)"
-  case "$ms" in ''|null) return 0 ;; esac
-  awk -v m="$ms" 'BEGIN{ printf "%d", m / 1000 }'
+  local issue="$1" created merged t0 t1
+  load_issue_json "$issue"
+  created="$(printf '%s' "$ISSUE_JSON" | jq -r '.createdAt // empty' 2>/dev/null)"
+  merged="$(merged_pr_field "$issue" mergedAt)"
+  [ -n "$created" ] && [ -n "$merged" ] || return 0
+  t0="$(date -u -d "$created" +%s 2>/dev/null)" || return 0
+  t1="$(date -u -d "$merged" +%s 2>/dev/null)" || return 0
+  case "$t0" in ''|*[!0-9]*) return 0 ;; esac
+  case "$t1" in ''|*[!0-9]*) return 0 ;; esac
+  awk -v a="$t0" -v b="$t1" 'BEGIN{ printf "%d", b - a }'
 }
 
 # issue_verdicts <issue> — `<plan-eval>/<pr-eval>`, each `n/a` when absent.
+# Both halves are reduced locally: the plan half from the cached issue blob,
+# the PR half from the merging PR's own comments inside the single PR fetch.
 issue_verdicts() {
   local issue="$1" plan pr
-  plan="$(dispatch gh issue view "$issue" --repo "$CALIB_REPO" --json comments \
-    --jq '[.comments[].body | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)").v] | last // "n/a"' 2>/dev/null)"
-  pr="$(printf '%s' "$MERGED_PRS_JSON" | jq -r --arg n "$issue" \
-    '[.[] | select((.body // "") | test("#" + $n + "\\b")) | .number] | first // empty' 2>/dev/null)"
-  if [ -n "$pr" ]; then
-    pr="$(dispatch gh pr view "$pr" --repo "$CALIB_REPO" --json comments \
-      --jq '[.comments[].body | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)").v] | last // "n/a"' 2>/dev/null)"
-  fi
+  load_issue_json "$issue"
+  plan="$(printf '%s' "$ISSUE_JSON" | jq -r \
+    '[(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+  pr="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
+    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
+     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
   printf '%s/%s' "${plan:-n/a}" "${pr:-n/a}"
 }
 
-# issue_path <issue> — the path the harness ACTUALLY routed the issue down.
-# Sources, in order: the rows JSON (derived from the merged PR's labels), then
-# the issue's own classification labels, then `?`. Never a slate-declared
-# expectation: `path=` is an OBSERVATION of the run under test, and a slate
-# `path.txt` would report the routing we hoped for even when the harness
-# misrouted — exactly the regression the calibration slate exists to catch.
-# `?` therefore means "this run never routed the issue" and is a real signal.
+# issue_path <issue> — the path the harness ACTUALLY routed the issue down,
+# read from the `## Classification` comment the classifier posts on the issue
+# (`recommended_path:`, last comment wins), else `?`.
+#
+# NOT the rows JSON and NOT the issue's labels — both are the same source, and
+# it lies: post-merge an issue's labels are just `merged`, so the label mapping
+# defaults everything to `B` (run #2 graded a docs-only issue `path=B` that
+# way). NOT a slate-declared expectation either: `path=` is an OBSERVATION of
+# the run under test, and a slate `path.txt` would report the routing we hoped
+# for even when the harness misrouted — exactly the regression the calibration
+# slate exists to catch. `?` therefore means "this run never classified the
+# issue" and is a real signal.
 issue_path() {
-  local issue="$1" names
-  names="$(row_field "$issue" path)"
-  if [ -n "$names" ]; then printf '%s' "$names"; return 0; fi
-  names="$(dispatch gh issue view "$issue" --repo "$CALIB_REPO" --json labels \
-    --jq '[.labels[].name] | join(" ")' 2>/dev/null)"
-  # Same mapping cost-latency-report.sh's derive_path() uses; an issue with no
-  # labels at all was never classified, so it stays `?` rather than defaulting.
-  case " $names " in
-    *" docs-only "*)  printf 'A' ;;
-    *" quick-fix "*)  printf 'D' ;;
-    *" multi-task "*) printf 'C' ;;
-    *) [ -n "$names" ] && printf 'B' ;;
+  local issue="$1" p
+  load_issue_json "$issue"
+  p="$(printf '%s' "$ISSUE_JSON" | jq -r \
+    '[(.comments // [])[] | .body // "" | capture("recommended_path:\\*\\*\\s*(?<p>[ABCD])"; "g").p] | last // empty' 2>/dev/null)"
+  case "$p" in
+    A|B|C|D) printf '%s' "$p" ;;
+    *)       printf '?' ;;
   esac
-  return 0
 }
 
 # issue_reftest <slate dir> — runs the slate's reference test IN THE SANDBOX.
@@ -487,7 +659,7 @@ issue_reftest() {
 # issue_unexpected <issue> <slate dir> — merged-PR files MINUS expected-files.txt.
 issue_unexpected() {
   local issue="$1" d="$2" expected="$2/expected-files.txt" files f n=0
-  files="$(printf '%s' "$MERGED_PRS_JSON" | jq -r --arg n "$issue" \
+  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
     '[.[] | select((.body // "") | test("#" + $n + "\\b")) | .files[]?.path] | .[]' 2>/dev/null)"
   [ -n "$files" ] || { printf '0'; return 0; }
   while IFS= read -r f; do
@@ -503,15 +675,27 @@ emit_calib_block() {
   local i=0 issue d path cost wall verdicts reftest unexpected
   local total_cost=0 pass=0 count=0
   load_run_substrate
+  detect_abort
+  if [ -n "$ABORT_REASON" ]; then
+    printf 'CALIB-ABORT reason=%s\n' "$ABORT_REASON"
+  fi
   for issue in $ISSUE_IDS; do
     d="${SLATE_DIRS[$i]:-}"
     i=$((i + 1)); count=$((count + 1))
+    load_issue_json "$issue"   # once per issue, in THIS shell (see the cache note)
     path="$(issue_path "$issue")"
     [ -n "$path" ] || path="?"
     cost="$(issue_cost "$issue")"
     wall="$(issue_wall "$issue")"
     verdicts="$(issue_verdicts "$issue")"
-    reftest="$(issue_reftest "$d")"
+    # On an aborted run the reference test is only meaningful for an issue the
+    # harness actually merged. For the rest it would grade the untouched
+    # sandbox and report `fail` — a regression the run never got near.
+    if [ -n "$ABORT_REASON" ] && [ -z "$(merged_pr_field "$issue" mergedAt)" ]; then
+      reftest="n/a"
+    else
+      reftest="$(issue_reftest "$d")"
+    fi
     unexpected="$(issue_unexpected "$issue" "$d")"
     [ "$reftest" = "pass" ] && pass=$((pass + 1))
     if [ -n "$cost" ]; then
@@ -520,8 +704,16 @@ emit_calib_block() {
     printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
       "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected"
   done
-  printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s\n' \
-    "$total_cost" "$wall_total" "$count" "$pass" "$count"
+  if [ -z "$ABORT_REASON" ]; then
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s\n' \
+      "$total_cost" "$wall_total" "$count" "$pass" "$count"
+  else
+    # No k/n for an aborted run, in either direction: `0/5` reads as a total
+    # regression and `3/5` as a partial one, when the denominator was never
+    # attempted. run-retro.sh renders this as the abort reason.
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s\n' \
+      "$total_cost" "$wall_total" "$count" "n/a"
+  fi
 }
 
 # sync_sandbox_after_run — the pipeline merges its PRs on the REMOTE, while
@@ -538,21 +730,27 @@ sync_sandbox_after_run() {
 
 cmd_run() {
   cmd_reset || return 1
+  stage_harness
   build_launch
-  local t0 t1 rc
-  t0="$(date +%s)"
-  ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" )
-  rc=$?
-  t1="$(date +%s)"
-  [ "$rc" -eq 0 ] || warn "headless run exited $rc (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
-  sync_sandbox_after_run
-  # Harness-rooted ABSOLUTE output path: --run executes with the SANDBOX as cwd.
+  local t0 t1
+  # Harness-rooted ABSOLUTE output paths: --run executes with the SANDBOX as
+  # cwd. The dir is created BEFORE the launch because the session log is tee'd
+  # as the run happens — it is the only evidence of what a run that stopped to
+  # ask a question actually said, and detect_abort reads its last line.
   # TRUNCATING, not appending: one artifact per UTC day, last run wins.
   # run-retro.sh's compute_calib() sums the `reftest=` atoms of EVERY CALIB
   # line in the newest artifact, so two same-day runs appended to one file
   # double-count (5/5 -> 10/10). run-retro.sh picks the newest artifact by
-  # FILENAME, which this <date>.txt name keeps stable across the rewrite.
+  # FILENAME, which this <date>.txt name keeps stable across the rewrite; the
+  # <date>.log beside it follows the same day-keyed rule.
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
+  RUN_LOG="$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).log"
+  t0="$(date +%s)"
+  ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
+  RUN_RC=${PIPESTATUS[0]}
+  t1="$(date +%s)"
+  [ "$RUN_RC" -eq 0 ] || warn "headless run exited $RUN_RC (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
+  sync_sandbox_after_run
   emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).txt"
 }
 

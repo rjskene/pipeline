@@ -127,6 +127,38 @@ for f in "$DOC" "$RETRO_README"; do
 done
 
 echo ""
+echo "docs/calibration.md — abort, harness staging, launch env (#1285)"
+assert_contains "$DOC" 'CALIB-ABORT reason=<no-pr|held|timeout>' \
+  "CALIB-ABORT line grammar"
+assert_contains "$DOC" 'calib/harness' "names the staged harness location"
+assert_matches "$DOC" 'detached[^.]*worktree' "staging is a detached git worktree"
+assert_contains "$DOC" 'env -u ALLOW_ORCHESTRATOR_EDIT' \
+  "launch env unsets the orchestrator-edit override"
+assert_contains "$DOC" 'PIPELINE_HEADLESS=true' "launch env sets the headless marker"
+assert_contains "$DOC" '<date>.log' "names the run-log artifact beside the .txt"
+assert_matches "$DOC" 'run #1|run 1' "records the run #1 lesson"
+assert_matches "$DOC" 'run #2|run 2' "records the run #2 lesson"
+
+echo ""
+echo "docs/calibration.md — PIPELINE_* token set"
+# The doc may name only knobs pipeline.config.example declares plus the one
+# allow-listed injected var; a removed/inert knob name here would red
+# scripts/check-config-drift.sh.
+TESTS=$((TESTS + 1))
+extra=""
+if [ -f "$DOC" ]; then
+  extra="$(grep -oE '\bPIPELINE_[A-Z0-9_]+\b' "$DOC" | sort -u \
+    | grep -vxF -e PIPELINE_CALIB_DIR -e PIPELINE_CALIB_REPO \
+        -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS \
+    | tr '\n' ' ' | sed 's/ $//')" || extra=""
+fi
+if [ -z "$extra" ]; then
+  pass_msg "names no PIPELINE_* token beyond the three calib knobs and PIPELINE_HEADLESS"
+else
+  fail_msg "names undeclared PIPELINE_* token(s): $extra"
+fi
+
+echo ""
 echo "docs/calibration.md — no anchored cross-references"
 TESTS=$((TESTS + 1))
 if [ -f "$DOC" ] && grep -qE '\.md#[A-Za-z0-9_-]+' "$DOC"; then
@@ -138,6 +170,7 @@ fi
 echo ""
 echo "docs/retros/README.md — calib substrate pointer"
 assert_contains "$RETRO_README" 'docs/retros/calib/' "retros README mentions docs/retros/calib/"
+assert_contains "$RETRO_README" 'CALIB-ABORT' "retros README documents CALIB-ABORT"
 
 echo ""
 echo "================================"

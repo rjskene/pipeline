@@ -102,6 +102,27 @@ check_cfg PIPELINE_REPO "rjskene/pipeline-calib"
 check_cfg PIPELINE_BASE_BRANCH "main"
 check_cfg PIPELINE_TEST_CMD "bash tests/run.sh"
 check_cfg PIPELINE_LOGS_ENABLED "true"
+check_cfg PIPELINE_TEST_FILE_GLOBS "case-*.sh"
+
+# The sandbox config carries EXACTLY the knobs the sandbox consumes, and every
+# one of them is declared in pipeline.config.example. Pinning the SET (rather
+# than naming the knobs that were dropped) keeps this file free of tokens the
+# config-drift lint would flag, and catches any future inert knob for free.
+want_knobs="PIPELINE_BASE_BRANCH PIPELINE_INSTALL_CMD PIPELINE_LOGS_ENABLED PIPELINE_REPO PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TEST_FILE_GLOBS PIPELINE_WORKTREE_PREFIX"
+got_knobs=$(grep -oE '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$cfg" | sed 's/[[:space:]]//g; s/=$//' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
+if [ "$got_knobs" = "$want_knobs" ]; then
+  pass_msg "pipeline.config knob set is exactly the eight declared knobs"
+else
+  fail_msg "pipeline.config knob set is '$got_knobs' (want '$want_knobs')"
+fi
+
+# The headless calibration session reads this file; a comment telling it a human
+# will close the loop is an instruction to stop and wait for one.
+if grep -qi 'human closes' "$cfg"; then
+  fail_msg "pipeline.config still tells the session a human closes the loop"
+else
+  pass_msg "pipeline.config carries no 'human closes' comment"
+fi
 
 # ---------------------------------------------------------------------------
 echo "== (c) sandbox claude settings disable both marketplace plugins =="
@@ -128,6 +149,85 @@ PY
     fail_msg "enabledPlugins['$plugin'] is $got (want False)"
   fi
 done
+
+# ---------------------------------------------------------------------------
+echo "== (c2) sandbox claude settings register the plugin logging hooks =="
+# ---------------------------------------------------------------------------
+# The sandbox must record tool use, subagent dispatches and agent cost, or a
+# calibration run grades `cost=` as n/a. The hooks live in the plugin build
+# under calibration, so every command is rooted at the plugin root — the
+# sandbox project has no hooks/ directory of its own. The dogfood-only hooks
+# (comment-trust, dogfood refresh/heal, doctor-on-update) are NOT carried.
+
+hooks_report=$(python3 - "$settings" <<'PY' 2>/dev/null
+import json, sys
+
+data = json.load(open(sys.argv[1]))
+hooks = data.get("hooks")
+if not isinstance(hooks, dict) or not hooks:
+    print("no-hooks-key")
+    sys.exit(0)
+
+
+def commands(event, matcher):
+    out = []
+    for entry in hooks.get(event, []):
+        if entry.get("matcher") != matcher:
+            continue
+        for hook in entry.get("hooks", []):
+            out.append(hook.get("command", ""))
+    return out
+
+
+def every_command():
+    for entries in hooks.values():
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                yield hook.get("command", "")
+
+
+def has(cmds, needle):
+    return any(needle in cmd for cmd in cmds)
+
+
+post_star = commands("PostToolUse", "*")
+post_agent = commands("PostToolUse", "Agent")
+stop_star = commands("Stop", "*")
+
+print("has-hooks True")
+print("post-star-tool-use", has(post_star, "log-tool-use.sh"))
+print("post-agent-subagent", has(post_agent, "log_subagent.py"))
+print("post-agent-cost", has(post_agent, "capture_agent_cost.py"))
+print("stop-cost", has(stop_star, "capture_agent_cost.py"))
+
+prefixes = ("bash ${CLAUDE_PLUGIN_ROOT}/hooks/", "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/")
+stray = [c for c in every_command() if not c.startswith(prefixes)]
+print("plugin-root-rooted", not stray, " ".join(stray))
+
+dogfood_only = ("enforce-comment-trust", "dogfood-", "doctor-on-update")
+carried = [c for c in every_command() if any(t in c for t in dogfood_only)]
+print("no-dogfood-only", not carried, " ".join(carried))
+PY
+)
+
+hook_check() {
+  local key="$1" desc="$2" got detail
+  got=$(printf '%s\n' "$hooks_report" | awk -v k="$key" '$1 == k { print $2 }')
+  detail=$(printf '%s\n' "$hooks_report" | awk -v k="$key" '$1 == k { $1 = ""; $2 = ""; sub(/^ +/, ""); print }')
+  if [ "$got" = "True" ]; then
+    pass_msg "$desc"
+  else
+    fail_msg "$desc — got '${got:-no hooks key}'${detail:+ (offenders: $detail)}"
+  fi
+}
+
+hook_check has-hooks "claude-settings.local.json declares a hooks object"
+hook_check post-star-tool-use "PostToolUse '*' logs tool use"
+hook_check post-agent-subagent "PostToolUse 'Agent' logs subagent dispatches"
+hook_check post-agent-cost "PostToolUse 'Agent' captures agent cost"
+hook_check stop-cost "Stop '*' captures agent cost"
+hook_check plugin-root-rooted "every hook command is rooted at the plugin root's hooks/ dir"
+hook_check no-dogfood-only "no dogfood-only hook is carried into the sandbox"
 
 # ---------------------------------------------------------------------------
 echo "== (d) slate shape =="

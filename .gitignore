@@ -9,6 +9,9 @@
 # advisory-scanner output (scripts/migration-cleanup-claudemd.sh) — runtime artifact, never tracked
 /.claude/migration-cleanup-report-claudemd.txt
 /.claude/migration-cleanup-claudemd.patch
+# calibration --run tees the headless session transcript beside the tracked
+# <date>.txt CALIB artifact — a runtime log, never tracked. .txt stays in.
+docs/retros/calib/*.log
 hooks/__pycache__/
 __pycache__/
 *.pyc

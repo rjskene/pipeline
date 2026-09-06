@@ -24,6 +24,7 @@ filename date, from `docs/retros/calib/*.txt`. The block is one line per calibra
 slate issue plus one total:
 
 ```
+CALIB-ABORT reason=<no-pr|held|timeout>
 CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
 CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>
 ```
@@ -31,7 +32,11 @@ CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>
 `compute_calib()` reads three atoms off the `CALIB` lines only: `reftest=` (the
 `weak-model pass` k/n), plus `cost=` filtered by `path=B` (the `median path b pr/usd`
 median). A missing `calib.txt`, or one carrying no `CALIB ` rows, degrades to the
-`n/a (...)` reasons instead of failing. Grammar reference: `docs/calibration.md`.
+`n/a (...)` reasons instead of failing. An artifact that STARTS with a
+`CALIB-ABORT` line — written only when the run did not finish — makes
+`compute_calib()` render `weak-model pass` as `n/a (calibration run aborted: …)`
+rather than a k/n over rows the run never reached. Grammar reference:
+`docs/calibration.md`.
 
 ## Variant files (the test copies these OVER a canonical name in a temp copy)
 

@@ -179,6 +179,38 @@ expect_line "live mode reads the newest artifact by filename, not by mtime" \
   "$LIVE_REPORT" "weak-model pass: 0/2"
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 7: an aborted calibration artifact renders the reason, never a k/n"
+# ---------------------------------------------------------------------------
+# calibration-run.sh leads an aborted run's block with `CALIB-ABORT reason=…`
+# and reports `reftest-pass=n/a`: the run never attempted the slate (it opened
+# no PR, stopped to ask a question, or hit the timeout cap). Summing the
+# `reftest=` atoms anyway would render `3/5` — indistinguishable in the retro
+# from a harness that genuinely failed two of five issues, which is exactly the
+# false signal the abort grammar exists to remove.
+
+cat > "$FIX/calib.txt" <<'ABORTED'
+CALIB-ABORT reason=held
+CALIB issue=201 path=A cost=$3.10 wall=420 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=202 path=D cost=$5.00 wall=600 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=203 path=B cost=$12.00 wall=1800 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=204 path=B cost=$20.00 wall=n/a verdicts=n/a/n/a reftest=n/a unexpected-files=0
+CALIB issue=205 path=B cost=$31.00 wall=n/a verdicts=n/a/n/a reftest=n/a unexpected-files=0
+CALIB-TOTAL cost=$71.10 wall=8220 issues=5 reftest-pass=n/a
+ABORTED
+
+REPORT_ABORT="$(retro)"
+RC_ABORT=$?
+if [ "$RC_ABORT" -eq 0 ]; then
+  pass_msg "an aborted artifact still exits 0"
+else
+  fail_msg "an aborted artifact must not fail the retro (rc=$RC_ABORT)"
+fi
+expect_line "the weak-model row renders the abort reason instead of a score" \
+  "$REPORT_ABORT" "weak-model pass: n/a (calibration run aborted: reason=held)"
+refute_sub "an aborted run is never scored over the rows it did reach" \
+  "$REPORT_ABORT" "weak-model pass: 3/5"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"

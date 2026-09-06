@@ -57,14 +57,18 @@ one file per run named `<date>.txt` (e.g. `2026-09-12.txt`). Each is the teed
 stdout of `bash scripts/calibration-run.sh --run` — one `CALIB issue=... ` line
 per slate issue plus a final `CALIB-TOTAL ...` line. The directory is
 harness-rooted on purpose: the artifact measures *this* harness version, while
-the sandbox clone it came from is reset to `calib-base` on the next run.
+the sandbox clone it came from is reset to `calib-base` on the next run. A
+`<date>.log`, the headless session's own output, is written beside each
+`<date>.txt`.
 
 `run-retro.sh` ingests the newest `docs/retros/calib/*.txt` (by filename date)
 into two spots in the cycle report:
 
 - `weak-model pass:` — a `<pass>/<rows>` ratio counted over the `reftest=` atoms
   of the per-issue `CALIB` rows; the `CALIB-TOTAL` line is not parsed.
-  `n/a (no calibration slate; ...)` when no artifact exists.
+  `n/a (no calibration slate; ...)` when no artifact exists. An artifact whose
+  first line is `CALIB-ABORT reason=...` renders as
+  `n/a (calibration run aborted: ...)` rather than a ratio.
 - `median path b pr/usd` — the median `cost=` across the `path=B` rows only
   (other paths are skipped), which is otherwise
   `n/a (no per-issue cost in rows JSON)`. Each `cost=` is
