@@ -68,6 +68,7 @@ FIXTURE_DIR=""
 LIMIT=50
 DUMP_BASELINE=0
 DUMP_COMPUTED=0
+NOW_ARG=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -85,6 +86,8 @@ while [ $# -gt 0 ]; do
     --fixture=*)      FIXTURE_DIR="${1#--fixture=}"; shift ;;
     --limit)          LIMIT="${2:-}"; shift 2 ;;
     --limit=*)        LIMIT="${1#--limit=}"; shift ;;
+    --now)            NOW_ARG="${2:-}"; shift 2 ;;
+    --now=*)          NOW_ARG="${1#--now=}"; shift ;;
     --dump-baseline)  DUMP_BASELINE=1; shift ;;
     --dump-computed)  DUMP_COMPUTED=1; shift ;;
     *)
@@ -105,6 +108,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Injectable clock for the newest cycle's OPEN upper bound (cycle_window()
+# below): a cycle with a successor `Cycle N+1 (<date>` tracker header is
+# clock-independent, but the newest cycle has none, so its window would
+# otherwise close at the wall clock. `--now` wins over the env var, which
+# wins over the real clock; live callers never need either.
+RETRO_NOW="${NOW_ARG:-${PIPELINE_RETRO_NOW:-$(date -u +%FT%TZ)}}"
 
 # ---------------------------------------------------------------------------
 # Small string helpers
@@ -302,6 +312,70 @@ parse_cycle_issues() {  # <body> <N> -> prints space-separated issue numbers
   printf '%s' "${nums[*]:-}"
 }
 
+# cycle_window <body> <cycle N> <cur ids json> <issues_file> -> sets
+# CYCLE_SINCE / CYCLE_UNTIL (#1281, item 3a).
+#
+# CYCLE_SINCE is the date captured from the tracker body's own
+# `Cycle N (<YYYY-MM-DD>` header; when no header carries cycle N, it falls
+# back to the MIN createdAt over the cycle's own issues. CYCLE_UNTIL is the
+# date from the `Cycle N+1 (` header when present, else the injected clock
+# ($RETRO_NOW) — only the newest cycle (no successor header) needs a clock,
+# which is why every earlier cycle's window is fully clock-independent.
+# The bound is uniformly EXCLUSIVE (mergedAt/createdAt >= SINCE and < UNTIL);
+# a bare YYYY-MM-DD upper bound already excludes every same-day timestamp
+# under lexicographic compare.
+#
+# If CYCLE_SINCE cannot be resolved at all (no header, no cycle issues to
+# fall back on): CYCLE_SINCE stays empty. Callers must treat that as "no
+# window" and render a named `n/a (no cycle window)` reason — NEVER fall back
+# to a repo-wide count.
+CYCLE_SINCE=""
+CYCLE_UNTIL=""
+
+cycle_window() {
+  local body="$1" n="$2" ids_json="$3" issues_file="$4" line found_n date next
+  CYCLE_SINCE=""
+  CYCLE_UNTIL=""
+  next=$((n + 1))
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^Cycle\ ([0-9]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+      found_n="${BASH_REMATCH[1]}"
+      date="${BASH_REMATCH[2]}"
+      if [ "$found_n" = "$n" ]; then
+        CYCLE_SINCE="$date"
+      elif [ "$found_n" = "$next" ]; then
+        CYCLE_UNTIL="$date"
+      fi
+    fi
+  done <<< "$body"
+
+  if [ -z "$CYCLE_SINCE" ] && [ -f "$issues_file" ]; then
+    CYCLE_SINCE="$(jq -r --argjson ids "$ids_json" '
+      [.[] | select(.number as $n | $ids | index($n) != null) | .createdAt] | sort | (.[0] // empty)
+    ' "$issues_file" 2>/dev/null)"
+  fi
+
+  [ -n "$CYCLE_UNTIL" ] || CYCLE_UNTIL="$RETRO_NOW"
+}
+
+# cycle_prs <prs_file> <cur ids json> <base> <since> <until> -> filtered PR
+# array JSON on stdout (#1281). A PR is in scope when it closes one of the
+# cycle's own issues, OR it merged onto the base branch inside the cycle
+# window — the second arm is what lets an escape-lane PR (no `Closes #`) still
+# count toward the cycle it actually landed in.
+cycle_prs() {
+  local prs_file="$1" ids_json="$2" base="$3" since="$4" until="$5"
+  if [ ! -f "$prs_file" ]; then printf '[]'; return 0; fi
+  jq -c --argjson ids "$ids_json" --arg base "$base" --arg since "$since" --arg until "$until" '
+    def closes: (.body // "") | [scan("Closes #([0-9]+)")] | map(.[0]|tonumber);
+    [.[] | . + {closes: closes}
+      | select(
+          (.closes | any(. as $c | $ids | index($c) != null))
+          or (((.baseRefName // "") == $base) and (.mergedAt >= $since) and (.mergedAt < $until))
+        )]
+  ' "$prs_file" 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
 # File-path resolution (fixture seam vs live)
 # ---------------------------------------------------------------------------
@@ -329,10 +403,10 @@ else
     gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json body --jq .body \
       > "$LIVE_TMP/tracker.md" 2>/dev/null
     gh issue list --repo "$PIPELINE_REPO" --state all \
-      --json number,labels,body,comments --limit 300 \
+      --json number,labels,body,comments,createdAt --limit 300 \
       > "$LIVE_TMP/issues.json" 2>/dev/null
     gh pr list --repo "$PIPELINE_REPO" --state merged \
-      --json number,title,headRefName,body,mergedAt,labels,files --limit 300 \
+      --json number,title,headRefName,body,mergedAt,labels,files,baseRefName --limit 300 \
       > "$LIVE_TMP/prs.json" 2>/dev/null
   fi
   ROWS_EXTRA_ARGS=()
@@ -374,6 +448,9 @@ if [ "$CYCLE" -gt 0 ]; then
   PREV_ISSUES="$(parse_cycle_issues "$TRACKER_BODY" $((CYCLE - 1)))"
 fi
 PREV_IDS_JSON="$(ids_json "$PREV_ISSUES")"
+
+cycle_window "$TRACKER_BODY" "$CYCLE" "$CUR_IDS_JSON" "$ISSUES_FILE"
+BASE="${PIPELINE_BASE_BRANCH:-evolve}"
 
 # ---------------------------------------------------------------------------
 # Task 3 — cost / latency rows scoped to the cycle's issues
@@ -567,7 +644,8 @@ FRICTION_MANUAL_MERGE=0
 FRICTION_HUMAN=0
 
 compute_friction() {
-  local toolog="$1" issues_file="$2" prs_file="$3" since="$4" cnt line
+  local toolog="$1" issues_file="$2" prs_file="$3" since="$4" cur_ids_json="$5" base="$6" cyc_since="$7" cyc_until="$8"
+  local cnt line cur_prs_json
 
   if [ -f "$toolog" ]; then
     cnt="$(awk -F'\t' -v since="$since" '
@@ -588,7 +666,7 @@ compute_friction() {
     while IFS= read -r line; do
       [ -z "$line" ] && continue
       FRICTION_LINES_TEXT+=("$line")
-    done < <(jq -r --argjson ids "$CUR_IDS_JSON" --arg since "$since" '
+    done < <(jq -r --argjson ids "$cur_ids_json" --arg since "$since" '
       [.[] | select(.number as $n | $ids | index($n) != null) | .comments[]?
         | select(($since == "") or (.createdAt >= $since))
         | .body] | .[]
@@ -596,19 +674,27 @@ compute_friction() {
   fi
   FRICTION_LINES_COUNT="${#FRICTION_LINES_TEXT[@]}"
 
-  FRICTION_HOTFIX=0
-  FRICTION_MANUAL_MERGE=0
-  if [ -f "$prs_file" ]; then
-    FRICTION_HOTFIX="$(jq -r '[.[] | select((.headRefName // "") | test("^feature/hotfix-"))] | length' "$prs_file" 2>/dev/null)"
-    FRICTION_MANUAL_MERGE="$(jq -r '[.[] | select(.labels[]?.name == "manual-merge")] | length' "$prs_file" 2>/dev/null)"
-  fi
-  FRICTION_HUMAN=0
-  if [ -f "$issues_file" ]; then
-    FRICTION_HUMAN="$(jq -r '[.[] | select(.labels[]?.name == "human")] | length' "$issues_file" 2>/dev/null)"
+  # friction/hotfix and friction/manual-merge are CYCLE-SCOPED (#1281): the PR
+  # universe is cycle_prs(), not every merged PR repo-wide. No resolvable
+  # cycle window -> a named reason, never a repo-wide count.
+  if [ -n "$cyc_since" ]; then
+    cur_prs_json="$(cycle_prs "$prs_file" "$cur_ids_json" "$base" "$cyc_since" "$cyc_until")"
+    [ -n "$cur_prs_json" ] || cur_prs_json="[]"
+    FRICTION_HOTFIX="$(printf '%s' "$cur_prs_json" | jq -r '[.[] | select((.headRefName // "") | test("^feature/hotfix-"))] | length' 2>/dev/null)"
+    FRICTION_MANUAL_MERGE="$(printf '%s' "$cur_prs_json" | jq -r '[.[] | select(.labels[]?.name == "manual-merge")] | length' 2>/dev/null)"
+    FRICTION_HOTFIX="${FRICTION_HOTFIX:-0}"
+    FRICTION_MANUAL_MERGE="${FRICTION_MANUAL_MERGE:-0}"
+  else
+    FRICTION_HOTFIX="n/a (no cycle window)"
+    FRICTION_MANUAL_MERGE="n/a (no cycle window)"
   fi
 
-  FRICTION_HOTFIX="${FRICTION_HOTFIX:-0}"
-  FRICTION_MANUAL_MERGE="${FRICTION_MANUAL_MERGE:-0}"
+  FRICTION_HUMAN=0
+  if [ -f "$issues_file" ]; then
+    FRICTION_HUMAN="$(jq -r --argjson ids "$cur_ids_json" '
+      [.[] | select(.number as $n | $ids | index($n) != null) | select(.labels[]?.name == "human")] | length
+    ' "$issues_file" 2>/dev/null)"
+  fi
   FRICTION_HUMAN="${FRICTION_HUMAN:-0}"
 
   EXTRA_COMP_VAL["friction/denials"]="$FRICTION_DENIALS";                   EXTRA_COMP_UNIT["friction/denials"]=""
@@ -619,7 +705,7 @@ compute_friction() {
   EXTRA_COMP_VAL["friction/human"]="$FRICTION_HUMAN";                      EXTRA_COMP_UNIT["friction/human"]=""
 }
 
-compute_friction "$TOOLOG" "$ISSUES_FILE" "$PRS_FILE" "$SINCE"
+compute_friction "$TOOLOG" "$ISSUES_FILE" "$PRS_FILE" "$SINCE" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL"
 
 GATE_REVISE=0; GATE_PLANS=0; GATE_FLAGGED=0; GATE_EVALS=0
 
@@ -656,14 +742,30 @@ compute_usage_snapshot "$USAGE_FILE"
 ESCAPES_HOTFIX=0; ESCAPES_REVERT=0; ESCAPES_LATERFIX=0
 
 compute_escapes() {
-  local prs_file="$1" prev_ids_json="$2" out
+  local prs_file="$1" prev_ids_json="$2" cur_ids_json="$3" base="$4" cyc_since="$5" cyc_until="$6"
+  local out cur_scope_json
   [ -f "$prs_file" ] || return 0
-  out="$(jq -r --argjson ids "$prev_ids_json" '
+
+  # Asymmetric on purpose: only the CURRENT-cycle side is windowed. $prev_prs
+  # is already scoped by "closes a previous-cycle issue"; layering the current
+  # cycle's window on top of it too would empty $prev_files and pin
+  # escapes/later-fix at 0 permanently (#1281 round-1 defect).
+  if [ -z "$cyc_since" ]; then
+    ESCAPES_HOTFIX="n/a (no cycle window)"
+    ESCAPES_REVERT="n/a (no cycle window)"
+    ESCAPES_LATERFIX="n/a (no cycle window)"
+    return 0
+  fi
+
+  cur_scope_json="$(cycle_prs "$prs_file" "$cur_ids_json" "$base" "$cyc_since" "$cyc_until")"
+  [ -n "$cur_scope_json" ] || cur_scope_json="[]"
+
+  out="$(jq -r --argjson prev_ids "$prev_ids_json" --argjson cur_scope "$cur_scope_json" '
     def closes: (.body // "") | [scan("Closes #([0-9]+)")] | map(.[0]|tonumber);
     [.[] | . + {closes: closes}] as $prs
-    | ($prs | map(select(.closes | any(. as $c | $ids | index($c) != null)))) as $prev_prs
+    | ($prs | map(select(.closes | any(. as $c | $prev_ids | index($c) != null)))) as $prev_prs
     | ($prev_prs | [.[].files[]?] | unique) as $prev_files
-    | ($prs | map(select((.closes | any(. as $c | $ids | index($c) != null)) | not))) as $cur_prs
+    | ($cur_scope | map(select((.closes | any(. as $c | $prev_ids | index($c) != null)) | not))) as $cur_prs
     | ($cur_prs | map(select((.headRefName // "") | test("^feature/hotfix-")))) as $hotfix
     | ($cur_prs - $hotfix) as $rest1
     | ($rest1 | map(select((.title // "") | test("^revert(\\([a-z0-9_-]+\\))?!?: ")))) as $revert
@@ -675,7 +777,7 @@ compute_escapes() {
   read -r ESCAPES_HOTFIX ESCAPES_REVERT ESCAPES_LATERFIX <<< "$out"
 }
 
-compute_escapes "$PRS_FILE" "$PREV_IDS_JSON"
+compute_escapes "$PRS_FILE" "$PREV_IDS_JSON" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL"
 
 EXTRA_COMP_VAL["escapes/hotfix"]="$ESCAPES_HOTFIX";       EXTRA_COMP_UNIT["escapes/hotfix"]=""
 EXTRA_COMP_VAL["escapes/revert"]="$ESCAPES_REVERT";       EXTRA_COMP_UNIT["escapes/revert"]=""
