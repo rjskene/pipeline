@@ -41,6 +41,11 @@ Options:
                     no filesystem writes).
   --tracker NNNN   Tracker issue number (default: 1271).
   --since DATE     ISO-8601 date; bounds the friction / denial window.
+  --now DATE       ISO-8601 clock override for the newest cycle's OPEN
+                    upper bound (cycle_window()); default the real clock
+                    (`date -u`). Same as PIPELINE_RETRO_NOW; the flag wins.
+                    Only the newest cycle needs it — every earlier cycle's
+                    window is bounded by the tracker's own headers.
   --write PATH     Write the full (untruncated) report to PATH (creates
                     parent directories). stdout stays bounded to 1..60 lines
                     regardless.
@@ -52,6 +57,15 @@ Options:
   --dump-baseline  Debug: emit only `BASELINE <row>/<label> = <value>` lines.
   --dump-computed  Debug: emit only `COMPUTED <row>/<label> = <value>` lines.
   --help           Print this banner and exit 0.
+
+Comment windows: the HARNESS-FRICTION harvest reads one of two substrates,
+published as `friction/harness-friction-window`:
+  - "cycle N issue comments"   --post, full mode at cycle 0, or the
+                                 degrade path when no prior tracker comment
+                                 exists (honours --since).
+  - "tracker cycle N-1 comment"  full mode at cycle N>0: the prior cycle's
+                                 tracker comment (ignores --since; the cycle
+                                 bound already scopes it).
 USAGE
 }
 
@@ -376,6 +390,19 @@ cycle_prs() {
   ' "$prs_file" 2>/dev/null
 }
 
+# prev_cycle_comment <issues_file> <tracker> <prev cycle N> -> the tracker
+# issue's LAST comment whose body opens `## Cycle <prev cycle N>` (#1281).
+# Defined here (ahead of compute_friction()) because both compute_friction()
+# and the pending-verdict harvest below call it.
+prev_cycle_comment() {
+  local issues_file="$1" tracker="$2" prev_n="$3"
+  [ -f "$issues_file" ] || return 0
+  jq -r --arg tracker "$tracker" --arg hdr "^## Cycle ${prev_n}\\b" '
+    [.[] | select((.number|tostring) == $tracker) | .comments[]?.body
+      | select(test($hdr))] | last // empty
+  ' "$issues_file" 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
 # File-path resolution (fixture seam vs live)
 # ---------------------------------------------------------------------------
@@ -639,13 +666,31 @@ NO_DECISION_FIELD="n/a (tool-use.log has no decision field; hooks/log-tool-use.s
 FRICTION_DENIALS=""
 FRICTION_LINES_COUNT=0
 declare -a FRICTION_LINES_TEXT=()
+FRICTION_WINDOW=""
 FRICTION_HOTFIX=0
 FRICTION_MANUAL_MERGE=0
 FRICTION_HUMAN=0
 
+# current_cycle_friction_lines <issues_file> <cur_ids_json> <since> -> appends
+# to FRICTION_LINES_TEXT; the shared "current cycle's own issue comments"
+# harvest used by --post, by full mode at cycle 0, and as the degrade path
+# when full mode at cycle N>0 has no prior tracker comment to read.
+current_cycle_friction_lines() {
+  local issues_file="$1" cur_ids_json="$2" since="$3" line
+  [ -f "$issues_file" ] || return 0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    FRICTION_LINES_TEXT+=("$line")
+  done < <(jq -r --argjson ids "$cur_ids_json" --arg since "$since" '
+    [.[] | select(.number as $n | $ids | index($n) != null) | .comments[]?
+      | select(($since == "") or (.createdAt >= $since))
+      | .body] | .[]
+  ' "$issues_file" 2>/dev/null | grep '^HARNESS-FRICTION:')
+}
+
 compute_friction() {
-  local toolog="$1" issues_file="$2" prs_file="$3" since="$4" cur_ids_json="$5" base="$6" cyc_since="$7" cyc_until="$8"
-  local cnt line cur_prs_json
+  local toolog="$1" issues_file="$2" prs_file="$3" since="$4" cur_ids_json="$5" base="$6" cyc_since="$7" cyc_until="$8" post="$9" cycle="${10}" tracker="${11}"
+  local cnt line cur_prs_json prev_comment_body
 
   if [ -f "$toolog" ]; then
     cnt="$(awk -F'\t' -v since="$since" '
@@ -661,16 +706,31 @@ compute_friction() {
     FRICTION_DENIALS="$NO_DECISION_FIELD"
   fi
 
+  # HARNESS-FRICTION comment window, chosen per mode (#1281):
+  #   --post (and full mode at cycle 0, where no prior cycle comment can
+  #   exist yet) reads the CURRENT cycle's own issue comments, honouring
+  #   --since — today's original behaviour.
+  #   Full mode at cycle N>0 reads the PRIOR cycle's tracker comment instead
+  #   (the step-1 observe window an operator actually looks at) and ignores
+  #   --since, because the cycle bound already scopes it. No prior tracker
+  #   comment found -> degrade to the current-cycle harvest.
   FRICTION_LINES_TEXT=()
-  if [ -f "$issues_file" ]; then
-    while IFS= read -r line; do
-      [ -z "$line" ] && continue
-      FRICTION_LINES_TEXT+=("$line")
-    done < <(jq -r --argjson ids "$cur_ids_json" --arg since "$since" '
-      [.[] | select(.number as $n | $ids | index($n) != null) | .comments[]?
-        | select(($since == "") or (.createdAt >= $since))
-        | .body] | .[]
-    ' "$issues_file" 2>/dev/null | grep '^HARNESS-FRICTION:')
+  FRICTION_WINDOW=""
+  if [ "$post" -eq 1 ] || [ "$cycle" -eq 0 ]; then
+    current_cycle_friction_lines "$issues_file" "$cur_ids_json" "$since"
+    FRICTION_WINDOW="cycle $cycle issue comments"
+  else
+    prev_comment_body="$(prev_cycle_comment "$issues_file" "$tracker" $((cycle - 1)))"
+    if [ -n "$prev_comment_body" ]; then
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        FRICTION_LINES_TEXT+=("$line")
+      done < <(printf '%s\n' "$prev_comment_body" | grep '^HARNESS-FRICTION:')
+      FRICTION_WINDOW="tracker cycle $((cycle - 1)) comment"
+    else
+      current_cycle_friction_lines "$issues_file" "$cur_ids_json" "$since"
+      FRICTION_WINDOW="cycle $cycle issue comments"
+    fi
   fi
   FRICTION_LINES_COUNT="${#FRICTION_LINES_TEXT[@]}"
 
@@ -699,13 +759,16 @@ compute_friction() {
 
   EXTRA_COMP_VAL["friction/denials"]="$FRICTION_DENIALS";                   EXTRA_COMP_UNIT["friction/denials"]=""
   EXTRA_COMP_VAL["friction/harness-friction-lines"]="$FRICTION_LINES_COUNT"; EXTRA_COMP_UNIT["friction/harness-friction-lines"]=""
+  # Deliberately NON-NUMERIC: it must never join a delta, so Scenario 13's
+  # `deltas == joined` invariant (numeric-only) cannot shift.
+  EXTRA_COMP_VAL["friction/harness-friction-window"]="$FRICTION_WINDOW";   EXTRA_COMP_UNIT["friction/harness-friction-window"]=""
   EXTRA_COMP_VAL["friction/compactions"]="n/a (no transcript substrate)";   EXTRA_COMP_UNIT["friction/compactions"]=""
   EXTRA_COMP_VAL["friction/hotfix"]="$FRICTION_HOTFIX";                    EXTRA_COMP_UNIT["friction/hotfix"]=""
   EXTRA_COMP_VAL["friction/manual-merge"]="$FRICTION_MANUAL_MERGE";        EXTRA_COMP_UNIT["friction/manual-merge"]=""
   EXTRA_COMP_VAL["friction/human"]="$FRICTION_HUMAN";                      EXTRA_COMP_UNIT["friction/human"]=""
 }
 
-compute_friction "$TOOLOG" "$ISSUES_FILE" "$PRS_FILE" "$SINCE" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL"
+compute_friction "$TOOLOG" "$ISSUES_FILE" "$PRS_FILE" "$SINCE" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL" "$POST" "$CYCLE" "$TRACKER"
 
 GATE_REVISE=0; GATE_PLANS=0; GATE_FLAGGED=0; GATE_EVALS=0
 
@@ -794,17 +857,6 @@ verdict_candidates() {  # <issues_file> <ids_json> -> space-separated issue numb
     [.[] | select(.number as $n | $ids | index($n) != null)
       | select((.body // "") | contains("Measured by: retro (next cycle)"))
       | .number] | map(tostring) | join(" ")
-  ' "$issues_file" 2>/dev/null
-}
-
-# prev_cycle_comment <issues_file> <tracker> <prev cycle N> -> the tracker
-# issue's LAST comment whose body opens `## Cycle <prev cycle N>` (#1281).
-prev_cycle_comment() {
-  local issues_file="$1" tracker="$2" prev_n="$3"
-  [ -f "$issues_file" ] || return 0
-  jq -r --arg tracker "$tracker" --arg hdr "^## Cycle ${prev_n}\\b" '
-    [.[] | select((.number|tostring) == $tracker) | .comments[]?.body
-      | select(test($hdr))] | last // empty
   ' "$issues_file" 2>/dev/null
 }
 
@@ -984,6 +1036,7 @@ build_full_report() {
   echo ""
   echo "friction: denials = $FRICTION_DENIALS"
   echo "friction: harness-friction-lines = $FRICTION_LINES_COUNT"
+  echo "friction: harness-friction-window = $FRICTION_WINDOW"
   for fl in "${FRICTION_LINES_TEXT[@]:-}"; do
     [ -z "$fl" ] && continue
     echo "$fl"
