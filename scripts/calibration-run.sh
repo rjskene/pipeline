@@ -547,13 +547,16 @@ merged_pr_field() {
 #            falls through to no-pr or grades normally.
 #   no-pr    the run opened no PR AT ALL (any state) — nothing to grade
 detect_abort() {
-  local last n
+  local n
   ABORT_REASON=""
   if [ "${RUN_RC:-0}" -eq 124 ]; then ABORT_REASON="timeout"; return 0; fi
-  last="$(sed -e 's/[[:space:]]*$//' "$RUN_LOG" 2>/dev/null | grep -v '^$' | tail -1)"
-  case "$last" in
-    *\?) ABORT_REASON="held"; return 0 ;;
-  esac
+  # The LAST FIVE non-blank lines, not the last one: the log is tee'd 2>&1, so
+  # a single stderr line emitted after the question (a limit notice, a stray
+  # warning) would otherwise defeat the test and regrade a held run.
+  if sed -e 's/[[:space:]]*$//' "$RUN_LOG" 2>/dev/null | grep -v '^$' | tail -5 \
+     | grep -q '?$'; then
+    ABORT_REASON="held"; return 0
+  fi
   # SCOPED TO THIS RUN'S SLATE, not `length` of the whole PR set: cmd_reset
   # reaps the slate issues and rewinds the base tag, but it never removes PRs,
   # so `gh pr list --state all` stays non-empty forever once the sandbox has

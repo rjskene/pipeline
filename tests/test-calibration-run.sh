@@ -788,6 +788,39 @@ else
   fail_msg "--run must tee the question it stopped on to $RUN_LOG_FILE"
 fi
 
+# That tee lands INSIDE docs/retros/calib/, which is tracked (the <date>.txt
+# artifact lives there and is committed). The session log is a per-run runtime
+# transcript, never a tracked artifact, so the repo must ignore it by name —
+# without an ignore rule every --run leaves the harness checkout dirty and the
+# next commit sweeps a raw session transcript into the repo.
+if git -C "$ROOT" check-ignore -q docs/retros/calib/x.log 2>/dev/null; then
+  pass_msg "the repo ignores docs/retros/calib/*.log"
+else
+  fail_msg "docs/retros/calib/*.log must be gitignored (the per-run session log)"
+fi
+if git -C "$ROOT" check-ignore -q docs/retros/calib/x.txt 2>/dev/null; then
+  fail_msg "the CALIB artifact docs/retros/calib/*.txt must stay TRACKED"
+else
+  pass_msg "the ignore rule spares the tracked <date>.txt artifact"
+fi
+
+# A `-p` session writes to BOTH streams and --run tees them merged (2>&1), so
+# the question it stopped on is routinely not the very last line: one stderr
+# line after it (a limit notice, a stray warning) defeated a detector that
+# read the last line alone and the held run silently regraded. Scan the tail.
+cat > "$TMP/claude-held-stderr.sh" <<'HELD2'
+#!/bin/bash
+echo "Wave 1 merged. Your call on auto-merge for the rest?"
+echo "note: session limit approaching" >&2
+HELD2
+chmod +x "$TMP/claude-held-stderr.sh"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-held-stderr.sh"
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_sub "a trailing stderr line after the question still reports reason=held" \
+  "$OUT" "CALIB-ABORT reason=held"
+
 # ---------------------------------------------------------------------------
 scenario "Scenario 12: the abort reason separates a timeout from a silent finish"
 # ---------------------------------------------------------------------------
