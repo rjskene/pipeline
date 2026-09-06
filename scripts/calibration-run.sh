@@ -97,6 +97,12 @@ set_mode() {
   MODE="$1"
 }
 
+# require_value "$@" — guards every `shift 2` below. Without it a value-taking
+# flag in LAST position leaves `shift 2` with $#=1: the shift fails, the token
+# is never consumed, and the parser spins forever printing nothing. Call it as
+# `require_value "$@"` so $1 is the flag name and $# is what remains.
+require_value() { [ $# -ge 2 ] || die_usage "$1 requires a value"; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)    print_usage; exit 0 ;;
@@ -104,11 +110,11 @@ while [ $# -gt 0 ]; do
     --reset)      set_mode reset; shift ;;
     --dry-run)    set_mode dry-run; shift ;;
     --run)        set_mode run; shift ;;
-    --profile)    PROFILE="${2:-}"; shift 2 ;;
+    --profile)    require_value "$@"; PROFILE="$2"; shift 2 ;;
     --profile=*)  PROFILE="${1#--profile=}"; shift ;;
-    --model)      MODEL="${2:-}"; shift 2 ;;
+    --model)      require_value "$@"; MODEL="$2"; shift 2 ;;
     --model=*)    MODEL="${1#--model=}"; shift ;;
-    --harness)    HARNESS_ARG="${2:-}"; shift 2 ;;
+    --harness)    require_value "$@"; HARNESS_ARG="$2"; shift 2 ;;
     --harness=*)  HARNESS_ARG="${1#--harness=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac

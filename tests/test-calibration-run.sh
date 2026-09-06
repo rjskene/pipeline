@@ -111,6 +111,11 @@ chmod +x "$STUB_BIN/claude"
 
 # run_helper <args...> — runs the helper IN THE CURRENT SHELL (never a command
 # substitution, so $RC / $OUT actually propagate) and sets $OUT + $RC.
+#
+# `timeout 20` is load-bearing, not belt-and-braces: an arg-parse bug that
+# fails to consume its token spins the `while [ $# -gt 0 ]` loop forever with
+# no output, which without the cap wedges the whole suite instead of failing
+# it (rc=124).
 RC=0
 OUT=""
 run_helper() {
@@ -125,7 +130,7 @@ run_helper() {
         PIPELINE_CALIB_ISSUE_IDS="8001 8002 8003 8004 8005" \
         GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
         GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
-        bash "$HELPER" "$@" 2>&1)"
+        timeout 20 bash "$HELPER" "$@" 2>&1)"
   RC=$?
 }
 
@@ -168,6 +173,15 @@ expect_sub "--model error names the allowed values" "$OUT" "sonnet|opus"
 
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
+
+# A value-taking flag in LAST position has no value to shift: `shift 2` with
+# $#=1 fails, the token is never consumed, and the parser spins forever with
+# no output. Must be a usage error, never a hang (rc=124 from run_helper's cap).
+for flag in --profile --model --harness; do
+  run_helper --dry-run "$flag"
+  expect_rc "trailing $flag exits 2 (never spins)" 2
+  expect_sub "trailing $flag reports the missing value" "$OUT" "$flag requires a value"
+done
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 3: --dry-run previews the launch and touches nothing"
