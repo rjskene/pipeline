@@ -115,6 +115,9 @@ mkdir -p "$TMP/remote"
 git init --quiet --bare "$REMOTE"
 
 SANDBOX="$TMP/sandbox/pipeline-calib"
+# Where --run stages the harness: a sibling of the sandbox clone inside the
+# calib dir. Derived from PIPELINE_CALIB_DIR, so it needs no knob of its own.
+STAGE="$TMP/sandbox/harness"
 CALLS="$TMP/calls.log"
 DOCTOR_ENV="$TMP/doctor-env.txt"
 STUB_BIN="$TMP/bin"
@@ -177,6 +180,7 @@ run_helper() {
         CALIB_TEST_CALLS="$CALLS" \
         CALIB_TEST_COUNTER="$TMP/issue-counter" \
         CALIB_TEST_DOCTOR_ENV="$DOCTOR_ENV" \
+        HOME="${CALIB_TEST_HOME:-$HOME}" \
         PIPELINE_REPO="rjskene/pipeline" \
         PIPELINE_CALIB_REPO="${CALIB_TEST_REPO_OVERRIDE:-owner/pipeline-calib}" \
         PIPELINE_CALIB_DIR="$SANDBOX" \
@@ -264,8 +268,11 @@ expect_sub "launch line drives /pipeline:fullsend" "$LAUNCH" "/pipeline:fullsend
 for id in 8001 8002 8003 8004 8005; do
   expect_sub "launch line carries issue id $id" "$LAUNCH" "$id"
 done
-expect_sub "launch line passes --plugin-dir <harness>" "$LAUNCH" "--plugin-dir $HARNESS"
-expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$HARNESS"
+# The session loads the STAGED harness, not the checkout under test: its own
+# restrict_paths hook allows only the sandbox project dir and ~/.claude, so a
+# plugin dir anywhere else is unreadable from inside the run.
+expect_sub "launch line passes --plugin-dir <staged harness>" "$LAUNCH" "--plugin-dir $STAGE"
+expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<staged harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$STAGE"
 expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dangerously-skip-permissions"
 expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
 
@@ -279,6 +286,21 @@ if [ -e "$SANDBOX" ]; then
 else
   pass_msg "--dry-run does not materialize the sandbox"
 fi
+if [ -e "$STAGE" ]; then
+  fail_msg "--dry-run created the staged harness dir"
+else
+  pass_msg "--dry-run computes the staged harness path without creating it"
+fi
+
+# Control: a harness that ALREADY lives under ~/.claude is readable from inside
+# the session, so it is launched IN PLACE — staging is not unconditional.
+mkdir -p "$TMP/home/.claude/h"
+CALIB_TEST_HOME="$TMP/home" run_helper --dry-run --harness "$TMP/home/.claude/h"
+LAUNCH_NS="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "a harness already under ~/.claude is launched in place" \
+  "$LAUNCH_NS" "--plugin-dir $TMP/home/.claude/h"
+expect_sub "a harness already under ~/.claude keeps its own CLAUDE_PLUGIN_ROOT" \
+  "$LAUNCH_NS" "CLAUDE_PLUGIN_ROOT=$TMP/home/.claude/h"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 4: --bootstrap is idempotent"
@@ -606,6 +628,74 @@ if [ "$N_ROWS" = "5" ]; then
   pass_msg "the day's artifact holds exactly one row per slate issue"
 else
   fail_msg "the day's artifact must hold 5 CALIB rows, not an accumulation (got $N_ROWS)"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 10: --run stages the harness as a detached worktree"
+# ---------------------------------------------------------------------------
+# Asserted against the --run Scenarios 8/9 just performed. The sandbox
+# session's restrict_paths hook allows only its own project dir and ~/.claude,
+# so a harness outside ~/.claude has its own scripts blocked from inside the
+# run. --run therefore stages the harness HEAD beside the sandbox clone and
+# launches THAT, while every other harness role (template, slate, doctor,
+# artifacts) keeps pointing at the ORIGINAL checkout.
+
+if [ -e "$STAGE/.git" ]; then
+  pass_msg "--run stages the harness at <calib dir>/harness"
+else
+  fail_msg "--run must stage the harness at $STAGE"
+fi
+if [ "$(git -C "$STAGE" rev-parse HEAD 2>/dev/null)" = "$(git -C "$HARNESS" rev-parse HEAD)" ]; then
+  pass_msg "the staged harness sits at the harness HEAD"
+else
+  fail_msg "the staged harness must sit at the harness HEAD (uncommitted edits are not under test)"
+fi
+if git -C "$STAGE" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  fail_msg "the staged harness must be DETACHED, never on a branch"
+else
+  pass_msg "the staged harness is detached"
+fi
+if [ -f "$STAGE/pipeline.config" ] && cmp -s "$STAGE/pipeline.config" "$HARNESS/pipeline.config"; then
+  pass_msg "the harness pipeline.config (untracked, host-specific) is copied in"
+else
+  fail_msg "the staged harness must carry the harness's pipeline.config"
+fi
+if [ -f "$STAGE/scripts/doctor.sh" ]; then
+  pass_msg "the staged harness carries the harness's tracked content"
+else
+  fail_msg "the staged harness must carry the harness's tracked content"
+fi
+if [ -f "$CALIB_ARTIFACT" ] && [ ! -e "$STAGE/docs/retros/calib/$(date -u +%Y-%m-%d).txt" ]; then
+  pass_msg "the run's artifact lands in the ORIGINAL harness, not the staged copy"
+else
+  fail_msg "the artifact must stay at $CALIB_ARTIFACT and never appear under $STAGE"
+fi
+
+# A second run REFRESHES the stage to the new harness HEAD — it must not leave
+# a stale copy behind, and must not accumulate a worktree per run.
+echo "# refreshed" >> "$HARNESS/scripts/doctor.sh"
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$HARNESS" commit --quiet -a -m "harness: move HEAD"
+cat > "$TMP/claude-noop.sh" <<'NOOP'
+#!/bin/bash
+exit 0
+NOOP
+chmod +x "$TMP/claude-noop.sh"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+run_helper --run --harness "$HARNESS"
+expect_rc "the refreshing --run exits 0" 0
+
+if [ "$(git -C "$STAGE" rev-parse HEAD 2>/dev/null)" = "$(git -C "$HARNESS" rev-parse HEAD)" ]; then
+  pass_msg "a second --run refreshes the staged harness to the new HEAD"
+else
+  fail_msg "the staged harness must be refreshed to the harness HEAD on every run"
+fi
+N_WT="$(git -C "$HARNESS" worktree list --porcelain 2>/dev/null | grep -c '^worktree .*/sandbox/harness$')"
+if [ "$N_WT" = "1" ]; then
+  pass_msg "the stage is ONE worktree, refreshed in place"
+else
+  fail_msg "the harness must register exactly one stage worktree (got $N_WT)"
 fi
 
 # ---------------------------------------------------------------------------

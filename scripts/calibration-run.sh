@@ -151,6 +151,34 @@ TEMPLATE_DIR="$HARNESS/dev/calib/template"
 SLATE_DIR="$HARNESS/dev/calib/slate"
 CALIB_OUT_DIR="$HARNESS/docs/retros/calib"
 
+# abs_path <dir> — the resolved, symlink-free path of a directory; the input
+# unchanged when it does not exist. Avoids depending on `realpath`.
+abs_path() { ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"; }
+
+# needs_staging — TRUE when the harness lives OUTSIDE ~/.claude. The sandbox
+# session's own restrict_paths hook allows exactly two roots: the session's
+# project dir (the sandbox) and ~/.claude. A --plugin-dir anywhere else has its
+# own scripts blocked from inside the run — run #1 died 87 s in that way. See
+# stage_harness().
+needs_staging() {
+  local h c
+  h="$(abs_path "$HARNESS")"
+  c="$(abs_path "$HOME/.claude")"
+  case "$h/" in "$c"/*) return 1 ;; esac
+  return 0
+}
+
+# TWO HARNESS ROLES, one variable each. HARNESS is the ORIGINAL checkout and
+# stays the source of the template, the slate, doctor.sh,
+# cost-latency-report.sh and CALIB_OUT_DIR — which is why the run's .txt/.log
+# substrate lands in the original by construction. LAUNCH_HARNESS is only what
+# the sandbox session loads. The stage is a sibling of the sandbox clone inside
+# the calib dir (default $HOME/.claude/calib/harness), derived rather than
+# configured so it needs no knob and follows PIPELINE_CALIB_DIR in tests.
+STAGE_DIR="$(dirname "$SANDBOX")/harness"
+LAUNCH_HARNESS="$HARNESS"
+needs_staging && LAUNCH_HARNESS="$STAGE_DIR"
+
 # The template ships the sandbox's Claude local-settings file FLAT (a normal
 # tracked file); --bootstrap materializes it under the sandbox's own .claude/
 # dir. Destination is composed from $SANDBOX at runtime — never a literal path.
@@ -181,10 +209,10 @@ build_launch() {
   if [ -z "$ids" ]; then
     ids="N1 N2 N3 N4 N5"   # --dry-run preview before --reset has resolved ids
   fi
-  LAUNCH=(env "CLAUDE_PLUGIN_ROOT=$HARNESS" "PIPELINE_CALIB_PROFILE=$PROFILE"
+  LAUNCH=(env "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS" "PIPELINE_CALIB_PROFILE=$PROFILE"
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
-          --plugin-dir "$HARNESS" --model "$MODEL" --dangerously-skip-permissions)
+          --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" --dangerously-skip-permissions)
 }
 
 # ---------------------------------------------------------------------------
@@ -373,6 +401,51 @@ cmd_reset() {
     || die_run "could not force the sandbox main branch back to $BASE_TAG"
   reap_stale_issues
   create_slate_issues
+}
+
+# ---------------------------------------------------------------------------
+# --run harness staging
+# ---------------------------------------------------------------------------
+
+# stage_harness — materialize the harness under the calib dir as a DETACHED
+# worktree at the harness's current HEAD, so the sandbox session can actually
+# read the plugin tree it is measuring (see needs_staging).
+#
+# A worktree rather than a copy: it shares the harness's object store, so the
+# refresh is one `checkout --force --detach` and the stage can never drift into
+# a stale copy of something. Consequence, and it is the point: UNCOMMITTED
+# harness edits are NOT under test — commit first.
+#
+# Called by --run only. --dry-run computes the staged PATH (LAUNCH_HARNESS
+# above) but creates nothing; --bootstrap / --reset never launch a session.
+stage_harness() {
+  needs_staging || return 0
+  local sha stage_common harness_common
+  sha="$(git -C "$HARNESS" rev-parse HEAD 2>/dev/null)"
+  [ -n "$sha" ] || die_run "harness staging needs --harness to be a git checkout: $HARNESS"
+  git -C "$HARNESS" worktree prune 2>/dev/null
+  if [ -e "$STAGE_DIR/.git" ]; then
+    # Adopt an existing checkout ONLY if it is a worktree of this same clone
+    # (the operator may already have made one by hand at this path). Anything
+    # else is somebody's repo: refuse by name, never rm -rf.
+    stage_common="$( cd "$STAGE_DIR" 2>/dev/null && abs_path "$(git rev-parse --git-common-dir 2>/dev/null)" )"
+    harness_common="$( cd "$HARNESS" 2>/dev/null && abs_path "$(git rev-parse --git-common-dir 2>/dev/null)" )"
+    if [ -z "$stage_common" ] || [ "$stage_common" != "$harness_common" ]; then
+      die_run "$STAGE_DIR is a checkout of a different repo — remove it and re-run"
+    fi
+    git -C "$STAGE_DIR" checkout --quiet --force --detach "$sha" \
+      || die_run "could not refresh the staged harness at $STAGE_DIR"
+  elif [ -d "$STAGE_DIR" ] && [ -n "$(ls -A "$STAGE_DIR" 2>/dev/null)" ]; then
+    die_run "$STAGE_DIR exists and is not a git checkout — remove it and re-run"
+  else
+    mkdir -p "$(dirname "$STAGE_DIR")" || die_run "could not create $(dirname "$STAGE_DIR")"
+    git -C "$HARNESS" worktree add --quiet --detach "$STAGE_DIR" "$sha" \
+      || die_run "could not stage the harness worktree at $STAGE_DIR"
+  fi
+  # pipeline.config is gitignored and host-specific, so no checkout carries it.
+  # Without this copy the staged harness runs with no config at all.
+  [ -f "$HARNESS/pipeline.config" ] && cp -f "$HARNESS/pipeline.config" "$STAGE_DIR/"
+  echo "calib: staged harness $sha at $STAGE_DIR"
 }
 
 # ---------------------------------------------------------------------------
@@ -630,6 +703,7 @@ sync_sandbox_after_run() {
 
 cmd_run() {
   cmd_reset || return 1
+  stage_harness
   build_launch
   local t0 t1
   # Harness-rooted ABSOLUTE output paths: --run executes with the SANDBOX as
