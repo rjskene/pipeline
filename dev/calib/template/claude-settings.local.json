@@ -1,5 +1,5 @@
 {
-  "$comment": "Copied into the calibration sandbox as .claude/settings.local.json. Both marketplace installs of the pipeline plugin are disabled so the sandbox only ever runs the plugin build under calibration.",
+  "$comment": "Copied into the calibration sandbox as .claude/settings.local.json. Both marketplace installs of the pipeline plugin are disabled so the sandbox only ever runs the plugin build under calibration. The hooks block carries only the three observability hooks (tool-use log, subagent log, agent-cost capture) so a calibration run can price itself; every command is rooted at ${CLAUDE_PLUGIN_ROOT} because the sandbox project has no hooks/ directory of its own. Dogfood-only hooks are deliberately not carried.",
   "enabledPlugins": {
     "pipeline@claude-pipeline": false,
     "pipeline@claude-pipeline-local": false
@@ -11,5 +11,42 @@
       "Bash(bash bin/calibctl:*)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/log_subagent.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_agent_cost.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_agent_cost.py"
+          }
+        ]
+      }
+    ]
   }
 }
