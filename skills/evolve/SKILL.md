@@ -84,8 +84,8 @@ grep -qE '^\| staging isolation \|.*PIPELINE_LABELS_EXCLUDED="[^"]*evolve[^"]*"'
 if [ -n "$STOP" ]; then echo "STOP: gate failed — abort the turn, do not run Step 1"; else
   git -C "$MAIN_REPO" fetch --quiet origin staging
   SYNC_BEFORE=$(git -C "$MAIN_REPO" rev-parse HEAD)
-  git -C "$MAIN_REPO" merge-base --is-ancestor origin/staging HEAD || git -C "$MAIN_REPO" merge --no-edit origin/staging   # forward-sync; conflicts → resolve in-session, then continue
-  [ "$SYNC_BEFORE" = "$(git -C "$MAIN_REPO" rev-parse HEAD)" ] || git -C "$MAIN_REPO" push origin evolve   # publish a productive forward-sync so cycle worktrees (cut from origin/evolve) see it
+  git -C "$MAIN_REPO" merge-base --is-ancestor origin/staging HEAD || git -C "$MAIN_REPO" merge --no-edit origin/staging   # forward-sync; conflicts → resolve in-session, commit, then git -C "$MAIN_REPO" push origin evolve before continuing to Step 1 (the auto-push below only fires on THIS call's own merge)
+  [ "$SYNC_BEFORE" = "$(git -C "$MAIN_REPO" rev-parse HEAD)" ] || git -C "$MAIN_REPO" push origin evolve || { echo "STOP: forward-sync merged locally but the push to origin/evolve failed (diverged remote?) — fetch/resolve and re-push before continuing"; STOP=1; }   # publish a productive forward-sync so cycle worktrees (cut from origin/evolve) see it
 fi
 ```
 
