@@ -101,6 +101,17 @@ Always relay `$GATE_LINE` in the run log, then branch on its `decision=` token:
 2. **Top of EVERY wave iteration** — the Step 1b classify/plan waves AND the `### Execute the slate WAVE BY WAVE` loop (before Step 5).
 3. **Campaign leg boundary** — `## Campaign mode` (e)3, BESIDE the `usage-surface.sh` advisory (which stays read-only per #725; different substrate, untouched).
 
+## Headless contract
+
+When `PIPELINE_HEADLESS=true` (read `${PIPELINE_HEADLESS:-false}`; set by the calibration launcher, #1285), fullsend and every dispatched stage MUST NOT end a turn on a question — at each operator-decision site below, apply the named default, emit one run-log line matching `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>`, and continue.
+
+- **merge-policy** overrides Step 9's *"Wait for explicit user confirmation before any non-greenlight merge."* `HEADLESS-DEFAULT: merge-policy decision=apply-greenlight-gate reason=flag-is-the-answer` — apply the greenlight gate to the green subset and continue (`--manual-merge` opts out); leave non-greenlight PRs unmerged with their `block-*` token, reported.
+- **unread-config-knob** covers any config key with no read site anywhere in the tree (run #2's worked example: the calibration template's inert auto-merge flag). `HEADLESS-DEFAULT: unread-config-knob decision=ignore-and-continue reason=not-a-contradiction` — ignore it, log the line, continue.
+- **stall-triage** covers Step 6/7's four-option `agent-stalled` prompt. `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the same timeout budget remaining.
+- **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — fire the autonomous-mode retry; on exhaustion, mark Flagged and continue the wave.
+
+Interactive mode (knob unset or false) is unchanged — the operator prompts stay.
+
 ## Campaign mode
 
 **This section is the single source of truth for the campaign machinery.** `/pipeline:campaign` is an **equivalent standalone entry point** into the SAME loop documented here — it owns no leg-loop prose of its own and defers to this section verbatim (see `skills/campaign/SKILL.md`). `--campaign` on `/pipeline:fullsend` remains supported on an ongoing basis and is **NOT deprecated**; the two entries are interchangeable and execute identical machinery, so they can never drift.
