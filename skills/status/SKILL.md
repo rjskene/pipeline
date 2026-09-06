@@ -169,7 +169,7 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    ```bash
    gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --limit 100
    gh issue list --repo $PIPELINE_REPO --state closed --json number,title,labels --limit 20
-   for wt in $(git worktree list --porcelain | awk '/^branch refs/{sub("refs/heads/","",$2); print $2}'); do
+   for wt in $(git worktree list --porcelain | awk '/^branch refs/{t=$NF; sub("refs/heads/","",t); print t}'); do
      gh pr list --repo $PIPELINE_REPO --head "$wt" --state merged --json number,headRefName --jq '.[] | {branch: .headRefName, pr: .number}'
    done
    git worktree list

@@ -198,3 +198,15 @@ PIPELINE_TRUST_PROFILE
 # every PIPELINE_SUPERPOWERS_* spelling). Peel when the knob is implemented and
 # documented in pipeline.config.example.
 PIPELINE_SUPERPOWERS_
+
+# #1281 test-only clock injection. PIPELINE_RETRO_NOW pins the OPEN upper bound
+# of scripts/run-retro.sh's cycle window (the newest cycle has no successor
+# `Cycle N+1 (<date>` header, so its bound would otherwise be `date -u` and every
+# cycle-N assertion would drift with the calendar). It is set ONLY by
+# tests/test-run-retro.sh on the invocation; reading it from pipeline.config
+# would make a host-global clock override and silently freeze every operator's
+# retro window. Same eval-caller-set-ONLY class as
+# PIPELINE_SPLIT_ROLE_SHARED_TESTS above; the operator-facing seam is the
+# `--now DATE` flag, documented in `run-retro.sh --help`. Intentionally
+# undocumented in pipeline.config.example; exact-match exempt here.
+PIPELINE_RETRO_NOW

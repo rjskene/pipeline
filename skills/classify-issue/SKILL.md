@@ -111,7 +111,7 @@ The skill receives an issue number as argument. Perform:
        # never a raw --json comments fetch. The trailing match wins (latest trusted
        # Classification body appears last in $TRUSTED).
        CACHED_PATH=$(printf '%s\n' "$TRUSTED" \
-         | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | tail -1)
+         | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $NF}' | tail -1)
        CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
        current_a=0; current_c=0; current_d=0
        printf '%s\n' "$CURRENT_LABELS" | grep -qx docs-only  && current_a=1
@@ -218,12 +218,12 @@ The skill receives an issue number as argument. Perform:
    # Required env: ISSUE_N (issue number), RECOMMENDED_PATH (A|B|C|D),
    #   CURRENT_LABELS (newline-separated label names), REPO (owner/name).
    REPO="${REPO:-$PIPELINE_REPO}"
-   _has_label() { printf '%s\n' "$CURRENT_LABELS" | grep -qx "$1"; }
+   _has_label() { printf '%s\n' "$CURRENT_LABELS" | grep -qx "${*}"; }
    _safe_label() {
      # Guardrail: this skill may only edit the three path labels.
-     case "$1" in
+     case "${*}" in
        docs-only|multi-task|quick-fix) return 0 ;;
-       *) echo "REFUSED: label '$1' not in allow-set {docs-only|multi-task|quick-fix}" >&2; return 1 ;;
+       *) echo "REFUSED: label '${*}' not in allow-set {docs-only|multi-task|quick-fix}" >&2; return 1 ;;
      esac
    }
    current_a=0; current_c=0; current_d=0

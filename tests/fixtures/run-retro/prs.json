@@ -1,8 +1,37 @@
 [
   {
+    "number": 1990,
+    "title": "fix(hotfix): unwedge the dogfood marketplace refresh",
+    "headRefName": "feature/hotfix-990",
+    "baseRefName": "evolve",
+    "body": "Emergency lane; no issue.",
+    "mergedAt": "2026-08-01T12:00:00Z",
+    "labels": [],
+    "files": [
+      "scripts/dogfood-mode.sh"
+    ]
+  },
+  {
+    "number": 1991,
+    "title": "fix(hotfix): unbreak the release back-sync",
+    "headRefName": "feature/hotfix-991",
+    "baseRefName": "main",
+    "body": "Emergency lane; no issue.",
+    "mergedAt": "2026-09-13T10:00:00Z",
+    "labels": [
+      {
+        "name": "manual-merge"
+      }
+    ],
+    "files": [
+      "scripts/back-sync-release.sh"
+    ]
+  },
+  {
     "number": 2001,
     "title": "feat(evolve): run-retro.sh scorecard",
     "headRefName": "feature/run-retro-scorecard",
+    "baseRefName": "evolve",
     "body": "Closes #1272",
     "mergedAt": "2026-09-05T18:00:00Z",
     "labels": [],
@@ -15,6 +44,7 @@
     "number": 2002,
     "title": "feat(evolve): evolve skill",
     "headRefName": "feature/evolve-skill",
+    "baseRefName": "evolve",
     "body": "Closes #1273",
     "mergedAt": "2026-09-05T19:00:00Z",
     "labels": [
@@ -30,6 +60,7 @@
     "number": 2003,
     "title": "chore(evolve): housekeeping",
     "headRefName": "feature/evolve-housekeeping",
+    "baseRefName": "evolve",
     "body": "Closes #1274",
     "mergedAt": "2026-09-05T20:00:00Z",
     "labels": [],
@@ -41,6 +72,7 @@
     "number": 2101,
     "title": "fix(evolve): run-retro median off-by-one",
     "headRefName": "feature/run-retro-median",
+    "baseRefName": "evolve",
     "body": "Closes #1281",
     "mergedAt": "2026-09-12T18:00:00Z",
     "labels": [],
@@ -52,6 +84,7 @@
     "number": 2102,
     "title": "docs(evolve): cycle 1 notes",
     "headRefName": "feature/evolve-notes",
+    "baseRefName": "evolve",
     "body": "Closes #1282",
     "mergedAt": "2026-09-12T19:00:00Z",
     "labels": [],
@@ -63,6 +96,7 @@
     "number": 2103,
     "title": "fix(hotfix): unwedge the dogfood refresh",
     "headRefName": "feature/hotfix-1283",
+    "baseRefName": "evolve",
     "body": "Closes #1283",
     "mergedAt": "2026-09-12T20:00:00Z",
     "labels": [],
@@ -74,6 +108,7 @@
     "number": 2104,
     "title": "revert: feat(evolve): evolve skill",
     "headRefName": "feature/revert-1273",
+    "baseRefName": "evolve",
     "body": "Reverts #2002",
     "mergedAt": "2026-09-12T21:00:00Z",
     "labels": [],

@@ -31,6 +31,14 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 inc_scenario() { echo ""; echo "-- $1 --"; }
 
+# The NEWEST cycle has no successor `Cycle N+1 (<date>` header, so its window's
+# upper bound is a clock. Every cycle-1 scenario injects it instead of reading
+# the wall clock, so the pinned counts can never drift with the calendar. The
+# env seam is used for the behaviour runs (Scenario 11 asserts the `--now` flag
+# is byte-equivalent to it); cycle 0's window is bounded by the `Cycle 1` header
+# and needs no clock at all.
+CYCLE1_NOW="2026-09-19T00:00:00Z"
+
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -56,11 +64,11 @@ mkfix() {
 }
 
 # has_line <text> <exact line>   — whole-line, fixed-string
-has_line() { printf '%s\n' "$1" | grep -qxF "$2"; }
+has_line() { printf '%s\n' "$1" | grep -qxF -- "$2"; }
 # has_re <text> <ERE>
-has_re() { printf '%s\n' "$1" | grep -qE "$2"; }
+has_re() { printf '%s\n' "$1" | grep -qE -- "$2"; }
 # has_sub <text> <fixed substring>
-has_sub() { printf '%s\n' "$1" | grep -qF "$2"; }
+has_sub() { printf '%s\n' "$1" | grep -qF -- "$2"; }
 # value_of <dump text> <key>  — echoes the RHS of `COMPUTED <key> = `
 value_of() { printf '%s\n' "$1" | sed -n "s|^COMPUTED $2 = ||p" | head -1; }
 
@@ -119,7 +127,7 @@ else
   fail_msg "--help printed no usage banner (got: $(printf '%s' "$HELP_OUT" | head -1))"
 fi
 
-for flag in --cycle --post --tracker --since --write --fixture; do
+for flag in --cycle --post --tracker --since --write --fixture --now; do
   if printf '%s' "$HELP_OUT" | grep -qF -- "$flag"; then
     pass_msg "--help banner names $flag"
   else
@@ -433,9 +441,26 @@ expect_line "--since excludes HARNESS-FRICTION comments older than the window (2
 expect_line "compactions have no substrate and say so" \
   "$DUMP_C" "COMPUTED friction/compactions = n/a (no transcript substrate)"
 
-expect_line "hotfix uses counted from prs.json head refs" "$DUMP_C" "COMPUTED friction/hotfix = 1"
-expect_line "manual-merge uses counted from prs.json labels" "$DUMP_C" "COMPUTED friction/manual-merge = 1"
-expect_line "human-label uses counted from issues.json labels" "$DUMP_C" "COMPUTED friction/human = 1"
+# The hotfix / manual-merge / human rows are CYCLE-SCOPED (#1281). Cycle 0's
+# window is [2026-09-05, 2026-09-12): BOTH bounds come from the tracker's own
+# `Cycle N (<date>` headers, so the 2-cycle tracker — the one that HAS a `Cycle 1`
+# header — is what makes these assertions clock-independent rather than a bomb
+# that goes off on 2026-09-12.
+#
+# Out-of-scope controls a repo-wide count picks up (fixtures README):
+#   PR #1990    right base, merged 2026-08-01 — before every cycle window
+#   PR #1991    inside the cycle-1 time range but merged into `main`
+#   issue #1299 labelled `human`, in no `## Cycle …` block
+DUMP_C0="$(bash "$HELPER" --cycle 0 --fixture "$FIX2" --dump-computed 2>/dev/null)"
+
+expect_line "cycle 0 window holds no hotfix PR (#1990 pre-window, #1991 wrong base)" \
+  "$DUMP_C0" "COMPUTED friction/hotfix = 0"
+expect_line "manual-merge counted on the base branch inside the window only (#2002, not #1991)" \
+  "$DUMP_C0" "COMPUTED friction/manual-merge = 1"
+expect_line "human-label counted over the cycle's own issues only (#1274, not #1299)" \
+  "$DUMP_C0" "COMPUTED friction/human = 1"
+expect_line "cycle 0 names the comment window its friction harvest read" \
+  "$DUMP_C0" "COMPUTED friction/harness-friction-window = cycle 0 issue comments"
 
 # ---------------------------------------------------------------------------
 # Scenario 11: escapes — all three sources
@@ -448,14 +473,53 @@ expect_line "human-label uses counted from issues.json labels" "$DUMP_C" "COMPUT
 #                 touches only docs/retros/cycle-01.md — disjoint, so the count
 #                 must be exactly 1, not 2.
 # ---------------------------------------------------------------------------
-inc_scenario "Scenario 11: escapes (hotfix, revert, later-fix)"
+inc_scenario "Scenario 11: escapes + cycle-scoped friction (clock pinned)"
 
-DUMP_C1="$(bash "$HELPER" --cycle 1 --fixture "$FIX2" --dump-computed 2>/dev/null)"
+# Cycle 1 is the newest cycle, so its window is [2026-09-12, $CYCLE1_NOW).
+# `escapes/revert` and `escapes/later-fix` are CONTROLS here: only the
+# current-cycle PR set is windowed, never the previous-cycle set the later-fix
+# file overlap is computed against — window both and `escapes/later-fix` is
+# pinned at 0 forever.
+DUMP_C1="$(PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --fixture "$FIX2" --dump-computed 2>/dev/null)"
 
 expect_line "escapes: hotfix PRs counted by head ref" "$DUMP_C1" "COMPUTED escapes/hotfix = 1"
 expect_line "escapes: revert PRs counted by conventional-commit type" "$DUMP_C1" "COMPUTED escapes/revert = 1"
 expect_line "escapes: later fix PR touching a previous-cycle file counted (disjoint PR excluded)" \
   "$DUMP_C1" "COMPUTED escapes/later-fix = 1"
+
+expect_line "cycle 1 friction/hotfix counts the in-window base-branch hotfix only (#2103)" \
+  "$DUMP_C1" "COMPUTED friction/hotfix = 1"
+expect_line "cycle 1 has no human-labelled issue (#1299 is in no cycle block)" \
+  "$DUMP_C1" "COMPUTED friction/human = 0"
+expect_line "cycle 1 has no in-window manual-merge PR (#1991 merged into main)" \
+  "$DUMP_C1" "COMPUTED friction/manual-merge = 0"
+
+# The `--now` FLAG is a behaviour seam, not just a banner string: pin it as
+# byte-equivalent to the env form every scenario above injects.
+DUMP_C1_FLAG="$(bash "$HELPER" --cycle 1 --now "$CYCLE1_NOW" --fixture "$FIX2" --dump-computed 2>/dev/null)"
+if [ -z "$DUMP_C1_FLAG" ]; then
+  fail_msg "--now $CYCLE1_NOW produced no output (the flag is not accepted)"
+elif [ "$DUMP_C1_FLAG" = "$DUMP_C1" ]; then
+  pass_msg "--now DATE is byte-equivalent to PIPELINE_RETRO_NOW=DATE"
+else
+  fail_msg "--now DATE did not reproduce PIPELINE_RETRO_NOW=DATE"
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 11b: no resolvable cycle window degrades to a NAMED reason
+#
+# `--cycle 5` against the 2-cycle tracker: no `Cycle 5` header and no cycle-5
+# issues, so neither the header nor the createdAt fallback yields a lower bound.
+# The contract is a named reason — never a silent fall back to the repo-wide
+# count, which is the mis-scoping this issue exists to remove.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 11b: no cycle window degradation"
+
+DUMP_C5="$(bash "$HELPER" --cycle 5 --fixture "$FIX2" --dump-computed 2>/dev/null)"
+expect_line "friction/hotfix renders a named reason when no cycle window resolves" \
+  "$DUMP_C5" "COMPUTED friction/hotfix = n/a (no cycle window)"
+expect_line "escapes/hotfix renders a named reason when no cycle window resolves" \
+  "$DUMP_C5" "COMPUTED escapes/hotfix = n/a (no cycle window)"
 
 # ---------------------------------------------------------------------------
 # Scenario 12: gate yield, weak-model pass, usage snapshot
@@ -555,15 +619,25 @@ inc_scenario "Scenario 14: pending verdicts"
 PENDING="$(printf '%s\n' "$REPORT1" | grep -F 'pending-verdicts:')"
 if [ -n "$PENDING" ]; then
   pass_msg "cycle 1 emits a pending-verdicts: line"
-  if printf '%s' "$PENDING" | grep -q '1273' && printf '%s' "$PENDING" | grep -q '1274'; then
-    pass_msg "pending verdicts name #1273 and #1274 (Measured by: retro (next cycle))"
+  # Non-vacuity FIRST: an empty RHS satisfies the exclusion below trivially.
+  if printf '%s' "$PENDING" | grep -qE 'pending-verdicts:[[:space:]]*[0-9]'; then
+    pass_msg "non-vacuity guard: the pending-verdicts: line names at least one issue"
   else
-    fail_msg "pending verdicts missing #1273/#1274 (got: $PENDING)"
+    fail_msg "non-vacuity guard: the pending-verdicts: line names no issue (got: $PENDING)"
   fi
-  if printf '%s' "$PENDING" | grep -q '1272'; then
-    fail_msg "pending verdicts wrongly include #1272 (Measured by: immediate)"
+  if printf '%s' "$PENDING" | grep -q '1274'; then
+    pass_msg "pending verdicts name #1274 (retro (next cycle), still unresolved)"
   else
-    pass_msg "pending verdicts exclude #1272 (Measured by: immediate)"
+    fail_msg "pending verdicts missing #1274 (got: $PENDING)"
+  fi
+  # The tracker's `## Cycle 0` comment records `#1273 no-effect`, so #1273 is
+  # already resolved and must not be re-asked for. (The old "#1272 is excluded"
+  # half was deleted as vacuous: verdict_candidates never proposes it — its body
+  # says `Measured by: immediate` — so that assertion could not fail.)
+  if printf '%s' "$PENDING" | grep -q '1273'; then
+    fail_msg "pending verdicts wrongly include #1273 — the previous cycle comment already records it as no-effect (got: $PENDING)"
+  else
+    pass_msg "pending verdicts exclude #1273 (resolved by the previous cycle comment)"
   fi
 else
   fail_msg "cycle 1 emitted no pending-verdicts: line"
@@ -670,6 +744,44 @@ if [ "$BEFORE_RETROS" -eq "$AFTER_RETROS" ]; then
 else
   fail_msg "a run without --write created a file under docs/retros/"
 fi
+
+# ---------------------------------------------------------------------------
+# Scenario 17a: the HARNESS-FRICTION comment window is per-mode and NAMED
+#
+# At cycle N>0 the full report reads the tracker's `## Cycle N-1` comment — the
+# window the operator actually reads at step 1 — because the cycle-N tracker
+# comment does not exist yet (step 7 writes it). `--post` runs before that, so it
+# keeps reading the current cycle's ISSUE comments. The fixture's #1271 comment
+# carries three HARNESS-FRICTION: lines and the cycle-1 issues carry none, so the
+# two windows are distinguishable by count as well as by name.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 17a: HARNESS-FRICTION comment window"
+
+TRACKER_FRICTION_1="HARNESS-FRICTION: the evolve skill fence promised awk field references | the harness rewrote them with the invocation args"
+TRACKER_FRICTION_2="HARNESS-FRICTION: run-retro friction rows claimed cycle scope | the counts were repo-wide"
+TRACKER_FRICTION_3="HARNESS-FRICTION: the pending-verdicts line claimed unresolved | the cycle comment already recorded the verdict"
+
+REPORT1W="$(PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --fixture "$FIX2" 2>/dev/null)"
+
+expect_line "cycle 1 counts the 3 HARNESS-FRICTION lines of the tracker's ## Cycle 0 comment" \
+  "$DUMP_C1" "COMPUTED friction/harness-friction-lines = 3"
+expect_line "cycle 1 names the tracker comment as the window it harvested" \
+  "$DUMP_C1" "COMPUTED friction/harness-friction-window = tracker cycle 0 comment"
+expect_sub "tracker friction line 1 is echoed verbatim in the cycle 1 report" "$REPORT1W" "$TRACKER_FRICTION_1"
+expect_sub "tracker friction line 2 is echoed verbatim in the cycle 1 report" "$REPORT1W" "$TRACKER_FRICTION_2"
+expect_sub "tracker friction line 3 is echoed verbatim in the cycle 1 report" "$REPORT1W" "$TRACKER_FRICTION_3"
+
+DUMP_POST1="$(PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --post --fixture "$FIX2" --dump-computed 2>/dev/null)"
+expect_line "--post at cycle 1 reads the CURRENT cycle's issue comments instead" \
+  "$DUMP_POST1" "COMPUTED friction/harness-friction-window = cycle 1 issue comments"
+
+# ---------------------------------------------------------------------------
+# Scenario 17b: --help documents the clock seam and both comment windows
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 17b: --help clock + comment windows"
+
+expect_sub "--help banner names the --now clock seam" "$HELP_OUT" "--now"
+expect_sub "--help banner carries a Comment windows: stanza" "$HELP_OUT" "Comment windows:"
 
 echo ""
 echo "== RESULTS =="

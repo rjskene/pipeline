@@ -64,3 +64,40 @@ delta join. Refresh this file whenever the #1271 baseline table is edited.
 | `min` | 45 | 50 |
 
 Cycle-0 issue #1274 has no row → `n/a (outside PR window)`.
+
+## Cycle-scope fields and the out-of-scope control rows (#1281)
+
+`run-retro.sh` scopes the friction / escape rows to the cycle window, so both
+JSON feeds carry the fields the window predicate reads:
+
+| field | file | stands in for | why the fixture needs it |
+|---|---|---|---|
+| `createdAt` | `issues.json` | `gh issue list --json …,createdAt` | FALLBACK lower bound for the cycle window when a `Cycle N (…` tracker header carries no date. Cycle-0 issues are stamped `2026-09-05T…`, cycle-1 issues `2026-09-12T…` |
+| `baseRefName` | `prs.json` | `gh pr list --json …,baseRefName` | a merged PR only counts toward a cycle when it landed on the base branch (`evolve`); a PR merged into `main` is out of scope no matter when it merged |
+
+Issue `#1271` is the TRACKER row (`labels: ["tracker"]`). Its single comment is a
+verbatim `## Cycle 0` cycle comment: the `- issues:` line, a `- verdicts:` line
+carrying `#1272 confirmed · #1273 no-effect · #1281 regressed (reverted by PR #2104)
+| pending: #1274 (retro next cycle)`, and THREE `HARNESS-FRICTION:` lines. It is
+the substrate for two behaviours: the pending-verdict subtraction (a cycle-1 run
+must drop `#1273`, keep `#1274`) and the cycle-N>0 comment window (a cycle-1 full
+report counts and echoes those three lines). `#1271` appears in NO `## Cycle …`
+block, so its friction lines cannot leak into a cycle-scoped issue-comment
+harvest — the cycle-0 count stays 2.
+
+### Out-of-scope control rows
+
+Four rows exist only to be EXCLUDED; each fails a different half of the window
+predicate, so a scope regression moves a pinned count:
+
+| row | file | why it is out of scope |
+|---|---|---|
+| `#1990` (PR, head `feature/hotfix-990`, base `evolve`, merged `2026-08-01`) | `prs.json` | right base, but merged before every cycle window — a repo-wide `friction/hotfix` count picks it up |
+| `#1991` (PR, head `feature/hotfix-991`, base `main`, label `manual-merge`, merged `2026-09-13`) | `prs.json` | inside the cycle-1 time range but WRONG base — pins both `friction/hotfix` and `friction/manual-merge` |
+| `#1299` (issue, label `human`, created `2026-09-20`) | `issues.json` | in no cycle block — a repo-wide `friction/human` count picks it up |
+| `#1271` (issue, label `tracker`) | `issues.json` | the tracker itself is in no cycle block — its 3 `HARNESS-FRICTION:` lines must not join a cycle-0 issue-comment harvest |
+
+Neither `#1990` nor `#1991` closes an issue, so both land in the escape
+computation's current-cycle PR set and inflate `escapes/hotfix` until the window
+is applied. Their `files` are disjoint from every cycle-0 PR's, so
+`escapes/later-fix` is unaffected either way.

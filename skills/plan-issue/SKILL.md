@@ -113,7 +113,7 @@ Receive an issue number as argument (or from context).
      # never from a raw `--json comments` fetch. Pipeline-posted `## Classification`
      # comments survive the filter because the operator account is OWNER.
      CACHED=$(printf '%s\n' "$TRUSTED" \
-       | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | tail -1)
+       | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $NF}' | tail -1)
      case "$CACHED" in A|B|C|D) PATH_LETTER="$CACHED" ;; *) PATH_LETTER=B ;; esac
    fi
    echo "Planning issue #<N> as PATH $PATH_LETTER"
