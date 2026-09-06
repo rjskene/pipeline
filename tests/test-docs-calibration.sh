@@ -2,7 +2,7 @@
 set -euo pipefail
 # Guard: docs/calibration.md is the operator guide for the calibration slate
 # (spec 2026-09-05-harness-evolve-loop-design.md section 8). It must document
-# every calibration-run.sh mode, the three PIPELINE_CALIB_* knobs, the cost
+# every calibration-run.sh mode, the three calibration knobs, the cost
 # band + headless-billing note, the two spec triggers, the CALIB summary-line
 # grammar, and the harness-rooted tee target. docs/retros/README.md must point
 # at the calib substrate directory.
