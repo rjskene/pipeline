@@ -227,6 +227,42 @@ assert_eq "CALIB-TOTAL fields: run-retro.sh header matches docs/calibration.md" 
 assert_eq "CALIB-TOTAL fields are the four the slate totals" \
   "cost wall issues reftest-pass" "$DOC_TOTAL"
 
+# The abort line is a fourth artifact's worth of grammar: the doc declares it,
+# the driver prints it, the retro header parses off it, and the fixture README
+# is what a future fixture author copies. All four must agree, or an aborted
+# run silently reads as a graded one somewhere.
+DOC_ABORT="$(fields "$(first_line "$DOC" '^CALIB-ABORT ')")"
+EMIT_ABORT="$(fields "$(first_line "$RUNNER" "printf 'CALIB-ABORT ")")"
+RETRO_ABORT="$(fields "$(first_line "$RETRO" '^#[[:space:]]+CALIB-ABORT ')")"
+FIX_ABORT="$(fields "$(first_line "$FIXTURE_README" '^CALIB-ABORT ')")"
+
+assert_eq "CALIB-ABORT fields: emitter matches docs/calibration.md" "$DOC_ABORT" "$EMIT_ABORT"
+assert_eq "CALIB-ABORT fields: run-retro.sh header matches docs/calibration.md" \
+  "$DOC_ABORT" "$RETRO_ABORT"
+assert_eq "CALIB-ABORT fields: the fixture README matches docs/calibration.md" \
+  "$DOC_ABORT" "$FIX_ABORT"
+assert_eq "CALIB-ABORT carries the one field the slate aborts with" "reason" "$DOC_ABORT"
+
+# The reason VOCABULARY is derived from the doc's own `<a|b|c>` slot, then
+# checked against the driver's detector: a documented reason the detector can
+# never set (or a renamed one) is drift the field-name pin above cannot see.
+DOC_ABORT_LINE="$(first_line "$DOC" '^CALIB-ABORT ')"
+REASONS="$(printf '%s\n' "$DOC_ABORT_LINE" | sed -e 's/.*<//' -e 's/>.*//' | tr '|' ' ')"
+if grep -qF '<' <<< "$DOC_ABORT_LINE" && [ -n "${REASONS// /}" ]; then
+  pass_msg "docs/calibration.md names a CALIB-ABORT reason vocabulary: $REASONS"
+else
+  fail_msg "docs/calibration.md's CALIB-ABORT line carries no <a|b|c> reason slot"
+fi
+
+DETECT_BLOCK="$TMP/detect-block"
+slice "$RUNNER" '^detect_abort' '^}$' > "$DETECT_BLOCK"
+missing_reason=""
+for tok in $REASONS; do
+  grep -qE "(=|\")$tok(\"|;| )" "$DETECT_BLOCK" || missing_reason="$missing_reason $tok"
+done
+assert_eq "every documented CALIB-ABORT reason is a literal detect_abort() sets" \
+  "" "${missing_reason# }"
+
 # The parser reads a SUBSET (it needs three atoms), but every key it looks for
 # must be a field the emitter actually emits — a renamed field is a silent
 # no-match, never an error.
