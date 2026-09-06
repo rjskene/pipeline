@@ -289,14 +289,54 @@ cmd_bootstrap() {
 # --reset
 # ---------------------------------------------------------------------------
 
+# guard_sandbox_repo — --reset force-pushes a branch back to a tag and DELETES
+# issues. Aimed at the harness repo (one wrong char in PIPELINE_CALIB_REPO, or
+# an unset knob inheriting a stale export) that is unrecoverable, so refuse on
+# both readings of "this is not a sandbox": the repo the harness itself drives,
+# and the slug of the checkout the driver is running in. The PIPELINE_REPO
+# comparison comes FIRST so the common slip costs no network call at all.
+guard_sandbox_repo() {
+  local own
+  if [ -n "${PIPELINE_REPO:-}" ] && [ "$CALIB_REPO" = "$PIPELINE_REPO" ]; then
+    die_run "refusing to --reset $CALIB_REPO: it is PIPELINE_REPO — the calibration sandbox must never be the harness repo"
+  fi
+  own="$(dispatch gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$own" ] && [ "$CALIB_REPO" = "$own" ]; then
+    die_run "refusing to --reset $CALIB_REPO: it is this checkout's own repo — the calibration sandbox must be a separate repo"
+  fi
+}
+
+# slate_titles — the exact titles create_slate_issues() creates, one per line.
+# This is the reap's scope (see below).
+slate_titles() {
+  local d
+  [ -d "$SLATE_DIR" ] || return 0
+  for d in "$SLATE_DIR"/*/; do
+    [ -f "${d}title.txt" ] || continue
+    head -1 "${d}title.txt"
+  done
+}
+
+# reap_stale_issues — close+delete PRIOR RUNS' slate issues, and nothing else.
+# Scoped by exact title match against the slate rather than by a `calib` label,
+# so the sandbox needs no extra label seeded at create time; an issue a human
+# (or the run under test) filed in the sandbox survives. `--limit 200` because
+# `gh issue list` defaults to 30 — silent truncation would leave prior slates
+# half-reaped and the next run reading two generations of issues.
 reap_stale_issues() {
-  local n
-  for n in $(dispatch gh issue list --repo "$CALIB_REPO" --state all \
-               --json number --jq '.[].number' 2>/dev/null); do
+  local titles n t
+  titles="$(slate_titles)"
+  if [ -z "$titles" ]; then
+    warn "no slate titles resolved from $SLATE_DIR — skipping the issue reap"
+    return 0
+  fi
+  while IFS="$(printf '\t')" read -r n t; do
     case "$n" in ''|*[!0-9]*) continue ;; esac
+    printf '%s\n' "$titles" | grep -qxF -- "$t" || continue
     dispatch gh issue close "$n" --repo "$CALIB_REPO" >/dev/null 2>&1
     dispatch gh issue delete "$n" --repo "$CALIB_REPO" --yes >/dev/null 2>&1
-  done
+  done < <(dispatch gh issue list --repo "$CALIB_REPO" --state all --limit 200 \
+             --json number,title --jq '.[] | [.number, .title] | @tsv' 2>/dev/null)
 }
 
 create_slate_issues() {
@@ -322,6 +362,7 @@ create_slate_issues() {
 }
 
 cmd_reset() {
+  guard_sandbox_repo
   [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
   dispatch git -C "$SANDBOX" fetch --quiet --tags origin || warn "sandbox fetch failed — resetting against the local $BASE_TAG"
   git -C "$SANDBOX" rev-parse -q --verify "refs/tags/$BASE_TAG" >/dev/null 2>&1 \

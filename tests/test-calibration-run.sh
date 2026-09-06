@@ -87,9 +87,14 @@ cat > "$STUB_BIN/gh" <<'GH'
 #!/bin/bash
 echo "gh $*" >> "$CALIB_TEST_CALLS"
 case "$*" in
+  # `gh repo view --json nameWithOwner` (no repo arg) = "what repo is this
+  # checkout?" — the slug the --reset blast-radius guard compares against.
+  "repo view --json"*) echo "${CALIB_TEST_OWN_SLUG:-rjskene/pipeline}" ;;
   "repo view"*)   exit 1 ;;                      # sandbox repo absent -> create
   "repo create"*) echo "created"; exit 0 ;;
-  "issue list"*)  printf '%s\n' 4001 4002 ;;     # two stale issues to reap
+  # <number>TAB<title>, the shape the title-scoped reap reads. 4001 carries a
+  # slate title (reapable); 4777 is an unrelated issue that must survive.
+  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
   "issue close"*|"issue delete"*) exit 0 ;;
   "issue create"*)
     n="$(cat "$CALIB_TEST_COUNTER" 2>/dev/null || echo 4100)"
@@ -124,7 +129,7 @@ run_helper() {
         CALIB_TEST_COUNTER="$TMP/issue-counter" \
         CALIB_TEST_DOCTOR_ENV="$DOCTOR_ENV" \
         PIPELINE_REPO="rjskene/pipeline" \
-        PIPELINE_CALIB_REPO="owner/pipeline-calib" \
+        PIPELINE_CALIB_REPO="${CALIB_TEST_REPO_OVERRIDE:-owner/pipeline-calib}" \
         PIPELINE_CALIB_DIR="$SANDBOX" \
         PIPELINE_CALIB_REMOTE="$REMOTE" \
         PIPELINE_CALIB_ISSUE_IDS="8001 8002 8003 8004 8005" \
@@ -349,6 +354,55 @@ if grep -q '^claude ' "$CALLS" 2>/dev/null; then
   fail_msg "--reset launched claude"
 else
   pass_msg "--reset never launches claude"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 6: --reset refuses to nuke a non-sandbox repo"
+# ---------------------------------------------------------------------------
+# --reset force-pushes a branch back to a tag and DELETES issues. Pointed at
+# the harness repo (a one-character config slip) that is unrecoverable, so the
+# refusal is asserted from both directions: the exported PIPELINE_REPO and the
+# slug of the checkout the driver is running in.
+
+rm -f "$CALLS"
+CALIB_TEST_REPO_OVERRIDE="rjskene/pipeline" run_helper --reset --harness "$HARNESS"
+expect_rc "--reset dies when the sandbox repo is PIPELINE_REPO" 1
+expect_sub "the refusal names the repo it refused" "$OUT" "rjskene/pipeline"
+if [ -s "$CALLS" ]; then
+  fail_msg "--reset dispatched before refusing: $(tr '\n' ';' < "$CALLS")"
+else
+  pass_msg "--reset refuses before any gh dispatch"
+fi
+
+rm -f "$CALLS"
+CALIB_TEST_REPO_OVERRIDE="owner/harness-checkout" CALIB_TEST_OWN_SLUG="owner/harness-checkout" \
+  run_helper --reset --harness "$HARNESS"
+expect_rc "--reset dies when the sandbox repo is this checkout's own repo" 1
+if grep -q '^gh issue ' "$CALLS" 2>/dev/null; then
+  fail_msg "--reset touched issues on its own repo: $(grep '^gh issue ' "$CALLS" | tr '\n' ';')"
+else
+  pass_msg "--reset touches no issue on its own repo"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 7: the reap is bounded and scoped to the slate"
+# ---------------------------------------------------------------------------
+rm -f "$CALLS" "$TMP/issue-counter"
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset exits 0 against the sandbox repo" 0
+
+LIST_CALL="$(grep -m1 '^gh issue list ' "$CALLS" 2>/dev/null)"
+expect_sub "the reap bounds gh issue list (default 30 silently truncates)" "$LIST_CALL" "--limit 200"
+
+if grep -qE '^gh issue (close|delete) 4001 ' "$CALLS" 2>/dev/null; then
+  pass_msg "the reap closes an issue carrying a slate title"
+else
+  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc')"
+fi
+if grep -qE '^gh issue (close|delete) 4777 ' "$CALLS" 2>/dev/null; then
+  fail_msg "the reap deleted an unrelated issue (4777)"
+else
+  pass_msg "the reap leaves non-slate issues alone"
 fi
 
 # ---------------------------------------------------------------------------
