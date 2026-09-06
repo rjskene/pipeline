@@ -210,17 +210,3 @@ PIPELINE_SUPERPOWERS_
 # `--now DATE` flag, documented in `run-retro.sh --help`. Intentionally
 # undocumented in pipeline.config.example; exact-match exempt here.
 PIPELINE_RETRO_NOW
-
-# #1286 split-role RED window (TRANSIENT — peel when #1286's GREEN declares it).
-# The `[split-role-red]` commit introduces the literal PIPELINE_HEADLESS into
-# tests/test-fullsend-headless-contract.sh — tests/ is a check-config-drift scan
-# dir, so the token reads as referenced-but-undeclared until the GREEN role adds
-# the COMMENTED `#PIPELINE_HEADLESS="false"` declaration to
-# pipeline.config.example. Without this entry the RED commit reds
-# scripts/check-config-drift.sh, tests/test-config-drift-clean.sh and
-# scripts/check-cross-cutting-guards.sh for reasons unrelated to the assertions
-# under test. Exact-match, deliberately NOT a prefix wildcard.
-# GREEN role: delete this block in the same commit that declares the knob — the
-# test's A8 assertion (drift lint exits 0, token unreported) then holds on its
-# own merits rather than on a suppression.
-PIPELINE_HEADLESS
