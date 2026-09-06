@@ -1,11 +1,31 @@
 [
   {
+    "number": 1271,
+    "labels": [
+      {
+        "name": "tracker"
+      }
+    ],
+    "createdAt": "2026-09-01T00:00:00Z",
+    "body": "Harness-evolve loop tracker. The cycle log lives in the comments.\n",
+    "comments": [
+      {
+        "author": {
+          "login": "rjskene"
+        },
+        "body": "## Cycle 0\n- issues: #1272 #1273 #1274\n- verdicts: #1272 confirmed · #1273 no-effect · #1281 regressed (reverted by PR #2104) | pending: #1274 (retro next cycle)\n- usage: start five_hour=10 seven_day=20 end five_hour=41 seven_day=63\n- retro: docs/retros/cycle-00.md @ 0badc0f\nHARNESS-FRICTION: the evolve skill fence promised awk field references | the harness rewrote them with the invocation args\nHARNESS-FRICTION: run-retro friction rows claimed cycle scope | the counts were repo-wide\nHARNESS-FRICTION: the pending-verdicts line claimed unresolved | the cycle comment already recorded the verdict\n",
+        "createdAt": "2026-09-12T08:00:00Z"
+      }
+    ]
+  },
+  {
     "number": 1272,
     "labels": [
       {
         "name": "evolve"
       }
     ],
+    "createdAt": "2026-09-05T09:00:00Z",
     "body": "## Scope\nrun-retro.sh\n\n## Evolve\n- Cycle: 0\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: immediate (works in cycle 1)\n- Prose budget: net skill-prose tokens <= 0\n",
     "comments": [
       {
@@ -45,6 +65,7 @@
         "name": "evolve"
       }
     ],
+    "createdAt": "2026-09-05T09:30:00Z",
     "body": "## Scope\nevolve skill\n\n## Evolve\n- Cycle: 0\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: retro (next cycle)\n- Prose budget: net skill-prose tokens <= 0\n",
     "comments": [
       {
@@ -80,6 +101,7 @@
         "name": "human"
       }
     ],
+    "createdAt": "2026-09-05T10:00:00Z",
     "body": "## Scope\nhousekeeping\n\n## Evolve\n- Cycle: 0\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: retro (next cycle)\n- Prose budget: net skill-prose tokens <= 0\n",
     "comments": [
       {
@@ -105,6 +127,7 @@
         "name": "evolve"
       }
     ],
+    "createdAt": "2026-09-12T09:00:00Z",
     "body": "## Scope\nmedian fix\n\n## Evolve\n- Cycle: 1\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: retro (next cycle)\n- Prose budget: net skill-prose tokens <= 0\n",
     "comments": [
       {
@@ -130,6 +153,7 @@
         "name": "evolve"
       }
     ],
+    "createdAt": "2026-09-12T09:30:00Z",
     "body": "## Scope\ncycle 1 notes\n\n## Evolve\n- Cycle: 1\n- Hypothesis: synthetic fixture hypothesis\n- Metric: friction\n- Measured by: immediate\n- Prose budget: net skill-prose tokens <= 0\n",
     "comments": [
       {
@@ -147,5 +171,16 @@
         "createdAt": "2026-09-12T12:00:00Z"
       }
     ]
+  },
+  {
+    "number": 1299,
+    "labels": [
+      {
+        "name": "human"
+      }
+    ],
+    "createdAt": "2026-09-20T09:00:00Z",
+    "body": "## Scope\nout-of-cycle human-routed work (negative control; in no tracker cycle block)\n",
+    "comments": []
   }
 ]
