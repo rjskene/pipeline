@@ -608,6 +608,138 @@ else
   fail_msg "the day's artifact must hold 5 CALIB rows, not an accumulation (got $N_ROWS)"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "Scenario 11: a run that stops to ask a question aborts, never grades 0/n"
+# ---------------------------------------------------------------------------
+# Run #1's observed shape: the headless session ended its final message on a
+# question ("your call on auto-merge?"), nobody answered, and it pushed
+# nothing. The driver graded that as reftest-pass=0/5 — indistinguishable in
+# the retro from "the harness regressed on all five issues", when in fact the
+# harness never started. The run must self-report the abort instead.
+
+# Rewind the "remote" to the unfixed base first: Scenario 8's stand-in landed
+# the fix there, and a run that merges nothing must grade against a sandbox
+# that carries no fix — otherwise the n/a assertions below could pass for the
+# wrong reason (a tree that happens to be green).
+git -C "$REMOTE" update-ref refs/heads/main "$(git -C "$REMOTE" rev-parse calib-base)"
+
+cat > "$TMP/claude-held.sh" <<'HELD'
+#!/bin/bash
+echo "Wave 1 merged. Your call on auto-merge for the rest?"
+HELD
+chmod +x "$TMP/claude-held.sh"
+printf '[]\n' > "$TMP/prs-empty.json"
+
+# --reset hands out fresh issue ids on every run, so re-pin the counter: the
+# staged issue substrate is keyed on 5001..5005.
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-held.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs-empty.json"
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "a run that merged nothing still exits 0" 0
+expect_sub "a session that ends on a question reports CALIB-ABORT reason=held" \
+  "$OUT" "CALIB-ABORT reason=held"
+
+ABORT_LN="$(printf '%s\n' "$OUT" | grep -n '^CALIB-ABORT ' | head -1 | cut -d: -f1)"
+ROW_LN="$(printf '%s\n' "$OUT" | grep -n '^CALIB issue=' | head -1 | cut -d: -f1)"
+if [ -n "$ABORT_LN" ] && [ -n "$ROW_LN" ] && [ "$ABORT_LN" -lt "$ROW_LN" ]; then
+  pass_msg "the CALIB-ABORT line comes before the first CALIB row"
+else
+  fail_msg "CALIB-ABORT must lead the block (abort line=${ABORT_LN:-none} first row=${ROW_LN:-none})"
+fi
+
+N_NA="$(printf '%s\n' "$OUT" | grep -c '^CALIB issue=.* reftest=n/a ')"
+if [ "$N_NA" = "5" ]; then
+  pass_msg "every row of a run that reached no issue reports reftest=n/a"
+else
+  fail_msg "an aborted run must report reftest=n/a for all 5 rows (got $N_NA)"
+fi
+TOTAL_HELD="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the total refuses to score an aborted run" "$TOTAL_HELD" "reftest-pass=n/a"
+refute_sub "an aborted run never reports a failed slate" "$OUT" "reftest-pass=0/5"
+
+RUN_LOG_FILE="$HARNESS/docs/retros/calib/$(date -u +%Y-%m-%d).log"
+if [ -f "$RUN_LOG_FILE" ] && grep -qF 'auto-merge for the rest?' "$RUN_LOG_FILE"; then
+  pass_msg "--run tees the session output to docs/retros/calib/<UTC date>.log"
+else
+  fail_msg "--run must tee the question it stopped on to $RUN_LOG_FILE"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 12: the abort reason separates a timeout from a silent finish"
+# ---------------------------------------------------------------------------
+cat > "$TMP/claude-timeout.sh" <<'TO'
+#!/bin/bash
+echo "working on it"
+exit 124
+TO
+chmod +x "$TMP/claude-timeout.sh"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-timeout.sh"
+run_helper --run --harness "$HARNESS"
+expect_rc "a timed-out run still exits 0" 0
+expect_sub "hitting the timeout cap reports CALIB-ABORT reason=timeout" \
+  "$OUT" "CALIB-ABORT reason=timeout"
+
+cat > "$TMP/claude-quiet.sh" <<'QUIET'
+#!/bin/bash
+echo "done."
+QUIET
+chmod +x "$TMP/claude-quiet.sh"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-quiet.sh"
+run_helper --run --harness "$HARNESS"
+expect_sub "a clean finish that opened no PR reports CALIB-ABORT reason=no-pr" \
+  "$OUT" "CALIB-ABORT reason=no-pr"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 13: a run held AFTER a partial merge grades only what merged"
+# ---------------------------------------------------------------------------
+# Run #2's observed shape: wave 1 merged, then the orchestrator stopped to ask
+# about the rest. The merged issues carry real evidence and must be graded for
+# real; the ones the run never reached must not be graded at all.
+
+cat > "$TMP/claude-partial.sh" <<'PART'
+#!/bin/bash
+"$CALIB_TEST_MERGE_SCRIPT"
+echo "Wave 1 merged. Want me to auto-merge the rest?"
+PART
+chmod +x "$TMP/claude-partial.sh"
+
+# 5001/5003/5004 merged; 5002/5005 have an OPEN PR (mergedAt null), so the set
+# is non-empty — the reason must be `held`, not `no-pr`.
+cat > "$TMP/prs-partial.json" <<'PARTPRS'
+[
+  {"number":9001,"body":"Closes #5001","headRefName":"feature/calib-5001","mergedAt":"2026-09-06T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9003,"body":"Closes #5003","headRefName":"feature/calib-5003","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9004,"body":"Closes #5004","headRefName":"feature/calib-5004","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9002,"body":"Closes #5002","headRefName":"feature/calib-5002","mergedAt":null,"files":[],"comments":[]},
+  {"number":9005,"body":"Closes #5005","headRefName":"feature/calib-5005","mergedAt":null,"files":[],"comments":[]}
+]
+PARTPRS
+
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_MERGE_SCRIPT="$TMP/claude-merge.sh"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-partial.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs-partial.json"
+run_helper --run --harness "$HARNESS"
+expect_rc "a partially-merged held run still exits 0" 0
+expect_sub "a held run with open PRs is held, not no-pr" "$OUT" "CALIB-ABORT reason=held"
+for n in 5001 5003 5004; do
+  expect_sub "issue $n merged, so its reference test is graded for real" \
+    "$OUT" "CALIB issue=$n path=" 
+  ROW="$(printf '%s\n' "$OUT" | grep -m1 "^CALIB issue=$n ")"
+  expect_sub "issue $n reports a real reftest verdict" "$ROW" "reftest=pass "
+done
+for n in 5002 5005; do
+  ROW="$(printf '%s\n' "$OUT" | grep -m1 "^CALIB issue=$n ")"
+  expect_sub "issue $n never merged, so its reference test is n/a" "$ROW" "reftest=n/a "
+done
+TOTAL_PARTIAL="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "a partially-graded run still refuses a k/n total" "$TOTAL_PARTIAL" "reftest-pass=n/a"
+refute_sub "a partially-graded run never reports 3/5" "$OUT" "reftest-pass=3/5"
+
 unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------

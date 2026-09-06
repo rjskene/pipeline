@@ -380,6 +380,9 @@ cmd_reset() {
 # ---------------------------------------------------------------------------
 
 CAPTURE_LOG=""
+RUN_LOG=""
+RUN_RC=0
+ABORT_REASON=""
 ROWS_JSON=""
 PRICING_TOTAL=""
 PRS_JSON=""
@@ -436,6 +439,35 @@ load_issue_json() {
 merged_pr_field() {
   printf '%s' "$MERGED_JSON" | jq -r --arg n "$1" --arg f "$2" \
     '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {} | .[$f] // empty' 2>/dev/null
+}
+
+# detect_abort — did the run FAIL TO START (or fail to finish) rather than do
+# the work badly? Sets ABORT_REASON, empty when the run really ran.
+#
+# Both observed failures graded as regressions instead of aborts: run #1's
+# session ended on a question nobody answered and pushed nothing (`0/5`), run
+# #2 merged wave 1 and then stopped to ask about the rest (`3/5`). A slate
+# score is only meaningful for work the harness actually attempted.
+#
+# Precedence, most specific first:
+#   timeout  the launch hit the cap (rc 124) — it was still working
+#   held     the session's last non-blank line ends on `?`; a `-p` session that
+#            stops to ask ends its final message on the question, and nobody is
+#            there to answer. A heuristic: a run that stops on a statement
+#            falls through to no-pr or grades normally.
+#   no-pr    the run opened no PR AT ALL (any state) — nothing to grade
+detect_abort() {
+  local last n
+  ABORT_REASON=""
+  if [ "${RUN_RC:-0}" -eq 124 ]; then ABORT_REASON="timeout"; return 0; fi
+  last="$(sed -e 's/[[:space:]]*$//' "$RUN_LOG" 2>/dev/null | grep -v '^$' | tail -1)"
+  case "$last" in
+    *\?) ABORT_REASON="held"; return 0 ;;
+  esac
+  n="$(printf '%s' "$PRS_JSON" | jq -r 'length' 2>/dev/null)"
+  case "$n" in
+    ''|0) ABORT_REASON="no-pr" ;;
+  esac
 }
 
 # row_field <issue> <jq field> — echoes the rows-JSON field or empty.
@@ -543,6 +575,10 @@ emit_calib_block() {
   local i=0 issue d path cost wall verdicts reftest unexpected
   local total_cost=0 pass=0 count=0
   load_run_substrate
+  detect_abort
+  if [ -n "$ABORT_REASON" ]; then
+    printf 'CALIB-ABORT reason=%s\n' "$ABORT_REASON"
+  fi
   for issue in $ISSUE_IDS; do
     d="${SLATE_DIRS[$i]:-}"
     i=$((i + 1)); count=$((count + 1))
@@ -552,7 +588,14 @@ emit_calib_block() {
     cost="$(issue_cost "$issue")"
     wall="$(issue_wall "$issue")"
     verdicts="$(issue_verdicts "$issue")"
-    reftest="$(issue_reftest "$d")"
+    # On an aborted run the reference test is only meaningful for an issue the
+    # harness actually merged. For the rest it would grade the untouched
+    # sandbox and report `fail` — a regression the run never got near.
+    if [ -n "$ABORT_REASON" ] && [ -z "$(merged_pr_field "$issue" mergedAt)" ]; then
+      reftest="n/a"
+    else
+      reftest="$(issue_reftest "$d")"
+    fi
     unexpected="$(issue_unexpected "$issue" "$d")"
     [ "$reftest" = "pass" ] && pass=$((pass + 1))
     if [ -n "$cost" ]; then
@@ -561,8 +604,16 @@ emit_calib_block() {
     printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
       "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected"
   done
-  printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s\n' \
-    "$total_cost" "$wall_total" "$count" "$pass" "$count"
+  if [ -z "$ABORT_REASON" ]; then
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s\n' \
+      "$total_cost" "$wall_total" "$count" "$pass" "$count"
+  else
+    # No k/n for an aborted run, in either direction: `0/5` reads as a total
+    # regression and `3/5` as a partial one, when the denominator was never
+    # attempted. run-retro.sh renders this as the abort reason.
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s\n' \
+      "$total_cost" "$wall_total" "$count" "n/a"
+  fi
 }
 
 # sync_sandbox_after_run — the pipeline merges its PRs on the REMOTE, while
@@ -580,20 +631,25 @@ sync_sandbox_after_run() {
 cmd_run() {
   cmd_reset || return 1
   build_launch
-  local t0 t1 rc
-  t0="$(date +%s)"
-  ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" )
-  rc=$?
-  t1="$(date +%s)"
-  [ "$rc" -eq 0 ] || warn "headless run exited $rc (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
-  sync_sandbox_after_run
-  # Harness-rooted ABSOLUTE output path: --run executes with the SANDBOX as cwd.
+  local t0 t1
+  # Harness-rooted ABSOLUTE output paths: --run executes with the SANDBOX as
+  # cwd. The dir is created BEFORE the launch because the session log is tee'd
+  # as the run happens — it is the only evidence of what a run that stopped to
+  # ask a question actually said, and detect_abort reads its last line.
   # TRUNCATING, not appending: one artifact per UTC day, last run wins.
   # run-retro.sh's compute_calib() sums the `reftest=` atoms of EVERY CALIB
   # line in the newest artifact, so two same-day runs appended to one file
   # double-count (5/5 -> 10/10). run-retro.sh picks the newest artifact by
-  # FILENAME, which this <date>.txt name keeps stable across the rewrite.
+  # FILENAME, which this <date>.txt name keeps stable across the rewrite; the
+  # <date>.log beside it follows the same day-keyed rule.
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
+  RUN_LOG="$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).log"
+  t0="$(date +%s)"
+  ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
+  RUN_RC=${PIPESTATUS[0]}
+  t1="$(date +%s)"
+  [ "$RUN_RC" -eq 0 ] || warn "headless run exited $RUN_RC (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
+  sync_sandbox_after_run
   emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).txt"
 }
 
