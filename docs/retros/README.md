@@ -50,6 +50,28 @@ evolve skill's diagnose reasoning appended below it:
 `cycle-<NN>.md`, `issues.json`, `prs.json`) and the numbers the test suite
 pins.
 
+## Calibration substrate
+
+Calibration-run artifacts live beside the cycle files, in `docs/retros/calib/`,
+one file per run named `<date>.txt` (e.g. `2026-09-12.txt`). Each is the teed
+stdout of `bash scripts/calibration-run.sh --run` — one `CALIB issue=... ` line
+per slate issue plus a final `CALIB-TOTAL ...` line. The directory is
+harness-rooted on purpose: the artifact measures *this* harness version, while
+the sandbox clone it came from is reset to `calib-base` on the next run.
+
+`run-retro.sh` ingests the newest `docs/retros/calib/*.txt` (by filename date)
+into two spots in the cycle report:
+
+- `weak-model pass:` — the `reftest-pass=<n>/<n>` ratio from `CALIB-TOTAL`,
+  with the profile/model of the run; `n/a (no calibration slate; ...)` when no
+  artifact exists.
+- `median path b pr/usd` — the median `cost=` across the `path=B` `CALIB`
+  lines, which is otherwise `n/a (no per-issue cost in rows JSON)`.
+
+Ingest is newest-wins and does not expire: a cycle with no fresh run keeps
+citing the last artifact, so the report names its date. Full operator guide
+(modes, knobs, cost band, triggers): `docs/calibration.md`.
+
 ## Index
 
 No cycles have been posted yet (issue #1272 is the cycle-0 tooling
