@@ -547,8 +547,13 @@ cmd_run() {
   [ "$rc" -eq 0 ] || warn "headless run exited $rc (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
   sync_sandbox_after_run
   # Harness-rooted ABSOLUTE output path: --run executes with the SANDBOX as cwd.
+  # TRUNCATING, not appending: one artifact per UTC day, last run wins.
+  # run-retro.sh's compute_calib() sums the `reftest=` atoms of EVERY CALIB
+  # line in the newest artifact, so two same-day runs appended to one file
+  # double-count (5/5 -> 10/10). run-retro.sh picks the newest artifact by
+  # FILENAME, which this <date>.txt name keeps stable across the rewrite.
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
-  emit_calib_block "$((t1 - t0))" | tee -a "$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).txt"
+  emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).txt"
 }
 
 # ---------------------------------------------------------------------------

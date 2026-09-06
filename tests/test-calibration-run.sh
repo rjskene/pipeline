@@ -505,6 +505,37 @@ else
   pass_msg "--run apportions the priced total onto the slate issues"
 fi
 
+CALIB_ARTIFACT="$HARNESS/docs/retros/calib/$(date -u +%Y-%m-%d).txt"
+if [ -f "$CALIB_ARTIFACT" ]; then
+  pass_msg "--run tees the CALIB block to docs/retros/calib/<UTC date>.txt"
+else
+  fail_msg "--run must tee the CALIB block to $CALIB_ARTIFACT"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 9: a same-day re-run replaces the artifact, never appends"
+# ---------------------------------------------------------------------------
+# run-retro.sh's compute_calib() sums the `reftest=` atoms of every CALIB line
+# in the newest artifact. Two runs on the same UTC day appending to one file
+# double-count: 5/5 becomes 10/10, and a fixed slate silently reports twice
+# its size. One artifact per day, last run wins.
+
+run_helper --run --harness "$HARNESS"
+expect_rc "the same-day re-run exits 0" 0
+
+N_TOTAL="$(grep -c '^CALIB-TOTAL ' "$CALIB_ARTIFACT" 2>/dev/null)"
+if [ "$N_TOTAL" = "1" ]; then
+  pass_msg "the day's artifact holds exactly one CALIB-TOTAL line"
+else
+  fail_msg "two runs on one UTC day must leave one CALIB-TOTAL line (got $N_TOTAL)"
+fi
+N_ROWS="$(grep -c '^CALIB issue=' "$CALIB_ARTIFACT" 2>/dev/null)"
+if [ "$N_ROWS" = "5" ]; then
+  pass_msg "the day's artifact holds exactly one row per slate issue"
+else
+  fail_msg "the day's artifact must hold 5 CALIB rows, not an accumulation (got $N_ROWS)"
+fi
+
 unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
