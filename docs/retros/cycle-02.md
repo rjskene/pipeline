@@ -120,3 +120,45 @@ Slate (≤3, ≤1 PATH C), ranked by what unblocks measurement:
 3. #1287 (PATH B) `$0` is positional — backlog #14: guard widened, projection + shared-tests parse moved to scripts.
 
 Deferred: #15 Boot-fence plugin-cache glob (8 friction lines; touches 18 skills — next cycle after #1287 proves the script-extraction shape), #16 doctor.sh cwd trap, #17 guard false-positive class, #18 prose drift, #12/#11 necessity questions (need two clean calibration runs first).
+
+## Post
+
+```
+COMPUTED prose-pinning tests/grep claude.md = 41
+COMPUTED harness mass/words = 55755
+COMPUTED harness mass/skills = 19
+COMPUTED harness mass/tests loc = 74886
+COMPUTED harness mass/hooks loc = 3533
+COMPUTED harness mass/scripts loc = 22214
+COMPUTED harness mass/hooks = 13
+COMPUTED issue-number archaeology in skill bodies/refs = 357
+COMPUTED issue-number archaeology in skill bodies/distinct = 134
+COMPUTED harness mass/tests = 420
+COMPUTED prose-pinning tests/grep skill.md = 175
+COMPUTED harness mass/scripts = 89
+COMPUTED escapes/hotfix = 0
+COMPUTED escapes/revert = 0
+COMPUTED friction/harness-friction-lines = 0
+COMPUTED friction/human = 0
+COMPUTED friction/hotfix = 0
+COMPUTED escapes/later-fix = 0
+COMPUTED friction/manual-merge = 0
+COMPUTED friction/compactions = n/a (no transcript substrate)
+COMPUTED friction/harness-friction-window = cycle 2 issue comments
+COMPUTED friction/denials = n/a (tool-use.log has no decision field; hooks/log-tool-use.sh logs invocations only)
+verdict-candidates: 
+```
+
+Slate: #1286 (PATH B, PR #1288 → d9c7481), #1287 (PATH B, PR #1290 → 1c14f09), #1285 (PATH C, PR #1289 → e6c77d1) all merged into `evolve`. 3/3 merged, 0 Flagged, 0 reverts.
+
+Gate yield: plan-eval Revise-first 3/3 (#1286 Approved r2, #1287 Approved r2, #1285 Approved r3 — every Revise was a ledger divergence found by execution); pr-eval Approved 3/3; code review: #1286 with-fixes (2 Important fixed), #1287 with-fixes (1 Important fixed), #1285 Ready with 1 Important fixed pre-PR. One RED-commit deviation on #1286 (transient allow-list entry the plan forbade, peeled by GREEN). #1287 was pulled forward into wave 1 once #1286 merged (its only file conflict).
+
+Instrument: the next calibration run launches with `env -u ALLOW_ORCHESTRATOR_EDIT … PIPELINE_HEADLESS=true`, a staged harness worktree, honest `path=`/`wall=`, and `CALIB-ABORT` instead of a false 0/5. Not run this cycle (5h usage at 32% after the slate; the run needs a fresh window) — #1285/#1286 verdicts stay pending until it runs.
+
+Verdicts: #1281 confirmed (cycle-2 retro read `tracker cycle 1 comment`, 54 lines; pending-verdicts omitted the resolved #1280; push behaviour pinned). #1285 pending (calibration run). #1286 pending (calibration run — no `CALIB-ABORT reason=held`). #1287 pending (cycle-3 retro: zero fence-garbling friction lines; guard green with `$0`).
+
+Mass deltas vs cycle 1: skills 19 (=), tests 417→420 / +1426 LOC, scripts 87→89 / +393 LOC, words 55836→55755 (−81; the evolve fence shrank), prose-pinning greps SKILL.md 172→175, hooks 13 (=). No scorecard row replaced (no cycle-2 confirmed verdict yet).
+
+Usage: start five_hour=3 seven_day=47, end five_hour=32 seven_day=53 (Δ 29 / 6).
+
+Friction: 47 HARNESS-FRICTION lines (verbatim in the cycle-2 tracker comment). Recurring classes: plugin-cache glob in every Boot fence (dead in the clone); exact-match sweep never fires its `PIPELINE_TEST_ROOTS` vacuity STOP; skill-body caching at session start hides merged fence fixes until restart; `filter-trusted-comments.sh` plaintext vs the skill's JSON `select-plan-comment.sh` step; docs/retros prose scanned by config drift; `check-branch-cruft.sh` needs `PIPELINE_BASE_BRANCH` in leaf worktrees.
