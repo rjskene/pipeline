@@ -495,6 +495,7 @@ MISSING_ROW_ISSUES=""
 # scripts/calibration-run.sh --run tees a block of
 #   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
 #   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n>
+#   CALIB-ABORT reason=<no-pr|held|timeout>
 # to docs/retros/calib/<UTC date>.txt. Two retro rows read it: the weak-model
 # guarantee (a k/n over the `reftest=` atoms) and the path-B $ median (over the
 # `cost=` atoms of the `path=B` rows only — the fixed slate is the ONLY place
@@ -509,9 +510,17 @@ compute_calib() {
   [ -n "$f" ] || return 0
   [ -f "$f" ] || return 0
 
-  local line atom pass=0 total=0 path="" cost="" b_costs=""
+  local line atom pass=0 total=0 path="" cost="" b_costs="" aborted=0
   while IFS= read -r line; do
     case "$line" in
+      "CALIB-ABORT "*)
+        # The run never really started, or never finished (see the emitter's
+        # reason set). Scoring the rows it did reach reports a k/n that reads
+        # as a harness regression over a denominator nothing ever attempted.
+        CALIB_WEAK="n/a (calibration run aborted: ${line#CALIB-ABORT })"
+        aborted=1
+        continue
+        ;;
       "CALIB issue="*) ;;
       *) continue ;;
     esac
@@ -531,7 +540,7 @@ compute_calib() {
     esac
   done < "$f"
 
-  [ "$total" -gt 0 ] && CALIB_WEAK="$pass/$total"
+  [ "$aborted" -eq 0 ] && [ "$total" -gt 0 ] && CALIB_WEAK="$pass/$total"
 
   if [ -n "$b_costs" ]; then
     local med
