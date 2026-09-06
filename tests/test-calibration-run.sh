@@ -120,6 +120,7 @@ SANDBOX="$TMP/sandbox/pipeline-calib"
 STAGE="$TMP/sandbox/harness"
 CALLS="$TMP/calls.log"
 DOCTOR_ENV="$TMP/doctor-env.txt"
+LAUNCH_ENV="$TMP/launch-env.txt"
 STUB_BIN="$TMP/bin"
 mkdir -p "$STUB_BIN"
 
@@ -158,6 +159,18 @@ chmod +x "$STUB_BIN/gh"
 cat > "$STUB_BIN/claude" <<'CL'
 #!/bin/bash
 echo "claude $*" >> "$CALIB_TEST_CALLS"
+# Record the environment the launch actually hands the sandbox session. Two
+# things must be true of it and neither is visible in the argv: the delegation
+# hook has to be LIVE inside the measured run (so the loop session's
+# ALLOW_ORCHESTRATOR_EDIT must not be inherited), and the session has to know
+# it is headless.
+if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
+  {
+    echo "ALLOW_ORCHESTRATOR_EDIT=${ALLOW_ORCHESTRATOR_EDIT:-unset}"
+    echo "PIPELINE_HEADLESS=${PIPELINE_HEADLESS:-unset}"
+    echo "CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-unset}"
+  } > "$CALIB_TEST_LAUNCH_ENV"
+fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
   exec "$CALIB_TEST_CLAUDE_SCRIPT" "$@"
 fi
@@ -180,7 +193,9 @@ run_helper() {
         CALIB_TEST_CALLS="$CALLS" \
         CALIB_TEST_COUNTER="$TMP/issue-counter" \
         CALIB_TEST_DOCTOR_ENV="$DOCTOR_ENV" \
+        CALIB_TEST_LAUNCH_ENV="$LAUNCH_ENV" \
         HOME="${CALIB_TEST_HOME:-$HOME}" \
+        ALLOW_ORCHESTRATOR_EDIT="true" \
         PIPELINE_REPO="rjskene/pipeline" \
         PIPELINE_CALIB_REPO="${CALIB_TEST_REPO_OVERRIDE:-owner/pipeline-calib}" \
         PIPELINE_CALIB_DIR="$SANDBOX" \
@@ -274,6 +289,12 @@ done
 expect_sub "launch line passes --plugin-dir <staged harness>" "$LAUNCH" "--plugin-dir $STAGE"
 expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<staged harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$STAGE"
 expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dangerously-skip-permissions"
+# The loop session that drives this script exports ALLOW_ORCHESTRATOR_EDIT;
+# inheriting it would disable the delegation hook inside the very run being
+# measured, so the launch strips it back out.
+expect_sub "launch line strips the loop session's ALLOW_ORCHESTRATOR_EDIT" \
+  "$LAUNCH" "env -u ALLOW_ORCHESTRATOR_EDIT"
+expect_sub "launch line tells the session it is headless" "$LAUNCH" "PIPELINE_HEADLESS=true"
 expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
 
 if [ -s "$CALLS" ]; then
@@ -691,6 +712,17 @@ if [ "$(git -C "$STAGE" rev-parse HEAD 2>/dev/null)" = "$(git -C "$HARNESS" rev-
 else
   fail_msg "the staged harness must be refreshed to the harness HEAD on every run"
 fi
+# The environment the session was actually handed, recorded by the stub during
+# the --run above: what the launch line PREVIEWS must be what the launch DOES.
+LAUNCH_ENV_TXT="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+for want in "ALLOW_ORCHESTRATOR_EDIT=unset" "PIPELINE_HEADLESS=true" "CLAUDE_PLUGIN_ROOT=$STAGE"; do
+  if printf '%s\n' "$LAUNCH_ENV_TXT" | grep -qxF -- "$want"; then
+    pass_msg "the launched session's environment carries $want"
+  else
+    fail_msg "the launched session's environment must carry $want (got: $(printf '%s' "$LAUNCH_ENV_TXT" | tr '\n' ' '))"
+  fi
+done
+
 N_WT="$(git -C "$HARNESS" worktree list --porcelain 2>/dev/null | grep -c '^worktree .*/sandbox/harness$')"
 if [ "$N_WT" = "1" ]; then
   pass_msg "the stage is ONE worktree, refreshed in place"

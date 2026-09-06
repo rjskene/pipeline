@@ -19,10 +19,15 @@ set -uo pipefail
 #                issues, recreate the five slate issues. Prints `CALIB-ISSUES`.
 #   --dry-run    Print the headless launch command that --run would execute
 #                and exit 0. Makes NO network call and launches NO claude.
-#   --run        --reset, then run the launch for real under `timeout`, then
-#                emit the per-issue `CALIB` block + `CALIB-TOTAL`, tee'd to
+#   --run        --reset, stage the harness for the session to load, then run
+#                the launch for real under `timeout`, then emit the per-issue
+#                `CALIB` block + `CALIB-TOTAL`, tee'd to
 #                $HARNESS/docs/retros/calib/<UTC date>.txt for the retro to
-#                ingest (scripts/run-retro.sh).
+#                ingest (scripts/run-retro.sh). The session's own output is
+#                tee'd beside it as <UTC date>.log. A run that never really
+#                started (no PR, stopped to ask, hit the cap) leads the block
+#                with `CALIB-ABORT reason=<no-pr|held|timeout>` and reports no
+#                score rather than grading the failure as a regression.
 #
 # EVERY network / launch call goes through the single dispatch() seam below,
 # which --dry-run replaces with a printf. That is what makes the test suite
@@ -38,7 +43,11 @@ set -uo pipefail
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
 # Plus PIPELINE_CALIB_PROFILE, which this script EXPORTS (never reads) into the
 # headless run's environment so the sandbox session knows which profile is
-# under test.
+# under test. That launch environment also sets PIPELINE_HEADLESS=true (the
+# seam the fullsend headless contract reads; nothing consumes it yet, which is
+# why it is an injected var rather than a knob) and UNSETS
+# ALLOW_ORCHESTRATOR_EDIT, which the loop session driving this script exports —
+# inheriting it would disable the delegation hook inside the measured run.
 #
 # Usage:
 #   bash scripts/calibration-run.sh --bootstrap
@@ -74,6 +83,10 @@ Options:
                    CLAUDE_PLUGIN_ROOT and --plugin-dir for the headless run.
                    Default: the repo containing this script.
   --help           Print this banner and exit 0.
+
+The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
+delegation hook is live inside the measured run, and with PIPELINE_HEADLESS=true
+so the session knows nobody is there to answer a question.
 USAGE
 }
 
@@ -209,7 +222,11 @@ build_launch() {
   if [ -z "$ids" ]; then
     ids="N1 N2 N3 N4 N5"   # --dry-run preview before --reset has resolved ids
   fi
-  LAUNCH=(env "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS" "PIPELINE_CALIB_PROFILE=$PROFILE"
+  # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
+  # exports it, and inheriting it would disable the delegation hook inside the
+  # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
+  LAUNCH=(env -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
+          "PIPELINE_CALIB_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
           --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" --dangerously-skip-permissions)
