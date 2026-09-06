@@ -56,6 +56,17 @@ done
 cat > "$HARNESS/scripts/doctor.sh" <<'DOC'
 #!/bin/bash
 echo "doctor stub: $* (project root=${PIPELINE_PROJECT_ROOT:-unset})"
+# Record the exact environment the label-seed step runs with. The real
+# doctor.sh --fix labels reads ./pipeline.config from its CWD and seeds
+# $PIPELINE_REPO, so both are load-bearing: seeding the harness repo instead
+# of the sandbox is the #1280 defect this recording exists to catch.
+if [ -n "${CALIB_TEST_DOCTOR_ENV:-}" ]; then
+  {
+    echo "cwd=$PWD"
+    echo "PIPELINE_REPO=${PIPELINE_REPO:-unset}"
+    echo "PIPELINE_PROJECT_ROOT=${PIPELINE_PROJECT_ROOT:-unset}"
+  } > "$CALIB_TEST_DOCTOR_ENV"
+fi
 DOC
 chmod +x "$HARNESS/scripts/doctor.sh"
 
@@ -68,6 +79,7 @@ git init --quiet --bare "$REMOTE"
 
 SANDBOX="$TMP/sandbox/pipeline-calib"
 CALLS="$TMP/calls.log"
+DOCTOR_ENV="$TMP/doctor-env.txt"
 STUB_BIN="$TMP/bin"
 mkdir -p "$STUB_BIN"
 
@@ -105,6 +117,8 @@ run_helper() {
   OUT="$(PATH="$STUB_BIN:$PATH" \
         CALIB_TEST_CALLS="$CALLS" \
         CALIB_TEST_COUNTER="$TMP/issue-counter" \
+        CALIB_TEST_DOCTOR_ENV="$DOCTOR_ENV" \
+        PIPELINE_REPO="rjskene/pipeline" \
         PIPELINE_CALIB_REPO="owner/pipeline-calib" \
         PIPELINE_CALIB_DIR="$SANDBOX" \
         PIPELINE_CALIB_REMOTE="$REMOTE" \
@@ -225,6 +239,35 @@ else
   pass_msg "flat template settings file is consumed, not left in the sandbox root"
 fi
 expect_sub "--bootstrap seeds labels through doctor --fix labels" "$OUT1" "doctor stub: --fix labels"
+
+# The label seed must target the SANDBOX repo. Regression guard for #1280: the
+# harness pipeline.config leaks PIPELINE_REPO=<harness slug> into the
+# environment (run_helper exports it, exactly as the real dogfood shell does),
+# and doctor.sh --fix labels honours both an already-set PIPELINE_REPO and the
+# pipeline.config sitting in its CWD — so an unscoped seed step silently seeds
+# the harness repo and leaves the sandbox with only GitHub's default labels.
+SEED_ENV="$(cat "$DOCTOR_ENV" 2>/dev/null)"
+if printf '%s\n' "$SEED_ENV" | grep -qxF "PIPELINE_REPO=owner/pipeline-calib"; then
+  pass_msg "label seed runs with PIPELINE_REPO pinned to the sandbox repo"
+else
+  fail_msg "label seed must run with PIPELINE_REPO=owner/pipeline-calib (got: $(printf '%s' "$SEED_ENV" | grep '^PIPELINE_REPO=' || echo none))"
+fi
+if printf '%s\n' "$SEED_ENV" | grep -qxF "PIPELINE_REPO=rjskene/pipeline"; then
+  fail_msg "label seed leaked the harness repo slug into PIPELINE_REPO"
+else
+  pass_msg "label seed never inherits the harness repo slug"
+fi
+if printf '%s\n' "$SEED_ENV" | grep -qxF "cwd=$SANDBOX"; then
+  pass_msg "label seed runs with the sandbox as cwd (doctor reads ./pipeline.config)"
+else
+  fail_msg "label seed must run with cwd=$SANDBOX (got: $(printf '%s' "$SEED_ENV" | grep '^cwd=' || echo none))"
+fi
+if printf '%s\n' "$SEED_ENV" | grep -qxF "PIPELINE_PROJECT_ROOT=$SANDBOX"; then
+  pass_msg "label seed runs with PIPELINE_PROJECT_ROOT=<sandbox>"
+else
+  fail_msg "label seed must run with PIPELINE_PROJECT_ROOT=$SANDBOX"
+fi
+expect_sub "--bootstrap names the repo it actually seeded" "$OUT1" "labels seeded on owner/pipeline-calib"
 
 TAGS1="$(git -C "$SANDBOX" tag -l 'calib-base' | wc -l | tr -d ' ')"
 RTAGS1="$(git -C "$REMOTE" tag -l 'calib-base' | wc -l | tr -d ' ')"

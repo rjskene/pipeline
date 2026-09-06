@@ -244,13 +244,27 @@ tag_base() {
   dispatch git -C "$SANDBOX" push --quiet origin "refs/tags/$BASE_TAG"
 }
 
+# Seed the canonical labels ON THE SANDBOX REPO. Scoping here is load-bearing
+# (#1280): doctor.sh --fix labels sources ./pipeline.config from its OWN cwd and
+# seeds whatever PIPELINE_REPO it ends up with, and this script runs from the
+# harness — whose pipeline.config (or the operator's exported shell env) names
+# the harness repo. Unscoped, the seed silently labels the HARNESS and leaves
+# the sandbox with only GitHub's default labels. So: cd into the sandbox AND
+# pin PIPELINE_REPO / PIPELINE_PROJECT_ROOT / PIPELINE_BASE_BRANCH explicitly,
+# in a subshell so the harness-side environment is left untouched. Idempotent —
+# doctor seeds with `gh label create --force`.
 seed_labels() {
   local doctor="$HARNESS/scripts/doctor.sh"
   if [ ! -f "$doctor" ]; then
     warn "no doctor.sh at $doctor — skipping label seed"
     return 0
   fi
-  PIPELINE_PROJECT_ROOT="$SANDBOX" bash "$doctor" --fix labels
+  ( cd "$SANDBOX" \
+    && PIPELINE_REPO="$CALIB_REPO" \
+       PIPELINE_PROJECT_ROOT="$SANDBOX" \
+       PIPELINE_BASE_BRANCH=main \
+       bash "$doctor" --fix labels ) || return 1
+  echo "calib: labels seeded on $CALIB_REPO"
 }
 
 cmd_bootstrap() {
