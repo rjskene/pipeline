@@ -348,7 +348,10 @@ else
   TOOLOG="$REPO_ROOT/.claude/logs/tool-use.log"
   USAGE_FILE="$REPO_ROOT/.claude/logs/usage-gate.jsonl"
   # Newest calibration block tee'd by scripts/calibration-run.sh --run (#1280).
-  CALIB_FILE="$(ls -1t "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | head -1)"
+  # Newest by FILENAME (the artifacts are <UTC date>.txt, so lexical order is
+  # date order), not by mtime: a re-teed older day, a `cp -r` or a restore all
+  # reshuffle mtimes, and docs/calibration.md promises the newest date.
+  CALIB_FILE="$(ls -1 "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | sort | tail -1)"
 fi
 
 TRACKER_BODY=""
@@ -494,7 +497,11 @@ compute_cost_latency() {
   JOIN_COMP_VAL["median path b pr/tokens/loc"]="$tpl";     JOIN_COMP_UNIT["median path b pr/tokens/loc"]=""
   JOIN_COMP_VAL["median path b pr/min"]="$minutes";        JOIN_COMP_UNIT["median path b pr/min"]=""
   JOIN_COMP_VAL["median path b pr/usd"]="$CALIB_USD"
-  JOIN_COMP_UNIT["median path b pr/usd"]=""
+  # `$`, matching the baseline atom (`... ~$55 ...`): build_full_report() only
+  # renders a delta when the units agree, so a unitless declaration here made
+  # the one row the calibration slate exists to supply report
+  # `n/a (unit mismatch: $ vs )` even with a perfectly good number in hand.
+  JOIN_COMP_UNIT["median path b pr/usd"]="$"
 }
 
 compute_cost_latency "$ROWS_FILE"

@@ -89,8 +89,11 @@ scenario "Scenario 2: median path b pr/usd is sourced from the CALIB cost atoms"
 # ---------------------------------------------------------------------------
 DUMP="$(retro --dump-computed)"
 
+# `20 $`, not a bare `20`: the row declares the `$` unit its baseline atom
+# carries (see Scenario 5), and print_computed_dump() renders `<value> <unit>`
+# for every unit-carrying row — symmetric with `BASELINE ... = 55 $`.
 expect_re "median path b \$ is the median of the path=B CALIB cost atoms" \
-  "$DUMP" '^COMPUTED median path b pr/usd = 20(\.0+)?$'
+  "$DUMP" '^COMPUTED median path b pr/usd = 20(\.0+)? \$$'
 refute_sub "median path b \$ drops the no-per-issue-cost placeholder" \
   "$DUMP" "$NA_USD"
 refute_sub "non-B CALIB rows do not shift the path-B median" \
@@ -125,6 +128,55 @@ expect_line "a CALIB-row-free calib.txt keeps the weak-model n/a reason" \
   "$REPORT_EMPTY" "weak-model pass: $NA_WEAK"
 expect_line "a CALIB-row-free calib.txt keeps the pr/usd n/a reason" \
   "$DUMP_EMPTY" "COMPUTED median path b pr/usd = $NA_USD"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 5: the path-B \$ delta renders against the \$-unit baseline"
+# ---------------------------------------------------------------------------
+# The #1271 baseline cell reads `... 44 min - ~\$55 - ...`, so the baseline
+# atom carries the unit `\$`. A computed value declared unitless makes
+# build_full_report() bail out with `n/a (unit mismatch: \$ vs )` — the one row
+# the calibration slate exists to supply would never render a delta.
+write_calib
+FULL="$TMP/full.txt"
+rm -f "$FULL"
+retro --write "$FULL" >/dev/null 2>&1
+FULL_REPORT="$(cat "$FULL" 2>/dev/null)"
+
+refute_sub "the path-B \$ delta is not a unit mismatch" \
+  "$FULL_REPORT" "delta median path b pr/usd n/a (unit mismatch"
+expect_line "the path-B \$ delta renders baseline -> computed" \
+  "$FULL_REPORT" "delta median path b pr/usd -35 (baseline 55 -> computed 20)"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 6: live mode picks the newest calib artifact BY FILENAME"
+# ---------------------------------------------------------------------------
+# Still hermetic: run-retro.sh resolves its repo root from its own location, so
+# a copy in a temp tree reads that tree's docs/retros/calib/. With no
+# PIPELINE_REPO in the environment live mode makes no gh call and no network
+# call; every other row degrades to n/a, which is fine — only the CALIB row is
+# under test. The artifacts are named <UTC date>.txt, but mtime order is NOT
+# date order (a re-teed older day, a `cp -r`, a restore all reshuffle it), so
+# the newest artifact is the newest FILENAME.
+
+LIVE="$TMP/live"
+mkdir -p "$LIVE/scripts" "$LIVE/docs/retros/calib"
+cp "$HELPER" "$LIVE/scripts/run-retro.sh"
+
+cat > "$LIVE/docs/retros/calib/2026-09-01.txt" <<'OLD'
+CALIB issue=1 path=B cost=$5.00 wall=10 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB-TOTAL cost=$5.00 wall=10 issues=1 reftest-pass=1/1
+OLD
+cat > "$LIVE/docs/retros/calib/2026-09-05.txt" <<'NEW'
+CALIB issue=2 path=B cost=$6.00 wall=10 verdicts=Approved/Approved reftest=fail unexpected-files=0
+CALIB issue=3 path=B cost=$7.00 wall=10 verdicts=Approved/Approved reftest=fail unexpected-files=0
+CALIB-TOTAL cost=$13.00 wall=20 issues=2 reftest-pass=0/2
+NEW
+# The NEWER date is the OLDER file: mtime order and filename order disagree.
+touch -d '2020-01-01T00:00:00Z' "$LIVE/docs/retros/calib/2026-09-05.txt"
+
+LIVE_REPORT="$(env -u PIPELINE_REPO bash "$LIVE/scripts/run-retro.sh" --cycle 0 2>&1)"
+expect_line "live mode reads the newest artifact by filename, not by mtime" \
+  "$LIVE_REPORT" "weak-model pass: 0/2"
 
 # ---------------------------------------------------------------------------
 echo ""
