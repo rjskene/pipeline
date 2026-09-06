@@ -390,10 +390,17 @@ load_run_substrate() {
   ROWS_JSON="[]"
   PRICING_TOTAL=""
   if [ -f "$clr" ]; then
-    ROWS_JSON="$(bash "$clr" --emit-rows-json --capture-log "$CAPTURE_LOG" 2>/dev/null)"
+    # SCOPING IS LOAD-BEARING (#1280): cost-latency-report.sh joins merged PRs
+    # against issue numbers and reads PIPELINE_REPO to know whose PRs. Run from
+    # the harness it would either error out (`ROWS_JSON=[]`) or join the
+    # HARNESS's PRs against sandbox issue ids — silently wrong rows. Pin both
+    # the repo and the cwd, in a subshell so the harness-side env is untouched.
+    ROWS_JSON="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
+      bash "$clr" --emit-rows-json --capture-log "$CAPTURE_LOG" 2>/dev/null )"
     [ -n "$ROWS_JSON" ] || ROWS_JSON="[]"
-    PRICING_TOTAL="$(bash "$clr" --emit-pricing-json --capture-log "$CAPTURE_LOG" 2>/dev/null \
-      | jq -r '.priced_cost_usd // empty' 2>/dev/null)"
+    PRICING_TOTAL="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
+      bash "$clr" --emit-pricing-json --capture-log "$CAPTURE_LOG" 2>/dev/null \
+      | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
   fi
   MERGED_PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state merged \
     --json number,body,headRefName,files --limit 50 2>/dev/null)"
@@ -442,6 +449,30 @@ issue_verdicts() {
   printf '%s/%s' "${plan:-n/a}" "${pr:-n/a}"
 }
 
+# issue_path <issue> — the path the harness ACTUALLY routed the issue down.
+# Sources, in order: the rows JSON (derived from the merged PR's labels), then
+# the issue's own classification labels, then `?`. Never a slate-declared
+# expectation: `path=` is an OBSERVATION of the run under test, and a slate
+# `path.txt` would report the routing we hoped for even when the harness
+# misrouted — exactly the regression the calibration slate exists to catch.
+# `?` therefore means "this run never routed the issue" and is a real signal.
+issue_path() {
+  local issue="$1" names
+  names="$(row_field "$issue" path)"
+  if [ -n "$names" ]; then printf '%s' "$names"; return 0; fi
+  names="$(dispatch gh issue view "$issue" --repo "$CALIB_REPO" --json labels \
+    --jq '[.labels[].name] | join(" ")' 2>/dev/null)"
+  # Same mapping cost-latency-report.sh's derive_path() uses; an issue with no
+  # labels at all was never classified, so it stays `?` rather than defaulting.
+  case " $names " in
+    *" docs-only "*)  printf 'A' ;;
+    *" quick-fix "*)  printf 'D' ;;
+    *" multi-task "*) printf 'C' ;;
+    *) [ -n "$names" ] && printf 'B' ;;
+  esac
+  return 0
+}
+
 # issue_reftest <slate dir> — runs the slate's reference test IN THE SANDBOX.
 issue_reftest() {
   local d="$1"
@@ -475,8 +506,7 @@ emit_calib_block() {
   for issue in $ISSUE_IDS; do
     d="${SLATE_DIRS[$i]:-}"
     i=$((i + 1)); count=$((count + 1))
-    path="$(cat "$d/path.txt" 2>/dev/null)"
-    [ -n "$path" ] || path="$(row_field "$issue" path)"
+    path="$(issue_path "$issue")"
     [ -n "$path" ] || path="?"
     cost="$(issue_cost "$issue")"
     wall="$(issue_wall "$issue")"
@@ -494,6 +524,18 @@ emit_calib_block() {
     "$total_cost" "$wall_total" "$count" "$pass" "$count"
 }
 
+# sync_sandbox_after_run — the pipeline merges its PRs on the REMOTE, while
+# --reset left THIS clone hard-reset to $BASE_TAG. Without pulling the merged
+# tree back, every reference test below grades the unfixed sandbox and --run
+# reports `reftest-pass=0/<n>` no matter how well the run went. Routed through
+# dispatch() like every other network call so the seam stays honest.
+sync_sandbox_after_run() {
+  dispatch git -C "$SANDBOX" fetch --quiet origin main \
+    || { warn "post-run fetch failed — reference tests will grade the pre-run tree"; return 0; }
+  dispatch git -C "$SANDBOX" reset --hard --quiet origin/main \
+    || warn "post-run reset failed — reference tests will grade the pre-run tree"
+}
+
 cmd_run() {
   cmd_reset || return 1
   build_launch
@@ -503,6 +545,7 @@ cmd_run() {
   rc=$?
   t1="$(date +%s)"
   [ "$rc" -eq 0 ] || warn "headless run exited $rc (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
+  sync_sandbox_after_run
   # Harness-rooted ABSOLUTE output path: --run executes with the SANDBOX as cwd.
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
   emit_calib_block "$((t1 - t0))" | tee -a "$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).txt"

@@ -47,11 +47,31 @@ for name in 01-stale-doc 02-script-bug 03-small-feature 04-race-vocab 05-two-dir
   mkdir -p "$d"
   echo "calib: $name" > "$d/title.txt"
   printf 'Body for %s.\n' "$name" > "$d/body.md"
-  printf '#!/bin/bash\nexit 0\n' > "$d/reference-test.sh"
+  # Graded against the sandbox WORKING TREE (issue_reftest runs it with the
+  # sandbox as cwd): passes only once the merged fix has been pulled back.
+  printf '#!/bin/bash\ngrep -qx fixed docs/guide.md\n' > "$d/reference-test.sh"
   echo "docs/guide.md" > "$d/expected-files.txt"
-  case "$i" in 1) echo A ;; 2) echo D ;; 3) echo B ;; 4) echo B ;; 5) echo C ;; esac > "$d/path.txt"
+  # A DECOY. `path=` must report the routing the run actually chose, never a
+  # slate-declared expectation, so any driver that reads this file reports `X`
+  # and fails the CALIB path assertions below.
+  echo X > "$d/path.txt"
   i=$((i + 1))
 done
+
+# The harness's cost/latency reporter. Records the environment it is invoked
+# with: it joins PRs against issue numbers, so an invocation carrying the
+# HARNESS's PIPELINE_REPO would join the WRONG repo's PRs against sandbox issue
+# ids (#1280). Emits whatever rows / pricing JSON the scenario staged.
+cat > "$HARNESS/scripts/cost-latency-report.sh" <<'CLR'
+#!/bin/bash
+echo "clr $* cwd=$PWD PIPELINE_REPO=${PIPELINE_REPO:-unset}" >> "$CALIB_TEST_CALLS"
+case "$*" in
+  *--emit-rows-json*)    cat "${CALIB_TEST_ROWS_JSON:-/dev/null}" 2>/dev/null ;;
+  *--emit-pricing-json*) cat "${CALIB_TEST_PRICING_JSON:-/dev/null}" 2>/dev/null ;;
+esac
+exit 0
+CLR
+chmod +x "$HARNESS/scripts/cost-latency-report.sh"
 
 cat > "$HARNESS/scripts/doctor.sh" <<'DOC'
 #!/bin/bash
@@ -106,9 +126,15 @@ esac
 GH
 chmod +x "$STUB_BIN/gh"
 
+# Default: fail loudly, so an accidental launch is a hard failure rather than a
+# silent 90-minute headless run. $CALIB_TEST_CLAUDE_SCRIPT swaps in a scripted
+# stand-in for the ONE scenario that needs the launch to "do the work".
 cat > "$STUB_BIN/claude" <<'CL'
 #!/bin/bash
 echo "claude $*" >> "$CALIB_TEST_CALLS"
+if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
+  exec "$CALIB_TEST_CLAUDE_SCRIPT" "$@"
+fi
 echo "FATAL: calibration test launched a real claude session" >&2
 exit 97
 CL
@@ -404,6 +430,82 @@ if grep -qE '^gh issue (close|delete) 4777 ' "$CALLS" 2>/dev/null; then
 else
   pass_msg "the reap leaves non-slate issues alone"
 fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 8: --run grades the MERGED sandbox tree, scoped to the sandbox"
+# ---------------------------------------------------------------------------
+# Still hermetic: `claude` is a scripted stand-in for the headless run and the
+# "remote" is the local bare repo. The stand-in does what the real run does —
+# it lands the fix ON THE REMOTE (the pipeline merges PRs there; this clone was
+# hard-reset to calib-base by --reset moments earlier). So a driver that never
+# pulls the merged tree back grades the UNFIXED sandbox and reports 0/5.
+
+PUSHER="$TMP/pusher"
+git clone --quiet "$REMOTE" "$PUSHER"
+
+cat > "$TMP/claude-merge.sh" <<'MERGE'
+#!/bin/bash
+set -e
+git -C "$CALIB_TEST_PUSHER" fetch --quiet origin
+git -C "$CALIB_TEST_PUSHER" checkout --quiet -B main origin/main
+printf 'fixed\n' > "$CALIB_TEST_PUSHER/docs/guide.md"
+git -C "$CALIB_TEST_PUSHER" add docs/guide.md
+git -C "$CALIB_TEST_PUSHER" commit --quiet -m "merge: slate fix"
+git -C "$CALIB_TEST_PUSHER" push --quiet origin main
+MERGE
+chmod +x "$TMP/claude-merge.sh"
+
+# --reset assigns the ids, so pin the stub's counter and stage the rows JSON
+# against the ids it will hand out (5001..5005). 5001/5003 have rows (routing
+# is known); 5002 has none and no labels (routing unknown -> `?`).
+echo 5000 > "$TMP/issue-counter"
+cat > "$TMP/rows.json" <<'ROWS'
+[
+  {"issue":5001,"path":"A","loc":10,"tokens_total":1000,"duration_ms":60000},
+  {"issue":5003,"path":"B","loc":90,"tokens_total":2000,"duration_ms":180000}
+]
+ROWS
+printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing.json"
+
+export CALIB_TEST_PUSHER="$PUSHER"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-merge.sh"
+export CALIB_TEST_ROWS_JSON="$TMP/rows.json"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run exits 0" 0
+
+TOTAL_LINE="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "every reference test passes against the merged sandbox tree" \
+  "$TOTAL_LINE" "reftest-pass=5/5"
+
+SANDBOX_HEAD="$(git -C "$SANDBOX" rev-parse HEAD)"
+REMOTE_HEAD="$(git -C "$REMOTE" rev-parse main)"
+if [ "$SANDBOX_HEAD" = "$REMOTE_HEAD" ]; then
+  pass_msg "--run syncs the sandbox to the remote before grading"
+else
+  fail_msg "--run must pull the merged tree back (sandbox=$SANDBOX_HEAD remote=$REMOTE_HEAD)"
+fi
+
+CLR_CALL="$(grep -m1 '^clr .*--emit-rows-json' "$CALLS" 2>/dev/null)"
+expect_sub "the cost report is scoped to the SANDBOX repo" \
+  "$CLR_CALL" "PIPELINE_REPO=owner/pipeline-calib"
+expect_sub "the cost report runs with the sandbox as cwd" "$CLR_CALL" "cwd=$SANDBOX"
+
+expect_sub "path= comes from the routing the rows JSON recorded (A)" \
+  "$OUT" "CALIB issue=5001 path=A "
+expect_sub "path= comes from the routing the rows JSON recorded (B)" \
+  "$OUT" "CALIB issue=5003 path=B "
+expect_sub "an unrouted issue reports path=? rather than a slate guess" \
+  "$OUT" "CALIB issue=5002 path=? "
+if printf '%s\n' "$OUT" | grep -q '^CALIB issue=5001 .*cost=\$n/a'; then
+  fail_msg "--run reported no cost for 5001 despite a priced rows substrate"
+else
+  pass_msg "--run apportions the priced total onto the slate issues"
+fi
+
+unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
 echo ""
