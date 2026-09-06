@@ -382,7 +382,10 @@ cmd_reset() {
 CAPTURE_LOG=""
 ROWS_JSON=""
 PRICING_TOTAL=""
-MERGED_PRS_JSON=""
+PRS_JSON=""
+MERGED_JSON=""
+ISSUE_JSON="{}"
+ISSUE_JSON_FOR=""
 
 load_run_substrate() {
   CAPTURE_LOG="$SANDBOX/.claude/logs/agent-costs.jsonl"
@@ -402,9 +405,37 @@ load_run_substrate() {
       bash "$clr" --emit-pricing-json --capture-log "$CAPTURE_LOG" 2>/dev/null \
       | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
   fi
-  MERGED_PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state merged \
-    --json number,body,headRefName,files --limit 50 2>/dev/null)"
-  [ -n "$MERGED_PRS_JSON" ] || MERGED_PRS_JSON="[]"
+  # ONE PR fetch for the whole run. `--state all` because "this run opened no
+  # PR at all" is a distinct, load-bearing observation (see the abort detector)
+  # that a merged-only query cannot make; the merged subset is taken locally.
+  # mergedAt carries both the merged filter and each issue's wall-clock end;
+  # comments carry the PR-eval verdict — so no second round trip per PR.
+  PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state all --limit 50 \
+    --json number,body,headRefName,files,mergedAt,comments 2>/dev/null)"
+  [ -n "$PRS_JSON" ] || PRS_JSON="[]"
+  MERGED_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.mergedAt != null)]' 2>/dev/null)"
+  [ -n "$MERGED_JSON" ] || MERGED_JSON="[]"
+}
+
+# load_issue_json <issue> — ONE `gh issue view` per issue, cached and fetched
+# WITHOUT --jq so all three readers below (path, wall, verdicts) share it.
+# emit_calib_block calls this from its loop body, not the readers alone: each
+# reader runs inside a command substitution, so a cache filled there would die
+# with the subshell and take the one-fetch-per-issue property with it.
+load_issue_json() {
+  local issue="$1"
+  [ "$ISSUE_JSON_FOR" = "$issue" ] && return 0
+  ISSUE_JSON="$(dispatch gh issue view "$issue" --repo "$CALIB_REPO" \
+    --json comments,createdAt 2>/dev/null)"
+  [ -n "$ISSUE_JSON" ] || ISSUE_JSON="{}"
+  ISSUE_JSON_FOR="$issue"
+}
+
+# merged_pr_field <issue> <field> — <field> of the FIRST merged PR whose body
+# references #<issue>, else empty.
+merged_pr_field() {
+  printf '%s' "$MERGED_JSON" | jq -r --arg n "$1" --arg f "$2" \
+    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {} | .[$f] // empty' 2>/dev/null
 }
 
 # row_field <issue> <jq field> — echoes the rows-JSON field or empty.
@@ -427,50 +458,59 @@ issue_cost() {
   awk -v t="$tok" -v s="$sum" -v p="$PRICING_TOTAL" 'BEGIN{ printf "%.2f", p * t / s }'
 }
 
-# issue_wall <issue> — wall-clock seconds from the rows JSON, else empty.
+# issue_wall <issue> — the issue's WALL-CLOCK span: from its own createdAt to
+# the mergedAt of the first merged PR that references it. Not the rows JSON's
+# duration_ms, which is the capture log's agent time (one run #2 issue read
+# `wall=60` for half an hour of clock). Degrades to empty -> `n/a` when the
+# issue never merged, or when `date -d` is not GNU coreutils; never errors.
 issue_wall() {
-  local ms
-  ms="$(row_field "$1" duration_ms)"
-  case "$ms" in ''|null) return 0 ;; esac
-  awk -v m="$ms" 'BEGIN{ printf "%d", m / 1000 }'
+  local issue="$1" created merged t0 t1
+  load_issue_json "$issue"
+  created="$(printf '%s' "$ISSUE_JSON" | jq -r '.createdAt // empty' 2>/dev/null)"
+  merged="$(merged_pr_field "$issue" mergedAt)"
+  [ -n "$created" ] && [ -n "$merged" ] || return 0
+  t0="$(date -u -d "$created" +%s 2>/dev/null)" || return 0
+  t1="$(date -u -d "$merged" +%s 2>/dev/null)" || return 0
+  case "$t0" in ''|*[!0-9]*) return 0 ;; esac
+  case "$t1" in ''|*[!0-9]*) return 0 ;; esac
+  awk -v a="$t0" -v b="$t1" 'BEGIN{ printf "%d", b - a }'
 }
 
 # issue_verdicts <issue> — `<plan-eval>/<pr-eval>`, each `n/a` when absent.
+# Both halves are reduced locally: the plan half from the cached issue blob,
+# the PR half from the merging PR's own comments inside the single PR fetch.
 issue_verdicts() {
   local issue="$1" plan pr
-  plan="$(dispatch gh issue view "$issue" --repo "$CALIB_REPO" --json comments \
-    --jq '[.comments[].body | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)").v] | last // "n/a"' 2>/dev/null)"
-  pr="$(printf '%s' "$MERGED_PRS_JSON" | jq -r --arg n "$issue" \
-    '[.[] | select((.body // "") | test("#" + $n + "\\b")) | .number] | first // empty' 2>/dev/null)"
-  if [ -n "$pr" ]; then
-    pr="$(dispatch gh pr view "$pr" --repo "$CALIB_REPO" --json comments \
-      --jq '[.comments[].body | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)").v] | last // "n/a"' 2>/dev/null)"
-  fi
+  load_issue_json "$issue"
+  plan="$(printf '%s' "$ISSUE_JSON" | jq -r \
+    '[(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+  pr="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
+    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
+     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
   printf '%s/%s' "${plan:-n/a}" "${pr:-n/a}"
 }
 
-# issue_path <issue> — the path the harness ACTUALLY routed the issue down.
-# Sources, in order: the rows JSON (derived from the merged PR's labels), then
-# the issue's own classification labels, then `?`. Never a slate-declared
-# expectation: `path=` is an OBSERVATION of the run under test, and a slate
-# `path.txt` would report the routing we hoped for even when the harness
-# misrouted — exactly the regression the calibration slate exists to catch.
-# `?` therefore means "this run never routed the issue" and is a real signal.
+# issue_path <issue> — the path the harness ACTUALLY routed the issue down,
+# read from the `## Classification` comment the classifier posts on the issue
+# (`recommended_path:`, last comment wins), else `?`.
+#
+# NOT the rows JSON and NOT the issue's labels — both are the same source, and
+# it lies: post-merge an issue's labels are just `merged`, so the label mapping
+# defaults everything to `B` (run #2 graded a docs-only issue `path=B` that
+# way). NOT a slate-declared expectation either: `path=` is an OBSERVATION of
+# the run under test, and a slate `path.txt` would report the routing we hoped
+# for even when the harness misrouted — exactly the regression the calibration
+# slate exists to catch. `?` therefore means "this run never classified the
+# issue" and is a real signal.
 issue_path() {
-  local issue="$1" names
-  names="$(row_field "$issue" path)"
-  if [ -n "$names" ]; then printf '%s' "$names"; return 0; fi
-  names="$(dispatch gh issue view "$issue" --repo "$CALIB_REPO" --json labels \
-    --jq '[.labels[].name] | join(" ")' 2>/dev/null)"
-  # Same mapping cost-latency-report.sh's derive_path() uses; an issue with no
-  # labels at all was never classified, so it stays `?` rather than defaulting.
-  case " $names " in
-    *" docs-only "*)  printf 'A' ;;
-    *" quick-fix "*)  printf 'D' ;;
-    *" multi-task "*) printf 'C' ;;
-    *) [ -n "$names" ] && printf 'B' ;;
+  local issue="$1" p
+  load_issue_json "$issue"
+  p="$(printf '%s' "$ISSUE_JSON" | jq -r \
+    '[(.comments // [])[] | .body // "" | capture("recommended_path:\\*\\*\\s*(?<p>[ABCD])"; "g").p] | last // empty' 2>/dev/null)"
+  case "$p" in
+    A|B|C|D) printf '%s' "$p" ;;
+    *)       printf '?' ;;
   esac
-  return 0
 }
 
 # issue_reftest <slate dir> — runs the slate's reference test IN THE SANDBOX.
@@ -487,7 +527,7 @@ issue_reftest() {
 # issue_unexpected <issue> <slate dir> — merged-PR files MINUS expected-files.txt.
 issue_unexpected() {
   local issue="$1" d="$2" expected="$2/expected-files.txt" files f n=0
-  files="$(printf '%s' "$MERGED_PRS_JSON" | jq -r --arg n "$issue" \
+  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
     '[.[] | select((.body // "") | test("#" + $n + "\\b")) | .files[]?.path] | .[]' 2>/dev/null)"
   [ -n "$files" ] || { printf '0'; return 0; }
   while IFS= read -r f; do
@@ -506,6 +546,7 @@ emit_calib_block() {
   for issue in $ISSUE_IDS; do
     d="${SLATE_DIRS[$i]:-}"
     i=$((i + 1)); count=$((count + 1))
+    load_issue_json "$issue"   # once per issue, in THIS shell (see the cache note)
     path="$(issue_path "$issue")"
     [ -n "$path" ] || path="?"
     cost="$(issue_cost "$issue")"

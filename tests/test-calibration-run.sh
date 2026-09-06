@@ -11,8 +11,10 @@ set -uo pipefail
 #     hard test failure rather than a silent 90-minute headless run.
 #   * the "remote" is a local BARE git repo created in mktemp -d, injected via
 #     $PIPELINE_CALIB_REMOTE, so clone/push/tag are exercised for real.
-#   * the harness under --harness is a synthetic tree carrying
-#     dev/calib/template/, dev/calib/slate/*/ and a scripts/doctor.sh stub.
+#   * the harness under --harness is a synthetic GIT CHECKOUT (non-bare)
+#     carrying dev/calib/template/, dev/calib/slate/*/ and a scripts/doctor.sh
+#     stub, plus an untracked pipeline.config — the shape --run's harness
+#     staging needs (a commit to detach at, a host-specific config to copy).
 #
 # BEHAVIOUR TESTS ONLY — nothing greps SKILL.md / CLAUDE.md prose.
 #
@@ -90,6 +92,21 @@ fi
 DOC
 chmod +x "$HARNESS/scripts/doctor.sh"
 
+# The harness is a REAL (non-bare) checkout, not a loose tree: --run stages the
+# harness HEAD as a detached worktree, which needs a commit to detach at, and
+# copies the harness's pipeline.config across. That config is UNTRACKED here on
+# purpose — the real one is gitignored and host-specific, so a staging step
+# that relied on `git checkout` alone would leave the staged tree without it.
+# GIT_* identity is set explicitly for the same reason run_helper sets it: the
+# test host may have no git identity configured at all.
+printf 'PIPELINE_CALIB_REPO=owner/pipeline-calib\n' > "$HARNESS/pipeline.config"
+printf 'pipeline.config\ndocs/retros/\n' > "$HARNESS/.gitignore"
+git init --quiet "$HARNESS"
+git -C "$HARNESS" add .gitignore scripts dev
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$HARNESS" commit --quiet -m "calib: synthetic harness"
+
 # ---------------------------------------------------------------------------
 # Local bare "remote" + PATH stubs
 # ---------------------------------------------------------------------------
@@ -112,6 +129,12 @@ case "$*" in
   "repo view --json"*) echo "${CALIB_TEST_OWN_SLUG:-rjskene/pipeline}" ;;
   "repo view"*)   exit 1 ;;                      # sandbox repo absent -> create
   "repo create"*) echo "created"; exit 0 ;;
+  # ONE fetch per PR set and ONE per issue, both reduced with jq INSIDE the
+  # driver — so this stub stays pure transport: it cats whatever JSON the
+  # scenario staged and never interprets --json / --jq itself.
+  "pr list"*)     cat "${CALIB_TEST_PRS_JSON:-}" 2>/dev/null || echo '[]' ;;
+  # `gh issue view <n> --repo R --json ...` — the number is the third token.
+  "issue view"*)  cat "${CALIB_TEST_ISSUES_DIR:-}/$3.json" 2>/dev/null || echo '{}' ;;
   # <number>TAB<title>, the shape the title-scoped reap reads. 4001 carries a
   # slate title (reapable); 4777 is an unrelated issue that must survive.
   "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
@@ -170,6 +193,13 @@ expect_sub() { # <label> <text> <substring>
 }
 expect_rc() { # <label> <want>
   if [ "$RC" -eq "$2" ]; then pass_msg "$1"; else fail_msg "$1 (want rc=$2, got rc=$RC)"; fi
+}
+refute_sub() { # <label> <text> <substring>
+  if printf '%s\n' "$2" | grep -qF -- "$3"; then
+    fail_msg "$1 (unexpectedly present: $3)"
+  else
+    pass_msg "$1"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -455,22 +485,54 @@ git -C "$CALIB_TEST_PUSHER" push --quiet origin main
 MERGE
 chmod +x "$TMP/claude-merge.sh"
 
-# --reset assigns the ids, so pin the stub's counter and stage the rows JSON
-# against the ids it will hand out (5001..5005). 5001/5003 have rows (routing
-# is known); 5002 has none and no labels (routing unknown -> `?`).
+# --reset assigns the ids, so pin the stub's counter and stage the substrate
+# against the ids it will hand out (5001..5005). The rows JSON's `path` field
+# is a DECOY, exactly like each slate dir's path.txt: it is derived from the
+# merged PR's labels, which post-merge are just `merged`. 5001 is classified A
+# and its row says X, so any driver still reading the rows reports X.
 echo 5000 > "$TMP/issue-counter"
 cat > "$TMP/rows.json" <<'ROWS'
 [
-  {"issue":5001,"path":"A","loc":10,"tokens_total":1000,"duration_ms":60000},
+  {"issue":5001,"path":"X","loc":10,"tokens_total":1000,"duration_ms":60000},
   {"issue":5003,"path":"B","loc":90,"tokens_total":2000,"duration_ms":180000}
 ]
 ROWS
 printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing.json"
 
+# One blob per issue, byte-for-byte what `gh issue view <n> --json
+# comments,createdAt` returns. 5001/5003/5004 carry a `## Classification`
+# comment (A / B / D); 5002 and 5005 were never classified, so `path=?` is the
+# honest answer. Compact single-line JSON on purpose: a driver that forgets to
+# reduce the blob locally still emits one line per row, so the row-count
+# assertions below stay meaningful while the path assertions fail.
+ISSUES_DIR="$TMP/issues"
+mkdir -p "$ISSUES_DIR"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** A\n- rationale: single doc file"},{"body":"**Verdict:** Approve"}]}' > "$ISSUES_DIR/5001.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** B\n"}]}' > "$ISSUES_DIR/5003.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** D\n"}]}' > "$ISSUES_DIR/5004.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[]}' > "$ISSUES_DIR/5002.json"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[]}' > "$ISSUES_DIR/5005.json"
+
+# The PR set the run produced: one merged PR per issue, each carrying the
+# PR-eval verdict comment. 5001 merges 30 minutes after its issue was filed
+# (wall=1800); the rest an hour after. The rows JSON's duration_ms for 5001 is
+# 60000 -> a driver reading THAT reports wall=60.
+cat > "$TMP/prs.json" <<'PRS'
+[
+  {"number":9001,"body":"Closes #5001","headRefName":"feature/calib-5001","mergedAt":"2026-09-06T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9002,"body":"Closes #5002","headRefName":"feature/calib-5002","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9003,"body":"Closes #5003","headRefName":"feature/calib-5003","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9004,"body":"Closes #5004","headRefName":"feature/calib-5004","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9005,"body":"Closes #5005","headRefName":"feature/calib-5005","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]}
+]
+PRS
+
 export CALIB_TEST_PUSHER="$PUSHER"
 export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-merge.sh"
 export CALIB_TEST_ROWS_JSON="$TMP/rows.json"
 export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+export CALIB_TEST_ISSUES_DIR="$ISSUES_DIR"
+export CALIB_TEST_PRS_JSON="$TMP/prs.json"
 
 rm -f "$CALLS"
 run_helper --run --harness "$HARNESS"
@@ -493,12 +555,22 @@ expect_sub "the cost report is scoped to the SANDBOX repo" \
   "$CLR_CALL" "PIPELINE_REPO=owner/pipeline-calib"
 expect_sub "the cost report runs with the sandbox as cwd" "$CLR_CALL" "cwd=$SANDBOX"
 
-expect_sub "path= comes from the routing the rows JSON recorded (A)" \
+expect_sub "path= comes from the ## Classification comment (5001)" \
   "$OUT" "CALIB issue=5001 path=A "
-expect_sub "path= comes from the routing the rows JSON recorded (B)" \
+expect_sub "path= comes from the ## Classification comment (5003)" \
   "$OUT" "CALIB issue=5003 path=B "
-expect_sub "an unrouted issue reports path=? rather than a slate guess" \
+expect_sub "path= comes from the ## Classification comment (5004)" \
+  "$OUT" "CALIB issue=5004 path=D "
+expect_sub "an unclassified issue reports path=? rather than a label guess" \
   "$OUT" "CALIB issue=5002 path=? "
+
+ROW_5001="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
+expect_sub "wall= spans the issue createdAt -> merging PR mergedAt" \
+  "$ROW_5001" "wall=1800 "
+expect_sub "verdicts= pair the plan-eval and the merged PR's own comments" \
+  "$ROW_5001" "verdicts=Approve/Approved "
+refute_sub "a run that produced merged PRs emits no CALIB-ABORT line" \
+  "$OUT" "CALIB-ABORT"
 if printf '%s\n' "$OUT" | grep -q '^CALIB issue=5001 .*cost=\$n/a'; then
   fail_msg "--run reported no cost for 5001 despite a priced rows substrate"
 else
