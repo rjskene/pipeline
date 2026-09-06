@@ -496,4 +496,11 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # in hooks/doctor-on-update.sh); uncomment to override.
 #PIPELINE_DOCTOR_ON_UPDATE_ENABLED="true"
 
+# --- Headless / unattended runs (issue #1286) ---
+#
+# See "## Headless contract" in skills/fullsend/SKILL.md for the four decision
+# sites and their defaults. Default "false" (interactive prompts stay), single-
+# sourced at the read site (${PIPELINE_HEADLESS:-false}); uncomment to override.
+#PIPELINE_HEADLESS="false"
+
 set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above)
