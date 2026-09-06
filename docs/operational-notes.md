@@ -350,3 +350,13 @@ the CR is invisible in most output. This bit many scripts across the tree.
   `pass\r`; a PR-number arithmetic step fails because the number is `123\r`. When
   a comparison that "should" hold fails only on the Windows/MSYS host, suspect a
   CR before suspecting the logic.
+
+## 12. Headless / unattended runs (issue #1286)
+
+When `PIPELINE_HEADLESS` is true, fullsend and every stage it dispatches must
+not end a turn on an operator question — at each of the four decision sites
+(`merge-policy`, `unread-config-knob`, `stall-triage`, `ci-red-budget`) it
+applies the documented default, logs one
+`HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continues;
+see `skills/fullsend/SKILL.md` for the full contract. Interactive mode (the
+knob unset or false) is unchanged — the operator prompts stay.
