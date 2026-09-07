@@ -2340,6 +2340,52 @@ else
 fi
 rm -rf "$TMP45B"
 
+# --- Scenario 45c: role-split table renders the `review` role (#1299) ---
+# The orchestrator's closing code review is attributed as stage=pr-eval with
+# role=review. emit_role_split_table sums tcost over ALL roles but prints only
+# the roles in its awk `order` list, so an unlisted `review` role is counted in
+# the denominator and never rendered — the printed percentages silently stop
+# summing to 100 and the review cost disappears from the report.
+#   REVIEW (opus,   output 1,000,000) -> $75.00
+#   SINGLE (sonnet, output 1,000,000) -> $15.00
+inc_scenario "Scenario 45c: --tokenomics renders a 'review' role row (#1299)"
+
+TMP45C="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP45C/" 2>/dev/null
+printf '%s\n' '[
+  {"number":147,"title":"feat: review-role cost split issue","additions":300,"deletions":100,"body":"Closes #247","mergedAt":"2026-05-13T12:00:00Z","labels":[]}
+]' > "$TMP45C/prs.json"
+printf '%s\n' '{"number":147,"additions":300,"deletions":100,"comments":[]}' > "$TMP45C/pr-147.json"
+printf '%s\n' '{"number":247,"labels":[],"comments":[]}' > "$TMP45C/issue-247.json"
+{
+  echo '{"schema_version":1,"issue":"247","stage":"pr-eval","session_id":"s45v","model":"claude-opus-4-8","role":"review","agent_kind":"inline","record_key":"K247V","tokens":{"input":0,"output":1000000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"247","stage":"execute","session_id":"s45s","model":"claude-sonnet-4-6","role":"single","agent_kind":"inline","record_key":"K247S","tokens":{"input":0,"output":1000000,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":2000}'
+} > "$TMP45C/capture.jsonl"
+
+TOK45C="$(bash "$HELPER" --fixture "$TMP45C" --tokenomics 2>/dev/null)"
+ROLE_BLOCK45C="$(printf '%s\n' "$TOK45C" | awk 'BEGIN{IGNORECASE=1} /ROLE/{f=1} f')"
+REVIEW_ROW45C="$(printf '%s\n' "$ROLE_BLOCK45C" | grep -E '^review[[:space:]]*\|' | head -1)"
+SINGLE_ROW45C="$(printf '%s\n' "$ROLE_BLOCK45C" | grep -E '^single[[:space:]]*\|' | head -1)"
+
+if [ -n "$REVIEW_ROW45C" ]; then
+  pass_msg "role-split table has a 'review' row"
+else
+  fail_msg "role-split table missing 'review' row (block: $ROLE_BLOCK45C)"
+fi
+case "$REVIEW_ROW45C" in
+  *75*) pass_msg "role-split 'review' row carries its priced \$ (75)" ;;
+  *) fail_msg "role-split 'review' row missing priced \$75 (row: $REVIEW_ROW45C)" ;;
+esac
+
+# CONTROL: the pre-existing roles keep rendering (the widening adds a row, it
+# does not reorder or drop the ones already in the `order` list).
+if [ -n "$SINGLE_ROW45C" ]; then
+  pass_msg "role-split table still renders its 'single' row"
+else
+  fail_msg "role-split table lost its 'single' row (block: $ROLE_BLOCK45C)"
+fi
+rm -rf "$TMP45C"
+
 # --- Scenario 46: --emit-day-json survives a large capture (no ARG_MAX breach, #1099) ---
 # When the capture log grows large, CAPTURE_JSON and CAPTURE_ALL may exceed the
 # kernel's ARG_MAX (~2MB on Linux). The old code passed them as argv to python3;

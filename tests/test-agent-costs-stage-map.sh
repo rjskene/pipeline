@@ -59,6 +59,24 @@ CASES=(
   "Classify + plan + evaluate #107|classify|107"
   "analyze open-issue hygiene shortlist||"
   "audit interaction lens hourly digest||"
+  # --- #1299: PATH C leaf + orchestrator closing-review shapes -------------
+  # These are the real dispatch descriptions that today attribute to NOTHING,
+  # so their cost vanishes from the issue row. They must resolve via the
+  # strictly-FALLBACK table (consulted only when the main precedence table
+  # yields ""), never as new entries in the main table.
+  "target=scripts/ trust-profile resolvers (#1291 T1)|execute|1291"
+  "Review code changes #1291|pr-eval|1291"
+  "code review #1292|pr-eval|1292"
+  # Interpolated review shape: five live orchestrator reviews render the issue
+  # number BETWEEN "Review" and "code changes".
+  "Review #1280 code changes|pr-eval|1280"
+  # CONTROL (issue gate): a target= description with NO #N must stay
+  # unattributed — the execute fallback is gated on an issue number.
+  "target=scratch/ no issue number here||"
+  # CONTROL (non-displacement): the main table already answers this one
+  # (\bplan\b wins), so the answer must be UNCHANGED by the fallback. A
+  # displaced stage would mint a second record_key and double-count.
+  "target=docs/ update the plan #1300|plan|1300"
 )
 
 # Python combiner: prints "<stage>\t<issue>" using the REAL hook functions.
@@ -130,6 +148,57 @@ for task in "Classify #143" "Plan #134" "Evaluate PR #137 for #134"; do
     fail_msg "negative control: new normaliser dropped [$task]"
   fi
 done
+
+# --- #1299 FIXTURE-WIDE ATTRIBUTION ---------------------------------------
+# Every description in the shared token-usage fixture must attribute to a stage,
+# with exactly ONE declared negative control. This is set-EQUALITY, not a count:
+# it fails both when a real shape stops attributing AND when the declared
+# control starts attributing.
+DECLARED_CONTROL="analyze open-issue hygiene shortlist"
+unattr=""
+while IFS=$'\t' read -r _f_ts _f_sess f_desc _f_rest; do
+  [ -z "${f_desc:-}" ] && continue
+  if [ -z "$(tu_stage_from_description "$f_desc")" ]; then
+    unattr="${unattr}${f_desc}"$'\n'
+  fi
+done < "$FIX/subagents.log"
+got_unattr="$(printf '%s' "$unattr" | sed '/^$/d' | sort)"
+if [ "$got_unattr" = "$DECLARED_CONTROL" ]; then
+  pass_msg "fixture-wide: unattributed set == {\"$DECLARED_CONTROL\"} (0 beyond the control)"
+else
+  fail_msg "fixture-wide: unattributed set is [$(printf '%s' "$got_unattr" | tr '\n' ';')], want exactly [$DECLARED_CONTROL]"
+fi
+
+# 0-DISPLACED pin: every description the fixture carried BEFORE #1299 keeps the
+# exact stage the main precedence table already gave it. The new shapes may only
+# turn "" into a stage (monotone widening) — never stage into another stage,
+# which would mint a second record_key and double-count on re-backfill.
+PRE_1299_STAGES=(
+  "Classify #310|classify"
+  "Plan #310|plan"
+  "Evaluate plan #310|plan-eval"
+  "Evaluate plan for #134|plan-eval"
+  "Evaluate PR #137 for #134|pr-eval"
+  "evaluate-issue-pr #626 / PR #637|pr-eval"
+  "Re-plan #310|plan"
+  "Classify + plan + evaluate #777|classify"
+  "analyze open-issue hygiene shortlist|"
+  "execute-issue-plan #899 split-role RED (PATH B inline)|execute"
+  "execute-issue-plan #899 split-role GREEN (PATH B inline)|execute"
+)
+displaced=0
+for row in "${PRE_1299_STAGES[@]}"; do
+  d="${row%%|*}"
+  w="${row#*|}"
+  g="$(tu_stage_from_description "$d")"
+  if [ "$g" != "$w" ]; then
+    displaced=$((displaced + 1))
+    fail_msg "displacement: [$d] -> [$g], was [$w]"
+  fi
+done
+if [ "$displaced" -eq 0 ]; then
+  pass_msg "fixture-wide: 0 pre-#1299 descriptions displaced from their stage"
+fi
 
 # --- FINDING-1: double-dash slug resolution -------------------------------
 # capture-agent-costs.sh must resolve /home/fix/.../.claude/worktrees/wt-642 to
