@@ -16,6 +16,7 @@ so `tests/test-run-retro.sh` never touches live data.
 | `issues.json` | `gh issue list --json number,labels,body,comments` |
 | `prs.json` | `gh pr list --json number,title,headRefName,body,mergedAt,labels,files` |
 | `calib.txt` | latest `docs/retros/calib/<date>.txt` CALIB block (`scripts/calibration-run.sh --run`) |
+| `agent-costs.jsonl` | `.claude/logs/agent-costs.jsonl` (produced by `scripts/capture-agent-costs.sh`) |
 
 ### The `calib.txt` CALIB grammar
 
@@ -69,6 +70,24 @@ delta join. Refresh this file whenever the #1271 baseline table is edited.
 | `min` | 45 | 50 |
 
 Cycle-0 issue #1274 has no row → `n/a (outside PR window)`.
+
+### `agent-costs.jsonl` — the numbers the cost rows pin (#1293)
+
+Six `schema_version=1` records (`issue` is a STRING; the token total lives at
+`.tokens.total`). The values are chosen so every control fails loudly:
+
+| issue | records | per-issue tokens | stages |
+|---|---|---|---|
+| `"1272"` | 2 distinct `record_key`s, stages `plan` + `execute` | 30000000 | 2 |
+| `"1273"` | 2 lines sharing ONE `record_key`, `tokens.total` 999000000 then 50000000, stage `execute` | 50000000 (last-write-wins) | 1 |
+| `"1274"` | 1 record, stage `pr-eval` | 70000000 | 1 |
+| `"9999"` | 1 record (out of cycle 0) | 900000000 | 1 |
+
+Median over `{30000000, 50000000, 70000000}` = `50000000`. If `#9999` leaked
+in: `60000000`. If the `record_key` dedup were skipped: `#1273` = 1049000000
+and the median becomes `70000000`. All three values are distinct, so the
+leak control and the dedup control each move the median to a value no other
+bug produces.
 
 ## Cycle-scope fields and the out-of-scope control rows (#1281)
 

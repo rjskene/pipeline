@@ -216,3 +216,19 @@ PIPELINE_SUPERPOWERS_
 # `--now DATE` flag, documented in `run-retro.sh --help`. Intentionally
 # undocumented in pipeline.config.example; exact-match exempt here.
 PIPELINE_RETRO_NOW
+
+# #1293 synthetic fixture tokens from tests/test-config-drift-retros-excluded.sh.
+# That test builds a throwaway repo root per sub-case and seeds it with four
+# invented knob names — PIPELINE_SYNTH_DOCS_ONLY, PIPELINE_SYNTH_RETRO_ONLY,
+# PIPELINE_SYNTH_UNDOC, PIPELINE_SYNTH_DECLARED_RETRO — to prove the DEFAULT
+# scan skips `retros/` subtrees while explicit positional dirs still read them.
+# They are NOT knobs: no read site exists anywhere in the tree outside that
+# fixture, and nothing consults pipeline.config for them. They read as
+# referenced-but-undeclared only because they appear as heredoc literals in the
+# test file itself and tests/ is a default scan dir — the same cause and the
+# same fix as the PIPELINE_TEST_PREFIX_ block above. A concat-prefix wildcard
+# rather than four exact entries, so adding a sub-case does not re-red the tree
+# (the bare `PIPELINE_SYNTH_` token in that file's header prose is covered too).
+# Peel this entry when tests/test-config-drift-retros-excluded.sh is deleted or
+# stops naming synthetic PIPELINE_SYNTH_* tokens.
+PIPELINE_SYNTH_

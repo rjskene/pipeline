@@ -33,8 +33,14 @@ CONFIG_EXAMPLE="${1:-$REPO_ROOT/pipeline.config.example}"
 shift || true
 if [ "$#" -gt 0 ]; then
   SCAN_DIRS=("$@")
+  SCAN_EXCLUDES=()
 else
   SCAN_DIRS=("$REPO_ROOT/scripts" "$REPO_ROOT/skills" "$REPO_ROOT/hooks" "$REPO_ROOT/tests" "$REPO_ROOT/docs")
+  # docs/retros/ is loop EVIDENCE (append-only retro prose), not knob
+  # documentation — a retro that quotes a PIPELINE_* token it touched must
+  # not turn the default scan red. An explicit positional dir (below) still
+  # scans it; this exclusion applies to the default scan only.
+  SCAN_EXCLUDES=(--exclude-dir=retros)
 fi
 ALLOWLIST="${PIPELINE_CONFIG_DRIFT_ALLOWLIST:-$REPO_ROOT/tests/config-drift-allowlist.txt}"
 
@@ -58,7 +64,7 @@ DECLARED=$( { grep -hE '^\s*#?\s*PIPELINE_[A-Z0-9_]+=' "$CONFIG_EXAMPLE" || true
   | sort -u)
 
 # --- Referenced set -------------------------------------------------------
-REFERENCED=$( { grep -rEohI '\bPIPELINE_[A-Z0-9_]+\b' "${EXISTING_SCAN_DIRS[@]}" 2>/dev/null || true; } \
+REFERENCED=$( { grep -rEohI "${SCAN_EXCLUDES[@]+"${SCAN_EXCLUDES[@]}"}" '\bPIPELINE_[A-Z0-9_]+\b' "${EXISTING_SCAN_DIRS[@]}" 2>/dev/null || true; } \
   | sort -u)
 
 # --- Allowlist parser -----------------------------------------------------
