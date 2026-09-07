@@ -1101,11 +1101,42 @@ print_post_report() {
 }
 
 build_full_report() {
+  # #1300: the summary block (cycle-issues, pending-verdicts, then the
+  # friction COUNTS) renders BEFORE the friction echo, so an operator reading
+  # only the head of the report sees the numbers before the appendix.
+  # `mode` controls the echo itself: `stdout` (the default) prints one
+  # pointer line ("friction: N lines — see <window>"); `write` prints the
+  # HARNESS-FRICTION lines verbatim — the durable record `--write` preserves.
+  local mode="${1:-stdout}"
   local key n i rn rc nr matched bval cval bunit cunit diff fl
 
   echo "cycle-issues: $CUR_ISSUES"
-  echo ""
 
+  if [ -n "$PENDING_VERDICTS" ]; then
+    echo "pending-verdicts: $PENDING_VERDICTS"
+  fi
+  echo "verdict-candidates: $VERDICT_CANDIDATES"
+
+  echo ""
+  echo "friction: denials = $FRICTION_DENIALS"
+  echo "friction: harness-friction-lines = $FRICTION_LINES_COUNT"
+  echo "friction: harness-friction-window = $FRICTION_WINDOW"
+  echo "friction: compactions = n/a (no transcript substrate)"
+  echo "friction: hotfix = $FRICTION_HOTFIX"
+  echo "friction: manual-merge = $FRICTION_MANUAL_MERGE"
+  echo "friction: human = $FRICTION_HUMAN"
+
+  echo ""
+  if [ "$mode" = "write" ]; then
+    for fl in "${FRICTION_LINES_TEXT[@]:-}"; do
+      [ -z "$fl" ] && continue
+      echo "$fl"
+    done
+  elif [ "$FRICTION_LINES_COUNT" -gt 0 ]; then
+    echo "friction: $FRICTION_LINES_COUNT lines — see $FRICTION_WINDOW"
+  fi
+
+  echo ""
   for key in "${!JOIN_COMP_VAL[@]}"; do
     cval="${JOIN_COMP_VAL[$key]}"
     is_numeric "$cval" || continue
@@ -1148,19 +1179,6 @@ build_full_report() {
   done
 
   echo ""
-  echo "friction: denials = $FRICTION_DENIALS"
-  echo "friction: harness-friction-lines = $FRICTION_LINES_COUNT"
-  echo "friction: harness-friction-window = $FRICTION_WINDOW"
-  for fl in "${FRICTION_LINES_TEXT[@]:-}"; do
-    [ -z "$fl" ] && continue
-    echo "$fl"
-  done
-  echo "friction: compactions = n/a (no transcript substrate)"
-  echo "friction: hotfix = $FRICTION_HOTFIX"
-  echo "friction: manual-merge = $FRICTION_MANUAL_MERGE"
-  echo "friction: human = $FRICTION_HUMAN"
-
-  echo ""
   echo "escapes: hotfix = $ESCAPES_HOTFIX"
   echo "escapes: revert = $ESCAPES_REVERT"
   echo "escapes: later-fix = $ESCAPES_LATERFIX"
@@ -1186,11 +1204,6 @@ build_full_report() {
     done
   else
     echo "prev-delta: n/a (no previous cycle)"
-  fi
-
-  if [ -n "$PENDING_VERDICTS" ]; then
-    echo ""
-    echo "pending-verdicts: $PENDING_VERDICTS"
   fi
 }
 
@@ -1221,13 +1234,16 @@ if [ "$POST" -eq 1 ]; then
   exit 0
 fi
 
-FULL_REPORT="$(build_full_report)"
+# #1300: stdout gets the pointer-form friction echo; --write keeps the
+# verbatim HARNESS-FRICTION lines. build_full_report is pure formatting over
+# globals already computed above, so calling it twice per mode is safe.
+FULL_REPORT="$(build_full_report stdout)"
 STDOUT_REPORT="$(apply_bound "$FULL_REPORT")"
 printf '%s\n' "$STDOUT_REPORT"
 
 if [ -n "$WRITE_PATH" ]; then
   mkdir -p "$(dirname "$WRITE_PATH")" 2>/dev/null
-  printf '%s\n' "$FULL_REPORT" > "$WRITE_PATH"
+  build_full_report write > "$WRITE_PATH"
 fi
 
 exit 0

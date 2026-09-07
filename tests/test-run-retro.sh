@@ -431,8 +431,21 @@ FRICTION_B="HARNESS-FRICTION: the SessionStart refresh hook claimed staging | th
 
 expect_line "HARNESS-FRICTION lines are counted (2 across the cycle's issues)" \
   "$DUMP_C" "COMPUTED friction/harness-friction-lines = 2"
-expect_sub "HARNESS-FRICTION line A is echoed verbatim in the report" "$REPORT0" "$FRICTION_A"
-expect_sub "HARNESS-FRICTION line B is echoed verbatim in the report" "$REPORT0" "$FRICTION_B"
+# #1300: STDOUT carries a POINTER, not the verbatim lines. The numeric summary
+# leads the report, so the friction echo may not push it past the 1..60 bound;
+# the verbatim record moves to the `--write` FILE, which is asserted below —
+# the lines are proven to SURVIVE, not to vanish.
+refute_sub "HARNESS-FRICTION line A is NOT echoed verbatim on stdout" "$REPORT0" "$FRICTION_A"
+refute_sub "HARNESS-FRICTION line B is NOT echoed verbatim on stdout" "$REPORT0" "$FRICTION_B"
+expect_re "stdout carries the friction pointer with the count and the named window" \
+  "$REPORT0" '^friction: 2 lines — see cycle 0 issue comments$'
+
+WRITE_FRICTION0="$TMP_ROOT/retros/cycle-00-friction.md"
+rm -f "$WRITE_FRICTION0"
+bash "$HELPER" --cycle 0 --fixture "$FIXTURE_DIR" --write "$WRITE_FRICTION0" >/dev/null 2>&1
+FILE_REPORT0="$(cat "$WRITE_FRICTION0" 2>/dev/null)"
+expect_sub "--write file keeps HARNESS-FRICTION line A verbatim" "$FILE_REPORT0" "$FRICTION_A"
+expect_sub "--write file keeps HARNESS-FRICTION line B verbatim" "$FILE_REPORT0" "$FRICTION_B"
 
 DUMP_SINCE="$(bash "$HELPER" --cycle 0 --fixture "$FIXTURE_DIR" --since 2026-09-03 --dump-computed 2>/dev/null)"
 expect_line "--since excludes HARNESS-FRICTION comments older than the window (2 -> 1)" \
@@ -767,9 +780,22 @@ expect_line "cycle 1 counts the 3 HARNESS-FRICTION lines of the tracker's ## Cyc
   "$DUMP_C1" "COMPUTED friction/harness-friction-lines = 3"
 expect_line "cycle 1 names the tracker comment as the window it harvested" \
   "$DUMP_C1" "COMPUTED friction/harness-friction-window = tracker cycle 0 comment"
-expect_sub "tracker friction line 1 is echoed verbatim in the cycle 1 report" "$REPORT1W" "$TRACKER_FRICTION_1"
-expect_sub "tracker friction line 2 is echoed verbatim in the cycle 1 report" "$REPORT1W" "$TRACKER_FRICTION_2"
-expect_sub "tracker friction line 3 is echoed verbatim in the cycle 1 report" "$REPORT1W" "$TRACKER_FRICTION_3"
+# #1300: same contract as Scenario 10 — stdout gets the pointer, the `--write`
+# FILE keeps the verbatim record. The pointer names the tracker window, so the
+# per-mode window distinction stays visible on stdout.
+refute_sub "tracker friction line 1 is NOT echoed verbatim on cycle 1 stdout" "$REPORT1W" "$TRACKER_FRICTION_1"
+refute_sub "tracker friction line 2 is NOT echoed verbatim on cycle 1 stdout" "$REPORT1W" "$TRACKER_FRICTION_2"
+refute_sub "tracker friction line 3 is NOT echoed verbatim on cycle 1 stdout" "$REPORT1W" "$TRACKER_FRICTION_3"
+expect_re "cycle 1 stdout carries the friction pointer naming the tracker window" \
+  "$REPORT1W" '^friction: 3 lines — see tracker cycle 0 comment$'
+
+WRITE_FRICTION1="$TMP_ROOT/retros/cycle-01-friction.md"
+rm -f "$WRITE_FRICTION1"
+PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --fixture "$FIX2" --write "$WRITE_FRICTION1" >/dev/null 2>&1
+FILE_REPORT1="$(cat "$WRITE_FRICTION1" 2>/dev/null)"
+expect_sub "--write file keeps tracker friction line 1 verbatim" "$FILE_REPORT1" "$TRACKER_FRICTION_1"
+expect_sub "--write file keeps tracker friction line 2 verbatim" "$FILE_REPORT1" "$TRACKER_FRICTION_2"
+expect_sub "--write file keeps tracker friction line 3 verbatim" "$FILE_REPORT1" "$TRACKER_FRICTION_3"
 
 DUMP_POST1="$(PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --post --fixture "$FIX2" --dump-computed 2>/dev/null)"
 expect_line "--post at cycle 1 reads the CURRENT cycle's issue comments instead" \
@@ -782,6 +808,63 @@ inc_scenario "Scenario 17b: --help clock + comment windows"
 
 expect_sub "--help banner names the --now clock seam" "$HELP_OUT" "--now"
 expect_sub "--help banner carries a Comment windows: stanza" "$HELP_OUT" "Comment windows:"
+
+# ---------------------------------------------------------------------------
+# Scenario 18a: the numeric summary precedes the verbatim friction echo (#1300)
+#
+# Asserted over the `--write` FILE, never stdout: the file is unbounded, so no
+# 1..60 truncation can mask an ordering regression. The operator reads the
+# counts first; the verbatim lines are the appendix.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 18a: summary rows precede the HARNESS-FRICTION echo"
+
+WRITE_ORDER="$TMP_ROOT/retros/cycle-01-order.md"
+rm -f "$WRITE_ORDER"
+PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --fixture "$FIX2" --write "$WRITE_ORDER" >/dev/null 2>&1
+
+# line_no <file> <fixed substring> — first matching line number, "" when absent.
+line_no() { grep -nF -- "$2" "$1" 2>/dev/null | head -1 | cut -d: -f1; }
+
+FRICTION_LN="$(line_no "$WRITE_ORDER" 'HARNESS-FRICTION:')"
+for key in 'cycle-issues:' 'pending-verdicts:' 'verdict-candidates:' 'friction: harness-friction-lines'; do
+  KEY_LN="$(line_no "$WRITE_ORDER" "$key")"
+  if [ -n "$FRICTION_LN" ] && [ -n "$KEY_LN" ] && [ "$KEY_LN" -lt "$FRICTION_LN" ]; then
+    pass_msg "summary row '$key' (L$KEY_LN) precedes the first HARNESS-FRICTION echo (L$FRICTION_LN)"
+  else
+    fail_msg "summary row '$key' does not precede the friction echo (row=${KEY_LN:-absent} friction=${FRICTION_LN:-absent})"
+  fi
+done
+
+if grep -qF 'verdict-candidates:' "$WRITE_ORDER" 2>/dev/null; then
+  pass_msg "verdict-candidates: is rendered in the full report, not only under --post"
+else
+  fail_msg "verdict-candidates: is missing from the full report (still --post-only)"
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 18b: the evolve `status` contract lands inside its own head bound
+#
+# `skills/evolve/SKILL.md` pipes the retro through a grep and the operator reads
+# the head of it. This LIFTS the pattern from the skill and asserts BOTH
+# alternatives match inside `head -12` of the cycle-1 stdout — a machine
+# contract between two artifacts, not prose pinning.
+# ---------------------------------------------------------------------------
+inc_scenario 'Scenario 18b: evolve status grep matches inside head -12'
+
+EVOLVE_SKILL="$REPO_ROOT/skills/evolve/SKILL.md"
+RAW_STATUS_GREP="$(grep -F 'run-retro.sh' "$EVOLVE_SKILL" 2>/dev/null | grep -o "grep -E '[^']*'" | head -1)"
+STATUS_PATTERN="${RAW_STATUS_GREP#grep -E \'}"
+STATUS_PATTERN="${STATUS_PATTERN%\'}"
+
+if [ "$STATUS_PATTERN" = '^(cycle-issues|pending-verdicts):' ]; then
+  pass_msg "evolve status lifts the pattern ^(cycle-issues|pending-verdicts):"
+else
+  fail_msg "evolve status pattern drifted (got: ${STATUS_PATTERN:-<none>})"
+fi
+
+STATUS_HEAD="$(printf '%s\n' "$REPORT1W" | head -12)"
+expect_re "evolve status: cycle-issues: matches inside head -12" "$STATUS_HEAD" '^cycle-issues:'
+expect_re "evolve status: pending-verdicts: matches inside head -12" "$STATUS_HEAD" '^pending-verdicts:'
 
 echo ""
 echo "== RESULTS =="

@@ -44,6 +44,7 @@ For every behavioral change in the task you were dispatched to do:
 - Invoking skills (you do not have the `Skill` tool).
 - Committing to `main`.
 - Mocking the system under test instead of testing it.
+- Listing several test files after one `bash`: one test file per `bash` invocation, since `bash a.sh b.sh` runs `a.sh` only.
 - Silently substituting a manual approximation for a mandated `Skill`/`Agent` invocation — refuse loudly instead (see Capability refusal).
 
 ## Capability refusal (fail loudly)
