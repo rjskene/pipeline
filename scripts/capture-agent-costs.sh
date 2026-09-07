@@ -34,12 +34,16 @@
 #     agent_type:   skill name (headless) | sidecar subagent_type (inline),
 #     session_id:   <string>,
 #     model:        <string>,
-#     role:         one of {red, green, single} — split-role TDD lane (#1098).
+#     role:         one of {red, green, single, review} — split-role TDD lane
+#                   (#1098) plus the orchestrator closing review (#1299).
 #                   "red"    = split-role RED (Opus test-author),
 #                   "green"  = split-role GREEN (implementer),
+#                   "review" = orchestrator-owned closing code review, stage
+#                              `pr-eval`,
 #                   "single" = non-split-role execute, orchestrator, or any
-#                              non-execute stage. Absent field → treated as
-#                              "single" by consumers (legacy/fixture compat).
+#                              other non-execute/non-review stage. Absent
+#                              field → treated as "single" by consumers
+#                              (legacy/fixture compat).
 #     tokens: { input, output, cache_read, cache_creation, total },
 #     duration_ms:  (ts_end - ts_start) in ms, 0 when timestamps absent/equal,
 #     ts_start:     <iso8601|"">,
@@ -117,6 +121,17 @@ STAGE_PATTERNS = [
     (r"\b(re[ -]?)?plan([ -]?issue)?\b", "plan"),
     (r"\b(re[ -]?)?classif(y|y[ -]?issue)\b", "classify"),
 ]
+# STRICTLY-FALLBACK table (#1299): consulted ONLY when STAGE_PATTERNS above
+# yields no match. Resolved by table RANK (first entry wins), not string
+# position -- both patterns can match zero-width, so a position rule would be
+# meaningless. This makes the widening MONOTONE ("" -> stage, never stage ->
+# another stage): a description STAGE_PATTERNS already answers is untouched,
+# so no record_key is re-minted. Mirrors scripts/_token-usage-lib.sh
+# tu_stage_from_description and hooks/capture_agent_cost.py.
+STAGE_FALLBACK_PATTERNS = [
+    (r"\breview\b(?:\s+#\d+)?\s+code[ -]?changes\b|\bcode[ -]?review\b", "pr-eval"),
+    (r"^(?=.*#\d+)(?=.*target=\S)", "execute"),
+]
 SKILL_STAGE = {
     "plan-issue": "plan",
     "evaluate-issue-plan": "plan-eval",
@@ -137,7 +152,12 @@ def stage_from_description(d):
         key = (m.start(), rank)
         if best is None or key < best[0]:
             best = (key, stage)
-    return best[1] if best else ""
+    if best is not None:
+        return best[1]
+    for pat, stage in STAGE_FALLBACK_PATTERNS:
+        if re.search(pat, d, re.IGNORECASE):
+            return stage
+    return ""
 
 
 def issue_from_description(d):
@@ -150,14 +170,18 @@ def issue_from_description(d):
 
 
 def role_from_description(d):
-    # Maps dispatch description to role in {red, green, single}. (#1098)
+    # Maps dispatch description to role in {red, green, review, single}.
+    # (#1098, #1299)
     # Mirrors tu_role_from_description in scripts/_token-usage-lib.sh and
     # role_from_description in hooks/capture_agent_cost.py.
-    # Regex: split[- ]role\s+(red|green), case-insensitive.
+    # Regex: split[- ]role\s+(red|green), case-insensitive; else a
+    # "review [#N] code changes" / "code review" shape -> review.
     if re.search(r"split[- ]role\s+red", d, re.IGNORECASE):
         return "red"
     if re.search(r"split[- ]role\s+green", d, re.IGNORECASE):
         return "green"
+    if re.search(r"\breview\b(?:\s+#\d+)?\s+code[ -]?changes\b|\bcode[ -]?review\b", d, re.IGNORECASE):
+        return "review"
     return "single"
 
 
@@ -275,10 +299,16 @@ def kv(fields, key):
 
 
 # existing record_keys for idempotency, plus the set of (session_id, issue,
-# stage) tuples already carrying a usage_complete==true record. The INLINE pass
-# uses complete_tuples to SUPPRESS a stranded lower-bound (usage_complete=false)
-# when a durable complete sibling already covers the same logical agent finish —
-# closing the retroactive half of the inline cost reconciliation leak (#830).
+# stage, role) tuples already carrying a usage_complete==true record. The
+# INLINE pass uses complete_tuples to SUPPRESS a stranded lower-bound
+# (usage_complete=false) when a durable complete sibling already covers the
+# same logical agent finish — closing the retroactive half of the inline cost
+# reconciliation leak (#830). `role` is part of the grain (#1299): the
+# orchestrator's closing code review (role=review) and the evaluate-issue-pr
+# agent (role=single) are dispatched from the SAME session for the SAME issue
+# and both land at stage=pr-eval, so a session/issue/stage-only grain would let
+# either sibling's complete record suppress the OTHER role's lower-bound —
+# legacy rows with no `role` field default to "single".
 seen = set()
 complete_tuples = set()
 if os.path.exists(out_path):
@@ -300,6 +330,7 @@ if os.path.exists(out_path):
                     rec.get("session_id", ""),
                     str(rec.get("issue", "")),
                     rec.get("stage", ""),
+                    rec.get("role", "single"),
                 ))
 
 new_records = []
@@ -415,14 +446,18 @@ if os.path.exists(subagents_log):
             if role == "red" and not model:
                 model = "claude-opus-4-8"
 
-            # RECONCILIATION (#830): suppress a stranded lower-bound when a
-            # durable usage_complete=true record already covers this logical
-            # agent finish at the (session, issue, stage) grain — the same grain
-            # the consumer (cost-latency-report.sh) collapses on. Only ever drops
-            # a lower-bound; complete records always proceed (still subject to
-            # record_key idempotency via `seen`). When no complete record exists,
-            # the lower-bound is preserved as the sole cost signal.
-            if not usage_complete and (session, str(issue), stage) in complete_tuples:
+            # RECONCILIATION (#830, role-aware grain #1299): suppress a stranded
+            # lower-bound when a durable usage_complete=true record already
+            # covers this logical agent finish at the (session, issue, stage,
+            # role) grain. `role` is in the grain because the orchestrator's
+            # closing code review (role=review) and the evaluate-issue-pr agent
+            # (role=single) share (session, issue, pr-eval) but are DIFFERENT
+            # agents' costs — a complete sibling of one role must not suppress
+            # a lower-bound of another role. Only ever drops a lower-bound;
+            # complete records always proceed (still subject to record_key
+            # idempotency via `seen`). When no complete record exists, the
+            # lower-bound is preserved as the sole cost signal.
+            if not usage_complete and (session, str(issue), stage, role) in complete_tuples:
                 continue
 
             rec = make_record(

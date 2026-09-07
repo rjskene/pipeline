@@ -60,6 +60,22 @@ check_stage "evaluate-issue-pr #626 / PR #637" "pr-eval"
 check_stage "Classify + plan + evaluate #777" "classify"
 check_stage "analyze open-issue hygiene shortlist" ""
 
+# #1299: shapes that reach the STRICTLY-FALLBACK table (consulted only when the
+# main precedence table above yields ""). PATH C leaf dispatches carry a
+# target=<dir> token; the orchestrator's closing review carries a code-review
+# token. Both attribute to nothing today, so their cost vanishes.
+check_stage "target=scripts/ trust-profile resolvers (#1291 T1)" "execute"
+check_stage "Review code changes #1291" "pr-eval"
+check_stage "code review #1292" "pr-eval"
+# Interpolated review shape: the issue number sits BETWEEN "Review" and
+# "code changes" (five live orchestrator reviews use exactly this form).
+check_stage "Review #1280 code changes" "pr-eval"
+# CONTROL (issue gate): a target= description with no #N stays unattributed.
+check_stage "target=scratch/ no issue number here" ""
+# CONTROL (non-displacement): the main table already answers this one, and the
+# fallback must NOT displace it (a stage change re-keys and double-counts).
+check_stage "target=docs/ update the plan #1300" "plan"
+
 # ---------------------------------------------------------------------------
 # tu_issue_from_description  (real enumerated shapes)
 # ---------------------------------------------------------------------------
@@ -77,5 +93,35 @@ check_issue "Evaluate PR #363 (#361)" "361"
 check_issue "Evaluate PR #384 (issue #342)" "342"
 check_issue "eval-pr #592 (PR #603)" "592"
 check_issue "Classify + plan + evaluate #777" "777"
+# #1299: "(#1291 T1)" does NOT match the \(#(\d+)\) priority group (no closing
+# paren after the digits), so it falls through to the first-#N rule.
+check_issue "target=scripts/ trust-profile resolvers (#1291 T1)" "1291"
+check_issue "Review code changes #1291" "1291"
+check_issue "code review #1292" "1292"
+check_issue "Review #1280 code changes" "1280"
+
+# ---------------------------------------------------------------------------
+# tu_role_from_description  (#1098 split-role + #1299 review)
+# ---------------------------------------------------------------------------
+check_role() {
+  local desc="$1" want="$2"
+  local got; got="$(tu_role_from_description "$desc")"
+  [ "$got" = "$want" ] || fail "role [$desc]: got [$got] want [$want]"
+  pass "role [$desc] -> [$want]"
+}
+
+# #1299: the orchestrator's closing code review is role=review at stage pr-eval
+# (NOT a sixth stage — see the plan's design decision).
+check_role "Review code changes #1291" "review"
+check_role "code review #1292" "review"
+check_role "Review #1280 code changes" "review"
+
+# Existing taxonomy UNCHANGED: the review branch sits AFTER red/green, so
+# split-role attribution is untouched, and everything else stays single.
+check_role "execute-issue-plan #899 split-role RED (PATH B inline)" "red"
+check_role "execute-issue-plan #899 split-role GREEN (PATH B inline)" "green"
+check_role "Execute issue plan for #642" "single"
+check_role "target=scripts/ trust-profile resolvers (#1291 T1)" "single"
+check_role "Evaluate PR #137 for #134" "single"
 
 echo "all tests passed"

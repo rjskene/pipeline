@@ -71,6 +71,18 @@ STAGE_PATTERNS = [
     (r"\b(re[ -]?)?classif(y|y[ -]?issue)\b", "classify"),
 ]
 
+# STRICTLY-FALLBACK table (#1299): consulted ONLY when STAGE_PATTERNS above
+# yields no match. Resolved by table RANK (first entry wins), not string
+# position -- both patterns can match zero-width, so a position rule would be
+# meaningless. This makes the widening MONOTONE ("" -> stage, never stage ->
+# another stage): a description STAGE_PATTERNS already answers is untouched,
+# so no record_key is re-minted. Mirrors scripts/_token-usage-lib.sh
+# tu_stage_from_description and scripts/capture-agent-costs.sh.
+STAGE_FALLBACK_PATTERNS = [
+    (r"\breview\b(?:\s+#\d+)?\s+code[ -]?changes\b|\bcode[ -]?review\b", "pr-eval"),
+    (r"^(?=.*#\d+)(?=.*target=\S)", "execute"),
+]
+
 
 def stage_from_description(d):
     # FIRST stage token by string position wins; STAGE_PATTERNS index breaks
@@ -84,7 +96,12 @@ def stage_from_description(d):
         key = (m.start(), rank)
         if best is None or key < best[0]:
             best = (key, stage)
-    return best[1] if best else ""
+    if best is not None:
+        return best[1]
+    for pat, stage in STAGE_FALLBACK_PATTERNS:
+        if re.search(pat, d, re.IGNORECASE):
+            return stage
+    return ""
 
 
 def issue_from_description(d):
@@ -97,18 +114,22 @@ def issue_from_description(d):
 
 
 def role_from_description(d):
-    """Map dispatch description to role in {red, green, single}. (#1098)
+    """Map dispatch description to role in {red, green, review, single}.
+    (#1098, #1299)
 
     Mirrors tu_role_from_description in scripts/_token-usage-lib.sh and
     role_from_description in scripts/capture-agent-costs.sh (same regex).
-    "split-role RED"   -> "red"
-    "split-role GREEN" -> "green"
-    anything else      -> "single"
+    "split-role RED"                 -> "red"
+    "split-role GREEN"               -> "green"
+    "review [#N] code changes" | "code review" -> "review"
+    anything else                    -> "single"
     """
     if re.search(r"split[- ]role\s+red", d, re.IGNORECASE):
         return "red"
     if re.search(r"split[- ]role\s+green", d, re.IGNORECASE):
         return "green"
+    if re.search(r"\breview\b(?:\s+#\d+)?\s+code[ -]?changes\b|\bcode[ -]?review\b", d, re.IGNORECASE):
+        return "review"
     return "single"
 
 
