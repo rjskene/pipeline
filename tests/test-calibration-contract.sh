@@ -294,6 +294,25 @@ assert_eq "the fixture README's CALIB-TOTAL grammar matches the emitter" \
   "$EMIT_TOTAL" "$FIX_DOC_TOTAL"
 
 # ---------------------------------------------------------------------------
+scenario "(f) --profile plumbs PIPELINE_TRUST_PROFILE into the launch env"
+# ---------------------------------------------------------------------------
+# #1291 made PIPELINE_TRUST_PROFILE the ONE knob the resolvers read. The driver
+# still EXPORTS (never reads) the profile under test into the headless launch
+# environment — but it must export the name the sandbox resolvers actually
+# consume. Exporting the old PIPELINE_CALIB_PROFILE would leave every measured
+# run silently on `strict` no matter what --profile said, which is the whole
+# experiment. So: the default launch carries strict, --profile lean carries
+# lean, and the dead name is gone from the driver entirely.
+assert_true "default launch exports PIPELINE_TRUST_PROFILE=strict" \
+  grep -qF "PIPELINE_TRUST_PROFILE=strict" <<< "$LAUNCH"
+LEAN_LAUNCH="$(PIPELINE_CALIB_DIR="$TMP/sandbox" PIPELINE_CALIB_TIMEOUT=77 \
+  bash "$RUNNER" --dry-run --profile lean 2>&1 | grep -m1 '^CALIB-LAUNCH ')"
+assert_true "--profile lean exports PIPELINE_TRUST_PROFILE=lean" \
+  grep -qF "PIPELINE_TRUST_PROFILE=lean" <<< "$LEAN_LAUNCH"
+assert_eq "the dead PIPELINE_CALIB_PROFILE export is retired from the driver" \
+  "0" "$(grep -c 'PIPELINE_CALIB_PROFILE' "$RUNNER")"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
