@@ -149,11 +149,11 @@ extra=""
 if [ -f "$DOC" ]; then
   extra="$(grep -oE '\bPIPELINE_[A-Z0-9_]+\b' "$DOC" | sort -u \
     | grep -vxF -e PIPELINE_CALIB_DIR -e PIPELINE_CALIB_REPO \
-        -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS \
+        -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS -e PIPELINE_TRUST_PROFILE \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then
-  pass_msg "names no PIPELINE_* token beyond the three calib knobs and PIPELINE_HEADLESS"
+  pass_msg "names no PIPELINE_* token beyond the three calib knobs, PIPELINE_HEADLESS and PIPELINE_TRUST_PROFILE"
 else
   fail_msg "names undeclared PIPELINE_* token(s): $extra"
 fi
