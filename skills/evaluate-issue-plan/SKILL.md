@@ -143,7 +143,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
        bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"; echo "rc=$?"
      ```
 
-     - **Non-zero exit is BLOCKING.** `REASON=no-test-root` or `REASON=no-test-files` (exit 3) means the host's `PIPELINE_TEST_ROOTS` is unset or misconfigured and the sweep proved nothing — a vacuous sweep is NEVER a clean pass. Report it under `**Spec gaps:**` and return **Revise** with the fix (set `PIPELINE_TEST_ROOTS` to the consumer's real test roots, e.g. `subagents/*/testing/ testing/`).
+     - **Scope rule:** roots resolve positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`; an unset var self-defaults and is never vacuous. `REASON=no-test-root` or `REASON=no-test-files` (exit 3) fires only when every resolved root fails `[ -e ]`. Report it under `**Spec gaps:**` and return **Revise** with the fix (add a valid root, e.g. `subagents/*/testing/ testing/`).
      - For each `EXACT_MATCH_GUARD=` line, decide whether the planned change alters the keyset/literal it pins — i.e. does the plan add, rename, or remove a key/field/element reachable by the `SUBJECT` expression or exercised by the `SYMBOL` under test? If yes AND `FILE` is not already listed under the plan's `**Shared tests (split-role):**` section, return **Revise**, quote `FILE:LINE`, and give the exact bullet to add.
      - When split-role is NOT applicable (PATH A/C/D, or the knob is `false`), hits are advisory only: report them under `**Missing files:**` and do not block.
 

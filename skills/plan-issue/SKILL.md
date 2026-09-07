@@ -145,7 +145,7 @@ Receive an issue number as argument (or from context).
      bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"; echo "rc=$?"
    ```
 
-   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Shared tests (split-role):**` in the plan. Without that declaration the split-role GREEN implementer may not legally edit the test and STOPS mid-leg. A non-zero exit (`REASON=no-test-root` / `no-test-files`) means the sweep proved nothing: fix `PIPELINE_TEST_ROOTS` for the host before relying on a `None` declaration.
+   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Shared tests (split-role):**` in the plan. Without that declaration the split-role GREEN implementer may not legally edit the test and STOPS mid-leg. Roots resolve positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`; an unset var self-defaults and is never vacuous. `REASON=no-test-root` / `no-test-files` fires only when every resolved root fails `[ -e ]`.
 
 4a. **Root-cause diagnosis gate.** Run this step ONLY when the issue carries `needs-debug` (resolved in Step 3a) OR `--debug-first` was passed (`DEBUG_FIRST=true`); otherwise this step is a no-op — skip straight to Step 5. The gate establishes the root cause BEFORE planning so the plan's design decisions + first task target the diagnosed cause, not the reported symptom. The diagnosis is autonomous — there is NO human gate (parallel to classify), distinct from the plan-approval gate downstream.
 
@@ -202,7 +202,7 @@ Receive an issue number as argument (or from context).
    **API changes:** (or "None")
    **Frontend changes:** (or "None")
    **Predicates:** (required for needs-browser-labeled issues)
-   **Test changes:** (or "None")
+   **Test changes:** (or "None") — one test file per `bash` invocation
    **Shared tests (split-role):** (optional — PATH B split-role only; omit when not applicable)
    **RED/GREEN ledger:** (required when the plan has a test deliverable — PATH B/C/D; `None` for docs-only PATH A)
    **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
