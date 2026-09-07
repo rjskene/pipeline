@@ -862,9 +862,17 @@ EXTRA_COMP_VAL["escapes/later-fix"]="$ESCAPES_LATERFIX";  EXTRA_COMP_UNIT["escap
 verdict_candidates() {  # <issues_file> <ids_json> -> space-separated issue numbers
   local issues_file="$1" ids_json="$2"
   [ -f "$issues_file" ] || { printf ''; return 0; }
+  # Retro-wins: a cycle issue is a candidate when its `Measured by:` LINE
+  # names `retro` in any case. A hybrid line (calibration run AND retro,
+  # e.g. live #1291) still qualifies — retro wins, so no separate
+  # `and not(calibration run)` clause is needed (that would both risk an
+  # unparenthesized-jq runtime error and hide hybrid lines). `.` does not
+  # cross newlines without the `s` flag, so `.*` stays scoped to the single
+  # Measured-by line — do not add `s`. Each `(.body // "") | test(...)` is
+  # its own fully-parenthesized clause: jq binds `|` looser than `and`.
   jq -r --argjson ids "$ids_json" '
     [.[] | select(.number as $n | $ids | index($n) != null)
-      | select((.body // "") | contains("Measured by: retro (next cycle)"))
+      | select(((.body // "") | test("Measured by:.*retro"; "i")))
       | .number] | map(tostring) | join(" ")
   ' "$issues_file" 2>/dev/null
 }
