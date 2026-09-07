@@ -35,7 +35,7 @@
 #   REASON=<token>                      # why MODEL resolved as it did (audit)
 #
 # REASON tokens: default-sonnet | default-opus | explicit-knob | high-uncertainty
-#                | needs-browser | scope-low-blast-gated
+#                | needs-browser | scope-low-blast-gated | lean-single
 #
 # #1186 — `inherit` is RETIRED as an emission. "Inherit the strong safe model"
 # was only ever true while the session model WAS the strong safe model; under a
@@ -84,6 +84,18 @@
 #     test-author is ALWAYS opus and the implementer is the resolved execute model
 #     (a W2 carve-out forces the implementer to opus too). Split-role NEVER
 #     applies to PATH D.
+#   #1291 trust profile — read PIPELINE_TRUST_PROFILE via the shared
+#     scripts/_trust-profile.sh (ONE normalization; never re-normalized here).
+#     `strict` (the DEFAULT, and the fallback for any unrecognized value, with a
+#     stderr WARN) is BYTE-IDENTICAL to the pre-#1291 resolver. `lean` collapses
+#     the #881 split PAIR into ONE dispatch — SPLIT_ROLE=false, ROLES=single,
+#     REASON=lean-single — but ONLY on PATH B, ONLY where the split would
+#     otherwise have applied, ONLY when NO carve-out fired, and ONLY when the
+#     implementer model is already STRONG (opus|fable). The W2 high-uncertainty
+#     and needs-browser carve-outs WIN over lean: those keep the split pair. A
+#     sonnet implementer also keeps it (collapsing there would delete the opus
+#     test-author and leave nothing strong in the dispatch). lean is a no-op for
+#     PATH A/C/D — lean-single is a PATH B rule only.
 
 set -uo pipefail
 
@@ -122,6 +134,10 @@ if [ -f "${_red_dir}/_resolve-config.sh" ]; then
   # shellcheck disable=SC1090,SC1091
   source "${_red_dir}/_resolve-config.sh"
 fi
+
+# --- Resolve the #1291 trust profile (ONE normalization, shared) ------------
+# shellcheck source=scripts/_trust-profile.sh
+. "${_red_dir}/_trust-profile.sh"
 
 REPO="${PIPELINE_REPO:-}"
 
@@ -233,16 +249,29 @@ fi
 # opus; the implementer is the resolved execute MODEL, and a W2 carve-out forces
 # the implementer to opus too. (#1186 dropped the dead `MODEL=inherit` arm — the
 # resolver no longer emits it.)
+#
+# #1291 lean-single: under TRUST_PROFILE=lean the split PAIR collapses into ONE
+# dispatch (REASON=lean-single) exactly where the redundancy buys least — no W2
+# carve-out fired AND the implementer would already have been a STRONG model
+# (opus|fable), so the collapsed dispatch is still the strong model. Every other
+# lane is untouched: strict, PATH A/C/D, W2/needs-browser, a sonnet implementer
+# (collapsing there would delete the opus test-author with nothing strong left),
+# and split-role explicitly off (already single — lean-single fires only where
+# the split WOULD have applied, so the audit reason stays the model reason).
 SPLIT_ROLE_OUT="false"
 ROLES_OUT="single"
 if [ "$PATH_LETTER" = "B" ] && [ "$SPLIT_FLAG" = "true" ]; then
-  SPLIT_ROLE_OUT="true"
-  if [ "$W2" = "1" ] || [ "$MODEL" = "opus" ]; then
-    IMPL_MODEL="opus"
+  if [ "$TRUST_PROFILE" = "lean" ] && [ "$W2" != "1" ] && { [ "$MODEL" = "opus" ] || [ "$MODEL" = "fable" ]; }; then
+    REASON="lean-single"
   else
-    IMPL_MODEL="$MODEL"
+    SPLIT_ROLE_OUT="true"
+    if [ "$W2" = "1" ] || [ "$MODEL" = "opus" ]; then
+      IMPL_MODEL="opus"
+    else
+      IMPL_MODEL="$MODEL"
+    fi
+    ROLES_OUT="red:opus,green:${IMPL_MODEL}"
   fi
-  ROLES_OUT="red:opus,green:${IMPL_MODEL}"
 fi
 
 emit
