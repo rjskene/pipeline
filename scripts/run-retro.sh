@@ -123,6 +123,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/_logging.sh"  # provides pipeline_logging_enabled()
+
 # Injectable clock for the newest cycle's OPEN upper bound (cycle_window()
 # below): a cycle with a successor `Cycle N+1 (<date>` tracker header is
 # clock-independent, but the newest cycle has none, so its window would
@@ -414,6 +417,7 @@ ROWS_FILE=""
 TOOLOG=""
 USAGE_FILE=""
 CALIB_FILE=""
+AGENT_COSTS_FILE=""
 
 if [ -n "$FIXTURE_DIR" ]; then
   TRACKER_FILE="$FIXTURE_DIR/tracker.md"
@@ -423,6 +427,7 @@ if [ -n "$FIXTURE_DIR" ]; then
   TOOLOG="$FIXTURE_DIR/tool-use.log"
   USAGE_FILE="$FIXTURE_DIR/usage-gate.jsonl"
   CALIB_FILE="$FIXTURE_DIR/calib.txt"
+  AGENT_COSTS_FILE="$FIXTURE_DIR/agent-costs.jsonl"
 else
   LIVE_TMP="$(mktemp -d)"
   trap 'rm -rf "$LIVE_TMP"' EXIT
@@ -453,6 +458,7 @@ else
   # date order), not by mtime: a re-teed older day, a `cp -r` or a restore all
   # reshuffle mtimes, and docs/calibration.md promises the newest date.
   CALIB_FILE="$(ls -1 "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | sort | tail -1)"
+  AGENT_COSTS_FILE="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/agent-costs.jsonl"
 fi
 
 TRACKER_BODY=""
@@ -618,6 +624,94 @@ compute_cost_latency() {
 }
 
 compute_cost_latency "$ROWS_FILE"
+
+# compute_agent_costs — --post-only per-issue AGENT-COST rows (issue #1293).
+# Backfills tests/fixtures/run-retro/agent-costs.jsonl (fixture mode) or
+# ${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/agent-costs.jsonl (live)
+# via scripts/capture-agent-costs.sh, then rolls up per cycle-issue tokens
+# and stage count. Sets the globals COST_ROWS / COST_MEDIAN / COST_BACKFILL
+# consumed by print_post_report(). Never fails the retro: capture-agent-costs.sh's
+# own rc is discarded, and every degraded input renders an `n/a (<reason>)`
+# string instead of erroring.
+#
+# Rollup contract: dedup on record_key FIRST (group_by(.record_key) |
+# map(last) — the key is LOGICAL and legitimately RECURS with revised totals,
+# per the schema header in capture-agent-costs.sh), THEN keep records whose
+# `.issue` (a STRING in the schema) parses to a cycle issue number, THEN sum
+# `.tokens.total` and count distinct `.stage` per issue. Cost rows are plain
+# `cost:` lines, not COMPUTED/EXTRA_COMP_VAL entries, so they never leak into
+# --dump-computed or double-print in --post output.
+compute_agent_costs() {
+  if [ -n "$FIXTURE_DIR" ]; then
+    COST_BACKFILL="skipped (fixture mode)"
+  elif ! pipeline_logging_enabled; then
+    COST_BACKFILL="skipped (PIPELINE_LOGS_ENABLED not true)"
+  else
+    CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}" \
+      bash "$SCRIPT_DIR/capture-agent-costs.sh" >/dev/null 2>&1
+    COST_BACKFILL="ran"
+  fi
+
+  local no_substrate="n/a (no agent-costs substrate)"
+  local no_records="n/a (no cost records)"
+  COST_ROWS=""
+  COST_MEDIAN=""
+
+  if [ ! -f "$AGENT_COSTS_FILE" ]; then
+    local n
+    for n in $CUR_ISSUES; do
+      COST_ROWS="${COST_ROWS}cost: issue=#$n $no_substrate
+"
+    done
+    COST_MEDIAN="$no_substrate"
+    return 0
+  fi
+
+  local json
+  json="$(jq -s --argjson ids "$CUR_IDS_JSON" '
+    group_by(.record_key) | map(last)
+    | map(. + {_num: ((.issue | tonumber?) // null)})
+    | map(select((._num) as $n | $n != null and ($ids | index($n) != null)))
+    | group_by(._num)
+    | map({issue: .[0]._num, tokens: (map(.tokens.total) | add), stages: (map(.stage) | unique | length)})
+  ' "$AGENT_COSTS_FILE" 2>/dev/null)"
+  [ -n "$json" ] || json="[]"
+
+  local -A tok_by_issue=() stg_by_issue=()
+  local i t s
+  while IFS=$'\t' read -r i t s; do
+    [ -n "$i" ] || continue
+    tok_by_issue["$i"]="$t"
+    stg_by_issue["$i"]="$s"
+  done < <(printf '%s' "$json" | jq -r '.[] | [(.issue|tostring), (.tokens|tostring), (.stages|tostring)] | @tsv' 2>/dev/null)
+
+  local n found=()
+  for n in $CUR_ISSUES; do
+    if [ -n "${tok_by_issue[$n]:-}" ]; then
+      COST_ROWS="${COST_ROWS}cost: issue=#$n tokens=$(clean_num "${tok_by_issue[$n]}") stages=${stg_by_issue[$n]}
+"
+      found+=("${tok_by_issue[$n]}")
+    else
+      COST_ROWS="${COST_ROWS}cost: issue=#$n $no_records
+"
+    fi
+  done
+
+  if [ "${#found[@]}" -gt 0 ]; then
+    local med
+    med="$(printf '%s\n' "${found[@]}" | jq -s '
+      def median: sort as $s | ($s|length) as $n |
+        if $n == 0 then null
+        elif ($n % 2 == 1) then $s[($n-1)/2]
+        else ($s[$n/2 - 1] + $s[$n/2]) / 2
+        end;
+      map(tonumber) | median
+    ')"
+    COST_MEDIAN="$(clean_num "$med")"
+  else
+    COST_MEDIAN="$no_records"
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # Task 4 — harness-mass rows (measured off the working tree; never n/a)
@@ -1000,6 +1094,9 @@ print_post_report() {
     v="${EXTRA_COMP_VAL[$key]}"; u="${EXTRA_COMP_UNIT[$key]}"
     if [ -n "$u" ] && is_numeric "$v"; then echo "COMPUTED $key = $v $u"; else echo "COMPUTED $key = $v"; fi
   done
+  printf '%s' "$COST_ROWS"
+  echo "cost: loop-own tokens/issue median = $COST_MEDIAN"
+  echo "cost: backfill = $COST_BACKFILL"
   echo "verdict-candidates: $VERDICT_CANDIDATES"
 }
 
@@ -1119,6 +1216,7 @@ if [ "$DUMP_BASELINE" -eq 1 ] || [ "$DUMP_COMPUTED" -eq 1 ]; then
 fi
 
 if [ "$POST" -eq 1 ]; then
+  compute_agent_costs
   print_post_report
   exit 0
 fi
