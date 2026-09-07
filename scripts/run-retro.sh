@@ -1132,7 +1132,7 @@ build_full_report() {
       [ -z "$fl" ] && continue
       echo "$fl"
     done
-  else
+  elif [ "$FRICTION_LINES_COUNT" -gt 0 ]; then
     echo "friction: $FRICTION_LINES_COUNT lines — see $FRICTION_WINDOW"
   fi
 
