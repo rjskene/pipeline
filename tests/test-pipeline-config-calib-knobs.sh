@@ -2,7 +2,7 @@
 set -uo pipefail
 
 # Guard (issue #1280): the calibration slate driver (scripts/calibration-run.sh)
-# reads seven env seams. Every one of them must be DOCUMENTED as a commented
+# reads six env seams. Every one of them must be DOCUMENTED as a commented
 # template line in pipeline.config.example so operators can discover the knob
 # without reading the script — and so scripts/check-config-drift.sh sees them
 # as declared rather than UNDOCUMENTED.
@@ -31,7 +31,7 @@ if [ ! -f "$EXAMPLE" ]; then
   exit 1
 fi
 
-# The seven seams read by scripts/calibration-run.sh.
+# The six seams read by scripts/calibration-run.sh.
 CALIB_VARS=(
   PIPELINE_CALIB_REPO
   PIPELINE_CALIB_DIR
@@ -39,7 +39,6 @@ CALIB_VARS=(
   PIPELINE_CALIB_REMOTE
   PIPELINE_CALIB_BASE_TAG
   PIPELINE_CALIB_ISSUE_IDS
-  PIPELINE_CALIB_PROFILE
 )
 
 # --- pipeline.config.example: each knob present and COMMENTED --------------

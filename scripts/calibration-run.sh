@@ -41,9 +41,11 @@ set -uo pipefail
 #   PIPELINE_CALIB_TIMEOUT   headless run cap, sec    (default 5400)
 #   PIPELINE_CALIB_BASE_TAG  reset anchor tag         (default calib-base)
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
-# Plus PIPELINE_CALIB_PROFILE, which this script EXPORTS (never reads) into the
-# headless run's environment so the sandbox session knows which profile is
-# under test. That launch environment also sets PIPELINE_HEADLESS=true (the
+# Plus PIPELINE_TRUST_PROFILE, which this script EXPORTS (never reads) into the
+# headless run's environment from --profile; dev/calib/template/pipeline.config
+# passes it through (${PIPELINE_TRUST_PROFILE:-strict}) so the sandbox resolvers
+# run under the profile under test (#1291).
+# That launch environment also sets PIPELINE_HEADLESS=true (the
 # seam the fullsend headless contract reads; nothing consumes it yet, which is
 # why it is an injected var rather than a knob) and UNSETS
 # ALLOW_ORCHESTRATOR_EDIT, which the loop session driving this script exports —
@@ -226,7 +228,7 @@ build_launch() {
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
   LAUNCH=(env -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
-          "PIPELINE_CALIB_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
+          "PIPELINE_TRUST_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
           --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" --dangerously-skip-permissions)

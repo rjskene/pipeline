@@ -160,6 +160,7 @@ run_stage_raw() {
           -u PIPELINE_PATH_D_MODEL_EXECUTE \
           -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
           -u PIPELINE_PATH_B_SPLIT_ROLE \
+          -u PIPELINE_TRUST_PROFILE \
       bash "$HELPER" 999 "$stage" 2>&1 >/dev/null
   else
     PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
@@ -174,6 +175,7 @@ run_stage_raw() {
           -u PIPELINE_PATH_D_MODEL_EXECUTE \
           -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
           -u PIPELINE_PATH_B_SPLIT_ROLE \
+          -u PIPELINE_TRUST_PROFILE \
       bash "$HELPER" 999 "$stage" 2>/dev/null
   fi
 }
@@ -200,6 +202,20 @@ assert_tok() {
   else
     fail_msg "$desc: expected line '$tok', got:
 $out"
+  fi
+}
+
+# Assert NO line of $out starts with the given "KEY=" prefix (#1291: SKIP= is an
+# OPTIONAL token — it is emitted only where the lean profile actually elides a
+# stage, so its ABSENCE is the assertion everywhere else).
+assert_no_key() {
+  local desc="$1" key="$2" out="$3"
+  inc
+  if printf '%s\n' "$out" | grep -qE "^${key}="; then
+    fail_msg "$desc: expected NO '${key}=' line, got:
+$out"
+  else
+    pass_msg "$desc -> emits no '${key}=' line"
   fi
 }
 
@@ -385,6 +401,7 @@ run_usage_case() {
         env -u PIPELINE_STAGE_MODEL_PLAN_EVAL \
             -u PIPELINE_STAGE_MODEL_PR_EVAL \
             -u PIPELINE_PATH_C_MODEL_PLAN \
+            -u PIPELINE_TRUST_PROFILE \
         bash "$HELPER" "$@" 2>&1 >/dev/null)
   rc=$?
   if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -qiE 'usage'; then
@@ -409,6 +426,7 @@ PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIXE" \
   env -u PIPELINE_STAGE_MODEL_PLAN_EVAL \
       -u PIPELINE_STAGE_MODEL_PR_EVAL \
       -u PIPELINE_PATH_C_MODEL_PLAN \
+      -u PIPELINE_TRUST_PROFILE \
   bash "$HELPER" 999 pr-eval >/dev/null 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then
@@ -416,6 +434,90 @@ if [ "$rc" -eq 0 ]; then
 else
   fail_msg "exit $rc on normal verdict (expected 0)"
 fi
+
+# ---- #1291 trust profile: the lean plan-eval SKIP ---------------------------
+# PIPELINE_TRUST_PROFILE (strict, the default | lean) is normalized ONCE by the
+# shared scripts/_trust-profile.sh. Under `lean` the plan-eval GATE is elided
+# (SKIP=true) exactly where the second opinion buys least: the cheap paths, A
+# and D, with no W2 signal. SKIP= is an OPTIONAL token — every other lane emits
+# NO SKIP= line at all, and pr-eval NEVER carries it. `strict` stays
+# byte-identical to the pre-#1291 resolver; an unrecognized profile falls back
+# to strict with ONE stderr WARN. (15)-(19) are CONTROLS.
+
+# (13) lean + PATH A, clean body, plan-eval -> gate elided; the resolved model
+#      is still emitted verbatim so a caller that IGNORES SKIP is unchanged.
+CFG13=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+FIX13=$(make_fixture "docs: update readme" "$BODY_LOW" "$LBL_A")
+OUT13=$(run_stage "$FIX13" "$CFG13" plan-eval)
+assert_tok "(13) lean PATH A plan-eval" "MODEL=opus" "$OUT13"
+assert_tok "(13) lean PATH A plan-eval" "REASON=default-pin" "$OUT13"
+assert_tok "(13) lean PATH A plan-eval" "SKIP=true" "$OUT13"
+
+# (14) lean + PATH D, clean body, plan-eval -> gate elided.
+CFG14=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+FIX14=$(make_fixture "fix(foo): quick" "$BODY_LOW" "$LBL_D")
+OUT14=$(run_stage "$FIX14" "$CFG14" plan-eval)
+assert_tok "(14) lean PATH D plan-eval" "SKIP=true" "$OUT14"
+
+# (15) CONTROL: lean is A/D ONLY. PATH B and PATH C plan-eval keep their gate,
+#      and PATH C still follows its fable producer.
+CFG15B=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+FIX15B=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
+OUT15B=$(run_stage "$FIX15B" "$CFG15B" plan-eval)
+assert_no_key "(15) CONTROL lean PATH B plan-eval" "SKIP" "$OUT15B"
+CFG15C=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+FIX15C=$(make_fixture "feat(x): multi-leaf rollout" "$BODY_C" "$LBL_C")
+OUT15C=$(run_stage "$FIX15C" "$CFG15C" plan-eval)
+assert_no_key "(15) CONTROL lean PATH C plan-eval" "SKIP" "$OUT15C"
+assert_tok "(15) CONTROL lean PATH C plan-eval" "MODEL=fable" "$OUT15C"
+
+# (16) CONTROL: SKIP is a plan-eval-ONLY token. The producer stage (`plan`) is
+#      never elided, and pr-eval — the W3 auto-merge gate — NEVER carries it.
+CFG16=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+FIX16=$(make_fixture "docs: update readme" "$BODY_LOW" "$LBL_A")
+OUT16P=$(run_stage "$FIX16" "$CFG16" plan)
+assert_no_key "(16) CONTROL lean PATH A plan" "SKIP" "$OUT16P"
+OUT16E=$(run_stage "$FIX16" "$CFG16" pr-eval)
+assert_no_key "(16) CONTROL lean PATH A pr-eval" "SKIP" "$OUT16E"
+assert_tok "(16) CONTROL lean PATH A pr-eval" "MODEL=opus" "$OUT16E"
+
+# (17) CONTROL: strict is a byte-identical no-op vs. no profile line at all, and
+#      emits no SKIP= (the pre-#1291 emission, unchanged).
+CFG17_NONE=$(make_config_root)
+CFG17_STRICT=$(make_config_root 'PIPELINE_TRUST_PROFILE=strict')
+FIX17=$(make_fixture "docs: update readme" "$BODY_LOW" "$LBL_A")
+OUT17_NONE=$(run_stage "$FIX17" "$CFG17_NONE" plan-eval)
+OUT17_STRICT=$(run_stage "$FIX17" "$CFG17_STRICT" plan-eval)
+inc
+if [ "$OUT17_NONE" = "$OUT17_STRICT" ]; then
+  pass_msg "(17) strict is byte-identical to no profile line (plan-eval)"
+else
+  fail_msg "(17) strict diverged from no profile line (plan-eval):
+$(diff <(printf '%s\n' "$OUT17_NONE") <(printf '%s\n' "$OUT17_STRICT"))"
+fi
+assert_no_key "(17) CONTROL strict PATH A plan-eval" "SKIP" "$OUT17_STRICT"
+
+# (18) An UNRECOGNIZED profile falls back to strict (no SKIP=), with exactly ONE
+#      WARN on stderr — a typo'd knob must never silently DELETE a gate.
+CFG18=$(make_config_root 'PIPELINE_TRUST_PROFILE=turbo')
+FIX18=$(make_fixture "docs: update readme" "$BODY_LOW" "$LBL_A")
+OUT18=$(run_stage "$FIX18" "$CFG18" plan-eval)
+assert_no_key "(18) unknown profile falls back to strict" "SKIP" "$OUT18"
+inc
+WARN18="$(run_stage_err "$FIX18" "$CFG18" plan-eval | grep -c '^WARN:.*PIPELINE_TRUST_PROFILE')"
+if [ "$WARN18" -eq 1 ]; then
+  pass_msg "(18) unknown profile -> exactly one WARN line on stderr"
+else
+  fail_msg "(18) expected exactly 1 '^WARN:.*PIPELINE_TRUST_PROFILE' stderr line, got $WARN18"
+fi
+
+# (19) CONTROL: lean + PATH D + W2 vocab -> the high-uncertainty carve-out WINS
+#      and the gate SURVIVES. lean never elides a second opinion on the issues
+#      most likely to need one.
+CFG19=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+FIX19=$(make_fixture "fix(auth): harden" "$BODY_W2" "$LBL_D")
+OUT19=$(run_stage "$FIX19" "$CFG19" plan-eval)
+assert_no_key "(19) CONTROL lean PATH D + W2" "SKIP" "$OUT19"
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="

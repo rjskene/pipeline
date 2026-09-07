@@ -39,9 +39,11 @@ bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
-`--profile` selects the sandbox's evaluator strictness (`strict` for the weak-model
-guarantee, `lean` otherwise). `--model` picks the executor model. `--harness <dir>`
-points at the harness working tree under test — it defaults to this repo's root.
+`--profile` sets `PIPELINE_TRUST_PROFILE` in the sandbox session — `strict` is today's
+split-role execute plus full plan-eval; `lean` runs opus/fable executors single-role
+outside W2 and skips PATH A/D plan-eval (docs/cost-architecture.md §9). `--model` picks
+the executor model. `--harness <dir>` points at the harness working tree under test — it
+defaults to this repo's root.
 
 `--reset` is what makes a run comparable to the previous one: inputs are pinned to
 the `calib-base` tag, so a delta between two `CALIB-TOTAL` lines is attributable to

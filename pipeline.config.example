@@ -23,7 +23,6 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 #PIPELINE_CALIB_REMOTE=""                           # Explicit git URL to clone the sandbox from. Empty (default) => `gh repo clone`; read site ${VAR:-}.
 #PIPELINE_CALIB_BASE_TAG="calib-base"               # Tag --reset rewinds the sandbox to (default calib-base; read site ${VAR:-calib-base}).
 #PIPELINE_CALIB_ISSUE_IDS=""                        # Pre-resolved slate issue ids. Empty (default) => whatever --reset resolved; read site ${VAR:-}.
-#PIPELINE_CALIB_PROFILE="strict"                    # Profile the sandbox session runs under (strict|lean, default strict). EXPORTED into the headless run by calibration-run.sh from --profile; never read back by it.
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
@@ -437,6 +436,16 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 #PIPELINE_PATH_C_MODEL_PLAN=fable        # cross-unit meshing; W2 carve-out forces opus
 #PIPELINE_PATH_A_MODEL_EXECUTE=opus      # docs-only execute; was a silent inherit
 #PIPELINE_PATH_C_MODEL_EXECUTE=opus      # tdd-implementer leaves; was a silent inherit
+
+# --- #1291 trust profile (spec §12.2, resolver half) ---
+# strict (default) = today's behaviour, byte-identical. lean = for a resolved opus/fable
+# executor OUTSIDE W2 / the browser-label carve-out, PATH B dispatches single-role
+# (SPLIT_ROLE=false, REASON=lean-single) and non-W2 PATH A/D plan-eval emits SKIP=true
+# (fullsend flips plan-pending -> plan-approved with an audit comment). pr-eval depth is
+# unchanged (W3). Unknown values fall back to strict with one stderr WARN. Read ONLY via
+# scripts/_trust-profile.sh (sourced by both resolvers). Override anchor (#1052):
+# defaults-in-code — stays COMMENTED; uncomment ="lean" to opt in.
+#PIPELINE_TRUST_PROFILE="strict"
 
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 # Override anchor (#1052): defaults-in-code — default true lives at the read site

@@ -108,10 +108,10 @@ check_cfg PIPELINE_TEST_FILE_GLOBS "case-*.sh"
 # one of them is declared in pipeline.config.example. Pinning the SET (rather
 # than naming the knobs that were dropped) keeps this file free of tokens the
 # config-drift lint would flag, and catches any future inert knob for free.
-want_knobs="PIPELINE_BASE_BRANCH PIPELINE_INSTALL_CMD PIPELINE_LOGS_ENABLED PIPELINE_REPO PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TEST_FILE_GLOBS PIPELINE_WORKTREE_PREFIX"
+want_knobs="PIPELINE_BASE_BRANCH PIPELINE_INSTALL_CMD PIPELINE_LOGS_ENABLED PIPELINE_REPO PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TEST_FILE_GLOBS PIPELINE_TRUST_PROFILE PIPELINE_WORKTREE_PREFIX"
 got_knobs=$(grep -oE '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$cfg" | sed 's/[[:space:]]//g; s/=$//' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
 if [ "$got_knobs" = "$want_knobs" ]; then
-  pass_msg "pipeline.config knob set is exactly the eight declared knobs"
+  pass_msg "pipeline.config knob set is exactly the nine declared knobs"
 else
   fail_msg "pipeline.config knob set is '$got_knobs' (want '$want_knobs')"
 fi
