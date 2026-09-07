@@ -183,15 +183,14 @@ PIPELINE_NEXT_
 # follow-up lands a real read-site + declaration.
 PIPELINE_STAGE_MODEL_CLASSIFY
 
-# #1275 spec-only knob. PIPELINE_TRUST_PROFILE is named in the evolve-loop design
-# spec (docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §12) as a
-# FUTURE trust-profile knob (strict|lean); no read site exists anywhere in the
-# tree. check-config-drift.sh scans docs/, so that prose mention reads as
-# referenced-but-undeclared and reds the clean-tree suite. Same
-# documented-but-not-yet-implemented class as PIPELINE_STAGE_MODEL_CLASSIFY above.
-# Exact-match (NOT a prefix wildcard). Peel this entry when the trust-profile
-# issue lands a real read-site + a pipeline.config.example declaration.
-PIPELINE_TRUST_PROFILE
+# #1291 retired knob. PIPELINE_CALIB_PROFILE was replaced by PIPELINE_TRUST_PROFILE
+# (0 readers repo-wide — calibration-run.sh only ever EXPORTED it). The remaining
+# occurrences are negative regression-guards under tests/ (test-calibration-contract.sh,
+# test-calib-template-trust-profile.sh, test-pipeline-config-trust-profile-knob.sh)
+# asserting it stays absent from the driver/template/example; check-config-drift.sh
+# scans tests/, so that literal reads as "referenced". Exact-match (NOT a prefix
+# wildcard) — same retired-knob class as PIPELINE_FRONTEND_PORT_OFFSET above.
+PIPELINE_CALIB_PROFILE
 
 # #1272 fixture-prose-only knob. PIPELINE_SUPERPOWERS_* is a HYPOTHETICAL per-stage
 # superpowers gate named only in the evolve-loop tracker's `## Hypothesis backlog`
@@ -200,7 +199,7 @@ PIPELINE_TRUST_PROFILE
 # fixtures are a byte-for-byte copy by test contract, so the prose cannot be edited
 # out. check-config-drift.sh scans tests/, so the mention reads as
 # referenced-but-undeclared and reds the clean-tree suite. No read site exists
-# anywhere in the tree. Same spec-only class as PIPELINE_TRUST_PROFILE above, but a
+# anywhere in the tree. Same spec-only class as PIPELINE_STAGE_MODEL_CLASSIFY above, but a
 # concat-prefix wildcard (the backlog names the family with a `*`, so this covers
 # every PIPELINE_SUPERPOWERS_* spelling). Peel when the knob is implemented and
 # documented in pipeline.config.example.
