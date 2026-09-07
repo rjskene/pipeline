@@ -6,10 +6,16 @@ set -euo pipefail
 #      `pipeline.config` (so the agent knows to source the project config
 #      at session start), and
 #  (2) contains no leftover literal `${PIPELINE_*}` envsubst placeholders
-#      (plugin SKILL.md must work without install-time substitution).
+#      (plugin SKILL.md must work without install-time substitution), and
+#  (3) carries the #1292 local-plugin anchor line in its Boot body, so a
+#      `--plugin-dir` session with no plugin cache still locates the resolver.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKILL_ROOT="$REPO_ROOT/skills"
+
+# #1292: byte-identical anchor line every Boot fence must carry. Single-quoted
+# literal (the line is full of regex metacharacters) matched with `grep -qF`.
+ANCHOR='_cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-parse --show-toplevel 2>/dev/null | sed '"'"'s|$|/|'"'"')}"'
 
 [ -d "$SKILL_ROOT" ] || { echo "FAIL: $SKILL_ROOT missing"; exit 1; }
 
@@ -45,6 +51,13 @@ for skill_md in $SKILLS; do
   else
     FAIL=$((FAIL + 1))
     FAIL_LINES+=("FAIL: $rel Boot body must reference 'pipeline.config'")
+  fi
+
+  if printf '%s' "$body" | grep -qF -- "$ANCHOR"; then
+    PASS=$((PASS + 1))
+  else
+    FAIL=$((FAIL + 1))
+    FAIL_LINES+=("FAIL: $rel Boot body missing the local-plugin anchor line")
   fi
 
   if grep -nE '\$\{PIPELINE_[A-Z0-9_]+\}' "$skill_md" >/dev/null; then
