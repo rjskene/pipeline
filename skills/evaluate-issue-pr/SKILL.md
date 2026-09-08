@@ -322,7 +322,7 @@ A guard that passes is not evidence until you have seen it fail on something.
        esac
        REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
        ```
-       Checks in order: `MANUAL_MERGE` env, `manual-merge` issue label, the 4 greenlight conditions above, capability-refusal (#1233), and `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`.
+       Checks in order: `MANUAL_MERGE` env, `manual-merge` issue label, the 4 greenlight conditions above, capability-refusal (#1233), and `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`.
 
     2b. **Split-role gate (#881 — `PIPELINE_PATH_B_SPLIT_ROLE`, default `true` per #1057, opt-OUT via `=false`).** The split-role precondition applies ONLY to PRs that were actually dispatched as split-role. Before running the gate, resolve TWO guards — the issue's PATH letter and (for PATH B) the resolved dispatch shape — so the gate distinguishes "this PR was never a split-role dispatch (nothing to protect → pass/skip)" from "this split-role PR is missing its mandatory red anchor (real violation → block)" (#1076).
 
