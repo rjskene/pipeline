@@ -58,6 +58,15 @@ skip_msg() {
   SKIP=$((SKIP + 1))
 }
 
+# A deleted or renamed hook makes `python3 <missing>` exit 2, which the deny
+# contract would otherwise read as a block — the exact weakening this
+# invariant exists to catch. Fail loudly instead.
+if [ ! -f "$HOOK" ]; then
+  echo "  FAIL: hook not found at $HOOK — python3 exits 2 on a missing file, which would be misread as a deny"
+  echo "RESULT: 0 passed, 1 failed, 0 skipped"
+  exit 1
+fi
+
 # True when the captured stdout parses as JSON carrying the Claude Code
 # PreToolUse deny decision.
 stdout_deny() {
