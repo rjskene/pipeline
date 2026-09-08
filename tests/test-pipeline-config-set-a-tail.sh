@@ -101,10 +101,15 @@ FIX=""
 cleanup_fix() { [ -n "$FIX" ] && rm -f "$FIX"; }
 trap cleanup_fix EXIT
 
-# c1: knob appended after the last set +a must be flagged dirty.
+# c1: knob appended after the last set +a must be flagged dirty. Reuses an
+# already-declared knob name (PIPELINE_HEADLESS, #1286) rather than inventing
+# a new one — check_tail_clean only cares about position relative to the
+# fence, not whether the name is declared elsewhere, and a novel token here
+# would itself trip scripts/check-config-drift.sh's referenced-but-undeclared
+# scan against this very test file.
 FIX=$(mktemp)
 cp "$EXAMPLE" "$FIX"
-printf '%s\n' 'PIPELINE_BOGUS_KNOB="x"' >> "$FIX"
+printf '%s\n' 'PIPELINE_HEADLESS="true"' >> "$FIX"
 inc
 if check_tail_clean "$FIX" >/dev/null; then
   fail_msg "fixture c1: knob appended after set +a was NOT flagged dirty"
