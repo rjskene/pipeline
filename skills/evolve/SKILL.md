@@ -108,6 +108,7 @@ Branch on `$DECISION` exactly as `skills/fullsend/SKILL.md` `## Usage gate (#969
 
 - `proceed` / `skip` → continue; `skip` NEVER resumes a paused loop (R4).
 - `pause-5h` → fence 3 with the current step, then `bash "${CLAUDE_PLUGIN_ROOT}/scripts/arm-usage-resume-cron.sh" --resume-command "/pipeline:evolve resume" --resume-at "$RESUME_AT"` and transcribe its output into exactly ONE recurring `CronCreate` (NEVER `ScheduleWakeup`), then STOP the turn.
+  - Under `PIPELINE_HEADLESS=true` (read `${PIPELINE_HEADLESS:-false}`) `pause-5h` instead writes fence 3 with the current step and ENDS the turn with `HEADLESS-DEFAULT: usage-pause decision=exit-for-wrapper reason=wrapper-owns-the-sleep resume_at=<ts>` as the final message — no `arm-usage-resume-cron.sh`, no `CronCreate`. `scripts/evolve-loop.sh` greps that line, sleeps, relaunches. Interactive keeps the cron; `halt-7d` unchanged.
 - `halt-7d` → fence 3 with `MODE_NEW=paused`, `--add-label paused`, LOUD report (seven-day %, reset date, `/pipeline:evolve resume` as the manual command); never auto-resume.
 
 `$FIVE` / `$SEVEN` at Step 0 are the cycle's `start` values; at Step 7 they are its `end` values.

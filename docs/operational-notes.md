@@ -369,3 +369,12 @@ bash fence in a SKILL.md arrives garbled — cycle-1 observed
 lives in a script (e.g. `scripts/parse-shared-tests.sh`,
 `scripts/evolve-projection.sh`), which the harness never rewrites. The guard
 is `tests/test-skill-fence-positional-args.sh`.
+
+## 14. Session-per-cycle evolve loop (issue #1303)
+
+Plugin skill/agent/hook bodies load once per session, so a merged harness fix is invisible until the operator restarts.
+Run `bash scripts/evolve-loop.sh --cycles N` from the clone root: each cycle is a fresh `claude -p` (launched with `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or print mode terminates the session 600 s into its first background agent — #1306), so every merge lands in the next cycle.
+The loop gates on `scripts/evolve-projection.sh`, the same line the skill gates on; a `pause-5h` from that pre-launch gate launches nothing and has no rc — it sleeps and re-reads the `paused` label each iteration.
+A session that exits on `HEADLESS-DEFAULT: usage-pause` is slept out and relaunched, not counted as a failed resume — bounded by `--max-pauses K` consecutive pauses (default 6 ≈ 30 h), reset by any real progress.
+`--dry-run` previews `LOOP-LAUNCH` and makes no network call. `LOOP-STOP reason=` is the exit contract (`paused`/`cycles-complete` 0, `halt-7d` 3, `resume-cap` 4, `pause-cap` 5).
+Interactive fallback at a cycle boundary: `/reload-plugins` — a built-in the model cannot invoke.
