@@ -5,8 +5,9 @@
 # that emitted the CAPABILITY-REFUSED: sentinel (#1225's contract) can never
 # reach an auto-merge greenlight. Precedence:
 #
-#   block-flag > block-label > block-verdict > block-capability-refused >
-#   block-base-mismatch > block-ci > block-mergeable > block-mergestate
+#   block-flag > block-label > block-cage-tests-diff > block-verdict >
+#   block-capability-refused > block-base-mismatch > block-ci >
+#   block-mergeable > block-mergestate
 #
 # The two operator opt-outs and the human evaluator verdict still precede it
 # (which is what makes the within-issue-history block self-clearing via the
