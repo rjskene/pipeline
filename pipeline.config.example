@@ -512,4 +512,4 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # sourced at the read site (${PIPELINE_HEADLESS:-false}); uncomment to override.
 #PIPELINE_HEADLESS="false"
 
-set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above)
+set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above; MUST stay the last line: knobs appended below it are never exported)
