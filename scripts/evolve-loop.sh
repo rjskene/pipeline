@@ -84,8 +84,9 @@ die_usage() { echo "evolve-loop: ERROR: $1" >&2; exit 2; }
 warn()      { echo "evolve-loop: WARN: $1" >&2; }
 
 # require_value "$@" — guards every `shift 2`. Without it a value-taking flag
-# in LAST position leaves `shift 2` with $#=1: the shift fails, the token is
-# never consumed, and the parser spins forever printing nothing.
+# in LAST position leaves `"$2"` unbound, so `set -u` aborts the parser with
+# rc 1 and no message naming the offending flag. The guard upgrades that to a
+# clean rc 2 usage error that says which flag is missing its value.
 require_value() { [ $# -ge 2 ] || die_usage "$1 requires a value"; }
 
 require_num() { # <flag> <value>
@@ -157,6 +158,7 @@ DRY_GATE_STUB='usage-gate: decision=skip reason=dry-run five_hour=--% seven_day=
 DRY_PROJ_STUB='PROJECTION decision=proceed est5=30 est7=8 five=-- seven=-- resume_at=--'
 
 MODE_LINE=""
+MODE_OK=1
 N=0
 STEP=done
 NEXT_N=1
@@ -181,6 +183,12 @@ dispatch() {
 # Tracker reads — `--json labels` / `--json body` ONLY, never `--json comments`
 # ---------------------------------------------------------------------------
 
+# Both reads FAIL CLOSED: the rc is captured and a failure never masquerades
+# as a successful read. Discarding it is what turns a gh outage into an
+# unbounded relaunch loop of real `claude -p` sessions — an empty labels list
+# reads as "not paused" (the kill switch silently disabled) and a bodyless
+# tracker parses as `cycle 0 / step done`, which classifies as a phantom
+# COMPLETED cycle and resets every counter, so no cap can ever fire.
 read_labels() {
   dispatch LOOP-READ "" \
     gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json labels --jq '.labels[].name'
@@ -188,14 +196,41 @@ read_labels() {
 
 # Parses the Mode line with the SAME idioms skills/evolve/SKILL.md
 # `## Durable state` uses, so the wrapper and the skill can never disagree
-# about what step the loop is on.
+# about what step the loop is on. Returns non-zero (and leaves MODE_OK=0) when
+# the read failed or the body carried no `## Mode` line; N/STEP/NEXT_N are then
+# left untouched rather than defaulted to a fiction.
 read_mode() {
+  local tmp rc
+  tmp="$BODY_FILE.new"
   dispatch LOOP-READ "$DRY_BODY_STUB" \
-    gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json body --jq .body > "$BODY_FILE"
-  MODE_LINE=$(awk '/^## Mode/{f=1;next} f&&/^`/{print;exit}' "$BODY_FILE" 2>/dev/null)
+    gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json body --jq .body > "$tmp"
+  rc=$?
+  MODE_LINE=""
+  if [ "$rc" -eq 0 ]; then
+    MODE_LINE=$(awk '/^## Mode/{f=1;next} f&&/^`/{print;exit}' "$tmp" 2>/dev/null)
+  fi
+  if [ "$rc" -ne 0 ] || [ -z "$MODE_LINE" ]; then
+    MODE_OK=0
+    rm -f "$tmp"
+    warn "tracker body read failed or carried no \`## Mode\` line (rc=$rc) — treating this iteration as a stall, not a completed cycle"
+    return 1
+  fi
+  MODE_OK=1
+  mv -f "$tmp" "$BODY_FILE" 2>/dev/null || true
   N=$(sed -nE 's/.*cycle ([0-9]+).*/\1/p' <<<"$MODE_LINE"); N=${N:-0}
   STEP=$(sed -nE 's/.*step ([0-9]+|done).*/\1/p' <<<"$MODE_LINE"); STEP=${STEP:-done}
   if [ "$STEP" = done ]; then NEXT_N=$((N + 1)); else NEXT_N=$N; fi
+  return 0
+}
+
+# charge_resume <reason> — a read that failed cannot be launched past; charge
+# it against --max-resumes so the failure is bounded exactly like a stall.
+charge_resume() {
+  RESUMES=$((RESUMES + 1))
+  if [ "$RESUMES" -gt "$MAX_RESUMES" ]; then
+    echo "LOOP-STOP reason=resume-cap cycle=$N step=$STEP"
+    exit 4
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -295,7 +330,7 @@ classify_exit() {
     return 0
   fi
   read_mode
-  if [ "$STEP" = done ]; then CLASS=done; else CLASS=stalled; fi
+  if [ "$MODE_OK" -eq 1 ] && [ "$STEP" = done ]; then CLASS=done; else CLASS=stalled; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -316,12 +351,18 @@ LOG=""
 
 while :; do
   LABELS="$(read_labels)"
+  LABELS_RC=$?
+  if [ "$LABELS_RC" -ne 0 ]; then
+    warn "tracker labels read failed (rc=$LABELS_RC) — not launching: the \`paused\` kill switch must be readable"
+    charge_resume
+    continue
+  fi
   if grep -qx paused <<<"$LABELS"; then
     echo "LOOP-STOP reason=paused"
     exit 0
   fi
 
-  read_mode
+  read_mode || { charge_resume; continue; }
   check_gate || continue
 
   # A stall is CASHED here, after the gate returned proceed: a stall the gate

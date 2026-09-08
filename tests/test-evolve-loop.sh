@@ -479,6 +479,155 @@ expect_rc "an unknown flag exits 2" 2
 expect_sub "an unknown flag names itself" "$OUT" "--bogus"
 
 # ---------------------------------------------------------------------------
+# Review-driven scenarios (pre-PR review of #1303). ADDITIVE ONLY — nothing
+# above this line is modified. Scenarios 14/15 are red against a wrapper that
+# treats a FAILED external read as success; 16/17/18 close three vacuity gaps
+# the reviewer proved by mutation (the deferred-resume rule and both
+# consecutive-cap resets survived deletion with the suite still 80/80).
+# ---------------------------------------------------------------------------
+
+BODY_STALL="$TMP/body-stall.md"
+export LOOP_TEST_BODY_STALL="$BODY_STALL"
+
+# A `gh` that FAILS the labels read and only that, placed FIRST on PATH.
+FAIL_BIN="$TMP/failbin"
+mkdir -p "$FAIL_BIN"
+cat > "$FAIL_BIN/gh" <<'GHF'
+#!/bin/bash
+echo "gh $*" >> "$LOOP_TEST_CALLS"
+case "$*" in
+  *"--json labels"*) exit 1 ;;
+  *"--json body"*)   cat "$LOOP_TEST_BODY" 2>/dev/null ;;
+esac
+exit 0
+GHF
+chmod +x "$FAIL_BIN/gh"
+
+run_helper_failgh() {
+  OUT="$(cd "$WORK" && PATH="$FAIL_BIN:$STUB_BIN:$PATH" \
+        EVOLVE_LOOP_USAGE_GATE="$STUB_BIN/fake-gate" \
+        EVOLVE_LOOP_PROJECTION="$STUB_BIN/fake-projection" \
+        EVOLVE_LOOP_SLEEP_CMD="$STUB_BIN/fake-sleep" \
+        PIPELINE_REPO="rjskene/pipeline" \
+        ALLOW_ORCHESTRATOR_EDIT="true" \
+        timeout 20 bash "$HELPER" "$@" 2>&1)"
+  RC=$?
+}
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 14: an unreadable Mode line is a STALL, never a completed cycle"
+# ---------------------------------------------------------------------------
+# A tracker body that carries no `## Mode` line parses as `cycle 0 / step
+# done` under `${N:-0}` / `${STEP:-done}`. Classified as `done`, that counts a
+# phantom cycle AND resets every counter, so no cap can fire: a gh outage
+# becomes an unbounded relaunch loop of real `claude -p` sessions.
+reset_state 14
+export LOOP_TEST_BODY="$TMP/body-absent.md"
+rm -f "$TMP/body-absent.md"
+run_helper --max-resumes 1 --tracker "$TRACKER_N"
+export LOOP_TEST_BODY="$BODY_FILE"
+
+expect_rc "an unreadable Mode line is capped by --max-resumes" 4
+expect_sub "the failed read reports the resume cap" "$OUT" "LOOP-STOP reason=resume-cap"
+refute_sub "an unreadable Mode line never reports a completed cycle" "$OUT" "LOOP-STOP reason=cycles-complete"
+expect_eq "no session is launched on an unreadable Mode line" "$(launches)" 0
+if [ "$RC" -eq 124 ]; then
+  fail_msg "an unreadable Mode line cannot relaunch forever (rc 124)"
+else
+  pass_msg "an unreadable Mode line cannot relaunch forever (rc != 124)"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 15: an unreadable labels list fails CLOSED"
+# ---------------------------------------------------------------------------
+# The `paused` label is the operator kill switch. A labels read whose rc is
+# discarded yields an empty list, which reads as "not paused" — so a gh outage
+# would silently disable the kill switch and keep launching.
+reset_state 15
+run_helper_failgh --max-resumes 1 --tracker "$TRACKER_N"
+
+expect_rc "an unreadable labels read is capped by --max-resumes" 4
+expect_sub "the failed labels read reports the resume cap" "$OUT" "LOOP-STOP reason=resume-cap"
+expect_eq "no session is launched while the kill switch is unreadable" "$(launches)" 0
+if [ "$RC" -eq 124 ]; then
+  fail_msg "an unreadable labels read cannot relaunch forever (rc 124)"
+else
+  pass_msg "an unreadable labels read cannot relaunch forever (rc != 124)"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 16: a resume is charged only AFTER the gate returns proceed"
+# ---------------------------------------------------------------------------
+# The intervening gate pause is the discriminator: a wrapper that cashed the
+# resume inside the `stalled` branch would stop before ever reaching it, so
+# `sleeps == 1` fails while every other assertion still passes.
+reset_state 16
+write_body "$BODY_FILE" 5 4
+{
+  printf 'PROJECTION decision=proceed est5=30 est7=8 five=10 seven=5 resume_at=--\n'
+  printf 'PROJECTION decision=pause-5h est5=30 est7=8 five=80 seven=20 resume_at=%s\n' "$FUTURE"
+  printf 'PROJECTION decision=proceed est5=30 est7=8 five=10 seven=5 resume_at=--\n'
+} > "$PROJ_LINES"
+run_helper --max-resumes 0 --cycles 1 --tracker "$TRACKER_N"
+
+expect_rc "the deferred resume is still charged once the gate clears" 4
+expect_eq "exactly one session is launched" "$(launches)" 1
+expect_eq "the intervening gate pause is reached and slept" "$(sleeps)" 1
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 17: the resume cap is CONSECUTIVE — progress resets it"
+# ---------------------------------------------------------------------------
+reset_state 17
+write_body "$BODY_FILE" 5 4
+write_body "$BODY_STALL" 5 4
+write_body "$BODY_DONE" 5 done
+cat > "$CLAUDE_SCRIPT" <<'S17'
+#!/bin/bash
+n=$(cat "$LOOP_TEST_CLAUDE_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1)); echo "$n" > "$LOOP_TEST_CLAUDE_COUNT"
+if [ $((n % 2)) -eq 0 ]; then
+  cat "$LOOP_TEST_BODY_DONE" > "$LOOP_TEST_BODY"
+else
+  cat "$LOOP_TEST_BODY_STALL" > "$LOOP_TEST_BODY"
+fi
+exit 0
+S17
+chmod +x "$CLAUDE_SCRIPT"
+run_helper --max-resumes 1 --cycles 2 --model opus --tracker "$TRACKER_N"
+
+expect_rc "stall/progress/stall/progress completes both cycles" 0
+expect_eq "four sessions are launched (the resume cap never accumulates)" "$(launches)" 4
+expect_sub "the cycle budget is reported" "$OUT" "LOOP-STOP reason=cycles-complete"
+expect_sub "--model reaches the launched argv" "$(cat "$CALLS")" "--model opus"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 18: the pause cap is CONSECUTIVE — progress resets it"
+# ---------------------------------------------------------------------------
+reset_state 18
+write_body "$BODY_FILE" 5 4
+write_body "$BODY_DONE" 5 done
+export LOOP_TEST_RESUME_AT="$FUTURE"
+cat > "$CLAUDE_SCRIPT" <<'S18'
+#!/bin/bash
+n=$(cat "$LOOP_TEST_CLAUDE_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1)); echo "$n" > "$LOOP_TEST_CLAUDE_COUNT"
+if [ $((n % 2)) -eq 0 ]; then
+  cat "$LOOP_TEST_BODY_DONE" > "$LOOP_TEST_BODY"
+else
+  echo "HEADLESS-DEFAULT: usage-pause decision=exit-for-wrapper reason=wrapper-owns-the-sleep resume_at=$LOOP_TEST_RESUME_AT"
+fi
+exit 0
+S18
+chmod +x "$CLAUDE_SCRIPT"
+run_helper --max-pauses 1 --max-resumes 0 --cycles 2 --tracker "$TRACKER_N"
+
+expect_rc "pause/progress/pause/progress completes both cycles" 0
+expect_eq "four sessions are launched (the pause cap never accumulates)" "$(launches)" 4
+expect_eq "each pause slept exactly once" "$(sleeps)" 2
+unset LOOP_TEST_RESUME_AT
+export LOOP_TEST_RESUME_AT="--"
+
+# ---------------------------------------------------------------------------
 scenario "Scenario 13: comment-trust control — no --json comments, ever"
 # ---------------------------------------------------------------------------
 cat "$CALLS" >> "$ALL_CALLS" 2>/dev/null || true
