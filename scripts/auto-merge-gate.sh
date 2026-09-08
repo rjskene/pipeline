@@ -4,12 +4,25 @@
 # Source this file; it exposes:
 #   auto_merge_should_fire <issue> <pr>
 #       - prints exactly one reason token, returns 0 only when token == green.
-#       - Tokens: green, block-flag, block-label, block-verdict,
-#         block-capability-refused, block-base-mismatch, block-ci,
-#         block-mergeable, block-mergestate.
+#       - Tokens: green, block-flag, block-label, block-cage-tests-diff,
+#         block-verdict, block-capability-refused, block-base-mismatch,
+#         block-ci, block-mergeable, block-mergestate.
 #       - Order: env (MANUAL_MERGE=1) > label (manual-merge on issue) >
-#         verdict > block-capability-refused > base-mismatch > CI rollup >
-#         mergeable > mergeStateStatus.
+#         cage-tests-diff > verdict > block-capability-refused >
+#         base-mismatch > CI rollup > mergeable > mergeStateStatus.
+#       - block-cage-tests-diff (#1304) fires when the PR touches a
+#         tests/test-cage-invariant-*.sh file with any status other than
+#         `added`: a PR that modifies, removes, or renames a
+#         tests/test-cage-invariant-*.sh — in EITHER direction — is weakening
+#         the loop's own cage and must not auto-merge. The file list comes
+#         from `gh api .../pulls/<pr>/files`, and matching previous_filename
+#         as well as filename is what closes the rename-away gap that
+#         `gh pr view --json files` left open (it carries only the new path).
+#         `added` cage tests never fire the token, because adding an
+#         invariant strengthens the cage. An empty or unparseable listing
+#         fails closed with a WARN — a gh failure must not become an evasion
+#         vector for exactly the change class the token exists to stop; the
+#         escape hatch is the manual-merge label, which is evaluated first.
 #       - block-capability-refused (#1233) fires when
 #         $PIPELINE_CAPABILITY_REFUSAL_SOURCES is non-empty AND
 #         scripts/check-capability-refusal.sh resolves CAPABILITY_REFUSAL=block
@@ -62,6 +75,29 @@ auto_merge_should_fire() {
   if gh issue view "$issue" --repo "$PIPELINE_REPO" --json labels \
        --jq '.labels[].name' 2>/dev/null | grep -qx manual-merge; then
     echo block-label
+    return 1
+  fi
+
+  # --- block-cage-tests-diff (#1304) ---
+  # A PR that modifies, removes, or renames a tests/test-cage-invariant-*.sh —
+  # in EITHER direction — is weakening the evolve loop's own cage and must not
+  # auto-merge. `added` cage tests never fire the token, because adding an
+  # invariant strengthens the cage (so the founding PR does not self-block).
+  # Matching previous_filename as well as filename is what closes the
+  # rename-away gap that `gh pr view --json files` left open (it carries only
+  # the new path of a rename). An empty or unparseable listing fails CLOSED
+  # with a WARN; the escape hatch is the manual-merge label, evaluated above.
+  local _amg_files
+  _amg_files=$(gh api "repos/${PIPELINE_REPO}/pulls/${pr}/files" --paginate \
+    --jq '.[] | "\(.status):\(.filename):\(.previous_filename // "")"' 2>/dev/null)
+  if [ -z "$_amg_files" ] || printf '%s\n' "$_amg_files" | grep -qvE '^[a-z]+:[^:]*:[^:]*$'; then
+    echo "[auto-merge-gate] WARN: cage-tests diff check unproven (no usable file list for PR $pr)" >&2
+    echo block-cage-tests-diff
+    return 1
+  fi
+  if printf '%s\n' "$_amg_files" | grep -v '^added:' \
+     | grep -qE ':tests/test-cage-invariant-[^:]*\.sh(:|$)'; then
+    echo block-cage-tests-diff
     return 1
   fi
 

@@ -62,6 +62,9 @@ case "$ALL_ARGS" in
   *"pr view"*"--json statusCheckRollup,mergeable,mergeStateStatus"*)
     printf '%s' "${GH_ROLLUP:-}"
     ;;
+  *"pulls/"*"/files"*)
+    printf '%s\n' "${GH_FILES:-modified:scripts/auto-merge-gate.sh:}"
+    ;;
   *)
     echo "[gh shim] unhandled: $ALL_ARGS" >&2
     exit 1
@@ -183,6 +186,10 @@ reset_env() {
   export GH_BASE_REF="staging"
   export GH_EVAL_BODY="$(make_eval Approved)"
   export GH_ROLLUP="$(make_rollup success MERGEABLE CLEAN)"
+  # Non-cage file listing (#1304): the cage-tests arm fails CLOSED, so a
+  # missing default would surface as block-cage-tests-diff + a stderr WARN
+  # and break (d)'s exactly-empty-stderr assertion.
+  export GH_FILES="modified:scripts/auto-merge-gate.sh:"
 }
 
 echo "=== (a) issue-scoped refusal blocks the greenlight ==="
