@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.23.25](https://github.com/rjskene/pipeline/compare/v0.23.24...v0.23.25) (2026-09-08)
+
+
+### Features
+
+* **auto-merge-gate:** block greenlight on block-capability-refused ([b5c5896](https://github.com/rjskene/pipeline/commit/b5c58965e822bf4f0edc49bc7eaf3bb685dd1021)), closes [#1233](https://github.com/rjskene/pipeline/issues/1233)
+* **evaluate:** execute the plan's predicted RED instead of reasoning about it ([#1224](https://github.com/rjskene/pipeline/issues/1224)) ([a0cfedc](https://github.com/rjskene/pipeline/commit/a0cfedc9cc0bba591576d36dded910482cd8e0bd))
+* **fullsend:** run the clean-main check per dispatch so leaks are attributed to their agent ([7505ee5](https://github.com/rjskene/pipeline/commit/7505ee500167a36a2662575d8c950e4c3bf8fcb3))
+* **guards:** add CAPABILITY-REFUSED sentinel detector + auto-merge gate ([579fed0](https://github.com/rjskene/pipeline/commit/579fed078042424cdfab6cd9701e2f395d3155ea))
+* **guards:** add issue-scoped CAPABILITY-REFUSED sentinel detector ([665447f](https://github.com/rjskene/pipeline/commit/665447f3347adcf08f92dea8aa9b4ab6e75bf34c)), closes [#1233](https://github.com/rjskene/pipeline/issues/1233)
+* **plan:** attribute Skill-mandating tasks to the PR-opening role ([4211870](https://github.com/rjskene/pipeline/commit/421187017827251fde0755fddb7cbe4b732d4509))
+* **plan:** attribute Skill-mandating tasks to the PR-opening role ([#1225](https://github.com/rjskene/pipeline/issues/1225)) ([d6df717](https://github.com/rjskene/pipeline/commit/d6df717dbe26240a7c0cc506a1d99a77ca23635c))
+* **plan:** require a per-task RED/GREEN ledger in the plan template ([#1224](https://github.com/rjskene/pipeline/issues/1224)) ([3f527cb](https://github.com/rjskene/pipeline/commit/3f527cb72ab925e51fbacaea8ef739280b4fc2f5))
+* RED/GREEN ledger contract for split-role plans ([#1224](https://github.com/rjskene/pipeline/issues/1224)) ([f626ef4](https://github.com/rjskene/pipeline/commit/f626ef44adbf02a5af7a309d9a7d38ddf6a557c0))
+* **scripts:** add shared body-path extractor helper ([#1239](https://github.com/rjskene/pipeline/issues/1239)) ([a658466](https://github.com/rjskene/pipeline/commit/a6584661b5e38af466fceab933250e47d8b4cd2d))
+* **status:** --label filter flag on /pipeline:status and --table ([7cce35c](https://github.com/rjskene/pipeline/commit/7cce35cd3e044c4fc32c4d73f29154e7ed06ec9f))
+* **status:** add --label filter to /pipeline:status ([ee9837b](https://github.com/rjskene/pipeline/commit/ee9837bad082cba628e05d6bed3d9599d0a8149d))
+* **status:** add filter-issues-by-label.sh label-OR filter for the status set ([fbaf6c6](https://github.com/rjskene/pipeline/commit/fbaf6c603a0e36cfa15c0d12d6d8881d6dfc9dec))
+* **verify-execute-completion:** add per-dispatch clean-main attribution (--since/--clean-main-baseline) ([1cf3617](https://github.com/rjskene/pipeline/commit/1cf3617dcb84d4e82c410b1a098d997f232c0da6))
+
+
+### Bug Fixes
+
+* **auto-merge-gate:** name the resolved sources path in the unproven WARN ([#1246](https://github.com/rjskene/pipeline/issues/1246)) ([dcb937b](https://github.com/rjskene/pipeline/commit/dcb937bfd9c7a9ecdeb439b47bfe641a502332af))
+* **capability-refusal:** resolve sources dir against the main checkout ([#1246](https://github.com/rjskene/pipeline/issues/1246)) ([889e315](https://github.com/rjskene/pipeline/commit/889e31575e417bc89f365c5415e43fe927aea605))
+* **capability-refusal:** resolve sources dir against the main checkout ([#1246](https://github.com/rjskene/pipeline/issues/1246)) ([e7b530d](https://github.com/rjskene/pipeline/commit/e7b530d331bd64ff7a4ad8fa43a167fbab780d2e))
+* **check-branch-cruft:** diff against origin/&lt;base&gt;, not stale local ref ([53862e9](https://github.com/rjskene/pipeline/commit/53862e9b7b99c094583c580b25d788da5e4c41ab)), closes [#1231](https://github.com/rjskene/pipeline/issues/1231)
+* **check-branch-cruft:** diff against the origin base ref instead of the stale local base ref ([5d15e17](https://github.com/rjskene/pipeline/commit/5d15e1750358bce244e4b5d422f632722100ab97))
+* **dispatch:** forbid attributing a misplaced write to a hypothesised concurrent writer ([f5a01ba](https://github.com/rjskene/pipeline/commit/f5a01ba69ac3dd2cbba06632a0407dffd61f5012))
+* **dispatch:** resolve tdd-implementer subagent_type to plugin namespace ([d81cf87](https://github.com/rjskene/pipeline/commit/d81cf87ef80fa840c9b31cdde0c2176bfc94c14a))
+* **dispatch:** resolve tdd-implementer subagent_type to plugin namespace ([#1238](https://github.com/rjskene/pipeline/issues/1238)) ([22b3ae8](https://github.com/rjskene/pipeline/commit/22b3ae803a131d3f43d14829d8d1ab4cceb09810))
+* **dispatch:** state the subagent_type namespacing convention and attribute clean-main leaks per dispatch ([7800ab1](https://github.com/rjskene/pipeline/commit/7800ab17bffb64da2feb89bf1b446c8cd0984977))
+* **eval-stages:** anchor plan selection on the trusted comment subset ([#1251](https://github.com/rjskene/pipeline/issues/1251)) ([9159fa4](https://github.com/rjskene/pipeline/commit/9159fa428815673b841f89bd1cddfde62a843b20))
+* **evaluate-issue-plan:** anchor plan selection on the trusted comment subset ([#1251](https://github.com/rjskene/pipeline/issues/1251)) ([8715972](https://github.com/rjskene/pipeline/commit/8715972ed42aa9f4d1697ece127bc0166316b388))
+* **evaluate-issue-pr:** anchor plan selection on the trusted comment subset ([#1251](https://github.com/rjskene/pipeline/issues/1251)) ([14c6339](https://github.com/rjskene/pipeline/commit/14c63398e641165502157059a551d15c88bb7d9c))
+* **evaluate-issue-pr:** harden Step 11.2b shared-tests awk parser (CRLF, region bound) ([0e4844d](https://github.com/rjskene/pipeline/commit/0e4844ddeb43a6bfc4ef6615a20b88ca845c6a89))
+* **evaluate-issue-pr:** harden Step 11.2b shared-tests carve-out parser + pin anchored-selector regression ([5938759](https://github.com/rjskene/pipeline/commit/59387593fac7a3f5890d8cfcae5fe7fded4563e3))
+* **evaluate-issue-pr:** mirror the SINGLE-bash-command directive on the plan fetch ([#1253](https://github.com/rjskene/pipeline/issues/1253)) ([4b03207](https://github.com/rjskene/pipeline/commit/4b03207661a9ee5e66a524b93b316d2ff4731559))
+* **evaluate-issue-pr:** thread worktree-aware capability-refusal sources ([#1246](https://github.com/rjskene/pipeline/issues/1246)) ([827549e](https://github.com/rjskene/pipeline/commit/827549e032801487db624bf148fd1e8b7ef96bad))
+* evaluation fixes for [#1263](https://github.com/rjskene/pipeline/issues/1263) — don't drop bullets after a blank line in the shared-tests region ([b4b4e82](https://github.com/rjskene/pipeline/commit/b4b4e82ee1a32c50499a009062f4d773bbc02e09))
+* **execute-issue-plan:** route the plan fetch through the trust-then-anchor block ([#1253](https://github.com/rjskene/pipeline/issues/1253)) ([62ecbd2](https://github.com/rjskene/pipeline/commit/62ecbd26b0994b1477af1160c7a06a85b051b2fa))
+* **execute-issue-plan:** route the plan fetch through the trust-then-anchor block ([#1253](https://github.com/rjskene/pipeline/issues/1253)) ([85156e5](https://github.com/rjskene/pipeline/commit/85156e57fba02be4a9b991295d64283305a9f0c0))
+* **execute-issue-plan:** select the plan comment by anchored heading, not substring ([010fb86](https://github.com/rjskene/pipeline/commit/010fb8671876ed5f9aa3e13efff44a5600caa7f8))
+* **execute-issue-plan:** select the plan comment by anchored heading, not substring ([9dc35e9](https://github.com/rjskene/pipeline/commit/9dc35e9e8463afa05a74cb387f11356dbdb665a0)), closes [#1247](https://github.com/rjskene/pipeline/issues/1247)
+* **log-subagent:** source leaf result text from PostToolUse content blocks ([b715245](https://github.com/rjskene/pipeline/commit/b71524580e0720c4843043c1016cf0c2b4712a44)), closes [#1233](https://github.com/rjskene/pipeline/issues/1233)
+* **path-b-execute-eligible:** inherit path normalization from the shared extractor ([#1239](https://github.com/rjskene/pipeline/issues/1239)) ([b4806fd](https://github.com/rjskene/pipeline/commit/b4806fd9e68d8eb1e72c0e3525bd7da17ff598b8))
+* **plan-waves:** --stage=execute file-conflict extraction emits unnormalized paths and junk tokens, so real shared-file conflicts are missed ([b2229c8](https://github.com/rjskene/pipeline/commit/b2229c83fa7c4d069114ffe73d8916b7f3f089aa))
+* **plan-waves:** make the Wave line verb reflect --stage ([#1230](https://github.com/rjskene/pipeline/issues/1230)) ([4915342](https://github.com/rjskene/pipeline/commit/4915342cb56699a7126bf8e7d746f868955ab405))
+* **plan-waves:** normalize extracted paths and reject junk tokens ([#1230](https://github.com/rjskene/pipeline/issues/1230)) ([b817f7e](https://github.com/rjskene/pipeline/commit/b817f7e21e8eab1e5b7d8d18d72748029699cb35))
+* **plan-waves:** select the plan comment by anchored heading, not substring ([8b38ab1](https://github.com/rjskene/pipeline/commit/8b38ab14f6224622d6857b761fb736c1a59a39bb))
+* **plan-waves:** select the plan comment by anchored heading, not substring ([#1240](https://github.com/rjskene/pipeline/issues/1240)) ([64646c1](https://github.com/rjskene/pipeline/commit/64646c1ae4c0bdc12455af091a79f10726f7bedd))
+* **scripts:** extract shared body-path helper, fix path-b normalization drift ([#1239](https://github.com/rjskene/pipeline/issues/1239)) ([a8c1422](https://github.com/rjskene/pipeline/commit/a8c1422c07b76633d75e30b0161931bd9545a078))
+* **split-role-gate:** resolve the RED anchor against origin/&lt;base&gt;, not the stale local base ref ([4e57f53](https://github.com/rjskene/pipeline/commit/4e57f53e1191d073da0e67b43a666b266d5db8e6))
+* **split-role-gate:** resolve the RED anchor against origin/&lt;base&gt;, not the stale local base ref ([ae812d8](https://github.com/rjskene/pipeline/commit/ae812d88e8c96d45fd43fc9726985ff9bcb240d5)), closes [#1237](https://github.com/rjskene/pipeline/issues/1237)
+* **tests:** allow-list PIPELINE_TRUST_PROFILE in config-drift check ([80cde5e](https://github.com/rjskene/pipeline/commit/80cde5eb63e5800d87048a962fea4bc7fb28b2cc))
+* **tests:** escape literal backticks in Case D so the else branch is reachable ([ff1d5f1](https://github.com/rjskene/pipeline/commit/ff1d5f1735ac9a7cf780be086393d83bdd3557aa)), closes [#1232](https://github.com/rjskene/pipeline/issues/1232)
+* **tests:** scope test-high-uncertainty-match drift guard to tracked files ([6c6a021](https://github.com/rjskene/pipeline/commit/6c6a021f49812f9a0d2ad9b823b8ded6d3d39ac8)), closes [#1255](https://github.com/rjskene/pipeline/issues/1255)
+* **tests:** scope test-path-c-args-directive-removed guard to tracked files ([f885715](https://github.com/rjskene/pipeline/commit/f885715da61fce688fc3800173b0974b633eb331)), closes [#1255](https://github.com/rjskene/pipeline/issues/1255)
+* **tests:** test-path-c-args-directive-removed.sh greps gitignored paths and fails on any host with local artifacts ([1b40cc6](https://github.com/rjskene/pipeline/commit/1b40cc6bed4ff3029e1285e7367e1ab6a321f4e7))
+* **tests:** unbalanced backticks in test-red-green-ledger-prose.sh Case D leave the D(0) failure branch dead ([c6cf149](https://github.com/rjskene/pipeline/commit/c6cf14918d638b6b57d9de461eafa792393eee29))
+* **verify-execute-completion:** locale-pin the delta comm so pre-existing dirt is never a leak ([642c085](https://github.com/rjskene/pipeline/commit/642c0854d300606bd3af8020500134d139ec20e1))
+* **verify-execute-completion:** recover-push wins over recover-label on stale remote ref ([2f2f477](https://github.com/rjskene/pipeline/commit/2f2f47799154f9ed58827921795095393db8fda3)), closes [#1258](https://github.com/rjskene/pipeline/issues/1258)
+* **verify-execute-completion:** reject unrecognised --clean-main args ([e91c853](https://github.com/rjskene/pipeline/commit/e91c8534d40465d1a0b51ce54b29cdb9abedaf84))
+* **verify-execute-completion:** reject unrecognised --clean-main args ([d843bc8](https://github.com/rjskene/pipeline/commit/d843bc82ab29d22de05496d9940d3f1220597908)), closes [#1266](https://github.com/rjskene/pipeline/issues/1266)
+* **verify-execute-completion:** reports recover-label when the branch is committed-but-unpushed with no PR ([a0c39e7](https://github.com/rjskene/pipeline/commit/a0c39e73e6bf5e7a9be0ed3ae029f7a2e40394e9))
+* **verify-execute-completion:** require an OPEN PR before trusting recover-label ([595d266](https://github.com/rjskene/pipeline/commit/595d26612000776b8752873b19438f693e8bd347))
+* **verify-execute-completion:** require an OPEN PR before trusting recover-label ([dc7d6d0](https://github.com/rjskene/pipeline/commit/dc7d6d0d87e7f38e2da58475fb056eadd5061395)), closes [#1260](https://github.com/rjskene/pipeline/issues/1260)
+
 ## [0.23.24](https://github.com/rjskene/pipeline/compare/v0.23.23...v0.23.24) (2026-08-18)
 
 
