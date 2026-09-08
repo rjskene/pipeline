@@ -223,9 +223,93 @@ build_launch() {
 }
 
 # ---------------------------------------------------------------------------
+# Usage gate — the PROJECTION line is the decision source
+# ---------------------------------------------------------------------------
+# scripts/evolve-projection.sh flips `proceed` -> `pause-5h` when the PROJECTED
+# spend (five+est5 / seven+est7) would cross the threshold, and the skill
+# decides on that flipped line. A wrapper deciding on the raw usage-gate line
+# would launch straight into a projected pause and burn its budget in minutes.
+#
+# Returns 0 to proceed, 1 to skip this iteration (gate pause: sleep, re-read
+# the `paused` label, re-check). halt-7d exits 3 from here.
+check_gate() {
+  local gate_line proj
+  gate_line="$(dispatch LOOP-READ "$DRY_GATE_STUB" \
+    bash "${EVOLVE_LOOP_USAGE_GATE:-$CLONE/scripts/usage-gate.sh}")"
+  echo "$gate_line"
+  proj="$(dispatch LOOP-READ "$DRY_PROJ_STUB" \
+    env PIPELINE_REPO="$PIPELINE_REPO" \
+    bash "${EVOLVE_LOOP_PROJECTION:-$CLONE/scripts/evolve-projection.sh}" \
+    --tracker "$TRACKER" --gate-line "$gate_line")"
+  echo "$proj"
+
+  DECISION=$(sed -nE 's/.*decision=([a-z0-9-]+).*/\1/p' <<<"$proj")
+  RESUME_AT=$(sed -nE 's/.*resume_at=([^ ]+).*/\1/p' <<<"$proj")
+  SEVEN=$(sed -nE 's/.* seven=([^ ]+).*/\1/p' <<<"$proj")
+
+  case "$DECISION" in
+    halt-7d)
+      echo "LOOP-STOP reason=halt-7d seven=${SEVEN:---} resume_at=${RESUME_AT:---}"
+      echo "evolve-loop: run \`/usage\` for the seven-day reset date; resume with /pipeline:evolve resume"
+      exit 3
+      ;;
+    pause-5h)
+      # Launches NOTHING: costs wall-clock only, has no rc of its own, and
+      # self-heals when the five-hour window resets. The `paused` label is
+      # re-read at the top of every iteration, so the kill switch still works.
+      sleep_until_resume "$RESUME_AT" gate
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# sleep_until_resume <resume_at> <reason> — clamped BOTH ways, so a malformed
+# or far-future resume_at can never hang the wrapper.
+sleep_until_resume() {
+  local resume_at="${1:---}" reason="$2" secs="" target now
+  if [ -n "$resume_at" ] && [ "$resume_at" != "--" ]; then
+    target="$(date -u -d "$resume_at" +%s 2>/dev/null)"
+    now="$(date -u +%s)"
+    if [ -n "$target" ]; then secs=$((target + 300 - now)); fi
+  fi
+  [ -n "$secs" ] || secs=300
+  [ "$secs" -lt 60 ] && secs=60
+  [ "$secs" -gt 21600 ] && secs=21600
+  echo "LOOP-PAUSE reason=$reason resume_at=$resume_at secs=$secs"
+  "${EVOLVE_LOOP_SLEEP_CMD:-sleep}" "$secs"
+}
+
+# classify_exit — the ONLY read site for the skill's headless usage-pause
+# token. It reads "$LOG" and nothing else, and "$LOG" holds EXACTLY the
+# current launch's output (see the LAUNCH_SEQ note below), so a pause token
+# from a PREVIOUS launch can never be re-matched.
+classify_exit() {
+  local pause_line
+  pause_line="$(grep -F 'HEADLESS-DEFAULT: usage-pause decision=exit-for-wrapper' "$LOG" 2>/dev/null | tail -1)"
+  if [ -n "$pause_line" ]; then
+    # `tail -1` makes this parse single-valued by construction, so
+    # `date -u -d` is never handed a multi-line value.
+    RESUME_AT=$(sed -nE 's/.*resume_at=([^ ]+).*/\1/p' <<<"$pause_line")
+    CLASS=pause
+    return 0
+  fi
+  read_mode
+  if [ "$STEP" = done ]; then CLASS=done; else CLASS=stalled; fi
+}
+
+# ---------------------------------------------------------------------------
 # Loop
 # ---------------------------------------------------------------------------
 
+DECISION=""
+RESUME_AT=""
+SEVEN=""
+CLASS=""
+CYCLES_DONE=0
+RESUMES=0
+PAUSES=0
+PENDING_RESUME=0
 LAUNCH_SEQ=0
 ATTEMPT=0
 LOG=""
@@ -238,8 +322,29 @@ while :; do
   fi
 
   read_mode
+  check_gate || continue
+
+  # A stall is CASHED here, after the gate returned proceed: a stall the gate
+  # then explains as a usage pause never consumes a resume.
+  if [ "$PENDING_RESUME" -eq 1 ]; then
+    PENDING_RESUME=0
+    RESUMES=$((RESUMES + 1))
+    if [ "$RESUMES" -gt "$MAX_RESUMES" ]; then
+      echo "LOOP-STOP reason=resume-cap cycle=$N step=$STEP"
+      exit 4
+    fi
+  fi
+
   build_launch
 
+  # ONE LOG FILE PER LAUNCH. LAUNCH_SEQ is monotonic for the life of the
+  # process and is NEVER reset by any classification, so it is the only
+  # component of the name guaranteed to change between two launches: `pause`
+  # advances neither NEXT_N (Mode is untouched) nor ATTEMPT (only `stalled`
+  # increments, only `done` resets), and two consecutive `done` iterations
+  # move neither either. With an invariant name and `tee -a`, classify_exit()
+  # would grep an ACCUMULATED file and re-match the previous launch's pause
+  # token forever. NEXT_N/ATTEMPT stay in the name for diagnostics.
   LAUNCH_SEQ=$((LAUNCH_SEQ + 1))
   LOG="$LOG_DIR/cycle-$(printf '%02d' "$NEXT_N")-$ATTEMPT-$LAUNCH_SEQ.log"
   dispatch LOOP-LAUNCH "" "${LAUNCH[@]}" 2>&1 | tee "$LOG"
@@ -248,5 +353,37 @@ while :; do
   # observe a Mode transition, so iterating would spin forever.
   if [ "$DRY" -eq 1 ]; then exit 0; fi
 
-  exit 0
+  classify_exit
+  case "$CLASS" in
+    pause)
+      # Neither a cycle nor a resume is consumed — that is the case this
+      # wrapper exists to survive — but the branch IS bounded: K consecutive
+      # pauses is the ceiling, K+1 launches in the pathological case. Both
+      # resets below are what make the cap CONSECUTIVE, not cumulative.
+      PAUSES=$((PAUSES + 1))
+      if [ "$PAUSES" -gt "$MAX_PAUSES" ]; then
+        echo "LOOP-STOP reason=pause-cap pauses=$PAUSES cycle=$N"
+        exit 5
+      fi
+      sleep_until_resume "$RESUME_AT" headless-exit
+      continue
+      ;;
+    done)
+      CYCLES_DONE=$((CYCLES_DONE + 1))
+      RESUMES=0
+      ATTEMPT=0
+      PAUSES=0
+      if [ "$CYCLES" -gt 0 ] && [ "$CYCLES_DONE" -ge "$CYCLES" ]; then
+        echo "LOOP-STOP reason=cycles-complete cycles=$CYCLES_DONE"
+        exit 0
+      fi
+      continue
+      ;;
+    *)
+      PAUSES=0
+      PENDING_RESUME=1
+      ATTEMPT=$((ATTEMPT + 1))
+      continue
+      ;;
+  esac
 done
