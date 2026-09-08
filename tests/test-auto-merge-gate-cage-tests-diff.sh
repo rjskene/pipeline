@@ -67,6 +67,9 @@ case "$ALL_ARGS" in
     ;;
   *"pulls/"*"/files"*)
     printf '%s\n' "${GH_FILES-modified:scripts/auto-merge-gate.sh:}"
+    # GH_FILES_RC lets a case make `gh api ... --paginate` PRINT a well-formed
+    # page and THEN exit non-zero — the real-world partial-pagination failure.
+    exit "${GH_FILES_RC:-0}"
     ;;
   *)
     echo "[gh shim] unhandled: $ALL_ARGS" >&2
@@ -136,6 +139,7 @@ reset_env() {
   unset NO_VERDICT
   unset PIPELINE_CAPABILITY_REFUSAL_SOURCES
   unset GH_FILES
+  unset GH_FILES_RC
   export GH_LABELS=""
   export GH_BASE_REF="staging"
   export GH_EVAL_BODY="$(make_eval Approved)"
@@ -237,6 +241,22 @@ export GH_EVAL_BODY="$(make_eval Revise)"
 export GH_FILES="modified:tests/test-cage-invariant-restrict-paths.sh:"
 run_gate "(m)"
 check "(m) cage diff + Revise verdict" "block-cage-tests-diff" "$STDOUT_LINE"
+
+echo "=== (n) a NON-ZERO gh exit fails CLOSED even when the printed page parses ==="
+# `gh api --paginate` can emit page 1 and then fail on a later page: stdout is
+# one well-formed non-cage line, exit status is 1. Trusting that truncated
+# listing would green-light exactly the diff class the token exists to stop, so
+# the gate must key on the exit status too, not just on parseability.
+reset_env
+export GH_FILES="modified:scripts/auto-merge-gate.sh:"
+export GH_FILES_RC=1
+run_gate "(n)"
+check "(n) token" "block-cage-tests-diff" "$STDOUT_LINE"
+check "(n) return code" "1" "$GATE_RC"
+case "$STDERR_TXT" in
+  *WARN*cage-tests*) pass "(n) stderr WARN names the unproven cage-tests check" ;;
+  *) fail "(n) expected a stderr WARN naming the cage-tests check, got: '$STDERR_TXT'" ;;
+esac
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"

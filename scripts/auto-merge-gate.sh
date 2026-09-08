@@ -19,10 +19,12 @@
 #         as well as filename is what closes the rename-away gap that
 #         `gh pr view --json files` left open (it carries only the new path).
 #         `added` cage tests never fire the token, because adding an
-#         invariant strengthens the cage. An empty or unparseable listing
-#         fails closed with a WARN — a gh failure must not become an evasion
-#         vector for exactly the change class the token exists to stop; the
-#         escape hatch is the manual-merge label, which is evaluated first.
+#         invariant strengthens the cage. A non-zero `gh api` exit (e.g. a
+#         failed later page under --paginate, which still prints earlier
+#         pages), an empty listing, or an unparseable listing all fail closed
+#         with a WARN — a gh failure must not become an evasion vector for
+#         exactly the change class the token exists to stop; the escape hatch
+#         is the manual-merge label, which is evaluated first.
 #       - block-capability-refused (#1233) fires when
 #         $PIPELINE_CAPABILITY_REFUSAL_SOURCES is non-empty AND
 #         scripts/check-capability-refusal.sh resolves CAPABILITY_REFUSAL=block
@@ -85,12 +87,16 @@ auto_merge_should_fire() {
   # invariant strengthens the cage (so the founding PR does not self-block).
   # Matching previous_filename as well as filename is what closes the
   # rename-away gap that `gh pr view --json files` left open (it carries only
-  # the new path of a rename). An empty or unparseable listing fails CLOSED
-  # with a WARN; the escape hatch is the manual-merge label, evaluated above.
+  # the new path of a rename). A NON-ZERO `gh api` exit, an empty listing, or an
+  # unparseable listing all fail CLOSED with a WARN — under --paginate gh can
+  # print a well-formed first page and THEN fail on a later one, so a listing
+  # that merely parses is not proof it is complete; the escape hatch is the
+  # manual-merge label, evaluated above. (`local` is declared on its own line so
+  # it cannot mask the command substitution's exit status.)
   local _amg_files
-  _amg_files=$(gh api "repos/${PIPELINE_REPO}/pulls/${pr}/files" --paginate \
-    --jq '.[] | "\(.status):\(.filename):\(.previous_filename // "")"' 2>/dev/null)
-  if [ -z "$_amg_files" ] || printf '%s\n' "$_amg_files" | grep -qvE '^[a-z]+:[^:]*:[^:]*$'; then
+  if ! _amg_files=$(gh api "repos/${PIPELINE_REPO}/pulls/${pr}/files" --paginate \
+    --jq '.[] | "\(.status):\(.filename):\(.previous_filename // "")"' 2>/dev/null) \
+     || [ -z "$_amg_files" ] || printf '%s\n' "$_amg_files" | grep -qvE '^[a-z]+:[^:]*:[^:]*$'; then
     echo "[auto-merge-gate] WARN: cage-tests diff check unproven (no usable file list for PR $pr)" >&2
     echo block-cage-tests-diff
     return 1
