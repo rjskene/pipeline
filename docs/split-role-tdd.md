@@ -187,6 +187,31 @@ non-locked test is caught locally, not in CI. The CI-green-rollup fast-path
 (`PIPELINE_CI_ROLLUP_GREEN`, #1078, described above) is the only way the
 SECONDARY suite-green step is skipped, and only on an already-green CI rollup.
 
+### RED/GREEN ledger (#1224)
+
+The plan template's `**RED/GREEN ledger:**` section (required for every plan
+with a test deliverable — PATH B/C/D; `None` for docs-only PATH A) predicts
+the failure state of each test artifact as a per-file, per-task TABLE, not a
+prose sentence:
+
+| test file | red at RED commit | vacuously green until | fully green at |
+|---|---|---|---|
+| `tests/test-foo.sh` | yes — `<assertion>` fails: `<expected message>` | — | Task 3 |
+| `tests/test-bar.sh` | no | Task 2 — why: pins a post-change constant Task 2 creates | Task 4 |
+
+- **RED commit** = the `[split-role-red]` commit under split-role PATH B; the
+  task's own red step otherwise.
+- Every row not red at the RED commit MUST state WHY it is green, in the
+  `vacuously green until` cell. The tell: a test whose redness depends on
+  state a LATER task creates is never `red at RED` — doc-vs-code consistency
+  tests are the classic shape.
+- The ledger is a PREDICTION to verify, not a script to satisfy: at plan-eval
+  time `evaluate-issue-plan` EXECUTES the predicted RED (at least the primary
+  row) rather than reasoning about it, reports unrunnable rows verbatim as
+  `red-not-reproduced: <reason>`, returns **Revise** on a missing or
+  prose-only ledger, and treats any observed divergence from the prediction
+  as BLOCKING.
+
 ### Execute-time base-ref drift guard (#1106/#1110)
 
 During execute dispatch the split-role gate resolves `<base-ref>..HEAD` against

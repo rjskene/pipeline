@@ -91,7 +91,7 @@ echo "Test 4: PATH C Task 0 dispatches tdd-implementer with target=<dir>"
 inc
 if [ -z "$BLOCK_C" ]; then
   fail_msg "no '#### Task 0 — PATH C' section found"
-elif echo "$BLOCK_C" | grep -q "subagent_type='tdd-implementer'" \
+elif echo "$BLOCK_C" | grep -q "subagent_type='pipeline:tdd-implementer'" \
    && echo "$BLOCK_C" | grep -qE "target=<"; then
   pass_msg "PATH C Task 0 dispatches tdd-implementer with target=<dir> sentinel"
 else

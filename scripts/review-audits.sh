@@ -423,7 +423,7 @@ if [ -n "$FLAG_ISSUE" ]; then
     if [ "$p" = "C" ]; then
       c_count=0
       while IFS=$'\t' read -r st _; do
-        [ "$st" = "tdd-implementer" ] && c_count=$((c_count + 1))
+        [ "${st##*:}" = "tdd-implementer" ] && c_count=$((c_count + 1))
       done < <(subagent_dispatches "$session" "$wt")
       echo "PATH C check:  $(tdd_implementer_label "$c_count")"
     fi

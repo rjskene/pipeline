@@ -171,21 +171,42 @@ fi
 
 # Repo-grep guard: no other tracked source carries an inline substring copy of
 # this vocabulary list (the broken `...|race|lock|...|auth|...` substring form).
-# Exclude generated paths (CHANGELOG.md, .claude/logs/, .git/) per CLAUDE.md, and
-# exclude this test + the helper + the docs that legitimately quote the list.
+# Scan TRACKED files only (git ls-files) — a bare `grep -r` walks gitignored
+# dirs (e.g. /dev/audits/, .gitignore:16) and is green in CI (fresh checkout
+# has no gitignored files) but red on any dev host with local artifacts (#1255).
+# Exclude this test + the helper + the docs that legitimately quote the list.
+scan_tracked_stray() {
+  (cd "$ROOT" && git ls-files -z -- '*.sh' \
+    | xargs -0 grep -Eln "concurrency\|race\|lock\|deadlock\|security\|auth\|crypto\|migration\|data-loss" 2>/dev/null) \
+    | grep -v '^CHANGELOG\.md$' \
+    | grep -v '/test-high-uncertainty-match\.sh$' \
+    | grep -v '/_high-uncertainty-match\.sh$' \
+    || true
+}
 inc
-STRAY=$(grep -rEln "concurrency\|race\|lock\|deadlock\|security\|auth\|crypto\|migration\|data-loss" "$ROOT" \
-  --include='*.sh' \
-  --exclude-dir=.git \
-  --exclude-dir=logs \
-  --exclude-dir=node_modules \
-  --exclude='CHANGELOG.md' \
-  --exclude='test-high-uncertainty-match.sh' \
-  --exclude='_high-uncertainty-match.sh' 2>/dev/null || true)
+STRAY=$(scan_tracked_stray)
 if [ -z "$STRAY" ]; then
   pass_msg "no other tracked shell source carries an inline substring copy of the regex"
 else
   fail_msg "stray inline substring copy of the regex found in: $STRAY"
+fi
+
+# Drift-guard scope regression (issue #1255): the STRAY scan above must ignore
+# gitignored dirs (e.g. /dev/audits/, .gitignore:16), not just excluded ones.
+echo "-- drift guard: guard ignores a gitignored file containing a matching string --"
+inc
+PLANTED="$ROOT/dev/audits/test-high-uncertainty-match-regression-$$.sh"
+mkdir -p "$(dirname "$PLANTED")"
+cleanup_planted() { rm -f "$PLANTED"; }
+trap cleanup_planted EXIT
+echo '# concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss' > "$PLANTED"
+PLANTED_STRAY=$(scan_tracked_stray)
+cleanup_planted
+trap - EXIT
+if printf '%s' "$PLANTED_STRAY" | grep -q "test-high-uncertainty-match-regression"; then
+  fail_msg "guard scanned the gitignored planted file (scope leak)"
+else
+  pass_msg "guard ignored the gitignored planted file"
 fi
 
 echo ""

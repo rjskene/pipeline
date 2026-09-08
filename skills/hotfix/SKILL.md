@@ -97,7 +97,7 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
    - **`--subagent` (default).** Dispatch the same leaf executor PATH C and PATH D use (runs inline; output streams live):
      ```
      Agent(
-       subagent_type: "tdd-implementer",
+       subagent_type: "pipeline:tdd-implementer",
        description: "hotfix #<N>",
        prompt: "target=<relevant-dir>/  ...full issue body...  write failing test → minimum impl → commit"
      )

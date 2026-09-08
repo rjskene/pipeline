@@ -14,6 +14,13 @@ set -euo pipefail
 # cwd = the temp repo and PIPELINE_BASE_BRANCH=base, asserting the exit code on the
 # committed base..HEAD diff. Case (f) is the #1028 core: an UNTRACKED+UNCOMMITTED cruft
 # file is absent from the committed diff and so must NOT be implicated.
+#
+# Case (g) is the #1231 core: the pipeline's inter-wave base advance is deliberately
+# fetch-only (#1214) — it moves `refs/remotes/origin/<base>` but never the local
+# `refs/heads/<base>`. So a stale local base ref makes the guard mistake an
+# already-merged (into origin/base) path for new/cruft content on this feature
+# branch. The guard MUST resolve the comparison ref as origin/<base> when that
+# remote-tracking ref exists.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -59,6 +66,66 @@ run_guard() {
   RC=$?
   set -e
   STDERR="$(cat "$err")"
+}
+
+# Same as run_guard, but also captures stdout into STDOUT.
+run_guard_capture_stdout() {
+  local repo="$1"
+  local out="$TMP/stdout-$RANDOM"
+  local err="$TMP/stderr-$RANDOM"
+  set +e
+  ( cd "$repo" && PIPELINE_BASE_BRANCH=base bash "$GUARD" >"$out" 2>"$err" )
+  RC=$?
+  set -e
+  STDOUT="$(cat "$out")"
+  STDERR="$(cat "$err")"
+}
+
+# Create a repo wired to a bare "origin" remote, with `base` pushed. Prints the
+# repo path on stdout. No `feature` branch is checked out here — callers that
+# need the origin-advance scenario check it out themselves after fetching.
+new_repo_with_remote() {
+  local remote="$TMP/remote-$RANDOM-$RANDOM.git"
+  local repo="$TMP/repo-$RANDOM-$RANDOM"
+  git init -q --bare "$remote"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git checkout -q -b base
+    mkdir -p src
+    echo "baseline" > src/baseline.txt
+    git add src/baseline.txt
+    git commit -q -m "baseline"
+    git remote add origin "$remote"
+    git push -q origin base
+  )
+  echo "$repo"
+}
+
+# Simulate another actor merging a commit straight into origin's base branch
+# (e.g. a prior wave's PR merge) — via a throwaway second clone — WITHOUT
+# touching $1's local refs/heads/base. Adds $2 (repo-relative path) with
+# content "wave1".
+simulate_remote_base_advance() {
+  local repo="$1" path="$2"
+  local remote clone
+  remote="$(cd "$repo" && git remote get-url origin)"
+  clone="$TMP/clone-$RANDOM-$RANDOM"
+  git clone -q "$remote" "$clone"
+  (
+    cd "$clone"
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git checkout -q base
+    mkdir -p "$(dirname "$path")"
+    echo "wave1" > "$path"
+    git add -f "$path"
+    git commit -q -m "wave1 merge: $path"
+    git push -q origin base
+  )
 }
 
 # ---------------------------------------------------------------------------
@@ -176,6 +243,35 @@ if [ "$RC" -eq 0 ]; then
   pass_msg "(f) untracked+uncommitted cruft not in committed diff → exit 0"
 else
   fail_msg "(f) expected exit 0 (cruft uncommitted), got rc=$RC; stderr: $STDERR"
+fi
+
+# ---------------------------------------------------------------------------
+# (g) #1231 core: stale local base ref must not cause an already-merged
+# (into origin/base) denylisted path to be reported as cruft on this branch.
+# ---------------------------------------------------------------------------
+inc
+repo="$(new_repo_with_remote)"
+# Simulate a prior wave's PR merge landing directly on origin/base — a denylisted
+# path, but legitimately part of base history, NOT something this feature branch
+# introduced. Local refs/heads/base is NOT advanced (mirrors the fetch-only #1214
+# inter-wave base advance).
+simulate_remote_base_advance "$repo" ".claude/logs/wave1.txt"
+(
+  cd "$repo"
+  git fetch -q origin
+  # Feature branches from the up-to-date origin/base tip (as a real worktree
+  # spawn does after the fetch-only base advance), NOT from the stale local base.
+  git checkout -q -b feature origin/base
+  mkdir -p src
+  echo "wave2" > src/wave2.txt
+  git add src/wave2.txt
+  git commit -q -m "add wave2 (this branch's own change)"
+)
+run_guard_capture_stdout "$repo"
+if [ "$RC" -eq 0 ] && printf '%s' "$STDOUT" | grep -q "1 changed paths"; then
+  pass_msg "(g) already-merged origin/base path not reported as cruft; only this branch's own path counted"
+else
+  fail_msg "(g) expected exit 0 with '1 changed paths', got rc=$RC; stdout: $STDOUT; stderr: $STDERR"
 fi
 
 echo ""

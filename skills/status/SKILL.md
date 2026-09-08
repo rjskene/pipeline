@@ -1,6 +1,6 @@
 ---
 name: status
-description: Read-only status and reporting for the GitHub issue pipeline. Renders the prioritization+grouping status table so you can see what is ready, in-progress, and awaiting review. Does not dispatch or merge. Usage: /pipeline:status
+description: Read-only status and reporting for the GitHub issue pipeline. Renders the prioritization+grouping status table so you can see what is ready, in-progress, and awaiting review. Does not dispatch or merge. Usage: /pipeline:status [--table] [--analyze] [--keep-trees] [--label <l>]...
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep
 ---
@@ -18,6 +18,12 @@ _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
+```
+
+The harness does not export slash-command args to Bash, so the model substitutes the literal invocation flags into `$ARGV` at Boot (the prose-argv convention `--analyze`/`--keep-trees` established; `--label` follows the same convention):
+
+```bash
+ARGV="<the raw flags this skill was invoked with, e.g. --label redline --label mailroom; empty if none>"
 ```
 
 The bash blocks below reference `PIPELINE_REPO`, `PIPELINE_BASE_BRANCH`, `PIPELINE_TEST_CMD`, `PIPELINE_CONTEXT_FILES`, etc. — they resolve from the sourced config, not from envsubst at install time.
@@ -47,11 +53,21 @@ When `--analyze` appears anywhere in the argv to `/pipeline:status`, this skill 
 
 When `--table` appears anywhere in the argv to `/pipeline:status`, this skill MUST render ONLY the status table via the Step 3 `scripts/render-status-table.sh` block and then STOP — skip housekeeping (Step 0), discovery prose narration, dependency reads, prioritization/grouping commentary, and any proposals. The status table is the sole output.
 
+`--label` **composes** with `--table`: `/pipeline:status --table --label redline` renders ONLY the `--label`-filtered status table and stops — the two flags combine without conflict.
+
 ## Auto-cleanup mode (--keep-trees)
 
 When a merged PR still has an active worktree, `/pipeline:status` **auto-proceeds** the cleanup during Step 0 housekeeping — **before discovery**, as a **non-blocking** tail pass that never preempts feature work — WITHOUT a confirmation gate. This is safe by construction: `cleanup-worktree.sh` already gates every destructive op on `PR state == MERGED`, and the destructive worktree-remove + branch-delete remain subject to the existing `ALLOW_DELETIONS` gate (`block_deletions.py` / `sync-worktrees.sh`). No second gate is added. The batch `create-checkpoint-tag.sh` (local-only `checkpoint/YYYY-MM-DD-NN` tag) is the rollback point for the whole auto-cleaned batch.
 
 When `--keep-trees` appears **anywhere in the argv**, the auto-cleanup is **SUPPRESSED** for that invocation: candidates are still detected and surfaced (status table), they are just NOT acted on. The flag is **per-invocation only — there is NO persistent `pipeline.config` default** (precedent: `--analyze`). Auto-cleanup is non-blocking and never gate-fatal.
+
+## Label filter mode (--label)
+
+When `--label <l>` appears one or more times in the argv to `/pipeline:status` (repeatable), the fetched issue set is scoped BEFORE render via `scripts/filter-issues-by-label.sh`. Repeated `--label` flags are a **UNION (OR)** — an issue carrying ANY of the requested labels survives. This deliberately DIFFERS from `gh issue list --label a --label b`, which is an AND/intersection — and cannot express a union at all — which is why the filter runs at Step 3 assembly rather than as an argument to `gh issue list`. Label matching is exact string equality, never a regex/substring: a label name containing `:` and a space (e.g. `autorelease: pending`) matches exactly and is not confused with a plain `autorelease` filter.
+
+A tracker row is **child-driven**: a tracker survives `--label` iff at least one of its `## Rollout sequence` children survives the filter — the tracker's own labels do NOT keep it. A tracker with no surviving child (or no `## Rollout sequence` section at all) is hidden from the tracker rows entirely; its would-be children fall back to filtering on their own labels like any other issue. Orphan rows filter directly on their own labels — there is no tracker-mediated rescue.
+
+The flag is **per-invocation only — there is NO persistent `pipeline.config` default** (precedent: `--analyze` / `--keep-trees`). Zero matches is a valid, readable answer — the table still renders, just with zero epics/children/orphans, rather than erroring.
 
 ## Shortcuts
 
@@ -60,6 +76,7 @@ When `--keep-trees` appears **anywhere in the argv**, the auto-cleanup is **SUPP
 | `--table` | Render ONLY the status table (Step 3) and STOP — skip housekeeping, discovery, and grouping. |
 | `--analyze` | Read-only hygiene pass — delegates to /pipeline:analyze-issues. See [skills/analyze-issues/SKILL.md](../analyze-issues/SKILL.md). |
 | `--keep-trees` | Opt out of auto-cleanup for this invocation — merged-worktree cleanup candidates are still surfaced but NOT acted on. Flag-only; no pipeline.config default. |
+| `--label <l>` | Repeatable; scope the status table to issues carrying ANY of the given labels (UNION/OR — differs from `gh issue list --label`, which is AND). Flag-only; no pipeline.config default. See [Label filter mode](#label-filter-mode---label). |
 
 Autonomous advancement lives in /pipeline:fullsend — this command does not delegate full send.
 
@@ -193,9 +210,34 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    gh issue list --repo "$PIPELINE_REPO" --state open \
      --json number,title,labels,body,updatedAt --limit 100 > "$ISSUES_JSON"
 
-   # trackers.json — JSON OBJECT keyed by tracker number, value = body.
+   # --label filter (#1269). Extract any --label values from $ARGV (repeatable;
+   # empty array when --label is absent) and scope the fetched set via
+   # scripts/filter-issues-by-label.sh BEFORE the render input is assembled.
+   # Repeated --label is a UNION (OR) — this differs from `gh issue list
+   # --label a --label b` (AND), which cannot express a union at all; that is
+   # why filtering happens HERE, at assembly, and not as a `gh issue list`
+   # argument. With no --label in $ARGV this is an unconditional identity
+   # passthrough — one code path, no `if` branch in prose.
+   LABEL_ARGS=()
+   while read -r _l; do
+     [ -n "$_l" ] && LABEL_ARGS+=(--label "$_l")
+   done < <(printf '%s\n' "${ARGV:-}" | grep -oE -- '--label +("[^"]*"|[^ ]+)' | sed -E 's/^--label +//; s/^"//; s/"$//')
+
+   FILTERED_ISSUES_JSON=$(mktemp)
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-issues-by-label.sh" \
+     --issues "$ISSUES_JSON" "${LABEL_ARGS[@]}" > "$FILTERED_ISSUES_JSON"
+   SURVIVING_TRACKERS=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-issues-by-label.sh" \
+     --issues "$ISSUES_JSON" "${LABEL_ARGS[@]}" --emit trackers)
+   ISSUES_JSON="$FILTERED_ISSUES_JSON"
+
+   # trackers.json — JSON OBJECT keyed by tracker number, value = body. Built
+   # from SURVIVING_TRACKERS (identical to TRACKER_ISSUES when --label is
+   # absent, so this is a no-op rewiring in the unfiltered case) — a hidden
+   # tracker's body must NOT be carried forward, because the map only
+   # supplies bodies for child extraction, and a stale entry would still
+   # claim children via IS_CHILD and suppress them from the orphan rows.
    TRACKERS_JSON=$(mktemp); echo '{}' > "$TRACKERS_JSON"
-   for tracker in $TRACKER_ISSUES; do
+   for tracker in $SURVIVING_TRACKERS; do
      body=$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body)
      TRACKERS_JSON_NEXT=$(jq --arg k "$tracker" --arg v "$body" '. + {($k): $v}' "$TRACKERS_JSON")
      printf '%s' "$TRACKERS_JSON_NEXT" > "$TRACKERS_JSON"

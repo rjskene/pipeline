@@ -513,6 +513,189 @@ else
   fail_msg "18b expected shebang '#!/usr/bin/env bash', got '$(head -1 "$SWEEP")'"
 fi
 
+# ===========================================================================
+# --- Loose plan-comment match guard (#1251) ---
+#
+# The plan-comment selector defect (#1240 in scripts/plan-waves.sh, #1247 in
+# skills/execute-issue-plan/SKILL.md, #1251 in the two evaluation stages) has
+# now been fixed THREE times, and each sweep for "is there another copy?"
+# missed the next one because the sweep searched for a matching VERB: the
+# third instance hid behind a shell `case` glob while the sweep looked for the
+# jq `contains(...)` idiom.
+#
+# So this guard is VERB-INDEPENDENT. Any loose plan selection must SPELL the
+# heading `## Implementation Plan` somewhere; the verb that consumes it
+# (`contains`, jq `test`, a `case` glob, `[[ == ]]`, `grep`, `awk`, `sed`,
+# Python `in`, `rg`, or whatever is invented next year) is an unbounded set and
+# is IGNORED by the detector. Keying on the constant instead of the verb is
+# what makes "a fourth spelling cannot hide" an executable property rather
+# than prose — see the Case 21 decoy self-test.
+#
+# Comment lines and non-shell markdown prose are excluded, and that exclusion
+# is what makes the constant safe to key on: a `#`-prefixed line is
+# documentation, and markdown outside a fenced shell block is prose (the
+# evaluate-issue-*/SKILL.md trust paragraphs MUST keep naming the heading —
+# tests/test-evaluate-issue-*-comment-trust.sh lint on exactly those lines).
+#
+# `tests/` is deliberately OUT of scope: it legitimately carries decoy
+# fixtures and hand-copied mirror drivers — the same self-referential-fixture
+# carve-out scripts/exact-match-guard-sweep.sh documents under KNOWN LIMITS.
+# ===========================================================================
+
+HEADING='## Implementation Plan'
+
+# scan_loose_plan_matches <root> -> one "FILE:LINE" per hit on stdout.
+# Set A: executable sources (.sh/.py) — every non-comment line naming the heading.
+# Set B: markdown skill/agent/doc bodies — non-comment lines INSIDE fenced shell
+#        blocks only (```bash / ```sh / ```shell / bare ```), so explanatory PROSE
+#        may name the heading freely. A bare ``` fence is treated as shell:
+#        deliberately fail-CLOSED, and measured to cost 0 false positives.
+scan_loose_plan_matches() {
+  local root="$1" f
+  find "$root/scripts" "$root/hooks" "$root/agents" -type f \
+         \( -name '*.sh' -o -name '*.py' \) 2>/dev/null \
+    | LC_ALL=C sort | while IFS= read -r f; do
+        awk -v H="$HEADING" -v F="${f#"$root"/}" '
+          index($0, H) == 0 { next }
+          { l = $0; sub(/^[[:space:]]+/, "", l) }
+          l ~ /^#/ { next }
+          { printf "%s:%d\n", F, FNR }' "$f"
+      done
+  find "$root/skills" "$root/agents" "$root/docs" -type f -name '*.md' 2>/dev/null \
+    | LC_ALL=C sort | while IFS= read -r f; do
+        awk -v H="$HEADING" -v F="${f#"$root"/}" '
+          /^[[:space:]]*```/ {
+            t = $0; sub(/^[[:space:]]*```[[:space:]]*/, "", t); sub(/[[:space:]]+$/, "", t)
+            if (inb) { inb = 0; next }
+            if (t == "bash" || t == "sh" || t == "shell" || t == "") inb = 1; else inb = 2
+            next
+          }
+          inb != 1 { next }
+          index($0, H) == 0 { next }
+          { l = $0; sub(/^[[:space:]]+/, "", l) }
+          l ~ /^#/ { next }
+          { printf "%s:%d\n", F, FNR }' "$f"
+      done
+}
+
+# Default-deny, COUNT-PINNED allowlist: "<repo-relative path> <exact hit count>".
+# A file absent from the table must have ZERO hits; a listed file must have
+# EXACTLY N. Equality (not a floor) makes the guard fail-closed in BOTH
+# directions — a smuggled-in extra selection trips it, AND a silently-empty
+# scan (wrong cwd, renamed directory) trips it too, with no separate "did we
+# scan anything?" assertion. The pin is the COUNT, not line numbers, so
+# unrelated line drift never breaks it.
+#
+#   scripts/post-plan.sh        4  lines 11-12 grep + report on a local DRAFT
+#                                  FILE (not a comment set); lines 34/38 are a
+#                                  post-verify COUNT (| length) + its error text
+#   scripts/combine-hint-impact.sh 1  replan COUNT (| length), not a selection
+#   skills/fullsend/SKILL.md    1  plan-presence COUNT (| length), not a selection
+#
+# The table is inline rather than a tests/*.allow sibling because it is three
+# rows and belongs next to the assertion; revisit only past ~10 rows.
+LOOSE_ALLOWLIST=$(cat <<'ALLOW'
+scripts/post-plan.sh 4
+scripts/combine-hint-impact.sh 1
+skills/fullsend/SKILL.md 1
+ALLOW
+)
+
+LOOSE_REMEDY='a plan-comment SELECTION must reuse scripts/select-plan-comment.sh; a COUNT/PRESENCE check must be added to the allowlist table with a justification.'
+
+LOOSE_TREE_HITS=$(scan_loose_plan_matches "$REPO_ROOT" || true)
+
+echo "Case 19 (#1251): tree verdict — zero unallowlisted loose plan-comment matches"
+inc
+LOOSE_UNALLOWED=$(printf '%s\n' "$LOOSE_TREE_HITS" | awk -v list="$LOOSE_ALLOWLIST" '
+  BEGIN {
+    n = split(list, rows, "\n")
+    for (i = 1; i <= n; i++) { split(rows[i], p, " "); if (p[1] != "") allow[p[1]] = 1 }
+  }
+  NF == 0 { next }
+  { f = $0; sub(/:[0-9]+$/, "", f); if (!(f in allow)) print $0 }')
+if [ -z "$LOOSE_UNALLOWED" ]; then
+  pass_msg "19 loose-plan-match: zero unallowlisted hits"
+else
+  fail_msg "19 loose-plan-match: $(count_nonempty "$LOOSE_UNALLOWED") unallowlisted loose plan-comment matches: $(printf '%s' "$LOOSE_UNALLOWED" | tr '\n' ' ')"
+  printf '%s\n' "$LOOSE_UNALLOWED" | sed 's/^/           /'
+  echo "           remedy: $LOOSE_REMEDY"
+fi
+
+echo "Case 20 (#1251): count-pinned allowlist — each listed file has EXACTLY N hits"
+while read -r LOOSE_AF LOOSE_AN; do
+  [ -n "$LOOSE_AF" ] || continue
+  assert_eq "20 $LOOSE_AF hit count" "$LOOSE_AN" \
+    "$(printf '%s\n' "$LOOSE_TREE_HITS" | awk -F: -v f="$LOOSE_AF" '$1 == f { n++ } END { print n + 0 }')"
+done <<ALLOWROWS
+$LOOSE_ALLOWLIST
+ALLOWROWS
+
+# ---------------------------------------------------------------------------
+# Case 21 — decoy self-test. The subject here is the DETECTOR, not the repo
+# tree: four decoys spelled with FOUR DIFFERENT verbs must all be CAUGHT, and
+# three near-miss negatives must all be MISSED — asserted as EQUALITY, so a
+# scanner that over-matches the negatives fails as loudly as one that
+# under-matches the positives.
+# ---------------------------------------------------------------------------
+DECOY="$WORKDIR/loose-decoy"
+# Create EVERY directory the scanner is pointed at. `find` exits 1 on a missing
+# operand; under this file's `set -euo pipefail` that status propagates out of
+# the pipeline and kills the suite with NO diagnostic (and $PIPELINE_TEST_CMD's
+# `|| true` then swallows it entirely).
+mkdir -p "$DECOY/scripts" "$DECOY/hooks" "$DECOY/agents" "$DECOY/docs" "$DECOY/skills/decoy"
+
+cat > "$DECOY/scripts/decoy-awk.sh" <<'DECOYSH'
+#!/bin/bash
+BODY=$(cat body.txt)
+awk '/## Implementation Plan/ { found = 1 } END { print found }' body.txt
+DECOYSH
+
+cat > "$DECOY/scripts/decoy-sed.sh" <<'DECOYSH'
+#!/bin/bash
+sed -n '/## Implementation Plan/,$p' body.txt
+DECOYSH
+
+cat > "$DECOY/hooks/decoy.py" <<'DECOYPY'
+body = open("body.txt").read()
+if "## Implementation Plan" in body:
+    print(body)
+DECOYPY
+
+cat > "$DECOY/skills/decoy/SKILL.md" <<'DECOYMD'
+# Decoy skill
+
+Prose naming ## Implementation Plan outside any fence must be MISSED.
+
+```bash
+# a comment naming ## Implementation Plan inside the fence must be MISSED
+[[ "$BODY" == *"## Implementation Plan"* ]] && echo plan
+```
+
+```markdown
+## Implementation Plan
+```
+DECOYMD
+
+DECOY_EXPECTED=$(cat <<'DECOYEXP'
+hooks/decoy.py:2
+scripts/decoy-awk.sh:3
+scripts/decoy-sed.sh:2
+skills/decoy/SKILL.md:7
+DECOYEXP
+)
+
+echo "Case 21 (#1251): decoy self-test — no fourth spelling can hide"
+inc
+DECOY_HITS=$(scan_loose_plan_matches "$DECOY" || true)
+if [ "$DECOY_HITS" = "$DECOY_EXPECTED" ]; then
+  pass_msg '21 decoy self-test: awk / sed / python-in / glob decoys all CAUGHT; prose-outside-fence, #-comment-inside-fence and markdown-fence negatives all MISSED'
+else
+  fail_msg "21 decoy self-test: scan output is not exactly the 4 expected positives"
+  echo "           expected:"; printf '%s\n' "$DECOY_EXPECTED" | sed 's/^/             /'
+  echo "           got:";      printf '%s\n' "$DECOY_HITS"     | sed 's/^/             /'
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

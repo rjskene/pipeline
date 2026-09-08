@@ -195,7 +195,7 @@ Receive an issue number as argument (or from context).
    **Tasks (ordered):**
    - Task 0: <per-path directive — copy the block matching $PATH_LETTER below>
    - Task 1..N-1: <code work, structured per path>
-   - Task N: PATH A/B/C — invoke `superpowers:requesting-code-review` to self-verify plan requirements are met and tests are green before opening the PR. PATH D — use the PATH D Task N substitute in the PATH D block below instead; do NOT use this directive for PATH D.
+   - Task N: PATH A/B — the inline execute agent (`general-purpose`, which HAS the `Skill` tool) invokes `superpowers:requesting-code-review` to self-verify plan requirements are met and tests are green before opening the PR. PATH C — the ORCHESTRATOR runs that same review after every `tdd-implementer` leaf has returned and been reassembled, before `gh pr create`; NEVER emit it as a `target=<dir>` leaf task, because the leaf `tdd-implementer` has no `Skill` tool. PATH D — use the PATH D Task N substitute in the PATH D block below instead; do NOT use this directive for PATH D.
 
    **DB schema changes:** (or "None")
    **API changes:** (or "None")
@@ -203,6 +203,7 @@ Receive an issue number as argument (or from context).
    **Predicates:** (required for needs-browser-labeled issues)
    **Test changes:** (or "None")
    **Shared tests (split-role):** (optional — PATH B split-role only; omit when not applicable)
+   **RED/GREEN ledger:** (required when the plan has a test deliverable — PATH B/C/D; `None` for docs-only PATH A)
    **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
    **Risks/unknowns:** (or "None")
    **Estimated effort:** X hours
@@ -211,6 +212,23 @@ Receive an issue number as argument (or from context).
    **IMPORTANT — the GitHub comment IS the plan.** `/pipeline:execute-issue-plan` reads ONLY the comment; it has no access to local `.claude/plans/` files. Include ALL design detail directly (data structures, tier tables, formulas, mode behaviors). Never summarize and point to a local file. Fold Claude plan-mode content into the comment before posting.
 
    **`**Shared tests (split-role):**` section (PATH B split-role only, optional).** Use ONLY when a plan deliverable legitimately requires the green implementer to modify an existing test file that the red author committed (e.g., hardening an assertion or updating an expected failure message). Format: one EXACT repo-relative path per bullet line, no globs, no directories. Scope warning: this section is default-deny — an absent or empty section exempts NOTHING. List ONLY the specific test files sanctioned for green-role modification; a `tests/` directory or any prefix/glob entry is never honored (exact-path match only). Deletions of a listed file STILL block (`locked-test-deleted`); the exemption is modify-only. The `evaluate-issue-pr` stage parses this section and threads the resolved paths into the W7 gate (`scripts/split-role-gate.sh`) as `PIPELINE_SPLIT_ROLE_SHARED_TESTS` — the plan's OWNER/MEMBER/COLLABORATOR approval is the trust anchor (#1089).
+
+   **`**RED/GREEN ledger:**` section (required for every plan carrying a test deliverable — PATH B/C/D).** Predict the failure state of each test artifact as a per-file, per-task TABLE, never a prose sentence. Prose hides the defect class this catches: the assertion is right, the TIMING is wrong.
+
+   | test file | red at RED commit | vacuously green until | fully green at |
+   |---|---|---|---|
+   | `tests/test-foo.sh` | yes — `<assertion>` fails: `<expected message>` | — | Task 3 |
+   | `tests/test-bar.sh` | no | Task 2 — why: pins a post-change constant Task 2 creates | Task 4 |
+
+   - **RED commit** = the `[split-role-red]` commit under split-role PATH B; the task's own red step otherwise.
+   - One row per test file. When assertions inside one file flip at different tasks, split into one row per assertion group and name the assertion.
+   - For every row not red at the RED commit you MUST state WHY it is green, in the `vacuously green until` cell after `why:`. An implementer that meets an unexplained GREEN either hunts a phantom failure or "fixes" a correct test to make it red.
+   - **The tell:** a test whose redness depends on state a LATER task creates is never `red at RED`. Doc-vs-code consistency tests are the classic shape — doc and code agree until the code changes.
+   - **The inverse:** a control pinned to a post-change value IS red at the RED commit; do not call it vacuously green because it is a control.
+   - The ledger is a PREDICTION to verify, not a script to satisfy — an executor observing a different state reports the divergence instead of bending the test to match.
+   - PATH A (docs-only) carries no test deliverable: the section is the single word `None`.
+
+   **Executor-capability rule (#1225).** A plan task MUST NOT mandate a capability the assigned executor lacks. `tdd-implementer` is a leaf executor whose toolset is exactly `Read, Write, Edit, Bash, Grep, Glob` — no `Skill`, no `Agent`. So NO task that will be dispatched to a `tdd-implementer` — every PATH C `target=<dir>` leaf task, and every PATH D task — may name a `Skill(...)` or `Agent(...)` invocation (including any `superpowers:*` skill). A task that needs a skill is OWNED BY THE PR-OPENING ROLE — the inline execute agent on PATH A/B, the orchestrator on PATH C (`execute-issue-plan` Step 8) — and the task text must say so. This is the planner-side half of the contract; the executor-side half is the loud-refusal rule in `agents/tdd-implementer.md`, where a leaf handed a task it cannot perform reports `CAPABILITY-REFUSED:` instead of silently substituting a manual approximation.
 
    ### Per-path Task 0 — copy the block matching `PATH_LETTER`; structure Tasks 1..N-1 in the same path's format.
 
@@ -223,7 +241,7 @@ Receive an issue number as argument (or from context).
    Code-task format: each impl task lists all five steps explicitly — test file path, exact test command, expected FAIL, impl sketch, expected PASS, commit message. Skipping red→green is a planning defect.
 
 #### Task 0 — PATH C (multi-task)
-   `Task 0: dispatch Agent(subagent_type='tdd-implementer', description='target=<first-dir>/ ...', prompt='target=<first-dir>/ implement <first-task>') — one tdd-implementer dispatch per distinct target directory. The orchestrator must NOT Write/Edit impl files directly; the enforce-path-c-delegation hook will block unauthorized edits.`
+   `Task 0: dispatch Agent(subagent_type='pipeline:tdd-implementer', description='target=<first-dir>/ ...', prompt='target=<first-dir>/ implement <first-task>') — one tdd-implementer dispatch per distinct target directory. The orchestrator must NOT Write/Edit impl files directly; the enforce-path-c-delegation hook will block unauthorized edits.`
    Code-task format: every code task is a single `tdd-implementer` dispatch with a `target=<dir>/` sentinel (real subdirectory — `target=.`, `target=./`, `target=/` are rejected by the delegation hook) and a prompt detailed enough for autonomous execution. Non-overlapping targets may run in parallel.
 
 #### Task 0 — PATH D (quick-fix)

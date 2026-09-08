@@ -40,8 +40,17 @@ assert "hook references subagent_type tdd-implementer predicate" \
   "grep -qE 'subagent_type.*tdd-implementer' '$HOOK_TEMPLATE'"
 # Pin the exact intact predicate line so a refactor that flips the negation
 # (e.g. removes the `!=` guard) is caught even if the substring still matches.
-assert "hook predicate intact: subagent_type != tdd-implementer guard present" \
-  "grep -qF 'data.get(\"subagent_type\") != \"tdd-implementer\"' '$HOOK_TEMPLATE'"
+# #1238: the predicate is now SUFFIX-TOLERANT — the plugin registry resolves the
+# agent as `pipeline:tdd-implementer`, so an exact-equality match against the
+# bare literal silently drops every real dispatch record. Repinned to the
+# suffix-match line verbatim.
+assert "hook predicate intact: suffix-match rsplit guard present (#1238)" \
+  "grep -qF 'if _stype.rsplit(\":\", 1)[-1] != \"tdd-implementer\":' '$HOOK_TEMPLATE'"
+# The negation-flip protection the old pin provided is preserved by additionally
+# asserting the superseded bare-equality predicate is GONE (otherwise both could
+# coexist and the stale one would keep dropping namespaced records).
+assert "hook no longer carries the bare-equality predicate (#1238)" \
+  "! grep -qF 'data.get(\"subagent_type\") != \"tdd-implementer\"' '$HOOK_TEMPLATE'"
 assert "hook still parses target=<dir> sentinel (delegation logic intact)" \
   "grep -q 'target=' '$HOOK_TEMPLATE'"
 

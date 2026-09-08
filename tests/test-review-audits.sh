@@ -394,6 +394,66 @@ if [ "$ok" = "1" ] && grep -qE '^TDD_IMPLEMENTER_MARKER=.*\.claude/agents/tdd-im
 fi
 [ "$ok" = "1" ] && pass_msg "Test 18: TDD_IMPLEMENTER_MARKER is plugin-rooted"
 
+# -------------------------------------------------------------------------
+# Test 19 (#1238): the PATH C dispatch counter must accept the PLUGIN-
+# NAMESPACED subagent_type. review-audits.sh is the SECOND runtime consumer of
+# the field: hooks/log_subagent.py writes the RAW runtime value into
+# <worktree>/.claude/logs/subagents/*.json, and in this environment the
+# plugin-registered agent resolves as `pipeline:tdd-implementer`. An exact-
+# equality match against the bare literal therefore reports a false
+# "tdd-implementer: MISSING (enforcement required since #327)" on EVERY real
+# PATH C run.
+#
+# Driven by a self-contained per-case fixture rather than the shared #902 /
+# $WT_C fixture: Tests 1/5/9/10/11/16/17 all read that row, and mutating it
+# would silently flip Test 11's label branch and the table view's Subagents
+# count. review-audits.sh derives REPO_ROOT from the SCRIPT path
+# (dirname "$0"/../..), not cwd, so a throwaway root under $TMP is fully
+# isolated. $TMP's existing EXIT trap cleans the sub-fixtures up.
+#
+# Asserts on the substring "1 dispatches" (NOT the "MISSING (...)" text) so the
+# negative controls stay independent of whether $TDD_IMPLEMENTER_MARKER
+# resolves in the runner's environment.
+# -------------------------------------------------------------------------
+
+# ns_path_c_check <subagent_type> -> echoes the "PATH C check:" line
+ns_path_c_check() {
+  local st="$1" ns
+  ns=$(mktemp -d "$TMP/ns-XXXXXX")
+  mkdir -p "$ns/.claude/scripts" "$ns/.claude/logs" "$ns/wt/.claude/logs/subagents"
+  printf 'PIPELINE_REPO="fake/repo"\nPIPELINE_PATH_C_SKILLS_EXECUTE="superpowers:subagent-driven-development"\n' > "$ns/pipeline.config"
+  cp "$SCRIPT_UNDER_TEST" "$ns/.claude/scripts/review-audits.sh"
+  local u="33333333-3333-3333-3333-333333333333"
+  printf '2026-04-18T12:00:00Z\tsession=%s\tissue=902\tpath=C\tskill=execute-issue-plan\tworktree=%s\n' "$u" "$ns/wt" > "$ns/.claude/logs/runs.log"
+  printf '2026-04-18T12:00:01Z\tSkill\tsession=%s\tskill=superpowers:subagent-driven-development\n' "$u" > "$ns/wt/.claude/logs/tool-use.log"
+  printf '2026-04-18T12:30:00Z\t%s\tLeaf\t0\t0\t0\t%s_leaf.json\n' "$u" "$u" > "$ns/wt/.claude/logs/subagents.log"
+  printf '{"session_id":"%s","subagent_type":"%s","description":"Leaf"}\n' "$u" "$st" > "$ns/wt/.claude/logs/subagents/${u}_leaf.json"
+  bash "$ns/.claude/scripts/review-audits.sh" --issue 902 2>&1 | grep -E 'PATH C check' || true
+}
+
+echo "Test 19 (#1238): PATH C dispatch counter accepts the namespaced subagent_type"
+inc
+ok=1
+NS_OUT=$(ns_path_c_check "pipeline:tdd-implementer")
+echo "$NS_OUT" | grep -qF 'tdd-implementer: 1 dispatches' \
+  || { fail_msg "Test 19(a): namespaced 'pipeline:tdd-implementer' dispatch not counted; got: ${NS_OUT:-<empty>}"; ok=0; }
+if [ "$ok" = "1" ]; then
+  NS_OUT=$(ns_path_c_check "tdd-implementer")
+  echo "$NS_OUT" | grep -qF 'tdd-implementer: 1 dispatches' \
+    || { fail_msg "Test 19(b): bare back-compat dispatch not counted; got: ${NS_OUT:-<empty>}"; ok=0; }
+fi
+if [ "$ok" = "1" ]; then
+  NS_OUT=$(ns_path_c_check "general-purpose")
+  echo "$NS_OUT" | grep -qF '1 dispatches' \
+    && { fail_msg "Test 19(c): 'general-purpose' was counted as a tdd-implementer dispatch (suffix match became a wildcard); got: $NS_OUT"; ok=0; } || true
+fi
+if [ "$ok" = "1" ]; then
+  NS_OUT=$(ns_path_c_check "evil:tdd-implementer-x")
+  echo "$NS_OUT" | grep -qF '1 dispatches' \
+    && { fail_msg "Test 19(d): impostor 'evil:tdd-implementer-x' was counted as a tdd-implementer dispatch; got: $NS_OUT"; ok=0; } || true
+fi
+[ "$ok" = "1" ] && pass_msg "Test 19: PATH C counter accepts bare + namespaced, rejects impostors"
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

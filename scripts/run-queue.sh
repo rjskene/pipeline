@@ -571,8 +571,9 @@ check_issue_outcome() {
 # for ANY block-* skip (skills/evaluate-issue-pr/SKILL.md Step 11.4), where
 # <REASON> is one of the auto-merge-gate.sh tokens (block-verdict, block-ci,
 # block-mergeable, block-mergestate, block-label, block-flag,
-# block-base-mismatch). Scan ALL PR comments (the skipped line is not always
-# the last comment under the manual-merge label arm). Fail-soft: prints
+# block-capability-refused, block-base-mismatch). Scan ALL PR comments (the
+# skipped line is not always the last comment under the manual-merge label
+# arm). Fail-soft: prints
 # `unknown` on any gh error / no PR / no skipped line so the emit never breaks.
 extract_block_reason() {
   local issue="$1" pr reason

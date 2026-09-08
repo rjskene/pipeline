@@ -105,7 +105,7 @@ write_plan_comment "$S" 1 "## Implementation Plan
 echo "Case 1: empty-backtick **Files to change:** block does not kill the script"
 inc
 if OUT=$(run_helper --stage=execute 1 2>"$S/stderr1"); then
-  if echo "$OUT" | grep -qE '^Wave 1: classify #1'; then
+  if echo "$OUT" | grep -qE '^Wave 1: execute #1'; then
     pass_msg "Case 1: helper exited 0 with a coherent Wave line"
   else
     fail_msg "Case 1: helper exited 0 but emitted no coherent Wave line"

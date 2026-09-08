@@ -111,6 +111,38 @@ def truncate_field(value: str, max_chars: int) -> tuple[str, bool]:
 
 
 # ---------------------------------------------------------------------------
+# Leaf result-text extraction (#1233)
+# ---------------------------------------------------------------------------
+
+def extract_result_text(tool_response: dict) -> str:
+    """Extract the leaf's returned text from a PostToolUse(Agent) tool_response.
+
+    The real payload (status == "completed") carries NO `result` key: the
+    leaf's return lives in `tool_response["content"]`, a list of
+    {"type": "text", "text": ...} blocks. Join every text block's `text` with
+    "\\n"; non-dict / non-text blocks are skipped, never raised on (the hook's
+    fail-open contract stays intact).
+
+    If `content` is absent, is not a list, or yields no text blocks (e.g. the
+    `status == "async_launched"` background-dispatch shape, which carries
+    neither `content` nor `result`), fall back to the legacy
+    `tool_response.get("result", "")` shape so old synthetic fixtures and any
+    genuinely `result`-keyed payload keep working.
+    """
+    content = tool_response.get("content")
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        if parts:
+            return "\n".join(parts)
+    return tool_response.get("result", "") or ""
+
+
+# ---------------------------------------------------------------------------
 # JSON record builder
 # ---------------------------------------------------------------------------
 
@@ -128,8 +160,15 @@ def build_json_record(
     total_duration_ms: int,
     num_turns: int,
     jsonl_path_hint: str,
+    status: str = "",
 ) -> dict:
-    """Build the per-agent JSON record (schema_version 1)."""
+    """Build the per-agent JSON record (schema_version 1).
+
+    `status` (#1233, additive, keyword-only, default "") records the
+    PostToolUse(Agent) payload's `status` field so `async_launched`
+    (background dispatch — the leaf's result never reaches this hook) is
+    mechanically distinguishable from "the leaf returned nothing".
+    """
     prompt_truncated_val, prompt_was_truncated = truncate_field(prompt, PROMPT_MAX_CHARS)
     result_truncated_val, result_was_truncated = truncate_field(result, RESULT_MAX_CHARS)
 
@@ -140,6 +179,7 @@ def build_json_record(
         "agent_id": agent_id,
         "description": description,
         "subagent_type": subagent_type,
+        "status": status,
         "prompt": prompt_truncated_val,
         "prompt_truncated": prompt_was_truncated,
         "result": result_truncated_val,

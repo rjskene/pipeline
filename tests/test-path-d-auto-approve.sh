@@ -5,9 +5,10 @@ set -euo pipefail
 # wiring in skills/run/SKILL.md. Asserts:
 #  (a) Step 4 plan-pending block emits the auto-flip gh command for
 #      `plan-pending` + `quick-fix` issues (skipping evaluate-issue-plan).
-#  (b) Step 6 execute dispatch routing contains the BARE
-#      `Agent(subagent_type='tdd-implementer'` form within 300 chars of the
-#      first PATH D mention.
+#  (b) Step 6 execute dispatch routing contains the PLUGIN-NAMESPACED
+#      `Agent(subagent_type='pipeline:tdd-implementer'` form within 300 chars
+#      of the first PATH D mention (#1238 — the bare `tdd-implementer` string
+#      is not a registered agent type and hard-fails the dispatch).
 #  (c) The same window contains `No spawn-claude.sh` within 300 chars of
 #      PATH D, confirming the inline-only routing for quick-fix.
 
@@ -51,14 +52,14 @@ else
   fail_msg "fullsend missing PATH D 'auto-flip plan-pending → plan-approved' prose"
 fi
 
-# --- Test (b): BARE Agent(subagent_type='tdd-implementer' near PATH D ---
-echo "Test (b): BARE tdd-implementer dispatch within 300 chars of PATH D"
+# --- Test (b): namespaced Agent(subagent_type='pipeline:tdd-implementer' near PATH D ---
+echo "Test (b): namespaced pipeline:tdd-implementer dispatch within 300 chars of PATH D"
 inc
 # Find each PATH D occurrence; check a 300-char window after it.
 PYOUT=$(python3 - "$SKILL_FILE" <<'PY'
 import re, sys, pathlib
 text = pathlib.Path(sys.argv[1]).read_text()
-needle_agent = "Agent(subagent_type='tdd-implementer'"
+needle_agent = "Agent(subagent_type='pipeline:tdd-implementer'"
 hits = [m.start() for m in re.finditer(r"PATH D", text)]
 ok = False
 for h in hits:
@@ -70,9 +71,9 @@ print("OK" if ok else "MISS")
 PY
 )
 if [ "$PYOUT" = "OK" ]; then
-  pass_msg "BARE Agent(subagent_type='tdd-implementer' within 300 chars of PATH D"
+  pass_msg "namespaced Agent(subagent_type='pipeline:tdd-implementer' within 300 chars of PATH D"
 else
-  fail_msg "BARE Agent(subagent_type='tdd-implementer' NOT within 300 chars of any PATH D mention"
+  fail_msg "namespaced Agent(subagent_type='pipeline:tdd-implementer' NOT within 300 chars of any PATH D mention (#1238)"
 fi
 
 # --- Test (c): `No spawn-claude.sh` near PATH D ---

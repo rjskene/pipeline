@@ -8,7 +8,7 @@ The exhaustive catalogue of pipeline slash commands — invocation form, args/fl
 
 | Command | Args / flags | Summary |
 |---|---|---|
-| [`/pipeline:status`](../skills/status/SKILL.md) | `[--table] [--analyze] [--keep-trees]` | Read-only status table + housekeeping; advances nothing. |
+| [`/pipeline:status`](../skills/status/SKILL.md) | `[--table] [--analyze] [--keep-trees] [--label <l>]...` | Read-only status table + housekeeping; advances nothing. |
 | [`/pipeline:run`](../skills/run/SKILL.md) | (none) | Deprecated alias forwarding to `/pipeline:status`. |
 | [`/pipeline:fullsend`](../skills/fullsend/SKILL.md) | `[issue_numbers...] [--manual-merge] [--spawn] [--campaign]` | Autonomous end-to-end run; flags position-independent. |
 | [`/pipeline:campaign`](../skills/campaign/SKILL.md) | `[issue_numbers...] [--manual-merge] [--spawn] [--max-bc=N] [--max-ad=N]` | Standalone coordinated-leg campaign; equivalent to `/pipeline:fullsend --campaign` (same machinery). |
@@ -48,6 +48,7 @@ Only the load-bearing nuance is captured here; see each SKILL.md for the full sp
 - `--table` renders ONLY the status table and stops.
 - `--analyze` delegates to `/pipeline:analyze-issues`.
 - `--keep-trees` opts out of merged-worktree auto-cleanup for that invocation (flag-only — no config default).
+- `--label <l>` (repeatable) scopes the status table to issues carrying ANY of the given labels — a UNION/OR, which differs from `gh issue list --label` (AND). Trackers are child-driven: a tracker survives only if >= 1 of its children survives. Flag-only — no `pipeline.config` default.
 
 ### create-issues
 

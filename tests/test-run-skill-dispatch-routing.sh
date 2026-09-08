@@ -33,7 +33,8 @@ STEP6_B=$(path_block "$STEP6" "PATH B")
 echo "$STEP6_B" | grep -q "Agent(subagent_type=" || { echo "FAIL: Step 6 PATH B branch missing inline Agent(subagent_type=...)"; exit 1; }
 echo "$STEP6_B" | grep -qF "No spawn-claude.sh" || { echo "FAIL: Step 6 PATH B branch missing 'No spawn-claude.sh' negation"; exit 1; }
 # Issue #749: Step 6 (execution) PATH C is now INLINE-by-default — the
-# orchestrator fans out Agent(subagent_type='tdd-implementer') per target=<dir>,
+# orchestrator fans out Agent(subagent_type='pipeline:tdd-implementer') per
+# target=<dir> (#1238 — the bare `tdd-implementer` string does not resolve),
 # with spawn-claude.sh/run-queue.sh reachable only under the --spawn fallback.
 STEP6_C=$(path_block "$STEP6" "PATH C")
 [ -n "$STEP6_C" ] || { echo "FAIL: Step 6 missing standalone PATH C branch"; exit 1; }
@@ -50,17 +51,21 @@ STEP7_C=$(path_block "$STEP7" "PATH C")
 [ -n "$STEP7_C" ] || { echo "FAIL: Step 7 missing standalone PATH C branch"; exit 1; }
 echo "$STEP7_C" | grep -q "spawn-claude.sh" || { echo "FAIL: Step 7 PATH C branch missing spawn-claude.sh"; exit 1; }
 
-# PATH D (quick-fix): inline dispatch via BARE tdd-implementer subagent,
-# explicitly NOT through spawn-claude.sh. Mirrors the A/B/C fixture style:
-# the assertion lives inside Step 6's "For execution" window.
+# PATH D (quick-fix): inline dispatch via the PLUGIN-NAMESPACED
+# pipeline:tdd-implementer subagent (#1238 — the bare `tdd-implementer` string
+# is not a registered agent type and hard-fails the dispatch), explicitly NOT
+# through spawn-claude.sh. Mirrors the A/B/C fixture style: the assertion lives
+# inside Step 6's "For execution" window.
 echo "$STEP6" | grep -q "PATH D" || { echo "FAIL: Step 6 missing PATH D branch"; exit 1; }
 echo "$STEP6" | grep -q "quick-fix" || { echo "FAIL: Step 6 PATH D branch missing quick-fix label reference"; exit 1; }
-echo "$STEP6" | grep -qF "Agent(subagent_type='tdd-implementer'" \
-  || { echo "FAIL: Step 6 PATH D branch missing BARE Agent(subagent_type='tdd-implementer'"; exit 1; }
-# Defensive: the BARE form, not the pipeline:tdd-implementer namespaced form,
-# in the PATH D dispatch block.
+echo "$STEP6" | grep -qF "Agent(subagent_type='pipeline:tdd-implementer'" \
+  || { echo "FAIL: Step 6 PATH D branch missing namespaced Agent(subagent_type='pipeline:tdd-implementer' (#1238)"; exit 1; }
+# Defensive (#1238, INVERTED): the namespaced form must be PRESENT and the BARE
+# form must be GONE from the Step 6 dispatch window.
 echo "$STEP6" | grep -qF "pipeline:tdd-implementer" \
-  && { echo "FAIL: Step 6 must use BARE tdd-implementer, not pipeline:tdd-implementer"; exit 1; } \
+  || { echo "FAIL: Step 6 missing pipeline:tdd-implementer — the bare form does not resolve (#1238)"; exit 1; }
+echo "$STEP6" | grep -qF "Agent(subagent_type='tdd-implementer'" \
+  && { echo "FAIL: Step 6 still carries the BARE Agent(subagent_type='tdd-implementer' literal (#1238)"; exit 1; } \
   || true
 # PATH D explicitly does NOT use spawn-claude.sh — verify the negation
 # phrasing is present.

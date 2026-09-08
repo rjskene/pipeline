@@ -143,7 +143,7 @@ inc
 DEFAULT_OUT=$(run_helper --stage=execute 1 2 3 4 2>"$S/stderr3d" || true)
 EDGE_OUT=$(run_helper --stage=execute --emit-edges 1 2 3 4 2>"$S/stderr3e" || true)
 # The multi-issue wave line for #2/#3 carries NO per-issue reason.
-WAVE_LINE=$(echo "$DEFAULT_OUT" | grep -E '^Wave [0-9]+: classify #2, #3 in parallel$' || true)
+WAVE_LINE=$(echo "$DEFAULT_OUT" | grep -E '^Wave [0-9]+: execute #2, #3 in parallel$' || true)
 if [ -n "$WAVE_LINE" ] \
    && ! echo "$WAVE_LINE" | grep -q 'blocked by' \
    && ! echo "$WAVE_LINE" | grep -q 'shares' \
@@ -161,7 +161,7 @@ echo "Case 4: no --emit-edges → no EDGE lines, normal Wave output"
 inc
 if OUT=$(run_helper --stage=execute 1 2 3 4 2>"$S/stderr4"); then
   if ! echo "$OUT" | grep -qE '^EDGE ' \
-     && echo "$OUT" | grep -qE '^Wave 1: classify '; then
+     && echo "$OUT" | grep -qE '^Wave 1: execute '; then
     pass_msg "Case 4: default output unchanged in shape (no EDGE lines)"
   else
     fail_msg "Case 4: default output regressed"

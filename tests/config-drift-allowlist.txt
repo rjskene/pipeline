@@ -140,6 +140,17 @@ PIPELINE_MOCK_WEB_EVAL_
 # in pipeline.config.example; exact-match exempt here.
 PIPELINE_SPLIT_ROLE_SHARED_TESTS
 
+# #1233 capability-refusal sentinel source knob. PIPELINE_CAPABILITY_REFUSAL_SOURCES
+# is an eval-caller-set-ONLY var: evaluate-issue-pr's Step 11.2 resolves the
+# default dogfood-only subagent log dir at the auto_merge_should_fire call site
+# and threads it into scripts/check-capability-refusal.sh via
+# scripts/auto-merge-gate.sh. Same shape as its sibling
+# PIPELINE_SPLIT_ROLE_SHARED_TESTS above — NEVER read from pipeline.config
+# (a host-global value would invite scanning the operator's real
+# .claude/logs/subagents/ nondeterministically, defeating per-issue scoping).
+# Intentionally undocumented in pipeline.config.example; exact-match exempt here.
+PIPELINE_CAPABILITY_REFUSAL_SOURCES
+
 # #1128 next-branch routing knobs. PIPELINE_NEXT_BRANCH / PIPELINE_NEXT_LABEL are
 # defaults-in-code (#1052): COMMENTED in pipeline.config.example + the init heredoc
 # with read-site ${VAR:-next} defaults at every consumer (render-status-table.sh,
@@ -164,3 +175,13 @@ PIPELINE_NEXT_
 # the lint via their pipeline.config.example declarations. Peel this entry when the
 # follow-up lands a real read-site + declaration.
 PIPELINE_STAGE_MODEL_CLASSIFY
+
+# #1275 spec-only knob. PIPELINE_TRUST_PROFILE is named in the evolve-loop design
+# spec (docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §12) as a
+# FUTURE trust-profile knob (strict|lean); no read site exists anywhere in the
+# tree. check-config-drift.sh scans docs/, so that prose mention reads as
+# referenced-but-undeclared and reds the clean-tree suite. Same
+# documented-but-not-yet-implemented class as PIPELINE_STAGE_MODEL_CLASSIFY above.
+# Exact-match (NOT a prefix wildcard). Peel this entry when the trust-profile
+# issue lands a real read-site + a pipeline.config.example declaration.
+PIPELINE_TRUST_PROFILE

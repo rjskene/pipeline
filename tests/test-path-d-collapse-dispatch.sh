@@ -69,7 +69,8 @@ PY
 # =====================================================================
 # Group 1 — skills/run/SKILL.md: ONE collapsed inline Agent (classify+
 # plan+execute carried forward), separate pr-eval agent, max-3 bound,
-# BARE tdd-implementer form, negation phrasing preserved.
+# PLUGIN-NAMESPACED pipeline:tdd-implementer form (#1238 — the bare
+# `tdd-implementer` string does not resolve), negation phrasing preserved.
 # =====================================================================
 
 echo "Group 1: run/SKILL.md collapsed PATH D dispatch"
@@ -113,20 +114,27 @@ else
   fail_msg "(1d) run/SKILL.md missing 'max 3 concurrent inline' bound"
 fi
 
-# (1e) BARE Agent(subagent_type='tdd-implementer' still used (regression guard).
+# (1e) #1238: the PLUGIN-NAMESPACED Agent(subagent_type='pipeline:tdd-implementer'
+# form is the one the agent registry actually resolves — the bare string
+# hard-fails the dispatch. Repinned from BARE to namespaced.
 inc
-if printf '%s' "$RUN_BODY" | grep -qF "Agent(subagent_type='tdd-implementer'"; then
-  pass_msg "(1e) BARE Agent(subagent_type='tdd-implementer' still present"
+if printf '%s' "$RUN_BODY" | grep -qF "Agent(subagent_type='pipeline:tdd-implementer'"; then
+  pass_msg "(1e) namespaced Agent(subagent_type='pipeline:tdd-implementer' present"
 else
-  fail_msg "(1e) run/SKILL.md missing BARE Agent(subagent_type='tdd-implementer'"
+  fail_msg "(1e) fullsend/SKILL.md missing namespaced Agent(subagent_type='pipeline:tdd-implementer' (#1238)"
 fi
 
-# (1f) NOT the namespaced pipeline:tdd-implementer form.
+# (1f) #1238 INVERTED (was: "the namespaced form must be ABSENT"). The
+# namespaced form must now be PRESENT, and no BARE dispatch literal may
+# survive anywhere in the whitespace-normalized body — an all-or-nothing
+# guard against a partial edit that flips only some of the sites.
 inc
-if printf '%s' "$RUN_BODY" | grep -qF "pipeline:tdd-implementer"; then
-  fail_msg "(1f) run/SKILL.md must use BARE tdd-implementer, NOT pipeline:tdd-implementer"
+if ! printf '%s' "$RUN_BODY" | grep -qF "pipeline:tdd-implementer"; then
+  fail_msg "(1f) fullsend/SKILL.md missing the namespaced pipeline:tdd-implementer form (#1238)"
+elif printf '%s' "$RUN_BODY" | grep -qF "Agent(subagent_type='tdd-implementer'"; then
+  fail_msg "(1f) fullsend/SKILL.md still carries a BARE Agent(subagent_type='tdd-implementer' literal (#1238)"
 else
-  pass_msg "(1f) namespaced pipeline:tdd-implementer form absent (BARE form preserved)"
+  pass_msg "(1f) namespaced form present and no BARE dispatch literal left"
 fi
 
 # (1g) negation phrasing preserved: No spawn-claude.sh / no tmux / no run-queue.

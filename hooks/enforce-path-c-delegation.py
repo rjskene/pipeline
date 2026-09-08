@@ -187,7 +187,8 @@ def collect_authorized_dirs(session_id: str) -> set[PurePosixPath]:
             continue
         if data.get("session_id") != session_id:
             continue
-        if data.get("subagent_type") != "tdd-implementer":
+        _stype = data.get("subagent_type") or ""
+        if _stype.rsplit(":", 1)[-1] != "tdd-implementer":
             continue
         haystack = (data.get("description", "") or "") + "\n" + (data.get("prompt", "") or "")
         for match in SENTINEL_RE.finditer(haystack):
@@ -256,7 +257,7 @@ def main() -> int:
         "BLOCKED: PATH C (multi-task issue #{n}) requires dispatching a "
         "tdd-implementer subagent before editing impl files.\n"
         "  File: {f}\n"
-        "  Fix: dispatch Agent(subagent_type='tdd-implementer', "
+        "  Fix: dispatch Agent(subagent_type='pipeline:tdd-implementer', "
         "prompt='target=<dir>/ ...') for the directory containing this file, "
         "then retry the edit.\n"
         "  Escape hatch: export ALLOW_ORCHESTRATOR_EDIT=true (audit the "
