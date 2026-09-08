@@ -36,6 +36,9 @@ case "$ALL_ARGS" in
   *"pr view"*"--json statusCheckRollup,mergeable,mergeStateStatus"*)
     printf '%s' "${GH_ROLLUP:-}"
     ;;
+  *"pulls/"*"/files"*)
+    printf '%s\n' "${GH_FILES:-modified:scripts/auto-merge-gate.sh:}"
+    ;;
   *)
     echo "[gh shim] unhandled: $ALL_ARGS" >&2
     exit 1

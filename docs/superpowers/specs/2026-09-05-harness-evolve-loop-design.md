@@ -185,10 +185,11 @@ Notes) plus a mandatory `## Evolve` block:
 <!-- pipeline:path-hint=A|B|C|D -->
 ```
 
-Label: `evolve` (the cycle number lives in the `## Evolve` block). Caps per cycle: ≤3 issues, ≤1 PATH C. Disallowed: new tests that grep
-`SKILL.md`/`CLAUDE.md` prose (behaviour tests only); any change to `hooks/restrict_paths.py`,
-`hooks/block_deletions.py`, or auth/credential surfaces — those route to the `human` label via the
-existing W2 carve-out and wait for the operator.
+Label: `evolve` (the cycle number lives in the `## Evolve` block). Caps per cycle: ≤3 issues, ≤1 PATH C. Disallowed: new tests that grep `SKILL.md`/`CLAUDE.md` prose (behaviour tests only); any change to
+`tests/test-cage-invariant-*.sh` or auth/credential surfaces — those route to the `human` label and wait
+for the operator. Hook source edits are ordinary `evolve` issues: each guard's deny contract (exit 2 or
+`hookSpecificOutput.permissionDecision: "deny"`) is pinned by a cage invariant, and the
+`block-cage-tests-diff` merge-gate token blocks any auto-merge whose PR modifies, renames or removes one.
 
 ## 7. Scorecard and verdicts
 
