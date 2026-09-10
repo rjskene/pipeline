@@ -244,6 +244,9 @@ and doubles as the end-to-end regression suite the 405 unit tests are not (the
 - **Triggers:** an issue whose `Measured by:` is `calibration run`; and once per seven cycles under
   `strict` + sonnet for the weak-model guarantee. Not every cycle: ≈$60–120 per run, billed as
   headless usage.
+- **Grading caveat (run #3, 2026-09-08):** the print-mode background-wait ceiling truncated the run
+  before harness completion, so its `wall`/completion numbers measure the ceiling, not the harness
+  (#1306).
 
 ## 9. Guardrails
 
