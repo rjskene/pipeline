@@ -1462,15 +1462,19 @@ class TestRestrictPaths(unittest.TestCase):
             {"command": "cat > " + SET + " <<EOF\nhi\nEOF"},
         )
 
-    # KEEP-BLOCK — SCOPE GUARD, the #1190 K7 discipline restated for the new
-    # mask. `extract_paths()` scans a DIFFERENT string and must never see the
-    # heredoc mask: a body naming an ABSOLUTE out-of-boundary token still emits
-    # the PATH message, not the cd one. This is also why the operational-notes
-    # amendment for this issue is narrow — `--body-file` stays the workaround
-    # for absolute-looking tokens even inside a heredoc body.
-    def test_issue1192_block_heredoc_body_absolute_token_scope_guard(self):
-        self.assertBlockedWith(
-            PATH_BLOCK_MSG, "Bash",
+    # SUPERSEDED BY #1282 — this replaces
+    # `test_issue1192_block_heredoc_body_absolute_token_scope_guard`, which
+    # pinned the #1190 K7 scope guard: the heredoc mask must never reach
+    # `extract_paths()`, so a body naming an ABSOLUTE out-of-boundary token
+    # still emitted the PATH message. #1282 inverts exactly that — the mask now
+    # DOES reach `extract_paths()`, so a token that lives only inside a heredoc
+    # BODY is data, not a path reference, and is ALLOWED. The payload is
+    # byte-identical to the superseded case; only the verdict flips. Its
+    # shell-layer twin is case 9f of tests/test-restrict-paths-hook.sh, flipped
+    # in the same commit.
+    def test_issue1282_allow_heredoc_body_absolute_token(self):
+        self.assertAllowed(
+            "Bash",
             {"command": "cat > s.txt <<'EOF'\nsee " + ETC + "/passwd here\nEOF"},
             project_dir=self.P1188,
         )
@@ -2057,6 +2061,82 @@ class TestRestrictPaths(unittest.TestCase):
             CD_BLOCK_MSG, "Bash",
             {"command": 'echo bash -c "cd ' + UP7 + '"'},
             project_dir=self.P1188,
+        )
+
+    # ======================================================================
+    # Issue #1282 — the three observed false-positive classes
+    # ======================================================================
+    # One case per fix mechanism, plus one control:
+    #   class 1 — the Bash extractor captures a path-shaped SUBSTRING out of a
+    #             quoted literal or a heredoc body. Post-fix a candidate must be
+    #             a whole dequoted shell WORD (or the RHS of a `name=` word),
+    #             the heredoc mask reaches `extract_paths()` (the flipped case
+    #             above), and a grep-family PATTERN operand is not an argument
+    #             position at all.
+    #   class 2 — the Linux session scratchpad under the system temp root is
+    #             outside the boundary; the existing `Temp/claude/` carve-out
+    #             has no POSIX arm.
+    #   class 3 — `_protected_write_context` branch 6 (interpreter inline-eval ∧
+    #             protected token) blocks an inline body that merely READS a
+    #             protected control file.
+    # Every case is RED at HEAD except the tmp control (see the RED/GREEN
+    # ledger): the pre-fix hook denies the whole temp root, so it is green from
+    # the RED commit and only becomes load-bearing once class 2 widens the
+    # boundary.
+
+    # --- class 1: whole-word candidates -----------------------------------
+    # RED today (exit 2 on `/proc`): the alternation lives inside a
+    # single-quoted regex operand, so no whole word is path-shaped — the
+    # extractor captures `/proc` from mid-word.
+    def test_issue1282_allow_quoted_regex_alternation(self):
+        self.assertAllowed(
+            "Bash", {"command": "grep -vE '(/proc|/sys)/[0-9]+' notes.txt"},
+        )
+
+    # RED today (exit 2 on the fixture dir): the first non-flag positional of a
+    # grep-family command is the PATTERN, not a file operand. Anchored on the
+    # MIDWORD_EXISTS fixture (an EXISTING out-of-project dir) so the case does
+    # not depend on host home layout.
+    def test_issue1282_allow_grep_pattern_operand(self):
+        self.assertAllowed(
+            "Bash",
+            {"command": "grep -cE '" + self.MIDWORD_EXISTS + "' notes.txt"},
+        )
+
+    # --- class 2: the Linux session scratchpad ----------------------------
+    # RED today (exit 2 `path outside project boundary`): the harness parks the
+    # session scratchpad under the system temp root, which no ALLOWED_ROOT
+    # covers on POSIX.
+    def test_issue1282_allow_linux_session_scratchpad_read(self):
+        self.assertAllowed(
+            "Read",
+            {"file_path": os.path.join(
+                tempfile.gettempdir(), "claude-%d" % os.getuid(),
+                "slug", "sess-abc", "scratchpad", "out.txt",
+            )},
+        )
+
+    # KEEP-BLOCK control — green from this RED commit, load-bearing after
+    # class 2 lands: it is what fails a GREEN that allowlists the whole temp
+    # root instead of the `claude-<uid>/<slug>/<session>/scratchpad` subtree.
+    def test_issue1282_block_non_scratchpad_tmp_write(self):
+        self.assertBlocked(
+            "Write",
+            {"file_path": os.path.join(
+                tempfile.gettempdir(), "not-claude", "out.txt",
+            )},
+        )
+
+    # --- class 3: read vs write on protected control files ----------------
+    # RED today (exit 2 `cannot modify protected file`): branch 6 fires on any
+    # inline interpreter body that NAMES a protected token, including a pure
+    # read. The four `test_bug1138_block_{python_c,node_e,perl_e,
+    # python3_c_hooks_dir}_*` write cases above stay blocked post-fix.
+    def test_issue1282_allow_inline_readonly_settings_load(self):
+        self.assertAllowed(
+            "Bash",
+            {"command": 'python3 -c '
+                        + '\'import json;print(json.load(open("' + SET + '")))\''},
         )
 
 
