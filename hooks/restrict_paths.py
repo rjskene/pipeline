@@ -140,6 +140,59 @@ OUT of scope, stated plainly:
     heredoc body, a delimiter that coincides with an ordinary body line, and
     anything requiring real shell emulation.
 
+Issue #1282 — three observed false-positive classes: the Bash boundary scan
+lifting a path-shaped SUBSTRING out of a quoted literal or a heredoc body
+instead of a real argument; the Linux session scratchpad having no POSIX
+carve-out (only the Windows `Temp/claude/` arm existed); and the
+interpreter-inline protected-file guard (`_protected_write_context` branch 6)
+firing on a pure READ.
+
+IN scope (narrowed/widened, as noted): `extract_paths()`'s Bash branch now
+rebinds `command = _mask_heredoc_bodies(command)` BEFORE the `$VAR` scrub
+passes, so the heredoc mask reaches the boundary scan too (superseding the
+#1190 K7 scope guard — a body naming an absolute out-of-boundary token is now
+DATA, not a path reference). `_bash_segments()` then tokenizes the scrubbed
+command into quote-aware, dequoted shell WORDS (reusing `_mask_quoted_regions`'s
+quote-state rules) instead of scanning for a token-boundary-anchored `/`
+substring: a candidate is now a WHOLE word (or the RHS of a `name=/abs` word,
+covering `X=<abs>`, `of=<abs>`, `--target-directory=<abs>`) — an out-of-
+boundary path embedded MID-WORD or inside a quoted/heredoc fragment is no
+longer a candidate at all, while a quoted WHOLE token (`cat "/etc/passwd"`)
+still is. A grep-family command's (`grep`/`egrep`/`fgrep`/`rg`/`ugrep`/`ag`)
+PATTERN operand (`-e`/`--regexp`, or the first non-flag positional when
+neither that nor `-f`/`--file` is present) is excluded from candidacy — a
+path-shaped regex alternation or an existing directory used only as a match
+pattern is not a file reference. An unterminated quote FAILS CLOSED: the
+tokenizer returns `None` and `extract_paths()` falls back to the prior
+delimiter-anchored scan verbatim, so this change can only DROP candidates
+relative to before, never add new missed-block cases.
+
+`_is_session_scratchpad` gains a second (Linux) arm, called from `is_allowed`'s
+POSIX branch after the `ALLOWED_ROOTS` loop: a REAL path anchored on
+`{os.path.realpath(tempfile.gettempdir()), "/tmp"}` whose remainder matches
+`claude-<uid>/<slug>/<session>/scratchpad(/...|$)` is in-boundary — the direct
+POSIX analogue of the existing Windows `Temp/claude/` carve-out. The rest of
+the temp root is unaffected (still outside the boundary).
+
+`_protected_write_context` branch 6 (interpreter inline-eval ∧ protected
+token) now additionally requires `_INLINE_WRITE_INTENT_RE` to match — an
+`open(...)` call whose mode literal carries `w`/`a`/`x`/`+`, a perl 2-arg
+`open(FH,">...")`, a `.write*(`/`json.dump`/JS `write*Sync`/`createWriteStream`
+call, or an `os.remove`-family/`shutil.copy*`/`shutil.move` call. A pure READ
+(`open(path)` with no mode, `json.load`) no longer trips the guard; branches
+1-5 (redirects, in-place mutators, `dd of=`, `truncate`, cp/mv/install/rsync/ln
+destinations) are unchanged.
+
+OUT of scope, stated plainly: an out-of-boundary absolute path that appears
+ONLY as a substring inside a quoted literal — an inline interpreter script, a
+regex, a commit message — is no longer extracted (consistent with this hook's
+existing documented porosity to a payload hidden in a script or base64); a
+dynamically-built or obfuscated write verb in an inline interpreter body (one
+`_INLINE_WRITE_INTENT_RE` does not lexically match) is no longer blocked; a
+backslash-escaped space inside an otherwise-unquoted word can mis-split
+`_bash_segments`' word boundary (not a shell parser, same doctrine as the rest
+of this hook).
+
 Explicit non-goals, same as the rest of this hook's "best-effort" scope: no
 shell emulation, no `pushd`/subshell/`$VAR` tracking, and an in-project `cd`
 does not re-anchor the absolute-token scan.
@@ -148,6 +201,7 @@ import os
 import posixpath
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -222,18 +276,57 @@ def _canon(p: str) -> str:
 _ALLOWED_CANON_KEYS = [_canon(_RAW_PROJECT_DIR), _canon(_RAW_CLAUDE_HOME)]
 
 
-def _is_session_scratchpad(canon_key: str) -> bool:
-    """True if a Windows-canonicalized path key falls under the Claude session
-    scratchpad root.
+# Issue #1282, class 2 — the POSIX analogue of the Windows `Temp/claude/`
+# carve-out below. Anchored on the REAL system temp dir (realpath'd, so a
+# symlinked /tmp resolves the same way here as it does for the `real` path
+# `is_allowed` compares against) plus the historical bare `/tmp` — a set, so
+# the two collapse to one entry when they are the same path (the common
+# case). Bounded to this exact shape; the rest of the temp root is untouched.
+_SCRATCHPAD_TEMP_ANCHORS = {os.path.realpath(tempfile.gettempdir()), "/tmp"}
+_LINUX_SCRATCHPAD_RE = re.compile(r"^claude-\d+/[^/]+/[^/]+/scratchpad(?:/|$)")
 
-    The harness-advertised session scratchpad lives at
-    ``.../Temp/claude/<project-slug>/<session-id>/scratchpad/...`` (per the
-    Claude Code system prompt). Scoped narrowly to the ``Temp/claude/``
-    subtree — NOT all of Temp — a deliberate, bounded widen of the boundary to
-    Claude's own session temp root, not a general Temp allowlist. (Issue
-    #1153, fingerprint 1.)
+
+def _is_session_scratchpad(key: str, windows_arm: bool = True) -> bool:
+    """True if a path key falls under the Claude session scratchpad root.
+
+    Two arms, selected by `windows_arm` (default True — the pre-existing
+    Windows/MSYS call site is byte-for-byte unchanged). The POSIX call site in
+    `is_allowed` passes `windows_arm=False`: the Windows arm is a bare
+    SUBSTRING test, and a real POSIX path is not a `_canon`'d Windows key, so
+    consulting it there would put ANY absolute path merely CONTAINING a
+    ``/temp/claude/`` segment (e.g. ``<home>/x/temp/claude/y``) inside the
+    boundary — a general escape hatch, not the bounded scratchpad carve-out
+    this function documents below.
+
+    Arms:
+
+    - Windows/MSYS (unchanged): a Windows-canonicalized key (`_canon`'d, so
+      forward-slashed and casefolded) containing ``/temp/claude/`` — the
+      harness-advertised
+      ``.../Temp/claude/<project-slug>/<session-id>/scratchpad/...`` layout
+      (per the Claude Code system prompt). Scoped narrowly to the
+      ``Temp/claude/`` subtree — NOT all of Temp — a deliberate, bounded
+      widen of the boundary to Claude's own session temp root, not a general
+      Temp allowlist. (Issue #1153, fingerprint 1.)
+    - Linux (issue #1282, class 2): a REAL (`os.path.realpath`'d) path
+      anchored on `_SCRATCHPAD_TEMP_ANCHORS` whose remainder matches
+      `_LINUX_SCRATCHPAD_RE` — the same
+      ``<slug>/<session>/scratchpad/...`` shape, direct analogue of the
+      Windows arm above. Everything else under the temp root — including a
+      sibling dir that merely starts with ``claude-`` but does not carry the
+      full slug/session/scratchpad shape — stays outside the boundary (see
+      `test_issue1282_block_non_scratchpad_tmp_write`).
     """
-    return "/temp/claude/" in canon_key
+    if windows_arm and "/temp/claude/" in key:
+        return True
+    for anchor in _SCRATCHPAD_TEMP_ANCHORS:
+        if key == anchor:
+            continue
+        if key.startswith(anchor + "/"):
+            remainder = key[len(anchor) + 1:]
+            if _LINUX_SCRATCHPAD_RE.match(remainder):
+                return True
+    return False
 
 
 def _resolve(path: str) -> str:
@@ -318,6 +411,36 @@ PROTECTED_CMD_PATTERNS = [
     r"(?:^|[\s=>'\"|&;(])(?:\./)?(?:[^\s'\";|&>]*/)?\.claude/hooks/",
     r"\.claude/plugins/cache/[^\s'\";|&>]*/hooks/",
 ]
+
+# Issue #1282, class 3 — write-intent gate for `_protected_write_context`
+# branch 6 (the interpreter inline-eval branch). Branch 6 used to fire on ANY
+# inline body that merely NAMED a protected token, including a pure read
+# (`python3 -c 'json.load(open(".claude/settings.json"))'`). Gating on this
+# alternation restricts it to bodies that actually carry a write verb:
+#   - a Python `open(...)` call whose (optional comma-separated, optionally
+#     `mode=`-keyworded) mode-string literal contains `w`/`a`/`x`/`+`
+#   - a perl 2-arg `open(FH, ">...")` / `open(FH,">>...")` form
+#   - `.write(`/`.writelines(`/`.write_text(`/`.write_bytes(`
+#   - `json.dump` (NOT `json.dumps`, which returns a string without writing —
+#     the trailing `\b` requires a non-word char right after `dump`)
+#   - the Node.js `fs` write family: `writeFileSync`/`appendFileSync`/
+#     `writeFile`/`createWriteStream`
+#   - `os.remove`/`os.unlink`/`os.rename`/`os.replace`/`os.truncate`/
+#     `os.chmod`/`os.chown`
+#   - `shutil.copy*`/`shutil.move`
+# A body with NONE of these markers (a pure `open(...)`-then-read, or a
+# `json.load`) no longer trips branch 6. Residual porosity — a dynamically
+# built or obfuscated write verb this alternation does not lexically match —
+# is unchanged, the same #964 limit as the rest of this scan.
+_INLINE_WRITE_INTENT_RE = re.compile(
+    r"\bopen\s*\([^()]*,\s*(?:mode\s*=\s*)?['\"][^'\"]*[wax+][^'\"]*['\"]"
+    r"|open\s*\([^)]*['\"]?>>?"
+    r"|\.write(?:lines|_text|_bytes)?\s*\("
+    r"|\bjson\.dump\b"
+    r"|\b(?:writeFileSync|appendFileSync|writeFile|createWriteStream)\b"
+    r"|\bos\.(?:remove|unlink|rename|replace|truncate|chmod|chown)\b"
+    r"|\bshutil\.(?:copy\w*|move)\b"
+)
 
 
 def _is_in_worktree(real: str) -> bool:
@@ -616,11 +739,17 @@ def _protected_write_context(command: str) -> bool:
     #    treated as an inline eval — it stays allowed. Residual porosity (a path
     #    built dynamically inside the body, or hidden in an external script
     #    file) is unchanged — the same #964 limit as the boundary check.
+    #
+    #    Issue #1282, class 3: additionally require `_INLINE_WRITE_INTENT_RE`
+    #    to match — a pure READ of a protected control file (`json.load(open(
+    #    ".claude/settings.json"))`) names the token without ever writing it,
+    #    so it no longer trips this branch. See that regex's docstring for the
+    #    write-verb alternation.
     if re.search(
         r"\b(?:python[0-9.]*|node|perl|ruby)\b(?:\s+-\S+)*?"
         r"\s+(?:-[A-Za-z]*[ceE]\b|--eval\b)",
         command,
-    ) and _has_protected_token():
+    ) and _has_protected_token() and _INLINE_WRITE_INTENT_RE.search(command):
         return True
 
     return False
@@ -650,6 +779,15 @@ def is_allowed(path: str) -> bool:
     for root in ALLOWED_ROOTS:
         if real == root or real.startswith(root + os.sep):
             return True
+    # Issue #1282, class 2 — the Linux session scratchpad arm of
+    # `_is_session_scratchpad`. Checked against the realpath'd `real` (not the
+    # raw `path`), consistent with every other POSIX comparison in this
+    # function. `windows_arm=False` keeps the Windows SUBSTRING test off this
+    # branch — otherwise any absolute path merely containing a
+    # `/temp/claude/` segment would be in-boundary, which is a general escape
+    # hatch rather than the bounded scratchpad carve-out class 2 specifies.
+    if _is_session_scratchpad(real, windows_arm=False):
+        return True
     if WORKTREE_PATTERN.match(real):
         return True
     if _worktree_pointer_allows(real):
@@ -1193,6 +1331,188 @@ def _iter_cd_targets(command: str, depth: int = 0):
         yield from _iter_cd_targets(inner, depth=1)
 
 
+def _bash_segments(command: str):
+    """Split `command` into pipeline segments of whole, dequoted shell words.
+
+    Issue #1282, class 1(b). `extract_paths()`'s prior Bash scan captured any
+    `/`-anchored SUBSTRING following a token-boundary character — including
+    one sitting mid-word inside a quoted literal or a heredoc body — rather
+    than a real shell argument. This tokenizer reuses `_mask_quoted_regions`'s
+    quote-state rules (`\\` escapes the next char outside quotes; `'…'`,
+    `"…"`, `$'…'` regions) but, instead of masking quoted interiors, DEQUOTES
+    them: a quoted fragment contributes its literal content (delimiters
+    stripped) to the CURRENT word, and adjacent quoted/unquoted fragments with
+    no whitespace between them concatenate into ONE word (`a"b"c` -> `abc`).
+
+    Splits on UNQUOTED whitespace between words, and on UNQUOTED `;`, `&`,
+    `|`, `(`, `)`, `<`, `>`, or a newline — each of which both closes the
+    current word AND starts a new segment (so a per-segment command word, as
+    consulted by `_grep_pattern_skip_indices`, is always segments[i][0]-ish,
+    never spanning a pipe/redirect boundary).
+
+    Returns None when the scan ends still inside a quoted region — an
+    unterminated quote FAILS CLOSED, mirroring `_mask_quoted_regions`: the
+    caller (`extract_paths`) falls back to the prior delimiter-anchored regex
+    scan verbatim, so this tokenizer can only DROP candidates relative to the
+    old behavior, never add a new missed-block case.
+    """
+    segments: list[list[str]] = []
+    words: list[str] = []
+    chars: list[str] = []
+    quote = ""
+    i = 0
+    n = len(command)
+
+    def _flush_word():
+        if chars:
+            words.append("".join(chars))
+            chars.clear()
+
+    def _flush_segment():
+        _flush_word()
+        segments.append(words[:])
+        words.clear()
+
+    while i < n:
+        ch = command[i]
+        if not quote:
+            if ch == "\\":
+                chars.append(ch)
+                if i + 1 < n:
+                    chars.append(command[i + 1])
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if ch == "$" and command[i + 1:i + 2] == "'":
+                quote = "$'"
+                i += 2
+                continue
+            if ch in "\"'":
+                quote = ch
+                i += 1
+                continue
+            if ch in " \t":
+                _flush_word()
+                i += 1
+                continue
+            if ch == "\n" or ch in ";&|()<>":
+                _flush_segment()
+                i += 1
+                continue
+            chars.append(ch)
+            i += 1
+            continue
+        # Inside a quoted region.
+        if quote == "$'" and ch == "\\":
+            chars.append(ch)
+            if i + 1 < n:
+                chars.append(command[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+        if quote == "$'" and ch == "'":
+            quote = ""
+            i += 1
+            continue
+        if quote == '"' and ch == "\\":
+            chars.append(ch)
+            if i + 1 < n:
+                chars.append(command[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+        if ch == quote:
+            quote = ""
+            i += 1
+            continue
+        chars.append(ch)
+        i += 1
+
+    if quote:
+        return None
+    _flush_segment()
+    return segments
+
+
+# Issue #1282, class 1(d) — grep-family command words whose first non-flag
+# positional (or `-e`/`--regexp` value) is a PATTERN, not a file operand.
+_GREP_FAMILY_WORDS = {"grep", "egrep", "fgrep", "rg", "ugrep", "ag"}
+
+
+def _grep_pattern_skip_indices(words: list) -> set:
+    """Return indices in `words` (one `_bash_segments` pipeline segment) that
+    are the grep-family PATTERN operand, not a file argument to boundary-check.
+
+    Issue #1282, class 1(d). A grep-family command's pattern lives in
+    `-e`/`--regexp` (separate token, or glued: `-e<pattern>` / `--regexp=
+    <pattern>`) when given; otherwise it is the FIRST non-flag positional
+    after the command word. `-f`/`--file` (read patterns from a file) also
+    counts as an explicit pattern source — its own value is a real file
+    argument (not the pattern), so it is walked past but never added to
+    `skip`; its mere presence just suppresses the first-positional fallback,
+    since the pattern is then coming from that file, not a positional.
+    Returns the empty set for a non-grep-family segment or an empty segment.
+    """
+    n = len(words)
+    if n == 0:
+        return set()
+    cmd_idx = None
+    for idx, w in enumerate(words):
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):
+            continue
+        cmd_idx = idx
+        break
+    if cmd_idx is None:
+        return set()
+    if _basename_word(words[cmd_idx]) not in _GREP_FAMILY_WORDS:
+        return set()
+
+    skip = set()
+    has_pattern_source = False
+    first_nonflag = None
+    i = cmd_idx + 1
+    while i < n:
+        w = words[i]
+        if w in ("-e", "--regexp"):
+            has_pattern_source = True
+            if i + 1 < n:
+                skip.add(i + 1)
+            i += 2
+            continue
+        if w.startswith("--regexp="):
+            has_pattern_source = True
+            i += 1
+            continue
+        if w.startswith("-e") and w != "-e" and not w.startswith("--"):
+            has_pattern_source = True  # glued short form: -e<pattern>
+            i += 1
+            continue
+        if w in ("-f", "--file"):
+            has_pattern_source = True
+            i += 2 if i + 1 < n else 1
+            continue
+        if w.startswith("--file="):
+            has_pattern_source = True
+            i += 1
+            continue
+        if w.startswith("-f") and w != "-f" and not w.startswith("--"):
+            has_pattern_source = True  # glued short form: -f<file>
+            i += 1
+            continue
+        if w.startswith("-") and w != "-":
+            i += 1
+            continue
+        if first_nonflag is None:
+            first_nonflag = i
+        i += 1
+    if not has_pattern_source and first_nonflag is not None:
+        skip.add(first_nonflag)
+    return skip
+
+
 def extract_paths() -> list[str]:
     """Extract file paths from tool input based on tool type."""
     paths = []
@@ -1210,6 +1530,12 @@ def extract_paths() -> list[str]:
     elif tool_name == "Bash":
         # Best-effort: extract absolute paths from the command string.
         command = tool_input.get("command", "")
+        # Issue #1282, class 1: mask heredoc BODIES as stdin DATA before this
+        # scan sees them at all (fail-closed on an owning interpreter command
+        # word, unchanged — see `_mask_heredoc_bodies`). Supersedes the #1190
+        # K7 scope guard: a body naming an absolute out-of-boundary token is
+        # now DATA, not a path reference, and is no longer extracted.
+        command = _mask_heredoc_bodies(command)
         # Pre-scrub env-var literals so unsubstituted ${VAR} / $VAR tokens
         # in the command text can't false-positive the path extractor. Two
         # passes: curly form first (explicit braces), then bare form on the
@@ -1252,10 +1578,37 @@ def extract_paths() -> list[str]:
         # class also keeps a backslash-containing token from spanning past a
         # separator and manufacturing a `/`-anchored sub-fragment. No in-repo
         # POSIX path literal contains a backslash, so this is Linux-safe.
-        for m in re.finditer(
-            r'(?:^|(?<=[\s"\'`;<>|&=(]))(/[^\s"\';<>|&\\]+)', scrubbed
-        ):
-            candidate = m.group(1)
+        # Issue #1282, class 1(b)-(d): narrow candidates to whole dequoted
+        # shell WORDS (or the RHS of a `name=<abs>` word), instead of any
+        # `/`-anchored substring following a token-boundary character —
+        # `_bash_segments` reuses `_mask_quoted_regions`'s quote-state rules
+        # to dequote+segment `scrubbed`. An unterminated quote FAILS CLOSED:
+        # `_bash_segments` returns None and we fall back to the prior
+        # delimiter-anchored regex scan verbatim (never fewer candidates than
+        # before).
+        segments = _bash_segments(scrubbed)
+        if segments is None:
+            candidates = [
+                m.group(1)
+                for m in re.finditer(
+                    r'(?:^|(?<=[\s"\'`;<>|&=(]))(/[^\s"\';<>|&\\]+)', scrubbed
+                )
+            ]
+        else:
+            candidates = []
+            for words in segments:
+                skip = _grep_pattern_skip_indices(words)
+                for idx, word in enumerate(words):
+                    if idx in skip:
+                        continue
+                    if word.startswith("/"):
+                        candidates.append(word)
+                        continue
+                    m = re.match(r"^[^\s/=]*=(/.+)$", word)
+                    if m:
+                        candidates.append(m.group(1))
+
+        for candidate in candidates:
             # Skip the bare jq alternative-operator token ("//" with nothing
             # after, captured when surrounded by whitespace as in
             # `.bar // empty`). The candidate must be exactly "//" — broader

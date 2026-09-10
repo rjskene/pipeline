@@ -537,13 +537,14 @@ run_hook_set "Bash multi-line herestring is not a heredoc — cd STILL BLOCKS (#
   '{"tool_name":"Bash","tool_input":{"command":"cat <<< \"x\"\ntrue; cd ../../../../../../.."}}' \
   2 "BLOCKED: cd target outside project boundary"
 
-# 9f (pin, SCOPE GUARD): the heredoc mask must never reach `extract_paths()` —
-# a body naming an ABSOLUTE out-of-boundary token still blocks with the
-# byte-identical PATH message, not the cd one. Cross-checks the python-layer
-# scope guard; this is why the operational-notes amendment stays narrow.
-run_hook_set "Bash heredoc body naming an absolute /etc path STILL BLOCKS with the path message (#1192 scope guard)" \
+# 9f (SUPERSEDED by #1282): the heredoc mask now DOES reach `extract_paths()`,
+# so a body naming an ABSOLUTE out-of-boundary token is data, not a path
+# reference, and is ALLOWED. Byte-identical payload to the #1192 scope guard it
+# replaces; only the verdict flips. Shell-layer twin of the python-layer
+# `test_issue1282_allow_heredoc_body_absolute_token`.
+run_hook_set "Bash heredoc body naming an absolute /etc path is ALLOWED (#1282 supersedes the #1192 scope guard)" \
   '{"tool_name":"Bash","tool_input":{"command":"cat > s.txt <<'\''EOF'\''\nsee /etc/passwd here\nEOF"}}' \
-  2 "BLOCKED: path outside project boundary"
+  0 --no-grep
 
 # 9g (pin, green today AND post-fix): a real escape AFTER the terminator line.
 # A mask that over-runs the terminator flips this to exit 0, so this is the pin
