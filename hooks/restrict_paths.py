@@ -286,10 +286,19 @@ _SCRATCHPAD_TEMP_ANCHORS = {os.path.realpath(tempfile.gettempdir()), "/tmp"}
 _LINUX_SCRATCHPAD_RE = re.compile(r"^claude-\d+/[^/]+/[^/]+/scratchpad(?:/|$)")
 
 
-def _is_session_scratchpad(key: str) -> bool:
+def _is_session_scratchpad(key: str, windows_arm: bool = True) -> bool:
     """True if a path key falls under the Claude session scratchpad root.
 
-    Two arms:
+    Two arms, selected by `windows_arm` (default True — the pre-existing
+    Windows/MSYS call site is byte-for-byte unchanged). The POSIX call site in
+    `is_allowed` passes `windows_arm=False`: the Windows arm is a bare
+    SUBSTRING test, and a real POSIX path is not a `_canon`'d Windows key, so
+    consulting it there would put ANY absolute path merely CONTAINING a
+    ``/temp/claude/`` segment (e.g. ``<home>/x/temp/claude/y``) inside the
+    boundary — a general escape hatch, not the bounded scratchpad carve-out
+    this function documents below.
+
+    Arms:
 
     - Windows/MSYS (unchanged): a Windows-canonicalized key (`_canon`'d, so
       forward-slashed and casefolded) containing ``/temp/claude/`` — the
@@ -308,7 +317,7 @@ def _is_session_scratchpad(key: str) -> bool:
       full slug/session/scratchpad shape — stays outside the boundary (see
       `test_issue1282_block_non_scratchpad_tmp_write`).
     """
-    if "/temp/claude/" in key:
+    if windows_arm and "/temp/claude/" in key:
         return True
     for anchor in _SCRATCHPAD_TEMP_ANCHORS:
         if key == anchor:
@@ -773,8 +782,11 @@ def is_allowed(path: str) -> bool:
     # Issue #1282, class 2 — the Linux session scratchpad arm of
     # `_is_session_scratchpad`. Checked against the realpath'd `real` (not the
     # raw `path`), consistent with every other POSIX comparison in this
-    # function.
-    if _is_session_scratchpad(real):
+    # function. `windows_arm=False` keeps the Windows SUBSTRING test off this
+    # branch — otherwise any absolute path merely containing a
+    # `/temp/claude/` segment would be in-boundary, which is a general escape
+    # hatch rather than the bounded scratchpad carve-out class 2 specifies.
+    if _is_session_scratchpad(real, windows_arm=False):
         return True
     if WORKTREE_PATTERN.match(real):
         return True
