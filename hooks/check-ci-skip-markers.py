@@ -80,7 +80,7 @@ def main() -> int:
                 "in backticks like `skip ci` - and retry.",
                 file=sys.stderr,
             )
-            return 1
+            return 2
     return 0
 
 
