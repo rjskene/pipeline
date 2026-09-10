@@ -40,46 +40,46 @@ run_hook() {
 echo "Case A: git commit -m with [skip ci] -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"git commit -m \"fix [skip ci] handling\""}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
   pass_msg "blocked with marker error"
 else
-  fail_msg "expected rc=1 + BLOCKED message, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2 + BLOCKED message, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case B: gh pr create --title containing [ci skip] -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"gh pr create --title \"[ci skip] fix release-please\" --body \"x\" --base staging"}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
   pass_msg "blocked --title with [ci skip]"
 else
-  fail_msg "expected rc=1, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case C: gh pr create --body containing [no-ci] -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"gh pr create --title \"fix release-please\" --body \"ship [no-ci] guard\" --base staging"}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
   pass_msg "blocked --body with [no-ci]"
 else
-  fail_msg "expected rc=1, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case D: git commit -m with ***NO_CI*** -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"git commit -m \"feat: handle ***NO_CI*** in payloads\""}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
   pass_msg "blocked ***NO_CI*** literal"
 else
-  fail_msg "expected rc=1, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case E: case-insensitive [Skip CI] -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"git commit -m \"[Skip CI] reword\""}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED: CI-blocking marker" "$WORKDIR/err"; then
   pass_msg "blocked [Skip CI] (case-insensitive)"
 else
-  fail_msg "expected rc=1, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case F: safe rephrase 'skip-ci' (no brackets) -> passthrough"

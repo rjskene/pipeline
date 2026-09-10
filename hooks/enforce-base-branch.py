@@ -63,7 +63,7 @@ if not match:
             f"Without --base, `gh pr create` defaults to the repo's default branch on GitHub.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        sys.exit(2)
     # is_edit: title/body-only edits omit --base and are allowed.
     sys.exit(0)
 
@@ -75,6 +75,6 @@ if actual_base != EXPECTED_BASE:
         f"Use --base {EXPECTED_BASE}.",
         file=sys.stderr,
     )
-    sys.exit(1)
+    sys.exit(2)
 
 sys.exit(0)

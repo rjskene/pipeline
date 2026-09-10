@@ -1,6 +1,6 @@
 """
 PreToolUse hook — blocks destructive deletion commands in the Bash tool.
-Exits 1 (blocked) if the command matches a known destructive pattern.
+Exits 2 (blocked) if the command matches a known destructive pattern.
 """
 import os
 import re
@@ -38,4 +38,4 @@ BLOCKED = [
 for pattern in BLOCKED:
     if re.search(pattern, command, re.IGNORECASE):
         print(f"BLOCKED: destructive deletion command detected: {command[:120]}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(2)

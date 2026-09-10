@@ -7,7 +7,7 @@ hard-drops untrusted-author comment bytes; this hook steers callers toward it
 so a forgetful skill or prompt-injection cannot smuggle raw untrusted comment
 text into the agent's context via a bare `gh ... view --json ...comments...`.
 
-Blocked (exit 1 + BLOCKED: stderr):
+Blocked (exit 2 + BLOCKED: stderr):
   - `gh issue view ... --json <fields>` where `comments` is one of the fields
   - `gh pr view ... --json <fields>`    where `comments` is one of the fields
     (both the `--json body,comments` and `--json=body,comments` forms)
@@ -76,7 +76,7 @@ def main():
                 "the comment-trust filter.\n" + HELPER_HINT,
                 file=sys.stderr,
             )
-            return 1
+            return 2
 
     # Bypass 2: direct attachment fetch.
     if "fetch-issue-attachments.sh" in command:
@@ -85,7 +85,7 @@ def main():
             "comment-trust filter.\n" + HELPER_HINT,
             file=sys.stderr,
         )
-        return 1
+        return 2
 
     return 0
 
