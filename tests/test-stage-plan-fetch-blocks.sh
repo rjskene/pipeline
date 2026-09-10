@@ -487,11 +487,11 @@ HNEG
 echo "Test H-neg: enforce-comment-trust.py BLOCKS the raw --json comments pipe"
 inc
 HNEG_RC=$(hook_rc "$TMP/hneg.sh")
-if [ "$HNEG_RC" = "1" ] \
+if [ "$HNEG_RC" = "2" ] \
    && grep -qF 'BLOCKED: raw `gh ... view --json ...comments...` bypasses' "$TMP/hook-err"; then
-  pass_msg "H-neg: pre-fix raw pipe blocked (rc=1 with the BLOCKED diagnostic) — assertion H is non-vacuous"
+  pass_msg "H-neg: pre-fix raw pipe blocked (rc=2 with the BLOCKED diagnostic) — assertion H is non-vacuous"
 else
-  fail_msg "H-neg: expected rc=1 + the BLOCKED diagnostic, got rc=$HNEG_RC"
+  fail_msg "H-neg: expected rc=2 + the BLOCKED diagnostic, got rc=$HNEG_RC"
   if [ -s "$TMP/hook-err" ]; then
     echo "    hook stderr:"; sed 's/^/      /' "$TMP/hook-err"
   fi

@@ -1,6 +1,6 @@
 """Discoverable-via-wrapper unittest for hooks/block_deletions.py (issue #965).
 Drives the real hook as a subprocess with a JSON stdin payload, asserting
-exit code (1 = blocked, 0 = allowed) — mirrors the subprocess-isolation
+exit code (2 = blocked, 0 = allowed) — mirrors the subprocess-isolation
 convention of tests/test-restrict-paths-hook.sh."""
 import os
 import subprocess
@@ -31,7 +31,7 @@ def run_hook(command, allow_deletions=False):
 
 class TestBlockDeletions(unittest.TestCase):
     def assertBlocked(self, cmd):
-        self.assertEqual(run_hook(cmd), 1, f"expected BLOCK (exit 1) for: {cmd}")
+        self.assertEqual(run_hook(cmd), 2, f"expected BLOCK (exit 2) for: {cmd}")
 
     def assertAllowed(self, cmd):
         self.assertEqual(run_hook(cmd), 0, f"expected ALLOW (exit 0) for: {cmd}")

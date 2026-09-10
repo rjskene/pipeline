@@ -40,48 +40,48 @@ run_hook() {
 echo "Case A: gh issue view --json body,comments -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"gh issue view 549 --repo rjskene/pipeline --json body,comments"}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED:" "$WORKDIR/err" \
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err" \
    && grep -q "filter-trusted-comments.sh" "$WORKDIR/err"; then
   pass_msg "blocked raw --json body,comments with helper hint"
 else
-  fail_msg "expected rc=1 + BLOCKED + helper hint, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2 + BLOCKED + helper hint, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case B: gh issue view --json comments --jq -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"gh issue view 12 --json comments --jq .comments"}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
   pass_msg "blocked --json comments"
 else
-  fail_msg "expected rc=1 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case C: gh pr view --json title,comments -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"gh pr view 540 --repo rjskene/pipeline --json title,comments"}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
   pass_msg "blocked gh pr view --json comments"
 else
-  fail_msg "expected rc=1 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case D: direct fetch-issue-attachments.sh -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"bash ${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh 549"}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED:" "$WORKDIR/err" \
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err" \
    && grep -q "filter-trusted-comments.sh" "$WORKDIR/err"; then
   pass_msg "blocked direct attachment fetch with helper hint"
 else
-  fail_msg "expected rc=1 + BLOCKED + helper hint, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2 + BLOCKED + helper hint, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case E: gh issue view --json=body,comments (= form) -> blocked"
 inc
 rc=$(run_hook '{"tool_input":{"command":"gh issue view 7 --json=body,comments"}}')
-if [ "$rc" = "1" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
   pass_msg "blocked --json= form"
 else
-  fail_msg "expected rc=1 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+  fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 echo "Case F: filter-trusted-comments.sh helper invocation -> passthrough"
