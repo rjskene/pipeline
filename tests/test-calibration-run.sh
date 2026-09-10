@@ -295,6 +295,8 @@ expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dang
 expect_sub "launch line strips the loop session's ALLOW_ORCHESTRATOR_EDIT" \
   "$LAUNCH" "env -u ALLOW_ORCHESTRATOR_EDIT"
 expect_sub "launch line tells the session it is headless" "$LAUNCH" "PIPELINE_HEADLESS=true"
+expect_sub "launch line disables the print-mode background wait ceiling" \
+  "$LAUNCH" "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0"
 expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
 
 if [ -s "$CALLS" ]; then

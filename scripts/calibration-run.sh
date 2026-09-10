@@ -229,6 +229,7 @@ build_launch() {
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
   LAUNCH=(env -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
+          CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
           --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" --dangerously-skip-permissions)
