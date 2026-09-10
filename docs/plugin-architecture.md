@@ -2,6 +2,8 @@
 
 Pipeline assets live outside the consumer project. The plugin installs to `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`). Hooks, scripts, and the `tdd-implementer` subagent are registered from the plugin manifest; skills auto-discover from `${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md` and the manifest does not enumerate them. The consumer project's `.claude/` stays clean.
 
+**PreToolUse guard-hook deny contract:** a guard hook must exit **2** on its BLOCKED path (message on stderr) — Claude Code treats any other non-zero exit as a non-blocking error and runs the tool anyway (#1294).
+
 ## Consumer-required rendered scripts
 
 Post-#215/#223, plugin skills invoke worktree/dispatch helpers as `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh` directly; the consumer `.claude/scripts/` mirror has been retired. The doctor's legacy `.template-branch` probe (formerly retained for subtree consumers) has since been removed from `doctor.sh`.
