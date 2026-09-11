@@ -138,6 +138,101 @@ else
   fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
+# ---------------------------------------------------------------------------
+# Issue #1321 — the hook decides from DEQUOTED SEGMENTS (hooks/command_mask.py)
+# rather than a whole-text regex: a `gh issue view … --json …comments` spelling
+# that lives only inside a grep/awk PATTERN operand, a heredoc BODY, or an
+# echo'd quoted string never yields a segment HEADED by `gh` (M/N/O/P/T allow).
+# Shell-headed segments recurse one level (Q/U: `bash -c` / `bash -lc`) and
+# wrapper words are skipped (S: `xargs`), so those still deny. R closes a
+# pre-existing miss: the field list is read from the dequoted word, so a
+# QUOTED `--json "body,comments"` denies too.
+# Quoting inside the single-quoted bash payload: an inner single quote is
+# spliced in as '"'"' (close ', open " containing ', close ", reopen '); `\"`
+# is a JSON double quote and `\n` a JSON newline (Case J's convention).
+# ---------------------------------------------------------------------------
+
+echo "Case M: grep PATTERN operand spelling the raw form -> passthrough (#1321)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"grep -nE '"'"'gh issue view 42 --json body,comments'"'"' skills/"}}')
+if [ "$rc" = "0" ]; then
+  pass_msg "passthrough for quoted grep pattern operand"
+else
+  fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case N: heredoc BODY spelling the raw form -> passthrough (#1321)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"cat <<'"'"'EOF'"'"'\ngh issue view 42 --json body,comments\nEOF"}}')
+if [ "$rc" = "0" ]; then
+  pass_msg "passthrough for heredoc body"
+else
+  fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case O: echo of a double-quoted raw form -> passthrough (#1321)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"echo \"gh issue view 42 --json body,comments\""}}')
+if [ "$rc" = "0" ]; then
+  pass_msg "passthrough for echo'd quoted string"
+else
+  fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case P: awk PROGRAM operand spelling the raw form -> passthrough (#1321)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"awk '"'"'/gh issue view 42 --json comments/{print}'"'"' x.md"}}')
+if [ "$rc" = "0" ]; then
+  pass_msg "passthrough for quoted awk program operand"
+else
+  fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case Q: bash -c '<raw form>' -> blocked (control, #1321 depth-1 recursion)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"bash -c '"'"'gh issue view 42 --json body,comments'"'"'"}}')
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+  pass_msg "blocked bash -c body (executed operand)"
+else
+  fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case R: gh issue view --json \"body,comments\" (quoted field list) -> blocked (#1321)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"gh issue view 42 --json \"body,comments\""}}')
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+  pass_msg "blocked quoted --json field list"
+else
+  fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case S: xargs-wrapped gh issue view --json comments -> blocked (control, #1321 wrapper skip)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"echo 5 | xargs -I{} gh issue view {} --json comments"}}')
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+  pass_msg "blocked xargs-wrapped raw read"
+else
+  fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case T: heredoc BODY naming fetch-issue-attachments.sh -> passthrough (#1321)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"cat <<'"'"'EOF'"'"'\nbash scripts/fetch-issue-attachments.sh 5\nEOF"}}')
+if [ "$rc" = "0" ]; then
+  pass_msg "passthrough for helper name inside heredoc body"
+else
+  fail_msg "expected rc=0, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case U: bash -lc '<raw form>' -> blocked (control, #1321 ^-[a-zA-Z]*c\$ recursion trigger)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"bash -lc '"'"'gh issue view 42 --json body,comments'"'"'"}}')
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+  pass_msg "blocked bash -lc body (executed operand)"
+else
+  fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
 echo "Case L: hook registered dogfood-only in .claude/settings.json"
 inc
 SETTINGS="$SCRIPT_DIR/../.claude/settings.json"

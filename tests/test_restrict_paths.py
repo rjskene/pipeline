@@ -205,6 +205,13 @@ DEVNULL = "/dev/" + "null"
 # merely lives inside a heredoc BODY.
 PROT_BLOCK_MSG = "cannot modify protected file"
 
+# ---------------------------------------------------------------------------
+# Issue #1321 — awk/sed PROGRAM operands. A bare slash fragment (the `ETC`
+# convention) so the `/x/…`-shaped awk/sed programs below are assembled at
+# runtime and this test SOURCE carries no `/`-leading literal.
+# ---------------------------------------------------------------------------
+SL = "/"
+
 
 class TestRestrictPaths(unittest.TestCase):
     @classmethod
@@ -2137,6 +2144,99 @@ class TestRestrictPaths(unittest.TestCase):
             "Bash",
             {"command": 'python3 -c '
                         + '\'import json;print(json.load(open("' + SET + '")))\''},
+        )
+
+    # ======================================================================
+    # Issue #1321 — awk/sed PROGRAM operands
+    # ======================================================================
+    # #1282 taught `extract_paths()` that a grep-family command's first
+    # non-flag positional (or `-e` value) is a PATTERN, not a file operand.
+    # awk/sed have the same shape and were left out: a `/x/{print}` or
+    # `/x/p` program is a `/`-leading dequoted word, and because `/x/…` is
+    # MSYS-shaped for `_looks_windows` (or carries a backslash) the
+    # `os.path.exists()` drop is skipped, so the program reaches the boundary
+    # check and blocks. `-F /` is a bare `/` value word. Post-fix the grep
+    # skip helper is table-driven over grep / sed / awk families
+    # (`_pattern_operand_skip_indices`); the grep branch is byte-for-byte
+    # unchanged, so every #1282 case above stays green.
+
+    # RED today (rc 2 `path outside project boundary: /x/{print}`).
+    def test_issue1321_allow_awk_single_letter_regex_program(self):
+        self.assertAllowed(
+            "Bash", {"command": "awk '" + SL + "x" + SL + "{print}' f.txt"},
+        )
+
+    # RED today (rc 2 on `/a/`): the regex and the action are separated by a
+    # space, so the `/a/` word is a bare two-slash MSYS-shaped token.
+    def test_issue1321_allow_awk_regex_then_space_action(self):
+        self.assertAllowed(
+            "Bash", {"command": "awk '" + SL + "a" + SL + " {print $1}' f.txt"},
+        )
+
+    # RED today (rc 2 on `/x/p`): sed's script operand has the same shape.
+    def test_issue1321_allow_sed_n_regex_program(self):
+        self.assertAllowed(
+            "Bash", {"command": "sed -n '" + SL + "x" + SL + "p' f.txt"},
+        )
+
+    # RED today (rc 2 on `/x/d`): in-place flag before the script operand.
+    def test_issue1321_allow_sed_inplace_regex_script(self):
+        self.assertAllowed(
+            "Bash", {"command": "sed -i '" + SL + "x" + SL + "d' f.txt"},
+        )
+
+    # RED today (rc 2 on `/^## Cycle log/{print \$0}`): the double-quoted
+    # program carries a backslash, so `_looks_windows` is true and the
+    # `exists()` drop is skipped.
+    def test_issue1321_allow_awk_program_double_quoted_backslash(self):
+        self.assertAllowed(
+            "Bash",
+            {"command": 'awk "' + SL + '^## Cycle log' + SL
+                        + '{print \\$0}" f.txt'},
+        )
+
+    # RED today (rc 2 on `/`): the separate-form `-F` value is a bare `/`.
+    def test_issue1321_allow_awk_F_separate_slash(self):
+        self.assertAllowed(
+            "Bash", {"command": "awk -F " + SL + " '{print $NF}' f.txt"},
+        )
+
+    # RED today (rc 2 on `/x/{print}`): the awk family aliases share the
+    # table entry.
+    def test_issue1321_allow_gawk_mawk_nawk_program(self):
+        for cmd in ("gawk", "mawk", "nawk"):
+            with self.subTest(cmd=cmd):
+                self.assertAllowed(
+                    "Bash",
+                    {"command": cmd + " '" + SL + "x" + SL + "{print}' f.txt"},
+                )
+
+    # KEEP pin — green from this RED commit (the #1282 grep branch already
+    # dequotes the pattern into one non-`/`-leading word); pins the cycle-7
+    # retro shape so a Task 5 table regression on the grep branch is caught.
+    def test_issue1321_allow_grep_quoted_pattern_bare_slash(self):
+        self.assertAllowed(
+            "Bash", {"command": "grep -c 'Approve " + SL + " Revise' f.txt"},
+        )
+
+    # RED today: blocks, but the message names `/x/` (the program), not the
+    # out-of-boundary FILE operand that follows it — `assertBlockedWith`
+    # fails on the substring. Post-fix the program is skipped and the block
+    # names the real target.
+    def test_issue1321_block_awk_program_then_out_of_boundary_file(self):
+        self.assertBlockedWith(
+            PATH_BLOCK_MSG + ": " + ETC + "/passwd", "Bash",
+            {"command": "awk '" + SL + "x" + SL + "' " + ETC + "/passwd"},
+        )
+
+    # CONTROL — green from this RED commit (`s/a/b/` never was a candidate,
+    # so the block already names the file); load-bearing once the sed table
+    # entry exists: fails a GREEN whose `-e` handling swallows the following
+    # file operand.
+    def test_issue1321_block_sed_script_then_out_of_boundary_file(self):
+        self.assertBlockedWith(
+            PATH_BLOCK_MSG + ": " + ETC + "/passwd", "Bash",
+            {"command": "sed -e 's/a/b/' " + ETC + "/passwd"},
         )
 
 

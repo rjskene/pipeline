@@ -1347,7 +1347,7 @@ def _bash_segments(command: str):
     Splits on UNQUOTED whitespace between words, and on UNQUOTED `;`, `&`,
     `|`, `(`, `)`, `<`, `>`, or a newline — each of which both closes the
     current word AND starts a new segment (so a per-segment command word, as
-    consulted by `_grep_pattern_skip_indices`, is always segments[i][0]-ish,
+    consulted by `_pattern_operand_skip_indices`, is always segments[i][0]-ish,
     never spanning a pipe/redirect boundary).
 
     Returns None when the scan ends still inside a quoted region — an
@@ -1437,24 +1437,62 @@ def _bash_segments(command: str):
     return segments
 
 
-# Issue #1282, class 1(d) — grep-family command words whose first non-flag
-# positional (or `-e`/`--regexp` value) is a PATTERN, not a file operand.
-_GREP_FAMILY_WORDS = {"grep", "egrep", "fgrep", "rg", "ugrep", "ag"}
+# Issue #1321 — pattern/program-operand families sharing the #1282 grep
+# shape: a command whose PATTERN/PROGRAM operand is a `/`-leading or
+# backslash-carrying string is a boundary-check false positive, because that
+# shape is MSYS-shaped for `_looks_windows` (or carries a backslash), which
+# skips the `os.path.exists()` drop that would otherwise filter out a
+# non-existent path fragment — the program then reaches the boundary check
+# and blocks on its own text. `{cmd: {flag: kind}}`, where `kind` is one of:
+#   pattern — the flag's value is pattern/program text, never a file operand:
+#             skip it (exclude from candidacy) AND suppress the
+#             first-positional fallback (the pattern already has a source).
+#   file    — the flag's value IS a real file argument (`-f`/`--file` reads
+#             the pattern/program FROM that file): walked past normally (a
+#             candidate), but still suppresses the first-positional fallback
+#             (the pattern/program is now coming from the file, not a
+#             positional).
+#   sep     — the flag's value is a non-file scalar (awk's field separator):
+#             skip it, but do NOT suppress the fallback.
+#   value   — the flag's value is an ordinary argument (awk's `-v NAME=val`):
+#             walked past normally, do NOT suppress the fallback.
+# The grep family is byte-for-byte the #1282 behavior (`-e`/`--regexp`
+# pattern, `-f`/`--file` file).
+_PATTERN_OPERAND_FAMILIES = {
+    **{
+        cmd: {"-e": "pattern", "--regexp": "pattern", "-f": "file", "--file": "file"}
+        for cmd in ("grep", "egrep", "fgrep", "rg", "ugrep", "ag")
+    },
+    **{
+        cmd: {
+            "-e": "pattern", "--expression": "pattern",
+            "-f": "file", "--file": "file",
+            "-l": "value", "--line-length": "value",
+        }
+        for cmd in ("sed", "gsed")
+    },
+    **{
+        cmd: {
+            "-e": "pattern", "--source": "pattern",
+            "-f": "file", "--file": "file",
+            "-F": "sep", "--field-separator": "sep",
+            "-v": "value", "--assign": "value",
+        }
+        for cmd in ("awk", "gawk", "mawk", "nawk")
+    },
+}
 
 
-def _grep_pattern_skip_indices(words: list) -> set:
+def _pattern_operand_skip_indices(words: list) -> set:
     """Return indices in `words` (one `_bash_segments` pipeline segment) that
-    are the grep-family PATTERN operand, not a file argument to boundary-check.
+    are a PATTERN/PROGRAM operand, not a file argument to boundary-check.
 
-    Issue #1282, class 1(d). A grep-family command's pattern lives in
-    `-e`/`--regexp` (separate token, or glued: `-e<pattern>` / `--regexp=
-    <pattern>`) when given; otherwise it is the FIRST non-flag positional
-    after the command word. `-f`/`--file` (read patterns from a file) also
-    counts as an explicit pattern source — its own value is a real file
-    argument (not the pattern), so it is walked past but never added to
-    `skip`; its mere presence just suppresses the first-positional fallback,
-    since the pattern is then coming from that file, not a positional.
-    Returns the empty set for a non-grep-family segment or an empty segment.
+    Issue #1282 (class 1(d), grep only) / #1321 (generalised, table-driven —
+    see `_PATTERN_OPERAND_FAMILIES`). A family command's pattern/program
+    lives in an explicit flag's value (separate token `-e pat` / glued
+    `-e<pat>` / `--long=<pat>`) when given; otherwise it is the FIRST
+    non-flag positional after the command word. Returns the empty set for a
+    command not in `_PATTERN_OPERAND_FAMILIES`, or an empty segment.
     """
     n = len(words)
     if n == 0:
@@ -1467,7 +1505,8 @@ def _grep_pattern_skip_indices(words: list) -> set:
         break
     if cmd_idx is None:
         return set()
-    if _basename_word(words[cmd_idx]) not in _GREP_FAMILY_WORDS:
+    family = _PATTERN_OPERAND_FAMILIES.get(_basename_word(words[cmd_idx]))
+    if family is None:
         return set()
 
     skip = set()
@@ -1476,31 +1515,25 @@ def _grep_pattern_skip_indices(words: list) -> set:
     i = cmd_idx + 1
     while i < n:
         w = words[i]
-        if w in ("-e", "--regexp"):
-            has_pattern_source = True
-            if i + 1 < n:
-                skip.add(i + 1)
-            i += 2
-            continue
-        if w.startswith("--regexp="):
-            has_pattern_source = True
-            i += 1
-            continue
-        if w.startswith("-e") and w != "-e" and not w.startswith("--"):
-            has_pattern_source = True  # glued short form: -e<pattern>
-            i += 1
-            continue
-        if w in ("-f", "--file"):
-            has_pattern_source = True
-            i += 2 if i + 1 < n else 1
-            continue
-        if w.startswith("--file="):
-            has_pattern_source = True
-            i += 1
-            continue
-        if w.startswith("-f") and w != "-f" and not w.startswith("--"):
-            has_pattern_source = True  # glued short form: -f<file>
-            i += 1
+        kind = None
+        glued = False
+        if w in family:
+            kind = family[w]
+        elif w.startswith("--") and "=" in w and w.split("=", 1)[0] in family:
+            kind = family[w.split("=", 1)[0]]
+            glued = True
+        elif not w.startswith("--") and len(w) > 2 and w[:2] in family:
+            kind = family[w[:2]]
+            glued = True
+        if kind is not None:
+            if kind in ("pattern", "file"):
+                has_pattern_source = True
+            if not glued:
+                if kind in ("pattern", "sep") and i + 1 < n:
+                    skip.add(i + 1)
+                i += 2
+            else:
+                i += 1
             continue
         if w.startswith("-") and w != "-":
             i += 1
@@ -1597,7 +1630,7 @@ def extract_paths() -> list[str]:
         else:
             candidates = []
             for words in segments:
-                skip = _grep_pattern_skip_indices(words)
+                skip = _pattern_operand_skip_indices(words)
                 for idx, word in enumerate(words):
                     if idx in skip:
                         continue
