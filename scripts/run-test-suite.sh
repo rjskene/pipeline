@@ -15,6 +15,7 @@
 #   scripts/run-test-suite.sh [tests-dir]
 #   TESTS_DIR=path scripts/run-test-suite.sh
 #   PIPELINE_TEST_PARALLELISM=N scripts/run-test-suite.sh   # override -P
+#   PIPELINE_TEST_LEAK_GUARD_REPO=path scripts/run-test-suite.sh   # redirect leak guard ("" = off)
 #   scripts/run-test-suite.sh --chunk k/n [tests-dir]        # FOREGROUND chunk mode
 #   TESTS_DIR=path scripts/run-test-suite.sh --chunk k/n
 #
@@ -27,6 +28,28 @@
 #
 # Each test is wrapped in `timeout 300` and `</dev/null` (mirrors the live
 # runner's hang-guard so an interactive `read` or a hang can't wedge a job).
+#
+# Post-suite worktree/branch leak guard (issue #1316). Fixture tests that drive
+# scripts/setup-worktree.sh once cut REAL worktrees + branches in the live repo
+# when a session exported PIPELINE_PROJECT_ROOT (the script honours that var
+# over cwd). The runner now snapshots `git worktree list --porcelain` and
+# `git branch --list` of the guard repo BEFORE Phase 1 and again AFTER the
+# serial retry, and DIFFS them: every entry that appeared during the run is
+# printed on stdout as `LEAK: worktree=<path> branch=<name>` (a leaked branch
+# attached to a leaked worktree is reported once on that line; an orphan branch
+# prints `worktree=-`), a `::error::leak guard: ...` summary goes to stderr, and
+# the run reds (`RESULT=fail` in chunk mode, exit 1 in both modes). A clean run
+# emits nothing, so default-mode output stays byte-compatible. Removals are not
+# leaks. The guard repo is the checkout this script lives in (REPO_ROOT; when
+# that is a linked worktree, `git -C` there still lists the WHOLE shared repo's
+# worktrees and branches — exactly where the leak lands);
+# PIPELINE_TEST_LEAK_GUARD_REPO=<path> redirects it (how the regression test
+# drives the guard against a throwaway repo) and an explicitly EMPTY value
+# disables it. Known false-positive shape: a legitimate, concurrently-started
+# orchestrator worktree (a real issue-number name such as wt-1317-<slug>, not a
+# wt-100-bar-style fixture name) landing mid-run — that is not a suite failure;
+# re-run, or set PIPELINE_TEST_LEAK_GUARD_REPO="" for that run. A guard repo
+# that is not a git repository is silently skipped.
 
 set -uo pipefail
 
@@ -93,6 +116,45 @@ esac
 if [ ! -d "$TESTS_DIR" ]; then
   echo "run-test-suite.sh: tests dir not found: $TESTS_DIR" >&2
   exit 1
+fi
+
+# Leak-guard repo (#1316): COLON-LESS expansion (precedent PIPELINE_CI_CHECK_ENABLED)
+# — unset ⇒ the repo this runner lives in; a path ⇒ redirect; explicitly empty
+# ⇒ guard OFF. Every guard step below is gated on `[ -n "$GUARD_REPO" ]` and the
+# empty value never reaches the rev-parse probe (`git -C "" rev-parse` succeeds
+# on the cwd repo, which would silently re-enable the guard). A non-repo path
+# clears the guard rather than erroring.
+GUARD_REPO="${PIPELINE_TEST_LEAK_GUARD_REPO-$REPO_ROOT}"
+if [ -n "$GUARD_REPO" ]; then
+  if ! git -C "$GUARD_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    GUARD_REPO=""
+  fi
+fi
+
+# Sorted snapshot of a repo's worktree + local-branch surfaces:
+#   W<TAB><path><TAB><branch>   one per `git worktree list --porcelain` entry
+#                               (branch = refs/heads/ stripped, or "(detached)")
+#   B<TAB><name>                one per local branch
+# Paths are taken as everything after the `worktree ` prefix so spaces survive.
+leak_snapshot() {
+  local repo="$1"
+  {
+    git -C "$repo" worktree list --porcelain 2>/dev/null \
+      | awk '
+          index($0, "worktree ") == 1 { path = substr($0, 10); branch = "(detached)"; next }
+          index($0, "branch ") == 1   { b = substr($0, 8); sub("^refs/heads/", "", b); branch = b; next }
+          $0 == ""                    { if (path != "") printf "W\t%s\t%s\n", path, branch; path = "" }
+          END                         { if (path != "") printf "W\t%s\t%s\n", path, branch }
+        '
+    git -C "$repo" branch --list --format='%(refname:short)' 2>/dev/null \
+      | awk '{ printf "B\t%s\n", $0 }'
+  } | LC_ALL=C sort
+}
+
+LEAK_BEFORE=""
+if [ -n "$GUARD_REPO" ]; then
+  LEAK_BEFORE="$(mktemp)"
+  leak_snapshot "$GUARD_REPO" > "$LEAK_BEFORE"
 fi
 
 # Parallelism: explicit override, else core count, else 1.
@@ -197,6 +259,35 @@ if [ -s "$SENTINEL" ]; then
   CHUNK_RESULT="fail"
 fi
 rm -f "$SENTINEL"
+
+# Post-suite leak guard (#1316): diff the guard repo's worktree/branch snapshot
+# against the pre-run one. New W entries print one `LEAK:` line each and
+# consume their branch; new B entries not consumed print with `worktree=-`.
+# Any LEAK line reds the run. Nothing is printed on a clean run.
+if [ -n "$GUARD_REPO" ] && [ -n "$LEAK_BEFORE" ]; then
+  LEAK_AFTER="$(mktemp)"
+  LEAK_REPORT="$(mktemp)"
+  leak_snapshot "$GUARD_REPO" > "$LEAK_AFTER"
+  LC_ALL=C comm -13 "$LEAK_BEFORE" "$LEAK_AFTER" \
+    | awk -F'\t' '
+        $1 == "W" { printf "LEAK: worktree=%s branch=%s\n", $2, $3; consumed[$3] = 1; next }
+        $1 == "B" { pending[++np] = $2; next }
+        END {
+          for (i = 1; i <= np; i++) {
+            if (!(pending[i] in consumed)) printf "LEAK: worktree=- branch=%s\n", pending[i]
+          }
+        }
+      ' > "$LEAK_REPORT"
+  if [ -s "$LEAK_REPORT" ]; then
+    cat "$LEAK_REPORT"
+    leak_n="$(wc -l < "$LEAK_REPORT" | tr -d '[:space:]')"
+    leak_noun="entries"
+    [ "$leak_n" -eq 1 ] && leak_noun="entry"
+    echo "::error::leak guard: $leak_n new worktree/branch $leak_noun in $GUARD_REPO after the suite" >&2
+    CHUNK_RESULT="fail"
+  fi
+  rm -f "$LEAK_BEFORE" "$LEAK_AFTER" "$LEAK_REPORT"
+fi
 
 if [ "$CHUNK_MODE" -eq 1 ]; then
   echo "CHUNK=$CHUNK_K/$CHUNK_N FILES=$FILE_COUNT RESULT=$CHUNK_RESULT"
