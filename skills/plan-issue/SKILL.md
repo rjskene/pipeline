@@ -268,7 +268,7 @@ Receive an issue number as argument (or from context).
 
 ## Revision handling
 
-When revising (user feedback on a prior plan exists), `**Changes from previous plan:**` appears first. Re-derive `PATH_LETTER` from the current label in step 3a — do NOT copy the prior plan's Task 0 block verbatim, since the user may have relabeled.
+When revising (user feedback on a prior plan exists), `**Changes from previous plan:**` appears first. **Round ≥2 (#1317):** when `$TRUSTED` holds a `## Plan Evaluation` with `**Verdict:** Revise`, apply its prescribed change verbatim — add no new scenarios, tests or sections; do not widen scope — and open `**Changes from previous plan:**` with the one line `Round <k>: applied <summary>` (k = this plan's round number). Re-derive `PATH_LETTER` from the current label in step 3a — do NOT copy the prior plan's Task 0 block verbatim, since the user may have relabeled.
 
 ## Comment trust
 

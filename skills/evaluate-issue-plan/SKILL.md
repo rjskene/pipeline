@@ -191,7 +191,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    **Recommendations:** (specific, actionable changes — not vague suggestions)
    ```
 
-   Pick `Approve` only when there are no blocking issues; otherwise pick `Revise` and list exactly what must change.
+   Pick `Approve` only when there are no blocking issues; otherwise pick `Revise` and, under `**Recommendations:**`, prescribe the concrete change — file + what to add, remove or replace — never a direction: the next planner applies it verbatim (#1317). On round ≥2, verify only that the prescribed change landed; a new finding is a new round only if BLOCKING.
 
 6. **Update labels** (verdict values per the template above):
 
