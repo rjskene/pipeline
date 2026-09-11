@@ -284,6 +284,9 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    The resolver emits `tier-max(this issue's plan model, PIPELINE_STAGE_MODEL_PLAN_EVAL)` (unset ⇒ `opus`), so the **gate never lands below its producer** — a PATH C plan produced on `fable` is gated on `fable` (`REASON=follows-producer`), and a knob set below the producer cannot drop it. Plan approval is an auto-gate with no human behind it in fullsend, which is why equal-tier is acceptable but below-tier is not.
    **Trust profile (#1291):** if `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D), do NOT dispatch the evaluator: run `gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-pending"`, post the audit comment `plan-eval skipped: lean profile`, and record `plan_eval=skip` for Step 6's log line.
 3. **Re-plan loop** — for any issue whose evaluation verdict is "Revise": re-run `/pipeline:plan-issue N`, then `/pipeline:evaluate-issue-plan N` — **each re-dispatch re-resolves its stage pin** exactly as in Step 1b / Step 2 (`resolve-stage-model.sh <N> plan` / `<N> plan-eval`) and always passes `model=$MODEL`. Repeat until all pass (max 3 iterations per issue). If an issue still fails after 3 iterations, skip it and flag it in the final report.
+
+   **Binding rule (#1317):** from round 2 on, the re-plan dispatch prompt MUST quote the evaluator's `Revise` prescription verbatim with "apply exactly this; add no new scenarios, tests or sections". The follow-up evaluate dispatch MUST say "verify only that the prescribed change landed; a new finding is a new round only if BLOCKING".
+
 4. **Approve** — for every issue now at `plan-reviewed`, run:
    ```bash
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-reviewed"
