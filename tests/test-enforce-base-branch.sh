@@ -157,6 +157,53 @@ else
   fail_msg "Case H: expected rc!=0, got rc=$rc"
 fi
 
+# --- Unexpanded $PIPELINE_BASE_BRANCH token (#1323) ------------------------
+# skills/execute-issue-plan/SKILL.md Step 9b prescribes
+# `gh pr create --base "$PIPELINE_BASE_BRANCH" ...` — quoted but unexpanded
+# in the command TEXT the hook sees. The token is equal-by-construction to
+# EXPECTED_BASE when PIPELINE_BASE_BRANCH is unset in the hook's env (the
+# shell would expand it from the same pipeline.config); if it IS exported to
+# a different branch, that disagreement must still deny.
+VAR_TOKEN_STR='$'"PIPELINE_BASE_BRANCH"
+VAR_TOKEN_BRACED='${'"PIPELINE_BASE_BRANCH"'}'
+
+echo "Case I: quoted \$PIPELINE_BASE_BRANCH token allows (env unset)"
+inc
+rc=$(run_hook "gh pr create --base \"$VAR_TOKEN_STR\" --title T --body B")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case I: allowed"
+else
+  fail_msg "Case I: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case J: quoted \${PIPELINE_BASE_BRANCH} braced token allows (env unset)"
+inc
+rc=$(run_hook "gh pr create --base \"$VAR_TOKEN_BRACED\" --title T --body B")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case J: allowed"
+else
+  fail_msg "Case J: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case K: \$PIPELINE_BASE_BRANCH token blocks when exported to a different branch"
+inc
+payload=$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' \
+  "gh pr create --base \"$VAR_TOKEN_STR\" --title T --body B")
+set +e
+echo "$payload" | env -i \
+  HOME="$HOME" \
+  PATH="/usr/bin:/bin" \
+  CLAUDE_PROJECT_DIR="$PROJ" \
+  PIPELINE_BASE_BRANCH="main" \
+  python3 "$HOOK" >"$WORKDIR/out" 2>"$WORKDIR/err"
+rc=$?
+set -e
+if [ "$rc" != "0" ]; then
+  pass_msg "Case K: blocked (exported PIPELINE_BASE_BRANCH=main disagrees with configured base staging)"
+else
+  fail_msg "Case K: expected rc!=0, got rc=$rc"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
