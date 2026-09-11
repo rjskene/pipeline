@@ -4,8 +4,8 @@ set -euo pipefail
 # Regression guard (#1251, #1253): the Step 1 plan fetch in ALL THREE stages
 # that read the approved plan off a GitHub issue comment must
 #   (a) be HOOK-LEGAL — survive hooks/enforce-comment-trust.py (#549);
-#   (b) TRUST-GATE before selecting — route every comment through #545's
-#       scripts/filter-trusted-comments.sh `is-trusted-author`; and
+#   (b) TRUST-GATE before selecting — route the fetch through #545's
+#       scripts/filter-trusted-comments.sh --json (#1315); and
 #   (c) select by ANCHORED HEADING via scripts/select-plan-comment.sh (#1240),
 #       never by a loose substring match.
 #
@@ -314,13 +314,12 @@ for ROW in "${SITES[@]}"; do
     pass_msg "$TAG: loose contains(...) | last selector absent from the Step 1 block"
   fi
 
-  echo "Test $SITE_N.T: block routes trust through filter-trusted-comments.sh is-trusted-author"
+  echo "Test $SITE_N.T: block routes trust through filter-trusted-comments.sh --json (#1315)"
   inc
-  if grep -qF 'filter-trusted-comments.sh' <<<"$NONCOMMENT" \
-     && grep -qF 'is-trusted-author' <<<"$NONCOMMENT"; then
-    pass_msg "$TAG: trust gate delegated to #545's is-trusted-author (helper named in the command string)"
+  if grep -qE 'filter-trusted-comments\.sh"?[[:space:]]+--json[[:space:]]' <<<"$NONCOMMENT"; then
+    pass_msg "$TAG: comment fetch delegated to #545's filter-trusted-comments.sh --json (helper named in the command string)"
   else
-    fail_msg "$TAG: Step 1 block dropped the filter-trusted-comments.sh is-trusted-author trust gate"
+    fail_msg "$TAG: Step 1 block does not fetch through filter-trusted-comments.sh --json"
   fi
 
   # -------------------------------------------------------------------------
@@ -418,12 +417,12 @@ APPEND
     pass_msg "$TAG: untrusted fake plan hard-dropped before selection"
   fi
 
-  echo "Test $SITE_N.5d: stderr carries the dropped-author audit line"
+  echo "Test $SITE_N.5d: stderr carries the helper's dropped-author audit line"
   inc
-  if [ -s "$TMP/stderr-$SITE_N" ] && grep -qF 'ignored untrusted comment' "$TMP/stderr-$SITE_N"; then
-    pass_msg "$TAG: stderr audits the dropped untrusted author"
+  if [ -s "$TMP/stderr-$SITE_N" ] && grep -qE 'ignored [0-9]+ comments from untrusted authors' "$TMP/stderr-$SITE_N"; then
+    pass_msg "$TAG: stderr carries filter-trusted-comments.sh's 'ignored <n> comments from untrusted authors' audit"
   else
-    fail_msg "$TAG: stderr does not carry an 'ignored untrusted comment' audit line"
+    fail_msg "$TAG: stderr does not carry filter-trusted-comments.sh's 'ignored <n> comments from untrusted authors' audit line"
     dump_run
   fi
 

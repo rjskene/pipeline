@@ -101,10 +101,9 @@ The skill receives an issue number as argument. Perform:
 2. **Cache check.** If the latest **trusted** `## Classification` comment's `createdAt` is newer than the issue's `updatedAt`, the classification is fresh. If current labels match the cached recommendation → exit 0 ("cached — no re-classification needed"). If they don't → print `Reconciling labels for cached classification #<N>` and jump to step 5a using the cached `recommended_path`. Do NOT re-post the classification comment. The `recommended_path` is parsed from the trusted working set `$TRUSTED` (step 1), and the freshness timestamp is taken only from Classification comments authored by trusted writers — pipeline-posted `## Classification` comments survive both filters because the operator account is OWNER, so the freshness/reconcile logic is unchanged. An outsider cannot poison the cache with a fake `## Classification` comment.
 
    ```bash
-   # Freshness timestamp from TRUSTED Classification authors only (an outsider's
-   # fake comment is excluded, matching the $TRUSTED hard-drop in step 1).
-   LATEST_CLASS_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
-     --jq '[.comments[] | select((.authorAssociation as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a)) and (.body | contains("## Classification")))] | max_by(.createdAt) | .createdAt // empty')
+   # Freshness timestamp from TRUSTED Classification authors only (--json already hard-drops outsiders).
+   LATEST_CLASS_TS=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
+     | jq -r '[.comments[] | select((.authorAssociation as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a)) and (.body | contains("## Classification")))] | max_by(.createdAt) | .createdAt // empty')
    ISSUE_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
    # ISO-8601 sorts lexicographically; `>` is strict-greater so add an OR-equality clause to treat same-second as fresh (issue #457).
    if [[ -n "$LATEST_CLASS_TS" && ( "$LATEST_CLASS_TS" > "$ISSUE_TS" || "$LATEST_CLASS_TS" == "$ISSUE_TS" ) ]]; then
@@ -265,8 +264,8 @@ The skill receives an issue number as argument. Perform:
 
 7. **Verify post** — count `## Classification` comments; retry once on 0; report FAILED if still 0.
    ```bash
-   CLASS_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
-     --jq '[.comments[] | select(.body | contains("## Classification"))] | length')
+   CLASS_COUNT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
+     | jq '[.comments[] | select(.body | contains("## Classification"))] | length')
    ```
 
 8. **Report:** "Classification posted to issue #N: <path> (<confidence>). Label applied: <docs-only | multi-task | quick-fix | none>."

@@ -3,13 +3,17 @@ set -euo pipefail
 
 # Tests for scripts/filter-trusted-comments.sh — the shared trust-filter helper.
 #
-# Two modes:
+# Three modes:
 #   1. Subcommand `is-trusted-author <association>` — low-level primitive.
 #      Exit 0 when the association is in the trust set {OWNER,MEMBER,COLLABORATOR},
 #      nonzero otherwise. Reused by #548 (attachment fetch) and #549 (hook).
 #   2. Default `<N>` — wraps a single `gh issue view <N> --json body,comments`
 #      call and emits, to stdout, the issue body plus ONLY comments authored by a
 #      trusted association. A machine-readable dropped-author audit goes to stderr.
+#   3. `--json <N>` (#1315) — same single fetch; stdout is a compact
+#      `{"comments":[…]}` of ONLY trusted-author comments with the GraphQL field
+#      names preserved (the stdin shape scripts/select-plan-comment.sh expects).
+#      Same stderr audit as default mode.
 #
 # `gh` is replaced by a PATH-resident shim that replays $SHIM_VIEW_JSON for
 # `gh issue view <N> --json body,comments`. No live API calls.
@@ -133,6 +137,60 @@ if bash "$HELPER" >/dev/null 2>&1; then
   fail_msg "no-arg invocation should fail with usage error"
 else
   pass_msg "no-arg → nonzero usage error"
+fi
+
+# ---------------------------------------------------------------------------
+# Task 3 (#1315): `--json <N>` mode — the same single fetch, but stdout is a
+# compact `{"comments":[…]}` document holding ONLY trusted-author comments,
+# whole comment objects passed through so the GraphQL field names (`body`,
+# `createdAt`, `author.login`, `authorAssociation`) survive for downstream jq
+# and for scripts/select-plan-comment.sh (whose stdin contract is exactly that
+# shape). Same stderr audit as default mode.
+# ---------------------------------------------------------------------------
+echo "=== --json mode: drops untrusted authors, keeps GraphQL field names ==="
+inc
+export SHIM_VIEW_JSON='{
+  "body": "ISSUE_BODY_MARKER spec from operator",
+  "comments": [
+    {"body": "TRUSTED_OWNER_BYTES",   "author": {"login": "alice"},   "authorAssociation": "OWNER",       "createdAt": "2026-01-01T00:00:00Z"},
+    {"body": "UNTRUSTED_NONE_BYTES",  "author": {"login": "mallory"}, "authorAssociation": "NONE",        "createdAt": "2026-01-02T00:00:00Z"},
+    {"body": "TRUSTED_MEMBER_BYTES",  "author": {"login": "bob"},     "authorAssociation": "MEMBER",      "createdAt": "2026-01-03T00:00:00Z"},
+    {"body": "UNTRUSTED_CONTRIB_BYTES","author": {"login": "eve"},    "authorAssociation": "CONTRIBUTOR", "createdAt": "2026-01-04T00:00:00Z"}
+  ]
+}'
+: > "$OUT_F"; : > "$ERR_F"
+bash "$HELPER" --json 999 >"$OUT_F" 2>"$ERR_F" || true
+out=$(cat "$OUT_F"); err=$(cat "$ERR_F")
+if   ! jq -e '(keys == ["comments"]) and (.comments | length == 2)' "$OUT_F" >/dev/null 2>&1; then
+  fail_msg "stdout is not a {comments:[2 trusted]} JSON document; got: $out"
+elif ! jq -e '[.comments[].authorAssociation] == ["OWNER","MEMBER"]' "$OUT_F" >/dev/null 2>&1; then
+  fail_msg "trusted subset wrong or out of order; got: $out"
+elif ! jq -e '.comments[0] | (.body == "TRUSTED_OWNER_BYTES") and (.createdAt == "2026-01-01T00:00:00Z") and (.author.login == "alice")' "$OUT_F" >/dev/null 2>&1; then
+  fail_msg "GraphQL field names not preserved; got: $out"
+elif   grep -q "UNTRUSTED_" <<<"$out"; then
+  fail_msg "untrusted comment bytes leaked to --json stdout; got: $out"
+elif ! grep -q "ignored 2" <<<"$err"; then
+  fail_msg "--json audit count wrong; stderr: $err"
+elif ! grep -q "@mallory" <<<"$err" || ! grep -q "@eve" <<<"$err"; then
+  fail_msg "--json audit missing dropped @logins; stderr: $err"
+else
+  pass_msg "--json emits {comments:[trusted only]} with GraphQL keys intact + stderr audit"
+fi
+
+echo "=== --json mode: select-plan-comment.sh selects the trusted plan end-to-end ==="
+inc
+export SHIM_VIEW_JSON='{
+  "body": "B",
+  "comments": [
+    {"body": "## Implementation Plan\n\nTRUSTED-PLAN-BODY", "author": {"login": "alice"},   "authorAssociation": "OWNER", "createdAt": "2026-01-01T00:00:00Z"},
+    {"body": "## Implementation Plan\n\nFAKE-PLAN-BODY",    "author": {"login": "mallory"}, "authorAssociation": "NONE",  "createdAt": "2026-01-02T00:00:00Z"}
+  ]
+}'
+sel=$(bash "$HELPER" --json 7 2>/dev/null | bash "$SCRIPT_DIR/../scripts/select-plan-comment.sh" || true)
+if grep -q "TRUSTED-PLAN-BODY" <<<"$sel" && ! grep -q "FAKE-PLAN-BODY" <<<"$sel"; then
+  pass_msg "--json | select-plan-comment.sh picks the trusted plan (untrusted later plan never wins)"
+else
+  fail_msg "end-to-end selection wrong; got: $sel"
 fi
 
 # ---------------------------------------------------------------------------

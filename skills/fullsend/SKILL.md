@@ -271,8 +271,8 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    - **`--debug-first` propagation (#997):** when fullsend was invoked with `--debug-first`, each dispatched plan-issue Agent's prompt MUST carry the flag (e.g. `/pipeline:plan-issue N --debug-first`) so the subagent runs plan-issue's Step 4a diagnosis gate. The flag is a one-off invocation toggle and does NOT live on the issue, so it has to be threaded through the dispatch explicitly. The durable `needs-debug` LABEL, by contrast, flows through for free — the dispatched plan-issue resolves it from the issue's OWN labels, so an issue already tagged `needs-debug` hits the gate with or without the flag. Propagation is therefore needed only for the one-off `--debug-first` flag, never for the label.
    - **Verify plan comments:** After all plan-issue agents complete, for each issue that was targeted (had no pipeline label at the start of this step), confirm a plan comment was posted:
      ```bash
-     PLAN_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
-       --jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
+     PLAN_COUNT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
+       | jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
      ```
      If any targeted issue has `PLAN_COUNT == 0` (regardless of whether `plan-pending` was added), the plan-issue agent failed. Re-run `/pipeline:plan-issue N` for that issue (max 1 retry). If still missing after retry, skip the issue and flag it in the final report as "Skipped (plan not posted)".
 2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (in parallel, one Agent per issue). Wait for all to complete.
