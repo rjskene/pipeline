@@ -40,8 +40,9 @@
 # prints `worktree=-`), a `::error::leak guard: ...` summary goes to stderr, and
 # the run reds (`RESULT=fail` in chunk mode, exit 1 in both modes). A clean run
 # emits nothing, so default-mode output stays byte-compatible. Removals are not
-# leaks. The guard repo is the repo this script lives in (REPO_ROOT — from a
-# linked worktree that is the shared main repo, exactly where the leak lands);
+# leaks. The guard repo is the checkout this script lives in (REPO_ROOT; when
+# that is a linked worktree, `git -C` there still lists the WHOLE shared repo's
+# worktrees and branches — exactly where the leak lands);
 # PIPELINE_TEST_LEAK_GUARD_REPO=<path> redirects it (how the regression test
 # drives the guard against a throwaway repo) and an explicitly EMPTY value
 # disables it. Known false-positive shape: a legitimate, concurrently-started
