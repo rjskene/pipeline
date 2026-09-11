@@ -68,6 +68,28 @@ if not match:
     sys.exit(0)
 
 actual_base = match.group(1).strip("'\"")
+
+# Treat the unexpanded $PIPELINE_BASE_BRANCH token as the configured base
+# (#1323). skills/execute-issue-plan/SKILL.md prescribes
+# `--base "$PIPELINE_BASE_BRANCH"` — quoted but unexpanded in the command
+# TEXT the hook sees. If PIPELINE_BASE_BRANCH is unset in the hook's env,
+# the token is equal-by-construction (the shell expands it from the same
+# pipeline.config EXPECTED_BASE was resolved from) and is allowed. If it IS
+# exported, compare THAT value to EXPECTED_BASE — an exported override that
+# disagrees with the config still denies. Any other $VAR token keeps
+# denying.
+#
+# The two token forms are assembled by concatenation on purpose:
+# tests/test-plugin-hooks-runtime-config.sh greps this file for the braced
+# `${...}` placeholder form (legacy .template-substitution guard) and must
+# not misfire on a Python string literal.
+_BASE_VAR = "PIPELINE_BASE_BRANCH"
+if actual_base in ("$" + _BASE_VAR, "${" + _BASE_VAR + "}"):
+    env_value = os.environ.get("PIPELINE_BASE_BRANCH")
+    if env_value is None:
+        sys.exit(0)
+    actual_base = env_value
+
 if actual_base != EXPECTED_BASE:
     subcommand = "gh pr create" if is_create else "gh pr edit"
     print(
