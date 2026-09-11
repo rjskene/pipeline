@@ -68,7 +68,7 @@ Ordinary diff review is unchanged. This section fires **per claim**, not per eva
 
 A guard that passes is not evidence until you have seen it fail on something.
 
-- **Scope at pr-eval time.** Guard claims are claims about artifacts added or modified by the diff, plus any pre-existing guard the PR claims now covers a case. Execute from the feature worktree; when the invocation needs state (a git repo, a plan comment, a labelled issue), build a throwaway fixture and run the real artifact against it. This is per-claim work inside the existing Phase 2 budget — never a second full-suite sweep (the Step 4 dedup guard is unchanged).
+- **Scope at pr-eval time.** Guard claims are claims about artifacts added or modified by the diff, plus any pre-existing guard the PR claims now covers a case. Execute from the feature worktree; when the invocation needs state (a git repo, a plan comment, a labelled issue), build a throwaway fixture and run the real artifact against it. This is per-claim work inside the existing Phase 2 budget — never a second full-suite sweep (the Step 4 dedup guard is unchanged). **CI is the oracle for pre-existing failures:** read the head's settled CI status (`gh pr checks`, Step 5b; Step 4's #957 short-circuit) and verify only the diff's own claims — never re-prove an untouched failure by re-running it in a throwaway clone of the base.
 
 ## Steps
 
