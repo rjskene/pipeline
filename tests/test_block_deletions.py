@@ -182,7 +182,10 @@ class TestBlockDeletions(unittest.TestCase):
                     "eval \"" + RMRF + " build\"",
                     "{ " + RMRF + " build; }",
                     "echo \"$(" + RMRF + " build)\"",
-                    "git commit -m \"$(" + RMRF + " build)\""):
+                    "git commit -m \"$(" + RMRF + " build)\"",
+                    # eval-fix: the `\rm` alias-bypass spelling was denied
+                    # pre-#1321 (`\b` anchor) and must stay denied.
+                    "\\" + RMRF + " build"):
             with self.subTest(cmd=cmd):
                 self.assertBlocked(cmd)
 
@@ -196,7 +199,14 @@ class TestBlockDeletions(unittest.TestCase):
                     RMRF + " /tmp/x src/",
                     RMRF + " /tmp/../home",
                     RMRF + " /tmp",
-                    RMRF):
+                    RMRF,
+                    # eval-fix: targets the command text does not show —
+                    # xargs appends stdin; brace/glob expansion can reach
+                    # `..` after normpath has already accepted the literal.
+                    "echo build | xargs " + RMRF + " /tmp/x",
+                    "echo x | xargs -I{} " + RMRF + " /tmp/{}",
+                    RMRF + " /tmp/{x,../home}",
+                    RMRF + " /tmp/.*/home"):
             with self.subTest(cmd=cmd):
                 self.assertBlocked(cmd)
 

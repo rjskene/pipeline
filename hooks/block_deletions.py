@@ -28,12 +28,14 @@ command = data.get("tool_input", {}).get("command", "")
 # a `$(` substitution opener, or a `find -exec`/`-execdir`/`-ok`/`-okdir`
 # operand slot — optionally followed by wrapper words (sudo/env/xargs/...),
 # NAME=value assignments and their positional arguments (timeout 5, nice -n 5).
+# A trailing `\` admits the alias-bypass spelling (`\rm -rf …`), which the
+# pre-#1321 `\b`-anchored regex also denied.
 _HEAD = (
     r"(?:^|[;&|(\n'\"`{]|\$\(|\s-(?:exec|execdir|ok|okdir)\s)\s*"
     r"(?:(?:sudo|doas|env|nohup|nice|time|timeout|command|exec|builtin|xargs|stdbuf"
     r"|if|then|else|elif|do|while|until|!)\s+"
     r"(?:-\S*\s+|[A-Za-z_]\w*=\S*\s+|\d+(?:\.\d+)?[smhd]?\s+)*)*"
-    r"(?:[A-Za-z_]\w*=\S*\s+)*"
+    r"(?:[A-Za-z_]\w*=\S*\s+)*\\?"
 )
 
 BLOCKED = [
@@ -62,15 +64,24 @@ _TMP_ROOTS = ["/tmp"] + (
 def _is_tmp(t: str) -> bool:
     if re.fullmatch(r"\$\(\s*mktemp\b[^)]*\)", t):
         return True
-    if "$" in t or "`" in t or not t.startswith("/"):
+    # Literal paths only: a `$VAR`/backtick target, or a brace/glob
+    # metacharacter (`/tmp/{x,../home}`, `/tmp/.*/home` expand past /tmp
+    # before normpath could see the `..`), is never temp-scoped.
+    if any(c in t for c in "$`{}[]*?") or not t.startswith("/"):
         return False
     n = posixpath.normpath(t)
     return any(n.startswith(r + "/") for r in _TMP_ROOTS)
 
 
+def _basename(w: str) -> str:
+    return w.strip("\"'").rsplit("/", 1)[-1]
+
+
 def _rm_targets_all_tmp(command: str, pos: int) -> bool:
     """True iff the `rm` segment owning the match at byte offset `pos` names
-    only literal /tmp (or $TMPDIR) paths or literal $(mktemp ...) targets."""
+    only literal /tmp (or $TMPDIR) paths or literal $(mktemp ...) targets.
+    An `xargs`-wrapped `rm` never qualifies: stdin appends targets the
+    command text does not show."""
     segs = segments(command)
     if segs is None:
         return False
@@ -81,8 +92,8 @@ def _rm_targets_all_tmp(command: str, pos: int) -> bool:
     if chosen is None:
         return False
     words = chosen[1]
-    k = next((i for i, w in enumerate(words) if w.strip("\"'").rsplit("/", 1)[-1] == "rm"), None)
-    if k is None:
+    k = next((i for i, w in enumerate(words) if _basename(w) == "rm"), None)
+    if k is None or any(_basename(w) == "xargs" for w in words[:k]):
         return False
     targets = [w for w in words[k + 1:] if not w.startswith("-")]
     return bool(targets) and all(_is_tmp(t) for t in targets)
