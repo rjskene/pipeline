@@ -153,12 +153,9 @@ Receive an issue number as argument (or from context).
 
    ```bash
    # Required env: DIAGNOSIS (root-cause text; CONSUMEd from $TRUSTED or produced below).
-   # Freshness probe — same shape as fullsend's `## Classification` check.
-   # Pipeline-posted `## Root-Cause Diagnosis` comments survive filter-trusted-comments.sh
-   # because the operator account is OWNER, so they appear in $TRUSTED.
    if printf '%s\n' "$TRUSTED" | grep -q '## Root-Cause Diagnosis'; then
-     DIAG_CREATED=$(gh issue view <N> --repo "$PIPELINE_REPO" --json comments \
-       --jq 'last(.comments[] | select(.body | contains("## Root-Cause Diagnosis")) | .createdAt)')
+     DIAG_CREATED=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
+       | jq -r 'last(.comments[] | select(.body | contains("## Root-Cause Diagnosis")) | .createdAt)')
      ISSUE_UPDATED=$(gh issue view <N> --repo "$PIPELINE_REPO" --json updatedAt --jq '.updatedAt')
      # Lexicographic compare is correct for ISO-8601 Z timestamps.
      if [[ "$DIAG_CREATED" > "$ISSUE_UPDATED" || "$DIAG_CREATED" == "$ISSUE_UPDATED" ]]; then
