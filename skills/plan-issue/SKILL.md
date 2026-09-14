@@ -177,9 +177,9 @@ Receive an issue number as argument (or from context).
 
 5. **Generate the implementation plan.**
 
-   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/logs/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it. **Subagent dispatch contract — this skill is end-to-end.** Whether invoked directly or dispatched as a subagent (from `/pipeline:fullsend`), YOU own every step from fetch through `post-plan.sh` success; the post step is never the caller's. Returning the plan as terminal agent output is a skill failure. The only acceptable terminal states are: (a) `post-plan.sh` exited 0 and you report the success line from Step 8, or (b) `post-plan.sh` exited non-zero and you report the FAILED line from Step 7.
+   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/scratch/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it — whether invoked directly or dispatched from `/pipeline:fullsend`, the post step is never the caller's (terminal states: `## Caller contract`; report per Step 7/8).
 
-   Invoke `Skill(skill: "superpowers:writing-plans")`. Pass the issue title, body, prior plan comments, codebase findings from step 4, `PATH_LETTER` from step 3a, AND — when Step 4a ran — the `$DIAGNOSIS` root cause (so the plan's `**Design decisions:**` and Task 0/Task 1 target the diagnosed cause, not the reported symptom). Tell it: "Do NOT save the plan to a file in `docs/`. Return the plan content directly so I can write it to the draft file under `.claude/logs/plan-drafts/`." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
+   Invoke `Skill(skill: "superpowers:writing-plans")` — skipped on a round-≥2 verbatim re-plan (`## Revision handling`). Pass the issue title, body, prior plan comments, codebase findings from step 4, `PATH_LETTER` from step 3a, AND — when Step 4a ran — the `$DIAGNOSIS` root cause (so the plan's `**Design decisions:**` and Task 0/Task 1 target the diagnosed cause, not the reported symptom). Tell it: "Return the plan content directly for the `.claude/scratch/plan-drafts/` draft — no `docs/superpowers/plans/` save, no `# … Implementation Plan` header (the `## Implementation Plan` format below replaces it), no Execution Handoff question (headless)." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
 
    > **TERSENESS:** The plan must be self-contained (execute-issue-plan reads ONLY this comment) — but self-contained ≠ verbose. Reference the issue by `#N`; do NOT paste the issue body back into the plan. Each `**Files to change:**` entry is `path — one-line reason`. Sections with no content are the single word `None` (`**DB schema changes:** None`), never a paragraph explaining why. Design detail belongs in `**Design decisions:**` as bullets — load-bearing data (tier tables, formulas, mode behaviors) stays; restated context goes.
 
@@ -250,9 +250,8 @@ Receive an issue number as argument (or from context).
 
 6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool (not heredoc, not `echo`) to create the draft file at the path below; YOU MUST NOT return the plan body in your final message for the caller to write.
    ```bash
-   mkdir -p .claude/logs/plan-drafts
-   DRAFT=".claude/logs/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
-   # Use the Write tool to write the canonical plan markdown to "$DRAFT".
+   mkdir -p .claude/scratch/plan-drafts
+   DRAFT=".claude/scratch/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
    ```
 
 7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke this from within your own turn. Do not stop, return, or summarize before the helper exits.
