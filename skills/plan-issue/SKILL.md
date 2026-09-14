@@ -177,7 +177,7 @@ Receive an issue number as argument (or from context).
 
 5. **Generate the implementation plan.**
 
-   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/scratch/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it — whether invoked directly or dispatched from `/pipeline:fullsend`, the post step is never the caller's (terminal states: `## Caller contract`; report per Step 7/8).
+   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/scratch/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it — whether invoked directly or dispatched from `/pipeline:fullsend`, the post step is never the caller's (terminal contract: `## Caller contract`; report per Step 7/8).
 
    Invoke `Skill(skill: "superpowers:writing-plans")` — skipped on a round-≥2 verbatim re-plan (`## Revision handling`). Pass the issue title, body, prior plan comments, codebase findings from step 4, `PATH_LETTER` from step 3a, AND — when Step 4a ran — the `$DIAGNOSIS` root cause (so the plan's `**Design decisions:**` and Task 0/Task 1 target the diagnosed cause, not the reported symptom). Tell it: "Return the plan content directly for the `.claude/scratch/plan-drafts/` draft — no `docs/superpowers/plans/` save, no `# … Implementation Plan` header (the `## Implementation Plan` format below replaces it), no Execution Handoff question (headless)." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
 
@@ -248,7 +248,7 @@ Receive an issue number as argument (or from context).
    Code-task format: single bullet — same five steps as PATH B but inline without the `superpowers:test-driven-development` bookend.
    `Task N (PATH D substitute): re-run $PIPELINE_TEST_CMD inline as a final self-check before opening the PR. Do NOT invoke superpowers:requesting-code-review — it dispatches a subagent, which the PATH D envelope forbids; evaluate-issue-pr is the sole review gate.`
 
-6. **Write the plan to a draft file (YOU, not the caller).** Use the `Write` tool, not a heredoc or `echo`: hooks text-scan the whole Bash command (`enforce-base-branch.py` denies any text naming a PR-create call without `--base` — plan Task N does) and an unquoted heredoc expands `$`/backticks in plan prose; this outranks the bypass-mode heredoc preference. Never return the plan body in your final message for the caller to write.
+6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool, not a heredoc or `echo`: hooks text-scan the whole Bash command (`enforce-base-branch.py` denies any text naming a PR-create call without `--base` — plan Task N does) and an unquoted heredoc expands `$`/backticks in plan prose; this outranks the bypass-mode heredoc preference. Never return the plan body in your final message for the caller to write.
    ```bash
    mkdir -p .claude/scratch/plan-drafts
    DRAFT=".claude/scratch/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
