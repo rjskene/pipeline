@@ -49,7 +49,7 @@ You are a senior engineer reviewing a PR against its approved plan. You have NO 
 
 ## Executable verification (guard / gate / matcher / assertion / security claims)
 
-Ordinary diff review is unchanged. This section fires **per claim**, not per evaluation — typically 0-2 claims per run.
+This section fires **per claim**, not per evaluation.
 
 **Trigger (mechanical) — a claim is a GUARD CLAIM when ANY of these hold:**
 1. **Decision output** — the artifact emits a verdict token (`pass` / `block` / `green` / `allow` / `deny` / `ok`) or a documented exit-code contract, rather than a value.
@@ -62,7 +62,7 @@ Ordinary diff review is unchanged. This section fires **per claim**, not per eva
 - **Execute, do not read.** Run the artifact. Record the exact command and the exact observed token / exit code.
 - **Run a negative control.** Also run a variant that MUST be rejected. The positive and negative inputs differ in exactly ONE property — the property under test. Report both results.
 - **Same result on both means UNVERIFIED.** If the positive and negative inputs produce the same outcome, the guard is not looking — Verdict: Revise (plan-eval) / Flagged (pr-eval). A green result alone cannot distinguish "correct" from "checked nothing".
-- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p .claude/scratch`, `git init`, a synthetic plan/issue) and run the REAL artifact against it. Never simulate the artifact's logic in the evaluation. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable.
+- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable.
 - **Vacuity check on REDs.** A RED that fails for an incidental reason (arg-parse error, missing file, import error, wrong path) is vacuous. Remove the incidental cause and confirm it still fails for the STATED reason.
 - **No silent fallback to reading.** When a claim genuinely cannot be executed, report `not-executed: <reason>`. An unexecuted guard claim is NEVER reported as verified.
 
@@ -231,16 +231,16 @@ A guard that passes is not evidence until you have seen it fail on something.
 
    **Per-tool wall-clock budget.** Wrap each `browser_evaluate` and `browser_navigate` call in a 60s wall-clock budget. On timeout, post Flagged with a timeout note and exit non-zero — this explicitly prevents the `until-grep DONE_MARKER` wedge pattern from issue #511 from migrating into the inline path. The 60s budget applies to inline-mode dispatch (mode #3) unconditionally.
 
-   **Selector pitfall (as of 2026-05-26).** When clicking elements, prefer the `ref=` identifier returned by `browser_snapshot` over CSS selectors with embedded quotes (e.g. `#echo-form button[type="submit"]`). The Playwright MCP server rejects the latter on the literal string (escaped-quote selectors fail to parse); the `ref=` from the snapshot works instantly. Surfaced in the #525 / PR #526 dogfood. This is upstream Playwright MCP behavior, not a pipeline bug — flagged "as of 2026-05-26" so a future audit can re-verify it is still needed.
+   **Selector pitfall (as of 2026-05-26).** When clicking elements, prefer the `ref=` identifier returned by `browser_snapshot` over CSS selectors with embedded quotes (e.g. `#echo-form button[type="submit"]`). The Playwright MCP server rejects the latter on the literal string (escaped-quote selectors fail to parse); the `ref=` from the snapshot works instantly. (Upstream Playwright MCP behavior, #525.)
 
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
-8. **Check for branch divergence before merge decision:**
+8. **Rebase only when NOT mergeable:**
    ```bash
-   git fetch origin $PIPELINE_BASE_BRANCH
-   git log --oneline HEAD..origin/$PIPELINE_BASE_BRANCH | head -5
+   gh pr view $PR_NUM --repo $PIPELINE_REPO --json mergeable,mergeStateStatus
+   git fetch origin $PIPELINE_BASE_BRANCH; git diff --name-only HEAD...origin/$PIPELINE_BASE_BRANCH
    ```
-   If `PIPELINE_BASE_BRANCH` has advanced, `git rebase origin/$PIPELINE_BASE_BRANCH`. If conflicts are complex (semantic, not whitespace), flag for user review.
+   `git rebase origin/$PIPELINE_BASE_BRANCH` ONLY when the PR reports other than `MERGEABLE` + `CLEAN`/`UNSTABLE`, or the diff names a file this PR touches; an advanced base alone is not a reason (merge-commits, #459) and a needless rebase forces a full CI re-watch. If conflicts are complex (semantic, not whitespace), flag for user review.
 
 9. **Post evaluation comment on the PR** via `gh pr comment $PR_NUM --repo $PIPELINE_REPO --body "<evaluation>"` using this format:
 
@@ -272,7 +272,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Remaining issues:** (if flagged) <what needs human attention and why>
    ```
 
-10. **Report verdict:** Approved → "PR #X approved — ready for merge." / Flagged → "PR #X flagged for review: <summary>". The evaluator auto-merges on the Step 11 greenlight matrix unless `--manual-merge` was passed or the issue carries the `manual-merge` label. Otherwise the orchestrator's step 8 handles merge.
+10. **Report verdict:** Approved → "PR #X approved — ready for merge." / Flagged → "PR #X flagged for review: <summary>". Step 11 auto-merges unless `--manual-merge` or the `manual-merge` label opts out.
 
 11. **Auto-merge gate.**
 
@@ -286,7 +286,7 @@ A guard that passes is not evidence until you have seen it fail on something.
     3. `mergeable == MERGEABLE`.
     4. `mergeStateStatus == CLEAN` (not BLOCKED/BEHIND/DIRTY/UNSTABLE).
 
-    **Dual-defense doctrine (issue #295).** Base-branch enforcement is defense-in-depth across four layers: (i) the eval-time `baseRefName == $PIPELINE_BASE_BRANCH` assertion inside `auto-merge-gate.sh` (Step 11.2 — `block-base-mismatch`); (ii) a TOCTOU re-read immediately before `gh pr merge` in Step 11.3; (iii) the skill-level quoted `--base "$PIPELINE_BASE_BRANCH"` in `execute-issue-plan` Step 9b; (iv) the `enforce-base-branch.py` PreToolUse hook over `gh pr create` / `gh pr edit --base`. The hook alone is **insufficient** — it has bypassed in production (#295) when consumer `.claude/settings.json` shadowed the plugin matcher or stale `spawn-claude.sh` emitted an unnamespaced slash command (see `dev/audits/295-root-cause.md`). The eval-time gate is the load-bearing zero-data-loss layer.
+    **Dual-defense doctrine (issue #295).** Base-branch enforcement is defense-in-depth across four layers: (i) the eval-time `baseRefName == $PIPELINE_BASE_BRANCH` assertion inside `auto-merge-gate.sh` (Step 11.2 — `block-base-mismatch`); (ii) a TOCTOU re-read immediately before `gh pr merge` in Step 11.3; (iii) the skill-level quoted `--base "$PIPELINE_BASE_BRANCH"` in `execute-issue-plan` Step 9b; (iv) the `enforce-base-branch.py` PreToolUse hook over `gh pr create` / `gh pr edit --base`. The hook alone is **insufficient** — bypassed in production (#295; see `dev/audits/295-root-cause.md`). The eval-time gate is the load-bearing zero-data-loss layer.
 
     1. **Flag parsing.** `--manual-merge` may appear anywhere in argv — before or after the issue number; the parser is loop-based, not positional. Also honored via env: `MANUAL_MERGE=1` (exported by `spawn-claude.sh` when the spawn carried `--manual-merge`) is equivalent. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
 
