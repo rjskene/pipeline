@@ -18,6 +18,9 @@ cp "$REPO_ROOT/hooks/enforce-base-branch.py" "$SANDBOX/.claude/hooks/enforce-bas
 # enforce-base-branch.py imports the shared read_event_stdin helper (#917); the
 # plugin/subtree install ships the whole hooks/ dir, so co-locate it here too.
 cp "$REPO_ROOT/hooks/subagent_log_utils.py" "$SANDBOX/.claude/hooks/subagent_log_utils.py"
+# enforce-base-branch.py decides from command_mask.segments() (#1327); co-locate
+# the shared masker for the same reason.
+cp "$REPO_ROOT/hooks/command_mask.py" "$SANDBOX/.claude/hooks/command_mask.py"
 chmod +x "$SANDBOX/.claude/hooks/log-tool-use.sh"
 
 PASS=0

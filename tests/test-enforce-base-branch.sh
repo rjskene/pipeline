@@ -204,6 +204,49 @@ else
   fail_msg "Case K: expected rc!=0, got rc=$rc"
 fi
 
+# --- Command-head masking (#1327) ------------------------------------------
+# The hook must decide from the command HEAD (command_mask.segments()), not a
+# raw-text substring scan — so `gh pr create` living only inside a grep
+# pattern, a Python replacement string, or a heredoc body is not a command;
+# but a `bash -c` operand still IS a command (depth-1 recursion).
+
+echo "Case L: grep pattern operand containing 'gh pr create' allows"
+inc
+rc=$(run_hook "grep -n 'gh pr create' skills/x.md")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case L: allowed (grep pattern, not a command)"
+else
+  fail_msg "Case L: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case M: python3 -c replacement string containing 'gh pr create --base foo' allows"
+inc
+rc=$(run_hook 'python3 -c '"'"'print("gh pr create --base foo")'"'"'')
+if [ "$rc" = "0" ]; then
+  pass_msg "Case M: allowed (Python string literal, not a command)"
+else
+  fail_msg "Case M: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case N: heredoc body spelling 'gh pr create --base main' allows"
+inc
+HEREDOC_CMD=$(printf 'cat <<%s\ngh pr create --base main\n%s' "EOF" "EOF")
+rc=$(run_hook "$HEREDOC_CMD")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case N: allowed (heredoc body, not a command)"
+else
+  fail_msg "Case N: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case O: bash -c operand running 'gh pr create --base main' still blocks"
+inc
+rc=$(run_hook 'bash -c "gh pr create --base main"')
+if [ "$rc" != "0" ] && grep -q "main" "$WORKDIR/err"; then
+  pass_msg "Case O: blocked (depth-1 recursion into -c operand still sees the real command)"
+else
+  fail_msg "Case O: expected rc!=0 with 'main' in stderr, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
