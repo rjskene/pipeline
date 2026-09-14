@@ -127,7 +127,7 @@ echo 0 > "$C/3.rc"
 if bash "$HELPER" 44 "$DRAFT" >"$C/stdout" 2>"$C/stderr"; then
   fail_msg "verify-comment trip: helper exit 0; expected non-zero"
 else
-  if grep -qF ".claude/logs/plan-drafts/" "$C/stderr" 2>/dev/null || grep -qF "$DRAFT" "$C/stderr"; then
+  if grep -qF ".claude/scratch/plan-drafts/" "$C/stderr" 2>/dev/null || grep -qF "$DRAFT" "$C/stderr"; then
     if grep -qF "Implementation Plan" "$C/stderr"; then
       pass_msg "verify-comment trip: helper exit non-zero with draft path + 'Implementation Plan' in stderr"
     else

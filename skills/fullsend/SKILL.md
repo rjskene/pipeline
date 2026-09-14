@@ -228,7 +228,7 @@ When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend au
 ```
 | # | Condition                                                | Source                              |
 |---|----------------------------------------------------------|-------------------------------------|
-| 1 | Latest `## Evaluation` has `**Verdict:** Approved`       | gh pr view --json comments          |
+| 1 | Latest `## Evaluation` has `**Verdict:** Approved`       | scripts/auto-merge-gate.sh          |
 | 2 | Every statusCheckRollup entry `conclusion == SUCCESS`    | gh pr view --json statusCheckRollup |
 | 3 | `mergeable == MERGEABLE`                                 | gh pr view --json mergeable         |
 | 4 | `mergeStateStatus == CLEAN` (not BLOCKED/BEHIND/DIRTY/UNSTABLE) | gh pr view --json mergeStateStatus |
