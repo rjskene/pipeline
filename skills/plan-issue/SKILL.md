@@ -71,10 +71,10 @@ Receive an issue number as argument (or from context).
 1. **Fetch issue details and the trusted comment working set:**
    ```bash
    gh issue view <N> --repo $PIPELINE_REPO --json number,title,body
-   # Trusted-only working set — drops comments from authors lacking write access
-   # (issue #546, helper from #545). $TRUSTED holds the body + trusted-comment
-   # content on stdout; the dropped-author audit line ("ignored N comments from
-   # untrusted authors: @x") is emitted on stderr for surfacing.
+   # Trusted-only working set (#546, helper #545). Default mode = plaintext: body, then
+   # each trusted comment body. `--json <N>` (Step 4a) = a `{"comments":[…]}` dict, no
+   # `body` key. Dropped-author audit ("ignored N comments from untrusted authors: @x")
+   # goes to stderr.
    TRUSTED=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/filter-trusted-comments.sh" <N>)
    ```
 
