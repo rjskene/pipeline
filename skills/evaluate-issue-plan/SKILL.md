@@ -51,7 +51,7 @@ You are a senior engineer reviewing an implementation plan. Your job is to **ver
 
 ## Executable verification (guard / gate / matcher / assertion / security claims)
 
-Ordinary diff review is unchanged. This section fires **per claim**, not per evaluation — typically 0-2 claims per run.
+This section fires **per claim**, not per evaluation.
 
 **Trigger (mechanical) — a claim is a GUARD CLAIM when ANY of these hold:**
 1. **Decision output** — the artifact emits a verdict token (`pass` / `block` / `green` / `allow` / `deny` / `ok`) or a documented exit-code contract, rather than a value.
@@ -64,7 +64,7 @@ Ordinary diff review is unchanged. This section fires **per claim**, not per eva
 - **Execute, do not read.** Run the artifact. Record the exact command and the exact observed token / exit code.
 - **Run a negative control.** Also run a variant that MUST be rejected. The positive and negative inputs differ in exactly ONE property — the property under test. Report both results.
 - **Same result on both means UNVERIFIED.** If the positive and negative inputs produce the same outcome, the guard is not looking — Verdict: Revise (plan-eval) / Flagged (pr-eval). A green result alone cannot distinguish "correct" from "checked nothing".
-- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p .claude/scratch`, `git init`, a synthetic plan/issue) and run the REAL artifact against it. Never simulate the artifact's logic in the evaluation. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable.
+- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable.
 - **Vacuity check on REDs.** A RED that fails for an incidental reason (arg-parse error, missing file, import error, wrong path) is vacuous. Remove the incidental cause and confirm it still fails for the STATED reason.
 - **No silent fallback to reading.** When a claim genuinely cannot be executed, report `not-executed: <reason>`. An unexecuted guard claim is NEVER reported as verified.
 

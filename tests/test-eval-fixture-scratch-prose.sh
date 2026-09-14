@@ -2,7 +2,7 @@
 set -euo pipefail
 # Guard (#1335): the "Build a fixture when needed" bullet in
 # evaluate-issue-plan and evaluate-issue-pr SKILL.md must prescribe a
-# `.claude/scratch`-scoped mktemp AND a literal-path (never-a-variable)
+# `$PWD/.claude/scratch`-anchored mktemp AND a literal-path (never-a-variable)
 # cleanup instruction — the wording the .claude/scratch carve-out in
 # hooks/block_deletions.py (#1335) exists to make safe.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -37,8 +37,8 @@ assert_bullet_contains() {
 for pair in "evaluate-issue-plan:$PLAN_SKILL" "evaluate-issue-pr:$PR_SKILL"; do
   name="${pair%%:*}"; file="${pair#*:}"
   echo "Fixture-scratch prose — $name"
-  assert_bullet_contains "$file" 'mktemp -d -p .claude/scratch' \
-    "$name: bullet prescribes mktemp -d -p .claude/scratch"
+  assert_bullet_contains "$file" 'mktemp -d -p "$PWD/.claude/scratch"' \
+    "$name: bullet prescribes mktemp -d -p \"\$PWD/.claude/scratch\""
   assert_bullet_contains "$file" '.claude/scratch/' \
     "$name: bullet names a .claude/scratch/ cleanup path"
   assert_bullet_contains "$file" 'variable' \
