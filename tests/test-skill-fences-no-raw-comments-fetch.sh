@@ -12,8 +12,8 @@ set -euo pipefail
 # The sweep mirrors the hook's own two regexes, FENCE-SCOPED:
 #   (a) the line is inside a fence opened by /^[[:space:]]*```bash/ and closed
 #       by the next /^[[:space:]]*```/ line — bare ``` prose tables (e.g. the
-#       fullsend greenlight matrix, which NAMES `gh pr view --json comments` as
-#       auto-merge-gate.sh's source) are not commands and must not trip it;
+#       fullsend greenlight matrix, whose source column now cites auto-merge-gate.sh,
+#       the script that does that read) are not commands and must not trip it;
 #   (b) the line matches gh[[:space:]]+(issue|pr)[[:space:]]+view; and
 #   (c) the line's FIRST `--json[=[:space:]]+<fields>` list, split on `,`,
 #       contains the exact field `comments` (both `--json x,comments` and
