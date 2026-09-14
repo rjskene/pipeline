@@ -253,7 +253,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    ```bash
    for N in <slate-issue-numbers>; do
      PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
-       bash "${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh" "$N" 2>/dev/null \
+       bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" fetch-attachments "$N" 2>/dev/null \
        | head -1
    done
    ```

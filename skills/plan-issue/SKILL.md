@@ -124,7 +124,7 @@ Receive an issue number as argument (or from context).
 
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh" <N> 2>/dev/null | head -1
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" fetch-attachments <N> 2>/dev/null | head -1
    ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
    ```
 
