@@ -248,7 +248,7 @@ Receive an issue number as argument (or from context).
    Code-task format: single bullet — same five steps as PATH B but inline without the `superpowers:test-driven-development` bookend.
    `Task N (PATH D substitute): re-run $PIPELINE_TEST_CMD inline as a final self-check before opening the PR. Do NOT invoke superpowers:requesting-code-review — it dispatches a subagent, which the PATH D envelope forbids; evaluate-issue-pr is the sole review gate.`
 
-6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool (not heredoc, not `echo`) to create the draft file at the path below; YOU MUST NOT return the plan body in your final message for the caller to write.
+6. **Write the plan to a draft file (YOU, not the caller).** Use the `Write` tool, not a heredoc or `echo`: hooks text-scan the whole Bash command (`enforce-base-branch.py` denies any text naming a PR-create call without `--base` — plan Task N does) and an unquoted heredoc expands `$`/backticks in plan prose; this outranks the bypass-mode heredoc preference. Never return the plan body in your final message for the caller to write.
    ```bash
    mkdir -p .claude/scratch/plan-drafts
    DRAFT=".claude/scratch/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
