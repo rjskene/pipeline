@@ -18,6 +18,8 @@
 #   PIPELINE_TEST_LEAK_GUARD_REPO=path scripts/run-test-suite.sh   # redirect leak guard ("" = off)
 #   scripts/run-test-suite.sh --chunk k/n [tests-dir]        # FOREGROUND chunk mode
 #   TESTS_DIR=path scripts/run-test-suite.sh --chunk k/n
+#   scripts/run-test-suite.sh --changed-only [--base <ref>] [tests-dir]
+#   TESTS_DIR=path scripts/run-test-suite.sh --changed-only
 #
 # --chunk k/n (issue #1208) is the FOREGROUND escape hatch for suites too large
 # to fit inside a single Bash-call timeout: it runs only the k-th of n
@@ -25,6 +27,15 @@
 # `CHUNK=k/n FILES=<count> RESULT=pass|fail` summary line. Run `--chunk 1/n`
 # through `--chunk n/n` as separate sequential foreground Bash calls instead of
 # backgrounding the full suite. Default (no `--chunk`) output is unchanged.
+#
+# --changed-only [--base <ref>] (issue #1334) runs only the diff's touched
+# tests plus their SUBJECT tests (a test that names a touched path by full
+# path, unique basename, or containing `<dir>/*` glob). The diff repo is the
+# git toplevel of TESTS_DIR; base resolves --base > origin/$PIPELINE_BASE_BRANCH
+# > origin/main. An unresolved base or a non-repo TESTS_DIR fails OPEN to the
+# full suite with one `CHANGED-ONLY: <reason> — running the full suite` stderr
+# line and no summary. Otherwise prints one `CHANGED-ONLY: touched=<n>
+# selected=<k>/<total> RESULT=pass|fail` line; mutually exclusive with --chunk.
 #
 # Each test is wrapped in `timeout 300` and `</dev/null` (mirrors the live
 # runner's hang-guard so an interactive `read` or a hang can't wedge a job).
@@ -55,15 +66,17 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# --chunk k/n (or --chunk=k/n) parsing — MUST happen before TESTS_DIR
-# resolution so the positional tests-dir and the TESTS_DIR env form both keep
-# working with a leading --chunk flag shifted off.
+# --chunk k/n (or --chunk=k/n), --changed-only, and --base <ref> parsing —
+# MUST happen before TESTS_DIR resolution so the positional tests-dir and the
+# TESTS_DIR env form both keep working with leading flags shifted off.
 CHUNK_MODE=0
 CHUNK_RAW=""
 CHUNK_K=""
 CHUNK_N=""
+CHANGED_ONLY=0
+BASE_REF=""
 
-if [ $# -gt 0 ]; then
+while [ $# -gt 0 ]; do
   case "$1" in
     --chunk=*)
       CHUNK_MODE=1
@@ -79,7 +92,33 @@ if [ $# -gt 0 ]; then
         shift 1
       fi
       ;;
+    --changed-only)
+      CHANGED_ONLY=1
+      shift
+      ;;
+    --base=*)
+      BASE_REF="${1#--base=}"
+      shift
+      ;;
+    --base)
+      BASE_REF="${2:-}"
+      if [ $# -ge 2 ]; then
+        shift 2
+      else
+        shift 1
+      fi
+      ;;
+    *)
+      break
+      ;;
   esac
+done
+
+# --changed-only and --chunk select mutually exclusive run modes (#1334).
+if [ "$CHUNK_MODE" -eq 1 ] && [ "$CHANGED_ONLY" -eq 1 ]; then
+  echo "run-test-suite.sh: --changed-only and --chunk are mutually exclusive" >&2
+  echo "usage: run-test-suite.sh [--chunk k/n | --changed-only [--base <ref>]] [tests-dir]" >&2
+  exit 2
 fi
 
 if [ "$CHUNK_MODE" -eq 1 ]; then
@@ -116,6 +155,59 @@ esac
 if [ ! -d "$TESTS_DIR" ]; then
   echo "run-test-suite.sh: tests dir not found: $TESTS_DIR" >&2
   exit 1
+fi
+
+# --changed-only (#1334): resolve the diff repo (git toplevel of TESTS_DIR)
+# and the base ref, fail-OPEN to the full suite on any resolution failure.
+co_fallback() {
+  echo "CHANGED-ONLY: $1 — running the full suite" >&2
+  CHANGED_ONLY=0
+}
+if [ "$CHANGED_ONLY" -eq 1 ]; then
+  TESTS_DIR="$(cd "$TESTS_DIR" && pwd -P)"
+  DIFF_REPO="$(git -C "$TESTS_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$DIFF_REPO" ]; then
+    co_fallback "tests dir $TESTS_DIR is not inside a git repo"
+  else
+    if [ -z "$BASE_REF" ]; then
+      [ -n "${PIPELINE_BASE_BRANCH:-}" ] || . "$REPO_ROOT/scripts/_resolve-config.sh"
+      BASE_REF="origin/${PIPELINE_BASE_BRANCH:-main}"
+    fi
+    MERGE_BASE="$(git -C "$DIFF_REPO" merge-base "$BASE_REF" HEAD 2>/dev/null || true)"
+    [ -n "$MERGE_BASE" ] || co_fallback "base $BASE_REF unresolved"
+  fi
+fi
+
+# --changed-only selection: touched set (diff + untracked) -> needles (full
+# path, unique basename, and every ancestor dir as a `<dir>/*` glob) ->
+# selected corpus tests (touched themselves, or grep-matching a needle).
+if [ "$CHANGED_ONLY" -eq 1 ]; then
+  TOUCHED="$(mktemp)"; NEEDLES="$(mktemp)"; SEL_LIST="$(mktemp)"; FULL_LIST="$(mktemp)"
+  { git -C "$DIFF_REPO" diff --name-only "$MERGE_BASE"
+    git -C "$DIFF_REPO" ls-files --others --exclude-standard; } | sort -u > "$TOUCHED"
+  KNOWN="$(git -C "$DIFF_REPO" ls-files -co --exclude-standard)"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    base="${p##*/}"; printf '%s\n' "$p"
+    if [ "$(printf '%s\n' "$KNOWN" | awk -F/ -v b="$base" '$NF==b' | wc -l)" -le 1 ]; then
+      printf '%s\n' "$base"                 # unique basename -> the #1329 basename needle
+    else
+      case "$p" in */*) printf '%s\n' "${p#"${p%/*/*}/"}" ;; esac   # ambiguous basename -> parent/basename; root-level -> path only
+    fi
+    d="$p"; while [ "${d%/*}" != "$d" ]; do d="${d%/*}"; printf '%s/*\n' "$d"; done   # every ancestor dir as a glob
+  done < "$TOUCHED" | sort -u > "$NEEDLES"
+  find "$TESTS_DIR" -maxdepth 1 -type f \( -name 'test*.sh' -o -name 'test_*.sh' \) -print0 | sort -z > "$FULL_LIST"
+  TOTAL="$(tr -cd '\0' < "$FULL_LIST" | wc -c | tr -d '[:space:]')"; TOUCHED_N="$(wc -l < "$TOUCHED" | tr -d '[:space:]')"; SELECTED=0
+  if [ "$TOUCHED_N" -gt 0 ]; then
+    while IFS= read -r -d '' f; do
+      rel="${f#"$DIFF_REPO"/}"
+      if grep -qxF -- "$rel" "$TOUCHED" || grep -qF -f "$NEEDLES" -- "$f"; then
+        printf '%s\0' "$f" >> "$SEL_LIST"; SELECTED=$((SELECTED + 1))
+        [ "${PIPELINE_TEST_VERBOSE:-0}" = 1 ] && echo "CHANGED-ONLY: selected $rel"
+      fi
+    done < "$FULL_LIST"
+  fi
+  rm -f "$TOUCHED" "$NEEDLES" "$FULL_LIST"
 fi
 
 # Leak-guard repo (#1316): COLON-LESS expansion (precedent PIPELINE_CI_CHECK_ENABLED)
@@ -214,6 +306,11 @@ if [ "$CHUNK_MODE" -eq 1 ]; then
 
   xargs -0 -P "$PAR" -I{} bash -c 'run_one "$@"' _ {} < "$CHUNK_LIST"
   rm -f "$CHUNK_LIST"
+elif [ "$CHANGED_ONLY" -eq 1 ]; then
+  if [ -s "$SEL_LIST" ]; then
+    xargs -0 -P "$PAR" -I{} bash -c 'run_one "$@"' _ {} < "$SEL_LIST"
+  fi
+  rm -f "$SEL_LIST"
 else
   find "$TESTS_DIR" -maxdepth 1 -type f \
     \( -name 'test*.sh' -o -name 'test_*.sh' \) -print0 \
@@ -287,6 +384,10 @@ if [ -n "$GUARD_REPO" ] && [ -n "$LEAK_BEFORE" ]; then
     CHUNK_RESULT="fail"
   fi
   rm -f "$LEAK_BEFORE" "$LEAK_AFTER" "$LEAK_REPORT"
+fi
+
+if [ "$CHANGED_ONLY" -eq 1 ]; then
+  echo "CHANGED-ONLY: touched=$TOUCHED_N selected=$SELECTED/$TOTAL RESULT=$CHUNK_RESULT"
 fi
 
 if [ "$CHUNK_MODE" -eq 1 ]; then

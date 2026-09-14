@@ -52,6 +52,10 @@ scan_file() {
   [ -n "$commit_lines" ] || return 0
 
   # identity present anywhere in the file? (any one shape => safe)
+  # A pattern that BEGINS with `-c` must go through `-e`: grep otherwise parses
+  # it as an OPTION (exit 2, never a match), so the bare-pattern line below is
+  # dead code. Working form added by the #1334 PR-eval (additive, W7-safe).
+  if grep -qE -e '-c[[:space:]]+user\.(email|name)' "$f"; then return 0; fi
   if grep -qE '-c[[:space:]]+user\.(email|name)' "$f"; then return 0; fi
   if grep -qE 'config[[:space:]]+user\.(email|name)' "$f"; then return 0; fi
   if grep -qE 'GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)' "$f"; then return 0; fi

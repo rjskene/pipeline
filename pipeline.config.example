@@ -50,6 +50,11 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # regardless of the suite form.
 # Optionally cap the runner's fan-out width (defaults to `nproc`):
 # PIPELINE_TEST_PARALLELISM=4
+# PIPELINE_TEST_VERBOSE (issue #1334): set to 1 to have `--changed-only` print
+# one `CHANGED-ONLY: selected <rel-path>` line per test it selects (in addition
+# to the single `CHANGED-ONLY: touched=<n> selected=<k>/<total> RESULT=...`
+# summary, which always prints). Unset/0 (default): summary only.
+# PIPELINE_TEST_VERBOSE=1
 # PIPELINE_TEST_LEAK_GUARD_REPO (issue #1316): the git repo scripts/run-test-suite.sh
 # snapshots (`git worktree list` + `git branch --list`) before and after a run;
 # any worktree/branch that APPEARED during the run prints
