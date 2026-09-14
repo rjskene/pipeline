@@ -73,13 +73,24 @@ def _is_tmp(t: str) -> bool:
     return any(n.startswith(r + "/") for r in _TMP_ROOTS)
 
 
+def _is_scratch(t: str) -> bool:
+    # Issue #1335: a literal relative `.claude/scratch/<sub>` path (also
+    # `./.claude/scratch/<sub>`) is allow-listed, same carve-out shape as
+    # _is_tmp. $VAR/backtick/brace/glob, an absolute path, and the bare
+    # .claude/scratch dir (no `n` component after the prefix) never qualify.
+    if any(c in t for c in "$`{}[]*?") or t.startswith("/"):
+        return False
+    return posixpath.normpath(t).startswith(".claude/scratch/")
+
+
 def _basename(w: str) -> str:
     return w.strip("\"'").rsplit("/", 1)[-1]
 
 
 def _rm_targets_all_tmp(command: str, pos: int) -> bool:
     """True iff the `rm` segment owning the match at byte offset `pos` names
-    only literal /tmp (or $TMPDIR) paths or literal $(mktemp ...) targets.
+    only literal /tmp (or $TMPDIR) paths, literal $(mktemp ...) targets, or
+    literal `.claude/scratch/<sub>` paths (#1335).
     An `xargs`-wrapped `rm` never qualifies: stdin appends targets the
     command text does not show."""
     segs = segments(command)
@@ -96,7 +107,7 @@ def _rm_targets_all_tmp(command: str, pos: int) -> bool:
     if k is None or any(_basename(w) == "xargs" for w in words[:k]):
         return False
     targets = [w for w in words[k + 1:] if not w.startswith("-")]
-    return bool(targets) and all(_is_tmp(t) for t in targets)
+    return bool(targets) and all(_is_tmp(t) or _is_scratch(t) for t in targets)
 
 
 masked = mask_command(command)

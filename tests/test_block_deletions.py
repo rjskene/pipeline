@@ -221,6 +221,33 @@ class TestBlockDeletions(unittest.TestCase):
         self.assertEqual(rc, 2, f"expected BLOCK (exit 2); stderr={err!r}")
         self.assertIn("(matched: >| out.txt)", err)
 
+    # ======================================================================
+    # Issue #1335 — a recursive remove whose every target is a literal
+    # relative `.claude/scratch/<sub>` path (also `./.claude/scratch/<sub>`)
+    # is allowed, same shape as the #1321 /tmp carve-out (_rm_targets_all_tmp
+    # reused, not a second scan). Everything else — $VAR, glob, `..`
+    # traversal, the bare .claude/scratch dir, an absolute path, xargs-wrapped
+    # rm — still denies.
+    # ======================================================================
+
+    def test_1335_scratch_scoped_recursive_remove_allowed(self):
+        for cmd in (RMRF + " .claude/scratch/fixture-1",
+                    RMRF + " ./.claude/scratch/x/y",
+                    "rm -r .claude/scratch/sub"):
+            with self.subTest(cmd=cmd):
+                self.assertAllowed(cmd)
+
+    def test_1335_scratch_scope_controls_blocked(self):
+        for cmd in (RMRF + " .claude/scratch/",
+                    RMRF + " .claude/scratch",
+                    RMRF + " .claude/scratch/../hooks",
+                    RMRF + " .claude/scratch/$NAME",
+                    RMRF + " .claude/scratch/*",
+                    RMRF + " /home/x/.claude/scratch/y",
+                    "echo build | xargs " + RMRF + " .claude/scratch/y"):
+            with self.subTest(cmd=cmd):
+                self.assertBlocked(cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
