@@ -458,6 +458,51 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 5b: --reset closes stale PRs and deletes remote branches (backlog #51)"
+# ---------------------------------------------------------------------------
+rm -f "$CALLS" "$TMP/issue-counter"
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$SANDBOX" checkout --quiet -b feature/stale calib-base
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$SANDBOX" commit --quiet --allow-empty -m "stale PR work"
+git -C "$SANDBOX" push --quiet origin feature/stale
+git -C "$SANDBOX" checkout --quiet main
+
+PRS_JSON="$TMP/prs-open.json"
+printf '[{"number":9001,"headRefName":"feature/stale"}]\n' > "$PRS_JSON"
+
+# Control: a dry-run reset must print CALIB-LAUNCH previews and touch nothing.
+CALIB_TEST_PRS_JSON="$PRS_JSON" run_helper --dry-run --reset --harness "$HARNESS"
+DRY_BRANCHES="$(git -C "$REMOTE" for-each-ref --format='%(refname:short)' refs/heads)"
+if printf '%s\n' "$DRY_BRANCHES" | grep -qxF "feature/stale"; then
+  pass_msg "--dry-run --reset leaves feature/stale on the remote"
+else
+  fail_msg "--dry-run --reset must not delete remote branches (remote heads: $DRY_BRANCHES)"
+fi
+
+# Real run: closes the stale PR and deletes every remote branch but main.
+CALIB_TEST_PRS_JSON="$PRS_JSON" run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (PR sweep) exits 0" 0
+if grep -qF "gh pr close 9001 --repo owner/pipeline-calib --delete-branch" "$CALLS" 2>/dev/null; then
+  pass_msg "--reset closes the stale open PR"
+else
+  fail_msg "--reset must close the stale open PR: $(grep '^gh pr ' "$CALLS" 2>/dev/null | tr '\n' ';')"
+fi
+REMOTE_BRANCHES="$(git -C "$REMOTE" for-each-ref --format='%(refname:short)' refs/heads)"
+if [ "$REMOTE_BRANCHES" = "main" ]; then
+  pass_msg "--reset deletes every remote branch but main"
+else
+  fail_msg "--reset must leave only main on the remote (got: $REMOTE_BRANCHES)"
+fi
+if grep -q '^claude ' "$CALLS" 2>/dev/null; then
+  fail_msg "--reset (PR sweep) launched claude"
+else
+  pass_msg "--reset (PR sweep) never launches claude"
+fi
+
+# ---------------------------------------------------------------------------
 scenario "Scenario 6: --reset refuses to nuke a non-sandbox repo"
 # ---------------------------------------------------------------------------
 # --reset force-pushes a branch back to a tag and DELETES issues. Pointed at

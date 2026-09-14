@@ -100,12 +100,17 @@ MODE=""
 PROFILE="strict"
 MODEL="sonnet"
 HARNESS_ARG=""
+DRY_RESET=0
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
 warn()      { echo "calibration-run: WARN: $1" >&2; }
 
 set_mode() {
+  # --reset + --dry-run (either order) compose into a free reset PREVIEW.
+  if { [ "$MODE" = reset ] && [ "$1" = dry-run ]; } || { [ "$MODE" = dry-run ] && [ "$1" = reset ]; }; then
+    MODE=reset; DRY_RESET=1; return 0
+  fi
   if [ -n "$MODE" ]; then
     die_usage "--$MODE and --$1 are mutually exclusive (pick one of --bootstrap|--reset|--dry-run|--run)"
   fi
@@ -201,7 +206,7 @@ TEMPLATE_SETTINGS_BASENAME="claude-settings.local.json"
 LOCAL_SETTINGS_BASENAME="settings.local.json"
 
 DRY=0
-[ "$MODE" = "dry-run" ] && DRY=1
+{ [ "$MODE" = "dry-run" ] || [ "$DRY_RESET" -eq 1 ]; } && DRY=1
 
 SLATE_DIRS=()
 LAUNCH=()
@@ -409,9 +414,42 @@ create_slate_issues() {
   printf 'CALIB-ISSUES %s\n' "$ISSUE_IDS"
 }
 
+# close_stale_prs — close every open PR before the force-reset below (avoids
+# a confusing GitHub auto-close note); tolerates zero PRs / a failed `gh pr
+# list` (warn, continue) — the sweep must never fail the reset.
+close_stale_prs() {
+  local prs n closed=0
+  prs="$(dispatch gh pr list --repo "$CALIB_REPO" --state open --json number,headRefName 2>/dev/null)" \
+    || { warn "gh pr list failed for $CALIB_REPO — skipping the PR sweep"; return 0; }
+  while IFS= read -r n; do
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    dispatch gh pr close "$n" --repo "$CALIB_REPO" --delete-branch
+    closed=$((closed + 1))
+  done < <(printf '%s' "$prs" | jq -r '.[].number' 2>/dev/null)
+  [ "$closed" -gt 0 ] && warn "closed $closed stale PR(s) in $CALIB_REPO"
+}
+
+# delete_stale_branches — delete every remote branch but main, then prune the
+# sandbox's local feature/* branches (an undeleted PR branch could resurface).
+delete_stale_branches() {
+  local ref branch
+  while read -r _ ref; do
+    branch="${ref#refs/heads/}"
+    [ "$branch" = main ] && continue
+    dispatch git -C "$SANDBOX" push --quiet origin --delete "$branch"
+  done < <(git -C "$SANDBOX" ls-remote --heads origin 2>/dev/null)
+  git -C "$SANDBOX" for-each-ref --format='%(refname:short)' 'refs/heads/feature/*' 2>/dev/null \
+    | while read -r branch; do
+        dispatch git -C "$SANDBOX" branch -D "$branch"
+      done
+}
+
 cmd_reset() {
   guard_sandbox_repo
   [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
+  close_stale_prs
+  delete_stale_branches
+  [ "$DRY" -eq 1 ] && return 0
   dispatch git -C "$SANDBOX" fetch --quiet --tags origin || warn "sandbox fetch failed — resetting against the local $BASE_TAG"
   git -C "$SANDBOX" rev-parse -q --verify "refs/tags/$BASE_TAG" >/dev/null 2>&1 \
     || die_run "$BASE_TAG does not exist in $SANDBOX (run --bootstrap first)"
