@@ -233,6 +233,25 @@ else
   fail_msg "expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
+echo "Case V: filter-trusted-comments.sh fetch-attachments <N> fence -> passthrough (#1340)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh\" fetch-attachments 549"}}')
+if [ "$rc" = "0" ] && [ ! -s "$WORKDIR/err" ]; then
+  pass_msg "passthrough for the sanctioned fetch-attachments fence"
+else
+  fail_msg "expected rc=0 + empty stderr, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case W: bare fetch-issue-attachments.sh direct call still blocked (#1340 control)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh\" 549"}}')
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err" \
+   && grep -q "filter-trusted-comments.sh" "$WORKDIR/err"; then
+  pass_msg "bare direct fetch-issue-attachments.sh call still denied"
+else
+  fail_msg "expected rc=2 + BLOCKED + helper hint, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
 echo "Case L: hook registered dogfood-only in .claude/settings.json"
 inc
 SETTINGS="$SCRIPT_DIR/../.claude/settings.json"
