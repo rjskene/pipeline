@@ -55,6 +55,52 @@ for assoc in CONTRIBUTOR NONE FIRST_TIME_CONTRIBUTOR FIRST_TIMER "" lowercase_ow
 done
 
 # ---------------------------------------------------------------------------
+# Task 1b (#1340): fetch-attachments <N> subcommand — execs the sibling
+# fetch-issue-attachments.sh (resolved script-dir-relative, same anchor as
+# is-trusted-author), forwarding the issue number as $1 and the caller's
+# exported env (PIPELINE_REPO, PIPELINE_PROJECT_ROOT) through, and
+# propagating its exit status verbatim.
+# ---------------------------------------------------------------------------
+echo "=== fetch-attachments: execs sibling fetch-issue-attachments.sh with arg + env passthrough ==="
+FA_TMP="$ROOT_TMP/fa"
+mkdir -p "$FA_TMP"
+cp "$HELPER" "$FA_TMP/filter-trusted-comments.sh"
+cat > "$FA_TMP/fetch-issue-attachments.sh" <<'FAKE'
+#!/bin/bash
+echo "FAKE_FETCH arg1=$1 PIPELINE_REPO=$PIPELINE_REPO PIPELINE_PROJECT_ROOT=$PIPELINE_PROJECT_ROOT"
+exit "${FAKE_FETCH_EXIT:-0}"
+FAKE
+chmod +x "$FA_TMP/fetch-issue-attachments.sh"
+
+inc
+export PIPELINE_REPO="rjskene/pipeline"
+export PIPELINE_PROJECT_ROOT="/tmp/fake-project-root"
+set +e
+out=$(FAKE_FETCH_EXIT=0 bash "$FA_TMP/filter-trusted-comments.sh" fetch-attachments 4242 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] \
+  && grep -q "FAKE_FETCH arg1=4242" <<<"$out" \
+  && grep -q "PIPELINE_REPO=rjskene/pipeline" <<<"$out" \
+  && grep -q "PIPELINE_PROJECT_ROOT=/tmp/fake-project-root" <<<"$out"; then
+  pass_msg "fetch-attachments execs sibling script with issue number + env passthrough"
+else
+  fail_msg "expected exec with forwarded arg+env, got rc=$rc out=$out"
+fi
+
+echo "=== fetch-attachments: propagates the sibling script's exit status verbatim ==="
+inc
+set +e
+out=$(FAKE_FETCH_EXIT=3 bash "$FA_TMP/filter-trusted-comments.sh" fetch-attachments 99 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 3 ]; then
+  pass_msg "fetch-attachments propagates sibling script's nonzero exit status"
+else
+  fail_msg "expected rc=3 passthrough, got rc=$rc out=$out"
+fi
+
+# ---------------------------------------------------------------------------
 # Task 2: default mode — filter comments + emit dropped-author audit
 # ---------------------------------------------------------------------------
 # Stage a PATH-resident `gh` shim that replays $SHIM_VIEW_JSON verbatim for

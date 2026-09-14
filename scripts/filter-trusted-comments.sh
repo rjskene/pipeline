@@ -11,6 +11,16 @@ set -euo pipefail
 #   filter-trusted-comments.sh is-trusted-author <association>
 #       Low-level primitive. Exit 0 if trusted, 1 if not. Reused by #548/#549.
 #
+#   filter-trusted-comments.sh fetch-attachments <issue-number>
+#       Sanctioned entry point for attachment ingestion (#1340). Because the
+#       command text names this helper, the enforce-comment-trust.py hook
+#       allows it (allow-by-presence) even though it execs the otherwise-
+#       denied fetch-issue-attachments.sh. Resolved script-dir-relative (same
+#       `dirname "$0"` anchor fetch-issue-attachments.sh uses for its reverse
+#       hop), so it works in worktrees and in the plugin cache. Env
+#       (PIPELINE_REPO, PIPELINE_PROJECT_ROOT) passes through via exec
+#       inheritance; exit status propagates verbatim.
+#
 #   filter-trusted-comments.sh <N>
 #       Default mode. Single `gh issue view <N> --json body,comments` call.
 #       stdout = issue body, then the body of each comment from a trusted
@@ -41,6 +51,10 @@ if [ "${1:-}" = "is-trusted-author" ]; then
   exit $?
 fi
 
+if [ "${1:-}" = "fetch-attachments" ]; then
+  exec "$(dirname "$0")/fetch-issue-attachments.sh" "${2:-}"
+fi
+
 # --- Default / --json mode ---
 MODE=text
 if [ "${1:-}" = "--json" ]; then
@@ -50,7 +64,7 @@ fi
 
 N="${1:-}"
 if [ -z "$N" ]; then
-  echo "usage: filter-trusted-comments.sh [--json] <issue-number> | is-trusted-author <association>" >&2
+  echo "usage: filter-trusted-comments.sh [--json] <issue-number> | is-trusted-author <association> | fetch-attachments <issue-number>" >&2
   exit 2
 fi
 
