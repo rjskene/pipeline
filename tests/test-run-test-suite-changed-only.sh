@@ -312,8 +312,9 @@ verdict "step-6b-prose: Step 6b names --changed-only as the primary form ('When 
 # ---------------------------------------------------------------------------
 # Fixture extension (#1339, backlog #65) — add a SCANNER-shaped test that
 # globs `"$TESTS_DIR"/test*.sh` (the exact idiom used by the real
-# tests/test-guard-temp-repo-git-identity.sh) and fails if ANY corpus test
-# file contains the marker string SCANNERMARK. It names no single touched
+# tests/test-guard-temp-repo-git-identity.sh, self-exclusion included) and
+# fails if ANY OTHER corpus test file contains the marker string SCANNERMARK
+# (it must skip itself — its own grep carries the literal). It names no single touched
 # path, so pre-#1339 --changed-only would never select it even when a diff
 # adds a file that trips it. Land it on origin/main so scenarios 11+ see a
 # 5-file corpus baseline (was 4 after scenario 3).
@@ -325,7 +326,8 @@ TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "RANFILE:test-scanner.sh"
 for f in "$TESTS_DIR"/test*.sh "$TESTS_DIR"/test_*.sh; do
   [ -f "$f" ] || continue
-  grep -q SCANNERMARK "$f" && { echo "SCANNER-FAIL: $f"; exit 1; }
+  [ "${f##*/}" = "${0##*/}" ] && continue   # skip self: this file carries the marker literal
+  grep -q SCANNERMARK "$f" && { echo "SCANNER-FAIL: ${f##*/}"; exit 1; }
 done
 exit 0
 SCANEOF
@@ -348,6 +350,7 @@ chmod +x "$R/tests/test-marked.sh"
 run --changed-only --base origin/main
 want_rc 1
 has 'RANFILE:test-scanner.sh'
+has 'SCANNER-FAIL: test-marked.sh'
 has 'touched=1 selected=2/6 scanners=1 RESULT=fail'
 verdict "changed-only/scanner-selected: a touched new test carrying the SCANNERMARK marker also selects the scanner test (scanners=1) and reds the run (touched=1 selected=2/6 scanners=1 RESULT=fail)"
 revert
