@@ -35,7 +35,7 @@ bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
 | Mode | What it does | Costs money |
 |---|---|---|
 | `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. | no |
-| `--reset` | Force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues and PRs, recreate the five slate issues from their templates. | no |
+| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the five slate issues from their templates. `--reset --dry-run` previews the PR/branch sweep for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
