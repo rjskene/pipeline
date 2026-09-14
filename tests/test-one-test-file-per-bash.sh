@@ -223,7 +223,7 @@ done
 # ---------------------------------------------------------------------------
 # Arm 3 — plan-draft ADVISORY. ASSERTS NOTHING, by design.
 #
-# `inline` over `.claude/logs/plan-drafts/*.md` measures 10 on the dogfood host
+# `inline` over `.claude/scratch/plan-drafts/*.md` measures 10 on the dogfood host
 # today: the six real #1291 incidents plus four self-quotations in this issue's
 # own drafts. That directory is gitignored, host-local and append-only, so NO PR
 # can drive it to zero — a zero assertion there is permanently red and unfixable.
@@ -232,7 +232,7 @@ done
 # ---------------------------------------------------------------------------
 inc_scenario "Arm 3: plan-draft advisory count (never fails the suite)"
 
-DRAFT_DIR="$REPO_ROOT/.claude/logs/plan-drafts"
+DRAFT_DIR="$REPO_ROOT/.claude/scratch/plan-drafts"
 if [ -d "$DRAFT_DIR" ]; then
   DRAFT_FILES=()
   for f in "$DRAFT_DIR"/*.md; do

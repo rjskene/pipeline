@@ -33,10 +33,10 @@ fi
 
 echo "Test 2: draft-file path pattern referenced"
 inc
-if grep -qF ".claude/logs/plan-drafts/" "$SKILL_FILE"; then
-  pass_msg "draft-file path .claude/logs/plan-drafts/ referenced"
+if grep -qF ".claude/scratch/plan-drafts/" "$SKILL_FILE"; then
+  pass_msg "draft-file path .claude/scratch/plan-drafts/ referenced"
 else
-  fail_msg "missing draft-file path .claude/logs/plan-drafts/"
+  fail_msg "missing draft-file path .claude/scratch/plan-drafts/"
 fi
 
 echo "Test 3: atomic helper scripts/post-plan.sh referenced"
