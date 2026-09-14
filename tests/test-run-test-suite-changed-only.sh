@@ -181,8 +181,8 @@ want_rc 0
 has   'RANFILE:test-a.sh'
 lacks 'RANFILE:test-unrelated.sh'
 lacks 'RANFILE:test-hooks.sh'
-has   'CHANGED-ONLY: touched=1 selected=1/3 RESULT=pass'
-verdict "changed-only/path-subject: touched scripts/a.sh selects only test-a.sh (touched=1 selected=1/3 RESULT=pass, exit 0)"
+has   'CHANGED-ONLY: touched=1 selected=1/3 scanners=0 RESULT=pass'
+verdict "changed-only/path-subject: touched scripts/a.sh selects only test-a.sh (touched=1 selected=1/3 scanners=0 RESULT=pass, exit 0)"
 revert
 
 # ---------------------------------------------------------------------------
@@ -221,9 +221,9 @@ fi
 
 run --changed-only --base origin/main
 want_rc 0
-has   'CHANGED-ONLY: touched=0 selected=0/4 RESULT=pass'
+has   'CHANGED-ONLY: touched=0 selected=0/4 scanners=0 RESULT=pass'
 lacks 'RANFILE:'
-verdict "changed-only/clean: a clean tree reports touched=0 selected=0/4 RESULT=pass and runs nothing"
+verdict "changed-only/clean: a clean tree reports touched=0 selected=0/4 scanners=0 RESULT=pass and runs nothing"
 
 # ---------------------------------------------------------------------------
 # 5. Unresolvable base ⇒ fail-open to the full suite with ONE stderr line and
@@ -259,8 +259,8 @@ verdict "changed-only/argcheck: --changed-only with --chunk exits 2 with 'mutual
 printf '#!/bin/bash\necho "RANFILE:test-a.sh"\nexit 1\n' > "$R/tests/test-a.sh"
 run --changed-only --base origin/main
 want_rc 1
-has 'touched=1 selected=1/4 RESULT=fail'
-verdict "changed-only/strict-fail: a touched, failing test reports touched=1 selected=1/4 RESULT=fail and exits 1"
+has 'touched=1 selected=1/4 scanners=0 RESULT=fail'
+verdict "changed-only/strict-fail: a touched, failing test reports touched=1 selected=1/4 scanners=0 RESULT=fail and exits 1"
 revert
 
 # ---------------------------------------------------------------------------
@@ -271,7 +271,7 @@ echo '# t' >> "$R/scripts/a.sh"
 PIPELINE_BASE_BRANCH=main PIPELINE_REPO=x/y PIPELINE_TEST_VERBOSE=1 run --changed-only
 want_rc 0
 has 'RANFILE:test-a.sh'
-has 'selected=1/4 RESULT=pass'
+has 'selected=1/4 scanners=0 RESULT=pass'
 has 'CHANGED-ONLY: selected tests/test-a.sh'
 verdict "changed-only/env-base+verbose: no --base resolves origin/\$PIPELINE_BASE_BRANCH and PIPELINE_TEST_VERBOSE=1 lists 'CHANGED-ONLY: selected tests/test-a.sh'"
 revert
@@ -308,6 +308,63 @@ has6b 'When base CI is green'
 has6b 'CHANGED-ONLY:'
 has6b '--chunk 1/4'
 verdict "step-6b-prose: Step 6b names --changed-only as the primary form ('When base CI is green'), reads the CHANGED-ONLY: summary, and keeps --chunk 1/4 as the fallback"
+
+# ---------------------------------------------------------------------------
+# Fixture extension (#1339, backlog #65) — add a SCANNER-shaped test that
+# globs `"$TESTS_DIR"/test*.sh` (the exact idiom used by the real
+# tests/test-guard-temp-repo-git-identity.sh) and fails if ANY corpus test
+# file contains the marker string SCANNERMARK. It names no single touched
+# path, so pre-#1339 --changed-only would never select it even when a diff
+# adds a file that trips it. Land it on origin/main so scenarios 11+ see a
+# 5-file corpus baseline (was 4 after scenario 3).
+# ---------------------------------------------------------------------------
+
+cat > "$R/tests/test-scanner.sh" <<'SCANEOF'
+#!/bin/bash
+TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "RANFILE:test-scanner.sh"
+for f in "$TESTS_DIR"/test*.sh "$TESTS_DIR"/test_*.sh; do
+  [ -f "$f" ] || continue
+  grep -q SCANNERMARK "$f" && { echo "SCANNER-FAIL: $f"; exit 1; }
+done
+exit 0
+SCANEOF
+chmod +x "$R/tests/test-scanner.sh"
+
+if ! { gitc add -A && gitc commit -qm scanner && git -C "$R" push -q origin main && git -C "$R" fetch -q origin; }; then
+  echo "FAIL: could not land tests/test-scanner.sh on the fixture's origin/main" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 11. Touched tests/test-marked.sh (new, carries SCANNERMARK) ⇒ the scanner
+#     test — which globs the tests dir but names no touched path — is
+#     selected too (scanners=1), and its marker-detection reds the run: the
+#     exact CI-red-head blind spot #1339 closes.
+# ---------------------------------------------------------------------------
+
+printf '#!/bin/bash\necho SCANNERMARK\nexit 0\n' > "$R/tests/test-marked.sh"
+chmod +x "$R/tests/test-marked.sh"
+run --changed-only --base origin/main
+want_rc 1
+has 'RANFILE:test-scanner.sh'
+has 'touched=1 selected=2/6 scanners=1 RESULT=fail'
+verdict "changed-only/scanner-selected: a touched new test carrying the SCANNERMARK marker also selects the scanner test (scanners=1) and reds the run (touched=1 selected=2/6 scanners=1 RESULT=fail)"
+revert
+
+# ---------------------------------------------------------------------------
+# 12. Control: a diff touching only scripts/a.sh (no tests/ path) does NOT
+#     select the scanner — scanners=0.
+# ---------------------------------------------------------------------------
+
+echo '# t' >> "$R/scripts/a.sh"
+run --changed-only --base origin/main
+want_rc 0
+has   'RANFILE:test-a.sh'
+lacks 'RANFILE:test-scanner.sh'
+has   'touched=1 selected=1/5 scanners=0 RESULT=pass'
+verdict "changed-only/scanner-control: a diff touching only scripts/a.sh (no tests/ path) does not select the scanner (touched=1 selected=1/5 scanners=0 RESULT=pass)"
+revert
 
 echo ""
 echo "================================"
