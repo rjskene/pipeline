@@ -98,7 +98,7 @@ A guard that passes is not evidence until you have seen it fail on something.
 
    **Phase 2 — Code quality.** Run checks and review the diff. **Resolve CI status (Step 5) BEFORE deciding whether to run tests** — the test-execution decision keys off the already-settled rollup, so Step 5b's `--watch` is the single source of the settled verdict and Phase 2 never issues a second `--watch`/`--wait`.
 
-   **Typecheck always runs** (cheap; not covered by the CI-suite-trust rationale):
+   **Typecheck runs only when `PIPELINE_TYPECHECK_CMD` is set** (cheap; outside the CI-trust rationale); if unset print `typecheck: skipped (PIPELINE_TYPECHECK_CMD unset)` — never substitute an ad-hoc checker:
    ```bash
    $PIPELINE_TYPECHECK_CMD 2>&1 | head -50
    ```
