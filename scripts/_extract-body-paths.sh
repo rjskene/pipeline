@@ -104,13 +104,10 @@ bp_drop_negated_lines() {
       -v act="(touch|change|edit|modify|alter|rewrite)" \
       '{
          line = $0
-         matched = 0
-         if (match(line, neg1)) { start = RSTART + RLENGTH; matched = 1 }
-         else if (match(line, neg2)) { start = RSTART + RLENGTH; matched = 1 }
-         if (matched) {
-           rest = substr(line, start)
-           if (match(rest, act)) next
-         }
+         # Each cue is checked independently: a `never <act>` must not be
+         # masked by a later `do not <non-act>` on the same line.
+         if (match(line, neg1)) { rest = substr(line, RSTART + RLENGTH); if (match(rest, act)) next }
+         if (match(line, neg2)) { rest = substr(line, RSTART + RLENGTH); if (match(rest, act)) next }
          print line
        }'
 }

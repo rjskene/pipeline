@@ -203,6 +203,10 @@ BODY_NEG_SIBLING='Do NOT touch `agents/tdd-implementer.md` — locked.
 Please update `skills/plan-issue/SKILL.md` per the new behavior.
 '
 
+# Dual-cue line: `never <act>` PLUS a later `do not <non-act>` on the same
+# line. Either cue followed by an action word must drop the line (#1347).
+BODY_NEG_DUAL='Never edit `agents/tdd-implementer.md`; you do not need to worry.'
+
 # ============================================================================
 # B group — shared helper unit cases
 # ============================================================================
@@ -341,6 +345,17 @@ if has_entry "$B10_OUT" "skills/plan-issue/SKILL.md" \
 else
   fail_msg "B10: expected only skills/plan-issue/SKILL.md, no agents/tdd-implementer.md"
   dump "got:" "$B10_OUT"
+fi
+
+# ---- B11: dual-cue line — either cue + later action word drops it (#1347) ---
+echo "B11: bp_body_paths drops a 'never edit X; you do not need to worry' line"
+inc
+B11_OUT=$(run_bp bp_body_paths "$BODY_NEG_DUAL")
+if [ -z "$B11_OUT" ]; then
+  pass_msg "B11: dual-cue negated line yields no paths"
+else
+  fail_msg "B11: expected empty output — 'never edit' must not be masked by a later 'do not'"
+  dump "got:" "$B11_OUT"
 fi
 
 # ============================================================================
