@@ -1,5 +1,12 @@
 #!/bin/bash
 set -euo pipefail
+# noglob (#1347): the wave-loop comparisons (FILES[$N]/WAVE_FILES[$WAVE])
+# iterate unquoted on purpose (whitespace word-splitting is required); `set -f`
+# blocks bash from ALSO pathname-expanding a glob-shaped body token (e.g.
+# `tests/*.sh`) against CWD at comparison time. Defense-in-depth alongside the
+# glob-token drop in scripts/_extract-body-paths.sh — no unquoted expansion
+# elsewhere in this script relies on globbing (verified by inspection).
+set -f
 
 # shellcheck source=scripts/_extract-body-paths.sh
 . "$(dirname "${BASH_SOURCE[0]:-$0}")/_extract-body-paths.sh"
