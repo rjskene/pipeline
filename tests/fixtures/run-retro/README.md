@@ -71,21 +71,21 @@ delta join. Refresh this file whenever the #1271 baseline table is edited.
 
 Cycle-0 issue #1274 has no row → `n/a (outside PR window)`.
 
-### `agent-costs.jsonl` — the numbers the cost rows pin (#1293)
+### `agent-costs.jsonl` — the numbers the cost rows pin (#1293, #1346)
 
-Six `schema_version=1` records (`issue` is a STRING; the token total lives at
+Ten `schema_version=1` records (`issue` is a STRING; the token total lives at
 `.tokens.total`). The values are chosen so every control fails loudly:
 
 | issue | records | per-issue tokens | stages |
 |---|---|---|---|
 | `"1272"` | 2 distinct `record_key`s, stages `plan` + `execute` | 30000000 | 2 |
 | `"1273"` | 2 lines sharing ONE `record_key`, `tokens.total` 999000000 then 50000000, stage `execute` | 50000000 (last-write-wins) | 1 |
-| `"1274"` | 1 record, stage `pr-eval` | 70000000 | 1 |
+| `"1274"` | 1 `pr-eval` record, plus two forward/retroactive `agent_id` pairs (#1346): `plan` with IDENTICAL tokens (4000000/4000000) and `review` with DIFFERING tokens (forward lower-bound 1000000, retroactive complete 6000000) | 80000000 (70000000 + 4000000 + 6000000, pairs collapsed by `agent_id` — the pre-#1346 doubled-sum was 85000000) | 3 |
 | `"9999"` | 1 record (out of cycle 0) | 900000000 | 1 |
 
-Median over `{30000000, 50000000, 70000000}` = `50000000`. If `#9999` leaked
-in: `60000000`. If the `record_key` dedup were skipped: `#1273` = 1049000000
-and the median becomes `70000000`. All three values are distinct, so the
+Median over `{30000000, 50000000, 80000000}` = `50000000`. If `#9999` leaked
+in: `65000000`. If the `record_key` dedup were skipped: `#1273` = 1049000000
+and the median becomes `80000000`. All three values are distinct, so the
 leak control and the dedup control each move the median to a value no other
 bug produces.
 
