@@ -178,6 +178,31 @@ write_issue "$S" 4 "priority/P2" "$BODY_SHALLOW"
 
 EXPECTED_DUP_SET="skills/plan-issue/SKILL.md"
 
+# ---- #1347 fixtures: glob-metacharacter tokens and negated mentions --------
+# A glob literal is prose, not a file (star/question/bracket-class shapes).
+# `agents/tdd-implementer.md` is the tracked real-path control alongside them.
+BODY_GLOB='Touches `tests/*.sh`, `docs/??.md`, and `src/[ab].py` for cleanup.
+Also touches `agents/tdd-implementer.md` for real.'
+
+PLAN_BODY_GLOB='## Implementation Plan
+
+**Files to change:**
+- `tests/*.sh` — cleanup wildcard, should be dropped
+- `agents/tdd-implementer.md` — real file, should survive
+
+**Tasks (ordered):**
+- Task 1: noop
+'
+
+# A negated line contributes no paths at all.
+BODY_NEG_ONLY='Do NOT change `agents/tdd-implementer.md` — this file must stay as-is.'
+
+# A negated line plus a non-negated sibling line: the sibling's path still
+# extracts; the negated line's path does not.
+BODY_NEG_SIBLING='Do NOT touch `agents/tdd-implementer.md` — locked.
+Please update `skills/plan-issue/SKILL.md` per the new behavior.
+'
+
 # ============================================================================
 # B group — shared helper unit cases
 # ============================================================================
@@ -267,6 +292,55 @@ if has_entry "$B6_OUT" "skills/plan-issue/SKILL.md" \
 else
   fail_msg "B6: expected {skills/plan-issue/SKILL.md, agents/tdd-implementer.md} and no data.map"
   dump "got:" "$B6_OUT"
+fi
+
+# ---- B7: bp_body_paths drops glob-metacharacter tokens (#1347) --------------
+echo "B7: bp_body_paths drops star/question/bracket-class glob tokens"
+inc
+B7_OUT=$(run_bp bp_body_paths "$BODY_GLOB")
+if has_entry "$B7_OUT" "agents/tdd-implementer.md" \
+   && ! printf '%s\n' "$B7_OUT" | grep -qF '*' \
+   && ! printf '%s\n' "$B7_OUT" | grep -qF '?' \
+   && ! printf '%s\n' "$B7_OUT" | grep -qF '['; then
+  pass_msg "B7: real path kept; tests/*.sh, docs/??.md, src/[ab].py all dropped"
+else
+  fail_msg "B7: expected only agents/tdd-implementer.md, no glob-metacharacter token"
+  dump "got:" "$B7_OUT"
+fi
+
+# ---- B8: bp_plan_files drops glob-metacharacter tokens (#1347) --------------
+echo "B8: bp_plan_files drops glob tokens from the **Files to change:** block"
+inc
+B8_OUT=$(run_bp bp_plan_files "$PLAN_BODY_GLOB")
+if has_entry "$B8_OUT" "agents/tdd-implementer.md" \
+   && ! printf '%s\n' "$B8_OUT" | grep -qF '*'; then
+  pass_msg "B8: real path kept; tests/*.sh dropped"
+else
+  fail_msg "B8: expected only agents/tdd-implementer.md, no tests/*.sh"
+  dump "got:" "$B8_OUT"
+fi
+
+# ---- B9: a negated line contributes no paths (#1347) ------------------------
+echo "B9: bp_body_paths drops the path on a 'do NOT change' negated line"
+inc
+B9_OUT=$(run_bp bp_body_paths "$BODY_NEG_ONLY")
+if [ -z "$B9_OUT" ]; then
+  pass_msg "B9: negated-only body yields no paths"
+else
+  fail_msg "B9: expected empty output for a body whose only path is negated"
+  dump "got:" "$B9_OUT"
+fi
+
+# ---- B10: a non-negated sibling line still yields its path (#1347) ----------
+echo "B10: a non-negated sibling line still yields its path"
+inc
+B10_OUT=$(run_bp bp_body_paths "$BODY_NEG_SIBLING")
+if has_entry "$B10_OUT" "skills/plan-issue/SKILL.md" \
+   && ! has_entry "$B10_OUT" "agents/tdd-implementer.md"; then
+  pass_msg "B10: sibling path kept; negated-line path absent"
+else
+  fail_msg "B10: expected only skills/plan-issue/SKILL.md, no agents/tdd-implementer.md"
+  dump "got:" "$B10_OUT"
 fi
 
 # ============================================================================

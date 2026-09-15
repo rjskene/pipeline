@@ -90,15 +90,41 @@ bp_normalize_tokens() {
   done
 }
 
+# bp_drop_negated_lines <body> — drop any physical line matching the negation
+# cue `(do|does|must|should|will)( not|n't)|never` when an action word
+# `(touch|change|edit|modify|alter|rewrite)` follows it later on the SAME
+# line (case-insensitive, #1347). A negated line contributes no paths at all
+# — documented trade-off: a line that both forbids one file and names another
+# loses the second (plans list real files in `**Files to change:**`, which is
+# unaffected since this filter is bp_body_paths-only).
+bp_drop_negated_lines() {
+  awk -v IGNORECASE=1 \
+      -v neg1="(do|does|must|should|will)( not|n't)" \
+      -v neg2="never" \
+      -v act="(touch|change|edit|modify|alter|rewrite)" \
+      '{
+         line = $0
+         matched = 0
+         if (match(line, neg1)) { start = RSTART + RLENGTH; matched = 1 }
+         else if (match(line, neg2)) { start = RSTART + RLENGTH; matched = 1 }
+         if (matched) {
+           rest = substr(line, start)
+           if (match(rest, act)) next
+         }
+         print line
+       }'
+}
+
 # bp_body_paths <body> — issue-body extraction: backticked tokens plus the
 # `## Affected areas` block, normalized and deduped. One path per line.
 bp_body_paths() {
-  local body="$1" from_backticks from_affected
-  from_backticks=$( { printf '%s' "$body" \
+  local body="$1" filtered from_backticks from_affected
+  filtered=$(printf '%s' "$body" | bp_drop_negated_lines)
+  from_backticks=$( { printf '%s' "$filtered" \
     | grep -oE '`[^`]+`' \
     | tr -d '`' \
     | grep -E "$FILE_PATH_RE"; } || true)
-  from_affected=$(printf '%s' "$body" \
+  from_affected=$(printf '%s' "$filtered" \
     | awk 'BEGIN{IGNORECASE=1; in_block=0}
            /^##[[:space:]]+Affected areas/ {in_block=1; next}
            in_block && /^##/ {in_block=0}
@@ -108,6 +134,7 @@ bp_body_paths() {
     | sed -E 's/^[[:space:]]*[-*][[:space:]]+//' \
     | sed 's/[[:space:]]\+/\n/g' \
     | grep -E "$FILE_PATH_RE" \
+    | grep -vE '[*?[]' \
     | bp_normalize_tokens \
     | sort -u; } || true
 }
@@ -125,6 +152,7 @@ bp_plan_files() {
     | sed 's/[[:space:]]\+/\n/g' \
     | tr -d '`' \
     | grep -E "$FILE_PATH_RE" \
+    | grep -vE '[*?[]' \
     | bp_normalize_tokens \
     | sort -u; } || true
 }
