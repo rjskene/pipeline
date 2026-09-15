@@ -637,9 +637,14 @@ compute_cost_latency "$ROWS_FILE"
 # Rollup contract: dedup on record_key FIRST (group_by(.record_key) |
 # map(last) — the key is LOGICAL and legitimately RECURS with revised totals,
 # per the schema header in capture-agent-costs.sh), THEN keep records whose
-# `.issue` (a STRING in the schema) parses to a cycle issue number, THEN sum
-# `.tokens.total` and count distinct `.stage` per issue. Cost rows are plain
-# `cost:` lines, not COMPUTED/EXTRA_COMP_VAL entries, so they never leak into
+# `.issue` (a STRING in the schema) parses to a cycle issue number, THEN
+# collapse forward/retroactive agent_id PAIRS the same way
+# cost-latency-report.sh L828-852 does (#880/#1346): non-empty agent_id ->
+# group_by(.agent_id) | max_by(.tokens.total); empty agent_id with a
+# session_id -> group_by(.session_id, .issue, .stage) | max_by(...); keyless
+# rows pass through untouched. THEN sum `.tokens.total` and count distinct
+# `.stage` per issue on that collapsed set. Cost rows are plain `cost:`
+# lines, not COMPUTED/EXTRA_COMP_VAL entries, so they never leak into
 # --dump-computed or double-print in --post output.
 compute_agent_costs() {
   if [ -n "$FIXTURE_DIR" ]; then
@@ -672,6 +677,15 @@ compute_agent_costs() {
     group_by(.record_key) | map(last)
     | map(. + {_num: ((.issue | tonumber?) // null)})
     | map(select((._num) as $n | $n != null and ($ids | index($n) != null)))
+    | (
+        ([ .[] | select((.agent_id // "") != "") ]
+           | group_by(.agent_id) | map(max_by(.tokens.total)))
+        + ([ .[] | select((.agent_id // "") == "")
+                  | select(has("session_id") and .session_id != null) ]
+           | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
+        + [ .[] | select((.agent_id // "") == "")
+                | select((has("session_id") | not) or .session_id == null) ]
+      )
     | group_by(._num)
     | map({issue: .[0]._num, tokens: (map(.tokens.total) | add), stages: (map(.stage) | unique | length)})
   ' "$AGENT_COSTS_FILE" 2>/dev/null)"

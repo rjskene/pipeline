@@ -76,10 +76,10 @@ else
   fail_msg "tests/fixtures/run-retro/agent-costs.jsonl missing — every assertion below is vacuous"
 fi
 NREC="$(wc -l < "$FIXTURE_DIR/agent-costs.jsonl" 2>/dev/null | tr -d '[:space:]')"
-if [ "${NREC:-0}" -eq 6 ]; then
-  pass_msg "substrate carries 6 records"
+if [ "${NREC:-0}" -eq 10 ]; then
+  pass_msg "substrate carries 10 records"
 else
-  fail_msg "substrate should carry 6 records, got ${NREC:-0}"
+  fail_msg "substrate should carry 10 records, got ${NREC:-0}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -102,13 +102,26 @@ expect_line "#1272 row sums both records and counts both stages" "$OUT1" \
 # LAST, so the row is 50M. This row IS the record_key control.
 expect_line "#1273 row is the record_key-deduped total (last write wins)" "$OUT1" \
   "cost: issue=#1273 tokens=50000000 stages=1"
-# #1274 — a single pr-eval record.
-expect_line "#1274 row renders a single-record issue" "$OUT1" \
-  "cost: issue=#1274 tokens=70000000 stages=1"
+# #1274 — a pr-eval record PLUS two forward/retroactive agent_id pairs (#1346,
+# mirrors #880's cost-latency-report.sh collapse): a "plan" pair with IDENTICAL
+# tokens (4000000/4000000, collapses to 4000000) and a "review" pair with
+# DIFFERING tokens (forward lower-bound 1000000, retroactive complete 6000000,
+# collapses to the max 6000000). Correct row: 70000000 + 4000000 + 6000000.
+expect_line "#1274 row collapses forward/retroactive agent_id pairs, not doubled-sums them" "$OUT1" \
+  "cost: issue=#1274 tokens=80000000 stages=3"
 expect_line "median over the three per-issue totals" "$OUT1" \
   "cost: loop-own tokens/issue median = 50000000"
 expect_line "backfill breadcrumb names the fixture-mode skip" "$OUT1" \
   "cost: backfill = skipped (fixture mode)"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 1b: agent_id pair-collapse control (#1346)"
+# ---------------------------------------------------------------------------
+# Summing BOTH halves of each pair (the pre-#1346 bug) would give
+# 70000000+4000000+4000000+1000000+6000000 = 85000000. stages= is UNCHANGED
+# by the pair either way (unique() already collapses repeated stage strings),
+# so only the tokens total discriminates the fix.
+refute_sub "#1274's doubled-pair sum 85000000 is not summed in" "$OUT1" "tokens=85000000"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 2: record_key dedup control"
