@@ -248,6 +248,18 @@ class TestBlockDeletions(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertBlocked(cmd)
 
+    # ======================================================================
+    # Issue #1342 — a bare `\`+newline continuation before the deletion verb
+    # must not mask the command from this guard. Regression guard: this hook
+    # was already unaffected by the #1342 bug (the BLOCKED regexes' `_HEAD`
+    # anchor treats a literal newline as a command separator on its own), so
+    # this pins that behaviour stays correct after the command_mask.py
+    # segments() continuation-elision fix.
+    # ======================================================================
+
+    def test_1342_continuation_before_verb_still_blocked(self):
+        self.assertBlocked("FOO=1 \\\n" + RMRF + " /home/x")
+
 
 if __name__ == "__main__":
     unittest.main()

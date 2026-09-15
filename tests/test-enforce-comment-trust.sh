@@ -252,6 +252,30 @@ else
   fail_msg "expected rc=2 + BLOCKED + helper hint, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
+# --- Line-continuation shape (#1342) ----------------------------------------
+# A bare `\`+newline continuation before the real command head must not mask
+# the command from this guard — same as the single-line form.
+
+echo "Case X: env-assignment + continuation + gh issue view --json body,comments blocks (#1342)"
+inc
+CONT_PAYLOAD=$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":"FOO=1 \\\ngh issue view 5 --json body,comments"}}))')
+rc=$(run_hook "$CONT_PAYLOAD")
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+  pass_msg "Case X: blocked (continuation-masked head still resolves to gh issue view)"
+else
+  fail_msg "Case X: expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case Y: env-assignment + continuation + bash fetch-issue-attachments.sh blocks (#1342 Step 1a fence shape)"
+inc
+CONT_PAYLOAD=$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":"PIPELINE_REPO=\"$PIPELINE_REPO\" \\\nbash scripts/fetch-issue-attachments.sh 5"}}))')
+rc=$(run_hook "$CONT_PAYLOAD")
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err"; then
+  pass_msg "Case Y: blocked (continuation-masked head still resolves to bash fetch-issue-attachments.sh)"
+else
+  fail_msg "Case Y: expected rc=2 + BLOCKED, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
 echo "Case L: hook registered dogfood-only in .claude/settings.json"
 inc
 SETTINGS="$SCRIPT_DIR/../.claude/settings.json"

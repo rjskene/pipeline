@@ -247,6 +247,19 @@ else
   fail_msg "Case O: expected rc!=0 with 'main' in stderr, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
 fi
 
+# --- Line-continuation shape (#1342) ----------------------------------------
+# A bare `\`+newline continuation before the real command head must not mask
+# the command from this guard — same as the single-line form.
+
+echo "Case P: continuation shape — env assignment + backslash-newline before gh pr create --base main blocks"
+inc
+rc=$(run_hook $'FOO=1 \\\ngh pr create --base main --title T --body B')
+if [ "$rc" != "0" ]; then
+  pass_msg "Case P: blocked (continuation-masked head still resolves to gh pr create)"
+else
+  fail_msg "Case P: expected rc!=0, got rc=$rc"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
