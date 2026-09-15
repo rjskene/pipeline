@@ -87,6 +87,37 @@ class TestSegments(unittest.TestCase):
     def test_h_unterminated_quote_is_none(self):
         self.assertIsNone(segments("echo 'x"))
 
+    # (i) issue #1342 — a bare `\`+newline continuation is elided, not kept
+    #     as a word: env assignment + continuation + `gh pr create --base
+    #     main` resolves head to `gh`, not the continuation token.
+    def test_i_continuation_elided_head_is_gh(self):
+        src = "FOO=1 \\\ngh pr create --base main"
+        words = [w for _, w in segments(src)][0]
+        self.assertEqual(words, ["FOO=1", "gh", "pr", "create", "--base", "main"])
+        self.assertEqual(head_index(words), 1)
+
+    # (j) continuation before `bash <script>`: head is `bash`, first operand
+    #     the script path (not glued to the continuation token).
+    def test_j_continuation_elided_head_is_bash_script_operand(self):
+        src = (
+            'PIPELINE_REPO="$PIPELINE_REPO" \\\n'
+            'bash scripts/fetch-issue-attachments.sh "$N"'
+        )
+        words = [w for _, w in segments(src)][0]
+        self.assertEqual(
+            words,
+            ["PIPELINE_REPO=$PIPELINE_REPO", "bash",
+             "scripts/fetch-issue-attachments.sh", "$N"],
+        )
+        self.assertEqual(head_index(words), 1)
+
+    # (k) a continuation INSIDE a quoted operand is literal content, not a
+    #     line-continuation to elide — it stays part of that one word.
+    def test_k_continuation_inside_quoted_operand_preserved(self):
+        src = 'echo "line1 \\\nline2"'
+        words = [w for _, w in segments(src)][0]
+        self.assertEqual(words, ["echo", "line1 \\\nline2"])
+
 
 class TestHeadIndex(unittest.TestCase):
     # (g) the command word after assignments / reserved words / wrappers and

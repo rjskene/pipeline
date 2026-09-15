@@ -168,6 +168,15 @@ def _scan(text: str):
         ch = text[i]
         if not quote:
             if ch == "\\":
+                # Bare `\`+newline (and `\`+CRLF) is a line continuation: the
+                # shell elides it and joins the two physical lines into one
+                # logical command, so it must never surface as a word (#1342).
+                if text[i + 1:i + 2] == "\n":
+                    i += 2
+                    continue
+                if text[i + 1:i + 3] == "\r\n":
+                    i += 3
+                    continue
                 chars.append(ch)
                 if i + 1 < n:
                     chars.append(text[i + 1])
