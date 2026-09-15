@@ -22,7 +22,8 @@ set -uo pipefail
 # (`group_by(.record_key) | map(last)` — the key is LOGICAL and legitimately
 # RECURS with revised totals, per the schema header in capture-agent-costs.sh),
 # THEN keep records whose `.issue` (a STRING) parses to a cycle issue number,
-# THEN sum `.tokens.total` and count distinct `.stage` per issue.
+# THEN collapse forward/retroactive `agent_id` pairs to `max_by(.tokens.total)`
+# (#880/#1346), THEN sum `.tokens.total` and count distinct `.stage` per issue.
 #
 # BEHAVIOUR TEST ONLY — nothing here greps SKILL.md / CLAUDE.md prose.
 #
@@ -127,22 +128,22 @@ refute_sub "#1274's doubled-pair sum 85000000 is not summed in" "$OUT1" "tokens=
 scenario "Scenario 2: record_key dedup control"
 # ---------------------------------------------------------------------------
 # Summing #1273's two same-key lines without deduping gives 1049000000 and
-# moves the median to 70000000 — both distinct from every other value the
+# moves the median to 80000000 — both distinct from every other value the
 # fixture can produce, so this control cannot pass by coincidence.
 refute_sub "#1273's superseded 999000000 record is not summed in" "$OUT1" "tokens=1049000000"
 refute_sub "the superseded lower-bound total never reaches a row" "$OUT1" "tokens=999000000"
-refute_sub "the median is not the dedup-skipped 70000000" "$OUT1" \
-  "cost: loop-own tokens/issue median = 70000000"
+refute_sub "the median is not the dedup-skipped 80000000" "$OUT1" \
+  "cost: loop-own tokens/issue median = 80000000"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 3: out-of-cycle leak control"
 # ---------------------------------------------------------------------------
 # #9999 carries 900000000 tokens and is in NO cycle-0 block. Including it would
-# render a fourth row and move the median to 60000000.
+# render a fourth row and move the median to 65000000.
 refute_sub "no row for the out-of-cycle issue #9999" "$OUT1" "cost: issue=#9999"
 refute_sub "the out-of-cycle total never reaches a row" "$OUT1" "tokens=900000000"
-refute_sub "the median is not the leaked-in 60000000" "$OUT1" \
-  "cost: loop-own tokens/issue median = 60000000"
+refute_sub "the median is not the leaked-in 65000000" "$OUT1" \
+  "cost: loop-own tokens/issue median = 65000000"
 NROWS="$(printf '%s\n' "$OUT1" | grep -c '^cost: issue=#')"
 if [ "$NROWS" -eq 3 ]; then
   pass_msg "exactly 3 cost rows — one per cycle-0 issue"
