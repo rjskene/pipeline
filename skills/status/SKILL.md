@@ -149,6 +149,14 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    # Reap stale visual-proof servers (orphaned python http.servers whose
    # worktree has been pruned). Housekeeping; never gate-fatal. See #517.
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/reap-stale-visual-proof-servers.sh" || true
+   # Log retention dry-run (#1353). READ-ONLY advisory over .claude/logs/ —
+   # gated on PIPELINE_LOGS_ENABLED (nothing to prune when logs are off).
+   # Relay ONLY the SUMMARY line. Status NEVER passes --apply; deleting is
+   # an operator action (bash scripts/prune-logs.sh --apply, gated behind
+   # ALLOW_DELETIONS). Never gate-fatal.
+   if [ "${PIPELINE_LOGS_ENABLED:-false}" = "true" ]; then
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/prune-logs.sh" || true
+   fi
    # Rolling-window usage read-out (dogfood-only, #725). READ-ONLY advisory
    # over the gated agent-cost capture — relay its single read-out line so the
    # operator sees window-usage / headroom / throttle-ETA. Never gate-fatal;

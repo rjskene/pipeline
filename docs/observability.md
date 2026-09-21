@@ -59,3 +59,18 @@ GREEN implementer are captured as distinct roles in `agent-costs.jsonl` — so
 `/pipeline:tokenomics` can break the per-issue cost down by split-role role. This
 makes the cost posture of the two-model lane (expensive authorship vs. cheap
 greening) directly measurable rather than lumped into a single PATH B figure.
+
+## Log retention (`scripts/prune-logs.sh`)
+
+`.claude/logs/` grows without bound once `PIPELINE_LOGS_ENABLED=true` — nothing prunes the per-issue / per-queue transcripts it accumulates. `scripts/prune-logs.sh` (issue #1353) is a retention pass over that directory, **dry run by default**:
+
+```
+bash scripts/prune-logs.sh [--apply] [--days N]
+```
+
+- **Retention window** — `PIPELINE_LOGS_RETENTION_DAYS` (commented in `pipeline.config.example`, read site `${PIPELINE_LOGS_RETENTION_DAYS:-30}`, default 30 days); `--days N` overrides it for a single run. A file is a candidate only when its age is strictly greater than the window (a file exactly at the boundary survives).
+- **Keep-list, checked first** — these aggregates and live streams are never candidates, no matter their age: `agent-costs.jsonl`, `tokenomics-history.jsonl`, `usage-gate.jsonl`, `metrics-timeseries.jsonl`, `metrics-snapshot.cron.log`, `agent-cost-orchestrator-state.json`, `tool-use.log`, `subagents.log`, `runs.log`, `hook-errors.log`, `dogfood-refresh.log`, and everything under `plan-drafts/`. A new aggregate file is safe by default only if it is added to this list (or if it fails to match a prune glob at all — the script is fail-safe by construction).
+- **Prune set** — per-issue and per-run transcripts: `issue-<N>-*.log`, `issue-<N>-plan.md`, `queue-*.log`, `tool-use-issue-<N>.log`, `ci-fix-<N>-attempt-<k>.log`, `fullsend-*.out`, `runner-*.log`, `analyze-shortlist-*.json`, and everything under `subagents/` at any depth.
+- **Output** — one `PRUNE path=<rel> age_days=<n>` line per candidate, then exactly one `SUMMARY candidates=<n> bytes=<n> mode=dry-run` (or `mode=apply`) line. Exits 0 on every non-usage path, including a missing `.claude/logs/` dir.
+- **Deleting is an operator action.** `--apply` only deletes when the repo's existing `ALLOW_DELETIONS` gate is open (env `ALLOW_DELETIONS=true`, or `.env.ALLOW_DELETIONS` in `.claude/settings.local.json` — the same convention `sync-worktrees.sh` / `cleanup-worktree.sh` use); otherwise it behaves like a dry run and prints a notice to stderr. Deletes files only — empty directories (including `subagents/`) are left in place.
+- **Status wiring** — `/pipeline:status` housekeeping calls the script with no flags (dry run only) when `PIPELINE_LOGS_ENABLED=true`, relaying just the `SUMMARY` line; it never passes `--apply`.
