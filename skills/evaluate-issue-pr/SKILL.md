@@ -238,9 +238,9 @@ A guard that passes is not evidence until you have seen it fail on something.
 8. **Rebase only when NOT mergeable:**
    ```bash
    gh pr view $PR_NUM --repo $PIPELINE_REPO --json mergeable,mergeStateStatus
-   git fetch origin $PIPELINE_BASE_BRANCH; git diff --name-only HEAD...origin/$PIPELINE_BASE_BRANCH
+   git fetch origin $PIPELINE_BASE_BRANCH; git diff --name-only origin/$PIPELINE_BASE_BRANCH...HEAD
    ```
-   `git rebase origin/$PIPELINE_BASE_BRANCH` ONLY when the PR reports other than `MERGEABLE` + `CLEAN`/`UNSTABLE`, or the diff names a file this PR touches; an advanced base alone is not a reason (merge-commits, #459) and a needless rebase forces a full CI re-watch. If conflicts are complex (semantic, not whitespace), flag for user review.
+   `git rebase origin/$PIPELINE_BASE_BRANCH` ONLY when the PR is not `MERGEABLE` + `CLEAN`/`UNSTABLE`, or a file in that list also changed on the base since the merge-base (`git diff --name-only HEAD...origin/$PIPELINE_BASE_BRANCH`, intersected); an advanced base alone is not a reason (merge-commits, #459) and a needless rebase forces a CI re-watch. If conflicts are complex (semantic, not whitespace), flag for user review.
 
 9. **Post evaluation comment on the PR** via `gh pr comment $PR_NUM --repo $PIPELINE_REPO --body "<evaluation>"` using this format:
 
@@ -290,7 +290,7 @@ A guard that passes is not evidence until you have seen it fail on something.
 
     1. **Flag parsing.** `--manual-merge` may appear anywhere in argv — before or after the issue number; the parser is loop-based, not positional. Also honored via env: `MANUAL_MERGE=1` (exported by `spawn-claude.sh` when the spawn carried `--manual-merge`) is equivalent. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
 
-    2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233) on the invocation. pr-eval ALWAYS runs from a feature WORKTREE, which has no `.claude/logs/` of its own (#1246) — resolve the subagent log dir against the MAIN checkout, never `$(pwd)`, via `scripts/check-capability-refusal.sh --resolve-sources`. The resolver emits exactly one of three tokens: `resolved` (export the knob), `no-log-dir` (benign — root resolved but the log dir genuinely does not exist, e.g. `PIPELINE_LOGS_ENABLED=false` consumer installs), or `unresolvable-root` (defensive — no main checkout resolvable from cwd). Both `no-log-dir` and `unresolvable-root` leave the knob unexported — byte-identical to the pre-#1233 gate (fail-open is structural, not conditional).
+    2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233). pr-eval ALWAYS runs from a feature WORKTREE with no `.claude/logs/` of its own (#1246), so `scripts/check-capability-refusal.sh --resolve-sources` climbs to the MAIN checkout's log dir, never `$(pwd)`. It emits one of three tokens: `resolved` (the normal worktree outcome — export the knob), `no-log-dir` (consumer install, `PIPELINE_LOGS_ENABLED=false`), or `unresolvable-root` (defensive — no main checkout above cwd). Either fallback leaves the knob unexported (fail-open, as before #1233).
        ```bash
        source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
        # #1246: pr-eval ALWAYS runs from a feature worktree, which has no .claude/logs/
