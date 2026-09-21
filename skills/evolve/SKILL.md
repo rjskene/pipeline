@@ -90,7 +90,7 @@ if [ -n "$STOP" ]; then echo "STOP: gate failed — abort the turn, do not run S
 fi
 ```
 
-`HARNESS_ROOT` is the path the harness substituted into this skill at load, so a session that loaded the published cache or the main checkout instead of `--plugin-dir <clone>` fails that compare — an unsubstituted or unset token is empty and fails too, which is the fail-closed behaviour we want. The main checkout's `pipeline.config` is outside the clone's `restrict_paths.py` boundary, so the exclusion knob is read as the operator's attestation in the tracker `## Runtime` row `staging isolation`, never as a file read (spec §3.3).
+`HARNESS_ROOT` is the path the harness substituted into this skill at load, so a session that loaded the published cache or the main checkout instead of `--plugin-dir <clone>` fails that compare — an unsubstituted or unset token is empty and fails too, which is the fail-closed behaviour we want. The exclusion knob is read as the tracker `## Runtime` attestation, never from the main checkout's `pipeline.config` (outside `restrict_paths.py`; spec §3.3).
 
 ## Usage gate + projection
 
@@ -119,8 +119,8 @@ Each transition calls fence 3.
 
 1. **observe** — `RETRO=$(printf '%s/docs/retros/cycle-%02d.md' "$MAIN_REPO" "$N")`; then `if [ -x "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" ]; then bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" --cycle "$N" --tracker "$TRACKER" --write "$RETRO"; else echo "run-retro.sh absent (#1272 not merged) — skipping retro"; fi` — `if`/`else`, never `&&`/`||`, which would misreport a non-zero run-retro exit as "absent". Relay the ≤60-line stdout; never paste plan/PR/eval bodies.
 2. **diagnose** — resolve the `pending-verdicts:` issues from cycle N−1 (`confirmed` / `no-effect` / `regressed` per spec §7 thresholds; real-work cost/latency deltas under 30% are `no-effect`); rank the tracker `## Hypothesis backlog`; pick ≤3 issues, ≤1 PATH C; append `## Diagnose` (verdicts + why this slate) to `$RETRO`.
-3. **file** — one `gh issue create --repo "$PIPELINE_REPO" --label evolve --title "<type>(<scope>): …" --body-file <tmp>` per issue, body = the create-issues template (Context / Scope / Affected areas / Notes) + the mandatory `## Evolve` block (spec §6: Cycle, Hypothesis, Metric · expected delta, Measured by, Prose budget) + `<!-- pipeline:path-hint=A|B|C -->` (D: `<!-- pipeline:path=D -->`). Disallowed content (`tests/test-cage-invariant-*.sh`, auth/credential surfaces, prose-pinning tests) is filed with `--label human` instead of `evolve`; hook source edits themselves are ordinary `evolve` issues. Append `- #<n> — <title>` lines under `Cycle <N> …:` in the tracker `## Cycle issues` (edit `$TMP`, then fence 3 with `ISSUES="#a #b #c"` and `STEP_NEW=3`).
-4. **run** — re-run fence 5, then `Skill(skill: "pipeline:fullsend", args: "<the cycle's issue numbers>")`. Explicit numbers only, never bare fullsend.
+3. **file** — one `gh issue create --repo "$PIPELINE_REPO" --label evolve --title "<type>(<scope>): …" --body-file <tmp>` per issue, body = the create-issues template (Context / Scope / Affected areas / Notes) + the mandatory `## Evolve` block (spec §6: Cycle, Hypothesis, Metric · expected delta, Measured by, Prose budget) + `<!-- pipeline:path-hint=A|B|C -->` (D: `<!-- pipeline:path=D -->`). Disallowed content (`tests/test-cage-invariant-*.sh`, auth/credential surfaces, prose-pinning tests) is filed with `--label human` instead of `evolve`; hook source edits themselves are ordinary `evolve` issues. Before filing, `grep -rl <changed token or script> docs/ tests/fixtures/` and list every hit under Affected areas — a doc or fixture README pinning the contract is executor scope, not a pr-eval fix. Append `- #<n> — <title>` lines under `Cycle <N> …:` in the tracker `## Cycle issues` (edit `$TMP`, then fence 3 with `ISSUES="#a #b #c"` and `STEP_NEW=3`).
+4. **run** — re-run fence 5, then `Skill(skill: "pipeline:fullsend", args: "<the cycle's issue numbers>")`. Explicit numbers only, never bare fullsend. Every dispatch you author carries the fixture-cleanup rule of `skills/evaluate-issue-pr/SKILL.md` `## Executable verification` — recursive removal ONLY on a literal `.claude/scratch/<name>` path, never a variable, never spelled in heredoc prose or commit messages.
 5. **measure** — same `if [ -x … ]; then … ; else …; fi` guard around `bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-retro.sh" --cycle "$N" --tracker "$TRACKER" --post` → mass + friction verdicts now; its `verdict-candidates:` lines are the cost/latency/escape verdicts, deferred to cycle N+1 step 2 unless the issue's Measured-by line names the calibration run and not `retro` — a hybrid line (`calibration run … and retro (next cycle)`) still lands in `verdict-candidates:`. `--post` first runs `scripts/capture-agent-costs.sh` when `PIPELINE_LOGS_ENABLED=true` (synchronous `Agent` dispatches yield a forward row; the backfill's retroactive row collapses by `agent_id`), then prints one `cost: issue=#N tokens=<M> stages=<k>` row per cycle issue plus `cost: loop-own tokens/issue median` — compare against the scorecard's 23M-token median PATH B PR.
 6. **decide** — `regressed` → `Skill(skill: "pipeline:hotfix", args: "\"revert #<issue>: <one-line reason>\" --auto-merge")` with the revert commit, re-filing a follow-up only if the hypothesis still holds. `no-effect` → move the backlog entry to the bottom of `## Hypothesis backlog`. `confirmed` → replace the matching `## Scorecard baseline` row value. Both edits go through `$TMP` + fence 3.
 7. **log** — append `## Post` (step 5 output + verdicts) to `$RETRO`; `git -C "$MAIN_REPO" add "$RETRO" && git -C "$MAIN_REPO" commit -m "$(printf 'docs(evolve): cycle %02d retro' "$N")" && git -C "$MAIN_REPO" push origin evolve`; post the cycle comment (shape below) with `gh issue comment "$TRACKER" --repo "$PIPELINE_REPO" --body-file <tmp>`; fence 3 with `STEP_NEW=done`. Diminishing returns: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" "$TRACKER" | grep -E '^- verdicts:' | tail -2` — two lines and neither contains `confirmed` → fence 3 `MODE_NEW=paused`, `--add-label paused`, post `need new hypotheses` on the tracker, STOP. Else, `CYCLES` not reached (or 0) → `N=$((N+1))` and the next cycle starts at Step 0.
@@ -136,7 +136,7 @@ Each transition calls fence 3.
 HARNESS-FRICTION: <what the doc/hook said> | <what was true>
 ```
 
-`run-retro.sh` (#1272) harvests the `HARNESS-FRICTION:` lines and fence 5 parses the `- usage:` line, so the percentages are integers with no `%`. Every `HARNESS-FRICTION:` line from the fullsend run's subagent reports is appended VERBATIM, plus the orchestrator's own — one per doc, skill or hook claim that disagreed with reality.
+`run-retro.sh` harvests the `HARNESS-FRICTION:` lines; usage percentages are integers with no `%`. Append every `HARNESS-FRICTION:` line from the fullsend subagent reports VERBATIM, plus the orchestrator's own.
 
 ## pause / resume / stop
 
@@ -144,7 +144,7 @@ HARNESS-FRICTION: <what the doc/hook said> | <what was true>
 
 ```bash
 SINCE=$(gh pr list --repo "$PIPELINE_REPO" --base staging --head evolve --state merged --limit 1 --json mergedAt --jq '.[0].mergedAt // "1970-01-01T00:00:00Z"')
-MERGED_PRS=$(gh pr list --repo "$PIPELINE_REPO" --base evolve --state merged --search "merged:>=${SINCE%%T*}" --json number,title --jq '.[] | "- #\(.number) \(.title)"')
+MERGED_PRS=$(gh pr list --repo "$PIPELINE_REPO" --base evolve --state merged --limit 100 --search "merged:>=${SINCE%%T*}" --json number,title --jq '.[] | "- #\(.number) \(.title)"')
 SCORECARD_DELTA=$(awk '/^## Post/{p=1} p' "$(ls "$MAIN_REPO"/docs/retros/cycle-*.md 2>/dev/null | tail -1)" 2>/dev/null)
 PR=$(gh api "repos/$PIPELINE_REPO/pulls" -f base=staging -f head=evolve -f title="chore(evolve): merge-back through cycle $N" \
   -f body="$(printf '## Merged PRs\n%s\n\n## Scorecard delta\n%s\n' "$MERGED_PRS" "${SCORECARD_DELTA:-n/a (no retro yet)}")" --jq .number)
@@ -158,4 +158,4 @@ Then fence 3 with `MODE_NEW=paused` and hand back — the release cut stays the 
 
 ## Guardrails
 
-≤3 issues per cycle and ≤1 PATH C; hook edits are ordinary `evolve` issues, pinned by `tests/test-cage-invariant-*.sh` and the `block-cage-tests-diff` merge gate; only those cage tests and auth/credential surfaces route to `human`; prose budget is judged by the retro mass row; agent reports stay terse; cycle boundaries are the compaction seam, so everything needed to resume lives on GitHub.
+Prose budget is judged by the retro mass row; agent reports stay terse; cycle boundaries are the compaction seam, so everything needed to resume lives on GitHub.
