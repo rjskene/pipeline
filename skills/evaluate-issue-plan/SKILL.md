@@ -64,7 +64,7 @@ This section fires **per claim**, not per evaluation.
 - **Execute, do not read.** Run the artifact. Record the exact command and the exact observed token / exit code.
 - **Run a negative control.** Also run a variant that MUST be rejected. The positive and negative inputs differ in exactly ONE property — the property under test. Report both results.
 - **Same result on both means UNVERIFIED.** If the positive and negative inputs produce the same outcome, the guard is not looking — Verdict: Revise (plan-eval) / Flagged (pr-eval). A green result alone cannot distinguish "correct" from "checked nothing".
-- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable.
+- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable. To rebuild part of a fixture, create a fresh `mktemp -d -p "$PWD/.claude/scratch"` subdir; never remove a variable-held path — only literal-path cleanup passes the deletion guard.
 - **Vacuity check on REDs.** A RED that fails for an incidental reason (arg-parse error, missing file, import error, wrong path) is vacuous. Remove the incidental cause and confirm it still fails for the STATED reason.
 - **No silent fallback to reading.** When a claim genuinely cannot be executed, report `not-executed: <reason>`. An unexecuted guard claim is NEVER reported as verified.
 
@@ -116,7 +116,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    - If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed.
    - If the plan lists changes, verify they're consistent with existing patterns in the codebase.
    - **README anchor guard (#397/#404):** If the plan prescribes adding any `README.md` link of the form `*.md#anchor` (regex `\.md#[A-Za-z0-9_-]+`), return **Revise** — README uses file-level links only; anchored cross-references are banned by the policy enforced in `tests/test-readme-current.sh`.
-   - **Exact-match guard sweep (#1200):** Run the mechanical sweep, never an improvised `grep`. Improvisation is what produced the consumer's keyset-caught / literal-missed asymmetry: an undeclared `assertEqual(msgs, [{...}])` contradicted the RED-authored suite and stalled the GREEN implementer mid-leg.
+   - **Exact-match guard sweep (#1200):** Run the mechanical sweep, never an improvised `grep`.
 
      First resolve split-role applicability MECHANICALLY — fetch the labels rather than inferring the path from the title (`gh issue view <N> --repo $PIPELINE_REPO --json labels`). Split-role applies when the issue is PATH B (none of `docs-only` / `quick-fix` / `multi-task` present) AND `${PIPELINE_PATH_B_SPLIT_ROLE:-true}` is not `false`. Then run the sweep from the project root, threading the test roots explicitly — the helper NEVER sources `pipeline.config` (same contract as `split-role-gate.sh`):
 
@@ -140,6 +140,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    - Are data structures, algorithms, or mode behaviors specified concretely (no ambiguous steps)?
    - Would the executor need to make design decisions the plan doesn't address?
    - Could an executor implement every step from the comment alone?
+   - **Skill-edit coverage:** a plan editing `skills/<name>/SKILL.md` must pass every test in `grep -l 'skills/<name>' tests/*.sh`, not only the pins the issue names; a task that cannot pass one is a **Revise**, not an execute-time scope-down.
 
 4. **Check for conflicts with in-flight work:**
    ```bash

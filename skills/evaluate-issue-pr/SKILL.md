@@ -62,7 +62,7 @@ This section fires **per claim**, not per evaluation.
 - **Execute, do not read.** Run the artifact. Record the exact command and the exact observed token / exit code.
 - **Run a negative control.** Also run a variant that MUST be rejected. The positive and negative inputs differ in exactly ONE property — the property under test. Report both results.
 - **Same result on both means UNVERIFIED.** If the positive and negative inputs produce the same outcome, the guard is not looking — Verdict: Revise (plan-eval) / Flagged (pr-eval). A green result alone cannot distinguish "correct" from "checked nothing".
-- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable.
+- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable. To rebuild part of a fixture, create a fresh `mktemp -d -p "$PWD/.claude/scratch"` subdir; never remove a variable-held path — only literal-path cleanup passes the deletion guard.
 - **Vacuity check on REDs.** A RED that fails for an incidental reason (arg-parse error, missing file, import error, wrong path) is vacuous. Remove the incidental cause and confirm it still fails for the STATED reason.
 - **No silent fallback to reading.** When a claim genuinely cannot be executed, report `not-executed: <reason>`. An unexecuted guard claim is NEVER reported as verified.
 
@@ -288,13 +288,11 @@ A guard that passes is not evidence until you have seen it fail on something.
 
     **Dual-defense doctrine (issue #295).** Base-branch enforcement is defense-in-depth across four layers: (i) the eval-time `baseRefName == $PIPELINE_BASE_BRANCH` assertion inside `auto-merge-gate.sh` (Step 11.2 — `block-base-mismatch`); (ii) a TOCTOU re-read immediately before `gh pr merge` in Step 11.3; (iii) the skill-level quoted `--base "$PIPELINE_BASE_BRANCH"` in `execute-issue-plan` Step 9b; (iv) the `enforce-base-branch.py` PreToolUse hook over `gh pr create` / `gh pr edit --base`. The hook alone is **insufficient** — bypassed in production (#295; see `dev/audits/295-root-cause.md`). The eval-time gate is the load-bearing zero-data-loss layer.
 
-    1. **Flag parsing.** `--manual-merge` may appear anywhere in argv — before or after the issue number; the parser is loop-based, not positional. Also honored via env: `MANUAL_MERGE=1` (exported by `spawn-claude.sh` when the spawn carried `--manual-merge`) is equivalent. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
+    1. **Flag parsing.** `--manual-merge` may appear anywhere in argv. Also honored via env: `MANUAL_MERGE=1` (exported by `spawn-claude.sh` when the spawn carried `--manual-merge`) is equivalent. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
 
-    2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233). pr-eval ALWAYS runs from a feature WORKTREE with no `.claude/logs/` of its own (#1246), so `scripts/check-capability-refusal.sh --resolve-sources` climbs to the MAIN checkout's log dir, never `$(pwd)`. It emits one of three tokens: `resolved` (the normal worktree outcome — export the knob), `no-log-dir` (consumer install, `PIPELINE_LOGS_ENABLED=false`), or `unresolvable-root` (defensive — no main checkout above cwd). Either fallback leaves the knob unexported (fail-open, as before #1233).
+    2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233): `scripts/check-capability-refusal.sh --resolve-sources` resolves the MAIN checkout's log dir, never `$(pwd)` — a feature WORKTREE has no `.claude/logs/` of its own (#1246). Tokens: `resolved` (normal — export the knob), `no-log-dir` (`PIPELINE_LOGS_ENABLED=false` consumer install), `unresolvable-root` (no main checkout above cwd); either fallback leaves the knob unexported (fail-open).
        ```bash
        source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
-       # #1246: pr-eval ALWAYS runs from a feature worktree, which has no .claude/logs/
-       # of its own. Resolve against the MAIN checkout, never $(pwd).
        CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
        CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
        CR_DIR=${CR_LINE##*DIR=}
@@ -305,7 +303,7 @@ A guard that passes is not evidence until you have seen it fail on something.
        esac
        REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
        ```
-       Checks in order: `MANUAL_MERGE` env, `manual-merge` issue label, the 4 greenlight conditions above, capability-refusal (#1233), and `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`.
+       Checks in order: `MANUAL_MERGE` env, `manual-merge` label, the 4 greenlight conditions, capability-refusal, `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`. The gate may also print `NOTE: capability-refusal arm skipped (REASON=async-dispatch …)` on stderr — expected for background-dispatch records, not a WARN, never reported as "unproven".
 
     2b. **Split-role gate (#881 — `PIPELINE_PATH_B_SPLIT_ROLE`, default `true` per #1057, opt-OUT via `=false`).** The split-role precondition applies ONLY to PRs that were actually dispatched as split-role. Before running the gate, resolve TWO guards — the issue's PATH letter and (for PATH B) the resolved dispatch shape — so the gate distinguishes "this PR was never a split-role dispatch (nothing to protect → pass/skip)" from "this split-role PR is missing its mandatory red anchor (real violation → block)" (#1076).
 
