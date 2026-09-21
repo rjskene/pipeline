@@ -73,15 +73,17 @@ check_ne() {
   fi
 }
 
-# mk_record <dir> <filename> <result-text> [<prompt-text>]
+# mk_record <dir> <filename> <result-text> [<prompt-text>] [<status-text>]
 # Writes a subagent-shaped record with python's json.dump, so a `\n` inside
 # .result is JSON-escaped exactly as hooks/log_subagent.py writes it (which is
 # why a raw grep over the file bytes misses a sentinel that is not on physical
-# line 1 — see case (c)).
+# line 1 — see case (c)). <status-text> mirrors the PostToolUse(Agent)
+# payload's `status` field (#1233/#1361) — "" (default) for the ordinary
+# case, "async_launched" for a background-dispatch stub.
 mk_record() {
-  local dir="$1" fname="$2" result="$3" prompt="${4:-}"
+  local dir="$1" fname="$2" result="$3" prompt="${4:-}" status="${5:-}"
   mkdir -p "$dir"
-  RESULT_TEXT="$result" PROMPT_TEXT="$prompt" python3 - "$dir/$fname" <<'PY'
+  RESULT_TEXT="$result" PROMPT_TEXT="$prompt" STATUS_TEXT="$status" python3 - "$dir/$fname" <<'PY'
 import json, os, sys
 rec = {
     "schema_version": 1,
@@ -94,6 +96,7 @@ rec = {
     "prompt_truncated": False,
     "result": os.environ.get("RESULT_TEXT", ""),
     "result_truncated": False,
+    "status": os.environ.get("STATUS_TEXT", ""),
     "usage": {"input_tokens": 0, "output_tokens": 0,
               "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
     "total_tokens": 0,
@@ -109,7 +112,10 @@ PY
 # --- (p)/(x) harness -------------------------------------------------------
 # Every detector invocation in this file goes through run_det/run_det_env, so
 # (p) (exactly one stdout line, exit 0) is asserted for EVERY case in this file
-# and (x) collects the (SCANNED, WITH_OUTPUT, REASON) triple of every `clear`.
+# and (x) collects the (SCANNED, WITH_OUTPUT, ASYNC, REASON) quadruple of every
+# `clear` (#1361 — REASON is no longer a total function of (SCANNED,
+# WITH_OUTPUT) alone: (2,0) maps to `async-dispatch` when ASYNC==2 but
+# `no-leaf-output` when ASYNC==1, so ASYNC joins the lookup key).
 TRIPLES="$TMP/triples.txt"
 : >"$TRIPLES"
 LINE=""
@@ -124,15 +130,15 @@ _assert_contract() {
     fail "(p) $label: expected exactly 1 stdout line, got $nlines"
     return 0
   fi
-  if [[ "$out" =~ ^CAPABILITY_REFUSAL=(clear|block)\ ISSUE=[0-9]+\ REASON=[a-z-]+\ SCANNED=[0-9]+\ WITH_OUTPUT=[0-9]+$ ]]; then
+  if [[ "$out" =~ ^CAPABILITY_REFUSAL=(clear|block)\ ISSUE=[0-9]+\ REASON=[a-z-]+\ SCANNED=[0-9]+\ WITH_OUTPUT=[0-9]+\ ASYNC=[0-9]+$ ]]; then
     :
   else
     fail "(p) $label: stdout does not match the one-line contract: '$out'"
     return 0
   fi
   if [ "$(fld "$out" CAPABILITY_REFUSAL)" = "clear" ]; then
-    printf '%s %s %s\n' \
-      "$(fld "$out" SCANNED)" "$(fld "$out" WITH_OUTPUT)" "$(fld "$out" REASON)" \
+    printf '%s %s %s %s\n' \
+      "$(fld "$out" SCANNED)" "$(fld "$out" WITH_OUTPUT)" "$(fld "$out" ASYNC)" "$(fld "$out" REASON)" \
       >>"$TRIPLES"
   fi
 }
@@ -390,27 +396,75 @@ run_det 9999 "$W_DIR"
 check "(w) paired positive control over the SAME fixture: verdict" "block" "$(fld "$LINE" CAPABILITY_REFUSAL)"
 check "(w) paired positive control: SCANNED" "1" "$(fld "$LINE" SCANNED)"
 
-echo "=== (x) REASON is a total FUNCTION of (SCANNED, WITH_OUTPUT) on every clear ==="
+echo "=== (y) all-async: every opened record is a background stub => async-dispatch ==="
+Y_DIR="$TMP/y"
+mk_record "$Y_DIR" "execute-1233-path-b_aaaa1111.json" "" "" "async_launched"
+mk_record "$Y_DIR" "execute-1233-path-c_bbbb2222.json" "" "" "async_launched"
+run_det 1233 "$Y_DIR"
+check "(y) verdict" "clear" "$(fld "$LINE" CAPABILITY_REFUSAL)"
+check "(y) reason" "async-dispatch" "$(fld "$LINE" REASON)"
+check "(y) SCANNED" "2" "$(fld "$LINE" SCANNED)"
+check "(y) WITH_OUTPUT" "0" "$(fld "$LINE" WITH_OUTPUT)"
+check "(y) ASYNC" "2" "$(fld "$LINE" ASYNC)"
+
+echo "=== (z) mixed async stub + one non-async empty record => no-leaf-output (proved nothing) ==="
+Z_DIR="$TMP/z"
+mk_record "$Z_DIR" "execute-1233-path-b_aaaa1111.json" "" "" "async_launched"
+mk_record "$Z_DIR" "plan-issue-1233_cccc3333.json" ""
+run_det 1233 "$Z_DIR"
+check "(z) verdict" "clear" "$(fld "$LINE" CAPABILITY_REFUSAL)"
+check "(z) reason" "no-leaf-output" "$(fld "$LINE" REASON)"
+check_ne "(z) reason is not async-dispatch (not every opened record is a stub)" "async-dispatch" "$(fld "$LINE" REASON)"
+check "(z) SCANNED" "2" "$(fld "$LINE" SCANNED)"
+check "(z) WITH_OUTPUT" "0" "$(fld "$LINE" WITH_OUTPUT)"
+check "(z) ASYNC" "1" "$(fld "$LINE" ASYNC)"
+
+echo "=== (aa) async stub + one record with real text => no-refusal (arm 4 wins) ==="
+AA_DIR="$TMP/aa"
+mk_record "$AA_DIR" "execute-1233-path-b_aaaa1111.json" "" "" "async_launched"
+mk_record "$AA_DIR" "execute-1233-path-c_dddd4444.json" "all tasks implemented; suite green"
+run_det 1233 "$AA_DIR"
+check "(aa) verdict" "clear" "$(fld "$LINE" CAPABILITY_REFUSAL)"
+check "(aa) reason" "no-refusal" "$(fld "$LINE" REASON)"
+check "(aa) SCANNED" "2" "$(fld "$LINE" SCANNED)"
+check "(aa) WITH_OUTPUT" "1" "$(fld "$LINE" WITH_OUTPUT)"
+check "(aa) ASYNC" "1" "$(fld "$LINE" ASYNC)"
+
+echo "=== (ab) async stub + one record carrying the sentinel => block/leaf-refused (arm 1 always wins) ==="
+AB_DIR="$TMP/ab"
+mk_record "$AB_DIR" "execute-1233-path-b_aaaa1111.json" "" "" "async_launched"
+mk_record "$AB_DIR" "execute-1233-path-c_eeee5555.json" "$SENT cannot do the thing"
+run_det 1233 "$AB_DIR"
+check "(ab) verdict" "block" "$(fld "$LINE" CAPABILITY_REFUSAL)"
+check "(ab) reason" "leaf-refused" "$(fld "$LINE" REASON)"
+check "(ab) SCANNED" "2" "$(fld "$LINE" SCANNED)"
+
+echo "=== (x) REASON is a total FUNCTION of (SCANNED, WITH_OUTPUT, ASYNC) on every clear ==="
 TRIPLE_COUNT="$(grep -c '' "$TRIPLES" 2>/dev/null || echo 0)"
 if [ "$TRIPLE_COUNT" -lt 3 ] 2>/dev/null; then
-  fail "(x) vacuous: only $TRIPLE_COUNT clear-verdict triples collected"
+  fail "(x) vacuous: only $TRIPLE_COUNT clear-verdict quadruples collected"
 else
-  pass "(x) collected $TRIPLE_COUNT clear-verdict (SCANNED, WITH_OUTPUT, REASON) triples"
+  pass "(x) collected $TRIPLE_COUNT clear-verdict (SCANNED, WITH_OUTPUT, ASYNC, REASON) quadruples"
 fi
 
-DUPE_KEYS="$(sort -u "$TRIPLES" | awk '{print $1" "$2}' | sort | uniq -d)"
+# Keyed on (SCANNED, WITH_OUTPUT, ASYNC) — #1361: (SCANNED, WITH_OUTPUT) alone
+# is no longer sufficient (e.g. (2,0) is `async-dispatch` at ASYNC=2 but
+# `no-leaf-output` at ASYNC=1; see (y)/(z)), so ASYNC joins the key.
+DUPE_KEYS="$(sort -u "$TRIPLES" | awk '{print $1" "$2" "$3}' | sort | uniq -d)"
 if [ -z "$DUPE_KEYS" ]; then
-  pass "(x) no (SCANNED, WITH_OUTPUT) key maps to two distinct REASONs"
+  pass "(x) no (SCANNED, WITH_OUTPUT, ASYNC) key maps to two distinct REASONs"
 else
-  fail "(x) counter pair(s) mapping to MULTIPLE REASONs: $(printf '%s' "$DUPE_KEYS" | tr '\n' ';')"
+  fail "(x) counter triple(s) mapping to MULTIPLE REASONs: $(printf '%s' "$DUPE_KEYS" | tr '\n' ';')"
 fi
 
 lookup_reason() {
-  awk -v s="$1" -v w="$2" '$1==s && $2==w {print $3}' "$TRIPLES" | sort -u | tr '\n' ',' | sed 's/,$//'
+  awk -v s="$1" -v w="$2" -v a="$3" '$1==s && $2==w && $3==a {print $4}' "$TRIPLES" | sort -u | tr '\n' ',' | sed 's/,$//'
 }
-check "(x) canonical (0,0)" "no-sources" "$(lookup_reason 0 0)"
-check "(x) canonical (1,0)" "no-leaf-output" "$(lookup_reason 1 0)"
-check "(x) canonical (1,1)" "no-refusal" "$(lookup_reason 1 1)"
+check "(x) canonical (0,0,0)" "no-sources" "$(lookup_reason 0 0 0)"
+check "(x) canonical (1,0,0)" "no-leaf-output" "$(lookup_reason 1 0 0)"
+check "(x) canonical (1,1,0)" "no-refusal" "$(lookup_reason 1 1 0)"
+check "(x) canonical (2,0,2) — new arm" "async-dispatch" "$(lookup_reason 2 0 2)"
+check "(x) canonical (2,0,1) — same (SCANNED,WITH_OUTPUT) as above, different ASYNC" "no-leaf-output" "$(lookup_reason 2 0 1)"
 
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"

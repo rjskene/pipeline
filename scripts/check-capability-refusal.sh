@@ -22,7 +22,7 @@
 # token, same contract as scripts/split-role-gate.sh /
 # scripts/auto-merge-gate.sh / scripts/verify-execute-completion.sh):
 #
-#   CAPABILITY_REFUSAL=<clear|block> ISSUE=<N> REASON=<token> SCANNED=<n> WITH_OUTPUT=<n>
+#   CAPABILITY_REFUSAL=<clear|block> ISSUE=<N> REASON=<token> SCANNED=<n> WITH_OUTPUT=<n> ASYNC=<n>
 #
 # Zero args -> usage on stderr, exit 2.
 #
@@ -30,20 +30,36 @@
 #   - a file is OPENED iff it is (i) an explicit file source, or (ii) a
 #     -maxdepth-1 regular file inside a dir source whose decomposed slug (see
 #     below) carries <issue-N> as a whole digit run. Anything else is never
-#     opened: contributes 0 to BOTH counters.
+#     opened: contributes 0 to ANY counter.
 #   - SCANNED increments exactly once for EVERY opened file, regardless of
 #     parse outcome — a malformed .json IS an opened file.
 #   - WITH_OUTPUT increments only when the opened file yielded NON-EMPTY leaf
 #     text. A malformed .json yields no leaf text, so it is indistinguishable
 #     in the counters from a record whose .result decodes empty — both mean
 #     "this file proved nothing".
+#   - ASYNC (#1361) increments only for an opened `*.json` file whose `.result`
+#     decoded EMPTY (so it never also counts toward WITH_OUTPUT) AND whose
+#     `.status // ""` equals `async_launched` — the PostToolUse(Agent) payload
+#     shape hooks/log_subagent.py records for a `run_in_background:true`
+#     dispatch (#1233's `status` field). Such a record is a structural
+#     background-dispatch stub: the leaf's real result never reached the
+#     hook, so it can mechanically never carry leaf text. A non-.json source
+#     never contributes to ASYNC (the `status` field only exists on the JSON
+#     record shape).
 #
-# TOKEN RULE — an ordered TOTAL FUNCTION of (HIT, SCANNED, WITH_OUTPUT). First
-# matching arm wins:
-#   1. HIT >= 1              -> block / leaf-refused
-#   2. else SCANNED == 0     -> clear / no-sources      (nothing scannable)
-#   3. else WITH_OUTPUT == 0 -> clear / no-leaf-output   (proved nothing)
-#   4. else                  -> clear / no-refusal       (the only confident clean)
+# TOKEN RULE — an ordered TOTAL FUNCTION of (HIT, SCANNED, WITH_OUTPUT, ASYNC).
+# First matching arm wins:
+#   1. HIT >= 1                          -> block / leaf-refused
+#   2. else SCANNED == 0                 -> clear / no-sources      (nothing scannable)
+#   3. else WITH_OUTPUT == 0 AND
+#      ASYNC == SCANNED                  -> clear / async-dispatch  (every opened
+#                                           record is a background-dispatch stub;
+#                                           none of them could ever carry leaf text)
+#   4. else WITH_OUTPUT == 0             -> clear / no-leaf-output  (at least one
+#                                           opened record is NOT an async stub yet
+#                                           still proved nothing — genuinely
+#                                           inconclusive)
+#   5. else                              -> clear / no-refusal      (the only confident clean)
 #
 # SLUG DECOMPOSITION — filenames are written by hooks/log_subagent.py as
 # "<file_ts>_<slug>_<agent_id_short>.json" where file_ts contains no `_`, slug
@@ -155,6 +171,7 @@ SENT="CAPABILITY-""REFUSED:"
 SCANNED=0
 WITH_OUTPUT=0
 HIT=0
+ASYNC=0
 
 # slug_of <basename> — the 4-step decomposition documented above. Pure bash
 # string/array ops, no regex.
@@ -196,7 +213,7 @@ matches_issue() {
 # extracts leaf text per the per-file scan rule, increments WITH_OUTPUT on
 # non-empty text, and sets HIT when the sentinel matches at a line start.
 process_file() {
-  local f="$1" text rc
+  local f="$1" text rc status
   SCANNED=$((SCANNED + 1))
   case "$f" in
     *.json)
@@ -213,6 +230,14 @@ process_file() {
     if printf '%s\n' "$text" | grep -qE "^[[:space:]]*${SENT}"; then
       HIT=$((HIT + 1))
     fi
+  else
+    case "$f" in
+      *.json)
+        status="$(jq -r '.status // ""' "$f" 2>/dev/null)"
+        [ "$?" -eq 0 ] || status=""
+        [ "$status" = "async_launched" ] && ASYNC=$((ASYNC + 1))
+        ;;
+    esac
   fi
 }
 
@@ -257,6 +282,9 @@ if [ "$HIT" -ge 1 ]; then
 elif [ "$SCANNED" -eq 0 ]; then
   VERDICT="clear"
   REASON="no-sources"
+elif [ "$WITH_OUTPUT" -eq 0 ] && [ "$ASYNC" -eq "$SCANNED" ]; then
+  VERDICT="clear"
+  REASON="async-dispatch"
 elif [ "$WITH_OUTPUT" -eq 0 ]; then
   VERDICT="clear"
   REASON="no-leaf-output"
@@ -265,5 +293,5 @@ else
   REASON="no-refusal"
 fi
 
-echo "CAPABILITY_REFUSAL=${VERDICT} ISSUE=${ISSUE} REASON=${REASON} SCANNED=${SCANNED} WITH_OUTPUT=${WITH_OUTPUT}"
+echo "CAPABILITY_REFUSAL=${VERDICT} ISSUE=${ISSUE} REASON=${REASON} SCANNED=${SCANNED} WITH_OUTPUT=${WITH_OUTPUT} ASYNC=${ASYNC}"
 exit 0
