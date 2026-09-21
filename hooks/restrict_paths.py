@@ -207,10 +207,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
 from subagent_log_utils import read_event_stdin  # noqa: E402
+from _deny_log import log_denial  # noqa: E402
 
 data = read_event_stdin()
 tool_name = data.get("tool_name", "")
 tool_input = data.get("tool_input", {})
+_session_id = data.get("session_id")
 # Event-payload `cwd` (issue #1188) — the harness-supplied shell working
 # directory at invocation time. Consulted ONLY by the cd-escape gate below
 # (never by `_resolve`/`is_allowed` generally) as the anchor for a relative
@@ -1686,10 +1688,9 @@ paths = extract_paths()
 if tool_name in ("Write", "Edit"):
     for path in paths:
         if is_protected(path):
-            print(
-                f"BLOCKED: cannot modify protected file: {path}",
-                file=sys.stderr,
-            )
+            _reason = f"BLOCKED: cannot modify protected file: {path}"
+            print(_reason, file=sys.stderr)
+            log_denial("restrict_paths", tool_name, _reason, path, session_id=_session_id)
             sys.exit(2)
 
 # Bash command-string protected-token scan (#964): the absolute+exists
@@ -1717,20 +1718,18 @@ if tool_name in ("Write", "Edit"):
 if tool_name == "Bash":
     command = tool_input.get("command", "")
     if not _command_has_worktree_dest(command) and _protected_write_context(command):
-        print(
-            "BLOCKED: cannot modify protected file "
-            "(Bash command targets a protected control file)",
-            file=sys.stderr,
-        )
+        _reason = ("BLOCKED: cannot modify protected file "
+                   "(Bash command targets a protected control file)")
+        print(_reason, file=sys.stderr)
+        log_denial("restrict_paths", tool_name, _reason, command, session_id=_session_id)
         sys.exit(2)
 
 # Check for path boundary violations
 for path in paths:
     if not is_allowed(path):
-        print(
-            f"BLOCKED: path outside project boundary: {path}",
-            file=sys.stderr,
-        )
+        _reason = f"BLOCKED: path outside project boundary: {path}"
+        print(_reason, file=sys.stderr)
+        log_denial("restrict_paths", tool_name, _reason, path, session_id=_session_id)
         sys.exit(2)
 
 # cd-escape gate (issue #1188). Placed LAST in the Bash flow, strictly
@@ -1757,11 +1756,10 @@ if tool_name == "Bash":
             if resolved.startswith("/tmp"):
                 continue
             if not is_allowed(resolved):
-                print(
-                    f"BLOCKED: cd target outside project boundary: {target} "
-                    f"(resolves to {resolved})",
-                    file=sys.stderr,
-                )
+                _reason = (f"BLOCKED: cd target outside project boundary: {target} "
+                           f"(resolves to {resolved})")
+                print(_reason, file=sys.stderr)
+                log_denial("restrict_paths", tool_name, _reason, command, session_id=_session_id)
                 sys.exit(2)
     except Exception:
         pass

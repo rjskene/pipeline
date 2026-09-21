@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
 from subagent_log_utils import read_event_stdin  # noqa: E402
+from _deny_log import log_denial  # noqa: E402
 
 
 def _pipeline_repo() -> str:
@@ -253,7 +254,7 @@ def main() -> int:
     if is_authorized(file_path, authorized):
         return 0
 
-    print(
+    reason = (
         "BLOCKED: PATH C (multi-task issue #{n}) requires dispatching a "
         "tdd-implementer subagent before editing impl files.\n"
         "  File: {f}\n"
@@ -261,9 +262,11 @@ def main() -> int:
         "prompt='target=<dir>/ ...') for the directory containing this file, "
         "then retry the edit.\n"
         "  Escape hatch: export ALLOW_ORCHESTRATOR_EDIT=true (audit the "
-        "log after the run).".format(n=issue_number, f=file_path),
-        file=sys.stderr,
+        "log after the run).".format(n=issue_number, f=file_path)
     )
+    print(reason, file=sys.stderr)
+    log_denial("enforce-path-c-delegation", tool_name, reason, file_path,
+                session_id=session_id)
     return 2
 
 
