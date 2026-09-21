@@ -39,7 +39,10 @@
 # BOOT ANCHOR: SKILL.md ## Boot blocks bootstrap this resolver via the cache
 # glob ~/.claude/plugins/cache/claude-pipeline/pipeline/*/scripts/_resolve-plugin-root.sh
 # when CLAUDE_PLUGIN_ROOT is unset (a var-independent anchor — the boot snippet
-# cannot reference CLAUDE_PLUGIN_ROOT to FIND itself). That boot snippet
+# cannot reference CLAUDE_PLUGIN_ROOT to FIND itself). Under PIPELINE_USE_LOCAL_PLUGIN=true,
+# the boot snippet instead anchors on the current checkout's `git rev-parse --show-toplevel`
+# ahead of both cache globs, so a --plugin-dir session with no plugin cache still finds this
+# resolver file. That boot snippet
 # deliberately does NOT honor PIPELINE_PLUGIN_CACHE_DIR: it must be a
 # self-contained literal that runs BEFORE any pipeline env is sourced (it is the
 # bootstrap), so it hardcodes ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline.

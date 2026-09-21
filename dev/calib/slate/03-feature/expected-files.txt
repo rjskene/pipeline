@@ -1,0 +1,3 @@
+bin/calibctl
+lib/store.sh
+tests/case-search.sh

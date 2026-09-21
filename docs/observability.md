@@ -1,6 +1,6 @@
 # Observability (dogfood-only)
 
-Logging hooks and substrate used by this repo's self-audit system. Most are registered in this repo's `.claude/settings.json` only; the published `pipeline@claude-pipeline` plugin manifest does NOT register them, so consumer installs produce no `.claude/logs/subagents/` or `.claude/logs/tool-use.log` files.
+Logging hooks and substrate for this repo's own dogfood operation. Most are registered in this repo's `.claude/settings.json` only; the published `pipeline@claude-pipeline` plugin manifest does NOT register them, so consumer installs produce no `.claude/logs/subagents/` or `.claude/logs/tool-use.log` files.
 
 ## Subagent log
 
@@ -16,6 +16,18 @@ Logging hooks and substrate used by this repo's self-audit system. Most are regi
 
 **dogfood-only.** `.claude/logs/tool-use.log` is a tab-separated per-tool-call log (timestamp, tool, session, summary) written by `.claude/hooks/log-tool-use.sh` (PostToolUse `*`). Correlate with `subagents.log` via the `session` field to reconstruct the tool sequence inside each subagent — useful for verifying TDD order (Write test → Bash pytest fail → Write impl → Bash pytest pass). Log rotation is not automated; `cleanup-worktree.sh` copies per-issue logs to the root `.claude/logs/tool-use-issue-<N>.log` on worktree teardown.
 
+## Hook-denial log
+
+**dogfood-only, gated (#1352).** PreToolUse guard hooks that deny (exit 2) leave no trace in `tool-use.log` — that log is written by a PostToolUse hook, which never fires for a denied call, so a false positive was previously unauditable. `hooks/_deny_log.py` closes that gap: each guard hook (`block_deletions.py`, `restrict_paths.py`, `enforce-base-branch.py`, `enforce-comment-trust.py`, `check-ci-skip-markers.py`, `enforce-ci-wait.py`, `enforce-path-c-delegation.py`) calls `log_denial(hook, tool_name, reason, command_text="")` immediately before its `sys.exit(2)` / `return 2`, appending one JSONL record to `.claude/logs/hook-denials.jsonl`:
+
+```json
+{"ts":"2026-09-21T13:05:00Z","hook":"restrict_paths","tool":"Bash","session":"<CLAUDE_SESSION_ID or unknown>","reason":"<first line of the stderr reason>","command":"<masked command text via hooks/command_mask.py, truncated to 512 chars>"}
+```
+
+`enforce-ci-wait.py` denies from a **Stop** hook, not PreToolUse — its record carries `tool:"Stop"`, a deliberate widening of the "PreToolUse denials" framing.
+
+Gated on the same [`PIPELINE_LOGS_ENABLED`](#pipeline_logs_enabled-gate) flag as `tool-use.log` / `agent-costs.jsonl` (disabled — no file, no directory touched — until a host opts in); the log-dir resolution mirrors `capture_agent_cost.py` (`CLAUDE_PROJECT_DIR` or cwd, then `.claude/logs/`), so denials from linked worktrees land in the one durable main-checkout file. The helper is **fail-open by construction**: its entire body is wrapped in one `try/except Exception: pass`, so a logging failure can never turn a deny into a crash or an allow, and it writes no error log of its own. No guard's decision logic, exit code, or stderr text changes — this is a pure audit-trail addition.
+
 ## Runs log
 
 `.claude/logs/runs.log` is a tab-separated per-spawn marker written by `spawn-claude.sh` at session launch (one line per spawn). Columns: timestamp, `session=<uuid>`, `issue=<N>`, `path=<A|B|C>`, `skill=<name>`, `worktree=<path>`. The session UUID matches `--session-id` passed to the claude CLI, so it joins 1:1 with `tool-use.log` and `subagents.log` rows for that session.
@@ -24,7 +36,7 @@ Use `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh [--last N | --path X | 
 
 ## PIPELINE_LOGS_ENABLED gate
 
-`PIPELINE_LOGS_ENABLED` (in `pipeline.config`) gates plugin writes to `.claude/logs/` — `runs.log`, `queue-*.log`, `queue-pending.txt`, per-issue `tool-use-issue-<N>.log` copies emitted by `cleanup-worktree.sh`, the analyze-mode shortlist JSON, and ci-fix attempt logs. **Default is `false`** so installing the plugin imposes no logging on consumer projects. **This repo's gitignored `pipeline.config` sets `PIPELINE_LOGS_ENABLED=true`** as a dogfood override so `dev/self-audit/inner-loop.sh` keeps receiving the `runs.log` substrate it needs.
+`PIPELINE_LOGS_ENABLED` (in `pipeline.config`) gates plugin writes to `.claude/logs/` — `runs.log`, `queue-*.log`, `queue-pending.txt`, per-issue `tool-use-issue-<N>.log` copies emitted by `cleanup-worktree.sh`, the analyze-mode shortlist JSON, and ci-fix attempt logs. **Default is `false`** so installing the plugin imposes no logging on consumer projects. **This repo's gitignored `pipeline.config` sets `PIPELINE_LOGS_ENABLED=true`** as a dogfood override so `scripts/capture-agent-costs.sh`, `scripts/review-audits.sh`, and `scripts/metrics-snapshot.sh` keep receiving the `runs.log` substrate they need.
 
 **Carve-out:** `hooks/enforce-path-c-delegation.py` and `hooks/enforce-ci-wait.py` still write `.claude/logs/enforce-*-errors.log` on hook fail-open paths — that emergency-diagnosis stream is intentionally ungated.
 
@@ -47,3 +59,18 @@ GREEN implementer are captured as distinct roles in `agent-costs.jsonl` — so
 `/pipeline:tokenomics` can break the per-issue cost down by split-role role. This
 makes the cost posture of the two-model lane (expensive authorship vs. cheap
 greening) directly measurable rather than lumped into a single PATH B figure.
+
+## Log retention (`scripts/prune-logs.sh`)
+
+`.claude/logs/` grows without bound once `PIPELINE_LOGS_ENABLED=true` — nothing prunes the per-issue / per-queue transcripts it accumulates. `scripts/prune-logs.sh` (issue #1353) is a retention pass over that directory, **dry run by default**:
+
+```
+bash scripts/prune-logs.sh [--apply] [--days N]
+```
+
+- **Retention window** — `PIPELINE_LOGS_RETENTION_DAYS` (commented in `pipeline.config.example`, read site `${PIPELINE_LOGS_RETENTION_DAYS:-30}`, default 30 days); `--days N` overrides it for a single run. A file is a candidate only when its age is strictly greater than the window (a file exactly at the boundary survives).
+- **Keep-list, checked first** — these aggregates and live streams are never candidates, no matter their age: `agent-costs.jsonl`, `tokenomics-history.jsonl`, `usage-gate.jsonl`, `metrics-timeseries.jsonl`, `metrics-snapshot.cron.log`, `agent-cost-orchestrator-state.json`, `tool-use.log`, `subagents.log`, `runs.log`, `hook-errors.log`, `dogfood-refresh.log`, and everything under `plan-drafts/`. A new aggregate file is safe by default only if it is added to this list (or if it fails to match a prune glob at all — the script is fail-safe by construction).
+- **Prune set** — per-issue and per-run transcripts: `issue-<N>-*.log`, `issue-<N>-plan.md`, `queue-*.log`, `tool-use-issue-<N>.log`, `ci-fix-<N>-attempt-<k>.log`, `fullsend-*.out`, `runner-*.log`, `analyze-shortlist-*.json`, and everything under `subagents/` at any depth.
+- **Output** — one `PRUNE path=<rel> age_days=<n>` line per candidate, then exactly one `SUMMARY candidates=<n> bytes=<n> mode=dry-run` (or `mode=apply`) line. Exits 0 on every non-usage path, including a missing `.claude/logs/` dir.
+- **Deleting is an operator action.** `--apply` only deletes when the repo's existing `ALLOW_DELETIONS` gate is open (env `ALLOW_DELETIONS=true`, or `.env.ALLOW_DELETIONS` in `.claude/settings.local.json` — the same convention `sync-worktrees.sh` / `cleanup-worktree.sh` use); otherwise it behaves like a dry run and prints a notice to stderr. Deletes files only — empty directories (including `subagents/`) are left in place.
+- **Status wiring** — `/pipeline:status` housekeeping calls the script with no flags (dry run only) when `PIPELINE_LOGS_ENABLED=true`, relaying just the `SUMMARY` line; it never passes `--apply`.

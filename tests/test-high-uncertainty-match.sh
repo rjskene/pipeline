@@ -172,7 +172,7 @@ fi
 # Repo-grep guard: no other tracked source carries an inline substring copy of
 # this vocabulary list (the broken `...|race|lock|...|auth|...` substring form).
 # Scan TRACKED files only (git ls-files) — a bare `grep -r` walks gitignored
-# dirs (e.g. /dev/audits/, .gitignore:16) and is green in CI (fresh checkout
+# dirs (e.g. /.claude/logs/, .gitignore:4) and is green in CI (fresh checkout
 # has no gitignored files) but red on any dev host with local artifacts (#1255).
 # Exclude this test + the helper + the docs that legitimately quote the list.
 scan_tracked_stray() {
@@ -192,10 +192,12 @@ else
 fi
 
 # Drift-guard scope regression (issue #1255): the STRAY scan above must ignore
-# gitignored dirs (e.g. /dev/audits/, .gitignore:16), not just excluded ones.
+# gitignored dirs (e.g. /.claude/logs/, .gitignore:4), not just excluded ones.
+# The probe dir must be one that STAYS gitignored — /dev/audits/ was dropped
+# from .gitignore by #1274 along with the self-audit retirement.
 echo "-- drift guard: guard ignores a gitignored file containing a matching string --"
 inc
-PLANTED="$ROOT/dev/audits/test-high-uncertainty-match-regression-$$.sh"
+PLANTED="$ROOT/.claude/logs/test-high-uncertainty-match-regression-$$.sh"
 mkdir -p "$(dirname "$PLANTED")"
 cleanup_planted() { rm -f "$PLANTED"; }
 trap cleanup_planted EXIT

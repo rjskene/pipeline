@@ -10,7 +10,7 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc() { TESTS=$((TESTS + 1)); }
 
 # Scan TRACKED files only (git ls-files), not the working tree — a bare
-# `grep -r` walks gitignored dirs (e.g. /dev/audits/, .gitignore:16) and is
+# `grep -r` walks gitignored dirs (e.g. /.claude/logs/, .gitignore:4) and is
 # green in CI (fresh checkout has no gitignored files) but red on any dev
 # host with local artifacts. See issue #1255.
 scan_tracked_refs() {
@@ -38,9 +38,11 @@ else
   pass_msg "no references found"
 fi
 
+# The probe dir must be one that STAYS gitignored — /dev/audits/ was dropped
+# from .gitignore by #1274 along with the self-audit retirement.
 echo "Test 3: guard ignores a gitignored file containing a matching string"
 inc
-PLANTED="$REPO_ROOT/dev/audits/test-path-c-args-directive-removed-regression-$$.md"
+PLANTED="$REPO_ROOT/.claude/logs/test-path-c-args-directive-removed-regression-$$.md"
 mkdir -p "$(dirname "$PLANTED")"
 cleanup_planted() { rm -f "$PLANTED"; }
 trap cleanup_planted EXIT

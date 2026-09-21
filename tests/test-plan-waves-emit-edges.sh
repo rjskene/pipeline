@@ -173,6 +173,37 @@ else
   echo "    stderr:"; sed 's/^/      /' "$S/stderr4"
 fi
 
+# ---- Case 5: glob literal in body must not pathname-expand into an edge (#1347) ----
+# #5's body names a glob literal that, if it survived extraction and were
+# unquoted-expanded against CWD, would collide with #6's real file. Fixed
+# behavior: the extractor drops the glob token outright (files=- for #5), and
+# plan-waves.sh runs under `set -f` as defense-in-depth, so #5 and #6 share a
+# wave instead of #6 serializing behind a shared-file edge #5 never names.
+GLOBFIX="$TMP/globfixture"; mkdir -p "$GLOBFIX/tests"
+: > "$GLOBFIX/tests/one.sh"
+: > "$GLOBFIX/tests/two.sh"
+write_issue "$S" 5 "priority/P2" "Touches \`tests/*.sh\` for cleanup."
+write_issue "$S" 6 "priority/P2" "Touches \`tests/one.sh\` directly."
+
+echo "Case 5: glob literal in body does not pathname-expand into a shared-file edge"
+inc
+if EDGE_OUT=$(cd "$GLOBFIX" && bash "$HELPER" --stage=execute --emit-edges 5 6 2>"$S/stderr5e"); then
+  e5=$(echo "$EDGE_OUT" | grep -E '^EDGE #5 ' || true)
+  WAVE_OUT=$(cd "$GLOBFIX" && bash "$HELPER" --stage=execute 5 6 2>"$S/stderr5w" || true)
+  if [ "$e5" = "EDGE #5 blockers=- files=-" ] \
+     && echo "$WAVE_OUT" | grep -qxE 'Wave 1: execute #5, #6 in parallel'; then
+    pass_msg "Case 5: glob token dropped (files=-); #5 and #6 share Wave 1"
+  else
+    fail_msg "Case 5: glob literal leaked into an edge or caused serialization"
+    echo "    e5: [$e5]"
+    echo "    waves:"; echo "$WAVE_OUT" | sed 's/^/      /'
+  fi
+else
+  rc=$?
+  fail_msg "Case 5: helper exited $rc"
+  echo "    stderr:"; sed 's/^/      /' "$S/stderr5e"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

@@ -2,8 +2,11 @@
 set -euo pipefail
 
 # Verifies that skills/plan-issue/SKILL.md has step 3b referencing
-# .claude/scratch/issue- AND fetch-issue-attachments.sh, placed between
-# step 3a (PATH determination) and step 4 (Explore the codebase).
+# .claude/scratch/issue- AND invoking the sanctioned
+# filter-trusted-comments.sh fetch-attachments fence (#1340 — routes around
+# enforce-comment-trust.py's direct fetch-issue-attachments.sh denial),
+# placed between step 3a (PATH determination) and step 4 (Explore the
+# codebase).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET="$SCRIPT_DIR/../skills/plan-issue/SKILL.md"
@@ -16,9 +19,15 @@ grep -q ".claude/scratch/issue-" "$TARGET" \
   && ok ".claude/scratch/issue- present in plan-issue" \
   || nope ".claude/scratch/issue- missing"
 
-grep -q "fetch-issue-attachments.sh" "$TARGET" \
-  && ok "fetch-issue-attachments.sh referenced in plan-issue" \
-  || nope "fetch-issue-attachments.sh not referenced"
+grep -qF 'scripts/filter-trusted-comments.sh" fetch-attachments <N>' "$TARGET" \
+  && ok "plan-issue invokes the sanctioned fetch-attachments fence" \
+  || nope "plan-issue does not invoke filter-trusted-comments.sh fetch-attachments"
+
+if grep -qF 'scripts/fetch-issue-attachments.sh" <N>' "$TARGET"; then
+  nope "plan-issue still directly invokes fetch-issue-attachments.sh (bypasses the trust-filter hook)"
+else
+  ok "plan-issue no longer directly invokes fetch-issue-attachments.sh"
+fi
 
 grep -qE "^3b\." "$TARGET" \
   && ok "step 3b header present" \

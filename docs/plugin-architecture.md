@@ -2,6 +2,8 @@
 
 Pipeline assets live outside the consumer project. The plugin installs to `~/.claude/plugins/claude-pipeline/` (referenced at runtime as `${CLAUDE_PLUGIN_ROOT}`). Hooks, scripts, and the `tdd-implementer` subagent are registered from the plugin manifest; skills auto-discover from `${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md` and the manifest does not enumerate them. The consumer project's `.claude/` stays clean.
 
+**PreToolUse guard-hook deny contract:** a guard hook must exit **2** on its BLOCKED path (message on stderr) — Claude Code treats any other non-zero exit as a non-blocking error and runs the tool anyway (#1294).
+
 ## Consumer-required rendered scripts
 
 Post-#215/#223, plugin skills invoke worktree/dispatch helpers as `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<name>.sh` directly; the consumer `.claude/scripts/` mirror has been retired. The doctor's legacy `.template-branch` probe (formerly retained for subtree consumers) has since been removed from `doctor.sh`.
@@ -47,12 +49,13 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
 # CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
 _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-parse --show-toplevel 2>/dev/null | sed 's|$|/|')}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-The snippet locates the resolver via a var-independent cache-glob anchor rather than the old chicken-and-egg `${CLAUDE_PLUGIN_ROOT:-.}/scripts/...` form — which silently no-op'd when `CLAUDE_PLUGIN_ROOT` was unset because it collapsed to a non-existent `./scripts/...` in the consumer cwd (#810). It globs the dogfood `claude-pipeline-local` cache FIRST and falls back to the published `claude-pipeline` cache (#878), so on a dogfood host the very first resolver sourced is the live one, not a stale published copy; consumer hosts have no local cache and the published glob fires. The glob only LOCATES the resolver; sourcing it then re-derives the authoritative root (dogfood `claude-pipeline-local` tiebreak, active-project mode, highest-semver scan), so consumers and dogfood operators converge on the same root as before.
+The snippet locates the resolver via a var-independent cache-glob anchor rather than the old chicken-and-egg `${CLAUDE_PLUGIN_ROOT:-.}/scripts/...` form — which silently no-op'd when `CLAUDE_PLUGIN_ROOT` was unset because it collapsed to a non-existent `./scripts/...` in the consumer cwd (#810). It globs the dogfood `claude-pipeline-local` cache FIRST and falls back to the published `claude-pipeline` cache (#878), so on a dogfood host the very first resolver sourced is the live one, not a stale published copy; consumer hosts have no local cache and the published glob fires. The glob only LOCATES the resolver; sourcing it then re-derives the authoritative root (dogfood `claude-pipeline-local` tiebreak, active-project mode, highest-semver scan), so consumers and dogfood operators converge on the same root as before. When `PIPELINE_USE_LOCAL_PLUGIN=true`, the snippet anchors on the current checkout's `git rev-parse --show-toplevel` first, so a `--plugin-dir` session with no plugin cache still finds the resolver; the knob defaults false, so consumer installs are unchanged.
 
 Why every skill needs it: `CLAUDE_PLUGIN_ROOT` only lives for the Bash tool's subshell. Each subsequent Bash tool call spawns a fresh subshell with no inherited env — so the orchestrator's session-start export does not propagate. Without the in-skill resolver, `bash "${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh"` collapses to `bash "/scripts/foo.sh"` or `bash "./scripts/foo.sh"`, 404'ing the plugin helper. The resolver is idempotent: a no-op when `CLAUDE_PLUGIN_ROOT` is already a valid path.
 

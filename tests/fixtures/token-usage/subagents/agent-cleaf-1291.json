@@ -1,0 +1,12 @@
+{
+  "ts": "2026-05-30T12:11:00Z",
+  "session": "sess-inline",
+  "description": "target=scripts/ trust-profile resolvers (#1291 T1)",
+  "subagent_type": "pipeline:tdd-implementer",
+  "usage": {
+    "input_tokens": 2600,
+    "output_tokens": 180,
+    "cache_read_input_tokens": 15,
+    "cache_creation_input_tokens": 5
+  }
+}

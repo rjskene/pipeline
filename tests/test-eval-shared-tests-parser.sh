@@ -5,16 +5,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SKILL="skills/evaluate-issue-pr/SKILL.md"
-[ -f "$SKILL" ] || { echo "missing $SKILL"; exit 1; }
-
-# Extract the awk one-liner from the SKILL.md source so we test the real parser.
-AWK_PROG=$(grep -oP "awk '\K[^']+(?=')" "$SKILL" | grep 'Shared tests' | head -1)
-[ -n "$AWK_PROG" ] || { echo "FAIL: could not extract Shared-tests awk program from $SKILL"; exit 1; }
+# The real parser now lives in scripts/parse-shared-tests.sh (#1287): it was
+# lifted out of the Step 11.2b bash fence, where the harness rewrites `$0`/`$1`
+# at skill load. This file therefore drives the script directly instead of
+# grep-extracting an awk program out of SKILL.md.
+#
+# `ROOT="$(pwd)"` and NOT `"$(cd "$(dirname "$0")/.." && pwd)"`: line 6 has
+# already cd-ed to the repo root, so a second relative `$0` dirname would
+# resolve one level too high. Same idiom as
+# tests/test-eval-shared-tests-carveout-selector.sh:23-24.
+#
+# NO existence guard on purpose — a missing script must surface as the genuine
+# interpreter failure, not as a hand-rolled message that hides it.
+ROOT="$(pwd)"
+PARSER="$ROOT/scripts/parse-shared-tests.sh"
 
 # (a) header-inline form: path on the same line as the header.
 result_a=$(printf '%s\n' "**Shared tests (split-role):** tests/test-foo.sh" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_a" != "tests/test-foo.sh" ]; then
   echo "FAIL(a): header-inline shared-test path not extracted; got: '$result_a'"
   exit 1
@@ -24,7 +32,7 @@ fi
 result_b=$(printf '%s\n' \
   "**Shared tests (split-role):**" \
   "- tests/test-bar.sh" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_b" != "tests/test-bar.sh" ]; then
   echo "FAIL(b): following-bullet shared-test path not extracted; got: '$result_b'"
   exit 1
@@ -32,22 +40,24 @@ fi
 
 # (c) header-inline with backtick quoting: **Shared tests (split-role):** \`tests/test-baz.sh\`
 result_c=$(printf '%s\n' "**Shared tests (split-role):** \`tests/test-baz.sh\`" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_c" != "tests/test-baz.sh" ]; then
   echo "FAIL(c): header-inline backtick-quoted path not extracted; got: '$result_c'"
   exit 1
 fi
 
 # (d) absent section => empty output (fail-closed unchanged).
-result_d=$(printf '%s\n' "Some other plan content" | awk "$AWK_PROG")
+result_d=$(printf '%s\n' "Some other plan content" | bash "$PARSER")
 if [ -n "$result_d" ]; then
   echo "FAIL(d): absent section should yield empty output; got: '$result_d'"
   exit 1
 fi
 
-# (e) SKILL.md documents the header-inline form as supported (#1107 fix).
-grep -q "header-inline" "$SKILL" \
-  || { echo "FAIL(e): $SKILL missing header-inline documentation"; exit 1; }
+# (e) the parser documents the header-inline form as supported (#1107 fix).
+# The contract moved with the code: it is the script header that must carry it
+# now, not skills/evaluate-issue-pr/SKILL.md (#1287).
+grep -q "header-inline" "$PARSER" \
+  || { echo "FAIL(e): $PARSER missing header-inline documentation"; exit 1; }
 
 # (f) following-bullet with a trailing reason: "- path — reason" => bare path (#1121).
 # Plans write shared-test bullets in the same `path — one-line reason` convention
@@ -56,7 +66,7 @@ grep -q "header-inline" "$SKILL" \
 result_f=$(printf '%s\n' \
   "**Shared tests (split-role):**" \
   "- tests/test_widen_results_tsv.py — index correction" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_f" != "tests/test_widen_results_tsv.py" ]; then
   echo "FAIL(f): trailing-reason following-bullet not stripped; got: '$result_f'"
   exit 1
@@ -64,7 +74,7 @@ fi
 
 # (g) header-inline with a trailing reason => bare path (#1121).
 result_g=$(printf '%s\n' "**Shared tests (split-role):** tests/test_widen_results_tsv.py — index correction" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_g" != "tests/test_widen_results_tsv.py" ]; then
   echo "FAIL(g): trailing-reason header-inline not stripped; got: '$result_g'"
   exit 1
@@ -73,7 +83,7 @@ fi
 # (h) header-inline empty-section sentinel `None` => empty output (#1178).
 # A plan whose Shared-tests section is written as the literal `None` sentinel
 # must yield an EMPTY allow-list, not the phantom path "None".
-result_h=$(printf '%s\n' "**Shared tests (split-role):** None" | awk "$AWK_PROG")
+result_h=$(printf '%s\n' "**Shared tests (split-role):** None" | bash "$PARSER")
 if [ -n "$result_h" ]; then
   echo "FAIL(h): header-inline None sentinel should yield empty; got: '$result_h'"
   exit 1
@@ -83,7 +93,7 @@ fi
 result_i=$(printf '%s\n' \
   "**Shared tests (split-role):**" \
   "- None" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ -n "$result_i" ]; then
   echo "FAIL(i): following-bullet None sentinel should yield empty; got: '$result_i'"
   exit 1
@@ -97,7 +107,7 @@ fi
 result_j=$(printf '%s\r\n%s\r\n' \
   "**Shared tests (split-role):**" \
   "- tests/test-crlf.sh" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 expected_j=$'tests/test-crlf.sh'
 if [ "$result_j" != "$expected_j" ]; then
   echo "FAIL(j): CRLF-terminated bullet path not cleaned; got: $(printf '%s' "$result_j" | cat -A)"
@@ -114,7 +124,7 @@ result_k=$(printf '%s\n' \
   "" \
   "## Notes" \
   "- some unrelated bullet that must NOT be captured" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_k" != "tests/test-bar.sh" ]; then
   echo "FAIL(k): armed bullet region not bounded by blank line/heading; got:"
   printf '%s\n' "$result_k" | sed 's/^/    /'
@@ -132,7 +142,7 @@ result_l=$(printf '%s\n' \
   "- tests/test-gap.sh" \
   "" \
   "**Estimated effort:** 1 hour" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_l" != "tests/test-gap.sh" ]; then
   echo "FAIL(l): blank line after a header-only line dropped the bullet; got: '$result_l'"
   exit 1
@@ -145,7 +155,7 @@ result_m=$(printf '%s\n' \
   "**Shared tests (split-role):** tests/test-inline.sh" \
   "" \
   "- some unrelated bullet that must NOT be captured" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_m" != "tests/test-inline.sh" ]; then
   echo "FAIL(m): header-inline region not bounded at the first blank line; got:"
   printf '%s\n' "$result_m" | sed 's/^/    /'
@@ -158,7 +168,7 @@ result_n=$(printf '%s\n' \
   "- tests/test-prose.sh" \
   "Some unrelated prose paragraph." \
   "- another unrelated bullet" \
-  | awk "$AWK_PROG")
+  | bash "$PARSER")
 if [ "$result_n" != "tests/test-prose.sh" ]; then
   echo "FAIL(n): prose did not close the armed bullet region; got:"
   printf '%s\n' "$result_n" | sed 's/^/    /'

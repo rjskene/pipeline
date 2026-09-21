@@ -1,0 +1,1263 @@
+#!/bin/bash
+set -uo pipefail
+#
+# run-retro.sh — per-cycle evolve-loop retro (issue #1272, tracker #1271,
+# spec docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §4/§7).
+#
+# Recomputes the #1271 scorecard baseline against the current cycle's
+# issues/PRs, renders deltas against the previous retro, harvests operator
+# friction signals (denials, HARNESS-FRICTION comments, escapes), gate yield,
+# and lists pending / next-cycle verdict candidates.
+#
+# Usage:
+#   bash scripts/run-retro.sh --cycle N [options]         # live (calls gh)
+#   bash scripts/run-retro.sh --cycle N --fixture DIR     # fixture mode
+#   bash scripts/run-retro.sh --cycle N --post            # post-run mode
+#   bash scripts/run-retro.sh --cycle N --write PATH      # full report to PATH
+#   bash scripts/run-retro.sh --help
+#
+# Degradation contract: every row is produced by a helper that renders
+# `n/a (<reason>)` on missing substrate rather than failing. `set -uo
+# pipefail` (no -e). Exit non-zero ONLY on invalid args (unknown flag,
+# missing --cycle, non-integer --cycle).
+#
+# Fixture seam (`--fixture DIR`) mirrors cost-latency-report.sh --fixture:
+# reads tracker.md, rows.json, tool-use.log, usage-gate.jsonl, cycle-<NN>.md,
+# issues.json, prs.json from DIR instead of calling gh/git/cost-latency-report.sh.
+# See tests/fixtures/run-retro/README.md for the substrate contract.
+
+print_usage() {
+  cat <<'USAGE'
+Usage: scripts/run-retro.sh --cycle N [options]
+
+Per-cycle evolve-loop retro: recomputes the #1271 scorecard baseline against
+this cycle's issues/PRs, renders deltas against the previous retro, harvests
+operator-friction signals, and lists pending / next-cycle verdict candidates.
+
+Options:
+  --cycle N        Cycle number to report on (required, non-negative integer).
+  --post           Post-run mode: harness-mass + friction rows +
+                    verdict-candidates only (no cost/latency rows, no deltas,
+                    no filesystem writes).
+  --tracker NNNN   Tracker issue number (default: 1271).
+  --since DATE     ISO-8601 date; bounds the friction / denial window.
+  --now DATE       ISO-8601 clock override for the newest cycle's OPEN
+                    upper bound (cycle_window()); default the real clock
+                    (`date -u`). Same as PIPELINE_RETRO_NOW; the flag wins.
+                    Only the newest cycle needs it — every earlier cycle's
+                    window is bounded by the tracker's own headers.
+  --write PATH     Write the full (untruncated) report to PATH (creates
+                    parent directories). stdout stays bounded to 1..60 lines
+                    regardless.
+  --fixture DIR    Read tracker.md / rows.json / tool-use.log /
+                    usage-gate.jsonl / cycle-<NN>.md / issues.json / prs.json
+                    from DIR instead of calling gh / git / cost-latency-report.sh.
+  --limit N        PR window size passed through to cost-latency-report.sh
+                    in live mode (default 50).
+  --dump-baseline  Debug: emit only `BASELINE <row>/<label> = <value>` lines.
+  --dump-computed  Debug: emit only `COMPUTED <row>/<label> = <value>` lines.
+  --help           Print this banner and exit 0.
+
+Comment windows: the HARNESS-FRICTION harvest reads one of two substrates,
+published as `friction/harness-friction-window`:
+  - "cycle N issue comments"   --post, full mode at cycle 0, or the
+                                 degrade path when no prior tracker comment
+                                 exists (honours --since).
+  - "tracker cycle N-1 comment"  full mode at cycle N>0: the prior cycle's
+                                 tracker comment (ignores --since; the cycle
+                                 bound already scopes it).
+USAGE
+}
+
+# ---------------------------------------------------------------------------
+# Arg parsing
+# ---------------------------------------------------------------------------
+
+CYCLE=""
+POST=0
+TRACKER="1271"
+SINCE=""
+WRITE_PATH=""
+FIXTURE_DIR=""
+LIMIT=50
+DUMP_BASELINE=0
+DUMP_COMPUTED=0
+NOW_ARG=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help|-h)        print_usage; exit 0 ;;
+    --cycle)          CYCLE="${2:-}"; shift 2 ;;
+    --cycle=*)        CYCLE="${1#--cycle=}"; shift ;;
+    --post)           POST=1; shift ;;
+    --tracker)        TRACKER="${2:-}"; shift 2 ;;
+    --tracker=*)      TRACKER="${1#--tracker=}"; shift ;;
+    --since)          SINCE="${2:-}"; shift 2 ;;
+    --since=*)        SINCE="${1#--since=}"; shift ;;
+    --write)          WRITE_PATH="${2:-}"; shift 2 ;;
+    --write=*)        WRITE_PATH="${1#--write=}"; shift ;;
+    --fixture)        FIXTURE_DIR="${2:-}"; shift 2 ;;
+    --fixture=*)      FIXTURE_DIR="${1#--fixture=}"; shift ;;
+    --limit)          LIMIT="${2:-}"; shift 2 ;;
+    --limit=*)        LIMIT="${1#--limit=}"; shift ;;
+    --now)            NOW_ARG="${2:-}"; shift 2 ;;
+    --now=*)          NOW_ARG="${1#--now=}"; shift ;;
+    --dump-baseline)  DUMP_BASELINE=1; shift ;;
+    --dump-computed)  DUMP_COMPUTED=1; shift ;;
+    *)
+      echo "run-retro: ERROR: unknown arg: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ -z "$CYCLE" ]; then
+  echo "run-retro: ERROR: --cycle is required" >&2
+  exit 1
+fi
+if ! [[ "$CYCLE" =~ ^[0-9]+$ ]]; then
+  echo "run-retro: ERROR: --cycle must be a non-negative integer (got: $CYCLE)" >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/_logging.sh"  # provides pipeline_logging_enabled()
+
+# Injectable clock for the newest cycle's OPEN upper bound (cycle_window()
+# below): a cycle with a successor `Cycle N+1 (<date>` tracker header is
+# clock-independent, but the newest cycle has none, so its window would
+# otherwise close at the wall clock. `--now` wins over the env var, which
+# wins over the real clock; live callers never need either.
+RETRO_NOW="${NOW_ARG:-${PIPELINE_RETRO_NOW:-$(date -u +%FT%TZ)}}"
+
+# ---------------------------------------------------------------------------
+# Small string helpers
+# ---------------------------------------------------------------------------
+
+norm_ws() { printf '%s' "$1" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'; }
+
+split_atoms() { printf '%s\n' "$1" | sed -E 's/ · /\n/g; s/, /\n/g; s/ \/ /\n/g'; }
+
+last_atom() { split_atoms "$(norm_ws "$1")" | tail -1; }
+
+norm_row() {
+  local s="$1"
+  s="$(printf '%s' "$s" | sed -E 's/[[:space:]]*\([^()]*\)[[:space:]]*$//')"
+  s="$(printf '%s' "$s" | tr '[:upper:]' '[:lower:]')"
+  norm_ws "$s"
+}
+
+is_numeric() { [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; }
+
+clean_num() { awk -v v="$1" 'BEGIN{ if (v==int(v)) printf "%d", v; else printf "%s", v }'; }
+
+ids_json() {
+  local list="$1" out="[" first=1 n
+  for n in $list; do
+    if [ "$first" -eq 1 ]; then out="$out$n"; first=0; else out="$out,$n"; fi
+  done
+  printf '%s]' "$out"
+}
+
+# parse_atom <atom text> -> sets ATOM_VALUE / ATOM_UNIT / ATOM_LABEL
+# (ATOM_VALUE empty means "no numeric token found; atom dropped")
+ATOM_VALUE=""; ATOM_UNIT=""; ATOM_LABEL=""
+parse_atom() {
+  local atom dollar digits suffix matched num mult unit val label
+  atom="$(norm_ws "$1")"
+  ATOM_VALUE=""; ATOM_UNIT=""; ATOM_LABEL=""
+  if [[ "$atom" =~ (≈)?(\$)?([0-9][0-9,.]*)([kKM%]?) ]]; then
+    dollar="${BASH_REMATCH[2]}"
+    digits="${BASH_REMATCH[3]}"
+    suffix="${BASH_REMATCH[4]}"
+    matched="${BASH_REMATCH[0]}"
+    num="${digits//,/}"
+    mult=1
+    unit=""
+    case "$suffix" in
+      k|K) mult=1000 ;;
+      M)   mult=1000000 ;;
+      %)   unit="%" ;;
+    esac
+    if [ -n "$dollar" ]; then unit='$'; fi
+    val="$(awk -v n="$num" -v m="$mult" 'BEGIN{v=n*m; if (v==int(v)) printf "%d", v; else printf "%s", v}')"
+    label="${atom/$matched/}"
+    label="$(printf '%s' "$label" | tr -d '`' | tr '[:upper:]' '[:lower:]')"
+    label="$(norm_ws "$label")"
+    if [ -z "$label" ]; then
+      case "$unit" in
+        '$') label="usd" ;;
+        '%') label="pct" ;;
+        *)   label="value" ;;
+      esac
+    fi
+    ATOM_VALUE="$val"
+    ATOM_UNIT="$unit"
+    ATOM_LABEL="$label"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Baseline table parsing + sub-metric decomposition (Task 2)
+# ---------------------------------------------------------------------------
+
+declare -a ROW_NAMES=()
+declare -a ROW_CELLS=()
+TABLE_FOUND=0
+
+parse_baseline_table() {
+  local body="$1" line in_table=0 name cell
+  ROW_NAMES=(); ROW_CELLS=(); TABLE_FOUND=0
+  while IFS= read -r line; do
+    if [ "$in_table" -eq 0 ]; then
+      if [[ "$line" == "## Scorecard baseline"* ]]; then
+        in_table=1
+        TABLE_FOUND=1
+      fi
+      continue
+    fi
+    if [[ "$line" == "## "* ]]; then
+      break
+    fi
+    if [[ "$line" != "|"*"|"* ]]; then
+      continue
+    fi
+    if [[ "$line" == *"Signal"*"Baseline"* ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^\|[-[:space:]|]+\|$ ]]; then
+      continue
+    fi
+    name="$(printf '%s' "$line" | awk -F'|' '{print $2}')"
+    cell="$(printf '%s' "$line" | awk -F'|' '{print $3}')"
+    name="$(norm_ws "$name")"
+    cell="$(norm_ws "$cell")"
+    ROW_NAMES+=("$name")
+    ROW_CELLS+=("$cell")
+  done <<< "$body"
+}
+
+declare -A BASE_VAL=()
+declare -A BASE_UNIT=()
+
+# decompose_cell <normalized row name> <raw cell text>
+decompose_cell() {
+  local row="$1" cell="$2" any_atom=0 work pre inner post preceding plabel key subatom atom
+  work="$cell"
+  while [[ "$work" == *"("* ]]; do
+    if [[ "$work" =~ ^(.*)\(([^()]*)\)(.*)$ ]]; then
+      pre="${BASH_REMATCH[1]}"
+      inner="${BASH_REMATCH[2]}"
+      post="${BASH_REMATCH[3]}"
+    else
+      break
+    fi
+    preceding="$(last_atom "$pre")"
+    parse_atom "$preceding"
+    plabel="$ATOM_LABEL"
+    if [ -n "$ATOM_VALUE" ]; then
+      while IFS= read -r subatom; do
+        [ -z "$subatom" ] && continue
+        parse_atom "$subatom"
+        if [ -n "$ATOM_VALUE" ]; then
+          key="$row/$plabel $ATOM_LABEL"
+          BASE_VAL["$key"]="$ATOM_VALUE"
+          BASE_UNIT["$key"]="$ATOM_UNIT"
+          any_atom=1
+        fi
+      done < <(split_atoms "$(norm_ws "$inner")")
+    fi
+    work="$pre$post"
+  done
+  work="$(norm_ws "$work")"
+  while IFS= read -r atom; do
+    [ -z "$atom" ] && continue
+    parse_atom "$atom"
+    if [ -n "$ATOM_VALUE" ]; then
+      key="$row/$ATOM_LABEL"
+      BASE_VAL["$key"]="$ATOM_VALUE"
+      BASE_UNIT["$key"]="$ATOM_UNIT"
+      any_atom=1
+    fi
+  done < <(split_atoms "$work")
+  if [ "$any_atom" -eq 0 ]; then
+    BASE_VAL["$row"]="n/a (non-numeric baseline)"
+    BASE_UNIT["$row"]=""
+  fi
+}
+
+DECOMPOSE_ROWS="median path b pr|harness mass|prose-pinning tests|issue-number archaeology in skill bodies|doc/behaviour contradictions"
+
+decompose_baseline_table() {
+  local i nr
+  for ((i = 0; i < ${#ROW_NAMES[@]}; i++)); do
+    nr="$(norm_row "${ROW_NAMES[$i]}")"
+    case "|$DECOMPOSE_ROWS|" in
+      *"|$nr|"*) decompose_cell "$nr" "${ROW_CELLS[$i]}" ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Cycle-issues parse (Task 2)
+# ---------------------------------------------------------------------------
+
+parse_cycle_issues() {  # <body> <N> -> prints space-separated issue numbers
+  local body="$1" n="$2" line collecting=0 found_n
+  local -a nums=()
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^Cycle\ ([0-9]+) ]]; then
+      found_n="${BASH_REMATCH[1]}"
+      if [ "$found_n" = "$n" ]; then
+        collecting=1
+      else
+        if [ "$collecting" -eq 1 ]; then break; fi
+        collecting=0
+      fi
+      continue
+    fi
+    if [ "$collecting" -eq 1 ]; then
+      if [[ "$line" == "## "* ]]; then break; fi
+      if [[ "$line" =~ ^-\ *#([0-9]+) ]]; then
+        nums+=("${BASH_REMATCH[1]}")
+      fi
+    fi
+  done <<< "$body"
+  printf '%s' "${nums[*]:-}"
+}
+
+# cycle_window <body> <cycle N> <cur ids json> <issues_file> -> sets
+# CYCLE_SINCE / CYCLE_UNTIL (#1281, item 3a).
+#
+# CYCLE_SINCE is the date captured from the tracker body's own
+# `Cycle N (<YYYY-MM-DD>` header; when no header carries cycle N, it falls
+# back to the MIN createdAt over the cycle's own issues. CYCLE_UNTIL is the
+# date from the `Cycle N+1 (` header when present, else the injected clock
+# ($RETRO_NOW) — only the newest cycle (no successor header) needs a clock,
+# which is why every earlier cycle's window is fully clock-independent.
+# The bound is uniformly EXCLUSIVE (mergedAt/createdAt >= SINCE and < UNTIL);
+# a bare YYYY-MM-DD upper bound already excludes every same-day timestamp
+# under lexicographic compare.
+#
+# If CYCLE_SINCE cannot be resolved at all (no header, no cycle issues to
+# fall back on): CYCLE_SINCE stays empty. Callers must treat that as "no
+# window" and render a named `n/a (no cycle window)` reason — NEVER fall back
+# to a repo-wide count.
+CYCLE_SINCE=""
+CYCLE_UNTIL=""
+
+cycle_window() {
+  local body="$1" n="$2" ids_json="$3" issues_file="$4" line found_n date next
+  CYCLE_SINCE=""
+  CYCLE_UNTIL=""
+  next=$((n + 1))
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^Cycle\ ([0-9]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+      found_n="${BASH_REMATCH[1]}"
+      date="${BASH_REMATCH[2]}"
+      if [ "$found_n" = "$n" ]; then
+        CYCLE_SINCE="$date"
+      elif [ "$found_n" = "$next" ]; then
+        CYCLE_UNTIL="$date"
+      fi
+    fi
+  done <<< "$body"
+
+  if [ -z "$CYCLE_SINCE" ] && [ -f "$issues_file" ]; then
+    CYCLE_SINCE="$(jq -r --argjson ids "$ids_json" '
+      [.[] | select(.number as $n | $ids | index($n) != null) | .createdAt] | sort | (.[0] // empty)
+    ' "$issues_file" 2>/dev/null)"
+  fi
+
+  [ -n "$CYCLE_UNTIL" ] || CYCLE_UNTIL="$RETRO_NOW"
+}
+
+# cycle_prs <prs_file> <cur ids json> <base> <since> <until> -> filtered PR
+# array JSON on stdout (#1281). A PR is in scope when it closes one of the
+# cycle's own issues, OR it merged onto the base branch inside the cycle
+# window — the second arm is what lets an escape-lane PR (no `Closes #`) still
+# count toward the cycle it actually landed in.
+cycle_prs() {
+  local prs_file="$1" ids_json="$2" base="$3" since="$4" until="$5"
+  if [ ! -f "$prs_file" ]; then printf '[]'; return 0; fi
+  jq -c --argjson ids "$ids_json" --arg base "$base" --arg since "$since" --arg until "$until" '
+    def closes: (.body // "") | [scan("Closes #([0-9]+)")] | map(.[0]|tonumber);
+    [.[] | . + {closes: closes}
+      | select(
+          (.closes | any(. as $c | $ids | index($c) != null))
+          or (((.baseRefName // "") == $base) and (.mergedAt >= $since) and (.mergedAt < $until))
+        )]
+  ' "$prs_file" 2>/dev/null
+}
+
+# prev_cycle_comment <issues_file> <tracker> <prev cycle N> -> the tracker
+# issue's LAST comment whose body opens `## Cycle <prev cycle N>` (#1281).
+# Defined here (ahead of compute_friction()) because both compute_friction()
+# and the pending-verdict harvest below call it.
+prev_cycle_comment() {
+  local issues_file="$1" tracker="$2" prev_n="$3"
+  [ -f "$issues_file" ] || return 0
+  jq -r --arg tracker "$tracker" --arg hdr "^## Cycle ${prev_n}\\b" '
+    [.[] | select((.number|tostring) == $tracker) | .comments[]?.body
+      | select(test($hdr))] | last // empty
+  ' "$issues_file" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# File-path resolution (fixture seam vs live)
+# ---------------------------------------------------------------------------
+
+TRACKER_FILE=""
+ISSUES_FILE=""
+PRS_FILE=""
+ROWS_FILE=""
+TOOLOG=""
+USAGE_FILE=""
+CALIB_FILE=""
+AGENT_COSTS_FILE=""
+
+if [ -n "$FIXTURE_DIR" ]; then
+  TRACKER_FILE="$FIXTURE_DIR/tracker.md"
+  ISSUES_FILE="$FIXTURE_DIR/issues.json"
+  PRS_FILE="$FIXTURE_DIR/prs.json"
+  ROWS_FILE="$FIXTURE_DIR/rows.json"
+  TOOLOG="$FIXTURE_DIR/tool-use.log"
+  USAGE_FILE="$FIXTURE_DIR/usage-gate.jsonl"
+  CALIB_FILE="$FIXTURE_DIR/calib.txt"
+  AGENT_COSTS_FILE="$FIXTURE_DIR/agent-costs.jsonl"
+else
+  LIVE_TMP="$(mktemp -d)"
+  trap 'rm -rf "$LIVE_TMP"' EXIT
+  if command -v gh >/dev/null 2>&1 && [ -n "${PIPELINE_REPO:-}" ]; then
+    gh issue view "$TRACKER" --repo "$PIPELINE_REPO" --json body --jq .body \
+      > "$LIVE_TMP/tracker.md" 2>/dev/null
+    gh issue list --repo "$PIPELINE_REPO" --state all \
+      --json number,labels,body,comments,createdAt --limit 300 \
+      > "$LIVE_TMP/issues.json" 2>/dev/null
+    gh pr list --repo "$PIPELINE_REPO" --state merged \
+      --json number,title,headRefName,body,mergedAt,labels,files,baseRefName --limit 300 \
+      > "$LIVE_TMP/prs.json" 2>/dev/null
+  fi
+  ROWS_EXTRA_ARGS=()
+  [ -n "$SINCE" ] && ROWS_EXTRA_ARGS+=(--since "$SINCE")
+  if [ -x "$REPO_ROOT/scripts/cost-latency-report.sh" ]; then
+    bash "$REPO_ROOT/scripts/cost-latency-report.sh" --emit-rows-json \
+      --limit "$LIMIT" "${ROWS_EXTRA_ARGS[@]}" > "$LIVE_TMP/rows.json" 2>/dev/null
+  fi
+  TRACKER_FILE="$LIVE_TMP/tracker.md"
+  ISSUES_FILE="$LIVE_TMP/issues.json"
+  PRS_FILE="$LIVE_TMP/prs.json"
+  ROWS_FILE="$LIVE_TMP/rows.json"
+  TOOLOG="$REPO_ROOT/.claude/logs/tool-use.log"
+  USAGE_FILE="$REPO_ROOT/.claude/logs/usage-gate.jsonl"
+  # Newest calibration block tee'd by scripts/calibration-run.sh --run (#1280).
+  # Newest by FILENAME (the artifacts are <UTC date>.txt, so lexical order is
+  # date order), not by mtime: a re-teed older day, a `cp -r` or a restore all
+  # reshuffle mtimes, and docs/calibration.md promises the newest date.
+  CALIB_FILE="$(ls -1 "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | sort | tail -1)"
+  AGENT_COSTS_FILE="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/agent-costs.jsonl"
+fi
+
+TRACKER_BODY=""
+if [ -f "$TRACKER_FILE" ]; then
+  TRACKER_BODY="$(cat "$TRACKER_FILE" 2>/dev/null)"
+fi
+
+parse_baseline_table "$TRACKER_BODY"
+decompose_baseline_table
+if [ "$TABLE_FOUND" -ne 1 ]; then
+  BASE_VAL["tracker"]="n/a (tracker body unreadable)"
+  BASE_UNIT["tracker"]=""
+fi
+
+CUR_ISSUES="$(parse_cycle_issues "$TRACKER_BODY" "$CYCLE")"
+CUR_IDS_JSON="$(ids_json "$CUR_ISSUES")"
+
+PREV_ISSUES=""
+if [ "$CYCLE" -gt 0 ]; then
+  PREV_ISSUES="$(parse_cycle_issues "$TRACKER_BODY" $((CYCLE - 1)))"
+fi
+PREV_IDS_JSON="$(ids_json "$PREV_ISSUES")"
+
+cycle_window "$TRACKER_BODY" "$CYCLE" "$CUR_IDS_JSON" "$ISSUES_FILE"
+BASE="${PIPELINE_BASE_BRANCH:-evolve}"
+
+# ---------------------------------------------------------------------------
+# Task 3 — cost / latency rows scoped to the cycle's issues
+# ---------------------------------------------------------------------------
+
+declare -A JOIN_COMP_VAL=()
+declare -A JOIN_COMP_UNIT=()
+declare -A EXTRA_COMP_VAL=()
+declare -A EXTRA_COMP_UNIT=()
+
+MISSING_ROW_ISSUES=""
+
+# Task 3a — calibration slate (#1280, spec §8)
+#
+# scripts/calibration-run.sh --run tees a block of
+#   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
+#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n>
+#   CALIB-ABORT reason=<no-pr|held|timeout>
+# to docs/retros/calib/<UTC date>.txt. Two retro rows read it: the weak-model
+# guarantee (a k/n over the `reftest=` atoms) and the path-B $ median (over the
+# `cost=` atoms of the `path=B` rows only — the fixed slate is the ONLY place
+# this harness has a per-issue dollar figure, since the rows JSON carries none).
+# Degradation contract: a missing / CALIB-row-free file leaves both reasons
+# exactly as they render with no calibration substrate at all.
+CALIB_WEAK="n/a (no calibration slate; spec §8 cycle-1 deliverable)"
+CALIB_USD="n/a (no per-issue cost in rows JSON)"
+
+compute_calib() {
+  local f="${1:-}"
+  [ -n "$f" ] || return 0
+  [ -f "$f" ] || return 0
+
+  local line atom pass=0 total=0 path="" cost="" b_costs="" aborted=0
+  while IFS= read -r line; do
+    case "$line" in
+      "CALIB-ABORT "*)
+        # The run never really started, or never finished (see the emitter's
+        # reason set). Scoring the rows it did reach reports a k/n that reads
+        # as a harness regression over a denominator nothing ever attempted.
+        CALIB_WEAK="n/a (calibration run aborted: ${line#CALIB-ABORT })"
+        aborted=1
+        continue
+        ;;
+      "CALIB issue="*) ;;
+      *) continue ;;
+    esac
+    path=""; cost=""
+    for atom in $line; do
+      case "$atom" in
+        path=*)    path="${atom#path=}" ;;
+        cost=*)    cost="${atom#cost=}"; cost="${cost#\$}" ;;
+        reftest=*)
+          total=$((total + 1))
+          [ "${atom#reftest=}" = "pass" ] && pass=$((pass + 1))
+          ;;
+      esac
+    done
+    case "$path" in
+      B|b) is_numeric "$cost" && b_costs="$b_costs $cost" ;;
+    esac
+  done < "$f"
+
+  [ "$aborted" -eq 0 ] && [ "$total" -gt 0 ] && CALIB_WEAK="$pass/$total"
+
+  if [ -n "$b_costs" ]; then
+    local med
+    med="$(printf '%s\n' $b_costs | sort -n | awk '
+      { v[NR] = $1 }
+      END {
+        if (NR == 0) exit 1
+        if (NR % 2) printf "%.2f", v[(NR + 1) / 2]
+        else printf "%.2f", (v[NR / 2] + v[NR / 2 + 1]) / 2
+      }')"
+    if is_numeric "$med"; then CALIB_USD="$(clean_num "$med")"; fi
+  fi
+}
+
+compute_calib "$CALIB_FILE"
+
+compute_cost_latency() {
+  local rows_file="$1"
+  local no_substrate="n/a (no rows substrate)"
+  local no_match="n/a (no in-cycle rows)"
+  local loc="$no_substrate" tokens="$no_substrate" tpl="$no_substrate" minutes="$no_substrate"
+  MISSING_ROW_ISSUES=""
+
+  if [ -f "$rows_file" ]; then
+    local json
+    json="$(jq -n --argjson ids "$CUR_IDS_JSON" --slurpfile rows "$rows_file" '
+      def median: sort as $s | ($s|length) as $n |
+        if $n == 0 then null
+        elif ($n % 2 == 1) then $s[($n-1)/2]
+        else ($s[$n/2 - 1] + $s[$n/2]) / 2
+        end;
+      ($rows[0] // []) as $all
+      | [$all[] | select(.issue as $i | $ids | index($i) != null)] as $m
+      | {
+          found: [$m[].issue],
+          loc: ([$m[].loc] | median),
+          tokens: ([$m[].tokens_total] | median),
+          tpl: ([$m[].tokens_per_loc] | median),
+          minutes: ([$m[].duration_ms] | map(./60000) | median)
+        }
+    ' 2>/dev/null)"
+
+    if [ -n "$json" ]; then
+      local found_list rloc rtokens rtpl rminutes n
+      found_list="$(printf '%s' "$json" | jq -r '.found | map(tostring) | join(" ")' 2>/dev/null)"
+      rloc="$(printf '%s' "$json" | jq -r '.loc // "null"' 2>/dev/null)"
+      rtokens="$(printf '%s' "$json" | jq -r '.tokens // "null"' 2>/dev/null)"
+      rtpl="$(printf '%s' "$json" | jq -r '.tpl // "null"' 2>/dev/null)"
+      rminutes="$(printf '%s' "$json" | jq -r '.minutes // "null"' 2>/dev/null)"
+      [ "$rloc" != "null" ] && loc="$(clean_num "$rloc")" || loc="$no_match"
+      [ "$rtokens" != "null" ] && tokens="$(clean_num "$rtokens")" || tokens="$no_match"
+      [ "$rtpl" != "null" ] && tpl="$(clean_num "$rtpl")" || tpl="$no_match"
+      [ "$rminutes" != "null" ] && minutes="$(clean_num "$rminutes")" || minutes="$no_match"
+      local missing=""
+      for n in $CUR_ISSUES; do
+        case " $found_list " in
+          *" $n "*) ;;
+          *) missing="$missing $n" ;;
+        esac
+      done
+      MISSING_ROW_ISSUES="${missing# }"
+    fi
+  fi
+
+  JOIN_COMP_VAL["median path b pr/loc"]="$loc";           JOIN_COMP_UNIT["median path b pr/loc"]=""
+  JOIN_COMP_VAL["median path b pr/tokens"]="$tokens";      JOIN_COMP_UNIT["median path b pr/tokens"]=""
+  JOIN_COMP_VAL["median path b pr/tokens/loc"]="$tpl";     JOIN_COMP_UNIT["median path b pr/tokens/loc"]=""
+  JOIN_COMP_VAL["median path b pr/min"]="$minutes";        JOIN_COMP_UNIT["median path b pr/min"]=""
+  JOIN_COMP_VAL["median path b pr/usd"]="$CALIB_USD"
+  # `$`, matching the baseline atom (`... ~$55 ...`): build_full_report() only
+  # renders a delta when the units agree, so a unitless declaration here made
+  # the one row the calibration slate exists to supply report
+  # `n/a (unit mismatch: $ vs )` even with a perfectly good number in hand.
+  JOIN_COMP_UNIT["median path b pr/usd"]="$"
+}
+
+compute_cost_latency "$ROWS_FILE"
+
+# compute_agent_costs — --post-only per-issue AGENT-COST rows (issue #1293).
+# Backfills tests/fixtures/run-retro/agent-costs.jsonl (fixture mode) or
+# ${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/agent-costs.jsonl (live)
+# via scripts/capture-agent-costs.sh, then rolls up per cycle-issue tokens
+# and stage count. Sets the globals COST_ROWS / COST_MEDIAN / COST_BACKFILL
+# consumed by print_post_report(). Never fails the retro: capture-agent-costs.sh's
+# own rc is discarded, and every degraded input renders an `n/a (<reason>)`
+# string instead of erroring.
+#
+# Rollup contract: dedup on record_key FIRST (group_by(.record_key) |
+# map(last) — the key is LOGICAL and legitimately RECURS with revised totals,
+# per the schema header in capture-agent-costs.sh), THEN keep records whose
+# `.issue` (a STRING in the schema) parses to a cycle issue number, THEN
+# collapse forward/retroactive agent_id PAIRS the same way
+# cost-latency-report.sh L828-852 does (#880/#1346): non-empty agent_id ->
+# group_by(.agent_id) | max_by(.tokens.total); empty agent_id with a
+# session_id -> group_by(.session_id, .issue, .stage) | max_by(...); keyless
+# rows pass through untouched. THEN sum `.tokens.total` and count distinct
+# `.stage` per issue on that collapsed set. Cost rows are plain `cost:`
+# lines, not COMPUTED/EXTRA_COMP_VAL entries, so they never leak into
+# --dump-computed or double-print in --post output.
+compute_agent_costs() {
+  if [ -n "$FIXTURE_DIR" ]; then
+    COST_BACKFILL="skipped (fixture mode)"
+  elif ! pipeline_logging_enabled; then
+    COST_BACKFILL="skipped (PIPELINE_LOGS_ENABLED not true)"
+  else
+    CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}" \
+      bash "$SCRIPT_DIR/capture-agent-costs.sh" >/dev/null 2>&1
+    COST_BACKFILL="ran"
+  fi
+
+  local no_substrate="n/a (no agent-costs substrate)"
+  local no_records="n/a (no cost records)"
+  COST_ROWS=""
+  COST_MEDIAN=""
+
+  if [ ! -f "$AGENT_COSTS_FILE" ]; then
+    local n
+    for n in $CUR_ISSUES; do
+      COST_ROWS="${COST_ROWS}cost: issue=#$n $no_substrate
+"
+    done
+    COST_MEDIAN="$no_substrate"
+    return 0
+  fi
+
+  local json
+  json="$(jq -s --argjson ids "$CUR_IDS_JSON" '
+    group_by(.record_key) | map(last)
+    | map(. + {_num: ((.issue | tonumber?) // null)})
+    | map(select((._num) as $n | $n != null and ($ids | index($n) != null)))
+    | (
+        ([ .[] | select((.agent_id // "") != "") ]
+           | group_by(.agent_id) | map(max_by(.tokens.total)))
+        + ([ .[] | select((.agent_id // "") == "")
+                  | select(has("session_id") and .session_id != null) ]
+           | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
+        + [ .[] | select((.agent_id // "") == "")
+                | select((has("session_id") | not) or .session_id == null) ]
+      )
+    | group_by(._num)
+    | map({issue: .[0]._num, tokens: (map(.tokens.total) | add), stages: (map(.stage) | unique | length)})
+  ' "$AGENT_COSTS_FILE" 2>/dev/null)"
+  [ -n "$json" ] || json="[]"
+
+  local -A tok_by_issue=() stg_by_issue=()
+  local i t s
+  while IFS=$'\t' read -r i t s; do
+    [ -n "$i" ] || continue
+    tok_by_issue["$i"]="$t"
+    stg_by_issue["$i"]="$s"
+  done < <(printf '%s' "$json" | jq -r '.[] | [(.issue|tostring), (.tokens|tostring), (.stages|tostring)] | @tsv' 2>/dev/null)
+
+  local n found=()
+  for n in $CUR_ISSUES; do
+    if [ -n "${tok_by_issue[$n]:-}" ]; then
+      COST_ROWS="${COST_ROWS}cost: issue=#$n tokens=$(clean_num "${tok_by_issue[$n]}") stages=${stg_by_issue[$n]}
+"
+      found+=("${tok_by_issue[$n]}")
+    else
+      COST_ROWS="${COST_ROWS}cost: issue=#$n $no_records
+"
+    fi
+  done
+
+  if [ "${#found[@]}" -gt 0 ]; then
+    local med
+    med="$(printf '%s\n' "${found[@]}" | jq -s '
+      def median: sort as $s | ($s|length) as $n |
+        if $n == 0 then null
+        elif ($n % 2 == 1) then $s[($n-1)/2]
+        else ($s[$n/2 - 1] + $s[$n/2]) / 2
+        end;
+      map(tonumber) | median
+    ')"
+    COST_MEDIAN="$(clean_num "$med")"
+  else
+    COST_MEDIAN="$no_records"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Task 4 — harness-mass rows (measured off the working tree; never n/a)
+# ---------------------------------------------------------------------------
+
+compute_harness_mass() {
+  local skills words scripts scripts_loc hooks hooks_loc tests tests_loc
+  local grep_skill grep_claude refs distinct
+
+  skills="$(ls -d "$REPO_ROOT"/skills/*/ 2>/dev/null | wc -l | tr -d ' ')"
+  words="$(cat "$REPO_ROOT"/skills/*/SKILL.md "$REPO_ROOT"/agents/*.md 2>/dev/null | wc -w | tr -d ' ')"
+  scripts="$(ls "$REPO_ROOT"/scripts/*.sh 2>/dev/null | wc -l | tr -d ' ')"
+  scripts_loc="$(cat "$REPO_ROOT"/scripts/*.sh 2>/dev/null | wc -l | tr -d ' ')"
+  hooks="$(find "$REPO_ROOT/hooks" -maxdepth 1 -type f \( -name '*.py' -o -name '*.sh' \) 2>/dev/null | wc -l | tr -d ' ')"
+  hooks_loc="$(find "$REPO_ROOT/hooks" -maxdepth 1 -type f \( -name '*.py' -o -name '*.sh' \) -exec cat {} + 2>/dev/null | wc -l | tr -d ' ')"
+  tests="$(ls "$REPO_ROOT"/tests/test*.sh 2>/dev/null | wc -l | tr -d ' ')"
+  tests_loc="$(cat "$REPO_ROOT"/tests/test*.sh 2>/dev/null | wc -l | tr -d ' ')"
+  grep_skill="$(grep -l 'SKILL.md' "$REPO_ROOT"/tests/test*.sh 2>/dev/null | wc -l | tr -d ' ')"
+  grep_claude="$(grep -l 'CLAUDE.md' "$REPO_ROOT"/tests/test*.sh 2>/dev/null | wc -l | tr -d ' ')"
+  refs="$(grep -ohE '#[0-9]{2,4}' "$REPO_ROOT"/skills/*/SKILL.md 2>/dev/null | wc -l | tr -d ' ')"
+  distinct="$(grep -ohE '#[0-9]{2,4}' "$REPO_ROOT"/skills/*/SKILL.md 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+
+  JOIN_COMP_VAL["harness mass/skills"]="${skills:-0}"
+  JOIN_COMP_VAL["harness mass/words"]="${words:-0}"
+  JOIN_COMP_VAL["harness mass/scripts"]="${scripts:-0}"
+  JOIN_COMP_VAL["harness mass/scripts loc"]="${scripts_loc:-0}"
+  JOIN_COMP_VAL["harness mass/hooks"]="${hooks:-0}"
+  JOIN_COMP_VAL["harness mass/hooks loc"]="${hooks_loc:-0}"
+  JOIN_COMP_VAL["harness mass/tests"]="${tests:-0}"
+  JOIN_COMP_VAL["harness mass/tests loc"]="${tests_loc:-0}"
+  JOIN_COMP_VAL["prose-pinning tests/grep skill.md"]="${grep_skill:-0}"
+  JOIN_COMP_VAL["prose-pinning tests/grep claude.md"]="${grep_claude:-0}"
+  JOIN_COMP_VAL["issue-number archaeology in skill bodies/refs"]="${refs:-0}"
+  JOIN_COMP_VAL["issue-number archaeology in skill bodies/distinct"]="${distinct:-0}"
+
+  local k
+  for k in "harness mass/skills" "harness mass/words" "harness mass/scripts" \
+           "harness mass/scripts loc" "harness mass/hooks" "harness mass/hooks loc" \
+           "harness mass/tests" "harness mass/tests loc" \
+           "prose-pinning tests/grep skill.md" "prose-pinning tests/grep claude.md" \
+           "issue-number archaeology in skill bodies/refs" \
+           "issue-number archaeology in skill bodies/distinct"; do
+    JOIN_COMP_UNIT["$k"]=""
+  done
+}
+
+compute_harness_mass
+
+# ---------------------------------------------------------------------------
+# Task 5 — friction, escapes, gate yield, weak-model, usage snapshot
+# ---------------------------------------------------------------------------
+
+NO_DECISION_FIELD="n/a (tool-use.log has no decision field; hooks/log-tool-use.sh logs invocations only)"
+
+FRICTION_DENIALS=""
+FRICTION_LINES_COUNT=0
+declare -a FRICTION_LINES_TEXT=()
+FRICTION_WINDOW=""
+FRICTION_HOTFIX=0
+FRICTION_MANUAL_MERGE=0
+FRICTION_HUMAN=0
+
+# current_cycle_friction_lines <issues_file> <cur_ids_json> <since> -> appends
+# to FRICTION_LINES_TEXT; the shared "current cycle's own issue comments"
+# harvest used by --post, by full mode at cycle 0, and as the degrade path
+# when full mode at cycle N>0 has no prior tracker comment to read.
+current_cycle_friction_lines() {
+  local issues_file="$1" cur_ids_json="$2" since="$3" line
+  [ -f "$issues_file" ] || return 0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    FRICTION_LINES_TEXT+=("$line")
+  done < <(jq -r --argjson ids "$cur_ids_json" --arg since "$since" '
+    [.[] | select(.number as $n | $ids | index($n) != null) | .comments[]?
+      | select(($since == "") or (.createdAt >= $since))
+      | .body] | .[]
+  ' "$issues_file" 2>/dev/null | grep '^HARNESS-FRICTION:')
+}
+
+compute_friction() {
+  local toolog="$1" issues_file="$2" prs_file="$3" since="$4" cur_ids_json="$5" base="$6" cyc_since="$7" cyc_until="$8" post="$9" cycle="${10}" tracker="${11}"
+  local cnt line cur_prs_json prev_comment_body
+
+  if [ -f "$toolog" ]; then
+    cnt="$(awk -F'\t' -v since="$since" '
+      NF>=5 && (since=="" || $1 >= since) && ($2=="denied" || $2=="blocked" || $3=="BLOCKED") { c++ }
+      END { print c+0 }
+    ' "$toolog")"
+    if [ "${cnt:-0}" -gt 0 ]; then
+      FRICTION_DENIALS="$cnt"
+    else
+      FRICTION_DENIALS="$NO_DECISION_FIELD"
+    fi
+  else
+    FRICTION_DENIALS="$NO_DECISION_FIELD"
+  fi
+
+  # HARNESS-FRICTION comment window, chosen per mode (#1281):
+  #   --post (and full mode at cycle 0, where no prior cycle comment can
+  #   exist yet) reads the CURRENT cycle's own issue comments, honouring
+  #   --since — today's original behaviour.
+  #   Full mode at cycle N>0 reads the PRIOR cycle's tracker comment instead
+  #   (the step-1 observe window an operator actually looks at) and ignores
+  #   --since, because the cycle bound already scopes it. No prior tracker
+  #   comment found -> degrade to the current-cycle harvest.
+  FRICTION_LINES_TEXT=()
+  FRICTION_WINDOW=""
+  if [ "$post" -eq 1 ] || [ "$cycle" -eq 0 ]; then
+    current_cycle_friction_lines "$issues_file" "$cur_ids_json" "$since"
+    FRICTION_WINDOW="cycle $cycle issue comments"
+  else
+    prev_comment_body="$(prev_cycle_comment "$issues_file" "$tracker" $((cycle - 1)))"
+    if [ -n "$prev_comment_body" ]; then
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        FRICTION_LINES_TEXT+=("$line")
+      done < <(printf '%s\n' "$prev_comment_body" | grep '^HARNESS-FRICTION:')
+      FRICTION_WINDOW="tracker cycle $((cycle - 1)) comment"
+    else
+      current_cycle_friction_lines "$issues_file" "$cur_ids_json" "$since"
+      FRICTION_WINDOW="cycle $cycle issue comments"
+    fi
+  fi
+  FRICTION_LINES_COUNT="${#FRICTION_LINES_TEXT[@]}"
+
+  # friction/hotfix and friction/manual-merge are CYCLE-SCOPED (#1281): the PR
+  # universe is cycle_prs(), not every merged PR repo-wide. No resolvable
+  # cycle window -> a named reason, never a repo-wide count.
+  if [ -n "$cyc_since" ]; then
+    cur_prs_json="$(cycle_prs "$prs_file" "$cur_ids_json" "$base" "$cyc_since" "$cyc_until")"
+    [ -n "$cur_prs_json" ] || cur_prs_json="[]"
+    FRICTION_HOTFIX="$(printf '%s' "$cur_prs_json" | jq -r '[.[] | select((.headRefName // "") | test("^feature/hotfix-"))] | length' 2>/dev/null)"
+    FRICTION_MANUAL_MERGE="$(printf '%s' "$cur_prs_json" | jq -r '[.[] | select(.labels[]?.name == "manual-merge")] | length' 2>/dev/null)"
+    FRICTION_HOTFIX="${FRICTION_HOTFIX:-0}"
+    FRICTION_MANUAL_MERGE="${FRICTION_MANUAL_MERGE:-0}"
+  else
+    FRICTION_HOTFIX="n/a (no cycle window)"
+    FRICTION_MANUAL_MERGE="n/a (no cycle window)"
+  fi
+
+  FRICTION_HUMAN=0
+  if [ -f "$issues_file" ]; then
+    FRICTION_HUMAN="$(jq -r --argjson ids "$cur_ids_json" '
+      [.[] | select(.number as $n | $ids | index($n) != null) | select(.labels[]?.name == "human")] | length
+    ' "$issues_file" 2>/dev/null)"
+  fi
+  FRICTION_HUMAN="${FRICTION_HUMAN:-0}"
+
+  EXTRA_COMP_VAL["friction/denials"]="$FRICTION_DENIALS";                   EXTRA_COMP_UNIT["friction/denials"]=""
+  EXTRA_COMP_VAL["friction/harness-friction-lines"]="$FRICTION_LINES_COUNT"; EXTRA_COMP_UNIT["friction/harness-friction-lines"]=""
+  # Deliberately NON-NUMERIC: it must never join a delta, so Scenario 13's
+  # `deltas == joined` invariant (numeric-only) cannot shift.
+  EXTRA_COMP_VAL["friction/harness-friction-window"]="$FRICTION_WINDOW";   EXTRA_COMP_UNIT["friction/harness-friction-window"]=""
+  EXTRA_COMP_VAL["friction/compactions"]="n/a (no transcript substrate)";   EXTRA_COMP_UNIT["friction/compactions"]=""
+  EXTRA_COMP_VAL["friction/hotfix"]="$FRICTION_HOTFIX";                    EXTRA_COMP_UNIT["friction/hotfix"]=""
+  EXTRA_COMP_VAL["friction/manual-merge"]="$FRICTION_MANUAL_MERGE";        EXTRA_COMP_UNIT["friction/manual-merge"]=""
+  EXTRA_COMP_VAL["friction/human"]="$FRICTION_HUMAN";                      EXTRA_COMP_UNIT["friction/human"]=""
+}
+
+compute_friction "$TOOLOG" "$ISSUES_FILE" "$PRS_FILE" "$SINCE" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL" "$POST" "$CYCLE" "$TRACKER"
+
+GATE_REVISE=0; GATE_PLANS=0; GATE_FLAGGED=0; GATE_EVALS=0
+
+compute_gate_yield() {
+  local issues_file="$1" out
+  [ -f "$issues_file" ] || return 0
+  out="$(jq -r --argjson ids "$CUR_IDS_JSON" '
+    [.[] | select(.number as $n | $ids | index($n) != null) | .comments[]?.body] as $bodies
+    | ($bodies | map(select(contains("## Plan Evaluation")))) as $plan
+    | ($bodies | map(select(contains("## Evaluation") and (contains("## Plan Evaluation")|not)))) as $pr
+    | "\(($plan | map(select(contains("Verdict:** Revise"))) | length)) \($plan|length) \(($pr | map(select(contains("Verdict:** Flagged"))) | length)) \($pr|length)"
+  ' "$issues_file" 2>/dev/null)"
+  [ -z "$out" ] && return 0
+  read -r GATE_REVISE GATE_PLANS GATE_FLAGGED GATE_EVALS <<< "$out"
+}
+
+compute_gate_yield "$ISSUES_FILE"
+
+USAGE_LINE="n/a (no usage-gate log)"
+
+compute_usage_snapshot() {
+  local f="$1" last fh sd th
+  [ -f "$f" ] || return 0
+  last="$(tail -1 "$f" 2>/dev/null)"
+  [ -z "$last" ] && return 0
+  fh="$(printf '%s' "$last" | jq -r '.five_hour // "n/a"' 2>/dev/null)"
+  sd="$(printf '%s' "$last" | jq -r '.seven_day // "n/a"' 2>/dev/null)"
+  th="$(printf '%s' "$last" | jq -r '.threshold // "n/a"' 2>/dev/null)"
+  USAGE_LINE="five_hour=$fh seven_day=$sd threshold=$th"
+}
+
+compute_usage_snapshot "$USAGE_FILE"
+
+ESCAPES_HOTFIX=0; ESCAPES_REVERT=0; ESCAPES_LATERFIX=0
+
+compute_escapes() {
+  local prs_file="$1" prev_ids_json="$2" cur_ids_json="$3" base="$4" cyc_since="$5" cyc_until="$6"
+  local out cur_scope_json
+  [ -f "$prs_file" ] || return 0
+
+  # Asymmetric on purpose: only the CURRENT-cycle side is windowed. $prev_prs
+  # is already scoped by "closes a previous-cycle issue"; layering the current
+  # cycle's window on top of it too would empty $prev_files and pin
+  # escapes/later-fix at 0 permanently (#1281 round-1 defect).
+  if [ -z "$cyc_since" ]; then
+    ESCAPES_HOTFIX="n/a (no cycle window)"
+    ESCAPES_REVERT="n/a (no cycle window)"
+    ESCAPES_LATERFIX="n/a (no cycle window)"
+    return 0
+  fi
+
+  cur_scope_json="$(cycle_prs "$prs_file" "$cur_ids_json" "$base" "$cyc_since" "$cyc_until")"
+  [ -n "$cur_scope_json" ] || cur_scope_json="[]"
+
+  out="$(jq -r --argjson prev_ids "$prev_ids_json" --argjson cur_scope "$cur_scope_json" '
+    def closes: (.body // "") | [scan("Closes #([0-9]+)")] | map(.[0]|tonumber);
+    [.[] | . + {closes: closes}] as $prs
+    | ($prs | map(select(.closes | any(. as $c | $prev_ids | index($c) != null)))) as $prev_prs
+    | ($prev_prs | [.[].files[]?] | unique) as $prev_files
+    | ($cur_scope | map(select((.closes | any(. as $c | $prev_ids | index($c) != null)) | not))) as $cur_prs
+    | ($cur_prs | map(select((.headRefName // "") | test("^feature/hotfix-")))) as $hotfix
+    | ($cur_prs - $hotfix) as $rest1
+    | ($rest1 | map(select((.title // "") | test("^revert(\\([a-z0-9_-]+\\))?!?: ")))) as $revert
+    | ($rest1 - $revert) as $rest2
+    | ($rest2 | map(select(([.files[]?] | any(. as $f | $prev_files | index($f) != null))))) as $laterfix
+    | "\($hotfix|length) \($revert|length) \($laterfix|length)"
+  ' "$prs_file" 2>/dev/null)"
+  [ -z "$out" ] && return 0
+  read -r ESCAPES_HOTFIX ESCAPES_REVERT ESCAPES_LATERFIX <<< "$out"
+}
+
+compute_escapes "$PRS_FILE" "$PREV_IDS_JSON" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL"
+
+EXTRA_COMP_VAL["escapes/hotfix"]="$ESCAPES_HOTFIX";       EXTRA_COMP_UNIT["escapes/hotfix"]=""
+EXTRA_COMP_VAL["escapes/revert"]="$ESCAPES_REVERT";       EXTRA_COMP_UNIT["escapes/revert"]=""
+EXTRA_COMP_VAL["escapes/later-fix"]="$ESCAPES_LATERFIX";  EXTRA_COMP_UNIT["escapes/later-fix"]=""
+
+# ---------------------------------------------------------------------------
+# Task 6 — deltas, passthrough rows, prev-delta, pending verdicts
+# ---------------------------------------------------------------------------
+
+verdict_candidates() {  # <issues_file> <ids_json> -> space-separated issue numbers
+  local issues_file="$1" ids_json="$2"
+  [ -f "$issues_file" ] || { printf ''; return 0; }
+  # Retro-wins: a cycle issue is a candidate when its `Measured by:` LINE
+  # names `retro` in any case. A hybrid line (calibration run AND retro,
+  # e.g. live #1291) still qualifies — retro wins, so no separate
+  # `and not(calibration run)` clause is needed (that would both risk an
+  # unparenthesized-jq runtime error and hide hybrid lines). `.` does not
+  # cross newlines without the `s` flag, so `.*` stays scoped to the single
+  # Measured-by line — do not add `s`. Each `(.body // "") | test(...)` is
+  # its own fully-parenthesized clause: jq binds `|` looser than `and`.
+  jq -r --argjson ids "$ids_json" '
+    [.[] | select(.number as $n | $ids | index($n) != null)
+      | select(((.body // "") | test("Measured by:.*retro"; "i")))
+      | .number] | map(tostring) | join(" ")
+  ' "$issues_file" 2>/dev/null
+}
+
+# resolved_verdicts <comment body> -> space-separated issue numbers the
+# comment's `- verdicts:` line already records a verdict for (#1281). Only
+# `#N <verdict-word>` pairs count — the same comment's `(reverted by PR #p)`
+# and `| pending: #q (retro next cycle)` fragments carry no verdict word
+# right after the `#`, so they are excluded by construction.
+resolved_verdicts() {
+  local body="$1" line
+  [ -n "$body" ] || { printf ''; return 0; }
+  line="$(printf '%s\n' "$body" | grep '^- verdicts:')"
+  [ -n "$line" ] || { printf ''; return 0; }
+  printf '%s\n' "$line" \
+    | grep -oE '#[0-9]+ +(confirmed|no-effect|regressed)' \
+    | sed -E 's/^#([0-9]+).*/\1/' \
+    | tr '\n' ' ' | sed -E 's/[[:space:]]+$//'
+}
+
+VERDICT_CANDIDATES="$(verdict_candidates "$ISSUES_FILE" "$CUR_IDS_JSON")"
+
+PENDING_VERDICTS=""
+if [ "$CYCLE" -gt 0 ] && [ -n "$PREV_ISSUES" ]; then
+  PENDING_VERDICTS="$(verdict_candidates "$ISSUES_FILE" "$PREV_IDS_JSON")"
+
+  PREV_CYCLE_COMMENT_BODY="$(prev_cycle_comment "$ISSUES_FILE" "$TRACKER" $((CYCLE - 1)))"
+  if [ -n "$PREV_CYCLE_COMMENT_BODY" ]; then
+    RESOLVED_VERDICTS="$(resolved_verdicts "$PREV_CYCLE_COMMENT_BODY")"
+    if [ -n "$PENDING_VERDICTS" ] && [ -n "$RESOLVED_VERDICTS" ]; then
+      REMAINING=""
+      for n in $PENDING_VERDICTS; do
+        skip=0
+        for r in $RESOLVED_VERDICTS; do
+          [ "$n" = "$r" ] && { skip=1; break; }
+        done
+        [ "$skip" -eq 0 ] && REMAINING="$REMAINING $n"
+      done
+      PENDING_VERDICTS="${REMAINING# }"
+    fi
+  fi
+fi
+
+declare -A PREV_COMP_VAL=()
+PREV_RETRO_FOUND=""
+
+resolve_prev_retro_file() {
+  local n="$1" prevnn
+  if [ "$n" -le 0 ]; then printf ''; return 0; fi
+  prevnn="$(printf '%02d' $((n - 1)))"
+  if [ -n "$FIXTURE_DIR" ]; then
+    printf '%s' "$FIXTURE_DIR/cycle-$prevnn.md"
+  else
+    printf '%s' "$REPO_ROOT/docs/retros/cycle-$prevnn.md"
+  fi
+}
+
+load_prev_computed() {
+  local f="$1" line rest key val
+  [ -n "$f" ] && [ -f "$f" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "COMPUTED "*)
+        rest="${line#COMPUTED }"
+        key="${rest%% = *}"
+        val="${rest#* = }"
+        PREV_COMP_VAL["$key"]="$val"
+        ;;
+    esac
+  done < "$f"
+  return 0
+}
+
+PREV_RETRO_FILE="$(resolve_prev_retro_file "$CYCLE")"
+if load_prev_computed "$PREV_RETRO_FILE"; then
+  PREV_RETRO_FOUND=1
+fi
+
+# ---------------------------------------------------------------------------
+# Report builders
+# ---------------------------------------------------------------------------
+
+print_baseline_dump() {
+  local key v u
+  for key in "${!BASE_VAL[@]}"; do
+    v="${BASE_VAL[$key]}"; u="${BASE_UNIT[$key]}"
+    if [ -n "$u" ] && is_numeric "$v"; then
+      echo "BASELINE $key = $v $u"
+    else
+      echo "BASELINE $key = $v"
+    fi
+  done
+}
+
+print_computed_dump() {
+  local key v u
+  for key in "${!JOIN_COMP_VAL[@]}"; do
+    v="${JOIN_COMP_VAL[$key]}"; u="${JOIN_COMP_UNIT[$key]}"
+    if [ -n "$u" ] && is_numeric "$v"; then
+      echo "COMPUTED $key = $v $u"
+    else
+      echo "COMPUTED $key = $v"
+    fi
+  done
+  for key in "${!EXTRA_COMP_VAL[@]}"; do
+    v="${EXTRA_COMP_VAL[$key]}"; u="${EXTRA_COMP_UNIT[$key]}"
+    if [ -n "$u" ] && is_numeric "$v"; then
+      echo "COMPUTED $key = $v $u"
+    else
+      echo "COMPUTED $key = $v"
+    fi
+  done
+}
+
+print_post_report() {
+  local key v u
+  for key in "${!JOIN_COMP_VAL[@]}"; do
+    case "$key" in
+      "median path b pr/"*) continue ;;
+    esac
+    v="${JOIN_COMP_VAL[$key]}"; u="${JOIN_COMP_UNIT[$key]}"
+    if [ -n "$u" ] && is_numeric "$v"; then echo "COMPUTED $key = $v $u"; else echo "COMPUTED $key = $v"; fi
+  done
+  for key in "${!EXTRA_COMP_VAL[@]}"; do
+    v="${EXTRA_COMP_VAL[$key]}"; u="${EXTRA_COMP_UNIT[$key]}"
+    if [ -n "$u" ] && is_numeric "$v"; then echo "COMPUTED $key = $v $u"; else echo "COMPUTED $key = $v"; fi
+  done
+  printf '%s' "$COST_ROWS"
+  echo "cost: loop-own tokens/issue median = $COST_MEDIAN"
+  echo "cost: backfill = $COST_BACKFILL"
+  echo "verdict-candidates: $VERDICT_CANDIDATES"
+}
+
+build_full_report() {
+  # #1300: the summary block (cycle-issues, pending-verdicts, then the
+  # friction COUNTS) renders BEFORE the friction echo, so an operator reading
+  # only the head of the report sees the numbers before the appendix.
+  # `mode` controls the echo itself: `stdout` (the default) prints one
+  # pointer line ("friction: N lines — see <window>"); `write` prints the
+  # HARNESS-FRICTION lines verbatim — the durable record `--write` preserves.
+  local mode="${1:-stdout}"
+  local key n i rn rc nr matched bval cval bunit cunit diff fl
+
+  echo "cycle-issues: $CUR_ISSUES"
+
+  if [ -n "$PENDING_VERDICTS" ]; then
+    echo "pending-verdicts: $PENDING_VERDICTS"
+  fi
+  echo "verdict-candidates: $VERDICT_CANDIDATES"
+
+  echo ""
+  echo "friction: denials = $FRICTION_DENIALS"
+  echo "friction: harness-friction-lines = $FRICTION_LINES_COUNT"
+  echo "friction: harness-friction-window = $FRICTION_WINDOW"
+  echo "friction: compactions = n/a (no transcript substrate)"
+  echo "friction: hotfix = $FRICTION_HOTFIX"
+  echo "friction: manual-merge = $FRICTION_MANUAL_MERGE"
+  echo "friction: human = $FRICTION_HUMAN"
+
+  echo ""
+  if [ "$mode" = "write" ]; then
+    for fl in "${FRICTION_LINES_TEXT[@]:-}"; do
+      [ -z "$fl" ] && continue
+      echo "$fl"
+    done
+  elif [ "$FRICTION_LINES_COUNT" -gt 0 ]; then
+    echo "friction: $FRICTION_LINES_COUNT lines — see $FRICTION_WINDOW"
+  fi
+
+  echo ""
+  for key in "${!JOIN_COMP_VAL[@]}"; do
+    cval="${JOIN_COMP_VAL[$key]}"
+    is_numeric "$cval" || continue
+    if [ -n "${BASE_VAL[$key]+x}" ]; then
+      bval="${BASE_VAL[$key]}"
+      if is_numeric "$bval"; then
+        bunit="${BASE_UNIT[$key]}"; cunit="${JOIN_COMP_UNIT[$key]}"
+        if [ "$bunit" != "$cunit" ]; then
+          echo "delta $key n/a (unit mismatch: $bunit vs $cunit)"
+        else
+          diff="$(awk -v a="$bval" -v b="$cval" 'BEGIN{d=b-a; if (d==int(d)) printf "%d", d; else printf "%.2f", d}')"
+          echo "delta $key $diff (baseline $bval -> computed $cval)"
+        fi
+      fi
+    else
+      echo "delta $key n/a (baseline row not found: $key)"
+    fi
+  done
+
+  for ((i = 0; i < ${#ROW_NAMES[@]}; i++)); do
+    rn="${ROW_NAMES[$i]}"; rc="${ROW_CELLS[$i]}"
+    nr="$(norm_row "$rn")"
+    matched=0
+    for key in "${!JOIN_COMP_VAL[@]}"; do
+      case "$key" in
+        "$nr/"*)
+          if is_numeric "${JOIN_COMP_VAL[$key]}" && [ -n "${BASE_VAL[$key]+x}" ]; then
+            matched=1
+          fi
+          ;;
+      esac
+    done
+    if [ "$matched" -eq 0 ]; then
+      echo "$rn: $rc"
+    fi
+  done
+
+  for n in $MISSING_ROW_ISSUES; do
+    echo "cost/latency #$n: n/a (outside PR window)"
+  done
+
+  echo ""
+  echo "escapes: hotfix = $ESCAPES_HOTFIX"
+  echo "escapes: revert = $ESCAPES_REVERT"
+  echo "escapes: later-fix = $ESCAPES_LATERFIX"
+
+  echo ""
+  echo "gate-yield: Flagged/evals = ${GATE_FLAGGED}/${GATE_EVALS}"
+  echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
+
+  echo ""
+  echo "weak-model pass: $CALIB_WEAK"
+
+  echo ""
+  echo "usage: $USAGE_LINE"
+
+  echo ""
+  if [ -n "$PREV_RETRO_FOUND" ]; then
+    for key in "${!JOIN_COMP_VAL[@]}"; do
+      is_numeric "${JOIN_COMP_VAL[$key]}" || continue
+      if [ -n "${PREV_COMP_VAL[$key]+x}" ] && is_numeric "${PREV_COMP_VAL[$key]}"; then
+        diff="$(awk -v a="${PREV_COMP_VAL[$key]}" -v b="${JOIN_COMP_VAL[$key]}" 'BEGIN{d=b-a; if (d==int(d)) printf "%d", d; else printf "%.2f", d}')"
+        echo "prev-delta $key $diff (previous ${PREV_COMP_VAL[$key]} -> computed ${JOIN_COMP_VAL[$key]})"
+      fi
+    done
+  else
+    echo "prev-delta: n/a (no previous cycle)"
+  fi
+}
+
+apply_bound() {
+  local text="$1" n
+  n="$(printf '%s\n' "$text" | wc -l)"
+  if [ "$n" -le 60 ]; then
+    printf '%s\n' "$text"
+  else
+    printf '%s\n' "$text" | head -59
+    echo "… (truncated; full report written by --write)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Output mode dispatch
+# ---------------------------------------------------------------------------
+
+if [ "$DUMP_BASELINE" -eq 1 ] || [ "$DUMP_COMPUTED" -eq 1 ]; then
+  [ "$DUMP_BASELINE" -eq 1 ] && print_baseline_dump
+  [ "$DUMP_COMPUTED" -eq 1 ] && print_computed_dump
+  exit 0
+fi
+
+if [ "$POST" -eq 1 ]; then
+  compute_agent_costs
+  print_post_report
+  exit 0
+fi
+
+# #1300: stdout gets the pointer-form friction echo; --write keeps the
+# verbatim HARNESS-FRICTION lines. build_full_report is pure formatting over
+# globals already computed above, so calling it twice per mode is safe.
+FULL_REPORT="$(build_full_report stdout)"
+STDOUT_REPORT="$(apply_bound "$FULL_REPORT")"
+printf '%s\n' "$STDOUT_REPORT"
+
+if [ -n "$WRITE_PATH" ]; then
+  mkdir -p "$(dirname "$WRITE_PATH")" 2>/dev/null
+  build_full_report write > "$WRITE_PATH"
+fi
+
+exit 0

@@ -17,7 +17,11 @@
 #   tu_stage_from_description <description>
 #       Map a free-text subagents.log description to a canonical stage
 #       (classify|plan|plan-eval|execute|pr-eval), matched case-insensitively in
-#       a fixed precedence order. Prints empty string when no stage matches.
+#       a fixed precedence order. When the precedence table yields no match, a
+#       second STRICTLY-FALLBACK table (#1299) is consulted: a PATH C leaf
+#       description (target=<dir> + an issue number) -> execute; an
+#       orchestrator closing code review (review [#N] code changes | code
+#       review) -> pr-eval. Prints empty string when neither table matches.
 #
 #   tu_issue_from_description <description>
 #       Extract the issue number from a free-text description per the enumerated
@@ -112,7 +116,24 @@ for rank, (pat, stage) in enumerate(patterns):
     key = (m.start(), rank)
     if best is None or key < best[0]:
         best = (key, stage)
-print(best[1] if best else "")
+if best is not None:
+    print(best[1])
+    sys.exit(0)
+# STRICTLY-FALLBACK table (#1299): consulted ONLY when the main precedence
+# table above yields no match. Resolved by table RANK (first entry wins), not
+# string position -- both patterns below can match zero-width around the
+# description, so a position rule would be meaningless. This makes the
+# widening MONOTONE ("" -> stage, never stage -> another stage): a description
+# the main table already answers is untouched, so no record_key is re-minted.
+STAGE_FALLBACK_PATTERNS = [
+    (r"\breview\b(?:\s+#\d+)?\s+code[ -]?changes\b|\bcode[ -]?review\b", "pr-eval"),
+    (r"^(?=.*#\d+)(?=.*target=\S)", "execute"),
+]
+for pat, stage in STAGE_FALLBACK_PATTERNS:
+    if re.search(pat, d, re.IGNORECASE):
+        print(stage)
+        sys.exit(0)
+print("")
 PY
 }
 
@@ -134,14 +155,16 @@ PY
 }
 
 # tu_role_from_description <description>
-#   Maps a free-text agent dispatch description to a role in {red, green, single}.
-#   Mirrors the inline python role_from_description in scripts/capture-agent-costs.sh
-#   and hooks/capture_agent_cost.py (same regex, same convention as
-#   tu_stage_from_description / tu_issue_from_description). (#1098)
+#   Maps a free-text agent dispatch description to a role in
+#   {red, green, review, single}. Mirrors the inline python
+#   role_from_description in scripts/capture-agent-costs.sh and
+#   hooks/capture_agent_cost.py (same regex, same convention as
+#   tu_stage_from_description / tu_issue_from_description). (#1098, #1299)
 #
-#   "split-role RED"   → "red"
-#   "split-role GREEN" → "green"
-#   anything else      → "single"
+#   "split-role RED"                 → "red"
+#   "split-role GREEN"               → "green"
+#   "review [#N] code changes" | "code review" (stage pr-eval) → "review"
+#   anything else                    → "single"
 tu_role_from_description() {
   local desc="$1"
   python3 - "$desc" <<'PY'
@@ -151,6 +174,8 @@ if re.search(r"split[- ]role\s+red", d, re.IGNORECASE):
     print("red")
 elif re.search(r"split[- ]role\s+green", d, re.IGNORECASE):
     print("green")
+elif re.search(r"\breview\b(?:\s+#\d+)?\s+code[ -]?changes\b|\bcode[ -]?review\b", d, re.IGNORECASE):
+    print("review")
 else:
     print("single")
 PY

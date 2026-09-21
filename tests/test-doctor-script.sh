@@ -275,6 +275,29 @@ grep -qE '^CHECK: labels_exist status=pass detail=18/18' <<<"$out" \
   && pass_msg "labels-override: pass when PIPELINE_LABELS_EXCLUDED=skip" \
   || { fail_msg "labels-override: failed"; echo "$out" | sed 's/^/    /'; }
 
+# #1274 scope 5: a pipe-separated override is TWO labels, so the expected set
+# (and therefore the pass detail total) grows from 18 to 19. Mirrors Case 5c.
+echo "Case 5d: pipe-separated override expands the expected set"
+FX=$(fresh_fx fx-labels-split)
+cat > "$FX/pipeline.config" <<'CFG'
+PIPELINE_REPO="owner/repo"
+PIPELINE_BASE_BRANCH="staging"
+PIPELINE_LABELS_EXCLUDED="excluded|evolve"
+CFG
+SPLIT_JSON='[
+  {"name":"plan-pending"},{"name":"plan-reviewed"},{"name":"plan-approved"},
+  {"name":"in-progress"},{"name":"pr-open"},{"name":"merged"},
+  {"name":"excluded"},{"name":"evolve"},{"name":"later"},{"name":"human"},
+  {"name":"brainstorm"},{"name":"docs-only"},{"name":"multi-task"},{"name":"quick-fix"},
+  {"name":"needs-browser"},{"name":"needs-debug"},{"name":"tracker"},{"name":"manual-merge"},
+  {"name":"next"}
+]'
+run_helper "$FX" LABELS_JSON="$SPLIT_JSON"
+out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
+grep -qE '^CHECK: labels_exist status=pass detail=19/19' <<<"$out" \
+  && pass_msg "labels-split: 19/19 when PIPELINE_LABELS_EXCLUDED=\"excluded|evolve\"" \
+  || { fail_msg "labels-split: expected pass detail=19/19"; grep -E '^CHECK: labels_exist' <<<"$out" | sed 's/^/    /'; }
+
 # ---------------------------------------------------------------------------
 # Case 6: plugin_loaded
 # ---------------------------------------------------------------------------

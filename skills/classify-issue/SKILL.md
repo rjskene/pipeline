@@ -15,6 +15,7 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
 # CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
 _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-parse --show-toplevel 2>/dev/null | sed 's|$|/|')}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
@@ -100,10 +101,9 @@ The skill receives an issue number as argument. Perform:
 2. **Cache check.** If the latest **trusted** `## Classification` comment's `createdAt` is newer than the issue's `updatedAt`, the classification is fresh. If current labels match the cached recommendation → exit 0 ("cached — no re-classification needed"). If they don't → print `Reconciling labels for cached classification #<N>` and jump to step 5a using the cached `recommended_path`. Do NOT re-post the classification comment. The `recommended_path` is parsed from the trusted working set `$TRUSTED` (step 1), and the freshness timestamp is taken only from Classification comments authored by trusted writers — pipeline-posted `## Classification` comments survive both filters because the operator account is OWNER, so the freshness/reconcile logic is unchanged. An outsider cannot poison the cache with a fake `## Classification` comment.
 
    ```bash
-   # Freshness timestamp from TRUSTED Classification authors only (an outsider's
-   # fake comment is excluded, matching the $TRUSTED hard-drop in step 1).
-   LATEST_CLASS_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
-     --jq '[.comments[] | select((.authorAssociation as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a)) and (.body | contains("## Classification")))] | max_by(.createdAt) | .createdAt // empty')
+   # Freshness timestamp from TRUSTED Classification authors only (--json already hard-drops outsiders).
+   LATEST_CLASS_TS=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
+     | jq -r '[.comments[] | select((.authorAssociation as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a)) and (.body | contains("## Classification")))] | max_by(.createdAt) | .createdAt // empty')
    ISSUE_TS=$(gh issue view <N> --repo $PIPELINE_REPO --json updatedAt --jq '.updatedAt')
    # ISO-8601 sorts lexicographically; `>` is strict-greater so add an OR-equality clause to treat same-second as fresh (issue #457).
    if [[ -n "$LATEST_CLASS_TS" && ( "$LATEST_CLASS_TS" > "$ISSUE_TS" || "$LATEST_CLASS_TS" == "$ISSUE_TS" ) ]]; then
@@ -111,7 +111,7 @@ The skill receives an issue number as argument. Perform:
        # never a raw --json comments fetch. The trailing match wins (latest trusted
        # Classification body appears last in $TRUSTED).
        CACHED_PATH=$(printf '%s\n' "$TRUSTED" \
-         | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | tail -1)
+         | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $NF}' | tail -1)
        CURRENT_LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
        current_a=0; current_c=0; current_d=0
        printf '%s\n' "$CURRENT_LABELS" | grep -qx docs-only  && current_a=1
@@ -218,12 +218,12 @@ The skill receives an issue number as argument. Perform:
    # Required env: ISSUE_N (issue number), RECOMMENDED_PATH (A|B|C|D),
    #   CURRENT_LABELS (newline-separated label names), REPO (owner/name).
    REPO="${REPO:-$PIPELINE_REPO}"
-   _has_label() { printf '%s\n' "$CURRENT_LABELS" | grep -qx "$1"; }
+   _has_label() { printf '%s\n' "$CURRENT_LABELS" | grep -qx "${*}"; }
    _safe_label() {
      # Guardrail: this skill may only edit the three path labels.
-     case "$1" in
+     case "${*}" in
        docs-only|multi-task|quick-fix) return 0 ;;
-       *) echo "REFUSED: label '$1' not in allow-set {docs-only|multi-task|quick-fix}" >&2; return 1 ;;
+       *) echo "REFUSED: label '${*}' not in allow-set {docs-only|multi-task|quick-fix}" >&2; return 1 ;;
      esac
    }
    current_a=0; current_c=0; current_d=0
@@ -264,8 +264,8 @@ The skill receives an issue number as argument. Perform:
 
 7. **Verify post** — count `## Classification` comments; retry once on 0; report FAILED if still 0.
    ```bash
-   CLASS_COUNT=$(gh issue view <N> --repo $PIPELINE_REPO --json comments \
-     --jq '[.comments[] | select(.body | contains("## Classification"))] | length')
+   CLASS_COUNT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
+     | jq '[.comments[] | select(.body | contains("## Classification"))] | length')
    ```
 
 8. **Report:** "Classification posted to issue #N: <path> (<confidence>). Label applied: <docs-only | multi-task | quick-fix | none>."

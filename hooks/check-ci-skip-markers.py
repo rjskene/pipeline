@@ -27,6 +27,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from subagent_log_utils import read_event_stdin  # noqa: E402
+try:  # #1352 fail-open: a partial hook install (e.g. a legacy
+    # subtree copy missing this file) must never crash a guard hook.
+    from _deny_log import log_denial  # noqa: E402
+except ImportError:
+    def log_denial(*_args, **_kwargs):  # noqa: E302
+        pass
 
 MARKER_RE = re.compile(
     r"\[(?:skip|no)[\s-]?ci\]|\[ci[\s-]?skip\]|\*\*\*NO_CI\*\*\*",
@@ -69,7 +75,7 @@ def main() -> int:
     for value in candidates:
         match = MARKER_RE.search(value)
         if match:
-            print(
+            reason = (
                 "BLOCKED: CI-blocking marker "
                 f"{match.group(0)!r} found in the proposed text.\n"
                 "GitHub Actions silently skips ALL workflows when commit "
@@ -77,10 +83,12 @@ def main() -> int:
                 "skip ci / ci skip / no ci / no-ci, or ***NO_CI***.\n"
                 "Substitute a safe rephrasing - e.g. 'skip-ci' (no "
                 "brackets), 'skip CI' (no brackets), or wrap the literal "
-                "in backticks like `skip ci` - and retry.",
-                file=sys.stderr,
+                "in backticks like `skip ci` - and retry."
             )
-            return 1
+            print(reason, file=sys.stderr)
+            log_denial("check-ci-skip-markers", data.get("tool_name", ""), reason,
+                        command, session_id=data.get("session_id"))
+            return 2
     return 0
 
 

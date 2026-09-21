@@ -25,9 +25,16 @@ set -uo pipefail
 #      resolver placed under a fake plugin cache; and a decoy
 #      PIPELINE_PLUGIN_CACHE_DIR is IGNORED (location-only bootstrap is
 #      hardcoded to ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline).
+#  (E) #1292 static: every Boot block carries the local-plugin anchor line,
+#      ORDERED after the ${CLAUDE_PLUGIN_ROOT:+…} seed and before the
+#      claude-pipeline-local cache glob (ordering, not mere presence).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR/.."
+
+# #1292: byte-identical anchor line every Boot fence must carry. Single-quoted
+# literal (the line is full of regex metacharacters) matched with `grep -F`.
+ANCHOR='_cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-parse --show-toplevel 2>/dev/null | sed '"'"'s|$|/|'"'"')}"'
 
 PASS=0
 FAIL=0
@@ -66,6 +73,18 @@ for skill_md in $SKILLS; do
   else
     fail_msg "$rel does NOT reference the local-marketplace cache anchor (#878)"
   fi
+  # (E) #1292: must carry the local-plugin anchor line, and carry it AFTER the
+  # ${CLAUDE_PLUGIN_ROOT:+…} seed but BEFORE the local-marketplace cache glob —
+  # otherwise the knob cannot beat a stale cache copy.
+  anchor_ln="$(printf '%s\n' "$head30" | grep -nF -- "$ANCHOR" | head -1 | cut -d: -f1)"
+  seed_ln="$(printf '%s\n' "$head30" | grep -n 'CLAUDE_PLUGIN_ROOT:+' | head -1 | cut -d: -f1)"
+  glob_ln="$(printf '%s\n' "$head30" | grep -n 'plugins/cache/claude-pipeline-local/pipeline' | head -1 | cut -d: -f1)"
+  if [ -n "$anchor_ln" ] && [ -n "$seed_ln" ] && [ -n "$glob_ln" ] &&
+     [ "$anchor_ln" -gt "$seed_ln" ] && [ "$anchor_ln" -lt "$glob_ln" ]; then
+    pass_msg "$rel carries the local-plugin anchor ahead of the cache globs (#1292)"
+  else
+    fail_msg "$rel does NOT carry the local-plugin anchor ahead of the cache globs (#1292)"
+  fi
 done
 
 # (B) hermetic exec of the canonical snippet.
@@ -80,14 +99,16 @@ RESOLVER
 CWD="$TMP/consumer"   # consumer cwd with NO ./scripts
 mkdir -p "$CWD"
 
-run_snippet() {  # args: extra env assignments evaluated before the snippet
+run_snippet() {  # args: 1=extra env assignments evaluated before the snippet, 2=cwd (default $CWD)
   (
-    cd "$CWD"
+    cd "${2:-$CWD}"
     export HOME="$FAKE_HOME"
     unset CLAUDE_PLUGIN_ROOT
+    unset PIPELINE_USE_LOCAL_PLUGIN   # keep B1/B2/B3 hermetic if the knob leaks in
     eval "$1"
     # --- canonical Boot snippet under test (keep byte-identical to SKILL.md) ---
     _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+    _cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-parse --show-toplevel 2>/dev/null | sed 's|$|/|')}"
     _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
     _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
     source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
@@ -127,6 +148,30 @@ if [ "$(run_snippet ':')" = "LOCAL_WINS" ]; then
   pass_msg "snippet prefers local-marketplace cache glob over published (#878)"
 else
   fail_msg "snippet did NOT prefer local-marketplace glob (got '$(run_snippet ':')')"
+fi
+
+# B4 (#1292): with PIPELINE_USE_LOCAL_PLUGIN=true and a cwd inside a git
+# checkout, the snippet anchors on that checkout's toplevel — beating BOTH cache
+# globs — so a `--plugin-dir` session with no (or a stale) cache still sources
+# the LIVE resolver.
+GITREPO="$TMP/localcheckout"
+mkdir -p "$GITREPO/scripts"
+cat > "$GITREPO/scripts/_resolve-plugin-root.sh" <<'GITR'
+export CLAUDE_PLUGIN_ROOT="LOCAL_PLUGIN_WINS"
+GITR
+git init -q "$GITREPO" >/dev/null 2>&1
+if [ "$(run_snippet "export PIPELINE_USE_LOCAL_PLUGIN=true" "$GITREPO")" = "LOCAL_PLUGIN_WINS" ]; then
+  pass_msg "snippet anchors on the local checkout when PIPELINE_USE_LOCAL_PLUGIN=true (#1292)"
+else
+  fail_msg "snippet did NOT anchor on the local checkout with the knob set (got '$(run_snippet "export PIPELINE_USE_LOCAL_PLUGIN=true" "$GITREPO")')"
+fi
+
+# B4 negative twin: same git cwd, knob UNSET — the anchor must stay inert and the
+# local-marketplace cache glob must still win (proves the anchor is knob-gated).
+if [ "$(run_snippet ':' "$GITREPO")" = "LOCAL_WINS" ]; then
+  pass_msg "anchor is knob-gated: knob unset in a git cwd still resolves via the cache glob (#1292)"
+else
+  fail_msg "anchor fired without the knob (got '$(run_snippet ':' "$GITREPO")')"
 fi
 
 echo "RESULT: $PASS passed, $FAIL failed"

@@ -156,9 +156,28 @@ run_resolver() {
         -u PIPELINE_PATH_D_MODEL_EXECUTE \
         -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
         -u PIPELINE_PATH_B_SPLIT_ROLE \
+        -u PIPELINE_TRUST_PROFILE \
     bash "$HELPER" 999 "$pathletter" 2>/dev/null)"
   printf '%s\n' "$out" >> "$ALL_OUT_FILE"
   printf '%s\n' "$out"
+}
+
+# Same launch environment as run_resolver(), but capture STDERR and DISCARD
+# stdout (#1291: the invalid-PIPELINE_TRUST_PROFILE fallback WARN rides stderr,
+# never stdout — the token block must stay machine-parseable).
+run_resolver_err() {
+  local fixture="$1" cfgroot="$2" pathletter="$3"
+  PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
+    PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$cfgroot" \
+    env -u PIPELINE_BASE_BRANCH \
+        -u PIPELINE_PATH_A_MODEL_EXECUTE \
+        -u PIPELINE_PATH_B_MODEL_EXECUTE \
+        -u PIPELINE_PATH_C_MODEL_EXECUTE \
+        -u PIPELINE_PATH_D_MODEL_EXECUTE \
+        -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
+        -u PIPELINE_PATH_B_SPLIT_ROLE \
+        -u PIPELINE_TRUST_PROFILE \
+    bash "$HELPER" 999 "$pathletter" 2>&1 >/dev/null
 }
 
 # Assert a token (literal "KEY=VALUE") is present on its own line in $out.
@@ -289,6 +308,7 @@ for bad in E pr-eval plan plan-eval; do
             -u PIPELINE_PATH_D_MODEL_EXECUTE \
             -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
             -u PIPELINE_PATH_B_SPLIT_ROLE \
+            -u PIPELINE_TRUST_PROFILE \
         bash "$HELPER" 999 "$bad" 2>&1 >/dev/null)
   rc=$?
   if [ "$rc" -eq 2 ] && printf '%s' "$ERR" | grep -qiE 'usage'; then
@@ -308,6 +328,7 @@ PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIXE" \
       -u PIPELINE_PATH_D_MODEL_EXECUTE \
       -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
       -u PIPELINE_PATH_B_SPLIT_ROLE \
+      -u PIPELINE_TRUST_PROFILE \
   bash "$HELPER" 999 B >/dev/null 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then
@@ -443,6 +464,112 @@ OUT21=$(run_resolver "$FIX21" "$CFG21" B)
 unset PIPELINE_BASE_BRANCH
 assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "MODEL=opus" "$OUT21"
 assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "REASON=explicit-knob" "$OUT21"
+
+# ---- #1291 trust profile ----------------------------------------------------
+# PIPELINE_TRUST_PROFILE (strict, the default | lean) is resolved ONCE by the
+# shared scripts/_trust-profile.sh helper. Under `lean` the #881 split-role PAIR
+# collapses into ONE strong-model dispatch (REASON=lean-single) — but ONLY for
+# PATH B, ONLY when the split would otherwise have applied, ONLY when no
+# carve-out fired (W2 / needs-browser), and ONLY when the implementer model is
+# already strong (opus|fable). `strict` must be BYTE-IDENTICAL to the pre-#1291
+# resolver. An unrecognized profile falls back to strict with ONE stderr WARN.
+# Cases (24)-(28) are CONTROLS: they pin the lanes lean must NOT widen into.
+
+# (22) lean + explicit opus knob on a clean low-blast PATH B -> single opus.
+CFG22=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
+FIX22=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT22=$(run_resolver "$FIX22" "$CFG22" B)
+assert_tok "(22) lean B + opus knob" "MODEL=opus" "$OUT22"
+assert_tok "(22) lean B + opus knob" "SPLIT_ROLE=false" "$OUT22"
+assert_tok "(22) lean B + opus knob" "ROLES=single" "$OUT22"
+assert_tok "(22) lean B + opus knob" "REASON=lean-single" "$OUT22"
+assert_tok "(22) lean B + opus knob" "SCOPE=all" "$OUT22"
+
+# (23) lean + explicit fable knob -> same collapse (fable is a strong model too).
+CFG23=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=fable')
+FIX23=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT23=$(run_resolver "$FIX23" "$CFG23" B)
+assert_tok "(23) lean B + fable knob" "MODEL=fable" "$OUT23"
+assert_tok "(23) lean B + fable knob" "SPLIT_ROLE=false" "$OUT23"
+assert_tok "(23) lean B + fable knob" "REASON=lean-single" "$OUT23"
+
+# (24) CONTROL: lean + opus knob + W2 vocab -> the high-uncertainty carve-out
+#      WINS; the split pair survives. lean never collapses a W2 dispatch.
+CFG24=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
+FIX24=$(make_fixture "fix(auth): harden" "$BODY_W2" '[]')
+OUT24=$(run_resolver "$FIX24" "$CFG24" B)
+assert_tok "(24) CONTROL lean + W2" "SPLIT_ROLE=true" "$OUT24"
+assert_tok "(24) CONTROL lean + W2" "ROLES=red:opus,green:opus" "$OUT24"
+assert_tok "(24) CONTROL lean + W2" "REASON=high-uncertainty" "$OUT24"
+
+# (24b) CONTROL: lean + opus knob + needs-browser -> carve-out wins, split survives.
+CFG24B=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
+FIX24B=$(make_fixture "fix(ui): table tweak" "$BODY_LOW" '[{"name":"needs-browser"}]')
+OUT24B=$(run_resolver "$FIX24B" "$CFG24B" B)
+assert_tok "(24b) CONTROL lean + needs-browser" "SPLIT_ROLE=true" "$OUT24B"
+assert_tok "(24b) CONTROL lean + needs-browser" "ROLES=red:opus,green:opus" "$OUT24B"
+assert_tok "(24b) CONTROL lean + needs-browser" "REASON=needs-browser" "$OUT24B"
+
+# (25) CONTROL: lean + knobs unset (sonnet executor) -> the split pair survives.
+#      lean collapses onto ONE STRONG model; it never collapses onto a weak one,
+#      which would delete the opus test-author with nothing strong left.
+CFG25=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+FIX25=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT25=$(run_resolver "$FIX25" "$CFG25" B)
+assert_tok "(25) CONTROL lean + sonnet executor" "MODEL=sonnet" "$OUT25"
+assert_tok "(25) CONTROL lean + sonnet executor" "SPLIT_ROLE=true" "$OUT25"
+assert_tok "(25) CONTROL lean + sonnet executor" "ROLES=red:opus,green:sonnet" "$OUT25"
+assert_tok "(25) CONTROL lean + sonnet executor" "REASON=default-sonnet" "$OUT25"
+
+# (26) An UNRECOGNIZED profile falls back to strict, with exactly ONE WARN on
+#      stderr (fail-safe: a typo'd knob must not silently buy a cheaper shape).
+CFG26=$(make_config_root 'PIPELINE_TRUST_PROFILE=turbo' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
+FIX26=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT26=$(run_resolver "$FIX26" "$CFG26" B)
+assert_tok "(26) unknown profile falls back to strict" "SPLIT_ROLE=true" "$OUT26"
+assert_tok "(26) unknown profile falls back to strict" "ROLES=red:opus,green:opus" "$OUT26"
+assert_tok "(26) unknown profile falls back to strict" "REASON=explicit-knob" "$OUT26"
+inc
+WARN26="$(run_resolver_err "$FIX26" "$CFG26" B | grep -c '^WARN:.*PIPELINE_TRUST_PROFILE')"
+if [ "$WARN26" -eq 1 ]; then
+  pass_msg "(26) unknown profile -> exactly one WARN line on stderr"
+else
+  fail_msg "(26) expected exactly 1 '^WARN:.*PIPELINE_TRUST_PROFILE' stderr line, got $WARN26"
+fi
+
+# (27) CONTROL: strict is a byte-identical no-op. An explicit `strict` matches
+#      "no profile line at all", and lean-single is PATH B ONLY — under lean the
+#      A/C/D outputs are byte-equal to the same config without the profile line.
+CFG27_NONE=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
+CFG27_STRICT=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=opus' 'PIPELINE_TRUST_PROFILE=strict')
+FIX27=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+inc
+if [ "$(run_resolver "$FIX27" "$CFG27_NONE" B)" = "$(run_resolver "$FIX27" "$CFG27_STRICT" B)" ]; then
+  pass_msg "(27) strict is byte-identical to no profile line (PATH B)"
+else
+  fail_msg "(27) strict diverged from no profile line (PATH B):
+$(diff <(run_resolver "$FIX27" "$CFG27_NONE" B) <(run_resolver "$FIX27" "$CFG27_STRICT" B))"
+fi
+for pl in A C D; do
+  CFG27P_NONE=$(make_config_root "PIPELINE_PATH_${pl}_MODEL_EXECUTE=opus")
+  CFG27P_LEAN=$(make_config_root "PIPELINE_PATH_${pl}_MODEL_EXECUTE=opus" 'PIPELINE_TRUST_PROFILE=lean')
+  inc
+  if [ "$(run_resolver "$FIX27" "$CFG27P_NONE" "$pl")" = "$(run_resolver "$FIX27" "$CFG27P_LEAN" "$pl")" ]; then
+    pass_msg "(27) lean is a no-op for PATH $pl (lean-single is PATH B only)"
+  else
+    fail_msg "(27) lean changed PATH $pl output (lean-single must be PATH B only)"
+  fi
+done
+
+# (28) CONTROL: lean + opus knob + split-role explicitly OFF -> the dispatch was
+#      already single, so lean-single does NOT fire (it fires only where the
+#      split WOULD have applied) and the audit reason stays the model reason.
+CFG28=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus' 'PIPELINE_PATH_B_SPLIT_ROLE=false')
+FIX28=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT28=$(run_resolver "$FIX28" "$CFG28" B)
+assert_tok "(28) CONTROL lean + split-role off" "SPLIT_ROLE=false" "$OUT28"
+assert_tok "(28) CONTROL lean + split-role off" "ROLES=single" "$OUT28"
+assert_tok "(28) CONTROL lean + split-role off" "REASON=explicit-knob" "$OUT28"
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="

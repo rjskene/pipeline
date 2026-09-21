@@ -14,6 +14,15 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 #PIPELINE_NEXT_BRANCH="next"   # Next-integration branch for breaking-change work (default: next, read-site ${VAR:-next}; uncomment to override)
 #PIPELINE_NEXT_LABEL="next"    # Label routing an issue onto PIPELINE_NEXT_BRANCH (default next; legacy alias next-major-release also honored)
 #PIPELINE_PROJECT_ROOT=""     # Orchestrator checkout root. Unset => read sites fall back to $(pwd) (correct only because the Bash tool resets cwd to the project root). Set to an absolute path to make the target explicit (#1215).
+# --- Calibration slate (issue #1280) — env seams read by scripts/calibration-run.sh.
+# All optional; every default is single-sourced at the read site, so these stay
+# COMMENTED (`--fix config` does not seed commented lines). Uncomment to override.
+#PIPELINE_CALIB_REPO="rjskene/pipeline-calib"       # Sandbox repo slug the slate runs against (default rjskene/pipeline-calib; read site ${VAR:-rjskene/pipeline-calib}).
+#PIPELINE_CALIB_DIR="$HOME/.claude/calib/pipeline-calib"  # Local sandbox clone dir (default $HOME/.claude/calib/pipeline-calib; read site ${VAR:-$HOME/.claude/calib/pipeline-calib}).
+#PIPELINE_CALIB_TIMEOUT=5400                        # Headless run cap in seconds (default 5400 = 90 min; read site ${VAR:-5400}).
+#PIPELINE_CALIB_REMOTE=""                           # Explicit git URL to clone the sandbox from. Empty (default) => `gh repo clone`; read site ${VAR:-}.
+#PIPELINE_CALIB_BASE_TAG="calib-base"               # Tag --reset rewinds the sandbox to (default calib-base; read site ${VAR:-calib-base}).
+#PIPELINE_CALIB_ISSUE_IDS=""                        # Pre-resolved slate issue ids. Empty (default) => whatever --reset resolved; read site ${VAR:-}.
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
@@ -41,6 +50,20 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # regardless of the suite form.
 # Optionally cap the runner's fan-out width (defaults to `nproc`):
 # PIPELINE_TEST_PARALLELISM=4
+# PIPELINE_TEST_VERBOSE (issue #1334): set to 1 to have `--changed-only` print
+# one `CHANGED-ONLY: selected <rel-path>` line per test it selects (in addition
+# to the single `CHANGED-ONLY: touched=<n> selected=<k>/<total> RESULT=...`
+# summary, which always prints). Unset/0 (default): summary only.
+# PIPELINE_TEST_VERBOSE=1
+# PIPELINE_TEST_LEAK_GUARD_REPO (issue #1316): the git repo scripts/run-test-suite.sh
+# snapshots (`git worktree list` + `git branch --list`) before and after a run;
+# any worktree/branch that APPEARED during the run prints
+# `LEAK: worktree=<path> branch=<name>` and reds the run. Default (unset): the
+# repo scripts/run-test-suite.sh lives in. Set to a path to redirect the guard
+# at another repo. Set to an explicitly EMPTY value ("") to disable the guard —
+# the escape hatch when a legitimate orchestrator worktree (a real issue-number
+# name, not a wt-100-bar-style fixture) lands concurrently mid-suite.
+# PIPELINE_TEST_LEAK_GUARD_REPO=
 # NOTE: the live, host-only pipeline.config is GITIGNORED and cannot ship in a PR
 # (see CLAUDE.md "Configuration conventions"). Apply the same parallel-runner edit
 # to your live pipeline.config by HAND on the operator host — this example file is
@@ -112,6 +135,14 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 # still write .claude/logs/enforce-*-errors.log on hook fail-open paths.
 # That emergency-diagnosis stream is intentionally ungated.
 PIPELINE_LOGS_ENABLED=false
+
+# Retention window (days) for scripts/prune-logs.sh, the dry-run-by-default
+# pass over .claude/logs/ wired into /pipeline:status housekeeping (#1353).
+# Default is 30, single-sourced at the read site (${PIPELINE_LOGS_RETENTION_DAYS:-30}
+# in scripts/prune-logs.sh); stays commented so `doctor.sh --fix config` never
+# seeds it (#1052). See docs/observability.md for the keep-list and the
+# operator --apply form.
+#PIPELINE_LOGS_RETENTION_DAYS=30
 
 # Out dir for /pipeline:visualize renders (default .claude/scratch/visuals/, read-site ${PIPELINE_VISUALS_DIR:-.claude/scratch/visuals/}; uncomment to override).
 #PIPELINE_VISUALS_DIR=".claude/scratch/visuals/"
@@ -428,6 +459,16 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 #PIPELINE_PATH_A_MODEL_EXECUTE=opus      # docs-only execute; was a silent inherit
 #PIPELINE_PATH_C_MODEL_EXECUTE=opus      # tdd-implementer leaves; was a silent inherit
 
+# --- #1291 trust profile (spec §12.2, resolver half) ---
+# strict (default) = today's behaviour, byte-identical. lean = for a resolved opus/fable
+# executor OUTSIDE W2 / the browser-label carve-out, PATH B dispatches single-role
+# (SPLIT_ROLE=false, REASON=lean-single) and non-W2 PATH A/D plan-eval emits SKIP=true
+# (fullsend flips plan-pending -> plan-approved with an audit comment). pr-eval depth is
+# unchanged (W3). Unknown values fall back to strict with one stderr WARN. Read ONLY via
+# scripts/_trust-profile.sh (sourced by both resolvers). Override anchor (#1052):
+# defaults-in-code — stays COMMENTED; uncomment ="lean" to opt in.
+#PIPELINE_TRUST_PROFILE="strict"
+
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 # Override anchor (#1052): defaults-in-code — default true lives at the read site
 # (fullsend 6b reads colon-less ${VAR-true}), so this stays COMMENTED and `--fix config`
@@ -486,4 +527,11 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 # in hooks/doctor-on-update.sh); uncomment to override.
 #PIPELINE_DOCTOR_ON_UPDATE_ENABLED="true"
 
-set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above)
+# --- Headless / unattended runs (issue #1286) ---
+#
+# See "## Headless contract" in skills/fullsend/SKILL.md for the four decision
+# sites and their defaults. Default "false" (interactive prompts stay), single-
+# sourced at the read site (${PIPELINE_HEADLESS:-false}); uncomment to override.
+#PIPELINE_HEADLESS="false"
+
+set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above; MUST stay the last line: knobs appended below it are never exported)

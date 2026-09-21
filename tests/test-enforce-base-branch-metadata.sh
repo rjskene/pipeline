@@ -74,10 +74,10 @@ PROJ="$WORKDIR/projB"
 mkdir -p "$PROJ/.claude"
 printf 'next\n' > "$PROJ/.claude/base-branch"
 rc=$(run_hook "$(payload_base pipeline)" "$PROJ")
-if [ "$rc" = "1" ] && grep -q "next" "$WORKDIR/err"; then
+if [ "$rc" = "2" ] && grep -q "next" "$WORKDIR/err"; then
   pass_msg "Case B: blocked --base pipeline with message naming 'next'"
 else
-  fail_msg "Case B: expected rc=1 and 'next' in stderr, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+  fail_msg "Case B: expected rc=2 and 'next' in stderr, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
 fi
 
 # --- Case C: metadata missing -> falls back to PIPELINE_BASE_BRANCH ---
@@ -93,10 +93,10 @@ else
 fi
 inc
 rc=$(run_hook "$(payload_base next)" "$PROJ")
-if [ "$rc" = "1" ]; then
+if [ "$rc" = "2" ]; then
   pass_msg "Case C: missing metadata -> blocked --base next"
 else
-  fail_msg "Case C: expected rc=1, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+  fail_msg "Case C: expected rc=2, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
 fi
 
 # --- Case D: metadata empty -> falls back to PIPELINE_BASE_BRANCH ---

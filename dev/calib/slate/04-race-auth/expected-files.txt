@@ -1,0 +1,2 @@
+lib/auth.sh
+tests/case-auth.sh

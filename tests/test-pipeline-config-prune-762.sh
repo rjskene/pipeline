@@ -30,6 +30,18 @@ set -uo pipefail
 # pipeline.config is gitignored and host-only (no-op in CI). All $LIVE
 # assertions are gated behind [ -f "$LIVE" ] and are a soft host-only check —
 # the operator must hand-patch the live config alongside this PR.
+#
+# EXAMPLE half vs LIVE half (#1274 scope 7b). The two halves enforce DIFFERENT
+# rules and must not be conflated:
+#   * EXAMPLE (tracked): a demoted knob may carry NO uncommented line at all,
+#     whatever its value — the default is single-sourced at the read site.
+#   * LIVE (gitignored, host-specific): the prune rule targets knobs PINNED AT
+#     THE DOCUMENTED DEFAULT. A live line that merely repeats the example's
+#     commented default is redundant and must go; a deliberate NON-default
+#     override is legitimate host configuration (e.g. PIPELINE_USE_LOCAL_PLUGIN=true,
+#     required on a --plugin-dir dogfood clone) and must NOT red this guard.
+# The documented default is always PARSED from pipeline.config.example, never
+# hardcoded, so a future default change cannot silently red the guard.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"
@@ -94,6 +106,81 @@ assert_var_live() {
   fi
 }
 
+# --- LIVE-half predicate (#1274 scope 7b) ---
+
+# _strip_value <raw> — drop a trailing ` # comment`, surrounding blanks, and one
+# layer of surrounding single/double quotes.
+_strip_value() {
+  local v
+  v="$(printf '%s' "$1" | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+  case "$v" in
+    \"*\") v="${v#\"}"; v="${v%\"}" ;;
+    \'*\') v="${v#\'}"; v="${v%\'}" ;;
+  esac
+  printf '%s' "$v"
+}
+
+# example_default <var> — the DOCUMENTED default: value of the FIRST commented
+# `#VAR=` line in pipeline.config.example. Empty when undocumented.
+example_default() {
+  local var="$1" line
+  line="$(grep -E "^[[:space:]]*#[[:space:]]*${var}=" "$EXAMPLE" 2>/dev/null | head -n 1)"
+  [ -n "$line" ] || return 0
+  _strip_value "${line#*=}"
+}
+
+# live_value <var> <file> — value of the LAST uncommented `VAR=` line (last-wins,
+# matching shell source semantics).
+live_value() {
+  local var="$1" file="$2" line
+  [ -f "$file" ] || return 0
+  line="$(grep -E "^[[:space:]]*${var}=" "$file" 2>/dev/null | tail -n 1)"
+  [ -n "$line" ] || return 0
+  _strip_value "${line#*=}"
+}
+
+# live_is_pinned_default <var> <file> — true iff <file> carries a live line for
+# <var> AND its value equals the documented default. No live line → false
+# (nothing to prune). Undocumented default → false (nothing to compare against).
+live_is_pinned_default() {
+  local var="$1" file="$2" lv dv
+  [ -f "$file" ] || return 1
+  grep -Eq "^[[:space:]]*${var}=" "$file" 2>/dev/null || return 1
+  lv="$(live_value "$var" "$file")"
+  dv="$(example_default "$var")"
+  [ -n "$dv" ] && [ "$lv" = "$dv" ]
+}
+
+# Asserts a var carries no live line PINNED AT THE DOCUMENTED DEFAULT. LIVE half
+# only — the example half keeps the stricter assert_var_not_live.
+assert_var_not_live_at_default() {
+  local var="$1" file="$2" label="$3"
+  inc
+  if live_is_pinned_default "$var" "$file"; then
+    fail_msg "$label: $var is pinned at the documented default ($(example_default "$var")) — drop the redundant live line in $(basename "$file")"
+  else
+    pass_msg "$label: $var has no live line pinned at the documented default in $(basename "$file")"
+  fi
+}
+
+# --- 0. Predicate self-tests: both directions, hermetic fixtures ---
+SELFT="$(mktemp -d)"
+inc
+printf 'PIPELINE_USE_LOCAL_PLUGIN=false\n' > "$SELFT/at-default.config"
+if live_is_pinned_default PIPELINE_USE_LOCAL_PLUGIN "$SELFT/at-default.config"; then
+  pass_msg "self-test: predicate flags a live line pinned at the documented default"
+else
+  fail_msg "self-test: predicate failed to flag a live line at the documented default"
+fi
+inc
+printf 'PIPELINE_USE_LOCAL_PLUGIN=true\n' > "$SELFT/override.config"
+if live_is_pinned_default PIPELINE_USE_LOCAL_PLUGIN "$SELFT/override.config"; then
+  fail_msg "self-test: predicate flagged a deliberate non-default override"
+else
+  pass_msg "self-test: predicate ignores a deliberate non-default override"
+fi
+rm -rf "$SELFT"
+
 # --- 1. STALE REMOVAL: PIPELINE_FRONTEND_PORT_OFFSET ---
 assert_var_absent PIPELINE_FRONTEND_PORT_OFFSET "$EXAMPLE" "example"
 if [ -f "$INIT" ]; then
@@ -126,11 +213,12 @@ for var in "${DEMOTED_VARS[@]}"; do
   assert_var_commented_present "$var" "$EXAMPLE" "example"
 done
 
-# Live host config: the demoted knobs must also be hand-patched to commented
-# form (no uncommented assignment). Soft host-only check, no-op in CI.
+# Live host config: the demoted knobs must not be PINNED AT THE DOCUMENTED
+# DEFAULT (a redundant live line). A deliberate non-default override is legal.
+# Soft host-only check, no-op in CI.
 if [ -f "$LIVE" ]; then
   for var in "${DEMOTED_VARS[@]}"; do
-    assert_var_not_live "$var" "$LIVE" "live"
+    assert_var_not_live_at_default "$var" "$LIVE" "live"
   done
 fi
 
@@ -144,7 +232,7 @@ assert_var_live PIPELINE_CI_CHECK_ENABLED "$EXAMPLE" "example"
 assert_var_not_live PIPELINE_CI_FIX_LOOP_ENABLED "$EXAMPLE" "example"
 assert_var_commented_present PIPELINE_CI_FIX_LOOP_ENABLED "$EXAMPLE" "example"
 if [ -f "$LIVE" ]; then
-  assert_var_not_live PIPELINE_CI_FIX_LOOP_ENABLED "$LIVE" "live"
+  assert_var_not_live_at_default PIPELINE_CI_FIX_LOOP_ENABLED "$LIVE" "live"
 fi
 
 echo ""
