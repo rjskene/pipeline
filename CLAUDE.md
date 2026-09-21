@@ -79,6 +79,8 @@ This repo's `.claude/settings.json` registers tool-use and subagent logging hook
 
 Agent token cost + latency are captured to the gated `agent-costs.jsonl` log and surfaced by `/pipeline:tokenomics` (dogfood-only, #721) — per-bucket/stage/structure cost with B→D breakeven. See [docs/observability.md](docs/observability.md#agent-cost-capture--pipelinetokenomics) and the cost analysis in [docs/cost-architecture.md](docs/cost-architecture.md).
 
+`.claude/logs/` retention is a dry-run-by-default pass, `scripts/prune-logs.sh`, wired into `/pipeline:status` housekeeping — see [docs/observability.md](docs/observability.md#log-retention-scriptsprune-logssh) for the `PIPELINE_LOGS_RETENTION_DAYS` knob, the keep-list, and the operator `--apply` form.
+
 Operator playbook — boundary-hook gotchas, executor wedge recovery, hand-driving scripts, campaign/wave caps, and other durable operational lessons: [docs/operational-notes.md](docs/operational-notes.md).
 
 ## Configuration conventions
