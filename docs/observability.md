@@ -28,6 +28,8 @@ Logging hooks and substrate for this repo's own dogfood operation. Most are regi
 
 Gated on the same [`PIPELINE_LOGS_ENABLED`](#pipeline_logs_enabled-gate) flag as `tool-use.log` / `agent-costs.jsonl` (disabled — no file, no directory touched — until a host opts in); the log-dir resolution mirrors `capture_agent_cost.py` (`CLAUDE_PROJECT_DIR` or cwd, then `.claude/logs/`), so denials from linked worktrees land in the one durable main-checkout file. The helper is **fail-open by construction**: its entire body is wrapped in one `try/except Exception: pass`, so a logging failure can never turn a deny into a crash or an allow, and it writes no error log of its own. No guard's decision logic, exit code, or stderr text changes — this is a pure audit-trail addition.
 
+`scripts/run-retro.sh` consumes this file as the primary source for the `friction/denials` row (in-window count + per-hook breakdown, falling back to the `tool-use.log` scan when the deny log is absent, #1360).
+
 ## Runs log
 
 `.claude/logs/runs.log` is a tab-separated per-spawn marker written by `spawn-claude.sh` at session launch (one line per spawn). Columns: timestamp, `session=<uuid>`, `issue=<N>`, `path=<A|B|C>`, `skill=<name>`, `worktree=<path>`. The session UUID matches `--session-id` passed to the claude CLI, so it joins 1:1 with `tool-use.log` and `subagents.log` rows for that session.
