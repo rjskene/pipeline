@@ -15,6 +15,7 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
 # CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
 _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-parse --show-toplevel 2>/dev/null | sed 's|$|/|')}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
@@ -169,7 +170,7 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    ```bash
    gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --limit 100
    gh issue list --repo $PIPELINE_REPO --state closed --json number,title,labels --limit 20
-   for wt in $(git worktree list --porcelain | awk '/^branch refs/{sub("refs/heads/","",$2); print $2}'); do
+   for wt in $(git worktree list --porcelain | awk '/^branch refs/{t=$NF; sub("refs/heads/","",t); print t}'); do
      gh pr list --repo $PIPELINE_REPO --head "$wt" --state merged --json number,headRefName --jq '.[] | {branch: .headRefName, pr: .number}'
    done
    git worktree list

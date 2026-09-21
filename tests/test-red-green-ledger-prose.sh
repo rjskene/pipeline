@@ -52,7 +52,8 @@
 # re-invokes this file in inner mode):
 #   SKILL_PI  path to plan-issue/SKILL.md
 #   SKILL_EP  path to evaluate-issue-plan/SKILL.md
-#   SKILL_PR  path to evaluate-issue-pr/SKILL.md   (Case F awk source)
+#   SKILL_PR  path to evaluate-issue-pr/SKILL.md   (reserved: since #1287 Case F
+#             drives scripts/parse-shared-tests.sh directly)
 #   LEDGER_INNER=1        inner mode: Case A ONLY, never recurses
 #   LEDGER_NOOP_REPS      Case G repetitions (default 10)
 #   LEDGER_SKIP_CASE_H=1  skip Case H's own recursive full-suite dispatch —
@@ -514,17 +515,19 @@ echo "Case F: the ledger header terminates the shared-tests section"
 # (`^\*\*[^*].*:\*\*`) or ledger table rows would leak into the sanctioned
 # modify-list that evaluate-issue-pr threads into the W7 split-role gate.
 #
-# Pipes are permitted ONLY in this extraction, mirroring
-# tests/test-eval-shared-tests-parser.sh:12 so the REAL parser is under test.
+# Case F drives the REAL parser directly — scripts/parse-shared-tests.sh, which
+# #1287 lifted out of the Step 11.2b bash fence (the harness rewrites `$0`/`$1`
+# at skill load, so no fence can hold an awk field reference). Same target as
+# tests/test-eval-shared-tests-parser.sh.
 case_f() {
-  local awk_prog result_pos result_neg want_pos
-  awk_prog="$(grep -oP "awk '\K[^']+(?=')" "$SKILL_PR" 2>/dev/null | grep 'Shared tests' | head -1)" || true
+  local parser result_pos result_neg want_pos
+  parser="$SCRIPT_DIR/../scripts/parse-shared-tests.sh"
 
   inc
-  if [ -n "$awk_prog" ]; then
-    pass_msg "F(0): extracted the real shared-tests awk parser from $SKILL_PR"
+  if [ -x "$parser" ]; then
+    pass_msg "F(0): resolved the real shared-tests parser at $parser"
   else
-    fail_msg "F(0): could not extract the shared-tests awk parser from $SKILL_PR — Case F cannot run"
+    fail_msg "F(0): shared-tests parser missing at $parser — Case F cannot run"
     return 0
   fi
 
@@ -536,7 +539,7 @@ case_f() {
     '| test file | red at RED commit | vacuously green until | fully green at |' \
     '|---|---|---|---|' \
     '| `tests/test-bar.sh` | yes — assertion fails | — | Task 3 |' \
-    | awk "$awk_prog")"
+    | bash "$parser")"
   inc
   if [ "$result_pos" = "$want_pos" ]; then
     pass_msg "F(1): the ledger header terminates the section — output is exactly '$want_pos'"
@@ -554,7 +557,7 @@ case_f() {
     '| test file | red at RED commit | vacuously green until | fully green at |' \
     '|---|---|---|---|' \
     '| `tests/test-bar.sh` | yes — assertion fails | — | Task 3 |' \
-    | awk "$awk_prog")"
+    | bash "$parser")"
   inc
   if [ "$result_neg" = "$want_pos"$'\n'"tests/test-leak.sh" ]; then
     pass_msg "F(2): negative control CAUGHT — a bullet in place of the ledger header yields both paths"

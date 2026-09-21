@@ -98,7 +98,7 @@ cp "$TEMPLATE" "$PROJ/.claude/scripts/setup-worktree.sh"
 chmod +x "$PROJ/.claude/scripts/setup-worktree.sh"
 
 run_setup() {
-  ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh "$@" )
+  ( cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ" bash .claude/scripts/setup-worktree.sh "$@" )
 }
 
 # --- Wave 1: first worktree off the (in-sync) local base tip ---
@@ -214,7 +214,7 @@ chmod +x "$PROJ2/.claude/scripts/setup-worktree.sh"
 BASE2_BEFORE=$(git -C "$PROJ2" rev-parse "$BASE")
 HEAD2_BEFORE=$(git -C "$PROJ2" symbolic-ref --short HEAD)
 set +e
-( cd "$PROJ2" && bash .claude/scripts/setup-worktree.sh --base "$BASE" feature/wave5 5 ) >"$WORKDIR/w5.log" 2>&1
+( cd "$PROJ2" && PIPELINE_PROJECT_ROOT="$PROJ2" bash .claude/scripts/setup-worktree.sh --base "$BASE" feature/wave5 5 ) >"$WORKDIR/w5.log" 2>&1
 RC5=$?
 set -e
 W5="$PROJ2/.claude/worktrees/ct-5-wave5"

@@ -72,11 +72,12 @@ stderr1="$(HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" 
 [ -f "$out" ] || fail "enabled: expected output file to exist"
 pass "enabled: output file written"
 
-# record count: 1 headless + 10 inline (analyze line skipped; +2 split-role
-# RED/GREEN execute lines for #899) = 11
+# record count: 1 headless + 13 inline (analyze line skipped; +2 split-role
+# RED/GREEN execute lines for #899; +3 #1299 lines: one PATH C target= leaf and
+# two orchestrator code-review dispatches) = 14
 n="$(wc -l < "$out" | tr -d ' ')"
-[ "$n" = "11" ] || fail "expected 11 records, got $n"
-pass "enabled: 11 records (1 headless + 10 inline, non-stage skipped)"
+[ "$n" = "14" ] || fail "expected 14 records, got $n"
+pass "enabled: 14 records (1 headless + 13 inline, non-stage skipped)"
 
 # missing-transcript skip counter surfaced on stderr
 case "$stderr1" in
@@ -134,7 +135,7 @@ assert h["record_key"] == rk, "record_key derivation: %r != %r" % (h["record_key
 
 # inline rows
 il = by_kind["inline"]
-assert len(il) == 10, "expected 10 inline rows, got %d" % len(il)
+assert len(il) == 13, "expected 13 inline rows, got %d" % len(il)
 for r in il:
     assert r["session_id"] == "sess-inline", "inline session_id: %r" % r["session_id"]
 
@@ -151,6 +152,9 @@ expect = sorted([
     ("classify","777"),    # Classify + plan + evaluate #777
     ("execute","899"),     # split-role RED #899  -> own execute record
     ("execute","899"),     # split-role GREEN #899 -> own execute record
+    ("execute","1291"),    # #1299 PATH C leaf: target=scripts/ ... (#1291 T1)
+    ("pr-eval","1291"),    # #1299 orchestrator review: Review code changes #1291
+    ("pr-eval","1292"),    # #1299 orchestrator review: code review #1292
 ])
 assert pairs == expect, "inline (stage,issue) pairs:\n got %r\n exp %r" % (pairs, expect)
 
@@ -187,7 +191,7 @@ assert not any(r.get("agent_type")=="pipeline:issue-analyzer" for r in rows), \
 # Every emitted record carries a 'role' field.
 for r in rows:
     assert "role" in r, "record missing 'role' field: %r" % r
-    assert r["role"] in ("red","green","single"), "role taxonomy: %r" % r["role"]
+    assert r["role"] in ("red","green","single","review"), "role taxonomy: %r" % r["role"]
 
 # The two #899 execute records are the split-role pair.
 e899 = [r for r in il if r["stage"]=="execute" and str(r["issue"])=="899"]
@@ -210,8 +214,31 @@ assert "opus" not in green899[0]["model"], \
 assert red899[0]["record_key"] != green899[0]["record_key"], \
     "split-role RED/GREEN must be two distinct records"
 
-# Every NON-split record is role=single (headless + all the classify/plan/eval inline rows).
-non_split = [r for r in rows if not (r["stage"]=="execute" and str(r["issue"])=="899")]
+# --- #1299: PATH C leaf + orchestrator closing-review attribution ----------
+# The three new fixture lines each produce EXACTLY ONE record:
+#   target=scripts/ ... (#1291 T1)  -> stage=execute, issue=1291, role=single
+#   Review code changes #1291       -> stage=pr-eval, issue=1291, role=review
+#   code review #1292               -> stage=pr-eval, issue=1292, role=review
+leaf1291 = [r for r in il if r["stage"]=="execute" and str(r["issue"])=="1291"]
+assert len(leaf1291) == 1, \
+    "expected exactly 1 execute record for the #1291 target= leaf, got %d" % len(leaf1291)
+assert leaf1291[0]["role"] == "single", \
+    "PATH C leaf must be role=single (not a split-role half): %r" % leaf1291[0]["role"]
+assert leaf1291[0]["usage_complete"] is False, \
+    "leaf #1291 has no staged transcript -> must stay a lower-bound: %r" % leaf1291[0]
+
+REVIEW_TUPLES = {("pr-eval","1291"), ("pr-eval","1292")}
+for stage, issue in sorted(REVIEW_TUPLES):
+    rev = [r for r in il
+           if r["stage"] == stage and str(r["issue"]) == issue and r["role"] == "review"]
+    assert len(rev) == 1, \
+        "expected exactly 1 role=review record for (%s,%s), got %d" % (stage, issue, len(rev))
+
+# Every NON-split, NON-review record is role=single (headless + all the
+# classify/plan/eval inline rows + the PATH C leaf).
+non_split = [r for r in rows
+             if not (r["stage"]=="execute" and str(r["issue"])=="899")
+             and (r["stage"], str(r["issue"])) not in REVIEW_TUPLES]
 assert non_split, "expected some non-split records"
 for r in non_split:
     assert r["role"] == "single", \
@@ -244,7 +271,7 @@ pass "tu_role_from_description helper mirrors the split-role regex"
 HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
   bash "$SCRIPT" >/dev/null 2>&1 || true
 n2="$(wc -l < "$out" | tr -d ' ')"
-[ "$n2" = "11" ] || fail "idempotency: re-run changed record count $n -> $n2"
+[ "$n2" = "14" ] || fail "idempotency: re-run changed record count $n -> $n2"
 pass "idempotency: re-run produced no duplicate record_keys"
 
 # unique record_keys
@@ -378,6 +405,139 @@ assert emitted821, \
 print("reconciliation (#830) assertions OK")
 PY
 pass "reconciliation (#830): complete record suppresses stranded lower-bound; uncovered lower-bound preserved"
+
+rm -rf "$home" "$proj"
+
+# ---------------------------------------------------------------------------
+# Role-aware reconciliation grain (#1299, on top of #830). The orchestrator's
+# closing code review and the evaluate-issue-pr agent are dispatched from the
+# SAME session for the SAME issue and BOTH land at stage=pr-eval. With the #830
+# suppression keyed on (session, issue, stage) alone, a usage_complete sibling
+# swallows the review agent's lower-bound and the new attribution delivers no
+# cost at all. The suppression grain must therefore include `role`.
+#
+# CONTROL (unchanged #830 behaviour): a lower-bound whose role MATCHES the
+# complete sibling's role is STILL suppressed. This control must stay green
+# before and after the grain change — it pins that #830 is narrowed by exactly
+# one dimension, not disabled.
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/runs.log"   # no headless rows for this scenario
+
+{
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "2026-06-02T09:00:00.000Z" "sess-rev" "Review code changes #1291" "x" "x" "x" "rev-review-1291.json"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "2026-06-02T09:01:00.000Z" "sess-rev" "Evaluate PR #1301 for #1291" "x" "x" "x" "rev-single-1291.json"
+} > "$proj/.claude/logs/subagents.log"
+
+cat > "$proj/.claude/logs/subagents/rev-review-1291.json" <<'JSON'
+{"subagent_type":"general-purpose","usage":{"input_tokens":1400,"output_tokens":90,"cache_read_input_tokens":8,"cache_creation_input_tokens":2}}
+JSON
+cat > "$proj/.claude/logs/subagents/rev-single-1291.json" <<'JSON'
+{"subagent_type":"general-purpose","usage":{"input_tokens":700,"output_tokens":40,"cache_read_input_tokens":3,"cache_creation_input_tokens":1}}
+JSON
+
+# Pre-seed ONE usage_complete=true, role=single record covering
+# (sess-rev, 1291, pr-eval) — the evaluate-issue-pr agent's durable cost.
+rev_out="$proj/.claude/logs/agent-costs.jsonl"
+cat > "$rev_out" <<'JSON'
+{"schema_version":1,"record_key":"seed-rev-1291-complete","issue":"1291","stage":"pr-eval","agent_kind":"inline","agent_type":"general-purpose","session_id":"sess-rev","model":"claude-opus-4-8","role":"single","tokens":{"input":40000,"output":900,"cache_read":30000,"cache_creation":1000,"total":71900},"duration_ms":0,"ts_start":"2026-06-02T08:00:00.000Z","ts_end":"2026-06-02T08:30:00.000Z","source":"forward","usage_complete":true}
+JSON
+
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+
+python3 - "$rev_out" <<'PY' || fail "role-aware reconciliation (#1299) assertions failed"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+
+def match(r, role, complete):
+    return (r.get("session_id") == "sess-rev"
+            and str(r.get("issue")) == "1291"
+            and r.get("stage") == "pr-eval"
+            and r.get("role") == role
+            and r.get("usage_complete") is complete)
+
+# The pre-seeded complete record survives.
+assert any(match(r, "single", True) for r in rows), \
+    "pre-seeded complete pr-eval record for #1291 must survive"
+
+# CONTROL (checked FIRST so it is exercised even while the case below is red):
+# the SAME-role lower-bound is still suppressed (#830 narrowed, not disabled).
+same_role_lb = [r for r in rows if match(r, "single", False)]
+assert not same_role_lb, \
+    "same-role lower-bound must still be suppressed, got %r" % same_role_lb
+print("  control OK: same-role lower-bound still suppressed")
+
+# The role=review lower-bound is a DIFFERENT agent's cost and must SURVIVE.
+review_lb = [r for r in rows if match(r, "review", False)]
+assert review_lb, \
+    "role=review lower-bound must survive: a complete role=single sibling at the " \
+    "same (session, issue, stage) must NOT suppress it"
+
+print("role-aware reconciliation (#1299) assertions OK")
+PY
+pass "reconciliation grain is role-aware: review lower-bound survives, same-role suppressed"
+
+rm -rf "$home" "$proj"
+
+# ---------------------------------------------------------------------------
+# Re-backfill idempotency across the widening (#1299). The retroactive pass is
+# re-run over an agent-costs.jsonl that already holds records from an EARLIER
+# run. A newly-attributable description mints a FIRST-EVER record (there is no
+# stale row to supersede and no key to re-mint), and a further re-run appends
+# nothing:
+#   run 1, pre-#1299 fixture lines only        -> 10 inline records appended
+#   run 2, the 3 new #1299 lines now present   -> exactly 3 more appended
+#   run 3, no input change                     -> 0 appended
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/runs.log"   # inline pass only
+cp "$FIX"/subagents/*.json "$proj/.claude/logs/subagents/"
+# Stage ONLY the pre-#1299 lines (drop the three new shapes by sidecar name).
+grep -v -e 'agent-cleaf-1291\.json' -e 'agent-review-1291\.json' \
+        -e 'agent-review-1292\.json' \
+  "$FIX/subagents.log" > "$proj/.claude/logs/subagents.log"
+idem_out="$proj/.claude/logs/agent-costs.jsonl"
+
+run_capture() {
+  HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+    bash "$SCRIPT" >/dev/null 2>&1 || true
+}
+count_out() {
+  if [ -f "$idem_out" ]; then wc -l < "$idem_out" | tr -d ' '; else echo 0; fi
+}
+
+run_capture
+n_pre="$(count_out)"
+[ "$n_pre" = "10" ] \
+  || fail "re-backfill: pre-#1299 fixture lines must yield 10 inline records, got $n_pre"
+pass "re-backfill: pre-#1299 fixture lines yield 10 inline records"
+
+cp "$FIX/subagents.log" "$proj/.claude/logs/subagents.log"
+run_capture
+n_post="$(count_out)"
+[ "$n_post" = "13" ] \
+  || fail "re-backfill: the 3 newly-attributable lines must append exactly 3 records (10 -> $n_post, want 13)"
+pass "re-backfill: 3 newly-attributable lines appended exactly 3 first-ever records"
+
+run_capture
+n_third="$(count_out)"
+[ "$n_third" = "13" ] \
+  || fail "re-backfill: third run must append 0 records (13 -> $n_third)"
+pass "re-backfill: third run appended 0 (no re-key, no double-count)"
+
+uniq2="$(python3 - "$idem_out" <<'PY'
+import json,sys
+keys=[json.loads(l)["record_key"] for l in open(sys.argv[1]) if l.strip()]
+print("DUP" if len(keys)!=len(set(keys)) else "OK")
+PY
+)"
+[ "$uniq2" = "OK" ] || fail "re-backfill: duplicate record_keys after the widening"
+pass "re-backfill: all record_keys unique across the widening"
 
 rm -rf "$home" "$proj"
 

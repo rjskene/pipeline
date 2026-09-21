@@ -315,6 +315,81 @@ else
 fi
 
 rm -rf "$T"
+
+# 9. Non-staging HEAD guard (#1274 scope 4): the hook hardcodes `origin/staging`
+# as its merge target, so it may only fast-forward when HEAD actually IS
+# `staging`. In the harness evolve clone this hook fires at SessionStart on
+# `evolve` and would silently fast-forward `evolve` onto staging until the
+# branches diverge. The symlink-swap half must STILL run on the skip path —
+# the guard covers the git half only.
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+mk_fixture "$T"
+
+git -C "$T/clone" checkout -q -b evolve
+
+# Advance origin/staging so an unguarded hook would have something to merge.
+( set -e
+  git -C "$T/seed" commit --quiet --allow-empty -m "non-staging guard upstream"
+  git -C "$T/seed" push --quiet origin staging
+) >/dev/null 2>&1
+
+# Swap-helper scaffolding (mirrors case 8) so the skip path can be observed.
+mkdir -p "$T/.claude/plugins"
+mkdir -p "$T/fakecache/pipeline/0.20.1"
+cat > "$T/.claude/plugins/installed_plugins.json" <<JSON
+{
+  "plugins": {
+    "pipeline@claude-pipeline-local": [
+      {
+        "projectPath": "$T/clone",
+        "installPath": "$T/fakecache/pipeline/0.20.1",
+        "marketplace": "claude-pipeline-local"
+      }
+    ]
+  }
+}
+JSON
+
+upstream_head="$(git -C "$T/seed" rev-parse HEAD)"
+clone_head_before="$(git -C "$T/clone" rev-parse HEAD)"
+if [ "$clone_head_before" != "$upstream_head" ]; then
+  pass_msg "non-staging guard fixture sanity: origin/staging is ahead of the clone"
+else
+  fail_msg "non-staging guard fixture sanity: origin/staging is ahead of the clone"
+fi
+
+HOME="$T" DOGFOOD_REFRESH_REPO_ROOT="$T/clone" bash "$TARGET"
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "non-staging guard exit 0"
+else
+  fail_msg "non-staging guard exit 0 (got rc=$rc)"
+fi
+
+clone_head_after="$(git -C "$T/clone" rev-parse HEAD)"
+if [ "$clone_head_after" = "$clone_head_before" ]; then
+  pass_msg "non-staging guard: HEAD unchanged (no fast-forward onto origin/staging)"
+else
+  fail_msg "non-staging guard: HEAD unchanged (before=$clone_head_before after=$clone_head_after upstream=$upstream_head)"
+fi
+
+clone_branch="$(git -C "$T/clone" symbolic-ref --short HEAD 2>/dev/null || true)"
+if [ "$clone_branch" = "evolve" ]; then
+  pass_msg "non-staging guard: still checked out on evolve"
+else
+  fail_msg "non-staging guard: still checked out on evolve (got=$clone_branch)"
+fi
+
+# Control: skipping the fetch/merge must NOT swallow the symlink swap.
+if [ -L "$T/fakecache/pipeline/0.20.1" ] && \
+   [ "$(readlink "$T/fakecache/pipeline/0.20.1")" = "$T/clone" ]; then
+  pass_msg "non-staging guard: swap helper still ran (install path is a symlink to REPO_ROOT)"
+else
+  fail_msg "non-staging guard: swap helper still ran (install path is a symlink to REPO_ROOT)"
+fi
+
+rm -rf "$T"
 trap - EXIT
 
 echo "PASS=$PASS FAIL=$FAIL"

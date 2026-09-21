@@ -115,7 +115,7 @@ cp "$SETUP" "$PROJ/.claude/scripts/setup-worktree.sh"
 chmod +x "$PROJ/.claude/scripts/setup-worktree.sh"
 
 inc
-if ! ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh --base next feature/foo 4242 ) \
+if ! ( cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ" bash .claude/scripts/setup-worktree.sh --base next feature/foo 4242 ) \
         >"$WORKDIR/setup.log" 2>&1; then
   fail_msg "setup-worktree.sh --base next exited non-zero"
   sed 's/^/    /' "$WORKDIR/setup.log"

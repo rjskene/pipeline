@@ -9,3 +9,6 @@
 2026-05-30T12:08:00Z	sess-inline	analyze open-issue hygiene shortlist	500	0	0	agent-analyze.json
 2026-05-30T12:09:00Z	sess-inline	execute-issue-plan #899 split-role RED (PATH B inline)	3600	0	0	agent-split-red-899.json
 2026-05-30T12:10:00Z	sess-inline	execute-issue-plan #899 split-role GREEN (PATH B inline)	5200	0	0	agent-split-green-899.json
+2026-05-30T12:11:00Z	sess-inline	target=scripts/ trust-profile resolvers (#1291 T1)	2800	0	0	agent-cleaf-1291.json
+2026-05-30T12:12:00Z	sess-inline	Review code changes #1291	1500	0	0	agent-review-1291.json
+2026-05-30T12:13:00Z	sess-inline	code review #1292	900	0	0	agent-review-1292.json

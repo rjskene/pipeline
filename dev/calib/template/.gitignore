@@ -1,0 +1,11 @@
+# calibctl runtime state
+.calib/
+
+# pipeline runtime artifacts
+.claude/logs/
+.claude/worktrees/
+.claude/scratch/
+
+# editors / OS
+*.swp
+.DS_Store

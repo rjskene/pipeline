@@ -1,0 +1,6 @@
+CALIB issue=30 path=A cost=$n/a wall=2489 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB issue=31 path=D cost=$n/a wall=2985 verdicts=n/a/Approved reftest=pass unexpected-files=0
+CALIB issue=32 path=B cost=$n/a wall=3580 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=33 path=B cost=$n/a wall=2694 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=34 path=B cost=$n/a wall=2573 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB-TOTAL cost=$0 wall=3622 issues=5 reftest-pass=5/5

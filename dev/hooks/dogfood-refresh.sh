@@ -61,11 +61,19 @@ command -v git >/dev/null 2>&1 || exit 0
 # Must be a real git working tree.
 git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
-# Fetch origin/staging — swallow network/auth errors.
-git -C "$REPO_ROOT" fetch --quiet origin staging 2>/dev/null || exit 0
+# Only fast-forward HEAD onto origin/staging when HEAD IS staging (#1274 scope
+# 4). On any other branch (e.g. this clone's `evolve` integration branch),
+# fast-forwarding would silently overwrite that branch's own history with
+# staging's — the literal below must match the hardcoded `origin/staging`
+# merge target, so this deliberately does NOT read $PIPELINE_BASE_BRANCH.
+# The swap helper below still runs regardless of branch.
+if [ "$(git -C "$REPO_ROOT" symbolic-ref --short HEAD 2>/dev/null)" = "staging" ]; then
+  # Fetch origin/staging — swallow network/auth errors.
+  git -C "$REPO_ROOT" fetch --quiet origin staging 2>/dev/null || exit 0
 
-# Fast-forward only. Non-FF or dirty tree exits non-zero; we swallow and exit 0.
-git -C "$REPO_ROOT" merge --ff-only origin/staging 2>/dev/null || true
+  # Fast-forward only. Non-FF or dirty tree exits non-zero; we swallow and exit 0.
+  git -C "$REPO_ROOT" merge --ff-only origin/staging 2>/dev/null || true
+fi
 
 # Self-heal the local-marketplace install path into a symlink to the working
 # tree. Fail-open: the helper's own || true keeps refresh exit 0 regardless.

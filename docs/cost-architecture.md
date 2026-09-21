@@ -288,6 +288,8 @@ the host-flag kill switch (`=opus` / `low-blast` = instant Opus revert, zero cod
 conditions (first-pass approval <75%, eval re-runs >0.5/PR, any tier-traceable post-merge defect) become the
 post-GA monitoring bar.
 
+**Trust profile (#1291) — `PIPELINE_TRUST_PROFILE=strict|lean`, default `strict`.** Spec §12.2's resolver half: split-role RED/GREEN (~24% of spend) and a separate PATH A/D plan-eval may buy no escapes once the executor is already opus/fable. Under `lean`, `scripts/resolve-execute-dispatch.sh` emits `SPLIT_ROLE=false ROLES=single REASON=lean-single` for PATH B when the resolved executor is opus/fable outside W2/`needs-browser`, and `scripts/resolve-stage-model.sh` adds `SKIP=true` to non-W2 PATH A/D `plan-eval`, which fullsend honours by flipping `plan-pending → plan-approved` with the audit comment `plan-eval skipped: lean profile`. `strict` is byte-identical to pre-#1291 behaviour; pr-eval depth (W3) is untouched. Measured by `calibration-run.sh --profile lean` against run #2 (`strict`).
+
 ## Issue map
 
 | Issue | Role | Status |

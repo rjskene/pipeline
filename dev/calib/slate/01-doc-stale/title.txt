@@ -1,0 +1,1 @@
+docs(usage): fix the stale `list --all` flag in the usage guide

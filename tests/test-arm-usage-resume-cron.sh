@@ -167,6 +167,38 @@ else
   fail_msg "section missing never-stop-and-ask phrasing"
 fi
 
+# --- Scenario 6: generic --resume-command banner (not fullsend-specific) ---
+inc_scenario "Scenario 6: generic --resume-command banner + evolve pass-through"
+
+HELP6="$(bash "$HELPER" --help 2>&1)"
+
+if grep -qF '/pipeline:evolve resume' <<<"$HELP6"; then
+  pass_msg "banner: --help carries an evolve resume example"
+else
+  fail_msg "banner: --help missing an evolve resume example (/pipeline:evolve resume)"
+fi
+
+if grep -qF 'resume command' <<<"$HELP6"; then
+  pass_msg "banner: --help uses the generic phrase \"resume command\""
+else
+  fail_msg "banner: --help missing the generic phrase \"resume command\""
+fi
+
+if [ "$(grep -cF 'The verbatim /pipeline:fullsend command' <<<"$HELP6")" -eq 0 ]; then
+  pass_msg "banner: fullsend-only wording is gone"
+else
+  fail_msg "banner: --help still carries fullsend-only wording (\"The verbatim /pipeline:fullsend command\")"
+fi
+
+# CONTROL: the emitter already passes any resume command through verbatim.
+run_emit --resume-command "/pipeline:evolve resume" --resume-at "$RESUME_AT"
+if [ "$RC" -eq 0 ]; then
+  pass_msg "evolve pass-through: exit 0"
+else
+  fail_msg "evolve pass-through: expected exit 0, got rc=$RC (err: $ERR)"
+fi
+assert_contains "evolve pass-through" "/pipeline:evolve resume"
+
 # --- Summary ---
 echo ""
 echo "=============================="

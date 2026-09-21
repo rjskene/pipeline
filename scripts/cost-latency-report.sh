@@ -1536,7 +1536,12 @@ emit_role_split_table() {
     }
     END {
       tcost=0; for (r in cost) tcost+=cost[r];
-      m = split("red green single", order, " ");
+      # order includes review (#1299): the orchestrator closing code review is
+      # role=review at stage pr-eval. emit_role_split_table sums tcost over
+      # ALL roles but prints only the roles in order, so an unlisted role is
+      # counted in the denominator and never rendered -- the printed
+      # percentages would silently stop summing to 100.
+      m = split("red green single review", order, " ");
       for (k=1; k<=m; k++) {
         r = order[k];
         if ((n[r]+0) == 0) continue;

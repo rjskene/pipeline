@@ -1,0 +1,1 @@
+feat(cli): add `calibctl search <term>` for finding tasks by text

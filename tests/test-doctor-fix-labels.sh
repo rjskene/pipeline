@@ -74,6 +74,11 @@ rc="$(cat "$FX/rc")"
 [ "$rc" = "0" ] && pass_msg "A: exit 0" || { fail_msg "A: exit $rc"; cat "$FX/out" | sed 's/^/    /'; }
 count=$(wc -l < "$FX/shim.log" | tr -d ' ')
 [ "$count" = "18" ] && pass_msg "A: 18 label create calls" || fail_msg "A: got $count label create calls"
+# Byte-stability control for the Case F count change: no default name contains
+# a `|`, so the split is a no-op here and the report must still say 18.
+grep -Fq "Seeded 18 labels" "$FX/out" \
+  && pass_msg "A: stdout reports 'Seeded 18 labels'" \
+  || fail_msg "A: stdout missing 'Seeded 18 labels' (got: $(grep -F 'Seeded' "$FX/out" || true))"
 
 # Canonical (name, color, description) — must match doctor.sh LABEL_TABLE and README.
 expected=(
@@ -156,6 +161,46 @@ run_fix "$FX"
 rc="$(cat "$FX/rc")"
 [ "$rc" != "0" ] && pass_msg "E: non-zero exit" || fail_msg "E: exit was 0"
 [ ! -s "$FX/shim.log" ] && pass_msg "E: no gh calls made" || { fail_msg "E: gh was called"; sed 's/^/    /' "$FX/shim.log"; }
+
+# ---------------------------------------------------------------------------
+# Case F (#1274 scope 5): a PIPE-SEPARATED PIPELINE_LABELS_* override seeds one
+# label PER NAME, not a single literal `excluded|evolve`. `|` is already the
+# multi-value separator at the READ site — skills/status/SKILL.md composes
+# SKIP_LABELS="tracker|$PIPELINE_LABELS_EXCLUDED|..." as a regex alternation —
+# so doctor's seeding path must agree with it.
+# ---------------------------------------------------------------------------
+echo "Case F: pipe-separated PIPELINE_LABELS_EXCLUDED seeds one label per name"
+FX=$(mk_fixture fx-f)
+cat > "$FX/pipeline.config" <<'CFG'
+PIPELINE_REPO="owner/repo"
+PIPELINE_BASE_BRANCH="staging"
+PIPELINE_LABELS_EXCLUDED="excluded|evolve"
+CFG
+run_fix "$FX"
+rc="$(cat "$FX/rc")"
+[ "$rc" = "0" ] && pass_msg "F: exit 0" || { fail_msg "F: exit $rc"; sed 's/^/    /' "$FX/out"; }
+
+for row in "excluded|E4E669|Excluded from pipeline" "evolve|E4E669|Excluded from pipeline"; do
+  if grep -Fxq "$row" "$FX/shim.log"; then
+    pass_msg "F: split row seeded: ${row%%|*}"
+  else
+    fail_msg "F: missing split row: $row"
+    echo "    shim log:"; sed 's/^/      /' "$FX/shim.log"
+  fi
+done
+
+if grep -q '^excluded|evolve|' "$FX/shim.log"; then
+  fail_msg "F: seeded the literal 'excluded|evolve' as a single label name"
+else
+  pass_msg "F: no literal 'excluded|evolve' label name seeded"
+fi
+
+count=$(wc -l < "$FX/shim.log" | tr -d ' ')
+[ "$count" = "19" ] && pass_msg "F: 19 label create calls" || fail_msg "F: got $count label create calls (expected 19)"
+
+grep -Fq "Seeded 19 labels" "$FX/out" \
+  && pass_msg "F: stdout reports 'Seeded 19 labels' (counts NAMES, not table rows)" \
+  || fail_msg "F: stdout missing 'Seeded 19 labels' (got: $(grep -F 'Seeded' "$FX/out" || true))"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

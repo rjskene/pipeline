@@ -15,6 +15,7 @@ source "$(pwd)/pipeline.config" 2>/dev/null || source ./pipeline.config
 # Anchor via the plugin cache glob (var-independent — no chicken-and-egg dependence on
 # CLAUDE_PLUGIN_ROOT to FIND the resolver). _cpr_dir is the dir prefix; literal source line.
 _cpr_dir="${CLAUDE_PLUGIN_ROOT:+${CLAUDE_PLUGIN_ROOT}/}"
+_cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-parse --show-toplevel 2>/dev/null | sed 's|$|/|')}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
@@ -70,10 +71,10 @@ Receive an issue number as argument (or from context).
 1. **Fetch issue details and the trusted comment working set:**
    ```bash
    gh issue view <N> --repo $PIPELINE_REPO --json number,title,body
-   # Trusted-only working set — drops comments from authors lacking write access
-   # (issue #546, helper from #545). $TRUSTED holds the body + trusted-comment
-   # content on stdout; the dropped-author audit line ("ignored N comments from
-   # untrusted authors: @x") is emitted on stderr for surfacing.
+   # Trusted-only working set (#546, helper #545). Default mode = plaintext: body, then
+   # each trusted comment body. `--json <N>` (Step 4a) = a `{"comments":[…]}` dict, no
+   # `body` key. Dropped-author audit ("ignored N comments from untrusted authors: @x")
+   # goes to stderr.
    TRUSTED=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/filter-trusted-comments.sh" <N>)
    ```
 
@@ -113,7 +114,7 @@ Receive an issue number as argument (or from context).
      # never from a raw `--json comments` fetch. Pipeline-posted `## Classification`
      # comments survive the filter because the operator account is OWNER.
      CACHED=$(printf '%s\n' "$TRUSTED" \
-       | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $2}' | tail -1)
+       | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $NF}' | tail -1)
      case "$CACHED" in A|B|C|D) PATH_LETTER="$CACHED" ;; *) PATH_LETTER=B ;; esac
    fi
    echo "Planning issue #<N> as PATH $PATH_LETTER"
@@ -123,7 +124,7 @@ Receive an issue number as argument (or from context).
 
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh" <N> 2>/dev/null | head -1
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" fetch-attachments <N> 2>/dev/null | head -1
    ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
    ```
 
@@ -144,7 +145,7 @@ Receive an issue number as argument (or from context).
      bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"; echo "rc=$?"
    ```
 
-   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Shared tests (split-role):**` in the plan. Without that declaration the split-role GREEN implementer may not legally edit the test and STOPS mid-leg. A non-zero exit (`REASON=no-test-root` / `no-test-files`) means the sweep proved nothing: fix `PIPELINE_TEST_ROOTS` for the host before relying on a `None` declaration.
+   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Shared tests (split-role):**` in the plan. Without that declaration the split-role GREEN implementer may not legally edit the test and STOPS mid-leg. Roots resolve positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`; an unset var self-defaults and is never vacuous. `REASON=no-test-root` / `no-test-files` fires only when every resolved root fails `[ -e ]`.
 
 4a. **Root-cause diagnosis gate.** Run this step ONLY when the issue carries `needs-debug` (resolved in Step 3a) OR `--debug-first` was passed (`DEBUG_FIRST=true`); otherwise this step is a no-op — skip straight to Step 5. The gate establishes the root cause BEFORE planning so the plan's design decisions + first task target the diagnosed cause, not the reported symptom. The diagnosis is autonomous — there is NO human gate (parallel to classify), distinct from the plan-approval gate downstream.
 
@@ -152,12 +153,9 @@ Receive an issue number as argument (or from context).
 
    ```bash
    # Required env: DIAGNOSIS (root-cause text; CONSUMEd from $TRUSTED or produced below).
-   # Freshness probe — same shape as fullsend's `## Classification` check.
-   # Pipeline-posted `## Root-Cause Diagnosis` comments survive filter-trusted-comments.sh
-   # because the operator account is OWNER, so they appear in $TRUSTED.
    if printf '%s\n' "$TRUSTED" | grep -q '## Root-Cause Diagnosis'; then
-     DIAG_CREATED=$(gh issue view <N> --repo "$PIPELINE_REPO" --json comments \
-       --jq 'last(.comments[] | select(.body | contains("## Root-Cause Diagnosis")) | .createdAt)')
+     DIAG_CREATED=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
+       | jq -r 'last(.comments[] | select(.body | contains("## Root-Cause Diagnosis")) | .createdAt)')
      ISSUE_UPDATED=$(gh issue view <N> --repo "$PIPELINE_REPO" --json updatedAt --jq '.updatedAt')
      # Lexicographic compare is correct for ISO-8601 Z timestamps.
      if [[ "$DIAG_CREATED" > "$ISSUE_UPDATED" || "$DIAG_CREATED" == "$ISSUE_UPDATED" ]]; then
@@ -179,9 +177,9 @@ Receive an issue number as argument (or from context).
 
 5. **Generate the implementation plan.**
 
-   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/logs/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it. **Subagent dispatch contract — this skill is end-to-end.** Whether invoked directly or dispatched as a subagent (from `/pipeline:fullsend`), YOU own every step from fetch through `post-plan.sh` success; the post step is never the caller's. Returning the plan as terminal agent output is a skill failure. The only acceptable terminal states are: (a) `post-plan.sh` exited 0 and you report the success line from Step 8, or (b) `post-plan.sh` exited non-zero and you report the FAILED line from Step 7.
+   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/scratch/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it — whether invoked directly or dispatched from `/pipeline:fullsend`, the post step is never the caller's (terminal contract: `## Caller contract`; report per Step 7/8).
 
-   Invoke `Skill(skill: "superpowers:writing-plans")`. Pass the issue title, body, prior plan comments, codebase findings from step 4, `PATH_LETTER` from step 3a, AND — when Step 4a ran — the `$DIAGNOSIS` root cause (so the plan's `**Design decisions:**` and Task 0/Task 1 target the diagnosed cause, not the reported symptom). Tell it: "Do NOT save the plan to a file in `docs/`. Return the plan content directly so I can write it to the draft file under `.claude/logs/plan-drafts/`." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
+   Invoke `Skill(skill: "superpowers:writing-plans")` — skipped on a round-≥2 verbatim re-plan (`## Revision handling`). Pass the issue title, body, prior plan comments, codebase findings from step 4, `PATH_LETTER` from step 3a, AND — when Step 4a ran — the `$DIAGNOSIS` root cause (so the plan's `**Design decisions:**` and Task 0/Task 1 target the diagnosed cause, not the reported symptom). Tell it: "Return the plan content directly for the `.claude/scratch/plan-drafts/` draft — no `docs/superpowers/plans/` save, no `# … Implementation Plan` header (the `## Implementation Plan` format below replaces it), no Execution Handoff question (headless)." Reformat its output into the canonical structure below, inserting `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
 
    > **TERSENESS:** The plan must be self-contained (execute-issue-plan reads ONLY this comment) — but self-contained ≠ verbose. Reference the issue by `#N`; do NOT paste the issue body back into the plan. Each `**Files to change:**` entry is `path — one-line reason`. Sections with no content are the single word `None` (`**DB schema changes:** None`), never a paragraph explaining why. Design detail belongs in `**Design decisions:**` as bullets — load-bearing data (tier tables, formulas, mode behaviors) stays; restated context goes.
 
@@ -201,7 +199,7 @@ Receive an issue number as argument (or from context).
    **API changes:** (or "None")
    **Frontend changes:** (or "None")
    **Predicates:** (required for needs-browser-labeled issues)
-   **Test changes:** (or "None")
+   **Test changes:** (or "None") — one test file per `bash` invocation
    **Shared tests (split-role):** (optional — PATH B split-role only; omit when not applicable)
    **RED/GREEN ledger:** (required when the plan has a test deliverable — PATH B/C/D; `None` for docs-only PATH A)
    **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
@@ -250,11 +248,10 @@ Receive an issue number as argument (or from context).
    Code-task format: single bullet — same five steps as PATH B but inline without the `superpowers:test-driven-development` bookend.
    `Task N (PATH D substitute): re-run $PIPELINE_TEST_CMD inline as a final self-check before opening the PR. Do NOT invoke superpowers:requesting-code-review — it dispatches a subagent, which the PATH D envelope forbids; evaluate-issue-pr is the sole review gate.`
 
-6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool (not heredoc, not `echo`) to create the draft file at the path below; YOU MUST NOT return the plan body in your final message for the caller to write.
+6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool, not a heredoc or `echo`: hooks text-scan the whole Bash command (`enforce-base-branch.py` denies any text naming a PR-create call without `--base` — plan Task N does) and an unquoted heredoc expands `$`/backticks in plan prose; this outranks the bypass-mode heredoc preference. Never return the plan body in your final message for the caller to write.
    ```bash
-   mkdir -p .claude/logs/plan-drafts
-   DRAFT=".claude/logs/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
-   # Use the Write tool to write the canonical plan markdown to "$DRAFT".
+   mkdir -p .claude/scratch/plan-drafts
+   DRAFT=".claude/scratch/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
    ```
 
 7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke this from within your own turn. Do not stop, return, or summarize before the helper exits.
@@ -267,7 +264,7 @@ Receive an issue number as argument (or from context).
 
 ## Revision handling
 
-When revising (user feedback on a prior plan exists), `**Changes from previous plan:**` appears first. Re-derive `PATH_LETTER` from the current label in step 3a — do NOT copy the prior plan's Task 0 block verbatim, since the user may have relabeled.
+When revising (user feedback on a prior plan exists), `**Changes from previous plan:**` appears first. **Round ≥2 (#1317):** when `$TRUSTED` holds a `## Plan Evaluation` with `**Verdict:** Revise`, apply its prescribed change verbatim — add no new scenarios, tests or sections; do not widen scope — and open `**Changes from previous plan:**` with the one line `Round <k>: applied <summary>` (k = this plan's round number). Re-derive `PATH_LETTER` from the current label in step 3a — do NOT copy the prior plan's Task 0 block verbatim, since the user may have relabeled.
 
 ## Comment trust
 

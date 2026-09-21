@@ -15,26 +15,25 @@ set -euo pipefail
 #
 # This test exercises the REAL composed pipeline exactly as Step 1 + Step
 # 11.2b run it: trust filter (filter-trusted-comments.sh) -> anchored
-# selection (select-plan-comment.sh) -> the Step 11.2b awk parser (extracted
-# live from SKILL.md) -> (Case C only) the real split-role-gate.sh consuming
+# selection (select-plan-comment.sh) -> the Step 11.2b parser
+# (scripts/parse-shared-tests.sh) -> (Case C only) the real split-role-gate.sh consuming
 # the resulting PIPELINE_SPLIT_ROLE_SHARED_TESTS export. Local JSON/git
 # fixtures only — no gh/network calls.
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
-SKILL="skills/evaluate-issue-pr/SKILL.md"
 SELECTOR="$REPO_ROOT/scripts/select-plan-comment.sh"
 TRUST_HELPER="$REPO_ROOT/scripts/filter-trusted-comments.sh"
 GATE="$REPO_ROOT/scripts/split-role-gate.sh"
-[ -f "$SKILL" ] || { echo "missing $SKILL"; exit 1; }
 [ -f "$SELECTOR" ] || { echo "missing $SELECTOR"; exit 1; }
 [ -f "$TRUST_HELPER" ] || { echo "missing $TRUST_HELPER"; exit 1; }
 
-# Extract the REAL Step 11.2b awk one-liner from the SKILL.md source (same
-# extraction idiom as tests/test-eval-shared-tests-parser.sh).
-AWK_PROG=$(grep -oP "awk '\K[^']+(?=')" "$SKILL" | grep 'Shared tests' | head -1)
-[ -n "$AWK_PROG" ] || { echo "FAIL: could not extract Shared-tests awk program from $SKILL"; exit 1; }
+# The REAL Step 11.2b parser is scripts/parse-shared-tests.sh (#1287) — the awk
+# program moved out of the bash fence, where the harness rewrites `$0`/`$1` at
+# skill load. This file already binds REPO_ROOT above, so use it. No existence
+# guard: a missing script must surface as the genuine interpreter failure.
+PARSER="$REPO_ROOT/scripts/parse-shared-tests.sh"
 
 PASS=0
 FAIL=0
@@ -98,7 +97,7 @@ echo "Case A: plan + trailing eval quoting the heading -> composed pipeline stil
 inc
 JSON_A=$(mk_comments_json "OWNER"$'\x1e'"$PLAN_BODY" "OWNER"$'\x1e'"$EVAL_BODY")
 PLAN_A=$(resolve_plan "$JSON_A")
-SHARED_A=$(printf '%s\n' "$PLAN_A" | awk "$AWK_PROG")
+SHARED_A=$(printf '%s\n' "$PLAN_A" | bash "$PARSER")
 if [ "$SHARED_A" = "tests/test-shared-widget.sh" ]; then
   pass_msg "Case A: carve-out resolved to tests/test-shared-widget.sh"
 else
@@ -111,7 +110,7 @@ echo "Case B: negative control -- no plan comment at all -> empty carve-out (def
 inc
 JSON_B=$(mk_comments_json "OWNER"$'\x1e'"$EVAL_BODY")
 PLAN_B=$(resolve_plan "$JSON_B")
-SHARED_B=$(printf '%s\n' "$PLAN_B" | awk "$AWK_PROG")
+SHARED_B=$(printf '%s\n' "$PLAN_B" | bash "$PARSER")
 if [ -z "$PLAN_B" ] && [ -z "$SHARED_B" ]; then
   pass_msg "Case B: empty plan selection -> empty carve-out"
 else

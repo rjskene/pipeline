@@ -98,7 +98,7 @@ NEXT_COMMIT=$(git -C "$REMOTE_CLONE" rev-parse HEAD)
 # The orchestrator (staging checkout) has NOT fetched origin/next yet — the
 # actuation must fetch it itself.
 inc
-if ! ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh --base next feature/foo 999 ) \
+if ! ( cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ" bash .claude/scripts/setup-worktree.sh --base next feature/foo 999 ) \
         >"$WORKDIR/ab.log" 2>&1; then
   fail_msg "A+B: setup-worktree.sh exited non-zero"
   sed 's/^/    /' "$WORKDIR/ab.log"
@@ -149,7 +149,7 @@ chmod +x "$PROJ2/.claude/scripts/setup-worktree.sh"
 
 # `next` exists NOWHERE (no local branch, never pushed). Actuation must create it.
 inc
-if ! ( cd "$PROJ2" && bash .claude/scripts/setup-worktree.sh --base next feature/bar 1000 ) \
+if ! ( cd "$PROJ2" && PIPELINE_PROJECT_ROOT="$PROJ2" bash .claude/scripts/setup-worktree.sh --base next feature/bar 1000 ) \
         >"$WORKDIR/c.log" 2>&1; then
   fail_msg "C: setup-worktree.sh exited non-zero"
   sed 's/^/    /' "$WORKDIR/c.log"

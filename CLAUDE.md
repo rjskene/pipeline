@@ -75,7 +75,7 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 
 ## Observability (dogfood-only)
 
-This repo's `.claude/settings.json` registers tool-use and subagent logging hooks; the published `pipeline@claude-pipeline` plugin manifest does NOT. See [docs/observability.md](docs/observability.md) for the log streams and `PIPELINE_LOGS_ENABLED` gating, and [docs/self-audit.md](docs/self-audit.md) for the inner/outer-loop digest system that consumes them.
+This repo's `.claude/settings.json` registers tool-use and subagent logging hooks; the published `pipeline@claude-pipeline` plugin manifest does NOT. See [docs/observability.md](docs/observability.md) for the log streams and `PIPELINE_LOGS_ENABLED` gating.
 
 Agent token cost + latency are captured to the gated `agent-costs.jsonl` log and surfaced by `/pipeline:tokenomics` (dogfood-only, #721) — per-bucket/stage/structure cost with B→D breakeven. See [docs/observability.md](docs/observability.md#agent-cost-capture--pipelinetokenomics) and the cost analysis in [docs/cost-architecture.md](docs/cost-architecture.md).
 

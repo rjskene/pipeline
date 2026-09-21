@@ -157,6 +157,109 @@ else
   fail_msg "Case H: expected rc!=0, got rc=$rc"
 fi
 
+# --- Unexpanded $PIPELINE_BASE_BRANCH token (#1323) ------------------------
+# skills/execute-issue-plan/SKILL.md Step 9b prescribes
+# `gh pr create --base "$PIPELINE_BASE_BRANCH" ...` — quoted but unexpanded
+# in the command TEXT the hook sees. The token is equal-by-construction to
+# EXPECTED_BASE when PIPELINE_BASE_BRANCH is unset in the hook's env (the
+# shell would expand it from the same pipeline.config); if it IS exported to
+# a different branch, that disagreement must still deny.
+VAR_TOKEN_STR='$'"PIPELINE_BASE_BRANCH"
+VAR_TOKEN_BRACED='${'"PIPELINE_BASE_BRANCH"'}'
+
+echo "Case I: quoted \$PIPELINE_BASE_BRANCH token allows (env unset)"
+inc
+rc=$(run_hook "gh pr create --base \"$VAR_TOKEN_STR\" --title T --body B")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case I: allowed"
+else
+  fail_msg "Case I: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case J: quoted \${PIPELINE_BASE_BRANCH} braced token allows (env unset)"
+inc
+rc=$(run_hook "gh pr create --base \"$VAR_TOKEN_BRACED\" --title T --body B")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case J: allowed"
+else
+  fail_msg "Case J: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case K: \$PIPELINE_BASE_BRANCH token blocks when exported to a different branch"
+inc
+payload=$(python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' \
+  "gh pr create --base \"$VAR_TOKEN_STR\" --title T --body B")
+set +e
+echo "$payload" | env -i \
+  HOME="$HOME" \
+  PATH="/usr/bin:/bin" \
+  CLAUDE_PROJECT_DIR="$PROJ" \
+  PIPELINE_BASE_BRANCH="main" \
+  python3 "$HOOK" >"$WORKDIR/out" 2>"$WORKDIR/err"
+rc=$?
+set -e
+if [ "$rc" != "0" ]; then
+  pass_msg "Case K: blocked (exported PIPELINE_BASE_BRANCH=main disagrees with configured base staging)"
+else
+  fail_msg "Case K: expected rc!=0, got rc=$rc"
+fi
+
+# --- Command-head masking (#1327) ------------------------------------------
+# The hook must decide from the command HEAD (command_mask.segments()), not a
+# raw-text substring scan — so `gh pr create` living only inside a grep
+# pattern, a Python replacement string, or a heredoc body is not a command;
+# but a `bash -c` operand still IS a command (depth-1 recursion).
+
+echo "Case L: grep pattern operand containing 'gh pr create' allows"
+inc
+rc=$(run_hook "grep -n 'gh pr create' skills/x.md")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case L: allowed (grep pattern, not a command)"
+else
+  fail_msg "Case L: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case M: python3 -c replacement string containing 'gh pr create --base foo' allows"
+inc
+rc=$(run_hook 'python3 -c '"'"'print("gh pr create --base foo")'"'"'')
+if [ "$rc" = "0" ]; then
+  pass_msg "Case M: allowed (Python string literal, not a command)"
+else
+  fail_msg "Case M: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case N: heredoc body spelling 'gh pr create --base main' allows"
+inc
+HEREDOC_CMD=$(printf 'cat <<%s\ngh pr create --base main\n%s' "EOF" "EOF")
+rc=$(run_hook "$HEREDOC_CMD")
+if [ "$rc" = "0" ]; then
+  pass_msg "Case N: allowed (heredoc body, not a command)"
+else
+  fail_msg "Case N: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case O: bash -c operand running 'gh pr create --base main' still blocks"
+inc
+rc=$(run_hook 'bash -c "gh pr create --base main"')
+if [ "$rc" != "0" ] && grep -q "main" "$WORKDIR/err"; then
+  pass_msg "Case O: blocked (depth-1 recursion into -c operand still sees the real command)"
+else
+  fail_msg "Case O: expected rc!=0 with 'main' in stderr, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+# --- Line-continuation shape (#1342) ----------------------------------------
+# A bare `\`+newline continuation before the real command head must not mask
+# the command from this guard — same as the single-line form.
+
+echo "Case P: continuation shape — env assignment + backslash-newline before gh pr create --base main blocks"
+inc
+rc=$(run_hook $'FOO=1 \\\ngh pr create --base main --title T --body B')
+if [ "$rc" != "0" ]; then
+  pass_msg "Case P: blocked (continuation-masked head still resolves to gh pr create)"
+else
+  fail_msg "Case P: expected rc!=0, got rc=$rc"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"

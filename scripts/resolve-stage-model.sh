@@ -24,6 +24,8 @@
 #   PATH=<A|B|C|D>
 #   MODEL=<fable|opus|sonnet|haiku>   # ALWAYS named; `inherit` is NEVER emitted
 #   REASON=<default-pin|path-c-fable|follows-producer|high-uncertainty|explicit-knob>
+#   SKIP=true                         # OPTIONAL (#1291) — emitted ONLY when the
+#                                     # stage may be elided. Absent otherwise.
 #
 # === Encoded routing rules (the single place the stage knobs + carve-outs apply) ===
 #
@@ -53,6 +55,17 @@
 #               is independent context — below is not).
 #               REASON=follows-producer when the producer tier decided it,
 #               explicit-knob when a set knob did, else default-pin.
+#               #1291 trust profile — PIPELINE_TRUST_PROFILE is normalized ONCE
+#               by the shared scripts/_trust-profile.sh (strict, the DEFAULT and
+#               the fallback for any unrecognized value with a stderr WARN |
+#               lean); it is NEVER re-normalized at this read-site. Under `lean`
+#               this arm ALSO emits `SKIP=true`, meaning the caller may skip the
+#               plan-eval gate entirely — but ONLY for the CHEAP paths A and D,
+#               and ONLY when the W2 high-uncertainty carve-out did NOT fire.
+#               PATH B/C always keep their gate; `plan` (the producer) is never
+#               elided; and pr-eval — the W3 auto-merge gate — NEVER carries
+#               SKIP at all. MODEL=/REASON= are emitted verbatim alongside it,
+#               so a caller that IGNORES SKIP behaves exactly as pre-#1291.
 #
 # Tier order for max/WARN comparisons: haiku(1) < sonnet(2) < opus(3) < fable(4).
 # An unrecognized knob token is honored VERBATIM in MODEL= (fail-loud at Agent
@@ -102,6 +115,10 @@ if [ -f "${_rsm_dir}/_resolve-config.sh" ]; then
   source "${_rsm_dir}/_resolve-config.sh"
 fi
 
+# --- Resolve the #1291 trust profile (ONE normalization, shared) ------------
+# shellcheck source=scripts/_trust-profile.sh
+. "${_rsm_dir}/_trust-profile.sh"
+
 REPO="${PIPELINE_REPO:-}"
 
 # --- ONE issue fetch: feeds BOTH the path detection and the W2 match ---------
@@ -142,6 +159,7 @@ tier() {
 
 MODEL=""
 REASON=""
+SKIP_OUT=""   # #1291: non-empty ⇒ emit the optional SKIP=true token
 
 # --- plan ---------------------------------------------------------------------
 # Sets PLAN_MODEL / PLAN_REASON. Also consumed by the plan-eval branch so the
@@ -187,6 +205,13 @@ case "$STAGE" in
     else
       MODEL="$GATE_MODEL"; REASON="$GATE_REASON"
     fi
+    # #1291 lean: elide the gate where the second opinion buys least — the
+    # CHEAP paths (A/D) with no W2 signal. The resolved MODEL is still emitted
+    # verbatim, so a caller that ignores SKIP behaves exactly as before.
+    if [ "$TRUST_PROFILE" = "lean" ] && [ "$W2" != "1" ] \
+       && { [ "$PATH_LETTER" = "A" ] || [ "$PATH_LETTER" = "D" ]; }; then
+      SKIP_OUT="true"
+    fi
     ;;
 
   pr-eval)
@@ -214,4 +239,7 @@ echo "STAGE=$STAGE"
 echo "PATH=$PATH_LETTER"
 echo "MODEL=$MODEL"
 echo "REASON=$REASON"
+if [ -n "$SKIP_OUT" ]; then
+  echo "SKIP=true"
+fi
 exit 0

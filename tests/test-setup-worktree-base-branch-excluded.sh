@@ -78,7 +78,7 @@ chmod +x "$PROJ/.claude/scripts/setup-worktree.sh"
 
 git -C "$PROJ" checkout -q next
 
-if ! ( cd "$PROJ" && bash .claude/scripts/setup-worktree.sh feature/foo 99 ) \
+if ! ( cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ" bash .claude/scripts/setup-worktree.sh feature/foo 99 ) \
         >"$WORKDIR/setup.log" 2>&1; then
   echo "ERROR: setup-worktree.sh exited non-zero" >&2
   sed 's/^/    /' "$WORKDIR/setup.log" >&2

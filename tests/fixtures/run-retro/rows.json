@@ -1,0 +1,5 @@
+[
+  {"issue":1272,"path":"B","loc":200,"ceremony":0,"tokens_total":12000000,"duration_ms":2400000,"tokens_per_loc":60000.0,"ms_per_loc":12000.0,"over_served":0,"pr_number":2001},
+  {"issue":1273,"path":"B","loc":400,"ceremony":0,"tokens_total":32000000,"duration_ms":3000000,"tokens_per_loc":80000.0,"ms_per_loc":7500.0,"over_served":0,"pr_number":2002},
+  {"issue":9999,"path":"B","loc":800,"ceremony":0,"tokens_total":76000000,"duration_ms":9000000,"tokens_per_loc":95000.0,"ms_per_loc":11250.0,"over_served":1,"pr_number":2999}
+]

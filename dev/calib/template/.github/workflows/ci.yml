@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: bash tests/run.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the test suite
+        run: bash tests/run.sh
+
+      - name: Smoke-test the entrypoint
+        run: |
+          bash bin/calibctl version
+          bash bin/calibctl help

@@ -29,46 +29,25 @@ Known trip-wires and the way around each:
 
 - **Path-shaped substrings in prose.** Any tool arg containing the literal
   `../..` is blocked anywhere in any string (PR bodies, issue comments, commit
-  messages, code-block examples) — not just real file paths. An absolute-looking
-  token is also extracted and resolved: a `gh issue comment` heredoc mentioning
-  `skills/run/` was blocked with `path outside project boundary: /run`.
+  messages, code-block examples) — not just real file paths.
   - Rephrase: use "parent-directory resolver shape" or "legacy
     `cd "$(dirname ...)" && pwd` pattern" instead of the literal `../..`.
-  - For `gh` bodies with unavoidable path-like substrings, `Write` the body to
-    `.claude/scratch/*.md` and pass `--body-file` so the text stays OUT of the
-    Bash command string. (The hook also scans `Write` content, so still rephrase
-    obvious offenders.)
-  - A `#!/bin/bash` shebang inside Bash *content* (e.g. a `cat <<'EOF'` heredoc
-    that writes a script) is extracted as `/bin/bash` and blocked — use an
-    `awk`/`sed` rewrite with no shebang instead.
-  - **Narrow exception (#1192):** as of #1192, a heredoc **BODY** (the lines
-    between `<<'EOF'` and its terminator, when the operator line's command
-    word is not an interpreter like `bash`/`sh`/`python`) is masked as stdin
-    DATA rather than scanned. This fixes the two RELATIVE cases only:
-    script-authoring a `.sh` file whose body contains a `; cd ../..`-shaped
-    line, and HTML/prose bodies that merely NAME a relative protected-control
-    token (`.claude/hooks/…`). It does **not** cover an ABSOLUTE
-    out-of-boundary token — the heredoc mask is deliberately kept off
-    `extract_paths()`, so a body naming an absolute path (e.g. `/etc/passwd`,
-    or the `skills/run/`-resolving-to-`/run` case above) still blocks with
-    `path outside project boundary`. `--body-file` therefore remains the
-    workaround for both absolute-token sub-bullets above (the `gh issue
-    comment` case and the shebang case) and for any path-like text that is
-    NOT inside a heredoc body.
-    **Narrowed further by #1194:** the "operator line's command word is not
-    an interpreter" check now resolves through a wrapper's own OPTION or
-    POSITIONAL argument (`timeout 300 bash <<EOF`, `sudo -u root bash
-    <<EOF`, `env -u FOO bash <<EOF`, `nice -n 5 bash <<EOF` all now correctly
-    resolve to `bash` and stay scanned — previously the walk terminated on
-    the wrapper's own argument and the body was wrongly masked as data). A
-    left-shift inside `$(( … ))` or a command-position `(( … ))` (`echo
-    $((x << y))`) is also no longer read as a heredoc operator, so it can no
-    longer open a phantom heredoc that masks every following line. See the
-    module docstring's `Issue #1194` section for the full IN/OUT list.
+  - **Narrowed by #1282:** the Bash extractor now only considers whole,
+    dequoted shell WORDS (or the RHS of a `name=<path>` word) as path
+    candidates. An absolute-looking token that lives only inside a quoted
+    literal, a heredoc body, a regex, or a commit message — including the
+    `#!/bin/bash` shebang inside a `cat <<'EOF'` script-authoring heredoc, and
+    a `gh issue comment` body merely naming `skills/run/` — is data, not a
+    path reference, and is no longer extracted. A path named as its OWN word,
+    or a real `cd` target, still blocks. See the module docstring's `Issue
+    #1282` section for the full IN/OUT list.
 
-- **`/tmp` is blocked.** Reads/writes under `/tmp` are outside the boundary.
-  Write scratch under `.claude/scratch/` instead. This is the root cause of the
-  inline-execute test-wait drop-out in §2.
+- **The temp root is mostly blocked.** Reads/writes under the system temp dir
+  are outside the boundary, **except** the harness's own session scratchpad
+  (`.../claude-<uid>/<slug>/<session>/scratchpad/...` on Linux, `Temp/claude/…`
+  on Windows — issue #1282/#1153) — write scratch under `.claude/scratch/`
+  otherwise. This is the root cause of the inline-execute test-wait drop-out in
+  §2.
 
 - **Worktree boundary vs. main-checkout absolute paths.** When a skill runs from
   a feature worktree under `.claude/worktrees/`, the worktree is the project
@@ -195,8 +174,8 @@ stopping:
 - `PIPELINE_REPO` from `git remote -v`.
 - `PIPELINE_BASE_BRANCH` from the worktree's `.claude/base-branch` file.
 - Test cmd: shell repo, no `package.json` — CI runs
-  `scripts/check-no-consumer-claude-writes.sh`, the `tests/test*.sh` loop, and
-  `dev/tests/run-all.sh`. No separate typecheck step.
+  `scripts/check-no-consumer-claude-writes.sh` and the `tests/test*.sh` loop.
+  No separate typecheck step.
 - Pass `PIPELINE_REPO` explicitly to helpers that need it
   (`PIPELINE_REPO=<owner>/<repo> ./scripts/derive-pr-title.sh <N>`).
 
@@ -350,3 +329,31 @@ the CR is invisible in most output. This bit many scripts across the tree.
   `pass\r`; a PR-number arithmetic step fails because the number is `123\r`. When
   a comparison that "should" hold fails only on the Windows/MSYS host, suspect a
   CR before suspecting the logic.
+
+## 12. Headless / unattended runs (issue #1286)
+
+When `PIPELINE_HEADLESS` is true, fullsend and every stage it dispatches must
+not end a turn on an operator question — at each of the four decision sites
+(`merge-policy`, `unread-config-knob`, `stall-triage`, `ci-red-budget`) it
+applies the documented default, logs one
+`HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continues;
+see `skills/fullsend/SKILL.md` for the full contract. Interactive mode (the
+knob unset or false) is unchanged — the operator prompts stay.
+
+## 13. Skill fences carry no awk field references (issue #1287)
+
+The harness rewrites `$0`-`$9` at skill load, so ANY field reference inside a
+bash fence in a SKILL.md arrives garbled — cycle-1 observed
+`awk '{sub(/\r$/,"",1281)}'` in the pr-eval fence. Anything needing `$<n>`
+lives in a script (e.g. `scripts/parse-shared-tests.sh`,
+`scripts/evolve-projection.sh`), which the harness never rewrites. The guard
+is `tests/test-skill-fence-positional-args.sh`.
+
+## 14. Session-per-cycle evolve loop (issue #1303)
+
+Plugin skill/agent/hook bodies load once per session, so a merged harness fix is invisible until the operator restarts.
+Run `bash scripts/evolve-loop.sh --cycles N` from the clone root: each cycle is a fresh `claude -p` (launched with `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or print mode terminates the session 600 s into its first background agent — #1306), so every merge lands in the next cycle.
+The loop gates on `scripts/evolve-projection.sh`, the same line the skill gates on; a `pause-5h` from that pre-launch gate launches nothing and has no rc — it sleeps and re-reads the `paused` label each iteration.
+A session that exits on `HEADLESS-DEFAULT: usage-pause` is slept out and relaunched, not counted as a failed resume — bounded by `--max-pauses K` consecutive pauses (default 6 ≈ 30 h), reset by any real progress.
+`--dry-run` previews `LOOP-LAUNCH` and makes no network call. `LOOP-STOP reason=` is the exit contract (`paused`/`cycles-complete` 0, `halt-7d` 3, `resume-cap` 4, `pause-cap` 5).
+Interactive fallback at a cycle boundary: `/reload-plugins` — a built-in the model cannot invoke.

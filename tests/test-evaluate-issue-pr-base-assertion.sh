@@ -68,6 +68,7 @@ case "$ALL_ARGS" in
   *"pr merge"*)
     echo "GATE_BREACH: gh pr merge was invoked despite base mismatch" >&2
     exit 99 ;;
+  *"pulls/"*"/files"*) printf '%s\n' "${GH_FILES:-modified:scripts/auto-merge-gate.sh:}" ;;
   *) echo "[shim-a] unhandled: $ALL_ARGS" >&2; exit 1 ;;
 esac
 SHIM_A
@@ -161,6 +162,7 @@ case "\$ALL_ARGS" in
   *"pr merge"*)
     echo "GATE_BREACH: gh pr merge was invoked despite TOCTOU flip" >&2
     exit 99 ;;
+  *"pulls/"*"/files"*) printf '%s\n' "\${GH_FILES:-modified:scripts/auto-merge-gate.sh:}" ;;
   *) echo "[shim-b] unhandled: \$ALL_ARGS" >&2; exit 1 ;;
 esac
 SHIM_B
@@ -208,6 +210,7 @@ case "\$ALL_ARGS" in
   *"pr view"*"--json statusCheckRollup"*)
     printf '%s' '{"statusCheckRollup":[{"name":"x","conclusion":"SUCCESS"}],"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}' ;;
   *"pr merge"*) printf 'merge ok\n' ;;
+  *"pulls/"*"/files"*) printf '%s\n' "\${GH_FILES:-modified:scripts/auto-merge-gate.sh:}" ;;
   *) echo "[shim-c] unhandled: \$ALL_ARGS" >&2; exit 1 ;;
 esac
 SHIM_C

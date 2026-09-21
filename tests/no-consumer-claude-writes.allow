@@ -16,14 +16,15 @@ scripts/migrate-from-subtree.sh
 scripts/setup-worktree.sh
 scripts/sync-worktrees.sh
 
-# dogfood-only repo audit hook on UserPromptSubmit. Not part of the
-# plugin manifest; see issue #134 and the "Self-improvement loop (dogfood-only)"
-# section in CLAUDE.md. The .claude/settings.json file is excluded from the
-# current lint scan but this entry is recorded defensively so any future
-# tightening of the scan keeps this file exempt.
-# Also covers the SubagentStop + Stop agent-cost-capture hook registration
-# (hooks/capture_agent_cost.py — dogfood-only, gated by PIPELINE_LOGS_ENABLED,
-# issue #642); the published .claude-plugin/plugin.json is untouched.
+# dogfood-only repo settings: registers the dogfood-heal-symlink and
+# dogfood-refresh hooks (issues #611, #624), the enforce-comment-trust
+# PreToolUse hook (issue #549), and the PostToolUse(Agent) agent-cost-capture
+# hook registration (hooks/capture_agent_cost.py — dogfood-only, gated by
+# PIPELINE_LOGS_ENABLED, issue #642). None of these is part of the plugin
+# manifest. The .claude/settings.json file is excluded from the current lint
+# scan but this entry is recorded defensively so any future tightening of the
+# scan keeps this file exempt; the published .claude-plugin/plugin.json is
+# untouched.
 .claude/settings.json
 
 # Doctor's no_residual_subtree check matches the legacy-installer marker path
