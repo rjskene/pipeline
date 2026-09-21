@@ -90,7 +90,7 @@ if [ -n "$STOP" ]; then echo "STOP: gate failed — abort the turn, do not run S
 fi
 ```
 
-`HARNESS_ROOT` is the path the harness substituted into this skill at load, so a session that loaded the published cache or the main checkout instead of `--plugin-dir <clone>` fails that compare — an unsubstituted or unset token is empty and fails too, which is the fail-closed behaviour we want. The main checkout's `pipeline.config` is outside the clone's `restrict_paths.py` boundary, so the exclusion knob is read as the operator's attestation in the tracker `## Runtime` row `staging isolation`, never as a file read (spec §3.3).
+`HARNESS_ROOT` is the path the harness substituted into this skill at load, so a session that loaded the published cache or the main checkout instead of `--plugin-dir <clone>` fails that compare — an unsubstituted or unset token is empty and fails too, which is the fail-closed behaviour we want. The exclusion knob is read as the tracker `## Runtime` attestation, never from the main checkout's `pipeline.config` (outside `restrict_paths.py`; spec §3.3).
 
 ## Usage gate + projection
 
@@ -136,7 +136,7 @@ Each transition calls fence 3.
 HARNESS-FRICTION: <what the doc/hook said> | <what was true>
 ```
 
-`run-retro.sh` (#1272) harvests the `HARNESS-FRICTION:` lines and fence 5 parses the `- usage:` line, so the percentages are integers with no `%`. Every `HARNESS-FRICTION:` line from the fullsend run's subagent reports is appended VERBATIM, plus the orchestrator's own — one per doc, skill or hook claim that disagreed with reality.
+`run-retro.sh` harvests the `HARNESS-FRICTION:` lines; usage percentages are integers with no `%`. Append every `HARNESS-FRICTION:` line from the fullsend subagent reports VERBATIM, plus the orchestrator's own.
 
 ## pause / resume / stop
 
@@ -158,4 +158,4 @@ Then fence 3 with `MODE_NEW=paused` and hand back — the release cut stays the 
 
 ## Guardrails
 
-≤3 issues per cycle and ≤1 PATH C; hook edits are ordinary `evolve` issues, pinned by `tests/test-cage-invariant-*.sh` and the `block-cage-tests-diff` merge gate; only those cage tests and auth/credential surfaces route to `human`; prose budget is judged by the retro mass row; agent reports stay terse; cycle boundaries are the compaction seam, so everything needed to resume lives on GitHub.
+Prose budget is judged by the retro mass row; agent reports stay terse; cycle boundaries are the compaction seam, so everything needed to resume lives on GitHub.
