@@ -24,6 +24,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
 from subagent_log_utils import read_event_stdin  # noqa: E402
+try:  # #1352 fail-open: a partial hook install (e.g. a legacy
+    # subtree copy missing this file) must never crash a guard hook.
+    from _deny_log import log_denial  # noqa: E402
+except ImportError:
+    def log_denial(*_args, **_kwargs):  # noqa: E302
+        pass
 
 GH_TIMEOUT_SECONDS = 10
 ROLLUP_RE = re.compile(r"\bgh\s+pr\s+view\s+(\d+)\b.*--json\s+statusCheckRollup")
@@ -118,6 +124,7 @@ def _escalate(issue_number: str, pr_number: str | None, reason: str) -> None:
 
 def _block(session_id: str, rows, reason: str) -> int:
     sys.stderr.write(reason)
+    log_denial("enforce-ci-wait", "Stop", reason, "", session_id=session_id)
     new_count = _read_count(session_id) + 1
     _write_count(session_id, new_count)
     if new_count >= 3:

@@ -25,6 +25,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _pipeline_config import read as _read_config  # noqa: E402
 from subagent_log_utils import read_event_stdin  # noqa: E402
 from command_mask import segments, head_index  # noqa: E402
+try:  # #1352 fail-open: a partial hook install (e.g. a legacy
+    # subtree copy missing this file) must never crash a guard hook.
+    from _deny_log import log_denial  # noqa: E402
+except ImportError:
+    def log_denial(*_args, **_kwargs):  # noqa: E302
+        pass
 
 
 def _resolve_expected_base() -> str:
@@ -118,7 +124,7 @@ def _decide(kind, actual_base):
     return 0, None
 
 
-def _legacy_scan(command: str) -> int:
+def _legacy_scan(command: str, tool_name: str = "Bash", session_id=None) -> int:
     """Pre-#1327 whole-text scan — used ONLY when segments() cannot parse
     the command (unterminated quote). Fail closed: never fewer blocks than
     before #1327."""
@@ -134,6 +140,9 @@ def _legacy_scan(command: str) -> int:
     rc, message = _decide(kind, actual_base)
     if message:
         print(message, file=sys.stderr)
+    if rc != 0:
+        log_denial("enforce-base-branch", tool_name, message or "", command,
+                    session_id=session_id)
     return rc
 
 
@@ -143,9 +152,12 @@ def main() -> int:
     if not command:
         return 0
 
+    tool_name = data.get("tool_name", "Bash")
+    session_id = data.get("session_id")
+
     segs = segments(command)
     if segs is None:
-        return _legacy_scan(command)
+        return _legacy_scan(command, tool_name=tool_name, session_id=session_id)
 
     for _, words in segs:
         kind = _pr_command_kind(words)
@@ -155,6 +167,8 @@ def main() -> int:
         if rc != 0:
             if message:
                 print(message, file=sys.stderr)
+            log_denial("enforce-base-branch", tool_name, message or "", command,
+                        session_id=session_id)
             return rc
 
     return 0
