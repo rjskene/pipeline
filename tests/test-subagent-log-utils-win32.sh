@@ -94,9 +94,11 @@ fi
 # ---------------------------------------------------------------------------
 echo "Task 3: all subagent_log_utils importers stay win32 import-clean"
 
+# _deny_log (#1352) consumes subagent_log_utils.append_locked, so it joins the
+# win32 import-cleanliness sweep alongside the guard hooks that call it.
 HOOKS=(enforce-comment-trust enforce-base-branch restrict_paths block_deletions \
        log_subagent enforce-ci-wait check-ci-skip-markers enforce-path-c-delegation \
-       capture_agent_cost)
+       capture_agent_cost _deny_log)
 for h in "${HOOKS[@]}"; do
   if python3 -c "
 import sys, signal
