@@ -69,6 +69,14 @@ Known trip-wires and the way around each:
     `.venv-host/Scripts` path (the Windows venv layout) is recognized as inside
     the boundary rather than blocked as a stray absolute-looking token.
 
+- **Auditing false positives (#1352).** Every denial from this hook (and the
+  other boundary/guard hooks) appends a record to the gated
+  `.claude/logs/hook-denials.jsonl` — see
+  [docs/observability.md](observability.md#hook-denial-log). When a
+  false-positive block looks suspicious, grep that log for the hook name and
+  session before assuming the guard is wrong; it is the audit trail this
+  section's trip-wires were previously diagnosed without.
+
 ## 2. Executor wedge classes & recovery
 
 Dispatched executors (`claude -p` workers and inline `Agent` subagents) wedge in

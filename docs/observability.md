@@ -16,6 +16,18 @@ Logging hooks and substrate for this repo's own dogfood operation. Most are regi
 
 **dogfood-only.** `.claude/logs/tool-use.log` is a tab-separated per-tool-call log (timestamp, tool, session, summary) written by `.claude/hooks/log-tool-use.sh` (PostToolUse `*`). Correlate with `subagents.log` via the `session` field to reconstruct the tool sequence inside each subagent — useful for verifying TDD order (Write test → Bash pytest fail → Write impl → Bash pytest pass). Log rotation is not automated; `cleanup-worktree.sh` copies per-issue logs to the root `.claude/logs/tool-use-issue-<N>.log` on worktree teardown.
 
+## Hook-denial log
+
+**dogfood-only, gated (#1352).** PreToolUse guard hooks that deny (exit 2) leave no trace in `tool-use.log` — that log is written by a PostToolUse hook, which never fires for a denied call, so a false positive was previously unauditable. `hooks/_deny_log.py` closes that gap: each guard hook (`block_deletions.py`, `restrict_paths.py`, `enforce-base-branch.py`, `enforce-comment-trust.py`, `check-ci-skip-markers.py`, `enforce-ci-wait.py`, `enforce-path-c-delegation.py`) calls `log_denial(hook, tool_name, reason, command_text="")` immediately before its `sys.exit(2)` / `return 2`, appending one JSONL record to `.claude/logs/hook-denials.jsonl`:
+
+```json
+{"ts":"2026-09-21T13:05:00Z","hook":"restrict_paths","tool":"Bash","session":"<CLAUDE_SESSION_ID or unknown>","reason":"<first line of the stderr reason>","command":"<masked command text via hooks/command_mask.py, truncated to 512 chars>"}
+```
+
+`enforce-ci-wait.py` denies from a **Stop** hook, not PreToolUse — its record carries `tool:"Stop"`, a deliberate widening of the "PreToolUse denials" framing.
+
+Gated on the same [`PIPELINE_LOGS_ENABLED`](#pipeline_logs_enabled-gate) flag as `tool-use.log` / `agent-costs.jsonl` (disabled — no file, no directory touched — until a host opts in); the log-dir resolution mirrors `capture_agent_cost.py` (`CLAUDE_PROJECT_DIR` or cwd, then `.claude/logs/`), so denials from linked worktrees land in the one durable main-checkout file. The helper is **fail-open by construction**: its entire body is wrapped in one `try/except Exception: pass`, so a logging failure can never turn a deny into a crash or an allow, and it writes no error log of its own. No guard's decision logic, exit code, or stderr text changes — this is a pure audit-trail addition.
+
 ## Runs log
 
 `.claude/logs/runs.log` is a tab-separated per-spawn marker written by `spawn-claude.sh` at session launch (one line per spawn). Columns: timestamp, `session=<uuid>`, `issue=<N>`, `path=<A|B|C>`, `skill=<name>`, `worktree=<path>`. The session UUID matches `--session-id` passed to the claude CLI, so it joins 1:1 with `tool-use.log` and `subagents.log` rows for that session.
