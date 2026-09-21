@@ -27,7 +27,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from subagent_log_utils import read_event_stdin  # noqa: E402
-from _deny_log import log_denial  # noqa: E402
+try:  # #1352 fail-open: a partial hook install (e.g. a legacy
+    # subtree copy missing this file) must never crash a guard hook.
+    from _deny_log import log_denial  # noqa: E402
+except ImportError:
+    def log_denial(*_args, **_kwargs):  # noqa: E302
+        pass
 
 MARKER_RE = re.compile(
     r"\[(?:skip|no)[\s-]?ci\]|\[ci[\s-]?skip\]|\*\*\*NO_CI\*\*\*",
