@@ -20,6 +20,7 @@ if os.environ.get("ALLOW_DELETIONS") == "true":
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from subagent_log_utils import read_event_stdin  # noqa: E402
 from command_mask import mask_command, segments  # noqa: E402
+from _deny_log import log_denial  # noqa: E402
 
 data = read_event_stdin()
 command = data.get("tool_input", {}).get("command", "")
@@ -116,8 +117,8 @@ for pattern in BLOCKED:
         hit = m.group("hit")
         if hit.lower().startswith("rm") and _rm_targets_all_tmp(command, m.start("hit")):
             continue
-        print(
-            f"BLOCKED: destructive deletion command detected (matched: {hit}): {command[:120]}",
-            file=sys.stderr,
-        )
+        reason = f"BLOCKED: destructive deletion command detected (matched: {hit}): {command[:120]}"
+        print(reason, file=sys.stderr)
+        log_denial("block_deletions", data.get("tool_name", ""), reason, command,
+                    session_id=data.get("session_id"))
         sys.exit(2)

@@ -37,6 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from subagent_log_utils import read_event_stdin  # noqa: E402
 from command_mask import segments, head_index  # noqa: E402
+from _deny_log import log_denial  # noqa: E402
 
 HELPER = "filter-trusted-comments.sh"
 _SHELL_BASENAMES = {"bash", "sh", "zsh", "dash", "ksh", "source", "."}
@@ -99,25 +100,29 @@ def _invokes_attachments(words):
     return any(_basename(c) == "fetch-issue-attachments.sh" for c in candidates)
 
 
-def _legacy_scan(command: str) -> int:
+def _legacy_scan(command: str, tool_name: str = "Bash", session_id=None) -> int:
     """Pre-#1321 whole-text scan - used ONLY when segments() cannot parse the
     command (unterminated quote). Fail closed: never fewer blocks than
     before #1321."""
     if re.search(r"\bgh\s+(?:issue|pr)\s+view\b", command):
         fields = _json_field_list(command)
         if fields and "comments" in fields:
-            print(
+            reason = (
                 "BLOCKED: raw `gh ... view --json ...comments...` bypasses "
-                "the comment-trust filter.\n" + HELPER_HINT,
-                file=sys.stderr,
+                "the comment-trust filter.\n" + HELPER_HINT
             )
+            print(reason, file=sys.stderr)
+            log_denial("enforce-comment-trust", tool_name, reason, command,
+                        session_id=session_id)
             return 2
     if "fetch-issue-attachments.sh" in command:
-        print(
+        reason = (
             "BLOCKED: direct `fetch-issue-attachments.sh` bypasses the "
-            "comment-trust filter.\n" + HELPER_HINT,
-            file=sys.stderr,
+            "comment-trust filter.\n" + HELPER_HINT
         )
+        print(reason, file=sys.stderr)
+        log_denial("enforce-comment-trust", tool_name, reason, command,
+                    session_id=session_id)
         return 2
     return 0
 
@@ -128,6 +133,9 @@ def main():
     if not command:
         return 0
 
+    tool_name = data.get("tool_name", "Bash")
+    session_id = data.get("session_id")
+
     # Allow-by-presence FIRST, on the RAW text (Case H): the trusted helper
     # internally runs `gh issue view --json body,comments`, so its own
     # command string (and any pipeline routing through it) must pass before
@@ -137,22 +145,26 @@ def main():
 
     segs = segments(command)
     if segs is None:
-        return _legacy_scan(command)
+        return _legacy_scan(command, tool_name=tool_name, session_id=session_id)
 
     for _, words in segs:
         if _reads_comments(words):
-            print(
+            reason = (
                 "BLOCKED: raw `gh ... view --json ...comments...` bypasses "
-                "the comment-trust filter.\n" + HELPER_HINT,
-                file=sys.stderr,
+                "the comment-trust filter.\n" + HELPER_HINT
             )
+            print(reason, file=sys.stderr)
+            log_denial("enforce-comment-trust", tool_name, reason, command,
+                        session_id=session_id)
             return 2
         if _invokes_attachments(words):
-            print(
+            reason = (
                 "BLOCKED: direct `fetch-issue-attachments.sh` bypasses the "
-                "comment-trust filter.\n" + HELPER_HINT,
-                file=sys.stderr,
+                "comment-trust filter.\n" + HELPER_HINT
             )
+            print(reason, file=sys.stderr)
+            log_denial("enforce-comment-trust", tool_name, reason, command,
+                        session_id=session_id)
             return 2
 
     return 0
