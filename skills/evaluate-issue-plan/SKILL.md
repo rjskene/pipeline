@@ -116,7 +116,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    - If the plan says "None" for schema/API/frontend/test sections, grep for evidence that changes ARE needed.
    - If the plan lists changes, verify they're consistent with existing patterns in the codebase.
    - **README anchor guard (#397/#404):** If the plan prescribes adding any `README.md` link of the form `*.md#anchor` (regex `\.md#[A-Za-z0-9_-]+`), return **Revise** — README uses file-level links only; anchored cross-references are banned by the policy enforced in `tests/test-readme-current.sh`.
-   - **Exact-match guard sweep (#1200):** Run the mechanical sweep, never an improvised `grep`. Improvisation is what produced the consumer's keyset-caught / literal-missed asymmetry: an undeclared `assertEqual(msgs, [{...}])` contradicted the RED-authored suite and stalled the GREEN implementer mid-leg.
+   - **Exact-match guard sweep (#1200):** Run the mechanical sweep, never an improvised `grep`.
 
      First resolve split-role applicability MECHANICALLY — fetch the labels rather than inferring the path from the title (`gh issue view <N> --repo $PIPELINE_REPO --json labels`). Split-role applies when the issue is PATH B (none of `docs-only` / `quick-fix` / `multi-task` present) AND `${PIPELINE_PATH_B_SPLIT_ROLE:-true}` is not `false`. Then run the sweep from the project root, threading the test roots explicitly — the helper NEVER sources `pipeline.config` (same contract as `split-role-gate.sh`):
 
@@ -140,6 +140,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    - Are data structures, algorithms, or mode behaviors specified concretely (no ambiguous steps)?
    - Would the executor need to make design decisions the plan doesn't address?
    - Could an executor implement every step from the comment alone?
+   - **Skill-edit coverage:** a plan editing `skills/<name>/SKILL.md` must pass every test in `grep -l 'skills/<name>' tests/*.sh`, not only the pins the issue names; a task that cannot pass one is a **Revise**, not an execute-time scope-down.
 
 4. **Check for conflicts with in-flight work:**
    ```bash
