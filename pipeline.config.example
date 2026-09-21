@@ -136,6 +136,14 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 # That emergency-diagnosis stream is intentionally ungated.
 PIPELINE_LOGS_ENABLED=false
 
+# Retention window (days) for scripts/prune-logs.sh, the dry-run-by-default
+# pass over .claude/logs/ wired into /pipeline:status housekeeping (#1353).
+# Default is 30, single-sourced at the read site (${PIPELINE_LOGS_RETENTION_DAYS:-30}
+# in scripts/prune-logs.sh); stays commented so `doctor.sh --fix config` never
+# seeds it (#1052). See docs/observability.md for the keep-list and the
+# operator --apply form.
+#PIPELINE_LOGS_RETENTION_DAYS=30
+
 # Out dir for /pipeline:visualize renders (default .claude/scratch/visuals/, read-site ${PIPELINE_VISUALS_DIR:-.claude/scratch/visuals/}; uncomment to override).
 #PIPELINE_VISUALS_DIR=".claude/scratch/visuals/"
 
