@@ -238,9 +238,9 @@ A guard that passes is not evidence until you have seen it fail on something.
 8. **Rebase only when NOT mergeable:**
    ```bash
    gh pr view $PR_NUM --repo $PIPELINE_REPO --json mergeable,mergeStateStatus
-   git fetch origin $PIPELINE_BASE_BRANCH; git diff --name-only HEAD...origin/$PIPELINE_BASE_BRANCH
+   git fetch origin $PIPELINE_BASE_BRANCH; git diff --name-only origin/$PIPELINE_BASE_BRANCH...HEAD
    ```
-   `git rebase origin/$PIPELINE_BASE_BRANCH` ONLY when the PR reports other than `MERGEABLE` + `CLEAN`/`UNSTABLE`, or the diff names a file this PR touches; an advanced base alone is not a reason (merge-commits, #459) and a needless rebase forces a full CI re-watch. If conflicts are complex (semantic, not whitespace), flag for user review.
+   `git rebase origin/$PIPELINE_BASE_BRANCH` ONLY when the PR is not `MERGEABLE` + `CLEAN`/`UNSTABLE`, or a file in that list also changed on the base since the merge-base (`git diff --name-only HEAD...origin/$PIPELINE_BASE_BRANCH`, intersected); an advanced base alone is not a reason (merge-commits, #459) and a needless rebase forces a CI re-watch. If conflicts are complex (semantic, not whitespace), flag for user review.
 
 9. **Post evaluation comment on the PR** via `gh pr comment $PR_NUM --repo $PIPELINE_REPO --body "<evaluation>"` using this format:
 
