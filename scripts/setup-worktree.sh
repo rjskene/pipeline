@@ -152,7 +152,7 @@ if [ -f "$MAIN_REPO/pipeline.config" ]; then
   echo "  Copied pipeline.config"
 fi
 # Sync .env files
-for envfile in $PIPELINE_SYNC_ENVS; do
+for envfile in ${PIPELINE_SYNC_ENVS:-}; do
   if [ -f "$MAIN_REPO/$envfile" ]; then
     mkdir -p "$WORKTREE_PATH/$(dirname "$envfile")"
     cp "$MAIN_REPO/$envfile" "$WORKTREE_PATH/$envfile"
@@ -160,7 +160,7 @@ for envfile in $PIPELINE_SYNC_ENVS; do
   fi
 done
 # Symlink venvs from main repo (avoids duplicating large venvs)
-for venvdir in $PIPELINE_SYNC_VENVS; do
+for venvdir in ${PIPELINE_SYNC_VENVS:-}; do
   if [ -d "$MAIN_REPO/$venvdir" ]; then
     mkdir -p "$WORKTREE_PATH/$(dirname "$venvdir")"
     ln -sfn "$MAIN_REPO/$venvdir" "$WORKTREE_PATH/$venvdir"
