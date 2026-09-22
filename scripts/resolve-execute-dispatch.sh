@@ -236,7 +236,14 @@ else
     # redefine the regex (bug #1039).
     # shellcheck source=scripts/_high-uncertainty-match.sh
     . "${_red_dir}/_high-uncertainty-match.sh"
-    if printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" | grep -iEq "$HIGH_UNCERTAINTY_RE"; then
+    # #1381: strip backticked path-shaped tokens first — a listed filename such
+    # as `docs/security-model.md` is a file reference, not a risk claim, so
+    # merely naming it must not buy an opus execute.
+    # CAPTURE first, then match with a here-string: the producer must finish
+    # writing before `grep -q` can exit, or SIGPIPE + `pipefail` silently voids
+    # the carve-out on a large body.
+    HU_TEXT="$(printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" | hu_strip_path_tokens)"
+    if grep -iEq "$HIGH_UNCERTAINTY_RE" <<<"$HU_TEXT"; then
       MODEL="opus"; REASON="high-uncertainty"; W2=1
     else
       MODEL="$RESOLVED_KNOB"; REASON="$KNOB_REASON"
