@@ -248,7 +248,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
 
 1. **Plan**
 
-   **1a. Ingest attachments for the slate.** For each issue in the slate (the ready-issue set being processed this wave), run `fetch-issue-attachments.sh` so downstream classify/plan/execute/evaluate-pr agents have screenshots and binary evidence available locally:
+   **1a. Ingest attachments for the slate.** For each issue in the slate (the ready-issue set being processed this wave), run the sanctioned `filter-trusted-comments.sh fetch-attachments <N>` fence (#1340 — a direct fetch-issue-attachments.sh call is denied by the enforce-comment-trust hook) so downstream classify/plan/execute/evaluate-pr agents have screenshots and binary evidence available locally:
 
    ```bash
    for N in <slate-issue-numbers>; do
