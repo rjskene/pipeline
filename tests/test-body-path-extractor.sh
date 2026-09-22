@@ -171,10 +171,36 @@ PLAN_BODY_B6='## Implementation Plan
 - Task 1: `sort` and `next_due` are symbols too
 '
 
+# ---- #1381 fixtures: the verify-only listing line, with and without the cue --
+# Two issues editing DISJOINT files that both LIST the same unedited contract
+# doc. Behind the `do not edit — verify only:` cue bp_drop_negated_lines drops
+# the line, so the listed doc contributes no edit edge (ONE wave). The cue-less
+# twins are byte-identical apart from the cue.
+BODY_CUE_A='Renames a dispatch token.
+
+## Affected areas
+
+- `skills/plan-issue/SKILL.md`
+- do not edit — verify only: `docs/shared-contract.md`
+'
+BODY_CUE_B='Renames the sibling token.
+
+## Affected areas
+
+- `agents/tdd-implementer.md`
+- do not edit — verify only: `docs/shared-contract.md`
+'
+BODY_NOCUE_A=${BODY_CUE_A//do not edit — verify only: /verify only: }
+BODY_NOCUE_B=${BODY_CUE_B//do not edit — verify only: /verify only: }
+
 write_issue "$S" 1 "priority/P2" "$BODY_DUP"
 write_issue "$S" 2 "priority/P2" "$BODY_JUNK"
 write_issue "$S" 3 "priority/P2" "$BODY_DEEP"
 write_issue "$S" 4 "priority/P2" "$BODY_SHALLOW"
+write_issue "$S" 5 "priority/P2" "$BODY_CUE_A"
+write_issue "$S" 6 "priority/P2" "$BODY_CUE_B"
+write_issue "$S" 7 "priority/P2" "$BODY_NOCUE_A"
+write_issue "$S" 8 "priority/P2" "$BODY_NOCUE_B"
 
 EXPECTED_DUP_SET="skills/plan-issue/SKILL.md"
 
@@ -389,6 +415,33 @@ if printf '%s\n' "$P2_OUT" | grep -E '^Wave 2:' | grep -q 'skills/plan-issue/SKI
 else
   fail_msg "P2: expected a 'Wave 2:' line citing skills/plan-issue/SKILL.md"
   dump "stdout:" "$P2_OUT"
+fi
+
+# ---- P3: the negation cue keeps a disjoint slate in ONE wave (#1381) --------
+# Expected GREEN at the RED commit: bp_drop_negated_lines (#1347) ALREADY drops
+# a `do not edit — verify only: …` line. P3 is the REGRESSION LOCK on the cue
+# FORM skills/evolve/SKILL.md Step 3 now mandates — an executor seeing it green
+# must NOT conclude the wording task is unnecessary, nor bend this case to red.
+echo "P3: two issues listing the same unedited doc behind the cue plan as one wave"
+inc
+P3_OUT=$(run_plan_waves --stage=execute 5 6 2>"$TMP/p3.err" || true)
+if [ -n "$P3_OUT" ] && ! printf '%s\n' "$P3_OUT" | grep -qE '^Wave 2:'; then
+  pass_msg "P3: no 'Wave 2:' line — the verify-only listing contributed no edge"
+else
+  fail_msg "P3: expected NO 'Wave 2:' line (or plan-waves produced no output at all)"
+  dump "stdout:" "$P3_OUT"
+fi
+
+# ---- P3b: non-vacuity control — the SAME slate without the cue serializes ---
+# Proves P3's verdict comes from the cue, not from trivially disjoint fixtures.
+echo "P3b: the same two issues without the cue serialize on the shared doc"
+inc
+P3B_OUT=$(run_plan_waves --stage=execute 7 8 2>"$TMP/p3b.err" || true)
+if printf '%s\n' "$P3B_OUT" | grep -E '^Wave 2:' | grep -q 'docs/shared-contract\.md'; then
+  pass_msg "P3b: Wave 2 serialization cites docs/shared-contract.md"
+else
+  fail_msg "P3b: expected a 'Wave 2:' line citing docs/shared-contract.md"
+  dump "stdout:" "$P3B_OUT"
 fi
 
 # ============================================================================

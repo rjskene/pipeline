@@ -99,8 +99,14 @@ fi
 # concurrency signal").
 # shellcheck source=scripts/_high-uncertainty-match.sh
 . "$(dirname "${BASH_SOURCE[0]:-$0}")/_high-uncertainty-match.sh"
-if printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" \
-     | grep -iEq "$HIGH_UNCERTAINTY_RE"; then
+# #1381: strip backticked path-shaped tokens first — a listed filename such as
+# `docs/security-model.md` is a file reference, not a risk claim, so merely
+# naming it must not score high-blast.
+# CAPTURE first, then match with a here-string: the producer must finish writing
+# before `grep -q` can exit, or SIGPIPE + `pipefail` silently voids the
+# carve-out on a large body.
+HU_TEXT="$(printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" | hu_strip_path_tokens)"
+if grep -iEq "$HIGH_UNCERTAINTY_RE" <<<"$HU_TEXT"; then
   emit high-blast high-uncertainty
 fi
 

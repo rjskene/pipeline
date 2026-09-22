@@ -84,6 +84,16 @@ else
   fail_msg "skill: W2 carve-out -> Opus clause missing from the routing block"
 fi
 
+# 3b. The SAME shared helper must also define hu_strip_path_tokens (#1381): the
+#     two carve-out call sites now require it, so this file's own source of the
+#     helper cannot drift from what they need.
+inc
+if declare -F hu_strip_path_tokens >/dev/null 2>&1; then
+  pass_msg "helper: hu_strip_path_tokens is defined alongside HIGH_UNCERTAINTY_RE"
+else
+  fail_msg "helper: hu_strip_path_tokens missing from scripts/_high-uncertainty-match.sh"
+fi
+
 # 4. SKILL routing block: PATH D needs-browser carve-out (#960) STILL forces Opus.
 #    #1186 changes the MECHANISM, not the carve-out: the branch now PINS the named
 #    `model=opus` instead of suppressing model= and inheriting the session model
