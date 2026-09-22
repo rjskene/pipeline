@@ -140,6 +140,7 @@ fi
 # Step 2: Sync untracked .claude/ files (settings.local.json, untracked hooks, .env files, venvs)
 echo "[2/6] Syncing untracked files (.claude/, .env)..."
 mkdir -p "$WORKTREE_PATH/.claude/hooks"
+mkdir -p "$WORKTREE_PATH/.claude/scratch"
 if [ -f "$MAIN_REPO/.claude/settings.local.json" ]; then
   cp "$MAIN_REPO/.claude/settings.local.json" "$WORKTREE_PATH/.claude/settings.local.json"
 fi
@@ -180,7 +181,6 @@ done
 # Step 3: Mirror per-issue scratch attachments into the worktree
 if [ -n "${ISSUE_NUM:-}" ] && [ -d "$MAIN_REPO/.claude/scratch/issue-${ISSUE_NUM}" ]; then
   echo "[3/6] Mirroring .claude/scratch/issue-${ISSUE_NUM}/ into worktree..."
-  mkdir -p "$WORKTREE_PATH/.claude/scratch"
   cp -R "$MAIN_REPO/.claude/scratch/issue-${ISSUE_NUM}" "$WORKTREE_PATH/.claude/scratch/"
   echo "  Copied issue-${ISSUE_NUM} attachments into worktree scratch"
 else
