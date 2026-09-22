@@ -77,6 +77,11 @@ Known trip-wires and the way around each:
   session before assuming the guard is wrong; it is the audit trail this
   section's trip-wires were previously diagnosed without.
 
+- **Release promotion lane (#1356).** `enforce-base-branch.py` denies every
+  `gh pr create`/`gh pr edit --base` off the worktree base except the exact
+  promotion shape `--base <PIPELINE_RELEASE_BRANCH> --head <PIPELINE_BASE_BRANCH>`;
+  omit `--head` and it still blocks. See docs/release-cadence.md step 2.
+
 ## 2. Executor wedge classes & recovery
 
 Dispatched executors (`claude -p` workers and inline `Agent` subagents) wedge in
