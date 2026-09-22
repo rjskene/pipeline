@@ -40,7 +40,7 @@ run_hook_unset() {
   local tmp_err rc
   tmp_err=$(mktemp)
   set +e
-  printf '%s' "$payload" | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$REPO_ROOT" python3 "$HOOK" >/dev/null 2>"$tmp_err"
+  printf '%s' "$payload" | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$REPO_ROOT" PIPELINE_LOGS_ENABLED=false python3 "$HOOK" >/dev/null 2>"$tmp_err"
   rc=$?
   set -e
   local stderr; stderr=$(cat "$tmp_err"); rm -f "$tmp_err"
@@ -68,7 +68,7 @@ run_hook_set() {
   local tmp_err rc
   tmp_err=$(mktemp)
   set +e
-  printf '%s' "$payload" | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$REPO_ROOT" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" python3 "$HOOK" >/dev/null 2>"$tmp_err"
+  printf '%s' "$payload" | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$REPO_ROOT" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" PIPELINE_LOGS_ENABLED=false python3 "$HOOK" >/dev/null 2>"$tmp_err"
   rc=$?
   set -e
   local stderr; stderr=$(cat "$tmp_err"); rm -f "$tmp_err"
