@@ -55,6 +55,12 @@ HELPER_HINT = (
     "calls bypass that trust filter."
 )
 
+ATTACH_HINT = (
+    "Ingest attachments through `scripts/filter-trusted-comments.sh "
+    "fetch-attachments <N>` instead - the sanctioned wrapper that this hook "
+    "allows by presence (#1340)."
+)
+
 
 def _basename(word):
     return word.strip("\"'").rsplit("/", 1)[-1]
@@ -123,7 +129,7 @@ def _legacy_scan(command: str, tool_name: str = "Bash", session_id=None) -> int:
     if "fetch-issue-attachments.sh" in command:
         reason = (
             "BLOCKED: direct `fetch-issue-attachments.sh` bypasses the "
-            "comment-trust filter.\n" + HELPER_HINT
+            "comment-trust filter.\n" + ATTACH_HINT + "\n" + HELPER_HINT
         )
         print(reason, file=sys.stderr)
         log_denial("enforce-comment-trust", tool_name, reason, command,
@@ -165,7 +171,7 @@ def main():
         if _invokes_attachments(words):
             reason = (
                 "BLOCKED: direct `fetch-issue-attachments.sh` bypasses the "
-                "comment-trust filter.\n" + HELPER_HINT
+                "comment-trust filter.\n" + ATTACH_HINT + "\n" + HELPER_HINT
             )
             print(reason, file=sys.stderr)
             log_denial("enforce-comment-trust", tool_name, reason, command,

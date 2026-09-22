@@ -13,6 +13,7 @@ PIPELINE_REPO="owner/repo"                         # GitHub owner/repo
 PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: staging — dev trunk; override per-repo if needed)
 #PIPELINE_NEXT_BRANCH="next"   # Next-integration branch for breaking-change work (default: next, read-site ${VAR:-next}; uncomment to override)
 #PIPELINE_NEXT_LABEL="next"    # Label routing an issue onto PIPELINE_NEXT_BRANCH (default next; legacy alias next-major-release also honored)
+#PIPELINE_RELEASE_BRANCH="main"  # Release branch the promotion PR targets (default: main, read-site default in hooks/enforce-base-branch.py; uncomment to override). #1356
 #PIPELINE_PROJECT_ROOT=""     # Orchestrator checkout root. Unset => read sites fall back to $(pwd) (correct only because the Bash tool resets cwd to the project root). Set to an absolute path to make the target explicit (#1215).
 # --- Calibration slate (issue #1280) — env seams read by scripts/calibration-run.sh.
 # All optional; every default is single-sourced at the read site, so these stay

@@ -260,6 +260,57 @@ else
   fail_msg "Case P: expected rc!=0, got rc=$rc"
 fi
 
+# --- Release promotion lane (#1356) ----------------------------------------
+# Allow ONLY: --base == PIPELINE_RELEASE_BRANCH (default main) AND --head == EXPECTED_BASE.
+REL_PROJ="$WORKDIR/proj-rel"
+mkdir -p "$REL_PROJ/.claude"
+printf 'staging\n' > "$REL_PROJ/.claude/base-branch"
+printf 'PIPELINE_BASE_BRANCH="staging"\nPIPELINE_RELEASE_BRANCH="release"\n' > "$REL_PROJ/pipeline.config"
+
+echo "Case Q: promotion --base main --head staging allows (a)"
+inc; rc=$(run_hook 'gh pr create --base main --head staging --title T --body B')
+[ "$rc" = "0" ] && pass_msg "Case Q: allowed" || fail_msg "Case Q: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+
+echo "Case R: promotion --base=main --head=staging (equals form) allows (a)"
+inc; rc=$(run_hook 'gh pr create --base=main --head=staging --title T --body B')
+[ "$rc" = "0" ] && pass_msg "Case R: allowed" || fail_msg "Case R: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+
+echo "Case S: --base main --head feature/x blocks (b)"
+inc; rc=$(run_hook 'gh pr create --base main --head feature/x --title T --body B')
+[ "$rc" != "0" ] && pass_msg "Case S: blocked" || fail_msg "Case S: expected rc!=0, got rc=$rc"
+
+echo "Case T: --base main with --head omitted blocks (c)"
+inc; rc=$(run_hook 'gh pr create --base main --title T --body B')
+[ "$rc" != "0" ] && pass_msg "Case T: blocked" || fail_msg "Case T: expected rc!=0, got rc=$rc"
+
+echo "Case U: PIPELINE_RELEASE_BRANCH=release — --base main --head staging blocks (d)"
+inc; rc=$(run_hook_in "$REL_PROJ" 'gh pr create --base main --head staging --title T --body B')
+[ "$rc" != "0" ] && pass_msg "Case U: blocked" || fail_msg "Case U: expected rc!=0, got rc=$rc"
+
+echo "Case U2: PIPELINE_RELEASE_BRANCH=release — --base release --head staging allows (d, knob is read)"
+inc; rc=$(run_hook_in "$REL_PROJ" 'gh pr create --base release --head staging --title T --body B')
+[ "$rc" = "0" ] && pass_msg "Case U2: allowed" || fail_msg "Case U2: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+
+echo "Case V: next-routing unchanged — --base main --head feature/x blocks when base-branch=next (e)"
+inc; rc=$(run_hook_in "$NEXT_PROJ" 'gh pr create --base main --head feature/x --title T --body B')
+[ "$rc" != "0" ] && pass_msg "Case V: blocked" || fail_msg "Case V: expected rc!=0, got rc=$rc"
+
+echo "Case V2: next-routing unchanged — --base next --head feature/x allows when base-branch=next (e)"
+inc; rc=$(run_hook_in "$NEXT_PROJ" 'gh pr create --base next --head feature/x --title T --body B')
+[ "$rc" = "0" ] && pass_msg "Case V2: allowed" || fail_msg "Case V2: expected rc=0, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+
+echo "Case X: deny message for --base main names the promotion shape"
+inc; rc=$(run_hook 'gh pr create --base main --title T --body B')
+if [ "$rc" != "0" ] && grep -q -- "--base main --head staging" "$WORKDIR/err"; then
+  pass_msg "Case X: blocked with promotion hint"
+else
+  fail_msg "Case X: expected rc!=0 and '--base main --head staging' in stderr, got rc=$rc, stderr: $(cat "$WORKDIR/err")"
+fi
+
+echo "Case Y: unterminated quote (legacy scan) — --base main --head staging still blocks (fail-closed)"
+inc; rc=$(run_hook 'gh pr create --base main --head staging --title "T')
+[ "$rc" != "0" ] && pass_msg "Case Y: blocked (legacy scan has no release lane)" || fail_msg "Case Y: expected rc!=0, got rc=$rc"
+
 echo ""
 echo "================================"
 echo "  $TESTS cases: $PASS passed, $FAIL failed"
