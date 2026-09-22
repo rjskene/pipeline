@@ -20,6 +20,7 @@ attempt onto the same broken path).
 """
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,25 @@ from command_mask import mask_command  # noqa: E402
 from subagent_log_utils import append_locked  # noqa: E402
 
 _MAX_COMMAND_LEN = 512
+
+
+def _resolve_log_dir(project_dir: str) -> Path:
+    """Main checkout root for project_dir (issue #1380): git-common-dir's
+    parent, same idiom as check-capability-refusal.sh --resolve-sources.
+    Falls back to project_dir on any failure — must never raise."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", project_dir, "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            common = Path(out.stdout.strip())
+            if not common.is_absolute():
+                common = Path(project_dir) / common
+            return common.resolve().parent
+    except Exception:
+        pass
+    return Path(project_dir)
 
 
 def _logs_enabled(project_dir: str) -> bool:
@@ -73,7 +93,7 @@ def log_denial(hook: str, tool_name: str, reason: str, command_text: str = "",
             "reason": first_line,
             "command": masked[:_MAX_COMMAND_LEN],
         }
-        log_path = Path(project_dir) / ".claude" / "logs" / "hook-denials.jsonl"
+        log_path = _resolve_log_dir(project_dir) / ".claude" / "logs" / "hook-denials.jsonl"
         append_locked(log_path, json.dumps(record))
     except Exception:
         pass
