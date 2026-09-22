@@ -28,7 +28,7 @@ Logging hooks and substrate for this repo's own dogfood operation. Most are regi
 
 Gated on the same [`PIPELINE_LOGS_ENABLED`](#pipeline_logs_enabled-gate) flag as `tool-use.log` / `agent-costs.jsonl` (disabled — no file, no directory touched — until a host opts in); the log-dir resolution mirrors `capture_agent_cost.py` (`CLAUDE_PROJECT_DIR` or cwd, then `.claude/logs/`), so denials from linked worktrees land in the one durable main-checkout file. The helper is **fail-open by construction**: its entire body is wrapped in one `try/except Exception: pass`, so a logging failure can never turn a deny into a crash or an allow, and it writes no error log of its own. No guard's decision logic, exit code, or stderr text changes — this is a pure audit-trail addition.
 
-`scripts/run-retro.sh` consumes this file as the primary source for the `friction/denials` row (in-window count + per-hook breakdown, falling back to the `tool-use.log` scan when the deny log is absent, #1360).
+`scripts/run-retro.sh` consumes this file as the primary source for the `friction/denials` row (in-window count + per-hook breakdown, falling back to the `tool-use.log` scan when the deny log is absent, #1360). The process env wins over `pipeline.config`, so evaluator negative controls — direct hook probes run with `PIPELINE_LOGS_ENABLED=false` — are absent from the log; a `session=unknown` row is a direct invocation that forgot the prefix, not a live denial.
 
 ## Runs log
 
