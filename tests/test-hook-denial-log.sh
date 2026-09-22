@@ -41,8 +41,9 @@ inc()      { TESTS=$((TESTS + 1)); }
 WORK=$(mktemp -d)
 PROJ="$WORK/project"
 STUB_DIR="$WORK/stub"
+GWORK=""
 cleanup() {
-  rm -rf "$WORK"
+  rm -rf "$WORK" "${GWORK:-}"
   rm -f /tmp/claude-path-c-denylog-*.cache
 }
 trap cleanup EXIT
@@ -440,6 +441,36 @@ if [ "$rc" = "0" ] && [ "$(log_lines)" = "0" ]; then
 else
   fail_msg "(f) enforce-comment-trust allow: rc=$rc, records=$(log_lines)"
 fi
+
+# ---------------------------------------------------------------------------
+# Case (g) — worktree-aware resolution (#1380): CLAUDE_PROJECT_DIR set to a
+# LINKED worktree resolves the log to the MAIN checkout, not the worktree.
+# Cases (a)-(f) above already cover the git-absent fallback ($PROJ has no
+# .git, so today's Path(project_dir) behavior stays exercised).
+# ---------------------------------------------------------------------------
+echo "Case (g): CLAUDE_PROJECT_DIR=<linked worktree> -> log lands in MAIN checkout"
+inc
+GWORK=$(mktemp -d)
+git -c init.defaultBranch=main init -q "$GWORK/main"
+git -C "$GWORK/main" config user.email t@t.t
+git -C "$GWORK/main" config user.name t
+git -C "$GWORK/main" config commit.gpgsign false
+git -C "$GWORK/main" commit -q --allow-empty -m init
+git -C "$GWORK/main" worktree add -q -b denylog-g-branch "$GWORK/wt" >/dev/null
+set +e
+printf '%s' '{"tool_name":"Bash","session_id":"denylog-g","tool_input":{"command":"rm -rf /some/path"}}' \
+  | env -i HOME="$HOME" PATH="$STUB_DIR:/usr/bin:/bin" CLAUDE_PROJECT_DIR="$GWORK/wt" \
+    PIPELINE_LOGS_ENABLED=true python3 "$HOOKS_DIR/block_deletions.py" >/dev/null 2>"$GWORK/err"
+rc=$?
+set -e
+main_lines="$(grep -c . "$GWORK/main/$LOG_REL" 2>/dev/null || echo 0)"
+if [ "$rc" = "2" ] && [ "$main_lines" = "1" ] && [ ! -e "$GWORK/wt/$LOG_REL" ]; then
+  pass_msg "(g) worktree denial logs to MAIN checkout, no worktree-local file"
+else
+  fail_msg "(g) rc=$rc main-lines=$main_lines wt-file=$([ -e "$GWORK/wt/$LOG_REL" ] && echo yes || echo no)"
+fi
+rm -rf "$GWORK"
+GWORK=""
 
 echo ""
 echo "================================"
