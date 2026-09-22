@@ -15,6 +15,15 @@ Strict allowlist: blocks ``gh pr create`` unless it explicitly uses
 ``X`` differs from ``EXPECTED_BASE`` (defense-in-depth against
 post-creation retargeting); ``gh pr edit`` without ``--base`` is
 unaffected because it represents a title/body-only edit.
+
+Release promotion lane (#1356): a narrow exception admits the
+``staging`` -> ``main`` release promotion PR. ``gh pr create`` is
+allowed when ``--base`` equals ``PIPELINE_RELEASE_BRANCH`` (read from
+``pipeline.config``, default ``"main"``) AND ``--head`` is present and
+equals ``EXPECTED_BASE``. A missing ``--head``, or a ``--head`` other
+than the configured base branch, still denies. This lane is
+segment-only: ``_legacy_scan`` (the unparseable-command fallback) never
+extracts ``--head`` and so can never admit a promotion PR.
 """
 import os
 import re
@@ -46,6 +55,36 @@ def _resolve_expected_base() -> str:
 
 
 EXPECTED_BASE = _resolve_expected_base()
+
+
+def _resolve_release_branch() -> str:
+    # #1356 release lane. Config-file only (same source as the
+    # EXPECTED_BASE fallback); no env override, no .claude/ metadata file.
+    root = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return _read_config("PIPELINE_RELEASE_BRANCH", "main", project_dir=root)
+
+
+RELEASE_BRANCH = _resolve_release_branch()
+
+
+def _extract_head(words):
+    """Return the --head value (`--head X` / `--head=X`), or None."""
+    for j, w in enumerate(words):
+        if w == "--head":
+            return words[j + 1] if j + 1 < len(words) else None
+        if w.startswith("--head="):
+            return w[len("--head="):]
+    return None
+
+
+def _is_release_promotion(actual_base, actual_head):
+    """#1356: base == RELEASE_BRANCH AND head == EXPECTED_BASE. A missing
+    --head never qualifies (gh would default the head to the current
+    branch)."""
+    if actual_head is None:
+        return False
+    return actual_base == RELEASE_BRANCH and actual_head.strip("'\"") == EXPECTED_BASE
+
 
 # Treat the unexpanded $PIPELINE_BASE_BRANCH token as the configured base
 # (#1323). skills/execute-issue-plan/SKILL.md prescribes
@@ -88,12 +127,13 @@ def _extract_base(words):
     return None
 
 
-def _decide(kind, actual_base):
+def _decide(kind, actual_base, actual_head=None):
     """Return (exit_code, message_or_None) for a matched `gh pr create|edit`
     segment. Preserves the long-standing decision semantics: missing --base
     on `create` is FATAL; a --base mismatch (after resolving the #1323
-    $PIPELINE_BASE_BRANCH token) is blocked; `edit` without --base is a
-    title/body-only edit and is allowed."""
+    $PIPELINE_BASE_BRANCH token) is blocked unless it is the #1356 release
+    promotion lane; `edit` without --base is a title/body-only edit and is
+    allowed."""
     if actual_base is None:
         if kind == "create":
             # Without --base, `gh pr create` silently falls back to the
@@ -116,10 +156,16 @@ def _decide(kind, actual_base):
         actual_base = EXPECTED_BASE if env_value is None else env_value
 
     if actual_base != EXPECTED_BASE:
+        if _is_release_promotion(actual_base, actual_head):
+            return 0, None
         subcommand = "gh pr create" if kind == "create" else "gh pr edit"
+        hint = ""
+        if actual_base == RELEASE_BRANCH:
+            hint = (f" Release promotion is the only exception: "
+                    f"--base {RELEASE_BRANCH} --head {EXPECTED_BASE}.")
         return 2, (
             f"BLOCKED: `{subcommand}` must target '{EXPECTED_BASE}', not '{actual_base}'. "
-            f"Use --base {EXPECTED_BASE}."
+            f"Use --base {EXPECTED_BASE}.{hint}"
         )
     return 0, None
 
@@ -137,6 +183,8 @@ def _legacy_scan(command: str, tool_name: str = "Bash", session_id=None) -> int:
     actual_base = match.group(1) if match else None
     kind = "create" if is_create else "edit"
 
+    # #1356: no head extraction here — the release lane is segment-only;
+    # legacy stays fail-closed.
     rc, message = _decide(kind, actual_base)
     if message:
         print(message, file=sys.stderr)
@@ -163,7 +211,7 @@ def main() -> int:
         kind = _pr_command_kind(words)
         if kind is None:
             continue
-        rc, message = _decide(kind, _extract_base(words))
+        rc, message = _decide(kind, _extract_base(words), _extract_head(words))
         if rc != 0:
             if message:
                 print(message, file=sys.stderr)
