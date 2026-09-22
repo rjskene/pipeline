@@ -120,7 +120,7 @@ Receive an issue number as argument (or from context).
    echo "Planning issue #<N> as PATH $PATH_LETTER"
    ```
 
-3b. **Ingest and read attachments.** In interactive single-issue planning (when `/pipeline:fullsend` is not the caller), run `fetch-issue-attachments.sh`, then `Read` every file under `.claude/scratch/issue-<N>/`. Idempotent — no-op if `/pipeline:fullsend` step 1a already ran.
+3b. **Ingest and read attachments.** In interactive single-issue planning (when `/pipeline:fullsend` is not the caller), run the sanctioned `filter-trusted-comments.sh fetch-attachments <N>` fence (#1340), then `Read` every file under `.claude/scratch/issue-<N>/`. Idempotent — no-op if `/pipeline:fullsend` step 1a already ran.
 
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
