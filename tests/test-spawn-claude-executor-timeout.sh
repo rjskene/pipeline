@@ -30,7 +30,7 @@ fi
 
 # 2. The timeout CMD line must reference the resolved ${EXECUTOR_TIMEOUT} var.
 inc
-if grep -Eq 'timeout .*kill-after=30 \$\{EXECUTOR_TIMEOUT\}' "$SPAWN"; then
+if grep -Eq 'PORTABLE_TIMEOUT\} --foreground --signal=TERM --kill-after=30 \$\{EXECUTOR_TIMEOUT\}' "$SPAWN"; then
   pass_msg "spawn-claude.sh timeout CMD line references \${EXECUTOR_TIMEOUT}"
 else
   fail_msg "spawn-claude.sh timeout CMD line does not reference \${EXECUTOR_TIMEOUT}"

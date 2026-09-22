@@ -11,6 +11,7 @@ source "${PIPELINE_PROJECT_ROOT:-$(pwd)}/pipeline.config"
 # inline definition when the helper is missing (e.g. partial install or
 # tests copying spawn-claude.sh in isolation) so we never hard-fail.
 _spawn_claude_dir="$(dirname "${BASH_SOURCE[0]}")"
+PORTABLE_TIMEOUT="$(cd "${_spawn_claude_dir}" && pwd)/portable-timeout.sh"
 if [ -f "${_spawn_claude_dir}/_logging.sh" ]; then
   source "${_spawn_claude_dir}/_logging.sh"
 else
@@ -552,7 +553,7 @@ INNER="\${INNER# }"
 # wraps the whole timeout->claude tree in a systemd-run --user scope so a runaway
 # is OOM/pid-killed inside its cgroup; it ends with "-- " or is empty (graceful
 # degrade), so this collapses to a clean "timeout …" when unavailable (#918).
-CMD="${SCOPE_PREFIX}timeout --foreground --signal=TERM --kill-after=30 ${EXECUTOR_TIMEOUT} \$INNER"
+CMD="${SCOPE_PREFIX}${PORTABLE_TIMEOUT} --foreground --signal=TERM --kill-after=30 ${EXECUTOR_TIMEOUT} \$INNER"
 if [ "\$(uname -s)" = "Darwin" ]; then
   ${LAUNCHER_EXEC_DARWIN}
 else
