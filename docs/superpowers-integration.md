@@ -5,7 +5,7 @@ Where pipeline stages invoke superpowers skills. Companion to `CLAUDE.md` § "Pi
 ## Mental model
 
 - Pipeline = outer workflow; superpowers = inner tools. Pipeline orchestrates; superpowers execute.
-- Pipeline skills declare superpower dependencies at point-of-use via `Skill(skill: "superpowers:<name>")` (Task tool dispatch for `superpowers:code-reviewer`).
+- Pipeline skills declare superpower dependencies at point-of-use via `Skill(skill: "superpowers:<name>")` (Step 8b: `general-purpose` + the `requesting-code-review` `code-reviewer.md` template).
 - Composition is per-stage, not global: a single pipeline run can invoke 0–5 distinct superpowers depending on PATH.
 - Pipeline owns lifecycle (labels, branches, PRs); superpowers own discipline (brainstorming, planning, TDD, review).
 - Authoritative invocation sites live in each `skills/<stage>/SKILL.md`; the table below is the index, not the spec.
@@ -22,7 +22,7 @@ Where pipeline stages invoke superpowers skills. Companion to `CLAUDE.md` § "Pi
 | `execute-issue-plan` (PATH C) | `superpowers:test-driven-development` | `skills/execute-issue-plan/SKILL.md` § Step 5 (via `tdd-implementer` subagent dispatch with `target=<dir>` sentinel) |
 | `execute-issue-plan` (PATH D) | `superpowers:test-driven-development` (inline) | `skills/execute-issue-plan/SKILL.md` § Step 5 (executor IS tdd-implementer; no subagent) |
 | `execute-issue-plan` (all paths) | `superpowers:requesting-code-review` | `skills/execute-issue-plan/SKILL.md` § Step 8a "Author self-check" |
-| `execute-issue-plan` (all paths) | `superpowers:code-reviewer` | `skills/execute-issue-plan/SKILL.md` § Step 8b (Task tool subagent dispatch) |
+| `execute-issue-plan` (all paths) | `general-purpose` + the `requesting-code-review` `code-reviewer.md` template | `skills/execute-issue-plan/SKILL.md` § Step 8b (description `code review #<N>`) |
 | `execute-issue-plan` (all paths) | `superpowers:receiving-code-review` | `skills/execute-issue-plan/SKILL.md` § Step 8c "Triage findings" |
 | `execute-issue-plan` (post-PR feedback) | `superpowers:receiving-code-review` | `skills/execute-issue-plan/SKILL.md` § "If evaluate-issue-pr flags the PR" |
 | `hotfix` | `superpowers:test-driven-development` | `skills/hotfix/SKILL.md` § red→green→commit loop |
@@ -37,7 +37,7 @@ Bullet timeline — one standard issue (`label: (none)`) from filed to merged. E
 - Human approves → `plan-approved`.
 - `/pipeline:execute-issue-plan` Step 5 → invokes `superpowers:test-driven-development` (Task 0) → executor applies red→green→commit per task.
 - `/pipeline:execute-issue-plan` Step 8a → invokes `superpowers:requesting-code-review` → self-verify plan compliance + green tests.
-- `/pipeline:execute-issue-plan` Step 8b → Task tool dispatches `subagent_type: "superpowers:code-reviewer"` → returns findings.
+- `/pipeline:execute-issue-plan` Step 8b → dispatches `general-purpose` + the `requesting-code-review` `code-reviewer.md` template (description `code review #<N>`) → returns findings.
 - `/pipeline:execute-issue-plan` Step 8c → invokes `superpowers:receiving-code-review` → triage findings (must-fix / nice-to-have / incorrect) → fix or reject inline.
 - PR opened → `/pipeline:evaluate-issue-pr` → if flagged, re-invokes `superpowers:receiving-code-review` in executor session.
 - Auto-merge on green → `merged`.
