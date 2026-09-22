@@ -246,10 +246,22 @@ echo "Case W: bare fetch-issue-attachments.sh direct call still blocked (#1340 c
 inc
 rc=$(run_hook '{"tool_input":{"command":"bash \"${CLAUDE_PLUGIN_ROOT}/scripts/fetch-issue-attachments.sh\" 549"}}')
 if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err" \
-   && grep -q "filter-trusted-comments.sh" "$WORKDIR/err"; then
+   && grep -q "filter-trusted-comments.sh" "$WORKDIR/err" \
+   && grep -q "filter-trusted-comments.sh fetch-attachments" "$WORKDIR/err"; then
   pass_msg "bare direct fetch-issue-attachments.sh call still denied"
 else
   fail_msg "expected rc=2 + BLOCKED + helper hint, got rc=$rc err=$(cat "$WORKDIR/err")"
+fi
+
+echo "Case W2: legacy-scan deny (unterminated quote) names the fetch-attachments subcommand (#1357)"
+inc
+rc=$(run_hook '{"tool_input":{"command":"bash scripts/fetch-issue-attachments.sh \"549"}}')
+if [ "$rc" = "2" ] && grep -q "BLOCKED:" "$WORKDIR/err" \
+   && grep -q "filter-trusted-comments.sh" "$WORKDIR/err" \
+   && grep -q "filter-trusted-comments.sh fetch-attachments" "$WORKDIR/err"; then
+  pass_msg "legacy-scan deny names fetch-attachments subcommand"
+else
+  fail_msg "expected rc=2 + BLOCKED + fetch-attachments hint, got rc=$rc err=$(cat "$WORKDIR/err")"
 fi
 
 # --- Line-continuation shape (#1342) ----------------------------------------
