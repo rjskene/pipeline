@@ -154,12 +154,12 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    Skill(skill: "superpowers:requesting-code-review")
    ```
 
-   **8b. Independent reviewer dispatch.** Dispatch a separate code-reviewer subagent (returns a list of findings or "LGTM"):
+   **8b. Independent reviewer dispatch.** The description is FIXED text — the `capture-agent-costs.sh` attribution key (`stage=pr-eval role=review`); append nothing:
    ```
    Agent(
-     subagent_type: "superpowers:code-reviewer",
-     description: "Independent review of the implementation for issue #<N> against the approved plan",
-     prompt: "<full plan comment body + git diff $PIPELINE_BASE_BRANCH..HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
+     subagent_type: "general-purpose",
+     description: "code review #<N>",
+     prompt: "<superpowers:requesting-code-review code-reviewer.md template, filled with the plan comment body + git diff $PIPELINE_BASE_BRANCH...HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
    )
    ```
 
