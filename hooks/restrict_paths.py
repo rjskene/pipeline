@@ -1658,6 +1658,10 @@ def extract_paths() -> list[str]:
             # is_allowed → os.path.realpath. See #353.
             if candidate == "//":
                 continue
+            # Skip a lone "/" (operator / string literal / prose, #1372): never a
+            # boundary reference; `cd /` is still caught by the cd gate below.
+            if candidate == "/":
+                continue
             if candidate in ("/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"):
                 continue
             if candidate.startswith("/tmp"):
