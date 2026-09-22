@@ -44,6 +44,13 @@ else
 fi
 
 inc
+if [ -d "$LEAF_A/.claude/scratch" ]; then
+  pass_msg "leaf-a .claude/scratch created"
+else
+  fail_msg "leaf-a .claude/scratch missing"
+fi
+
+inc
 LEAF_B=$(bash "$HELPER" setup "$REPO" "dev/probe/b/")
 if [ -d "$LEAF_B" ] && [ "$LEAF_B" != "$LEAF_A" ]; then
   pass_msg "leaf-b worktree is distinct from leaf-a"
