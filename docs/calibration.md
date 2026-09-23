@@ -2,7 +2,7 @@
 
 Real-work retros cannot isolate cause: every cycle's workload differs, so a cost or
 latency delta between cycles says nothing about the harness. The calibration slate
-holds the *inputs* fixed — same sandbox repo, same five issues, same base commit —
+holds the *inputs* fixed — same sandbox repo, same six issues, same base commit —
 so the harness version under test is the only variable. It doubles as the
 end-to-end regression suite the unit tests are not.
 
@@ -14,7 +14,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   project (scripts, tests, docs, CI workflow, `pipeline.config`, seeded labels).
 - **Clone location:** `${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}` —
   inside the boundary `restrict_paths.py` already allows, so no hook change.
-- **Slate:** five template issues committed at tag `calib-base`, each with a
+- **Slate:** six template issues committed at tag `calib-base`, each with a
   reference test and an expected-files list:
 
   | Issue | Path | Exercises |
@@ -24,6 +24,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   | small feature needing a new test | B | full lifecycle, split-role, pr-eval |
   | body with `race`/`auth` vocabulary | B + W2 | carve-out routing to opus |
   | two-directory change | C | per-leaf worktree fan-out, cherry-pick reassembly |
+  | planted boundary defect | B | pr-eval gate yield |
 
 ## Running
 
@@ -35,7 +36,7 @@ bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
 | Mode | What it does | Costs money |
 |---|---|---|
 | `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. | no |
-| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the five slate issues from their templates. `--reset --dry-run` previews the PR/branch sweep for free. | no |
+| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the six slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
@@ -129,9 +130,9 @@ One `CALIB` line per slate issue, then one total, both on stdout and teed to the
 artifact:
 
 ```
-CALIB-ABORT reason=<no-pr|held|timeout>
+CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
-CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>
 ```
 
 The `CALIB-ABORT` line is written only when the run did not finish, and is then
@@ -150,10 +151,19 @@ the first line of the block.
 - `verdicts` — plan-eval and pr-eval verdicts, slash-separated.
 - `reftest` — the sandbox issue's reference test after the PR lands.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
+- `planted` — a per-RUN atom on the `CALIB-TOTAL` line only: did the slate's
+  planted-boundary-defect issue escape the pr-eval gate? `caught` (the
+  boundary was implemented correctly, or a defective PR was Flagged before it
+  merged), `missed` (the reference test fails and pr-eval did not flag it — a
+  defective PR passed the gate), or `n/a` (the slate carries no
+  planted-defect dir, or the row was never graded).
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
-  there to answer) or `timeout` (the wall-clock ceiling killed it); `timeout`
-  wins over `held`, which wins over `no-pr`. Issues the run never reached read
+  there to answer), `timeout` (the wall-clock ceiling killed it), or
+  `no-cost-log` (the sandbox session registered no cost-capture hooks, so
+  nothing was priced — the run is not graded rather than reported as `$0`);
+  `timeout` wins over `held`, which wins over `no-pr`, which wins over
+  `no-cost-log`. Issues the run never reached read
   `reftest=n/a` and the total reads `reftest-pass=n/a`, so a failed start can
   never be graded `0/5`.
 
@@ -189,14 +199,18 @@ date and feeds two places in the cycle report:
   median is approximate: it estimates the typical path-B share of the run, not a
   billed per-PR amount.
 
-Both rows render as bare values. The CALIB grammar carries no profile, model or
-run-date atom, so the cycle report cannot state which `--profile`/`--model`
-produced a ratio, or when. Ingest is newest-artifact-wins and never expires, so
-a stale artifact keeps being cited until a newer run replaces it, and nothing in
-the report says how old it is — read the filenames under `docs/retros/calib/` to
-date the evidence yourself. Surfacing provenance in the row would mean adding
-atoms to the CALIB grammar; that is a follow-up, not current behaviour. See
-`docs/retros/README.md` for the retro-file layout.
+The CALIB grammar carries no profile, model or date atom, so neither row can
+state which `--profile`/`--model` produced it. The `weak-model pass:` row is
+the exception on DATE: it reads the chosen artifact's own FILENAME (never a
+CALIB atom) and renders `<value> (run <date>)` when that filename resolves a
+`YYYY-MM-DD` date, or the bare `<value>` when it does not (the undated
+`calib.txt` fallback). Once N ≥ 3 tracker `## Cycle <k>` comments have been
+posted after that day, the row instead renders
+`<value> (run <date>, stale N cycles)` — a cycle-12 retro citing a cycle-2
+run used to say nothing about its age; now it does. Ingest itself is still
+newest-artifact-wins and never expires, so a stale artifact keeps being cited
+until a newer run replaces it — the stale marker says so instead of the
+report staying silent. See `docs/retros/README.md` for the retro-file layout.
 
 ## Lessons from runs #1 and #2
 

@@ -224,8 +224,11 @@ RETRO_TOTAL="$(fields "$(first_line "$RETRO" '^#[[:space:]]+CALIB-TOTAL ')")"
 assert_eq "CALIB-TOTAL fields: emitter matches docs/calibration.md" "$DOC_TOTAL" "$EMIT_TOTAL"
 assert_eq "CALIB-TOTAL fields: run-retro.sh header matches docs/calibration.md" \
   "$DOC_TOTAL" "$RETRO_TOTAL"
-assert_eq "CALIB-TOTAL fields are the four the slate totals" \
-  "cost wall issues reftest-pass" "$DOC_TOTAL"
+# Five, not four: `planted=<caught|missed|n/a>` (#1395) grades whether the
+# slate's planted boundary defect escaped the pr-eval gate. It is a per-RUN
+# atom on the total line, never a per-issue CALIB atom.
+assert_eq "CALIB-TOTAL fields are the five the slate totals" \
+  "cost wall issues reftest-pass planted" "$DOC_TOTAL"
 
 # The abort line is a fourth artifact's worth of grammar: the doc declares it,
 # the driver prints it, the retro header parses off it, and the fixture README

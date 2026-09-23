@@ -6,7 +6,7 @@ set -uo pipefail
 # docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §8).
 #
 # Real-work retros cannot isolate cause: the workload differs every cycle.
-# The calibration slate holds the INPUTS fixed (five template issues at tag
+# The calibration slate holds the INPUTS fixed (six template issues at tag
 # `calib-base` in a purpose-built consumer sandbox) so the harness version is
 # the only variable, and doubles as the end-to-end regression suite the unit
 # tests are not.
@@ -16,7 +16,10 @@ set -uo pipefail
 #                template into it, seed labels, tag `calib-base`. Idempotent:
 #                every step is guarded, so a re-run is a no-op.
 #   --reset      Force the sandbox back to `calib-base`, reap stale calib
-#                issues, recreate the five slate issues. Prints `CALIB-ISSUES`.
+#                issues, recreate the six slate issues, and re-materialize
+#                .claude/settings.local.json from the harness template so the
+#                sandbox always carries the current cost-capture hooks. Prints
+#                `CALIB-ISSUES`.
 #   --dry-run    Print the headless launch command that --run would execute
 #                and exit 0. Makes NO network call and launches NO claude.
 #   --run        --reset, stage the harness for the session to load, then run
@@ -25,9 +28,11 @@ set -uo pipefail
 #                $HARNESS/docs/retros/calib/<UTC date>.txt for the retro to
 #                ingest (scripts/run-retro.sh). The session's own output is
 #                tee'd beside it as <UTC date>.log. A run that never really
-#                started (no PR, stopped to ask, hit the cap) leads the block
-#                with `CALIB-ABORT reason=<no-pr|held|timeout>` and reports no
-#                score rather than grading the failure as a regression.
+#                started (no PR, stopped to ask, hit the cap, or wrote no
+#                capture log) leads the block with
+#                `CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>` and
+#                reports no score rather than grading the failure as a
+#                regression.
 #
 # EVERY network / launch call goes through the single dispatch() seam below,
 # which --dry-run replaces with a printf. That is what makes the test suite
@@ -65,14 +70,15 @@ print_usage() {
   cat <<'USAGE'
 Usage: scripts/calibration-run.sh (--bootstrap|--reset|--dry-run|--run) [options]
 
-Drives the §8 calibration slate: a fixed five-issue workload run against a
+Drives the §8 calibration slate: a fixed six-issue workload run against a
 purpose-built consumer sandbox so the harness version is the only variable.
 
 Modes (exactly one, mutually exclusive):
   --bootstrap      Create/adopt + clone the sandbox, sync the harness
                    template, seed labels, tag calib-base. Idempotent.
-  --reset          Force the sandbox back to calib-base and recreate the five
-                   slate issues. Prints `CALIB-ISSUES <n1> ... <n5>`.
+  --reset          Force the sandbox back to calib-base, recreate the six
+                   slate issues, and refresh .claude/settings.local.json from
+                   the harness template. Prints `CALIB-ISSUES <n1> ... <n6>`.
   --dry-run        Print the headless launch command and exit. No network
                    call, no claude launch, no sandbox mutation.
   --run            --reset, then run the launch for real, then emit the
@@ -247,7 +253,11 @@ calib_env_prefix() {
 build_launch() {
   local ids="$ISSUE_IDS"
   if [ -z "$ids" ]; then
-    ids="N1 N2 N3 N4 N5"   # --dry-run preview before --reset has resolved ids
+    # --dry-run preview before --reset has resolved real ids: one N<k> slot
+    # per slate dir, derived from the slate itself so an added/removed dir
+    # never leaves the preview showing the wrong width (#1395).
+    ids="$(slate_titles | awk '{ printf "N%d ", NR }')"
+    ids="${ids% }"
   fi
   local -a scrub
   readarray -t scrub < <(calib_env_prefix)
@@ -299,12 +309,30 @@ sync_template() {
   fi
 }
 
+# materialize_local_settings — refresh the sandbox's .claude/settings.local.json
+# from the HARNESS TEMPLATE (never from the sandbox's own flat copy). #1395: on
+# the operator's host the sandbox's settings.local.json is untracked AND
+# covered by a global git-ignore rule, so neither `--bootstrap` (a one-time
+# write) nor `git reset --hard` ever refreshes it — every hook added to the
+# template since the first bootstrap (log_subagent.py, capture_agent_cost.py)
+# never reached a single measured run. Called from both cmd_bootstrap() and
+# cmd_reset(), so every reset re-syncs it, not just the first one.
+#
+# All three mutating calls are routed through dispatch() so `--reset --dry-run`
+# previews the copy and mutates nothing; the hook-count line is an OBSERVATION,
+# not a mutation, so it is unconditional and appears in the dry-run preview too.
 materialize_local_settings() {
-  local flat="$SANDBOX/$TEMPLATE_SETTINGS_BASENAME"
-  [ -f "$flat" ] || return 0
-  local dest_dir="$SANDBOX/.claude"
-  mkdir -p "$dest_dir" || return 1
-  mv -f "$flat" "$dest_dir/$LOCAL_SETTINGS_BASENAME" || return 1
+  local src="$TEMPLATE_DIR/$TEMPLATE_SETTINGS_BASENAME"
+  [ -f "$src" ] || { warn "no template settings at $src"; return 0; }
+  dispatch mkdir -p "$SANDBOX/.claude" || return 1
+  dispatch cp -f "$src" "$SANDBOX/.claude/$LOCAL_SETTINGS_BASENAME" || return 1
+  # sync_template rsyncs the template's flat file into the sandbox root; the
+  # real refresh consumes it so it is never left behind as sandbox cruft.
+  dispatch rm -f "$SANDBOX/$TEMPLATE_SETTINGS_BASENAME" || return 1
+  local n
+  n="$(jq '[.hooks[]?[]?.hooks[]?] | length' "$src" 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  echo "calib: settings.local.json refreshed from template ($n hooks)"
 }
 
 commit_sandbox() {
@@ -476,7 +504,12 @@ cmd_reset() {
   [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
   close_stale_prs
   delete_stale_branches
-  [ "$DRY" -eq 1 ] && return 0
+  # --reset --dry-run is a free PREVIEW: it must also preview (and not mutate)
+  # the settings refresh, so materialize_local_settings() runs here INSTEAD of
+  # the hard reset below rather than being skipped outright (#1395). Every
+  # mutating call inside it is routed through dispatch(), which is what keeps
+  # this branch hermetic under DRY=1.
+  if [ "$DRY" -eq 1 ]; then materialize_local_settings; return 0; fi
   dispatch git -C "$SANDBOX" fetch --quiet --tags origin || warn "sandbox fetch failed — resetting against the local $BASE_TAG"
   git -C "$SANDBOX" rev-parse -q --verify "refs/tags/$BASE_TAG" >/dev/null 2>&1 \
     || die_run "$BASE_TAG does not exist in $SANDBOX (run --bootstrap first)"
@@ -484,6 +517,10 @@ cmd_reset() {
   git -C "$SANDBOX" reset --hard --quiet "$BASE_TAG" || die_run "could not reset the sandbox to $BASE_TAG"
   dispatch git -C "$SANDBOX" push --quiet --force-with-lease origin main \
     || die_run "could not force the sandbox main branch back to $BASE_TAG"
+  # Refresh AFTER the hard reset, every time: --bootstrap was the only writer
+  # of the sandbox's local-settings file, and it is untracked on the operator's
+  # host, so `git reset --hard` never touches it (#1395).
+  materialize_local_settings || die_run "could not refresh the sandbox local-settings file"
   reap_stale_issues
   create_slate_issues
 }
@@ -636,6 +673,15 @@ detect_abort() {
   case "$n" in
     ''|0) ABORT_REASON="no-pr" ;;
   esac
+  # no-cost-log: the sandbox session registered no cost-capture hooks, so
+  # nothing was priced (#1395). Guarded on `-z "$ABORT_REASON"` rather than
+  # placed after a `return` — the `no-pr` arm above assigns WITHOUT returning,
+  # so an unguarded append here would OVERWRITE it and invert the documented
+  # precedence (timeout > held > no-pr > no-cost-log). CAPTURE_LOG is already
+  # set by load_run_substrate(), which emit_calib_block() calls before this.
+  if [ -z "$ABORT_REASON" ] && [ ! -s "$CAPTURE_LOG" ]; then
+    ABORT_REASON="no-cost-log"
+  fi
 }
 
 # row_field <issue> <jq field> — echoes the rows-JSON field or empty.
@@ -738,10 +784,18 @@ issue_unexpected() {
   printf '%s' "$n"
 }
 
+# pricing_is_zero <value> — TRUE when <value> is numeric and equal to zero.
+# cost-latency-report.sh --emit-pricing-json returns the NON-empty string
+# "0.00" for a missing/empty capture log (#1395), so an emptiness-only guard
+# on PRICING_TOTAL is inert — the numeric check is what actually fires.
+pricing_is_zero() {
+  awk -v v="${1:-}" 'BEGIN{ if (v ~ /^[0-9.]+$/ && v + 0 == 0) exit 0; exit 1 }'
+}
+
 emit_calib_block() {
   local wall_total="$1"
   local i=0 issue d path cost wall verdicts reftest unexpected
-  local total_cost=0 pass=0 count=0
+  local total_cost=0 pass=0 count=0 planted="n/a" cost_display
   load_run_substrate
   detect_abort
   if [ -n "$ABORT_REASON" ]; then
@@ -769,18 +823,43 @@ emit_calib_block() {
     if [ -n "$cost" ]; then
       total_cost="$(awk -v a="$total_cost" -v b="$cost" 'BEGIN{ printf "%.2f", a + b }')"
     fi
+    # planted= grades the ESCAPE, not the implementer (#1395): caught = the
+    # boundary was implemented correctly, or a defective PR was Flagged by
+    # pr-eval before it merged; missed = the reference test fails AND pr-eval
+    # did not flag it — a defective PR passed the gate. n/a when the slate
+    # carries no planted-defect dir, or the row was never graded.
+    case "$(basename "${d:-}")" in
+      *planted*)
+        if [ "$reftest" = "pass" ]; then
+          planted="caught"
+        elif [ "$reftest" = "fail" ]; then
+          case "$verdicts" in
+            */Flagged) planted="caught" ;;
+            *)         planted="missed" ;;
+          esac
+        fi
+        ;;
+    esac
     printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
       "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected"
   done
+  # A $0 total is never printable UNPRICED (#1395): render n/a on the TOTAL
+  # line whenever the capture log is missing/empty, PRICING_TOTAL is empty, or
+  # PRICING_TOTAL is numerically zero — the zero/missing-log arms are the ones
+  # that actually fire in production (see pricing_is_zero() above).
+  cost_display="$total_cost"
+  if [ ! -s "$CAPTURE_LOG" ] || [ -z "$PRICING_TOTAL" ] || pricing_is_zero "$PRICING_TOTAL"; then
+    cost_display="n/a"
+  fi
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s\n' \
-      "$total_cost" "$wall_total" "$count" "$pass" "$count"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s\n' \
+      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s\n' \
-      "$total_cost" "$wall_total" "$count" "n/a"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s\n' \
+      "$cost_display" "$wall_total" "$count" "n/a" "$planted"
   fi
 }
 

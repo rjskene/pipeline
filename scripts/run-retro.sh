@@ -451,7 +451,11 @@ if [ -n "$FIXTURE_DIR" ]; then
   ROWS_FILE="$FIXTURE_DIR/rows.json"
   TOOLOG="$FIXTURE_DIR/tool-use.log"
   USAGE_FILE="$FIXTURE_DIR/usage-gate.jsonl"
-  CALIB_FILE="$FIXTURE_DIR/calib.txt"
+  # Dated form first (calib/<YYYY-MM-DD>.txt — mirrors live mode's newest-by-
+  # filename resolution), falling back to the legacy flat calib.txt when no
+  # dated artifact exists (#1395). Newest by SORT ORDER of the filename.
+  CALIB_FILE="$(ls -1 "$FIXTURE_DIR"/calib/*.txt 2>/dev/null | sort | tail -1)"
+  [ -n "$CALIB_FILE" ] || CALIB_FILE="$FIXTURE_DIR/calib.txt"
   AGENT_COSTS_FILE="$FIXTURE_DIR/agent-costs.jsonl"
   DENY_LOG="$FIXTURE_DIR/hook-denials.jsonl"
 else
@@ -529,16 +533,20 @@ MISSING_ROW_ISSUES=""
 #
 # scripts/calibration-run.sh --run tees a block of
 #   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
-#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n>
-#   CALIB-ABORT reason=<no-pr|held|timeout>
-# to docs/retros/calib/<UTC date>.txt. Two retro rows read it: the weak-model
+#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>
+#   CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
+# to docs/retros/calib/<UTC date>.txt (fixture mode mirrors this at
+# <FIXTURE_DIR>/calib/<date>.txt). Two retro rows read it: the weak-model
 # guarantee (a k/n over the `reftest=` atoms) and the path-B $ median (over the
 # `cost=` atoms of the `path=B` rows only — the fixed slate is the ONLY place
 # this harness has a per-issue dollar figure, since the rows JSON carries none).
+# `planted=` is a per-RUN atom on the total line and is not parsed here.
 # Degradation contract: a missing / CALIB-row-free file leaves both reasons
 # exactly as they render with no calibration substrate at all.
 CALIB_WEAK="n/a (no calibration slate; spec §8 cycle-1 deliverable)"
 CALIB_USD="n/a (no per-issue cost in rows JSON)"
+CALIB_RUN_DATE=""
+CALIB_STALE=""
 
 compute_calib() {
   local f="${1:-}"
@@ -590,7 +598,38 @@ compute_calib() {
   fi
 }
 
+# calib_provenance <file> — dates the chosen calibration artifact off its own
+# FILENAME (never off a CALIB atom — the grammar carries none) and counts
+# tracker `## Cycle <k>` comments posted strictly AFTER that day (#1395). Both
+# globals stay empty when the filename carries no `YYYY-MM-DD` (the undated
+# calib.txt fallback), which is what keeps that fallback rendering the bare
+# value. The `2>/dev/null` plus the numeric `case` guard on CALIB_STALE are
+# required: in live mode with no PIPELINE_REPO reachable (Scenario 6) the
+# issues substrate is never created, so an unguarded jq would write to stderr;
+# non-numeric / absent substrate degrades silently to "date only", never a
+# failed retro.
+calib_provenance() {
+  local f="${1:-}" base cutoff
+  CALIB_RUN_DATE=""
+  CALIB_STALE=""
+  [ -n "$f" ] || return 0
+  base="$(basename "$f" .txt)"
+  case "$base" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) CALIB_RUN_DATE="$base" ;;
+    *) return 0 ;;
+  esac
+  # The artifact is DAY-keyed, so a same-day cycle comment does not count as
+  # "since" — the cutoff is the end of the run's own day.
+  cutoff="${CALIB_RUN_DATE}T23:59:59Z"
+  CALIB_STALE="$(jq -r --arg t "$TRACKER" --arg after "$cutoff" '
+    [.[] | select((.number|tostring) == $t) | .comments[]?
+     | select((.body // "") | test("^## Cycle [0-9]+"))
+     | select(.createdAt > $after)] | length' "$ISSUES_FILE" 2>/dev/null)"
+  case "$CALIB_STALE" in ''|*[!0-9]*) CALIB_STALE="" ;; esac
+}
+
 compute_calib "$CALIB_FILE"
+calib_provenance "$CALIB_FILE"
 
 compute_cost_latency() {
   local rows_file="$1"
@@ -1255,7 +1294,15 @@ build_full_report() {
   echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
 
   echo ""
-  echo "weak-model pass: $CALIB_WEAK"
+  if [ -n "$CALIB_RUN_DATE" ]; then
+    if [ -n "$CALIB_STALE" ] && [ "$CALIB_STALE" -ge 3 ]; then
+      echo "weak-model pass: $CALIB_WEAK (run $CALIB_RUN_DATE, stale $CALIB_STALE cycles)"
+    else
+      echo "weak-model pass: $CALIB_WEAK (run $CALIB_RUN_DATE)"
+    fi
+  else
+    echo "weak-model pass: $CALIB_WEAK"
+  fi
 
   echo ""
   echo "usage: $USAGE_LINE"
