@@ -137,6 +137,53 @@ else
   fail_msg "split-role-scope: contract paragraph missing the #1122 worktree-index staging precondition ('worktree index')"
 fi
 
+# 2e) #1387 closing-review directive. A dispatched `general-purpose` subagent
+#     NEVER loads skills/execute-issue-plan/SKILL.md, so Step 8's closing
+#     independent code review happens only if the DISPATCH SITE asks for it.
+#     The split-role prompt carried the red/green, git-anchoring, staging, suite
+#     and cross-cutting-guard directives but said NOTHING about the closing
+#     review, so cycle 16's PATH B issue produced no review-role cost row at all
+#     — the row the cycle-15 work exists to create.
+#
+#     Same CRITICAL scoping as 2b–2d: assert INSIDE the extracted contract
+#     paragraph, not the whole file — skills/execute-issue-plan/SKILL.md and the
+#     PATH C routing bullet already name `code review #<N>`, so a whole-file
+#     grep would pass spuriously on the pre-fix prose.
+#
+#     The description is FIXED (`code review #<N>`, append nothing): the cost
+#     parser resolves exactly that shape to stage=pr-eval / role=review, which is
+#     what makes the review's cost land on the issue's row.
+inc
+if contract_flat | grep -Fq 'code review #<N>'; then
+  pass_msg "closing-review: contract paragraph carries the fixed 'code review #<N>' dispatch description"
+else
+  fail_msg "closing-review: contract paragraph missing the 'code review #<N>' dispatch description"
+fi
+
+# 2f) The directive must bind BOTH lanes — the split-role GREEN prompt and the
+#     collapsed single-role prompt. Co-occurrence within the same paragraph:
+#     `green-implementer` plus a single-role marker (ROLES=single or
+#     SPLIT_ROLE=false). Naming only the green lane leaves every PATH A/D and
+#     collapsed PATH B dispatch without a closing review.
+inc
+if contract_flat | grep -Fq 'green-implementer' \
+   && contract_flat | grep -Eq 'ROLES=single|SPLIT_ROLE=false'; then
+  pass_msg "closing-review: directive binds both the green-implementer and the single-role lane"
+else
+  fail_msg "closing-review: directive does not bind both lanes (need 'green-implementer' AND one of 'ROLES=single' / 'SPLIT_ROLE=false' in the contract paragraph)"
+fi
+
+# 2g) PATH D exclusion marker. skills/execute-issue-plan/SKILL.md Step 8
+#     early-returns for `quick-fix`, so the closing review does NOT apply to
+#     PATH D; without the carve-out the dispatch-site directive contradicts the
+#     skill's own early-return contract.
+inc
+if contract_flat | grep -Fq 'PATH D'; then
+  pass_msg "closing-review: contract paragraph carries the PATH D exclusion marker"
+else
+  fail_msg "closing-review: contract paragraph missing the PATH D exclusion marker (execute-issue-plan Step 8 early-returns for quick-fix)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"
