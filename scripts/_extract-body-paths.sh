@@ -122,12 +122,12 @@ bp_drop_negated_lines() {
 # header is present — that absence is what bp_body_paths reads as "declares
 # nothing", the presence-based fallback trigger (see B14/B15).
 bp_declared_lines() {
-  awk 'BEGIN{IGNORECASE=1; in_block=0; seen=0; buf=""}
-       /^##[[:space:]]+Affected areas/ { seen=1; in_block=1; next }
-       /^\*\*Files to change:\*\*/ { seen=1; in_block=1; next }
-       /^##[[:space:]]+Files to change/ { seen=1; in_block=1; next }
+  awk 'BEGIN{IGNORECASE=1; in_block=0; seen=0; buf=""; mode=""}
+       /^##[[:space:]]+Affected areas/ { seen=1; in_block=1; mode="affected"; next }
+       /^\*\*Files to change:\*\*/ { seen=1; in_block=1; mode="files"; next }
+       /^##[[:space:]]+Files to change/ { seen=1; in_block=1; mode="files"; next }
        in_block && /^##/ { in_block=0 }
-       in_block && /^\*\*/ { in_block=0 }
+       in_block && mode=="files" && /^\*\*/ { in_block=0 }
        in_block && NF>0 { buf = buf $0 "\n" }
        END{ if (seen) { printf "BP_DECLARED\n"; printf "%s", buf } }'
 }

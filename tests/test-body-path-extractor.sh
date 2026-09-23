@@ -260,6 +260,21 @@ BODY_DECL_ALL_NEGATED='Context: the runner reads `agents/tdd-implementer.md` bef
 
 - do not edit — verify only: `docs/shared-contract.md`
 '
+# A bold line mid-block must not close an Affected areas block (asymmetric
+# terminator regression, #1388). The block terminates on `^##` only.
+BODY_AFFECTED_BOLD_INSIDE='## Affected areas
+- `scripts/foo-1388.sh`
+**Note:** a bold note inside the block
+- `scripts/bar-1388.sh`
+'
+# Control fixture for the above: a Files-to-change block must still close on
+# a bold line, same as before the asymmetric-terminator fix.
+BODY_FILES_BOLD_TERMINATES='## Files to change
+
+- `scripts/gamma-1388.sh`
+**Note:** a bold note that ends the files block
+- `scripts/delta-1388.sh`
+'
 write_issue "$S"  9 "priority/P2" "$BODY_PROSE_MENTION"
 write_issue "$S" 10 "priority/P2" 'Renames the leaf executor contract.
 
@@ -484,6 +499,38 @@ if [ -z "$B15_OUT" ]; then
 else
   fail_msg "B15: expected empty output — a body that declares a section must not harvest prose"
   dump "got:" "$B15_OUT"
+fi
+
+# ---- B16: a bold line INSIDE an Affected areas block must not truncate it (#1388)
+# Asymmetric-terminator regression: `## Affected areas` closes only on `^##`,
+# never on `^\*\*`. Before the fix, `bp_declared_lines` closed the block on
+# ANY bold line regardless of which header opened it, so a stray bold note
+# mid-block silently dropped every path after it — the same silent-edge-loss
+# class this issue exists to close, reached via a different vector.
+echo "B16: a bold line inside an Affected areas block does not truncate the block"
+inc
+B16_OUT=$(run_bp bp_body_paths "$BODY_AFFECTED_BOLD_INSIDE")
+if has_entry "$B16_OUT" "scripts/foo-1388.sh" \
+   && has_entry "$B16_OUT" "scripts/bar-1388.sh"; then
+  pass_msg "B16: both scripts/foo-1388.sh and scripts/bar-1388.sh survived the bold line"
+else
+  fail_msg "B16: expected BOTH scripts/foo-1388.sh and scripts/bar-1388.sh"
+  dump "got:" "$B16_OUT"
+fi
+
+# ---- B17: a Files-to-change block still terminates on a bold line (#1388) ---
+# Non-vacuity control for B16: proves the fix is asymmetric, not a blanket
+# removal of the bold terminator. A `## Files to change` / `**Files to
+# change:**` block must still close on `^\*\*`, same as before the fix.
+echo "B17: a Files-to-change block still terminates on a bold line"
+inc
+B17_OUT=$(run_bp bp_body_paths "$BODY_FILES_BOLD_TERMINATES")
+if has_entry "$B17_OUT" "scripts/gamma-1388.sh" \
+   && ! has_entry "$B17_OUT" "scripts/delta-1388.sh"; then
+  pass_msg "B17: scripts/gamma-1388.sh kept; scripts/delta-1388.sh dropped past the bold terminator"
+else
+  fail_msg "B17: expected ONLY scripts/gamma-1388.sh (delta must be dropped, block closed on the bold line)"
+  dump "got:" "$B17_OUT"
 fi
 
 # ============================================================================
