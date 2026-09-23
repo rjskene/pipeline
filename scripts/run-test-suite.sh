@@ -80,9 +80,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # fence, orchestrator session) already exported — else a worktree suite run
 # silently tests the caller's tree. PIPELINE_TEST_ROOT_OVERRIDE=1 is the
 # escape hatch (see Usage above).
-if [ "${PIPELINE_TEST_ROOT_OVERRIDE:-0}" != "1" ]; then
-  unset PIPELINE_PROJECT_ROOT CLAUDE_PLUGIN_ROOT PIPELINE_USE_LOCAL_PLUGIN
-fi
+scrub_roots() {
+  if [ "${PIPELINE_TEST_ROOT_OVERRIDE:-0}" != "1" ]; then
+    unset PIPELINE_PROJECT_ROOT CLAUDE_PLUGIN_ROOT PIPELINE_USE_LOCAL_PLUGIN
+  fi
+}
+scrub_roots
 
 # --chunk k/n (or --chunk=k/n), --changed-only, and --base <ref> parsing —
 # MUST happen before TESTS_DIR resolution so the positional tests-dir and the
@@ -195,6 +198,13 @@ if [ "$CHANGED_ONLY" -eq 1 ]; then
     [ -n "$MERGE_BASE" ] || co_fallback "base $BASE_REF unresolved"
   fi
 fi
+
+# Re-scrub (#1389): the --changed-only base resolution above sources
+# _resolve-config.sh, which re-reads the consumer pipeline.config under `set -a`
+# — re-EXPORTING that config's own PIPELINE_PROJECT_ROOT / PIPELINE_USE_LOCAL_PLUGIN
+# into this process and back into every spawned test, defeating the scrub in the
+# mode execute-issue-plan Step 6b uses by default. Idempotent no-op otherwise.
+scrub_roots
 
 # --changed-only selection: touched set (diff + untracked) -> needles (full
 # path, unique basename, and every ancestor dir as a `<dir>/*` glob) ->

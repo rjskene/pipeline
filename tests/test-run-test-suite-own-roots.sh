@@ -106,6 +106,34 @@ else
   fail_msg "runner exited $rc on the six named tests; tail:"; tail -n 30 "$WORK/named.out" | sed 's/^/    /'
 fi
 
+echo "Case 5: --changed-only re-scrubs after its config source"
+# --changed-only resolves its base ref by sourcing scripts/_resolve-config.sh,
+# which re-reads pipeline.config under `set -a` — re-EXPORTING that config's own
+# PIPELINE_PROJECT_ROOT / PIPELINE_USE_LOCAL_PLUGIN into the runner process after
+# the entry scrub. Hermetic fixture: a throwaway git repo whose pipeline.config
+# names the decoy root (no commits, so no git identity is needed).
+CO="$WORK/co"; mkdir -p "$CO/scripts" "$CO/tests"
+cp "$ROOT/scripts/run-test-suite.sh" "$ROOT/scripts/_resolve-config.sh" "$CO/scripts/"
+cat > "$CO/pipeline.config" <<EOF
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="co-base"
+PIPELINE_PROJECT_ROOT="$DECOY"
+PIPELINE_USE_LOCAL_PLUGIN=true
+EOF
+cp "$STUB_DIR/test-marker.sh" "$CO/tests/test-marker.sh"
+git init -q "$CO" >/dev/null 2>&1
+rm -f "$MARKER"
+( cd "$CO" && env -u PIPELINE_REPO -u PIPELINE_BASE_BRANCH \
+    PIPELINE_PROJECT_ROOT="$DECOY" CLAUDE_PLUGIN_ROOT="$DECOY" PIPELINE_USE_LOCAL_PLUGIN=true \
+    PIPELINE_TEST_LEAK_GUARD_REPO="" PIPELINE_TEST_PARALLELISM=1 \
+    bash scripts/run-test-suite.sh --changed-only ) >/dev/null 2>&1
+inc
+if [ "$(cat "$MARKER" 2>/dev/null)" = "$UNSET3" ]; then
+  pass_msg "--changed-only: config source did not re-export roots to the stub"
+else
+  fail_msg "--changed-only: expected all-UNSET; got:"; sed 's/^/    /' "$MARKER" 2>/dev/null
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
