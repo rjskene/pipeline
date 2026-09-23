@@ -329,33 +329,38 @@ parse_cycle_issues() {  # <body> <N> -> prints space-separated issue numbers
   printf '%s' "${nums[*]:-}"
 }
 
-# cycle_window <body> <cycle N> <cur ids json> <issues_file> -> sets
-# CYCLE_SINCE / CYCLE_UNTIL (#1281, item 3a).
+# cycle_window <body> <cycle N> <cur ids json> <issues_file> <tracker> -> sets
+# CYCLE_SINCE / CYCLE_UNTIL (#1281 item 3a; #1396 items 1+2).
 #
-# CYCLE_SINCE is the date captured from the tracker body's own
-# `Cycle N (<YYYY-MM-DD>` header; when no header carries cycle N, it falls
-# back to the MIN createdAt over the cycle's own issues. CYCLE_UNTIL is the
-# date from the `Cycle N+1 (` header when present, else the injected clock
-# ($RETRO_NOW) — only the newest cycle (no successor header) needs a clock,
-# which is why every earlier cycle's window is fully clock-independent.
-# The bound is uniformly EXCLUSIVE (mergedAt/createdAt >= SINCE and < UNTIL);
-# a bare YYYY-MM-DD upper bound already excludes every same-day timestamp
-# under lexicographic compare.
+# CYCLE_SINCE is read from the tracker body's own `Cycle N (<date-or-ISO8601>`
+# header; the captured token may be a bare `YYYY-MM-DD` (historical headers)
+# or a full ISO-8601 timestamp (from #1396 onward) — both compare correctly
+# as plain strings. CYCLE_UNTIL is read the same way from the `Cycle N+1 (`
+# header when present, else the injected clock ($RETRO_NOW) — only the
+# newest cycle (no successor header) needs a clock, which is why every
+# earlier cycle's window is fully clock-independent. The bound is uniformly
+# EXCLUSIVE (mergedAt/createdAt >= SINCE and < UNTIL).
 #
-# If CYCLE_SINCE cannot be resolved at all (no header, no cycle issues to
-# fall back on): CYCLE_SINCE stays empty. Callers must treat that as "no
-# window" and render a named `n/a (no cycle window)` reason — NEVER fall back
-# to a repo-wide count.
+# When cycle N's header does not exist yet — `skills/evolve/SKILL.md` Step 1
+# runs this BEFORE Step 3 appends the header (#1396) — CYCLE_SINCE instead
+# dates from the PREVIOUS cycle's own tracker retro comment (`## Cycle N-1`
+# with a `- retro:` line): that comment's `createdAt`. Only when NEITHER the
+# header NOR a previous-cycle retro comment resolves a bound does CYCLE_SINCE
+# fall back to the MIN createdAt over the cycle's own issues.
+#
+# If CYCLE_SINCE cannot be resolved at all: CYCLE_SINCE stays empty. Callers
+# must treat that as "no window" and render a named `n/a (no cycle window)`
+# reason — NEVER fall back to a repo-wide count.
 CYCLE_SINCE=""
 CYCLE_UNTIL=""
 
 cycle_window() {
-  local body="$1" n="$2" ids_json="$3" issues_file="$4" line found_n date next
+  local body="$1" n="$2" ids_json="$3" issues_file="$4" tracker="$5" line found_n date next
   CYCLE_SINCE=""
   CYCLE_UNTIL=""
   next=$((n + 1))
   while IFS= read -r line; do
-    if [[ "$line" =~ ^Cycle\ ([0-9]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+    if [[ "$line" =~ ^Cycle\ ([0-9]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?) ]]; then
       found_n="${BASH_REMATCH[1]}"
       date="${BASH_REMATCH[2]}"
       if [ "$found_n" = "$n" ]; then
@@ -365,6 +370,10 @@ cycle_window() {
       fi
     fi
   done <<< "$body"
+
+  if [ -z "$CYCLE_SINCE" ] && [ "$n" -gt 0 ] && [ -f "$issues_file" ]; then
+    CYCLE_SINCE="$(prev_cycle_retro_timestamp "$issues_file" "$tracker" $((n - 1)))"
+  fi
 
   if [ -z "$CYCLE_SINCE" ] && [ -f "$issues_file" ]; then
     CYCLE_SINCE="$(jq -r --argjson ids "$ids_json" '
@@ -403,6 +412,21 @@ prev_cycle_comment() {
   jq -r --arg tracker "$tracker" --arg hdr "^## Cycle ${prev_n}\\b" '
     [.[] | select((.number|tostring) == $tracker) | .comments[]?.body
       | select(test($hdr))] | last // empty
+  ' "$issues_file" 2>/dev/null
+}
+
+# prev_cycle_retro_timestamp <issues_file> <tracker> <prev cycle N> -> the
+# `createdAt` of the tracker's own LAST comment whose body opens
+# `## Cycle <prev cycle N>` AND carries a `- retro:` line (the final retro
+# post for that cycle, not an interim one) — empty if none (#1396, item 1).
+prev_cycle_retro_timestamp() {
+  local issues_file="$1" tracker="$2" prev_n="$3"
+  [ -f "$issues_file" ] || return 0
+  jq -r --arg tracker "$tracker" --arg hdr "^## Cycle ${prev_n}\\b" '
+    [.[] | select((.number|tostring) == $tracker) | .comments[]?
+      | select((.body // "") | test($hdr))
+      | select((.body // "") | test("(?m)^- retro:"))
+      | .createdAt] | last // empty
   ' "$issues_file" 2>/dev/null
 }
 
@@ -487,7 +511,7 @@ if [ "$CYCLE" -gt 0 ]; then
 fi
 PREV_IDS_JSON="$(ids_json "$PREV_ISSUES")"
 
-cycle_window "$TRACKER_BODY" "$CYCLE" "$CUR_IDS_JSON" "$ISSUES_FILE"
+cycle_window "$TRACKER_BODY" "$CYCLE" "$CUR_IDS_JSON" "$ISSUES_FILE" "$TRACKER"
 BASE="${PIPELINE_BASE_BRANCH:-evolve}"
 
 # ---------------------------------------------------------------------------
@@ -910,7 +934,6 @@ compute_friction() {
   # Deliberately NON-NUMERIC: it must never join a delta, so Scenario 13's
   # `deltas == joined` invariant (numeric-only) cannot shift.
   EXTRA_COMP_VAL["friction/harness-friction-window"]="$FRICTION_WINDOW";   EXTRA_COMP_UNIT["friction/harness-friction-window"]=""
-  EXTRA_COMP_VAL["friction/compactions"]="n/a (no transcript substrate)";   EXTRA_COMP_UNIT["friction/compactions"]=""
   EXTRA_COMP_VAL["friction/hotfix"]="$FRICTION_HOTFIX";                    EXTRA_COMP_UNIT["friction/hotfix"]=""
   EXTRA_COMP_VAL["friction/manual-merge"]="$FRICTION_MANUAL_MERGE";        EXTRA_COMP_UNIT["friction/manual-merge"]=""
   EXTRA_COMP_VAL["friction/human"]="$FRICTION_HUMAN";                      EXTRA_COMP_UNIT["friction/human"]=""
@@ -1166,7 +1189,6 @@ build_full_report() {
   echo "friction: denials = $FRICTION_DENIALS"
   echo "friction: harness-friction-lines = $FRICTION_LINES_COUNT"
   echo "friction: harness-friction-window = $FRICTION_WINDOW"
-  echo "friction: compactions = n/a (no transcript substrate)"
   echo "friction: hotfix = $FRICTION_HOTFIX"
   echo "friction: manual-merge = $FRICTION_MANUAL_MERGE"
   echo "friction: human = $FRICTION_HUMAN"

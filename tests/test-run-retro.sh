@@ -477,8 +477,12 @@ DUMP_SINCE="$(bash "$HELPER" --cycle 0 --fixture "$FIXTURE_DIR" --since 2026-09-
 expect_line "--since excludes HARNESS-FRICTION comments older than the window (2 -> 1)" \
   "$DUMP_SINCE" "COMPUTED friction/harness-friction-lines = 1"
 
-expect_line "compactions have no substrate and say so" \
-  "$DUMP_C" "COMPUTED friction/compactions = n/a (no transcript substrate)"
+# friction/compactions never had a code path that could set it — a permanent
+# `n/a (no transcript substrate)` literal — so #1396 deletes the row entirely.
+refute_sub "friction/compactions row is REMOVED, not renders n/a (#1396)" \
+  "$DUMP_C" "friction/compactions"
+refute_sub "the human-readable report no longer prints a compactions line (#1396)" \
+  "$REPORT0" "friction: compactions"
 
 # The hotfix / manual-merge / human rows are CYCLE-SCOPED (#1281). Cycle 0's
 # window is [2026-09-05, 2026-09-12): BOTH bounds come from the tracker's own
@@ -559,6 +563,55 @@ expect_line "friction/hotfix renders a named reason when no cycle window resolve
   "$DUMP_C5" "COMPUTED friction/hotfix = n/a (no cycle window)"
 expect_line "escapes/hotfix renders a named reason when no cycle window resolves" \
   "$DUMP_C5" "COMPUTED escapes/hotfix = n/a (no cycle window)"
+
+# ---------------------------------------------------------------------------
+# Scenario 11c: NO `Cycle N` header yet (Step 1 runs before Step 3 appends it,
+# #1396), but the PREVIOUS cycle's tracker comment (`## Cycle 0`, with a
+# `- retro:` line) exists. The window must date from THAT comment's own
+# `createdAt` through `$RETRO_NOW`, not degrade to "no cycle window" — the
+# same PR universe Scenario 11 already pins (#2101/#2102/#2103/#2104), so the
+# expected numbers are identical.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 11c: cycle window dates from the prior cycle's comment when no header exists"
+
+FIX_NOHDR="$(mkfix cycle1-noheader tracker=tracker-cycle1-noheader.md)"
+DUMP_NOHDR="$(PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --fixture "$FIX_NOHDR" --dump-computed 2>/dev/null)"
+
+expect_line "escapes/hotfix renders numeric, not n/a, with no Cycle 1 header" \
+  "$DUMP_NOHDR" "COMPUTED escapes/hotfix = 1"
+expect_line "escapes/revert renders numeric, not n/a, with no Cycle 1 header" \
+  "$DUMP_NOHDR" "COMPUTED escapes/revert = 1"
+expect_line "friction/hotfix renders numeric, not n/a, with no Cycle 1 header (#2103 in window)" \
+  "$DUMP_NOHDR" "COMPUTED friction/hotfix = 1"
+expect_line "friction/manual-merge renders numeric, not n/a, with no Cycle 1 header" \
+  "$DUMP_NOHDR" "COMPUTED friction/manual-merge = 0"
+
+# ---------------------------------------------------------------------------
+# Scenario 11d: two cycles dated the SAME calendar day but distinct
+# timestamps must not share a window / double-count a PR (backlog #80;
+# cycles 13/14, 15/16). `tracker-sameday.md` carries `Cycle 20
+# (2026-09-12T06:00:00Z…)` and `Cycle 21 (2026-09-12T18:00:00Z…)`; one hotfix
+# PR merges in each half of the day.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 11d: same-day cycles are timestamp-granular, not date-granular"
+
+FIX_SAMEDAY="$(mkfix sameday tracker=tracker-sameday.md)"
+# Neither PR body carries a `Closes #` — the window (base + mergedAt) arm of
+# cycle_prs() is the ONLY arm that can match, isolating the timestamp compare.
+cat > "$FIX_SAMEDAY/prs.json" <<'JSON'
+[
+  {"number": 3101, "title": "fix(evolve): sameday early", "headRefName": "feature/hotfix-a", "baseRefName": "evolve", "body": "No linked issue.", "mergedAt": "2026-09-12T10:00:00Z", "labels": [], "files": ["a.txt"]},
+  {"number": 3102, "title": "fix(evolve): sameday late", "headRefName": "feature/hotfix-b", "baseRefName": "evolve", "body": "No linked issue.", "mergedAt": "2026-09-12T19:00:00Z", "labels": [], "files": ["b.txt"]}
+]
+JSON
+
+DUMP_SD20="$(bash "$HELPER" --cycle 20 --fixture "$FIX_SAMEDAY" --dump-computed 2>/dev/null)"
+expect_line "cycle 20 (06:00-18:00 window) counts only its own early hotfix PR" \
+  "$DUMP_SD20" "COMPUTED friction/hotfix = 1"
+
+DUMP_SD21="$(PIPELINE_RETRO_NOW="2026-09-19T00:00:00Z" bash "$HELPER" --cycle 21 --fixture "$FIX_SAMEDAY" --dump-computed 2>/dev/null)"
+expect_line "cycle 21 (18:00-now window) counts only its own late hotfix PR, not cycle 20's" \
+  "$DUMP_SD21" "COMPUTED friction/hotfix = 1"
 
 # ---------------------------------------------------------------------------
 # Scenario 12: gate yield, weak-model pass, usage snapshot

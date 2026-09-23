@@ -30,6 +30,8 @@ evolve skill's diagnose reasoning appended below it:
   HARNESS-FRICTION harvest, hotfix/manual-merge/human operator escapes,
   hotfix/revert/later-fix escapes, plan-eval Revise rate, pr-eval Flagged
   rate, weak-model calibration pass, five-hour/seven-day usage snapshot).
+  `friction/compactions` was removed (#1396): no code path ever populated it,
+  so it always rendered the same `n/a (no transcript substrate)` literal.
 - `prev-delta <row>/<label> …` — diff against the PREVIOUS cycle's own
   computed values (read from `docs/retros/cycle-<N-1>.md`), or
   `n/a (no previous cycle)` at cycle 0.
