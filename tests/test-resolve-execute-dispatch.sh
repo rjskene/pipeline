@@ -216,6 +216,10 @@ BODY_HIGH=$'## Affected areas\n- `scripts/a.sh`\n- `skills/x/SKILL.md`\n'
 BODY_W2=$'## Summary\nHarden the authentication and security path.\n\n## Affected areas\n- `scripts/foo.sh`\n'
 # W2 high-uncertainty for PATH D (concurrency/deadlock vocab).
 BODY_W2D=$'## Summary\nFix a deadlock in the concurrency path.\n'
+# Listed-but-unedited path token (#1381): the ONLY carve-out hit rides inside a
+# backticked PATH-SHAPED token on a `do not edit — verify only:` line. A
+# filename is not a risk claim, so this must resolve the cheap default.
+BODY_PATHTOK=$'## Summary\nrename a dispatch token.\n\n## Affected areas\n- `scripts/foo.sh`\n- do not edit — verify only: `docs/security-model.md`\n'
 
 # ---- Task 1: model resolution + carve-outs ----------------------------------
 
@@ -291,6 +295,24 @@ FIX9=$(make_fixture "fix(foo): contention" "$BODY_W2D" '[]')
 OUT9=$(run_resolver "$FIX9" "$CFG9" D)
 assert_tok "(9) D W2 vocab" "MODEL=opus" "$OUT9"
 assert_tok "(9) D W2 vocab" "REASON=high-uncertainty" "$OUT9"
+
+# (9b) PATH D, #1381: the only carve-out hit is a LISTED path token -> the cheap
+#      default. Case (9) directly above is its CONTROL — genuine PROSE signal
+#      still resolves opus / high-uncertainty — as is case (3) for PATH B.
+CFG9B=$(make_config_root)
+FIX9B=$(make_fixture "fix(foo): rename a token" "$BODY_PATHTOK" '[]')
+OUT9B=$(run_resolver "$FIX9B" "$CFG9B" D)
+assert_tok "(9b) D listed path token" "MODEL=sonnet" "$OUT9B"
+assert_tok "(9b) D listed path token" "REASON=default-sonnet" "$OUT9B"
+
+# (9c) PATH B, same body -> sonnet + low-blast. ALSO exercises the strip in
+#      scripts/path-b-execute-eligible.sh (the PATH B arm shells out to it).
+CFG9C=$(make_config_root)
+FIX9C=$(make_fixture "fix(foo): rename a token" "$BODY_PATHTOK" '[]')
+OUT9C=$(run_resolver "$FIX9C" "$CFG9C" B)
+assert_tok "(9c) B listed path token" "MODEL=sonnet" "$OUT9C"
+assert_tok "(9c) B listed path token" "ELIGIBLE=low-blast" "$OUT9C"
+assert_tok "(9c) B listed path token" "REASON=default-sonnet" "$OUT9C"
 
 # (10) GENUINELY invalid arguments -> exit 2 + usage on stderr. #1186 narrows this
 #      set: `A` and `C` are now ACCEPTED path letters (cases 16-19 below), so the

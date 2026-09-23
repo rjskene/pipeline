@@ -17,6 +17,7 @@ so `tests/test-run-retro.sh` never touches live data.
 | `prs.json` | `gh pr list --json number,title,headRefName,body,mergedAt,labels,files` |
 | `calib.txt` | latest `docs/retros/calib/<date>.txt` CALIB block (`scripts/calibration-run.sh --run`) |
 | `agent-costs.jsonl` | `.claude/logs/agent-costs.jsonl` (produced by `scripts/capture-agent-costs.sh`) |
+| `hook-denials.jsonl` | `.claude/logs/hook-denials.jsonl` (`hooks/_deny_log.py`, #1352) — PRIMARY source of the `friction/denials` row: 5 records / 3 hooks, one (`2026-09-04`) before the `Cycle 0 (2026-09-05` header → `4 (hook-denials.jsonl; block_deletions=2 enforce-ci-wait=1 restrict_paths=1)`, `2` under `--since 2026-09-07`, `0 (…; none in window)` under `--since 2026-09-08` (#1360) |
 
 ### The `calib.txt` CALIB grammar
 
@@ -47,8 +48,8 @@ rather than a k/n over rows the run never reached. Grammar reference:
 | `tracker-nonnumeric.md` | a baseline cell with zero numeric atoms → `n/a (non-numeric baseline)` |
 | `tracker-missing-row.md` | the `harness mass` baseline row deleted → `n/a (baseline row not found: <key>)` |
 | `tracker-garbled.md` | no `## Scorecard baseline` section → `n/a (tracker body unreadable)` |
-| `tool-use-summary-blocked.log` | records whose **field 5 summary** contains `BLOCKED` → the denial row must STILL be `n/a` (a whole-line `grep -c BLOCKED` would self-inflate) |
-| `tool-use-denied.log` | field-2 `denied` records → the denial row renders a count (2 unbounded, 1 under `--since 2026-09-03`) |
+| `tool-use-summary-blocked.log` | (deny log absent) records whose **field 5 summary** contains `BLOCKED` → the denial row must STILL be `n/a` (a whole-line `grep -c BLOCKED` would self-inflate) |
+| `tool-use-denied.log` | (deny log absent) field-2 `denied` records → the legacy fallback still renders a count (2 unbounded, 1 under `--since 2026-09-03`) |
 
 ## `tracker.md` is a VERBATIM byte copy of the live #1271 body
 

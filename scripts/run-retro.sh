@@ -418,6 +418,7 @@ TOOLOG=""
 USAGE_FILE=""
 CALIB_FILE=""
 AGENT_COSTS_FILE=""
+DENY_LOG=""
 
 if [ -n "$FIXTURE_DIR" ]; then
   TRACKER_FILE="$FIXTURE_DIR/tracker.md"
@@ -428,6 +429,7 @@ if [ -n "$FIXTURE_DIR" ]; then
   USAGE_FILE="$FIXTURE_DIR/usage-gate.jsonl"
   CALIB_FILE="$FIXTURE_DIR/calib.txt"
   AGENT_COSTS_FILE="$FIXTURE_DIR/agent-costs.jsonl"
+  DENY_LOG="$FIXTURE_DIR/hook-denials.jsonl"
 else
   LIVE_TMP="$(mktemp -d)"
   trap 'rm -rf "$LIVE_TMP"' EXIT
@@ -459,6 +461,9 @@ else
   # reshuffle mtimes, and docs/calibration.md promises the newest date.
   CALIB_FILE="$(ls -1 "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | sort | tail -1)"
   AGENT_COSTS_FILE="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/agent-costs.jsonl"
+  # Mirrors AGENT_COSTS_FILE resolution (#1352/#1360): denials from linked
+  # worktrees land in the main checkout's one durable file.
+  DENY_LOG="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/hook-denials.jsonl"
 fi
 
 TRACKER_BODY=""
@@ -778,7 +783,7 @@ compute_harness_mass
 # Task 5 — friction, escapes, gate yield, weak-model, usage snapshot
 # ---------------------------------------------------------------------------
 
-NO_DECISION_FIELD="n/a (tool-use.log has no decision field; hooks/log-tool-use.sh logs invocations only)"
+NO_DECISION_FIELD="n/a (no hook-denials.jsonl — PIPELINE_LOGS_ENABLED=false or pre-#1352; tool-use.log has no decision field)"
 
 FRICTION_DENIALS=""
 FRICTION_LINES_COUNT=0
@@ -806,10 +811,36 @@ current_cycle_friction_lines() {
 }
 
 compute_friction() {
-  local toolog="$1" issues_file="$2" prs_file="$3" since="$4" cur_ids_json="$5" base="$6" cyc_since="$7" cyc_until="$8" post="$9" cycle="${10}" tracker="${11}"
-  local cnt line cur_prs_json prev_comment_body
+  local toolog="$1" issues_file="$2" prs_file="$3" since="$4" cur_ids_json="$5" base="$6" cyc_since="$7" cyc_until="$8" post="$9" cycle="${10}" tracker="${11}" deny_log="${12}"
+  local cnt line cur_prs_json prev_comment_body deny_summary dcount dbreak
 
-  if [ -f "$toolog" ]; then
+  # friction/denials primary source (#1352/#1360): hook-denials.jsonl, scoped
+  # to the cycle window (cyc_since/cyc_until) and further narrowed by --since
+  # when given. Falls back to the tool-use.log scan (unchanged) only when the
+  # deny log is absent (PIPELINE_LOGS_ENABLED=false, or a pre-#1352 tree).
+  if [ -n "$deny_log" ] && [ -f "$deny_log" ]; then
+    if [ -z "$cyc_since" ] && [ -z "$since" ]; then
+      FRICTION_DENIALS="n/a (no cycle window)"
+    else
+      deny_summary="$(jq -s -c --arg cs "$cyc_since" --arg cu "$cyc_until" --arg sf "$since" '
+        [ .[] | select(
+            ($cs == "" or .ts >= $cs)
+            and ($cu == "" or .ts < $cu)
+            and ($sf == "" or .ts >= $sf)
+          ) ]
+        | { count: length,
+            breakdown: (group_by(.hook) | map({hook: .[0].hook, n: length}) | sort_by([-.n, .hook])) }
+      ' "$deny_log" 2>/dev/null)"
+      dcount="$(printf '%s' "$deny_summary" | jq -r '.count // 0' 2>/dev/null)"
+      dcount="${dcount:-0}"
+      if [ "$dcount" -gt 0 ] 2>/dev/null; then
+        dbreak="$(printf '%s' "$deny_summary" | jq -r '.breakdown[] | "\(.hook)=\(.n)"' 2>/dev/null | paste -sd' ' -)"
+        FRICTION_DENIALS="$dcount (hook-denials.jsonl; $dbreak)"
+      else
+        FRICTION_DENIALS="0 (hook-denials.jsonl; none in window)"
+      fi
+    fi
+  elif [ -f "$toolog" ]; then
     cnt="$(awk -F'\t' -v since="$since" '
       NF>=5 && (since=="" || $1 >= since) && ($2=="denied" || $2=="blocked" || $3=="BLOCKED") { c++ }
       END { print c+0 }
@@ -885,7 +916,7 @@ compute_friction() {
   EXTRA_COMP_VAL["friction/human"]="$FRICTION_HUMAN";                      EXTRA_COMP_UNIT["friction/human"]=""
 }
 
-compute_friction "$TOOLOG" "$ISSUES_FILE" "$PRS_FILE" "$SINCE" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL" "$POST" "$CYCLE" "$TRACKER"
+compute_friction "$TOOLOG" "$ISSUES_FILE" "$PRS_FILE" "$SINCE" "$CUR_IDS_JSON" "$BASE" "$CYCLE_SINCE" "$CYCLE_UNTIL" "$POST" "$CYCLE" "$TRACKER" "$DENY_LOG"
 
 GATE_REVISE=0; GATE_PLANS=0; GATE_FLAGGED=0; GATE_EVALS=0
 

@@ -135,6 +135,98 @@ echo "-- mixed-case / in-prose smoke checks --"
 assert_match "This fixes a race condition in the concurrency path."
 assert_no_match "control-plane files for direct operator authoring; Blocks the sibling"
 
+echo "-- path-token stripping (#1381) --"
+# A backticked PATH-SHAPED token is a filename, not a risk claim: merely LISTING
+# `docs/security-model.md` must not buy an opus execute. The strip is confined to
+# backticked + whole-token + path-shaped spans, so bare prose, unbackticked paths
+# and backticked NON-path tokens all still match (fail-CLOSED posture preserved).
+# Shape: CAPTURE first, then match with a here-string — piping a producer into
+# `grep -q` lets grep exit early and SIGPIPE it, which under `pipefail` silently
+# voids the carve-out on a large body. Mirrors the call-site shape pinned below.
+matches_stripped() {
+  local t
+  t="$(printf '%s' "$1" | hu_strip_path_tokens)"
+  grep -iEq "$HIGH_UNCERTAINTY_RE" <<<"$t"
+}
+
+assert_stripped_match() {
+  local candidate="$1"
+  inc
+  if matches_stripped "$candidate"; then
+    pass_msg "MUST match after strip: '$candidate'"
+  else
+    fail_msg "MUST match after strip but did NOT: '$candidate'"
+  fi
+}
+
+assert_stripped_no_match() {
+  local candidate="$1"
+  inc
+  if matches_stripped "$candidate"; then
+    fail_msg "MUST NOT match after strip but DID: '$candidate'"
+  else
+    pass_msg "MUST NOT match after strip: '$candidate'"
+  fi
+}
+
+# Non-vacuity anchor: with no helper the capture is empty and every
+# assert_stripped_no_match would pass for the wrong reason.
+inc
+if declare -F hu_strip_path_tokens >/dev/null 2>&1; then
+  pass_msg "hu_strip_path_tokens is defined by the shared helper"
+else
+  fail_msg "hu_strip_path_tokens is NOT defined by _high-uncertainty-match.sh"
+fi
+
+# MUST NOT match: the only carve-out hit rides inside a backticked path token.
+assert_stripped_no_match '`docs/security-model.md`'
+assert_stripped_no_match '`scripts/crypto-sign.sh`'
+assert_stripped_no_match '- do not edit — verify only: `docs/security-model.md`, `docs/architecture.md`'
+# MUST still match: bare prose, a backticked NON-path token, an unbackticked path.
+assert_stripped_match 'this changes the security model'
+assert_stripped_match 'Fix a deadlock in the concurrency path.'
+assert_stripped_match 'the `security` knob is renamed'
+assert_stripped_match 'see docs/security-model.md'
+# MUST still match: real prose signal survives ALONGSIDE a stripped path token.
+assert_stripped_match 'Harden auth in `scripts/foo.sh`'
+
+# Large-body non-flake: 1 signal line + 1000 filler, 10/10 runs must match. Under
+# `printf | hu_strip_path_tokens | grep -iEq` this fails ~18/20 (SIGPIPE +
+# `pipefail`); under capture-then-here-string it is 0/20.
+inc
+BIG=$(printf 'security line\n'; printf 'filler line\n%.0s' $(seq 1000))
+BIG_MISSES=0
+for _i in $(seq 10); do
+  matches_stripped "$BIG" || BIG_MISSES=$((BIG_MISSES + 1))
+done
+if [ "$BIG_MISSES" -eq 0 ]; then
+  pass_msg "large body (1 signal + 1000 filler lines) matches on 10/10 runs"
+else
+  fail_msg "large body: $BIG_MISSES/10 runs did NOT match (flaky strip pipeline)"
+fi
+
+echo "-- drift guard: carve-out call sites strip path tokens first (#1381) --"
+# Both direct-match call sites must capture through hu_strip_path_tokens into
+# HU_TEXT and match with a HERE-STRING — never pipe into the carve-out grep.
+RD="$ROOT/scripts/resolve-execute-dispatch.sh"
+PB="$ROOT/scripts/path-b-execute-eligible.sh"
+for _site in "$RD" "$PB"; do
+  _name="$(basename "$_site")"
+  inc
+  if grep -Eq 'HU_TEXT=.*hu_strip_path_tokens' "$_site" \
+     && grep -Eq 'grep -iEq "\$HIGH_UNCERTAINTY_RE"[[:space:]]*<<<[[:space:]]*"\$HU_TEXT"' "$_site"; then
+    pass_msg "$_name routes through hu_strip_path_tokens into an HU_TEXT here-string match"
+  else
+    fail_msg "$_name does NOT route through hu_strip_path_tokens (HU_TEXT capture + here-string match)"
+  fi
+  inc
+  if grep -Eq '\|[[:space:]]*grep -iEq "\$HIGH_UNCERTAINTY_RE"' "$_site"; then
+    fail_msg "$_name still PIPES a producer into grep -iEq \"\$HIGH_UNCERTAINTY_RE\" (SIGPIPE + pipefail voids the carve-out)"
+  else
+    pass_msg "$_name does not pipe a producer into the carve-out grep"
+  fi
+done
+
 echo "-- drift guard: single source of truth (both scripts source the helper) --"
 PB="$ROOT/scripts/path-b-execute-eligible.sh"
 PC="$ROOT/scripts/plan-campaign.sh"

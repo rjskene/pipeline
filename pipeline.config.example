@@ -65,6 +65,11 @@ PIPELINE_SEED_CMD=""                               # DB seed command (optional, 
 # the escape hatch when a legitimate orchestrator worktree (a real issue-number
 # name, not a wt-100-bar-style fixture) lands concurrently mid-suite.
 # PIPELINE_TEST_LEAK_GUARD_REPO=
+# PIPELINE_TEST_ROOT_OVERRIDE (issue #1389): scripts/run-test-suite.sh unsets
+# PIPELINE_PROJECT_ROOT/CLAUDE_PLUGIN_ROOT/PIPELINE_USE_LOCAL_PLUGIN before
+# dispatching any test, so a worktree suite run never inherits a caller's
+# roots. Set to 1 to keep the caller's values instead (unused elsewhere here).
+# PIPELINE_TEST_ROOT_OVERRIDE=1
 # NOTE: the live, host-only pipeline.config is GITIGNORED and cannot ship in a PR
 # (see CLAUDE.md "Configuration conventions"). Apply the same parallel-runner edit
 # to your live pipeline.config by HAND on the operator host — this example file is

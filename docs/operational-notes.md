@@ -165,14 +165,7 @@ export CLAUDE_PLUGIN_ROOT=<repo-working-tree>   # in dogfood the repo tree IS th
 
 ## 4. Subagent type availability
 
-`skills/execute-issue-plan/SKILL.md` Step 8b (independent reviewer dispatch)
-references `Agent(subagent_type: "superpowers:code-reviewer", ...)`, which does
-**not** exist in the dogfood environment (`Agent type ... not found`). Dispatch
-`Agent(subagent_type: "general-purpose", ...)` instead, with the plan body +
-`git diff <base>..HEAD` and the "flag plan-compliance gaps and real bugs; do not
-refactor; return LGTM or tagged findings" instructions. Don't burn retries on the
-non-existent type. (The `superpowers:requesting-code-review` skill body itself
-says to use `general-purpose` with its `code-reviewer.md` template.)
+superpowers ships no `agents/` directory, so there is no plugin reviewer agent type to dispatch. `skills/execute-issue-plan/SKILL.md` Step 8b is the rule: `general-purpose` + the `requesting-code-review` `code-reviewer.md` template, description `code review #<N>` (the cost-attribution key).
 
 ## 5. Standalone `execute-issue-plan` in a worktree
 

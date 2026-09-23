@@ -56,6 +56,8 @@ mkfix() {
       tracker=*)    v="${1#tracker=}"; cp "$FIXTURE_DIR/$v" "$dir/tracker.md" ;;
       toolog=none)  rm -f "$dir/tool-use.log" ;;
       toolog=*)     v="${1#toolog=}"; cp "$FIXTURE_DIR/$v" "$dir/tool-use.log" ;;
+      denylog=none) rm -f "$dir/hook-denials.jsonl" ;;
+      denylog=*)    v="${1#denylog=}"; cp "$FIXTURE_DIR/$v" "$dir/hook-denials.jsonl" ;;
       rm=*)         rm -f "$dir/${1#rm=}" ;;
     esac
     shift
@@ -399,27 +401,51 @@ done
 # and logs INVOCATIONS only — there is no decision field, so no denial record
 # can exist today. A whole-line `grep -c BLOCKED` counts the retro's own
 # investigation (the summary field carries the agent's Bash command verbatim).
+#
+# hooks/_deny_log.py (#1352) closes that gap with .claude/logs/hook-denials.jsonl
+# — when present it is the PRIMARY source; tool-use.log stays the fallback.
 # ---------------------------------------------------------------------------
 inc_scenario "Scenario 9: friction denial row (field-scoped)"
 
-NO_DECISION="n/a (tool-use.log has no decision field; hooks/log-tool-use.sh logs invocations only)"
+NO_DECISION="n/a (no hook-denials.jsonl — PIPELINE_LOGS_ENABLED=false or pre-#1352; tool-use.log has no decision field)"
 
-expect_line "clean tool-use.log renders the no-decision-field reason (not 0)" \
-  "$DUMP_C" "COMPUTED friction/denials = $NO_DECISION"
+FIX_NODENY="$(mkfix no-denylog denylog=none)"
+DUMP_NODENY="$(bash "$HELPER" --cycle 0 --fixture "$FIX_NODENY" --dump-computed 2>/dev/null)"
+expect_line "clean tool-use.log renders the renamed no-decision-field reason (not 0)" \
+  "$DUMP_NODENY" "COMPUTED friction/denials = $NO_DECISION"
 
-FIX_SUMBLK="$(mkfix summary-blocked toolog=tool-use-summary-blocked.log)"
+FIX_SUMBLK="$(mkfix summary-blocked toolog=tool-use-summary-blocked.log denylog=none)"
 DUMP_SUMBLK="$(bash "$HELPER" --cycle 0 --fixture "$FIX_SUMBLK" --dump-computed 2>/dev/null)"
 expect_line "BLOCKED in the field-5 SUMMARY still renders n/a (self-inflation guard)" \
   "$DUMP_SUMBLK" "COMPUTED friction/denials = $NO_DECISION"
 
-FIX_DENIED="$(mkfix denied toolog=tool-use-denied.log)"
+FIX_DENIED="$(mkfix denied toolog=tool-use-denied.log denylog=none)"
 DUMP_DENIED="$(bash "$HELPER" --cycle 0 --fixture "$FIX_DENIED" --dump-computed 2>/dev/null)"
-expect_line "field-2 'denied' records are counted (2 in the fixture)" \
+expect_line "deny log absent: legacy tool-use.log 'denied' count still renders (backward-compat, 2 in the fixture)" \
   "$DUMP_DENIED" "COMPUTED friction/denials = 2"
 
 DUMP_DENIED_SINCE="$(bash "$HELPER" --cycle 0 --fixture "$FIX_DENIED" --since 2026-09-03 --dump-computed 2>/dev/null)"
 expect_line "--since excludes denial records older than the window (2 -> 1)" \
   "$DUMP_DENIED_SINCE" "COMPUTED friction/denials = 1"
+
+# hook-denials.jsonl present (default fixture) is now the PRIMARY source: 4 of
+# the 5 fixture records fall inside cycle 0's window (>= 2026-09-05), one
+# (2026-09-04) is excluded as before the tracker's `Cycle 0 (` date.
+expect_line "hook-denials.jsonl present: in-window count with per-hook breakdown (count desc, then name)" \
+  "$DUMP_C" "COMPUTED friction/denials = 4 (hook-denials.jsonl; block_deletions=2 enforce-ci-wait=1 restrict_paths=1)"
+
+DUMP_DENYLOG_SINCE="$(bash "$HELPER" --cycle 0 --fixture "$FIXTURE_DIR" --since 2026-09-07 --dump-computed 2>/dev/null)"
+expect_line "--since further narrows the deny-log count (4 -> 2)" \
+  "$DUMP_DENYLOG_SINCE" "COMPUTED friction/denials = 2 (hook-denials.jsonl; enforce-ci-wait=1 restrict_paths=1)"
+
+FIX_DENYLOG_ONLY="$(mkfix denylog-only toolog=none denylog=hook-denials.jsonl)"
+DUMP_DENYLOG_ONLY="$(bash "$HELPER" --cycle 0 --fixture "$FIX_DENYLOG_ONLY" --dump-computed 2>/dev/null)"
+expect_line "hook-denials.jsonl is used even when tool-use.log is absent" \
+  "$DUMP_DENYLOG_ONLY" "COMPUTED friction/denials = 4 (hook-denials.jsonl; block_deletions=2 enforce-ci-wait=1 restrict_paths=1)"
+
+DUMP_DENYLOG_ZERO="$(bash "$HELPER" --cycle 0 --fixture "$FIXTURE_DIR" --since 2026-09-08 --dump-computed 2>/dev/null)"
+expect_line "zero in-window deny records render 0, not n/a" \
+  "$DUMP_DENYLOG_ZERO" "COMPUTED friction/denials = 0 (hook-denials.jsonl; none in window)"
 
 # ---------------------------------------------------------------------------
 # Scenario 10: HARNESS-FRICTION harvest, compactions, hotfix/manual-merge/human

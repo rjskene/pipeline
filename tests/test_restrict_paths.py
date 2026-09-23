@@ -2239,6 +2239,46 @@ class TestRestrictPaths(unittest.TestCase):
             {"command": "sed -e 's/a/b/' " + ETC + "/passwd"},
         )
 
+    # ======================================================================
+    # Issue #1372 — a lone `/` candidate is never a boundary reference
+    # ======================================================================
+    # RED today (rc 2, `BLOCKED: path outside project boundary: /`): an
+    # interpreter-owned heredoc body stays in the scan by design (#1192/#1282),
+    # so a python `"/"` literal / pathlib join surfaces as the candidate `/`.
+    def test_issue1372_allow_python_heredoc_split_slash_literal(self):
+        self.assertAllowed(
+            "Bash",
+            {"command": "python3 - <<'EOF'\nprint(\"a\".split(\"" + SL + "\"))\nEOF"},
+        )
+
+    def test_issue1372_allow_python_heredoc_single_quoted_slash_literal(self):
+        self.assertAllowed(
+            "Bash",
+            {"command": "python3 - <<'EOF'\nprint('a'.split('" + SL + "'))\nEOF"},
+        )
+
+    def test_issue1372_allow_python_heredoc_pathlib_join_operator(self):
+        self.assertAllowed(
+            "Bash",
+            {"command": "python3 - <<'EOF'\nfrom pathlib import Path\n"
+                        "print(Path(\"x\") " + SL + " \"y\")\nEOF"},
+        )
+
+    # RED today: a bare `/` word in plain prose is the same candidate.
+    def test_issue1372_allow_echo_bare_slash_word(self):
+        self.assertAllowed("Bash", {"command": "echo a " + SL + " b"})
+
+    # CONTROLS — green today AND post-fix: the skip is exact-match `/` only;
+    # `cd /` stays blocked via the #1188 cd gate once the extractor skips it.
+    def test_issue1372_block_cat_etc_passwd_keep(self):
+        self.assertBlocked("Bash", {"command": "cat " + ETC + "/passwd"})
+
+    def test_issue1372_block_cat_double_slash_etc_passwd_keep(self):
+        self.assertBlocked("Bash", {"command": "cat /" + ETC + "/passwd"})
+
+    def test_issue1372_block_cd_root_keep(self):
+        self.assertBlocked("Bash", {"command": "cd " + SL})
+
 
 if __name__ == "__main__":
     unittest.main()

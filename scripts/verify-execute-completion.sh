@@ -59,6 +59,16 @@ fi
 #   DISPATCH=mismatch ISSUE=<N> REASON=shape:single!=split-role
 #   DISPATCH=warn     ISSUE=<N> REASON=model-unrecoverable
 #
+# #1387 — ADVISORY cost-attribution miss signal, emitted as the FIRST line of
+# stdout (ahead of every DISPATCH= verdict above, ahead of every early-exit
+# branch too):
+#
+#   COST=miss ISSUE=<N> REASON=unattributed-row
+#
+# echo-only: no exit-code change, no halt, no gate. MISS-ONLY — there is no
+# COST=ok; silence covers an attributed last row, PIPELINE_LOGS_ENABLED not
+# exactly "true", jq unavailable, and an absent/empty cost log.
+#
 # Fail-soft, fail-CLOSED parity with the rest of the helper: any check that
 # cannot CONFIRM a match emits `warn`/`mismatch`, never a spurious `match`. The
 # verify is a backstop (surfaced WARN-level in the run log), not a hard gate — it
@@ -99,6 +109,31 @@ if [ "$1" = "--verify-dispatch" ]; then
     source "${_vec_dir}/_resolve-config.sh"
   fi
   VD_BASE="${PIPELINE_BASE_BRANCH:-staging}"
+
+  # --- #1387: advisory cost-attribution miss signal, dispatch-time. -----------
+  # Sits at the TOP of the branch (after VD_BASE, before the shape verify) so
+  # the advisory is always the FIRST line of stdout, ahead of every DISPATCH=
+  # verdict below (every early-exit branch still carries it). echo-only: no
+  # exit-code change, no halt, no gate. MISS-ONLY: there is no COST=ok —
+  # silence covers an attributed row, PIPELINE_LOGS_ENABLED not exactly
+  # "true", jq unavailable, and an absent/empty cost log (never manufacture a
+  # miss from a missing file). PIPELINE_COST_LOG_OVERRIDE mirrors the
+  # PIPELINE_RUNS_LOG_OVERRIDE read below — a test-injected path, allow-listed
+  # in tests/config-drift-allowlist.txt, not a pipeline.config.example knob.
+  if [ -f "${_vec_dir}/_logging.sh" ]; then
+    # shellcheck disable=SC1090,SC1091
+    source "${_vec_dir}/_logging.sh"
+  fi
+  if command -v pipeline_logging_enabled >/dev/null 2>&1 && pipeline_logging_enabled \
+     && command -v jq >/dev/null 2>&1; then
+    _cost_log="${PIPELINE_COST_LOG_OVERRIDE:-.claude/logs/agent-costs.jsonl}"
+    if [ -s "$_cost_log" ]; then
+      _cost_last_issue="$(tail -n 1 "$_cost_log" | jq -r '.issue // ""' 2>/dev/null || true)"
+      if [ -z "$_cost_last_issue" ]; then
+        echo "COST=miss ISSUE=$VD_ISSUE REASON=unattributed-row"
+      fi
+    fi
+  fi
 
   EXPECT_MODEL="${VED_EXPECT_MODEL:-}"
   EXPECT_SPLIT="${VED_EXPECT_SPLIT_ROLE:-false}"
