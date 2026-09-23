@@ -233,6 +233,48 @@ Please update `skills/plan-issue/SKILL.md` per the new behavior.
 # line. Either cue followed by an action word must drop the line (#1347).
 BODY_NEG_DUAL='Never edit `agents/tdd-implementer.md`; you do not need to worry.'
 
+# ---- #1388 fixtures: prose mention vs declared placement --------------------
+# BODY_PROSE_MENTION and BODY_DECLARED_MENTION carry the SAME token
+# `agents/tdd-implementer.md`. The only difference is WHERE it sits: a
+# Context prose line vs a bullet inside the declared block.
+BODY_PROSE_MENTION='Context: the runner reads `agents/tdd-implementer.md` before dispatch.
+
+## Affected areas
+
+- `skills/plan-issue/SKILL.md`
+'
+BODY_DECLARED_MENTION='Context: the runner reads the leaf contract before dispatch.
+
+## Affected areas
+
+- `skills/plan-issue/SKILL.md`
+- `agents/tdd-implementer.md`
+'
+# No declaring header anywhere -> the fallback must keep today's harvest.
+BODY_NO_SECTION='No declared block anywhere. This edits `scripts/alpha-1388.sh` and `docs/beta-1388.md`.'
+# Header PRESENT but the block yields nothing (its only entry is negated),
+# plus a prose path. Presence of the header, not the block's yield, decides.
+BODY_DECL_ALL_NEGATED='Context: the runner reads `agents/tdd-implementer.md` before dispatch.
+
+## Affected areas
+
+- do not edit — verify only: `docs/shared-contract.md`
+'
+write_issue "$S"  9 "priority/P2" "$BODY_PROSE_MENTION"
+write_issue "$S" 10 "priority/P2" 'Renames the leaf executor contract.
+
+## Affected areas
+
+- `agents/tdd-implementer.md`
+'
+write_issue "$S" 11 "priority/P2" "$BODY_DECLARED_MENTION"
+write_issue "$S" 12 "priority/P2" 'Renames the leaf executor contract.
+
+## Affected areas
+
+- `agents/tdd-implementer.md`
+'
+
 # ============================================================================
 # B group — shared helper unit cases
 # ============================================================================
@@ -384,6 +426,66 @@ else
   dump "got:" "$B11_OUT"
 fi
 
+# ---- B12: a prose mention outside the declared sections yields no path (#1388)
+# The load-bearing case. `agents/tdd-implementer.md` appears ONLY on a Context
+# prose line; the declared block names a different file. Two distinct failure
+# messages so the red reason is never ambiguous: a missing declared path is a
+# BROKEN extractor, a present prose path is the DEFECT under repair.
+echo "B12: bp_body_paths ignores a backticked path on a prose line outside the declared sections"
+inc
+B12_OUT=$(run_bp bp_body_paths "$BODY_PROSE_MENTION")
+if ! has_entry "$B12_OUT" "skills/plan-issue/SKILL.md"; then
+  fail_msg "B12: declared path skills/plan-issue/SKILL.md missing — extractor produced nothing usable"
+  dump "got:" "$B12_OUT"
+elif has_entry "$B12_OUT" "agents/tdd-implementer.md"; then
+  fail_msg "B12: prose-only path agents/tdd-implementer.md leaked from a line OUTSIDE the declared sections"
+  dump "got:" "$B12_OUT"
+else
+  pass_msg "B12: declared path kept; prose-mention path absent"
+fi
+
+# ---- B13: the placement twin — same token, declared instead of prosed (#1388)
+# Non-vacuity control for B12: proves B12's redness is about WHERE the token
+# sits, not about the token itself.
+echo "B13: the same token declared inside the Affected areas block still contributes"
+inc
+B13_OUT=$(run_bp bp_body_paths "$BODY_DECLARED_MENTION")
+if has_entry "$B13_OUT" "skills/plan-issue/SKILL.md" \
+   && has_entry "$B13_OUT" "agents/tdd-implementer.md"; then
+  pass_msg "B13: both declared paths present — B12 is about PLACEMENT, not the token"
+else
+  fail_msg "B13: expected BOTH skills/plan-issue/SKILL.md and agents/tdd-implementer.md"
+  dump "got:" "$B13_OUT"
+fi
+
+# ---- B14: no declared section anywhere -> whole-body fallback (#1388) --------
+# The anti-overshoot lock. A hand-written body that never learned the
+# convention must keep today's harvest rather than silently losing every edge.
+echo "B14: a body declaring no section at all falls back to the whole-body harvest"
+inc
+B14_OUT=$(run_bp bp_body_paths "$BODY_NO_SECTION")
+if has_entry "$B14_OUT" "scripts/alpha-1388.sh" \
+   && has_entry "$B14_OUT" "docs/beta-1388.md"; then
+  pass_msg "B14: fallback kept both prose paths"
+else
+  fail_msg "B14: expected BOTH scripts/alpha-1388.sh and docs/beta-1388.md from the no-section fallback"
+  dump "got:" "$B14_OUT"
+fi
+
+# ---- B15: header PRESENT, block all-negated -> empty, no fallback (#1388) ----
+# Pins header PRESENCE (not the block's yield) as the fallback decision. A
+# yield-based fallback would reintroduce the prose harvest for every body whose
+# declared block is present but all-negated.
+echo "B15: a declared header whose block yields nothing does NOT fall back to prose"
+inc
+B15_OUT=$(run_bp bp_body_paths "$BODY_DECL_ALL_NEGATED")
+if [ -z "$B15_OUT" ]; then
+  pass_msg "B15: declared-but-empty block yields no paths — no fallback to the prose line"
+else
+  fail_msg "B15: expected empty output — a body that declares a section must not harvest prose"
+  dump "got:" "$B15_OUT"
+fi
+
 # ============================================================================
 # P group — plan-waves.sh call-site parity
 # ============================================================================
@@ -442,6 +544,34 @@ if printf '%s\n' "$P3B_OUT" | grep -E '^Wave 2:' | grep -q 'docs/shared-contract
 else
   fail_msg "P3b: expected a 'Wave 2:' line citing docs/shared-contract.md"
   dump "stdout:" "$P3B_OUT"
+fi
+
+# ---- P4: a prose mention of the sibling's file keeps a disjoint slate at ONE
+#          wave (#1388) ------------------------------------------------------
+# #9 edits skills/plan-issue/SKILL.md and merely MENTIONS
+# agents/tdd-implementer.md in a Context sentence; #10 edits
+# agents/tdd-implementer.md. The slate is genuinely disjoint.
+echo "P4: a body that only MENTIONS the sibling's file plans as one wave"
+inc
+P4_OUT=$(run_plan_waves --stage=execute 9 10 2>"$TMP/p4.err" || true)
+if [ -n "$P4_OUT" ] && ! printf '%s\n' "$P4_OUT" | grep -qE '^Wave 2:'; then
+  pass_msg "P4: no 'Wave 2:' line — the prose mention contributed no edit edge"
+else
+  fail_msg "P4: expected NO 'Wave 2:' line (or plan-waves produced no output at all)"
+  dump "stdout:" "$P4_OUT"
+fi
+
+# ---- P4b: non-vacuity control — the same shared file DECLARED serializes -----
+# Mirrors the P3/P3b precedent: proves P4's one-wave verdict comes from the
+# mention's PLACEMENT, not from trivially disjoint fixtures.
+echo "P4b: the same shared file declared in BOTH bodies still serializes"
+inc
+P4B_OUT=$(run_plan_waves --stage=execute 11 12 2>"$TMP/p4b.err" || true)
+if printf '%s\n' "$P4B_OUT" | grep -E '^Wave 2:' | grep -q 'agents/tdd-implementer\.md'; then
+  pass_msg "P4b: Wave 2 serialization cites agents/tdd-implementer.md"
+else
+  fail_msg "P4b: expected a 'Wave 2:' line citing agents/tdd-implementer.md"
+  dump "stdout:" "$P4B_OUT"
 fi
 
 # ============================================================================
