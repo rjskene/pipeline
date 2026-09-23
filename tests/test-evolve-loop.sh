@@ -60,6 +60,11 @@ CLAUDE_COUNT="$TMP/claude.count"
 PROJ_ARGV="$TMP/proj-argv.log"
 SLEEP_LOG="$TMP/sleep.log"
 CLAUDE_SCRIPT="$TMP/claude-script"
+PRS_FILE="$TMP/prs.json"
+GIT_SHA_FILE="$TMP/git-sha.txt"
+GIT_SHORTSTAT_FILE="$TMP/git-shortstat.txt"
+ROWS_MOVED_LINES="$TMP/rows-moved-lines.txt"
+ROWS_MOVED_COUNT="$TMP/rows-moved.count"
 
 : > "$ALL_CALLS"
 
@@ -79,6 +84,11 @@ export LOOP_TEST_CLAUDE_COUNT="$CLAUDE_COUNT"
 export LOOP_TEST_PROJ_ARGV="$PROJ_ARGV"
 export LOOP_TEST_SLEEP_LOG="$SLEEP_LOG"
 export LOOP_TEST_CLAUDE_SCRIPT="$CLAUDE_SCRIPT"
+export LOOP_TEST_PRS="$PRS_FILE"
+export LOOP_TEST_GIT_SHA="$GIT_SHA_FILE"
+export LOOP_TEST_GIT_SHORTSTAT="$GIT_SHORTSTAT_FILE"
+export LOOP_TEST_ROWS_MOVED_LINES="$ROWS_MOVED_LINES"
+export LOOP_TEST_ROWS_MOVED_COUNT="$ROWS_MOVED_COUNT"
 export LOOP_TEST_RESUME_AT="--"
 
 TRACKER_N=1271
@@ -88,13 +98,20 @@ FUTURE="$(date -u -d '+2 hours' +%FT%TZ 2>/dev/null || echo '2099-01-01T00:00:00
 # PATH stubs
 # ---------------------------------------------------------------------------
 
-# The wrapper reads the tracker with `--json labels` and `--json body` ONLY.
-# Scenario 13 is the mechanical control that `--json comments` never appears.
+# The wrapper reads the tracker with `--json labels` and `--json body` ONLY,
+# plus a merged-PR list for the LOOP-YIELD `merged=` field. Scenario 13 is the
+# mechanical control that `--json comments` never appears.
+#
+# ARM ORDER: the merged-PR read carries its own `--json <fields>` list, so the
+# `*"pr list"*` arm is placed ABOVE `*"--json body"*` — the subcommand, not the
+# field list, is what selects the seam. Below it, any PR read whose field list
+# happened to render as `--json body` would be answered with the tracker body.
 cat > "$STUB_BIN/gh" <<'GH'
 #!/bin/bash
 echo "gh $*" >> "$LOOP_TEST_CALLS"
 case "$*" in
   *"--json labels"*) cat "$LOOP_TEST_LABELS" 2>/dev/null ;;
+  *"pr list"*)       cat "$LOOP_TEST_PRS" 2>/dev/null ;;
   *"--json body"*)   cat "$LOOP_TEST_BODY" 2>/dev/null ;;
 esac
 exit 0
@@ -167,17 +184,55 @@ exit 0
 FS
 chmod +x "$STUB_BIN/fake-sleep"
 
+# LOOP-YIELD's `loc=` field is the only thing in the wrapper that shells out to
+# `git`, and it is invoked bare (not by absolute path), so a PATH stub is the
+# right seam. An EMPTY seam file means "the read failed" — that is how
+# Scenario 22 drives the degraded `loc=?` branch without deleting the binary.
+cat > "$STUB_BIN/git" <<'GT'
+#!/bin/bash
+echo "git $*" >> "$LOOP_TEST_CALLS"
+case "$*" in
+  *"rev-parse HEAD"*)
+    [ -s "$LOOP_TEST_GIT_SHA" ] || exit 1
+    cat "$LOOP_TEST_GIT_SHA" ;;
+  *"--shortstat"*)
+    [ -s "$LOOP_TEST_GIT_SHORTSTAT" ] || exit 1
+    cat "$LOOP_TEST_GIT_SHORTSTAT" ;;
+  *) exit 1 ;;
+esac
+exit 0
+GT
+chmod +x "$STUB_BIN/git"
+
+# `run-retro.sh --rows-moved N` is invoked by ABSOLUTE PATH (a PATH shim cannot
+# intercept it), so it is replaced through the wrapper's own
+# EVOLVE_LOOP_RUN_RETRO seam. One canned line per call off a counter file, the
+# last line repeating — the fake-gate idiom.
+cat > "$STUB_BIN/fake-run-retro" <<'FR'
+#!/bin/bash
+n=$(cat "$LOOP_TEST_ROWS_MOVED_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1)); echo "$n" > "$LOOP_TEST_ROWS_MOVED_COUNT"
+line=$(sed -n "${n}p" "$LOOP_TEST_ROWS_MOVED_LINES" 2>/dev/null)
+[ -z "$line" ] && line=$(tail -1 "$LOOP_TEST_ROWS_MOVED_LINES" 2>/dev/null)
+printf '%s\n' "$line"
+FR
+chmod +x "$STUB_BIN/fake-run-retro"
+
 # ---------------------------------------------------------------------------
 # Fixtures + assertions
 # ---------------------------------------------------------------------------
 
-# write_body <file> <cycle> <step> — the tracker `## Mode` block the wrapper
-# parses with the same idioms skills/evolve/SKILL.md `## Durable state` uses.
+# write_body <file> <cycle> <step> [issues] — the tracker `## Mode` block the
+# wrapper parses with the same idioms skills/evolve/SKILL.md `## Durable state`
+# uses. `issues` defaults to the literal `none`, which is what the tracker
+# carries between cycles; LOOP-YIELD takes its `merged=` denominator from this
+# atom, so Scenario 21 overrides it with a real issue list.
 write_body() {
+  local issues="${4:-none}"
   cat > "$1" <<BODY
 ## Mode
 
-\`active\` — cycle $2 · step $3 · issues none · updated 2026-09-07T00:00:00Z
+\`active\` — cycle $2 · step $3 · issues $issues · updated 2026-09-07T00:00:00Z
 
 ## Runtime
 BODY
@@ -188,8 +243,15 @@ reset_state() { # <slug>
   cat "$CALLS" >> "$ALL_CALLS" 2>/dev/null || true
   : > "$CALLS"
   rm -f "$GATE_COUNT" "$PROJ_COUNT" "$DIMIN_COUNT" "$CLAUDE_COUNT" "$CLAUDE_SCRIPT"
+  rm -f "$ROWS_MOVED_COUNT"
   : > "$PROJ_ARGV"
   : > "$SLEEP_LOG"
+  # Default: nothing is measurable, so LOOP-YIELD degrades to `?` everywhere
+  # and Scenarios 1-19b are untouched by it.
+  : > "$PRS_FILE"
+  : > "$GIT_SHA_FILE"
+  : > "$GIT_SHORTSTAT_FILE"
+  printf 'rows-moved: n/a (no previous cycle)\n' > "$ROWS_MOVED_LINES"
   printf 'evolve\n' > "$LABELS_FILE"
   write_body "$BODY_FILE" 5 done
   write_body "$BODY_DONE" 5 done
@@ -210,17 +272,25 @@ run_helper() {
         EVOLVE_LOOP_PROJECTION="$STUB_BIN/fake-projection" \
         EVOLVE_LOOP_DIMINISHING="$STUB_BIN/fake-diminishing" \
         EVOLVE_LOOP_SLEEP_CMD="$STUB_BIN/fake-sleep" \
+        EVOLVE_LOOP_RUN_RETRO="$STUB_BIN/fake-run-retro" \
         PIPELINE_REPO="rjskene/pipeline" \
         ALLOW_ORCHESTRATOR_EDIT="true" \
         timeout 20 bash "$HELPER" "$@" 2>&1)"
   RC=$?
 }
 
+# HERE-STRING, NOT A PIPE. `grep -q` exits on its first match, so
+# `printf ... | grep -qF` takes SIGPIPE whenever the text exceeds the 64 KiB
+# pipe buffer — and under this file's `set -o pipefail` that rc 141 reads as
+# "no match". The Scenario 13 aggregate is the one assert whose input can grow
+# past 64 KiB (it is every call of every scenario), so a pipe there makes
+# `expect_sub` fail spuriously AND `refute_sub` pass VACUOUSLY. `<<<` is backed
+# by a temp file, so grep's early exit costs nothing.
 expect_sub() { # <label> <text> <substring>
-  if printf '%s\n' "$2" | grep -qF -- "$3"; then pass_msg "$1"; else fail_msg "$1 (missing: $3)"; fi
+  if grep -qF -- "$3" <<<"$2"; then pass_msg "$1"; else fail_msg "$1 (missing: $3)"; fi
 }
 refute_sub() { # <label> <text> <substring>
-  if printf '%s\n' "$2" | grep -qF -- "$3"; then
+  if grep -qF -- "$3" <<<"$2"; then
     fail_msg "$1 (unexpectedly present: $3)"
   else
     pass_msg "$1"
@@ -535,6 +605,7 @@ run_helper_failgh() {
         EVOLVE_LOOP_PROJECTION="$STUB_BIN/fake-projection" \
         EVOLVE_LOOP_DIMINISHING="$STUB_BIN/fake-diminishing" \
         EVOLVE_LOOP_SLEEP_CMD="$STUB_BIN/fake-sleep" \
+        EVOLVE_LOOP_RUN_RETRO="$STUB_BIN/fake-run-retro" \
         PIPELINE_REPO="rjskene/pipeline" \
         ALLOW_ORCHESTRATOR_EDIT="true" \
         timeout 20 bash "$HELPER" "$@" 2>&1)"
@@ -694,6 +765,117 @@ expect_sub "the cycle budget is reported" "$OUT" "LOOP-STOP reason=cycles-comple
 refute_sub "a healthy check never reports diminishing" "$OUT" "LOOP-STOP reason=diminishing"
 expect_eq "exactly one session is launched" "$(launches)" 1
 refute_sub "no paused label is added" "$(cat "$CALLS")" "--add-label paused"
+
+# ---------------------------------------------------------------------------
+# #1398 — the loop had no BLOCK boundary and no per-cycle yield summary.
+# Scenarios 20-22 are ADDITIVE and sit ABOVE the Scenario 13 aggregate, which
+# drains $ALL_CALLS and must stay the last block in the file.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 20: --cycles defaults to 3, so an unattended run stops on its own"
+# ---------------------------------------------------------------------------
+# The wrapper shipped `--cycles 0` (unbounded) with the `paused` label as the
+# ONLY operator checkpoint, so a collapsing run kept relaunching until a human
+# noticed — 17 cycles, in the event. The default becomes a 3-cycle BLOCK.
+# `RC != 124` is the mechanical pin that "stops" means the wrapper stopped, not
+# that the suite's own `timeout 20` reaped a runaway (the Scenario 8/8c idiom).
+reset_state 20
+write_body "$BODY_FILE" 5 done
+write_body "$BODY_DONE" 5 done
+cat > "$CLAUDE_SCRIPT" <<'S20'
+#!/bin/bash
+n=$(cat "$LOOP_TEST_CLAUDE_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1)); echo "$n" > "$LOOP_TEST_CLAUDE_COUNT"
+cat "$LOOP_TEST_BODY_DONE" > "$LOOP_TEST_BODY"
+exit 0
+S20
+chmod +x "$CLAUDE_SCRIPT"
+
+HELP_OUT="$(bash "$HELPER" --help 2>&1)"
+expect_sub "--help advertises the 3-cycle default" "$HELP_OUT" "default 3"
+
+run_helper --tracker "$TRACKER_N"
+
+expect_rc "a run with no --cycles flag exits 0" 0
+expect_sub "the default block is exactly three cycles" "$OUT" "LOOP-STOP reason=cycles-complete cycles=3"
+expect_eq "exactly three sessions are launched" "$(launches)" 3
+if [ "$RC" -eq 124 ]; then
+  fail_msg "the DEFAULT is bounded (rc 124 = the default is still unbounded)"
+else
+  pass_msg "the DEFAULT is bounded (rc != 124)"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 21: LOOP-YIELD reports the completed cycle's yield"
+# ---------------------------------------------------------------------------
+# Reading the yield trend took 17 retros because no cycle ever summarised
+# itself. `merged=` is derived from the Mode line's OWN `issues` atom joined
+# against a merged-PR list — never from a comment read, which is why the
+# Scenario 13 control stays green.
+reset_state 21
+write_body "$BODY_FILE" 5 done '#11 #22 #33'
+write_body "$BODY_DONE" 5 done '#11 #22 #33'
+cat > "$PRS_FILE" <<'PRS'
+[
+  {"number": 2001, "title": "feat: first thing (#11)", "body": "Closes #11"},
+  {"number": 2002, "title": "fix: second thing (#22)", "body": "Closes #22"}
+]
+PRS
+printf 'deadbee\n' > "$GIT_SHA_FILE"
+printf ' 4 files changed, 120 insertions(+), 30 deletions(-)\n' > "$GIT_SHORTSTAT_FILE"
+printf 'rows-moved: 7\n' > "$ROWS_MOVED_LINES"
+mkdir -p "$WORK/docs/retros"
+cat > "$WORK/docs/retros/cycle-05.md" <<'RETRO05'
+# Cycle 05 retro
+
+cost: loop-own tokens/issue median = 22300000
+
+HARNESS-FRICTION: the first one | what was true
+HARNESS-FRICTION: the second one | what was true
+HARNESS-FRICTION: the third one | what was true
+RETRO05
+run_helper --cycles 1 --tracker "$TRACKER_N"
+
+expect_rc "a yielding cycle exits 0" 0
+expect_sub "the completed cycle reports its yield in one line" "$OUT" \
+  "LOOP-YIELD cycle=5 merged=2/3 loc=+120/-30 rows_moved=7 tokens=22.3M friction=3"
+expect_eq "exactly one LOOP-YIELD line is printed" "$(count_lines 'LOOP-YIELD ' "$OUT")" 1
+expect_sub "the cycle budget is still reported" "$OUT" "LOOP-STOP reason=cycles-complete"
+refute_sub "the merged join never reads issue comments" "$(cat "$CALLS")" "--json comments"
+
+# The FINAL cycle of a block must yield too: emitting after the
+# `cycles-complete` check would silently drop the most interesting line.
+YIELD_LN="$(printf '%s\n' "$OUT" | grep -nF 'LOOP-YIELD ' | head -1 | cut -d: -f1)"
+STOP_LN="$(printf '%s\n' "$OUT" | grep -nF 'LOOP-STOP reason=cycles-complete' | head -1 | cut -d: -f1)"
+if [ -n "$YIELD_LN" ] && [ -n "$STOP_LN" ] && [ "$YIELD_LN" -lt "$STOP_LN" ]; then
+  pass_msg "the last cycle yields before the block stops (yield L$YIELD_LN < stop L$STOP_LN)"
+else
+  fail_msg "no LOOP-YIELD precedes LOOP-STOP (yield=${YIELD_LN:-absent} stop=${STOP_LN:-absent})"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 22: every missing LOOP-YIELD input renders ?, never an abort"
+# ---------------------------------------------------------------------------
+# The yield line is diagnostics, not control flow: an unreadable git, an empty
+# PR list, a `n/a (...)` rows-moved and an absent retro file must each degrade
+# to `?` and leave the cycle contract — rc and LOOP-STOP reason — untouched.
+reset_state 22
+write_body "$BODY_FILE" 5 done
+write_body "$BODY_DONE" 5 done
+: > "$PRS_FILE"
+: > "$GIT_SHA_FILE"
+: > "$GIT_SHORTSTAT_FILE"
+printf 'rows-moved: n/a (no previous cycle)\n' > "$ROWS_MOVED_LINES"
+run_helper --cycles 1 --tracker "$TRACKER_N"
+
+expect_rc "a cycle with no measurable input still exits 0" 0
+expect_eq "exactly one LOOP-YIELD line is printed" "$(count_lines 'LOOP-YIELD ' "$OUT")" 1
+expect_sub "every unmeasurable field degrades to ?" "$OUT" \
+  "merged=?/0 loc=? rows_moved=? tokens=? friction=?"
+expect_sub "the degraded line still names its cycle" "$OUT" "LOOP-YIELD cycle=5"
+expect_sub "the loop still reaches its cycle budget" "$OUT" "LOOP-STOP reason=cycles-complete"
+expect_eq "exactly one session is launched" "$(launches)" 1
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 13: comment-trust control — no --json comments, ever"
