@@ -19,6 +19,9 @@ bash tests/run.sh case-auth  # one case file
 
 CI runs the same command on every push and pull request.
 
+_Calibration slate issue `06-planted-defect` (title truncation in `list`)
+intentionally ships unimplemented here — see `dev/calib/slate/06-planted-defect/`._
+
 ## Layout
 
 | path            | what it is                                  |

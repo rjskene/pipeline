@@ -77,12 +77,17 @@ into two spots in the cycle report:
   apportioned from the run's priced total by token share, so the median is an
   estimate, not a measured per-issue charge.
 
-Both rows render as bare values: the CALIB grammar carries no profile, model or
-run-date atom, so nothing in the cycle report says which run produced them or
-how old it is. Ingest is newest-wins and does not expire, so a cycle with no
-fresh run keeps citing the last artifact — read the filenames in this directory
-to date the evidence. Full operator guide (modes, knobs, cost band, triggers):
-`docs/calibration.md`.
+The CALIB grammar carries no profile, model or date atom, so neither row can
+state which `--profile`/`--model` produced it. The `weak-model pass:` row is
+the exception on DATE: it reads the chosen artifact's own FILENAME (never a
+CALIB atom) and renders `<value> (run <date>)` when that filename resolves a
+`YYYY-MM-DD` date, or the bare `<value>` when it does not (the undated
+`calib.txt` fallback). Once N ≥ 3 tracker `## Cycle <k>` comments have been
+posted after that day, the row instead renders
+`<value> (run <date>, stale N cycles)`. Ingest itself is still newest-wins and
+does not expire, so a cycle with no fresh run keeps citing the last artifact —
+the stale marker says so instead of the report staying silent. Full operator
+guide (modes, knobs, cost band, triggers): `docs/calibration.md`.
 
 ## Index
 
