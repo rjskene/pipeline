@@ -36,6 +36,7 @@ set -uo pipefail
 #   | 3  | LOOP-STOP reason=halt-7d seven=<n> resume_at=<v> | projection says halt-7d                          |
 #   | 4  | LOOP-STOP reason=resume-cap cycle=<N> step=<STEP> | consecutive unexplained stalls > --max-resumes   |
 #   | 5  | LOOP-STOP reason=pause-cap pauses=<n> cycle=<N>   | consecutive headless usage-pause exits > --max-pauses |
+#   | 6  | LOOP-STOP reason=diminishing           | the two most recent tracker verdict lines carry no confirmed |
 #
 # EVERY external call goes through the single dispatch() seam below, which
 # --dry-run replaces with a printf preview. That is what makes
@@ -46,8 +47,9 @@ set -uo pipefail
 #
 # Test-only env seams (not user knobs, mirroring calibration-run.sh's
 # CALIB_TEST_*): EVOLVE_LOOP_USAGE_GATE, EVOLVE_LOOP_PROJECTION,
-# EVOLVE_LOOP_SLEEP_CMD. Both helpers are invoked by ABSOLUTE PATH, which a
-# PATH shim cannot intercept, hence the seams.
+# EVOLVE_LOOP_DIMINISHING, EVOLVE_LOOP_SLEEP_CMD. All three helpers are
+# invoked by ABSOLUTE PATH, which a PATH shim cannot intercept, hence the
+# seams.
 #
 # Usage:
 #   bash scripts/evolve-loop.sh --cycles 3
@@ -76,7 +78,7 @@ Options:
   --help            Print this banner and exit 0.
 
 Exit codes: 0 paused / cycles-complete · 2 invalid arguments · 3 halt-7d
-            · 4 resume-cap · 5 pause-cap.
+            · 4 resume-cap · 5 pause-cap · 6 diminishing.
 USAGE
 }
 
@@ -299,6 +301,28 @@ check_gate() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# Diminishing-returns kill switch (#1397) — runs BEFORE the usage gate so a
+# barren-verdict stop is never masked by a pause-5h sleep that would
+# otherwise re-loop for hours first.
+# ---------------------------------------------------------------------------
+# Returns 0 to proceed. rc 3 from the script means DIMINISHING: pause the
+# tracker (the operator kill switch) and exit 6. Any other rc is fail-open.
+check_diminishing() {
+  local out rc
+  out="$(dispatch LOOP-READ "" env PIPELINE_REPO="$PIPELINE_REPO" \
+    bash "${EVOLVE_LOOP_DIMINISHING:-$CLONE/scripts/evolve-diminishing.sh}" \
+    --tracker "$TRACKER")"
+  rc=$?
+  [ -n "$out" ] && echo "$out"
+  if [ "$rc" -eq 3 ]; then
+    dispatch LOOP-WRITE "" gh issue edit "$TRACKER" --repo "$PIPELINE_REPO" --add-label paused
+    echo "LOOP-STOP reason=diminishing"
+    exit 6
+  fi
+  return 0
+}
+
 # sleep_until_resume <resume_at> <reason> — clamped BOTH ways, so a malformed
 # or far-future resume_at can never hang the wrapper.
 sleep_until_resume() {
@@ -363,6 +387,7 @@ while :; do
   fi
 
   read_mode || { charge_resume; continue; }
+  check_diminishing
   check_gate || continue
 
   # A stall is CASHED here, after the gate returned proceed: a stall the gate
