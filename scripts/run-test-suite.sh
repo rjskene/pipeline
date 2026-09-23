@@ -20,6 +20,9 @@
 #   TESTS_DIR=path scripts/run-test-suite.sh --chunk k/n
 #   scripts/run-test-suite.sh --changed-only [--base <ref>] [tests-dir]
 #   TESTS_DIR=path scripts/run-test-suite.sh --changed-only
+#   PIPELINE_TEST_ROOT_OVERRIDE=1 scripts/run-test-suite.sh   # keep the caller's
+#     own PIPELINE_PROJECT_ROOT/CLAUDE_PLUGIN_ROOT/PIPELINE_USE_LOCAL_PLUGIN
+#     instead of scrubbing them (unused elsewhere in this repo today)
 #
 # --chunk k/n (issue #1208) is the FOREGROUND escape hatch for suites too large
 # to fit inside a single Bash-call timeout: it runs only the k-th of n
@@ -69,6 +72,17 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Own-root scrub (#1389): every test this script spawns (default parallel
+# fan-out, --chunk, --changed-only — all inherit this exported process env)
+# must see roots it re-derives itself from ITS OWN tree (cwd/dirname, each
+# test's existing at-head fallback logic), not whatever a caller (skill boot
+# fence, orchestrator session) already exported — else a worktree suite run
+# silently tests the caller's tree. PIPELINE_TEST_ROOT_OVERRIDE=1 is the
+# escape hatch (see Usage above).
+if [ "${PIPELINE_TEST_ROOT_OVERRIDE:-0}" != "1" ]; then
+  unset PIPELINE_PROJECT_ROOT CLAUDE_PLUGIN_ROOT PIPELINE_USE_LOCAL_PLUGIN
+fi
 
 # --chunk k/n (or --chunk=k/n), --changed-only, and --base <ref> parsing —
 # MUST happen before TESTS_DIR resolution so the positional tests-dir and the
