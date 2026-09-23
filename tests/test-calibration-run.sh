@@ -121,6 +121,14 @@ STAGE="$TMP/sandbox/harness"
 CALLS="$TMP/calls.log"
 DOCTOR_ENV="$TMP/doctor-env.txt"
 LAUNCH_ENV="$TMP/launch-env.txt"
+# The capture log the sandbox session's own cost hooks write (#1395). --run
+# refuses to report a total it never priced, so a stub standing in for a run
+# that REALLY happened has to leave one behind — and the stubs standing in for
+# a run that never started (Scenario 12, Scenario 13c) must not. Exported
+# rather than passed through run_helper so the scripted `claude` stand-ins can
+# see it: they inherit this shell's environment through the `claude` stub.
+COST_LOG="$SANDBOX/.claude/logs/agent-costs.jsonl"
+export CALIB_TEST_COST_LOG="$COST_LOG"
 STUB_BIN="$TMP/bin"
 mkdir -p "$STUB_BIN"
 
@@ -559,6 +567,116 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 7b: --reset re-materializes the sandbox local-settings file"
+# ---------------------------------------------------------------------------
+# The #1395 defect. --bootstrap was the ONLY writer of the sandbox's
+# .claude/<local settings> file, and on the operator's host that file is
+# untracked AND covered by a global ignore rule, so `git reset --hard` never
+# touched it either. Every hook added to the harness template since the first
+# bootstrap — log_subagent.py and capture_agent_cost.py among them — therefore
+# never reached a single measured run, and every CALIB block since reported
+# cost=$0. --reset has to refresh it from the harness template, every time.
+
+TEMPLATE_SETTINGS="$HARNESS/dev/calib/template/claude-settings.local.json"
+SANDBOX_SETTINGS="$SANDBOX/.claude/settings.local.json"
+cat > "$TEMPLATE_SETTINGS" <<'TPL'
+{
+  "permissions": {"allow": ["Bash"]},
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Agent", "hooks": [
+        {"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_agent_cost.py"}
+      ]}
+    ]
+  }
+}
+TPL
+
+# The stale bootstrap-era blob: enabledPlugins + permissions, no `hooks` key at
+# all — the shape found in the live sandbox on 2026-09-23, weeks after the
+# template grew its hooks.
+STALE_SETTINGS='{"enabledPlugins":{},"permissions":{"allow":[]}}'
+mkdir -p "$SANDBOX/.claude"
+printf '%s\n' "$STALE_SETTINGS" > "$SANDBOX_SETTINGS"
+
+rm -f "$CALLS" "$TMP/issue-counter"
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (settings refresh) exits 0" 0
+expect_sub "--reset reports the local-settings refresh" \
+  "$OUT" "calib: settings.local.json refreshed from template ("
+# Counted off the template, not hardcoded: a driver that prints `(0 hooks)`
+# while copying a one-hook file is the same defect wearing a log line.
+expect_sub "the refresh line carries the template's real hook count" \
+  "$OUT" "refreshed from template (1 hooks)"
+
+SETTINGS_AFTER="$(cat "$SANDBOX_SETTINGS" 2>/dev/null)"
+expect_sub "the sandbox settings file carries the template's hook command" \
+  "$SETTINGS_AFTER" "capture_agent_cost.py"
+refute_sub "the stale bootstrap-era blob is replaced, not merged into" \
+  "$SETTINGS_AFTER" '"enabledPlugins":{}'
+if [ -f "$TEMPLATE_SETTINGS" ]; then
+  pass_msg "the refresh is a COPY — the harness template survives it"
+else
+  fail_msg "--reset consumed the harness template instead of copying it"
+fi
+
+rm -f "$CALLS"
+run_helper --reset --harness "$HARNESS"
+expect_rc "a second --reset (settings refresh) exits 0" 0
+if grep -qF 'capture_agent_cost.py' "$SANDBOX_SETTINGS" 2>/dev/null; then
+  pass_msg "a second --reset leaves the refreshed settings in place (idempotent)"
+else
+  fail_msg "a second --reset must leave the template's hooks in the sandbox settings"
+fi
+if [ -e "$SANDBOX/claude-settings.local.json" ]; then
+  fail_msg "--reset left the flat template settings file in the sandbox root"
+else
+  pass_msg "--reset leaves no flat template settings file in the sandbox root"
+fi
+
+# --reset --dry-run is the FREE preview: it must NAME the copy and mutate
+# nothing, so every mutating call in the refresh goes through dispatch().
+printf '%s\n' "$STALE_SETTINGS" > "$SANDBOX_SETTINGS"
+# sync_template rsyncs the template's flat file into the sandbox root and the
+# real refresh consumes it. A dry run must leave it exactly where it found it.
+printf '%s\n' '{"flat":true}' > "$SANDBOX/claude-settings.local.json"
+
+rm -f "$CALLS"
+run_helper --dry-run --reset --harness "$HARNESS"
+expect_rc "--reset --dry-run (settings refresh) exits 0" 0
+expect_sub "the dry-run preview names the template -> sandbox copy" \
+  "$OUT" "$TEMPLATE_SETTINGS $SANDBOX_SETTINGS"
+expect_sub "the dry-run preview still reports the hook count it WOULD install" \
+  "$OUT" "refreshed from template (1 hooks)"
+DRY_SETTINGS="$(cat "$SANDBOX_SETTINGS" 2>/dev/null)"
+expect_sub "--dry-run leaves the stale sandbox settings file untouched" \
+  "$DRY_SETTINGS" '"enabledPlugins":{}'
+refute_sub "--dry-run installs no hook into the sandbox" \
+  "$DRY_SETTINGS" "capture_agent_cost.py"
+if [ -f "$SANDBOX/claude-settings.local.json" ]; then
+  pass_msg "--dry-run does not consume the flat template settings file"
+else
+  fail_msg "--dry-run deleted the flat template settings file from the sandbox root"
+fi
+
+rm -rf "$SANDBOX/.claude"
+rm -f "$CALLS"
+run_helper --dry-run --reset --harness "$HARNESS"
+expect_rc "--reset --dry-run with no sandbox .claude/ exits 0" 0
+if [ -e "$SANDBOX/.claude" ]; then
+  fail_msg "--dry-run created $SANDBOX/.claude"
+else
+  pass_msg "--dry-run creates no .claude/ dir in the sandbox"
+fi
+
+# Restore the sandbox for the --run scenarios below: the real reset re-creates
+# the tracked settings file; the planted flat copy is untracked, so it has to
+# be removed by hand.
+rm -f "$SANDBOX/claude-settings.local.json" "$TMP/issue-counter"
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset restores the sandbox after the dry-run probes" 0
+
+# ---------------------------------------------------------------------------
 scenario "Scenario 8: --run grades the MERGED sandbox tree, scoped to the sandbox"
 # ---------------------------------------------------------------------------
 # Still hermetic: `claude` is a scripted stand-in for the headless run and the
@@ -573,6 +691,13 @@ git clone --quiet "$REMOTE" "$PUSHER"
 cat > "$TMP/claude-merge.sh" <<'MERGE'
 #!/bin/bash
 set -e
+# A run that really happened leaves a capture log behind — the sandbox's own
+# cost hooks write it as the session works (#1395). Without one the driver has
+# nothing to price and refuses to report a total at all, so every stub standing
+# in for a REAL run has to write one too.
+mkdir -p "$(dirname "$CALIB_TEST_COST_LOG")"
+printf '%s\n' '{"schema_version":1,"issue":"5001","stage":"execute","tokens":{"total":1000}}' \
+  >> "$CALIB_TEST_COST_LOG"
 git -C "$CALIB_TEST_PUSHER" fetch --quiet origin
 git -C "$CALIB_TEST_PUSHER" checkout --quiet -B main origin/main
 printf 'fixed\n' > "$CALIB_TEST_PUSHER/docs/guide.md"
@@ -638,6 +763,14 @@ expect_rc "--run exits 0" 0
 TOTAL_LINE="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
 expect_sub "every reference test passes against the merged sandbox tree" \
   "$TOTAL_LINE" "reftest-pass=5/5"
+# The planted-defect grade is a per-RUN atom on the total line (#1395): did the
+# slate's hidden boundary assertion escape the pr-eval gate? This synthetic
+# harness carries no *planted* slate dir, so the honest answer is n/a — but the
+# atom itself must be there, or a real run has nowhere to report the escape.
+expect_sub "the graded total records the planted-defect verdict" \
+  "$TOTAL_LINE" "planted="
+expect_sub "a slate with no planted-defect dir grades it n/a" \
+  "$TOTAL_LINE" "planted=n/a"
 
 SANDBOX_HEAD="$(git -C "$SANDBOX" rev-parse HEAD)"
 REMOTE_HEAD="$(git -C "$REMOTE" rev-parse main)"
@@ -801,6 +934,12 @@ git -C "$REMOTE" update-ref refs/heads/main "$(git -C "$REMOTE" rev-parse calib-
 
 cat > "$TMP/claude-held.sh" <<'HELD'
 #!/bin/bash
+# A held run DID start — it merged wave 1 and then stopped to ask — so it left
+# a capture log behind. `held` outranks `no-cost-log` either way (#1395), and
+# this stub is the control that says so for the right reason.
+mkdir -p "$(dirname "$CALIB_TEST_COST_LOG")"
+printf '%s\n' '{"schema_version":1,"issue":"5001","stage":"execute","tokens":{"total":1000}}' \
+  >> "$CALIB_TEST_COST_LOG"
 echo "Wave 1 merged. Your call on auto-merge for the rest?"
 HELD
 chmod +x "$TMP/claude-held.sh"
@@ -834,6 +973,10 @@ fi
 TOTAL_HELD="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
 expect_sub "the total refuses to score an aborted run" "$TOTAL_HELD" "reftest-pass=n/a"
 refute_sub "an aborted run never reports a failed slate" "$OUT" "reftest-pass=0/5"
+# BOTH total printfs carry the atom, or the aborted branch silently drops a
+# field and every cross-artifact grammar pin only sees the graded one.
+expect_sub "the aborted total carries the planted-defect atom too" \
+  "$TOTAL_HELD" "planted="
 
 RUN_LOG_FILE="$HARNESS/docs/retros/calib/$(date -u +%Y-%m-%d).log"
 if [ -f "$RUN_LOG_FILE" ] && grep -qF 'auto-merge for the rest?' "$RUN_LOG_FILE"; then
@@ -864,6 +1007,9 @@ fi
 # read the last line alone and the held run silently regraded. Scan the tail.
 cat > "$TMP/claude-held-stderr.sh" <<'HELD2'
 #!/bin/bash
+mkdir -p "$(dirname "$CALIB_TEST_COST_LOG")"
+printf '%s\n' '{"schema_version":1,"issue":"5001","stage":"execute","tokens":{"total":1000}}' \
+  >> "$CALIB_TEST_COST_LOG"
 echo "Wave 1 merged. Your call on auto-merge for the rest?"
 echo "note: session limit approaching" >&2
 HELD2
@@ -891,6 +1037,10 @@ expect_rc "a timed-out run still exits 0" 0
 expect_sub "hitting the timeout cap reports CALIB-ABORT reason=timeout" \
   "$OUT" "CALIB-ABORT reason=timeout"
 
+# DELIBERATELY writes no capture log, and must stay that way: this stub and the
+# stale-PR variant below are the `no-pr` controls. `no-pr` outranks
+# `no-cost-log` (#1395), and Scenario 13c pins that order against exactly this
+# stub — "helpfully" giving it a cost log would make the precedence untestable.
 cat > "$TMP/claude-quiet.sh" <<'QUIET'
 #!/bin/bash
 echo "done."
@@ -975,6 +1125,119 @@ expect_sub "a partially-graded run still refuses a k/n total" "$TOTAL_PARTIAL" "
 refute_sub "a partially-graded run never reports 3/5" "$OUT" "reftest-pass=3/5"
 
 unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 13b: a run that priced nothing aborts, it never reports \$0"
+# ---------------------------------------------------------------------------
+# Every calibration run since #2 printed `CALIB-TOTAL cost=$0` and `cost=$n/a`
+# per issue, so the loop's two headline metrics were never once measured — and
+# nothing in the block said so. `$0` is not a cheap run, it is an unpriced one:
+# the sandbox session registered no cost-capture hooks, so no
+# agent-costs.jsonl was ever written and issue_cost() had nothing to apportion.
+# The run has to say `no-cost-log` out loud instead.
+
+cat > "$TMP/claude-nocost.sh" <<'NOCOST'
+#!/bin/bash
+echo "all five merged."
+NOCOST
+chmod +x "$TMP/claude-nocost.sh"
+
+# The PRODUCTION shape of a pricing probe over a missing capture log:
+# `cost-latency-report.sh --emit-pricing-json` answers "0.00", never an empty
+# string. Staging it is load-bearing — leaving CALIB_TEST_PRICING_JSON unset
+# makes the stub emit nothing, PRICING_TOTAL empty, and an emptiness-only guard
+# would look correct here while `cost=$0` still printed in production.
+printf '%s\n' '{"priced_cost_usd":"0.00","unpriced_count":0}' > "$TMP/pricing-zero.json"
+
+# The log is untracked, so neither --reset's hard reset nor the post-run sync
+# removes one an earlier scenario's stub left behind.
+rm -f "$COST_LOG"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-nocost.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs.json"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-zero.json"
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "a run that wrote no cost log still exits 0" 0
+
+if [ -s "$COST_LOG" ]; then
+  fail_msg "the no-cost-log stub left a capture log behind (the premise is broken)"
+else
+  pass_msg "the no-cost-log stub leaves no capture log (the condition under test)"
+fi
+# The PR set is this run's own slate (5001..5005, all merged), so `no-pr`
+# cannot fire and the reason under test is the only one available.
+refute_sub "the no-cost-log run opened PRs, so no-pr is not what fired" \
+  "$OUT" "CALIB-ABORT reason=no-pr"
+expect_sub "a session that priced nothing reports CALIB-ABORT reason=no-cost-log" \
+  "$OUT" "CALIB-ABORT reason=no-cost-log"
+TOTAL_NOCOST="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "an unpriced run reports cost=\$n/a" "$TOTAL_NOCOST" "cost=\$n/a"
+refute_sub "an unpriced run never reports a \$0 total" "$TOTAL_NOCOST" "cost=\$0"
+expect_sub "an unpriced run refuses to score the slate" \
+  "$TOTAL_NOCOST" "reftest-pass=n/a"
+
+# Mirror control: the same run, with the stub writing ONE capture record. The
+# guard is on the missing log, not on runs in general — it must not fire here,
+# and a priced total must still render a real dollar figure.
+cat > "$TMP/claude-cost.sh" <<'WITHCOST'
+#!/bin/bash
+mkdir -p "$(dirname "$CALIB_TEST_COST_LOG")"
+printf '%s\n' '{"schema_version":1,"issue":"5001","stage":"execute","tokens":{"total":1000}}' \
+  >> "$CALIB_TEST_COST_LOG"
+echo "all five merged."
+WITHCOST
+chmod +x "$TMP/claude-cost.sh"
+
+rm -f "$COST_LOG" "$CALLS"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-cost.sh"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+run_helper --run --harness "$HARNESS"
+expect_rc "a run whose session wrote a cost log exits 0" 0
+if [ -s "$COST_LOG" ]; then
+  pass_msg "the mirror stub wrote a capture log"
+else
+  fail_msg "the mirror stub must write a capture log (the premise is broken)"
+fi
+refute_sub "a run that priced something never aborts" "$OUT" "CALIB-ABORT"
+TOTAL_PRICED="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+refute_sub "a priced run still reports a real total" "$TOTAL_PRICED" "cost=\$n/a"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 13c: no-pr outranks no-cost-log"
+# ---------------------------------------------------------------------------
+# Documented precedence, most specific first: timeout > held > no-pr >
+# no-cost-log. A run that opened no PR is better described by `no-pr` than by
+# the cost log it also never wrote. The `no-pr` arm of detect_abort() assigns
+# WITHOUT returning, so a no-cost-log check appended after it overwrites the
+# more specific reason unless it is guarded on an empty ABORT_REASON. Nothing
+# else in this suite orders the reasons — this scenario is the whole pin.
+
+rm -f "$COST_LOG" "$CALLS"
+echo 5000 > "$TMP/issue-counter"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-quiet.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs-empty.json"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-zero.json"
+run_helper --run --harness "$HARNESS"
+expect_rc "a run with neither a PR nor a cost log still exits 0" 0
+if [ -s "$COST_LOG" ]; then
+  fail_msg "the precedence stub left a capture log behind (the premise is broken)"
+else
+  pass_msg "the precedence stub leaves no capture log either"
+fi
+expect_sub "a run that opened no PR keeps the more specific reason=no-pr" \
+  "$OUT" "CALIB-ABORT reason=no-pr"
+refute_sub "no-cost-log never overwrites the no-pr reason" "$OUT" "reason=no-cost-log"
+N_ABORT="$(printf '%s\n' "$OUT" | grep -c '^CALIB-ABORT ')"
+if [ "$N_ABORT" -eq 1 ]; then
+  pass_msg "an aborted run prints exactly one CALIB-ABORT line"
+else
+  fail_msg "an aborted run must print exactly one CALIB-ABORT line (got $N_ABORT)"
+fi
+
+unset CALIB_TEST_CLAUDE_SCRIPT
+export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 14: the launch scrubs the operator's inherited PIPELINE_* env (#1390)"

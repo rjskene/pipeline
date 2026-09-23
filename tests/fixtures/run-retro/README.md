@@ -15,7 +15,8 @@ so `tests/test-run-retro.sh` never touches live data.
 | `cycle-<NN>.md` | `docs/retros/cycle-<NN>.md` (previous-cycle retro) |
 | `issues.json` | `gh issue list --json number,labels,body,comments` |
 | `prs.json` | `gh pr list --json number,title,headRefName,body,mergedAt,labels,files` |
-| `calib.txt` | latest `docs/retros/calib/<date>.txt` CALIB block (`scripts/calibration-run.sh --run`) |
+| `calib.txt` | latest `docs/retros/calib/<date>.txt` CALIB block (`scripts/calibration-run.sh --run`) — the UNDATED fallback, read only when `calib/` resolves nothing |
+| `calib/<date>.txt` | the same block under its real day-keyed name, e.g. `calib/2026-09-05.txt`. Newest filename wins, and the date is what the `weak-model pass` row reports as `(run <date>)` / `(run <date>, stale N cycles)` (#1395) |
 | `agent-costs.jsonl` | `.claude/logs/agent-costs.jsonl` (produced by `scripts/capture-agent-costs.sh`) |
 | `hook-denials.jsonl` | `.claude/logs/hook-denials.jsonl` (`hooks/_deny_log.py`, #1352) — PRIMARY source of the `friction/denials` row: 5 records / 3 hooks, one (`2026-09-04`) before the `Cycle 0 (2026-09-05` header → `4 (hook-denials.jsonl; block_deletions=2 enforce-ci-wait=1 restrict_paths=1)`, `2` under `--since 2026-09-07`, `0 (…; none in window)` under `--since 2026-09-08` (#1360) |
 
@@ -26,14 +27,15 @@ filename date, from `docs/retros/calib/*.txt`. The block is one line per calibra
 slate issue plus one total:
 
 ```
-CALIB-ABORT reason=<no-pr|held|timeout>
+CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
-CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>
 ```
 
 `compute_calib()` reads three atoms off the `CALIB` lines only: `reftest=` (the
 `weak-model pass` k/n), plus `cost=` filtered by `path=B` (the `median path b pr/usd`
-median). A missing `calib.txt`, or one carrying no `CALIB ` rows, degrades to the
+median). `planted=` is a per-RUN atom on the total line and is not parsed by the retro.
+A missing `calib.txt`, or one carrying no `CALIB ` rows, degrades to the
 `n/a (...)` reasons instead of failing. An artifact that STARTS with a
 `CALIB-ABORT` line — written only when the run did not finish — makes
 `compute_calib()` render `weak-model pass` as `n/a (calibration run aborted: …)`

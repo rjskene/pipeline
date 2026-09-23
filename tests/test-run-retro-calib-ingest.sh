@@ -175,8 +175,11 @@ NEW
 touch -d '2020-01-01T00:00:00Z' "$LIVE/docs/retros/calib/2026-09-05.txt"
 
 LIVE_REPORT="$(env -u PIPELINE_REPO bash "$LIVE/scripts/run-retro.sh" --cycle 0 2>&1)"
+# The chosen filename IS the run date, so the row reports it (#1395). No
+# tracker substrate is reachable here (no PIPELINE_REPO, so live mode makes no
+# gh call), which is exactly the case that must degrade to the date alone.
 expect_line "live mode reads the newest artifact by filename, not by mtime" \
-  "$LIVE_REPORT" "weak-model pass: 0/2"
+  "$LIVE_REPORT" "weak-model pass: 0/2 (run 2026-09-05)"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 7: an aborted calibration artifact renders the reason, never a k/n"
@@ -209,6 +212,90 @@ expect_line "the weak-model row renders the abort reason instead of a score" \
   "$REPORT_ABORT" "weak-model pass: n/a (calibration run aborted: reason=held)"
 refute_sub "an aborted run is never scored over the rows it did reach" \
   "$REPORT_ABORT" "weak-model pass: 3/5"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 8: the weak-model row dates its artifact and flags a stale one"
+# ---------------------------------------------------------------------------
+# Cycles 12 through 17 all cited the SAME calibration run — the ingest is
+# newest-artifact-wins and never expires, and nothing in the row said how old
+# the evidence was. The row now carries the artifact's own day (read off the
+# FILENAME, not off any CALIB atom) and, once three or more tracker cycle
+# comments have been posted since that day, says so out loud.
+#
+# A dedicated fixture copy: the shared $FIX tree is what Scenarios 1-7 pin the
+# UNDATED fallback against, and both forms have to keep working.
+
+FIX2="$TMP/fixture-dated"
+cp -r "$FIXTURE_SRC" "$FIX2"
+retro2() { bash "$HELPER" --cycle 0 --fixture "$FIX2" "$@" 2>&1; }
+
+write_calib_at() { # <path> — the same 4-pass-of-5 block write_calib emits
+  mkdir -p "$(dirname "$1")"
+  cat > "$1" <<'CALIB'
+CALIB issue=101 path=A cost=$3.10 wall=420 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=102 path=D cost=$5.00 wall=600 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=103 path=B cost=$12.00 wall=1800 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=104 path=B cost=$20.00 wall=2400 verdicts=Approved/Flagged reftest=fail unexpected-files=2
+CALIB issue=105 path=B cost=$31.00 wall=3000 verdicts=Approved/Approved reftest=pass unexpected-files=1
+CALIB-TOTAL cost=$71.10 wall=8220 issues=5 reftest-pass=4/5 planted=missed
+CALIB
+}
+
+# The dated form ONLY — no calib.txt — so fixture mode has to resolve the
+# day-keyed artifact the way live mode does.
+rm -f "$FIX2/calib.txt"
+write_calib_at "$FIX2/calib/2026-09-05.txt"
+
+# The shared fixture's tracker (#1271) carries exactly ONE `## Cycle N` comment,
+# posted 2026-09-12 — one cycle since the run, below the marker's threshold.
+REPORT_FRESH="$(retro2)"
+expect_line "a dated artifact reports its run date" \
+  "$REPORT_FRESH" "weak-model pass: 4/5 (run 2026-09-05)"
+refute_sub "one cycle since the run is not stale" "$REPORT_FRESH" "stale"
+
+# Four more numbered cycle comments after the run day (five in total), plus
+# three controls that must NOT be counted: a `## Cycle`-prefixed comment that
+# carries no number, one posted LATER ON the run's own day (the artifact is
+# day-keyed, so same-day is not "since"), and one posted before it.
+jq '(.[] | select(.number == 1271) | .comments) +=
+      [ {"createdAt":"2026-09-13T08:00:00Z","body":"## Cycle 1\n- issues: #1301\n"},
+        {"createdAt":"2026-09-14T08:00:00Z","body":"## Cycle 2\n- issues: #1302\n"},
+        {"createdAt":"2026-09-15T08:00:00Z","body":"## Cycle 3\n- issues: #1303\n"},
+        {"createdAt":"2026-09-16T08:00:00Z","body":"## Cycle 4\n- issues: #1304\n"},
+        {"createdAt":"2026-09-14T09:00:00Z","body":"## Cycle notes, not a numbered cycle comment\n"},
+        {"createdAt":"2026-09-05T18:00:00Z","body":"## Cycle 98\n- issues: #1398\n"},
+        {"createdAt":"2026-09-04T08:00:00Z","body":"## Cycle 99\n- issues: #1399\n"} ]' \
+   "$FIX2/issues.json" > "$TMP/issues-stale.json" \
+  && mv "$TMP/issues-stale.json" "$FIX2/issues.json"
+
+REPORT_STALE="$(retro2)"
+# Exactly 5: if the un-numbered comment, the same-day one or the earlier one
+# leaked in, this reads 6, 7 or 8 and the line does not match.
+expect_line "five cycles since the run renders the stale marker" \
+  "$REPORT_STALE" "weak-model pass: 4/5 (run 2026-09-05, stale 5 cycles)"
+
+# No tracker substrate at all: the marker degrades to the date alone, silently
+# — no stderr noise, and never a failed retro.
+rm -f "$FIX2/issues.json"
+REPORT_NOTRACKER="$(retro2)"
+RC_NOTRACKER=$?
+if [ "$RC_NOTRACKER" -eq 0 ]; then
+  pass_msg "a missing tracker substrate still exits 0"
+else
+  fail_msg "a missing tracker substrate must not fail the retro (rc=$RC_NOTRACKER)"
+fi
+expect_line "no tracker substrate degrades to the run date alone" \
+  "$REPORT_NOTRACKER" "weak-model pass: 4/5 (run 2026-09-05)"
+refute_sub "the stale lookup writes no jq error to stderr" "$REPORT_NOTRACKER" "jq: error"
+
+# The UNDATED fallback keeps rendering a bare value: an artifact with no date
+# in its name cannot be dated, and Scenario 1's exact line must stay green.
+rm -rf "$FIX2/calib"
+write_calib_at "$FIX2/calib.txt"
+REPORT_UNDATED="$(retro2)"
+expect_line "the undated calib.txt fallback renders the bare value" \
+  "$REPORT_UNDATED" "weak-model pass: 4/5"
+refute_sub "an undated artifact is never given a run date" "$REPORT_UNDATED" "(run "
 
 # ---------------------------------------------------------------------------
 echo ""

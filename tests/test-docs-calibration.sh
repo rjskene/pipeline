@@ -9,10 +9,11 @@ set -euo pipefail
 #
 # Both files must describe run-retro.sh's ingest AS IMPLEMENTED (#1280 review):
 # the weak-model ratio is counted from the per-issue `reftest=` atoms (the
-# CALIB-TOTAL line is not parsed), the row carries no profile/model/date
-# because the grammar has no such atom, the path-B median reads `path=B` rows
-# only, and the per-issue `cost=` is a token-share apportionment of the run's
-# priced total (an estimate, not a measured per-issue charge).
+# CALIB-TOTAL line is not parsed), the CALIB grammar carries no profile/model/
+# date atom while the row itself still dates the run from the artifact FILENAME
+# and flags a stale one (#1395), the path-B median reads `path=B` rows only,
+# and the per-issue `cost=` is a token-share apportionment of the run's priced
+# total (an estimate, not a measured per-issue charge).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOC="$REPO_ROOT/docs/calibration.md"
@@ -89,7 +90,7 @@ assert_contains "$DOC" \
   'CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>' \
   "per-issue CALIB line grammar"
 assert_contains "$DOC" \
-  'CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>' \
+  'CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>' \
   "CALIB-TOTAL line grammar"
 
 echo ""
@@ -111,8 +112,19 @@ for f in "$DOC" "$RETRO_README"; do
     "$n: says the CALIB-TOTAL line is not parsed"
   assert_matches "$f" 'grammar carries no profile' \
     "$n: says the CALIB grammar has no profile/model/date atom"
-  assert_not_matches "$f" 'report (names|reports|surfaces|carries)[^.]*(date|profile|model)' \
-    "$n: does not claim the report surfaces run provenance"
+  # #1395 flipped this row's polarity. The weak-model row USED to render as a
+  # bare value with no provenance at all, so a cycle-12 retro could cite a
+  # cycle-2 run and nothing said so. It now renders `<value> (run <date>)`, and
+  # `<value> (run <date>, stale N cycles)` once N tracker cycle comments have
+  # been posted since the run, at N >= 3. The date is read off the artifact
+  # FILENAME, so `grammar carries no profile` above stays true and must stay
+  # asserted — that is the distinction these two assertions pin together.
+  assert_contains "$f" '(run <date>)' \
+    "$n: the weak-model pass row renders the artifact's run date"
+  assert_contains "$f" '(run <date>, stale N cycles)' \
+    "$n: the weak-model pass row carries a stale-cycle marker"
+  assert_matches "$f" '[Nn] ?(≥|>=) ?3' \
+    "$n: names the N >= 3 threshold the stale marker fires at"
 done
 
 echo ""
@@ -128,7 +140,7 @@ done
 
 echo ""
 echo "docs/calibration.md — abort, harness staging, launch env (#1285)"
-assert_contains "$DOC" 'CALIB-ABORT reason=<no-pr|held|timeout>' \
+assert_contains "$DOC" 'CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>' \
   "CALIB-ABORT line grammar"
 assert_contains "$DOC" 'calib/harness' "names the staged harness location"
 assert_matches "$DOC" 'detached[^.]*worktree' "staging is a detached git worktree"

@@ -4,10 +4,13 @@
 #   dev/calib/template/ — a consumer-shaped sandbox project the pipeline can be
 #                         pointed at (its own pipeline.config, its own test
 #                         runner, its own CI workflow).
-#   dev/calib/slate/    — five canned issues (title/body/reference test/expected
+#   dev/calib/slate/    — six canned issues (title/body/reference test/expected
 #                         files) covering the routing shapes the calibration
 #                         run needs: docs-only, quick-fix, plain feature,
-#                         high-uncertainty (race + auth), and multi-directory.
+#                         high-uncertainty (race + auth), multi-directory, and
+#                         the planted boundary defect (a hidden reference-test
+#                         assertion the obvious implementation fails, so the
+#                         pr-eval gate has something to catch).
 #
 # Nothing here shells out to the network or to `gh`; every assertion is a
 # filesystem / content / exit-code check, plus a live run of the template test
@@ -234,10 +237,10 @@ echo "== (d) slate shape =="
 # ---------------------------------------------------------------------------
 
 mapfile -t slate_dirs < <(find "$SLATE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
-if [ "${#slate_dirs[@]}" -eq 5 ]; then
-  pass_msg "slate has exactly 5 issue directories"
+if [ "${#slate_dirs[@]}" -eq 6 ]; then
+  pass_msg "slate has exactly 6 issue directories"
 else
-  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 5)"
+  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 6)"
 fi
 
 for d in "${slate_dirs[@]}"; do
@@ -300,7 +303,11 @@ check_count() {
 }
 check_count "docs-only issues" "$docs_only" 1
 check_count "quick-fix issues" "$quick_fix" 1
-check_count "feat-titled issues" "$feature" 1
+# 2, not 1: the planted-defect slate issue (#1395) is the second `feat(`-titled
+# one. The other four counts stay at 1 — the new dir must not perturb them, so a
+# body that says `quick fix`, or names both `race` and `auth`, or spans lib/ +
+# docs/, would red one of the rows below.
+check_count "feat-titled issues" "$feature" 2
 check_count "race+auth issues" "$race_auth" 1
 check_count "lib/+docs/ multi-dir issues" "$lib_and_docs" 1
 
