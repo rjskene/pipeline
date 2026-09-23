@@ -329,10 +329,19 @@ materialize_local_settings() {
   # sync_template rsyncs the template's flat file into the sandbox root; the
   # real refresh consumes it so it is never left behind as sandbox cruft.
   dispatch rm -f "$SANDBOX/$TEMPLATE_SETTINGS_BASENAME" || return 1
+  # #1404: Claude Code refuses ${CLAUDE_PLUGIN_ROOT} in a settings-level hook
+  # (the variable is only honored inside a plugin's own hooks/hooks.json), so
+  # the template's placeholder is dead on arrival in the sandbox — every
+  # PostToolUse(Agent) hook exited 1 with that exact message in run #7 and the
+  # cost log was never written. Rewrite the literal token to the absolute
+  # staged-harness path on every refresh; sed against an already-rewritten
+  # file matches nothing, so this is idempotent by construction.
+  dispatch sed -i "s|\${CLAUDE_PLUGIN_ROOT}|$LAUNCH_HARNESS|g" \
+    "$SANDBOX/.claude/$LOCAL_SETTINGS_BASENAME" || return 1
   local n
   n="$(jq '[.hooks[]?[]?.hooks[]?] | length' "$src" 2>/dev/null)"
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
-  echo "calib: settings.local.json refreshed from template ($n hooks)"
+  echo "calib: settings.local.json refreshed from template ($n hooks) -> $LAUNCH_HARNESS"
 }
 
 commit_sandbox() {
