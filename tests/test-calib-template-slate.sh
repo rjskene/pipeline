@@ -138,6 +138,18 @@ else
   fail_msg "claude-settings.local.json is not valid JSON"
 fi
 
+# #1404: Claude Code refuses ${CLAUDE_PLUGIN_ROOT} in a settings-level hook —
+# the template keeps the placeholder to document intent, but calibration-run.sh
+# substitutes it for the absolute staged-harness path on every reset. The
+# $comment has to say so, or a reader sees a dead-looking variable with no clue
+# the launcher is the one making it work.
+comment=$(python3 -c "import json; print(json.load(open('$settings')).get('\$comment', ''))" 2>/dev/null)
+if printf '%s' "$comment" | grep -qi 'substitut'; then
+  pass_msg '$comment documents that the launcher substitutes ${CLAUDE_PLUGIN_ROOT}'
+else
+  fail_msg '$comment does not document the launcher substitution of ${CLAUDE_PLUGIN_ROOT}'
+fi
+
 for plugin in "pipeline@claude-pipeline" "pipeline@claude-pipeline-local"; do
   got=$(python3 - "$settings" "$plugin" <<'PY' 2>/dev/null
 import json, sys

@@ -677,6 +677,60 @@ run_helper --reset --harness "$HARNESS"
 expect_rc "--reset restores the sandbox after the dry-run probes" 0
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 7c: --reset rewrites \${CLAUDE_PLUGIN_ROOT} to the staged harness path (#1404)"
+# ---------------------------------------------------------------------------
+# Claude Code refuses \${CLAUDE_PLUGIN_ROOT} in a settings-level hook -- it is
+# only honored inside a plugin's own hooks/hooks.json. Run #7 showed every
+# PostToolUse(Agent) hook exiting 1 with exactly that message (38/38 Agent
+# dispatches), so the cost log was never written and the run aborted
+# no-cost-log. The refresh has to rewrite the literal placeholder to the
+# absolute staged-harness path every time, idempotently.
+cat > "$TEMPLATE_SETTINGS" <<'TPL'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "*", "hooks": [
+        {"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.sh"}
+      ]},
+      {"matcher": "Agent", "hooks": [
+        {"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/log_subagent.py"},
+        {"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_agent_cost.py"}
+      ]}
+    ]
+  }
+}
+TPL
+
+rm -f "$CALLS"
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (plugin-root substitution) exits 0" 0
+expect_sub "the refresh line reports the substituted staged-harness path" \
+  "$OUT" "-> $STAGE"
+
+SUBST_SETTINGS="$(cat "$SANDBOX_SETTINGS" 2>/dev/null)"
+refute_sub "the sandbox settings file carries no literal \${CLAUDE_PLUGIN_ROOT}" \
+  "$SUBST_SETTINGS" '${CLAUDE_PLUGIN_ROOT}'
+
+hook_cmds="$(grep -o '"command": "[^"]*"' "$SANDBOX_SETTINGS")"
+if [ -n "$hook_cmds" ] && ! printf '%s\n' "$hook_cmds" | grep -qvE "\"command\": \"(bash|python3) $STAGE/hooks/"; then
+  pass_msg "every hook command starts with the staged harness path"
+else
+  fail_msg "some hook command was not rewritten to the staged harness path: $hook_cmds"
+fi
+
+# A second --reset is idempotent: the placeholder is already gone, so the
+# substitution is a no-op re-run, not a double-rewrite.
+rm -f "$CALLS"
+run_helper --reset --harness "$HARNESS"
+expect_rc "a second --reset (plugin-root substitution) exits 0" 0
+SUBST_SETTINGS_2="$(cat "$SANDBOX_SETTINGS" 2>/dev/null)"
+if [ "$SUBST_SETTINGS_2" = "$SUBST_SETTINGS" ]; then
+  pass_msg "a second --reset re-substitution is idempotent (unchanged output)"
+else
+  fail_msg "a second --reset changed the already-substituted settings file"
+fi
+
+# ---------------------------------------------------------------------------
 scenario "Scenario 8: --run grades the MERGED sandbox tree, scoped to the sandbox"
 # ---------------------------------------------------------------------------
 # Still hermetic: `claude` is a scripted stand-in for the headless run and the
