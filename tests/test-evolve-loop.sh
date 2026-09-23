@@ -13,11 +13,12 @@ set -uo pipefail
 #   * `gh` and `claude` are STUBS on PATH that append to a call log; the
 #     `claude` stub optionally execs a per-scenario script so a scenario can
 #     print a `HEADLESS-DEFAULT:` line and/or rewrite the tracker body.
-#   * `usage-gate.sh` / `evolve-projection.sh` are invoked by ABSOLUTE PATH by
-#     the wrapper, which a PATH shim cannot intercept, so they are replaced
-#     through the wrapper's own `EVOLVE_LOOP_USAGE_GATE` /
-#     `EVOLVE_LOOP_PROJECTION` seams. `EVOLVE_LOOP_SLEEP_CMD` replaces `sleep`,
-#     so no scenario ever waits.
+#   * `usage-gate.sh` / `evolve-projection.sh` / `evolve-diminishing.sh` are
+#     invoked by ABSOLUTE PATH by the wrapper, which a PATH shim cannot
+#     intercept, so they are replaced through the wrapper's own
+#     `EVOLVE_LOOP_USAGE_GATE` / `EVOLVE_LOOP_PROJECTION` /
+#     `EVOLVE_LOOP_DIMINISHING` seams. `EVOLVE_LOOP_SLEEP_CMD` replaces
+#     `sleep`, so no scenario ever waits.
 #   * cwd for every run is a scratch dir under `mktemp -d`, so the wrapper's
 #     `.claude/scratch/evolve-loop/` writes never touch the real clone.
 #
@@ -51,8 +52,10 @@ BODY_FILE="$TMP/body.md"
 BODY_DONE="$TMP/body-done.md"
 GATE_LINES="$TMP/gate-lines.txt"
 PROJ_LINES="$TMP/proj-lines.txt"
+DIMIN_LINES="$TMP/dimin-lines.txt"
 GATE_COUNT="$TMP/gate.count"
 PROJ_COUNT="$TMP/proj.count"
+DIMIN_COUNT="$TMP/dimin.count"
 CLAUDE_COUNT="$TMP/claude.count"
 PROJ_ARGV="$TMP/proj-argv.log"
 SLEEP_LOG="$TMP/sleep.log"
@@ -68,8 +71,10 @@ export LOOP_TEST_BODY="$BODY_FILE"
 export LOOP_TEST_BODY_DONE="$BODY_DONE"
 export LOOP_TEST_GATE_LINES="$GATE_LINES"
 export LOOP_TEST_PROJ_LINES="$PROJ_LINES"
+export LOOP_TEST_DIMIN_LINES="$DIMIN_LINES"
 export LOOP_TEST_GATE_COUNT="$GATE_COUNT"
 export LOOP_TEST_PROJ_COUNT="$PROJ_COUNT"
+export LOOP_TEST_DIMIN_COUNT="$DIMIN_COUNT"
 export LOOP_TEST_CLAUDE_COUNT="$CLAUDE_COUNT"
 export LOOP_TEST_PROJ_ARGV="$PROJ_ARGV"
 export LOOP_TEST_SLEEP_LOG="$SLEEP_LOG"
@@ -137,6 +142,24 @@ printf '%s\n' "$line"
 FP
 chmod +x "$STUB_BIN/fake-projection"
 
+# The kill switch, counter-driven exactly like fake-gate: one entry per call
+# from $LOOP_TEST_DIMIN_LINES, the LAST entry repeating. An entry is `<rc>` or
+# `<rc> <stdout-line>` — the wrapper has to relay the script's OWN line into
+# the loop log, so the stub must be able to emit one AND pick its exit code.
+cat > "$STUB_BIN/fake-diminishing" <<'FD'
+#!/bin/bash
+n=$(cat "$LOOP_TEST_DIMIN_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1)); echo "$n" > "$LOOP_TEST_DIMIN_COUNT"
+line=$(sed -n "${n}p" "$LOOP_TEST_DIMIN_LINES" 2>/dev/null)
+[ -z "$line" ] && line=$(tail -1 "$LOOP_TEST_DIMIN_LINES" 2>/dev/null)
+rc="${line%% *}"
+out="${line#* }"
+[ "$out" = "$line" ] && out=""
+[ -n "$out" ] && printf '%s\n' "$out"
+exit "${rc:-0}"
+FD
+chmod +x "$STUB_BIN/fake-diminishing"
+
 cat > "$STUB_BIN/fake-sleep" <<'FS'
 #!/bin/bash
 echo "sleep ${1:-}" >> "$LOOP_TEST_SLEEP_LOG"
@@ -164,7 +187,7 @@ WORK=""
 reset_state() { # <slug>
   cat "$CALLS" >> "$ALL_CALLS" 2>/dev/null || true
   : > "$CALLS"
-  rm -f "$GATE_COUNT" "$PROJ_COUNT" "$CLAUDE_COUNT" "$CLAUDE_SCRIPT"
+  rm -f "$GATE_COUNT" "$PROJ_COUNT" "$DIMIN_COUNT" "$CLAUDE_COUNT" "$CLAUDE_SCRIPT"
   : > "$PROJ_ARGV"
   : > "$SLEEP_LOG"
   printf 'evolve\n' > "$LABELS_FILE"
@@ -172,6 +195,8 @@ reset_state() { # <slug>
   write_body "$BODY_DONE" 5 done
   printf 'usage-gate: decision=proceed five_hour=10%% seven_day=5%% threshold=85 resume_at=--\n' > "$GATE_LINES"
   printf 'PROJECTION decision=proceed est5=30 est7=8 five=10 seven=5 resume_at=--\n' > "$PROJ_LINES"
+  # Default: the kill switch never fires, so Scenarios 1-18 are untouched by it.
+  printf '0\n' > "$DIMIN_LINES"
   WORK="$TMP/work-$1"
   rm -rf "$WORK"
   mkdir -p "$WORK"
@@ -183,6 +208,7 @@ run_helper() {
   OUT="$(cd "$WORK" && PATH="$STUB_BIN:$PATH" \
         EVOLVE_LOOP_USAGE_GATE="$STUB_BIN/fake-gate" \
         EVOLVE_LOOP_PROJECTION="$STUB_BIN/fake-projection" \
+        EVOLVE_LOOP_DIMINISHING="$STUB_BIN/fake-diminishing" \
         EVOLVE_LOOP_SLEEP_CMD="$STUB_BIN/fake-sleep" \
         PIPELINE_REPO="rjskene/pipeline" \
         ALLOW_ORCHESTRATOR_EDIT="true" \
@@ -507,6 +533,7 @@ run_helper_failgh() {
   OUT="$(cd "$WORK" && PATH="$FAIL_BIN:$STUB_BIN:$PATH" \
         EVOLVE_LOOP_USAGE_GATE="$STUB_BIN/fake-gate" \
         EVOLVE_LOOP_PROJECTION="$STUB_BIN/fake-projection" \
+        EVOLVE_LOOP_DIMINISHING="$STUB_BIN/fake-diminishing" \
         EVOLVE_LOOP_SLEEP_CMD="$STUB_BIN/fake-sleep" \
         PIPELINE_REPO="rjskene/pipeline" \
         ALLOW_ORCHESTRATOR_EDIT="true" \
@@ -626,6 +653,47 @@ expect_eq "four sessions are launched (the pause cap never accumulates)" "$(laun
 expect_eq "each pause slept exactly once" "$(sleeps)" 2
 unset LOOP_TEST_RESUME_AT
 export LOOP_TEST_RESUME_AT="--"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 19: two barren verdict lines stop the loop with rc 6"
+# ---------------------------------------------------------------------------
+# The diminishing-returns kill switch was prose in skills/evolve/SKILL.md Step
+# 7 and nothing at all here, so the wrapper kept relaunching whatever the
+# verdicts said. `paused` is the OPERATOR kill switch; this is the loop's own.
+# It runs BEFORE the usage gate, so a barren-verdict stop is never masked by a
+# pause-5h sleep that would re-loop for hours first — `GATE_COUNT == 0` is the
+# mechanical pin for that ordering, not decoration.
+reset_state 19
+printf '3 DIMINISHING cycles=16,17\n' > "$DIMIN_LINES"
+run_helper --cycles 1 --tracker "$TRACKER_N"
+
+expect_rc "diminishing stops the loop" 6
+expect_sub "diminishing reports its reason" "$OUT" "LOOP-STOP reason=diminishing"
+expect_sub "the script's own line is relayed to the loop log" "$OUT" "DIMINISHING cycles=16,17"
+expect_eq "no session is launched" "$(launches)" 0
+expect_sub "the tracker is paused" "$(cat "$CALLS")" "--add-label paused"
+refute_sub "a diminishing stop is not a completed cycle" "$OUT" "LOOP-STOP reason=cycles-complete"
+expect_eq "the usage gate is never reached" "$(counter_of "$GATE_COUNT")" 0
+if [ "$RC" -eq 124 ]; then
+  fail_msg "a diminishing stop cannot relaunch forever (rc 124)"
+else
+  pass_msg "a diminishing stop cannot relaunch forever (rc != 124)"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 19b: a healthy verdict line does not stop the loop"
+# ---------------------------------------------------------------------------
+# The non-vacuity control for 19: on the default `0` entry the wrapper must
+# behave exactly as Scenario 2 does, so 19's rc 6 is attributable to the kill
+# switch firing and not to the wiring being broken.
+reset_state 19b
+run_helper --cycles 1 --tracker "$TRACKER_N"
+
+expect_rc "a healthy check completes the cycle" 0
+expect_sub "the cycle budget is reported" "$OUT" "LOOP-STOP reason=cycles-complete"
+refute_sub "a healthy check never reports diminishing" "$OUT" "LOOP-STOP reason=diminishing"
+expect_eq "exactly one session is launched" "$(launches)" 1
+refute_sub "no paused label is added" "$(cat "$CALLS")" "--add-label paused"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 13: comment-trust control — no --json comments, ever"
