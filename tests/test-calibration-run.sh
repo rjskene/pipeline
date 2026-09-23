@@ -169,6 +169,12 @@ if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
     echo "ALLOW_ORCHESTRATOR_EDIT=${ALLOW_ORCHESTRATOR_EDIT:-unset}"
     echo "PIPELINE_HEADLESS=${PIPELINE_HEADLESS:-unset}"
     echo "CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-unset}"
+    echo "PIPELINE_TRUST_PROFILE=${PIPELINE_TRUST_PROFILE:-unset}"
+    # #1390 regression guard: an operator shell that has sourced the clone's
+    # pipeline.config exports these too. They must never reach this launch.
+    echo "PIPELINE_REPO=${PIPELINE_REPO:-unset}"
+    echo "PIPELINE_PROJECT_ROOT=${PIPELINE_PROJECT_ROOT:-unset}"
+    echo "PIPELINE_USE_LOCAL_PLUGIN=${PIPELINE_USE_LOCAL_PLUGIN:-unset}"
   } > "$CALIB_TEST_LAUNCH_ENV"
 fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
@@ -196,7 +202,7 @@ run_helper() {
         CALIB_TEST_LAUNCH_ENV="$LAUNCH_ENV" \
         HOME="${CALIB_TEST_HOME:-$HOME}" \
         ALLOW_ORCHESTRATOR_EDIT="true" \
-        PIPELINE_REPO="rjskene/pipeline" \
+        PIPELINE_REPO="${CALIB_TEST_PIPELINE_REPO_OVERRIDE:-rjskene/pipeline}" \
         PIPELINE_CALIB_REPO="${CALIB_TEST_REPO_OVERRIDE:-owner/pipeline-calib}" \
         PIPELINE_CALIB_DIR="$SANDBOX" \
         PIPELINE_CALIB_REMOTE="$REMOTE" \
@@ -293,7 +299,8 @@ expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dang
 # inheriting it would disable the delegation hook inside the very run being
 # measured, so the launch strips it back out.
 expect_sub "launch line strips the loop session's ALLOW_ORCHESTRATOR_EDIT" \
-  "$LAUNCH" "env -u ALLOW_ORCHESTRATOR_EDIT"
+  "$LAUNCH" "-u ALLOW_ORCHESTRATOR_EDIT"
+expect_sub "launch line starts with env" "$LAUNCH" "cwd=$SANDBOX env "
 expect_sub "launch line tells the session it is headless" "$LAUNCH" "PIPELINE_HEADLESS=true"
 expect_sub "launch line disables the print-mode background wait ceiling" \
   "$LAUNCH" "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0"
@@ -968,6 +975,53 @@ expect_sub "a partially-graded run still refuses a k/n total" "$TOTAL_PARTIAL" "
 refute_sub "a partially-graded run never reports 3/5" "$OUT" "reftest-pass=3/5"
 
 unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 14: the launch scrubs the operator's inherited PIPELINE_* env (#1390)"
+# ---------------------------------------------------------------------------
+# Regression guard for #1390: calibration run #6 was launched from an operator
+# shell that had sourced the clone's pipeline.config (`set -a`), which exports
+# PIPELINE_REPO / PIPELINE_PROJECT_ROOT / PIPELINE_USE_LOCAL_PLUGIN (and ~25
+# more). The launch unset exactly one var (ALLOW_ORCHESTRATOR_EDIT) and passed
+# everything else through, so the sandbox session's slate lookup ran against
+# the inherited PIPELINE_REPO instead of the sandbox — CALIB-ABORT reason=no-pr
+# after 61s. The launch must scrub every exported PIPELINE_* name instead.
+
+rm -f "$CALLS" "$LAUNCH_ENV" "$TMP/issue-counter"
+export PIPELINE_PROJECT_ROOT="/poison"
+export PIPELINE_USE_LOCAL_PLUGIN="true"
+CALIB_TEST_PIPELINE_REPO_OVERRIDE="poison/harness" \
+CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh" \
+  run_helper --run --harness "$HARNESS"
+expect_rc "a poisoned-env --run still exits 0" 0
+
+LAUNCH_ENV_POISON="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+for poison in "PIPELINE_REPO=poison/harness" "PIPELINE_PROJECT_ROOT=/poison" "PIPELINE_USE_LOCAL_PLUGIN=true"; do
+  if printf '%s\n' "$LAUNCH_ENV_POISON" | grep -qxF -- "$poison"; then
+    fail_msg "the launched session's environment must NOT carry $poison"
+  else
+    pass_msg "the launched session's environment does not carry $poison"
+  fi
+done
+for want in "CLAUDE_PLUGIN_ROOT=" "PIPELINE_TRUST_PROFILE=strict" "PIPELINE_HEADLESS=true"; do
+  if printf '%s\n' "$LAUNCH_ENV_POISON" | grep -qF -- "$want"; then
+    pass_msg "the launched session's environment still carries $want"
+  else
+    fail_msg "the launched session's environment must still carry $want (got: $(printf '%s' "$LAUNCH_ENV_POISON" | tr '\n' ' '))"
+  fi
+done
+unset PIPELINE_PROJECT_ROOT PIPELINE_USE_LOCAL_PLUGIN
+
+# --dry-run control: the scrub is visible in the CALIB-LAUNCH preview so the
+# operator can see the -u list.
+rm -f "$CALLS"
+export PIPELINE_PROJECT_ROOT="/poison"
+run_helper --dry-run --harness "$HARNESS"
+expect_rc "a poisoned-env --dry-run still exits 0" 0
+LAUNCH_DRY="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "the dry-run preview names the scrubbed PIPELINE_REPO" "$LAUNCH_DRY" "-u PIPELINE_REPO"
+expect_sub "the dry-run preview names the scrubbed PIPELINE_PROJECT_ROOT" "$LAUNCH_DRY" "-u PIPELINE_PROJECT_ROOT"
+unset PIPELINE_PROJECT_ROOT
 
 # ---------------------------------------------------------------------------
 echo ""

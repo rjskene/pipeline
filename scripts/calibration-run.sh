@@ -224,15 +224,39 @@ dispatch() {
   "$@"
 }
 
+# calib_env_prefix — one `-u <name>` token per line, per PIPELINE_* variable
+# name currently EXPORTED in this shell. An operator shell that has sourced
+# the clone's pipeline.config (`set -a`) exports PIPELINE_REPO,
+# PIPELINE_PROJECT_ROOT, PIPELINE_USE_LOCAL_PLUGIN, PIPELINE_BASE_BRANCH and
+# ~25 more; left alone `env`'s default "inherit everything" behavior passes
+# every one of them straight through into both the headless launch and the
+# label-seed subshell, redirecting either at the operator's own harness repo
+# instead of the sandbox under test (#1390 — calibration run #6: 0/5,
+# CALIB-ABORT reason=no-pr after the slate lookup ran against the inherited
+# PIPELINE_REPO). Callers `readarray` this into an argv array and splice it
+# into an `env` invocation BEFORE their own explicit KEY=value settings, so
+# the unset happens first and the explicit set wins.
+calib_env_prefix() {
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    printf -- '-u\n%s\n' "$name"
+  done < <(compgen -e | grep '^PIPELINE_')
+}
+
 build_launch() {
   local ids="$ISSUE_IDS"
   if [ -z "$ids" ]; then
     ids="N1 N2 N3 N4 N5"   # --dry-run preview before --reset has resolved ids
   fi
+  local -a scrub
+  readarray -t scrub < <(calib_env_prefix)
   # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
-  LAUNCH=(env -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
+  # `${scrub[@]}` comes FIRST so every inherited PIPELINE_* is unset before the
+  # explicit sets below run (#1390).
+  LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
           timeout "$CALIB_TIMEOUT"
@@ -318,8 +342,11 @@ seed_labels() {
     warn "no doctor.sh at $doctor — skipping label seed"
     return 0
   fi
+  local -a scrub
+  readarray -t scrub < <(calib_env_prefix)
   ( cd "$SANDBOX" \
-    && PIPELINE_REPO="$CALIB_REPO" \
+    && env "${scrub[@]}" \
+       PIPELINE_REPO="$CALIB_REPO" \
        PIPELINE_PROJECT_ROOT="$SANDBOX" \
        PIPELINE_BASE_BRANCH=main \
        bash "$doctor" --fix labels ) || return 1
