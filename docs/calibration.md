@@ -61,6 +61,10 @@ delegation hook the measured run exists to exercise, and with
 `PIPELINE_HEADLESS=true` — the seam the fullsend headless contract (#1286) will
 read. Nothing consumes that marker yet.
 
+The launcher scrubs every inherited `PIPELINE_*` env var before setting only
+what the run needs; sourcing the clone config in the launching shell is
+harmless after this fix (#1390).
+
 ## Harness staging
 
 `hooks/restrict_paths.py` allows only the session's own project dir and
