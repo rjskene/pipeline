@@ -55,6 +55,11 @@ PIPELINE_REPO_ROOT
 PIPELINE_PLUGIN_CACHE_DIR
 PIPELINE_SPAWN_DRY_RUN
 PIPELINE_RUNS_LOG_OVERRIDE
+# #1387: test-injected path override for the agent-costs log, read at the
+# same --verify-dispatch call site as PIPELINE_RUNS_LOG_OVERRIDE above
+# (tests/test-verify-execute-completion.sh D13-D15). Not an operator knob;
+# intentionally undeclared in pipeline.config.example.
+PIPELINE_COST_LOG_OVERRIDE
 PIPELINE_TEST_TMPDIRS
 PIPELINE_VERSION
 # #1285: PIPELINE_HEADLESS is exported by scripts/calibration-run.sh into the

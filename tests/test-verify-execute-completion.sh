@@ -610,6 +610,121 @@ for bad in E pr-eval; do
   fi
 done
 
+
+# ============================================================================
+# #1387 — advisory cost-attribution miss signal, additive to the DISPATCH=
+# token contract of --verify-dispatch.
+#
+# Cycle 16 dispatched twelve agents whose descriptions named the issue as a bare
+# integer, so every .claude/logs/agent-costs.jsonl row landed with an empty
+# `issue` field and the loop's own cost report printed "no cost records" for all
+# three issues. Nothing detected it. The helper now reads the LAST line of the
+# cost log at dispatch time and, when that row is UNATTRIBUTED, emits one
+# advisory line AHEAD of the DISPATCH= verdict:
+#
+#   COST=miss ISSUE=<N> REASON=unattributed-row
+#
+# Advisory by construction: it only ever echoes — no exit-code change, no halt,
+# no gate — and the pre-existing DISPATCH= contract stays byte-identical (the
+# D1–D12 cases above are the additivity controls).
+#
+# MISS-ONLY emission. There is no COST=ok. Silence covers all three benign
+# states: attributed row (D14), PIPELINE_LOGS_ENABLED not "true" (D15), and an
+# absent/empty cost log (D15's fourth sub-assert).
+#
+# `PIPELINE_COST_LOG_OVERRIDE` is the test-injected path override, mirroring the
+# existing `PIPELINE_RUNS_LOG_OVERRIDE` read at the same call site (allow-listed
+# in tests/config-drift-allowlist.txt, not a pipeline.config.example knob).
+#
+# HERMETICITY: _resolve-config.sh does `set -a; source pipeline.config; set +a`
+# and snapshots ONLY PIPELINE_REPO/PIPELINE_BASE_BRANCH, so on the dogfood host
+# (PIPELINE_LOGS_ENABLED=true) a caller-exported `false` would be clobbered
+# whenever either of those two is unset. run_vd exports BOTH, so the helper
+# early-returns and never sources the host config — load-bearing for D15.
+# ============================================================================
+
+# Assertion text carries the bare token (unquoted) so a red reads
+# `FAIL: d13: expected COST=miss ISSUE=<N> REASON=unattributed-row in output: …`.
+assert_cost_token() {
+  local label="$1" out="$2" needle="$3"
+  inc
+  if printf '%s' "$out" | grep -F -q -- "$needle"; then
+    pass_msg "$label: emitted $needle"
+  else
+    fail_msg "$label: expected $needle in output: $out"
+  fi
+}
+
+assert_no_cost_token() {
+  local label="$1" out="$2" why="$3"
+  inc
+  if printf '%s' "$out" | grep -F -q -- "COST="; then
+    fail_msg "$label: expected NO COST= token ($why), got: $out"
+  else
+    pass_msg "$label: no COST= token ($why)"
+  fi
+}
+
+# make_cost_log <path> <issue-value-of-LAST-row>
+# Two records; the FIRST is always attributed to a different issue so the test
+# can only pass by reading the LAST line (tail -n 1), not by scanning the file.
+make_cost_log() {
+  local f="$1" issue="$2"
+  mkdir -p "$(dirname "$f")"
+  {
+    printf '%s\n' '{"schema_version":1,"record_key":"k1","issue":"999","stage":"plan","role":"single","model":"sonnet"}'
+    printf '{"schema_version":1,"record_key":"k2","issue":"%s","stage":"execute","role":"green","model":"opus"}\n' "$issue"
+  } > "$f"
+}
+
+# Case D13: logging ON + the last cost row is unattributed -> advisory miss.
+echo ""
+echo "Case D13 (#1387): unattributed last cost row + logging ON -> COST=miss advisory"
+D13="$ROOT/d13"; make_dispatch_repo "$D13" 0
+D13_LOG="$D13/cost-log.jsonl"; make_cost_log "$D13_LOG" ""
+OUT=$(PIPELINE_LOGS_ENABLED=true PIPELINE_COST_LOG_OVERRIDE="$D13_LOG" \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D13" 1387 B)
+rc=$?
+assert_cost_token "d13" "$OUT" "COST=miss ISSUE=1387 REASON=unattributed-row"
+# Additivity: the DISPATCH= verdict line is UNCHANGED and still present.
+assert_action "d13-additive" "$OUT" "DISPATCH=match"
+assert_action "d13-additive-issue" "$OUT" "ISSUE=1387"
+inc
+if [ "$rc" -eq 0 ]; then
+  pass_msg "d13: advisory never changes the exit code (rc=0)"
+else
+  fail_msg "d13: expected rc=0 (the advisory is never a gate), got rc=$rc"
+fi
+
+# Case D14: logging ON + the last cost row IS attributed -> silence.
+echo ""
+echo "Case D14 (#1387): attributed last cost row -> no COST= token"
+D14="$ROOT/d14"; make_dispatch_repo "$D14" 0
+D14_LOG="$D14/cost-log.jsonl"; make_cost_log "$D14_LOG" "1387"
+OUT=$(PIPELINE_LOGS_ENABLED=true PIPELINE_COST_LOG_OVERRIDE="$D14_LOG" \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D14" 1387 B)
+assert_no_cost_token "d14" "$OUT" "last row carries issue 1387"
+assert_action "d14-additive" "$OUT" "DISPATCH=match"
+
+# Case D15: the gate + the absent-log case. Both are SILENCE, never a miss.
+echo ""
+echo "Case D15 (#1387): logging gated off / cost log absent -> no COST= token"
+D15="$ROOT/d15"; make_dispatch_repo "$D15" 0
+D15_LOG="$D15/cost-log.jsonl"; make_cost_log "$D15_LOG" ""
+OUT=$(PIPELINE_LOGS_ENABLED=false PIPELINE_COST_LOG_OVERRIDE="$D15_LOG" \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D15" 1387 B)
+assert_no_cost_token "d15" "$OUT" "PIPELINE_LOGS_ENABLED is not true"
+assert_action "d15-additive" "$OUT" "DISPATCH=match"
+# Fourth sub-assert: logging ON but the cost log does not exist. An ABSENT log
+# is silence, never a manufactured miss.
+OUT=$(PIPELINE_LOGS_ENABLED=true PIPELINE_COST_LOG_OVERRIDE="$D15/no-such-cost-log.jsonl" \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      run_vd "$D15" 1387 B)
+assert_no_cost_token "d15-absent-log" "$OUT" "cost log path does not exist"
+
 # ============================================================================
 # #1122 — additive --clean-main <main-repo-dir> mode: orchestrator main-checkout
 # cleanliness guard.
