@@ -22,10 +22,11 @@
 #                                  unique-suffix match), else keeps a token
 #                                  with a known extension verbatim, else drops
 #                                  it (#1230 junk-token rejection).
-#   bp_body_paths <body>        — full issue-body extraction pipeline
-#                                  (backticked tokens + `## Affected areas`
-#                                  block) -> normalized, deduped paths, one
-#                                  per line on stdout.
+#   bp_body_paths <body>        — full issue-body extraction pipeline:
+#                                  declared sections (affected-areas / files-
+#                                  to-change), whole body as fallback ->
+#                                  normalized, deduped paths, one per line on
+#                                  stdout.
 #   bp_plan_files <plan_body>   — extraction over a plan-comment's
 #                                  `**Files to change:**` bullet block ->
 #                                  normalized, deduped paths, one per line.
@@ -112,20 +113,47 @@ bp_drop_negated_lines() {
        }'
 }
 
-# bp_body_paths <body> — issue-body extraction: backticked tokens plus the
-# `## Affected areas` block, normalized and deduped. One path per line.
+# bp_declared_lines — stdin/stdout filter (#1388). ONE awk pass that both
+# DETECTS a declaring header (`## Affected areas`, `**Files to change:**`,
+# `## Files to change`) and SLICES the block(s) that follow it. When at
+# least one header was seen, emits a `BP_DECLARED` sentinel line first, then
+# the block lines (possibly none, e.g. a block whose only entry was already
+# dropped by bp_drop_negated_lines). Emits nothing at all when no declaring
+# header is present — that absence is what bp_body_paths reads as "declares
+# nothing", the presence-based fallback trigger (see B14/B15).
+bp_declared_lines() {
+  awk 'BEGIN{IGNORECASE=1; in_block=0; seen=0; buf=""}
+       /^##[[:space:]]+Affected areas/ { seen=1; in_block=1; next }
+       /^\*\*Files to change:\*\*/ { seen=1; in_block=1; next }
+       /^##[[:space:]]+Files to change/ { seen=1; in_block=1; next }
+       in_block && /^##/ { in_block=0 }
+       in_block && /^\*\*/ { in_block=0 }
+       in_block && NF>0 { buf = buf $0 "\n" }
+       END{ if (seen) { printf "BP_DECLARED\n"; printf "%s", buf } }'
+}
+
+# bp_body_paths <body> — issue-body extraction: declared sections (affected-
+# areas / files-to-change) when the body declares at least one; the whole
+# body (backticked tokens plus the `## Affected areas` block) as a fallback
+# when it declares none. Normalized and deduped. One path per line.
 bp_body_paths() {
-  local body="$1" filtered from_backticks from_affected
+  local body="$1" filtered scoped from_backticks from_affected
   filtered=$(printf '%s' "$body" | bp_drop_negated_lines)
-  from_backticks=$( { printf '%s' "$filtered" \
-    | grep -oE '`[^`]+`' \
-    | tr -d '`' \
-    | grep -E "$FILE_PATH_RE"; } || true)
-  from_affected=$(printf '%s' "$filtered" \
-    | awk 'BEGIN{IGNORECASE=1; in_block=0}
-           /^##[[:space:]]+Affected areas/ {in_block=1; next}
-           in_block && /^##/ {in_block=0}
-           in_block && NF>0 {print}')
+  scoped=$(printf '%s' "$filtered" | bp_declared_lines)
+  if [ -n "$scoped" ]; then
+    from_backticks=""
+    from_affected=$(printf '%s' "$scoped" | tail -n +2)
+  else
+    from_backticks=$( { printf '%s' "$filtered" \
+      | grep -oE '`[^`]+`' \
+      | tr -d '`' \
+      | grep -E "$FILE_PATH_RE"; } || true)
+    from_affected=$(printf '%s' "$filtered" \
+      | awk 'BEGIN{IGNORECASE=1; in_block=0}
+             /^##[[:space:]]+Affected areas/ {in_block=1; next}
+             in_block && /^##/ {in_block=0}
+             in_block && NF>0 {print}')
+  fi
   { printf '%s\n%s\n' "$from_backticks" "$from_affected" \
     | tr -d '`' \
     | sed -E 's/^[[:space:]]*[-*][[:space:]]+//' \
