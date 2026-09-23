@@ -38,6 +38,12 @@ set -uo pipefail
 #   | 5  | LOOP-STOP reason=pause-cap pauses=<n> cycle=<N>   | consecutive headless usage-pause exits > --max-pauses |
 #   | 6  | LOOP-STOP reason=diminishing           | the two most recent tracker verdict lines carry no confirmed |
 #
+# LOOP-YIELD (#1398) is an ADDITIONAL per-cycle line, printed once for every
+# completed cycle (including the last one of a --cycles block, right before
+# the matching LOOP-STOP reason=cycles-complete). It carries no rc of its own
+# and changes no exit code above — every field degrades to `?` on missing
+# input rather than aborting the loop.
+#
 # EVERY external call goes through the single dispatch() seam below, which
 # --dry-run replaces with a printf preview. That is what makes
 # tests/test-evolve-loop.sh hermetic and what makes --dry-run cost nothing.
@@ -47,9 +53,9 @@ set -uo pipefail
 #
 # Test-only env seams (not user knobs, mirroring calibration-run.sh's
 # CALIB_TEST_*): EVOLVE_LOOP_USAGE_GATE, EVOLVE_LOOP_PROJECTION,
-# EVOLVE_LOOP_DIMINISHING, EVOLVE_LOOP_SLEEP_CMD. All three helpers are
-# invoked by ABSOLUTE PATH, which a PATH shim cannot intercept, hence the
-# seams.
+# EVOLVE_LOOP_DIMINISHING, EVOLVE_LOOP_SLEEP_CMD, EVOLVE_LOOP_RUN_RETRO. All
+# five helpers are invoked by ABSOLUTE PATH, which a PATH shim cannot
+# intercept, hence the seams.
 #
 # Usage:
 #   bash scripts/evolve-loop.sh --cycles 3
@@ -222,6 +228,17 @@ read_mode() {
   N=$(sed -nE 's/.*cycle ([0-9]+).*/\1/p' <<<"$MODE_LINE"); N=${N:-0}
   STEP=$(sed -nE 's/.*step ([0-9]+|done).*/\1/p' <<<"$MODE_LINE"); STEP=${STEP:-done}
   if [ "$STEP" = done ]; then NEXT_N=$((N + 1)); else NEXT_N=$N; fi
+  # ISSUES (#1398) — LOOP-YIELD's `merged=` denominator. Mirrors
+  # skills/evolve/SKILL.md L60's OWN idiom verbatim (not a new parser), so
+  # this function's "SAME idioms" claim above stays true. The literal `none`
+  # atom yields an empty list by construction — no special case needed.
+  case "$MODE_LINE" in
+    *"· issues "*)
+      ISSUES=$(grep -oE '#[0-9]+' <<<"${MODE_LINE#*· issues }" | tr '\n' ' ')
+      ISSUES="${ISSUES% }"
+      ;;
+    *) ISSUES="" ;;
+  esac
   return 0
 }
 
@@ -372,6 +389,96 @@ PENDING_RESUME=0
 LAUNCH_SEQ=0
 ATTEMPT=0
 LOG=""
+ISSUES=""
+CYCLE_BASE_SHA=""
+
+# ---------------------------------------------------------------------------
+# emit_yield() — LOOP-YIELD, one line per completed cycle (#1398)
+# ---------------------------------------------------------------------------
+# Called from the `done)` branch right after CYCLES_DONE is incremented and
+# BEFORE the cycles-complete check, so the final cycle of a --cycles block
+# yields too. Every field is fail-soft: `?` on any missing/failed input,
+# never `exit`, never a `set -e` abort. Purely diagnostic — it carries no rc
+# of its own and never changes the LOOP-STOP reason= or exit code that
+# follows it.
+emit_yield() {
+  local n_issues=0 k=0 id num merged_str
+  local pr_json pr_rc
+  local loc_str shortstat sc_rc ins del
+  local rm_line rm_val rows_str
+  local retro_file raw_tokens tokens_str friction_str
+
+  # merged=<k>/<n> — `n` is the issue count from the Mode line's OWN `issues`
+  # atom (read_mode()'s ISSUES, never a comment read — Scenario 13 stays
+  # green); `k` is how many of them appear as `#<id>` (not followed by a
+  # digit) in the raw JSON of ONE merged-PR-list read. Plain grep -E, no jq.
+  for id in $ISSUES; do n_issues=$((n_issues + 1)); done
+  if [ "$n_issues" -eq 0 ]; then
+    merged_str="?/0"
+  else
+    pr_json="$(dispatch LOOP-READ "" \
+      gh pr list --repo "$PIPELINE_REPO" --state merged --limit 100 \
+      --json number,title,body)"
+    pr_rc=$?
+    if [ "$pr_rc" -ne 0 ] || [ -z "$pr_json" ]; then
+      merged_str="?/$n_issues"
+    else
+      k=0
+      for id in $ISSUES; do
+        num="${id#\#}"
+        if grep -qE "#${num}([^0-9]|\$)" <<<"$pr_json"; then
+          k=$((k + 1))
+        fi
+      done
+      merged_str="$k/$n_issues"
+    fi
+  fi
+
+  # loc=+<a>/-<b> from `git diff --shortstat` against the SHA captured at the
+  # first launch of this cycle (CYCLE_BASE_SHA, set just above LOOP-LAUNCH
+  # below). Empty (capture never succeeded) or a failed/empty diff -> `?`.
+  if [ -z "$CYCLE_BASE_SHA" ]; then
+    loc_str="?"
+  else
+    shortstat="$(dispatch LOOP-READ "" git diff --shortstat "$CYCLE_BASE_SHA"..HEAD)"
+    sc_rc=$?
+    if [ "$sc_rc" -ne 0 ] || [ -z "$shortstat" ]; then
+      loc_str="?"
+    else
+      ins=$(sed -nE 's/.*[[:space:]]([0-9]+) insertion.*/\1/p' <<<"$shortstat"); ins=${ins:-0}
+      del=$(sed -nE 's/.*[[:space:]]([0-9]+) deletion.*/\1/p' <<<"$shortstat"); del=${del:-0}
+      loc_str="+$ins/-$del"
+    fi
+  fi
+
+  # rows_moved=<m> from run-retro.sh --rows-moved N. Anything non-numeric
+  # (including an `n/a (...)` degrade line) -> `?`.
+  rm_line="$(dispatch LOOP-READ "" \
+    bash "${EVOLVE_LOOP_RUN_RETRO:-$CLONE/scripts/run-retro.sh}" \
+    --rows-moved "$N" --tracker "$TRACKER")"
+  rm_val=$(sed -nE 's/^rows-moved: ([0-9]+)$/\1/p' <<<"$rm_line")
+  rows_str="${rm_val:-?}"
+
+  # tokens=<X.Y>M / friction=<f> from $(pwd)/docs/retros/cycle-<NN>.md — the
+  # SAME base as LOG_DIR above. Absent file -> both `?`.
+  retro_file="$(pwd)/docs/retros/cycle-$(printf '%02d' "$N").md"
+  if [ -f "$retro_file" ]; then
+    raw_tokens=$(sed -nE 's/^cost: loop-own tokens\/issue median = ([0-9]+)$/\1/p' "$retro_file" | head -1)
+    if [ -n "$raw_tokens" ]; then
+      tokens_str="$(awk -v t="$raw_tokens" 'BEGIN{printf "%.1fM", t/1000000}')"
+    else
+      tokens_str="?"
+    fi
+    friction_str="$(grep -cE '^HARNESS-FRICTION:' "$retro_file" 2>/dev/null)"
+    friction_str="${friction_str:-0}"
+  else
+    tokens_str="?"
+    friction_str="?"
+  fi
+
+  echo "LOOP-YIELD cycle=$N merged=$merged_str loc=$loc_str rows_moved=$rows_str tokens=$tokens_str friction=$friction_str"
+  CYCLE_BASE_SHA=""
+}
 
 while :; do
   LABELS="$(read_labels)"
@@ -402,6 +509,14 @@ while :; do
   fi
 
   build_launch
+
+  # Capture the cycle's BASE sha lazily — only when empty — so it is the SHA
+  # at the FIRST launch of the current cycle across intervening
+  # pauses/stalls; emit_yield() clears it after each LOOP-YIELD. Empty/failed
+  # read -> loc=? in emit_yield() (#1398).
+  if [ -z "$CYCLE_BASE_SHA" ]; then
+    CYCLE_BASE_SHA="$(dispatch LOOP-READ "" git rev-parse HEAD)"
+  fi
 
   # ONE LOG FILE PER LAUNCH. LAUNCH_SEQ is monotonic for the life of the
   # process and is NEVER reset by any classification, so it is the only
@@ -436,6 +551,7 @@ while :; do
       ;;
     done)
       CYCLES_DONE=$((CYCLES_DONE + 1))
+      emit_yield
       RESUMES=0
       ATTEMPT=0
       PAUSES=0
