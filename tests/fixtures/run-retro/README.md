@@ -45,6 +45,8 @@ rather than a k/n over rows the run never reached. Grammar reference:
 | file | exercises |
 |---|---|
 | `tracker-2cycle.md` | verbatim `tracker.md` + an appended `Cycle 1` block — cross-cycle tests (previous-cycle deltas, pending verdicts, later-fix escapes) |
+| `tracker-cycle1-noheader.md` | `tracker-2cycle.md` with the `Cycle 1 (…)` header + bullets removed (Step-1-before-Step-3 shape, #1396) → `cycle_window()` dates the window from the prior cycle's tracker retro comment instead of degrading to `n/a (no cycle window)` |
+| `tracker-sameday.md` | two `Cycle N (<ISO8601>…)` headers on the SAME calendar day but distinct timestamps (#1396) → each window counts only its own PRs, no double-count |
 | `tracker-nonnumeric.md` | a baseline cell with zero numeric atoms → `n/a (non-numeric baseline)` |
 | `tracker-missing-row.md` | the `harness mass` baseline row deleted → `n/a (baseline row not found: <key>)` |
 | `tracker-garbled.md` | no `## Scorecard baseline` section → `n/a (tracker body unreadable)` |
