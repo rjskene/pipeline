@@ -67,7 +67,7 @@ skill/agent/hook change merged during the loop is loaded by the next cycle
 instead of waiting for an operator restart. Run from the clone root.
 
 Options:
-  --cycles N        Cycles to complete before stopping (default 0 = unbounded).
+  --cycles N        Cycles to complete before stopping (default 3; 0 = unbounded).
   --tracker N       Tracker issue number (default 1271).
   --model M         Model for the headless session (default: account default).
   --max-resumes K   consecutive unexplained stalls before LOOP-STOP reason=resume-cap (default 2, rc 4)
@@ -97,7 +97,7 @@ require_num() { # <flag> <value>
   esac
 }
 
-CYCLES=0
+CYCLES=3
 TRACKER=""
 MODEL=""
 MAX_RESUMES=2
