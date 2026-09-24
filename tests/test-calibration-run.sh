@@ -92,6 +92,28 @@ fi
 DOC
 chmod +x "$HARNESS/scripts/doctor.sh"
 
+# A minimal manifest shaped like the real .claude-plugin/plugin.json: two
+# PreToolUse guard hooks, a Stop guard (enforce-ci-wait.py), and a
+# SessionStart hook (doctor-on-update.sh) that --hooks off must leave alone.
+mkdir -p "$HARNESS/.claude-plugin"
+cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
+{
+  "name": "pipeline",
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/block_deletions.py"}]},
+      {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/restrict_paths.py"}]}
+    ],
+    "Stop": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py"}]}
+    ],
+    "SessionStart": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/doctor-on-update.sh"}]}
+    ]
+  }
+}
+PLUGIN
+
 # The harness is a REAL (non-bare) checkout, not a loose tree: --run stages the
 # harness HEAD as a detached worktree, which needs a commit to detach at, and
 # copies the harness's pipeline.config across. That config is UNTRACKED here on
@@ -102,7 +124,7 @@ chmod +x "$HARNESS/scripts/doctor.sh"
 printf 'PIPELINE_CALIB_REPO=owner/pipeline-calib\n' > "$HARNESS/pipeline.config"
 printf 'pipeline.config\ndocs/retros/\n' > "$HARNESS/.gitignore"
 git init --quiet "$HARNESS"
-git -C "$HARNESS" add .gitignore scripts dev
+git -C "$HARNESS" add .gitignore scripts dev .claude-plugin
 GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
 GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
   git -C "$HARNESS" commit --quiet -m "calib: synthetic harness"
@@ -265,13 +287,17 @@ run_helper --dry-run --model gpt
 expect_rc "--model gpt is rejected" 2
 expect_sub "--model error names the allowed values" "$OUT" "sonnet|opus"
 
+run_helper --dry-run --hooks maybe
+expect_rc "--hooks maybe is rejected" 2
+expect_sub "--hooks error names the allowed values" "$OUT" "on|off"
+
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
 
 # A value-taking flag in LAST position has no value to shift: `shift 2` with
 # $#=1 fails, the token is never consumed, and the parser spins forever with
 # no output. Must be a usage error, never a hang (rc=124 from run_helper's cap).
-for flag in --profile --model --harness; do
+for flag in --profile --model --harness --hooks; do
   run_helper --dry-run "$flag"
   expect_rc "trailing $flag exits 2 (never spins)" 2
   expect_sub "trailing $flag reports the missing value" "$OUT" "$flag requires a value"
@@ -313,6 +339,12 @@ expect_sub "launch line tells the session it is headless" "$LAUNCH" "PIPELINE_HE
 expect_sub "launch line disables the print-mode background wait ceiling" \
   "$LAUNCH" "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0"
 expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
+expect_sub "the dry-run preview names the default hooks arm" "$LAUNCH" "hooks=on"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --hooks off
+LAUNCH_HOOKS_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--hooks off is named in the dry-run preview" "$LAUNCH_HOOKS_OFF" "hooks=off"
 
 if [ -s "$CALLS" ]; then
   fail_msg "--dry-run made a network / launch call: $(tr '\n' ';' < "$CALLS")"
@@ -1667,6 +1699,102 @@ refute_sub "the pre-fix apportionment (diluted by the stale row) is gone" \
 
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
       CALIB_TEST_PRICING_JSON
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 18: --hooks off strips guard hooks from the staged manifest only (#1409)"
+# ---------------------------------------------------------------------------
+# Arm 2 of the hook-necessity experiment (backlog #12): the staged manifest
+# under test must carry no PreToolUse guard and no enforce-ci-wait Stop hook,
+# but the doctor-on-update SessionStart hook (not a guard) survives, and the
+# edit must never reach the ORIGINAL harness checkout — only the next
+# stage_harness refresh (a fresh `checkout --force --detach`) would discard it.
+
+HARNESS_MANIFEST_BEFORE="$(cat "$HARNESS/.claude-plugin/plugin.json")"
+
+echo 6000 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+run_helper --run --harness "$HARNESS" --hooks off
+expect_rc "--run --hooks off exits 0" 0
+
+STAGED_MANIFEST="$STAGE/.claude-plugin/plugin.json"
+N_PRE="$(jq '.hooks.PreToolUse | length' "$STAGED_MANIFEST" 2>/dev/null)"
+if [ "$N_PRE" = "0" ]; then
+  pass_msg "--hooks off leaves zero PreToolUse entries in the staged manifest"
+else
+  fail_msg "--hooks off must strip every PreToolUse entry (got $N_PRE)"
+fi
+if jq -e '[.hooks.Stop[]?.hooks[]?.command // "" | select(contains("enforce-ci-wait.py"))] | length == 0' \
+     "$STAGED_MANIFEST" >/dev/null 2>&1; then
+  pass_msg "--hooks off removes the enforce-ci-wait Stop hook"
+else
+  fail_msg "--hooks off must remove the enforce-ci-wait Stop hook"
+fi
+if jq -e '[.hooks.SessionStart[]?.hooks[]?.command // "" | select(contains("doctor-on-update.sh"))] | length == 1' \
+     "$STAGED_MANIFEST" >/dev/null 2>&1; then
+  pass_msg "--hooks off keeps the SessionStart doctor-on-update hook"
+else
+  fail_msg "--hooks off must keep the SessionStart doctor-on-update hook"
+fi
+HARNESS_MANIFEST_AFTER="$(cat "$HARNESS/.claude-plugin/plugin.json")"
+if [ "$HARNESS_MANIFEST_AFTER" = "$HARNESS_MANIFEST_BEFORE" ]; then
+  pass_msg "the original harness manifest is never touched"
+else
+  fail_msg "--hooks off must edit only the STAGED manifest, never the harness checkout"
+fi
+# Scoped to .claude-plugin/, not the whole tree: Scenario 15 leaves unrelated
+# untracked cost-capture scripts under $HARNESS/scripts/ by design (copied in
+# to make the backfill call real), which would otherwise poison this check
+# with cruft that has nothing to do with the manifest under test.
+if [ -z "$(git -C "$HARNESS" status --porcelain -- .claude-plugin)" ]; then
+  pass_msg "the harness's .claude-plugin/ (git status) is clean after --hooks off"
+else
+  fail_msg "the harness checkout's .claude-plugin/ must stay clean: $(git -C "$HARNESS" status --porcelain -- .claude-plugin)"
+fi
+
+TOTAL_HOOKS_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the CALIB-TOTAL line records the off arm" "$TOTAL_HOOKS_OFF" "hooks=off"
+
+ARTIFACT_OFF="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*-hooks-off.txt 2>/dev/null | sort | tail -1)"
+if [ -n "$ARTIFACT_OFF" ] && [ -f "$ARTIFACT_OFF" ]; then
+  pass_msg "--hooks off names its artifact with a -hooks-off suffix"
+else
+  fail_msg "--hooks off must name its artifact <UTC date>T<HHMM>Z-hooks-off.txt"
+fi
+
+expect_sub "--hooks off logs how many guard hook entries it removed" \
+  "$OUT" "hooks=off — removed"
+
+unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 19: default --hooks on leaves the staged manifest byte-identical (#1409)"
+# ---------------------------------------------------------------------------
+
+echo 6100 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run (default hooks=on) exits 0" 0
+
+if cmp -s "$STAGE/.claude-plugin/plugin.json" "$HARNESS/.claude-plugin/plugin.json"; then
+  pass_msg "default --hooks on leaves the staged manifest byte-identical to the harness's"
+else
+  fail_msg "default --hooks on must not modify the staged manifest"
+fi
+
+TOTAL_HOOKS_ON="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the CALIB-TOTAL line records the on arm" "$TOTAL_HOOKS_ON" "hooks=on"
+
+ARTIFACT_ON="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*.txt 2>/dev/null \
+  | grep -v -- '-hooks-off\.txt$' | sort | tail -1)"
+if [ -n "$ARTIFACT_ON" ] && [ -f "$ARTIFACT_ON" ]; then
+  pass_msg "default --hooks on names its artifact with no -hooks-off suffix"
+else
+  fail_msg "default --hooks on must not suffix its artifact filename"
+fi
+
+unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
 echo ""

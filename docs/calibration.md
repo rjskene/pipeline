@@ -30,7 +30,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 
 ```
 bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
-    [--profile strict|lean] [--model sonnet|opus] [--harness <dir>]
+    [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off]
 ```
 
 | Mode | What it does | Costs money |
@@ -65,6 +65,13 @@ read. Nothing consumes that marker yet.
 The launcher scrubs every inherited `PIPELINE_*` env var before setting only
 what the run needs; sourcing the clone config in the launching shell is
 harmless after this fix (#1390).
+
+`--hooks off` (default `on`) is arm 2 of the hook-necessity experiment
+(backlog #12): it strips every `PreToolUse` guard hook and the
+`enforce-ci-wait.py` Stop hook from the STAGED manifest only, keeping
+`SessionStart`/`UserPromptSubmit`. Off runs are tagged `hooks=off` in
+`CALIB-TOTAL` and in the `<date>T<HHMM>Z-hooks-off.txt`/`.log` artifact names,
+so an arm-2 run can never be mistaken for the hooks-on baseline (#1409).
 
 ## Harness staging
 

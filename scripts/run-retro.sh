@@ -919,8 +919,15 @@ calib_provenance() {
   local f="${1:-}" base cutoff
   CALIB_RUN_DATE=""
   CALIB_STALE=""
+  CALIB_HOOKS=""
   [ -n "$f" ] || return 0
   base="$(basename "$f" .txt)"
+  # #1409: --hooks off suffixes its artifact `-hooks-off` — strip it (and
+  # remember the arm) BEFORE the date-shape match below, so both the bare
+  # and the T<HHMM>Z form are recognized regardless of arm.
+  case "$base" in
+    *-hooks-off) CALIB_HOOKS="off"; base="${base%-hooks-off}" ;;
+  esac
   case "$base" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) CALIB_RUN_DATE="$base" ;;
     # #1408: minute-granular <date>T<HHMM>Z artifact — the run date is the
@@ -1560,12 +1567,16 @@ build_full_report() {
   echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
 
   echo ""
+  # #1409: an arm-2 (--hooks off) artifact is tagged `hooks=off` so it can
+  # never silently read as the hooks-on baseline; arm 1 (on, default) stays
+  # unlabeled.
   if [ -n "$CALIB_RUN_DATE" ]; then
-    if [ -n "$CALIB_STALE" ] && [ "$CALIB_STALE" -ge 3 ]; then
-      echo "weak-model pass: $CALIB_WEAK (run $CALIB_RUN_DATE, stale $CALIB_STALE cycles)"
-    else
-      echo "weak-model pass: $CALIB_WEAK (run $CALIB_RUN_DATE)"
-    fi
+    CALIB_PROV="run $CALIB_RUN_DATE"
+    [ -n "$CALIB_STALE" ] && [ "$CALIB_STALE" -ge 3 ] && CALIB_PROV="$CALIB_PROV, stale $CALIB_STALE cycles"
+    [ "$CALIB_HOOKS" = "off" ] && CALIB_PROV="$CALIB_PROV, hooks=off"
+    echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
+  elif [ "$CALIB_HOOKS" = "off" ]; then
+    echo "weak-model pass: $CALIB_WEAK (hooks=off)"
   else
     echo "weak-model pass: $CALIB_WEAK"
   fi
