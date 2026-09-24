@@ -595,8 +595,51 @@ MERGED_JSON=""
 ISSUE_JSON="{}"
 ISSUE_JSON_FOR=""
 
+# backfill_costs — retroactive pass before pricing (#1406): async Agent
+# dispatches carry no usage at PostToolUse, so $CAPTURE_LOG under-attributes.
+# CLAUDE_PROJECT_DIR pins capture-agent-costs.sh's input+output to the
+# sandbox. Idempotent (record_key dedup); a failure WARNs, never aborts —
+# CALIB-ABORT reason=no-cost-log stays the only abort path.
+backfill_costs() {
+  local out rc n
+  out="$(CLAUDE_PROJECT_DIR="$SANDBOX" PIPELINE_LOGS_ENABLED=true \
+    bash "$HARNESS/scripts/capture-agent-costs.sh" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    warn "cost backfill failed (rc=$rc): $out"
+    return 0
+  fi
+  n="$(printf '%s' "$out" | sed -n 's/.*appended \([0-9][0-9]*\) record.*/\1/p' | head -1)"
+  echo "calib: cost backfill appended ${n:-0} record(s)"
+}
+
+# dedup_capture_log <path> — collapse forward+retroactive dupes by agent_id,
+# keeping max tokens.total (mirrors run-retro.sh's #1346 rule). Echoes a
+# deduped temp copy's path, or the original when absent/empty.
+dedup_capture_log() {
+  local src="$1" dst
+  [ -s "$src" ] || { printf '%s' "$src"; return 0; }
+  dst="$(mktemp)"
+  if jq -c -s '
+      ([ .[] | select((.agent_id // "") != "") ]
+         | group_by(.agent_id) | map(max_by(.tokens.total)))
+      + ([ .[] | select((.agent_id // "") == "")
+                | select(has("session_id") and .session_id != null) ]
+         | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
+      + [ .[] | select((.agent_id // "") == "")
+              | select((has("session_id") | not) or .session_id == null) ]
+      | .[]
+    ' "$src" > "$dst" 2>/dev/null && [ -s "$dst" ]; then
+    printf '%s' "$dst"
+  else
+    rm -f "$dst"
+    printf '%s' "$src"
+  fi
+}
+
 load_run_substrate() {
   CAPTURE_LOG="$SANDBOX/.claude/logs/agent-costs.jsonl"
+  backfill_costs
   local clr="$HARNESS/scripts/cost-latency-report.sh"
   ROWS_JSON="[]"
   PRICING_TOTAL=""
@@ -606,11 +649,13 @@ load_run_substrate() {
     # the harness it would either error out (`ROWS_JSON=[]`) or join the
     # HARNESS's PRs against sandbox issue ids — silently wrong rows. Pin both
     # the repo and the cwd, in a subshell so the harness-side env is untouched.
+    local dedup_log
+    dedup_log="$(dedup_capture_log "$CAPTURE_LOG")"
     ROWS_JSON="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
-      bash "$clr" --emit-rows-json --capture-log "$CAPTURE_LOG" 2>/dev/null )"
+      bash "$clr" --emit-rows-json --capture-log "$dedup_log" 2>/dev/null )"
     [ -n "$ROWS_JSON" ] || ROWS_JSON="[]"
     PRICING_TOTAL="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
-      bash "$clr" --emit-pricing-json --capture-log "$CAPTURE_LOG" 2>/dev/null \
+      bash "$clr" --emit-pricing-json --capture-log "$dedup_log" 2>/dev/null \
       | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
   fi
   # ONE PR fetch for the whole run. `--state all` because "this run opened no
