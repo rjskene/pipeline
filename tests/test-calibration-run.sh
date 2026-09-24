@@ -1542,6 +1542,52 @@ else
   fail_msg "usage-gate.jsonl must NOT be archived"
 fi
 
+# Same-UTC-second collision. The archive dir is second-granular, so a --reset
+# landing in the same second as the previous archive resolves the SAME dest —
+# and `mv -f <dir> <dest>/` fails with "Directory not empty" when
+# <dest>/subagents/ already holds the earlier archive's sidecars. That aborted
+# archive_run_logs mid-loop: agent-costs.jsonl and subagents.log had already
+# moved, tool-use.log/runs.log/state.json were left behind, and the function
+# returned before its log line — silently, because cmd_reset ignores its exit
+# status. The collision is pre-seeded for this second AND the next two so the
+# case fires deterministically whichever second the reset lands in.
+rm -f "$CALLS" "$TMP/issue-counter"
+mkdir -p "$LOGS_DIR/subagents"
+echo '{"issue":"7777"}' > "$LOGS_DIR/agent-costs.jsonl"
+echo "second subagent line" > "$LOGS_DIR/subagents.log"
+echo '{"sidecar":2}' > "$LOGS_DIR/subagents/agent-second.json"
+echo "second tool use" > "$LOGS_DIR/tool-use.log"
+echo "second run" > "$LOGS_DIR/runs.log"
+echo '{"state":2}' > "$LOGS_DIR/agent-cost-orchestrator-state.json"
+for off in 0 1 2; do
+  COLLIDE="$SANDBOX/.claude/logs-archive/$(date -u -d "+$off seconds" +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$COLLIDE/subagents"
+  echo '{"prior":true}' > "$COLLIDE/subagents/agent-prior.json"
+done
+
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (same-second collision) exits 0" 0
+expect_sub "a same-second re-archive still logs its destination" \
+  "$OUT" "calib: archived previous run logs -> "
+
+ARCHIVE_DIR2="$(printf '%s\n' "$OUT" | sed -n 's/^calib: archived previous run logs -> //p' | head -1)"
+MISSING2=""
+for f in agent-costs.jsonl subagents.log tool-use.log runs.log \
+         agent-cost-orchestrator-state.json subagents/agent-second.json; do
+  { [ -n "$ARCHIVE_DIR2" ] && [ -e "$ARCHIVE_DIR2/$f" ] && [ ! -e "$LOGS_DIR/$f" ]; } \
+    || MISSING2="$MISSING2 $f"
+done
+if [ -z "$MISSING2" ]; then
+  pass_msg "a same-second re-archive moves EVERY log, not just the ones before subagents/"
+else
+  fail_msg "a same-second re-archive must archive every log (missing:$MISSING2)"
+fi
+if [ -n "$ARCHIVE_DIR2" ] && [ ! -e "$ARCHIVE_DIR2/subagents/agent-prior.json" ]; then
+  pass_msg "a same-second collision resolves to a fresh dir, never a prior archive"
+else
+  fail_msg "the same-second archive must not land in the pre-existing archive dir (got: $ARCHIVE_DIR2)"
+fi
+
 # A --reset with nothing to archive (a fresh sandbox, no prior logs) is a
 # no-op: no archive dir, no log line.
 rm -f "$CALLS" "$TMP/issue-counter"

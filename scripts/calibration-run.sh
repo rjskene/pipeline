@@ -533,10 +533,25 @@ archive_run_logs() {
   [ "$any" -eq 1 ] || return 0
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
   dest="$SANDBOX/.claude/logs-archive/$ts"
-  dispatch mkdir -p "$dest" || return 1
+  # The timestamp is second-granular, so two archives inside one UTC second
+  # (a --reset immediately followed by a --run, or the reverse) resolve the
+  # SAME dest — and `mv -f <dir> <dest>/` FAILS "Directory not empty" when
+  # <dest>/subagents/ already holds the earlier archive's sidecars. That
+  # aborted the loop half-done (agent-costs.jsonl moved, tool-use.log left
+  # behind) and returned before the log line below, silently: cmd_reset does
+  # not check this function's exit status. Suffix an unused dir instead of
+  # merging two runs' logs into one archive.
+  if [ -e "$dest" ]; then
+    local n=2
+    while [ -e "${dest}-${n}" ]; do n=$((n + 1)); done
+    dest="${dest}-${n}"
+  fi
+  dispatch mkdir -p "$dest" \
+    || { warn "could not create the log archive dir $dest — previous run logs left in place"; return 1; }
   for f in "${files[@]}"; do
     [ -e "$f" ] || continue
-    dispatch mv -f "$f" "$dest/" || return 1
+    dispatch mv -f "$f" "$dest/" \
+      || { warn "could not archive $f -> $dest — previous run logs only PARTIALLY archived"; return 1; }
   done
   echo "calib: archived previous run logs -> $dest"
 }
