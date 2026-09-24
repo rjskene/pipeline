@@ -93,8 +93,9 @@ DOC
 chmod +x "$HARNESS/scripts/doctor.sh"
 
 # A minimal manifest shaped like the real .claude-plugin/plugin.json: two
-# PreToolUse guard hooks, a Stop guard (enforce-ci-wait.py), and a
-# SessionStart hook (doctor-on-update.sh) that --hooks off must leave alone.
+# PreToolUse guard hooks, a Stop guard (enforce-ci-wait.py), and the
+# SessionStart + UserPromptSubmit doctor-on-update.sh hooks that --hooks off
+# must leave alone (the issue names BOTH non-guard events, so both are pinned).
 mkdir -p "$HARNESS/.claude-plugin"
 cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
 {
@@ -108,6 +109,9 @@ cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
       {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py"}]}
     ],
     "SessionStart": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/doctor-on-update.sh"}]}
+    ],
+    "UserPromptSubmit": [
       {"matcher": "*", "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/doctor-on-update.sh"}]}
     ]
   }
@@ -1735,6 +1739,12 @@ if jq -e '[.hooks.SessionStart[]?.hooks[]?.command // "" | select(contains("doct
   pass_msg "--hooks off keeps the SessionStart doctor-on-update hook"
 else
   fail_msg "--hooks off must keep the SessionStart doctor-on-update hook"
+fi
+if jq -e '[.hooks.UserPromptSubmit[]?.hooks[]?.command // "" | select(contains("doctor-on-update.sh"))] | length == 1' \
+     "$STAGED_MANIFEST" >/dev/null 2>&1; then
+  pass_msg "--hooks off keeps the UserPromptSubmit doctor-on-update hook"
+else
+  fail_msg "--hooks off must keep the UserPromptSubmit doctor-on-update hook"
 fi
 HARNESS_MANIFEST_AFTER="$(cat "$HARNESS/.claude-plugin/plugin.json")"
 if [ "$HARNESS_MANIFEST_AFTER" = "$HARNESS_MANIFEST_BEFORE" ]; then
