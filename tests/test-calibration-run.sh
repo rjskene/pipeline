@@ -1509,8 +1509,17 @@ echo "prior run" > "$LOGS_DIR/runs.log"
 echo '{"state":true}' > "$LOGS_DIR/agent-cost-orchestrator-state.json"
 echo "keep me" > "$LOGS_DIR/usage-gate.jsonl"
 
+echo "DBG16 branch=$(git -C "$SANDBOX" rev-parse --abbrev-ref HEAD 2>&1)"
+echo "DBG16 branches=$(git -C "$SANDBOX" branch -a --format='%(refname:short)' 2>&1 | tr '\n' ' ')"
+echo "DBG16 tracked=$(git -C "$SANDBOX" ls-files 2>&1 | tr '\n' ' ')"
+echo "DBG16 pre-ls=$(ls -A "$LOGS_DIR" 2>&1 | tr '\n' ' ')"
+echo "DBG16 gitignore=$(cat "$SANDBOX/.gitignore" 2>&1 | tr '\n' ' ')"
 run_helper --reset --harness "$HARNESS"
 expect_rc "--reset (archive) exits 0" 0
+echo "DBG16 post-ls=$(ls -A "$LOGS_DIR" 2>&1 | tr '\n' ' ')"
+echo "DBG16 archdir=$(ls -A "$SANDBOX/.claude/logs-archive" 2>&1 | tr '\n' ' ')"
+echo "DBG16 OUT<<<$OUT>>>"
+
 expect_sub "--reset logs the archive destination" "$OUT" "calib: archived previous run logs -> "
 
 ARCHIVE_DIR="$(printf '%s\n' "$OUT" | sed -n 's/^calib: archived previous run logs -> //p' | head -1)"
