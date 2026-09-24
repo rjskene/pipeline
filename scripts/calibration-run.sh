@@ -94,6 +94,9 @@ Options:
   --harness DIR    Harness (pipeline repo) under test; becomes both
                    CLAUDE_PLUGIN_ROOT and --plugin-dir for the headless run.
                    Default: the repo containing this script.
+  --hooks H        on|off  (default on) — off strips every PreToolUse guard
+                   hook and the enforce-ci-wait Stop hook from the STAGED
+                   manifest (hook-necessity experiment, backlog #12).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -111,6 +114,7 @@ PROFILE="strict"
 MODEL="sonnet"
 HARNESS_ARG=""
 DRY_RESET=0
+HOOKS="on"
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -146,6 +150,8 @@ while [ $# -gt 0 ]; do
     --model=*)    MODEL="${1#--model=}"; shift ;;
     --harness)    require_value "$@"; HARNESS_ARG="$2"; shift 2 ;;
     --harness=*)  HARNESS_ARG="${1#--harness=}"; shift ;;
+    --hooks)      require_value "$@"; HOOKS="$2"; shift 2 ;;
+    --hooks=*)    HOOKS="${1#--hooks=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -157,6 +163,10 @@ esac
 case "$MODEL" in
   sonnet|opus) ;;
   *) die_usage "--model must be one of sonnet|opus (got: ${MODEL:-<empty>})" ;;
+esac
+case "$HOOKS" in
+  on|off) ;;
+  *) die_usage "--hooks must be one of on|off (got: ${HOOKS:-<empty>})" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
@@ -587,6 +597,31 @@ cmd_reset() {
 # --run harness staging
 # ---------------------------------------------------------------------------
 
+# strip_guard_hooks — arm 2 of the hook-necessity experiment (backlog #12,
+# #1409): remove every PreToolUse entry and the Stop entry running
+# enforce-ci-wait.py from the STAGED manifest, in place. SessionStart /
+# UserPromptSubmit (doctor-on-update.sh) are not guards and stay untouched.
+# Called only from stage_harness(), so the edit lives in the stage only — the
+# next refresh's `checkout --force --detach` discards it.
+strip_guard_hooks() {
+  local manifest="$STAGE_DIR/.claude-plugin/plugin.json" n tmp
+  [ -f "$manifest" ] || { warn "no manifest at $manifest — --hooks off has nothing to strip"; return 0; }
+  n="$(jq '(.hooks.PreToolUse // [] | length)
+           + ([(.hooks.Stop // [])[] | select((.hooks[]?.command // "") | contains("enforce-ci-wait.py"))] | length)' \
+        "$manifest" 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  tmp="$(mktemp)"
+  if jq '.hooks.PreToolUse = []
+         | .hooks.Stop = [(.hooks.Stop // [])[] | select((.hooks[]?.command // "") | contains("enforce-ci-wait.py") | not)]' \
+       "$manifest" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv "$tmp" "$manifest"
+    echo "calib: hooks=off — removed $n guard hook entries from the staged manifest"
+  else
+    rm -f "$tmp"
+    die_run "could not rewrite the staged manifest at $manifest"
+  fi
+}
+
 # stage_harness — materialize the harness under the calib dir as a DETACHED
 # worktree at the harness's current HEAD, so the sandbox session can actually
 # read the plugin tree it is measuring (see needs_staging).
@@ -626,6 +661,7 @@ stage_harness() {
   # Without this copy the staged harness runs with no config at all.
   [ -f "$HARNESS/pipeline.config" ] && cp -f "$HARNESS/pipeline.config" "$STAGE_DIR/"
   echo "calib: staged harness $sha at $STAGE_DIR"
+  [ "$HOOKS" = "off" ] && strip_guard_hooks
 }
 
 # ---------------------------------------------------------------------------
@@ -983,15 +1019,17 @@ emit_calib_block() {
   if [ ! -s "$CAPTURE_LOG" ] || [ -z "$PRICING_TOTAL" ] || pricing_is_zero "$PRICING_TOTAL"; then
     cost_display="n/a"
   fi
+  # hooks=<on|off> (#1409) is recorded on every CALIB-TOTAL line, both arms,
+  # so an arm-2 run is never mistaken for the hooks-on baseline.
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s\n' \
-      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s\n' \
+      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s\n' \
-      "$cost_display" "$wall_total" "$count" "n/a" "$planted"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s\n' \
+      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS"
   fi
 }
 
@@ -1027,14 +1065,18 @@ cmd_run() {
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
   RUN_TS="$(date -u +%Y-%m-%dT%H%MZ)"
   RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}.log"
+  # #1409: the off arm suffixes both artifacts so it can never be mistaken for
+  # the hooks-on baseline; default on keeps the plain name.
+  local run_suffix=""
+  [ "$HOOKS" = "off" ] && run_suffix="-hooks-off"
+  RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
   RUN_RC=${PIPESTATUS[0]}
   t1="$(date +%s)"
   [ "$RUN_RC" -eq 0 ] || warn "headless run exited $RUN_RC (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
   sync_sandbox_after_run
-  emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/${RUN_TS}.txt"
+  emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.txt"
 }
 
 # ---------------------------------------------------------------------------
@@ -1044,7 +1086,10 @@ cmd_run() {
 case "$MODE" in
   dry-run)
     build_launch
-    dispatch "${LAUNCH[@]}"   # DRY=1 -> exactly one CALIB-LAUNCH preview line
+    # DRY=1 here always (MODE=dry-run forces it), so this never reaches the
+    # real "$@" branch of dispatch() — the trailing hooks=<val> token is safe
+    # as informational-only preview text (#1409), never passed to `claude`.
+    dispatch "${LAUNCH[@]}" "hooks=$HOOKS"
     exit 0
     ;;
   bootstrap) cmd_bootstrap ;;

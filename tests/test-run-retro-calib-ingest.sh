@@ -333,6 +333,42 @@ refute_sub "the earlier same-day artifact's aborted score is never read" \
   "$REPORT_TS" "calibration run aborted"
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 10: an arm-2 (--hooks off) artifact renders hooks=off (#1409)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --hooks off suffixes its artifact filename with
+# `-hooks-off` (issue #1409) so an arm-2 run never silently reads as the
+# hooks-on baseline. The marker is read off the FILENAME, like the run date,
+# never off a CALIB atom.
+
+FIX4="$TMP/fixture-hooks-off"
+cp -r "$FIXTURE_SRC" "$FIX4"
+retro4() { bash "$HELPER" --cycle 0 --fixture "$FIX4" "$@" 2>&1; }
+rm -f "$FIX4/calib.txt"
+mkdir -p "$FIX4/calib"
+# write_calib_at() is Scenario 8's helper — still in scope here, same 4-of-5
+# block it wrote there.
+write_calib_at "$FIX4/calib/2026-09-06T1200Z-hooks-off.txt"
+
+REPORT_HOOKS_OFF="$(retro4)"
+expect_line "an arm-2 artifact's weak-model row names hooks=off" \
+  "$REPORT_HOOKS_OFF" "weak-model pass: 4/5 (run 2026-09-06, hooks=off)"
+
+# Control: the default hooks-on artifact (no suffix) never renders a hooks=
+# marker — arm 1 is the baseline and stays unlabeled.
+FIX5="$TMP/fixture-hooks-on"
+cp -r "$FIXTURE_SRC" "$FIX5"
+retro5() { bash "$HELPER" --cycle 0 --fixture "$FIX5" "$@" 2>&1; }
+rm -f "$FIX5/calib.txt"
+mkdir -p "$FIX5/calib"
+write_calib_at "$FIX5/calib/2026-09-06T1200Z.txt"
+
+REPORT_HOOKS_ON="$(retro5)"
+expect_line "a default hooks-on artifact carries no hooks= marker" \
+  "$REPORT_HOOKS_ON" "weak-model pass: 4/5 (run 2026-09-06)"
+refute_sub "a hooks-on artifact is never mislabeled hooks=off" \
+  "$REPORT_HOOKS_ON" "hooks=off"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"
