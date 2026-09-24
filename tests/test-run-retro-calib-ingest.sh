@@ -298,6 +298,41 @@ expect_line "the undated calib.txt fallback renders the bare value" \
 refute_sub "an undated artifact is never given a run date" "$REPORT_UNDATED" "(run "
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 9: two same-day <date>T<HHMM>Z artifacts — the later one wins (#1408)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --run now names its artifact docs/retros/calib/<UTC
+# date>T<HHMM>Z.txt instead of the legacy day-granular <date>.txt, so a
+# same-day re-run gets its OWN file instead of silently overwriting the
+# prior run's (run #9 erased run #8's `reason=timeout` record this way).
+# run-retro.sh must still pick the NEWEST artifact by filename sort — the
+# T<HHMM>Z suffix keeps lexical order — and still date its provenance off
+# the filename.
+
+FIX3="$TMP/fixture-timestamped"
+cp -r "$FIXTURE_SRC" "$FIX3"
+retro3() { bash "$HELPER" --cycle 0 --fixture "$FIX3" "$@" 2>&1; }
+rm -f "$FIX3/calib.txt"
+
+# EARLIER same-day artifact: 3/5, aborted with reason=timeout (run #8's shape).
+mkdir -p "$FIX3/calib"
+cat > "$FIX3/calib/2026-09-05T1451Z.txt" <<'EARLY'
+CALIB-ABORT reason=timeout
+CALIB issue=101 path=A cost=$3.10 wall=420 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=102 path=D cost=$5.00 wall=600 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=103 path=B cost=$12.00 wall=1800 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB-TOTAL cost=$20.10 wall=2820 issues=3 reftest-pass=n/a
+EARLY
+
+# LATER same-day artifact: the full 4/5 run.
+write_calib_at "$FIX3/calib/2026-09-05T1601Z.txt"
+
+REPORT_TS="$(retro3)"
+expect_line "the later T<HHMM>Z artifact's content wins, not the earlier one's" \
+  "$REPORT_TS" "weak-model pass: 4/5 (run 2026-09-05)"
+refute_sub "the earlier same-day artifact's aborted score is never read" \
+  "$REPORT_TS" "calibration run aborted"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"

@@ -22,13 +22,16 @@ set -uo pipefail
 #                `CALIB-ISSUES`.
 #   --dry-run    Print the headless launch command that --run would execute
 #                and exit 0. Makes NO network call and launches NO claude.
-#   --run        --reset, stage the harness for the session to load, then run
-#                the launch for real under `timeout`, then emit the per-issue
-#                `CALIB` block + `CALIB-TOTAL`, tee'd to
-#                $HARNESS/docs/retros/calib/<UTC date>.txt for the retro to
-#                ingest (scripts/run-retro.sh). The session's own output is
-#                tee'd beside it as <UTC date>.log. A run that never really
-#                started (no PR, stopped to ask, hit the cap, or wrote no
+#   --run        --reset (which now also archives the sandbox's PREVIOUS run
+#                logs, #1408), stage the harness for the session to load,
+#                then run the launch for real under `timeout`, then emit the
+#                per-issue `CALIB` block + `CALIB-TOTAL`, tee'd to
+#                $HARNESS/docs/retros/calib/<UTC date>T<HHMM>Z.txt for the
+#                retro to ingest (scripts/run-retro.sh) — minute-granular so a
+#                same-day re-run gets its own artifact rather than
+#                overwriting the prior run's. The session's own output is
+#                tee'd beside it as <UTC date>T<HHMM>Z.log. A run that never
+#                really started (no PR, stopped to ask, hit the cap, or wrote no
 #                capture log) leads the block with
 #                `CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>` and
 #                reports no score rather than grading the failure as a
@@ -509,6 +512,50 @@ delete_stale_branches() {
       done
 }
 
+# archive_run_logs — move the PREVIOUS run's cost/observability logs out of
+# the way before create_slate_issues() seeds the fresh slate (#1408). The
+# sandbox's .claude/logs/ dir is gitignored, so cmd_reset's hard git reset
+# above never touches it: agent-costs.jsonl accumulated EVERY prior run's
+# rows forever, diluting the next run's pricing (run #9 priced run #8's
+# tokens too). usage-gate.jsonl is left in place — it is cross-run by design.
+# dispatch-aware (mkdir/mv) so a future dry-run caller previews, never mutates.
+archive_run_logs() {
+  local ts dest f any=0
+  local files=(
+    "$SANDBOX/.claude/logs/agent-costs.jsonl"
+    "$SANDBOX/.claude/logs/subagents.log"
+    "$SANDBOX/.claude/logs/subagents"
+    "$SANDBOX/.claude/logs/tool-use.log"
+    "$SANDBOX/.claude/logs/runs.log"
+    "$SANDBOX/.claude/logs/agent-cost-orchestrator-state.json"
+  )
+  for f in "${files[@]}"; do [ -e "$f" ] && any=1; done
+  [ "$any" -eq 1 ] || return 0
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  dest="$SANDBOX/.claude/logs-archive/$ts"
+  # The timestamp is second-granular, so two archives inside one UTC second
+  # (a --reset immediately followed by a --run, or the reverse) resolve the
+  # SAME dest — and `mv -f <dir> <dest>/` FAILS "Directory not empty" when
+  # <dest>/subagents/ already holds the earlier archive's sidecars. That
+  # aborted the loop half-done (agent-costs.jsonl moved, tool-use.log left
+  # behind) and returned before the log line below, silently: cmd_reset does
+  # not check this function's exit status. Suffix an unused dir instead of
+  # merging two runs' logs into one archive.
+  if [ -e "$dest" ]; then
+    local n=2
+    while [ -e "${dest}-${n}" ]; do n=$((n + 1)); done
+    dest="${dest}-${n}"
+  fi
+  dispatch mkdir -p "$dest" \
+    || { warn "could not create the log archive dir $dest — previous run logs left in place"; return 1; }
+  for f in "${files[@]}"; do
+    [ -e "$f" ] || continue
+    dispatch mv -f "$f" "$dest/" \
+      || { warn "could not archive $f -> $dest — previous run logs only PARTIALLY archived"; return 1; }
+  done
+  echo "calib: archived previous run logs -> $dest"
+}
+
 cmd_reset() {
   guard_sandbox_repo
   [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
@@ -532,6 +579,7 @@ cmd_reset() {
   # host, so `git reset --hard` never touches it (#1395).
   materialize_local_settings || die_run "could not refresh the sandbox local-settings file"
   reap_stale_issues
+  archive_run_logs
   create_slate_issues
 }
 
@@ -654,9 +702,38 @@ load_run_substrate() {
     ROWS_JSON="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
       bash "$clr" --emit-rows-json --capture-log "$dedup_log" 2>/dev/null )"
     [ -n "$ROWS_JSON" ] || ROWS_JSON="[]"
+    # Belt and braces (#1408): run #9 priced run #8's leftover rows too
+    # because nothing scoped pricing to THIS run's window. --since is
+    # DAY-granularity (cost-latency-report.sh compares ts_start's date
+    # prefix), so pass RUN_START_TS's date portion only — a full timestamp
+    # would exclude same-day rows from THIS run as well. The precise
+    # (sub-day) cut is the ROWS_JSON filter below.
     PRICING_TOTAL="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
-      bash "$clr" --emit-pricing-json --capture-log "$dedup_log" 2>/dev/null \
+      bash "$clr" --emit-pricing-json --capture-log "$dedup_log" \
+      ${RUN_START_TS:+--since "${RUN_START_TS%%T*}"} 2>/dev/null \
       | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
+    # Second layer: restrict ROWS_JSON itself (issue_cost()'s apportionment
+    # sum, below) to issues carrying a FRESH capture record — ts_end at/after
+    # RUN_START_TS — so a stale row that survives the cmd_reset archive can
+    # never dilute a fresh issue's share of the priced total.
+    if [ -n "${RUN_START_TS:-}" ] && [ -s "$dedup_log" ]; then
+      local fresh_issues
+      # tostring both sides: dedup_log's .issue is a STRING (capture-agent-
+      # costs.sh's #issue tag), ROWS_JSON's .issue is a bare JSON NUMBER
+      # (cost-latency-report.sh's TSV column) — an untyped comparison would
+      # never match and silently zero ROWS_JSON on every run. A record with
+      # NO ts_end at all (unknown timing, never emitted by the real capture
+      # schema but possible from an older/foreign writer) fails OPEN — this
+      # is a belt-and-braces layer on top of the archive above, not the sole
+      # defense, so it must never zero a run's pricing over missing metadata.
+      fresh_issues="$(jq -c -s --arg t "$RUN_START_TS" \
+        '[.[] | select((.ts_end // "") == "" or .ts_end >= $t) | (.issue | tostring)] | unique' \
+        "$dedup_log" 2>/dev/null)"
+      [ -n "$fresh_issues" ] || fresh_issues="[]"
+      ROWS_JSON="$(printf '%s' "$ROWS_JSON" | jq -c --argjson f "$fresh_issues" \
+        '[.[] | select((.issue | tostring) as $i | $f | any(. == $i))]' 2>/dev/null)"
+      [ -n "$ROWS_JSON" ] || ROWS_JSON="[]"
+    fi
   fi
   # ONE PR fetch for the whole run. `--state all` because "this run opened no
   # PR at all" is a distinct, load-bearing observation (see the abort detector)
@@ -939,21 +1016,25 @@ cmd_run() {
   # cwd. The dir is created BEFORE the launch because the session log is tee'd
   # as the run happens — it is the only evidence of what a run that stopped to
   # ask a question actually said, and detect_abort reads its last line.
-  # TRUNCATING, not appending: one artifact per UTC day, last run wins.
-  # run-retro.sh's compute_calib() sums the `reftest=` atoms of EVERY CALIB
-  # line in the newest artifact, so two same-day runs appended to one file
-  # double-count (5/5 -> 10/10). run-retro.sh picks the newest artifact by
-  # FILENAME, which this <date>.txt name keeps stable across the rewrite; the
-  # <date>.log beside it follows the same day-keyed rule.
+  # RUN_TS is MINUTE-granular, not day-granular (#1408): a same-day re-run
+  # gets its OWN artifact pair instead of truncating the prior run's (run #9
+  # silently erased run #8's `reason=timeout` record). run-retro.sh picks the
+  # newest artifact by FILENAME sort, and the `T<HHMM>Z` suffix keeps that
+  # order (it sorts after the bare legacy `<date>.txt`, which run-retro.sh
+  # still reads for older artifacts). RUN_START_TS is second-precision and
+  # recorded separately — load_run_substrate()'s ts_end filter needs that
+  # resolution, which RUN_TS's minute truncation cannot give it.
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
-  RUN_LOG="$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).log"
+  RUN_TS="$(date -u +%Y-%m-%dT%H%MZ)"
+  RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
   RUN_RC=${PIPESTATUS[0]}
   t1="$(date +%s)"
   [ "$RUN_RC" -eq 0 ] || warn "headless run exited $RUN_RC (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
   sync_sandbox_after_run
-  emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).txt"
+  emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/${RUN_TS}.txt"
 }
 
 # ---------------------------------------------------------------------------

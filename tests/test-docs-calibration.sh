@@ -95,7 +95,8 @@ assert_contains "$DOC" \
 
 echo ""
 echo "docs/calibration.md — artifact + retro ingest"
-assert_contains "$DOC" '$HARNESS/docs/retros/calib/<date>.txt' "harness-rooted tee target"
+assert_contains "$DOC" '$HARNESS/docs/retros/calib/<UTC date>T<HHMM>Z.txt' \
+  "harness-rooted tee target (#1408)"
 assert_contains "$DOC" 'run-retro.sh' "names the retro ingest script"
 assert_contains "$DOC" 'weak-model pass' "ingest: weak-model pass row"
 assert_contains "$DOC" 'median path b pr/usd' "ingest: median path b pr/usd computed value"
@@ -147,7 +148,7 @@ assert_matches "$DOC" 'detached[^.]*worktree' "staging is a detached git worktre
 assert_contains "$DOC" 'env -u ALLOW_ORCHESTRATOR_EDIT' \
   "launch env unsets the orchestrator-edit override"
 assert_contains "$DOC" 'PIPELINE_HEADLESS=true' "launch env sets the headless marker"
-assert_contains "$DOC" '<date>.log' "names the run-log artifact beside the .txt"
+assert_contains "$DOC" 'T<HHMM>Z.log' "names the run-log artifact beside the .txt (#1408)"
 assert_matches "$DOC" 'run #1|run 1' "records the run #1 lesson"
 assert_matches "$DOC" 'run #2|run 2' "records the run #2 lesson"
 

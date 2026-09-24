@@ -861,35 +861,46 @@ else
   pass_msg "--run apportions the priced total onto the slate issues"
 fi
 
-CALIB_ARTIFACT="$HARNESS/docs/retros/calib/$(date -u +%Y-%m-%d).txt"
-if [ -f "$CALIB_ARTIFACT" ]; then
-  pass_msg "--run tees the CALIB block to docs/retros/calib/<UTC date>.txt"
+# #1408: minute-granular <UTC date>T<HHMM>Z.txt, not the legacy day-granular
+# <UTC date>.txt — a same-day re-run must get its OWN artifact rather than
+# truncating the prior run's. Newest-by-sort, tolerant of whatever minute the
+# test itself actually lands on.
+CALIB_ARTIFACT="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*.txt 2>/dev/null | sort | tail -1)"
+if [ -n "$CALIB_ARTIFACT" ] && [ -f "$CALIB_ARTIFACT" ]; then
+  pass_msg "--run tees the CALIB block to docs/retros/calib/<UTC date>T<HHMM>Z.txt"
 else
-  fail_msg "--run must tee the CALIB block to $CALIB_ARTIFACT"
+  fail_msg "--run must tee the CALIB block to docs/retros/calib/<UTC date>T<HHMM>Z.txt"
 fi
 
 # ---------------------------------------------------------------------------
-scenario "Scenario 9: a same-day re-run replaces the artifact, never appends"
+scenario "Scenario 9: a same-day re-run never appends to a prior run's rows (#1408)"
 # ---------------------------------------------------------------------------
 # run-retro.sh's compute_calib() sums the `reftest=` atoms of every CALIB line
-# in the newest artifact. Two runs on the same UTC day appending to one file
-# double-count: 5/5 becomes 10/10, and a fixed slate silently reports twice
-# its size. One artifact per day, last run wins.
+# in the artifact it reads. Pre-#1408, two same-day runs shared one
+# <date>.txt file and a `tee` (never `tee -a`) truncated it, so a double-count
+# was already impossible WITHIN one artifact — but the overwrite silently
+# erased the FIRST run's own record (run #9 erased run #8's `reason=timeout`
+# abort). #1408 gives each run its own <date>T<HHMM>Z artifact instead: this
+# re-run's tee is either a fresh minute-keyed file (the common case) or, on
+# the rare same-minute collision, a truncating overwrite of its own file —
+# either way the picked (newest-by-sort) artifact holds exactly one run's
+# rows, never an accumulation of two.
 
 run_helper --run --harness "$HARNESS"
 expect_rc "the same-day re-run exits 0" 0
 
+CALIB_ARTIFACT="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*.txt 2>/dev/null | sort | tail -1)"
 N_TOTAL="$(grep -c '^CALIB-TOTAL ' "$CALIB_ARTIFACT" 2>/dev/null)"
 if [ "$N_TOTAL" = "1" ]; then
-  pass_msg "the day's artifact holds exactly one CALIB-TOTAL line"
+  pass_msg "the picked artifact holds exactly one CALIB-TOTAL line"
 else
-  fail_msg "two runs on one UTC day must leave one CALIB-TOTAL line (got $N_TOTAL)"
+  fail_msg "a re-run's artifact must hold one CALIB-TOTAL line (got $N_TOTAL)"
 fi
 N_ROWS="$(grep -c '^CALIB issue=' "$CALIB_ARTIFACT" 2>/dev/null)"
 if [ "$N_ROWS" = "5" ]; then
-  pass_msg "the day's artifact holds exactly one row per slate issue"
+  pass_msg "the picked artifact holds exactly one row per slate issue"
 else
-  fail_msg "the day's artifact must hold 5 CALIB rows, not an accumulation (got $N_ROWS)"
+  fail_msg "the picked artifact must hold 5 CALIB rows, not an accumulation (got $N_ROWS)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -927,7 +938,7 @@ if [ -f "$STAGE/scripts/doctor.sh" ]; then
 else
   fail_msg "the staged harness must carry the harness's tracked content"
 fi
-if [ -f "$CALIB_ARTIFACT" ] && [ ! -e "$STAGE/docs/retros/calib/$(date -u +%Y-%m-%d).txt" ]; then
+if [ -f "$CALIB_ARTIFACT" ] && [ ! -e "$STAGE/docs/retros/calib/$(basename "$CALIB_ARTIFACT")" ]; then
   pass_msg "the run's artifact lands in the ORIGINAL harness, not the staged copy"
 else
   fail_msg "the artifact must stay at $CALIB_ARTIFACT and never appear under $STAGE"
@@ -1032,11 +1043,11 @@ refute_sub "an aborted run never reports a failed slate" "$OUT" "reftest-pass=0/
 expect_sub "the aborted total carries the planted-defect atom too" \
   "$TOTAL_HELD" "planted="
 
-RUN_LOG_FILE="$HARNESS/docs/retros/calib/$(date -u +%Y-%m-%d).log"
-if [ -f "$RUN_LOG_FILE" ] && grep -qF 'auto-merge for the rest?' "$RUN_LOG_FILE"; then
-  pass_msg "--run tees the session output to docs/retros/calib/<UTC date>.log"
+RUN_LOG_FILE="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*.log 2>/dev/null | sort | tail -1)"
+if [ -n "$RUN_LOG_FILE" ] && grep -qF 'auto-merge for the rest?' "$RUN_LOG_FILE"; then
+  pass_msg "--run tees the session output to docs/retros/calib/<UTC date>T<HHMM>Z.log"
 else
-  fail_msg "--run must tee the question it stopped on to $RUN_LOG_FILE"
+  fail_msg "--run must tee the question it stopped on to docs/retros/calib/<UTC date>T<HHMM>Z.log"
 fi
 
 # That tee lands INSIDE docs/retros/calib/, which is tracked (the <date>.txt
@@ -1378,8 +1389,8 @@ printf '{"priced_cost_usd": "42.00"}\n' > "$TMP/pricing-1406.json"
 # reconciled (usage_complete=true) cumulative. 3500 + 4500 = 8000 total.
 mkdir -p "$TMP/home1406/.claude/projects/proj-slug/sess-fwd/subagents"
 cat > "$TMP/home1406/.claude/projects/proj-slug/sess-fwd/subagents/agent-shared1.jsonl" <<'TX'
-{"timestamp":"2026-09-24T10:00:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":2000,"cache_creation_input_tokens":300}}}
-{"timestamp":"2026-09-24T10:00:30Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1500,"output_tokens":300,"cache_read_input_tokens":2500,"cache_creation_input_tokens":200}}}
+{"timestamp":"2099-01-01T10:00:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":2000,"cache_creation_input_tokens":300}}}
+{"timestamp":"2099-01-01T10:00:30Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1500,"output_tokens":300,"cache_read_input_tokens":2500,"cache_creation_input_tokens":200}}}
 TX
 
 cat > "$TMP/claude-backfill.sh" <<'BACKFILL'
@@ -1391,15 +1402,15 @@ mkdir -p "$logs_dir/subagents"
 # with a LOWER partial total (300), tagged with the SAME agent_id the
 # retroactive sidecar below resolves to a larger cumulative for -- the
 # forward/retroactive duplicate pair #1406's dedup step must collapse.
-printf '%s\n' '{"schema_version":1,"issue":"9001","stage":"pr-eval","agent_kind":"main","agent_type":"single","session_id":"sess-fwd","model":"claude-sonnet-4-6","agent_id":"shared1","role":"single","tokens":{"input":150,"output":150,"cache_read":0,"cache_creation":0,"total":300},"duration_ms":1000,"ts_start":"2026-09-24T10:00:00Z","ts_end":"2026-09-24T10:00:01Z","source":"forward","usage_complete":true}' \
+printf '%s\n' '{"schema_version":1,"issue":"9001","stage":"pr-eval","agent_kind":"main","agent_type":"single","session_id":"sess-fwd","model":"claude-sonnet-4-6","agent_id":"shared1","role":"single","tokens":{"input":150,"output":150,"cache_read":0,"cache_creation":0,"total":300},"duration_ms":1000,"ts_start":"2099-01-01T10:00:00Z","ts_end":"2099-01-01T10:00:01Z","source":"forward","usage_complete":true}' \
   >> "$CALIB_TEST_COST_LOG"
 # RETROACTIVE substrate: subagents.log + sidecar for the backfill pass to
 # discover (SAME agent_id; sidecar lower-bound 5000, transcript-upgraded 8000).
-printf '2026-09-24T10:00:00Z\tsess-fwd\tevaluate-issue-pr #9001\t0\t0\t0\tagent-preval-9001.json\n' \
+printf '2099-01-01T10:00:00Z\tsess-fwd\tevaluate-issue-pr #9001\t0\t0\t0\tagent-preval-9001.json\n' \
   >> "$logs_dir/subagents.log"
 cat > "$logs_dir/subagents/agent-preval-9001.json" <<'SIDECAR'
 {
-  "ts": "2026-09-24T10:00:00Z",
+  "ts": "2099-01-01T10:00:00Z",
   "session": "sess-fwd",
   "description": "evaluate-issue-pr #9001",
   "subagent_type": "pipeline:pr-evaluator",
@@ -1461,16 +1472,201 @@ else
   pass_msg "issue=9001 reports a real cost=\$ once the backfill substrate is wired in"
 fi
 
-# Re-run against the SAME already-backfilled sandbox log: idempotent, appends
-# nothing a second time (record_key dedup inside capture-agent-costs.sh).
+# A second --run: cmd_reset's #1408 archive step moves the FIRST run's
+# agent-costs.jsonl/subagents.log out of the way before this run's launch, so
+# the backfill pass starts from a genuinely clean substrate and re-derives its
+# own retroactive record — "1 record(s)" again, not "0". (record_key dedup
+# WITHIN one capture log's own lifetime is covered at the unit level by
+# tests/test-capture-agent-costs.sh; archiving is what makes that lifetime
+# per-run instead of forever.)
 rm -f "$CALLS"
 run_helper --run --harness "$HARNESS"
-expect_rc "a second run against an already-backfilled log still exits 0" 0
-expect_sub "a re-run against an already-backfilled log appends nothing new" \
-  "$OUT" "calib: cost backfill appended 0 record(s)"
+expect_rc "a second run against a freshly-archived sandbox still exits 0" 0
+expect_sub "a second run's backfill re-derives its own record from the archived-clean log" \
+  "$OUT" "calib: cost backfill appended 1 record(s)"
 
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
       CALIB_TEST_PRICING_JSON CALIB_TEST_HOME
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 16: --reset archives the sandbox's previous-run logs before creating the slate (#1408)"
+# ---------------------------------------------------------------------------
+# The sandbox's .claude/logs/ dir is gitignored, so --reset's hard git reset
+# never touches it: agent-costs.jsonl accumulated EVERY prior run's rows
+# forever, so run #9's pricing was diluted by run #8's tokens too (#1408).
+# --reset must move the previous run's logs out of the way before
+# create_slate_issues() seeds the fresh slate. usage-gate.jsonl is cross-run
+# by design and must stay in place.
+
+rm -f "$CALLS" "$TMP/issue-counter"
+LOGS_DIR="$SANDBOX/.claude/logs"
+mkdir -p "$LOGS_DIR/subagents"
+echo '{"issue":"8888"}' > "$LOGS_DIR/agent-costs.jsonl"
+echo "prior subagent line" > "$LOGS_DIR/subagents.log"
+echo '{"sidecar":true}' > "$LOGS_DIR/subagents/agent-old.json"
+echo "prior tool use" > "$LOGS_DIR/tool-use.log"
+echo "prior run" > "$LOGS_DIR/runs.log"
+echo '{"state":true}' > "$LOGS_DIR/agent-cost-orchestrator-state.json"
+echo "keep me" > "$LOGS_DIR/usage-gate.jsonl"
+
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (archive) exits 0" 0
+expect_sub "--reset logs the archive destination" "$OUT" "calib: archived previous run logs -> "
+
+ARCHIVE_DIR="$(printf '%s\n' "$OUT" | sed -n 's/^calib: archived previous run logs -> //p' | head -1)"
+if [ -n "$ARCHIVE_DIR" ] && [ -d "$ARCHIVE_DIR" ]; then
+  pass_msg "the archive destination directory exists"
+else
+  fail_msg "the archive destination directory must exist (got: $ARCHIVE_DIR)"
+fi
+if [ -f "$ARCHIVE_DIR/agent-costs.jsonl" ] && [ ! -e "$LOGS_DIR/agent-costs.jsonl" ]; then
+  pass_msg "agent-costs.jsonl is archived and removed from the sandbox"
+else
+  fail_msg "agent-costs.jsonl must be archived to $ARCHIVE_DIR and removed from $LOGS_DIR"
+fi
+for f in subagents.log tool-use.log runs.log agent-cost-orchestrator-state.json; do
+  if [ -f "$ARCHIVE_DIR/$f" ] && [ ! -e "$LOGS_DIR/$f" ]; then
+    pass_msg "$f is archived and removed from the sandbox"
+  else
+    fail_msg "$f must be archived to $ARCHIVE_DIR and removed from $LOGS_DIR"
+  fi
+done
+if [ -f "$ARCHIVE_DIR/subagents/agent-old.json" ]; then
+  pass_msg "the subagents/ directory is archived wholesale"
+else
+  fail_msg "the subagents/ directory must be archived to $ARCHIVE_DIR"
+fi
+if [ -f "$LOGS_DIR/usage-gate.jsonl" ]; then
+  pass_msg "usage-gate.jsonl stays in the sandbox (cross-run by design)"
+else
+  fail_msg "usage-gate.jsonl must NOT be archived"
+fi
+
+# Same-UTC-second collision. The archive dir is second-granular, so a --reset
+# landing in the same second as the previous archive resolves the SAME dest —
+# and `mv -f <dir> <dest>/` fails with "Directory not empty" when
+# <dest>/subagents/ already holds the earlier archive's sidecars. That aborted
+# archive_run_logs mid-loop: agent-costs.jsonl and subagents.log had already
+# moved, tool-use.log/runs.log/state.json were left behind, and the function
+# returned before its log line — silently, because cmd_reset ignores its exit
+# status. The collision is pre-seeded for this second AND the next two so the
+# case fires deterministically whichever second the reset lands in.
+rm -f "$CALLS" "$TMP/issue-counter"
+mkdir -p "$LOGS_DIR/subagents"
+echo '{"issue":"7777"}' > "$LOGS_DIR/agent-costs.jsonl"
+echo "second subagent line" > "$LOGS_DIR/subagents.log"
+echo '{"sidecar":2}' > "$LOGS_DIR/subagents/agent-second.json"
+echo "second tool use" > "$LOGS_DIR/tool-use.log"
+echo "second run" > "$LOGS_DIR/runs.log"
+echo '{"state":2}' > "$LOGS_DIR/agent-cost-orchestrator-state.json"
+for off in 0 1 2; do
+  COLLIDE="$SANDBOX/.claude/logs-archive/$(date -u -d "+$off seconds" +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$COLLIDE/subagents"
+  echo '{"prior":true}' > "$COLLIDE/subagents/agent-prior.json"
+done
+
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (same-second collision) exits 0" 0
+expect_sub "a same-second re-archive still logs its destination" \
+  "$OUT" "calib: archived previous run logs -> "
+
+ARCHIVE_DIR2="$(printf '%s\n' "$OUT" | sed -n 's/^calib: archived previous run logs -> //p' | head -1)"
+MISSING2=""
+for f in agent-costs.jsonl subagents.log tool-use.log runs.log \
+         agent-cost-orchestrator-state.json subagents/agent-second.json; do
+  { [ -n "$ARCHIVE_DIR2" ] && [ -e "$ARCHIVE_DIR2/$f" ] && [ ! -e "$LOGS_DIR/$f" ]; } \
+    || MISSING2="$MISSING2 $f"
+done
+if [ -z "$MISSING2" ]; then
+  pass_msg "a same-second re-archive moves EVERY log, not just the ones before subagents/"
+else
+  fail_msg "a same-second re-archive must archive every log (missing:$MISSING2)"
+fi
+if [ -n "$ARCHIVE_DIR2" ] && [ ! -e "$ARCHIVE_DIR2/subagents/agent-prior.json" ]; then
+  pass_msg "a same-second collision resolves to a fresh dir, never a prior archive"
+else
+  fail_msg "the same-second archive must not land in the pre-existing archive dir (got: $ARCHIVE_DIR2)"
+fi
+
+# A --reset with nothing to archive (a fresh sandbox, no prior logs) is a
+# no-op: no archive dir, no log line.
+rm -f "$CALLS" "$TMP/issue-counter"
+rm -rf "$LOGS_DIR"
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (nothing to archive) exits 0" 0
+refute_sub "--reset with no prior logs never prints an archive line" \
+  "$OUT" "calib: archived previous run logs"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 17: --run scopes pricing to its own window, filtering stale capture rows by ts_end (#1408)"
+# ---------------------------------------------------------------------------
+# Run #9 priced run #8's leftover rows too because issue_cost() apportions
+# PRICING_TOTAL by each issue's SHARE of ROWS_JSON's token sum, and that sum
+# included every row ever captured. This is the belt-and-braces control for a
+# row that somehow survives the Scenario 16 archive (e.g. a session that
+# writes AFTER the archive step with a backdated ts_end): --run must record
+# RUN_START_TS before the launch and exclude any row whose ts_end predates it
+# from the sum, so a stale issue's tokens can never dilute a fresh issue's
+# apportioned $.
+
+echo 5000 > "$TMP/issue-counter"
+cat > "$TMP/prs-1408.json" <<'PRS1408'
+[
+  {"number":9201,"body":"Closes #5001","headRefName":"feature/calib-5001","mergedAt":"2026-09-24T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9202,"body":"Closes #5002","headRefName":"feature/calib-5002","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9203,"body":"Closes #5003","headRefName":"feature/calib-5003","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9204,"body":"Closes #5004","headRefName":"feature/calib-5004","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9205,"body":"Closes #5005","headRefName":"feature/calib-5005","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]}
+]
+PRS1408
+
+# Both rows present unfiltered: sum=1000+9000=10000, so issue 5001's
+# apportioned share of the fixed $100 total is $10.00. Filtered (the stale
+# 5099 row dropped), the sum is 1000 alone and 5001's share is the full
+# $100.00 — a deterministic tell for whether the ts_end filter ran.
+cat > "$TMP/rows-1408.json" <<'ROWS1408'
+[
+  {"issue":5001,"path":"D","loc":10,"tokens_total":1000,"duration_ms":1000},
+  {"issue":5099,"path":"B","loc":10,"tokens_total":9000,"duration_ms":1000}
+]
+ROWS1408
+printf '{"priced_cost_usd": "100.00"}\n' > "$TMP/pricing-1408.json"
+
+cat > "$TMP/claude-stale-mix.sh" <<'STALEMIX'
+#!/bin/bash
+mkdir -p "$(dirname "$CALIB_TEST_COST_LOG")"
+# A STALE row for a FOREIGN issue (5099 is not in this run's slate) dated
+# WAY in the past: models a record the Scenario 16 archive somehow missed.
+printf '%s\n' '{"schema_version":1,"issue":"5099","stage":"execute","agent_id":"stale1","tokens":{"total":9000},"ts_start":"2000-01-01T00:00:00Z","ts_end":"2000-01-01T00:00:01Z"}' \
+  >> "$CALIB_TEST_COST_LOG"
+# A FRESH row for this run's own issue, dated WAY in the future so it is
+# >= RUN_START_TS regardless of when this test actually executes.
+printf '%s\n' '{"schema_version":1,"issue":"5001","stage":"execute","agent_id":"fresh1","tokens":{"total":1000},"ts_start":"2099-01-01T00:00:00Z","ts_end":"2099-01-01T00:00:01Z"}' \
+  >> "$CALIB_TEST_COST_LOG"
+echo "all five merged."
+STALEMIX
+chmod +x "$TMP/claude-stale-mix.sh"
+
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-stale-mix.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs-1408.json"
+export CALIB_TEST_ROWS_JSON="$TMP/rows-1408.json"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-1408.json"
+rm -f "$COST_LOG" "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "a run with a stale foreign-issue row still exits 0" 0
+
+PRICING_CALL="$(grep -m1 '^clr .*--emit-pricing-json' "$CALLS" 2>/dev/null)"
+expect_sub "the pricing call is scoped by --since to this run's window" \
+  "$PRICING_CALL" "--since "
+
+ROW_5001_1408="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
+expect_sub "the stale foreign row never dilutes this run's own issue cost" \
+  "$ROW_5001_1408" "cost=\$100.00"
+refute_sub "the pre-fix apportionment (diluted by the stale row) is gone" \
+  "$OUT" "CALIB issue=5001 path=D cost=\$10.00 "
+
+unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
+      CALIB_TEST_PRICING_JSON
 
 # ---------------------------------------------------------------------------
 echo ""
