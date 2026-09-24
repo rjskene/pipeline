@@ -839,7 +839,7 @@ MISSING_ROW_ISSUES=""
 #
 # scripts/calibration-run.sh --run tees a block of
 #   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
-#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>
+#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
 #   CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 # to docs/retros/calib/<UTC date>T<HHMM>Z.txt (#1408; legacy <UTC date>.txt
 # artifacts are still read — fixture mode mirrors either form at

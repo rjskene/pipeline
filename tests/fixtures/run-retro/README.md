@@ -29,7 +29,7 @@ slate issue plus one total:
 ```
 CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
-CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
 ```
 
 `compute_calib()` reads three atoms off the `CALIB` lines only: `reftest=` (the

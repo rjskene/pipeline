@@ -139,7 +139,7 @@ artifact:
 ```
 CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
-CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
 ```
 
 The `CALIB-ABORT` line is written only when the run did not finish, and is then
@@ -167,6 +167,8 @@ the first line of the block.
   merged), `missed` (the reference test fails and pr-eval did not flag it — a
   defective PR passed the gate), or `n/a` (the slate carries no
   planted-defect dir, or the row was never graded).
+- `hooks` — a per-RUN atom on the `CALIB-TOTAL` line only: `on` (default) or
+  `off`, the arm `--hooks` launched under (#1409, see Running above).
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
   there to answer), `timeout` (the wall-clock ceiling killed it), or
@@ -191,7 +193,9 @@ The filename is **minute-granular**, not day-granular (#1408): a same-day
 re-run gets its own artifact instead of silently overwriting the prior run's
 (run #9 once erased run #8's `reason=timeout` record this way). Older,
 day-only `<date>.txt` artifacts committed before #1408 are still read by
-`scripts/run-retro.sh` — nothing rewrites history.
+`scripts/run-retro.sh` — nothing rewrites history. A `--hooks off` run
+suffixes its artifact `-hooks-off` (`<UTC date>T<HHMM>Z-hooks-off.txt`); the
+default `on` arm keeps the plain name (#1409).
 
 `--run` also writes `<UTC date>T<HHMM>Z.log` beside it: the headless session's
 own output, truncated per run like the `.txt`. That is where the question a
