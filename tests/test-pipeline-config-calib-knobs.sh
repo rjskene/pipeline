@@ -65,6 +65,22 @@ else
   echo "  SKIP: pipeline.config not present (gitignored host-only file) — live scan skipped"
 fi
 
+# --- default cap: 10800s, six-issue slate = three inline execute waves (#1406) ---
+SCRIPT="$ROOT/scripts/calibration-run.sh"
+inc
+if grep -Eq '^#PIPELINE_CALIB_TIMEOUT=10800\b' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_CALIB_TIMEOUT default documented as 10800"
+else
+  fail_msg "example: PIPELINE_CALIB_TIMEOUT default must be 10800 in pipeline.config.example"
+fi
+
+inc
+if grep -Eq 'CALIB_TIMEOUT="\$\{PIPELINE_CALIB_TIMEOUT:-10800\}"' "$SCRIPT"; then
+  pass_msg "calibration-run.sh: PIPELINE_CALIB_TIMEOUT default is 10800"
+else
+  fail_msg "calibration-run.sh: PIPELINE_CALIB_TIMEOUT default must be 10800"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

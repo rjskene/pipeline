@@ -20,7 +20,7 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 # COMMENTED (`--fix config` does not seed commented lines). Uncomment to override.
 #PIPELINE_CALIB_REPO="rjskene/pipeline-calib"       # Sandbox repo slug the slate runs against (default rjskene/pipeline-calib; read site ${VAR:-rjskene/pipeline-calib}).
 #PIPELINE_CALIB_DIR="$HOME/.claude/calib/pipeline-calib"  # Local sandbox clone dir (default $HOME/.claude/calib/pipeline-calib; read site ${VAR:-$HOME/.claude/calib/pipeline-calib}).
-#PIPELINE_CALIB_TIMEOUT=5400                        # Headless run cap in seconds (default 5400 = 90 min; read site ${VAR:-5400}).
+#PIPELINE_CALIB_TIMEOUT=10800                       # Headless run cap in seconds (default 10800 = 180 min: the six-issue slate = three inline execute waves; read site ${VAR:-10800}).
 #PIPELINE_CALIB_REMOTE=""                           # Explicit git URL to clone the sandbox from. Empty (default) => `gh repo clone`; read site ${VAR:-}.
 #PIPELINE_CALIB_BASE_TAG="calib-base"               # Tag --reset rewinds the sandbox to (default calib-base; read site ${VAR:-calib-base}).
 #PIPELINE_CALIB_ISSUE_IDS=""                        # Pre-resolved slate issue ids. Empty (default) => whatever --reset resolved; read site ${VAR:-}.

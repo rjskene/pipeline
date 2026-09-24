@@ -43,7 +43,8 @@ set -uo pipefail
 #   PIPELINE_CALIB_REPO      sandbox repo slug        (default rjskene/pipeline-calib)
 #   PIPELINE_CALIB_DIR       sandbox clone dir        (default $HOME/.claude/calib/pipeline-calib)
 #   PIPELINE_CALIB_REMOTE    git URL to clone         (default: `gh repo clone`)
-#   PIPELINE_CALIB_TIMEOUT   headless run cap, sec    (default 5400)
+#   PIPELINE_CALIB_TIMEOUT   headless run cap, sec    (default 10800: the
+#                            six-issue slate is three inline execute waves)
 #   PIPELINE_CALIB_BASE_TAG  reset anchor tag         (default calib-base)
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
 # Plus PIPELINE_TRUST_PROFILE, which this script EXPORTS (never reads) into the
@@ -169,7 +170,7 @@ HARNESS="${HARNESS_ARG:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 CALIB_REPO="${PIPELINE_CALIB_REPO:-rjskene/pipeline-calib}"
 SANDBOX="${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}"
 CALIB_REMOTE="${PIPELINE_CALIB_REMOTE:-}"
-CALIB_TIMEOUT="${PIPELINE_CALIB_TIMEOUT:-5400}"
+CALIB_TIMEOUT="${PIPELINE_CALIB_TIMEOUT:-10800}"
 BASE_TAG="${PIPELINE_CALIB_BASE_TAG:-calib-base}"
 ISSUE_IDS="${PIPELINE_CALIB_ISSUE_IDS:-}"
 
