@@ -173,21 +173,39 @@ the first line of the block.
 The tee target is **harness-rooted**, not sandbox-rooted:
 
 ```
-$HARNESS/docs/retros/calib/<date>.txt
+$HARNESS/docs/retros/calib/<UTC date>T<HHMM>Z.txt
 ```
 
 The artifact belongs to the harness whose behaviour it measures, so it is committed
 alongside the retro that cites it. The sandbox clone is disposable — `--reset`
 destroys its history every run.
 
-`--run` also writes `<date>.log` beside it: the headless session's own output,
-truncated per run like the `.txt`. That is where the question a `held` run
-stopped on is visible.
+The filename is **minute-granular**, not day-granular (#1408): a same-day
+re-run gets its own artifact instead of silently overwriting the prior run's
+(run #9 once erased run #8's `reason=timeout` record this way). Older,
+day-only `<date>.txt` artifacts committed before #1408 are still read by
+`scripts/run-retro.sh` — nothing rewrites history.
+
+`--run` also writes `<UTC date>T<HHMM>Z.log` beside it: the headless session's
+own output, truncated per run like the `.txt`. That is where the question a
+`held` run stopped on is visible.
+
+Before staging the next run, `--reset` (hence every `--run`) also archives the
+PREVIOUS run's sandbox cost/observability logs — `.claude/logs/{agent-costs.jsonl,
+subagents.log, subagents/, tool-use.log, runs.log,
+agent-cost-orchestrator-state.json}` — into `.claude/logs-archive/<UTC
+timestamp>/` inside the sandbox, so the next run's pricing is never diluted by
+a prior run's rows (`.claude/logs/` is gitignored and untouched by the sandbox's
+own hard git reset). `usage-gate.jsonl` is left in place — it is cross-run by
+design. `--run` also records the run's own start time and scopes its pricing
+to records at or after it, as a second, belt-and-braces layer.
 
 ## Retro ingest
 
 `scripts/run-retro.sh` reads the **newest** `docs/retros/calib/*.txt` by filename
-date and feeds two places in the cycle report:
+sort and feeds two places in the cycle report. The `T<HHMM>Z` suffix keeps
+lexical order, so a same-day timestamped artifact still sorts after an
+older-format one from the same day.
 
 - **`weak-model pass:`** — the spec section 7 row, counted over the `reftest=`
   atoms of the per-issue `CALIB` rows: the rows reading `reftest=pass`, over the
@@ -206,8 +224,10 @@ The CALIB grammar carries no profile, model or date atom, so neither row can
 state which `--profile`/`--model` produced it. The `weak-model pass:` row is
 the exception on DATE: it reads the chosen artifact's own FILENAME (never a
 CALIB atom) and renders `<value> (run <date>)` when that filename resolves a
-`YYYY-MM-DD` date, or the bare `<value>` when it does not (the undated
-`calib.txt` fallback). Once N ≥ 3 tracker `## Cycle <k>` comments have been
+`YYYY-MM-DD` date — from either the legacy `<date>.txt` form or the `<date>T
+<HHMM>Z.txt` form (#1408; only the date portion before the `T` is used) — or
+the bare `<value>` when it does not (the undated `calib.txt` fallback). Once
+N ≥ 3 tracker `## Cycle <k>` comments have been
 posted after that day, the row instead renders
 `<value> (run <date>, stale N cycles)` — a cycle-12 retro citing a cycle-2
 run used to say nothing about its age; now it does. Ingest itself is still

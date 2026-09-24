@@ -750,9 +750,12 @@ if [ -n "$FIXTURE_DIR" ]; then
   ROWS_FILE="$FIXTURE_DIR/rows.json"
   TOOLOG="$FIXTURE_DIR/tool-use.log"
   USAGE_FILE="$FIXTURE_DIR/usage-gate.jsonl"
-  # Dated form first (calib/<YYYY-MM-DD>.txt — mirrors live mode's newest-by-
+  # Dated form first (calib/<YYYY-MM-DD>.txt or, since #1408, the minute-
+  # granular calib/<YYYY-MM-DD>T<HHMM>Z.txt — mirrors live mode's newest-by-
   # filename resolution), falling back to the legacy flat calib.txt when no
-  # dated artifact exists (#1395). Newest by SORT ORDER of the filename.
+  # dated artifact exists (#1395). Newest by SORT ORDER of the filename: the
+  # `T<HHMM>Z` suffix sorts after the bare date, so a same-day timestamped
+  # artifact always wins over an older-format one from the same day.
   CALIB_FILE="$(ls -1 "$FIXTURE_DIR"/calib/*.txt 2>/dev/null | sort | tail -1)"
   [ -n "$CALIB_FILE" ] || CALIB_FILE="$FIXTURE_DIR/calib.txt"
   AGENT_COSTS_FILE="$FIXTURE_DIR/agent-costs.jsonl"
@@ -783,9 +786,13 @@ else
   TOOLOG="$REPO_ROOT/.claude/logs/tool-use.log"
   USAGE_FILE="$REPO_ROOT/.claude/logs/usage-gate.jsonl"
   # Newest calibration block tee'd by scripts/calibration-run.sh --run (#1280).
-  # Newest by FILENAME (the artifacts are <UTC date>.txt, so lexical order is
-  # date order), not by mtime: a re-teed older day, a `cp -r` or a restore all
-  # reshuffle mtimes, and docs/calibration.md promises the newest date.
+  # Newest by FILENAME, not by mtime: a re-teed older day, a `cp -r` or a
+  # restore all reshuffle mtimes, and docs/calibration.md promises the newest
+  # artifact. Since #1408 the artifact is minute-granular
+  # (<UTC date>T<HHMM>Z.txt, legacy <UTC date>.txt still read) precisely so a
+  # same-day re-run gets its OWN file instead of overwriting the prior run's;
+  # the `T<HHMM>Z` suffix sorts after the bare legacy date, keeping "newest by
+  # filename" correct for both forms.
   CALIB_FILE="$(ls -1 "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | sort | tail -1)"
   AGENT_COSTS_FILE="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/agent-costs.jsonl"
   # Mirrors AGENT_COSTS_FILE resolution (#1352/#1360): denials from linked
@@ -834,8 +841,9 @@ MISSING_ROW_ISSUES=""
 #   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
 #   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>
 #   CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
-# to docs/retros/calib/<UTC date>.txt (fixture mode mirrors this at
-# <FIXTURE_DIR>/calib/<date>.txt). Two retro rows read it: the weak-model
+# to docs/retros/calib/<UTC date>T<HHMM>Z.txt (#1408; legacy <UTC date>.txt
+# artifacts are still read — fixture mode mirrors either form at
+# <FIXTURE_DIR>/calib/<date-or-timestamp>.txt). Two retro rows read it: the weak-model
 # guarantee (a k/n over the `reftest=` atoms) and the path-B $ median (over the
 # `cost=` atoms of the `path=B` rows only — the fixed slate is the ONLY place
 # this harness has a per-issue dollar figure, since the rows JSON carries none).
@@ -915,6 +923,9 @@ calib_provenance() {
   base="$(basename "$f" .txt)"
   case "$base" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) CALIB_RUN_DATE="$base" ;;
+    # #1408: minute-granular <date>T<HHMM>Z artifact — the run date is the
+    # portion before the `T`.
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9]Z) CALIB_RUN_DATE="${base%%T*}" ;;
     *) return 0 ;;
   esac
   # The artifact is DAY-keyed, so a same-day cycle comment does not count as
