@@ -1341,6 +1341,138 @@ expect_sub "the dry-run preview names the scrubbed PIPELINE_PROJECT_ROOT" "$LAUN
 unset PIPELINE_PROJECT_ROOT
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 15: --run backfills retroactive costs before grading and dedups by agent_id (#1406)"
+# ---------------------------------------------------------------------------
+# Run #8 (2026-09-24) showed the forward-only capture log under-attributes
+# almost every issue (async Agent dispatches carry no usage at PostToolUse)
+# and that a forward/retroactive duplicate pair for the SAME agent_id double-
+# counts unless collapsed. This is the ONE scenario using the REAL
+# capture-agent-costs.sh (not a scripted stand-in) so the backfill call is
+# exercised end to end; cost-latency-report.sh stays the shared fake stub.
+
+mkdir -p "$HARNESS/scripts"
+cp "$ROOT/scripts/capture-agent-costs.sh" "$HARNESS/scripts/capture-agent-costs.sh"
+cp "$ROOT/scripts/_logging.sh" "$HARNESS/scripts/_logging.sh"
+cp "$ROOT/scripts/_token-usage-lib.sh" "$HARNESS/scripts/_token-usage-lib.sh"
+chmod +x "$HARNESS/scripts/capture-agent-costs.sh"
+
+echo 9000 > "$TMP/issue-counter"
+
+cat > "$TMP/prs-1406.json" <<'PRS1406'
+[
+  {"number":9101,"body":"Closes #9001","headRefName":"feature/calib-9001","mergedAt":"2026-09-24T10:30:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9102,"body":"Closes #9002","headRefName":"feature/calib-9002","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9103,"body":"Closes #9003","headRefName":"feature/calib-9003","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9104,"body":"Closes #9004","headRefName":"feature/calib-9004","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]},
+  {"number":9105,"body":"Closes #9005","headRefName":"feature/calib-9005","mergedAt":"2026-09-24T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[]}
+]
+PRS1406
+
+cat > "$TMP/rows-1406.json" <<'ROWS1406'
+[ {"issue":9001,"path":"D","loc":10,"tokens_total":5000,"duration_ms":60000} ]
+ROWS1406
+printf '{"priced_cost_usd": "42.00"}\n' > "$TMP/pricing-1406.json"
+
+# Transcript hint the retroactive INLINE pass backfills against: it EXCEEDS
+# the sidecar's own lower-bound usage, so the real script adopts it as the
+# reconciled (usage_complete=true) cumulative. 3500 + 4500 = 8000 total.
+mkdir -p "$TMP/home1406/.claude/projects/proj-slug/sess-fwd/subagents"
+cat > "$TMP/home1406/.claude/projects/proj-slug/sess-fwd/subagents/agent-shared1.jsonl" <<'TX'
+{"timestamp":"2026-09-24T10:00:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":2000,"cache_creation_input_tokens":300}}}
+{"timestamp":"2026-09-24T10:00:30Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1500,"output_tokens":300,"cache_read_input_tokens":2500,"cache_creation_input_tokens":200}}}
+TX
+
+cat > "$TMP/claude-backfill.sh" <<'BACKFILL'
+#!/bin/bash
+set -e
+logs_dir="$(dirname "$CALIB_TEST_COST_LOG")"
+mkdir -p "$logs_dir/subagents"
+# FORWARD row: a synchronous pr-eval dispatch, captured live at PostToolUse
+# with a LOWER partial total (300), tagged with the SAME agent_id the
+# retroactive sidecar below resolves to a larger cumulative for -- the
+# forward/retroactive duplicate pair #1406's dedup step must collapse.
+printf '%s\n' '{"schema_version":1,"issue":"9001","stage":"pr-eval","agent_kind":"main","agent_type":"single","session_id":"sess-fwd","model":"claude-sonnet-4-6","agent_id":"shared1","role":"single","tokens":{"input":150,"output":150,"cache_read":0,"cache_creation":0,"total":300},"duration_ms":1000,"ts_start":"2026-09-24T10:00:00Z","ts_end":"2026-09-24T10:00:01Z","source":"forward","usage_complete":true}' \
+  >> "$CALIB_TEST_COST_LOG"
+# RETROACTIVE substrate: subagents.log + sidecar for the backfill pass to
+# discover (SAME agent_id; sidecar lower-bound 5000, transcript-upgraded 8000).
+printf '2026-09-24T10:00:00Z\tsess-fwd\tevaluate-issue-pr #9001\t0\t0\t0\tagent-preval-9001.json\n' \
+  >> "$logs_dir/subagents.log"
+cat > "$logs_dir/subagents/agent-preval-9001.json" <<'SIDECAR'
+{
+  "ts": "2026-09-24T10:00:00Z",
+  "session": "sess-fwd",
+  "description": "evaluate-issue-pr #9001",
+  "subagent_type": "pipeline:pr-evaluator",
+  "agent_id": "shared1",
+  "usage": {
+    "input_tokens": 4000,
+    "output_tokens": 900,
+    "cache_read_input_tokens": 100,
+    "cache_creation_input_tokens": 0
+  }
+}
+SIDECAR
+echo "all five merged."
+BACKFILL
+chmod +x "$TMP/claude-backfill.sh"
+
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-backfill.sh"
+export CALIB_TEST_PRS_JSON="$TMP/prs-1406.json"
+export CALIB_TEST_ROWS_JSON="$TMP/rows-1406.json"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-1406.json"
+export CALIB_TEST_HOME="$TMP/home1406"
+rm -f "$COST_LOG" "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "a run whose session wrote a forward + retroactive substrate exits 0" 0
+
+expect_sub "the run backfills the sidecar's retroactive cost record" \
+  "$OUT" "calib: cost backfill appended 1 record(s)"
+
+CAP_LOG_ARG="$(grep -m1 '^clr .*--emit-pricing-json' "$CALLS" 2>/dev/null \
+  | sed -n 's/.*--capture-log \([^ ]*\).*/\1/p')"
+if [ -n "$CAP_LOG_ARG" ] && [ -f "$CAP_LOG_ARG" ]; then
+  pass_msg "the grader hands cost-latency-report.sh a resolvable --capture-log"
+else
+  fail_msg "the grader's --capture-log argument did not resolve to a file (got: $CAP_LOG_ARG)"
+fi
+if [ "$CAP_LOG_ARG" = "$COST_LOG" ]; then
+  fail_msg "the grader must dedup BEFORE pricing, not hand cost-latency-report.sh the raw capture log"
+else
+  pass_msg "the grader prices a deduped copy, not the raw forward+retroactive capture log"
+fi
+
+DEDUPED_COUNT="$(jq -s '[.[] | select(.agent_id=="shared1")] | length' "$CAP_LOG_ARG" 2>/dev/null)"
+if [ "$DEDUPED_COUNT" = "1" ]; then
+  pass_msg "duplicate agent_id rows (forward + retroactive) count once"
+else
+  fail_msg "expected exactly 1 deduped row for agent_id=shared1, got $DEDUPED_COUNT"
+fi
+
+DEDUPED_TOTAL="$(jq -s '[.[] | select(.agent_id=="shared1")][0].tokens.total' "$CAP_LOG_ARG" 2>/dev/null)"
+if [ "$DEDUPED_TOTAL" = "8000" ]; then
+  pass_msg "dedup keeps the MAX tokens.total (8000, transcript-upgraded), not the sum (8300)"
+else
+  fail_msg "expected the deduped row's tokens.total to be the max (8000), got $DEDUPED_TOTAL"
+fi
+
+if printf '%s\n' "$OUT" | grep -q '^CALIB issue=9001 .*cost=\$n/a'; then
+  fail_msg "issue=9001 still reports cost=\$n/a despite the backfilled + priced substrate"
+else
+  pass_msg "issue=9001 reports a real cost=\$ once the backfill substrate is wired in"
+fi
+
+# Re-run against the SAME already-backfilled sandbox log: idempotent, appends
+# nothing a second time (record_key dedup inside capture-agent-costs.sh).
+rm -f "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "a second run against an already-backfilled log still exits 0" 0
+expect_sub "a re-run against an already-backfilled log appends nothing new" \
+  "$OUT" "calib: cost backfill appended 0 record(s)"
+
+unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
+      CALIB_TEST_PRICING_JSON CALIB_TEST_HOME
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"

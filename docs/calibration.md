@@ -147,7 +147,10 @@ the first line of the block.
 - `cost` — the issue's **apportioned** share of the run's priced total, split by
   that issue's share of the run's total tokens. The rows JSON carries no
   per-issue dollar figure, so this is an estimate, not a measured per-issue charge.
-  Only `CALIB-TOTAL cost` is a real priced number.
+  Only `CALIB-TOTAL cost` is a real priced number. Before pricing, `--run`
+  backfills the sandbox's retroactive costs (async `Agent` dispatches carry no
+  usage at PostToolUse) and dedups forward/retroactive duplicates by
+  `agent_id`, keeping the max `tokens.total` (#1406).
 - `verdicts` — plan-eval and pr-eval verdicts, slash-separated.
 - `reftest` — the sandbox issue's reference test after the PR lands.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
