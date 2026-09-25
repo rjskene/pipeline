@@ -97,6 +97,10 @@ Options:
   --hooks H        on|off  (default on) — off strips every PreToolUse guard
                    hook and the enforce-ci-wait Stop hook from the STAGED
                    manifest (hook-necessity experiment, backlog #12).
+  --superpowers S  on|off  (default on) — off disables the superpowers plugin
+                   in the materialized sandbox settings, so every
+                   Skill(skill: "superpowers:…") call fails closed
+                   (superpowers-necessity experiment, backlog #11).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -115,6 +119,7 @@ MODEL="sonnet"
 HARNESS_ARG=""
 DRY_RESET=0
 HOOKS="on"
+SUPERPOWERS="on"
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -152,6 +157,8 @@ while [ $# -gt 0 ]; do
     --harness=*)  HARNESS_ARG="${1#--harness=}"; shift ;;
     --hooks)      require_value "$@"; HOOKS="$2"; shift 2 ;;
     --hooks=*)    HOOKS="${1#--hooks=}"; shift ;;
+    --superpowers)   require_value "$@"; SUPERPOWERS="$2"; shift 2 ;;
+    --superpowers=*) SUPERPOWERS="${1#--superpowers=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -167,6 +174,10 @@ esac
 case "$HOOKS" in
   on|off) ;;
   *) die_usage "--hooks must be one of on|off (got: ${HOOKS:-<empty>})" ;;
+esac
+case "$SUPERPOWERS" in
+  on|off) ;;
+  *) die_usage "--superpowers must be one of on|off (got: ${SUPERPOWERS:-<empty>})" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
@@ -356,6 +367,24 @@ materialize_local_settings() {
   n="$(jq '[.hooks[]?[]?.hooks[]?] | length' "$src" 2>/dev/null)"
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
   echo "calib: settings.local.json refreshed from template ($n hooks) -> $LAUNCH_HARNESS"
+  # superpowers-necessity experiment (backlog #11, #1412): off disables the
+  # plugin in the MATERIALIZED sandbox settings only, the same mechanism the
+  # template already uses to disable both pipeline marketplace installs, so
+  # every Skill(skill: "superpowers:…") call in the measured run fails
+  # closed. Reachable only from a real (non-DRY) refresh — under DRY the cp
+  # above never ran, so there is no destination file to edit.
+  if [ "$SUPERPOWERS" = "off" ] && [ "$DRY" -eq 0 ]; then
+    local target="$SANDBOX/.claude/$LOCAL_SETTINGS_BASENAME" tmp2
+    tmp2="$(mktemp)"
+    if jq '.enabledPlugins["superpowers@claude-plugins-official"] = false' "$target" > "$tmp2" 2>/dev/null \
+         && [ -s "$tmp2" ]; then
+      mv "$tmp2" "$target"
+      echo "calib: superpowers=off — plugin disabled in sandbox settings"
+    else
+      rm -f "$tmp2"
+      die_run "could not disable the superpowers plugin in $target"
+    fi
+  fi
 }
 
 commit_sandbox() {
@@ -1019,17 +1048,18 @@ emit_calib_block() {
   if [ ! -s "$CAPTURE_LOG" ] || [ -z "$PRICING_TOTAL" ] || pricing_is_zero "$PRICING_TOTAL"; then
     cost_display="n/a"
   fi
-  # hooks=<on|off> (#1409) is recorded on every CALIB-TOTAL line, both arms,
-  # so an arm-2 run is never mistaken for the hooks-on baseline.
+  # hooks=<on|off> (#1409) and superpowers=<on|off> (#1412) are recorded on
+  # every CALIB-TOTAL line, all arms, so an off-arm run is never mistaken for
+  # the on-arm baseline.
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s\n' \
-      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s superpowers=%s\n' \
+      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" "$SUPERPOWERS"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s\n' \
-      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s superpowers=%s\n' \
+      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" "$SUPERPOWERS"
   fi
 }
 
@@ -1065,10 +1095,13 @@ cmd_run() {
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
   RUN_TS="$(date -u +%Y-%m-%dT%H%MZ)"
   RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  # #1409: the off arm suffixes both artifacts so it can never be mistaken for
-  # the hooks-on baseline; default on keeps the plain name.
+  # #1409/#1412: an off arm suffixes both artifacts so it can never be
+  # mistaken for the on baseline; default on keeps the plain name. Composable:
+  # -hooks-off comes first, then -superpowers-off, so both-off names
+  # <ts>-hooks-off-superpowers-off.
   local run_suffix=""
-  [ "$HOOKS" = "off" ] && run_suffix="-hooks-off"
+  [ "$HOOKS" = "off" ] && run_suffix="${run_suffix}-hooks-off"
+  [ "$SUPERPOWERS" = "off" ] && run_suffix="${run_suffix}-superpowers-off"
   RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
@@ -1087,9 +1120,10 @@ case "$MODE" in
   dry-run)
     build_launch
     # DRY=1 here always (MODE=dry-run forces it), so this never reaches the
-    # real "$@" branch of dispatch() — the trailing hooks=<val> token is safe
-    # as informational-only preview text (#1409), never passed to `claude`.
-    dispatch "${LAUNCH[@]}" "hooks=$HOOKS"
+    # real "$@" branch of dispatch() — the trailing hooks=<val>/superpowers=<val>
+    # tokens are safe as informational-only preview text (#1409/#1412), never
+    # passed to `claude`.
+    dispatch "${LAUNCH[@]}" "hooks=$HOOKS" "superpowers=$SUPERPOWERS"
     exit 0
     ;;
   bootstrap) cmd_bootstrap ;;
