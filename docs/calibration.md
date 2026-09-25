@@ -30,7 +30,8 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 
 ```
 bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
-    [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off]
+    [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
+    [--superpowers on|off]
 ```
 
 | Mode | What it does | Costs money |
@@ -72,6 +73,12 @@ harmless after this fix (#1390).
 `SessionStart`/`UserPromptSubmit`. Off runs are tagged `hooks=off` in
 `CALIB-TOTAL` and in the `<date>T<HHMM>Z-hooks-off.txt`/`.log` artifact names,
 so an arm-2 run can never be mistaken for the hooks-on baseline (#1409).
+
+`--superpowers off` (default `on`, backlog #11) disables the `superpowers`
+plugin in the sandbox's materialized settings, so `Skill(skill:
+"superpowers:…")` calls fail closed. Off runs are tagged `superpowers=off`
+in `CALIB-TOTAL` and the `-superpowers-off` artifact suffix, composable with
+`-hooks-off` (#1412).
 
 ## Harness staging
 
@@ -139,7 +146,7 @@ artifact:
 ```
 CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
-CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off> superpowers=<on|off>
 ```
 
 The `CALIB-ABORT` line is written only when the run did not finish, and is then
@@ -169,6 +176,9 @@ the first line of the block.
   planted-defect dir, or the row was never graded).
 - `hooks` — a per-RUN atom on the `CALIB-TOTAL` line only: `on` (default) or
   `off`, the arm `--hooks` launched under (#1409, see Running above).
+- `superpowers` — a per-RUN atom on the `CALIB-TOTAL` line only: `on`
+  (default) or `off`, the arm `--superpowers` launched under (#1412, see
+  Running above).
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
   there to answer), `timeout` (the wall-clock ceiling killed it), or
@@ -194,8 +204,9 @@ re-run gets its own artifact instead of silently overwriting the prior run's
 (run #9 once erased run #8's `reason=timeout` record this way). Older,
 day-only `<date>.txt` artifacts committed before #1408 are still read by
 `scripts/run-retro.sh` — nothing rewrites history. A `--hooks off` run
-suffixes its artifact `-hooks-off` (`<UTC date>T<HHMM>Z-hooks-off.txt`); the
-default `on` arm keeps the plain name (#1409).
+suffixes its artifact `-hooks-off` (`<UTC date>T<HHMM>Z-hooks-off.txt`); a
+`--superpowers off` run suffixes `-superpowers-off`, composable with
+`-hooks-off`; the default `on` arm(s) keep the plain name (#1409/#1412).
 
 `--run` also writes `<UTC date>T<HHMM>Z.log` beside it: the headless session's
 own output, truncated per run like the `.txt`. That is where the question a

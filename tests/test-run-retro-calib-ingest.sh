@@ -369,6 +369,42 @@ refute_sub "a hooks-on artifact is never mislabeled hooks=off" \
   "$REPORT_HOOKS_ON" "hooks=off"
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 11: an arm-2 (--superpowers off) artifact renders superpowers=off (backlog #11, #1412)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --superpowers off suffixes its artifact filename with
+# `-superpowers-off` (issue #1412), composable with `-hooks-off`, so an
+# off-arm run never silently reads as the on-arm baseline. The marker is read
+# off the FILENAME, like the run date, never off a CALIB atom.
+
+FIX6="$TMP/fixture-superpowers-off"
+cp -r "$FIXTURE_SRC" "$FIX6"
+retro6() { bash "$HELPER" --cycle 0 --fixture "$FIX6" "$@" 2>&1; }
+rm -f "$FIX6/calib.txt"
+mkdir -p "$FIX6/calib"
+write_calib_at "$FIX6/calib/2026-09-07T1200Z-superpowers-off.txt"
+
+REPORT_SUPERPOWERS_OFF="$(retro6)"
+expect_line "an arm-2 artifact's weak-model row names superpowers=off" \
+  "$REPORT_SUPERPOWERS_OFF" "weak-model pass: 4/5 (run 2026-09-07, superpowers=off)"
+
+# Composability: both arms off at once names both markers.
+FIX7="$TMP/fixture-both-off"
+cp -r "$FIXTURE_SRC" "$FIX7"
+retro7() { bash "$HELPER" --cycle 0 --fixture "$FIX7" "$@" 2>&1; }
+rm -f "$FIX7/calib.txt"
+mkdir -p "$FIX7/calib"
+write_calib_at "$FIX7/calib/2026-09-07T1200Z-hooks-off-superpowers-off.txt"
+
+REPORT_BOTH_OFF="$(retro7)"
+expect_line "a both-arms-off artifact's weak-model row names both markers" \
+  "$REPORT_BOTH_OFF" "weak-model pass: 4/5 (run 2026-09-07, hooks=off, superpowers=off)"
+
+# Control: the default arm-1 artifact (no suffix) never renders a
+# superpowers= marker.
+refute_sub "a superpowers-on artifact is never mislabeled superpowers=off" \
+  "$REPORT_HOOKS_ON" "superpowers=off"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"
