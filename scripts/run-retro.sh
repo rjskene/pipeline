@@ -839,7 +839,7 @@ MISSING_ROW_ISSUES=""
 #
 # scripts/calibration-run.sh --run tees a block of
 #   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
-#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
+#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off> superpowers=<on|off>
 #   CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 # to docs/retros/calib/<UTC date>T<HHMM>Z.txt (#1408; legacy <UTC date>.txt
 # artifacts are still read — fixture mode mirrors either form at
@@ -920,13 +920,18 @@ calib_provenance() {
   CALIB_RUN_DATE=""
   CALIB_STALE=""
   CALIB_HOOKS=""
+  CALIB_SUPERPOWERS=""
   [ -n "$f" ] || return 0
   base="$(basename "$f" .txt)"
-  # #1409: --hooks off suffixes its artifact `-hooks-off` — strip it (and
-  # remember the arm) BEFORE the date-shape match below, so both the bare
-  # and the T<HHMM>Z form are recognized regardless of arm.
+  # #1409/#1412: --hooks off and/or --superpowers off suffix their artifact
+  # `-hooks-off` / `-superpowers-off` (composable, hooks first) — strip them
+  # (and remember the arm(s)) BEFORE the date-shape match below, so both the
+  # bare and the T<HHMM>Z form are recognized regardless of arm.
   case "$base" in
+    *-hooks-off-superpowers-off)
+      CALIB_HOOKS="off"; CALIB_SUPERPOWERS="off"; base="${base%-hooks-off-superpowers-off}" ;;
     *-hooks-off) CALIB_HOOKS="off"; base="${base%-hooks-off}" ;;
+    *-superpowers-off) CALIB_SUPERPOWERS="off"; base="${base%-superpowers-off}" ;;
   esac
   case "$base" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) CALIB_RUN_DATE="$base" ;;
@@ -1567,16 +1572,22 @@ build_full_report() {
   echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
 
   echo ""
-  # #1409: an arm-2 (--hooks off) artifact is tagged `hooks=off` so it can
-  # never silently read as the hooks-on baseline; arm 1 (on, default) stays
-  # unlabeled.
+  # #1409/#1412: an off-arm artifact is tagged `hooks=off` and/or
+  # `superpowers=off` (composable) so it can never silently read as the
+  # on-arm baseline; the default on arm stays unlabeled.
   if [ -n "$CALIB_RUN_DATE" ]; then
     CALIB_PROV="run $CALIB_RUN_DATE"
     [ -n "$CALIB_STALE" ] && [ "$CALIB_STALE" -ge 3 ] && CALIB_PROV="$CALIB_PROV, stale $CALIB_STALE cycles"
     [ "$CALIB_HOOKS" = "off" ] && CALIB_PROV="$CALIB_PROV, hooks=off"
+    [ "$CALIB_SUPERPOWERS" = "off" ] && CALIB_PROV="$CALIB_PROV, superpowers=off"
     echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
-  elif [ "$CALIB_HOOKS" = "off" ]; then
-    echo "weak-model pass: $CALIB_WEAK (hooks=off)"
+  elif [ "$CALIB_HOOKS" = "off" ] || [ "$CALIB_SUPERPOWERS" = "off" ]; then
+    CALIB_PROV=""
+    [ "$CALIB_HOOKS" = "off" ] && CALIB_PROV="hooks=off"
+    if [ "$CALIB_SUPERPOWERS" = "off" ]; then
+      if [ -n "$CALIB_PROV" ]; then CALIB_PROV="$CALIB_PROV, superpowers=off"; else CALIB_PROV="superpowers=off"; fi
+    fi
+    echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
   else
     echo "weak-model pass: $CALIB_WEAK"
   fi
