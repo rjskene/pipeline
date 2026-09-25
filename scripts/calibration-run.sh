@@ -389,6 +389,20 @@ materialize_local_settings() {
 
 commit_sandbox() {
   git -C "$SANDBOX" add --all -- . || return 1
+  # #1412: keep .claude/settings.local.json perpetually UNTRACKED, on every
+  # host. materialize_local_settings() only ever mutates it in the working
+  # tree (never commits it) — on operators' hosts that happen to carry a
+  # global git-ignore rule for it (#1395), `git add --all` above silently
+  # skips it and this is a no-op. Without such a rule (every CI runner: a
+  # bare container with no ~/.config/git/ignore) `git add --all` stages it
+  # like any other file, it gets committed here, and the very next
+  # sync_sandbox_after_run() `git reset --hard origin/main` — which runs
+  # AFTER every measured launch — throws away whatever
+  # materialize_local_settings() wrote for THIS run (e.g. the --superpowers
+  # off plugin-disable flip) and restores the stale committed copy instead.
+  # `--ignore-unmatch` makes this safe whether or not `add --all` staged it.
+  git -C "$SANDBOX" rm --cached --ignore-unmatch --quiet \
+    -- ".claude/$LOCAL_SETTINGS_BASENAME" || return 1
   if git -C "$SANDBOX" diff --cached --quiet 2>/dev/null; then
     return 0   # already in sync — no commit, no churn
   fi
