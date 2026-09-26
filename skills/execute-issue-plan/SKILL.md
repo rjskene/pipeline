@@ -88,7 +88,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: invoke `superpowers:test-driven-development`; PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels).
+5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: red→green→commit inline (discipline: `agents/tdd-implementer.md`); PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels).
 
    **PATH B split-role two-phase execute (#881 — `PIPELINE_PATH_B_SPLIT_ROLE=true`).** When split-role is enabled, PATH B execute splits the red→green discipline across two roles in this same worktree:
    - **Phase (i) — Opus test-author authors+commits the locked suite.** The Opus test-author writes the full failing suite per the approved plan, confirms each test is red-for-the-right-reason, and makes a **single commit** carrying the literal `[split-role-red]` substring in the **commit subject**. Pre-existing-test updates (golden refresh, changed contract) belong **IN that commit** — never in a later commit.
@@ -147,28 +147,22 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
    For all other paths, Step 8 runs BEFORE `gh pr create` to catch plan-compliance gaps and real bugs while the branch is still local-only.
 
-   **Step 8 owner — the role that opens the PR (#1225).** Step 8's `Skill(...)`/`Agent(...)` calls require tools a leaf executor does not have, so Step 8 is owned by the PR-opening role: on PATH A/B the inline execute `Agent` (`general-purpose`); on PATH C the ORCHESTRATOR, after every `tdd-implementer` leaf has returned and `path-c-split-worktree.sh reassemble` has run, and before `gh pr create` (Step 9). A `tdd-implementer` leaf NEVER runs Step 8; a leaf handed a Step 8-shaped task refuses loudly with `CAPABILITY-REFUSED:` per `agents/tdd-implementer.md` rather than substituting a self-review.
+   **Step 8 owner — the role that opens the PR (#1225).** Step 8's `Agent(...)` dispatch requires tools a leaf executor does not have, so Step 8 is owned by the PR-opening role: on PATH A/B the inline execute `Agent` (`general-purpose`); on PATH C the ORCHESTRATOR, after every `tdd-implementer` leaf has returned and `path-c-split-worktree.sh reassemble` has run, and before `gh pr create` (Step 9). A `tdd-implementer` leaf NEVER runs Step 8; a leaf handed a Step 8-shaped task refuses loudly with `CAPABILITY-REFUSED:` per `agents/tdd-implementer.md` rather than substituting a self-review.
 
-   **8a. Author self-check.** Invoke `superpowers:requesting-code-review` with the plan comment body (from step 1) as context. The skill verifies plan requirements are met, tests pass, and CI-equivalent checks are green locally. Fix any gaps and re-run step 6 before continuing. If unavailable, run this self-check inline against the plan comment body, same checklist, no dispatch.
-   ```
-   Skill(skill: "superpowers:requesting-code-review")
-   ```
+   **8a. Author self-check.** Run this checklist inline against the plan comment body (from step 1): every `**Files to change:**` entry touched, every task deliverable present, `$PIPELINE_TEST_CMD` green, no unrelated diff. Fix any gaps and re-run step 6 before continuing.
 
    **8b. Independent reviewer dispatch.** The description is FIXED text — the `capture-agent-costs.sh` attribution key (`stage=pr-eval role=review`); append nothing:
    ```
    Agent(
      subagent_type: "general-purpose",
      description: "code review #<N>",
-     prompt: "<superpowers:requesting-code-review code-reviewer.md template, filled with the plan comment body + git diff $PIPELINE_BASE_BRANCH...HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
+     prompt: "<the plan comment body + git diff $PIPELINE_BASE_BRANCH...HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
    )
    ```
 
-   Step 8's review flow is synchronous — `Skill(...)` and `Agent(...)` calls block until they return, so there is no poll loop to bound here. If a future revision adds background-task coordination, it MUST wait via `scripts/wait-for-sentinel.sh` (bounded timeout), never an inline `until grep ...; do sleep N; done` poll (see Constraints).
+   Step 8's review flow is synchronous — the `Agent(...)` call blocks until it returns, so there is no poll loop to bound here. If a future revision adds background-task coordination, it MUST wait via `scripts/wait-for-sentinel.sh` (bounded timeout), never an inline `until grep ...; do sleep N; done` poll (see Constraints).
 
-   **8c. Triage findings.** Invoke `superpowers:receiving-code-review` with the reviewer's output. The skill classifies each finding as **must-fix** (plan-compliance gap, test gap, real bug → fix), **nice-to-have** (style, rename → skip unless trivial), or **incorrect** (reviewer misread → reject with a one-line rationale in the follow-up commit message).
-   ```
-   Skill(skill: "superpowers:receiving-code-review")
-   ```
+   **8c. Triage findings.** Triage each finding yourself: verify the claim against the code before acting. Classify each as **must-fix** (plan-compliance gap, test gap, real bug → fix), **nice-to-have** (style, rename → skip unless trivial), or **incorrect** (reviewer misread → reject with a one-line rationale in the follow-up commit message).
 
    Path-specific constraints when applying must-fixes:
    - **PATH C (`multi-task`):** any must-fix touching impl code MUST go through a fresh inline `Agent(tdd-implementer)` dispatch (or a spawned worker under `--spawn`) — the `enforce-path-c-delegation` hook blocks direct orchestrator `Edit`/`Write` on impl files regardless of transport.
@@ -272,7 +266,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 ## Handling evaluation feedback
 
-If `evaluate-issue-pr` flags the PR while the executor session is still active, invoke `superpowers:receiving-code-review` with the evaluation comment as context: `Skill(skill: "superpowers:receiving-code-review")`.
+- If `evaluate-issue-pr` flags the PR while the executor session is still active, verify each claim in the evaluation comment against the code, fix what is right, and push back with evidence where it is wrong.
 
 ## Constraints
 - Implement ONLY what the approved plan says.

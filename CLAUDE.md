@@ -4,12 +4,6 @@
 
 Claude Pipeline is a **CI workflow for automating code updates** through GitHub issues. It manages the full lifecycle: issue creation, planning, plan review, execution, and PR evaluation.
 
-## Pipeline vs Superpowers
-
-Pipeline is the outer workflow — slash commands that advance an issue through the lifecycle. Superpowers are inner tools — skills like brainstorming, writing-plans, TDD, and debugging that pipeline stages use internally to do their work well.
-
-Pipeline orchestrates. Superpowers execute.
-
 Full process maps (lifecycle, label flow, dispatch model, paths A/B/C/D, wave plan) in docs/process-maps.md.
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
@@ -70,7 +64,7 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 
 1. **Issues are the unit of work.** All planned work lives in GitHub issues. Specs, brainstorm notes, and design docs are transient — they get converted to issues and deleted.
 2. **Human gates matter.** Plan approval and PR merge are manual. The pipeline automates the work between human decisions, not the decisions themselves.
-3. **Superpowers are composable.** Pipeline skills declare which superpowers they use. A skill can compose with any superpowers available in the environment — if a superpowers skill isn't installed, the pipeline skill falls back to inline behavior.
+3. **Procedures are inline.** Pipeline skills carry their own procedures — no external skill plugin is required at any stage.
 4. **Isolation by default.** Execution happens in git worktrees. The main workspace stays clean.
 
 ## Observability (dogfood-only)

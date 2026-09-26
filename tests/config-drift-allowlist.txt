@@ -206,8 +206,10 @@ PIPELINE_CALIB_PROFILE
 # referenced-but-undeclared and reds the clean-tree suite. No read site exists
 # anywhere in the tree. Same spec-only class as PIPELINE_STAGE_MODEL_CLASSIFY above, but a
 # concat-prefix wildcard (the backlog names the family with a `*`, so this covers
-# every PIPELINE_SUPERPOWERS_* spelling). Peel when the knob is implemented and
-# documented in pipeline.config.example.
+# every PIPELINE_SUPERPOWERS_* spelling). This entry is now PERMANENT, not a
+# peel-when-implemented one: #1419 removed the superpowers dependency outright,
+# so the hypothetical per-stage gate will never be implemented — the mirrored
+# tracker prose in tests/fixtures/ is all that will ever reference it.
 PIPELINE_SUPERPOWERS_
 
 # #1281 test-only clock injection. PIPELINE_RETRO_NOW pins the OPEN upper bound

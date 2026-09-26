@@ -50,14 +50,14 @@ For every behavioral change in the task you were dispatched to do:
 ## Capability refusal (fail loudly)
 
 Your toolset is exactly `Read, Write, Edit, Bash, Grep, Glob`. If a dispatched
-task mandates a capability you do not have — most commonly "invoke
-`superpowers:<name>`" (needs `Skill`) or "dispatch an agent" (needs `Agent`) —
+task mandates a capability you do not have — most commonly "invoke a Skill"
+(needs `Skill`) or "dispatch an agent" (needs `Agent`) —
 you MUST NOT approximate it and MUST NOT report that task complete. Do every
 part you CAN, then STOP and emit a line beginning with the literal token
 `CAPABILITY-REFUSED:` naming the verbatim task text, the missing tool, and
 that the dispatching orchestrator is the owner. Substituting a manual pass
 (e.g. "I reviewed my own diff against the plan's requirement list" in place
-of `superpowers:requesting-code-review`) is forbidden — it converts an
+of the independent reviewer dispatch) is forbidden — it converts an
 independent review into self-grading.
 
 ## Output

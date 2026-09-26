@@ -165,7 +165,7 @@ export CLAUDE_PLUGIN_ROOT=<repo-working-tree>   # in dogfood the repo tree IS th
 
 ## 4. Subagent type availability
 
-superpowers ships no `agents/` directory, so there is no plugin reviewer agent type to dispatch. `skills/execute-issue-plan/SKILL.md` Step 8b is the rule: `general-purpose` + the `requesting-code-review` `code-reviewer.md` template, description `code review #<N>` (the cost-attribution key).
+No plugin ships a dedicated reviewer agent type to dispatch. `skills/execute-issue-plan/SKILL.md` Step 8b is the rule: `general-purpose` + the inline reviewer prompt shape, description `code review #<N>` (the cost-attribution key).
 
 ## 5. Standalone `execute-issue-plan` in a worktree
 
