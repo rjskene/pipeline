@@ -302,13 +302,20 @@ run_helper --dry-run --superpowers maybe
 expect_rc "--superpowers maybe is rejected" 2
 expect_sub "--superpowers error names the allowed values" "$OUT" "on|off"
 
+run_helper --dry-run --executor-model gpt
+expect_rc "--executor-model gpt is rejected" 2
+expect_sub "--executor-model error names the allowed values" "$OUT" "opus|sonnet"
+
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
+
+run_helper --dry-run --profile lean --executor-model opus
+expect_rc "--profile lean --executor-model opus is accepted" 0
 
 # A value-taking flag in LAST position has no value to shift: `shift 2` with
 # $#=1 fails, the token is never consumed, and the parser spins forever with
 # no output. Must be a usage error, never a hang (rc=124 from run_helper's cap).
-for flag in --profile --model --harness --hooks --superpowers; do
+for flag in --profile --model --harness --hooks --superpowers --executor-model; do
   run_helper --dry-run "$flag"
   expect_rc "trailing $flag exits 2 (never spins)" 2
   expect_sub "trailing $flag reports the missing value" "$OUT" "$flag requires a value"
@@ -352,6 +359,12 @@ expect_sub "launch line disables the print-mode background wait ceiling" \
 expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
 expect_sub "the dry-run preview names the default hooks arm" "$LAUNCH" "hooks=on"
 expect_sub "the dry-run preview names the default superpowers arm" "$LAUNCH" "superpowers=on"
+# The executor-model arm is OPT-IN (#1414): unset means "whatever the harness
+# defaults to" (Sonnet, per #1042), so the default preview must set no
+# PIPELINE_PATH_B_MODEL_EXECUTE at all rather than pinning a value.
+refute_sub "the default preview sets no PIPELINE_PATH_B_MODEL_EXECUTE" \
+  "$LAUNCH" "PIPELINE_PATH_B_MODEL_EXECUTE="
+refute_sub "the default preview names no bexec arm" "$LAUNCH" "bexec="
 
 rm -f "$CALLS"
 run_helper --dry-run --harness "$HARNESS" --hooks off
@@ -362,6 +375,16 @@ rm -f "$CALLS"
 run_helper --dry-run --harness "$HARNESS" --superpowers off
 LAUNCH_SUPERPOWERS_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
 expect_sub "--superpowers off is named in the dry-run preview" "$LAUNCH_SUPERPOWERS_OFF" "superpowers=off"
+
+# #1414: the arm is an ENV knob, not a CLI flag on `claude` — the preview has
+# to show the token that actually reaches the sandbox session as well as the
+# human-readable arm label.
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --executor-model opus
+LAUNCH_BEXEC="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--executor-model opus previews the PIPELINE_PATH_B_MODEL_EXECUTE token" \
+  "$LAUNCH_BEXEC" "PIPELINE_PATH_B_MODEL_EXECUTE=opus"
+expect_sub "--executor-model opus is named in the dry-run preview" "$LAUNCH_BEXEC" "bexec=opus"
 
 if [ -s "$CALLS" ]; then
   fail_msg "--dry-run made a network / launch call: $(tr '\n' ';' < "$CALLS")"

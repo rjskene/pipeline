@@ -31,7 +31,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 ```
 bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
     [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
-    [--superpowers on|off]
+    [--superpowers on|off] [--executor-model opus|sonnet]
 ```
 
 | Mode | What it does | Costs money |
@@ -79,6 +79,17 @@ plugin in the sandbox's materialized settings, so `Skill(skill:
 "superpowers:…")` calls fail closed. Off runs are tagged `superpowers=off`
 in `CALIB-TOTAL` and the `-superpowers-off` artifact suffix, composable with
 `-hooks-off` (#1412).
+
+`--executor-model opus|sonnet` (default unset, backlog #2/#10/#28) sets
+`PIPELINE_PATH_B_MODEL_EXECUTE` in the sandbox session — the knob
+`resolve-execute-dispatch.sh` and `resolve-stage-model.sh` read to decide
+whether `--profile lean` collapses split-role to `lean-single` (they only do
+so for a non-W2 opus/fable executor, so `lean` with the default Sonnet
+executor exercises almost nothing). Unset means "whatever the harness resolves
+on its own" (Sonnet, #1042); no value is pinned by default, so a plain run is
+never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
+`CALIB-TOTAL` and carries a `-bexec-<M>` artifact suffix, composable with
+`-hooks-off` / `-superpowers-off` (#1414).
 
 ## Harness staging
 

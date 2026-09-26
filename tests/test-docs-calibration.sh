@@ -154,19 +154,23 @@ assert_matches "$DOC" 'run #2|run 2' "records the run #2 lesson"
 
 echo ""
 echo "docs/calibration.md — PIPELINE_* token set"
-# The doc may name only knobs pipeline.config.example declares plus the one
-# allow-listed injected var; a removed/inert knob name here would red
-# scripts/check-config-drift.sh.
+# The doc may name only knobs pipeline.config.example declares plus the two
+# allow-listed injected vars (PIPELINE_HEADLESS, PIPELINE_TRUST_PROFILE); a
+# removed/inert knob name here would red scripts/check-config-drift.sh.
+# PIPELINE_PATH_B_MODEL_EXECUTE joined the list with the --executor-model arm
+# (#1414): the doc names it because the flag sets it, and
+# pipeline.config.example declares it (line ~401).
 TESTS=$((TESTS + 1))
 extra=""
 if [ -f "$DOC" ]; then
   extra="$(grep -oE '\bPIPELINE_[A-Z0-9_]+\b' "$DOC" | sort -u \
     | grep -vxF -e PIPELINE_CALIB_DIR -e PIPELINE_CALIB_REPO \
         -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS -e PIPELINE_TRUST_PROFILE \
+        -e PIPELINE_PATH_B_MODEL_EXECUTE \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then
-  pass_msg "names no PIPELINE_* token beyond the three calib knobs, PIPELINE_HEADLESS and PIPELINE_TRUST_PROFILE"
+  pass_msg "names no PIPELINE_* token beyond the three calib knobs, PIPELINE_HEADLESS, PIPELINE_TRUST_PROFILE and PIPELINE_PATH_B_MODEL_EXECUTE"
 else
   fail_msg "names undeclared PIPELINE_* token(s): $extra"
 fi

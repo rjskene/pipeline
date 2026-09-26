@@ -101,6 +101,10 @@ Options:
                    in the materialized sandbox settings, so every
                    Skill(skill: "superpowers:…") call fails closed
                    (superpowers-necessity experiment, backlog #11).
+  --executor-model M  opus|sonnet  (default unset = the harness default,
+                   Sonnet per #1042) — sets PIPELINE_PATH_B_MODEL_EXECUTE in
+                   the sandbox session, which is what lets --profile lean
+                   actually collapse split-role to lean-single (backlog #2/#28).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -120,6 +124,10 @@ HARNESS_ARG=""
 DRY_RESET=0
 HOOKS="on"
 SUPERPOWERS="on"
+# Empty = "do not set it at all", so the sandbox session keeps whatever the
+# harness resolves on its own (Sonnet, #1042). Never defaulted to a value here:
+# pinning one would silently make every run an arm of this experiment (#1414).
+EXECUTOR_MODEL=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -159,6 +167,8 @@ while [ $# -gt 0 ]; do
     --hooks=*)    HOOKS="${1#--hooks=}"; shift ;;
     --superpowers)   require_value "$@"; SUPERPOWERS="$2"; shift 2 ;;
     --superpowers=*) SUPERPOWERS="${1#--superpowers=}"; shift ;;
+    --executor-model)   require_value "$@"; EXECUTOR_MODEL="$2"; shift 2 ;;
+    --executor-model=*) EXECUTOR_MODEL="${1#--executor-model=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -178,6 +188,11 @@ esac
 case "$SUPERPOWERS" in
   on|off) ;;
   *) die_usage "--superpowers must be one of on|off (got: ${SUPERPOWERS:-<empty>})" ;;
+esac
+# Empty is legal here (and is the default): it means "leave the knob unset".
+case "$EXECUTOR_MODEL" in
+  ''|opus|sonnet) ;;
+  *) die_usage "--executor-model must be one of opus|sonnet (got: $EXECUTOR_MODEL)" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
@@ -286,13 +301,20 @@ build_launch() {
   fi
   local -a scrub
   readarray -t scrub < <(calib_env_prefix)
+  # #1414: the executor-model arm is an ENV knob, not a `claude` CLI flag —
+  # resolve-execute-dispatch.sh reads PIPELINE_PATH_B_MODEL_EXECUTE inside the
+  # sandbox session. Spliced AFTER ${scrub[@]} (which `-u`s it along with every
+  # other inherited PIPELINE_*), so the explicit set wins exactly the way
+  # PIPELINE_TRUST_PROFILE does. Empty arm = no token at all, not an empty set.
+  local -a bexec_env=()
+  [ -n "$EXECUTOR_MODEL" ] && bexec_env=("PIPELINE_PATH_B_MODEL_EXECUTE=$EXECUTOR_MODEL")
   # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
   # `${scrub[@]}` comes FIRST so every inherited PIPELINE_* is unset before the
   # explicit sets below run (#1390).
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
-          "PIPELINE_TRUST_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
+          "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" PIPELINE_HEADLESS=true
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
@@ -1135,9 +1157,12 @@ case "$MODE" in
     build_launch
     # DRY=1 here always (MODE=dry-run forces it), so this never reaches the
     # real "$@" branch of dispatch() — the trailing hooks=<val>/superpowers=<val>
-    # tokens are safe as informational-only preview text (#1409/#1412), never
-    # passed to `claude`.
-    dispatch "${LAUNCH[@]}" "hooks=$HOOKS" "superpowers=$SUPERPOWERS"
+    # /bexec=<val> tokens are safe as informational-only preview text
+    # (#1409/#1412/#1414), never passed to `claude`. bexec= is printed only
+    # when the arm is set, matching its CALIB-TOTAL atom.
+    ARM_TOKENS=("hooks=$HOOKS" "superpowers=$SUPERPOWERS")
+    [ -n "$EXECUTOR_MODEL" ] && ARM_TOKENS+=("bexec=$EXECUTOR_MODEL")
+    dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;
   bootstrap) cmd_bootstrap ;;
