@@ -45,13 +45,16 @@ script `scripts/init.sh` runs five phases:
    else. Answering "no tests" writes no-op `PIPELINE_TEST_CMD="true"` /
    `PIPELINE_TYPECHECK_CMD="true"`; answering "no CI" writes
    `PIPELINE_CI_CHECK_ENABLED=""`. The generated config also ships the
-   per-path execute MODEL routing knobs **active** at the Sonnet default
-   (opt-OUT, #1042) — `PIPELINE_PATH_B_MODEL_EXECUTE=sonnet`,
-   `PIPELINE_PATH_D_MODEL_EXECUTE=sonnet`, `PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"`,
-   matching `pipeline.config.example`; a fresh install runs Sonnet on eligible
-   PATH B + all PATH D execute, and an operator opts out with `=opus` /
-   `low-blast` (or by commenting the knobs). Refuses to clobber an existing config
-   without `--force`.
+   per-path execute MODEL routing knobs matching `pipeline.config.example`:
+   `PIPELINE_PATH_D_MODEL_EXECUTE=sonnet` and `PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"`
+   **active** at the #1042 Sonnet-on-execute default, and
+   `#PIPELINE_PATH_B_MODEL_EXECUTE=opus` **commented** (#1420 flipped PATH B's
+   unset default to `opus` when the two-agent execute lane collapsed to one agent;
+   the default lives at the read site per #1052, so `init` must not pin it). A fresh
+   install therefore runs Sonnet on all PATH D execute and Opus on PATH B; an
+   operator opts PATH D out with `=opus` / `low-blast`, and buys the cheap PATH B
+   lane back with `PIPELINE_PATH_B_MODEL_EXECUTE=sonnet`. Refuses to clobber an
+   existing config without `--force`.
 3. **Gitignore** — appends `pipeline.config` to `.gitignore` (host-specific;
    idempotent).
 4. **Labels** — seeds the canonical GitHub labels via `doctor.sh --fix labels`.

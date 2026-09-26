@@ -233,7 +233,7 @@ elif [ "$PATH_LETTER" = "B" ]; then
     MODEL="opus"; REASON="scope-low-blast-gated"
   else
     # scope=all (default) OR scope=low-blast with a low-blast verdict ⇒ resolved
-    # knob applies (sonnet default, or explicit opt-out honored verbatim).
+    # knob applies (opus default since #1420, or an explicit cheaper value honored verbatim).
     MODEL="$RESOLVED_KNOB"; REASON="$KNOB_REASON"
   fi
 else

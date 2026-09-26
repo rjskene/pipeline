@@ -26,10 +26,10 @@
 # Fail-closed: any check that cannot confirm a satisfied terminal state emits a
 # recover token, never `complete`.
 #
-# #1056 — ADDITIVE `--verify-dispatch <N> <A|B|C|D>` mode (post-hoc model + shape
-# verify): asserts the dispatched model + dispatch shape match what
-# scripts/resolve-execute-dispatch.sh specified, closing the invisible
-# cost-regression property. It emits its OWN `DISPATCH=` token contract and never
+# #1056 — ADDITIVE `--verify-dispatch <N> <A|B|C|D>` mode (post-hoc model verify):
+# asserts the dispatched model matches what scripts/resolve-execute-dispatch.sh
+# specified, closing the invisible cost-regression property. (#1420 retired the
+# shape half of this check — see the dispatch block below.) It emits its OWN `DISPATCH=` token contract and never
 # alters the default-mode `ACTION=` output above. See the dispatch block below.
 # #1186 widened the accepted path set to A|B|C|D alongside the resolver: PATH A
 # execute and every PATH C leaf now carry a real resolved `model=`, so their
