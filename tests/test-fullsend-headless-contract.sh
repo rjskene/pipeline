@@ -15,7 +15,7 @@ set -uo pipefail
 #
 #     HEADLESS-DEFAULT: <site> decision=<what> reason=<why>
 #
-# and continues. Four decision sites are enumerated (a CLOSED vocabulary, so the
+# and continues. Five decision sites are enumerated (a CLOSED vocabulary, so the
 # assertions below can pin them exactly):
 #
 #   merge-policy        — Step 9's "Wait for explicit user confirmation before
@@ -25,6 +25,11 @@ set -uo pipefail
 #                         by Step 7's wake loop.
 #   ci-red-budget       — Step 6b's `red-retry` "Interactive mode: propose ..."
 #                         branch and the `red-budget-exhausted` row.
+#   permission-denied   — a `PermissionRequest` bridge timeout or operator deny
+#                         (#1421). Headless sessions no longer run under
+#                         --dangerously-skip-permissions, so an escalation can
+#                         now come back DENIED mid-run; without a named default
+#                         a stage would stop and ask what to do about it.
 #
 # This file is the ONLY thing pinning fullsend's prose size for this change:
 # there is no `tests/test-fullsend-*budget*`, `tests/test-evolve-skill-budget.sh`
@@ -32,7 +37,10 @@ set -uo pipefail
 # directives.sh` does not cover fullsend. So A6 (section body 1..200 words),
 # A6b (each dispatch sentence 1..25 words) and A6c (sum <= 250) together enforce
 # the issue's "<= 250 words added to skills/fullsend/SKILL.md" budget. If the
-# prose overruns, CUT THE PROSE — never raise a ceiling here.
+# prose overruns, CUT THE PROSE — never raise a ceiling here. #1421 added the
+# fifth site by REWRITING the whole section body to 199 words rather than
+# appending a bullet: appending would have put the body at 223 (> 200) and the
+# total at 265 (> 250), and the ceilings are not the thing that gives.
 #
 # Non-vacuity discipline: every ceiling is paired with a `1 <=` floor, because
 # `wc -w` of a missing/empty extract is 0, which satisfies any ceiling and turns
@@ -41,12 +49,14 @@ set -uo pipefail
 # moved marker cannot masquerade as a missing directive — the same shape as H9
 # in tests/test-no-hypothesised-writer-clause.sh.
 #
-# HARD BAN inherited from the plan: `PIPELINE_HEADLESS` is the ONLY new
-# `PIPELINE_*` token this change may name anywhere. `scripts/`, `skills/`,
-# `hooks/`, `tests/` and `docs/` are all scan dirs for
-# `scripts/check-config-drift.sh`, whose referenced-set pattern is
-# `\bPIPELINE_[A-Z0-9_]+\b` — a bare prose mention counts as a reference. A8
-# asserts the lint's EXIT CODE, which is the mechanical enforcement of that ban.
+# CONFIG-DRIFT SYMMETRY: `scripts/`, `skills/`, `hooks/`, `tests/` and `docs/`
+# are all scan dirs for `scripts/check-config-drift.sh`, whose referenced-set
+# pattern is `\bPIPELINE_[A-Z0-9_]+\b` — a bare PROSE mention counts as a
+# reference. #1286 read that as "PIPELINE_HEADLESS is the only new token this
+# change may name"; the durable rule is the weaker and truer one: any PIPELINE_*
+# token named anywhere must be DECLARED (commented is enough) in
+# pipeline.config.example. #1421 names three more and declares all three. A8
+# asserts the lint's EXIT CODE, which is the mechanical enforcement.
 #
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,7 +72,7 @@ LOG_PREFIX="HEADLESS-DEFAULT:"
 GRAMMAR_TEMPLATE="HEADLESS-DEFAULT: <site> decision=<what> reason=<why>"
 GRAMMAR_RE="HEADLESS-DEFAULT: [a-z0-9-]+ decision=[^[:space:]]+ reason="
 SENTINEL='**Headless:**'
-SITES=(merge-policy unread-config-knob stall-triage ci-red-budget)
+SITES=(merge-policy unread-config-knob stall-triage ci-red-budget permission-denied)
 
 SECTION_MAX_WORDS=200
 SENTENCE_MAX_WORDS=25
@@ -185,7 +195,7 @@ fi
 # ---------------------------------------------------------------------------
 # A3 — all four decision sites are enumerated, each with a default.
 # ---------------------------------------------------------------------------
-scenario "A3: four enumerated decision sites, each naming a default"
+scenario "A3: five enumerated decision sites, each naming a default"
 
 for site in "${SITES[@]}"; do
   inc

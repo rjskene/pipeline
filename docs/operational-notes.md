@@ -339,8 +339,9 @@ the CR is invisible in most output. This bit many scripts across the tree.
 ## 12. Headless / unattended runs (issue #1286)
 
 When `PIPELINE_HEADLESS` is true, fullsend and every stage it dispatches must
-not end a turn on an operator question — at each of the four decision sites
-(`merge-policy`, `unread-config-knob`, `stall-triage`, `ci-red-budget`) it
+not end a turn on an operator question — at each of the five decision sites
+(`merge-policy`, `unread-config-knob`, `stall-triage`, `ci-red-budget`,
+`permission-denied`) it
 applies the documented default, logs one
 `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continues;
 see `skills/fullsend/SKILL.md` for the full contract. Interactive mode (the
@@ -363,3 +364,39 @@ The loop gates on `scripts/evolve-projection.sh`, the same line the skill gates 
 A session that exits on `HEADLESS-DEFAULT: usage-pause` is slept out and relaunched, not counted as a failed resume — bounded by `--max-pauses K` consecutive pauses (default 6 ≈ 30 h), reset by any real progress.
 `--dry-run` previews `LOOP-LAUNCH` and makes no network call. `LOOP-STOP reason=` is the exit contract (`paused`/`cycles-complete` 0, `halt-7d` 3, `resume-cap` 4, `pause-cap` 5, `diminishing` 6).
 Interactive fallback at a cycle boundary: `/reload-plugins` — a built-in the model cannot invoke.
+
+## 15. Headless permission bridge (issue #1421)
+
+NO launcher passes `--dangerously-skip-permissions` any more. `calibration-run.sh`,
+`evolve-loop.sh` and `spawn-claude.sh` all launch under `--permission-mode auto
+--permission-prompts none` and export a queue dir, which arms the
+`PermissionRequest` bridge hook: an escalated tool call is queued for you instead
+of being granted unseen.
+
+You are the watcher, and nothing enforces it. From the LAUNCHING repo (the
+harness for a calibration run, the clone for the evolve loop, the main repo for a
+spawn), watch the queue in a persistent `Monitor` until-loop:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" pending
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" show <id>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" answer <id> allow|deny [message]
+```
+
+An unanswered request is denied after the bridge timeout (840 s by default, held
+under the 900 s hook timeout) with a skip-and-continue message: the session
+continues and never retries that call, so a missed prompt costs one step, not the
+run. Two unanswered prompts in one executor still eat ~31 % of the default
+5400 s executor budget — that is the cost of not watching.
+
+`permission-bridge.sh prune` drops answered pairs older than a day; unanswered
+requests are kept however old, because they are still open questions.
+
+Set `PIPELINE_HEADLESS_PERMISSIONS=bypass` for a launch nobody will watch — a
+detached `evolve-loop.sh`, PATH C `--spawn` executors, `run-queue.sh --ci-fix`.
+It restores the old flag for that run and exports no queue dir. If a calibration
+run reports a high `bridge_prompts`, that knob is the rollback, not a revert.
+
+The hook is INERT with no queue dir exported: it exits 0 having emitted nothing
+and having read nothing, which is what makes its matcher-`*` registration safe in
+your live interactive sessions.

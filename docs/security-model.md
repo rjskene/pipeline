@@ -42,7 +42,15 @@ pipeline cannot impose them:
 - **Least privilege** — short-lived, narrowly-scoped tokens; no ambient prod
   creds; no SSH-agent forwarding.
 - **Human gate** on the irreversible / outward-facing class (deletes, pushes,
-  sends).
+  sends). For HEADLESS (`claude -p`) sessions this one is now a shipped
+  mechanism rather than an aspiration: every launcher runs the operator-owned
+  permission mode (`--permission-mode auto --permission-prompts none`) with the
+  `PermissionRequest` bridge (`hooks/permission-bridge.py`, issue #1421) as the
+  escalation channel. An escalated call is queued for a human to answer; an
+  unanswered one is DENIED, never granted. `--dangerously-skip-permissions` —
+  which granted the whole irreversible class unseen — is no longer passed by any
+  launcher (`PIPELINE_HEADLESS_PERMISSIONS=bypass` restores it for one run).
+  Interactive sessions are unchanged: the bridge is inert without a queue dir.
 
 The model: stop worrying *which* string the agent writes; make the dangerous
 primitive **unreachable**, shrinking blast radius to near-zero.
@@ -52,6 +60,7 @@ primitive **unreachable**, shrinking blast radius to near-zero.
 | Pipeline owns (cheap, shipped) | Operator owns (the boundary) |
 |---|---|
 | Best-effort tripwires (`restrict_paths.py`, `block_deletions.py`) | Permission mode (allowlist vs bypass) |
+| Headless human gate: the `PermissionRequest` bridge (#1421) — queue the escalation, deny it unanswered | Actually watching the queue and answering it |
 | Base-branch enforcement, path-C delegation guard | Sandbox / container, network egress, read-only mounts |
 | Per-agent resource caps (`MemoryMax`/`TasksMax`, #918) | Non-root execution, token scope |
 | Honest docs (this note) + doctor posture advisories | Human review of the session |

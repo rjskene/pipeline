@@ -110,6 +110,41 @@ Consequences:
 | `PIPELINE_CALIB_TIMEOUT` | see `pipeline.config.example` | Wall-clock ceiling (seconds) for the headless run before it is killed and the partial summary emitted. |
 | `PIPELINE_CALIB_REPO` | `rjskene/pipeline-calib` | `owner/name` of the sandbox repo, for forks or a re-homed sandbox. |
 
+## Permission bridge
+
+Headless runs no longer pass `--dangerously-skip-permissions`. They launch under
+`--permission-mode auto --permission-prompts none` with the `PermissionRequest`
+bridge hook as the escalation channel (issue #1421): an escalated tool call is
+written to a queue file, the session BLOCKS, and the launching interactive
+session answers it.
+
+The launching session is the watcher, and there is no mechanism that enforces
+that — watch the queue from the harness repo with a persistent `Monitor`
+until-loop over
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" pending
+```
+
+then `permission-bridge.sh show <id>` anything unfamiliar and
+`permission-bridge.sh answer <id> allow|deny [message]` to decide. `pending` on
+an empty or missing queue dir prints nothing and exits 0, so the loop is quiet
+while there is nothing to answer.
+
+- The queue dir is the LAUNCHING repo's `.claude/scratch/permission-queue` (the
+  harness for `--run`, the clone for `scripts/evolve-loop.sh`), exported per run.
+  The hook is inert without it.
+- An unanswered request is denied after `PIPELINE_PERMISSION_BRIDGE_TIMEOUT`
+  seconds (840 by default, under the 900 s hook timeout) with a
+  skip-and-continue message. The session continues; it does not retry the call.
+- `--hooks off` does NOT strip the bridge. It is the deny rail, not a guard, and
+  stripping it would confound arm 2 of the hook-necessity experiment.
+- `PIPELINE_HEADLESS_PERMISSIONS=bypass` restores the old flag for one run, with
+  no bridge dir exported — honoured by all three launchers (`calibration-run.sh`,
+  `evolve-loop.sh`, `spawn-claude.sh`). Reach for it when nobody will be watching
+  the queue; every unanswered escalation otherwise costs the full timeout.
+- `bridge_prompts=<n>` on the `CALIB-TOTAL` line is the measurement. Expect ≤ 3.
+
 ## Cost
 
 A full `--run` costs **≈$60–120** and takes hours. The `claude -p` launch is a
@@ -183,6 +218,12 @@ the first line of the block.
   (#1414, see Running above). Absent entirely when the flag was not passed,
   because the unset arm is the harness default rather than an arm — so the
   seven-field `CALIB-TOTAL` grammar above is unchanged for a default run.
+- `bridge_prompts` — a per-RUN atom on the `CALIB-TOTAL` line only: how many
+  permission escalations the run raised through the `PermissionRequest` bridge
+  (#1421, see Permission bridge above). `0` when the queue dir is absent or
+  empty. Only requests written after the run started are counted — the queue dir
+  is not cleaned between runs. Like `bexec` it is appended rather than being a
+  grammar field, so the `CALIB-TOTAL` grammar above is unchanged.
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
   there to answer), `timeout` (the wall-clock ceiling killed it), or
