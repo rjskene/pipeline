@@ -84,6 +84,7 @@ A guard that passes is not evidence until you have seen it fail on something.
 
 2. **Fetch the PR number and diff:**
    ```bash
+   ISSUE=<N>          # this skill's issue argument — consumed by Step 11.2's gate call
    BRANCH=$(git rev-parse --abbrev-ref HEAD)
    PR_NUM=$(gh pr list --repo $PIPELINE_REPO --head "$BRANCH" --json number --jq '.[0].number')
    gh pr diff $PR_NUM --repo $PIPELINE_REPO
