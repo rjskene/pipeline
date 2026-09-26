@@ -99,6 +99,10 @@ chmod +x "$HARNESS/scripts/doctor.sh"
 # PreToolUse guard hooks, a Stop guard (enforce-ci-wait.py), and the
 # SessionStart + UserPromptSubmit doctor-on-update.sh hooks that --hooks off
 # must leave alone (the issue names BOTH non-guard events, so both are pinned).
+# PermissionRequest (#1421) is pinned here for the same reason: the bridge is
+# the headless DENY RAIL, not a guard, so arm 2 of the hook-necessity
+# experiment must not strip it — stripping it would confound the arm by also
+# removing the only way a headless run can be granted an escalation.
 mkdir -p "$HARNESS/.claude-plugin"
 cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
 {
@@ -116,6 +120,9 @@ cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
     ],
     "UserPromptSubmit": [
       {"matcher": "*", "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/doctor-on-update.sh"}]}
+    ],
+    "PermissionRequest": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/permission-bridge.py", "timeout": 900}]}
     ]
   }
 }
@@ -1784,6 +1791,16 @@ if jq -e '[.hooks.UserPromptSubmit[]?.hooks[]?.command // "" | select(contains("
   pass_msg "--hooks off keeps the UserPromptSubmit doctor-on-update hook"
 else
   fail_msg "--hooks off must keep the UserPromptSubmit doctor-on-update hook"
+fi
+# #1421: the permission bridge is the headless deny RAIL, not a guard.
+# strip_guard_hooks() only rewrites .hooks.PreToolUse and .hooks.Stop, so this
+# survives by construction — pinned so a future "strip everything" refactor
+# cannot silently remove the only channel a headless run has for an escalation.
+if jq -e '[.hooks.PermissionRequest[]?.hooks[]?.command // "" | select(contains("permission-bridge.py"))] | length == 1' \
+     "$STAGED_MANIFEST" >/dev/null 2>&1; then
+  pass_msg "--hooks off keeps the PermissionRequest bridge hook (a deny rail, not a guard)"
+else
+  fail_msg "--hooks off must keep the PermissionRequest bridge hook — stripping the deny rail confounds the arm"
 fi
 HARNESS_MANIFEST_AFTER="$(cat "$HARNESS/.claude-plugin/plugin.json")"
 if [ "$HARNESS_MANIFEST_AFTER" = "$HARNESS_MANIFEST_BEFORE" ]; then

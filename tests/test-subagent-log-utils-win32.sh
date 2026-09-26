@@ -96,9 +96,15 @@ echo "Task 3: all subagent_log_utils importers stay win32 import-clean"
 
 # _deny_log (#1352) consumes subagent_log_utils.append_locked, so it joins the
 # win32 import-cleanliness sweep alongside the guard hooks that call it.
+# permission-bridge (#1421) imports read_event_stdin too. It is also the one
+# entry whose top-level main() RUNS here rather than just importing — with
+# PIPELINE_PERMISSION_BRIDGE_DIR unset it returns 0 BEFORE touching stdin,
+# so exec_module raises SystemExit(0) and the sweep sees rc 0. If that
+# inertness gate ever moves below the stdin read, this entry hangs on the
+# inherited stdin (SIGALRM is deleted here) — which is the regression to catch.
 HOOKS=(enforce-comment-trust enforce-base-branch restrict_paths block_deletions \
        log_subagent enforce-ci-wait check-ci-skip-markers enforce-path-c-delegation \
-       capture_agent_cost _deny_log)
+       capture_agent_cost _deny_log permission-bridge)
 for h in "${HOOKS[@]}"; do
   if python3 -c "
 import sys, signal

@@ -20,6 +20,16 @@ assert "agents[0] points at an existing file under plugin root" "python3 -c 'imp
 assert "referenced agent file has name: tdd-implementer" "python3 -c 'import json,os,sys,re; m=json.load(open(\"$MANIFEST\")); p=m.get(\"agents\",[None])[0]; t=open(os.path.join(\"$REPO_ROOT\",p)).read() if p else \"\"; sys.exit(0 if re.search(r\"(?m)^name:\\s*tdd-implementer\\s*\$\", t) else 1)' 2>/dev/null"
 assert "hooks is an object" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\"); sys.exit(0 if isinstance(h,dict) else 1)' 2>/dev/null"
 assert "hooks.PreToolUse is a non-empty array" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}).get(\"PreToolUse\"); sys.exit(0 if isinstance(h,list) and h else 1)' 2>/dev/null"
+# #1421 — the headless permission bridge. matcher `*` (any tool can escalate),
+# and `timeout: 900` because the hook BLOCKS polling for an operator answer:
+# the bridge's own deadline (PIPELINE_PERMISSION_BRIDGE_TIMEOUT, default 840 s)
+# must resolve INSIDE the harness timeout, or the hook is killed mid-poll with
+# no envelope on stdout and the session gets no decision at all.
+assert "hooks.PermissionRequest is a non-empty array" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}).get(\"PermissionRequest\"); sys.exit(0 if isinstance(h,list) and h else 1)' 2>/dev/null"
+assert "hooks.PermissionRequest has exactly one entry with matcher '*'" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\"))[\"hooks\"][\"PermissionRequest\"]; sys.exit(0 if len(h)==1 and h[0].get(\"matcher\")==\"*\" else 1)' 2>/dev/null"
+assert "the PermissionRequest hook runs python3 \${CLAUDE_PLUGIN_ROOT}/hooks/permission-bridge.py" "python3 -c 'import json,sys; hs=json.load(open(\"$MANIFEST\"))[\"hooks\"][\"PermissionRequest\"][0][\"hooks\"]; sys.exit(0 if len(hs)==1 and hs[0].get(\"type\")==\"command\" and hs[0].get(\"command\")==\"python3 \${CLAUDE_PLUGIN_ROOT}/hooks/permission-bridge.py\" else 1)' 2>/dev/null"
+assert "the PermissionRequest hook declares timeout 900" "python3 -c 'import json,sys; hs=json.load(open(\"$MANIFEST\"))[\"hooks\"][\"PermissionRequest\"][0][\"hooks\"]; sys.exit(0 if hs[0].get(\"timeout\")==900 else 1)' 2>/dev/null"
+assert "the PermissionRequest hook file exists under plugin root" "[ -f '$REPO_ROOT/hooks/permission-bridge.py' ]"
 assert "hooks.PostToolUse is absent (consumer install ships no log-* hooks)" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}); sys.exit(0 if \"PostToolUse\" not in h else 1)' 2>/dev/null"
 # Skills are auto-discovered from ${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md;
 # the manifest must NOT enumerate them (presence of a top-level `skills` field
