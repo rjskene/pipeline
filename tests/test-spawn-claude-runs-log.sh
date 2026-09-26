@@ -167,6 +167,89 @@ else
 fi
 
 # -------------------------------------------------------------------------
+# Test 8: the --dangerously-skip-permissions flag resolves through
+#         PIPELINE_HEADLESS_PERMISSIONS (issue #1421)
+# -------------------------------------------------------------------------
+# spawn-claude.sh keeps the flag NAME (run-queue.sh:69,110 pass it verbatim and
+# need no change) but the flag now means "apply the headless permission policy",
+# resolved by PIPELINE_HEADLESS_PERMISSIONS:
+#   auto (default) -> --permission-mode auto --permission-prompts none, plus the
+#                     bridge dir exported so the PermissionRequest hook is armed
+#   bypass         -> the old --dangerously-skip-permissions, no bridge dir
+# The bridge dir is the MAIN repo's, never the per-issue worktree: the worktree
+# is the CHILD's cwd, and the operator's session watches the main repo.
+# One `CLAUDE_ARGV+=(<tok>)` LINE PER TOKEN — a single line cannot hold two
+# tokens, which is why the old single-string SKIP_PERMS had to become an array.
+run_dryrun_perms() { # <extra-env-assignment...> -- runs WITH the flag
+  local perms="$1" issue="$2"
+  cd "$PROJ"
+  PATH="$STUB_DIR:$PATH" \
+    STUB_LABELS="" \
+    PIPELINE_SPAWN_DRY_RUN=1 \
+    PIPELINE_LOGS_ENABLED=true \
+    PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
+    PIPELINE_HEADLESS_PERMISSIONS="$perms" \
+    bash .claude/scripts/spawn-claude.sh --dangerously-skip-permissions \
+      "$PROJ/worktree" "$issue" slug tmux 2>/dev/null
+  cd - >/dev/null
+}
+build_block_of() { sed -n '/^=== BUILD_ARGV ===$/,/^=== END BUILD_ARGV ===$/p'; }
+
+echo "Test 8: default (auto) arm emits the permission-mode pair + bridge dir"
+: > "$RUNS_LOG"
+BLOCK_AUTO="$(run_dryrun_perms "" 910 | build_block_of)"
+for want in 'CLAUDE_ARGV+=(--permission-mode)' 'CLAUDE_ARGV+=(auto)' \
+            'CLAUDE_ARGV+=(--permission-prompts)' 'CLAUDE_ARGV+=(none)' \
+            "export PIPELINE_PERMISSION_BRIDGE_DIR=$PROJ/.claude/scratch/permission-queue"; do
+  inc
+  if grep -qF -- "$want" <<<"$BLOCK_AUTO"; then
+    pass_msg "auto arm emits: $want"
+  else
+    fail_msg "auto arm is missing: $want"
+  fi
+done
+inc
+if grep -qF -- '--dangerously-skip-permissions' <<<"$BLOCK_AUTO"; then
+  fail_msg "the auto arm still emits --dangerously-skip-permissions"
+else
+  pass_msg "the auto arm emits NO --dangerously-skip-permissions"
+fi
+
+echo "Test 9: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old flag only"
+: > "$RUNS_LOG"
+BLOCK_BYPASS="$(run_dryrun_perms bypass 911 | build_block_of)"
+inc
+if grep -qF -- 'CLAUDE_ARGV+=(--dangerously-skip-permissions)' <<<"$BLOCK_BYPASS"; then
+  pass_msg "bypass arm emits --dangerously-skip-permissions"
+else
+  fail_msg "bypass arm must emit --dangerously-skip-permissions"
+fi
+for unwanted in '--permission-mode' '--permission-prompts' 'PIPELINE_PERMISSION_BRIDGE_DIR'; do
+  inc
+  if grep -qF -- "$unwanted" <<<"$BLOCK_BYPASS"; then
+    fail_msg "bypass arm must NOT emit: $unwanted"
+  else
+    pass_msg "bypass arm emits no $unwanted"
+  fi
+done
+
+echo "Test 10: with NO permission flag, neither rail is emitted"
+# run-queue.sh only passes the flag on the --skip-permissions / --ci-fix paths.
+# A spawn without it must keep today's behaviour exactly — normal prompting —
+# or every interactive tmux spawn silently inherits a headless policy.
+: > "$RUNS_LOG"
+BLOCK_NOFLAG="$(run_dryrun "" 912 | build_block_of)"
+for unwanted in '--permission-mode' '--permission-prompts' \
+                '--dangerously-skip-permissions' 'PIPELINE_PERMISSION_BRIDGE_DIR'; do
+  inc
+  if grep -qF -- "$unwanted" <<<"$BLOCK_NOFLAG"; then
+    fail_msg "a flagless spawn must NOT emit: $unwanted"
+  else
+    pass_msg "a flagless spawn emits no $unwanted"
+  fi
+done
+
+# -------------------------------------------------------------------------
 # Test 7: --session-id injected into CLAUDE_ARGV with UUID interpolated
 # -------------------------------------------------------------------------
 # The dry-run block dumps the rendered BUILD_ARGV; it should contain the

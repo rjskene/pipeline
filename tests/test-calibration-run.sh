@@ -255,6 +255,7 @@ run_helper() {
         PIPELINE_CALIB_DIR="$SANDBOX" \
         PIPELINE_CALIB_REMOTE="$REMOTE" \
         PIPELINE_CALIB_ISSUE_IDS="8001 8002 8003 8004 8005" \
+        PIPELINE_HEADLESS_PERMISSIONS="${CALIB_TEST_HEADLESS_PERMS:-}" \
         GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
         GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
         timeout 20 bash "$HELPER" "$@" 2>&1)"
@@ -361,7 +362,18 @@ done
 # plugin dir anywhere else is unreadable from inside the run.
 expect_sub "launch line passes --plugin-dir <staged harness>" "$LAUNCH" "--plugin-dir $STAGE"
 expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<staged harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$STAGE"
-expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dangerously-skip-permissions"
+# #1421: the headless rail is no longer "grant everything unseen". The launch
+# runs under the operator-owned permission mode with the PermissionRequest
+# bridge as the escalation channel, and the bridge dir is exported so the hook
+# is armed. It points at $HARNESS, NOT $LAUNCH_HARNESS: the stage is refreshed
+# by `checkout --force --detach` every run, and it is not the directory the
+# operator's interactive session is sitting in.
+refute_sub "launch line no longer passes --dangerously-skip-permissions" \
+  "$LAUNCH" "--dangerously-skip-permissions"
+expect_sub "launch line passes --permission-mode auto" "$LAUNCH" "--permission-mode auto"
+expect_sub "launch line passes --permission-prompts none" "$LAUNCH" "--permission-prompts none"
+expect_sub "launch line arms the permission bridge in the LAUNCHING repo" \
+  "$LAUNCH" "PIPELINE_PERMISSION_BRIDGE_DIR=$HARNESS/.claude/scratch/permission-queue"
 # The loop session that drives this script exports ALLOW_ORCHESTRATOR_EDIT;
 # inheriting it would disable the delegation hook inside the very run being
 # measured, so the launch strips it back out.
@@ -396,6 +408,20 @@ expect_sub "--executor-model opus previews the PIPELINE_PATH_B_MODEL_EXECUTE tok
   "$LAUNCH_BEXEC" "PIPELINE_PATH_B_MODEL_EXECUTE=opus"
 expect_sub "--executor-model opus is named in the dry-run preview" "$LAUNCH_BEXEC" "bexec=opus"
 
+# #1421 escape hatch: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old
+# flag for one run and exports NO bridge dir, so an unattended launch with no
+# operator watching the queue cannot stall 840 s per escalation.
+rm -f "$CALLS"
+CALIB_TEST_HEADLESS_PERMS=bypass run_helper --dry-run --harness "$HARNESS"
+LAUNCH_BYPASS="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "bypass restores --dangerously-skip-permissions" \
+  "$LAUNCH_BYPASS" "--dangerously-skip-permissions"
+refute_sub "bypass passes no --permission-mode auto" "$LAUNCH_BYPASS" "--permission-mode auto"
+refute_sub "bypass passes no --permission-prompts none" "$LAUNCH_BYPASS" "--permission-prompts none"
+refute_sub "bypass exports no bridge dir" "$LAUNCH_BYPASS" "PIPELINE_PERMISSION_BRIDGE_DIR="
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS"
 if [ -s "$CALLS" ]; then
   fail_msg "--dry-run made a network / launch call: $(tr '\n' ';' < "$CALLS")"
 else

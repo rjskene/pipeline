@@ -302,12 +302,30 @@ build_launch() {
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
   # `${scrub[@]}` comes FIRST so every inherited PIPELINE_* is unset before the
   # explicit sets below run (#1390).
+  # #1421: the headless rail is the operator-owned permission mode plus the
+  # PermissionRequest bridge, not "grant everything unseen".
+  #   auto (default) -> `--permission-mode auto --permission-prompts none` and an
+  #                     exported bridge dir, so an escalation is QUEUED for the
+  #                     operator instead of denied outright or granted blind.
+  #   bypass         -> the old flag, no bridge dir: the one-run escape hatch for
+  #                     a launch nobody is watching.
+  # The queue dir is $HARNESS, NOT $LAUNCH_HARNESS: the stage is refreshed by
+  # `checkout --force --detach` every run, and it is not where the operator's
+  # interactive session is sitting. It is spliced AFTER "${scrub[@]}" (which
+  # `-u`s every inherited PIPELINE_*, #1390), so the explicit set wins.
+  local -a perm_argv bridge_env=()
+  case "${PIPELINE_HEADLESS_PERMISSIONS:-auto}" in
+    bypass) perm_argv=(--dangerously-skip-permissions) ;;
+    *)      perm_argv=(--permission-mode auto --permission-prompts none)
+            bridge_env=("PIPELINE_PERMISSION_BRIDGE_DIR=$HARNESS/.claude/scratch/permission-queue") ;;
+  esac
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" PIPELINE_HEADLESS=true
+          "${bridge_env[@]}"
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
-          --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" --dangerously-skip-permissions)
+          --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" "${perm_argv[@]}")
 }
 
 # ---------------------------------------------------------------------------

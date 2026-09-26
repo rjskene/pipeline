@@ -274,6 +274,7 @@ run_helper() {
         EVOLVE_LOOP_SLEEP_CMD="$STUB_BIN/fake-sleep" \
         EVOLVE_LOOP_RUN_RETRO="$STUB_BIN/fake-run-retro" \
         PIPELINE_REPO="rjskene/pipeline" \
+        PIPELINE_HEADLESS_PERMISSIONS="${EVOLVE_TEST_HEADLESS_PERMS:-}" \
         ALLOW_ORCHESTRATOR_EDIT="true" \
         timeout 20 bash "$HELPER" "$@" 2>&1)"
   RC=$?
@@ -329,7 +330,24 @@ expect_sub "launch line marks the session headless" "$OUT" "PIPELINE_HEADLESS=tr
 expect_sub "launch line disables the print-mode background wait ceiling" "$OUT" "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0"
 expect_sub "launch line runs claude in print mode" "$OUT" "claude -p"
 expect_sub "launch line points --plugin-dir at the clone" "$OUT" "--plugin-dir $ROOT"
-expect_sub "launch line skips permission prompts" "$OUT" "--dangerously-skip-permissions"
+# #1421: the loop launch runs under the operator-owned permission mode with the
+# PermissionRequest bridge as the escalation channel, and arms the bridge dir in
+# the CLONE (the repo the operator's session is sitting in), not the worktree.
+refute_sub "launch line no longer skips permission prompts" "$OUT" "--dangerously-skip-permissions"
+expect_sub "launch line passes --permission-mode auto" "$OUT" "--permission-mode auto"
+expect_sub "launch line passes --permission-prompts none" "$OUT" "--permission-prompts none"
+expect_sub "launch line arms the permission bridge in the clone" \
+  "$OUT" "PIPELINE_PERMISSION_BRIDGE_DIR=$ROOT/.claude/scratch/permission-queue"
+
+# #1421 escape hatch: an unattended detached loop has no watcher by
+# construction, so `bypass` has to restore the old flag and export nothing.
+OUT_AUTO="$OUT"
+EVOLVE_TEST_HEADLESS_PERMS=bypass run_helper --dry-run --tracker "$TRACKER_N"
+expect_sub "bypass restores --dangerously-skip-permissions" "$OUT" "--dangerously-skip-permissions"
+refute_sub "bypass passes no --permission-mode auto" "$OUT" "--permission-mode auto"
+refute_sub "bypass passes no --permission-prompts none" "$OUT" "--permission-prompts none"
+refute_sub "bypass exports no bridge dir" "$OUT" "PIPELINE_PERMISSION_BRIDGE_DIR="
+OUT="$OUT_AUTO"
 
 if [ -s "$CALLS" ]; then
   fail_msg "--dry-run made no gh/claude call (call log: $(tr '\n' '|' < "$CALLS"))"

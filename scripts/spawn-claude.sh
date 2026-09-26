@@ -31,7 +31,12 @@ fi
 #         "tmux"               — tmux window with auto-fire /pipeline:execute-issue-plan
 #         "remote-control"     — remote-control server (control from mobile app / claude.ai/code)
 
-SKIP_PERMS=""
+# --dangerously-skip-permissions is now a POLICY REQUEST, not a literal flag
+# (#1421). Callers keep passing the same argument name — run-queue.sh:69 and
+# :110 are unchanged — but what it resolves to is decided by
+# PIPELINE_HEADLESS_PERMISSIONS below. A spawn WITHOUT the flag is untouched:
+# normal interactive prompting, exactly as before.
+PERMS_REQUESTED=0
 SKILL="execute-issue-plan"
 MANUAL_MERGE_ARG=""
 EXTRA_CLAUDE_ARGV=()
@@ -48,7 +53,7 @@ EXTRA_CLAUDE_ARGV=()
 # into the final CLAUDE_ARGV.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dangerously-skip-permissions) SKIP_PERMS="--dangerously-skip-permissions"; shift ;;
+    --dangerously-skip-permissions) PERMS_REQUESTED=1; shift ;;
     --skill) SKILL="$2"; shift 2 ;;
     --manual-merge) MANUAL_MERGE_ARG="--manual-merge"; shift ;;
     --classifier-passthrough=*) EXTRA_CLAUDE_ARGV+=("${1#--classifier-passthrough=}"); shift ;;
@@ -384,6 +389,42 @@ fi
 # EXTRA_CLAUDE_ARGV holds tokens forwarded from the pre-spawn classifier via
 # --classifier-passthrough=<token>; they are appended verbatim.
 _launch_cmd_quoted="claude"
+# --- Headless permission policy (issue #1421) -------------------------------
+# PIPELINE_HEADLESS_PERMISSIONS decides what the --dangerously-skip-permissions
+# ARGUMENT resolves to:
+#   auto (default) -> `--permission-mode auto --permission-prompts none` plus an
+#                     exported PIPELINE_PERMISSION_BRIDGE_DIR, which arms the
+#                     PermissionRequest bridge hook: an escalation is queued for
+#                     an operator to answer instead of being granted unseen.
+#   bypass         -> the old `--dangerously-skip-permissions`, no bridge dir.
+#                     The escape hatch for PATH C `--spawn` executors and
+#                     run-queue.sh --ci-fix, which run with nobody watching the
+#                     queue and would otherwise stall the bridge timeout per
+#                     unanswered escalation.
+# The queue dir is the MAIN repo's ($REPO_ROOT), never the per-issue worktree:
+# the worktree is the CHILD's cwd, while the operator's interactive session is
+# sitting in the main repo. Resolved HERE, not inside BUILD_ARGV, because
+# BUILD_ARGV executes with cwd=<worktree> — a `$(pwd)` in there would name the
+# wrong directory.
+# One `CLAUDE_ARGV+=(<tok>)` LINE PER TOKEN, mirroring _extra_argv_lines: the
+# old single-string SKIP_PERMS could not hold the two-token flag pair at all.
+PERM_ARGV=()
+_bridge_export_line=""
+if [ "$PERMS_REQUESTED" = "1" ]; then
+  case "${PIPELINE_HEADLESS_PERMISSIONS:-auto}" in
+    bypass)
+      PERM_ARGV=(--dangerously-skip-permissions)
+      ;;
+    *)
+      PERM_ARGV=(--permission-mode auto --permission-prompts none)
+      _bridge_export_line="export PIPELINE_PERMISSION_BRIDGE_DIR=$(printf '%q' "$REPO_ROOT/.claude/scratch/permission-queue")"$'\n'
+      ;;
+  esac
+fi
+_perm_argv_lines=""
+for tok in ${PERM_ARGV[@]+"${PERM_ARGV[@]}"}; do
+  _perm_argv_lines+="CLAUDE_ARGV+=($(printf '%q' "$tok"))"$'\n'
+done
 # One `CLAUDE_ARGV+=(<tok>)` line per classifier-passthrough token.
 _extra_argv_lines=""
 for tok in ${EXTRA_CLAUDE_ARGV[@]+"${EXTRA_CLAUDE_ARGV[@]}"}; do
@@ -397,8 +438,7 @@ done
 BUILD_ARGV='
 declare -a CLAUDE_ARGV
 declare -a LAUNCH_CMD=('"$_launch_cmd_quoted"')
-[ -n "'"$SKIP_PERMS"'" ] && CLAUDE_ARGV+=("'"$SKIP_PERMS"'")
-# Surface session metadata to in-session hooks (e.g. enforce-path-c-delegation.py).
+'"$_perm_argv_lines$_bridge_export_line"'# Surface session metadata to in-session hooks (e.g. enforce-path-c-delegation.py).
 # Both vars are inherited by the claude CLI and by any hook subprocess it spawns.
 export CLAUDE_PIPELINE_ISSUE_NUMBER='"$ISSUE_NUM"'
 export CLAUDE_PIPELINE_SKILL='"$SKILL"'

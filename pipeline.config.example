@@ -553,4 +553,36 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # sourced at the read site (${PIPELINE_HEADLESS:-false}); uncomment to override.
 #PIPELINE_HEADLESS="false"
 
+# --- Headless permission bridge (issue #1421) ---
+#
+# Headless (`claude -p`) launches no longer pass --dangerously-skip-permissions.
+# They run under `--permission-mode auto --permission-prompts none` with the
+# PermissionRequest bridge hook (hooks/permission-bridge.py) as the escalation
+# channel: an escalated tool call is written to a queue dir, the session blocks,
+# and the operator answers it with
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh pending
+#   bash ${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh answer <id> allow|deny [msg]
+# See "## 15. Headless permission bridge" in docs/operational-notes.md.
+#
+# "auto" (default) = the bridge rail. "bypass" = the old
+# --dangerously-skip-permissions flag with NO bridge, for a launch nobody is
+# watching (a detached evolve loop, PATH C --spawn executors, run-queue.sh
+# --ci-fix). Default single-sourced at each read site
+# (${PIPELINE_HEADLESS_PERMISSIONS:-auto}); uncomment to override.
+#PIPELINE_HEADLESS_PERMISSIONS="auto"
+
+# Queue dir the bridge hook writes requests to. Normally left EMPTY: each
+# launcher exports it per run, pointing at the LAUNCHING repo's
+# .claude/scratch/permission-queue (gitignored, on the pipeline runtime
+# allow-list). The hook is fully INERT when this is unset, which is what makes
+# the matcher-`*` registration safe in interactive sessions.
+#PIPELINE_PERMISSION_BRIDGE_DIR=""
+
+# Seconds the bridge waits for an operator answer before denying the call with a
+# skip-and-continue message. Must stay UNDER the 900 s hook timeout declared in
+# .claude-plugin/plugin.json, or the hook is killed mid-poll and the session gets
+# no decision at all. Default 840, single-sourced at the read site; uncomment to
+# override.
+#PIPELINE_PERMISSION_BRIDGE_TIMEOUT="840"
+
 set +a  # stop auto-exporting (issue #801 — pairs with the `set -a` above; MUST stay the last line: knobs appended below it are never exported)
