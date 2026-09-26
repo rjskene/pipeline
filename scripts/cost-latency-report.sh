@@ -80,10 +80,11 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
   --emit-rows-json     Debug: emit the per-issue rows as a JSON array to
                        stdout instead of the formatted tables.
   --emit-pricing-json  Debug: emit aggregate pricing as JSON
-                       {priced_cost_usd, unpriced_count} and exit. Prices each
-                       capture record from per-model rate env vars (Opus default
-                       fallback); model=="" records are UNPRICED (excluded from
-                       the $ total, counted separately). See PRICING below.
+                       {priced_cost_usd, unpriced_count, fallback_priced_count}
+                       and exit. Prices each capture record from per-model rate
+                       env vars (Opus 4.8 default fallback, WARNs on stderr);
+                       model=="" records are UNPRICED (excluded from the $
+                       total, counted separately). See PRICING below.
   --tokenomics         Emit ADDITIONAL cost-analysis tables (per-bucket
                        token-share vs cost-share, per-stage cost, spawn vs
                        in-session structure + stage×structure cross-tab, and a
@@ -415,12 +416,11 @@ has_block() {
 # "claude-opus-4-8" → "CLAUDE_OPUS_4_8"). The script runs after pipeline.config
 # is sourced by the skill, so these are ambient env; in fixture/test mode they
 # are typically unset and the per-model baked DEFAULT list price applies per
-# bucket (per 1M tokens, #733):
-#   Opus 4.8:   input 15, output 75, cache_creation 18.75, cache_read 1.50
-#   Sonnet 4.6: input  3, output 15, cache_creation  3.75, cache_read 0.30
-#   Haiku 4.5:  input  1, output  5, cache_creation  1.25, cache_read 0.10
-# An UNKNOWN model falls back EXPLICITLY to the Opus rates — a conservative
-# upper-bound over-estimate (better than under-counting an unrecognized model).
+# bucket (per 1M tokens; see price_default() for the full table + source).
+# An UNKNOWN model falls back EXPLICITLY to the Opus 4.8 rates and WARNs on
+# stderr once per distinct unknown model per invocation (#1416) — see
+# price_check_row(). --emit-pricing-json reports how many rows were priced
+# this way in fallback_priced_count, alongside unpriced_count.
 #
 # Cost(record) = Σ_bucket (tokens_bucket / 1e6 * rate_bucket), summed across
 # records for aggregates. Records with model=="" (or model absent) are UNPRICED
@@ -434,15 +434,39 @@ price_model_normalize() {
 
 # price_default <normalized-model> <BUCKET> — echo the baked per-1M list-price
 # default for (model, bucket). Known models price at their own published rates;
-# unknown models fall back EXPLICITLY to Opus (conservative upper bound).
-# BUCKET is one of INPUT|OUTPUT|CACHE_CREATION|CACHE_READ.
+# unknown models fall back EXPLICITLY to Opus 4.8. BUCKET is one of
+# INPUT|OUTPUT|CACHE_CREATION|CACHE_READ.
+#
+# Source: https://platform.claude.com/docs/en/about-claude/pricing (retrieved
+# 2026-09-26) "Model pricing" table. CACHE_CREATION is the 5m cache writes
+# column; CACHE_READ is the Cache hits and refreshes column. USD per 1M tokens.
 price_default() {
   local norm="$1" bucket="$2"
   case "$norm" in
+    # #1416: corrected from 15/75/18.75/1.50, which were the RETIRED Claude
+    # Opus 4.1 rates, not Opus 4.8 — a 3x overstatement on the dominant model
+    # in the capture stream.
     CLAUDE_OPUS_4_8)
       case "$bucket" in
-        INPUT) printf '15' ;; OUTPUT) printf '75' ;;
-        CACHE_CREATION) printf '18.75' ;; CACHE_READ) printf '1.50' ;;
+        INPUT) printf '5' ;; OUTPUT) printf '25' ;;
+        CACHE_CREATION) printf '6.25' ;; CACHE_READ) printf '0.50' ;;
+      esac ;;
+    CLAUDE_OPUS_5)
+      case "$bucket" in
+        INPUT) printf '5' ;; OUTPUT) printf '25' ;;
+        CACHE_CREATION) printf '6.25' ;; CACHE_READ) printf '0.50' ;;
+      esac ;;
+    CLAUDE_SONNET_5)
+      case "$bucket" in
+        INPUT) printf '2' ;; OUTPUT) printf '10' ;;
+        CACHE_CREATION) printf '2.50' ;; CACHE_READ) printf '0.20' ;;
+      esac ;;
+    # Fable 5.1's cache read is a NON-STANDARD 0.025x base input (0.25), not
+    # the usual 0.1x — do not "fix" this to 1.00, it is correct per source.
+    CLAUDE_FABLE_5_1)
+      case "$bucket" in
+        INPUT) printf '10' ;; OUTPUT) printf '50' ;;
+        CACHE_CREATION) printf '12.50' ;; CACHE_READ) printf '0.25' ;;
       esac ;;
     CLAUDE_SONNET_4_6)
       case "$bucket" in
@@ -465,12 +489,79 @@ price_default() {
         CACHE_CREATION) printf '12.50' ;; CACHE_READ) printf '1.00' ;;
       esac ;;
     *)
-      # conservative upper-bound fallback for unknown models: Opus rates.
+      # Fallback for unknown models: Opus 4.8 rates. #1416 — after the Opus
+      # 4.8 correction above this is no longer a conservative upper bound
+      # (Fable prices higher on every bucket); it is a mid-tier default that
+      # MUST be surfaced to the operator, which is what price_check_row()'s
+      # stderr WARN + the fallback_priced_count field exist for.
       case "$bucket" in
-        INPUT) printf '15' ;; OUTPUT) printf '75' ;;
-        CACHE_CREATION) printf '18.75' ;; CACHE_READ) printf '1.50' ;;
+        INPUT) printf '5' ;; OUTPUT) printf '25' ;;
+        CACHE_CREATION) printf '6.25' ;; CACHE_READ) printf '0.50' ;;
       esac ;;
   esac
+}
+
+# price_is_known <normalized-model> — true (rc 0) iff <normalized-model> has
+# its own case in price_default() (i.e. would NOT hit the `*` fallback arm).
+price_is_known() {
+  case "$1" in
+    CLAUDE_OPUS_4_8|CLAUDE_OPUS_5|CLAUDE_SONNET_5|CLAUDE_FABLE_5_1|CLAUDE_SONNET_4_6|CLAUDE_HAIKU_4_5|CLAUDE_FABLE_5)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
+# price_has_full_override <normalized-model> — true (rc 0) iff ALL FOUR
+# PIPELINE_PRICE_<normalized-model>_<BUCKET> env vars are set (non-empty).
+price_has_full_override() {
+  local norm="$1" bucket var
+  for bucket in INPUT OUTPUT CACHE_CREATION CACHE_READ; do
+    var="PIPELINE_PRICE_${norm}_${bucket}"
+    [ -n "${!var:-}" ] || return 1
+  done
+  return 0
+}
+
+# price_uses_fallback <normalized-model> — true (rc 0) iff this model will be
+# priced via price_default()'s unknown-model `*` fallback arm (i.e. it is NOT
+# a known model AND does not carry a full explicit override for all 4 buckets).
+price_uses_fallback() {
+  local norm="$1"
+  price_is_known "$norm" && return 1
+  price_has_full_override "$norm" && return 1
+  return 0
+}
+
+# Process-level dedup set for price_check_row()'s stderr WARN — keyed on the
+# RAW (un-normalized) model string, so the WARN fires once per distinct
+# unknown model per invocation even though every pricing loop below calls it.
+declare -A _PRICE_WARNED_MODELS=()
+# Set by price_check_row() on every call: 1 if the row it just checked is
+# fallback-priced, else 0. Callers that need a per-row fallback count (e.g.
+# compute_pricing) read this immediately after calling price_check_row.
+_PRICE_LAST_FALLBACK=0
+
+# price_check_row <normalized-model> <raw-model> — call ONCE per capture
+# record (not per bucket) from each pricing loop, right after computing
+# <normalized-model>, before the per-bucket price_rate calls. Sets
+# $_PRICE_LAST_FALLBACK to 1 if this row will be fallback-priced, else 0.
+# Side effect: the FIRST time a given <raw-model> is seen as fallback-priced
+# in this process, emits one WARN line to stderr (#1416).
+#
+# MUST be called directly (not inside a `$(...)` command substitution) so the
+# _PRICE_WARNED_MODELS mutation persists across loop iterations / callers.
+price_check_row() {
+  local norm="$1" raw="$2"
+  if price_uses_fallback "$norm"; then
+    _PRICE_LAST_FALLBACK=1
+    if [ -z "${_PRICE_WARNED_MODELS[$raw]:-}" ]; then
+      _PRICE_WARNED_MODELS[$raw]=1
+      printf 'WARN: no price for model %s — using Opus-4.8 rates\n' "$raw" >&2
+    fi
+  else
+    _PRICE_LAST_FALLBACK=0
+  fi
 }
 
 # price_rate <normalized-model> <BUCKET> — echo the configured per-1M rate for
@@ -487,11 +578,14 @@ price_rate() {
   fi
 }
 
-# compute_pricing — read CAPTURE_JSON, return "<priced_cost_usd> <unpriced_count>"
-# (space-separated). priced_cost_usd is formatted to 2 decimals. Unpriced
-# (model=="" or absent) records are excluded from the cost but counted.
+# compute_pricing — read CAPTURE_JSON, return
+# "<priced_cost_usd> <unpriced_count> <fallback_priced_count>" (space-
+# separated). priced_cost_usd is formatted to 2 decimals. Unpriced (model==""
+# or absent) records are excluded from the cost but counted. fallback_priced_count
+# counts PRICED rows whose model was unknown and priced via the Opus-4.8
+# fallback (#1416) — an explicit PIPELINE_PRICE_* override never counts here.
 compute_pricing() {
-  local total="0" unpriced=0
+  local total="0" unpriced=0 fallback=0
   local line model norm
   local r_in r_out r_cc r_cr
   # Iterate one record per line so per-record model lookup + ${!var} indirection
@@ -504,6 +598,8 @@ compute_pricing() {
       continue
     fi
     norm="$(price_model_normalize "$model")"
+    price_check_row "$norm" "$model"
+    fallback=$((fallback + _PRICE_LAST_FALLBACK))
     r_in="$(price_rate "$norm" INPUT)"
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
@@ -514,7 +610,7 @@ compute_pricing() {
           { t += ($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr }
           END { printf "%.10f", t }')"
   done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
-  printf '%s %s' "$(awk -v t="$total" 'BEGIN { printf "%.2f", t }')" "$unpriced"
+  printf '%s %s %s' "$(awk -v t="$total" 'BEGIN { printf "%.2f", t }')" "$unpriced" "$fallback"
 }
 
 # priced_records_tsv — emit one TSV line per PRICED capture record (model!=""):
@@ -535,6 +631,7 @@ priced_records_tsv() {
       continue
     fi
     norm="$(price_model_normalize "$model")"
+    price_check_row "$norm" "$model"
     r_in="$(price_rate "$norm" INPUT)"
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
@@ -569,6 +666,7 @@ priced_issue_stage_cost_tsv() {
       continue
     fi
     norm="$(price_model_normalize "$model")"
+    price_check_row "$norm" "$model"
     r_in="$(price_rate "$norm" INPUT)"
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
@@ -610,6 +708,7 @@ priced_day_cost_tsv() {
       continue
     fi
     norm="$(price_model_normalize "$model")"
+    price_check_row "$norm" "$model"
     r_in="$(price_rate "$norm" INPUT)"
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
@@ -650,6 +749,7 @@ priced_day_bucket_cost_tsv() {
   while IFS= read -r model; do
     [ -z "$model" ] && continue
     norm="$(price_model_normalize "$model")"
+    price_check_row "$norm" "$model"
     r_in="$(price_rate "$norm" INPUT)"
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"
@@ -682,8 +782,11 @@ priced_day_bucket_cost_tsv() {
           ri[f[1]] = f[2]; ro[f[1]] = f[3]; rcc[f[1]] = f[4]; rcr[f[1]] = f[5]
         }
       }
-      # Opus-rate fallback (conservative upper bound for unknown models).
-      OPU_RI="15"; OPU_RO="75"; OPU_RCC="18.75"; OPU_RCR="1.50"
+      # Opus 4.8-rate fallback (#1416; mirrors price_default() unknown-model arm).
+      # Defensive only: Step 1 above already calls price_rate() for every
+      # distinct model in CAPTURE_JSON, so every model should already be a key
+      # in ri[]/ro[]/rcc[]/rcr[] by the time this branch is reached.
+      OPU_RI="5"; OPU_RO="25"; OPU_RCC="6.25"; OPU_RCR="0.50"
     }
     {
       model=$1; day=$2; in_t=$3; out_t=$4; cc_t=$5; cr_t=$6
@@ -885,9 +988,10 @@ EXCLUDED_LOWER_BOUND="$(printf '%s' "$CAPTURE_ALL" | jqr -r '[ .[] | select(.usa
 
 # --- emit aggregate pricing as JSON (debug; feeds Task-3 tokenomics) ---
 if [ "$EMIT_PRICING_JSON" -eq 1 ]; then
-  read -r _priced_cost _unpriced_count < <(compute_pricing)
+  read -r _priced_cost _unpriced_count _fallback_priced_count < <(compute_pricing)
   jqr -cn --arg cost "$_priced_cost" --argjson unpriced "${_unpriced_count:-0}" \
-    '{priced_cost_usd: $cost, unpriced_count: $unpriced}'
+    --argjson fallback_priced "${_fallback_priced_count:-0}" \
+    '{priced_cost_usd: $cost, unpriced_count: $unpriced, fallback_priced_count: $fallback_priced}'
   exit 0
 fi
 
@@ -1346,7 +1450,8 @@ TOKENOMICS_TSV=""
 # emit_bucket_table — per token bucket (input/output/cache_creation/cache_read):
 # total tokens (over priced records), priced $, %-of-cost, and %-of-tokens. The
 # headline finding: token-share != cost-share (output = low token-share / high
-# cost-share at 75/1M; cache_read = high token-share / low cost-share at 1.50/1M).
+# cost-share at 25/1M; cache_read = high token-share / low cost-share at 0.50/1M,
+# Opus 4.8 example rates).
 emit_bucket_table() {
   # Per-N / per-LOC divisors (issue #833): N = reconciled-substrate record count
   # (CAPTURE_JSON length); LOC = total merged-PR LOC across the window (sum of
@@ -1505,6 +1610,7 @@ priced_role_tsv() {
       continue
     fi
     norm="$(price_model_normalize "$model")"
+    price_check_row "$norm" "$model"
     r_in="$(price_rate "$norm" INPUT)"
     r_out="$(price_rate "$norm" OUTPUT)"
     r_cc="$(price_rate "$norm" CACHE_CREATION)"

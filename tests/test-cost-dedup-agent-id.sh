@@ -46,31 +46,32 @@ echo "== test-cost-dedup-agent-id (issue #880) =="
 # so the priced total is what we assert.
 #
 # Golden pricing (Opus defaults, no PIPELINE_PRICE_* env): per-1M rates
-#   input 15, output 75, cache_creation 18.75, cache_read 1.50.
+#   input 5, output 25, cache_creation 6.25, cache_read 0.50 (corrected #1416
+#   from the retired Opus 4.1 rates 15/75/18.75/1.50).
 #
 # Case A — pair on agent_id="A1". Forward record (smaller) and retroactive
 #   record (larger, reconciled) describe ONE logical agent. After #880 the report
 #   keeps ONLY the larger (retroactive) record:
-#     input 1,000,000 → 1 * 15    = $15.00
-#     output  500,000 → 0.5 * 75  = $37.50
+#     input 1,000,000 → 1 * 5     = $5.00
+#     output  500,000 → 0.5 * 25  = $12.50
 #     cache_creation 0            =  $0.00
-#     cache_read 2,000,000 → 2*1.5 =  $3.00
-#                            A-cost = $55.50
-#   The forward record (input 600,000 → $9, output 300,000 → $22.50 = $31.50)
+#     cache_read 2,000,000 → 2*0.5 =  $1.00
+#                            A-cost = $18.50
+#   The forward record (input 600,000 → $3, output 300,000 → $7.50 = $10.50)
 #   must NOT be added — pre-#880 (distinct session_id) it WOULD be, inflating the
 #   total. NOTE both carry usage_complete=true so neither is dropped by the
 #   reconciled-substrate (usage_complete!=false) filter; the ONLY thing that can
 #   collapse them is the agent_id dedup.
 #
 # Case B — two distinct agents B1/B2 in one (session sBB, "", execute) group:
-#     B1 input 1,000,000 → $15.00
-#     B2 input 1,000,000 → $15.00
-#   Both must survive → $30.00. Pre-#880 the (session,"",stage) fallback collapses
-#   them to one (keeps max; here equal) → only $15.00 (an UNDER-count).
+#     B1 input 1,000,000 → $5.00
+#     B2 input 1,000,000 → $5.00
+#   Both must survive → $10.00. Pre-#880 the (session,"",stage) fallback collapses
+#   them to one (keeps max; here equal) → only $5.00 (an UNDER-count).
 #
-# Golden total after #880 = 55.50 (A) + 30.00 (B) = $85.50.
-# Pre-#880 (buggy) total = (55.50 + 31.50) (A, both counted) + 15.00 (B collapsed)
-#                        = $102.00  — a DIFFERENT number, so the test discriminates.
+# Golden total after #880 = 18.50 (A) + 10.00 (B) = $28.50.
+# Pre-#880 (buggy) total = (18.50 + 10.50) (A, both counted) + 5.00 (B collapsed)
+#                        = $34.00  — a DIFFERENT number, so the test discriminates.
 # ---------------------------------------------------------------------------
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -106,12 +107,12 @@ fi
 
 COST="$(printf '%s' "$PRICING" | jq -r '.priced_cost_usd' 2>/dev/null)"
 case "$COST" in
-  85.50|85.5)
-    pass_msg "priced_cost_usd == 85.50 — pair collapsed on agent_id (A=55.50) + both B agents kept (30.00)" ;;
-  102.00|102|102.0)
-    fail_msg "priced_cost_usd == 102.00 — forward+retroactive pair DOUBLE-COUNTED and B agents over-collapsed (pre-#880 bug)" ;;
+  28.50|28.5)
+    pass_msg "priced_cost_usd == 28.50 — pair collapsed on agent_id (A=18.50) + both B agents kept (10.00)" ;;
+  34.00|34|34.0)
+    fail_msg "priced_cost_usd == 34.00 — forward+retroactive pair DOUBLE-COUNTED and B agents over-collapsed (pre-#880 bug)" ;;
   *)
-    fail_msg "priced_cost_usd should be 85.50 (A reconciled 55.50 + B1+B2 30.00), got $COST" ;;
+    fail_msg "priced_cost_usd should be 28.50 (A reconciled 18.50 + B1+B2 10.00), got $COST" ;;
 esac
 
 echo ""
