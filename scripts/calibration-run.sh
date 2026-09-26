@@ -1086,16 +1086,22 @@ emit_calib_block() {
   fi
   # hooks=<on|off> (#1409) and superpowers=<on|off> (#1412) are recorded on
   # every CALIB-TOTAL line, all arms, so an off-arm run is never mistaken for
-  # the on-arm baseline.
+  # the on-arm baseline. bexec=<opus|sonnet> (#1414) is OPTIONAL — appended as
+  # one pre-built atom rather than a format field, because the unset arm is the
+  # harness default rather than an arm, and because the CALIB-TOTAL grammar
+  # contract (tests/test-calibration-contract.sh (d)) pins the seven named
+  # fields shared by doc / emitter / run-retro.sh header.
+  local bexec_atom=""
+  [ -n "$EXECUTOR_MODEL" ] && bexec_atom=" bexec=$EXECUTOR_MODEL"
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s superpowers=%s\n' \
-      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" "$SUPERPOWERS"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s superpowers=%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" "$SUPERPOWERS" "$bexec_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s superpowers=%s\n' \
-      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" "$SUPERPOWERS"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s superpowers=%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" "$SUPERPOWERS" "$bexec_atom"
   fi
 }
 
@@ -1131,13 +1137,15 @@ cmd_run() {
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
   RUN_TS="$(date -u +%Y-%m-%dT%H%MZ)"
   RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  # #1409/#1412: an off arm suffixes both artifacts so it can never be
-  # mistaken for the on baseline; default on keeps the plain name. Composable:
-  # -hooks-off comes first, then -superpowers-off, so both-off names
-  # <ts>-hooks-off-superpowers-off.
+  # #1409/#1412/#1414: a non-default arm suffixes both artifacts so it can
+  # never be mistaken for the baseline; the default arms keep the plain name.
+  # Composable in a FIXED order — -hooks-off, then -superpowers-off, then
+  # -bexec-<M> — so every-arm names <ts>-hooks-off-superpowers-off-bexec-opus
+  # and run-retro.sh has one order to peel.
   local run_suffix=""
   [ "$HOOKS" = "off" ] && run_suffix="${run_suffix}-hooks-off"
   [ "$SUPERPOWERS" = "off" ] && run_suffix="${run_suffix}-superpowers-off"
+  [ -n "$EXECUTOR_MODEL" ] && run_suffix="${run_suffix}-bexec-$EXECUTOR_MODEL"
   RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"

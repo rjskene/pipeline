@@ -212,6 +212,10 @@ if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
     echo "PIPELINE_REPO=${PIPELINE_REPO:-unset}"
     echo "PIPELINE_PROJECT_ROOT=${PIPELINE_PROJECT_ROOT:-unset}"
     echo "PIPELINE_USE_LOCAL_PLUGIN=${PIPELINE_USE_LOCAL_PLUGIN:-unset}"
+    # #1414: the --executor-model arm reaches the session ONLY as this env var
+    # (resolve-execute-dispatch.sh reads it), so the dump is the only place its
+    # value — and the scrub of an inherited poison value — is observable.
+    echo "PIPELINE_PATH_B_MODEL_EXECUTE=${PIPELINE_PATH_B_MODEL_EXECUTE:-unset}"
   } > "$CALIB_TEST_LAUNCH_ENV"
 fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
@@ -1929,6 +1933,70 @@ if [ -n "$ARTIFACT_SUPERPOWERS_ON" ] && [ -f "$ARTIFACT_SUPERPOWERS_ON" ]; then
   pass_msg "default --superpowers on names its artifact with no -superpowers-off suffix"
 else
   fail_msg "default --superpowers on must not suffix its artifact filename"
+fi
+
+unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 22: --executor-model opus reaches the sandbox session and labels the run (backlog #2/#28, #1414)"
+# ---------------------------------------------------------------------------
+# Block C of the outer-loop plan: --profile lean only collapses split-role to
+# lean-single for a non-W2 opus/fable executor, so the lean arm is inert unless
+# PIPELINE_PATH_B_MODEL_EXECUTE reaches the measured session. #1390's scrub -u's
+# every inherited PIPELINE_*, so the explicit set has to come AFTER it — and a
+# poison value in the launching shell must lose to the flag, and must be gone
+# entirely when the flag is absent.
+
+echo 6400 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export PIPELINE_PATH_B_MODEL_EXECUTE="poison"
+run_helper --run --harness "$HARNESS" --executor-model opus
+expect_rc "--run --executor-model opus exits 0" 0
+
+LAUNCH_ENV_BEXEC="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_BEXEC" | grep -qxF -- "PIPELINE_PATH_B_MODEL_EXECUTE=opus"; then
+  pass_msg "--executor-model opus hands the session PIPELINE_PATH_B_MODEL_EXECUTE=opus"
+else
+  fail_msg "the launched session's environment must carry PIPELINE_PATH_B_MODEL_EXECUTE=opus (got: $(printf '%s' "$LAUNCH_ENV_BEXEC" | tr '\n' ' '))"
+fi
+
+TOTAL_BEXEC="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the CALIB-TOTAL line records the executor-model arm" "$TOTAL_BEXEC" "bexec=opus"
+
+ARTIFACT_BEXEC="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*-bexec-opus.txt 2>/dev/null | sort | tail -1)"
+if [ -n "$ARTIFACT_BEXEC" ] && [ -f "$ARTIFACT_BEXEC" ]; then
+  pass_msg "--executor-model opus names its artifact with a -bexec-opus suffix"
+else
+  fail_msg "--executor-model opus must name its artifact <UTC date>T<HHMM>Z-bexec-opus.txt"
+fi
+
+# Control: same poisoned launching shell, flag ABSENT. The knob must be gone
+# from the session entirely (not inherited as `poison`), and the run must carry
+# no bexec label at all — the unset arm is the harness default, not an arm.
+echo 6500 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with no --executor-model exits 0" 0
+
+LAUNCH_ENV_NO_BEXEC="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_NO_BEXEC" | grep -qxF -- "PIPELINE_PATH_B_MODEL_EXECUTE=unset"; then
+  pass_msg "an inherited PIPELINE_PATH_B_MODEL_EXECUTE is scrubbed when the flag is absent"
+else
+  fail_msg "the launched session must NOT inherit PIPELINE_PATH_B_MODEL_EXECUTE (got: $(printf '%s' "$LAUNCH_ENV_NO_BEXEC" | tr '\n' ' '))"
+fi
+unset PIPELINE_PATH_B_MODEL_EXECUTE
+
+TOTAL_NO_BEXEC="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+refute_sub "an unset-arm CALIB-TOTAL carries no bexec atom" "$TOTAL_NO_BEXEC" "bexec="
+
+ARTIFACT_NO_BEXEC="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*.txt 2>/dev/null \
+  | grep -v -- '-bexec-' | grep -v -- '-superpowers-off\.txt$' | grep -v -- '-hooks-off\.txt$' \
+  | sort | tail -1)"
+if [ -n "$ARTIFACT_NO_BEXEC" ] && [ -f "$ARTIFACT_NO_BEXEC" ]; then
+  pass_msg "the unset arm names its artifact with no -bexec- suffix"
+else
+  fail_msg "the unset executor-model arm must not suffix its artifact filename"
 fi
 
 unset CALIB_TEST_CLAUDE_SCRIPT
