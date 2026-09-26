@@ -104,10 +104,7 @@ parse args → look up / file issue → snapshot cwd + trap → create worktree 
      )
      ```
 
-   - **`--inline`.** Drive TDD directly from the orchestrator (no subagent dispatch):
-     ```
-     Skill(skill: "superpowers:test-driven-development")
-     ```
+   - **`--inline`.** Drive red→green→commit directly from the orchestrator (discipline: `agents/tdd-implementer.md`; no subagent dispatch).
 
 6. **Open the PR.** Targets `PIPELINE_BASE_BRANCH`; no pipeline labels.
 
