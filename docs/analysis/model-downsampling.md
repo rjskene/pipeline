@@ -221,8 +221,7 @@ questions call for; pr-eval still **always** stays Opus.
 5. **Scope-widen knob (#881 Phase 1; default flipped #1042)** — `PIPELINE_PATH_B_ELIGIBLE_SCOPE`.
    Originally default `"low-blast"`; **as of #1042 the unset-default resolves to `"all"`** (widens PATH B to
    non-W2 issues even on a high-blast verdict) and the knob ships **active by default (opt-out)** in
-   `pipeline.config.example` (opt OUT with `"low-blast"`). The related split-role lane
-   (`PIPELINE_PATH_B_SPLIT_ROLE`, #881 Phase 2) keeps the test-author on Opus regardless of the model knob.
+   `pipeline.config.example` (opt OUT with `"low-blast"`).
 
 ## 6. Methodology caveats
 
