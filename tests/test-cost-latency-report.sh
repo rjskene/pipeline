@@ -2677,6 +2677,45 @@ if [ "$FALLBACK48C" = "2" ]; then
 else
   fail_msg "fallback_priced_count should be 2 (one per fallback-priced row), got $FALLBACK48C"
 fi
+
+# --tokenomics is the REAL operator path (/pipeline:tokenomics Step 2) and it
+# runs FIVE separate pricing loops, four of them inside a `$(...)` command
+# substitution. An in-memory-array-only dedup set silently resets at each of
+# those subshell boundaries, so "once per distinct unknown model per
+# invocation" held only for --emit-pricing-json (a single subshell) and emitted
+# 5 WARNs here. Pin the operator path too, and pin that a SECOND distinct
+# unknown model still gets its own WARN (dedup must not over-collapse).
+TMP48C_ERR2="$(mktemp)"
+bash "$HELPER" --fixture "$TMP48C" --tokenomics >/dev/null 2>"$TMP48C_ERR2"
+WARN_TOK48C="$(grep -c 'WARN: no price for model claude-x-9 — using Opus-4.8 rates' "$TMP48C_ERR2" 2>/dev/null; true)"
+if [ "${WARN_TOK48C:-0}" -eq 1 ]; then
+  pass_msg "--tokenomics WARNs exactly once for claude-x-9 (dedup survives \$(...) subshells)"
+else
+  fail_msg "--tokenomics should WARN exactly once for claude-x-9, got ${WARN_TOK48C:-0} (per-loop subshell dedup reset?)"
+fi
+rm -f "$TMP48C_ERR2"
+
+# Negative control for the dedup: TWO distinct unknown models → TWO WARN lines,
+# one each. Differs from the positive case in exactly one property (distinct
+# model strings vs. the same model twice).
+TMP48C2="$(mktemp -d)"
+cp "$TMP48C"/*.json "$TMP48C2/" 2>/dev/null
+{
+  echo '{"schema_version":1,"issue":"251","stage":"execute","session_id":"s48c1","model":"claude-x-9","agent_kind":"headless","record_key":"K248C1","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"251","stage":"plan","session_id":"s48c2","model":"claude-z-7","agent_kind":"headless","record_key":"K248C2","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+} > "$TMP48C2/capture.jsonl"
+TMP48C_ERR3="$(mktemp)"
+bash "$HELPER" --fixture "$TMP48C2" --tokenomics >/dev/null 2>"$TMP48C_ERR3"
+WARN_X48C="$(grep -c 'no price for model claude-x-9' "$TMP48C_ERR3" 2>/dev/null; true)"
+WARN_Z48C="$(grep -c 'no price for model claude-z-7' "$TMP48C_ERR3" 2>/dev/null; true)"
+if [ "${WARN_X48C:-0}" -eq 1 ] && [ "${WARN_Z48C:-0}" -eq 1 ]; then
+  pass_msg "two distinct unknown models WARN once EACH (dedup is per-model, not global)"
+else
+  fail_msg "expected 1 WARN per distinct unknown model, got claude-x-9=${WARN_X48C:-0} claude-z-7=${WARN_Z48C:-0}"
+fi
+rm -f "$TMP48C_ERR3"
+rm -rf "$TMP48C2"
+
 rm -f "$TMP48C_ERR"
 rm -rf "$TMP48C"
 

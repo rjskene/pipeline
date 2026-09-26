@@ -537,6 +537,18 @@ price_uses_fallback() {
 # RAW (un-normalized) model string, so the WARN fires once per distinct
 # unknown model per invocation even though every pricing loop below calls it.
 declare -A _PRICE_WARNED_MODELS=()
+# Cross-SUBSHELL half of that dedup set. The in-memory array above only covers
+# iterations within ONE shell: every pricing loop below (priced_records_tsv,
+# priced_issue_stage_cost_tsv, priced_day_cost_tsv, priced_role_tsv) is invoked
+# inside a `$(...)` command substitution, and compute_pricing inside `< <(...)`
+# — an array mutated in a subshell never propagates back to the parent, so an
+# array-only dedup re-WARNs once PER LOOP (observed: 5x for one unknown model
+# under --tokenomics). A file-backed marker set fixes that because an append
+# from a subshell IS visible to the parent and to later subshells. `$$` is the
+# invoking shell's PID even inside a subshell, so the path is stable for the
+# whole invocation without needing to propagate a mktemp result upward.
+_PRICE_WARN_STATE_FILE="${TMPDIR:-/tmp}/.pipeline-price-warned.$$"
+: > "$_PRICE_WARN_STATE_FILE" 2>/dev/null || _PRICE_WARN_STATE_FILE=""
 # Set by price_check_row() on every call: 1 if the row it just checked is
 # fallback-priced, else 0. Callers that need a per-row fallback count (e.g.
 # compute_pricing) read this immediately after calling price_check_row.
@@ -549,16 +561,22 @@ _PRICE_LAST_FALLBACK=0
 # Side effect: the FIRST time a given <raw-model> is seen as fallback-priced
 # in this process, emits one WARN line to stderr (#1416).
 #
-# MUST be called directly (not inside a `$(...)` command substitution) so the
-# _PRICE_WARNED_MODELS mutation persists across loop iterations / callers.
+# Dedup is two-layered so it holds even though most callers run inside a
+# `$(...)` subshell: the in-memory _PRICE_WARNED_MODELS array is the fast path
+# within one shell, and $_PRICE_WARN_STATE_FILE carries the set ACROSS
+# subshells. Command substitutions run sequentially, so the append is race-free.
 price_check_row() {
   local norm="$1" raw="$2"
   if price_uses_fallback "$norm"; then
     _PRICE_LAST_FALLBACK=1
-    if [ -z "${_PRICE_WARNED_MODELS[$raw]:-}" ]; then
-      _PRICE_WARNED_MODELS[$raw]=1
-      printf 'WARN: no price for model %s — using Opus-4.8 rates\n' "$raw" >&2
+    [ -n "${_PRICE_WARNED_MODELS[$raw]:-}" ] && return 0
+    _PRICE_WARNED_MODELS[$raw]=1
+    if [ -n "$_PRICE_WARN_STATE_FILE" ]; then
+      # Already warned by an earlier loop / subshell → stay silent.
+      grep -qxF -- "$raw" "$_PRICE_WARN_STATE_FILE" 2>/dev/null && return 0
+      printf '%s\n' "$raw" >> "$_PRICE_WARN_STATE_FILE" 2>/dev/null
     fi
+    printf 'WARN: no price for model %s — using Opus-4.8 rates\n' "$raw" >&2
   else
     _PRICE_LAST_FALLBACK=0
   fi
@@ -862,7 +880,7 @@ execute_headless_intervals_tsv() {
 
 # --- temp files ---
 ROWS_TSV=$(mktemp)
-trap 'rm -f "$ROWS_TSV"' EXIT
+trap 'rm -f "$ROWS_TSV" "$_PRICE_WARN_STATE_FILE"' EXIT
 
 # --- load inputs ---
 
@@ -1105,7 +1123,7 @@ if [ "$EMIT_DAY_JSON" -eq 1 ]; then
   DAY_COST_FILE="$(mktemp)"
   CAP_JSON_FILE="$(mktemp)"
   CAP_ALL_FILE="$(mktemp)"
-  trap 'rm -f "$ROWS_TSV" "$DAY_COST_FILE" "$CAP_JSON_FILE" "$CAP_ALL_FILE"' EXIT
+  trap 'rm -f "$ROWS_TSV" "$DAY_COST_FILE" "$CAP_JSON_FILE" "$CAP_ALL_FILE" "$_PRICE_WARN_STATE_FILE"' EXIT
   priced_day_bucket_cost_tsv > "$DAY_COST_FILE"
   # Write CAPTURE_JSON and CAPTURE_ALL to temp files to avoid ARG_MAX limits
   # when the capture log is large (>2 MB). (#1099)
