@@ -1,25 +1,27 @@
 #!/bin/bash
 set -uo pipefail
 
-# Regression guard for #1095: extend the split-role dispatch prose guard to
-# cover the resolver section of skills/fullsend/SKILL.md (the
-# "Per-path execute MODEL routing — SINGLE-SOURCE resolver" block, ~L474-492)
-# AND assert CROSS-SECTION AGREEMENT among all three prose homes:
+# Regression guard for #1095, re-pinned by #1420 (split-role lane removed).
 #
-#   (A) Step 6 "Split dispatch" region (~L295)
-#   (B) Routing-reference PATH B EXECUTE block (~L455)
-#   (C) Resolver section (~L474)
+# skills/fullsend/SKILL.md restates the PATH B execute dispatch shape in THREE
+# prose homes:
 #
-# The existing tests/test-fullsend-split-role-dispatch.sh (issue #1093) asserts
-# regions A and B INDEPENDENTLY. This guard adds:
-#   - resolver-section (C) anchor + per-token assertions
-#   - cross-section agreement: all three homes carry the SAME required token set
-#     (red:opus, green:, [split-role-red], two-sequential wording) so two
-#     regions cannot silently contradict each other.
+#   (A) Step 6 "Split dispatch" region
+#   (B) Routing-reference PATH B EXECUTE block
+#   (C) Resolver section ("Per-path execute MODEL routing — SINGLE-SOURCE resolver")
 #
-# Static-grep/awk over skills/fullsend/SKILL.md ONLY (no live dispatch) —
-# mirrors tests/test-fullsend-split-role-dispatch.sh. Never compares version
-# literals and never whole-repo greps (per CLAUDE.md release-hygiene).
+# Before #1420 those three homes had to AGREE on the two-phase split-role token
+# set (red:opus / green: / [split-role-red] / "two sequential"). #1420 collapses
+# PATH B execute to ONE agent, so the agreement contract inverts: every home must
+# carry the SINGLE-shape tokens (a resolved `model=` plus the canonical
+# `execute-issue-plan #<N>` attribution description) and NONE may carry any
+# surviving split-role token. Cross-section agreement is still the point — two
+# regions must not silently contradict each other, one describing a single agent
+# while another still describes a red/green pair.
+#
+# Static-grep/awk over skills/fullsend/SKILL.md ONLY (no live dispatch). Never
+# compares version literals and never whole-repo greps (per CLAUDE.md
+# release-hygiene).
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FULLSEND="$ROOT/skills/fullsend/SKILL.md"
@@ -98,93 +100,73 @@ else
   fail_msg "anchor-C: resolver section is EMPTY (SKILL restructured?)"
 fi
 
-# === Assertion (3): the resolver section encodes the two-phase split-role
-#     dispatch shape. Require co-occurrence, in the resolver section, of:
-#       (3a) role tokens: red:opus AND green:
-#       (3b) the [split-role-red] literal
-#       (3c) two-sequential-dispatch wording (two sequential)
-#       (3d) SPLIT_ROLE=true default
-inc
-if resolver_flat | grep -Fq 'red:opus' \
-   && resolver_flat | grep -Fq 'green:'; then
-  pass_msg "(3a) resolver section names red:opus + green: role tokens"
-else
-  fail_msg "(3a) resolver section missing red:opus / green: role tokens"
-fi
-inc
-if resolver_flat | grep -Fq '[split-role-red]'; then
-  pass_msg "(3b) resolver section names the [split-role-red] anchor literal"
-else
-  fail_msg "(3b) resolver section missing the [split-role-red] anchor literal"
-fi
-inc
-if resolver_flat | grep -Eiq 'two sequential'; then
-  pass_msg "(3c) resolver section uses two-sequential-dispatch wording"
-else
-  fail_msg "(3c) resolver section missing two-sequential-dispatch wording"
-fi
-inc
-if resolver_flat | grep -Fq 'SPLIT_ROLE=true'; then
-  pass_msg "(3d) resolver section asserts SPLIT_ROLE=true default"
-else
-  fail_msg "(3d) resolver section missing SPLIT_ROLE=true default assertion"
-fi
+# === Assertion (3): every prose home encodes the SINGLE-agent dispatch shape.
+#     Required, per region:
+#       (3a) a resolved model pin — `model='<resolved-model>'` or `model=$MODEL`
+#       (3b) the canonical attribution description `execute-issue-plan #<N>`
+REQUIRED_DESC='execute-issue-plan #<N>'
 
-# === Assertion (4): CROSS-SECTION AGREEMENT — every prose home that restates
-#     the split-role two-phase contract carries the SAME required token set.
-#     Per-region presence (assertions 1/2 in test-fullsend-split-role-dispatch.sh
-#     and assertions 3 above) does NOT prove the regions agree — two regions
-#     could each carry one half of the token set while describing different
-#     models/shapes, slipping through per-region checks. These assertions verify
-#     the token SET is present in EVERY region simultaneously.
-#
-#   Required tokens for cross-section agreement:
-#     T1 = red:opus
-#     T2 = green:
-#     T3 = [split-role-red]
-#     T4 = two-sequential wording (two sequential)
-#
-#   Each assertion fails if ANY of the three regions is missing the token.
+assert_model_pin() {
+  local label="$1" flat="$2"
+  inc
+  if printf '%s' "$flat" | grep -Fq "model='<resolved-model>'" \
+     || printf '%s' "$flat" | grep -Fq 'model=$MODEL'; then
+    pass_msg "$label: names a resolved model pin (model='<resolved-model>' or model=\$MODEL)"
+  else
+    fail_msg "$label: no resolved model pin — an unpinned dispatch inherits the session model"
+  fi
+}
 
-# T1 — red:opus in ALL three regions
-inc
-if split_dispatch_flat | grep -Fq 'red:opus' \
-   && routing_pathb_execute_flat | grep -Fq 'red:opus' \
-   && resolver_flat | grep -Fq 'red:opus'; then
-  pass_msg "(4a) cross-section: red:opus present in all three prose homes"
-else
-  fail_msg "(4a) cross-section: red:opus MISSING from at least one prose home"
-fi
+assert_desc() {
+  local label="$1" flat="$2"
+  inc
+  if printf '%s' "$flat" | grep -Fq "$REQUIRED_DESC"; then
+    pass_msg "$label: names the canonical '$REQUIRED_DESC' dispatch description"
+  else
+    fail_msg "$label: missing the canonical '$REQUIRED_DESC' dispatch description (cost attribution key)"
+  fi
+}
 
-# T2 — green: in ALL three regions
-inc
-if split_dispatch_flat | grep -Fq 'green:' \
-   && routing_pathb_execute_flat | grep -Fq 'green:' \
-   && resolver_flat | grep -Fq 'green:'; then
-  pass_msg "(4b) cross-section: green: present in all three prose homes"
-else
-  fail_msg "(4b) cross-section: green: MISSING from at least one prose home"
-fi
+A_FLAT="$(split_dispatch_flat)"
+B_FLAT="$(routing_pathb_execute_flat)"
+C_FLAT="$(resolver_flat)"
 
-# T3 — [split-role-red] in ALL three regions
-inc
-if split_dispatch_flat | grep -Fq '[split-role-red]' \
-   && routing_pathb_execute_flat | grep -Fq '[split-role-red]' \
-   && resolver_flat | grep -Fq '[split-role-red]'; then
-  pass_msg "(4c) cross-section: [split-role-red] present in all three prose homes"
-else
-  fail_msg "(4c) cross-section: [split-role-red] MISSING from at least one prose home"
-fi
+assert_model_pin "(3a) region-A Step 6 split dispatch" "$A_FLAT"
+assert_desc      "(3b) region-A Step 6 split dispatch" "$A_FLAT"
+assert_model_pin "(3a) region-B routing PATH B execute" "$B_FLAT"
+assert_desc      "(3b) region-B routing PATH B execute" "$B_FLAT"
+assert_model_pin "(3a) region-C resolver section" "$C_FLAT"
+assert_desc      "(3b) region-C resolver section" "$C_FLAT"
 
-# T4 — two-sequential wording in ALL three regions
-inc
-if split_dispatch_flat | grep -Eiq 'two sequential' \
-   && routing_pathb_execute_flat | grep -Eiq 'two sequential' \
-   && resolver_flat | grep -Eiq 'two sequential'; then
-  pass_msg "(4d) cross-section: two-sequential wording present in all three prose homes"
-else
-  fail_msg "(4d) cross-section: two-sequential wording MISSING from at least one prose home"
-fi
+# === Assertion (4): CROSS-SECTION AGREEMENT on the single shape (#1420) — NO
+#     region may carry a surviving split-role token. Per-region presence of the
+#     single-shape tokens (assertion 3) does not prove the regions agree: one
+#     region could name the single agent while another still prescribes the
+#     retired red/green pair, which is exactly the contradiction this asserts
+#     away.
+BANNED=(
+  'red:opus'
+  'green:'
+  '[split-role-red]'
+  'SPLIT_ROLE'
+  'two sequential'
+)
+
+assert_no_banned() {
+  local label="$1" flat="$2" needle
+  for needle in "${BANNED[@]}"; do
+    inc
+    if printf '%s' "$flat" | grep -Fiq -- "$needle"; then
+      fail_msg "$label: still carries the retired split-role token '$needle' (#1420 collapsed PATH B to one execute agent)"
+    else
+      pass_msg "$label: free of the retired split-role token '$needle'"
+    fi
+  done
+}
+
+assert_no_banned "(4) region-A Step 6 split dispatch" "$A_FLAT"
+assert_no_banned "(4) region-B routing PATH B execute" "$B_FLAT"
+assert_no_banned "(4) region-C resolver section" "$C_FLAT"
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="

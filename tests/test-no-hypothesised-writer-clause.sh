@@ -153,11 +153,12 @@ fi
 
 # ---------------------------------------------------------------------------
 # H8 — CONTRACT PRESERVATION. Appending to a very long single-line paragraph is
-#      easy to do destructively. These four keys are the ones
+#      easy to do destructively. These keys are the ones
 #      tests/test-dispatch-no-background-test-run.sh already pins inside the same
-#      region; if the append truncated the paragraph they disappear.
+#      region; if the append truncated the paragraph they disappear. (#1420
+#      retired the two SPLIT_ROLE keys along with the split-role lane.)
 # ---------------------------------------------------------------------------
-for key in 'valid terminal states are' 'SPLIT_ROLE' '[split-role-red]' 'worktree index'; do
+for key in 'valid terminal states are' 'worktree index'; do
   inc
   if grep -Fq -- "$key" <<< "$F_FLAT"; then
     pass_msg "H8: contract paragraph still contains \"$key\""

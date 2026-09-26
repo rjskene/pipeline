@@ -16,7 +16,7 @@ set -euo pipefail
 # Shape mirrors tests/test-plan-issue-path-tasks.sh (counters + summary rule).
 #
 # ---------------------------------------------------------------------------
-# Assertion ledger at the `[split-role-red]` marker commit
+# Assertion ledger at the RED commit
 # ---------------------------------------------------------------------------
 #   RED   : A1 A2 A3 A4 A6 A7 A8 A10 — the target prose does not exist yet.
 #           (A9 pinned a row in docs/superpowers-integration.md; #1419 deleted

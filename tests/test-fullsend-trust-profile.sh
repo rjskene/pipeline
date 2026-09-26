@@ -41,7 +41,8 @@ SENTINEL='**Trust profile (#1291):**'
 STEP2_ANCHOR='2. **Evaluate plans**'
 STEP3_ANCHOR='3. **Re-plan loop**'
 ROUTING_ANCHOR='**Per-path execute MODEL routing'
-GRAMMAR='TRUST-PROFILE: profile=<p> issue=#N split_role=<bool> plan_eval=<run|skip>'
+# #1420 removed the split-role lane, so the logged grammar drops `split_role=`.
+GRAMMAR='TRUST-PROFILE: profile=<p> issue=#N plan_eval=<run|skip>'
 PREVAL_PIN='resolve-stage-model.sh" <N> pr-eval'
 
 MAX_WORDS=120
@@ -144,13 +145,6 @@ if [ -n "$S2_TEXT" ] && grep -qF -- "$GRAMMAR" <<<"$S2_TEXT"; then
   pass_msg "A3: second sentinel line carries the log grammar verbatim"
 else
   fail_msg "A3: second sentinel line does not carry '$GRAMMAR'"
-fi
-
-inc
-if [ -n "$S2_TEXT" ] && grep -qF -- 'lean-single' <<<"$S2_TEXT"; then
-  pass_msg "A3: second sentinel line names 'lean-single'"
-else
-  fail_msg "A3: second sentinel line does not name 'lean-single'"
 fi
 
 inc

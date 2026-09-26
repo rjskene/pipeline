@@ -118,7 +118,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    - **README anchor guard (#397/#404):** If the plan prescribes adding any `README.md` link of the form `*.md#anchor` (regex `\.md#[A-Za-z0-9_-]+`), return **Revise** — README uses file-level links only; anchored cross-references are banned by the policy enforced in `tests/test-readme-current.sh`.
    - **Exact-match guard sweep (#1200):** Run the mechanical sweep, never an improvised `grep`.
 
-     First resolve split-role applicability MECHANICALLY — fetch the labels rather than inferring the path from the title (`gh issue view <N> --repo $PIPELINE_REPO --json labels`). Split-role applies when the issue is PATH B (none of `docs-only` / `quick-fix` / `multi-task` present) AND `${PIPELINE_PATH_B_SPLIT_ROLE:-true}` is not `false`. Then run the sweep from the project root, threading the test roots explicitly — the helper NEVER sources `pipeline.config` (same contract as `split-role-gate.sh`):
+     First fetch the labels MECHANICALLY rather than inferring the path from the title (`gh issue view <N> --repo $PIPELINE_REPO --json labels`) — the path letter decides whether the plan carries a test deliverable at all. Then run the sweep from the project root, threading the test roots explicitly — the helper NEVER sources `pipeline.config`:
 
      ```bash
      gh issue view <N> --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(" ")'
@@ -127,13 +127,10 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
      ```
 
      - **Scope rule:** roots resolve positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`; an unset var self-defaults and is never vacuous. `REASON=no-test-root` or `REASON=no-test-files` (exit 3) fires only when every resolved root fails `[ -e ]`. Report it under `**Spec gaps:**` and return **Revise** with the fix (add a valid root, e.g. `subagents/*/testing/ testing/`).
-     - For each `EXACT_MATCH_GUARD=` line, decide whether the planned change alters the keyset/literal it pins — i.e. does the plan add, rename, or remove a key/field/element reachable by the `SUBJECT` expression or exercised by the `SYMBOL` under test? If yes AND `FILE` is not already listed under the plan's `**Shared tests (split-role):**` section, return **Revise**, quote `FILE:LINE`, and give the exact bullet to add.
-     - When split-role is NOT applicable (PATH A/C/D, or the knob is `false`), hits are advisory only: report them under `**Missing files:**` and do not block.
+     - For each `EXACT_MATCH_GUARD=` line, decide whether the planned change alters the keyset/literal it pins — i.e. does the plan add, rename, or remove a key/field/element reachable by the `SUBJECT` expression or exercised by the `SYMBOL` under test? If yes AND `FILE` is not already declared under the plan's `**Test changes:**` section, return **Revise**, quote `FILE:LINE`, and give the exact bullet to add — an undeclared exact-match test is the one the executor meets mid-task and cannot legally touch.
+     - Every other hit — one the change does not break — is advisory: report it under `**Missing files:**` and do not block. Unbroken sweep hits are advisory only, never a Revise.
 
    - **Executable verification (#1218):** every plan claim matching the trigger list in the Executable verification section must be verified by EXECUTING it plus a negative control, never by reading. A claim you could not execute is reported as unexecuted, never as verified.
-   - **RED/GREEN ledger execution (#1224):** when the plan carries a `**RED/GREEN ledger:**` section, do NOT reason about the predicted timing — EXECUTE it. For the PRIMARY row (the first file the ledger predicts red at the RED commit) plus one negative control, run the stated assertion against the current tree and compare the ACTUAL output to the prediction. When the test does not exist yet, prototype it (`mktemp -d`, a throwaway copy of the stated assertion) and run the REAL command; never simulate the outcome. **Cap the prototype there:** do not prototype the GREEN; do not prototype every row — further rows are prototyped only when the primary row's observed outcome contradicts its prediction.
-   - **Unrunnable rows.** A row that genuinely cannot be run is reported verbatim as `red-not-reproduced: <reason>` — an unrun row is never reported as verified.
-   - **Missing or prose-only ledger → Revise:** a plan with a test deliverable (PATH B/C/D, per the labels fetched above) that carries no `**RED/GREEN ledger:**` section, or whose ledger is a prose sentence rather than the per-file table, is incomplete. A row predicted green at the RED commit with no `why:` is the same defect.
    - **Divergence is BLOCKING:** an observed state that contradicts the prediction — predicted red but observed green, predicted green but observed red, or red for a DIFFERENT reason than stated — returns **Revise**, naming the row, the exact command run, and the observed output. The usual cause is a row whose redness depends on state a later task creates.
 
    **Phase 2 — Implementability.** Verify the plan is executable without guessing:
@@ -170,7 +167,6 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    **Missing files:** (files the plan should list but doesn't — with reasoning)
    **Spec gaps:** (ambiguities an executor would have to guess about)
    **Guard claims verified:** (one line per guard claim: `<claim> - <positive cmd> -> <observed>; <negative cmd> -> <observed>`; `None` when the trigger did not fire)
-   **RED/GREEN ledger verified:** (one line per executed row: `<test file> — predicted <red|green> at RED; <command> -> <observed>`; `None` when the plan carries no ledger)
    **Conflict risk:** (overlap with open PRs)
    **Recommendations:** (specific, actionable changes — not vague suggestions)
    ```
