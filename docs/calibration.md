@@ -31,7 +31,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 ```
 bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
     [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
-    [--superpowers on|off] [--executor-model opus|sonnet]
+    [--executor-model opus|sonnet]
 ```
 
 | Mode | What it does | Costs money |
@@ -74,12 +74,6 @@ harmless after this fix (#1390).
 `CALIB-TOTAL` and in the `<date>T<HHMM>Z-hooks-off.txt`/`.log` artifact names,
 so an arm-2 run can never be mistaken for the hooks-on baseline (#1409).
 
-`--superpowers off` (default `on`, backlog #11) disables the `superpowers`
-plugin in the sandbox's materialized settings, so `Skill(skill:
-"superpowers:…")` calls fail closed. Off runs are tagged `superpowers=off`
-in `CALIB-TOTAL` and the `-superpowers-off` artifact suffix, composable with
-`-hooks-off` (#1412).
-
 `--executor-model opus|sonnet` (default unset, backlog #2/#10/#28) sets
 `PIPELINE_PATH_B_MODEL_EXECUTE` in the sandbox session — the knob
 `resolve-execute-dispatch.sh` and `resolve-stage-model.sh` read to decide
@@ -89,7 +83,7 @@ executor exercises almost nothing). Unset means "whatever the harness resolves
 on its own" (Sonnet, #1042); no value is pinned by default, so a plain run is
 never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
 `CALIB-TOTAL` and carries a `-bexec-<M>` artifact suffix, composable with
-`-hooks-off` / `-superpowers-off` (#1414).
+`-hooks-off` (#1414).
 
 ## Harness staging
 
@@ -157,7 +151,7 @@ artifact:
 ```
 CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
 CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
-CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off> superpowers=<on|off>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
 ```
 
 The `CALIB-ABORT` line is written only when the run did not finish, and is then
@@ -187,9 +181,6 @@ the first line of the block.
   planted-defect dir, or the row was never graded).
 - `hooks` — a per-RUN atom on the `CALIB-TOTAL` line only: `on` (default) or
   `off`, the arm `--hooks` launched under (#1409, see Running above).
-- `superpowers` — a per-RUN atom on the `CALIB-TOTAL` line only: `on`
-  (default) or `off`, the arm `--superpowers` launched under (#1412, see
-  Running above).
 - `bexec` — a per-RUN atom on the `CALIB-TOTAL` line only, and the only
   OPTIONAL one: `opus` or `sonnet`, the arm `--executor-model` launched under
   (#1414, see Running above). Absent entirely when the flag was not passed,
@@ -220,13 +211,14 @@ re-run gets its own artifact instead of silently overwriting the prior run's
 (run #9 once erased run #8's `reason=timeout` record this way). Older,
 day-only `<date>.txt` artifacts committed before #1408 are still read by
 `scripts/run-retro.sh` — nothing rewrites history. A `--hooks off` run
-suffixes its artifact `-hooks-off` (`<UTC date>T<HHMM>Z-hooks-off.txt`); a
-`--superpowers off` run suffixes `-superpowers-off`; a run with
-`--executor-model` set suffixes `-bexec-<M>`. The three compose in that fixed
-order (`<UTC date>T<HHMM>Z-hooks-off-superpowers-off-bexec-opus.txt`) and the
-default arms keep the plain name (#1409/#1412/#1414). `run-retro.sh` peels the
-suffixes off the filename and renders them on the `weak-model pass:` row, so
-an arm run can never be read as the baseline.
+suffixes its artifact `-hooks-off` (`<UTC date>T<HHMM>Z-hooks-off.txt`); a run
+with `--executor-model` set suffixes `-bexec-<M>`. The two compose in that
+fixed order (`<UTC date>T<HHMM>Z-hooks-off-bexec-opus.txt`) and the default
+arms keep the plain name (#1409/#1414). `run-retro.sh` peels the suffixes off
+the filename and renders them on the `weak-model pass:` row, so an arm run
+can never be read as the baseline. Legacy `-superpowers-off`-suffixed
+artifacts (written before #1419 retired the experiment arm) are still read
+and dated/labelled correctly — the read-side peel was deliberately kept.
 
 `--run` also writes `<UTC date>T<HHMM>Z.log` beside it: the headless session's
 own output, truncated per run like the `.txt`. That is where the question a

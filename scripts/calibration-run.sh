@@ -97,10 +97,6 @@ Options:
   --hooks H        on|off  (default on) — off strips every PreToolUse guard
                    hook and the enforce-ci-wait Stop hook from the STAGED
                    manifest (hook-necessity experiment, backlog #12).
-  --superpowers S  on|off  (default on) — off disables the superpowers plugin
-                   in the materialized sandbox settings, so every
-                   Skill(skill: "superpowers:…") call fails closed
-                   (superpowers-necessity experiment, backlog #11).
   --executor-model M  opus|sonnet  (default unset = the harness default,
                    Sonnet per #1042) — sets PIPELINE_PATH_B_MODEL_EXECUTE in
                    the sandbox session, which is what lets --profile lean
@@ -123,7 +119,6 @@ MODEL="sonnet"
 HARNESS_ARG=""
 DRY_RESET=0
 HOOKS="on"
-SUPERPOWERS="on"
 # Empty = "do not set it at all", so the sandbox session keeps whatever the
 # harness resolves on its own (Sonnet, #1042). Never defaulted to a value here:
 # pinning one would silently make every run an arm of this experiment (#1414).
@@ -165,8 +160,6 @@ while [ $# -gt 0 ]; do
     --harness=*)  HARNESS_ARG="${1#--harness=}"; shift ;;
     --hooks)      require_value "$@"; HOOKS="$2"; shift 2 ;;
     --hooks=*)    HOOKS="${1#--hooks=}"; shift ;;
-    --superpowers)   require_value "$@"; SUPERPOWERS="$2"; shift 2 ;;
-    --superpowers=*) SUPERPOWERS="${1#--superpowers=}"; shift ;;
     --executor-model)   require_value "$@"; EXECUTOR_MODEL="$2"; shift 2 ;;
     --executor-model=*) EXECUTOR_MODEL="${1#--executor-model=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
@@ -184,10 +177,6 @@ esac
 case "$HOOKS" in
   on|off) ;;
   *) die_usage "--hooks must be one of on|off (got: ${HOOKS:-<empty>})" ;;
-esac
-case "$SUPERPOWERS" in
-  on|off) ;;
-  *) die_usage "--superpowers must be one of on|off (got: ${SUPERPOWERS:-<empty>})" ;;
 esac
 # Empty is legal here (and is the default): it means "leave the knob unset".
 case "$EXECUTOR_MODEL" in
@@ -389,24 +378,6 @@ materialize_local_settings() {
   n="$(jq '[.hooks[]?[]?.hooks[]?] | length' "$src" 2>/dev/null)"
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
   echo "calib: settings.local.json refreshed from template ($n hooks) -> $LAUNCH_HARNESS"
-  # superpowers-necessity experiment (backlog #11, #1412): off disables the
-  # plugin in the MATERIALIZED sandbox settings only, the same mechanism the
-  # template already uses to disable both pipeline marketplace installs, so
-  # every Skill(skill: "superpowers:…") call in the measured run fails
-  # closed. Reachable only from a real (non-DRY) refresh — under DRY the cp
-  # above never ran, so there is no destination file to edit.
-  if [ "$SUPERPOWERS" = "off" ] && [ "$DRY" -eq 0 ]; then
-    local target="$SANDBOX/.claude/$LOCAL_SETTINGS_BASENAME" tmp2
-    tmp2="$(mktemp)"
-    if jq '.enabledPlugins["superpowers@claude-plugins-official"] = false' "$target" > "$tmp2" 2>/dev/null \
-         && [ -s "$tmp2" ]; then
-      mv "$tmp2" "$target"
-      echo "calib: superpowers=off — plugin disabled in sandbox settings"
-    else
-      rm -f "$tmp2"
-      die_run "could not disable the superpowers plugin in $target"
-    fi
-  fi
 }
 
 commit_sandbox() {
@@ -420,8 +391,8 @@ commit_sandbox() {
   # like any other file, it gets committed here, and the very next
   # sync_sandbox_after_run() `git reset --hard origin/main` — which runs
   # AFTER every measured launch — throws away whatever
-  # materialize_local_settings() wrote for THIS run (e.g. the --superpowers
-  # off plugin-disable flip) and restores the stale committed copy instead.
+  # materialize_local_settings() wrote for THIS run and restores the stale
+  # committed copy instead.
   # `--ignore-unmatch` makes this safe whether or not `add --all` staged it.
   git -C "$SANDBOX" rm --cached --ignore-unmatch --quiet \
     -- ".claude/$LOCAL_SETTINGS_BASENAME" || return 1
@@ -1084,24 +1055,24 @@ emit_calib_block() {
   if [ ! -s "$CAPTURE_LOG" ] || [ -z "$PRICING_TOTAL" ] || pricing_is_zero "$PRICING_TOTAL"; then
     cost_display="n/a"
   fi
-  # hooks=<on|off> (#1409) and superpowers=<on|off> (#1412) are recorded on
-  # every CALIB-TOTAL line, all arms, so an off-arm run is never mistaken for
-  # the on-arm baseline. bexec=<opus|sonnet> (#1414) is OPTIONAL — appended as
-  # one pre-built atom rather than a format field, because the unset arm is the
-  # harness default rather than an arm, and because the CALIB-TOTAL grammar
-  # contract (tests/test-calibration-contract.sh (d)) pins the seven named
-  # fields shared by doc / emitter / run-retro.sh header.
+  # hooks=<on|off> (#1409) is recorded on every CALIB-TOTAL line, all arms, so
+  # an off-arm run is never mistaken for the on-arm baseline. bexec=<opus|
+  # sonnet> (#1414) is OPTIONAL — appended as one pre-built atom rather than a
+  # format field, because the unset arm is the harness default rather than an
+  # arm, and because the CALIB-TOTAL grammar contract
+  # (tests/test-calibration-contract.sh (d)) pins the six named fields shared
+  # by doc / emitter / run-retro.sh header.
   local bexec_atom=""
   [ -n "$EXECUTOR_MODEL" ] && bexec_atom=" bexec=$EXECUTOR_MODEL"
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s superpowers=%s%s\n' \
-      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" "$SUPERPOWERS" "$bexec_atom"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" "$bexec_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s superpowers=%s%s\n' \
-      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" "$SUPERPOWERS" "$bexec_atom"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" "$bexec_atom"
   fi
 }
 
@@ -1137,14 +1108,12 @@ cmd_run() {
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
   RUN_TS="$(date -u +%Y-%m-%dT%H%MZ)"
   RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  # #1409/#1412/#1414: a non-default arm suffixes both artifacts so it can
-  # never be mistaken for the baseline; the default arms keep the plain name.
-  # Composable in a FIXED order — -hooks-off, then -superpowers-off, then
-  # -bexec-<M> — so every-arm names <ts>-hooks-off-superpowers-off-bexec-opus
-  # and run-retro.sh has one order to peel.
+  # #1409/#1414: a non-default arm suffixes both artifacts so it can never be
+  # mistaken for the baseline; the default arms keep the plain name.
+  # Composable in a FIXED order — -hooks-off, then -bexec-<M> — so every-arm
+  # names <ts>-hooks-off-bexec-opus and run-retro.sh has one order to peel.
   local run_suffix=""
   [ "$HOOKS" = "off" ] && run_suffix="${run_suffix}-hooks-off"
-  [ "$SUPERPOWERS" = "off" ] && run_suffix="${run_suffix}-superpowers-off"
   [ -n "$EXECUTOR_MODEL" ] && run_suffix="${run_suffix}-bexec-$EXECUTOR_MODEL"
   RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
@@ -1164,11 +1133,11 @@ case "$MODE" in
   dry-run)
     build_launch
     # DRY=1 here always (MODE=dry-run forces it), so this never reaches the
-    # real "$@" branch of dispatch() — the trailing hooks=<val>/superpowers=<val>
-    # /bexec=<val> tokens are safe as informational-only preview text
-    # (#1409/#1412/#1414), never passed to `claude`. bexec= is printed only
-    # when the arm is set, matching its CALIB-TOTAL atom.
-    ARM_TOKENS=("hooks=$HOOKS" "superpowers=$SUPERPOWERS")
+    # real "$@" branch of dispatch() — the trailing hooks=<val>/bexec=<val>
+    # tokens are safe as informational-only preview text (#1409/#1414), never
+    # passed to `claude`. bexec= is printed only when the arm is set, matching
+    # its CALIB-TOTAL atom.
+    ARM_TOKENS=("hooks=$HOOKS")
     [ -n "$EXECUTOR_MODEL" ] && ARM_TOKENS+=("bexec=$EXECUTOR_MODEL")
     dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
