@@ -41,8 +41,8 @@ echo "# calib sandbox" > "$HARNESS/dev/calib/template/README.md"
 echo "PIPELINE_REPO=owner/pipeline-calib" > "$HARNESS/dev/calib/template/pipeline.config"
 echo "stale line" > "$HARNESS/dev/calib/template/docs/guide.md"
 # enabledPlugins carries the two pipeline marketplace installs disabled, the
-# same shape the real template ships (#1412 superpowers scenarios check these
-# survive untouched when --superpowers off adds a third key).
+# same shape the real template ships. Nothing in the driver rewrites these any
+# more: #1419 removed the --superpowers arm that used to add a third key.
 printf '{"enabledPlugins":{"pipeline@claude-pipeline":false,"pipeline@claude-pipeline-local":false},"permissions":{"allow":["Bash"]}}\n' \
   > "$HARNESS/dev/calib/template/claude-settings.local.json"
 
@@ -302,9 +302,13 @@ run_helper --dry-run --hooks maybe
 expect_rc "--hooks maybe is rejected" 2
 expect_sub "--hooks error names the allowed values" "$OUT" "on|off"
 
-run_helper --dry-run --superpowers maybe
-expect_rc "--superpowers maybe is rejected" 2
-expect_sub "--superpowers error names the allowed values" "$OUT" "on|off"
+# #1419 retired the arm. The rejection must be pinned on the MESSAGE, not the
+# exit code: a bare `--superpowers off` with no mode flag already exits 2 today
+# ("one of --bootstrap|--reset|--dry-run|--run is required"), so an
+# exit-code-only assert would be vacuous against the old driver.
+run_helper --dry-run --superpowers off
+expect_rc "--superpowers is no longer a driver flag" 2
+expect_sub "--superpowers is rejected as an unknown arg" "$OUT" "unknown arg: --superpowers"
 
 run_helper --dry-run --executor-model gpt
 expect_rc "--executor-model gpt is rejected" 2
@@ -319,7 +323,7 @@ expect_rc "--profile lean --executor-model opus is accepted" 0
 # A value-taking flag in LAST position has no value to shift: `shift 2` with
 # $#=1 fails, the token is never consumed, and the parser spins forever with
 # no output. Must be a usage error, never a hang (rc=124 from run_helper's cap).
-for flag in --profile --model --harness --hooks --superpowers --executor-model; do
+for flag in --profile --model --harness --hooks --executor-model; do
   run_helper --dry-run "$flag"
   expect_rc "trailing $flag exits 2 (never spins)" 2
   expect_sub "trailing $flag reports the missing value" "$OUT" "$flag requires a value"
@@ -362,7 +366,7 @@ expect_sub "launch line disables the print-mode background wait ceiling" \
   "$LAUNCH" "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0"
 expect_sub "launch line names the resolved sandbox dir" "$LAUNCH" "$SANDBOX"
 expect_sub "the dry-run preview names the default hooks arm" "$LAUNCH" "hooks=on"
-expect_sub "the dry-run preview names the default superpowers arm" "$LAUNCH" "superpowers=on"
+refute_sub "the dry-run preview names no superpowers arm (#1419)" "$LAUNCH" "superpowers="
 # The executor-model arm is OPT-IN (#1414): unset means "whatever the harness
 # defaults to" (Sonnet, per #1042), so the default preview must set no
 # PIPELINE_PATH_B_MODEL_EXECUTE at all rather than pinning a value.
@@ -374,11 +378,6 @@ rm -f "$CALLS"
 run_helper --dry-run --harness "$HARNESS" --hooks off
 LAUNCH_HOOKS_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
 expect_sub "--hooks off is named in the dry-run preview" "$LAUNCH_HOOKS_OFF" "hooks=off"
-
-rm -f "$CALLS"
-run_helper --dry-run --harness "$HARNESS" --superpowers off
-LAUNCH_SUPERPOWERS_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
-expect_sub "--superpowers off is named in the dry-run preview" "$LAUNCH_SUPERPOWERS_OFF" "superpowers=off"
 
 # #1414: the arm is an ENV knob, not a CLI flag on `claude` — the preview has
 # to show the token that actually reaches the sandbox session as well as the
@@ -1847,97 +1846,6 @@ fi
 unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
-scenario "Scenario 20: --superpowers off disables the plugin in the materialized sandbox settings (backlog #11, #1412)"
-# ---------------------------------------------------------------------------
-# Arm 2 of the superpowers-necessity experiment: the sandbox's materialized
-# .claude/settings.local.json must gain
-# enabledPlugins["superpowers@claude-plugins-official"] = false, while the
-# pipeline entries the template already disables stay untouched.
-
-# Scenario 7b/7c overwrote $TEMPLATE_SETTINGS with hook-focused fixtures that
-# carry no enabledPlugins block — restore the pipeline-entries shape these
-# scenarios need.
-cat > "$TEMPLATE_SETTINGS" <<'TPL'
-{
-  "enabledPlugins": {
-    "pipeline@claude-pipeline": false,
-    "pipeline@claude-pipeline-local": false
-  },
-  "permissions": {"allow": ["Bash"]}
-}
-TPL
-
-echo 6200 > "$TMP/issue-counter"
-rm -f "$COST_LOG" "$CALLS"
-export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
-run_helper --run --harness "$HARNESS" --superpowers off
-expect_rc "--run --superpowers off exits 0" 0
-
-SANDBOX_SETTINGS="$SANDBOX/.claude/settings.local.json"
-if jq -e '.enabledPlugins["superpowers@claude-plugins-official"] == false' \
-     "$SANDBOX_SETTINGS" >/dev/null 2>&1; then
-  pass_msg "--superpowers off disables superpowers@claude-plugins-official in the sandbox settings"
-else
-  fail_msg "--superpowers off must set enabledPlugins[\"superpowers@claude-plugins-official\"] = false"
-fi
-if jq -e '.enabledPlugins["pipeline@claude-pipeline"] == false
-          and .enabledPlugins["pipeline@claude-pipeline-local"] == false' \
-     "$SANDBOX_SETTINGS" >/dev/null 2>&1; then
-  pass_msg "--superpowers off keeps the pipeline enabledPlugins entries"
-else
-  fail_msg "--superpowers off must keep the pipeline enabledPlugins entries untouched"
-fi
-
-TOTAL_SUPERPOWERS_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
-expect_sub "the CALIB-TOTAL line records the superpowers off arm" \
-  "$TOTAL_SUPERPOWERS_OFF" "superpowers=off"
-
-ARTIFACT_SUPERPOWERS_OFF="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*-superpowers-off.txt 2>/dev/null | sort | tail -1)"
-if [ -n "$ARTIFACT_SUPERPOWERS_OFF" ] && [ -f "$ARTIFACT_SUPERPOWERS_OFF" ]; then
-  pass_msg "--superpowers off names its artifact with a -superpowers-off suffix"
-else
-  fail_msg "--superpowers off must name its artifact <UTC date>T<HHMM>Z-superpowers-off.txt"
-fi
-
-expect_sub "--superpowers off logs the plugin-disable message" \
-  "$OUT" "calib: superpowers=off — plugin disabled in sandbox settings"
-
-unset CALIB_TEST_CLAUDE_SCRIPT
-
-# ---------------------------------------------------------------------------
-scenario "Scenario 21: default --superpowers on leaves the sandbox settings byte-identical to the template (#1412)"
-# ---------------------------------------------------------------------------
-
-echo 6300 > "$TMP/issue-counter"
-rm -f "$COST_LOG" "$CALLS"
-export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
-run_helper --run --harness "$HARNESS"
-expect_rc "--run (default superpowers=on) exits 0" 0
-
-EXPECTED_SETTINGS_ON="$TMP/expected-settings-on.json"
-sed "s|\${CLAUDE_PLUGIN_ROOT}|$STAGE|g" \
-  "$HARNESS/dev/calib/template/claude-settings.local.json" > "$EXPECTED_SETTINGS_ON"
-if cmp -s "$SANDBOX/.claude/settings.local.json" "$EXPECTED_SETTINGS_ON"; then
-  pass_msg "default --superpowers on leaves the sandbox settings byte-identical to the template"
-else
-  fail_msg "default --superpowers on must not modify the materialized sandbox settings"
-fi
-
-TOTAL_SUPERPOWERS_ON="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
-expect_sub "the CALIB-TOTAL line records the superpowers on arm" \
-  "$TOTAL_SUPERPOWERS_ON" "superpowers=on"
-
-ARTIFACT_SUPERPOWERS_ON="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*.txt 2>/dev/null \
-  | grep -v -- '-superpowers-off\.txt$' | grep -v -- '-hooks-off\.txt$' | sort | tail -1)"
-if [ -n "$ARTIFACT_SUPERPOWERS_ON" ] && [ -f "$ARTIFACT_SUPERPOWERS_ON" ]; then
-  pass_msg "default --superpowers on names its artifact with no -superpowers-off suffix"
-else
-  fail_msg "default --superpowers on must not suffix its artifact filename"
-fi
-
-unset CALIB_TEST_CLAUDE_SCRIPT
-
-# ---------------------------------------------------------------------------
 scenario "Scenario 22: --executor-model opus reaches the sandbox session and labels the run (backlog #2/#28, #1414)"
 # ---------------------------------------------------------------------------
 # Block C of the outer-loop plan: --profile lean only collapses split-role to
@@ -1991,12 +1899,25 @@ TOTAL_NO_BEXEC="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
 refute_sub "an unset-arm CALIB-TOTAL carries no bexec atom" "$TOTAL_NO_BEXEC" "bexec="
 
 ARTIFACT_NO_BEXEC="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*.txt 2>/dev/null \
-  | grep -v -- '-bexec-' | grep -v -- '-superpowers-off\.txt$' | grep -v -- '-hooks-off\.txt$' \
+  | grep -v -- '-bexec-' | grep -v -- '-hooks-off\.txt$' \
   | sort | tail -1)"
 if [ -n "$ARTIFACT_NO_BEXEC" ] && [ -f "$ARTIFACT_NO_BEXEC" ]; then
   pass_msg "the unset arm names its artifact with no -bexec- suffix"
 else
   fail_msg "the unset executor-model arm must not suffix its artifact filename"
+fi
+
+# Was Scenario 21's job before #1419 retired the --superpowers arm: with the
+# plugin-disable branch gone, NOTHING in the driver rewrites the materialized
+# sandbox settings, so the default arm's file must be the template with
+# ${CLAUDE_PLUGIN_ROOT} substituted and nothing else. Folded into this existing
+# default-arm run rather than kept as a dedicated scenario.
+EXPECTED_SETTINGS_DEFAULT="$TMP/expected-settings-default.json"
+sed "s|\${CLAUDE_PLUGIN_ROOT}|$STAGE|g" "$TEMPLATE_SETTINGS" > "$EXPECTED_SETTINGS_DEFAULT"
+if cmp -s "$SANDBOX/.claude/settings.local.json" "$EXPECTED_SETTINGS_DEFAULT"; then
+  pass_msg "the default arm leaves the materialized sandbox settings byte-identical to the template"
+else
+  fail_msg "the default arm must not modify the materialized sandbox settings"
 fi
 
 unset CALIB_TEST_CLAUDE_SCRIPT

@@ -75,15 +75,22 @@ else
   pass_msg "PATH A Task 0 has no TDD directive"
 fi
 
-# --- Test 3: PATH B block requires superpowers:test-driven-development ---
-echo "Test 3: PATH B Task 0 invokes superpowers:test-driven-development"
+# --- Test 3: PATH B block carries the INLINE TDD discipline (#1419) -------
+# #1419 removed the superpowers dependency: PATH B Task 0 no longer invokes a
+# skill, it names the discipline and points at the agent that already carries
+# it verbatim. The negative half is load-bearing — an assertion that only
+# looked for "test-driven-development" would pass on the old
+# `superpowers:test-driven-development` invocation too.
+echo "Test 3: PATH B Task 0 names the inline test-driven-development discipline"
 inc
 if [ -z "$BLOCK_B" ]; then
   fail_msg "no '#### Task 0 — PATH B' section found"
-elif echo "$BLOCK_B" | grep -q "superpowers:test-driven-development"; then
-  pass_msg "PATH B Task 0 requires superpowers:test-driven-development"
+elif echo "$BLOCK_B" | grep -qF "test-driven-development discipline" \
+   && echo "$BLOCK_B" | grep -qF "agents/tdd-implementer.md" \
+   && ! echo "$BLOCK_B" | grep -qF "superpowers:"; then
+  pass_msg "PATH B Task 0 names the inline TDD discipline and cites agents/tdd-implementer.md"
 else
-  fail_msg "PATH B Task 0 does not invoke superpowers:test-driven-development"
+  fail_msg "PATH B Task 0 must name 'test-driven-development discipline', cite 'agents/tdd-implementer.md', and carry NO 'superpowers:' invocation"
 fi
 
 # --- Test 4: PATH C block requires tdd-implementer dispatch with target sentinel ---
@@ -98,13 +105,23 @@ else
   fail_msg "PATH C Task 0 missing tdd-implementer dispatch or target=<...> sentinel"
 fi
 
-# --- Test 5: final Task N directive references requesting-code-review ---
-echo "Test 5: final Task N calls superpowers:requesting-code-review"
+# --- Test 5: final Task N runs the pre-PR self-check INLINE (#1419) -------
+# The closing task used to dispatch `superpowers:requesting-code-review`; it
+# now runs the same checklist inline. Scoped to the `- Task N:` bullet so a
+# match elsewhere in the skill cannot satisfy it, and paired with the negative
+# so the old invocation (whose #1412 fallback clause already said "run the
+# self-check inline") cannot pass this assertion.
+echo "Test 5: final Task N runs the pre-PR self-check inline"
 inc
-if grep -q "superpowers:requesting-code-review" "$RENDERED"; then
-  pass_msg "requesting-code-review is referenced as final Task N"
+TASKN=$(grep -F -- '- Task N:' "$RENDERED" | head -1 || true)
+if [ -z "$TASKN" ]; then
+  fail_msg "no '- Task N:' bullet found in the rendered skill"
+elif printf '%s' "$TASKN" | grep -qF "self-check" \
+   && printf '%s' "$TASKN" | grep -qF "inline" \
+   && ! printf '%s' "$TASKN" | grep -qF "superpowers:"; then
+  pass_msg "Task N runs the self-check inline, with no superpowers: invocation"
 else
-  fail_msg "no superpowers:requesting-code-review directive in rendered template"
+  fail_msg "Task N bullet must name an inline 'self-check' and carry NO 'superpowers:' invocation"
 fi
 
 # --- Test 6: canonical plan format now includes **Tasks (ordered):** ---
@@ -167,17 +184,21 @@ else
   fail_msg "rendered skill missing PATH_LETTER=D branch / quick-fix label / A|B|C|D fallback"
 fi
 
-# --- Test 12: PATH D block explicitly forbids requesting-code-review ---
-echo "Test 12: PATH D Task N substitute forbids superpowers:requesting-code-review"
+# --- Test 12: PATH D block forbids dispatching a review subagent (#1419) --
+# The prohibition survives the dependency removal — it was never about the
+# skill NAME, it is about the PATH D envelope forbidding any subagent. The
+# clause is therefore reworded to the capability, and the rationale
+# ("PATH D envelope forbids") must stay attached to it.
+echo "Test 12: PATH D Task N substitute forbids dispatching a review subagent"
 inc
 if [ -z "$BLOCK_D" ]; then
   fail_msg "no '#### Task 0 — PATH D' section found"
-elif echo "$BLOCK_D" | grep -qiF "do NOT invoke superpowers:requesting-code-review" \
-   && echo "$BLOCK_D" | grep -qi "dispatches a subagent" \
-   && echo "$BLOCK_D" | grep -qi "PATH D envelope forbids"; then
-  pass_msg "PATH D block explicitly forbids requesting-code-review dispatch with rationale"
+elif echo "$BLOCK_D" | grep -qiF "do NOT dispatch a review subagent" \
+   && echo "$BLOCK_D" | grep -qi "PATH D envelope forbids" \
+   && ! echo "$BLOCK_D" | grep -qF "superpowers:"; then
+  pass_msg "PATH D block forbids dispatching a review subagent, with the envelope rationale"
 else
-  fail_msg "PATH D block missing explicit 'do NOT invoke superpowers:requesting-code-review' clause with subagent/envelope rationale"
+  fail_msg "PATH D block must carry 'do NOT dispatch a review subagent' + the 'PATH D envelope forbids' rationale, and NO 'superpowers:' invocation"
 fi
 
 echo ""
