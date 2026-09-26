@@ -190,6 +190,11 @@ the first line of the block.
 - `superpowers` — a per-RUN atom on the `CALIB-TOTAL` line only: `on`
   (default) or `off`, the arm `--superpowers` launched under (#1412, see
   Running above).
+- `bexec` — a per-RUN atom on the `CALIB-TOTAL` line only, and the only
+  OPTIONAL one: `opus` or `sonnet`, the arm `--executor-model` launched under
+  (#1414, see Running above). Absent entirely when the flag was not passed,
+  because the unset arm is the harness default rather than an arm — so the
+  seven-field `CALIB-TOTAL` grammar above is unchanged for a default run.
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
   there to answer), `timeout` (the wall-clock ceiling killed it), or
@@ -216,8 +221,12 @@ re-run gets its own artifact instead of silently overwriting the prior run's
 day-only `<date>.txt` artifacts committed before #1408 are still read by
 `scripts/run-retro.sh` — nothing rewrites history. A `--hooks off` run
 suffixes its artifact `-hooks-off` (`<UTC date>T<HHMM>Z-hooks-off.txt`); a
-`--superpowers off` run suffixes `-superpowers-off`, composable with
-`-hooks-off`; the default `on` arm(s) keep the plain name (#1409/#1412).
+`--superpowers off` run suffixes `-superpowers-off`; a run with
+`--executor-model` set suffixes `-bexec-<M>`. The three compose in that fixed
+order (`<UTC date>T<HHMM>Z-hooks-off-superpowers-off-bexec-opus.txt`) and the
+default arms keep the plain name (#1409/#1412/#1414). `run-retro.sh` peels the
+suffixes off the filename and renders them on the `weak-model pass:` row, so
+an arm run can never be read as the baseline.
 
 `--run` also writes `<UTC date>T<HHMM>Z.log` beside it: the headless session's
 own output, truncated per run like the `.txt`. That is where the question a
