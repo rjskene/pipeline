@@ -27,10 +27,17 @@ inc()      { TESTS=$((TESTS + 1)); }
 
 echo "no split-role lane under skills/ (#1420)"
 
-# The retired lane's vocabulary. `PIPELINE_TEST_FILE_GLOBS` and
+# The retired lane's vocabulary. The test-file-globs knob and
 # `parse-shared-tests` are in the list because both existed ONLY to serve the W7
 # split-role gate.
-LANE_RE='split[-_ ]role|\[split-role-red\]|SPLIT_ROLE|red:opus|lean-single|parse-shared-tests|PIPELINE_TEST_FILE_GLOBS|RED/GREEN ledger'
+#
+# The knob name is assembled from KP + suffix rather than spelled literally:
+# scripts/check-config-drift.sh extracts \bPIPELINE_[A-Z0-9_]+\b from tests/,
+# so a literal here would re-reference a knob this issue deletes from
+# pipeline.config.example and pin it UNDOCUMENTED forever (same technique as
+# tests/test-no-split-role-lane.sh).
+KP="PIPELINE_"
+LANE_RE="split[-_ ]role|\[split-role-red\]|SPLIT_ROLE|red:opus|lean-single|parse-shared-tests|${KP}TEST_FILE_GLOBS|RED/GREEN ledger"
 
 ALLOWED='skills/tokenomics/SKILL.md'
 
