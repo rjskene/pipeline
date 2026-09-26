@@ -16,8 +16,9 @@ decision it forced. It is the durable record behind issues #721, #723, #707,
 - **Decision: Path 2** — keep work on the subscription's *interactive pool* by running execute+pr-eval as **inline subagents from a human-attended orchestrator**, `claude -p` opt-in. As of #749/#891/#896 this now applies to PATH C as well: C execute/PR-eval fan out inline by default (one `tdd-implementer` per `target=<dir>` leaf in its own per-leaf worktree, reassembled by cherry-pick), with `--spawn` as the opt-in legacy `claude -p` worker transport. Path 1 (API-key, full automation) is the documented later-option.
 - **Two parallel workstreams, both required:** migrate to inline (#723/#707) AND drive down tokens (#648/#420/#700).
 - **Everything gates on #721** (measurement) — it also produces the execute-concurrency assessment that sizes the migration and feeds the governor.
-- **Model-tier lever (shipped DEFAULT, opt-OUT as of #1042):** a third axis — routing the **execute** stage to
-  cheaper Sonnet — is now the shipped default (`scope=all`), not opt-in. It is controlled by the host vars
+- **Model-tier lever (shipped DEFAULT, opt-OUT as of #1042; PATH B reverted to Opus by #1420):** a third axis —
+  routing the **execute** stage to cheaper Sonnet — ships on (`scope=all`) for PATH D; PATH B's unset default
+  returned to Opus with #1420. It is controlled by the host vars
   `PIPELINE_PATH_B_MODEL_EXECUTE` / `PIPELINE_PATH_D_MODEL_EXECUTE` (+ the `PIPELINE_PATH_B_ELIGIBLE_SCOPE`
   scope knob), which ship **active = sonnet / all**; an operator opts OUT with `=opus` / `low-blast`. The W2
   high-uncertainty carve-out (the sole safety boundary under the default, depends on #1039) and **pr-eval

@@ -391,9 +391,9 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # --- per-path execute MODEL routing (#1042: Sonnet is the DEFAULT, opt-OUT) ---
 #
 # fullsend's execute dispatch (Step 6) pins this model for eligible PATH B / PATH D
-# issues; the value is the Agent `model` enum: sonnet | opus | haiku | fable. The lines below
-# ship ACTIVE at the Sonnet default (#1042) — a fresh install runs Sonnet on eligible
-# PATH D execute. To opt OUT, set `=opus` (the conservative Opus-everywhere
+# issues; the value is the Agent `model` enum: sonnet | opus | haiku | fable. The PATH D
+# line below ships ACTIVE at the Sonnet default (#1042) — a fresh install runs Sonnet on
+# eligible PATH D execute; the PATH B line ships COMMENTED (unset -> opus since #1420). To opt OUT, set `=opus` (the conservative Opus-everywhere
 # tier) or comment the line entirely; either restores the pinned Opus tier at the read site.
 # #1420 flipped PATH B's own default the other way (unset -> opus, see below), so on
 # PATH B the opt-out direction is `=sonnet`.

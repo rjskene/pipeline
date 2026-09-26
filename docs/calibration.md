@@ -76,8 +76,8 @@ so an arm-2 run can never be mistaken for the hooks-on baseline (#1409).
 `--executor-model opus|sonnet` (default unset, backlog #2/#10/#28) sets
 `PIPELINE_PATH_B_MODEL_EXECUTE` in the sandbox session — the knob
 `resolve-execute-dispatch.sh` and `resolve-stage-model.sh` read to pin the
-single PATH B execute agent's model. Unset means "whatever the harness resolves
-on its own" (Sonnet, #1042); no value is pinned by default, so a plain run is
+single PATH B execute agent's model. Unset means "whatever the resolver defaults
+to" (Opus for PATH B since #1420); no value is pinned by default, so a plain run is
 never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
 `CALIB-TOTAL` and carries a `-bexec-<M>` artifact suffix, composable with
 `-hooks-off` (#1414).

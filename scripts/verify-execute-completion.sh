@@ -115,10 +115,8 @@ if [ "$1" = "--verify-dispatch" ]; then
     # shellcheck disable=SC1090,SC1091
     source "${_vec_dir}/_resolve-config.sh"
   fi
-  VD_BASE="${PIPELINE_BASE_BRANCH:-staging}"
-
   # --- #1387: advisory cost-attribution miss signal, dispatch-time. -----------
-  # Sits at the TOP of the branch (after VD_BASE, before the shape verify) so
+  # Sits at the TOP of the branch, ahead of the model verify, so
   # the advisory is always the FIRST line of stdout, ahead of every DISPATCH=
   # verdict below (every early-exit branch still carries it). echo-only: no
   # exit-code change, no halt, no gate. MISS-ONLY: there is no COST=ok —

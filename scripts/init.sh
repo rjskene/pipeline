@@ -223,9 +223,10 @@ PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 # force Opus; pr-eval is NEVER defaulted to Sonnet (the W3 Opus backstop).
 #PIPELINE_PATH_B_MODEL_EXECUTE=opus
 PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
-# Scope of the PATH B Sonnet downshift. Ships ACTIVE at "all" (#1042): every PATH B
-# issue without a W2 carve-out routes Sonnet on execute. Opt OUT with "low-blast"
-# (or comment) to restrict Sonnet to the low-blast lane only. pr-eval ALWAYS stays Opus (W3).
+# Scope of the PATH B execute-model routing. Ships ACTIVE at "all": every PATH B
+# issue without a W2 carve-out routes the resolved execute model. Since #1420 PATH B's
+# unset default is Opus, so "all" is not a downshift on its own; "low-blast" (or
+# commenting the line) narrows routing to the low-blast lane. pr-eval ALWAYS stays Opus (W3).
 PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"
 
 # --- Per-model token pricing (issue #721) ---

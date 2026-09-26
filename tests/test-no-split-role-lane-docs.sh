@@ -3,9 +3,18 @@ set -euo pipefail
 # Guard (#1420): the split-role RED/GREEN TDD lane is gone from the docs surface.
 # PATH B dispatches ONE execute agent that applies the `tdd-implementer`
 # discipline inline, so `docs/split-role-tdd.md`, `scripts/split-role-gate.sh`,
-# `scripts/parse-shared-tests.sh`, the `PIPELINE_PATH_B_SPLIT_ROLE` knob and the
+# `scripts/parse-shared-tests.sh`, the PATH B split-role shape knob and the
 # `lean-single` resolver REASON no longer exist — no forward-looking doc may
 # describe them as live behaviour.
+#
+# The knob name is assembled from KP + suffix rather than spelled literally:
+# scripts/check-config-drift.sh extracts \bPIPELINE_[A-Z0-9_]+\b from tests/, so
+# a literal here would re-reference a knob this issue deletes and pin it
+# UNDOCUMENTED forever (same technique as tests/test-no-split-role-lane.sh and
+# tests/test-no-split-role-lane-skills.sh). It also keeps assertion (6b) of
+# tests/test-no-split-role-lane.sh honest: that assertion asserts the allow-list
+# entry covers a LOAD-BEARING literal, and a second literal here would satisfy
+# it vacuously.
 #
 # Exempt by contract: `docs/retros/`, `docs/tokenomics/` and `docs/superpowers/`
 # are point-in-time historical records (retro transcripts, cost windows, design
@@ -25,10 +34,11 @@ inc() { TESTS=$((TESTS + 1)); }
 
 # Tokens that name the retired lane's machinery. A live doc naming any of these
 # is making a claim about code that no longer exists.
+KP="PIPELINE_"
 RETIRED_TOKENS=(
   'split-role-tdd.md'
   'split-role-gate.sh'
-  'PIPELINE_PATH_B_SPLIT_ROLE'
+  "${KP}PATH_B_SPLIT_ROLE"
   'lean-single'
   'parse-shared-tests.sh'
 )

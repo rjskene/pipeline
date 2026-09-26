@@ -131,7 +131,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
      - Every other hit — one the change does not break — is advisory: report it under `**Missing files:**` and do not block. Unbroken sweep hits are advisory only, never a Revise.
 
    - **Executable verification (#1218):** every plan claim matching the trigger list in the Executable verification section must be verified by EXECUTING it plus a negative control, never by reading. A claim you could not execute is reported as unexecuted, never as verified.
-   - **Divergence is BLOCKING:** an observed state that contradicts the prediction — predicted red but observed green, predicted green but observed red, or red for a DIFFERENT reason than stated — returns **Revise**, naming the row, the exact command run, and the observed output. The usual cause is a row whose redness depends on state a later task creates.
+   - **Divergence is BLOCKING:** an observed state that contradicts the plan's prediction — predicted red but observed green, predicted green but observed red, or red for a DIFFERENT reason than stated — returns **Revise**, naming the claim, the exact command run, and the observed output. The usual cause is a claim whose redness depends on state a later task creates.
 
    **Phase 2 — Implementability.** Verify the plan is executable without guessing:
    - Are data structures, algorithms, or mode behaviors specified concretely (no ambiguous steps)?
