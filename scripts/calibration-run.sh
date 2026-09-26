@@ -1082,15 +1082,39 @@ emit_calib_block() {
   # by doc / emitter / run-retro.sh header.
   local bexec_atom=""
   [ -n "$EXECUTOR_MODEL" ] && bexec_atom=" bexec=$EXECUTOR_MODEL"
+  # bridge_prompts=<n> (#1421) — how many permission escalations THIS run raised
+  # through the PermissionRequest bridge. It is the measurement that says whether
+  # replacing --dangerously-skip-permissions with `--permission-mode auto` turned
+  # a $60-120 run into a wall of unanswered prompts, each burning
+  # PIPELINE_PERMISSION_BRIDGE_TIMEOUT seconds (expected <= 3). A pre-built atom
+  # for the same reason bexec= is: the CALIB-TOTAL grammar contract
+  # (tests/test-calibration-contract.sh (d)) greps `[a-z][a-z-]*=` out of the
+  # EMITTER'S FORMAT STRING, and `bridge_prompts=` in there would add a bogus
+  # `prompts` field that docs/calibration.md and run-retro.sh's header would then
+  # have to declare too.
+  # `-newermt "$RUN_START_TS"` is load-bearing: the queue dir is never cleaned
+  # between runs, so an unpruned request from a previous run would inflate every
+  # later run's count. Unlike RUN_TS, RUN_START_TS is second-precision — minute
+  # truncation would count the prior minute's requests.
+  local bridge_atom bridge_q n_bridge=0
+  bridge_q="$HARNESS/.claude/scratch/permission-queue"
+  if [ -d "$bridge_q" ] && [ -n "${RUN_START_TS:-}" ]; then
+    n_bridge="$(find "$bridge_q" -maxdepth 1 -type f -name '*.json' \
+                  -newermt "$RUN_START_TS" 2>/dev/null | wc -l | tr -d ' ')"
+    case "$n_bridge" in ''|*[!0-9]*) n_bridge=0 ;; esac
+  fi
+  bridge_atom=" bridge_prompts=$n_bridge"
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s\n' \
-      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" "$bexec_atom"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" \
+      "$bexec_atom" "$bridge_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s\n' \
-      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" "$bexec_atom"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" \
+      "$bexec_atom" "$bridge_atom"
   fi
 }
 

@@ -933,6 +933,15 @@ expect_sub "the graded total records the planted-defect verdict" \
   "$TOTAL_LINE" "planted="
 expect_sub "a slate with no planted-defect dir grades it n/a" \
   "$TOTAL_LINE" "planted=n/a"
+# #1421: how many permission escalations the run raised through the bridge. The
+# measurement that says whether `--permission-mode auto` turned a $60-120 run
+# into a wall of unanswered prompts (expected <= 3). ALWAYS emitted, 0 when the
+# queue dir is absent or empty — an absent atom is indistinguishable from a run
+# of an older harness.
+expect_sub "the graded total records the bridge-prompt count" \
+  "$TOTAL_LINE" "bridge_prompts="
+expect_sub "a run with no queue dir reports bridge_prompts=0" \
+  "$TOTAL_LINE" "bridge_prompts=0"
 
 SANDBOX_HEAD="$(git -C "$SANDBOX" rev-parse HEAD)"
 REMOTE_HEAD="$(git -C "$REMOTE" rev-parse main)"
@@ -1964,6 +1973,44 @@ else
 fi
 
 unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 23: bridge_prompts counts THIS run's queued permission requests (#1421)"
+# ---------------------------------------------------------------------------
+# Non-vacuity pair for the Scenario 8 `bridge_prompts=0` assertion: a
+# ceiling-free "the atom is there" check is satisfied by a hardcoded 0. Two
+# queue files are planted in the launching repo's queue dir — one STALE (mtime
+# well before the run) and one fresh — and only the fresh one may be counted,
+# because the dir is not cleaned between runs and a stale request would
+# otherwise inflate every subsequent run's measurement.
+BRIDGE_Q="$HARNESS/.claude/scratch/permission-queue"
+mkdir -p "$BRIDGE_Q"
+printf '{"id":"stale"}\n' > "$BRIDGE_Q/stale.json"
+touch -d "2 days ago" "$BRIDGE_Q/stale.json"
+
+echo 6600 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+cat > "$TMP/claude-bridge.sh" <<'BRIDGE'
+#!/bin/bash
+# Stands in for a session that raised one permission escalation: the hook would
+# have written this queue file DURING the run.
+printf '{"id":"fresh"}
+' > "$CALIB_TEST_BRIDGE_Q/fresh.json"
+exit 0
+BRIDGE
+chmod +x "$TMP/claude-bridge.sh"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-bridge.sh"
+export CALIB_TEST_BRIDGE_Q="$BRIDGE_Q"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with a bridge prompt exits 0" 0
+
+TOTAL_BRIDGE="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "bridge_prompts counts the request the run itself raised" \
+  "$TOTAL_BRIDGE" "bridge_prompts=1"
+refute_sub "a stale pre-run queue file is NOT counted" "$TOTAL_BRIDGE" "bridge_prompts=2"
+
+unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_BRIDGE_Q
+rm -f "$BRIDGE_Q/stale.json" "$BRIDGE_Q/fresh.json"
 
 # ---------------------------------------------------------------------------
 echo ""
