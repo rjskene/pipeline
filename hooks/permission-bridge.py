@@ -30,7 +30,9 @@ skip-and-continue message: an escalation the operator never saw must not be
 silently granted. A crashed bridge must never wedge a headless session, which
 is why every path ends in exactly one envelope on stdout and exit 0.
 
-Queue-dir layout (one pair per escalation, both named by tool_use_id):
+Queue-dir layout (one pair per escalation, both named by the queue id — see
+queue_id(): tool_use_id when the harness sends one, else
+`req-<session-head>-<ms>`, because claude 2.1.278 sends no tool_use_id):
     <dir>/<id>.json    written by this hook — the request the operator reads
     <dir>/<id>.answer  written by the operator CLI — `allow` or `deny[\nmsg]`
 """
@@ -116,11 +118,29 @@ def issue_from_cwd(cwd: str) -> str:
     return f"#{m.group(1)}" if m else ""
 
 
-def safe_id(raw: str) -> str:
-    """Filename-safe queue id. Never empty: a request with no tool_use_id
-    still has to be answerable, so fall back to a per-call timestamp."""
-    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", str(raw or "").strip())
-    return cleaned or f"noid-{int(time.time() * 1000)}"
+def _sanitize(raw) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(raw or "").strip())
+
+
+def queue_id(data: dict) -> str:
+    """Filename-safe, per-CALL-unique queue id.
+
+    Measured against claude 2.1.278 (the #1421 spike): the PermissionRequest
+    payload carries session_id / transcript_path / cwd / prompt_id /
+    permission_mode / effort / hook_event_name / tool_name / tool_input /
+    permission_suggestions — and NO tool_use_id. `tool_use_id` stays PREFERRED
+    so the naming follows the harness if that field is ever added; the fallback
+    is `req-<session-head>-<ms>`, which is
+      * unique per call — `prompt_id` alone is NOT: two escalations inside one
+        prompt would collide on a single queue file and one of them would be
+        unanswerable, and
+      * correlatable to the session the operator is watching.
+    """
+    explicit = _sanitize(data.get("tool_use_id") or data.get("toolUseId") or "")
+    if explicit:
+        return explicit
+    head = _sanitize(data.get("session_id") or "").split("-")[0][:8] or "anon"
+    return f"req-{head}-{int(time.time() * 1000)}"
 
 
 def write_queue_file(path: Path, payload: dict) -> None:
@@ -165,7 +185,7 @@ def main() -> int:
         return 0
 
     data = read_event_stdin() or {}
-    qid = safe_id(data.get("tool_use_id") or data.get("toolUseId") or "")
+    qid = queue_id(data)
     cwd = data.get("cwd") or os.getcwd()
     timeout = resolve_timeout()
 

@@ -266,6 +266,45 @@ else
   fail_msg "7: issue= was guessed from a non-worktree cwd"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "Case 8: a real event carries NO tool_use_id — the id stays legible"
+# ---------------------------------------------------------------------------
+# Measured against claude 2.1.278 in the #1421 spike: the PermissionRequest
+# payload is {session_id, transcript_path, cwd, prompt_id, permission_mode,
+# effort, hook_event_name, tool_name, tool_input, permission_suggestions} —
+# there is NO tool_use_id. The fallback id must therefore be (a) unique per
+# call, so two escalations in one prompt cannot collide on one queue file, and
+# (b) correlatable back to the session the operator is watching. `req-` prefixed
+# and carrying the session-id head does both; `tool_use_id` stays PREFERRED so
+# the naming follows the harness if the field is ever added.
+Q8="$WORKDIR/q8"
+mkdir -p "$Q8"
+printf '{"hook_event_name":"PermissionRequest","session_id":"91699b82-23f0-429a-9c41-e2c90ae3b056","cwd":"%s","prompt_id":"e6d27137","tool_name":"Bash","tool_input":{"command":"sudo -n id"}}' "$PROJ" \
+  | env PIPELINE_PERMISSION_BRIDGE_DIR="$Q8" PIPELINE_PERMISSION_BRIDGE_TIMEOUT=2 \
+    CLAUDE_PROJECT_DIR="$PROJ" python3 "$HOOK" >/dev/null 2>&1
+Q8_FILES="$(find "$Q8" -maxdepth 1 -name '*.json' -printf '%f\n' 2>/dev/null)"
+inc
+if [ "$(printf '%s\n' "$Q8_FILES" | grep -c .)" -eq 1 ]; then
+  pass_msg "8: an event with no tool_use_id still produces exactly one queue file"
+else
+  fail_msg "8: expected one queue file, got: $(printf '%s' "$Q8_FILES" | tr '\n' ' ')"
+fi
+inc
+case "$Q8_FILES" in
+  req-91699b82-*) pass_msg "8: the fallback id is 'req-<session-head>-<ms>' ($Q8_FILES)" ;;
+  *)              fail_msg "8: the fallback id is not correlatable to the session ($Q8_FILES)" ;;
+esac
+# Two escalations inside ONE prompt must not land on the same queue file.
+printf '{"hook_event_name":"PermissionRequest","session_id":"91699b82-23f0-429a-9c41-e2c90ae3b056","cwd":"%s","prompt_id":"e6d27137","tool_name":"Bash","tool_input":{"command":"chmod -R 777 /tmp"}}' "$PROJ" \
+  | env PIPELINE_PERMISSION_BRIDGE_DIR="$Q8" PIPELINE_PERMISSION_BRIDGE_TIMEOUT=2 \
+    CLAUDE_PROJECT_DIR="$PROJ" python3 "$HOOK" >/dev/null 2>&1
+inc
+if [ "$(find "$Q8" -maxdepth 1 -name '*.json' | wc -l)" -eq 2 ]; then
+  pass_msg "8: a second escalation in the same prompt gets its OWN queue file"
+else
+  fail_msg "8: two escalations collided on one queue file — one would be unanswerable"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
