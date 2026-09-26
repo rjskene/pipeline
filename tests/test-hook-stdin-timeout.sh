@@ -126,6 +126,13 @@ fi
 # ---------------------------------------------------------------------------
 echo "Task 2: shipped Python hooks bound their stdin reads"
 
+# permission-bridge.py (#1421) needs a queue dir to get PAST its inertness gate:
+# with PIPELINE_PERMISSION_BRIDGE_DIR unset it returns 0 BEFORE touching stdin,
+# so (a) below would pass for the wrong reason and (b) would be pinning a path
+# the hook never takes in production. The 1 s bridge deadline keeps
+# 5 s (read_event_stdin's alarm) + the answer poll under this task's 8 s ceiling.
+BRIDGE_Q="$(mktemp -d)"
+
 # name|env-prefix(space-separated VAR=val, or empty)
 PY_HOOKS=(
   "log_subagent.py|"
@@ -137,6 +144,7 @@ PY_HOOKS=(
   "enforce-base-branch.py|"
   "enforce-comment-trust.py|"
   "check-ci-skip-markers.py|"
+  "permission-bridge.py|PIPELINE_PERMISSION_BRIDGE_DIR=$BRIDGE_Q PIPELINE_PERMISSION_BRIDGE_TIMEOUT=1"
 )
 
 for row in "${PY_HOOKS[@]}"; do
@@ -169,6 +177,8 @@ for row in "${PY_HOOKS[@]}"; do
     pass_msg "2[$hook]: no bare json.load(sys.stdin)/sys.stdin.read()"
   fi
 done
+
+rm -rf "$BRIDGE_Q"
 
 # ---------------------------------------------------------------------------
 # Task 3 — bash hook log-tool-use.sh bounds its `cat` stdin read with timeout.
