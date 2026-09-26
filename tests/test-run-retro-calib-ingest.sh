@@ -405,6 +405,44 @@ refute_sub "a superpowers-on artifact is never mislabeled superpowers=off" \
   "$REPORT_HOOKS_ON" "superpowers=off"
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 12: a --executor-model artifact renders bexec=<M> (backlog #2/#28, #1414)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --executor-model M suffixes its artifact `-bexec-<M>`
+# (issue #1414), composable with `-hooks-off` / `-superpowers-off` in that
+# fixed order. A run with an opus PATH B executor is not comparable with the
+# default-executor baseline, so the row has to say which one it graded. The
+# marker is read off the FILENAME, like the run date, never off a CALIB atom.
+
+FIX8="$TMP/fixture-bexec"
+cp -r "$FIXTURE_SRC" "$FIX8"
+retro8() { bash "$HELPER" --cycle 0 --fixture "$FIX8" "$@" 2>&1; }
+rm -f "$FIX8/calib.txt"
+mkdir -p "$FIX8/calib"
+write_calib_at "$FIX8/calib/2026-09-08T1200Z-bexec-opus.txt"
+
+REPORT_BEXEC="$(retro8)"
+expect_line "an executor-model artifact's weak-model row names bexec=opus" \
+  "$REPORT_BEXEC" "weak-model pass: 4/5 (run 2026-09-08, bexec=opus)"
+
+# Composability: all three arms at once names all three markers, and the date
+# still parses — the suffixes must be peeled BEFORE the date-shape match.
+FIX9="$TMP/fixture-all-arms"
+cp -r "$FIXTURE_SRC" "$FIX9"
+retro9() { bash "$HELPER" --cycle 0 --fixture "$FIX9" "$@" 2>&1; }
+rm -f "$FIX9/calib.txt"
+mkdir -p "$FIX9/calib"
+write_calib_at "$FIX9/calib/2026-09-08T1200Z-hooks-off-superpowers-off-bexec-opus.txt"
+
+REPORT_ALL_ARMS="$(retro9)"
+expect_line "an all-arms artifact's weak-model row names all three markers" \
+  "$REPORT_ALL_ARMS" "weak-model pass: 4/5 (run 2026-09-08, hooks=off, superpowers=off, bexec=opus)"
+
+# Control: the default (unset) executor-model artifact never renders a bexec
+# marker — unset is the harness default, not an arm.
+refute_sub "a default-executor artifact is never labelled bexec=" \
+  "$REPORT_HOOKS_ON" "bexec="
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"

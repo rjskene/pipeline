@@ -916,23 +916,31 @@ compute_calib() {
 # non-numeric / absent substrate degrades silently to "date only", never a
 # failed retro.
 calib_provenance() {
-  local f="${1:-}" base cutoff
+  local f="${1:-}" base cutoff peeled
   CALIB_RUN_DATE=""
   CALIB_STALE=""
   CALIB_HOOKS=""
   CALIB_SUPERPOWERS=""
+  CALIB_BEXEC=""
   [ -n "$f" ] || return 0
   base="$(basename "$f" .txt)"
-  # #1409/#1412: --hooks off and/or --superpowers off suffix their artifact
-  # `-hooks-off` / `-superpowers-off` (composable, hooks first) — strip them
-  # (and remember the arm(s)) BEFORE the date-shape match below, so both the
-  # bare and the T<HHMM>Z form are recognized regardless of arm.
-  case "$base" in
-    *-hooks-off-superpowers-off)
-      CALIB_HOOKS="off"; CALIB_SUPERPOWERS="off"; base="${base%-hooks-off-superpowers-off}" ;;
-    *-hooks-off) CALIB_HOOKS="off"; base="${base%-hooks-off}" ;;
-    *-superpowers-off) CALIB_SUPERPOWERS="off"; base="${base%-superpowers-off}" ;;
-  esac
+  # #1409/#1412/#1414: a non-default arm suffixes its artifact `-hooks-off`,
+  # `-superpowers-off` and/or `-bexec-<M>` (composable, emitted in that order)
+  # — strip them (and remember the arm(s)) BEFORE the date-shape match below,
+  # so both the bare and the T<HHMM>Z form are recognized regardless of arm.
+  # Peeled in a LOOP, not a case over the combinations: two arms were three
+  # cases, three arms are seven, and every further arm doubles them.
+  peeled=1
+  while [ "$peeled" -eq 1 ]; do
+    peeled=0
+    case "$base" in
+      *-bexec-opus)   CALIB_BEXEC="opus";   base="${base%-bexec-opus}";   peeled=1 ;;
+      *-bexec-sonnet) CALIB_BEXEC="sonnet"; base="${base%-bexec-sonnet}"; peeled=1 ;;
+      *-superpowers-off)
+        CALIB_SUPERPOWERS="off"; base="${base%-superpowers-off}"; peeled=1 ;;
+      *-hooks-off) CALIB_HOOKS="off"; base="${base%-hooks-off}"; peeled=1 ;;
+    esac
+  done
   case "$base" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) CALIB_RUN_DATE="$base" ;;
     # #1408: minute-granular <date>T<HHMM>Z artifact — the run date is the
@@ -948,6 +956,14 @@ calib_provenance() {
      | select((.body // "") | test("^## Cycle [0-9]+"))
      | select(.createdAt > $after)] | length' "$ISSUES_FILE" 2>/dev/null)"
   case "$CALIB_STALE" in ''|*[!0-9]*) CALIB_STALE="" ;; esac
+}
+
+# calib_prov_add <marker> — appends one comma-separated marker to CALIB_PROV.
+# The provenance list grew a third arm with #1414; composing it through one
+# helper keeps "first marker takes no comma" in a single place instead of one
+# nested if per arm.
+calib_prov_add() {
+  if [ -n "$CALIB_PROV" ]; then CALIB_PROV="$CALIB_PROV, $1"; else CALIB_PROV="$1"; fi
 }
 
 compute_calib "$CALIB_FILE"
@@ -1572,21 +1588,19 @@ build_full_report() {
   echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
 
   echo ""
-  # #1409/#1412: an off-arm artifact is tagged `hooks=off` and/or
-  # `superpowers=off` (composable) so it can never silently read as the
-  # on-arm baseline; the default on arm stays unlabeled.
-  if [ -n "$CALIB_RUN_DATE" ]; then
-    CALIB_PROV="run $CALIB_RUN_DATE"
-    [ -n "$CALIB_STALE" ] && [ "$CALIB_STALE" -ge 3 ] && CALIB_PROV="$CALIB_PROV, stale $CALIB_STALE cycles"
-    [ "$CALIB_HOOKS" = "off" ] && CALIB_PROV="$CALIB_PROV, hooks=off"
-    [ "$CALIB_SUPERPOWERS" = "off" ] && CALIB_PROV="$CALIB_PROV, superpowers=off"
-    echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
-  elif [ "$CALIB_HOOKS" = "off" ] || [ "$CALIB_SUPERPOWERS" = "off" ]; then
-    CALIB_PROV=""
-    [ "$CALIB_HOOKS" = "off" ] && CALIB_PROV="hooks=off"
-    if [ "$CALIB_SUPERPOWERS" = "off" ]; then
-      if [ -n "$CALIB_PROV" ]; then CALIB_PROV="$CALIB_PROV, superpowers=off"; else CALIB_PROV="superpowers=off"; fi
-    fi
+  # #1409/#1412/#1414: a non-default-arm artifact is tagged `hooks=off`,
+  # `superpowers=off` and/or `bexec=<M>` (composable) so it can never silently
+  # read as the baseline; the default arms stay unlabeled. Each marker is
+  # independent of the run date, so an undated artifact still names its arms.
+  CALIB_PROV=""
+  [ -n "$CALIB_RUN_DATE" ] && calib_prov_add "run $CALIB_RUN_DATE"
+  if [ -n "$CALIB_RUN_DATE" ] && [ -n "$CALIB_STALE" ] && [ "$CALIB_STALE" -ge 3 ]; then
+    calib_prov_add "stale $CALIB_STALE cycles"
+  fi
+  [ "$CALIB_HOOKS" = "off" ] && calib_prov_add "hooks=off"
+  [ "$CALIB_SUPERPOWERS" = "off" ] && calib_prov_add "superpowers=off"
+  [ -n "$CALIB_BEXEC" ] && calib_prov_add "bexec=$CALIB_BEXEC"
+  if [ -n "$CALIB_PROV" ]; then
     echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
   else
     echo "weak-model pass: $CALIB_WEAK"
