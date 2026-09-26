@@ -343,30 +343,36 @@ else
 fi
 
 # ============================================================================
-# #1056 — additive --verify-dispatch mode: post-hoc model + shape verify.
+# #1056 — additive --verify-dispatch mode: post-hoc model verify.
 #
 # After an inline execute Agent returns, the orchestrator runs
 #   verify-execute-completion.sh --verify-dispatch <N> <path>
-# to assert the dispatched model + shape MATCH what resolve-execute-dispatch.sh
+# to assert the dispatched model MATCHES what resolve-execute-dispatch.sh
 # specified — closing the "invisible cost regression" property (#1056). The mode
 # emits a parallel single-line token contract on stdout:
 #
 #   DISPATCH=match    ISSUE=<N>
 #   DISPATCH=mismatch ISSUE=<N> REASON=model:<got>!=<want>
-#   DISPATCH=mismatch ISSUE=<N> REASON=shape:single!=split-role
 #   DISPATCH=warn     ISSUE=<N> REASON=model-unrecoverable
+#
+# #1420 — the mode is now a PURE MODEL check on every path. It used to carry a
+# second half: when the resolver emitted SPLIT_ROLE=true the mode scanned
+# <base>..<feature-ref> for a `[split-role-red]` commit and reported
+# `REASON=shape:single!=split-role` on its absence, catching an orchestrator that
+# silently collapsed the #881 split pair into one agent. #1420 collapses that pair
+# BY DESIGN, so the scan's only possible verdict became a false alarm and it is
+# gone — along with the VED_EXPECT_SPLIT_ROLE input and the shape REASON token.
+# A legacy VED_EXPECT_SPLIT_ROLE in the environment is IGNORED, never an error
+# (Case D3'): the orchestrator prose and the helper ship in separate leaves, so a
+# stale export must degrade to the model check rather than hard-fail a live wave.
 #
 # Inputs (threaded by the orchestrator at the call site; env-driven so the
 # existing positional ACTION-token contract stays byte-for-byte unchanged):
-#   VED_EXPECT_MODEL        — the resolver's MODEL= (sonnet|opus|haiku|inherit)
-#   VED_EXPECT_SPLIT_ROLE   — the resolver's SPLIT_ROLE= (true|false)
+#   VED_EXPECT_MODEL        — the resolver's MODEL= (sonnet|opus|haiku|fable)
 #   VED_OBSERVED_MODEL      — the model actually dispatched (recorded at dispatch
 #                             for the inline path); empty => try the runs log,
 #                             else WARN (model-unrecoverable, never a spurious
 #                             match — fail-soft, the verify is a backstop).
-# Shape: when VED_EXPECT_SPLIT_ROLE=true, assert a `[split-role-red]` commit
-# exists in $PIPELINE_BASE_BRANCH..HEAD; its ABSENCE => shape mismatch (the
-# inline orchestrator silently collapsed the split pair to one agent).
 # Exit 0 in every case (token carries the verdict). Default-mode (no
 # --verify-dispatch) ACTION= contract is UNCHANGED (additivity regression guard).
 # ============================================================================
@@ -374,9 +380,13 @@ fi
 echo ""
 echo "== #1056 --verify-dispatch mode =="
 
-# A real throwaway git repo fixture for the shape (git-log) checks.
+# A real throwaway git repo fixture: a base branch plus a feature branch with one
+# implementation commit. #1420 dropped the fixture's second parameter (it planted
+# the locked-RED anchor commit the retired shape scan looked for); the git repo
+# itself stays because --verify-dispatch still resolves a feature ref before the
+# model check.
 make_dispatch_repo() {
-  local d="$1"; local with_red="$2"
+  local d="$1"
   mkdir -p "$d"
   (
     cd "$d" || exit 1
@@ -384,9 +394,6 @@ make_dispatch_repo() {
     git config user.email t@t.t; git config user.name t
     git commit -q --allow-empty -m "base"
     git checkout -q -b feature/foo
-    if [ "$with_red" = "1" ]; then
-      git commit -q --allow-empty -m "test(foo): failing suite [split-role-red]"
-    fi
     git commit -q --allow-empty -m "feat(foo): implement"
   )
 }
@@ -401,59 +408,16 @@ run_vd() {
   ) 2>&1
 }
 
-# Real-call-site fixture: HEAD stays on the BASE branch (orchestrator session),
-# the [split-role-red] anchor lives ONLY on a separate feature/foo branch that is
-# NOT checked out. Mirrors verify running from the orchestrator's staging checkout
-# while the anchor sits on the unmerged feature branch (#1077).
-make_orchestrator_repo() {
-  local d="$1"          # repo dir
-  local with_red="$2"   # 1 => anchor present on feature/foo, 0 => genuine single-role
-  mkdir -p "$d"
-  (
-    cd "$d" || exit 1
-    git init -q -b staging
-    git config user.email t@t.t; git config user.name t
-    git commit -q --allow-empty -m "base"
-    git checkout -q -b feature/foo
-    if [ "$with_red" = "1" ]; then
-      git commit -q --allow-empty -m "test(foo): failing suite [split-role-red]"
-    fi
-    git commit -q --allow-empty -m "feat(foo): implement"
-    # Return HEAD to the base branch — the orchestrator never checks out the feature branch.
-    git checkout -q staging
-  )
-}
-
-run_vd_orchestrator() {
-  # run_vd_orchestrator <repo-dir> <issue> <path> ; VED_* read from caller env.
-  # gh stub returns feature/foo as the linked-PR head so the shape branch can
-  # resolve the feature ref without a live worktree (orchestrator call site).
-  local repo="$1" issue="$2" path="$3"
-  local stub_dir="$repo/ghstub"
-  mkdir -p "$stub_dir"
-  cat > "$stub_dir/gh" <<'EOF'
-#!/bin/bash
-ARGS="$*"
-case "$1 $2" in
-  "issue view")
-    if [[ "$ARGS" == *closedByPullRequestsReferences* ]]; then printf 'feature/foo'; fi ;;
-  "pr list") printf 'feature/foo' ;;
-  *) printf '' ;;
-esac
-EOF
-  chmod +x "$stub_dir/gh"
-  (
-    cd "$repo" || exit 1
-    PATH="$stub_dir:$PATH" \
-    PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
-      bash "$SCRIPT_UNDER_TEST" --verify-dispatch "$issue" "$path"
-  ) 2>&1
-}
+# NOTE: #1420 removed make_orchestrator_repo() / run_vd_orchestrator() with cases
+# D8/D9. Those existed solely for the retired shape scan's #1077 feature-ref
+# resolution (the anchor commit lived on an unmerged branch the orchestrator never
+# checked out). The model check reads no git history, so there is nothing left for
+# an orchestrator-CWD fixture to distinguish.
 
 # Case D1: model match (resolver sonnet, observed sonnet) -> DISPATCH=match.
 echo "Case D1: model match -> DISPATCH=match"
-D1="$ROOT/d1"; make_dispatch_repo "$D1" 0
-OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+D1="$ROOT/d1"; make_dispatch_repo "$D1"
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet \
       run_vd "$D1" 1056 B)
 assert_action "d1" "$OUT" "DISPATCH=match"
 assert_action "d1-issue" "$OUT" "ISSUE=1056"
@@ -461,34 +425,36 @@ assert_action "d1-issue" "$OUT" "ISSUE=1056"
 # Case D2: the exact #1056 bug — resolver sonnet, observed opus -> mismatch.
 echo ""
 echo "Case D2: model mismatch (the #1056 bug) -> DISPATCH=mismatch REASON=model:opus!=sonnet"
-D2="$ROOT/d2"; make_dispatch_repo "$D2" 0
-OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=opus VED_EXPECT_SPLIT_ROLE=false \
+D2="$ROOT/d2"; make_dispatch_repo "$D2"
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=opus \
       run_vd "$D2" 1056 B)
 assert_action "d2" "$OUT" "DISPATCH=mismatch"
 assert_action "d2-reason" "$OUT" "REASON=model:opus!=sonnet"
 
-# Case D3: split-role expected, branch HAS a [split-role-red] commit -> match.
+# Case D3' (#1420): a LEGACY VED_EXPECT_SPLIT_ROLE=true export is IGNORED. This is
+# the exact fixture the retired shape scan reported `shape:single!=split-role` on —
+# a PATH B feature branch carrying only an implementation commit, no locked-RED
+# anchor. A consumer or an in-flight orchestrator prose copy may still export the
+# variable, and #1420 deletes the split lane precisely because that collapsed shape
+# is now correct, so the ONLY acceptable verdict is the model check's: match.
 echo ""
-echo "Case D3: split-role expected + [split-role-red] commit present -> DISPATCH=match"
-D3="$ROOT/d3"; make_dispatch_repo "$D3" 1
+echo "Case D3' (#1420): legacy VED_EXPECT_SPLIT_ROLE=true + no anchor commit -> DISPATCH=match"
+D3="$ROOT/d3"; make_dispatch_repo "$D3"
 OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
       run_vd "$D3" 1056 B)
-assert_action "d3" "$OUT" "DISPATCH=match"
-
-# Case D4: split-role expected, NO [split-role-red] commit -> shape mismatch.
-echo ""
-echo "Case D4: split-role expected + NO [split-role-red] commit -> shape mismatch"
-D4="$ROOT/d4"; make_dispatch_repo "$D4" 0
-OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
-      run_vd "$D4" 1056 B)
-assert_action "d4" "$OUT" "DISPATCH=mismatch"
-assert_action "d4-reason" "$OUT" "REASON=shape:single!=split-role"
+assert_action "d3'-legacy-env" "$OUT" "DISPATCH=match"
+inc
+if printf '%s' "$OUT" | grep -qF "REASON=shape:"; then
+  fail_msg "d3'-legacy-env: a shape REASON survived the #1420 removal: $OUT"
+else
+  pass_msg "d3'-legacy-env: no shape REASON emitted (pure model check)"
+fi
 
 # Case D5: no observed model recoverable -> WARN line, no spurious match.
 echo ""
 echo "Case D5: no observed model recoverable -> WARN (no spurious match)"
-D5="$ROOT/d5"; make_dispatch_repo "$D5" 0
-OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL="" VED_EXPECT_SPLIT_ROLE=false \
+D5="$ROOT/d5"; make_dispatch_repo "$D5"
+OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL="" \
       run_vd "$D5" 1056 B)
 assert_action "d5" "$OUT" "DISPATCH=warn"
 inc
@@ -501,8 +467,8 @@ fi
 # Case D6: --verify-dispatch exits 0 even on a mismatch (token carries verdict).
 echo ""
 echo "Case D6: --verify-dispatch exits 0 on a mismatch verdict"
-D6="$ROOT/d6"; make_dispatch_repo "$D6" 0
-( cd "$D6" && VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=opus VED_EXPECT_SPLIT_ROLE=false \
+D6="$ROOT/d6"; make_dispatch_repo "$D6"
+( cd "$D6" && VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=opus \
     PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
     bash "$SCRIPT_UNDER_TEST" --verify-dispatch 1056 B ) >/dev/null 2>&1
 rc=$?
@@ -530,44 +496,15 @@ else
   pass_msg "d7: default mode emits ACTION= only (no DISPATCH= leak)"
 fi
 
-# Case D8 (#1077): orchestrator HEAD on the BASE branch, [split-role-red] anchor
-# lives ONLY on the unmerged feature/foo branch. The OLD `<base>..HEAD` scan finds
-# no anchor (HEAD==staging) and spuriously reports shape:single!=split-role. The
-# fix resolves the feature ref and scans <base>..<feature-ref>, yielding match.
-echo ""
-echo "Case D8 (#1077): split-role pair, orchestrator on base branch -> DISPATCH=match (not spurious shape mismatch)"
-D8="$ROOT/d8"; make_orchestrator_repo "$D8" 1
-OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
-      run_vd_orchestrator "$D8" 1077 B)
-assert_action "d8" "$OUT" "DISPATCH=match"
-inc
-if printf '%s' "$OUT" | grep -qF "REASON=shape:single!=split-role"; then
-  fail_msg "d8: spurious shape:single mismatch — scanned base..HEAD instead of the feature ref (#1077): $OUT"
-else
-  pass_msg "d8: no spurious shape mismatch when anchor lives on the unmerged feature branch"
-fi
-
-# Case D9 (#1077): genuine single-role — NO [split-role-red] anchor on the feature
-# branch. Even with deterministic feature-ref resolution, the absence of the anchor
-# MUST still produce shape:single!=split-role (no false positive from the fix).
-echo ""
-echo "Case D9 (#1077): genuine single-role (no anchor on feature branch) -> shape mismatch preserved"
-D9="$ROOT/d9"; make_orchestrator_repo "$D9" 0
-OUT=$(VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=true \
-      run_vd_orchestrator "$D9" 1077 B)
-assert_action "d9" "$OUT" "DISPATCH=mismatch"
-assert_action "d9-reason" "$OUT" "REASON=shape:single!=split-role"
-
 # Case D10 (#1186): PATH A is now a REAL dispatch spec. Before #1186 the PATH A
 # execute Agent carried no `model=` at all (no knob existed), so there was
 # nothing to verify and the mode refused the path letter with exit 2 + usage.
 # resolve-execute-dispatch.sh now resolves A (opus default), so the post-dispatch
-# verify must accept it. Shape scan is inert for A/C (VED_EXPECT_SPLIT_ROLE=false
-# — split-role is PATH B only), so this is a pure model check.
+# verify must accept it.
 echo ""
 echo "Case D10 (#1186): --verify-dispatch accepts PATH A -> DISPATCH=match"
-D10="$ROOT/d10"; make_dispatch_repo "$D10" 0
-OUT=$(VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=opus VED_EXPECT_SPLIT_ROLE=false \
+D10="$ROOT/d10"; make_dispatch_repo "$D10"
+OUT=$(VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=opus \
       run_vd "$D10" 1186 A)
 assert_action "d10" "$OUT" "DISPATCH=match"
 assert_action "d10-issue" "$OUT" "ISSUE=1186"
@@ -584,8 +521,8 @@ fi
 # verifiable rather than merely declared.
 echo ""
 echo "Case D11 (#1186): --verify-dispatch accepts PATH C + catches model drift"
-D11="$ROOT/d11"; make_dispatch_repo "$D11" 0
-OUT=$(VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+D11="$ROOT/d11"; make_dispatch_repo "$D11"
+OUT=$(VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=sonnet \
       run_vd "$D11" 1186 C)
 assert_action "d11" "$OUT" "DISPATCH=mismatch"
 assert_action "d11-reason" "$OUT" "REASON=model:sonnet!=opus"
@@ -595,11 +532,11 @@ assert_action "d11-reason" "$OUT" "REASON=model:sonnet!=opus"
 # structural guard that pr-eval is never routed through the execute resolver).
 echo ""
 echo "Case D12 (#1186): invalid path letters still rejected (guard widened, not removed)"
-D12="$ROOT/d12"; make_dispatch_repo "$D12" 0
+D12="$ROOT/d12"; make_dispatch_repo "$D12"
 for bad in E pr-eval; do
   inc
   ERR=$( ( cd "$D12" && VED_EXPECT_MODEL=opus VED_OBSERVED_MODEL=opus \
-             VED_EXPECT_SPLIT_ROLE=false \
+             \
              PIPELINE_REPO="fake/repo" PIPELINE_BASE_BRANCH="staging" \
              bash "$SCRIPT_UNDER_TEST" --verify-dispatch 1186 "$bad" ) 2>&1 >/dev/null )
   rc=$?
@@ -680,10 +617,10 @@ make_cost_log() {
 # Case D13: logging ON + the last cost row is unattributed -> advisory miss.
 echo ""
 echo "Case D13 (#1387): unattributed last cost row + logging ON -> COST=miss advisory"
-D13="$ROOT/d13"; make_dispatch_repo "$D13" 0
+D13="$ROOT/d13"; make_dispatch_repo "$D13"
 D13_LOG="$D13/cost-log.jsonl"; make_cost_log "$D13_LOG" ""
 OUT=$(PIPELINE_LOGS_ENABLED=true PIPELINE_COST_LOG_OVERRIDE="$D13_LOG" \
-      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet \
       run_vd "$D13" 1387 B)
 rc=$?
 assert_cost_token "d13" "$OUT" "COST=miss ISSUE=1387 REASON=unattributed-row"
@@ -700,10 +637,10 @@ fi
 # Case D14: logging ON + the last cost row IS attributed -> silence.
 echo ""
 echo "Case D14 (#1387): attributed last cost row -> no COST= token"
-D14="$ROOT/d14"; make_dispatch_repo "$D14" 0
+D14="$ROOT/d14"; make_dispatch_repo "$D14"
 D14_LOG="$D14/cost-log.jsonl"; make_cost_log "$D14_LOG" "1387"
 OUT=$(PIPELINE_LOGS_ENABLED=true PIPELINE_COST_LOG_OVERRIDE="$D14_LOG" \
-      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet \
       run_vd "$D14" 1387 B)
 assert_no_cost_token "d14" "$OUT" "last row carries issue 1387"
 assert_action "d14-additive" "$OUT" "DISPATCH=match"
@@ -711,17 +648,17 @@ assert_action "d14-additive" "$OUT" "DISPATCH=match"
 # Case D15: the gate + the absent-log case. Both are SILENCE, never a miss.
 echo ""
 echo "Case D15 (#1387): logging gated off / cost log absent -> no COST= token"
-D15="$ROOT/d15"; make_dispatch_repo "$D15" 0
+D15="$ROOT/d15"; make_dispatch_repo "$D15"
 D15_LOG="$D15/cost-log.jsonl"; make_cost_log "$D15_LOG" ""
 OUT=$(PIPELINE_LOGS_ENABLED=false PIPELINE_COST_LOG_OVERRIDE="$D15_LOG" \
-      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet \
       run_vd "$D15" 1387 B)
 assert_no_cost_token "d15" "$OUT" "PIPELINE_LOGS_ENABLED is not true"
 assert_action "d15-additive" "$OUT" "DISPATCH=match"
 # Fourth sub-assert: logging ON but the cost log does not exist. An ABSENT log
 # is silence, never a manufactured miss.
 OUT=$(PIPELINE_LOGS_ENABLED=true PIPELINE_COST_LOG_OVERRIDE="$D15/no-such-cost-log.jsonl" \
-      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet VED_EXPECT_SPLIT_ROLE=false \
+      VED_EXPECT_MODEL=sonnet VED_OBSERVED_MODEL=sonnet \
       run_vd "$D15" 1387 B)
 assert_no_cost_token "d15-absent-log" "$OUT" "cost log path does not exist"
 
@@ -729,7 +666,7 @@ assert_no_cost_token "d15-absent-log" "$OUT" "cost log path does not exist"
 # #1122 — additive --clean-main <main-repo-dir> mode: orchestrator main-checkout
 # cleanliness guard.
 #
-# A split-role execute subagent (#615/#617) ran `git add` against the MAIN repo
+# An execute subagent (#615/#617) ran `git add` against the MAIN repo
 # index instead of its own worktree index, leaving STAGED edits in the
 # orchestrator main checkout. That staged-but-uncommitted leak aborted the
 # inter-leg `git pull --ff-only origin <base>` base advance with

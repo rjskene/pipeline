@@ -159,7 +159,6 @@ run_stage_raw() {
           -u PIPELINE_PATH_C_MODEL_EXECUTE \
           -u PIPELINE_PATH_D_MODEL_EXECUTE \
           -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
-          -u PIPELINE_PATH_B_SPLIT_ROLE \
           -u PIPELINE_TRUST_PROFILE \
       bash "$HELPER" 999 "$stage" 2>&1 >/dev/null
   else
@@ -174,7 +173,6 @@ run_stage_raw() {
           -u PIPELINE_PATH_C_MODEL_EXECUTE \
           -u PIPELINE_PATH_D_MODEL_EXECUTE \
           -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
-          -u PIPELINE_PATH_B_SPLIT_ROLE \
           -u PIPELINE_TRUST_PROFILE \
       bash "$HELPER" 999 "$stage" 2>/dev/null
   fi

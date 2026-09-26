@@ -5,7 +5,7 @@
 # Compares the local base-branch SHA to <expected-sha> (snapshotted by the
 # orchestrator before dispatch) and emits ONE token on stdout; ALWAYS exits 0
 # (the verdict rides the token, mirroring verify-execute-completion.sh /
-# split-role-gate.sh):
+# check-capability-refusal.sh):
 #
 #   BASE=ok                       local base SHA == expected; no mutation.
 #   BASE=recovered                drifted, but every stray commit in

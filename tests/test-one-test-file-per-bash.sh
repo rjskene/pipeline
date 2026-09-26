@@ -192,8 +192,8 @@ fi
 # the sanctioned cap), are recorded here verbatim so the budget is auditable:
 #
 #   skills/plan-issue/SKILL.md  — appended to the EXISTING `**Test changes:**`
-#   template line (never a new template line: tests/test-red-green-ledger-prose.sh
-#   pins `**RED/GREEN ledger:**` directly after `**Shared tests (split-role):**`):
+#   template line, never a new template line (#1420 deleted the two template
+#   lines that used to follow it, and the guard that pinned their order):
 #     `— one test file per `bash` invocation`                                (7)
 #
 #   agents/tdd-implementer.md — new Forbidden bullet, immediately BEFORE the

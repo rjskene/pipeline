@@ -138,14 +138,14 @@ Receive an issue number as argument (or from context).
 
    **README anchor guard (#397/#404):** Do NOT prescribe adding anchored cross-references to `README.md` (links of the form `*.md#anchor`, regex `\.md#[A-Za-z0-9_-]+`). README uses file-level links only; anchored refs are banned by the policy enforced in `tests/test-readme-current.sh`. If the issue asks for such a link, redirect to a file-level reference or a pointer to the relevant doc file instead.
 
-   **Exact-match guard sweep (#1200):** Before drafting, run the mechanical sweep so the plan DECLARES the shared tests instead of leaving plan-eval (or, worse, a stalled GREEN implementer) to discover them:
+   **Exact-match guard sweep (#1200):** Before drafting, run the mechanical sweep so the plan DECLARES the exact-match tests it will break instead of leaving plan-eval (or, worse, a stalled executor mid-task) to discover them:
 
    ```bash
    PIPELINE_TEST_ROOTS="${PIPELINE_TEST_ROOTS:-}" \
      bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"; echo "rc=$?"
    ```
 
-   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Shared tests (split-role):**` in the plan. Without that declaration the split-role GREEN implementer may not legally edit the test and STOPS mid-leg. Roots resolve positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`; an unset var self-defaults and is never vacuous. `REASON=no-test-root` / `no-test-files` fires only when every resolved root fails `[ -e ]`.
+   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Test changes:**` in the plan. Without that declaration the executor meets a red test the plan never sanctioned touching and STOPS mid-task. Roots resolve positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`; an unset var self-defaults and is never vacuous. `REASON=no-test-root` / `no-test-files` fires only when every resolved root fails `[ -e ]`.
 
 4a. **Root-cause diagnosis gate.** Run this step ONLY when the issue carries `needs-debug` (resolved in Step 3a) OR `--debug-first` was passed (`DEBUG_FIRST=true`); otherwise this step is a no-op — skip straight to Step 5. The gate establishes the root cause BEFORE planning so the plan's design decisions + first task target the diagnosed cause, not the reported symptom. The diagnosis is autonomous — there is NO human gate (parallel to classify), distinct from the plan-approval gate downstream.
 
@@ -206,31 +206,12 @@ Receive an issue number as argument (or from context).
    **Frontend changes:** (or "None")
    **Predicates:** (required for needs-browser-labeled issues)
    **Test changes:** (or "None") — one test file per `bash` invocation
-   **Shared tests (split-role):** (optional — PATH B split-role only; omit when not applicable)
-   **RED/GREEN ledger:** (required when the plan has a test deliverable — PATH B/C/D; `None` for docs-only PATH A)
    **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
    **Risks/unknowns:** (or "None")
    **Estimated effort:** X hours
    ```
 
    **IMPORTANT — the GitHub comment IS the plan.** `/pipeline:execute-issue-plan` reads ONLY the comment; it has no access to local `.claude/plans/` files. Include ALL design detail directly (data structures, tier tables, formulas, mode behaviors). Never summarize and point to a local file. Fold Claude plan-mode content into the comment before posting.
-
-   **`**Shared tests (split-role):**` section (PATH B split-role only, optional).** Use ONLY when a plan deliverable legitimately requires the green implementer to modify an existing test file that the red author committed (e.g., hardening an assertion or updating an expected failure message). Format: one EXACT repo-relative path per bullet line, no globs, no directories. Scope warning: this section is default-deny — an absent or empty section exempts NOTHING. List ONLY the specific test files sanctioned for green-role modification; a `tests/` directory or any prefix/glob entry is never honored (exact-path match only). Deletions of a listed file STILL block (`locked-test-deleted`); the exemption is modify-only. The `evaluate-issue-pr` stage parses this section and threads the resolved paths into the W7 gate (`scripts/split-role-gate.sh`) as `PIPELINE_SPLIT_ROLE_SHARED_TESTS` — the plan's OWNER/MEMBER/COLLABORATOR approval is the trust anchor (#1089).
-
-   **`**RED/GREEN ledger:**` section (required for every plan carrying a test deliverable — PATH B/C/D).** Predict the failure state of each test artifact as a per-file, per-task TABLE, never a prose sentence. Prose hides the defect class this catches: the assertion is right, the TIMING is wrong.
-
-   | test file | red at RED commit | vacuously green until | fully green at |
-   |---|---|---|---|
-   | `tests/test-foo.sh` | yes — `<assertion>` fails: `<expected message>` | — | Task 3 |
-   | `tests/test-bar.sh` | no | Task 2 — why: pins a post-change constant Task 2 creates | Task 4 |
-
-   - **RED commit** = the `[split-role-red]` commit under split-role PATH B; the task's own red step otherwise.
-   - One row per test file. When assertions inside one file flip at different tasks, split into one row per assertion group and name the assertion.
-   - For every row not red at the RED commit you MUST state WHY it is green, in the `vacuously green until` cell after `why:`. An implementer that meets an unexplained GREEN either hunts a phantom failure or "fixes" a correct test to make it red.
-   - **The tell:** a test whose redness depends on state a LATER task creates is never `red at RED`. Doc-vs-code consistency tests are the classic shape — doc and code agree until the code changes.
-   - **The inverse:** a control pinned to a post-change value IS red at the RED commit; do not call it vacuously green because it is a control.
-   - The ledger is a PREDICTION to verify, not a script to satisfy — an executor observing a different state reports the divergence instead of bending the test to match.
-   - PATH A (docs-only) carries no test deliverable: the section is the single word `None`.
 
    **Executor-capability rule (#1225).** A plan task MUST NOT mandate a capability the assigned executor lacks. `tdd-implementer` is a leaf executor whose toolset is exactly `Read, Write, Edit, Bash, Grep, Glob` — no `Skill`, no `Agent`. So NO task that will be dispatched to a `tdd-implementer` — every PATH C `target=<dir>` leaf task, and every PATH D task — may name a `Skill(...)` or `Agent(...)` invocation. A task that needs a skill is OWNED BY THE PR-OPENING ROLE — the inline execute agent on PATH A/B, the orchestrator on PATH C (`execute-issue-plan` Step 8) — and the task text must say so. This is the planner-side half of the contract; the executor-side half is the loud-refusal rule in `agents/tdd-implementer.md`, where a leaf handed a task it cannot perform reports `CAPABILITY-REFUSED:` instead of silently substituting a manual approximation.
 

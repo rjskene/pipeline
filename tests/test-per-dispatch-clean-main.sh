@@ -171,16 +171,24 @@ assert_region_contains "P10" 'CLEAN=untracked-only'
 assert_region_contains "P10" 'CLEAN=dirty'
 
 # =====================================================================
-# P11 — split-role coverage. PATH B dispatches RED then GREEN sequentially
-#       into the same worktree; one baseline spanning both cannot say which
-#       role leaked — the exact failure this issue is about.
+# P11 — role coverage, re-pinned by #1420. PATH B execute is ONE agent now, so
+#       the per-dispatch roles are the collapsed-D dispatch and the single
+#       execute dispatch; the retired RED/GREEN pair must not be named, or the
+#       baseline/delta prose prescribes a second dispatch that never happens.
 # =====================================================================
 inc
-if printf '%s' "$SUB_FLAT" | grep -Eq -- 'RED|red' \
-   && printf '%s' "$SUB_FLAT" | grep -Eq -- 'GREEN|green'; then
-  pass_msg "P11: sub-block distinguishes the split-role RED and GREEN dispatches"
+if printf '%s' "$SUB_FLAT" | grep -Fq -- 'collapsed-D' \
+   && printf '%s' "$SUB_FLAT" | grep -Fq -- 'single'; then
+  pass_msg "P11: sub-block names the collapsed-D and single execute roles"
 else
-  fail_msg "P11: sub-block does not name the RED/GREEN split-role dispatches — a PATH B leak would be attributed to \"the PATH B dispatch\" rather than to a role"
+  fail_msg "P11: sub-block does not name the 'collapsed-D | single' roles — a leak would be attributed to \"the PATH B dispatch\" rather than to a role"
+fi
+
+inc
+if printf '%s' "$SUB_FLAT" | grep -Eq -- 'RED|GREEN'; then
+  fail_msg "P11: sub-block still names the retired RED/GREEN split-role dispatches (#1420 collapsed PATH B to one execute agent)"
+else
+  pass_msg "P11: sub-block names no RED/GREEN split-role dispatch (#1420)"
 fi
 
 echo ""

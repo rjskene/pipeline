@@ -6,9 +6,10 @@ set -uo pipefail
 # Contract (Surface A containment, #868 comment 4):
 #   - New vars PIPELINE_PATH_B_MODEL_EXECUTE / PIPELINE_PATH_D_MODEL_EXECUTE,
 #     default EMPTY. When set, fullsend's execute dispatch pins that model for
-#     eligible PATH B / PATH D issues; when unset, NO model= param is passed and
-#     the inline subagent inherits the orchestrator's Opus — byte-for-byte current
-#     behavior. pr-eval dispatch is NEVER gated (independent Opus backstop).
+#     eligible PATH B / PATH D issues; when unset, the resolver supplies the
+#     read-site default (#1186/#1420: opus for A/B/C, sonnet for D — always a NAMED
+#     model, never an inherit). pr-eval dispatch is NEVER gated (independent Opus
+#     backstop).
 #   - Documented (commented, default-off) in pipeline.config.example.
 #   - Wired at the fullsend execute dispatch site (skill prose references the vars).
 #
@@ -46,16 +47,25 @@ for v in "${VARS[@]}"; do
 done
 
 # 2. #1052 (defaults-in-code) supersedes the #1042 "ship active" polarity for the
-#    example: the Sonnet default lives at the scripts/resolve-execute-dispatch.sh read
-#    site (unset -> sonnet), so each model var is now COMMENTED in the example and
-#    --fix config does NOT seed it. The shipped Sonnet default is unchanged (asserted at
-#    the resolver read site); the example carries the documented default in commented form.
+#    example: each default lives at the scripts/resolve-execute-dispatch.sh read
+#    site, so each model var is COMMENTED in the example and --fix config does NOT
+#    seed it. The example carries the documented default in commented form.
+#    #1420 split the two defaults apart: PATH B's unset default moved sonnet ->
+#    opus when the #881 two-agent lane was collapsed to a single execute agent (the
+#    always-Opus test-author that made a cheap PATH B executor safe is gone), while
+#    PATH D — never a two-agent lane — keeps sonnet. Asserting the value per-var
+#    rather than one shared literal is what keeps this guard honest about that.
+declare -A WANT_DEFAULT=(
+  [PIPELINE_PATH_B_MODEL_EXECUTE]=opus
+  [PIPELINE_PATH_D_MODEL_EXECUTE]=sonnet
+)
 for v in "${VARS[@]}"; do
   inc
-  if grep -Eq "^[[:space:]]*#[[:space:]]*${v}=sonnet" "$EXAMPLE"; then
-    pass_msg "example: $v documented (commented) = sonnet per #1052"
+  want="${WANT_DEFAULT[$v]}"
+  if grep -Eq "^[[:space:]]*#[[:space:]]*${v}=${want}" "$EXAMPLE"; then
+    pass_msg "example: $v documented (commented) = $want per #1052/#1420"
   else
-    fail_msg "example: $v not documented as commented = sonnet (#1052)"
+    fail_msg "example: $v not documented as commented = $want (#1052/#1420)"
   fi
 done
 

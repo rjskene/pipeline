@@ -19,8 +19,8 @@
 #                .claude/logs/subagents/ nondeterministically.
 #
 # Stdout (ALWAYS exactly one line, ALWAYS exit 0 — the verdict rides the
-# token, same contract as scripts/split-role-gate.sh /
-# scripts/auto-merge-gate.sh / scripts/verify-execute-completion.sh):
+# token, same contract as scripts/auto-merge-gate.sh /
+# scripts/verify-execute-completion.sh):
 #
 #   CAPABILITY_REFUSAL=<clear|block> ISSUE=<N> REASON=<token> SCANNED=<n> WITH_OUTPUT=<n> ASYNC=<n>
 #

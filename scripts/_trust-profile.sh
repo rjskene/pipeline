@@ -7,13 +7,18 @@
 #
 #   strict (the DEFAULT) — the pre-#1291 shape, byte-for-byte. Every read-site
 #     behaves exactly as it did before this helper existed.
-#   lean — trade redundant verification for cost where the remaining dispatch is
-#     still a strong model: collapse the #881 split-role PAIR into ONE dispatch
-#     (scripts/resolve-execute-dispatch.sh), and skip the PATH A/D plan-eval
-#     second opinion (scripts/resolve-stage-model.sh).
+#   lean — trade redundant verification for cost: skip the non-W2 PATH A/D
+#     plan-eval second opinion (scripts/resolve-stage-model.sh).
 #
-# Both resolvers source THIS file so the profile is normalized in exactly ONE
-# place. Read-sites consume $TRUST_PROFILE and must NEVER re-normalize
+# #1420 — lean has ONE half left. It used to also collapse the #881 two-agent
+# PATH B execute pair into a single dispatch in scripts/resolve-execute-dispatch.sh;
+# that lane was removed outright (every path now dispatches one execute agent), so
+# the execute resolver no longer sources this helper at all. `lean` is therefore a
+# plan-eval-depth knob only, and adding an execute-side read back here would be a
+# second source of truth for a decision the execute resolver no longer makes.
+#
+# scripts/resolve-stage-model.sh sources THIS file so the profile is normalized in
+# exactly ONE place. Read-sites consume $TRUST_PROFILE and must NEVER re-normalize
 # ${PIPELINE_TRUST_PROFILE} themselves — a second normalization is a second
 # source of truth, which is the #1039/#1056 drift failure mode.
 #

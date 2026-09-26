@@ -5,14 +5,22 @@ set -uo pipefail
 #
 # The resolver is the SINGLE SOURCE OF TRUTH for the inline execute dispatch
 # spec: given an issue number and a path letter (A|B|C|D), it resolves the full
-# dispatch spec the orchestrator must apply — the execute `model=`, the #881
-# split-role shape, and an advisory eligibility/scope/reason audit — folding
-# the #1042 model knob, the W2 high-uncertainty always-Opus carve-out, the
-# needs-browser PATH-D always-Opus carve-out (#960), and the #881 split-role
-# flag into ONE place so config + SKILL prose can no longer drift (the #1056
-# root cause). It REUSES scripts/_high-uncertainty-match.sh and
-# scripts/path-b-execute-eligible.sh — it never redefines the carve-out regex
-# (that was bug #1039).
+# dispatch spec the orchestrator must apply — the execute `model=` plus an
+# advisory eligibility/scope/reason audit — folding the #1042 model knob, the W2
+# high-uncertainty always-Opus carve-out and the needs-browser PATH-D
+# always-Opus carve-out (#960) into ONE place so config + SKILL prose can no
+# longer drift (the #1056 root cause). It REUSES
+# scripts/_high-uncertainty-match.sh and scripts/path-b-execute-eligible.sh — it
+# never redefines the carve-out regex (that was bug #1039).
+#
+# #1420 — the #881 split-role dispatch SHAPE is retired. Every path now
+# dispatches ONE execute agent, so the resolver emits `ROLES=single`
+# unconditionally and emits NO `SPLIT_ROLE=` line at all; a
+# PIPELINE_PATH_B_SPLIT_ROLE value left in a consumer's config is silently
+# ignored (no WARN — there is nothing left to opt out of). PATH B's unset-knob
+# default also flips sonnet -> `opus` (REASON=default-opus): the split lane's
+# Opus test-author was what made a cheap implementer safe, so collapsing to one
+# agent without raising its model would have lowered the quality floor.
 #
 # The resolver emits one token per line on stdout and ALWAYS exits 0 (the
 # verdict rides the tokens, mirroring scripts/path-b-execute-eligible.sh):
@@ -20,8 +28,7 @@ set -uo pipefail
 #   ISSUE=<N>
 #   PATH=<A|B|C|D>
 #   MODEL=<sonnet|opus|haiku|fable>     # ALWAYS a NAMED model (#1186)
-#   SPLIT_ROLE=<true|false>             # PATH B only; false for A/C/D
-#   ROLES=<single | red:opus,green:<model>>
+#   ROLES=single                        # #1420: the ONLY dispatch shape
 #   SCOPE=<all|low-blast>               # resolved PIPELINE_PATH_B_ELIGIBLE_SCOPE (B)
 #   ELIGIBLE=<low-blast|high-blast>     # advisory passthrough (B only)
 #   REASON=<token>                      # why MODEL resolved as it did (audit)
@@ -43,8 +50,8 @@ set -uo pipefail
 # This test stubs `gh` on PATH (same pattern as
 # tests/test-path-b-execute-eligible.sh) so `gh issue view <N> --json
 # title,body,labels` returns canned fixtures, and sources config from a temp
-# pipeline.config via PIPELINE_PROJECT_ROOT so the per-path model/scope/split
-# knobs are exercised without touching the host config.
+# pipeline.config via PIPELINE_PROJECT_ROOT so the per-path model/scope knobs are
+# exercised without touching the host config.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HELPER="$SCRIPT_DIR/../scripts/resolve-execute-dispatch.sh"
@@ -162,23 +169,11 @@ run_resolver() {
   printf '%s\n' "$out"
 }
 
-# Same launch environment as run_resolver(), but capture STDERR and DISCARD
-# stdout (#1291: the invalid-PIPELINE_TRUST_PROFILE fallback WARN rides stderr,
-# never stdout — the token block must stay machine-parseable).
-run_resolver_err() {
-  local fixture="$1" cfgroot="$2" pathletter="$3"
-  PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
-    PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$cfgroot" \
-    env -u PIPELINE_BASE_BRANCH \
-        -u PIPELINE_PATH_A_MODEL_EXECUTE \
-        -u PIPELINE_PATH_B_MODEL_EXECUTE \
-        -u PIPELINE_PATH_C_MODEL_EXECUTE \
-        -u PIPELINE_PATH_D_MODEL_EXECUTE \
-        -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
-        -u PIPELINE_PATH_B_SPLIT_ROLE \
-        -u PIPELINE_TRUST_PROFILE \
-    bash "$HELPER" 999 "$pathletter" 2>&1 >/dev/null
-}
+# NOTE: #1420 removed the stderr-capturing run_resolver_err() helper along with
+# the invalid-PIPELINE_TRUST_PROFILE WARN case it served. This resolver no longer
+# sources scripts/_trust-profile.sh, so it has no WARN to emit; the
+# one-WARN-on-stderr contract now belongs entirely to
+# tests/test-resolve-stage-model.sh, whose resolver still reads the knob.
 
 # Assert a token (literal "KEY=VALUE") is present on its own line in $out.
 assert_tok() {
@@ -223,22 +218,38 @@ BODY_PATHTOK=$'## Summary\nrename a dispatch token.\n\n## Affected areas\n- `scr
 
 # ---- Task 1: model resolution + carve-outs ----------------------------------
 
-# (1) PATH B, knobs unset -> sonnet default, default-on split shape, scope all.
+# (1) PATH B, knobs unset -> #1420 opus default, single shape, scope all, and NO
+#     SPLIT_ROLE= line at all (the key is retired, not merely set to false: a
+#     `false` emission would keep every downstream parser reading a dead token).
 CFG1=$(make_config_root)
 FIX1=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT1=$(run_resolver "$FIX1" "$CFG1" B)
-assert_tok "(1) B knobs unset" "MODEL=sonnet" "$OUT1"
-assert_tok "(1) B knobs unset" "SPLIT_ROLE=true" "$OUT1"
-assert_tok "(1) B knobs unset" "ROLES=red:opus,green:sonnet" "$OUT1"
+assert_tok "(1) B knobs unset" "MODEL=opus" "$OUT1"
+assert_tok "(1) B knobs unset" "REASON=default-opus" "$OUT1"
+assert_tok "(1) B knobs unset" "ROLES=single" "$OUT1"
+assert_no_key "(1) B knobs unset" "SPLIT_ROLE" "$OUT1"
 assert_tok "(1) B knobs unset" "SCOPE=all" "$OUT1"
 assert_tok "(1) B knobs unset" "PATH=B" "$OUT1"
 assert_tok "(1) B knobs unset" "ISSUE=999" "$OUT1"
 
-# (2) PATH B, explicit opus -> honored verbatim.
+# (2) PATH B, explicit opus -> honored verbatim. #1420: the audit REASON is
+#     `explicit-knob`, NOT `default-opus` — an operator who pinned the value must
+#     stay distinguishable from the shipped default, or the audit trail cannot
+#     tell a deliberate pin from a default flip.
 CFG2=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
 FIX2=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT2=$(run_resolver "$FIX2" "$CFG2" B)
 assert_tok "(2) B explicit opus" "MODEL=opus" "$OUT2"
+assert_tok "(2) B explicit opus" "REASON=explicit-knob" "$OUT2"
+
+# (2b) PATH B, explicit sonnet -> honored verbatim (the #1420 opus default is
+#      reversible: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet restores the cheap lane).
+CFG2B=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=sonnet')
+FIX2B=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+OUT2B=$(run_resolver "$FIX2B" "$CFG2B" B)
+assert_tok "(2b) B explicit sonnet" "MODEL=sonnet" "$OUT2B"
+assert_tok "(2b) B explicit sonnet" "REASON=explicit-knob" "$OUT2B"
+assert_tok "(2b) B explicit sonnet" "ROLES=single" "$OUT2B"
 
 # (3) PATH B, W2 vocab in body, knobs default -> opus, reason high-uncertainty.
 CFG3=$(make_config_root)
@@ -265,20 +276,25 @@ assert_tok "(5) B scope=low-blast high-blast" "REASON=scope-low-blast-gated" "$O
 assert_tok "(5) B scope=low-blast high-blast" "ELIGIBLE=high-blast" "$OUT5"
 assert_tok "(5) B scope=low-blast high-blast" "SCOPE=low-blast" "$OUT5"
 
-# (6) PATH B, scope=low-blast, low-blast (single module) issue -> sonnet, ELIGIBLE=low-blast.
+# (6) PATH B, scope=low-blast, low-blast (single module) issue -> the resolved
+#     knob applies (#1420: unset => opus), ELIGIBLE=low-blast.
 CFG6=$(make_config_root 'PIPELINE_PATH_B_ELIGIBLE_SCOPE=low-blast')
 FIX6=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT6=$(run_resolver "$FIX6" "$CFG6" B)
-assert_tok "(6) B scope=low-blast low-blast" "MODEL=sonnet" "$OUT6"
+assert_tok "(6) B scope=low-blast low-blast" "MODEL=opus" "$OUT6"
+assert_tok "(6) B scope=low-blast low-blast" "REASON=default-opus" "$OUT6"
 assert_tok "(6) B scope=low-blast low-blast" "ELIGIBLE=low-blast" "$OUT6"
 
-# (7) PATH D, knobs unset -> sonnet default, single shape (no eligibility predicate).
+# (7) PATH D, knobs unset -> sonnet default, single shape (no eligibility
+#     predicate). #1420 does NOT touch PATH D's default: quick-fix was never a
+#     split lane, so there is no lost test-author to compensate for.
 CFG7=$(make_config_root)
 FIX7=$(make_fixture "fix(foo): quick" "$BODY_LOW" '[]')
 OUT7=$(run_resolver "$FIX7" "$CFG7" D)
 assert_tok "(7) D knobs unset" "MODEL=sonnet" "$OUT7"
-assert_tok "(7) D knobs unset" "SPLIT_ROLE=false" "$OUT7"
+assert_tok "(7) D knobs unset" "REASON=default-sonnet" "$OUT7"
 assert_tok "(7) D knobs unset" "ROLES=single" "$OUT7"
+assert_no_key "(7) D knobs unset" "SPLIT_ROLE" "$OUT7"
 assert_tok "(7) D knobs unset" "PATH=D" "$OUT7"
 
 # (8) PATH D, needs-browser label -> opus (#1186: the #960 carve-out semantics are
@@ -305,14 +321,16 @@ OUT9B=$(run_resolver "$FIX9B" "$CFG9B" D)
 assert_tok "(9b) D listed path token" "MODEL=sonnet" "$OUT9B"
 assert_tok "(9b) D listed path token" "REASON=default-sonnet" "$OUT9B"
 
-# (9c) PATH B, same body -> sonnet + low-blast. ALSO exercises the strip in
-#      scripts/path-b-execute-eligible.sh (the PATH B arm shells out to it).
+# (9c) PATH B, same body -> the #1420 opus default + low-blast. ALSO exercises the
+#      strip in scripts/path-b-execute-eligible.sh (the PATH B arm shells out to
+#      it). The PROPERTY under test is that no carve-out fired, so the resolved
+#      KNOB applies — not which model the knob happens to default to.
 CFG9C=$(make_config_root)
 FIX9C=$(make_fixture "fix(foo): rename a token" "$BODY_PATHTOK" '[]')
 OUT9C=$(run_resolver "$FIX9C" "$CFG9C" B)
-assert_tok "(9c) B listed path token" "MODEL=sonnet" "$OUT9C"
+assert_tok "(9c) B listed path token" "MODEL=opus" "$OUT9C"
 assert_tok "(9c) B listed path token" "ELIGIBLE=low-blast" "$OUT9C"
-assert_tok "(9c) B listed path token" "REASON=default-sonnet" "$OUT9C"
+assert_tok "(9c) B listed path token" "REASON=default-opus" "$OUT9C"
 
 # (10) GENUINELY invalid arguments -> exit 2 + usage on stderr. #1186 narrows this
 #      set: `A` and `C` are now ACCEPTED path letters (cases 16-19 below), so the
@@ -359,40 +377,35 @@ else
   fail_msg "exit $rc on normal verdict (expected 0)"
 fi
 
-# ---- Task 2: split-role (#881) dispatch shape -------------------------------
+# ---- #1420: ONE dispatch shape, and PIPELINE_PATH_B_SPLIT_ROLE is inert -------
+#
+# Before #1420 this section pinned the #881 two-agent PATH B shape
+# (SPLIT_ROLE=true, ROLES=red:opus,green:<model>) against the
+# PIPELINE_PATH_B_SPLIT_ROLE knob. Calibration runs #11-#13 showed no cost or
+# latency return for the split, so the lane is gone and cases (11)-(15) collapse
+# into ONE property: EVERY path emits `ROLES=single` and NO `SPLIT_ROLE=` line,
+# and a stale `PIPELINE_PATH_B_SPLIT_ROLE=true` left behind in a consumer's
+# config is SILENTLY IGNORED — not honored, and not an error either. Ignoring it
+# rather than erroring is what lets an existing consumer upgrade without editing
+# config first; asserting it on the knob's most dangerous value (`true`, the old
+# default every #1057-era config carries) is what proves the read site is gone
+# rather than merely renamed.
 
-# (11) PATH B, split-role true, knobs default -> red:opus,green:sonnet.
-CFG11=$(make_config_root 'PIPELINE_PATH_B_SPLIT_ROLE=true')
-FIX11=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
-OUT11=$(run_resolver "$FIX11" "$CFG11" B)
-assert_tok "(11) B split-role default" "SPLIT_ROLE=true" "$OUT11"
-assert_tok "(11) B split-role default" "ROLES=red:opus,green:sonnet" "$OUT11"
-
-# (12) PATH B, split-role true + explicit opus -> red:opus,green:opus.
-CFG12=$(make_config_root 'PIPELINE_PATH_B_SPLIT_ROLE=true' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
-FIX12=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
-OUT12=$(run_resolver "$FIX12" "$CFG12" B)
-assert_tok "(12) B split-role explicit opus" "ROLES=red:opus,green:opus" "$OUT12"
-
-# (13) PATH B, split-role true + W2 vocab -> implementer forced opus.
-CFG13=$(make_config_root 'PIPELINE_PATH_B_SPLIT_ROLE=true')
-FIX13=$(make_fixture "fix(auth): harden" "$BODY_W2" '[]')
-OUT13=$(run_resolver "$FIX13" "$CFG13" B)
-assert_tok "(13) B split-role W2" "ROLES=red:opus,green:opus" "$OUT13"
-
-# (14) PATH B, split-role unset -> default-on split shape.
-CFG14=$(make_config_root)
-FIX14=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
-OUT14=$(run_resolver "$FIX14" "$CFG14" B)
-assert_tok "(14) B split-role unset" "SPLIT_ROLE=true" "$OUT14"
-assert_tok "(14) B split-role unset" "ROLES=red:opus,green:sonnet" "$OUT14"
-
-# (15) PATH D, split-role flag set -> still single (split-role is B-only).
-CFG15=$(make_config_root 'PIPELINE_PATH_B_SPLIT_ROLE=true')
-FIX15=$(make_fixture "fix(foo): quick" "$BODY_LOW" '[]')
-OUT15=$(run_resolver "$FIX15" "$CFG15" D)
-assert_tok "(15) D split-role flag set" "SPLIT_ROLE=false" "$OUT15"
-assert_tok "(15) D split-role flag set" "ROLES=single" "$OUT15"
+# (11) The knob is set to its old default on EVERY path letter -> single shape.
+for pl in A B C D; do
+  CFG11=$(make_config_root 'PIPELINE_PATH_B_SPLIT_ROLE=true')
+  FIX11=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+  OUT11=$(run_resolver "$FIX11" "$CFG11" "$pl")
+  assert_tok     "(11) PATH $pl + ignored PIPELINE_PATH_B_SPLIT_ROLE=true" "ROLES=single" "$OUT11"
+  assert_no_key  "(11) PATH $pl + ignored PIPELINE_PATH_B_SPLIT_ROLE=true" "SPLIT_ROLE" "$OUT11"
+  inc
+  if printf '%s\n' "$OUT11" | grep -qE '^ROLES=.*(red:|green:)'; then
+    fail_msg "(11) PATH $pl emitted a red/green ROLES shape:
+$OUT11"
+  else
+    pass_msg "(11) PATH $pl -> ROLES names no red:/green: role"
+  fi
+done
 
 # ---- #1186: PATH A / PATH C acceptance --------------------------------------
 # Before #1186 PATH A execute and every PATH C `tdd-implementer` leaf dispatched
@@ -400,7 +413,7 @@ assert_tok "(15) D split-role flag set" "ROLES=single" "$OUT15"
 # model. They now resolve through this same resolver: unset knob ⇒ the `opus`
 # execute ceiling (REASON=default-opus), an explicit knob honored verbatim
 # (REASON=explicit-knob). No eligibility predicate, no W2/needs-browser
-# carve-outs (the default IS already the carve-out target), never split-role.
+# carve-outs (the default IS already the carve-out target).
 
 # (16) PATH A, knobs unset -> opus default, single shape.
 CFG16=$(make_config_root)
@@ -409,7 +422,7 @@ OUT16=$(run_resolver "$FIX16" "$CFG16" A)
 assert_tok "(16) A knobs unset" "PATH=A" "$OUT16"
 assert_tok "(16) A knobs unset" "MODEL=opus" "$OUT16"
 assert_tok "(16) A knobs unset" "REASON=default-opus" "$OUT16"
-assert_tok "(16) A knobs unset" "SPLIT_ROLE=false" "$OUT16"
+assert_no_key "(16) A knobs unset" "SPLIT_ROLE" "$OUT16"
 assert_tok "(16) A knobs unset" "ROLES=single" "$OUT16"
 assert_no_key "(16) A knobs unset" "SCOPE" "$OUT16"
 assert_no_key "(16) A knobs unset" "ELIGIBLE" "$OUT16"
@@ -423,14 +436,14 @@ assert_tok "(17) A explicit sonnet" "MODEL=sonnet" "$OUT17"
 assert_tok "(17) A explicit sonnet" "REASON=explicit-knob" "$OUT17"
 
 # (18) PATH C, knobs unset -> opus default (applied to EVERY leaf dispatch),
-#      single shape (split-role is PATH B only).
+#      single shape.
 CFG18=$(make_config_root)
 FIX18=$(make_fixture "feat(x): multi-leaf rollout" "$BODY_HIGH" '[{"name":"multi-task"}]')
 OUT18=$(run_resolver "$FIX18" "$CFG18" C)
 assert_tok "(18) C knobs unset" "PATH=C" "$OUT18"
 assert_tok "(18) C knobs unset" "MODEL=opus" "$OUT18"
 assert_tok "(18) C knobs unset" "REASON=default-opus" "$OUT18"
-assert_tok "(18) C knobs unset" "SPLIT_ROLE=false" "$OUT18"
+assert_no_key "(18) C knobs unset" "SPLIT_ROLE" "$OUT18"
 assert_tok "(18) C knobs unset" "ROLES=single" "$OUT18"
 assert_no_key "(18) C knobs unset" "SCOPE" "$OUT18"
 assert_no_key "(18) C knobs unset" "ELIGIBLE" "$OUT18"
@@ -487,81 +500,24 @@ unset PIPELINE_BASE_BRANCH
 assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "MODEL=opus" "$OUT21"
 assert_tok "(21) hermeticity guard: explicit knob survives host PIPELINE_BASE_BRANCH" "REASON=explicit-knob" "$OUT21"
 
-# ---- #1291 trust profile ----------------------------------------------------
-# PIPELINE_TRUST_PROFILE (strict, the default | lean) is resolved ONCE by the
-# shared scripts/_trust-profile.sh helper. Under `lean` the #881 split-role PAIR
-# collapses into ONE strong-model dispatch (REASON=lean-single) — but ONLY for
-# PATH B, ONLY when the split would otherwise have applied, ONLY when no
-# carve-out fired (W2 / needs-browser), and ONLY when the implementer model is
-# already strong (opus|fable). `strict` must be BYTE-IDENTICAL to the pre-#1291
-# resolver. An unrecognized profile falls back to strict with ONE stderr WARN.
-# Cases (24)-(28) are CONTROLS: they pin the lanes lean must NOT widen into.
+# ---- #1291 trust profile (#1420: inert for THIS resolver) -------------------
+# PIPELINE_TRUST_PROFILE (strict, the default | lean) used to have TWO halves:
+# collapse the #881 split-role PAIR here, and skip the non-W2 PATH A/D plan-eval
+# second opinion in scripts/resolve-stage-model.sh. #1420 deleted the split lane
+# outright, so the profile's execute half has nothing left to collapse — every
+# path was already single — and this resolver no longer sources
+# scripts/_trust-profile.sh at all. The surviving property is therefore the
+# STRONGEST one: the profile is a total no-op HERE, on every path letter,
+# including PATH B (`lean` used to change PATH B and only PATH B). The plan-eval
+# half is still covered by tests/test-resolve-stage-model.sh, and the
+# unrecognized-value stderr WARN is asserted there too — the resolver that still
+# reads the knob is the one that must warn about it.
 
-# (22) lean + explicit opus knob on a clean low-blast PATH B -> single opus.
-CFG22=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
-FIX22=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
-OUT22=$(run_resolver "$FIX22" "$CFG22" B)
-assert_tok "(22) lean B + opus knob" "MODEL=opus" "$OUT22"
-assert_tok "(22) lean B + opus knob" "SPLIT_ROLE=false" "$OUT22"
-assert_tok "(22) lean B + opus knob" "ROLES=single" "$OUT22"
-assert_tok "(22) lean B + opus knob" "REASON=lean-single" "$OUT22"
-assert_tok "(22) lean B + opus knob" "SCOPE=all" "$OUT22"
-
-# (23) lean + explicit fable knob -> same collapse (fable is a strong model too).
-CFG23=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=fable')
-FIX23=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
-OUT23=$(run_resolver "$FIX23" "$CFG23" B)
-assert_tok "(23) lean B + fable knob" "MODEL=fable" "$OUT23"
-assert_tok "(23) lean B + fable knob" "SPLIT_ROLE=false" "$OUT23"
-assert_tok "(23) lean B + fable knob" "REASON=lean-single" "$OUT23"
-
-# (24) CONTROL: lean + opus knob + W2 vocab -> the high-uncertainty carve-out
-#      WINS; the split pair survives. lean never collapses a W2 dispatch.
-CFG24=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
-FIX24=$(make_fixture "fix(auth): harden" "$BODY_W2" '[]')
-OUT24=$(run_resolver "$FIX24" "$CFG24" B)
-assert_tok "(24) CONTROL lean + W2" "SPLIT_ROLE=true" "$OUT24"
-assert_tok "(24) CONTROL lean + W2" "ROLES=red:opus,green:opus" "$OUT24"
-assert_tok "(24) CONTROL lean + W2" "REASON=high-uncertainty" "$OUT24"
-
-# (24b) CONTROL: lean + opus knob + needs-browser -> carve-out wins, split survives.
-CFG24B=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
-FIX24B=$(make_fixture "fix(ui): table tweak" "$BODY_LOW" '[{"name":"needs-browser"}]')
-OUT24B=$(run_resolver "$FIX24B" "$CFG24B" B)
-assert_tok "(24b) CONTROL lean + needs-browser" "SPLIT_ROLE=true" "$OUT24B"
-assert_tok "(24b) CONTROL lean + needs-browser" "ROLES=red:opus,green:opus" "$OUT24B"
-assert_tok "(24b) CONTROL lean + needs-browser" "REASON=needs-browser" "$OUT24B"
-
-# (25) CONTROL: lean + knobs unset (sonnet executor) -> the split pair survives.
-#      lean collapses onto ONE STRONG model; it never collapses onto a weak one,
-#      which would delete the opus test-author with nothing strong left.
-CFG25=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
-FIX25=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
-OUT25=$(run_resolver "$FIX25" "$CFG25" B)
-assert_tok "(25) CONTROL lean + sonnet executor" "MODEL=sonnet" "$OUT25"
-assert_tok "(25) CONTROL lean + sonnet executor" "SPLIT_ROLE=true" "$OUT25"
-assert_tok "(25) CONTROL lean + sonnet executor" "ROLES=red:opus,green:sonnet" "$OUT25"
-assert_tok "(25) CONTROL lean + sonnet executor" "REASON=default-sonnet" "$OUT25"
-
-# (26) An UNRECOGNIZED profile falls back to strict, with exactly ONE WARN on
-#      stderr (fail-safe: a typo'd knob must not silently buy a cheaper shape).
-CFG26=$(make_config_root 'PIPELINE_TRUST_PROFILE=turbo' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
-FIX26=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
-OUT26=$(run_resolver "$FIX26" "$CFG26" B)
-assert_tok "(26) unknown profile falls back to strict" "SPLIT_ROLE=true" "$OUT26"
-assert_tok "(26) unknown profile falls back to strict" "ROLES=red:opus,green:opus" "$OUT26"
-assert_tok "(26) unknown profile falls back to strict" "REASON=explicit-knob" "$OUT26"
-inc
-WARN26="$(run_resolver_err "$FIX26" "$CFG26" B | grep -c '^WARN:.*PIPELINE_TRUST_PROFILE')"
-if [ "$WARN26" -eq 1 ]; then
-  pass_msg "(26) unknown profile -> exactly one WARN line on stderr"
-else
-  fail_msg "(26) expected exactly 1 '^WARN:.*PIPELINE_TRUST_PROFILE' stderr line, got $WARN26"
-fi
-
-# (27) CONTROL: strict is a byte-identical no-op. An explicit `strict` matches
-#      "no profile line at all", and lean-single is PATH B ONLY — under lean the
-#      A/C/D outputs are byte-equal to the same config without the profile line.
+# (27) strict is a byte-identical no-op (an explicit `strict` matches "no profile
+#      line at all"), and since #1420 `lean` is byte-identical too — on EVERY path
+#      letter, PATH B included. Before #1420 PATH B was the one lane lean changed
+#      (SPLIT_ROLE=false REASON=lean-single); a lean PATH B that still diverges
+#      here means a trust-profile read survived in the execute resolver.
 CFG27_NONE=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=opus')
 CFG27_STRICT=$(make_config_root 'PIPELINE_PATH_B_MODEL_EXECUTE=opus' 'PIPELINE_TRUST_PROFILE=strict')
 FIX27=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
@@ -572,26 +528,27 @@ else
   fail_msg "(27) strict diverged from no profile line (PATH B):
 $(diff <(run_resolver "$FIX27" "$CFG27_NONE" B) <(run_resolver "$FIX27" "$CFG27_STRICT" B))"
 fi
-for pl in A C D; do
+for pl in A B C D; do
   CFG27P_NONE=$(make_config_root "PIPELINE_PATH_${pl}_MODEL_EXECUTE=opus")
   CFG27P_LEAN=$(make_config_root "PIPELINE_PATH_${pl}_MODEL_EXECUTE=opus" 'PIPELINE_TRUST_PROFILE=lean')
   inc
   if [ "$(run_resolver "$FIX27" "$CFG27P_NONE" "$pl")" = "$(run_resolver "$FIX27" "$CFG27P_LEAN" "$pl")" ]; then
-    pass_msg "(27) lean is a no-op for PATH $pl (lean-single is PATH B only)"
+    pass_msg "(27) lean is a no-op for PATH $pl (#1420: no trust-profile read left)"
   else
-    fail_msg "(27) lean changed PATH $pl output (lean-single must be PATH B only)"
+    fail_msg "(27) lean changed PATH $pl output (#1420: the execute resolver must not read the profile)"
   fi
 done
 
-# (28) CONTROL: lean + opus knob + split-role explicitly OFF -> the dispatch was
-#      already single, so lean-single does NOT fire (it fires only where the
-#      split WOULD have applied) and the audit reason stays the model reason.
+# (28) BOTH retired knobs present at once (lean + PIPELINE_PATH_B_SPLIT_ROLE=false)
+#      -> both ignored, the audit reason stays the MODEL reason. This is the
+#      upgrade-path case: a #1291-era config carries both lines, and neither may
+#      perturb the emitted spec or inject a stale REASON token like `lean-single`.
 CFG28=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EXECUTE=opus' 'PIPELINE_PATH_B_SPLIT_ROLE=false')
 FIX28=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT28=$(run_resolver "$FIX28" "$CFG28" B)
-assert_tok "(28) CONTROL lean + split-role off" "SPLIT_ROLE=false" "$OUT28"
-assert_tok "(28) CONTROL lean + split-role off" "ROLES=single" "$OUT28"
-assert_tok "(28) CONTROL lean + split-role off" "REASON=explicit-knob" "$OUT28"
+assert_no_key "(28) lean + retired split-role knob" "SPLIT_ROLE" "$OUT28"
+assert_tok "(28) lean + retired split-role knob" "ROLES=single" "$OUT28"
+assert_tok "(28) lean + retired split-role knob" "REASON=explicit-knob" "$OUT28"
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="

@@ -103,12 +103,13 @@ section_body() {
 
 # The inline EXECUTE dispatch prompt contract paragraph. Copied VERBATIM from
 # tests/test-execute-dispatch-prompt-hardening.sh / test-no-hypothesised-writer-
-# clause.sh / test-dispatch-no-background-test-run.sh / test-split-role-green-
-# full-suite-pre-pr.sh so all five guards agree on the region boundary: the
-# paragraph terminates on the next `   **` sub-heading. This boundary is exactly
-# why the headless directive must be appended to the END of the SAME physical
-# line — a new line beginning `   **Headless:**` would TERMINATE the region
-# instead of joining it, silently emptying four existing guards.
+# clause.sh / test-dispatch-no-background-test-run.sh so all four guards agree on
+# the region boundary: the paragraph terminates on the next `   **` sub-heading.
+# (#1420 deleted the fifth copy, test-split-role-green-full-suite-pre-pr.sh, with
+# the split-role lane.) This boundary is exactly why the headless directive must
+# be appended to the END of the SAME physical line — a new line beginning
+# `   **Headless:**` would TERMINATE the region instead of joining it, silently
+# emptying three existing guards.
 exec_contract_region() {
   awk '
     /\*\*Inline execute dispatch prompt contract \(mandatory\)\.\*\*/ { inblock = 1; print; next }

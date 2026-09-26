@@ -105,16 +105,20 @@ check_cfg PIPELINE_REPO "rjskene/pipeline-calib"
 check_cfg PIPELINE_BASE_BRANCH "main"
 check_cfg PIPELINE_TEST_CMD "bash tests/run.sh"
 check_cfg PIPELINE_LOGS_ENABLED "true"
-check_cfg PIPELINE_TEST_FILE_GLOBS "case-*.sh"
 
 # The sandbox config carries EXACTLY the knobs the sandbox consumes, and every
 # one of them is declared in pipeline.config.example. Pinning the SET (rather
 # than naming the knobs that were dropped) keeps this file free of tokens the
 # config-drift lint would flag, and catches any future inert knob for free.
-want_knobs="PIPELINE_BASE_BRANCH PIPELINE_INSTALL_CMD PIPELINE_LOGS_ENABLED PIPELINE_REPO PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TEST_FILE_GLOBS PIPELINE_TRUST_PROFILE PIPELINE_WORKTREE_PREFIX"
+# #1420 dropped the #1201 discoverable-test basename-glob knob (nine -> eight): its
+# sole reader was the retired split-role W7 locked-test gate, so declaring it in the
+# sandbox would leave an ORPHAN knob the drift lint reports. Named descriptively
+# rather than spelled out, because check-config-drift.sh scans tests/ and a literal
+# here would report the retired knob as referenced-but-undeclared forever.
+want_knobs="PIPELINE_BASE_BRANCH PIPELINE_INSTALL_CMD PIPELINE_LOGS_ENABLED PIPELINE_REPO PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TRUST_PROFILE PIPELINE_WORKTREE_PREFIX"
 got_knobs=$(grep -oE '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$cfg" | sed 's/[[:space:]]//g; s/=$//' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
 if [ "$got_knobs" = "$want_knobs" ]; then
-  pass_msg "pipeline.config knob set is exactly the nine declared knobs"
+  pass_msg "pipeline.config knob set is exactly the eight declared knobs"
 else
   fail_msg "pipeline.config knob set is '$got_knobs' (want '$want_knobs')"
 fi

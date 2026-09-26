@@ -3,11 +3,11 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# On a split-role (RED/GREEN) leg the GREEN implementer may not edit the locked
-# `[split-role-red]` suite. If the planned change would break an EXISTING
-# exact-match assertion elsewhere in the test tree, that file must be declared
-# under `**Shared tests (split-role):**` at plan time — otherwise GREEN reaches a
-# contradiction it cannot legally resolve and correctly STOPS mid-leg.
+# A plan that breaks an EXISTING exact-match assertion somewhere in the test tree
+# must SAY SO. If the planner does not notice the assertion, the executor meets a
+# contradiction mid-task — an unrelated test that was green before the change and
+# is now red for a reason the plan never sanctioned — and has no legal way to tell
+# an intended re-pin from a regression it just caused.
 #
 # Before #1200 there was no mechanical sweep at all (`grep -rn "assertEqual"
 # skills/ scripts/` returned zero hits): each plan evaluator improvised its own
@@ -17,13 +17,21 @@
 # guard. Call sites: `skills/evaluate-issue-plan/SKILL.md` Step 3 Phase 1 and
 # `skills/plan-issue/SKILL.md` Step 4.
 #
+# #1420 — the sweep is now a PLAN-TIME DECLARATION aid, nothing more. It was born
+# alongside the #881 two-agent PATH B lane, where an undeclared exact-match
+# assertion was a hard stop: the implementer was forbidden to touch the locked
+# suite the test-author had committed, so the contradiction had no legal
+# resolution. That lane is gone and the single execute agent may edit any test the
+# plan names, so the sweep's output feeds the plan's `**Test changes:**` section —
+# plan-eval Revises when a hit the change WILL break is missing from it, and a hit
+# the change does not break is advisory only.
+#
 # CONTRACT
 # --------
 #   Usage: exact-match-guard-sweep.sh [<test-path>...]
-#   NEVER sources pipeline.config — the caller exports env (same contract as
-#   scripts/split-role-gate.sh).
+#   NEVER sources pipeline.config — the caller exports env.
 #
-#   Scope resolution, three tiers (mirroring split-role-gate.sh):
+#   Scope resolution, three tiers:
 #     1. positional <test-path>... args (highest)
 #     2. else $PIPELINE_TEST_ROOTS — shell word-split + glob-EXPANDED (globbing
 #        ON, NOT `set -f`): a trailing-slash wildcard root such as
@@ -51,10 +59,10 @@
 #     3  vacuous scope: no-test-root (zero roots resolved to an existing path)
 #        or no-test-files (roots resolved but zero scannable files)
 #   The sweep must NEVER exit 0 on a scope it could not prove anything about.
-#   This deliberately DIVERGES from split-role-gate.sh's always-exit-0 token
-#   contract: that gate rides its verdict on a token consumed by an auto-merge
-#   parser, whereas this sweep's caller is an LLM evaluator that must be forced
-#   to notice a vacuous run.
+#   This deliberately DIVERGES from the always-exit-0 token contract the pipeline's
+#   auto-merge gates use (scripts/auto-merge-gate.sh, check-capability-refusal.sh):
+#   those ride their verdict on a token consumed by a parser, whereas this sweep's
+#   caller is an LLM evaluator that must be FORCED to notice a vacuous run.
 #
 # KNOWN LIMITS (heuristic, not an AST)
 # ------------------------------------

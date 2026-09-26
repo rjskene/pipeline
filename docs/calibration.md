@@ -21,7 +21,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   |---|---|---|
   | stale doc line | A | docs-only routing |
   | one-line script bug, failing test present | D | quick-fix lane |
-  | small feature needing a new test | B | full lifecycle, split-role, pr-eval |
+  | small feature needing a new test | B | full lifecycle, single execute agent, pr-eval |
   | body with `race`/`auth` vocabulary | B + W2 | carve-out routing to opus |
   | two-directory change | C | per-leaf worktree fan-out, cherry-pick reassembly |
   | planted boundary defect | B | pr-eval gate yield |
@@ -41,11 +41,10 @@ bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
-`--profile` sets `PIPELINE_TRUST_PROFILE` in the sandbox session — `strict` is today's
-split-role execute plus full plan-eval; `lean` runs opus/fable executors single-role
-outside W2 and skips PATH A/D plan-eval (docs/cost-architecture.md §9). `--model` picks
-the executor model. `--harness <dir>` points at the harness working tree under test — it
-defaults to this repo's root.
+`--profile` sets `PIPELINE_TRUST_PROFILE` in the sandbox session — `strict` runs full
+plan-eval; `lean` skips the non-W2 PATH A/D plan-eval (docs/cost-architecture.md §9).
+`--model` picks the executor model. `--harness <dir>` points at the harness working
+tree under test — it defaults to this repo's root.
 
 `--reset` is what makes a run comparable to the previous one: inputs are pinned to
 the `calib-base` tag, so a delta between two `CALIB-TOTAL` lines is attributable to
@@ -76,11 +75,9 @@ so an arm-2 run can never be mistaken for the hooks-on baseline (#1409).
 
 `--executor-model opus|sonnet` (default unset, backlog #2/#10/#28) sets
 `PIPELINE_PATH_B_MODEL_EXECUTE` in the sandbox session — the knob
-`resolve-execute-dispatch.sh` and `resolve-stage-model.sh` read to decide
-whether `--profile lean` collapses split-role to `lean-single` (they only do
-so for a non-W2 opus/fable executor, so `lean` with the default Sonnet
-executor exercises almost nothing). Unset means "whatever the harness resolves
-on its own" (Sonnet, #1042); no value is pinned by default, so a plain run is
+`resolve-execute-dispatch.sh` and `resolve-stage-model.sh` read to pin the
+single PATH B execute agent's model. Unset means "whatever the resolver defaults
+to" (Opus for PATH B since #1420); no value is pinned by default, so a plain run is
 never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
 `CALIB-TOTAL` and carries a `-bexec-<M>` artifact suffix, composable with
 `-hooks-off` (#1414).

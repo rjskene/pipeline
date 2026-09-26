@@ -210,11 +210,13 @@ if [ -n "$SHAPES" ]; then
   SHAPE_COUNT=$(printf '%s\n' "$SHAPES" | grep -c . || true)
 fi
 
+# Floor re-pinned by #1420: the block listed 9 shapes while the split-role lane
+# existed; with the two `split-role RED`/`GREEN` rows retired it lists 7.
 inc
-if [ "$SHAPE_COUNT" -ge 9 ]; then
-  pass_msg "shapes: block yields $SHAPE_COUNT canonical descriptions (>= 9)"
+if [ "$SHAPE_COUNT" -ge 7 ]; then
+  pass_msg "shapes: block yields $SHAPE_COUNT canonical descriptions (>= 7)"
 else
-  fail_msg "shapes: block yields only $SHAPE_COUNT canonical descriptions (need >= 9, one per dispatch stage). Extracted: $(printf '%s' "$SHAPES" | tr '\n' '|')"
+  fail_msg "shapes: block yields only $SHAPE_COUNT canonical descriptions (need >= 7, one per live dispatch stage). Extracted: $(printf '%s' "$SHAPES" | tr '\n' '|')"
 fi
 
 shape_present() { printf '%s\n' "$SHAPES" | grep -qxF -- "$1"; }
@@ -226,8 +228,6 @@ EXPECTED_SHAPES=(
   "plan-issue #1387|plan/single/1387"
   "evaluate-issue-plan #1387|plan-eval/single/1387"
   "execute-issue-plan #1387|execute/single/1387"
-  "execute-issue-plan #1387 split-role RED|execute/red/1387"
-  "execute-issue-plan #1387 split-role GREEN|execute/green/1387"
   "execute-issue-plan #1387 target=scripts/|execute/single/1387"
   "evaluate-issue-pr #1387|pr-eval/single/1387"
   "code review #1387|pr-eval/review/1387"
@@ -243,6 +243,35 @@ for row in "${EXPECTED_SHAPES[@]}"; do
     fail_msg "shape-listed: the block does NOT name '$desc'. Extracted: $(printf '%s' "$SHAPES" | tr '\n' '|')"
   fi
   assert_both_producers "shape-parse" "$desc" "$want"
+done
+
+# ==========================================================================
+# 4) HISTORICAL SHAPES (#1420) — the split-role RED/GREEN lane is retired, so the
+#    doc block no longer PRESCRIBES these two descriptions. Both producers must
+#    still PARSE them, because agent-costs.jsonl rows captured while the lane
+#    existed are still priced by scripts/cost-latency-report.sh and the
+#    `--tokenomics` role-split table. Parser-only: no `shape-listed` assertion.
+# ==========================================================================
+echo ""
+echo "== #1420 historical shapes (retired lane, still priced) =="
+
+HISTORICAL_SHAPES=(
+  "execute-issue-plan #1387 split-role RED|execute/red/1387"
+  "execute-issue-plan #1387 split-role GREEN|execute/green/1387"
+)
+
+for row in "${HISTORICAL_SHAPES[@]}"; do
+  desc="${row%%|*}"
+  want="${row##*|}"
+  assert_both_producers "shape-parse-historical" "$desc" "$want"
+  # Negative control: the doc block must NOT name a retired shape — a plan that
+  # reintroduced the lane would show up here first.
+  inc
+  if shape_present "$desc"; then
+    fail_msg "shape-absent: the block still names '$desc' (#1420 retired the split-role lane)"
+  else
+    pass_msg "shape-absent: the block no longer names '$desc'"
+  fi
 done
 
 summary

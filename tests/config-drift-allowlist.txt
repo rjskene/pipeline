@@ -142,22 +142,12 @@ PIPELINE_DELTA
 # concat-prefix wildcard covering PIPELINE_MOCK_WEB_EVAL_X and any sibling.
 PIPELINE_MOCK_WEB_EVAL_
 
-# #1089 split-role shared-test exemption. PIPELINE_SPLIT_ROLE_SHARED_TESTS is an
-# eval-caller-set-ONLY var: evaluate-issue-pr resolves the approved plan's
-# `**Shared tests (split-role):**` section and threads the paths into
-# scripts/split-role-gate.sh on the invocation. Like its sibling
-# PIPELINE_CI_ROLLUP_GREEN (covered by the PIPELINE_CI_ prefix above), it is
-# NEVER read from pipeline.config — reading it from config would make a
-# host-global exemption, defeating per-issue scoping. Intentionally undocumented
-# in pipeline.config.example; exact-match exempt here.
-PIPELINE_SPLIT_ROLE_SHARED_TESTS
-
 # #1233 capability-refusal sentinel source knob. PIPELINE_CAPABILITY_REFUSAL_SOURCES
 # is an eval-caller-set-ONLY var: evaluate-issue-pr's Step 11.2 resolves the
 # default dogfood-only subagent log dir at the auto_merge_should_fire call site
 # and threads it into scripts/check-capability-refusal.sh via
-# scripts/auto-merge-gate.sh. Same shape as its sibling
-# PIPELINE_SPLIT_ROLE_SHARED_TESTS above — NEVER read from pipeline.config
+# scripts/auto-merge-gate.sh. Like its sibling PIPELINE_CI_ROLLUP_GREEN (covered
+# by the PIPELINE_CI_ prefix above), it is NEVER read from pipeline.config
 # (a host-global value would invite scanning the operator's real
 # .claude/logs/subagents/ nondeterministically, defeating per-issue scoping).
 # Intentionally undocumented in pipeline.config.example; exact-match exempt here.
@@ -169,7 +159,7 @@ PIPELINE_CAPABILITY_REFUSAL_SOURCES
 # setup-worktree.sh, doctor.sh, housekeeping.md, fullsend Step 5). Commenting keeps
 # test-doctor-golden-seed-set.sh green (a seeded knob would pin its value and defeat
 # central default evolution), so the drift lint sees them as referenced-but-undeclared.
-# Same intentionally-undocumented class as PIPELINE_SPLIT_ROLE_SHARED_TESTS above. The
+# Same intentionally-undocumented class as PIPELINE_CAPABILITY_REFUSAL_SOURCES above. The
 # PIPELINE_NEXT_ prefix wildcard covers both *_BRANCH/*_LABEL; PIPELINE_NEXT exact-matches
 # the bare-prefix token the scan extracts.
 PIPELINE_NEXT
@@ -197,6 +187,20 @@ PIPELINE_STAGE_MODEL_CLASSIFY
 # wildcard) — same retired-knob class as PIPELINE_FRONTEND_PORT_OFFSET above.
 PIPELINE_CALIB_PROFILE
 
+# #1420 retired knob. The #881 PATH B two-agent shape flag lost its only read site
+# when scripts/resolve-execute-dispatch.sh collapsed to one execute agent. It is
+# NOT merely unread, it is deliberately IGNORED: a consumer upgrading from a
+# #1057-era config still carries the line, and the resolver must keep emitting the
+# single shape rather than erroring. tests/test-resolve-execute-dispatch.sh pins
+# that by WRITING the knob into its fixture configs and asserting the emitted spec
+# is unperturbed — so the literal there is load-bearing and cannot be spelled
+# around (unlike the absence-guard needles in tests/test-no-split-role-lane.sh,
+# which are assembled from a prefix + suffix precisely to avoid landing here).
+# check-config-drift.sh scans tests/, so that fixture literal reads as
+# "referenced". Exact-match (NOT a prefix wildcard) — same retired-knob class as
+# PIPELINE_CALIB_PROFILE above, and the same peel-when-the-guard-goes rule.
+PIPELINE_PATH_B_SPLIT_ROLE
+
 # #1272 fixture-prose-only knob. PIPELINE_SUPERPOWERS_* is a HYPOTHETICAL per-stage
 # superpowers gate named only in the evolve-loop tracker's `## Hypothesis backlog`
 # (item 11: "per-stage `PIPELINE_SUPERPOWERS_*` knob or trust-profile row"). That
@@ -219,7 +223,7 @@ PIPELINE_SUPERPOWERS_
 # tests/test-run-retro.sh on the invocation; reading it from pipeline.config
 # would make a host-global clock override and silently freeze every operator's
 # retro window. Same eval-caller-set-ONLY class as
-# PIPELINE_SPLIT_ROLE_SHARED_TESTS above; the operator-facing seam is the
+# PIPELINE_CAPABILITY_REFUSAL_SOURCES above; the operator-facing seam is the
 # `--now DATE` flag, documented in `run-retro.sh --help`. Intentionally
 # undocumented in pipeline.config.example; exact-match exempt here.
 PIPELINE_RETRO_NOW

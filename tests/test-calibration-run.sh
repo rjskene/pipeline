@@ -1848,8 +1848,8 @@ unset CALIB_TEST_CLAUDE_SCRIPT
 # ---------------------------------------------------------------------------
 scenario "Scenario 22: --executor-model opus reaches the sandbox session and labels the run (backlog #2/#28, #1414)"
 # ---------------------------------------------------------------------------
-# Block C of the outer-loop plan: --profile lean only collapses split-role to
-# lean-single for a non-W2 opus/fable executor, so the lean arm is inert unless
+# Block C of the outer-loop plan: the flag pins the model of the SINGLE PATH B
+# execute agent (#1420), so the measured arm is meaningless unless
 # PIPELINE_PATH_B_MODEL_EXECUTE reaches the measured session. #1390's scrub -u's
 # every inherited PIPELINE_*, so the explicit set has to come AFTER it — and a
 # poison value in the launching shell must lose to the flag, and must be gone
