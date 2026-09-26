@@ -97,10 +97,10 @@ Options:
   --hooks H        on|off  (default on) — off strips every PreToolUse guard
                    hook and the enforce-ci-wait Stop hook from the STAGED
                    manifest (hook-necessity experiment, backlog #12).
-  --executor-model M  opus|sonnet  (default unset = the harness default,
-                   Sonnet per #1042) — sets PIPELINE_PATH_B_MODEL_EXECUTE in
-                   the sandbox session, which is what lets --profile lean
-                   actually collapse split-role to lean-single (backlog #2/#28).
+  --executor-model M  opus|sonnet  (default unset = the harness default, Opus
+                   per #1420) — sets PIPELINE_PATH_B_MODEL_EXECUTE in the
+                   sandbox session, pinning the model of the SINGLE PATH B
+                   execute agent (backlog #2/#28).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the

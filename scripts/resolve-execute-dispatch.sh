@@ -12,30 +12,53 @@
 # inline foreground batch — the post-#748/#749/#750 DEFAULT — had no equivalent).
 #
 # This script IS that mechanism. Given an issue + a path letter (A|B|C|D), it
-# emits the FULL dispatch spec — the execute `model=`, the #881 split-role shape,
-# and an advisory eligibility/scope/reason audit — so skills/fullsend/SKILL.md
-# Step 6 consumes ONE emitted spec instead of re-deriving the decision in prose.
+# emits the FULL dispatch spec — the execute `model=` plus an advisory
+# eligibility/scope/reason audit — so skills/fullsend/SKILL.md Step 6 consumes ONE
+# emitted spec instead of re-deriving the decision in prose.
 # skills/campaign/SKILL.md inherits this by reference (it defers to fullsend's
 # `## Campaign mode`).
 #
 # Emits one token per line on stdout and ALWAYS exits 0 in normal operation (the
-# verdict rides the tokens, mirroring scripts/path-b-execute-eligible.sh +
-# scripts/split-role-gate.sh). Exit 2 is reserved for a usage error.
+# verdict rides the tokens, mirroring scripts/path-b-execute-eligible.sh). Exit 2
+# is reserved for a usage error.
 #
 #   ISSUE=<N>
 #   PATH=<A|B|C|D>
 #   MODEL=<sonnet|opus|haiku|fable>     # the model= to pass to the execute Agent.
 #                                       # ALWAYS a NAMED model (#1186) — `inherit`
 #                                       # is NOT a valid emission.
-#   SPLIT_ROLE=<true|false>             # PATH B only; always false for A/C/D
-#   ROLES=<single | red:opus,green:<model>>   # dispatch shape spec
+#   ROLES=single                        # #1420: the ONLY dispatch shape
 #   SCOPE=<all|low-blast>               # resolved PIPELINE_PATH_B_ELIGIBLE_SCOPE (B only)
 #   ELIGIBLE=<low-blast|high-blast>     # advisory passthrough from
 #                                       # path-b-execute-eligible.sh (B only)
 #   REASON=<token>                      # why MODEL resolved as it did (audit)
 #
 # REASON tokens: default-sonnet | default-opus | explicit-knob | high-uncertainty
-#                | needs-browser | scope-low-blast-gated | lean-single
+#                | needs-browser | scope-low-blast-gated
+#
+# #1420 — the #881 two-agent PATH B execute lane is GONE, and with it the SHAPE
+# half of this resolver's contract. PATH B used to dispatch TWO sequential agents
+# (an always-Opus test-author committing the complete locked failing suite, then a
+# cheaper implementer greening it additive-only under an eval-time git invariant),
+# and this resolver emitted that pairing as its own boolean key plus
+# `ROLES=red:opus,green:<model>`. Calibration runs #11-#13 measured NO cost or
+# latency return for the redundancy, so every path now dispatches ONE execute
+# agent: `ROLES=single` unconditionally, and the boolean key is REMOVED outright
+# rather than pinned to false — a surviving `false` emission would keep every
+# downstream parser reading a dead token. Three consequences:
+#   - The #881 shape knob is no longer read. A stale value in a consumer's config
+#     is SILENTLY ignored, with no WARN: there is nothing left to opt out of, and
+#     warning on it would fire on every dispatch of every #1057-era config until
+#     the operator edits a file this upgrade does not otherwise require touching.
+#   - PATH B's unset-knob default flips sonnet -> `opus` (REASON=default-opus). The
+#     Opus test-author was what made a cheap implementer safe; collapsing to one
+#     agent without raising its model would have quietly lowered the quality floor
+#     rather than merely removing a redundancy. Reversible per-consumer via
+#     PIPELINE_PATH_B_MODEL_EXECUTE=sonnet. PATH D is UNCHANGED — it was never a
+#     two-agent lane, so it lost nothing to compensate for.
+#   - scripts/_trust-profile.sh is no longer sourced: `lean`'s execute half existed
+#     only to collapse that pair, which is now the unconditional shape.
+#     scripts/resolve-stage-model.sh still sources it for the plan-eval half.
 #
 # #1186 — `inherit` is RETIRED as an emission. "Inherit the strong safe model"
 # was only ever true while the session model WAS the strong safe model; under a
@@ -46,22 +69,24 @@
 #
 # === Encoded routing rules (the single place the knobs + carve-outs apply) ===
 #
-#   #1042 model knob — read PIPELINE_PATH_{B,D}_MODEL_EXECUTE. Unset/empty ⇒
-#     effective `sonnet` (the shipped opt-out default). An explicit value
-#     (opus|haiku|sonnet) is honored verbatim.
+#   #1042 model knob — read PIPELINE_PATH_{B,D}_MODEL_EXECUTE. An explicit value
+#     (opus|haiku|sonnet) is honored verbatim. Unset/empty ⇒ effective `sonnet`
+#     for PATH D; #1420 flipped PATH B's unset default to `opus`
+#     (REASON=default-opus) when the split lane's Opus test-author was removed.
 #   #1186 PATH A/C model knob — read PIPELINE_PATH_{A,C}_MODEL_EXECUTE.
 #     Unset/empty ⇒ effective `opus` (REASON=default-opus — execute's quality
 #     ceiling, which is what those dispatches silently assumed they were getting
 #     from the session model). An explicit value is honored verbatim
 #     (REASON=explicit-knob), consistent with the B/D rule. A/C run NO
 #     eligibility predicate and NO W2/needs-browser carve-outs — the default IS
-#     already the carve-out target — and are never split-role (PATH B only), so
-#     they emit neither SCOPE= nor ELIGIBLE=. For PATH C the resolved model
-#     applies to EVERY `target=<dir>` leaf dispatch.
+#     already the carve-out target — so they emit neither SCOPE= nor ELIGIBLE=.
+#     For PATH C the resolved model applies to EVERY `target=<dir>` leaf dispatch.
 #   PIPELINE_PATH_B_ELIGIBLE_SCOPE — default `all`. Under `all`, every non-W2
 #     PATH B routes the resolved model even on a high-blast eligibility verdict.
 #     Under `low-blast`, the resolved model is passed ONLY when
 #     path-b-execute-eligible.sh returns low-blast; high-blast ⇒ pinned `opus`.
+#     (Since #1420 flipped the B default to `opus`, this gate only bites a consumer
+#     who explicitly opted down to a cheaper model.)
 #   W2 always-Opus carve-out — detected via the SAME machinery the existing
 #     read-site uses: path-b-execute-eligible.sh's REASON=high-uncertainty token
 #     (PATH B), and a DIRECT match of $HIGH_UNCERTAINTY_RE from
@@ -79,23 +104,9 @@
 #     PIPELINE_STAGE_MODEL_PR_EVAL (scripts/resolve-stage-model.sh <N> pr-eval)
 #     rather than riding an inherited session model; pr-eval is still NEVER
 #     routed through this resolver.
-#   #881 split-role — read PIPELINE_PATH_B_SPLIT_ROLE (default true, #1057/#1064). PATH B +
-#     true ⇒ SPLIT_ROLE=true, ROLES=red:opus,green:<implementer-model> where the
-#     test-author is ALWAYS opus and the implementer is the resolved execute model
-#     (a W2 carve-out forces the implementer to opus too). Split-role NEVER
-#     applies to PATH D.
-#   #1291 trust profile — read PIPELINE_TRUST_PROFILE via the shared
-#     scripts/_trust-profile.sh (ONE normalization; never re-normalized here).
-#     `strict` (the DEFAULT, and the fallback for any unrecognized value, with a
-#     stderr WARN) is BYTE-IDENTICAL to the pre-#1291 resolver. `lean` collapses
-#     the #881 split PAIR into ONE dispatch — SPLIT_ROLE=false, ROLES=single,
-#     REASON=lean-single — but ONLY on PATH B, ONLY where the split would
-#     otherwise have applied, ONLY when NO carve-out fired, and ONLY when the
-#     implementer model is already STRONG (opus|fable). The W2 high-uncertainty
-#     and needs-browser carve-outs WIN over lean: those keep the split pair. A
-#     sonnet implementer also keeps it (collapsing there would delete the opus
-#     test-author and leave nothing strong in the dispatch). lean is a no-op for
-#     PATH A/C/D — lean-single is a PATH B rule only.
+#   #881 two-agent PATH B lane — RETIRED by #1420 (see the note above). No shape
+#     knob is read, no shape boolean is emitted, and no trust-profile helper is
+#     sourced.
 
 set -uo pipefail
 
@@ -127,23 +138,24 @@ esac
 
 # --- Self-resolve config (export-on-source) ---------------------------------
 # Same pattern as verify-execute-completion.sh: source the co-located
-# _resolve-config.sh so PIPELINE_PATH_{B,D}_MODEL_EXECUTE / *_ELIGIBLE_SCOPE /
-# *_SPLIT_ROLE are available even when callers source-but-don't-export them.
+# _resolve-config.sh so PIPELINE_PATH_{A,B,C,D}_MODEL_EXECUTE /
+# PIPELINE_PATH_B_ELIGIBLE_SCOPE are available even when callers
+# source-but-don't-export them.
 _red_dir="$(dirname "${BASH_SOURCE[0]:-$0}")"
 if [ -f "${_red_dir}/_resolve-config.sh" ]; then
   # shellcheck disable=SC1090,SC1091
   source "${_red_dir}/_resolve-config.sh"
 fi
 
-# --- Resolve the #1291 trust profile (ONE normalization, shared) ------------
-# shellcheck source=scripts/_trust-profile.sh
-. "${_red_dir}/_trust-profile.sh"
+# #1420: scripts/_trust-profile.sh is deliberately NOT sourced here. Its execute
+# half only ever collapsed the #881 two-agent pair, which is now the unconditional
+# shape, so a read would be a knob with no effect. scripts/resolve-stage-model.sh
+# still sources it for the surviving plan-eval half.
 
 REPO="${PIPELINE_REPO:-}"
 
-# --- Resolve knobs (#1042 / #881 defaults) ----------------------------------
+# --- Resolve knobs (#1042 / #1420 defaults) ---------------------------------
 SCOPE="${PIPELINE_PATH_B_ELIGIBLE_SCOPE:-all}"
-SPLIT_FLAG="${PIPELINE_PATH_B_SPLIT_ROLE:-true}"
 
 case "$PATH_LETTER" in
   A) KNOB="${PIPELINE_PATH_A_MODEL_EXECUTE:-}" ;;
@@ -151,32 +163,38 @@ case "$PATH_LETTER" in
   C) KNOB="${PIPELINE_PATH_C_MODEL_EXECUTE:-}" ;;
   *) KNOB="${PIPELINE_PATH_D_MODEL_EXECUTE:-}" ;;
 esac
-# #1042: unset/empty ⇒ effective sonnet for B/D (shipped opt-out default).
+# #1042: unset/empty ⇒ effective sonnet for D (the shipped opt-out default).
 # #1186: unset/empty ⇒ effective opus for A/C (the execute quality ceiling those
 # dispatches previously assumed they inherited from the session model).
+# #1420: unset/empty ⇒ effective opus for B too. B's sonnet default was safe only
+# because the split lane paired it with an always-Opus test-author; with one agent
+# the resolved model IS the quality floor, so B joins A/C at the ceiling. An
+# explicit knob still wins on every path (REASON=explicit-knob), which is the
+# documented way back to a cheap PATH B execute.
 if [ -n "$KNOB" ]; then
   RESOLVED_KNOB="$KNOB"
   KNOB_REASON="explicit-knob"
-elif [ "$PATH_LETTER" = "A" ] || [ "$PATH_LETTER" = "C" ]; then
-  RESOLVED_KNOB="opus"
-  KNOB_REASON="default-opus"
-else
+elif [ "$PATH_LETTER" = "D" ]; then
   RESOLVED_KNOB="sonnet"
   KNOB_REASON="default-sonnet"
+else
+  RESOLVED_KNOB="opus"
+  KNOB_REASON="default-opus"
 fi
 
 # --- Defaults the emit() block fills in (overridden by the branches below) ---
 MODEL=""
 REASON=""
 ELIGIBLE=""        # B-only advisory; left empty for D
-W2=0               # set to 1 when the W2 carve-out fires (forces Opus)
 
 emit() {
   echo "ISSUE=$N"
   echo "PATH=$PATH_LETTER"
   echo "MODEL=$MODEL"
-  echo "SPLIT_ROLE=$SPLIT_ROLE_OUT"
-  echo "ROLES=$ROLES_OUT"
+  # #1420: ROLES is a constant. It is still EMITTED (unlike the retired shape
+  # boolean, which is dropped outright) so a consumer reading the shape gets an
+  # explicit `single` rather than silence it would have to interpret.
+  echo "ROLES=single"
   if [ "$PATH_LETTER" = "B" ]; then
     echo "SCOPE=$SCOPE"
     [ -n "$ELIGIBLE" ] && echo "ELIGIBLE=$ELIGIBLE"
@@ -191,7 +209,7 @@ if [ "$PATH_LETTER" = "A" ] || [ "$PATH_LETTER" = "C" ]; then
   # ceiling those carve-outs exist to reach, so there is nothing to force. An
   # explicit cheaper knob is an operator override, honored verbatim (same rule
   # as B/D `explicit-knob`). For PATH C the resolved model applies to EVERY
-  # `target=<dir>` leaf dispatch. Never split-role (PATH B only).
+  # `target=<dir>` leaf dispatch.
   MODEL="$RESOLVED_KNOB"; REASON="$KNOB_REASON"
 elif [ "$PATH_LETTER" = "B" ]; then
   # === PATH B ================================================================
@@ -205,9 +223,9 @@ elif [ "$PATH_LETTER" = "B" ]; then
 
   # W2 high-uncertainty OR needs-browser ⇒ always Opus (the protected carve-out).
   if [ "$ELIG_REASON" = "high-uncertainty" ]; then
-    MODEL="opus"; REASON="high-uncertainty"; W2=1
+    MODEL="opus"; REASON="high-uncertainty"
   elif [ "$ELIG_REASON" = "needs-browser" ]; then
-    MODEL="opus"; REASON="needs-browser"; W2=1
+    MODEL="opus"; REASON="needs-browser"
   elif [ "$SCOPE" = "low-blast" ] && [ "$ELIGIBLE" != "low-blast" ]; then
     # scope=low-blast restricts the resolved model to low-blast verdicts only;
     # a high-blast verdict PINS opus (the pre-#1042 conservative lane — named,
@@ -244,40 +262,10 @@ else
     # the carve-out on a large body.
     HU_TEXT="$(printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" | hu_strip_path_tokens)"
     if grep -iEq "$HIGH_UNCERTAINTY_RE" <<<"$HU_TEXT"; then
-      MODEL="opus"; REASON="high-uncertainty"; W2=1
+      MODEL="opus"; REASON="high-uncertainty"
     else
       MODEL="$RESOLVED_KNOB"; REASON="$KNOB_REASON"
     fi
-  fi
-fi
-
-# --- Split-role (#881) dispatch shape ---------------------------------------
-# Split-role applies to PATH B ONLY (never A/C/D). The test-author is ALWAYS
-# opus; the implementer is the resolved execute MODEL, and a W2 carve-out forces
-# the implementer to opus too. (#1186 dropped the dead `MODEL=inherit` arm — the
-# resolver no longer emits it.)
-#
-# #1291 lean-single: under TRUST_PROFILE=lean the split PAIR collapses into ONE
-# dispatch (REASON=lean-single) exactly where the redundancy buys least — no W2
-# carve-out fired AND the implementer would already have been a STRONG model
-# (opus|fable), so the collapsed dispatch is still the strong model. Every other
-# lane is untouched: strict, PATH A/C/D, W2/needs-browser, a sonnet implementer
-# (collapsing there would delete the opus test-author with nothing strong left),
-# and split-role explicitly off (already single — lean-single fires only where
-# the split WOULD have applied, so the audit reason stays the model reason).
-SPLIT_ROLE_OUT="false"
-ROLES_OUT="single"
-if [ "$PATH_LETTER" = "B" ] && [ "$SPLIT_FLAG" = "true" ]; then
-  if [ "$TRUST_PROFILE" = "lean" ] && [ "$W2" != "1" ] && { [ "$MODEL" = "opus" ] || [ "$MODEL" = "fable" ]; }; then
-    REASON="lean-single"
-  else
-    SPLIT_ROLE_OUT="true"
-    if [ "$W2" = "1" ] || [ "$MODEL" = "opus" ]; then
-      IMPL_MODEL="opus"
-    else
-      IMPL_MODEL="$MODEL"
-    fi
-    ROLES_OUT="red:opus,green:${IMPL_MODEL}"
   fi
 fi
 

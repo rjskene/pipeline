@@ -7,7 +7,7 @@
 # needs a listener, otherwise a silently-substituting executor still merges.
 #
 # Contract (one stdout line, ALWAYS exit 0 — the verdict rides the token, same
-# shape as scripts/split-role-gate.sh / scripts/auto-merge-gate.sh):
+# shape as scripts/auto-merge-gate.sh / scripts/verify-execute-completion.sh):
 #
 #   CAPABILITY_REFUSAL=<clear|block> ISSUE=<N> REASON=<token> SCANNED=<n> WITH_OUTPUT=<n>
 #

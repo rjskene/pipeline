@@ -4,13 +4,21 @@ set -uo pipefail
 # Regression guard for #1042: Sonnet-on-execute is the shipped DEFAULT (opt-OUT),
 # not opt-in. Two layers, both required:
 #   1. Read-site default flip in skills/fullsend/SKILL.md "Per-path execute MODEL
-#      routing": unset PIPELINE_PATH_B_MODEL_EXECUTE / PIPELINE_PATH_D_MODEL_EXECUTE
-#      => default `sonnet` (was: unset => Opus); unset PIPELINE_PATH_B_ELIGIBLE_SCOPE
-#      => default `all` (was: low-blast). The W2 high-uncertainty carve-out and the
-#      PATH D needs-browser carve-out (#960) STILL force Opus. pr-eval is NEVER
-#      defaulted to Sonnet (W3).
-#   2. The three knobs ship ACTIVE (=sonnet, scope=all) in pipeline.config.example
-#      and scripts/init.sh's generated config, with opt-OUT framing.
+#      routing": unset PIPELINE_PATH_D_MODEL_EXECUTE => default `sonnet` (was:
+#      unset => Opus); unset PIPELINE_PATH_B_ELIGIBLE_SCOPE => default `all` (was:
+#      low-blast). The W2 high-uncertainty carve-out and the PATH D needs-browser
+#      carve-out (#960) STILL force Opus. pr-eval is NEVER defaulted to Sonnet (W3).
+#   2. The knobs are documented at their read-site defaults in
+#      pipeline.config.example and scripts/init.sh's generated config, with
+#      opt-OUT framing.
+#
+# #1420 — the PATH B half of layer 1 is retired. #881's split lane paired a cheap
+# implementer with an ALWAYS-Opus test-author; collapsing PATH B to one execute
+# agent removed that Opus half, so PATH B's unset-knob default is now `opus`
+# (REASON=default-opus) and the documented value flips sonnet -> opus in both
+# surfaces. PATH D is UNCHANGED (never a split lane, so nothing was lost), which
+# is why the routing block's "unset => default sonnet" sentence stays asserted
+# below: it is still true, for PATH D.
 #
 # Static-grep/awk over the named source files only (no live dispatch) — mirrors the
 # shape of tests/test-path-model-execute-routing.sh. Per CLAUDE.md release-hygiene
@@ -128,10 +136,10 @@ fi
 #    them). Assert each is documented as a commented knob (NOT a live line). The Sonnet
 #    default itself is asserted at the SKILL/resolver read site by the checks above.
 inc
-if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet documented (commented) per #1052"
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=opus' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=opus documented (commented) per #1052/#1420"
 else
-  fail_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet not documented as commented (#1052)"
+  fail_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=opus not documented as commented (#1052/#1420)"
 fi
 inc
 if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
@@ -179,11 +187,21 @@ heredoc_body() {
     inheredoc { print }
   ' "$INIT"
 }
+# #1420: the B knob is seeded COMMENTED at the read-site default (#1052
+# defaults-in-code) — an ACTIVE line would PIN opus into every greenfield config
+# and defeat central default evolution on plugin upgrade. PATH D keeps its ACTIVE
+# =sonnet line (its default did not move, so seeding it pins nothing new).
 inc
-if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet' >/dev/null; then
-  pass_msg "init.sh: heredoc emits PIPELINE_PATH_B_MODEL_EXECUTE=sonnet"
+if heredoc_body | grep -E '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=opus' >/dev/null; then
+  pass_msg "init.sh: heredoc seeds #PIPELINE_PATH_B_MODEL_EXECUTE=opus (commented, #1052/#1420)"
 else
-  fail_msg "init.sh: heredoc does NOT emit PIPELINE_PATH_B_MODEL_EXECUTE=sonnet"
+  fail_msg "init.sh: heredoc does NOT seed commented #PIPELINE_PATH_B_MODEL_EXECUTE=opus (#1052/#1420)"
+fi
+inc
+if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=' >/dev/null; then
+  fail_msg "init.sh: heredoc seeds an ACTIVE PIPELINE_PATH_B_MODEL_EXECUTE line (must stay commented, #1052)"
+else
+  pass_msg "init.sh: heredoc seeds no ACTIVE PIPELINE_PATH_B_MODEL_EXECUTE line"
 fi
 inc
 if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet' >/dev/null; then

@@ -209,14 +209,19 @@ PIPELINE_CI_FIX_RETRY_BUDGET="2"
 PIPELINE_CI_FIX_LOG_LINES="200"
 PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 
-# --- Per-path execute MODEL routing (#1042: Sonnet is the DEFAULT, opt-OUT) ---
-# fullsend's execute dispatch pins this model for eligible PATH B / PATH D issues
-# (enum: sonnet | opus | haiku). These ship ACTIVE at the Sonnet default — a fresh
-# install runs Sonnet on eligible PATH B + all PATH D execute. To opt OUT, set =opus
-# (or comment the line) to restore the conservative Opus-everywhere tier. The W2
+# --- Per-path execute MODEL routing (#1042 / #1420) ---
+# fullsend's execute dispatch pins this model for PATH B / PATH D issues
+# (enum: sonnet | opus | haiku). PATH D ships ACTIVE at the Sonnet default — a
+# fresh install runs Sonnet on all PATH D execute; opt OUT with =opus (or comment
+# the line). PATH B is COMMENTED at its read-site default of opus (#1420: PATH B
+# dispatches ONE execute agent, so the resolved model IS the quality floor —
+# there is no longer an always-Opus test-author to make a cheap executor safe).
+# Leaving it commented is the #1052 defaults-in-code convention: an active line
+# would PIN today's default and defeat central default evolution on upgrade.
+# Uncomment with =sonnet to buy the cheap PATH B lane back. The W2
 # high-uncertainty carve-out and the PATH D needs-browser carve-out (#960) always
 # force Opus; pr-eval is NEVER defaulted to Sonnet (the W3 Opus backstop).
-PIPELINE_PATH_B_MODEL_EXECUTE=sonnet
+#PIPELINE_PATH_B_MODEL_EXECUTE=opus
 PIPELINE_PATH_D_MODEL_EXECUTE=sonnet
 # Scope of the PATH B Sonnet downshift. Ships ACTIVE at "all" (#1042): every PATH B
 # issue without a W2 carve-out routes Sonnet on execute. Opt OUT with "low-blast"
