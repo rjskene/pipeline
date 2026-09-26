@@ -549,18 +549,19 @@ rm -rf "$TMP15"
 # --- Scenario 16: per-model pricing + unpriced (empty-model) count (#721) ---
 # A config-driven pricing helper prices each capture record from per-model rate
 # env vars (PIPELINE_PRICE_<MODEL>_{INPUT,OUTPUT,CACHE_CREATION,CACHE_READ}),
-# falling back to the Opus default list price per bucket (per 1M tokens):
-#   input 15, output 75, cache_creation 18.75, cache_read 1.50.
+# falling back to the Opus 4.8 default list price per bucket (per 1M tokens;
+# corrected #1416 from the retired Opus 4.1 rates 15/75/18.75/1.50):
+#   input 5, output 25, cache_creation 6.25, cache_read 0.50.
 # Records with model=="" (issue #699 INLINE records) are UNPRICED: excluded from
 # the $ total and COUNTED so coverage health is visible. Surfaced via
 # --emit-pricing-json → {priced_cost_usd, unpriced_count}.
 #
 # Golden (Opus defaults, no env override) for the ONE priced record below:
-#   input          2,000,000 → 2 * 15      = $30.00
-#   output         1,000,000 → 1 * 75      = $75.00
-#   cache_creation 4,000,000 → 4 * 18.75   = $75.00
-#   cache_read     8,000,000 → 8 * 1.50    = $12.00
-#                                    TOTAL = $192.00
+#   input          2,000,000 → 2 * 5       = $10.00
+#   output         1,000,000 → 1 * 25      = $25.00
+#   cache_creation 4,000,000 → 4 * 6.25    = $25.00
+#   cache_read     8,000,000 → 8 * 0.50    = $4.00
+#                                    TOTAL = $64.00
 inc_scenario "Scenario 16: per-model pricing + unpriced empty-model count"
 
 TMP16="$(mktemp -d)"
@@ -593,10 +594,10 @@ else
 fi
 
 COST16="$(printf '%s' "$PRICING16" | jq -r '.priced_cost_usd' 2>/dev/null)"
-if [ "$COST16" = "192.00" ] || [ "$COST16" = "192" ] || [ "$COST16" = "192.0" ]; then
-  pass_msg "priced_cost_usd == 192.00 (Opus default rates, golden arithmetic)"
+if [ "$COST16" = "64.00" ] || [ "$COST16" = "64" ] || [ "$COST16" = "64.0" ]; then
+  pass_msg "priced_cost_usd == 64.00 (Opus default rates, golden arithmetic)"
 else
-  fail_msg "priced_cost_usd should be 192.00 (30+75+75+12), got $COST16"
+  fail_msg "priced_cost_usd should be 64.00 (10+25+25+4), got $COST16"
 fi
 
 UNPRICED16="$(printf '%s' "$PRICING16" | jq -r '.unpriced_count' 2>/dev/null)"
@@ -606,11 +607,11 @@ else
   fail_msg "unpriced_count should be 1 (one model:\"\" record), got $UNPRICED16"
 fi
 
-# The unpriced record's 1,000,000 input+output tokens (would be $45 at Opus
-# rates) must NOT leak into the priced total — total stays 192, not 237.
+# The unpriced record's 1,000,000 input+output tokens (would be $15 at Opus
+# rates) must NOT leak into the priced total — total stays 64, not 79.
 case "$COST16" in
-  237*) fail_msg "priced_cost_usd leaked the unpriced empty-model record (237)" ;;
-  *) pass_msg "priced_cost_usd excludes the unpriced empty-model record (237 rejected)" ;;
+  79*) fail_msg "priced_cost_usd leaked the unpriced empty-model record (79)" ;;
+  *) pass_msg "priced_cost_usd excludes the unpriced empty-model record (79 rejected)" ;;
 esac
 rm -rf "$TMP16"
 
@@ -622,7 +623,7 @@ rm -rf "$TMP16"
 # `model` gains a trailing \r and misses the awk price-table LOOKUP KEY, so it
 # falls off its Opus rate. Observed pre-fix under the seam: priced_cost_usd=0.00,
 # unpriced_count=0 (both wrong) with a trailing CR — all three assertions below
-# FAIL. A jqr() CR-stripping wrapper over every jq boundary restores 192.00 / 1.
+# FAIL. A jqr() CR-stripping wrapper over every jq boundary restores 64.00 / 1.
 # A fake jq earlier on PATH reproduces the msvcrt CR faithfully on an LF-only host.
 inc_scenario "Scenario 16b: CRLF-jq seam — pricing survives Windows CRLF jq"
 
@@ -653,10 +654,10 @@ if make_crlf_jq_bin "$CRLF_BIN16/bin"; then
                PATH="$CRLF_BIN16/bin:$PATH" bash "$HELPER" --fixture "$TMP16C" --emit-pricing-json 2>/dev/null)"
 
   COST16C="$(printf '%s' "$PRICING16C" | jq -r '.priced_cost_usd' 2>/dev/null)"
-  if [ "$COST16C" = "192.00" ] || [ "$COST16C" = "192" ] || [ "$COST16C" = "192.0" ]; then
-    pass_msg "CRLF-seam: priced_cost_usd == 192.00 (model lookup survives CRLF jq)"
+  if [ "$COST16C" = "64.00" ] || [ "$COST16C" = "64" ] || [ "$COST16C" = "64.0" ]; then
+    pass_msg "CRLF-seam: priced_cost_usd == 64.00 (model lookup survives CRLF jq)"
   else
-    fail_msg "CRLF-seam: priced_cost_usd should be 192.00, got '$COST16C' (CRLF poisoned the model lookup key)"
+    fail_msg "CRLF-seam: priced_cost_usd should be 64.00, got '$COST16C' (CRLF poisoned the model lookup key)"
   fi
 
   UNPRICED16C="$(printf '%s' "$PRICING16C" | jq -r '.unpriced_count' 2>/dev/null)"
@@ -682,10 +683,10 @@ rm -rf "$TMP16C" "$CRLF_BIN16"
 # table with: total tokens, priced $ (Opus default rates over priced records),
 # and %-of-cost. Headline finding: token-share != cost-share.
 # Fixture: ONE priced opus record where:
-#   output     1,000,000  → $75.00  (token-share 9.09%, cost-share 83.33%)
-#   cache_read 10,000,000 → $15.00  (token-share 90.9%, cost-share 16.67%)
+#   output     1,000,000  → $25.00  (token-share 9.09%, cost-share 83.33%)
+#   cache_read 10,000,000 → $5.00  (token-share 90.9%, cost-share 16.67%)
 #   input 0, cache_creation 0
-# Total tokens = 11,000,000; total cost = $90.00.
+# Total tokens = 11,000,000; total cost = $30.00.
 # Assert: output cost% > output token%  AND  cache_read cost% < cache_read token%.
 # Also assert DEFAULT output (no --tokenomics) is byte-unchanged (no bucket table).
 inc_scenario "Scenario 17: --tokenomics bucket table (token-share vs cost-share)"
@@ -741,39 +742,39 @@ else
   fail_msg "cache_read bucket cost% should be below token% (cost%=$CR_COSTPCT token%=$CR_TOKPCT row=$CR_ROW17)"
 fi
 
-# Sanity: output bucket $ == 75.00 (golden), cache_read $ == 15.00 (golden).
+# Sanity: output bucket $ == 25.00 (golden), cache_read $ == 5.00 (golden).
 OUT_USD17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$3); print $3}')"
 CR_USD17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$3); print $3}')"
-if [ "$OUT_USD17" = "75.00" ]; then
-  pass_msg "output bucket priced \$ == 75.00 (golden)"
+if [ "$OUT_USD17" = "25.00" ]; then
+  pass_msg "output bucket priced \$ == 25.00 (golden)"
 else
-  fail_msg "output bucket \$ should be 75.00, got $OUT_USD17 (row=$OUT_ROW17)"
+  fail_msg "output bucket \$ should be 25.00, got $OUT_USD17 (row=$OUT_ROW17)"
 fi
-if [ "$CR_USD17" = "15.00" ]; then
-  pass_msg "cache_read bucket priced \$ == 15.00 (golden)"
+if [ "$CR_USD17" = "5.00" ]; then
+  pass_msg "cache_read bucket priced \$ == 5.00 (golden)"
 else
-  fail_msg "cache_read bucket \$ should be 15.00, got $CR_USD17 (row=$CR_ROW17)"
+  fail_msg "cache_read bucket \$ should be 5.00, got $CR_USD17 (row=$CR_ROW17)"
 fi
 
 # per-N / per-LOC columns (issue #833). Fixture: N=1 record, total LOC=400.
 # Appended after the existing 5 cols: tok/N($6) | $/N($7) | tok/LOC($8) | $/LOC($9).
-# output:     tok/N=1000000, $/N=75.00, tok/LOC=2500.0, $/LOC=0.1875→0.19
-# cache_read: tok/N=10000000, $/N=15.00, tok/LOC=25000.0, $/LOC=0.0375→0.04
+# output:     tok/N=1000000, $/N=25.00, tok/LOC=2500.0, $/LOC=0.0625→0.06
+# cache_read: tok/N=10000000, $/N=5.00, tok/LOC=25000.0, $/LOC=0.0125→0.01
 OUT_TOKN17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6+0}')"
 OUT_USDN17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
 OUT_TOKLOC17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$8); print $8+0}')"
 OUT_USDLOC17="$(printf '%s' "$OUT_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$9); print $9}')"
 if [ "$OUT_TOKN17" = "1000000" ]; then pass_msg "output tok/N == 1000000"; else fail_msg "output tok/N should be 1000000, got $OUT_TOKN17 (row=$OUT_ROW17)"; fi
-if [ "$OUT_USDN17" = "75.00" ]; then pass_msg "output \$/N == 75.00"; else fail_msg "output \$/N should be 75.00, got $OUT_USDN17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_USDN17" = "25.00" ]; then pass_msg "output \$/N == 25.00"; else fail_msg "output \$/N should be 25.00, got $OUT_USDN17 (row=$OUT_ROW17)"; fi
 if [ "$OUT_TOKLOC17" = "2500" ]; then pass_msg "output tok/LOC == 2500"; else fail_msg "output tok/LOC should be 2500, got $OUT_TOKLOC17 (row=$OUT_ROW17)"; fi
-if [ "$OUT_USDLOC17" = "0.19" ]; then pass_msg "output \$/LOC == 0.19"; else fail_msg "output \$/LOC should be 0.19, got $OUT_USDLOC17 (row=$OUT_ROW17)"; fi
+if [ "$OUT_USDLOC17" = "0.06" ]; then pass_msg "output \$/LOC == 0.06"; else fail_msg "output \$/LOC should be 0.06, got $OUT_USDLOC17 (row=$OUT_ROW17)"; fi
 
 CR_TOKN17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ ]/,"",$6); print $6+0}')"
 CR_USDN17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
 CR_USDLOC17="$(printf '%s' "$CR_ROW17" | awk -F'|' '{gsub(/[ $]/,"",$9); print $9}')"
 if [ "$CR_TOKN17" = "10000000" ]; then pass_msg "cache_read tok/N == 10000000"; else fail_msg "cache_read tok/N should be 10000000, got $CR_TOKN17 (row=$CR_ROW17)"; fi
-if [ "$CR_USDN17" = "15.00" ]; then pass_msg "cache_read \$/N == 15.00"; else fail_msg "cache_read \$/N should be 15.00, got $CR_USDN17 (row=$CR_ROW17)"; fi
-if [ "$CR_USDLOC17" = "0.04" ]; then pass_msg "cache_read \$/LOC == 0.04"; else fail_msg "cache_read \$/LOC should be 0.04, got $CR_USDLOC17 (row=$CR_ROW17)"; fi
+if [ "$CR_USDN17" = "5.00" ]; then pass_msg "cache_read \$/N == 5.00"; else fail_msg "cache_read \$/N should be 5.00, got $CR_USDN17 (row=$CR_ROW17)"; fi
+if [ "$CR_USDLOC17" = "0.01" ]; then pass_msg "cache_read \$/LOC == 0.01"; else fail_msg "cache_read \$/LOC should be 0.01, got $CR_USDLOC17 (row=$CR_ROW17)"; fi
 rm -rf "$TMP17"
 
 # per-LOC divide-by-zero guard (issue #833). Fixture: a priced capture record but
@@ -797,10 +798,10 @@ rm -rf "$TMP17B"
 # tokens = input+output+cache_creation (EXCLUDING cache_read), so execute does
 # not read as ~90% cache; but the $ column uses ALL FOUR buckets.
 # Fixture: one 'execute' priced opus record with a huge cache_read:
-#   input          1,000,000   → $15.00
-#   cache_read   100,000,000   → $150.00
+#   input          1,000,000   → $5.00
+#   cache_read   100,000,000   → $50.00
 #   output 0, cache_creation 0
-#   size tokens = 1,000,000 (cache_read EXCLUDED); $ = 165.00 (cache_read INCLUDED).
+#   size tokens = 1,000,000 (cache_read EXCLUDED); $ = 55.00 (cache_read INCLUDED).
 inc_scenario "Scenario 18: --tokenomics per-stage cost table (size nets out cache_read)"
 
 TMP18="$(mktemp -d)"
@@ -847,12 +848,12 @@ case "$EXEC_ROW18" in
   *) pass_msg "execute size-view tokens excludes cache_read total (101000000 absent)" ;;
 esac
 
-# $ column INCLUDES cache_read cost → 165.00 (15 input + 150 cache_read).
+# $ column INCLUDES cache_read cost → 55.00 (5 input + 50 cache_read).
 EXEC_USD18="$(printf '%s' "$EXEC_ROW18" | awk -F'|' '{gsub(/[ $]/,"",$3); print $3}')"
-if [ "$EXEC_USD18" = "165.00" ]; then
-  pass_msg "execute \$ == 165.00 (cache_read cost INCLUDED)"
+if [ "$EXEC_USD18" = "55.00" ]; then
+  pass_msg "execute \$ == 55.00 (cache_read cost INCLUDED)"
 else
-  fail_msg "execute \$ should be 165.00 (15 + 150 cache_read), got $EXEC_USD18 (row=$EXEC_ROW18)"
+  fail_msg "execute \$ should be 55.00 (5 + 50 cache_read), got $EXEC_USD18 (row=$EXEC_ROW18)"
 fi
 rm -rf "$TMP18"
 
@@ -865,10 +866,10 @@ rm -rf "$TMP18"
 # model="" (unpriced). The $/cost% columns stay PRICED-ONLY; an all-unpriced
 # in-session row renders $ == '--' with an '(unpriced)' mark.
 # Fixture (#789 LIVE shape):
-#   headless / execute: input 2,000,000 PRICED → spawn $30.00
+#   headless / execute: input 2,000,000 PRICED → spawn $10.00
 #   inline   / plan:    input 1,000,000 UNPRICED (model="") → in-session tokens
 #                       real, but $ == '--' (unpriced)
-# crosstab: execute×spawn = 30.00 ; plan×in-session = 0.00 (inline now unpriced).
+# crosstab: execute×spawn = 10.00 ; plan×in-session = 0.00 (inline now unpriced).
 inc_scenario "Scenario 19: --tokenomics structure table + stage×structure cross-tab"
 
 TMP19="$(mktemp -d)"
@@ -910,11 +911,11 @@ done
 SPAWN_ROW19="$(printf '%s\n' "$TOK19" | grep -E '^spawn[[:space:]]*\|' | head -1)"
 INSESS_ROW19="$(printf '%s\n' "$TOK19" | grep -E '^in-session[[:space:]]*\|' | head -1)"
 
-# spawn (headless, priced): input bucket 2000000, $ == 30.00.
+# spawn (headless, priced): input bucket 2000000, $ == 10.00.
 SPAWN_IN19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
 SPAWN_USD19="$(printf '%s' "$SPAWN_ROW19" | awk -F'|' '{gsub(/[ $]/,"",$7); print $7}')"
 if [ "$SPAWN_IN19" = "2000000" ]; then pass_msg "spawn input bucket == 2000000"; else fail_msg "spawn input should be 2000000, got $SPAWN_IN19 (row=$SPAWN_ROW19)"; fi
-if [ "$SPAWN_USD19" = "30.00" ]; then pass_msg "spawn structure \$ == 30.00 (headless priced)"; else fail_msg "spawn structure \$ should be 30.00, got $SPAWN_USD19 (row=$SPAWN_ROW19)"; fi
+if [ "$SPAWN_USD19" = "10.00" ]; then pass_msg "spawn structure \$ == 10.00 (headless priced)"; else fail_msg "spawn structure \$ should be 10.00, got $SPAWN_USD19 (row=$SPAWN_ROW19)"; fi
 
 # in-session (inline UNPRICED): input bucket 1000000 (REAL, non-zero), $ == '--' / (unpriced).
 INSESS_IN19="$(printf '%s' "$INSESS_ROW19" | awk -F'|' '{gsub(/[ ]/,"",$3); print $3}')"
@@ -937,8 +938,8 @@ esac
 XTAB_BLOCK19="$(printf '%s\n' "$TOK19" | awk '/STAGE.STRUCTURE|STAGE x STRUCTURE|CROSS-TAB|CROSSTAB/{f=1} f')"
 XEXEC_ROW19="$(printf '%s\n' "$XTAB_BLOCK19" | grep -E '^execute[[:space:]]*\|' | head -1)"
 case "$XEXEC_ROW19" in
-  *30.00*) pass_msg "cross-tab execute×spawn cell == 30.00" ;;
-  *) fail_msg "cross-tab execute row should carry spawn cell 30.00 (got: $XEXEC_ROW19)" ;;
+  *10.00*) pass_msg "cross-tab execute×spawn cell == 10.00" ;;
+  *) fail_msg "cross-tab execute row should carry spawn cell 10.00 (got: $XEXEC_ROW19)" ;;
 esac
 rm -rf "$TMP19"
 
@@ -1027,12 +1028,12 @@ rm -rf "$TMP20"
 # PATH D instead. PATH D drops the plan + plan-eval ceremony stages (collapses
 # execute to a single inline implementer). The MODELLED "saved" amount is the
 # issue's plan + plan-eval stage cost; projected-D $ = current $ - saved.
-# Fixture: PATH B issue 221 with three priced opus records (input-only, $15 each
-# at Opus default 15/1M):
-#   plan       input 1,000,000 → $15.00
-#   plan-eval  input 1,000,000 → $15.00
-#   execute    input 1,000,000 → $15.00
-# current $ = 45.00 ; saved (plan+plan-eval) = 30.00 ; projected-D $ = 15.00.
+# Fixture: PATH B issue 221 with three priced opus records (input-only, $5 each
+# at Opus default 5/1M):
+#   plan       input 1,000,000 → $5.00
+#   plan-eval  input 1,000,000 → $5.00
+#   execute    input 1,000,000 → $5.00
+# current $ = 15.00 ; saved (plan+plan-eval) = 10.00 ; projected-D $ = 5.00.
 inc_scenario "Scenario 21: --tokenomics B→D breakeven table"
 
 TMP21="$(mktemp -d)"
@@ -1069,24 +1070,24 @@ fi
 
 BE_BLOCK21="$(printf '%s\n' "$TOK21" | awk '/BREAKEVEN/{f=1} f')"
 BE_ROW21="$(printf '%s\n' "$BE_BLOCK21" | grep -E '221' | head -1)"
-# Row should carry current 45.00, projected-D 15.00, savings 30.00.
+# Row should carry current 15.00, projected-D 5.00, savings 10.00.
 case "$BE_ROW21" in
-  *45.00*) pass_msg "breakeven issue 221 current \$ == 45.00" ;;
-  *) fail_msg "breakeven issue 221 current \$ should be 45.00 (got: $BE_ROW21)" ;;
+  *15.00*) pass_msg "breakeven issue 221 current \$ == 15.00" ;;
+  *) fail_msg "breakeven issue 221 current \$ should be 15.00 (got: $BE_ROW21)" ;;
 esac
 case "$BE_ROW21" in
-  *15.00*) pass_msg "breakeven issue 221 projected-D \$ == 15.00" ;;
-  *) fail_msg "breakeven issue 221 projected-D \$ should be 15.00 (got: $BE_ROW21)" ;;
+  *5.00*) pass_msg "breakeven issue 221 projected-D \$ == 5.00" ;;
+  *) fail_msg "breakeven issue 221 projected-D \$ should be 5.00 (got: $BE_ROW21)" ;;
 esac
 case "$BE_ROW21" in
-  *30.00*) pass_msg "breakeven issue 221 savings == 30.00 (plan+plan-eval cost)" ;;
-  *) fail_msg "breakeven issue 221 savings should be 30.00 (got: $BE_ROW21)" ;;
+  *10.00*) pass_msg "breakeven issue 221 savings == 10.00 (plan+plan-eval cost)" ;;
+  *) fail_msg "breakeven issue 221 savings should be 10.00 (got: $BE_ROW21)" ;;
 esac
-# Aggregate total savings line == 30.00.
+# Aggregate total savings line == 10.00.
 BE_TOTAL21="$(printf '%s\n' "$BE_BLOCK21" | grep -iE 'TOTAL|aggregate' | head -1)"
 case "$BE_TOTAL21" in
-  *30.00*) pass_msg "breakeven aggregate total savings == 30.00" ;;
-  *) fail_msg "breakeven aggregate total savings should be 30.00 (got: $BE_TOTAL21)" ;;
+  *10.00*) pass_msg "breakeven aggregate total savings == 10.00" ;;
+  *) fail_msg "breakeven aggregate total savings should be 10.00 (got: $BE_TOTAL21)" ;;
 esac
 rm -rf "$TMP21"
 
@@ -1172,11 +1173,11 @@ rm -rf "$TMP22"
 # Outlier days flagged when day $ >= 40% of the window total (documented thresh).
 # Per-PR: cost per merged feature PR via the PR→issue join.
 # Fixture: issue 223 (PR #123), FOUR execute records (opus), one per day:
-#   2026-05-10  input 1,000,000        → $15.00
-#   2026-05-11  input 1,000,000        → $15.00
-#   2026-05-12  input 8,000,000        → $120.00   ← outlier (120 >= 40% of 180 = 72)
-#   2026-05-13  cache_read 20,000,000  → $30.00    (opus cache_read $1.50/1M)
-# window total = $180.00. Days 05-10/05-11 ($15) and 05-13 ($30) are NOT outliers.
+#   2026-05-10  input 1,000,000        → $5.00
+#   2026-05-11  input 1,000,000        → $5.00
+#   2026-05-12  input 8,000,000        → $40.00   ← outlier (40 >= 40% of 60 = 24)
+#   2026-05-13  cache_read 20,000,000  → $10.00    (opus cache_read $0.50/1M)
+# window total = $60.00. Days 05-10/05-11 ($5) and 05-13 ($10) are NOT outliers.
 # The non-zero cache_read record is the regression guard for the per-PR/per-day
 # off-by-one (a wrong $7 index coerces cache_read to 0 and fails loudly).
 inc_scenario "Scenario 23: --tokenomics per-day + per-PR \$ trend with outlier flagging"
@@ -1224,8 +1225,8 @@ done
 DAY12_ROW23="$(printf '%s\n' "$TREND_BLOCK23" | grep -F '2026-05-12' | head -1)"
 DAY10_ROW23="$(printf '%s\n' "$TREND_BLOCK23" | grep -F '2026-05-10' | head -1)"
 case "$DAY12_ROW23" in
-  *120.00*) pass_msg "05-12 day total \$ == 120.00" ;;
-  *) fail_msg "05-12 day total \$ should be 120.00 (got: $DAY12_ROW23)" ;;
+  *40.00*) pass_msg "05-12 day total \$ == 40.00" ;;
+  *) fail_msg "05-12 day total \$ should be 40.00 (got: $DAY12_ROW23)" ;;
 esac
 if printf '%s' "$DAY12_ROW23" | grep -qiE 'outlier|\*|FLAG'; then
   pass_msg "05-12 outlier day is flagged"
@@ -1233,8 +1234,8 @@ else
   fail_msg "05-12 outlier day should be flagged (got: $DAY12_ROW23)"
 fi
 case "$DAY10_ROW23" in
-  *15.00*) pass_msg "05-10 day total \$ == 15.00" ;;
-  *) fail_msg "05-10 day total \$ should be 15.00 (got: $DAY10_ROW23)" ;;
+  *5.00*) pass_msg "05-10 day total \$ == 5.00" ;;
+  *) fail_msg "05-10 day total \$ should be 5.00 (got: $DAY10_ROW23)" ;;
 esac
 if printf '%s' "$DAY10_ROW23" | grep -qiE 'outlier|FLAG'; then
   fail_msg "05-10 normal day should NOT be flagged (got: $DAY10_ROW23)"
@@ -1264,7 +1265,7 @@ else
   fail_msg "05-12 cache_read column should be 0, got $DAY12_CR23 (row=$DAY12_ROW23)"
 fi
 
-# 05-13 row: cache_read 20,000,000 (input/output 0), $ total 30.00, NOT flagged.
+# 05-13 row: cache_read 20,000,000 (input/output 0), $ total 10.00, NOT flagged.
 # The cache_read==20000000 assertion is the per-day off-by-one regression guard.
 DAY13_ROW23="$(printf '%s\n' "$TREND_BLOCK23" | grep -F '2026-05-13' | head -1)"
 DAY13_IN23="$(printf '%s' "$DAY13_ROW23" | awk -F'|' '{gsub(/[ ]/,"",$2); print $2}')"
@@ -1286,8 +1287,8 @@ else
   fail_msg "05-13 cache_read column should be 20000000, got $DAY13_CR23 (row=$DAY13_ROW23)"
 fi
 case "$DAY13_ROW23" in
-  *30.00*) pass_msg "05-13 day total \$ == 30.00 (cache_read priced)" ;;
-  *) fail_msg "05-13 day total \$ should be 30.00 (got: $DAY13_ROW23)" ;;
+  *10.00*) pass_msg "05-13 day total \$ == 10.00 (cache_read priced)" ;;
+  *) fail_msg "05-13 day total \$ should be 10.00 (got: $DAY13_ROW23)" ;;
 esac
 if printf '%s' "$DAY13_ROW23" | grep -qiE 'outlier|FLAG'; then
   fail_msg "05-13 normal day should NOT be flagged (got: $DAY13_ROW23)"
@@ -1295,7 +1296,7 @@ else
   pass_msg "05-13 normal day is not flagged"
 fi
 
-# Per-PR $ section: PR #123 costs $180.00 (all four records join to issue 223).
+# Per-PR $ section: PR #123 costs $60.00 (all four records join to issue 223).
 PERPR_BLOCK23="$(printf '%s\n' "$TOK23" | awk '/PER-PR|PR \$|per-PR/{f=1} f')"
 if printf '%s' "$PERPR_BLOCK23" | grep -qE '123'; then
   pass_msg "per-PR \$ section references PR #123"
@@ -1304,8 +1305,8 @@ else
 fi
 PERPR_ROW23="$(printf '%s\n' "$PERPR_BLOCK23" | grep -E '123' | head -1)"
 case "$PERPR_ROW23" in
-  *180.00*) pass_msg "per-PR \$ for PR #123 == 180.00 (sum of all four days)" ;;
-  *) fail_msg "per-PR \$ for PR #123 should be 180.00 (got: $PERPR_ROW23)" ;;
+  *60.00*) pass_msg "per-PR \$ for PR #123 == 60.00 (sum of all four days)" ;;
+  *) fail_msg "per-PR \$ for PR #123 should be 60.00 (got: $PERPR_ROW23)" ;;
 esac
 # Per-PR token columns (pipe-position parse). New column order:
 #   PR # | input | output | cache_read | $ total
@@ -1488,18 +1489,18 @@ rm -rf "$TMP25"
 # EVERY new dimension; this scenario runs the report ONCE and asserts golden values.
 #
 # Surviving PRICED records (model="claude-opus-4-8") after both dedup passes, with
-# their all-four-bucket $ at Opus default rates (per 1M: in 15, out 75, cc 18.75,
-# cr 1.50):
-#   301-plan      in 1.0M out 0.2M cc 2.0M cr 4.0M  → 15+15+37.5+6   = $ 73.50
-#   301-plan-eval in 0.5M out 0.1M cc 1.0M cr 2.0M  → 7.5+7.5+18.75+3= $ 36.75
-#   301-execute   in 2.0M out 1.0M cc 4.0M cr 10.0M → 30+75+75+15    = $195.00  (max-total winner of a dup)
-#   301-pr-eval   in 0.8M out 0.2M cc 1.0M cr 3.0M  → 12+15+18.75+4.5= $ 50.25
-#   302-plan      in 0.4M out 0.1M cc 0.8M cr 1.0M  → 6+7.5+15+1.5   = $ 30.00
-#   302-execute   in 1.0M out 0.5M cc 2.0M cr 5.0M  → 15+37.5+37.5+7.5=$ 97.50
-#   303-execute-b in 4.0M out 4.0M cc 8.0M cr 20.0M → 60+300+150+30  = $540.00  (session sB)
-#   303-execute-c in 3.0M out 3.0M cc 6.0M cr 15.0M → 45+225+112.5+22.5=$405.00 (session sC; multi-session re-run preserved)
-#   orch-final    in 5.0M out 2.0M cc 0   cr 0      → 75+150+0+0     = $225.00  (N snapshots collapse to this max-total)
-#                                                          PRICED $ TOTAL = $1653.00
+# their all-four-bucket $ at Opus default rates (per 1M: in 5, out 25, cc 6.25,
+# cr 0.50; corrected #1416 from the retired Opus 4.1 rates):
+#   301-plan      in 1.0M out 0.2M cc 2.0M cr 4.0M  → 5+5+12.5+2     = $ 24.50
+#   301-plan-eval in 0.5M out 0.1M cc 1.0M cr 2.0M  → 2.5+2.5+6.25+1 = $ 12.25
+#   301-execute   in 2.0M out 1.0M cc 4.0M cr 10.0M → 10+25+25+5     = $ 65.00  (max-total winner of a dup)
+#   301-pr-eval   in 0.8M out 0.2M cc 1.0M cr 3.0M  → 4+5+6.25+1.5   = $ 16.75
+#   302-plan      in 0.4M out 0.1M cc 0.8M cr 1.0M  → 2+2.5+5+0.5    = $ 10.00
+#   302-execute   in 1.0M out 0.5M cc 2.0M cr 5.0M  → 5+12.5+12.5+2.5 =$ 32.50
+#   303-execute-b in 4.0M out 4.0M cc 8.0M cr 20.0M → 20+100+50+10   = $180.00  (session sB)
+#   303-execute-c in 3.0M out 3.0M cc 6.0M cr 15.0M → 15+75+37.5+7.5 = $135.00 (session sC; multi-session re-run preserved)
+#   orch-final    in 5.0M out 2.0M cc 0   cr 0      → 25+50+0+0      = $ 75.00  (N snapshots collapse to this max-total)
+#                                                          PRICED $ TOTAL = $551.00
 # Plus ONE UNPRICED inline record (model="") → excluded from $, COUNTED → coverage 9/10 = 90.0%.
 inc_scenario "Scenario 26: tokenomics-report fixture renders all --tokenomics tables non-zero"
 
@@ -1523,26 +1524,26 @@ for hdr in 'BUCKET' 'STAGE COST' 'STRUCTURE' 'STAGE x STRUCTURE' 'B→D BREAKEVE
   fi
 done
 
-# (b) priced $ total == $1653.00 (golden; arithmetic in the comment above).
+# (b) priced $ total == $551.00 (golden; arithmetic in the comment above).
 COST26="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT \
               -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
               -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION \
               -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
           bash "$HELPER" --fixture "$TOKFIX" --emit-pricing-json 2>/dev/null \
           | jq -r '.priced_cost_usd' 2>/dev/null)"
-if [ "$COST26" = "1653.00" ]; then
-  pass_msg "tokenomics-report: priced \$ total == 1653.00 (exact golden)"
+if [ "$COST26" = "551.00" ]; then
+  pass_msg "tokenomics-report: priced \$ total == 551.00 (exact golden)"
 else
-  fail_msg "tokenomics-report: priced \$ total should be 1653.00, got $COST26"
+  fail_msg "tokenomics-report: priced \$ total should be 551.00, got $COST26"
 fi
 
 # Bucket table $ is the SAME total (sum of the four bucket $ rows).
 BUCKET_USD_SUM26="$(printf '%s\n' "$TOK26" \
   | awk -F'|' '/^(input|output|cache_creation|cache_read)[[:space:]]*\|/ {gsub(/[ $]/,"",$3); s+=$3} END{printf "%.2f", s}')"
-if [ "$BUCKET_USD_SUM26" = "1653.00" ]; then
-  pass_msg "tokenomics-report: bucket table \$ sums to 1653.00 (matches priced total)"
+if [ "$BUCKET_USD_SUM26" = "551.00" ]; then
+  pass_msg "tokenomics-report: bucket table \$ sums to 551.00 (matches priced total)"
 else
-  fail_msg "tokenomics-report: bucket \$ rows should sum to 1653.00, got $BUCKET_USD_SUM26"
+  fail_msg "tokenomics-report: bucket \$ rows should sum to 551.00, got $BUCKET_USD_SUM26"
 fi
 
 # (c) token-share != cost-share: output cost% > token%; cache_read cost% < token%.
@@ -1623,12 +1624,12 @@ if printf '%s' "$TOK26" | grep -qE 'issue #301' && printf '%s' "$TOK26" | grep -
 else
   fail_msg "tokenomics-report: breakeven should list PATH B issues 301 and 302"
 fi
-# 301 saved = plan(73.50)+plan-eval(36.75)=110.25; 302 saved = plan(30.00); TOTAL=140.25.
+# 301 saved = plan(24.50)+plan-eval(12.25)=36.75; 302 saved = plan(10.00); TOTAL=46.75.
 BE_TOTAL26="$(printf '%s\n' "$TOK26" | grep -E '^TOTAL[[:space:]]*\|' | awk -F'|' '{gsub(/[ ]/,"",$4); print $4}')"
-if [ "$BE_TOTAL26" = "140.25" ]; then
-  pass_msg "tokenomics-report: breakeven TOTAL savings == 140.25 (golden: 73.50+36.75+30.00)"
+if [ "$BE_TOTAL26" = "46.75" ]; then
+  pass_msg "tokenomics-report: breakeven TOTAL savings == 46.75 (golden: 24.50+12.25+10.00)"
 else
-  fail_msg "tokenomics-report: breakeven TOTAL savings should be 140.25, got $BE_TOTAL26"
+  fail_msg "tokenomics-report: breakeven TOTAL savings should be 46.75, got $BE_TOTAL26"
 fi
 
 # --- Scenario 27: per-model baked defaults — Sonnet & Haiku price at own rates (#733) ---
@@ -1638,9 +1639,10 @@ fi
 #   Sonnet (3/15/3.75/0.30):  1*3 + 1*15 + 1*3.75 + 1*0.30  = $22.05
 #   Haiku  (1/5/1.25/0.10):   1*1 + 1*5  + 1*1.25 + 1*0.10  =  $7.35
 #                                                    COMBINED = $29.40
-# At the OLD Opus-only fallback both records would price at 15/75/18.75/1.50 =
-# $110.25 each → $220.50. Assert == 29.40 AND != 220.* so this fails RED against
-# current code for the RIGHT reason (Opus fallback applied to non-Opus models).
+# At the Opus-only fallback (corrected #1416 rates 5/25/6.25/0.50) both records
+# would price at $36.75 each → $73.50. Assert == 29.40 AND != 73.50 so this fails
+# RED against current code for the RIGHT reason (Opus fallback applied to
+# non-Opus models).
 inc_scenario "Scenario 27: per-model baked defaults (Sonnet+Haiku price at own rates, not Opus)"
 
 TMP27="$(mktemp -d)"
@@ -1684,26 +1686,28 @@ else
 fi
 
 # Guard: prove the flat Opus fallback did NOT apply to the non-Opus records
-# (Opus fallback would yield $220.50).
+# (Opus fallback would yield $73.50).
 case "$COST27" in
-  220*) fail_msg "priced_cost_usd applied the Opus fallback to non-Opus models (220.50)" ;;
-  *) pass_msg "priced_cost_usd did NOT apply Opus fallback to Sonnet/Haiku (220.50 rejected)" ;;
+  73.50*) fail_msg "priced_cost_usd applied the Opus fallback to non-Opus models (73.50)" ;;
+  *) pass_msg "priced_cost_usd did NOT apply Opus fallback to Sonnet/Haiku (73.50 rejected)" ;;
 esac
 rm -rf "$TMP27"
 
 # --- Scenario 27b: Fable 5 baked defaults (#1186) ---
 # The stage-model pins design moves the ORCHESTRATOR session (and PATH C plan)
 # onto Fable 5, so Fable records now appear in the capture stream. Fable is an
-# UNKNOWN model to price_default(), which falls back to Opus 4.8 rates (15/75/
-# 18.75/1.50) — a conservative upper bound that MIS-prices Fable's actual list
-# price (10/50/12.50/1.00), so the tokenomics report would over-state the very
-# line item this design is spending against. Fable needs its own baked case.
+# UNKNOWN model to price_default(), which falls back to Opus 4.8 rates (5/25/
+# 6.25/0.50, corrected #1416) — a mid-tier default (no longer a conservative
+# upper bound: Fable's own list price is higher on every bucket) that
+# MIS-prices Fable's actual list price (10/50/12.50/1.00), so the tokenomics
+# report would understate the very line item this design is spending against.
+# Fable needs its own baked case.
 #
 # One priced record with round 1,000,000 tokens per bucket so the golden $ is
 # exact at the baked Fable rates:
 #   Fable (10/50/12.50/1.00):  1*10 + 1*50 + 1*12.50 + 1*1.00 = $73.50
-# At the Opus fallback the SAME record prices at 15+75+18.75+1.50 = $110.25.
-# Assert == 73.50 AND != 110.* so this fails RED against current code for the
+# At the Opus fallback the SAME record prices at 5+25+6.25+0.50 = $36.75.
+# Assert == 73.50 AND != 36.75 so this fails RED against current code for the
 # RIGHT reason (the unknown-model Opus fallback applied to a known model).
 inc_scenario "Scenario 27b: Fable 5 baked defaults (prices at own rates, not the Opus fallback)"
 
@@ -1741,8 +1745,8 @@ fi
 
 # Guard: prove the unknown-model Opus fallback did NOT price this record.
 case "$COST27B" in
-  110*) fail_msg "priced_cost_usd applied the unknown-model Opus fallback to Fable (110.25)" ;;
-  *) pass_msg "priced_cost_usd did NOT apply the Opus fallback to Fable (110.25 rejected)" ;;
+  36.75*) fail_msg "priced_cost_usd applied the unknown-model Opus fallback to Fable (36.75)" ;;
+  *) pass_msg "priced_cost_usd did NOT apply the Opus fallback to Fable (36.75 rejected)" ;;
 esac
 rm -rf "$TMP27B"
 
@@ -2204,8 +2208,8 @@ if [ "$(dj_field 2026-05-31 '.tokens.input')" = "1500" ]; then pass_msg "05-31 t
 if [ "$(dj_field 2026-05-31 '.tokens.output')" = "2000" ]; then pass_msg "05-31 tokens.output==2000"; else fail_msg "05-31 tokens.output expected 2000, got $(dj_field 2026-05-31 '.tokens.output')"; fi
 if [ "$(dj_field 2026-05-31 '.priced_n')" = "2" ]; then pass_msg "05-31 priced_n==2 (excludes model:\"\")"; else fail_msg "05-31 priced_n expected 2, got $(dj_field 2026-05-31 '.priced_n')"; fi
 if [ "$(dj_field 2026-05-31 '.usage_complete_floor')" = "false" ]; then pass_msg "05-31 usage_complete_floor==false (clean day)"; else fail_msg "05-31 floor expected false, got $(dj_field 2026-05-31 '.usage_complete_floor')"; fi
-# cost.total = 1000/1e6*15 + 2000/1e6*75 = 0.015 + 0.15 = 0.165
-if awk -v c="$(dj_field 2026-05-31 '.cost.total')" 'BEGIN{exit !(c>0.16 && c<0.17)}'; then pass_msg "05-31 cost.total ~= 0.165"; else fail_msg "05-31 cost.total expected ~0.165, got $(dj_field 2026-05-31 '.cost.total')"; fi
+# cost.total = 1000/1e6*5 + 2000/1e6*25 = 0.005 + 0.05 = 0.055
+if awk -v c="$(dj_field 2026-05-31 '.cost.total')" 'BEGIN{exit !(c>0.054 && c<0.056)}'; then pass_msg "05-31 cost.total ~= 0.055"; else fail_msg "05-31 cost.total expected ~0.055, got $(dj_field 2026-05-31 '.cost.total')"; fi
 # active_loc: issue 250 has records on 05-31, loc=10 → active_loc=10
 if [ "$(dj_field 2026-05-31 '.active_loc')" = "10" ]; then pass_msg "05-31 active_loc==10 (issue 250 LOC join)"; else fail_msg "05-31 active_loc expected 10, got $(dj_field 2026-05-31 '.active_loc')"; fi
 
@@ -2245,9 +2249,9 @@ if printf '%s' "$HELP44" | grep -q -- '--history'; then pass_msg "--help documen
 # --- Scenario 45: --tokenomics split-role red/green cost split (#1098) ---
 # Under --tokenomics, emit a role-split table (red vs green vs single) reading
 # the new schema-v1 `role` field. Records with no `role` bucket as `single`.
-#   RED   (opus,   output 1,000,000) → $75.00
+#   RED   (opus,   output 1,000,000) → $25.00
 #   GREEN (sonnet, output 1,000,000) → $15.00
-# Assert: the role-split section renders a 'red' row with $75 and a 'green' row
+# Assert: the role-split section renders a 'red' row with $25 and a 'green' row
 # with $15; the section is ABSENT (or carries no red/green rows) without
 # split-role records; and DEFAULT (no --tokenomics) output never shows it.
 inc_scenario "Scenario 45: --tokenomics split-role red/green cost split (#1098)"
@@ -2299,10 +2303,10 @@ else
   fail_msg "role-split table missing 'green' row (block: $ROLE_BLOCK45)"
 fi
 
-# The red row carries its $75.00 (opus output) and green its $15.00 (sonnet output).
+# The red row carries its $25.00 (opus output) and green its $15.00 (sonnet output).
 case "$RED_ROW45" in
-  *75*) pass_msg "role-split 'red' row carries its priced \$ (75)" ;;
-  *) fail_msg "role-split 'red' row missing priced \$75 (row: $RED_ROW45)" ;;
+  *25*) pass_msg "role-split 'red' row carries its priced \$ (25)" ;;
+  *) fail_msg "role-split 'red' row missing priced \$25 (row: $RED_ROW45)" ;;
 esac
 case "$GREEN_ROW45" in
   *15*) pass_msg "role-split 'green' row carries its priced \$ (15)" ;;
@@ -2346,7 +2350,7 @@ rm -rf "$TMP45B"
 # the roles in its awk `order` list, so an unlisted `review` role is counted in
 # the denominator and never rendered — the printed percentages silently stop
 # summing to 100 and the review cost disappears from the report.
-#   REVIEW (opus,   output 1,000,000) -> $75.00
+#   REVIEW (opus,   output 1,000,000) -> $25.00
 #   SINGLE (sonnet, output 1,000,000) -> $15.00
 inc_scenario "Scenario 45c: --tokenomics renders a 'review' role row (#1299)"
 
@@ -2373,8 +2377,8 @@ else
   fail_msg "role-split table missing 'review' row (block: $ROLE_BLOCK45C)"
 fi
 case "$REVIEW_ROW45C" in
-  *75*) pass_msg "role-split 'review' row carries its priced \$ (75)" ;;
-  *) fail_msg "role-split 'review' row missing priced \$75 (row: $REVIEW_ROW45C)" ;;
+  *25*) pass_msg "role-split 'review' row carries its priced \$ (25)" ;;
+  *) fail_msg "role-split 'review' row missing priced \$25 (row: $REVIEW_ROW45C)" ;;
 esac
 
 # CONTROL: the pre-existing roles keep rendering (the widening adds a row, it
@@ -2567,6 +2571,209 @@ else
   fail_msg "Scenario 47 all-invalid capture emitted $LINES47B day records (expected 0)"
 fi
 rm -rf "$TMP47B"
+
+# --- Scenario 48: Claude 5 model pricing + loud fallback (#1416) ---
+# https://platform.claude.com/docs/en/about-claude/pricing (retrieved 2026-09-26).
+# Adds baked defaults for CLAUDE_OPUS_5 (5/25/6.25/0.50), CLAUDE_SONNET_5
+# (2/10/2.50/0.20), CLAUDE_FABLE_5_1 (10/50/12.50/0.25 — cache read is a
+# non-standard 0.025x base input, NOT the usual 0.1x), and pins the
+# CLAUDE_OPUS_4_8 correction (was 15/75/18.75/1.50, the retired Opus 4.1
+# rates; is now 5/25/6.25/0.50). Unknown models still fall back to the Opus
+# 4.8 default, but the fallback must now WARN on stderr (once per distinct
+# unknown model per invocation) and be counted in a new fallback_priced_count
+# field on --emit-pricing-json.
+
+# (a) Sonnet 5 and Opus 5 price at their OWN rates — same token counts, Sonnet
+# strictly cheaper. Golden: Sonnet (2/10/2.50/0.20) = 2+10+2.5+0.2 = $14.70;
+# Opus (5/25/6.25/0.50) = 5+25+6.25+0.5 = $36.75.
+inc_scenario "Scenario 48a: Sonnet 5 and Opus 5 price at their own rates (Sonnet < Opus)"
+
+TMP48A="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP48A/" 2>/dev/null
+printf '%s\n' '[{"number":148,"title":"feat: sonnet5 record","additions":300,"deletions":100,"body":"Closes #248","mergedAt":"2026-09-26T12:00:00Z","labels":[]}]' > "$TMP48A/prs.json"
+printf '%s\n' '{"number":148,"additions":300,"deletions":100,"comments":[]}' > "$TMP48A/pr-148.json"
+printf '%s\n' '{"number":248,"labels":[],"comments":[]}' > "$TMP48A/issue-248.json"
+printf '%s\n' '{"schema_version":1,"issue":"248","stage":"execute","session_id":"s48a","model":"claude-sonnet-5","agent_kind":"headless","record_key":"K248A","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}' > "$TMP48A/capture.jsonl"
+
+COST_SONNET5="$(env -u PIPELINE_PRICE_CLAUDE_SONNET_5_INPUT -u PIPELINE_PRICE_CLAUDE_SONNET_5_OUTPUT \
+                    -u PIPELINE_PRICE_CLAUDE_SONNET_5_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_SONNET_5_CACHE_READ \
+                bash "$HELPER" --fixture "$TMP48A" --emit-pricing-json 2>/dev/null | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST_SONNET5" = "14.70" ]; then
+  pass_msg "Sonnet 5 priced_cost_usd == 14.70 (own baked rates)"
+else
+  fail_msg "Sonnet 5 priced_cost_usd should be 14.70, got $COST_SONNET5"
+fi
+rm -rf "$TMP48A"
+
+TMP48A2="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP48A2/" 2>/dev/null
+printf '%s\n' '[{"number":149,"title":"feat: opus5 record","additions":300,"deletions":100,"body":"Closes #249","mergedAt":"2026-09-26T12:00:00Z","labels":[]}]' > "$TMP48A2/prs.json"
+printf '%s\n' '{"number":149,"additions":300,"deletions":100,"comments":[]}' > "$TMP48A2/pr-149.json"
+printf '%s\n' '{"number":249,"labels":[],"comments":[]}' > "$TMP48A2/issue-249.json"
+printf '%s\n' '{"schema_version":1,"issue":"249","stage":"execute","session_id":"s48a2","model":"claude-opus-5","agent_kind":"headless","record_key":"K248A2","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}' > "$TMP48A2/capture.jsonl"
+
+COST_OPUS5="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_5_INPUT -u PIPELINE_PRICE_CLAUDE_OPUS_5_OUTPUT \
+                  -u PIPELINE_PRICE_CLAUDE_OPUS_5_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_OPUS_5_CACHE_READ \
+              bash "$HELPER" --fixture "$TMP48A2" --emit-pricing-json 2>/dev/null | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST_OPUS5" = "36.75" ]; then
+  pass_msg "Opus 5 priced_cost_usd == 36.75 (own baked rates)"
+else
+  fail_msg "Opus 5 priced_cost_usd should be 36.75, got $COST_OPUS5"
+fi
+rm -rf "$TMP48A2"
+
+if awk -v s="$COST_SONNET5" -v o="$COST_OPUS5" 'BEGIN{exit !(s<o)}'; then
+  pass_msg "Sonnet 5 ($COST_SONNET5) strictly cheaper than Opus 5 ($COST_OPUS5) at identical token counts"
+else
+  fail_msg "Sonnet 5 should be strictly cheaper than Opus 5, got sonnet=$COST_SONNET5 opus=$COST_OPUS5"
+fi
+
+# (b) Fable 5.1 cache reads price at the non-standard 0.25/MTok multiplier
+# (0.025x base input, not the usual 0.1x). Golden: 1M cache_read * 0.25 = $0.25.
+inc_scenario "Scenario 48b: Fable 5.1 cache reads price at 0.25/MTok (non-standard multiplier)"
+
+TMP48B="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP48B/" 2>/dev/null
+printf '%s\n' '[{"number":150,"title":"feat: fable5.1 cache-read record","additions":300,"deletions":100,"body":"Closes #250","mergedAt":"2026-09-26T12:00:00Z","labels":[]}]' > "$TMP48B/prs.json"
+printf '%s\n' '{"number":150,"additions":300,"deletions":100,"comments":[]}' > "$TMP48B/pr-150.json"
+printf '%s\n' '{"number":250,"labels":[],"comments":[]}' > "$TMP48B/issue-250.json"
+printf '%s\n' '{"schema_version":1,"issue":"250","stage":"execute","session_id":"s48b","model":"claude-fable-5-1","agent_kind":"headless","record_key":"K248B","tokens":{"input":0,"output":0,"cache_read":1000000,"cache_creation":0,"total":1000000},"duration_ms":1000}' > "$TMP48B/capture.jsonl"
+
+COST_FABLE51="$(env -u PIPELINE_PRICE_CLAUDE_FABLE_5_1_INPUT -u PIPELINE_PRICE_CLAUDE_FABLE_5_1_OUTPUT \
+                    -u PIPELINE_PRICE_CLAUDE_FABLE_5_1_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_FABLE_5_1_CACHE_READ \
+                bash "$HELPER" --fixture "$TMP48B" --emit-pricing-json 2>/dev/null | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST_FABLE51" = "0.25" ]; then
+  pass_msg "Fable 5.1 cache_read prices at 0.25 (non-standard 0.025x base-input multiplier)"
+else
+  fail_msg "Fable 5.1 cache_read cost should be 0.25, got $COST_FABLE51"
+fi
+rm -rf "$TMP48B"
+
+# (c) Unknown model warns ONCE on stderr per distinct model per invocation, and
+# --emit-pricing-json counts fallback-priced ROWS (not distinct models).
+inc_scenario "Scenario 48c: unknown model WARNs once on stderr + counts fallback_priced_count per row"
+
+TMP48C="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP48C/" 2>/dev/null
+printf '%s\n' '[{"number":151,"title":"feat: unknown model rows","additions":300,"deletions":100,"body":"Closes #251","mergedAt":"2026-09-26T12:00:00Z","labels":[]}]' > "$TMP48C/prs.json"
+printf '%s\n' '{"number":151,"additions":300,"deletions":100,"comments":[]}' > "$TMP48C/pr-151.json"
+printf '%s\n' '{"number":251,"labels":[],"comments":[]}' > "$TMP48C/issue-251.json"
+{
+  echo '{"schema_version":1,"issue":"251","stage":"execute","session_id":"s48c1","model":"claude-x-9","agent_kind":"headless","record_key":"K248C1","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"251","stage":"execute","session_id":"s48c2","model":"claude-x-9","agent_kind":"headless","record_key":"K248C2","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+} > "$TMP48C/capture.jsonl"
+
+TMP48C_ERR="$(mktemp)"
+PRICING48C="$(bash "$HELPER" --fixture "$TMP48C" --emit-pricing-json 2>"$TMP48C_ERR")"
+WARN_COUNT48C="$(grep -c 'WARN: no price for model claude-x-9 — using Opus-4.8 rates' "$TMP48C_ERR" 2>/dev/null; true)"
+if [ "${WARN_COUNT48C:-0}" -eq 1 ]; then
+  pass_msg "unknown model claude-x-9 WARNs exactly once on stderr (2 rows, 1 WARN)"
+else
+  fail_msg "expected exactly 1 WARN line for claude-x-9, got ${WARN_COUNT48C:-0} (stderr: $(cat "$TMP48C_ERR"))"
+fi
+FALLBACK48C="$(printf '%s' "$PRICING48C" | jq -r '.fallback_priced_count' 2>/dev/null)"
+if [ "$FALLBACK48C" = "2" ]; then
+  pass_msg "fallback_priced_count == 2 (both claude-x-9 rows fallback-priced)"
+else
+  fail_msg "fallback_priced_count should be 2 (one per fallback-priced row), got $FALLBACK48C"
+fi
+
+# --tokenomics is the REAL operator path (/pipeline:tokenomics Step 2) and it
+# runs FIVE separate pricing loops, four of them inside a `$(...)` command
+# substitution. An in-memory-array-only dedup set silently resets at each of
+# those subshell boundaries, so "once per distinct unknown model per
+# invocation" held only for --emit-pricing-json (a single subshell) and emitted
+# 5 WARNs here. Pin the operator path too, and pin that a SECOND distinct
+# unknown model still gets its own WARN (dedup must not over-collapse).
+TMP48C_ERR2="$(mktemp)"
+bash "$HELPER" --fixture "$TMP48C" --tokenomics >/dev/null 2>"$TMP48C_ERR2"
+WARN_TOK48C="$(grep -c 'WARN: no price for model claude-x-9 — using Opus-4.8 rates' "$TMP48C_ERR2" 2>/dev/null; true)"
+if [ "${WARN_TOK48C:-0}" -eq 1 ]; then
+  pass_msg "--tokenomics WARNs exactly once for claude-x-9 (dedup survives \$(...) subshells)"
+else
+  fail_msg "--tokenomics should WARN exactly once for claude-x-9, got ${WARN_TOK48C:-0} (per-loop subshell dedup reset?)"
+fi
+rm -f "$TMP48C_ERR2"
+
+# Negative control for the dedup: TWO distinct unknown models → TWO WARN lines,
+# one each. Differs from the positive case in exactly one property (distinct
+# model strings vs. the same model twice).
+TMP48C2="$(mktemp -d)"
+cp "$TMP48C"/*.json "$TMP48C2/" 2>/dev/null
+{
+  echo '{"schema_version":1,"issue":"251","stage":"execute","session_id":"s48c1","model":"claude-x-9","agent_kind":"headless","record_key":"K248C1","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+  echo '{"schema_version":1,"issue":"251","stage":"plan","session_id":"s48c2","model":"claude-z-7","agent_kind":"headless","record_key":"K248C2","tokens":{"input":1000000,"output":0,"cache_read":0,"cache_creation":0,"total":1000000},"duration_ms":1000}'
+} > "$TMP48C2/capture.jsonl"
+TMP48C_ERR3="$(mktemp)"
+bash "$HELPER" --fixture "$TMP48C2" --tokenomics >/dev/null 2>"$TMP48C_ERR3"
+WARN_X48C="$(grep -c 'no price for model claude-x-9' "$TMP48C_ERR3" 2>/dev/null; true)"
+WARN_Z48C="$(grep -c 'no price for model claude-z-7' "$TMP48C_ERR3" 2>/dev/null; true)"
+if [ "${WARN_X48C:-0}" -eq 1 ] && [ "${WARN_Z48C:-0}" -eq 1 ]; then
+  pass_msg "two distinct unknown models WARN once EACH (dedup is per-model, not global)"
+else
+  fail_msg "expected 1 WARN per distinct unknown model, got claude-x-9=${WARN_X48C:-0} claude-z-7=${WARN_Z48C:-0}"
+fi
+rm -f "$TMP48C_ERR3"
+rm -rf "$TMP48C2"
+
+rm -f "$TMP48C_ERR"
+rm -rf "$TMP48C"
+
+# (d) Regression pin: claude-opus-4-8 prices at 5/25/6.25/0.50 (must not
+# silently revert to the retired Opus 4.1 rates 15/75/18.75/1.50).
+inc_scenario "Scenario 48d: claude-opus-4-8 regression pin (5/25/6.25/0.50)"
+
+TMP48D="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP48D/" 2>/dev/null
+printf '%s\n' '[{"number":152,"title":"feat: opus4.8 regression pin","additions":300,"deletions":100,"body":"Closes #252","mergedAt":"2026-09-26T12:00:00Z","labels":[]}]' > "$TMP48D/prs.json"
+printf '%s\n' '{"number":152,"additions":300,"deletions":100,"comments":[]}' > "$TMP48D/pr-152.json"
+printf '%s\n' '{"number":252,"labels":[],"comments":[]}' > "$TMP48D/issue-252.json"
+printf '%s\n' '{"schema_version":1,"issue":"252","stage":"execute","session_id":"s48d","model":"claude-opus-4-8","agent_kind":"headless","record_key":"K248D","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}' > "$TMP48D/capture.jsonl"
+
+COST48D="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
+               -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
+           bash "$HELPER" --fixture "$TMP48D" --emit-pricing-json 2>/dev/null | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST48D" = "36.75" ]; then
+  pass_msg "claude-opus-4-8 prices at 5/25/6.25/0.50 == 36.75 (regression pin)"
+else
+  fail_msg "claude-opus-4-8 should price at 36.75 (5+25+6.25+0.50), got $COST48D (retired-rate regression?)"
+fi
+rm -rf "$TMP48D"
+
+# (e) An explicit PIPELINE_PRICE_* override for an otherwise-unknown model wins
+# over the fallback, and must NOT count as fallback-priced or WARN.
+inc_scenario "Scenario 48e: explicit PIPELINE_PRICE_* override wins — no WARN, fallback_priced_count == 0"
+
+TMP48E="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP48E/" 2>/dev/null
+printf '%s\n' '[{"number":153,"title":"feat: override wins","additions":300,"deletions":100,"body":"Closes #253","mergedAt":"2026-09-26T12:00:00Z","labels":[]}]' > "$TMP48E/prs.json"
+printf '%s\n' '{"number":153,"additions":300,"deletions":100,"comments":[]}' > "$TMP48E/pr-153.json"
+printf '%s\n' '{"number":253,"labels":[],"comments":[]}' > "$TMP48E/issue-253.json"
+printf '%s\n' '{"schema_version":1,"issue":"253","stage":"execute","session_id":"s48e","model":"claude-y-2","agent_kind":"headless","record_key":"K248E","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}' > "$TMP48E/capture.jsonl"
+
+TMP48E_ERR="$(mktemp)"
+PRICING48E="$(PIPELINE_PRICE_CLAUDE_Y_2_INPUT=1 PIPELINE_PRICE_CLAUDE_Y_2_OUTPUT=2 \
+              PIPELINE_PRICE_CLAUDE_Y_2_CACHE_CREATION=3 PIPELINE_PRICE_CLAUDE_Y_2_CACHE_READ=4 \
+              bash "$HELPER" --fixture "$TMP48E" --emit-pricing-json 2>"$TMP48E_ERR")"
+COST48E="$(printf '%s' "$PRICING48E" | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST48E" = "10.00" ]; then
+  pass_msg "explicit override priced claude-y-2 at 1+2+3+4 == 10.00 (override wins)"
+else
+  fail_msg "explicit override should price claude-y-2 at 10.00, got $COST48E"
+fi
+FALLBACK48E="$(printf '%s' "$PRICING48E" | jq -r '.fallback_priced_count' 2>/dev/null)"
+if [ "$FALLBACK48E" = "0" ]; then
+  pass_msg "fallback_priced_count == 0 (explicit override does not count as fallback)"
+else
+  fail_msg "fallback_priced_count should be 0 (explicit override), got $FALLBACK48E"
+fi
+if grep -q 'WARN: no price for model claude-y-2' "$TMP48E_ERR" 2>/dev/null; then
+  fail_msg "explicit override for claude-y-2 wrongly emitted a WARN (got: $(cat "$TMP48E_ERR"))"
+else
+  pass_msg "explicit override for claude-y-2 emitted no WARN"
+fi
+rm -f "$TMP48E_ERR"
+rm -rf "$TMP48E"
 
 echo ""
 echo "== RESULTS =="

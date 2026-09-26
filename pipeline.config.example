@@ -164,19 +164,21 @@ PIPELINE_LOGS_ENABLED=false
 # upcasing and collapsing each non-alphanumeric run to a single underscore
 # (e.g. "claude-opus-4-8" -> "CLAUDE_OPUS_4_8"). Any bucket left unset falls
 # back to the per-model list-price defaults baked into the report script
-# (Opus, Sonnet, and Haiku each price at their own rates; unknown models fall
-# back to Opus as a conservative upper bound — see scripts/cost-latency-report.sh).
+# (each known model prices at its own rate; an unknown model falls back to
+# Opus 4.8 and WARNs on stderr — see scripts/cost-latency-report.sh).
 #
-# The keys below match the script's built-in per-model rates. These are the
-# tracked anchor: mirror them BY HAND into the gitignored, host-only live
-# pipeline.config (this .example file is never sourced at runtime). The Opus
-# block is left live; the Sonnet/Haiku blocks are commented out because they
-# already match the baked defaults — they are override anchors, not required
-# live settings (uncomment + edit only to override a baked rate).
-PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT=15
-PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT=75
-PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION=18.75
-PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
+# The keys below match the script's built-in per-model rates (#1416:
+# https://platform.claude.com/docs/en/about-claude/pricing, retrieved
+# 2026-09-26). These are the tracked anchor: mirror them BY HAND into the
+# gitignored, host-only live pipeline.config (this .example file is never
+# sourced at runtime). The Opus block is left live; the Sonnet/Haiku blocks
+# are commented out because they already match the baked defaults — they are
+# override anchors, not required live settings (uncomment + edit only to
+# override a baked rate).
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT=5
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT=25
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION=6.25
+PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # Sonnet 4.6 (matches baked defaults; uncomment to override):
 #PIPELINE_PRICE_CLAUDE_SONNET_4_6_INPUT=3
 #PIPELINE_PRICE_CLAUDE_SONNET_4_6_OUTPUT=15
@@ -195,6 +197,23 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=1.50
 #PIPELINE_PRICE_CLAUDE_FABLE_5_OUTPUT=50
 #PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_CREATION=12.50
 #PIPELINE_PRICE_CLAUDE_FABLE_5_CACHE_READ=1.00
+# Opus 5 (#1416 — matches baked defaults; uncomment to override):
+#PIPELINE_PRICE_CLAUDE_OPUS_5_INPUT=5
+#PIPELINE_PRICE_CLAUDE_OPUS_5_OUTPUT=25
+#PIPELINE_PRICE_CLAUDE_OPUS_5_CACHE_CREATION=6.25
+#PIPELINE_PRICE_CLAUDE_OPUS_5_CACHE_READ=0.50
+# Sonnet 5 (#1416 — matches baked defaults; uncomment to override):
+#PIPELINE_PRICE_CLAUDE_SONNET_5_INPUT=2
+#PIPELINE_PRICE_CLAUDE_SONNET_5_OUTPUT=10
+#PIPELINE_PRICE_CLAUDE_SONNET_5_CACHE_CREATION=2.50
+#PIPELINE_PRICE_CLAUDE_SONNET_5_CACHE_READ=0.20
+# Fable 5.1 (#1416 — matches baked defaults; uncomment to override). Cache
+# read is a NON-STANDARD 0.025x base-input multiplier (0.25), not the usual
+# 0.1x — this is correct per source, not a typo.
+#PIPELINE_PRICE_CLAUDE_FABLE_5_1_INPUT=10
+#PIPELINE_PRICE_CLAUDE_FABLE_5_1_OUTPUT=50
+#PIPELINE_PRICE_CLAUDE_FABLE_5_1_CACHE_CREATION=12.50
+#PIPELINE_PRICE_CLAUDE_FABLE_5_1_CACHE_READ=0.25
 
 # --- Rolling-window usage read-out (issue #725, dogfood-only phase 1) ---
 #
