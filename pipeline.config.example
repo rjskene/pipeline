@@ -344,6 +344,11 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 
 # --- Label-driven 3-path execution (optional) ---
 #
+# NOTE: the `superpowers:*` spellings below are THIRD-PARTY EXAMPLES for this
+# operator-configured injection point, not a pipeline dependency (#1419
+# removed the last of those) — substitute any installed plugin's skill/agent
+# names; the knob is generic and unset by default.
+#
 # spawn-claude.sh reads the issue's labels and injects a path-specific
 # --append-system-prompt directive before launching the Claude CLI.
 #
