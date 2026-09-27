@@ -114,6 +114,7 @@ When `PIPELINE_HEADLESS=true` (set by the calibration launcher, #1285), fullsend
 - A headless orchestrator must not end a turn while an agent is running — wait for the `Monitor` notification, or the print-mode ceiling kills it.
 
 Interactive mode (knob unset/false) is unchanged — operator prompts stay.
+
 ## Campaign mode
 
 **This section is the single source of truth for the campaign machinery.** `/pipeline:campaign` is an **equivalent standalone entry point** into the SAME loop documented here — it owns no leg-loop prose of its own and defers to this section verbatim (see `skills/campaign/SKILL.md`). `--campaign` on `/pipeline:fullsend` remains supported on an ongoing basis and is **NOT deprecated**; the two entries are interchangeable and execute identical machinery, so they can never drift.
