@@ -253,7 +253,12 @@ fi
 # ---------------------------------------------------------------------------
 scenario "B3: the Step 3 directive caps the re-plan loop under GATE=single"
 
-for lit in 'GATE=single' '#1317'; do
+# 'plan-approved'/'plan-pending' are load-bearing, not decoration: the single-gate
+# Revise arm approves HERE because evaluate-issue-plan leaves a Revise verdict at
+# `plan-pending` and Step 4's approve site filters on `plan-reviewed` — an arm
+# that says "approve" without naming the transition drops the issue out of the
+# execute slate silently.
+for lit in 'GATE=single' '#1317' 'plan-approved' 'plan-pending'; do
   inc
   if [ -n "$P2_TEXT" ] && grep -qF -- "$lit" <<<"$P2_TEXT"; then
     pass_msg "B3: second plan-gate line names '$lit'"

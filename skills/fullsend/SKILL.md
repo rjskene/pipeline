@@ -289,7 +289,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
 
    **Binding rule (#1317):** from round 2 on, the re-plan dispatch prompt MUST quote the evaluator's `Revise` prescription verbatim with "apply exactly this; add no new scenarios, tests or sections". The follow-up evaluate dispatch MUST say "verify only that the prescribed change landed; a new finding is a new round only if BLOCKING".
 
-   **Plan gate (#1429):** `GATE=single` caps this loop at ONE evaluate dispatch plus ONE re-plan — on `Revise`, re-plan once with the binding #1317 prescription above, then approve directly WITHOUT a second `evaluate-issue-plan` dispatch. `GATE=full` keeps the 3-iteration cap.
+   **Plan gate (#1429):** `GATE=single` caps this loop at ONE evaluate dispatch plus ONE re-plan — on `Revise`, re-plan once with the binding #1317 prescription above, then approve HERE with `gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-pending"` (Step 4's `plan-reviewed` filter never sees it) and NO second `evaluate-issue-plan` dispatch; record `plan_rounds=1`. `GATE=full` keeps the 3-iteration cap.
 
 4. **Approve** — for every issue now at `plan-reviewed`, run:
    ```bash
