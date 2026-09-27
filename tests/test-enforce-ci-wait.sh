@@ -58,7 +58,7 @@ printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
 # Stub gh on PATH. Routes by argv pattern:
 #   --jq '. | length'          -> STUB_GH_ROLLUP_LEN (default: "1")
 #   --jq '[.statusCheckRollup  -> STUB_GH_FAIL_COUNT  (default: "0")
-#   gh issue view ... labels   -> STUB_GH_LABELS     (default: "")
+#   gh issue view <N> labels   -> STUB_GH_LABELS_<N>, else STUB_GH_LABELS ("")
 #   gh issue edit ...          -> records call, exits 0
 #   gh pr comment ...          -> records call, exits 0
 # When STUB_GH_FAIL=1, exits 1.
@@ -77,7 +77,11 @@ case "$args" in
   *". | length"*)
     printf '%s' "${STUB_GH_ROLLUP_LEN:-1}" ;;
   *"issue view"*)
-    printf '%s' "${STUB_GH_LABELS:-}" ;;
+    # $3 is the issue number: `gh issue view <N> --repo ...`. A per-issue
+    # STUB_GH_LABELS_<N> wins over the global STUB_GH_LABELS, so a test can give
+    # two slate issues DIFFERENT label sets.
+    per_issue="STUB_GH_LABELS_$3"
+    printf '%s' "${!per_issue:-${STUB_GH_LABELS:-}}" ;;
   *"issue edit"*|*"pr comment"*)
     : ;;
   *)
@@ -455,10 +459,17 @@ reset_state
 seed_transcript "$SLATE_CONTENT"
 RC=$(run_hook "$(orch_payload orch-9j)" PIPELINE_HEADLESS=true STUB_GH_FAIL=1 \
   STUB_GH_LABELS="in-progress")
-if [ "$RC" = "0" ] && [ -s "$PROJ/.claude/logs/enforce-ci-wait-errors.log" ]; then
-  pass_msg "fail-open: exit 0 + errors.log gained a line"
+ERRLOG=$(cat "$PROJ/.claude/logs/enforce-ci-wait-errors.log" 2>/dev/null || true)
+# The GRACEFUL fail-open, not the top-level one: a bare `rc=0 + non-empty log`
+# assertion is satisfied by an uncaught exception too, so pin the gate's own
+# message AND the absence of a traceback.
+if [ "$RC" = "0" ] \
+  && grep -qF "orchestrator slate gate" <<<"$ERRLOG" \
+  && grep -qF "gh issue view 101 failed" <<<"$ERRLOG" \
+  && ! grep -qF "Traceback" <<<"$ERRLOG"; then
+  pass_msg "graceful fail-open: exit 0 + gate errors.log line, no traceback"
 else
-  fail_msg "expected exit 0 + non-empty errors.log; got rc=$RC, errors.log=$(wc -c < "$PROJ/.claude/logs/enforce-ci-wait-errors.log" 2>/dev/null || echo absent)"
+  fail_msg "expected exit 0 + a traceback-free 'orchestrator slate gate' line; got rc=$RC, errors.log=$ERRLOG"
 fi
 
 # --- Test 9k: the knob resolves from pipeline.config too -> exit 2 ---
@@ -478,6 +489,32 @@ reset_state
 seed_transcript "$OTHER_CMD_CONTENT"
 RC=$(run_hook "$(orch_payload orch-9n)" PIPELINE_HEADLESS=true STUB_GH_LABELS="in-progress")
 if [ "$RC" = "0" ]; then pass_msg "exit 0 (scope bound to the invoked command)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 9o: the loop continues past a finished issue, keyed to the right one ---
+# #101 merged, #102 in-progress: the gate must not stop at the first FINISHED
+# issue, and the reason must name #102 (the in-order short-circuit fires on the
+# first UNFINISHED issue, not the first issue).
+echo "Test 9o: finished first, unfinished second -> exit 2 naming #102"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9o)" PIPELINE_HEADLESS=true \
+  STUB_GH_LABELS_101="merged" STUB_GH_LABELS_102="in-progress")
+ERR=$(cat "$WORKDIR/err.txt")
+if [ "$RC" = "2" ] && grep -qF "slate unfinished: #102 in-progress" <<<"$ERR"; then
+  pass_msg "exit 2 + reason keyed to #102"
+else
+  fail_msg "expected exit 2 naming #102; got rc=$RC stderr=$ERR"
+fi
+
+# --- Test 9p: --manual-merge still blocks on in-progress -> exit 2 ---
+# The flag parks pr-open ONLY; an issue still executing is unfinished either way.
+echo "Test 9p: --manual-merge + in-progress -> exit 2"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT_MM"
+RC=$(run_hook "$(orch_payload orch-9p)" PIPELINE_HEADLESS=true STUB_GH_LABELS="in-progress")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (in-progress survives --manual-merge)"; else fail_msg "expected exit 2, got $RC"; fi
 
 # --- Test 9m: merged + STALE pr-open is finished -> exit 0 ---
 # scripts/finalize-issue-labels.sh falls back to `--add-label merged` ALONE when
