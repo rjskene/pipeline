@@ -7,7 +7,7 @@ set -uo pipefail
 #   - New vars PIPELINE_PATH_B_MODEL_EXECUTE / PIPELINE_PATH_D_MODEL_EXECUTE,
 #     default EMPTY. When set, fullsend's execute dispatch pins that model for
 #     eligible PATH B / PATH D issues; when unset, the resolver supplies the
-#     read-site default (#1186/#1420: opus for A/B/C, sonnet for D — always a NAMED
+#     read-site default (#1186/#1420/#1428: opus for A/B/C/D — always a NAMED
 #     model, never an inherit). pr-eval dispatch is NEVER gated (independent Opus
 #     backstop).
 #   - Documented (commented, default-off) in pipeline.config.example.
@@ -50,14 +50,14 @@ done
 #    example: each default lives at the scripts/resolve-execute-dispatch.sh read
 #    site, so each model var is COMMENTED in the example and --fix config does NOT
 #    seed it. The example carries the documented default in commented form.
-#    #1420 split the two defaults apart: PATH B's unset default moved sonnet ->
-#    opus when the #881 two-agent lane was collapsed to a single execute agent (the
-#    always-Opus test-author that made a cheap PATH B executor safe is gone), while
-#    PATH D — never a two-agent lane — keeps sonnet. Asserting the value per-var
-#    rather than one shared literal is what keeps this guard honest about that.
+#    #1420 flipped PATH B's unset default sonnet -> opus when the #881 two-agent
+#    lane was collapsed to a single execute agent (the always-Opus test-author
+#    that made a cheap PATH B executor safe is gone); #1428 flipped PATH D's
+#    unset default the same way (the executor-model split never moved cost in
+#    calibration), so both vars now share the same default literal.
 declare -A WANT_DEFAULT=(
   [PIPELINE_PATH_B_MODEL_EXECUTE]=opus
-  [PIPELINE_PATH_D_MODEL_EXECUTE]=sonnet
+  [PIPELINE_PATH_D_MODEL_EXECUTE]=opus
 )
 for v in "${VARS[@]}"; do
   inc
