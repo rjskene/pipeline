@@ -215,6 +215,13 @@ def main() -> int:
     # `hook_event_name` is compared case-sensitively against the literal wire
     # value claude sends. Return 0 with NO stdout — same "expressed no opinion"
     # semantics as the env gate above, never a deny envelope.
+    # A truthy NON-dict payload (a bare JSON string or number) survives the
+    # `or {}` above and would make .get() raise, landing on the module-level
+    # crash handler — a `deny` envelope plus a traceback for something that was
+    # never an escalation. It is not PermissionRequest-shaped, so it takes the
+    # same inert exit as everything else below.
+    if not isinstance(data, dict):
+        return 0
     event = str(data.get("hook_event_name") or data.get("hookEventName") or "").strip()
     tool = str(data.get("tool_name") or data.get("toolName") or "").strip()
     if event != "PermissionRequest" or not tool:

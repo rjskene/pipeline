@@ -317,22 +317,30 @@ scenario "Case 9: a non-PermissionRequest payload is inert — no queue file, no
 # tool_name before touching the queue. Anything else exits 0 with EMPTY stdout —
 # the same "expressed no opinion" semantics as the env-inertness gate in Case 1,
 # never a deny envelope: emitting a decision for an event class that does not
-# consume one would fabricate a verdict.
+# consume one would fabricate a verdict. "Anything else" includes valid JSON that
+# is not an OBJECT: `read_event_stdin()` returns it verbatim, and a truthy
+# non-dict (a bare string or number) makes `.get()` raise, which without a type
+# check lands on the module-level crash handler and emits a `deny` envelope plus a
+# traceback in the error log for an event that was never an escalation.
 Q9="$WORKDIR/q9"
 P9_LABELS=(
   "empty stdin"
   "no hook_event_name"
   "PreToolUse-shaped payload"
   "PermissionRequest with an empty tool_name (#1426 wire shape)"
+  "valid JSON that is not an object (string)"
+  "valid JSON that is not an object (number)"
 )
 P9_PAYLOADS=(
   ''
   '{"tool_name":"Bash","tool_input":{}}'
   '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{}}'
   '{"hook_event_name":"PermissionRequest","tool_name":"","tool_input":{},"session_id":""}'
+  '"not an object"'
+  '5'
 )
 T0=$(date +%s)
-for i in 0 1 2 3; do
+for i in "${!P9_PAYLOADS[@]}"; do
   OUT="$(printf '%s' "${P9_PAYLOADS[$i]}" | env PIPELINE_PERMISSION_BRIDGE_DIR="$Q9" \
           PIPELINE_PERMISSION_BRIDGE_TIMEOUT=3 \
           CLAUDE_PROJECT_DIR="$PROJ" python3 "$HOOK" 2>/dev/null)"
@@ -360,13 +368,14 @@ else
   fail_msg "9: a malformed payload was queued: $(printf '%s' "$Q9_FILES" | tr '\n' ' ')"
 fi
 inc
-# With PIPELINE_PERMISSION_BRIDGE_TIMEOUT=3 an UNGATED hook burns ~3 s per
-# sub-case (4 x 3 s) plus the stdin alarm, so a 5 s ceiling discriminates gated
-# from ungated without being flaky on a loaded host.
+# With PIPELINE_PERMISSION_BRIDGE_TIMEOUT=3 an UNGATED hook burns ~3 s for each of
+# the four OBJECT-shaped sub-cases (the two non-object ones raise instead), so a
+# 5 s ceiling discriminates gated from ungated without being flaky on a loaded
+# host.
 if [ "$ELAPSED" -le 5 ]; then
-  pass_msg "9: all four shapes resolve without waiting (elapsed=${ELAPSED}s)"
+  pass_msg "9: every shape resolves without waiting (elapsed=${ELAPSED}s)"
 else
-  fail_msg "9: took ${ELAPSED}s for four inert payloads — the hook still enters the answer poll"
+  fail_msg "9: took ${ELAPSED}s for the inert payloads — the hook still enters the answer poll"
 fi
 
 # ---------------------------------------------------------------------------
