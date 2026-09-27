@@ -285,14 +285,16 @@ assert_tok "(6) B scope=low-blast low-blast" "MODEL=opus" "$OUT6"
 assert_tok "(6) B scope=low-blast low-blast" "REASON=default-opus" "$OUT6"
 assert_tok "(6) B scope=low-blast low-blast" "ELIGIBLE=low-blast" "$OUT6"
 
-# (7) PATH D, knobs unset -> sonnet default, single shape (no eligibility
-#     predicate). #1420 does NOT touch PATH D's default: quick-fix was never a
-#     split lane, so there is no lost test-author to compensate for.
+# (7) PATH D, knobs unset -> opus default, single shape (no eligibility
+#     predicate). #1428 collapses PATH D's default onto A/B/C: the
+#     Sonnet-vs-Opus executor split never moved cost in any priced calibration
+#     run, so the odd path out is retired. An explicit
+#     PIPELINE_PATH_D_MODEL_EXECUTE=sonnet remains the documented way back.
 CFG7=$(make_config_root)
 FIX7=$(make_fixture "fix(foo): quick" "$BODY_LOW" '[]')
 OUT7=$(run_resolver "$FIX7" "$CFG7" D)
-assert_tok "(7) D knobs unset" "MODEL=sonnet" "$OUT7"
-assert_tok "(7) D knobs unset" "REASON=default-sonnet" "$OUT7"
+assert_tok "(7) D knobs unset" "MODEL=opus" "$OUT7"
+assert_tok "(7) D knobs unset" "REASON=default-opus" "$OUT7"
 assert_tok "(7) D knobs unset" "ROLES=single" "$OUT7"
 assert_no_key "(7) D knobs unset" "SPLIT_ROLE" "$OUT7"
 assert_tok "(7) D knobs unset" "PATH=D" "$OUT7"
@@ -318,8 +320,8 @@ assert_tok "(9) D W2 vocab" "REASON=high-uncertainty" "$OUT9"
 CFG9B=$(make_config_root)
 FIX9B=$(make_fixture "fix(foo): rename a token" "$BODY_PATHTOK" '[]')
 OUT9B=$(run_resolver "$FIX9B" "$CFG9B" D)
-assert_tok "(9b) D listed path token" "MODEL=sonnet" "$OUT9B"
-assert_tok "(9b) D listed path token" "REASON=default-sonnet" "$OUT9B"
+assert_tok "(9b) D listed path token" "MODEL=opus" "$OUT9B"
+assert_tok "(9b) D listed path token" "REASON=default-opus" "$OUT9B"
 
 # (9c) PATH B, same body -> the #1420 opus default + low-blast. ALSO exercises the
 #      strip in scripts/path-b-execute-eligible.sh (the PATH B arm shells out to

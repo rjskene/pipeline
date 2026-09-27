@@ -33,7 +33,7 @@
 #                                       # path-b-execute-eligible.sh (B only)
 #   REASON=<token>                      # why MODEL resolved as it did (audit)
 #
-# REASON tokens: default-sonnet | default-opus | explicit-knob | high-uncertainty
+# REASON tokens: default-opus | explicit-knob | high-uncertainty
 #                | needs-browser | scope-low-blast-gated
 #
 # #1420 — the #881 two-agent PATH B execute lane is GONE, and with it the SHAPE
@@ -54,8 +54,10 @@
 #     Opus test-author was what made a cheap implementer safe; collapsing to one
 #     agent without raising its model would have quietly lowered the quality floor
 #     rather than merely removing a redundancy. Reversible per-consumer via
-#     PIPELINE_PATH_B_MODEL_EXECUTE=sonnet. PATH D is UNCHANGED — it was never a
-#     two-agent lane, so it lost nothing to compensate for.
+#     PIPELINE_PATH_B_MODEL_EXECUTE=sonnet. PATH D was UNCHANGED at this point —
+#     it was never a two-agent lane, so it lost nothing to compensate for — but
+#     #1428 later flipped PATH D's own unset default to `opus` too, so it now
+#     matches A/B/C uniformly (reversible via PIPELINE_PATH_D_MODEL_EXECUTE=sonnet).
 #   - scripts/_trust-profile.sh is no longer sourced: `lean`'s execute half existed
 #     only to collapse that pair, which is now the unconditional shape.
 #     scripts/resolve-stage-model.sh still sources it for the plan-eval half.
@@ -70,9 +72,11 @@
 # === Encoded routing rules (the single place the knobs + carve-outs apply) ===
 #
 #   #1042 model knob — read PIPELINE_PATH_{B,D}_MODEL_EXECUTE. An explicit value
-#     (opus|haiku|sonnet) is honored verbatim. Unset/empty ⇒ effective `sonnet`
-#     for PATH D; #1420 flipped PATH B's unset default to `opus`
-#     (REASON=default-opus) when the split lane's Opus test-author was removed.
+#     (opus|haiku|sonnet) is honored verbatim. Unset/empty ⇒ effective `opus`
+#     (REASON=default-opus) on BOTH paths: #1420 flipped PATH B's unset default
+#     to `opus` when the split lane's Opus test-author was removed, and #1428
+#     flipped PATH D's unset default to `opus` too (the executor-model split
+#     never moved cost in calibration, so the last path-specific default retires).
 #   #1186 PATH A/C model knob — read PIPELINE_PATH_{A,C}_MODEL_EXECUTE.
 #     Unset/empty ⇒ effective `opus` (REASON=default-opus — execute's quality
 #     ceiling, which is what those dispatches silently assumed they were getting
@@ -163,20 +167,19 @@ case "$PATH_LETTER" in
   C) KNOB="${PIPELINE_PATH_C_MODEL_EXECUTE:-}" ;;
   *) KNOB="${PIPELINE_PATH_D_MODEL_EXECUTE:-}" ;;
 esac
-# #1042: unset/empty ⇒ effective sonnet for D (the shipped opt-out default).
 # #1186: unset/empty ⇒ effective opus for A/C (the execute quality ceiling those
 # dispatches previously assumed they inherited from the session model).
 # #1420: unset/empty ⇒ effective opus for B too. B's sonnet default was safe only
 # because the split lane paired it with an always-Opus test-author; with one agent
-# the resolved model IS the quality floor, so B joins A/C at the ceiling. An
-# explicit knob still wins on every path (REASON=explicit-knob), which is the
-# documented way back to a cheap PATH B execute.
+# the resolved model IS the quality floor, so B joins A/C at the ceiling.
+# #1428: unset/empty ⇒ effective opus for D too — the Sonnet-vs-Opus executor
+# split never moved cost in any priced calibration run, so the last path-specific
+# branch is retired; every path now shares ONE default. An explicit knob still
+# wins on every path (REASON=explicit-knob), which is the documented way back to
+# a cheap PATH B/D execute (e.g. PIPELINE_PATH_D_MODEL_EXECUTE=sonnet).
 if [ -n "$KNOB" ]; then
   RESOLVED_KNOB="$KNOB"
   KNOB_REASON="explicit-knob"
-elif [ "$PATH_LETTER" = "D" ]; then
-  RESOLVED_KNOB="sonnet"
-  KNOB_REASON="default-sonnet"
 else
   RESOLVED_KNOB="opus"
   KNOB_REASON="default-opus"
