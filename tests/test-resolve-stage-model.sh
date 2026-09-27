@@ -160,6 +160,7 @@ run_stage_raw() {
           -u PIPELINE_PATH_D_MODEL_EXECUTE \
           -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
           -u PIPELINE_TRUST_PROFILE \
+          -u PIPELINE_PLAN_GATE \
       bash "$HELPER" 999 "$stage" 2>&1 >/dev/null
   else
     PATH="$STUB_DIR:$PATH" GH_FIXTURE="$fixture" \
@@ -174,6 +175,7 @@ run_stage_raw() {
           -u PIPELINE_PATH_D_MODEL_EXECUTE \
           -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
           -u PIPELINE_TRUST_PROFILE \
+          -u PIPELINE_PLAN_GATE \
       bash "$HELPER" 999 "$stage" 2>/dev/null
   fi
 }
@@ -516,6 +518,82 @@ CFG19=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
 FIX19=$(make_fixture "fix(auth): harden" "$BODY_W2" "$LBL_D")
 OUT19=$(run_stage "$FIX19" "$CFG19" plan-eval)
 assert_no_key "(19) CONTROL lean PATH D + W2" "SKIP" "$OUT19"
+
+# ---- #1429 PIPELINE_PLAN_GATE: the GATE= token on the plan-eval arm ---------
+
+# (20) PIPELINE_PLAN_GATE=full on plan-eval -> GATE=full.
+CFG20=$(make_config_root 'PIPELINE_PLAN_GATE=full')
+FIX20=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
+OUT20=$(run_stage "$FIX20" "$CFG20" plan-eval)
+assert_tok "(20) plan-gate full" "GATE=full" "$OUT20"
+assert_tok "(20) plan-gate full" "MODEL=opus" "$OUT20"
+
+# (21) PIPELINE_PLAN_GATE=single on plan-eval -> GATE=single.
+CFG21=$(make_config_root 'PIPELINE_PLAN_GATE=single')
+FIX21=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
+OUT21=$(run_stage "$FIX21" "$CFG21" plan-eval)
+assert_tok "(21) plan-gate single" "GATE=single" "$OUT21"
+
+# (22) PIPELINE_PLAN_GATE=none on plan-eval -> GATE=none. The MODEL=/REASON=
+#      pins are emitted verbatim alongside it: a caller that IGNORES GATE=
+#      behaves exactly as pre-#1429.
+CFG22=$(make_config_root 'PIPELINE_PLAN_GATE=none')
+FIX22=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
+OUT22=$(run_stage "$FIX22" "$CFG22" plan-eval)
+assert_tok "(22) plan-gate none" "GATE=none" "$OUT22"
+assert_tok "(22) plan-gate none" "MODEL=opus" "$OUT22"
+assert_tok "(22) plan-gate none" "REASON=default-pin" "$OUT22"
+
+# (23) No knob line at all -> GATE=full (the default is EMITTED, not omitted)
+#      and NOTHING on the WARN channel. The unset default must be silent.
+CFG23=$(make_config_root)
+FIX23=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
+OUT23=$(run_stage "$FIX23" "$CFG23" plan-eval)
+assert_tok "(23) plan-gate unset" "GATE=full" "$OUT23"
+inc
+WARN23="$(run_stage_err "$FIX23" "$CFG23" plan-eval | grep -c '^WARN:')"
+if [ "$WARN23" -eq 0 ]; then
+  pass_msg "(23) plan-gate unset -> no WARN on stderr"
+else
+  fail_msg "(23) expected 0 '^WARN:' stderr lines for an unset knob, got $WARN23"
+fi
+
+# (24) An UNRECOGNIZED value falls back to full, with exactly ONE WARN on
+#      stderr — a typo'd knob must never silently DELETE the plan gate.
+CFG24=$(make_config_root 'PIPELINE_PLAN_GATE=garbage')
+FIX24=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
+OUT24=$(run_stage "$FIX24" "$CFG24" plan-eval)
+assert_tok "(24) unknown plan-gate falls back to full" "GATE=full" "$OUT24"
+inc
+WARN24="$(run_stage_err "$FIX24" "$CFG24" plan-eval | grep -c '^WARN:.*PIPELINE_PLAN_GATE')"
+if [ "$WARN24" -eq 1 ]; then
+  pass_msg "(24) unknown plan-gate -> exactly one WARN line on stderr"
+else
+  fail_msg "(24) expected exactly 1 '^WARN:.*PIPELINE_PLAN_GATE' stderr line, got $WARN24"
+fi
+
+# (25) CONTROLS: GATE= is a plan-eval-ONLY token (stage-scoped, like SKIP=), and
+#      when the lean SKIP and GATE=none both fire BOTH are emitted with GATE=
+#      printed BEFORE the conditional SKIP=true (the pre-#1429 tail shape is
+#      preserved: the conditional token stays last).
+CFG25=$(make_config_root 'PIPELINE_PLAN_GATE=none')
+FIX25=$(make_fixture "docs: update readme" "$BODY_LOW" "$LBL_A")
+OUT25P=$(run_stage "$FIX25" "$CFG25" plan)
+assert_no_key "(25) CONTROL plan-gate none, plan stage" "GATE" "$OUT25P"
+OUT25R=$(run_stage "$FIX25" "$CFG25" pr-eval)
+assert_no_key "(25) CONTROL plan-gate none, pr-eval stage" "GATE" "$OUT25R"
+
+CFG25L=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PLAN_GATE=none')
+OUT25L=$(run_stage "$FIX25" "$CFG25L" plan-eval)
+assert_tok "(25) lean + PATH A + plan-gate none" "GATE=none" "$OUT25L"
+assert_tok "(25) lean + PATH A + plan-gate none" "SKIP=true" "$OUT25L"
+inc
+if printf '%s\n' "$OUT25L" | grep -A1 '^GATE=none$' | grep -qxF 'SKIP=true'; then
+  pass_msg "(25) GATE= is printed BEFORE the conditional SKIP=true"
+else
+  fail_msg "(25) expected 'SKIP=true' on the line directly after 'GATE=none', got:
+$OUT25L"
+fi
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="
