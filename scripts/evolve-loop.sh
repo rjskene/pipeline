@@ -268,12 +268,25 @@ build_launch() {
   else
     cmd="/pipeline:evolve resume"
   fi
+  # #1421: same two-way branch as calibration-run.sh. The bridge dir lives in
+  # the CLONE — the repo the operator's interactive session is sitting in — so
+  # `permission-bridge.sh pending` finds the queue without any extra env.
+  # `bypass` restores the old flag for one run: a detached loop has no watcher by
+  # construction, and every unanswered escalation would otherwise burn the
+  # bridge timeout before being denied.
+  local -a perm_argv bridge_env=()
+  case "${PIPELINE_HEADLESS_PERMISSIONS:-auto}" in
+    bypass) perm_argv=(--dangerously-skip-permissions) ;;
+    *)      perm_argv=(--permission-mode auto --permission-prompts none)
+            bridge_env=("PIPELINE_PERMISSION_BRIDGE_DIR=$CLONE/.claude/scratch/permission-queue") ;;
+  esac
   LAUNCH=(env -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$CLONE"
-          PIPELINE_HEADLESS=true CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+          PIPELINE_HEADLESS=true "${bridge_env[@]}"
+          CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
           timeout "$LOOP_TIMEOUT"
           claude -p "$cmd" --plugin-dir "$CLONE")
   if [ -n "$MODEL" ]; then LAUNCH+=(--model "$MODEL"); fi
-  LAUNCH+=(--dangerously-skip-permissions)
+  LAUNCH+=("${perm_argv[@]}")
 }
 
 # ---------------------------------------------------------------------------

@@ -160,6 +160,10 @@ echo "docs/calibration.md — PIPELINE_* token set"
 # PIPELINE_PATH_B_MODEL_EXECUTE joined the list with the --executor-model arm
 # (#1414): the doc names it because the flag sets it, and
 # pipeline.config.example declares it (line ~401).
+# PIPELINE_HEADLESS_PERMISSIONS + PIPELINE_PERMISSION_BRIDGE_TIMEOUT joined with
+# the headless permission bridge (#1421): the `## Permission bridge` subsection
+# documents the one-run escape hatch and the answer deadline, and
+# pipeline.config.example declares both (commented, defaults-in-code).
 TESTS=$((TESTS + 1))
 extra=""
 if [ -f "$DOC" ]; then
@@ -167,10 +171,11 @@ if [ -f "$DOC" ]; then
     | grep -vxF -e PIPELINE_CALIB_DIR -e PIPELINE_CALIB_REPO \
         -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS -e PIPELINE_TRUST_PROFILE \
         -e PIPELINE_PATH_B_MODEL_EXECUTE \
+        -e PIPELINE_HEADLESS_PERMISSIONS -e PIPELINE_PERMISSION_BRIDGE_TIMEOUT \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then
-  pass_msg "names no PIPELINE_* token beyond the three calib knobs, PIPELINE_HEADLESS, PIPELINE_TRUST_PROFILE and PIPELINE_PATH_B_MODEL_EXECUTE"
+  pass_msg "names no PIPELINE_* token beyond the three calib knobs, PIPELINE_HEADLESS, PIPELINE_TRUST_PROFILE, PIPELINE_PATH_B_MODEL_EXECUTE and the two bridge knobs"
 else
   fail_msg "names undeclared PIPELINE_* token(s): $extra"
 fi

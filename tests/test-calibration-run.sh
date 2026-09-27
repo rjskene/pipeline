@@ -99,6 +99,10 @@ chmod +x "$HARNESS/scripts/doctor.sh"
 # PreToolUse guard hooks, a Stop guard (enforce-ci-wait.py), and the
 # SessionStart + UserPromptSubmit doctor-on-update.sh hooks that --hooks off
 # must leave alone (the issue names BOTH non-guard events, so both are pinned).
+# PermissionRequest (#1421) is pinned here for the same reason: the bridge is
+# the headless DENY RAIL, not a guard, so arm 2 of the hook-necessity
+# experiment must not strip it — stripping it would confound the arm by also
+# removing the only way a headless run can be granted an escalation.
 mkdir -p "$HARNESS/.claude-plugin"
 cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
 {
@@ -116,6 +120,9 @@ cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
     ],
     "UserPromptSubmit": [
       {"matcher": "*", "hooks": [{"type": "command", "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/doctor-on-update.sh"}]}
+    ],
+    "PermissionRequest": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/permission-bridge.py", "timeout": 900}]}
     ]
   }
 }
@@ -248,6 +255,7 @@ run_helper() {
         PIPELINE_CALIB_DIR="$SANDBOX" \
         PIPELINE_CALIB_REMOTE="$REMOTE" \
         PIPELINE_CALIB_ISSUE_IDS="8001 8002 8003 8004 8005" \
+        PIPELINE_HEADLESS_PERMISSIONS="${CALIB_TEST_HEADLESS_PERMS:-}" \
         GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
         GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
         timeout 20 bash "$HELPER" "$@" 2>&1)"
@@ -354,7 +362,18 @@ done
 # plugin dir anywhere else is unreadable from inside the run.
 expect_sub "launch line passes --plugin-dir <staged harness>" "$LAUNCH" "--plugin-dir $STAGE"
 expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<staged harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$STAGE"
-expect_sub "launch line passes --dangerously-skip-permissions" "$LAUNCH" "--dangerously-skip-permissions"
+# #1421: the headless rail is no longer "grant everything unseen". The launch
+# runs under the operator-owned permission mode with the PermissionRequest
+# bridge as the escalation channel, and the bridge dir is exported so the hook
+# is armed. It points at $HARNESS, NOT $LAUNCH_HARNESS: the stage is refreshed
+# by `checkout --force --detach` every run, and it is not the directory the
+# operator's interactive session is sitting in.
+refute_sub "launch line no longer passes --dangerously-skip-permissions" \
+  "$LAUNCH" "--dangerously-skip-permissions"
+expect_sub "launch line passes --permission-mode auto" "$LAUNCH" "--permission-mode auto"
+expect_sub "launch line passes --permission-prompts none" "$LAUNCH" "--permission-prompts none"
+expect_sub "launch line arms the permission bridge in the LAUNCHING repo" \
+  "$LAUNCH" "PIPELINE_PERMISSION_BRIDGE_DIR=$HARNESS/.claude/scratch/permission-queue"
 # The loop session that drives this script exports ALLOW_ORCHESTRATOR_EDIT;
 # inheriting it would disable the delegation hook inside the very run being
 # measured, so the launch strips it back out.
@@ -389,6 +408,20 @@ expect_sub "--executor-model opus previews the PIPELINE_PATH_B_MODEL_EXECUTE tok
   "$LAUNCH_BEXEC" "PIPELINE_PATH_B_MODEL_EXECUTE=opus"
 expect_sub "--executor-model opus is named in the dry-run preview" "$LAUNCH_BEXEC" "bexec=opus"
 
+# #1421 escape hatch: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old
+# flag for one run and exports NO bridge dir, so an unattended launch with no
+# operator watching the queue cannot stall 840 s per escalation.
+rm -f "$CALLS"
+CALIB_TEST_HEADLESS_PERMS=bypass run_helper --dry-run --harness "$HARNESS"
+LAUNCH_BYPASS="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "bypass restores --dangerously-skip-permissions" \
+  "$LAUNCH_BYPASS" "--dangerously-skip-permissions"
+refute_sub "bypass passes no --permission-mode auto" "$LAUNCH_BYPASS" "--permission-mode auto"
+refute_sub "bypass passes no --permission-prompts none" "$LAUNCH_BYPASS" "--permission-prompts none"
+refute_sub "bypass exports no bridge dir" "$LAUNCH_BYPASS" "PIPELINE_PERMISSION_BRIDGE_DIR="
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS"
 if [ -s "$CALLS" ]; then
   fail_msg "--dry-run made a network / launch call: $(tr '\n' ';' < "$CALLS")"
 else
@@ -900,6 +933,15 @@ expect_sub "the graded total records the planted-defect verdict" \
   "$TOTAL_LINE" "planted="
 expect_sub "a slate with no planted-defect dir grades it n/a" \
   "$TOTAL_LINE" "planted=n/a"
+# #1421: how many permission escalations the run raised through the bridge. The
+# measurement that says whether `--permission-mode auto` turned a $60-120 run
+# into a wall of unanswered prompts (expected <= 3). ALWAYS emitted, 0 when the
+# queue dir is absent or empty — an absent atom is indistinguishable from a run
+# of an older harness.
+expect_sub "the graded total records the bridge-prompt count" \
+  "$TOTAL_LINE" "bridge_prompts="
+expect_sub "a run with no queue dir reports bridge_prompts=0" \
+  "$TOTAL_LINE" "bridge_prompts=0"
 
 SANDBOX_HEAD="$(git -C "$SANDBOX" rev-parse HEAD)"
 REMOTE_HEAD="$(git -C "$REMOTE" rev-parse main)"
@@ -1785,6 +1827,16 @@ if jq -e '[.hooks.UserPromptSubmit[]?.hooks[]?.command // "" | select(contains("
 else
   fail_msg "--hooks off must keep the UserPromptSubmit doctor-on-update hook"
 fi
+# #1421: the permission bridge is the headless deny RAIL, not a guard.
+# strip_guard_hooks() only rewrites .hooks.PreToolUse and .hooks.Stop, so this
+# survives by construction — pinned so a future "strip everything" refactor
+# cannot silently remove the only channel a headless run has for an escalation.
+if jq -e '[.hooks.PermissionRequest[]?.hooks[]?.command // "" | select(contains("permission-bridge.py"))] | length == 1' \
+     "$STAGED_MANIFEST" >/dev/null 2>&1; then
+  pass_msg "--hooks off keeps the PermissionRequest bridge hook (a deny rail, not a guard)"
+else
+  fail_msg "--hooks off must keep the PermissionRequest bridge hook — stripping the deny rail confounds the arm"
+fi
 HARNESS_MANIFEST_AFTER="$(cat "$HARNESS/.claude-plugin/plugin.json")"
 if [ "$HARNESS_MANIFEST_AFTER" = "$HARNESS_MANIFEST_BEFORE" ]; then
   pass_msg "the original harness manifest is never touched"
@@ -1921,6 +1973,44 @@ else
 fi
 
 unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 23: bridge_prompts counts THIS run's queued permission requests (#1421)"
+# ---------------------------------------------------------------------------
+# Non-vacuity pair for the Scenario 8 `bridge_prompts=0` assertion: a
+# ceiling-free "the atom is there" check is satisfied by a hardcoded 0. Two
+# queue files are planted in the launching repo's queue dir — one STALE (mtime
+# well before the run) and one fresh — and only the fresh one may be counted,
+# because the dir is not cleaned between runs and a stale request would
+# otherwise inflate every subsequent run's measurement.
+BRIDGE_Q="$HARNESS/.claude/scratch/permission-queue"
+mkdir -p "$BRIDGE_Q"
+printf '{"id":"stale"}\n' > "$BRIDGE_Q/stale.json"
+touch -d "2 days ago" "$BRIDGE_Q/stale.json"
+
+echo 6600 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+cat > "$TMP/claude-bridge.sh" <<'BRIDGE'
+#!/bin/bash
+# Stands in for a session that raised one permission escalation: the hook would
+# have written this queue file DURING the run.
+printf '{"id":"fresh"}
+' > "$CALIB_TEST_BRIDGE_Q/fresh.json"
+exit 0
+BRIDGE
+chmod +x "$TMP/claude-bridge.sh"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-bridge.sh"
+export CALIB_TEST_BRIDGE_Q="$BRIDGE_Q"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with a bridge prompt exits 0" 0
+
+TOTAL_BRIDGE="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "bridge_prompts counts the request the run itself raised" \
+  "$TOTAL_BRIDGE" "bridge_prompts=1"
+refute_sub "a stale pre-run queue file is NOT counted" "$TOTAL_BRIDGE" "bridge_prompts=2"
+
+unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_BRIDGE_Q
+rm -f "$BRIDGE_Q/stale.json" "$BRIDGE_Q/fresh.json"
 
 # ---------------------------------------------------------------------------
 echo ""
