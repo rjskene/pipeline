@@ -443,6 +443,44 @@ refute_sub "a default-executor artifact is never labelled bexec=" \
   "$REPORT_HOOKS_ON" "bexec="
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 13: a --plan-gate artifact renders plan_gate=<v> (#1429)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --plan-gate <v> suffixes its artifact `-plan-gate-<v>`
+# (issue #1429), appended AFTER `-bexec-<M>` in the fixed order. A run that
+# elided the plan-approval gate is not comparable with the full-gate baseline,
+# so the row has to say which gate it graded. Read off the FILENAME, like the
+# run date and the other arm markers, never off a CALIB atom.
+
+FIX10="$TMP/fixture-plan-gate"
+cp -r "$FIXTURE_SRC" "$FIX10"
+retro10() { bash "$HELPER" --cycle 0 --fixture "$FIX10" "$@" 2>&1; }
+rm -f "$FIX10/calib.txt"
+mkdir -p "$FIX10/calib"
+write_calib_at "$FIX10/calib/2026-09-08T1200Z-plan-gate-none.txt"
+
+REPORT_PG="$(retro10)"
+expect_line "a plan-gate artifact's weak-model row names plan_gate=none" \
+  "$REPORT_PG" "weak-model pass: 4/5 (run 2026-09-08, plan_gate=none)"
+
+# Composability: the every-arm name must still parse its date — the suffixes are
+# peeled BEFORE the date-shape match, in a loop, so order does not matter.
+FIX11="$TMP/fixture-all-arms-plan-gate"
+cp -r "$FIXTURE_SRC" "$FIX11"
+retro11() { bash "$HELPER" --cycle 0 --fixture "$FIX11" "$@" 2>&1; }
+rm -f "$FIX11/calib.txt"
+mkdir -p "$FIX11/calib"
+write_calib_at "$FIX11/calib/2026-09-08T1200Z-hooks-off-superpowers-off-bexec-opus-plan-gate-single.txt"
+
+REPORT_ALL_ARMS_PG="$(retro11)"
+expect_line "an every-arm artifact's weak-model row names all four markers" \
+  "$REPORT_ALL_ARMS_PG" "weak-model pass: 4/5 (run 2026-09-08, hooks=off, superpowers=off, bexec=opus, plan_gate=single)"
+
+# Control: the default (unset) plan-gate artifact never renders a plan_gate
+# marker — unset is the harness default, not an arm.
+refute_sub "a default plan-gate artifact is never labelled plan_gate=" \
+  "$REPORT_HOOKS_ON" "plan_gate="
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"

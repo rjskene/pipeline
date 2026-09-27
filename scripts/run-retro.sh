@@ -922,10 +922,12 @@ calib_provenance() {
   CALIB_HOOKS=""
   CALIB_SUPERPOWERS=""
   CALIB_BEXEC=""
+  CALIB_PLAN_GATE=""
   [ -n "$f" ] || return 0
   base="$(basename "$f" .txt)"
-  # #1409/#1412/#1414: a non-default arm suffixes its artifact `-hooks-off`,
-  # `-superpowers-off` and/or `-bexec-<M>` (composable, emitted in that order)
+  # #1409/#1412/#1414/#1429: a non-default arm suffixes its artifact
+  # `-hooks-off`, `-superpowers-off`, `-bexec-<M>` and/or `-plan-gate-<v>`
+  # (composable, emitted in that order)
   # — strip them (and remember the arm(s)) BEFORE the date-shape match below,
   # so both the bare and the T<HHMM>Z form are recognized regardless of arm.
   # Peeled in a LOOP, not a case over the combinations: two arms were three
@@ -934,6 +936,9 @@ calib_provenance() {
   while [ "$peeled" -eq 1 ]; do
     peeled=0
     case "$base" in
+      *-plan-gate-full)   CALIB_PLAN_GATE="full";   base="${base%-plan-gate-full}";   peeled=1 ;;
+      *-plan-gate-single) CALIB_PLAN_GATE="single"; base="${base%-plan-gate-single}"; peeled=1 ;;
+      *-plan-gate-none)   CALIB_PLAN_GATE="none";   base="${base%-plan-gate-none}";   peeled=1 ;;
       *-bexec-opus)   CALIB_BEXEC="opus";   base="${base%-bexec-opus}";   peeled=1 ;;
       *-bexec-sonnet) CALIB_BEXEC="sonnet"; base="${base%-bexec-sonnet}"; peeled=1 ;;
       *-superpowers-off)
@@ -1588,9 +1593,10 @@ build_full_report() {
   echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
 
   echo ""
-  # #1409/#1412/#1414: a non-default-arm artifact is tagged `hooks=off`,
-  # `superpowers=off` and/or `bexec=<M>` (composable) so it can never silently
-  # read as the baseline; the default arms stay unlabeled. Each marker is
+  # #1409/#1412/#1414/#1429: a non-default-arm artifact is tagged `hooks=off`,
+  # `superpowers=off`, `bexec=<M>` and/or `plan_gate=<v>` (composable) so it can
+  # never silently read as the baseline; the default arms stay unlabeled. Each
+  # marker is
   # independent of the run date, so an undated artifact still names its arms.
   CALIB_PROV=""
   [ -n "$CALIB_RUN_DATE" ] && calib_prov_add "run $CALIB_RUN_DATE"
@@ -1600,6 +1606,7 @@ build_full_report() {
   [ "$CALIB_HOOKS" = "off" ] && calib_prov_add "hooks=off"
   [ "$CALIB_SUPERPOWERS" = "off" ] && calib_prov_add "superpowers=off"
   [ -n "$CALIB_BEXEC" ] && calib_prov_add "bexec=$CALIB_BEXEC"
+  [ -n "$CALIB_PLAN_GATE" ] && calib_prov_add "plan_gate=$CALIB_PLAN_GATE"
   if [ -n "$CALIB_PROV" ]; then
     echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
   else
