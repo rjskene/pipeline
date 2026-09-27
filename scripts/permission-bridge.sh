@@ -47,6 +47,11 @@ die() { echo "permission-bridge: $*" >&2; exit 1; }
 # require_queued <id> — the queue file must exist before show/answer act on it.
 require_queued() {
   [ -n "${1:-}" ] || { usage; exit 2; }
+  # <id> is interpolated into a path, so refuse separators and traversal:
+  # `answer ../../x allow` must not write outside the queue dir (#1421 review).
+  case "$1" in
+    *[/\\]*|.|..|*..*) die "invalid request id '$1' (no path separators)" ;;
+  esac
   [ -f "$QUEUE_DIR/$1.json" ] \
     || die "no queued request with id '$1' in $QUEUE_DIR"
 }

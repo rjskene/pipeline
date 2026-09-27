@@ -189,6 +189,7 @@ run_dryrun_perms() { # <extra-env-assignment...> -- runs WITH the flag
     PIPELINE_LOGS_ENABLED=true \
     PIPELINE_RUNS_LOG_OVERRIDE="$RUNS_LOG" \
     PIPELINE_HEADLESS_PERMISSIONS="$perms" \
+    PIPELINE_PROJECT_ROOT="$PROJ" \
     bash .claude/scripts/spawn-claude.sh --dangerously-skip-permissions \
       "$PROJ/worktree" "$issue" slug tmux 2>/dev/null
   cd - >/dev/null

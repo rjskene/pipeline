@@ -108,7 +108,13 @@ def resolve_timeout() -> int:
         n = int(float(raw))
     except (TypeError, ValueError):
         return DEFAULT_TIMEOUT_SECONDS
-    return n if n > 0 else DEFAULT_TIMEOUT_SECONDS
+    if n <= 0:
+        return DEFAULT_TIMEOUT_SECONDS
+    # Clamp under the manifest's `timeout: 900`. A longer poll is SIGKILLed by
+    # the harness mid-wait, so NO envelope reaches stdout and the session gets
+    # no decision at all — the exact failure the 840-vs-900 margin prevents
+    # (#1421 review).
+    return min(n, DEFAULT_TIMEOUT_SECONDS)
 
 
 def issue_from_cwd(cwd: str) -> str:
@@ -140,7 +146,11 @@ def queue_id(data: dict) -> str:
     if explicit:
         return explicit
     head = _sanitize(data.get("session_id") or "").split("-")[0][:8] or "anon"
-    return f"req-{head}-{int(time.time() * 1000)}"
+    # os.getpid() disambiguates same-millisecond concurrent escalations within
+    # ONE session. Without it two parallel Bash calls can collapse onto a single
+    # <id>.json/<id>.answer pair, so one `allow` would authorize a request the
+    # operator never saw — a silent grant in a deny rail (#1421 review).
+    return f"req-{head}-{int(time.time() * 1000)}-{os.getpid()}"
 
 
 def write_queue_file(path: Path, payload: dict) -> None:

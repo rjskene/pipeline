@@ -367,6 +367,18 @@ Interactive fallback at a cycle boundary: `/reload-plugins` — a built-in the m
 
 ## 15. Headless permission bridge (issue #1421)
 
+> **LATENT under `auto` — expect an empty queue.** The launchers pass
+> `--permission-mode auto`, which escalates almost nothing, so in practice the
+> queue stays empty and `bridge_prompts=` reads `0`. The rail is proven end-to-end
+> under `--permission-mode manual`; it is the MODE, not the bridge, that decides
+> whether a human ever sees a prompt. Do not treat the watch loop below as the
+> thing standing between a headless run and an irreversible command until the mode
+> changes. See [docs/security-model.md](security-model.md).
+>
+> Never hand-write an answer file. Use `permission-bridge.sh answer` — it writes
+> via an atomic rename; a hand-rolled redirect can be read torn and resolve to a
+> spurious deny.
+
 NO launcher passes `--dangerously-skip-permissions` any more. `calibration-run.sh`,
 `evolve-loop.sh` and `spawn-claude.sh` all launch under `--permission-mode auto
 --permission-prompts none` and export a queue dir, which arms the

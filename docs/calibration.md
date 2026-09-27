@@ -112,6 +112,11 @@ Consequences:
 
 ## Permission bridge
 
+> **Expect `bridge_prompts=0` today.** The launchers pass `--permission-mode auto`,
+> which escalates almost nothing, so the queue usually stays empty and the watch
+> loop below has nothing to answer. The rail is proven (see #1421) but LATENT until
+> the mode moves to `manual` / `default`. See [docs/security-model.md](security-model.md).
+
 Headless runs no longer pass `--dangerously-skip-permissions`. They launch under
 `--permission-mode auto --permission-prompts none` with the `PermissionRequest`
 bridge hook as the escalation channel (issue #1421): an escalated tool call is
