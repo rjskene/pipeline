@@ -93,8 +93,8 @@ fi
 # `import`ed by module name); exec_module runs the top-level imports we guard.
 #
 # `< /dev/null` on the importlib probe is LOAD-BEARING, not tidiness. Three
-# entries (restrict_paths, block_deletions, log_subagent) call read_event_stdin
-# from top-level code, and this sweep DELETES signal.SIGALRM, which is the only
+# One entry (log_subagent) calls read_event_stdin from top-level code, and this
+# sweep DELETES signal.SIGALRM, which is the only
 # thing bounding that read. Inheriting a still-open stdin from the caller (an
 # interactive shell, a CI runner that leaves the pipe open) therefore hangs the
 # sweep for as long as the caller lives — measured at 6 s+ per entry against an
@@ -112,7 +112,7 @@ echo "Task 3: all subagent_log_utils importers stay win32 import-clean"
 # so exec_module raises SystemExit(0) and the sweep sees rc 0. If that
 # inertness gate ever moves below the stdin read, this entry hangs on the
 # inherited stdin (SIGALRM is deleted here) — which is the regression to catch.
-HOOKS=(enforce-comment-trust enforce-base-branch restrict_paths block_deletions \
+HOOKS=(enforce-comment-trust enforce-base-branch \
        log_subagent enforce-ci-wait check-ci-skip-markers enforce-path-c-delegation \
        capture_agent_cost _deny_log permission-bridge)
 for h in "${HOOKS[@]}"; do
