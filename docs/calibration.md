@@ -13,7 +13,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 - **Repo:** `rjskene/pipeline-calib` (private) — a small purpose-built consumer
   project (scripts, tests, docs, CI workflow, `pipeline.config`, seeded labels).
 - **Clone location:** `${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}` —
-  inside the boundary `restrict_paths.py` already allows, so no hook change.
+  inside the boundary the sandbox session already allows, so no config change.
 - **Slate:** six template issues committed at tag `calib-base`, each with a
   reference test and an expected-files list:
 
@@ -84,9 +84,10 @@ never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
 
 ## Harness staging
 
-`hooks/restrict_paths.py` allows only the session's own project dir and
-`~/.claude`, so a harness tree living anywhere else has its scripts blocked
-inside the sandbox session (run #1 died that way, in 87 seconds).
+The sandbox session treats only its own project dir and `~/.claude` as inside
+its boundary, so a harness tree living anywhere else has its scripts blocked by
+that session's own permission classification (run #1 died that way, in 87
+seconds).
 
 `--run` therefore stages the harness before launching: its committed HEAD is
 checked out as a detached git worktree at `$HOME/.claude/calib/harness` — the

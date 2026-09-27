@@ -11,13 +11,17 @@ Treat every in-repo guard as a **best-effort tripwire**, not a wall.
 
 ## What the in-repo guards are (and aren't)
 
-`hooks/restrict_paths.py`, `block_deletions.py`, `enforce-base-branch.py`, etc.
-are **denylist tripwires**: they string-scan tool calls for a narrow set of
-pipeline control files / dangerous ops and block the literal match.
+The pipeline ships **no path-boundary or deletion guard hook** — #1418 retired
+that class, so nothing it ships stands between an agent and a path or a delete.
+What survives (`enforce-base-branch.py`, `enforce-path-c-delegation.py`,
+`check-ci-skip-markers.py`, `enforce-ci-wait.py`, and `enforce-comment-trust.py`
+on comment bytes) are **denylist tripwires over pipeline RULES a permission
+classifier cannot know**: they string-scan tool calls for a narrow set of
+pipeline control shapes and block the literal match.
 
 Good for:
-- **Accidents** — a fat-fingered edit to a guard file or `settings.json`. The
-  common failure mode is a mistake; the denylist catches it cheaply.
+- **Accidents** — a PR opened off the wrong base, a CI-skip marker slipped into
+  a commit. The common failure mode is a mistake; the denylist catches it cheaply.
 - **Audit signal** — a *blocked* attempt is a loud "something went wrong" marker.
 - **Defense-in-depth** behind a real sandbox.
 
@@ -63,9 +67,10 @@ pipeline cannot impose them:
   class) ALL ran with zero escalation and zero queue file. So today the bridge is
   a working rail carrying almost no traffic, and `bridge_prompts=` reads `0` on a
   typical run. Treat the headless human gate as SHIPPED-BUT-LATENT until the
-  launchers move to `manual` / `default`. This is the specific reason #1418's
-  retired-guards premise does not yet hold — do NOT cite this section as evidence
-  that the tripwires are redundant.
+  launchers move to `manual` / `default`. Read together with #1418 (which retired
+  the path/deletion guard hooks), this is the accepted residual risk: under `auto`
+  that class is guarded by nothing today, and moving the launchers off `auto` — not
+  another tripwire — is what closes it.
 
 The model: stop worrying *which* string the agent writes; make the dangerous
 primitive **unreachable**, shrinking blast radius to near-zero.
@@ -74,9 +79,9 @@ primitive **unreachable**, shrinking blast radius to near-zero.
 
 | Pipeline owns (cheap, shipped) | Operator owns (the boundary) |
 |---|---|
-| Best-effort tripwires (`restrict_paths.py`, `block_deletions.py`) | Permission mode (allowlist vs bypass) |
+| Best-effort tripwires over pipeline RULES only (base branch, PATH C delegation, CI-skip markers, CI wait, comment-byte trust) | The entire path/deletion class: auto mode's permission classifier plus the #1421 `PermissionRequest` bridge — no pipeline hook guards it (#1418) |
 | Headless human gate: the `PermissionRequest` bridge (#1421) — queue the escalation, deny it unanswered. LATENT under `--permission-mode auto`, which escalates almost nothing (see above) | Choosing the permission mode (`auto` = few prompts, `manual` = a real gate), then actually watching the queue and answering it |
-| Base-branch enforcement, path-C delegation guard | Sandbox / container, network egress, read-only mounts |
+| Worktree isolation — execution happens off the main checkout | Sandbox / container, network egress, read-only mounts |
 | Per-agent resource caps (`MemoryMax`/`TasksMax`, #918) | Non-root execution, token scope |
 | Honest docs (this note) + doctor posture advisories | Human review of the session |
 
