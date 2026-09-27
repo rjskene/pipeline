@@ -101,8 +101,11 @@ cmd_pending() {
     [ -n "$f" ] || continue
     id="$(basename "$f" .json)"
     [ -e "$QUEUE_DIR/$id.answer" ] && continue
+    # tool=(malformed) rather than a bare `-`: post-#1426 the hook gates on a
+    # non-empty tool_name, so no FRESH queue file can have one — such a row is a
+    # pre-gate artifact and should be denied (or deleted), not allowed blind.
     printf '%s  issue=%s  tool=%s  input=%s\n' \
-      "$id" "$(field_of "$f" issue -)" "$(field_of "$f" tool_name -)" \
+      "$id" "$(field_of "$f" issue -)" "$(field_of "$f" tool_name '(malformed)')" \
       "$(preview_of "$f")"
   done < <(find "$QUEUE_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | sort)
 }

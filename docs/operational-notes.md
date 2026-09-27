@@ -364,6 +364,11 @@ continues and never retries that call, so a missed prompt costs one step, not th
 run. Two unanswered prompts in one executor still eat ~31 % of the default
 5400 s executor budget — that is the cost of not watching.
 
+A `pending` row rendered `tool=(malformed)` is a pre-#1426 malformed queue entry —
+a payload the hook queued before it gated on `hook_event_name` + `tool_name`, not
+a real escalation anyone is waiting on. Answer it `deny` (or delete the
+`<id>.json`/`<id>.answer` pair); never `allow` it.
+
 `permission-bridge.sh prune` drops answered pairs older than a day; unanswered
 requests are kept however old, because they are still open questions.
 
