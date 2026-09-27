@@ -234,7 +234,13 @@ def main() -> int:
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "session_id": data.get("session_id", ""),
         "cwd": cwd,
-        "tool_name": data.get("tool_name", ""),
+        # The already-gated `tool` local, NOT a fresh data.get("tool_name"):
+        # the gate accepts toolName too, so reading the snake key alone would
+        # record "" for a camelCase escalation — and `pending` renders an empty
+        # tool_name as `tool=(malformed)`, the label the operator notes say to
+        # deny as a dead pre-gate artifact. Post-gate `tool` is non-empty, so a
+        # FRESH queue file can never carry that label (#1426). Schema unchanged.
+        "tool_name": tool,
         "tool_input": data.get("tool_input", {}),
         "issue": issue_from_cwd(cwd),
     })

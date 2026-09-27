@@ -369,6 +369,39 @@ else
   fail_msg "9: took ${ELAPSED}s for four inert payloads — the hook still enters the answer poll"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "Case 10: a camelCase payload queues with tool_name populated"
+# ---------------------------------------------------------------------------
+# The #1426 gate accepts BOTH key spellings (hook_event_name/hookEventName,
+# tool_name/toolName), mirroring queue_id()'s tool_use_id/toolUseId tolerance. The
+# queue WRITER has to be equally tolerant, or a camelCase escalation passes the
+# gate, blocks for the full timeout as a REAL escalation, and yet records
+# tool_name="" — which `pending` renders `tool=(malformed)`, i.e. exactly the label
+# the operator notes say to `deny` as a dead pre-gate artifact. A live escalation
+# must never be presented to the operator as junk. Post-gate, `tool` is guaranteed
+# non-empty, so the queue file can always name the tool.
+Q10="$WORKDIR/q10"
+mkdir -p "$Q10"
+printf '{"hookEventName":"PermissionRequest","session_id":"sess-camel","cwd":"%s","toolName":"Bash","tool_input":{"command":"sudo -n id"}}' "$PROJ" \
+  | env PIPELINE_PERMISSION_BRIDGE_DIR="$Q10" PIPELINE_PERMISSION_BRIDGE_TIMEOUT=2 \
+    CLAUDE_PROJECT_DIR="$PROJ" python3 "$HOOK" >/dev/null 2>&1
+Q10_FILE="$(find "$Q10" -maxdepth 1 -name '*.json' -print -quit 2>/dev/null)"
+inc
+if [ -n "$Q10_FILE" ]; then
+  pass_msg "10: a camelCase PermissionRequest is queued (the gate accepts the spelling)"
+else
+  fail_msg "10: a camelCase PermissionRequest was not queued at all"
+fi
+inc
+Q10_TOOL="$(python3 -c '
+import json,sys
+print(json.load(open(sys.argv[1])).get("tool_name","MISSING"))' "$Q10_FILE" 2>/dev/null)"
+if [ "$Q10_TOOL" = "Bash" ]; then
+  pass_msg "10: the queue file records tool_name=Bash, so pending cannot mislabel it (malformed)"
+else
+  fail_msg "10: the queue file recorded tool_name='$Q10_TOOL' — a live escalation renders as tool=(malformed)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
