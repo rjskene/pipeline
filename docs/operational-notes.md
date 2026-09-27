@@ -293,13 +293,22 @@ the CR is invisible in most output. This bit many scripts across the tree.
 ## 12. Headless / unattended runs (issue #1286)
 
 When `PIPELINE_HEADLESS` is true, fullsend and every stage it dispatches must
-not end a turn on an operator question — at each of the five decision sites
+not end a turn on an operator question — at each of the six decision sites
 (`merge-policy`, `unread-config-knob`, `stall-triage`, `ci-red-budget`,
-`permission-denied`) it
+`permission-denied`, `ci-wait`) it
 applies the documented default, logs one
 `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continues;
 see `skills/fullsend/SKILL.md` for the full contract. Interactive mode (the
 knob unset or false) is unchanged — the operator prompts stay.
+
+**The CI-wait yield (#1424).** Print mode waits only on dispatched background
+`Agent`s (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, #1306), so a backgrounded
+Bash or `Monitor` CI poll lets the process exit the moment the model stops
+calling tools — stranding the slate. Poll CI in the FOREGROUND. The
+`enforce-ci-wait` Stop hook has two branches: the unchanged `evaluate-issue-pr`
+sequence gate, and a headless fullsend-scoped slate gate that denies Stop while
+any slate issue is `in-progress` or unparked `pr-open`, capped at 40 blocks per
+session then fail-open.
 
 ## 13. Skill fences carry no awk field references (issue #1287)
 
