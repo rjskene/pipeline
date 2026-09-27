@@ -111,7 +111,7 @@ When `PIPELINE_HEADLESS=true`, fullsend and every dispatched stage MUST NOT end 
 - **stall-triage** covers Step 6/7's four-option `agent-stalled` prompt. `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the remaining budget.
 - **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — retry autonomously; on exhaustion mark Flagged, skip `evaluate-issue-pr`, continue the wave.
 - **permission-denied** covers a `PermissionRequest` bridge timeout or deny. `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=bridge-timeout|operator-deny` — skip the step, never retry.
-- **ci-wait** covers every wait on PR CI; never end a turn while CI or an agent is still running. `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — wait FOREGROUND via `timeout 590 gh pr checks <PR> --repo "$PIPELINE_REPO" --watch --interval 30`, repeated across turns until terminal; never `Monitor`, never `run_in_background`, never narrate waiting.
+- **ci-wait** covers every wait on PR CI; never end a turn while CI or an agent is still running. `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — the orchestrator waits FOREGROUND via `timeout 590 gh pr checks <PR> --repo "$PIPELINE_REPO" --watch --interval 30`, repeated across turns until terminal; never `Monitor`, never `run_in_background`, never narrate waiting.
 
 Interactive mode (knob unset/false) is unchanged — operator prompts stay.
 
