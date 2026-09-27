@@ -109,8 +109,8 @@ cat > "$HARNESS/.claude-plugin/plugin.json" <<'PLUGIN'
   "name": "pipeline",
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/block_deletions.py"}]},
-      {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/restrict_paths.py"}]}
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py"}]},
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py"}]}
     ],
     "Stop": [
       {"matcher": "*", "hooks": [{"type": "command", "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py"}]}
@@ -357,8 +357,8 @@ expect_sub "launch line drives /pipeline:fullsend" "$LAUNCH" "/pipeline:fullsend
 for id in 8001 8002 8003 8004 8005; do
   expect_sub "launch line carries issue id $id" "$LAUNCH" "$id"
 done
-# The session loads the STAGED harness, not the checkout under test: its own
-# restrict_paths hook allows only the sandbox project dir and ~/.claude, so a
+# The session loads the STAGED harness, not the checkout under test: it counts
+# only the sandbox project dir and ~/.claude as inside its own boundary, so a
 # plugin dir anywhere else is unreadable from inside the run.
 expect_sub "launch line passes --plugin-dir <staged harness>" "$LAUNCH" "--plugin-dir $STAGE"
 expect_sub "launch line exports CLAUDE_PLUGIN_ROOT=<staged harness>" "$LAUNCH" "CLAUDE_PLUGIN_ROOT=$STAGE"
@@ -1023,9 +1023,9 @@ fi
 # ---------------------------------------------------------------------------
 scenario "Scenario 10: --run stages the harness as a detached worktree"
 # ---------------------------------------------------------------------------
-# Asserted against the --run Scenarios 8/9 just performed. The sandbox
-# session's restrict_paths hook allows only its own project dir and ~/.claude,
-# so a harness outside ~/.claude has its own scripts blocked from inside the
+# Asserted against the --run Scenarios 8/9 just performed. The sandbox session
+# counts only its own project dir and ~/.claude as inside its boundary, so a
+# harness outside ~/.claude has its own scripts blocked from inside the
 # run. --run therefore stages the harness HEAD beside the sandbox clone and
 # launches THAT, while every other harness role (template, slate, doctor,
 # artifacts) keeps pointing at the ORIGINAL checkout.

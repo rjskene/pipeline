@@ -211,10 +211,11 @@ CALIB_OUT_DIR="$HARNESS/docs/retros/calib"
 abs_path() { ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"; }
 
 # needs_staging — TRUE when the harness lives OUTSIDE ~/.claude. The sandbox
-# session's own restrict_paths hook allows exactly two roots: the session's
-# project dir (the sandbox) and ~/.claude. A --plugin-dir anywhere else has its
-# own scripts blocked from inside the run — run #1 died 87 s in that way. See
-# stage_harness().
+# session classifies every read/write against its OWN project boundary: the
+# session's project dir (the sandbox) and ~/.claude pass unprompted, anything
+# else needs an escalation nobody is there to grant. A --plugin-dir anywhere
+# else therefore has its own scripts blocked from inside the run — run #1 died
+# 87 s in that way. See stage_harness().
 needs_staging() {
   local h c
   h="$(abs_path "$HARNESS")"
