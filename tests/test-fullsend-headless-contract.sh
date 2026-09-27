@@ -409,6 +409,20 @@ else
   pass_msg "A9: the headless docs section uses file-level links only (no \`.md#anchor\`)"
 fi
 
+# A9b — the operator docs must enumerate the SAME closed vocabulary as the
+#       skill, or the two lists drift and an operator reading the docs cannot
+#       tell which decision sites have a documented default.
+scenario "A9b: the docs headless section names every site in the closed vocabulary"
+
+for site in "${SITES[@]}"; do
+  inc
+  if grep -qF -- "$site" <<<"$DOCS_SECTION"; then
+    pass_msg "A9b: docs headless section names site '$site'"
+  else
+    fail_msg "A9b: site '$site' missing from the docs headless section — the operator list has drifted from the skill's closed vocabulary"
+  fi
+done
+
 # ---------------------------------------------------------------------------
 # A10 — negative control. Strip the section from a throwaway copy and re-run
 #       the A1/A3/A4 predicates against it: they MUST fail there. Guards
