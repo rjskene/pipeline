@@ -245,6 +245,31 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+scenario "pending: a malformed row (empty tool_name) is labelled, not blank"
+# ---------------------------------------------------------------------------
+# #1426: the pre-gate bridge hook queued whatever payload it read, so a
+# hook-exec'ing test produced a `tool_name=""` request that the operator had to
+# answer by hand. Post-gate no FRESH queue file can have an empty tool_name, so
+# such a row is a pre-#1426 artifact — `pending` must say so rather than render a
+# bare `tool=-`, which reads like a well-formed request with a missing field.
+seed q-mal "" "" ""
+run pending
+inc
+if printf '%s\n' "$OUT" | grep '^q-mal ' | grep -qF 'tool=(malformed)'; then
+  pass_msg "an empty tool_name renders as tool=(malformed)"
+else
+  fail_msg "q-mal did not render tool=(malformed) (line: $(printf '%s\n' "$OUT" | grep '^q-mal '))"
+fi
+inc
+# Control: a still-unanswered WELL-FORMED row in the same queue keeps its real
+# tool name, so the marker is discriminating and not a blanket relabel.
+if printf '%s\n' "$OUT" | grep '^q-bad ' | grep -qF 'tool=Bash'; then
+  pass_msg "a well-formed row still renders its real tool name (tool=Bash)"
+else
+  fail_msg "the control row q-bad lost its tool name (line: $(printf '%s\n' "$OUT" | grep '^q-bad '))"
+fi
+
+# ---------------------------------------------------------------------------
 scenario "prune: answered + older than a day only"
 # ---------------------------------------------------------------------------
 PQ="$WORKDIR/prune"; mkdir -p "$PQ"

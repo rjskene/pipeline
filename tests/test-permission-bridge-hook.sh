@@ -305,6 +305,112 @@ else
   fail_msg "8: two escalations collided on one queue file — one would be unanswerable"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "Case 9: a non-PermissionRequest payload is inert — no queue file, no wait"
+# ---------------------------------------------------------------------------
+# The #1426 stall: tests/test-subagent-log-utils-win32.sh execs every hook in
+# hooks/ with a NON-PermissionRequest payload (or none at all). Inside a
+# bridge-armed session that exec inherited PIPELINE_PERMISSION_BRIDGE_DIR, so the
+# hook queued a `tool_name=""` garbage request and then blocked for the full
+# bridge timeout (840 s live) waiting for an answer no operator was expecting.
+# The gate: require hook_event_name == "PermissionRequest" AND a non-empty
+# tool_name before touching the queue. Anything else exits 0 with EMPTY stdout —
+# the same "expressed no opinion" semantics as the env-inertness gate in Case 1,
+# never a deny envelope: emitting a decision for an event class that does not
+# consume one would fabricate a verdict. "Anything else" includes valid JSON that
+# is not an OBJECT: `read_event_stdin()` returns it verbatim, and a truthy
+# non-dict (a bare string or number) makes `.get()` raise, which without a type
+# check lands on the module-level crash handler and emits a `deny` envelope plus a
+# traceback in the error log for an event that was never an escalation.
+Q9="$WORKDIR/q9"
+P9_LABELS=(
+  "empty stdin"
+  "no hook_event_name"
+  "PreToolUse-shaped payload"
+  "PermissionRequest with an empty tool_name (#1426 wire shape)"
+  "valid JSON that is not an object (string)"
+  "valid JSON that is not an object (number)"
+)
+P9_PAYLOADS=(
+  ''
+  '{"tool_name":"Bash","tool_input":{}}'
+  '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{}}'
+  '{"hook_event_name":"PermissionRequest","tool_name":"","tool_input":{},"session_id":""}'
+  '"not an object"'
+  '5'
+)
+T0=$(date +%s)
+for i in "${!P9_PAYLOADS[@]}"; do
+  OUT="$(printf '%s' "${P9_PAYLOADS[$i]}" | env PIPELINE_PERMISSION_BRIDGE_DIR="$Q9" \
+          PIPELINE_PERMISSION_BRIDGE_TIMEOUT=3 \
+          CLAUDE_PROJECT_DIR="$PROJ" python3 "$HOOK" 2>/dev/null)"
+  RC=$?
+  inc
+  if [ "$RC" -eq 0 ]; then
+    pass_msg "9: ${P9_LABELS[$i]} -> exits 0"
+  else
+    fail_msg "9: ${P9_LABELS[$i]} -> exited $RC"
+  fi
+  inc
+  if [ -z "$OUT" ]; then
+    pass_msg "9: ${P9_LABELS[$i]} -> emits NOTHING on stdout (no deny envelope)"
+  else
+    fail_msg "9: ${P9_LABELS[$i]} -> emitted stdout: $(printf '%q' "$OUT")"
+  fi
+done
+T1=$(date +%s)
+ELAPSED=$((T1 - T0))
+inc
+Q9_FILES="$(find "$Q9" -maxdepth 1 -name '*.json' 2>/dev/null)"
+if [ "$(printf '%s' "$Q9_FILES" | grep -c . )" -eq 0 ]; then
+  pass_msg "9: no queue file is written for any non-PermissionRequest payload"
+else
+  fail_msg "9: a malformed payload was queued: $(printf '%s' "$Q9_FILES" | tr '\n' ' ')"
+fi
+inc
+# With PIPELINE_PERMISSION_BRIDGE_TIMEOUT=3 an UNGATED hook burns ~3 s for each of
+# the four OBJECT-shaped sub-cases (the two non-object ones raise instead), so a
+# 5 s ceiling discriminates gated from ungated without being flaky on a loaded
+# host.
+if [ "$ELAPSED" -le 5 ]; then
+  pass_msg "9: every shape resolves without waiting (elapsed=${ELAPSED}s)"
+else
+  fail_msg "9: took ${ELAPSED}s for the inert payloads — the hook still enters the answer poll"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "Case 10: a camelCase payload queues with tool_name populated"
+# ---------------------------------------------------------------------------
+# The #1426 gate accepts BOTH key spellings (hook_event_name/hookEventName,
+# tool_name/toolName), mirroring queue_id()'s tool_use_id/toolUseId tolerance. The
+# queue WRITER has to be equally tolerant, or a camelCase escalation passes the
+# gate, blocks for the full timeout as a REAL escalation, and yet records
+# tool_name="" — which `pending` renders `tool=(malformed)`, i.e. exactly the label
+# the operator notes say to `deny` as a dead pre-gate artifact. A live escalation
+# must never be presented to the operator as junk. Post-gate, `tool` is guaranteed
+# non-empty, so the queue file can always name the tool.
+Q10="$WORKDIR/q10"
+mkdir -p "$Q10"
+printf '{"hookEventName":"PermissionRequest","session_id":"sess-camel","cwd":"%s","toolName":"Bash","tool_input":{"command":"sudo -n id"}}' "$PROJ" \
+  | env PIPELINE_PERMISSION_BRIDGE_DIR="$Q10" PIPELINE_PERMISSION_BRIDGE_TIMEOUT=2 \
+    CLAUDE_PROJECT_DIR="$PROJ" python3 "$HOOK" >/dev/null 2>&1
+Q10_FILE="$(find "$Q10" -maxdepth 1 -name '*.json' -print -quit 2>/dev/null)"
+inc
+if [ -n "$Q10_FILE" ]; then
+  pass_msg "10: a camelCase PermissionRequest is queued (the gate accepts the spelling)"
+else
+  fail_msg "10: a camelCase PermissionRequest was not queued at all"
+fi
+inc
+Q10_TOOL="$(python3 -c '
+import json,sys
+print(json.load(open(sys.argv[1])).get("tool_name","MISSING"))' "$Q10_FILE" 2>/dev/null)"
+if [ "$Q10_TOOL" = "Bash" ]; then
+  pass_msg "10: the queue file records tool_name=Bash, so pending cannot mislabel it (malformed)"
+else
+  fail_msg "10: the queue file recorded tool_name='$Q10_TOOL' — a live escalation renders as tool=(malformed)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

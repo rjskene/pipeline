@@ -22,7 +22,9 @@
 #   TESTS_DIR=path scripts/run-test-suite.sh --changed-only
 #   PIPELINE_TEST_ROOT_OVERRIDE=1 scripts/run-test-suite.sh   # keep the caller's
 #     own PIPELINE_PROJECT_ROOT/CLAUDE_PLUGIN_ROOT/PIPELINE_USE_LOCAL_PLUGIN
-#     instead of scrubbing them (unused elsewhere in this repo today)
+#     instead of scrubbing them (unused elsewhere in this repo today). ROOTS
+#     ONLY — the permission-bridge scrub (#1426) is unconditional and this hatch
+#     does not re-arm it.
 #
 # --chunk k/n (issue #1208) is the FOREGROUND escape hatch for suites too large
 # to fit inside a single Bash-call timeout: it runs only the k-th of n
@@ -84,6 +86,13 @@ scrub_roots() {
   if [ "${PIPELINE_TEST_ROOT_OVERRIDE:-0}" != "1" ]; then
     unset PIPELINE_PROJECT_ROOT CLAUDE_PLUGIN_ROOT PIPELINE_USE_LOCAL_PLUGIN
   fi
+  # Permission-bridge scrub (#1426) — UNCONDITIONAL, outside the root-override
+  # hatch above: a bridge-armed headless session otherwise has every
+  # hook-exec'ing test queue a malformed request against the LIVE queue and then
+  # block for the bridge timeout (840 s) waiting for an operator answer nobody
+  # was expecting. No test needs the live queue — the bridge tests each set
+  # these knobs themselves, per invocation.
+  unset PIPELINE_PERMISSION_BRIDGE_DIR PIPELINE_PERMISSION_BRIDGE_TIMEOUT
 }
 scrub_roots
 

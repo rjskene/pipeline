@@ -112,11 +112,19 @@ echo "Task 3: all subagent_log_utils importers stay win32 import-clean"
 # so exec_module raises SystemExit(0) and the sweep sees rc 0. If that
 # inertness gate ever moves below the stdin read, this entry hangs on the
 # inherited stdin (SIGALRM is deleted here) — which is the regression to catch.
+# That var is now EXPLICITLY scrubbed with `env -u` below (#1426), so the sweep
+# cannot inherit a live queue dir from a bridge-armed session, queue a malformed
+# request and then block for the bridge timeout. Strictly belt-and-braces, not
+# load-bearing: the hook's own env and payload-shape gates already hold here
+# (including when this sweep is hand-run outside the runner), and the runner
+# scrubs the same two knobs in scrub_roots(). `env -u` just makes the precondition
+# this Task ALREADY asserts ("with the dir unset ...") true by construction rather
+# than by whatever the caller happened to export.
 HOOKS=(enforce-comment-trust enforce-base-branch \
        log_subagent enforce-ci-wait check-ci-skip-markers enforce-path-c-delegation \
        capture_agent_cost _deny_log permission-bridge)
 for h in "${HOOKS[@]}"; do
-  if python3 -c "
+  if env -u PIPELINE_PERMISSION_BRIDGE_DIR python3 -c "
 import sys, signal
 sys.modules['fcntl'] = None
 if hasattr(signal,'SIGALRM'): del signal.SIGALRM
