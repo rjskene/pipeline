@@ -14,7 +14,7 @@ set -uo pipefail
 #   (e) doctor.sh's array and skills/doctor/SKILL.md stay in lockstep
 #   (f) the consumer-writes allow-list drops restrict_paths.py and every
 #       remaining entry resolves on disk
-#   (g) no surviving file under hooks/ mentions either basename
+#   (g) no surviving TRACKED file under hooks/ mentions either basename
 #   (h) tests/test-command-mask-unittest.sh is the sole discoverable runner for
 #       tests/test_command_mask.py (the deleted test-block-deletions-hook.sh was
 #       its only entrypoint; the suite runner globs test*.sh, never *.py)
@@ -160,19 +160,47 @@ else
   fail_msg "(f) allow-list entries do not exist:$missing_entries"
 fi
 
-# --- (g) nothing under hooks/ mentions either basename ----------------------
+# --- (g) no TRACKED file under hooks/ mentions either basename --------------
 # Bare stems count too: docstrings that name `restrict_paths` as the example
 # _deny_log stem, or command_mask.py's "shared by" list, are stale references
 # to code the plugin no longer ships.
-echo "(g) no file under hooks/ mentions a retired basename or stem"
-for h in "${RETIRED[@]}" "${RETIRED[@]%.py}"; do
-  hits="$(grep -rlF "$h" "$REPO_ROOT/hooks" 2>/dev/null || true)"
-  if [ -z "$hits" ]; then
-    pass_msg "(g) hooks/ is free of $h"
-  else
-    fail_msg "(g) $h still referenced under hooks/: $(printf '%s' "$hits" | tr '\n' ' ')"
-  fi
-done
+#
+# Scope is TRACKED files only (`git ls-files hooks/`). Generated Python bytecode
+# (hooks/__pycache__/*.pyc) is EXCLUDED for the same reason
+# scripts/check-no-consumer-claude-writes.sh:30-43 excludes it: it is compiled
+# output, not source, and its binary content embeds the module name of every
+# hook that was ever imported in the worktree. Python materializes those .pyc
+# files on import and `git merge` never removes gitignored files, so a stale
+# block_deletions / restrict_paths .pyc outlives the merge on any checkout that
+# ran the guards before they were retired — scanning it would red this test
+# forever over code the plugin no longer ships.
+echo "(g) no tracked file under hooks/ mentions a retired basename or stem"
+HOOK_FILES="$(cd "$REPO_ROOT" && git ls-files -- hooks/ 2>/dev/null || true)"
+if [ -z "$HOOK_FILES" ]; then
+  # Not a git checkout (tarball install): fall back to a filesystem walk that
+  # applies the same bytecode exclusion, so the assertion is never vacuous.
+  HOOK_FILES="$(cd "$REPO_ROOT" && find hooks -type f \
+    -not -path '*/__pycache__/*' -not -name '*.pyc' 2>/dev/null || true)"
+fi
+if [ -z "$HOOK_FILES" ]; then
+  fail_msg "(g) no tracked file under hooks/ to scan — the assertion would be vacuous"
+else
+  for h in "${RETIRED[@]}" "${RETIRED[@]%.py}"; do
+    hits=""
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      [ -f "$REPO_ROOT/$f" ] || continue
+      if grep -qF -- "$h" "$REPO_ROOT/$f" 2>/dev/null; then
+        hits="$hits $f"
+      fi
+    done <<<"$HOOK_FILES"
+    if [ -z "$hits" ]; then
+      pass_msg "(g) no tracked file under hooks/ mentions $h"
+    else
+      fail_msg "(g) $h still referenced by tracked file(s) under hooks/:$hits"
+    fi
+  done
+fi
 
 # --- (h) sole discoverable runner for tests/test_command_mask.py ------------
 echo "(h) tests/test-command-mask-unittest.sh is the sole command_mask runner"

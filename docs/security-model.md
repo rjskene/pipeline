@@ -95,6 +95,26 @@ primitive **unreachable**, shrinking blast radius to near-zero.
   development in the repo that is its own substrate. The boundary for dogfooding
   is the operator's session posture, same as everywhere else.
 
+- **The retired path/deletion deny classes (#1418).** Retiring the two guards
+  gave up more than the obvious recursive force-delete outside the workspace.
+  The retired deletion guard also denied a set of non-`rm` destructive forms:
+  `git reset --hard` (drops commits), `git clean` with `-f` (drops untracked
+  files), `truncate -s 0`, the clobbering redirect `>| <file>`,
+  `cp /dev/null <file>`, and `dd … of=<file>` carrying `if=/dev/null`,
+  `if=/dev/zero` or `count=0`. The retired path guard also denied Edit/Write
+  against `.claude/settings.json`, `.claude/settings.local.json` and
+  `.claude/hooks/` — the hook-disarm class, where a single write switches every
+  remaining guard off. All of that is now governed by auto mode's permission
+  classifier plus the #1421 `PermissionRequest` bridge rather than a hard deny.
+  **Accepted** per the operator decision on #1418 (2026-09-26, reaffirmed
+  2026-09-27): across the preceding 7 days the two guards produced 77
+  false-positive denials and zero true catches, so they cost real operator
+  throughput and bought nothing. The substitute is weak today — as
+  `## The real boundary` records, a probe ran the hard reset, the untracked-file
+  force-clean and the session-settings overwrite under `--permission-mode auto`
+  with zero escalation and no queue file. Moving the launchers off `auto` — not
+  another tripwire — is what actually closes this.
+
 ## Where hardening IS worth it
 
 Tightening an **allowlist** is the model that works, so over-broad *allow*

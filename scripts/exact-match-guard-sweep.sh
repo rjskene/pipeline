@@ -77,8 +77,8 @@
 #   - SELF-REFERENTIAL OUTPUT: run from this repo with the default root, the
 #     sweep reports hits from the plugin's own fixtures (e.g.
 #     `tests/test_command_mask.py` and the heredoc fixtures inside
-#     `tests/test-exact-match-guard-sweep.sh`). Those are
-#     fixtures, not real guards — do not read them as consumer findings.
+#     `tests/test-exact-match-guard-sweep.sh`). Those are fixtures, not real
+#     guards — do not read them as consumer findings.
 
 set -uo pipefail
 
