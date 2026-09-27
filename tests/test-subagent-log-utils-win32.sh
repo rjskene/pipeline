@@ -92,9 +92,9 @@ fi
 # Loads each hook file via importlib (filenames use hyphens so they cannot be
 # `import`ed by module name); exec_module runs the top-level imports we guard.
 #
-# `< /dev/null` on the importlib probe is LOAD-BEARING, not tidiness. Three
-# One entry (log_subagent) calls read_event_stdin from top-level code, and this
-# sweep DELETES signal.SIGALRM, which is the only
+# `< /dev/null` on the importlib probe is LOAD-BEARING, not tidiness. One entry
+# (log_subagent) calls read_event_stdin from top-level code, and this sweep
+# DELETES signal.SIGALRM, which is the only
 # thing bounding that read. Inheriting a still-open stdin from the caller (an
 # interactive shell, a CI runner that leaves the pipe open) therefore hangs the
 # sweep for as long as the caller lives — measured at 6 s+ per entry against an
