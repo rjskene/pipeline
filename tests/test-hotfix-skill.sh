@@ -6,7 +6,7 @@ set -euo pipefail
 # restoration on EXIT/ERR/INT, lifecycle-bypass invariants (no pipeline
 # labels applied, no evaluate-issue-plan/evaluate-issue-pr invocation), PR
 # targets PIPELINE_BASE_BRANCH, PATH-D boundary callout, and the
-# restrict_paths.py / issue #353 safety notes.
+# path-construction / issue #353 safety notes.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILL="$REPO_ROOT/skills/hotfix/SKILL.md"
@@ -106,9 +106,8 @@ assert_contains "PIPELINE_BASE_BRANCH"  "PR targets configured base branch"
 # PATH-D boundary callout.
 assert_contains "PATH D"                "documents PATH D boundary"
 
-# Path-safety / restrict_paths.py history.
-assert_contains "issue #353"            "calls out restrict_paths.py hook-bug family"
-assert_contains "restrict_paths.py"     "references the restrict_paths.py hook by name"
+# Path-safety / issue #353 history.
+assert_contains "issue #353"            "calls out the issue #353 boundary-bug family as path-construction history"
 
 # Worktree helper reuse.
 assert_contains "setup-worktree.sh"     "reuses existing worktree helper"
