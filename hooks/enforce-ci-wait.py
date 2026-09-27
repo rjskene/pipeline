@@ -340,10 +340,17 @@ def _gh_issue_labels(issue_number: str):
 def _unfinished(labels, manual_merge: bool) -> str | None:
     """The label proving this slate issue still needs the orchestrator, or None.
 
+    `merged` is terminal and wins over ANY stale lifecycle label:
+    finalize-issue-labels.sh falls back to `--add-label merged` alone when the
+    combined add+strip edit fails, warning "lifecycle labels may be stale"
+    (#888), so a merged issue can still carry `pr-open`.
+
     `--manual-merge` makes evaluate-issue-pr skip its merge step entirely and
     apply NO label, so under that flag `pr-open` is the finished state — without
     this arm a --manual-merge run would burn all ORCH_BLOCK_CAP denials.
     """
+    if "merged" in labels:
+        return None
     if "in-progress" in labels:
         return "in-progress"
     if manual_merge:

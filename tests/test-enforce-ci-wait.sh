@@ -467,6 +467,18 @@ RC=$(run_hook "$(orch_payload orch-9k)" STUB_GH_LABELS="in-progress")
 printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
 if [ "$RC" = "2" ]; then pass_msg "exit 2 (config fallback)"; else fail_msg "expected exit 2, got $RC"; fi
 
+# --- Test 9m: merged + STALE pr-open is finished -> exit 0 ---
+# scripts/finalize-issue-labels.sh falls back to `--add-label merged` ALONE when
+# the combined add+strip edit fails (#888), warning "lifecycle labels may be
+# stale". A merged issue that kept `pr-open` must NOT be read as unfinished, or
+# a fully-merged slate burns every one of the 40 denials.
+echo "Test 9m: merged + stale pr-open -> exit 0"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9m)" PIPELINE_HEADLESS=true STUB_GH_LABELS=$'merged\npr-open')
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (merged wins over stale pr-open)"; else fail_msg "expected exit 0, got $RC"; fi
+
 # --- Test 9l: --manual-merge parks pr-open (no LABEL records the flag) -> exit 0 ---
 echo "Test 9l: --manual-merge in the slate command + pr-open -> exit 0"
 inc
