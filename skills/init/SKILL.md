@@ -46,14 +46,14 @@ script `scripts/init.sh` runs five phases:
    `PIPELINE_TYPECHECK_CMD="true"`; answering "no CI" writes
    `PIPELINE_CI_CHECK_ENABLED=""`. The generated config also ships the
    per-path execute MODEL routing knobs matching `pipeline.config.example`:
-   `PIPELINE_PATH_D_MODEL_EXECUTE=sonnet` and `PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"`
-   **active** at the #1042 Sonnet-on-execute default, and
-   `#PIPELINE_PATH_B_MODEL_EXECUTE=opus` **commented** (#1420 flipped PATH B's
-   unset default to `opus` when the two-agent execute lane collapsed to one agent;
-   the default lives at the read site per #1052, so `init` must not pin it). A fresh
-   install therefore runs Sonnet on all PATH D execute and Opus on PATH B; an
-   operator opts PATH D out with `=opus` / `low-blast`, and buys the cheap PATH B
-   lane back with `PIPELINE_PATH_B_MODEL_EXECUTE=sonnet`. Refuses to clobber an
+   `PIPELINE_PATH_B_ELIGIBLE_SCOPE="all"` **active**, and
+   `#PIPELINE_PATH_B_MODEL_EXECUTE=opus` / `#PIPELINE_PATH_D_MODEL_EXECUTE=opus`
+   **commented** (#1420/#1428: both paths' unset default is now `opus` — the
+   two-agent execute lane that made a cheap PATH B safe is gone, and the
+   Sonnet-vs-Opus executor split never moved cost on PATH D either; the default
+   lives at the read site per #1052, so `init` must not pin it). A fresh
+   install therefore runs Opus on all PATH B/D execute; an operator buys the
+   cheap Sonnet lane back per-path with `=sonnet`. Refuses to clobber an
    existing config without `--force`.
 3. **Gitignore** — appends `pipeline.config` to `.gitignore` (host-specific;
    idempotent).
