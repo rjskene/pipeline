@@ -52,7 +52,17 @@ GH_TIMEOUT_SECONDS = 10
 ORCH_BLOCK_CAP = 40
 FULLSEND_CMD = "/pipeline:fullsend"
 FULLSEND_CMD_RE = re.compile(re.escape(FULLSEND_CMD))
-COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+COMMAND_NAME_RE = re.compile(r"<command-name>")
+# The slash-command shape, bound to the INVOKED command: <command-args> is read
+# only when it belongs to a `/pipeline:fullsend` <command-name>, so another
+# command's args (e.g. `/pipeline:evolve start --cycles 101`) are never parsed as
+# a slate and a bare MENTION of fullsend in the prose does not pull a session
+# into scope.
+FULLSEND_INVOCATION_RE = re.compile(
+    r"<command-name>\s*" + re.escape(FULLSEND_CMD) + r"\s*</command-name>\s*"
+    r"(?:<command-args>(.*?)</command-args>)?",
+    re.DOTALL,
+)
 ISSUE_ID_RE = re.compile(r"\b(\d{1,7})\b")
 ROLLUP_RE = re.compile(r"\bgh\s+pr\s+view\s+(\d+)\b.*--json\s+statusCheckRollup")
 WATCH_RE = re.compile(r"\bgh\s+pr\s+checks\s+(\d+)\b.*--watch\b")
@@ -295,21 +305,26 @@ def _slate_from_transcript(path) -> tuple[list[str], set[str]]:
     The real slash-command shape is
       <command-name>/pipeline:fullsend</command-name>
       <command-args>1421 1418 --manual-merge</command-args>
-    so <command-args> is read when present, with the bare-prose remainder
-    (`/pipeline:fullsend 1421 1418`) as the fallback. Only bare integers become
-    issue ids; `--`-prefixed tokens become flags.
+    so <command-args> is read when it belongs to a fullsend <command-name>, with
+    the bare-prose remainder (`/pipeline:fullsend 1421 1418`) as the fallback for
+    a message carrying no command tags at all. A message that invoked a
+    DIFFERENT slash command is out of scope even when its prose mentions
+    fullsend. Only bare integers become issue ids; `--`-prefixed tokens become
+    flags.
     """
     if not path:
         return [], set()
     text = _first_user_text(path)
-    if not FULLSEND_CMD_RE.search(text):
-        return [], set()
-    match = COMMAND_ARGS_RE.search(text)
+    match = FULLSEND_INVOCATION_RE.search(text)
     if match:
-        argtext = match.group(1)
-    else:
+        argtext = match.group(1) or ""
+    elif COMMAND_NAME_RE.search(text):
+        return [], set()          # a different slash command was invoked
+    elif FULLSEND_CMD_RE.search(text):
         tail = text.split(FULLSEND_CMD, 1)[1].splitlines()
         argtext = tail[0] if tail else ""
+    else:
+        return [], set()
     tokens = argtext.split()
     ids = [t for t in tokens if ISSUE_ID_RE.fullmatch(t)]
     flags = {t for t in tokens if t.startswith("--")}

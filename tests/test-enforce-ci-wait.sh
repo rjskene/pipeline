@@ -351,6 +351,10 @@ seed_transcript() {
 SLATE_CONTENT='<command-message>pipeline:fullsend</command-message>\n<command-name>/pipeline:fullsend</command-name>\n<command-args>101 102</command-args>'
 SLATE_CONTENT_MM='<command-message>pipeline:fullsend</command-message>\n<command-name>/pipeline:fullsend</command-name>\n<command-args>101 102 --manual-merge</command-args>'
 PROSE_CONTENT='please review the open PRs and tell me which ones are green'
+# A DIFFERENT slash command whose args carry digits, plus a fullsend MENTION in
+# trailing prose: the scope check must bind to the invoked <command-name>, not to
+# any occurrence of the string, or `--cycles 101` is parsed as issue #101.
+OTHER_CMD_CONTENT='<command-message>pipeline:evolve</command-message>\n<command-name>/pipeline:evolve</command-name>\n<command-args>start --cycles 101</command-args>\nresume the /pipeline:fullsend slate afterwards'
 
 orch_payload() {
   printf '{"session_id":"%s","cwd":"%s","transcript_path":"%s"}' "$1" "$PROJ" "$TRANSCRIPT"
@@ -466,6 +470,14 @@ printf 'PIPELINE_HEADLESS="true"\n' >> "$PROJ/pipeline.config"
 RC=$(run_hook "$(orch_payload orch-9k)" STUB_GH_LABELS="in-progress")
 printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
 if [ "$RC" = "2" ]; then pass_msg "exit 2 (config fallback)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 9n: a DIFFERENT slash command is out of scope -> exit 0 ---
+echo "Test 9n: headless /pipeline:evolve session mentioning fullsend -> exit 0"
+inc
+reset_state
+seed_transcript "$OTHER_CMD_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9n)" PIPELINE_HEADLESS=true STUB_GH_LABELS="in-progress")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (scope bound to the invoked command)"; else fail_msg "expected exit 0, got $RC"; fi
 
 # --- Test 9m: merged + STALE pr-open is finished -> exit 0 ---
 # scripts/finalize-issue-labels.sh falls back to `--add-label merged` ALONE when
