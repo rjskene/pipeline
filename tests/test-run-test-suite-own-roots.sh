@@ -10,6 +10,13 @@ set -uo pipefail
 # `--chunk`, which share the same exported-env mechanism), the escape hatch
 # (PIPELINE_TEST_ROOT_OVERRIDE=1), and the six named tests end-to-end.
 #
+# Case 6 additionally guards issue #1426: the runner must scrub
+# PIPELINE_PERMISSION_BRIDGE_DIR / PIPELINE_PERMISSION_BRIDGE_TIMEOUT from every
+# spawned test UNCONDITIONALLY — a bridge-armed headless session otherwise makes
+# every hook-exec'ing test queue a malformed request against the LIVE queue and
+# block for the bridge timeout. The PIPELINE_TEST_ROOT_OVERRIDE hatch covers
+# ROOTS ONLY, so the bridge scrub holds even with the hatch set.
+#
 # All runner exercises use `mktemp -d` stub/decoy dirs — NEVER the real
 # tests/ dir as the "decoy" root. The leak guard is disabled
 # (PIPELINE_TEST_LEAK_GUARD_REPO="") since these invocations are irrelevant
@@ -41,27 +48,42 @@ cat > "$STUB_DIR/test-marker.sh" <<EOF
   echo "PROJECT_ROOT=\${PIPELINE_PROJECT_ROOT:-UNSET}"
   echo "PLUGIN_ROOT=\${CLAUDE_PLUGIN_ROOT:-UNSET}"
   echo "USE_LOCAL=\${PIPELINE_USE_LOCAL_PLUGIN:-UNSET}"
+  echo "BRIDGE_DIR=\${PIPELINE_PERMISSION_BRIDGE_DIR:-UNSET}"
+  echo "BRIDGE_TIMEOUT=\${PIPELINE_PERMISSION_BRIDGE_TIMEOUT:-UNSET}"
 } > "$MARKER"
 exit 0
 EOF
 chmod +x "$STUB_DIR/test-marker.sh"
 
 DECOY="$WORK/decoy"; mkdir -p "$DECOY"
+# A decoy queue dir standing in for the live bridge queue (#1426).
+BRIDGE_DECOY="$WORK/bridge-queue"; mkdir -p "$BRIDGE_DECOY"
 
 run_stub() {
   local extra="$1"
   rm -f "$MARKER"
   PIPELINE_PROJECT_ROOT="$DECOY" CLAUDE_PLUGIN_ROOT="$DECOY" PIPELINE_USE_LOCAL_PLUGIN=true \
+    PIPELINE_PERMISSION_BRIDGE_DIR="$BRIDGE_DECOY" PIPELINE_PERMISSION_BRIDGE_TIMEOUT=7 \
     PIPELINE_TEST_LEAK_GUARD_REPO="" PIPELINE_TEST_PARALLELISM=1 \
     bash "$RUNNER" $extra "$STUB_DIR" >/dev/null 2>&1
 }
 
-UNSET3="$(printf 'PROJECT_ROOT=UNSET\nPLUGIN_ROOT=UNSET\nUSE_LOCAL=UNSET')"
+# Per-KEY marker assertions, not whole-file equality: the marker grows a line
+# whenever a new scrub is guarded (#1426 added two), and a wholesale comparison
+# reds every existing case on that growth instead of only the new one.
+marker_has() { grep -qxF "$1" "$MARKER" 2>/dev/null; }
+roots_scrubbed() {
+  marker_has 'PROJECT_ROOT=UNSET' && marker_has 'PLUGIN_ROOT=UNSET' \
+    && marker_has 'USE_LOCAL=UNSET'
+}
+bridge_scrubbed() {
+  marker_has 'BRIDGE_DIR=UNSET' && marker_has 'BRIDGE_TIMEOUT=UNSET'
+}
 
 echo "Case 1: default (parallel) dispatch scrubs the caller's roots"
 run_stub ""
 inc
-if [ "$(cat "$MARKER")" = "$UNSET3" ]; then
+if roots_scrubbed; then
   pass_msg "default mode: stub saw no inherited roots, not the decoy"
 else
   fail_msg "default mode: expected all-UNSET; got:"; sed 's/^/    /' "$MARKER"
@@ -70,7 +92,7 @@ fi
 echo "Case 2: --chunk dispatch scrubs the caller's roots"
 run_stub "--chunk 1/1"
 inc
-if [ "$(cat "$MARKER")" = "$UNSET3" ]; then
+if roots_scrubbed; then
   pass_msg "chunk mode: stub saw no inherited roots, not the decoy"
 else
   fail_msg "chunk mode: expected all-UNSET; got:"; sed 's/^/    /' "$MARKER"
@@ -79,10 +101,12 @@ fi
 echo "Case 3: PIPELINE_TEST_ROOT_OVERRIDE=1 escape hatch preserves the caller's roots"
 rm -f "$MARKER"
 PIPELINE_PROJECT_ROOT="$DECOY" CLAUDE_PLUGIN_ROOT="$DECOY" PIPELINE_USE_LOCAL_PLUGIN=true \
+  PIPELINE_PERMISSION_BRIDGE_DIR="$BRIDGE_DECOY" PIPELINE_PERMISSION_BRIDGE_TIMEOUT=7 \
   PIPELINE_TEST_ROOT_OVERRIDE=1 PIPELINE_TEST_LEAK_GUARD_REPO="" PIPELINE_TEST_PARALLELISM=1 \
   bash "$RUNNER" "$STUB_DIR" >/dev/null 2>&1
 inc
-if [ "$(cat "$MARKER")" = "$(printf 'PROJECT_ROOT=%s\nPLUGIN_ROOT=%s\nUSE_LOCAL=true' "$DECOY" "$DECOY")" ]; then
+if marker_has "PROJECT_ROOT=$DECOY" && marker_has "PLUGIN_ROOT=$DECOY" \
+   && marker_has 'USE_LOCAL=true'; then
   pass_msg "escape hatch: stub saw the caller's decoy roots, unchanged"
 else
   fail_msg "escape hatch: expected roots=$DECOY true; got:"; sed 's/^/    /' "$MARKER"
@@ -128,10 +152,46 @@ rm -f "$MARKER"
     PIPELINE_TEST_LEAK_GUARD_REPO="" PIPELINE_TEST_PARALLELISM=1 \
     bash scripts/run-test-suite.sh --changed-only ) >/dev/null 2>&1
 inc
-if [ "$(cat "$MARKER" 2>/dev/null)" = "$UNSET3" ]; then
+if roots_scrubbed; then
   pass_msg "--changed-only: config source did not re-export roots to the stub"
 else
   fail_msg "--changed-only: expected all-UNSET; got:"; sed 's/^/    /' "$MARKER" 2>/dev/null
+fi
+
+echo "Case 6: the runner scrubs the permission-bridge env from every spawned test"
+# #1426: the first live run under the #1421 bridge had
+# tests/test-subagent-log-utils-win32.sh exec hooks/permission-bridge.py with the
+# session's PIPELINE_PERMISSION_BRIDGE_DIR inherited; the hook queued a
+# tool_name="" request against the LIVE queue and blocked 840 s for an operator
+# answer nobody was expecting. The runner must therefore scrub both bridge knobs
+# from every spawned test, in every dispatch mode, and UNCONDITIONALLY — the
+# PIPELINE_TEST_ROOT_OVERRIDE hatch is for ROOTS (#1389), not for the bridge.
+run_stub ""
+inc
+if bridge_scrubbed; then
+  pass_msg "default mode: stub saw no inherited permission-bridge env"
+else
+  fail_msg "default mode: expected BRIDGE_DIR/BRIDGE_TIMEOUT=UNSET; got:"; sed 's/^/    /' "$MARKER"
+fi
+
+run_stub "--chunk 1/1"
+inc
+if bridge_scrubbed; then
+  pass_msg "chunk mode: stub saw no inherited permission-bridge env"
+else
+  fail_msg "chunk mode: expected BRIDGE_DIR/BRIDGE_TIMEOUT=UNSET; got:"; sed 's/^/    /' "$MARKER"
+fi
+
+rm -f "$MARKER"
+PIPELINE_PROJECT_ROOT="$DECOY" CLAUDE_PLUGIN_ROOT="$DECOY" PIPELINE_USE_LOCAL_PLUGIN=true \
+  PIPELINE_PERMISSION_BRIDGE_DIR="$BRIDGE_DECOY" PIPELINE_PERMISSION_BRIDGE_TIMEOUT=7 \
+  PIPELINE_TEST_ROOT_OVERRIDE=1 PIPELINE_TEST_LEAK_GUARD_REPO="" PIPELINE_TEST_PARALLELISM=1 \
+  bash "$RUNNER" "$STUB_DIR" >/dev/null 2>&1
+inc
+if bridge_scrubbed; then
+  pass_msg "escape hatch: the bridge scrub is unconditional (the hatch covers roots only)"
+else
+  fail_msg "escape hatch: PIPELINE_TEST_ROOT_OVERRIDE=1 leaked the bridge env; got:"; sed 's/^/    /' "$MARKER"
 fi
 
 echo ""
