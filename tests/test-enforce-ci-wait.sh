@@ -17,6 +17,13 @@ set -euo pipefail
 #     comment summarising the gate firing.
 #   - Fail-open: any unexpected exception writes to
 #     .claude/logs/enforce-ci-wait-errors.log and exits 0.
+#
+# Issue #1424 added a second, ORCHESTRATOR branch (Tests 9a-9l). For a session
+# that is NOT the PR evaluator it exits 0 unless PIPELINE_HEADLESS is true (env
+# first, then pipeline.config) and the transcript's first user message is a
+# `/pipeline:fullsend` invocation; then it exits 2 while any slate issue is
+# `in-progress`, or `pr-open` with no parked label. Capped at 40 blocks per
+# session, then fail-open.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOOK="$SCRIPT_DIR/../hooks/enforce-ci-wait.py"
@@ -51,6 +58,7 @@ printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
 # Stub gh on PATH. Routes by argv pattern:
 #   --jq '. | length'          -> STUB_GH_ROLLUP_LEN (default: "1")
 #   --jq '[.statusCheckRollup  -> STUB_GH_FAIL_COUNT  (default: "0")
+#   gh issue view ... labels   -> STUB_GH_LABELS     (default: "")
 #   gh issue edit ...          -> records call, exits 0
 #   gh pr comment ...          -> records call, exits 0
 # When STUB_GH_FAIL=1, exits 1.
@@ -68,6 +76,8 @@ case "$args" in
     printf '%s' "${STUB_GH_FAIL_COUNT:-0}" ;;
   *". | length"*)
     printf '%s' "${STUB_GH_ROLLUP_LEN:-1}" ;;
+  *"issue view"*)
+    printf '%s' "${STUB_GH_LABELS:-}" ;;
   *"issue edit"*|*"pr comment"*)
     : ;;
   *)
@@ -315,6 +325,155 @@ if [ "$RC" = "0" ] && [ -s "$PROJ/.claude/logs/enforce-ci-wait-errors.log" ]; th
 else
   fail_msg "expected exit 0 + non-empty errors.log; got rc=$RC, err=$(ls -la $PROJ/.claude/logs/ 2>&1 | head -5)"
 fi
+
+# ---------------------------------------------------------------------------
+# Tests 9a-9l: the ORCHESTRATOR branch (issue #1424).
+#
+# Under PIPELINE_HEADLESS=true a Stop from the orchestrator session itself
+# (CLAUDE_PIPELINE_SKILL unset, or =fullsend) is DENIED while any slate issue is
+# still `in-progress`, or `pr-open` with no parked label. The slate comes from
+# the transcript's first user message. Everything else stays exit 0: a
+# non-headless session, a first message that is not /pipeline:fullsend, the
+# 40-block cap, and any `gh` failure (fail-open + errors.log).
+# ---------------------------------------------------------------------------
+
+TRANSCRIPT="$WORKDIR/transcript.jsonl"
+
+# Helper: one-line JSONL transcript whose first user entry carries $1 verbatim.
+# `\n` inside $1 stays a JSON escape — printf does not interpret escapes in its
+# arguments, only in the format string.
+seed_transcript() {
+  printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":"%s"}}\n' \
+    "$1" > "$TRANSCRIPT"
+}
+
+# The REAL slash-command transcript shape (verified against a yielding session).
+SLATE_CONTENT='<command-message>pipeline:fullsend</command-message>\n<command-name>/pipeline:fullsend</command-name>\n<command-args>101 102</command-args>'
+SLATE_CONTENT_MM='<command-message>pipeline:fullsend</command-message>\n<command-name>/pipeline:fullsend</command-name>\n<command-args>101 102 --manual-merge</command-args>'
+PROSE_CONTENT='please review the open PRs and tell me which ones are green'
+
+orch_payload() {
+  printf '{"session_id":"%s","cwd":"%s","transcript_path":"%s"}' "$1" "$PROJ" "$TRANSCRIPT"
+}
+
+# --- Test 9a: headless orchestrator, slate issue in-progress -> exit 2 ---
+echo "Test 9a: headless orchestrator + in-progress slate issue -> exit 2"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9a)" PIPELINE_HEADLESS=true STUB_GH_LABELS="in-progress")
+ERR=$(cat "$WORKDIR/err.txt")
+if [ "$RC" = "2" ] \
+  && grep -qF "slate unfinished: #101" <<<"$ERR" \
+  && grep -qF "do not background the wait" <<<"$ERR"; then
+  pass_msg "exit 2 + slate-unfinished stderr matches"
+else
+  fail_msg "expected exit 2 with slate-unfinished stderr; got rc=$RC stderr=$ERR"
+fi
+
+# --- Test 9b: pr-open with no parked label is unfinished -> exit 2 ---
+echo "Test 9b: headless orchestrator + unparked pr-open -> exit 2"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9b)" PIPELINE_HEADLESS=true STUB_GH_LABELS="pr-open")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (unparked pr-open)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 9c: whole slate merged -> exit 0 + count cleared ---
+echo "Test 9c: headless orchestrator + merged slate -> exit 0 + count cleared"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+mkdir -p "$PROJ/.claude/logs/enforce-ci-wait-state"
+echo "2" > "$PROJ/.claude/logs/enforce-ci-wait-state/orch-9c.count"
+RC=$(run_hook "$(orch_payload orch-9c)" PIPELINE_HEADLESS=true STUB_GH_LABELS="merged")
+if [ "$RC" = "0" ] && [ ! -f "$PROJ/.claude/logs/enforce-ci-wait-state/orch-9c.count" ]; then
+  pass_msg "exit 0 + count cleared"
+else
+  fail_msg "expected exit 0 + cleared count; got rc=$RC count=$(cat "$PROJ/.claude/logs/enforce-ci-wait-state/orch-9c.count" 2>/dev/null || echo absent)"
+fi
+
+# --- Test 9d: pr-open + manual-merge label is parked -> exit 0 ---
+echo "Test 9d: headless orchestrator + pr-open/manual-merge -> exit 0"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9d)" PIPELINE_HEADLESS=true STUB_GH_LABELS=$'pr-open\nmanual-merge')
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (manual-merge parked)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 9e: pr-open + human label is parked -> exit 0 ---
+echo "Test 9e: headless orchestrator + pr-open/human -> exit 0"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9e)" PIPELINE_HEADLESS=true STUB_GH_LABELS=$'pr-open\nhuman')
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (human parked)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 9f: PIPELINE_HEADLESS absent -> exit 0 (every interactive session) ---
+echo "Test 9f: PIPELINE_HEADLESS absent + in-progress slate -> exit 0"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9f)" STUB_GH_LABELS="in-progress")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (not headless)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 9g: first user message is not /pipeline:fullsend -> exit 0 ---
+echo "Test 9g: headless session whose first message is prose -> exit 0"
+inc
+reset_state
+seed_transcript "$PROSE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9g)" PIPELINE_HEADLESS=true STUB_GH_LABELS="in-progress")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (out of scope)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 9h: CLAUDE_PIPELINE_SKILL=fullsend is accepted -> exit 2 ---
+echo "Test 9h: CLAUDE_PIPELINE_SKILL=fullsend + in-progress slate -> exit 2"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9h)" PIPELINE_HEADLESS=true CLAUDE_PIPELINE_SKILL=fullsend \
+  STUB_GH_LABELS="in-progress")
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (skill alias accepted)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 9i: block cap reached -> exit 0 (a wedged session must still end) ---
+echo "Test 9i: orchestrator block cap reached -> exit 0 (fail open)"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+mkdir -p "$PROJ/.claude/logs/enforce-ci-wait-state"
+echo "40" > "$PROJ/.claude/logs/enforce-ci-wait-state/orch-9i.count"
+RC=$(run_hook "$(orch_payload orch-9i)" PIPELINE_HEADLESS=true STUB_GH_LABELS="in-progress")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (cap reached)"; else fail_msg "expected exit 0, got $RC"; fi
+
+# --- Test 9j: gh failure -> exit 0 + errors.log line (fail-open) ---
+echo "Test 9j: gh issue view fails -> exit 0 + errors.log gains a line"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+RC=$(run_hook "$(orch_payload orch-9j)" PIPELINE_HEADLESS=true STUB_GH_FAIL=1 \
+  STUB_GH_LABELS="in-progress")
+if [ "$RC" = "0" ] && [ -s "$PROJ/.claude/logs/enforce-ci-wait-errors.log" ]; then
+  pass_msg "fail-open: exit 0 + errors.log gained a line"
+else
+  fail_msg "expected exit 0 + non-empty errors.log; got rc=$RC, errors.log=$(wc -c < "$PROJ/.claude/logs/enforce-ci-wait-errors.log" 2>/dev/null || echo absent)"
+fi
+
+# --- Test 9k: the knob resolves from pipeline.config too -> exit 2 ---
+echo "Test 9k: PIPELINE_HEADLESS from pipeline.config (not env) -> exit 2"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT"
+printf 'PIPELINE_HEADLESS="true"\n' >> "$PROJ/pipeline.config"
+RC=$(run_hook "$(orch_payload orch-9k)" STUB_GH_LABELS="in-progress")
+printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (config fallback)"; else fail_msg "expected exit 2, got $RC"; fi
+
+# --- Test 9l: --manual-merge parks pr-open (no LABEL records the flag) -> exit 0 ---
+echo "Test 9l: --manual-merge in the slate command + pr-open -> exit 0"
+inc
+reset_state
+seed_transcript "$SLATE_CONTENT_MM"
+RC=$(run_hook "$(orch_payload orch-9l)" PIPELINE_HEADLESS=true STUB_GH_LABELS="pr-open")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (--manual-merge parks pr-open)"; else fail_msg "expected exit 0, got $RC"; fi
 
 echo ""
 echo "================================"
