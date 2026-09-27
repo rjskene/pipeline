@@ -15,7 +15,7 @@ set -uo pipefail
 #
 #     HEADLESS-DEFAULT: <site> decision=<what> reason=<why>
 #
-# and continues. Five decision sites are enumerated (a CLOSED vocabulary, so the
+# and continues. Six decision sites are enumerated (a CLOSED vocabulary, so the
 # assertions below can pin them exactly):
 #
 #   merge-policy        — Step 9's "Wait for explicit user confirmation before
@@ -30,6 +30,11 @@ set -uo pipefail
 #                         --dangerously-skip-permissions, so an escalation can
 #                         now come back DENIED mid-run; without a named default
 #                         a stage would stop and ask what to do about it.
+#   ci-wait             — any wait on PR CI (#1424). Print mode waits only on
+#                         dispatched background Agents, so a backgrounded
+#                         Bash/`Monitor` poll plus a narrated "will continue
+#                         when it lands" IS the silent abort: the process exits
+#                         the moment the model stops calling tools.
 #
 # This file is the ONLY thing pinning fullsend's prose size for this change:
 # there is no `tests/test-fullsend-*budget*`, `tests/test-evolve-skill-budget.sh`
@@ -72,7 +77,7 @@ LOG_PREFIX="HEADLESS-DEFAULT:"
 GRAMMAR_TEMPLATE="HEADLESS-DEFAULT: <site> decision=<what> reason=<why>"
 GRAMMAR_RE="HEADLESS-DEFAULT: [a-z0-9-]+ decision=[^[:space:]]+ reason="
 SENTINEL='**Headless:**'
-SITES=(merge-policy unread-config-knob stall-triage ci-red-budget permission-denied)
+SITES=(merge-policy unread-config-knob stall-triage ci-red-budget permission-denied ci-wait)
 
 SECTION_MAX_WORDS=200
 SENTENCE_MAX_WORDS=25
@@ -193,9 +198,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# A3 — all four decision sites are enumerated, each with a default.
+# A3 — all six decision sites are enumerated, each with a default.
 # ---------------------------------------------------------------------------
-scenario "A3: five enumerated decision sites, each naming a default"
+scenario "A3: six enumerated decision sites, each naming a default"
 
 for site in "${SITES[@]}"; do
   inc
