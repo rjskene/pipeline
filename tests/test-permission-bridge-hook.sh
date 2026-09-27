@@ -305,6 +305,70 @@ else
   fail_msg "8: two escalations collided on one queue file — one would be unanswerable"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "Case 9: a non-PermissionRequest payload is inert — no queue file, no wait"
+# ---------------------------------------------------------------------------
+# The #1426 stall: tests/test-subagent-log-utils-win32.sh execs every hook in
+# hooks/ with a NON-PermissionRequest payload (or none at all). Inside a
+# bridge-armed session that exec inherited PIPELINE_PERMISSION_BRIDGE_DIR, so the
+# hook queued a `tool_name=""` garbage request and then blocked for the full
+# bridge timeout (840 s live) waiting for an answer no operator was expecting.
+# The gate: require hook_event_name == "PermissionRequest" AND a non-empty
+# tool_name before touching the queue. Anything else exits 0 with EMPTY stdout —
+# the same "expressed no opinion" semantics as the env-inertness gate in Case 1,
+# never a deny envelope: emitting a decision for an event class that does not
+# consume one would fabricate a verdict.
+Q9="$WORKDIR/q9"
+P9_LABELS=(
+  "empty stdin"
+  "no hook_event_name"
+  "PreToolUse-shaped payload"
+  "PermissionRequest with an empty tool_name (#1426 wire shape)"
+)
+P9_PAYLOADS=(
+  ''
+  '{"tool_name":"Bash","tool_input":{}}'
+  '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{}}'
+  '{"hook_event_name":"PermissionRequest","tool_name":"","tool_input":{},"session_id":""}'
+)
+T0=$(date +%s)
+for i in 0 1 2 3; do
+  OUT="$(printf '%s' "${P9_PAYLOADS[$i]}" | env PIPELINE_PERMISSION_BRIDGE_DIR="$Q9" \
+          PIPELINE_PERMISSION_BRIDGE_TIMEOUT=3 \
+          CLAUDE_PROJECT_DIR="$PROJ" python3 "$HOOK" 2>/dev/null)"
+  RC=$?
+  inc
+  if [ "$RC" -eq 0 ]; then
+    pass_msg "9: ${P9_LABELS[$i]} -> exits 0"
+  else
+    fail_msg "9: ${P9_LABELS[$i]} -> exited $RC"
+  fi
+  inc
+  if [ -z "$OUT" ]; then
+    pass_msg "9: ${P9_LABELS[$i]} -> emits NOTHING on stdout (no deny envelope)"
+  else
+    fail_msg "9: ${P9_LABELS[$i]} -> emitted stdout: $(printf '%q' "$OUT")"
+  fi
+done
+T1=$(date +%s)
+ELAPSED=$((T1 - T0))
+inc
+Q9_FILES="$(find "$Q9" -maxdepth 1 -name '*.json' 2>/dev/null)"
+if [ "$(printf '%s' "$Q9_FILES" | grep -c . )" -eq 0 ]; then
+  pass_msg "9: no queue file is written for any non-PermissionRequest payload"
+else
+  fail_msg "9: a malformed payload was queued: $(printf '%s' "$Q9_FILES" | tr '\n' ' ')"
+fi
+inc
+# With PIPELINE_PERMISSION_BRIDGE_TIMEOUT=3 an UNGATED hook burns ~3 s per
+# sub-case (4 x 3 s) plus the stdin alarm, so a 5 s ceiling discriminates gated
+# from ungated without being flaky on a loaded host.
+if [ "$ELAPSED" -le 5 ]; then
+  pass_msg "9: all four shapes resolve without waiting (elapsed=${ELAPSED}s)"
+else
+  fail_msg "9: took ${ELAPSED}s for four inert payloads — the hook still enters the answer poll"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

@@ -15,6 +15,17 @@ sessions too. With `PIPELINE_PERMISSION_BRIDGE_DIR` unset it exits 0 having
 emitted nothing and having read nothing (the env check precedes the stdin
 read), which Claude Code reads as "this hook expressed no opinion".
 
+A SECOND inertness gate guards the payload shape (issue #1426). The hook is
+registered with matcher `*`, and the repo's own tests exec every file in
+hooks/ with a non-PermissionRequest payload (or none at all) — inside a
+bridge-armed session those execs inherit `PIPELINE_PERMISSION_BRIDGE_DIR`, so
+the hook queued a `tool_name=""` garbage request and then blocked for the full
+bridge timeout (840 s) waiting for an answer no operator was expecting. So
+unless the payload carries `hook_event_name == "PermissionRequest"` AND a
+non-empty `tool_name`, the hook exits 0 with EMPTY stdout — no queue dir, no
+queue file, no poll. Empty stdout, never a `deny` envelope: a decision emitted
+for an event class that does not consume one would fabricate a verdict.
+
 Exit-code contract — DIFFERENT from the PreToolUse guards in
 docs/plugin-architecture.md: `PermissionRequest` does NOT honour exit 2. This
 hook ALWAYS exits 0 and expresses allow/deny purely through the stdout JSON
@@ -195,6 +206,20 @@ def main() -> int:
         return 0
 
     data = read_event_stdin() or {}
+
+    # --- Payload-shape gate (#1426). Runs AFTER the stdin read (the payload
+    # must be parsed to be inspected) and BEFORE queue_id() / qdir.mkdir() /
+    # write_queue_file(), so a non-PermissionRequest payload creates no queue
+    # dir, no queue file, and never enters the answer poll. Both key spellings
+    # are accepted, mirroring queue_id()'s tool_use_id/toolUseId tolerance;
+    # `hook_event_name` is compared case-sensitively against the literal wire
+    # value claude sends. Return 0 with NO stdout — same "expressed no opinion"
+    # semantics as the env gate above, never a deny envelope.
+    event = str(data.get("hook_event_name") or data.get("hookEventName") or "").strip()
+    tool = str(data.get("tool_name") or data.get("toolName") or "").strip()
+    if event != "PermissionRequest" or not tool:
+        return 0
+
     qid = queue_id(data)
     cwd = data.get("cwd") or os.getcwd()
     timeout = resolve_timeout()
