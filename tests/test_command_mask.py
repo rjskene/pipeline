@@ -1,6 +1,7 @@
 """Unit tests for hooks/command_mask.py (issue #1321) — the shared
-heredoc-body + quoted-operand masking helper consumed by block_deletions.py
-and enforce-comment-trust.py.
+heredoc-body + quoted-operand masking helper consumed by
+hooks/enforce-comment-trust.py, hooks/enforce-base-branch.py and
+hooks/_deny_log.py.
 
 Exercises the helper API in-process (not via a hook subprocess):
 

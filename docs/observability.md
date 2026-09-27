@@ -18,10 +18,10 @@ Logging hooks and substrate for this repo's own dogfood operation. Most are regi
 
 ## Hook-denial log
 
-**dogfood-only, gated (#1352).** PreToolUse guard hooks that deny (exit 2) leave no trace in `tool-use.log` — that log is written by a PostToolUse hook, which never fires for a denied call, so a false positive was previously unauditable. `hooks/_deny_log.py` closes that gap: each guard hook (`block_deletions.py`, `restrict_paths.py`, `enforce-base-branch.py`, `enforce-comment-trust.py`, `check-ci-skip-markers.py`, `enforce-ci-wait.py`, `enforce-path-c-delegation.py`) calls `log_denial(hook, tool_name, reason, command_text="")` immediately before its `sys.exit(2)` / `return 2`, appending one JSONL record to `.claude/logs/hook-denials.jsonl`:
+**dogfood-only, gated (#1352).** PreToolUse guard hooks that deny (exit 2) leave no trace in `tool-use.log` — that log is written by a PostToolUse hook, which never fires for a denied call, so a false positive was previously unauditable. `hooks/_deny_log.py` closes that gap: each guard hook (`enforce-base-branch.py`, `enforce-comment-trust.py`, `check-ci-skip-markers.py`, `enforce-ci-wait.py`, `enforce-path-c-delegation.py`) calls `log_denial(hook, tool_name, reason, command_text="")` immediately before its `sys.exit(2)` / `return 2`, appending one JSONL record to `.claude/logs/hook-denials.jsonl`:
 
 ```json
-{"ts":"2026-09-21T13:05:00Z","hook":"restrict_paths","tool":"Bash","session":"<CLAUDE_SESSION_ID or unknown>","reason":"<first line of the stderr reason>","command":"<masked command text via hooks/command_mask.py, truncated to 512 chars>"}
+{"ts":"2026-09-21T13:05:00Z","hook":"enforce-base-branch","tool":"Bash","session":"<CLAUDE_SESSION_ID or unknown>","reason":"<first line of the stderr reason>","command":"<masked command text via hooks/command_mask.py, truncated to 512 chars>"}
 ```
 
 `enforce-ci-wait.py` denies from a **Stop** hook, not PreToolUse — its record carries `tool:"Stop"`, a deliberate widening of the "PreToolUse denials" framing.

@@ -3,10 +3,6 @@
 # Each entry must explain WHY it is exempt. Entries shrink as legacy code is
 # migrated to ${CLAUDE_PLUGIN_ROOT}/...
 
-# Runtime path-protection regex — legitimately matches consumer .claude/hooks/
-# as a STRING to block writes via the restrict_paths hook itself.
-hooks/restrict_paths.py
-
 # One-shot migration tool whose job is to REMOVE consumer
 # .claude/{skills,hooks,scripts,agents} — references are inherent.
 scripts/migrate-from-subtree.sh

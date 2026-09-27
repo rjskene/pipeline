@@ -36,10 +36,10 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 # hook returns in ~timeout seconds with exit 0. The producer is reaped after.
 # Env vars that short-circuit a hook's escape-hatch path BEFORE it reaches its
 # stdin read. The orchestrator session exports ALLOW_ORCHESTRATOR_EDIT=true (the
-# PATH C escape hatch) and may export ALLOW_DELETIONS; if either leaks into the
-# test process, enforce-path-c-delegation.py / block_deletions.py exit 0 before
-# the read and the timeout assertion passes for the WRONG reason. Strip them so
-# each hook genuinely exercises read_event_stdin.
+# PATH C escape hatch); if it leaks into the test process,
+# enforce-path-c-delegation.py exits 0 before the read and the timeout assertion
+# passes for the WRONG reason. Strip it so each hook genuinely exercises
+# read_event_stdin.
 run_with_blocking_stdin() {
   local start end fifo hookpid producerpid
   fifo="$(mktemp -u)"
@@ -48,7 +48,7 @@ run_with_blocking_stdin() {
   # Open the FIFO write end with a long sleep so the read end never sees EOF.
   ( sleep 30 > "$fifo" ) &
   producerpid=$!
-  env -u ALLOW_ORCHESTRATOR_EDIT -u ALLOW_DELETIONS "$@" < "$fifo" >/dev/null 2>&1 &
+  env -u ALLOW_ORCHESTRATOR_EDIT "$@" < "$fifo" >/dev/null 2>&1 &
   hookpid=$!
   wait "$hookpid"
   RUN_RC=$?
@@ -139,8 +139,6 @@ PY_HOOKS=(
   "capture_agent_cost.py|PIPELINE_LOGS_ENABLED=true"
   "enforce-ci-wait.py|CLAUDE_PIPELINE_SKILL=evaluate-issue-pr"
   "enforce-path-c-delegation.py|CLAUDE_PIPELINE_ISSUE_NUMBER=917"
-  "block_deletions.py|"
-  "restrict_paths.py|CLAUDE_PLUGIN_ROOT=$REPO_ROOT"
   "enforce-base-branch.py|"
   "enforce-comment-trust.py|"
   "check-ci-skip-markers.py|"

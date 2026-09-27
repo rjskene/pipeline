@@ -44,7 +44,7 @@ RESOLVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # pipeline depends on for defense-in-depth (#295): if a consumer has a stale
 # local copy that diverges from the plugin's, security-relevant guardrails
 # can silently fail. Add to this list whenever a hook becomes load-bearing.
-LOAD_BEARING_HOOKS=("enforce-base-branch.py" "enforce-path-c-delegation.py" "block_deletions.py")
+LOAD_BEARING_HOOKS=("enforce-base-branch.py" "enforce-path-c-delegation.py")
 
 # Canonical label table — single source of truth.
 # Each row: <key>|<default-name>|<color>|<description>

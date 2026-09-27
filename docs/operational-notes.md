@@ -11,76 +11,30 @@ Related docs: [dogfood-setup.md](dogfood-setup.md) (install + symlink mechanics)
 
 ---
 
-## 1. The boundary hook (`hooks/restrict_paths.py`)
+## 1. Project-boundary rules (no guard hook enforces them)
 
-The `restrict_paths.py` PreToolUse hook enforces the project boundary. Its
-detection is substring-based and naive, so it has a wide false-positive surface.
-Known trip-wires and the way around each:
+The pipeline ships **no path-boundary or deletion hook** (#1418) — the rail is
+the session's own permission mode. These boundary rules still bite, because the
+harness classifier enforces them from outside the pipeline:
 
-- **Edits to protected files.** It blocks the **Edit/Write tools** on
-  `.claude/settings.json`, `.claude/settings.local.json`, and `.claude/hooks/`.
-  The check only fires for `tool_name in ("Write","Edit")` — a `Bash` rewrite
-  (`awk`/`sed`/`python3`) is not covered (it only hits the boundary check, which
-  `.claude/settings.json` passes since it is inside the project). Repo-root
-  `hooks/` (where new hook `.py` files live) is **not** protected — only
-  `.claude/hooks/` is — so creating a hook file via Write works fine. Routing a
-  config change around a security guardrail via a different tool is worth
-  surfacing to the operator, not doing silently on plan-approval alone.
-
-- **Path-shaped substrings in prose.** Any tool arg containing the literal
-  `../..` is blocked anywhere in any string (PR bodies, issue comments, commit
-  messages, code-block examples) — not just real file paths.
-  - Rephrase: use "parent-directory resolver shape" or "legacy
-    `cd "$(dirname ...)" && pwd` pattern" instead of the literal `../..`.
-  - **Narrowed by #1282:** the Bash extractor now only considers whole,
-    dequoted shell WORDS (or the RHS of a `name=<path>` word) as path
-    candidates. An absolute-looking token that lives only inside a quoted
-    literal, a heredoc body, a regex, or a commit message — including the
-    `#!/bin/bash` shebang inside a `cat <<'EOF'` script-authoring heredoc, and
-    a `gh issue comment` body merely naming `skills/run/` — is data, not a
-    path reference, and is no longer extracted. A path named as its OWN word,
-    or a real `cd` target, still blocks. See the module docstring's `Issue
-    #1282` section for the full IN/OUT list.
-
-- **The temp root is mostly blocked.** Reads/writes under the system temp dir
-  are outside the boundary, **except** the harness's own session scratchpad
-  (`.../claude-<uid>/<slug>/<session>/scratchpad/...` on Linux, `Temp/claude/…`
-  on Windows — issue #1282/#1153) — write scratch under `.claude/scratch/`
-  otherwise. This is the root cause of the inline-execute test-wait drop-out in
-  §2.
-
-- **Worktree boundary vs. main-checkout absolute paths.** When a skill runs from
-  a feature worktree under `.claude/worktrees/`, the worktree is the project
-  boundary — a hardcoded main-checkout absolute path (e.g.
-  `/<repo>/scripts/derive-pr-title.sh`) is blocked. Call the worktree-local copy
-  (`./scripts/derive-pr-title.sh <N>`); every worktree mirrors `scripts/`.
-
-- **Later hardening sweep.** The hook was tightened along three axes without
-  widening the false-positive surface:
-  - **Project-root anchoring + write-gated protected-file guard (#1136/#1137).**
-    Relative paths are resolved against the project root before the boundary
-    comparison, and the protected-file guard fires only on *write* tools — a read
-    of a protected path is no longer over-blocked.
-  - **Dest-via-flag / interpreter-inline / glued `-t<protected>` write blocks
-    (#1138/#1141).** A protected-path write smuggled through a destination flag,
-    an inline interpreter invocation, or a glued short flag like `-t<protected>`
-    is now caught, closing the routes around the naive substring check.
-  - **In-repo `.venv-host/Scripts` admitted (#1135/#1142).** An in-repo
-    `.venv-host/Scripts` path (the Windows venv layout) is recognized as inside
-    the boundary rather than blocked as a stray absolute-looking token.
-
-- **Auditing false positives (#1352).** Every denial from this hook (and the
-  other boundary/guard hooks) appends a record to the gated
-  `.claude/logs/hook-denials.jsonl` — see
-  [docs/observability.md](observability.md#hook-denial-log). When a
-  false-positive block looks suspicious, grep that log for the hook name and
-  session before assuming the guard is wrong; it is the audit trail this
-  section's trip-wires were previously diagnosed without.
-
-- **Release promotion lane (#1356).** `enforce-base-branch.py` denies every
-  `gh pr create`/`gh pr edit --base` off the worktree base except the exact
-  promotion shape `--base <PIPELINE_RELEASE_BRANCH> --head <PIPELINE_BASE_BRANCH>`;
-  omit `--head` and it still blocks. See docs/release-cadence.md step 2.
+- **Write monitor/scratch output INSIDE the project boundary, never the system
+  temp dir.** An inline execute agent that backgrounds a test monitor to a temp
+  path and then tries to `Read` it can be denied and drop out — the root cause
+  of the test-wait drop-out in the next section. Write scratch under
+  `.claude/scratch/`.
+- **Keep worktrees under the project root** (`.claude/worktrees/`), and call a
+  script's worktree-local copy (`./scripts/derive-pr-title.sh <N>`) rather than
+  a main-checkout absolute path — every worktree mirrors `scripts/`.
+- **Release promotion lane (#1356).** `enforce-base-branch.py`, a surviving
+  guard, denies every `gh pr create`/`gh pr edit --base` off the worktree base
+  except the exact promotion shape
+  `--base <PIPELINE_RELEASE_BRANCH> --head <PIPELINE_BASE_BRANCH>`; omit
+  `--head` and it still blocks. See docs/release-cadence.md step 2.
+- **Auditing a denial (#1352).** A surviving guard's denial appends a record to
+  the gated `.claude/logs/hook-denials.jsonl` — see
+  [docs/observability.md](observability.md#hook-denial-log). A permission-mode
+  denial leaves no record there, so an unexplained boundary block with nothing
+  in that log came from the harness, not from a pipeline hook.
 
 ## 2. Executor wedge classes & recovery
 
@@ -172,7 +126,7 @@ No plugin ships a dedicated reviewer agent type to dispatch. `skills/execute-iss
 When `/pipeline:execute-issue-plan <N>` is invoked directly inside a feature
 worktree (not inherited from `/pipeline:fullsend`), the boot
 `source ./pipeline.config` may fail — `pipeline.config` is gitignored +
-host-specific and the boundary hook blocks reading the main checkout's copy.
+host-specific, and the main checkout's copy is not a worktree's to reach for.
 `setup-worktree.sh` now copies `pipeline.config` into each worktree (#529), so
 this is largely closed; if vars still resolve empty, derive state instead of
 stopping:

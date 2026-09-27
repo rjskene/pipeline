@@ -246,7 +246,7 @@ while IFS= read -r url; do
   # `grep -F` on a multi-byte pattern across newlines is unreliable on GNU
   # grep (line-oriented even under -a), so we do the split in python where
   # binary-safe re.search and `wb` writes are guaranteed. python3 is already
-  # a runtime dep (see hooks/restrict_paths.py).
+  # a runtime dep.
   set +e
   ct=$(PIPELINE_BODY_OUT="$body_tmp" python3 - "$raw_tmp" <<'PY'
 import os, re, sys

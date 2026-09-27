@@ -25,20 +25,25 @@ fi
 . "$HELPER"
 
 MANIFEST_HOOKS=(
-  block_deletions.py
   enforce-base-branch.py
   check-ci-skip-markers.py
   enforce-path-c-delegation.py
-  restrict_paths.py
   enforce-ci-wait.py
 )
 DOGFOOD_HOOKS=(
   log-tool-use.sh
   log_subagent.py
 )
+# Retired (#1418): the plugin no longer ships these, but the table KEEPS their
+# rows so advisory_for_hook answers rc=0 with delete-local guidance for the two
+# hooks a consumer is most likely to still carry locally.
+RETIRED_HOOKS=(
+  block_deletions.py
+  restrict_paths.py
+)
 
 # (a) advisory_for_hook returns non-empty for every known basename.
-for b in "${MANIFEST_HOOKS[@]}" "${DOGFOOD_HOOKS[@]}"; do
+for b in "${MANIFEST_HOOKS[@]}" "${DOGFOOD_HOOKS[@]}" "${RETIRED_HOOKS[@]}"; do
   out="$(advisory_for_hook "$b" || true)"
   if [ -n "$out" ]; then
     pass_msg "advisory_for_hook $b returns non-empty"
@@ -67,6 +72,16 @@ for b in "${DOGFOOD_HOOKS[@]}"; do
   fi
 done
 
+# Retired hooks must say "retired"
+for b in "${RETIRED_HOOKS[@]}"; do
+  out="$(advisory_for_hook "$b" || true)"
+  if [[ "$out" == *"retired"* ]]; then
+    pass_msg "$b annotation mentions retired"
+  else
+    fail_msg "$b annotation mentions retired (got: $out)"
+  fi
+done
+
 # Unknown basename returns empty with rc=1.
 unk_out="$(advisory_for_hook "no-such-hook.py" 2>/dev/null || echo "__RC_NONZERO__")"
 if [ "$unk_out" = "__RC_NONZERO__" ] || [ -z "$unk_out" ]; then
@@ -80,9 +95,10 @@ else
   fail_msg "advisory_for_hook unknown basename returns empty"
 fi
 
-# list_pipeline_hook_basenames prints the 8 known basenames.
+# list_pipeline_hook_basenames prints the 8 known basenames — the union of the
+# manifest, dogfood and retired arrays.
 listing="$(list_pipeline_hook_basenames | sort -u)"
-expected="$(printf '%s\n' "${MANIFEST_HOOKS[@]}" "${DOGFOOD_HOOKS[@]}" | sort -u)"
+expected="$(printf '%s\n' "${MANIFEST_HOOKS[@]}" "${DOGFOOD_HOOKS[@]}" "${RETIRED_HOOKS[@]}" | sort -u)"
 if [ "$listing" = "$expected" ]; then
   pass_msg "list_pipeline_hook_basenames prints the 8 known basenames"
 else
@@ -121,6 +137,15 @@ for b in "${DOGFOOD_HOOKS[@]}"; do
     fail_msg "manifest does NOT contain $b (dogfood-only)"
   else
     pass_msg "manifest does NOT contain $b (dogfood-only)"
+  fi
+done
+
+# Every "retired" basename must NOT appear in the manifest either (#1418).
+for b in "${RETIRED_HOOKS[@]}"; do
+  if echo "$manifest_basenames" | grep -qx "$b"; then
+    fail_msg "manifest does NOT contain $b (retired)"
+  else
+    pass_msg "manifest does NOT contain $b (retired)"
   fi
 done
 

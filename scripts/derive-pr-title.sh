@@ -87,9 +87,9 @@ refuse_tracker() {
 }
 
 # Rewrite the literal substring `../` to `..⁄` (U+2044, FRACTION SLASH) so the
-# emitted title can be safely interpolated into `gh pr create --title "$T"`
-# without the restrict_paths.py PreToolUse hook treating it as a path-escape
-# attempt. Visually near-identical to `/`, never matches `\.\./` as a regex,
+# emitted title can be safely interpolated into `gh pr create --title "$T"`:
+# the title then carries no path-escape substring of its own, whatever reads
+# it. Visually near-identical to `/`, never matches `\.\./` as a regex,
 # survives round-trip through GitHub's PR title field unchanged. Every other
 # shell metachar ($, backticks, single quotes, ;, &&) is left to the
 # executor's quoting boundary. See issue #361 for the full rationale.

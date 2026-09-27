@@ -130,6 +130,6 @@ done
 
 For each candidate (merged PR + active worktree), run `cleanup-worktree.sh <issue>` capturing its `CLEANUP-SUMMARY:` line, then create ONE batch `create-checkpoint-tag.sh --issues … --prs …` for the whole batch — updating CLAUDE.md, capturing each `CLEANUP-SUMMARY`, creating the batch `create-checkpoint-tag.sh`, and emitting the CLEANUP COMPLETE table.
 
-**Gate reuse, not duplication.** `cleanup-worktree.sh` already verifies `PR state == MERGED` before any destructive op, and the destructive worktree-remove + branch-delete remain subject to the existing `ALLOW_DELETIONS` gate (read from `settings.local.json` `.env.ALLOW_DELETIONS` by `sync-worktrees.sh` pruning and honored by `block_deletions.py`). Do NOT add a second gate.
+**Gate reuse, not duplication.** `cleanup-worktree.sh` already verifies `PR state == MERGED` before any destructive op, and the destructive worktree-remove + branch-delete remain subject to the existing `ALLOW_DELETIONS` gate (read from `settings.local.json` `.env.ALLOW_DELETIONS` by `sync-worktrees.sh` pruning). Do NOT add a second gate.
 
 **`--keep-trees` opt-out.** When `--keep-trees` appears anywhere in the argv, SKIP this concern entirely — candidates are still detected and surfaced downstream (status table / Step 4), they are just not acted on. Auto-cleanup is non-blocking and never gate-fatal.

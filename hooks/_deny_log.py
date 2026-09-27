@@ -65,7 +65,7 @@ def log_denial(hook: str, tool_name: str, reason: str, command_text: str = "",
                 session_id: str = None) -> None:
     """Append one JSONL denial record. Fail-open: swallows every exception.
 
-    `hook` is the denying hook's file stem (e.g. "restrict_paths"),
+    `hook` is the denying hook's file stem (e.g. "enforce-comment-trust"),
     `tool_name` the payload's tool_name ("Stop" for enforce-ci-wait),
     `reason` the same stderr text the hook already prints (only its first
     line is recorded), and `command_text` the offending Bash command (masked

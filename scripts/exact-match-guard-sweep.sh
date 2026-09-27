@@ -76,9 +76,9 @@
 #     (#1200 names `assertEqual` only). Widening is a one-line follow-up.
 #   - SELF-REFERENTIAL OUTPUT: run from this repo with the default root, the
 #     sweep reports hits from the plugin's own fixtures (e.g.
-#     `tests/test_block_deletions.py`, `tests/test_restrict_paths.py`, and the
-#     heredoc fixtures inside `tests/test-exact-match-guard-sweep.sh`). Those are
-#     fixtures, not real guards — do not read them as consumer findings.
+#     `tests/test_command_mask.py` and the heredoc fixtures inside
+#     `tests/test-exact-match-guard-sweep.sh`). Those are fixtures, not real
+#     guards — do not read them as consumer findings.
 
 set -uo pipefail
 
