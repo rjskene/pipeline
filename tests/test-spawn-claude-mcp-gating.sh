@@ -119,7 +119,7 @@ else
 fi
 
 inc
-if echo "$OUT" | grep -qE '^EMPTY_MCP_FILE=/tmp/claude-mcp-empty-'; then
+if echo "$OUT" | grep -qE '^EMPTY_MCP_FILE=/tmp/claude-spawn-[^/]+/mcp-empty\.json$'; then
   pass_msg "A: EMPTY_MCP_FILE dump line present ($MCP_FILE)"
 else
   fail_msg "A: EMPTY_MCP_FILE dump line missing or wrong shape"
