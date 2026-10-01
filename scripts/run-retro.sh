@@ -939,6 +939,7 @@ calib_provenance() {
       *-plan-gate-full)   CALIB_PLAN_GATE="full";   base="${base%-plan-gate-full}";   peeled=1 ;;
       *-plan-gate-single) CALIB_PLAN_GATE="single"; base="${base%-plan-gate-single}"; peeled=1 ;;
       *-plan-gate-none)   CALIB_PLAN_GATE="none";   base="${base%-plan-gate-none}";   peeled=1 ;;
+      *-plan-gate-annotate) CALIB_PLAN_GATE="annotate"; base="${base%-plan-gate-annotate}"; peeled=1 ;;
       *-bexec-opus)   CALIB_BEXEC="opus";   base="${base%-bexec-opus}";   peeled=1 ;;
       *-bexec-sonnet) CALIB_BEXEC="sonnet"; base="${base%-bexec-sonnet}"; peeled=1 ;;
       *-superpowers-off)

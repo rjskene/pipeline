@@ -481,6 +481,35 @@ refute_sub "a default plan-gate artifact is never labelled plan_gate=" \
   "$REPORT_HOOKS_ON" "plan_gate="
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 13b: a --plan-gate annotate artifact renders plan_gate=annotate (#1435)"
+# ---------------------------------------------------------------------------
+# The annotate arm is the fourth accepted value; the suffix must be peeled
+# BEFORE the date-shape match or the row loses both its date and its provenance.
+
+FIX12="$TMP/fixture-plan-gate-annotate"
+cp -r "$FIXTURE_SRC" "$FIX12"
+retro12() { bash "$HELPER" --cycle 0 --fixture "$FIX12" "$@" 2>&1; }
+rm -f "$FIX12/calib.txt"
+mkdir -p "$FIX12/calib"
+write_calib_at "$FIX12/calib/2026-09-08T1200Z-plan-gate-annotate.txt"
+
+REPORT_PGA="$(retro12)"
+expect_line "an annotate artifact's weak-model row names plan_gate=annotate" \
+  "$REPORT_PGA" "weak-model pass: 4/5 (run 2026-09-08, plan_gate=annotate)"
+
+# Composed with -bexec-<M>, the fixed suffix order.
+FIX13="$TMP/fixture-bexec-plan-gate-annotate"
+cp -r "$FIXTURE_SRC" "$FIX13"
+retro13() { bash "$HELPER" --cycle 0 --fixture "$FIX13" "$@" 2>&1; }
+rm -f "$FIX13/calib.txt"
+mkdir -p "$FIX13/calib"
+write_calib_at "$FIX13/calib/2026-09-08T1200Z-bexec-opus-plan-gate-annotate.txt"
+
+REPORT_BEXEC_PGA="$(retro13)"
+expect_line "a composed bexec+annotate artifact names both markers" \
+  "$REPORT_BEXEC_PGA" "weak-model pass: 4/5 (run 2026-09-08, bexec=opus, plan_gate=annotate)"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"
