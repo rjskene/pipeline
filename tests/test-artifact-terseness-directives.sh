@@ -46,6 +46,19 @@ assert_grep "$PI" "## Implementation Plan"  "plan: header held"
 assert_grep "$PI" "**Tasks (ordered):**"    "plan: Tasks (ordered) held"
 assert_grep "$PI" "**Predicates:**"         "plan: Predicates held"
 assert_grep "$PI" "post-plan.sh"            "plan: post-plan.sh ref held"
+
+# (c) #1435 — the optional `**Scope:**` line on a Revise verdict. The template
+# pin plus the prose that defines it, held under ONE 60-word budget so the
+# annotate arm cannot grow unbounded prose in the evaluator.
+assert_grep "$PLAN" "**Scope:** patch | structural" "plan-eval: Scope template line held"
+assert_grep "$PLAN" "**Scope (#1435):**"            "plan-eval: Scope prose line held"
+SCOPE_MAX_WORDS=60
+SCOPE_WORDS=$({ grep -F -e '**Scope:** patch | structural' -e '**Scope (#1435):**' "$PLAN" || true; } | wc -w | tr -d ' ')
+if [ "$SCOPE_WORDS" -ge 1 ] && [ "$SCOPE_WORDS" -le "$SCOPE_MAX_WORDS" ]; then
+  pass_msg "plan-eval: Scope template+prose lines total $SCOPE_WORDS words (<= $SCOPE_MAX_WORDS)"
+else
+  fail_msg "plan-eval: Scope template+prose lines total $SCOPE_WORDS words (budget 1..$SCOPE_MAX_WORDS) - CUT THE PROSE, never raise the ceiling"
+fi
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

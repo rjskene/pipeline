@@ -159,6 +159,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    ## Plan Evaluation
 
    **Verdict:** Approve / Revise
+   **Scope:** patch | structural
 
    **File accuracy:**
    - `path/file.ts` — ✅ exists, description accurate
@@ -172,6 +173,8 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
    ```
 
    Pick `Approve` only when there are no blocking issues; otherwise pick `Revise` and, under `**Recommendations:**`, prescribe the concrete change — file + what to add, remove or replace — never a direction: the next planner applies it verbatim (#1317). On round ≥2, verify only that the prescribed change landed; a new finding is a new round only if BLOCKING.
+
+   **Scope (#1435):** emit `**Scope:**` ONLY with `Revise`. `structural` = the approach, task split or file set is wrong, so the Recommendations are not applicable as amendments. `patch` (the default when the line is absent) = file + what-to-change amendments an executor applies directly.
 
 6. **Update labels** (verdict values per the template above):
 
