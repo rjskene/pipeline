@@ -306,6 +306,139 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# C-series — #1435 `GATE=annotate`. Its own sentinel and its own 100-word
+# budget: the two #1429 lines already consume 116 of their 120-word B4 ceiling,
+# so widening them is not available. B1 also pins #1429 at exactly 2 lines.
+# ---------------------------------------------------------------------------
+PGA_SENTINEL='**Plan gate — annotate (#1435):**'
+PGA_MAX_WORDS=100
+
+PGA_LINES=()
+while IFS= read -r n; do
+  [ -n "$n" ] && PGA_LINES+=("$n")
+done < <(grep -nF -- "$PGA_SENTINEL" "$FULLSEND" | cut -d: -f1)
+
+G1="${PGA_LINES[0]-}"
+G2="${PGA_LINES[1]-}"
+G1_TEXT=""
+G2_TEXT=""
+[ -n "$G1" ] && G1_TEXT="$(sed -n "${G1}p" "$FULLSEND")"
+[ -n "$G2" ] && G2_TEXT="$(sed -n "${G2}p" "$FULLSEND")"
+
+scenario "C1: the annotate sentinel appears on exactly two lines"
+
+PGA_COUNT="$(grep -cF -- "$PGA_SENTINEL" "$FULLSEND")"
+inc
+if [ "$PGA_COUNT" -eq 2 ]; then
+  pass_msg "C1: exactly 2 lines carry '$PGA_SENTINEL'"
+else
+  fail_msg "C1: expected exactly 2 lines carrying '$PGA_SENTINEL', found $PGA_COUNT"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "C2: the Step 2 annotate arm dispatches the evaluator exactly ONCE"
+
+for lit in 'GATE=annotate' 'once'; do
+  inc
+  if [ -n "$G1_TEXT" ] && grep -qF -- "$lit" <<<"$G1_TEXT"; then
+    pass_msg "C2: first annotate line names '$lit'"
+  else
+    fail_msg "C2: first annotate line does not name '$lit'"
+  fi
+done
+
+inc
+if [ -n "$G1" ] && [ -n "$STEP2_LINE" ] && [ "$G1" -gt "$STEP2_LINE" ]; then
+  pass_msg "C2: first annotate line ($G1) is below '$STEP2_ANCHOR' ($STEP2_LINE)"
+else
+  fail_msg "C2: first annotate line (${G1:-none}) is not below '$STEP2_ANCHOR' (${STEP2_LINE:-none})"
+fi
+
+inc
+if [ -n "$G1" ] && [ -n "$STEP3_LINE" ] && [ "$G1" -lt "$STEP3_LINE" ]; then
+  pass_msg "C2: first annotate line ($G1) is above '$STEP3_ANCHOR' ($STEP3_LINE)"
+else
+  fail_msg "C2: first annotate line (${G1:-none}) is not above '$STEP3_ANCHOR' (${STEP3_LINE:-none})"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "C3: the Step 3 annotate arm deletes the re-plan round"
+
+# Same load-bearing reason as B3: a Revise under annotate is approved HERE, so
+# the `plan-pending -> plan-approved` transition must be NAMED or the issue
+# silently drops out of Step 4's `plan-reviewed`-filtered execute slate. The
+# `**Scope:** structural` exception is the ONE arm that still re-plans (#1317).
+for lit in 'GATE=annotate' 'plan-approved' 'plan-pending' 'plan_gate=annotate' 'plan_rounds=1' '**Scope:** structural' '#1317'; do
+  inc
+  if [ -n "$G2_TEXT" ] && grep -qF -- "$lit" <<<"$G2_TEXT"; then
+    pass_msg "C3: second annotate line names '$lit'"
+  else
+    fail_msg "C3: second annotate line does not name '$lit'"
+  fi
+done
+
+inc
+if [ -n "$G2" ] && [ -n "$STEP3_LINE" ] && [ "$G2" -gt "$STEP3_LINE" ]; then
+  pass_msg "C3: second annotate line ($G2) is below '$STEP3_ANCHOR' ($STEP3_LINE)"
+else
+  fail_msg "C3: second annotate line (${G2:-none}) is not below '$STEP3_ANCHOR' (${STEP3_LINE:-none})"
+fi
+
+inc
+if [ -n "$G2" ] && [ -n "$STEP4_LINE" ] && [ "$G2" -lt "$STEP4_LINE" ]; then
+  pass_msg "C3: second annotate line ($G2) is above '$STEP4_ANCHOR' ($STEP4_LINE)"
+else
+  fail_msg "C3: second annotate line (${G2:-none}) is not above '$STEP4_ANCHOR' (${STEP4_LINE:-none})"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "C4: prose budget — the two annotate directives sum to <= $PGA_MAX_WORDS words"
+
+GW1="$(wc -w <<<"$G1_TEXT" | tr -d ' ')"
+GW2="$(wc -w <<<"$G2_TEXT" | tr -d ' ')"
+PGA_WORDS=$((GW1 + GW2))
+
+inc
+if [ "$PGA_WORDS" -ge 1 ] && [ "$PGA_WORDS" -le "$PGA_MAX_WORDS" ]; then
+  pass_msg "C4: the two annotate lines sum to $PGA_WORDS words (1..$PGA_MAX_WORDS)"
+else
+  fail_msg "C4: the two annotate lines sum to $PGA_WORDS words, outside 1..$PGA_MAX_WORDS — cut prose, never raise the ceiling"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "C5: CONTROLS — #1429, the B4 budget, the log grammar and pr-eval are untouched"
+
+inc
+if [ "$PG_COUNT" -eq 2 ]; then
+  pass_msg "C5: the #1429 sentinel is STILL on exactly 2 lines (annotate did not widen it)"
+else
+  fail_msg "C5: the #1429 sentinel is on $PG_COUNT lines — annotate must not touch it"
+fi
+
+inc
+if [ "$PG_WORDS" -ge 1 ] && [ "$PG_WORDS" -le "$PG_MAX_WORDS" ]; then
+  pass_msg "C5: the #1429 B4 budget still holds ($PG_WORDS <= $PG_MAX_WORDS)"
+else
+  fail_msg "C5: the #1429 B4 budget broke ($PG_WORDS words, cap $PG_MAX_WORDS)"
+fi
+
+inc
+if grep -qF -- "$GRAMMAR" "$FULLSEND"; then
+  pass_msg "C5: the TRUST-PROFILE log grammar literal is UNCHANGED (plan_gate carries the resolved value)"
+else
+  fail_msg "C5: the TRUST-PROFILE log grammar literal changed — the issue mandates 'log-line grammar unchanged'"
+fi
+
+for banned in "$PGA_SENTINEL" 'GATE=annotate'; do
+  inc
+  if grep -qF -- "$banned" <<<"$PREVAL"; then
+    fail_msg "C5: the PR-eval dispatch prompt contract region names '$banned' — #1435 must not reach pr-eval"
+  else
+    pass_msg "C5: the PR-eval dispatch prompt contract region does not name '$banned'"
+  fi
+done
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"

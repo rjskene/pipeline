@@ -595,6 +595,31 @@ else
 $OUT25L"
 fi
 
+# (26) #1435 PIPELINE_PLAN_GATE=annotate on plan-eval -> GATE=annotate. The
+#      annotate arm is a FOURTH recognized value, not a fallback: it must reach
+#      stdout verbatim and emit NO WARN.
+CFG26=$(make_config_root 'PIPELINE_PLAN_GATE=annotate')
+FIX26=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
+OUT26=$(run_stage "$FIX26" "$CFG26" plan-eval)
+assert_tok "(26) plan-gate annotate" "GATE=annotate" "$OUT26"
+assert_tok "(26) plan-gate annotate" "MODEL=opus" "$OUT26"
+inc
+WARN26="$(run_stage_err "$FIX26" "$CFG26" plan-eval | grep -c '^WARN:')"
+if [ "$WARN26" -eq 0 ]; then
+  pass_msg "(26) plan-gate annotate -> no WARN on stderr"
+else
+  fail_msg "(26) expected 0 '^WARN:' stderr lines for annotate, got $WARN26"
+fi
+
+# (26b) The case-(24) fallback WARN must NAME annotate in its accepted-value
+#       enumeration, so a typo'd knob tells the operator every legal value.
+inc
+WARN26B="$(run_stage_err "$FIX24" "$CFG24" plan-eval | grep '^WARN:.*PIPELINE_PLAN_GATE')"
+case "$WARN26B" in
+  *annotate*) pass_msg "(26b) fallback WARN names 'annotate'" ;;
+  *) fail_msg "(26b) expected the PIPELINE_PLAN_GATE fallback WARN to name 'annotate', got: $WARN26B" ;;
+esac
+
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="
 [ "$FAIL" -eq 0 ]

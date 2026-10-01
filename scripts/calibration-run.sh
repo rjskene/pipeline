@@ -101,10 +101,11 @@ Options:
                    per #1420) — sets PIPELINE_PATH_B_MODEL_EXECUTE in the
                    sandbox session, pinning the model of the SINGLE PATH B
                    execute agent (backlog #2/#28).
-  --plan-gate F    full|single|none  (default unset = the harness default,
-                   `full`) — sets PIPELINE_PLAN_GATE in the sandbox session,
-                   varying how many plan-eval dispatches the plan-approval gate
-                   is worth (outer-loop step 4, #1429).
+  --plan-gate F    full|single|none|annotate  (default unset = the harness
+                   default, `full`) — sets PIPELINE_PLAN_GATE in the sandbox
+                   session, varying how many plan-eval dispatches the
+                   plan-approval gate is worth (outer-loop step 4, #1429;
+                   annotate, #1435).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -195,8 +196,8 @@ case "$EXECUTOR_MODEL" in
 esac
 # Empty is legal here too (and is the default): "leave the knob unset".
 case "$PLAN_GATE" in
-  ''|full|single|none) ;;
-  *) die_usage "--plan-gate must be one of full|single|none (got: $PLAN_GATE)" ;;
+  ''|full|single|none|annotate) ;;
+  *) die_usage "--plan-gate must be one of full|single|none|annotate (got: $PLAN_GATE)" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
@@ -1105,7 +1106,7 @@ emit_calib_block() {
   # by doc / emitter / run-retro.sh header.
   local bexec_atom=""
   [ -n "$EXECUTOR_MODEL" ] && bexec_atom=" bexec=$EXECUTOR_MODEL"
-  # plan_gate=<full|single|none> (#1429) is OPTIONAL for exactly the same reason
+  # plan_gate=<full|single|none|annotate> (#1429, #1435) is OPTIONAL for the same reason
   # and is a PRE-BUILT atom for exactly the same reason: a literal `plan_gate=`
   # in the format string would be read by the (d) grammar contract's
   # `[a-z][a-z-]*=` extractor as a bogus SEVENTH field `gate=` (the char class

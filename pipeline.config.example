@@ -488,10 +488,14 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # stays COMMENTED; uncomment ="lean" to opt in.
 #PIPELINE_TRUST_PROFILE="strict"
 
-# --- #1429 plan gate ---
+# --- #1429 plan gate (annotate arm: #1435) ---
 # How many evaluate-issue-plan DISPATCHES the plan-approval gate is worth: full
-# (default) = today's evaluate -> re-plan -> re-evaluate loop, cap 3; single =
-# one evaluate plus at most one re-plan, then approve; none = skip the gate.
+# (default) = today's evaluate -> re-plan -> re-evaluate loop, cap 3; annotate =
+# ONE evaluate, a Revise carried into execute as binding amendments, no re-plan
+# round (the `**Scope:** structural` exception re-plans once); single (LEGACY --
+# strictly dominated by annotate, retained because existing calibration
+# artifacts carry the -plan-gate-single suffix) = one evaluate plus at most one
+# re-plan, then approve; none = skip the gate.
 # Unknown values fall back to full with one stderr WARN. Read ONLY by the
 # plan-eval arm of scripts/resolve-stage-model.sh, which emits it as GATE=<v>.
 # Override anchor (#1052): defaults-in-code — stays COMMENTED.

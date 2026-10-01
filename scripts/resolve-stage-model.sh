@@ -24,7 +24,7 @@
 #   PATH=<A|B|C|D>
 #   MODEL=<fable|opus|sonnet|haiku>   # ALWAYS named; `inherit` is NEVER emitted
 #   REASON=<default-pin|path-c-fable|follows-producer|high-uncertainty|explicit-knob>
-#   GATE=<full|single|none>           # OPTIONAL (#1429) — emitted on EVERY
+#   GATE=<full|single|none|annotate>  # OPTIONAL (#1429) — emitted on EVERY
 #                                     # plan-eval resolution (including the
 #                                     # `full` default) and on NO other stage.
 #                                     # Callers may ignore it.
@@ -77,12 +77,15 @@
 #               #1429 plan gate — PIPELINE_PLAN_GATE (full, the DEFAULT and the
 #               fallback for any unrecognized value with a stderr WARN | single
 #               | none) is normalized INLINE in this arm, its ONLY read-site,
-#               and emitted as the optional second token GATE=<full|single|none>
+#               and emitted as the optional second token
+#               GATE=<full|single|none|annotate> (annotate, #1435)
 #               after REASON= and before the conditional SKIP=true. It is
 #               stage-scoped: `plan` and `pr-eval` emit no GATE= line at all.
 #               GATE= tells fullsend how many evaluate DISPATCHES the plan gate
 #               is worth (full = the 3-round loop | single = one eval + one
-#               re-plan | none = skip the gate); the resolver itself makes no
+#               re-plan | none = skip the gate | annotate = one eval, a Revise
+#               carried into execute as binding amendments, #1435); the
+#               resolver itself makes no
 #               skip decision beyond SKIP=, and a caller that IGNORES GATE=
 #               behaves exactly as pre-#1429. When lean SKIP=true and GATE=none
 #               both fire, SKIP wins at the call-site.
@@ -240,9 +243,9 @@ case "$STAGE" in
     # machine-parsed token block, so the WARN must never reach it).
     PLAN_GATE_RAW="${PIPELINE_PLAN_GATE:-full}"
     case "$PLAN_GATE_RAW" in
-      full|single|none) GATE_OUT="$PLAN_GATE_RAW" ;;
+      full|single|none|annotate) GATE_OUT="$PLAN_GATE_RAW" ;;
       *)
-        echo "WARN: PIPELINE_PLAN_GATE='$PLAN_GATE_RAW' is not full|single|none — falling back to full." >&2
+        echo "WARN: PIPELINE_PLAN_GATE='$PLAN_GATE_RAW' is not full|single|none|annotate — falling back to full." >&2
         GATE_OUT="full"
         ;;
     esac
