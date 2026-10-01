@@ -326,6 +326,131 @@ else
   [ -s "$TMP/stderr-f" ] && sed 's/^/      /' "$TMP/stderr-f"
 fi
 
+# ---------------------------------------------------------------------------
+# Case G (g) — the execute-issue-plan Step-1 CALL SITE.
+#
+# The selection must live INSIDE the existing Step-1 bash fence (so the
+# single-bash-command directive and the `$COMMENTS_JSON` reuse both hold) and
+# STRICTLY AFTER `printf '%s\n' "$PLAN"` — tests/test-stage-plan-fetch-blocks.sh
+# compares the `COMMENTS_JSON=`..`PLAN=` span three ways and runs this very
+# block UNWRAPPED asserting raw stdout carries no `Plan Evaluation`. Hence the
+# print is GATED on `**Verdict:** Revise`: that guard's decoy says `Approved`.
+# ---------------------------------------------------------------------------
+STEP1_ANCHOR='Fetch the approved plan'
+SKILL_EXEC="$REPO_ROOT/skills/execute-issue-plan/SKILL.md"
+
+BLOCK=$(awk -v anchor="$STEP1_ANCHOR" '
+  index($0, anchor) { found = 1 }
+  found && !in_b && /^[[:space:]]*```bash[[:space:]]*$/ { in_b = 1; next }
+  in_b && /^[[:space:]]*```[[:space:]]*$/ { exit }
+  in_b { print }
+' "$SKILL_EXEC")
+NONCOMMENT=$(printf '%s\n' "$BLOCK" | { grep -vE '^[[:space:]]*#' || true; })
+
+echo "Case G1: the Step-1 fence invokes select-plan-eval-comment.sh on a NON-COMMENT line"
+inc
+if [ -n "$NONCOMMENT" ] \
+   && grep -qE 'bash[[:space:]]+"?\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts/select-plan-eval-comment\.sh' <<<"$NONCOMMENT"; then
+  pass_msg "Case G1: execute Step-1 block invokes the evaluation selector"
+else
+  fail_msg "Case G1: execute Step-1 block does not invoke \${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-eval-comment.sh on a non-comment line"
+  printf '%s\n' "$BLOCK" | sed 's/^/      /'
+fi
+
+echo "Case G2: it reuses \$COMMENTS_JSON — no second trust fetch, no gh call"
+inc
+FTC_CALLS=$(grep -cE 'filter-trusted-comments\.sh' <<<"$NONCOMMENT" || true)
+if grep -qE 'select-plan-eval-comment\.sh' <<<"$NONCOMMENT" \
+   && grep -E 'select-plan-eval-comment\.sh' <<<"$NONCOMMENT" | grep -qF '"$COMMENTS_JSON"' \
+   && [ "$FTC_CALLS" = "1" ] \
+   && ! grep -qE '(^|[^[:alnum:]_-])gh[[:space:]]' <<<"$NONCOMMENT"; then
+  pass_msg "Case G2: same \$COMMENTS_JSON reused (filter-trusted-comments.sh called once, no gh call)"
+else
+  fail_msg "Case G2: expected one filter-trusted-comments.sh call (got $FTC_CALLS), \$COMMENTS_JSON reuse and no gh call"
+  printf '%s\n' "$NONCOMMENT" | sed 's/^/      /'
+fi
+
+echo "Case G3: BEHAVIORAL — the eval body prints only on '**Verdict:** Revise'"
+inc
+RAW_G="$TMP/step1-block.sh"
+printf '%s\n' "$BLOCK" | sed 's/<N>/1435/g' > "$RAW_G"
+
+mk_site_fixture() {  # $1 = verdict word; writes $TMP/site-comments.json
+  jq -n --arg v "$1" '{body:"b", comments:[
+    {authorAssociation:"OWNER", body:"## Implementation Plan\n\n**Files to change:**\n- `scripts/alpha.sh` — TRUSTED-PLAN-BODY\n"},
+    {authorAssociation:"OWNER", body:("## Plan Evaluation\n\n**Verdict:** " + $v + "\n\n**Recommendations:**\n- SITE-EVAL-BODY\n")}
+  ]}' > "$TMP/site-comments.json"
+}
+
+run_site_block() {   # echoes raw stdout of the UNWRAPPED block
+  PATH="$TMP/bin:$PATH" \
+  PIPELINE_REPO="rjskene/pipeline" \
+  CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+  GH_COMMENTS_JSON="$TMP/site-comments.json" \
+  bash "$RAW_G" 2>"$TMP/stderr-site"
+}
+
+mk_site_fixture "Approved"
+G_RC_A=0; G_OUT_A=$(run_site_block) || G_RC_A=$?
+mk_site_fixture "Revise"
+G_RC_R=0; G_OUT_R=$(run_site_block) || G_RC_R=$?
+
+ok=0
+if [ "$G_RC_A" -eq 0 ] && [ "$G_RC_R" -eq 0 ] \
+   && grep -qF 'TRUSTED-PLAN-BODY' <<<"$G_OUT_A" \
+   && ! grep -qF 'SITE-EVAL-BODY' <<<"$G_OUT_A" \
+   && ! grep -qF 'PLAN-AMENDMENTS' <<<"$G_OUT_A" \
+   && grep -qF 'TRUSTED-PLAN-BODY' <<<"$G_OUT_R" \
+   && grep -qF 'SITE-EVAL-BODY' <<<"$G_OUT_R" \
+   && grep -qF 'PLAN-AMENDMENTS' <<<"$G_OUT_R"; then ok=1; fi
+if [ "$ok" = "1" ]; then
+  pass_msg "Case G3: Approved -> plan only; Revise -> plan + PLAN-AMENDMENTS + eval body"
+else
+  fail_msg "Case G3: verdict gate wrong (rc Approved=$G_RC_A Revise=$G_RC_R)"
+  echo "    Approved stdout:"; printf '%s\n' "$G_OUT_A" | sed 's/^/      /'
+  echo "    Revise stdout:";   printf '%s\n' "$G_OUT_R" | sed 's/^/      /'
+  [ -s "$TMP/stderr-site" ] && sed 's/^/      /' "$TMP/stderr-site"
+fi
+
+# ---------------------------------------------------------------------------
+# Case H (h) — the Step-1 PROSE sentinel and its hard 80-word budget.
+# ---------------------------------------------------------------------------
+PA_SENTINEL='**Plan amendments (#1435):**'
+PA_MAX_WORDS=80
+
+echo "Case H1: the sentinel '$PA_SENTINEL' appears on EXACTLY ONE line"
+inc
+PA_COUNT=$(grep -cF -- "$PA_SENTINEL" "$SKILL_EXEC" || true)
+if [ "$PA_COUNT" = "1" ]; then
+  pass_msg "Case H1: sentinel on exactly 1 line"
+else
+  fail_msg "Case H1: sentinel appears on $PA_COUNT lines (expected exactly 1)"
+fi
+
+PA_LINE=$(grep -F -- "$PA_SENTINEL" "$SKILL_EXEC" | head -n 1 || true)
+
+echo "Case H2: that line names Recommendations, PLAN-AMENDMENTS and the recommendation-wins rule"
+inc
+h2_ok=1
+for lit in '**Recommendations:**' 'PLAN-AMENDMENTS:' 'recommendation'; do
+  grep -qF -- "$lit" <<<"$PA_LINE" || h2_ok=0
+done
+grep -qiE 'wins' <<<"$PA_LINE" || h2_ok=0
+if [ "$h2_ok" = "1" ]; then
+  pass_msg "Case H2: line names **Recommendations:**, PLAN-AMENDMENTS: and the wins rule"
+else
+  fail_msg "Case H2: line is missing one of **Recommendations:** / PLAN-AMENDMENTS: / the 'wins' rule: $PA_LINE"
+fi
+
+echo "Case H3: the sentinel line is within its $PA_MAX_WORDS-word budget"
+inc
+PA_WORDS=$(printf '%s' "$PA_LINE" | wc -w | tr -d ' ')
+if [ "$PA_WORDS" -ge 1 ] && [ "$PA_WORDS" -le "$PA_MAX_WORDS" ]; then
+  pass_msg "Case H3: $PA_WORDS words (<= $PA_MAX_WORDS)"
+else
+  fail_msg "Case H3: sentinel line is $PA_WORDS words (budget 1..$PA_MAX_WORDS) — CUT THE PROSE, never raise the ceiling"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

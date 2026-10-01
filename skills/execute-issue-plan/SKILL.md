@@ -64,8 +64,12 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    COMMENTS_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N>)
    PLAN=$(printf '%s' "$COMMENTS_JSON" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-comment.sh")
    printf '%s\n' "$PLAN"
+   PLAN_EVAL=$(printf '%s' "$COMMENTS_JSON" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-eval-comment.sh")
+   case "$PLAN_EVAL" in *'**Verdict:** Revise'*) printf 'PLAN-AMENDMENTS\n%s\n' "$PLAN_EVAL" ;; esac
    ```
    If `PLAN` is empty/`null`, **STOP**: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
+
+   **Plan amendments (#1435):** on `**Verdict:** Revise` the evaluation's `**Recommendations:**` are BINDING amendments to the plan — where a recommendation and a plan step conflict, the recommendation WINS. Append `PLAN-AMENDMENTS: <k>` to Step 11's fixed report line (Step 11 itself stays unedited); `k` counts recommendations APPLIED, not newly applied, since under `GATE=single` or `**Scope:** structural` a re-plan already transcribed them. `Approve`, or no evaluation, leaves behaviour unchanged.
 
    Then list every file under `.claude/scratch/issue-<N>/` — screenshots/binary evidence the planner saw, mirrored into this worktree by `setup-worktree.sh` / `sync-worktrees.sh` (this skill does NOT re-fetch):
 
