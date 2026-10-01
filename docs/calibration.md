@@ -32,7 +32,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
     [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
     [--executor-model opus|sonnet] \
-    [--plan-gate full|single|none]
+    [--plan-gate full|single|none|annotate]
 ```
 
 | Mode | What it does | Costs money |
@@ -83,12 +83,16 @@ never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
 `CALIB-TOTAL` and carries a `-bexec-<M>` artifact suffix, composable with
 `-hooks-off` (#1414).
 
-`--plan-gate full|single|none` (default unset, #1429) sets `PIPELINE_PLAN_GATE`
+`--plan-gate full|single|none|annotate` (default unset, #1429) sets `PIPELINE_PLAN_GATE`
 in the sandbox session — the knob `resolve-stage-model.sh`'s plan-eval arm reads
 to emit `GATE=<v>`, capping how many plan-eval dispatches fullsend makes. Unset
 means the harness default (`full`). A set run is tagged `plan_gate=<v>` on the
 total line and carries a `-plan-gate-<v>` artifact suffix after `-bexec-<M>`,
 composable with `--hooks off`.
+
+`annotate` (#1435) goes further: ONE evaluation, and a `Revise` is carried into
+execute as binding amendments — no re-plan round. A `**Scope:** structural`
+Revise still re-plans once.
 
 ## Harness staging
 

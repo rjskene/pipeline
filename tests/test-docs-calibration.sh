@@ -202,9 +202,26 @@ if [ "$PG_WORDS" -ge 1 ] && [ "$PG_WORDS" -le "$PG_MAX_WORDS" ]; then
 else
   fail_msg "the --plan-gate arm paragraph is $PG_WORDS words, outside 1..$PG_MAX_WORDS — cut prose, never raise the ceiling"
 fi
-assert_contains "$DOC" '`--plan-gate full|single|none`' "documents the --plan-gate arm"
-assert_contains "$DOC" '[--plan-gate full|single|none]' "the usage synopsis names --plan-gate"
+assert_contains "$DOC" '`--plan-gate full|single|none|annotate`' "documents the --plan-gate arm"
+assert_contains "$DOC" '[--plan-gate full|single|none|annotate]' "the usage synopsis names --plan-gate"
 assert_contains "$DOC" '-plan-gate-<v>' "documents the -plan-gate-<v> artifact suffix"
+
+# #1435: the annotate arm gets its OWN paragraph with its OWN 30-word budget,
+# placed AFTER the first `--plan-gate` paragraph and deliberately NOT containing
+# the literal `--plan-gate` — so the 80-word extractor above stays unambiguous
+# and its ceiling is untouched.
+ANN_MAX_WORDS=30
+TESTS=$((TESTS + 1))
+ANN_PARA=""
+if [ -f "$DOC" ]; then
+  ANN_PARA="$(awk 'BEGIN{RS=""} /annotate/ && !/--plan-gate/ && !/^```/ {print; exit}' "$DOC")"
+fi
+ANN_WORDS="$(printf '%s' "$ANN_PARA" | wc -w | tr -d ' ')"
+if [ "$ANN_WORDS" -ge 1 ] && [ "$ANN_WORDS" -le "$ANN_MAX_WORDS" ]; then
+  pass_msg "the annotate paragraph exists and is $ANN_WORDS words (1..$ANN_MAX_WORDS)"
+else
+  fail_msg "the annotate paragraph is $ANN_WORDS words, outside 1..$ANN_MAX_WORDS — cut prose, never raise the ceiling"
+fi
 
 echo ""
 echo "docs/calibration.md — no anchored cross-references"
