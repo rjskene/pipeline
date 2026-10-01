@@ -332,6 +332,7 @@ expect_sub "--executor-model error names the allowed values" "$OUT" "opus|sonnet
 run_helper --dry-run --plan-gate garbage
 expect_rc "--plan-gate garbage is rejected" 2
 expect_sub "--plan-gate error names the allowed values" "$OUT" "full|single|none"
+expect_sub "--plan-gate error names the annotate value (#1435)" "$OUT" "annotate"
 
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
@@ -432,6 +433,15 @@ LAUNCH_PG="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
 expect_sub "--plan-gate single previews the PIPELINE_PLAN_GATE token" \
   "$LAUNCH_PG" "PIPELINE_PLAN_GATE=single"
 expect_sub "--plan-gate single is named in the dry-run preview" "$LAUNCH_PG" "plan_gate=single"
+
+# #1435: the annotate arm is the fourth accepted value and previews identically.
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --plan-gate annotate
+expect_rc "--plan-gate annotate dry-run exits 0" 0
+LAUNCH_PGA="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--plan-gate annotate previews the PIPELINE_PLAN_GATE token" \
+  "$LAUNCH_PGA" "PIPELINE_PLAN_GATE=annotate"
+expect_sub "--plan-gate annotate is named in the dry-run preview" "$LAUNCH_PGA" "plan_gate=annotate"
 
 # #1421 escape hatch: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old
 # flag for one run and exports NO bridge dir, so an unattended launch with no
@@ -2085,6 +2095,24 @@ if [ -n "$ARTIFACT_PG_COMPOSED" ] && [ -f "$ARTIFACT_PG_COMPOSED" ]; then
   pass_msg "the composed arm names its artifact -bexec-opus-plan-gate-none (fixed order)"
 else
   fail_msg "the composed arm must name its artifact <UTC date>T<HHMM>Z-bexec-opus-plan-gate-none.txt"
+fi
+
+# #1435: the annotate arm labels its run and its artifact exactly like the other
+# values — the suffix + atom machinery is value-generic, so this row is the proof
+# that `annotate` needs nothing bespoke beyond passing validation.
+echo 6850 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+run_helper --run --harness "$HARNESS" --plan-gate annotate
+expect_rc "--run --plan-gate annotate exits 0" 0
+
+TOTAL_PGA="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the CALIB-TOTAL line records the annotate arm" "$TOTAL_PGA" "plan_gate=annotate"
+
+ARTIFACT_PGA="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*-plan-gate-annotate.txt 2>/dev/null | sort | tail -1)"
+if [ -n "$ARTIFACT_PGA" ] && [ -f "$ARTIFACT_PGA" ]; then
+  pass_msg "--plan-gate annotate names its artifact with a -plan-gate-annotate suffix"
+else
+  fail_msg "--plan-gate annotate must name its artifact <UTC date>T<HHMM>Z-plan-gate-annotate.txt"
 fi
 
 # Control: same poisoned launching shell, flag ABSENT. The knob must be gone
