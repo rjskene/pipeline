@@ -223,6 +223,10 @@ if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
     # (resolve-execute-dispatch.sh reads it), so the dump is the only place its
     # value — and the scrub of an inherited poison value — is observable.
     echo "PIPELINE_PATH_B_MODEL_EXECUTE=${PIPELINE_PATH_B_MODEL_EXECUTE:-unset}"
+    # #1429: same story for the --plan-gate arm — PIPELINE_PLAN_GATE reaches the
+    # session ONLY as this env var (resolve-stage-model.sh's plan-eval arm reads
+    # it), so this dump is the only place the value and the scrub are observable.
+    echo "PIPELINE_PLAN_GATE=${PIPELINE_PLAN_GATE:-unset}"
   } > "$CALIB_TEST_LAUNCH_ENV"
 fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
@@ -322,6 +326,13 @@ run_helper --dry-run --executor-model gpt
 expect_rc "--executor-model gpt is rejected" 2
 expect_sub "--executor-model error names the allowed values" "$OUT" "opus|sonnet"
 
+# #1429: pinned on the MESSAGE as well as the exit code — a bare unknown arg
+# already exits 2, so an exit-code-only assert would pass before the parser
+# lands (a vacuous RED).
+run_helper --dry-run --plan-gate garbage
+expect_rc "--plan-gate garbage is rejected" 2
+expect_sub "--plan-gate error names the allowed values" "$OUT" "full|single|none"
+
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
 
@@ -392,6 +403,11 @@ refute_sub "the dry-run preview names no superpowers arm (#1419)" "$LAUNCH" "sup
 refute_sub "the default preview sets no PIPELINE_PATH_B_MODEL_EXECUTE" \
   "$LAUNCH" "PIPELINE_PATH_B_MODEL_EXECUTE="
 refute_sub "the default preview names no bexec arm" "$LAUNCH" "bexec="
+# #1429: the plan-gate arm is OPT-IN the same way — an unset arm must be the
+# harness default (`full`), never a pinned value in the measured session.
+refute_sub "the default preview sets no PIPELINE_PLAN_GATE" \
+  "$LAUNCH" "PIPELINE_PLAN_GATE="
+refute_sub "the default preview names no plan_gate arm" "$LAUNCH" "plan_gate="
 
 rm -f "$CALLS"
 run_helper --dry-run --harness "$HARNESS" --hooks off
@@ -407,6 +423,15 @@ LAUNCH_BEXEC="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
 expect_sub "--executor-model opus previews the PIPELINE_PATH_B_MODEL_EXECUTE token" \
   "$LAUNCH_BEXEC" "PIPELINE_PATH_B_MODEL_EXECUTE=opus"
 expect_sub "--executor-model opus is named in the dry-run preview" "$LAUNCH_BEXEC" "bexec=opus"
+
+# #1429: same shape for --plan-gate — the env token that actually reaches the
+# sandbox session plus the human-readable arm label.
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --plan-gate single
+LAUNCH_PG="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--plan-gate single previews the PIPELINE_PLAN_GATE token" \
+  "$LAUNCH_PG" "PIPELINE_PLAN_GATE=single"
+expect_sub "--plan-gate single is named in the dry-run preview" "$LAUNCH_PG" "plan_gate=single"
 
 # #1421 escape hatch: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old
 # flag for one run and exports NO bridge dir, so an unattended launch with no
@@ -2011,6 +2036,77 @@ refute_sub "a stale pre-run queue file is NOT counted" "$TOTAL_BRIDGE" "bridge_p
 
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_BRIDGE_Q
 rm -f "$BRIDGE_Q/stale.json" "$BRIDGE_Q/fresh.json"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 24: --plan-gate reaches the sandbox session and labels the run (#1429)"
+# ---------------------------------------------------------------------------
+# Outer-loop step 4: the arm varies how many plan-eval DISPATCHES fullsend makes
+# (resolve-stage-model.sh's plan-eval arm reads PIPELINE_PLAN_GATE and emits
+# GATE=<v>), so the measured arm is meaningless unless the knob reaches the
+# measured session. #1390's scrub -u's every inherited PIPELINE_*, so the
+# explicit set has to come AFTER it — a poison value in the launching shell must
+# lose to the flag, and must be gone entirely when the flag is absent.
+# A DISTINCT arm per --run: RUN_TS is minute-granular, so two same-arm runs in
+# one UTC minute would overwrite each other's artifact.
+
+echo 6700 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export PIPELINE_PLAN_GATE="bogus"
+run_helper --run --harness "$HARNESS" --plan-gate single
+expect_rc "--run --plan-gate single exits 0" 0
+
+LAUNCH_ENV_PG="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_PG" | grep -qxF -- "PIPELINE_PLAN_GATE=single"; then
+  pass_msg "--plan-gate single hands the session PIPELINE_PLAN_GATE=single"
+else
+  fail_msg "the launched session's environment must carry PIPELINE_PLAN_GATE=single (got: $(printf '%s' "$LAUNCH_ENV_PG" | tr '\n' ' '))"
+fi
+
+TOTAL_PG="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the CALIB-TOTAL line records the plan-gate arm" "$TOTAL_PG" "plan_gate=single"
+
+ARTIFACT_PG="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*-plan-gate-single.txt 2>/dev/null | sort | tail -1)"
+if [ -n "$ARTIFACT_PG" ] && [ -f "$ARTIFACT_PG" ]; then
+  pass_msg "--plan-gate single names its artifact with a -plan-gate-single suffix"
+else
+  fail_msg "--plan-gate single must name its artifact <UTC date>T<HHMM>Z-plan-gate-single.txt"
+fi
+
+# Composed arm: the suffix order is FIXED — -hooks-off, then -bexec-<M>, then
+# -plan-gate-<v> — so run-retro.sh has exactly one order to peel.
+echo 6800 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+run_helper --run --harness "$HARNESS" --plan-gate none --executor-model opus
+expect_rc "--run --plan-gate none --executor-model opus exits 0" 0
+
+ARTIFACT_PG_COMPOSED="$(ls -1 "$HARNESS"/docs/retros/calib/"$(date -u +%Y-%m-%d)"T*-bexec-opus-plan-gate-none.txt 2>/dev/null | sort | tail -1)"
+if [ -n "$ARTIFACT_PG_COMPOSED" ] && [ -f "$ARTIFACT_PG_COMPOSED" ]; then
+  pass_msg "the composed arm names its artifact -bexec-opus-plan-gate-none (fixed order)"
+else
+  fail_msg "the composed arm must name its artifact <UTC date>T<HHMM>Z-bexec-opus-plan-gate-none.txt"
+fi
+
+# Control: same poisoned launching shell, flag ABSENT. The knob must be gone
+# from the session entirely (not inherited as `bogus`), and the run must carry
+# no plan_gate label at all — the unset arm is the harness default, not an arm.
+echo 6900 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with no --plan-gate exits 0" 0
+
+LAUNCH_ENV_NO_PG="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_NO_PG" | grep -qxF -- "PIPELINE_PLAN_GATE=unset"; then
+  pass_msg "an inherited PIPELINE_PLAN_GATE is scrubbed when the flag is absent"
+else
+  fail_msg "the launched session must NOT inherit PIPELINE_PLAN_GATE (got: $(printf '%s' "$LAUNCH_ENV_NO_PG" | tr '\n' ' '))"
+fi
+unset PIPELINE_PLAN_GATE
+
+TOTAL_NO_PG="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+refute_sub "an unset-arm CALIB-TOTAL carries no plan_gate atom" "$TOTAL_NO_PG" "plan_gate="
+
+unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
 echo ""

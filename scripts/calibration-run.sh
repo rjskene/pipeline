@@ -101,6 +101,10 @@ Options:
                    per #1420) — sets PIPELINE_PATH_B_MODEL_EXECUTE in the
                    sandbox session, pinning the model of the SINGLE PATH B
                    execute agent (backlog #2/#28).
+  --plan-gate F    full|single|none  (default unset = the harness default,
+                   `full`) — sets PIPELINE_PLAN_GATE in the sandbox session,
+                   varying how many plan-eval dispatches the plan-approval gate
+                   is worth (outer-loop step 4, #1429).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -123,6 +127,10 @@ HOOKS="on"
 # harness resolves on its own (Sonnet, #1042). Never defaulted to a value here:
 # pinning one would silently make every run an arm of this experiment (#1414).
 EXECUTOR_MODEL=""
+# Same contract for the plan-gate arm (#1429): empty = "leave PIPELINE_PLAN_GATE
+# unset", so the sandbox session keeps the harness default (`full`). Pinning a
+# value here would make every run an arm of this experiment.
+PLAN_GATE=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -162,6 +170,8 @@ while [ $# -gt 0 ]; do
     --hooks=*)    HOOKS="${1#--hooks=}"; shift ;;
     --executor-model)   require_value "$@"; EXECUTOR_MODEL="$2"; shift 2 ;;
     --executor-model=*) EXECUTOR_MODEL="${1#--executor-model=}"; shift ;;
+    --plan-gate)        require_value "$@"; PLAN_GATE="$2"; shift 2 ;;
+    --plan-gate=*)      PLAN_GATE="${1#--plan-gate=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -182,6 +192,11 @@ esac
 case "$EXECUTOR_MODEL" in
   ''|opus|sonnet) ;;
   *) die_usage "--executor-model must be one of opus|sonnet (got: $EXECUTOR_MODEL)" ;;
+esac
+# Empty is legal here too (and is the default): "leave the knob unset".
+case "$PLAN_GATE" in
+  ''|full|single|none) ;;
+  *) die_usage "--plan-gate must be one of full|single|none (got: $PLAN_GATE)" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
@@ -298,6 +313,12 @@ build_launch() {
   # PIPELINE_TRUST_PROFILE does. Empty arm = no token at all, not an empty set.
   local -a bexec_env=()
   [ -n "$EXECUTOR_MODEL" ] && bexec_env=("PIPELINE_PATH_B_MODEL_EXECUTE=$EXECUTOR_MODEL")
+  # #1429: the plan-gate arm is an ENV knob too — resolve-stage-model.sh's
+  # plan-eval arm reads PIPELINE_PLAN_GATE inside the sandbox session and emits
+  # GATE=<v> for fullsend to consume. Same splice position and same empty-arm
+  # semantics as bexec_env above.
+  local -a plan_gate_env=()
+  [ -n "$PLAN_GATE" ] && plan_gate_env=("PIPELINE_PLAN_GATE=$PLAN_GATE")
   # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
@@ -321,7 +342,8 @@ build_launch() {
             bridge_env=("PIPELINE_PERMISSION_BRIDGE_DIR=$HARNESS/.claude/scratch/permission-queue") ;;
   esac
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
-          "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" PIPELINE_HEADLESS=true
+          "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" "${plan_gate_env[@]}"
+          PIPELINE_HEADLESS=true
           "${bridge_env[@]}"
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
           timeout "$CALIB_TIMEOUT"
@@ -1083,6 +1105,13 @@ emit_calib_block() {
   # by doc / emitter / run-retro.sh header.
   local bexec_atom=""
   [ -n "$EXECUTOR_MODEL" ] && bexec_atom=" bexec=$EXECUTOR_MODEL"
+  # plan_gate=<full|single|none> (#1429) is OPTIONAL for exactly the same reason
+  # and is a PRE-BUILT atom for exactly the same reason: a literal `plan_gate=`
+  # in the format string would be read by the (d) grammar contract's
+  # `[a-z][a-z-]*=` extractor as a bogus SEVENTH field `gate=` (the char class
+  # breaks at `_`).
+  local plan_gate_atom=""
+  [ -n "$PLAN_GATE" ] && plan_gate_atom=" plan_gate=$PLAN_GATE"
   # bridge_prompts=<n> (#1421) — how many permission escalations THIS run raised
   # through the PermissionRequest bridge. It is the measurement that says whether
   # replacing --dangerously-skip-permissions with `--permission-mode auto` turned
@@ -1106,16 +1135,16 @@ emit_calib_block() {
   fi
   bridge_atom=" bridge_prompts=$n_bridge"
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" \
-      "$bexec_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" \
-      "$bexec_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
   fi
 }
 
@@ -1153,11 +1182,14 @@ cmd_run() {
   RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   # #1409/#1414: a non-default arm suffixes both artifacts so it can never be
   # mistaken for the baseline; the default arms keep the plain name.
-  # Composable in a FIXED order — -hooks-off, then -bexec-<M> — so every-arm
-  # names <ts>-hooks-off-bexec-opus and run-retro.sh has one order to peel.
+  # Composable in a FIXED order — -hooks-off, then -bexec-<M>, then
+  # -plan-gate-<v> (#1429) — so an every-arm run names
+  # <ts>-hooks-off-bexec-opus-plan-gate-single and run-retro.sh has one order to
+  # peel.
   local run_suffix=""
   [ "$HOOKS" = "off" ] && run_suffix="${run_suffix}-hooks-off"
   [ -n "$EXECUTOR_MODEL" ] && run_suffix="${run_suffix}-bexec-$EXECUTOR_MODEL"
+  [ -n "$PLAN_GATE" ] && run_suffix="${run_suffix}-plan-gate-$PLAN_GATE"
   RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
@@ -1182,6 +1214,7 @@ case "$MODE" in
     # its CALIB-TOTAL atom.
     ARM_TOKENS=("hooks=$HOOKS")
     [ -n "$EXECUTOR_MODEL" ] && ARM_TOKENS+=("bexec=$EXECUTOR_MODEL")
+    [ -n "$PLAN_GATE" ] && ARM_TOKENS+=("plan_gate=$PLAN_GATE")
     dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;

@@ -164,6 +164,9 @@ echo "docs/calibration.md — PIPELINE_* token set"
 # the headless permission bridge (#1421): the `## Permission bridge` subsection
 # documents the one-run escape hatch and the answer deadline, and
 # pipeline.config.example declares both (commented, defaults-in-code).
+# PIPELINE_PLAN_GATE joined with the --plan-gate arm (#1429): the doc names it
+# because the flag sets it in the sandbox session, and pipeline.config.example
+# declares it (commented, defaults-in-code, beside PIPELINE_TRUST_PROFILE).
 TESTS=$((TESTS + 1))
 extra=""
 if [ -f "$DOC" ]; then
@@ -172,6 +175,7 @@ if [ -f "$DOC" ]; then
         -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS -e PIPELINE_TRUST_PROFILE \
         -e PIPELINE_PATH_B_MODEL_EXECUTE \
         -e PIPELINE_HEADLESS_PERMISSIONS -e PIPELINE_PERMISSION_BRIDGE_TIMEOUT \
+        -e PIPELINE_PLAN_GATE \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then
@@ -179,6 +183,28 @@ if [ -z "$extra" ]; then
 else
   fail_msg "names undeclared PIPELINE_* token(s): $extra"
 fi
+
+echo ""
+echo "docs/calibration.md — --plan-gate arm paragraph (#1429)"
+# The arm gets ONE paragraph and a synopsis-fence entry, capped at 80 words. The
+# `1 <=` floor pairs with the ceiling because `wc -w` of a missing extract is 0,
+# which satisfies any ceiling and turns the assertion into a vacuous pass. If it
+# overruns, CUT THE PROSE — never raise the ceiling.
+PG_MAX_WORDS=80
+TESTS=$((TESTS + 1))
+PG_PARA=""
+if [ -f "$DOC" ]; then
+  PG_PARA="$(awk 'BEGIN{RS=""} /--plan-gate/ && !/^```/ {print; exit}' "$DOC")"
+fi
+PG_WORDS="$(printf '%s' "$PG_PARA" | wc -w | tr -d ' ')"
+if [ "$PG_WORDS" -ge 1 ] && [ "$PG_WORDS" -le "$PG_MAX_WORDS" ]; then
+  pass_msg "the --plan-gate arm paragraph exists and is $PG_WORDS words (1..$PG_MAX_WORDS)"
+else
+  fail_msg "the --plan-gate arm paragraph is $PG_WORDS words, outside 1..$PG_MAX_WORDS — cut prose, never raise the ceiling"
+fi
+assert_contains "$DOC" '`--plan-gate full|single|none`' "documents the --plan-gate arm"
+assert_contains "$DOC" '[--plan-gate full|single|none]' "the usage synopsis names --plan-gate"
+assert_contains "$DOC" '-plan-gate-<v>' "documents the -plan-gate-<v> artifact suffix"
 
 echo ""
 echo "docs/calibration.md — no anchored cross-references"

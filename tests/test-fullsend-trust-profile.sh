@@ -41,8 +41,12 @@ SENTINEL='**Trust profile (#1291):**'
 STEP2_ANCHOR='2. **Evaluate plans**'
 STEP3_ANCHOR='3. **Re-plan loop**'
 ROUTING_ANCHOR='**Per-path execute MODEL routing'
+# #1429 plan gate — its own sentinel, its own 120-word budget (B-series below).
+PG_SENTINEL='**Plan gate (#1429):**'
+STEP4_ANCHOR='4. **Approve**'
+PG_MAX_WORDS=120
 # #1420 removed the split-role lane, so the logged grammar drops `split_role=`.
-GRAMMAR='TRUST-PROFILE: profile=<p> issue=#N plan_eval=<run|skip>'
+GRAMMAR='TRUST-PROFILE: profile=<p> issue=#N plan_eval=<run|skip> plan_gate=<full|single|none> plan_rounds=<k>'
 PREVAL_PIN='resolve-stage-model.sh" <N> pr-eval'
 
 MAX_WORDS=120
@@ -99,6 +103,19 @@ S2_TEXT=""
 STEP2_LINE="$(first_line_of "$STEP2_ANCHOR")"
 STEP3_LINE="$(first_line_of "$STEP3_ANCHOR")"
 ROUTING_LINE="$(first_line_of "$ROUTING_ANCHOR")"
+STEP4_LINE="$(first_line_of "$STEP4_ANCHOR")"
+
+PG_LINES=()
+while IFS= read -r n; do
+  [ -n "$n" ] && PG_LINES+=("$n")
+done < <(grep -nF -- "$PG_SENTINEL" "$FULLSEND" | cut -d: -f1)
+
+P1="${PG_LINES[0]-}"
+P2="${PG_LINES[1]-}"
+P1_TEXT=""
+P2_TEXT=""
+[ -n "$P1" ] && P1_TEXT="$(sed -n "${P1}p" "$FULLSEND")"
+[ -n "$P2" ] && P2_TEXT="$(sed -n "${P2}p" "$FULLSEND")"
 
 # ---------------------------------------------------------------------------
 scenario "A1: the sentinel appears on exactly two lines"
@@ -194,6 +211,98 @@ if grep -qF -- "$PREVAL_PIN" "$FULLSEND"; then
   pass_msg "A5: the pr-eval stage pin ('$PREVAL_PIN') is unchanged"
 else
   fail_msg "A5: the pr-eval stage pin ('$PREVAL_PIN') is GONE"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "B1: the plan-gate sentinel appears on exactly two lines"
+
+PG_COUNT="$(grep -cF -- "$PG_SENTINEL" "$FULLSEND")"
+inc
+if [ "$PG_COUNT" -eq 2 ]; then
+  pass_msg "B1: exactly 2 lines carry '$PG_SENTINEL'"
+else
+  fail_msg "B1: expected exactly 2 lines carrying '$PG_SENTINEL', found $PG_COUNT"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "B2: the Step 2 directive consumes the resolver's GATE= token"
+
+for lit in 'GATE=none' 'GATE=single' 'GATE=full' 'plan-eval skipped: plan-gate=none' 'plan_eval=skip'; do
+  inc
+  if [ -n "$P1_TEXT" ] && grep -qF -- "$lit" <<<"$P1_TEXT"; then
+    pass_msg "B2: first plan-gate line names '$lit'"
+  else
+    fail_msg "B2: first plan-gate line does not name '$lit'"
+  fi
+done
+
+inc
+if [ -n "$P1" ] && [ -n "$STEP2_LINE" ] && [ "$P1" -gt "$STEP2_LINE" ]; then
+  pass_msg "B2: first plan-gate line ($P1) is below '$STEP2_ANCHOR' ($STEP2_LINE)"
+else
+  fail_msg "B2: first plan-gate line (${P1:-none}) is not below '$STEP2_ANCHOR' (${STEP2_LINE:-none})"
+fi
+
+inc
+if [ -n "$P1" ] && [ -n "$STEP3_LINE" ] && [ "$P1" -lt "$STEP3_LINE" ]; then
+  pass_msg "B2: first plan-gate line ($P1) is above '$STEP3_ANCHOR' ($STEP3_LINE)"
+else
+  fail_msg "B2: first plan-gate line (${P1:-none}) is not above '$STEP3_ANCHOR' (${STEP3_LINE:-none})"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "B3: the Step 3 directive caps the re-plan loop under GATE=single"
+
+# 'plan-approved'/'plan-pending' are load-bearing, not decoration: the single-gate
+# Revise arm approves HERE because evaluate-issue-plan leaves a Revise verdict at
+# `plan-pending` and Step 4's approve site filters on `plan-reviewed` — an arm
+# that says "approve" without naming the transition drops the issue out of the
+# execute slate silently.
+for lit in 'GATE=single' '#1317' 'plan-approved' 'plan-pending'; do
+  inc
+  if [ -n "$P2_TEXT" ] && grep -qF -- "$lit" <<<"$P2_TEXT"; then
+    pass_msg "B3: second plan-gate line names '$lit'"
+  else
+    fail_msg "B3: second plan-gate line does not name '$lit'"
+  fi
+done
+
+inc
+if [ -n "$P2" ] && [ -n "$STEP3_LINE" ] && [ "$P2" -gt "$STEP3_LINE" ]; then
+  pass_msg "B3: second plan-gate line ($P2) is below '$STEP3_ANCHOR' ($STEP3_LINE)"
+else
+  fail_msg "B3: second plan-gate line (${P2:-none}) is not below '$STEP3_ANCHOR' (${STEP3_LINE:-none})"
+fi
+
+inc
+if [ -n "$P2" ] && [ -n "$STEP4_LINE" ] && [ "$P2" -lt "$STEP4_LINE" ]; then
+  pass_msg "B3: second plan-gate line ($P2) is above '$STEP4_ANCHOR' ($STEP4_LINE)"
+else
+  fail_msg "B3: second plan-gate line (${P2:-none}) is not above '$STEP4_ANCHOR' (${STEP4_LINE:-none})"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "B4: prose budget — the two plan-gate directives sum to <= $PG_MAX_WORDS words"
+
+PW1="$(wc -w <<<"$P1_TEXT" | tr -d ' ')"
+PW2="$(wc -w <<<"$P2_TEXT" | tr -d ' ')"
+PG_WORDS=$((PW1 + PW2))
+
+inc
+if [ "$PG_WORDS" -ge 1 ] && [ "$PG_WORDS" -le "$PG_MAX_WORDS" ]; then
+  pass_msg "B4: the two plan-gate lines sum to $PG_WORDS words (1..$PG_MAX_WORDS)"
+else
+  fail_msg "B4: the two plan-gate lines sum to $PG_WORDS words, outside 1..$PG_MAX_WORDS — cut prose, never raise the ceiling"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "B5: CONTROL — the plan gate never reaches the pr-eval dispatch contract"
+
+inc
+if grep -qF -- 'plan-gate' <<<"$PREVAL"; then
+  fail_msg "B5: the PR-eval dispatch prompt contract region names 'plan-gate' — #1429 must not reach pr-eval"
+else
+  pass_msg "B5: the PR-eval dispatch prompt contract region does not name 'plan-gate'"
 fi
 
 # ---------------------------------------------------------------------------

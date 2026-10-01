@@ -488,6 +488,15 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # stays COMMENTED; uncomment ="lean" to opt in.
 #PIPELINE_TRUST_PROFILE="strict"
 
+# --- #1429 plan gate ---
+# How many evaluate-issue-plan DISPATCHES the plan-approval gate is worth: full
+# (default) = today's evaluate -> re-plan -> re-evaluate loop, cap 3; single =
+# one evaluate plus at most one re-plan, then approve; none = skip the gate.
+# Unknown values fall back to full with one stderr WARN. Read ONLY by the
+# plan-eval arm of scripts/resolve-stage-model.sh, which emits it as GATE=<v>.
+# Override anchor (#1052): defaults-in-code — stays COMMENTED.
+#PIPELINE_PLAN_GATE="full"
+
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 # Override anchor (#1052): defaults-in-code — default true lives at the read site
 # (fullsend 6b reads colon-less ${VAR-true}), so this stays COMMENTED and `--fix config`
