@@ -358,6 +358,114 @@ for d in "${slate_dirs[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+echo "== (i) slate 01 reference test scores correctness, not wording =="
+# ---------------------------------------------------------------------------
+# The issue-01 doc check must accept ANY phrasing that names `--status`
+# together with open/done/all — not one blessed literal. Calibration run #17
+# wrote "`--status` accepts `open|done|all`", which is correct, and the old
+# literal grep for '--status open|done|all' scored it FAIL (5/6, #1438).
+
+REFTEST_01="$SLATE_DIR/01-doc-stale/reference-test.sh"
+
+# rewrite_listing_section <sandbox docs/usage.md> <file with the replacement>
+# Swaps everything between "## Listing tasks" and the next "## " heading.
+rewrite_listing_section() {
+  local usage="$1" repl="$2"
+  awk -v repl="$repl" '
+    $0 == "## Listing tasks" {
+      print
+      while ((getline line < repl) > 0) print line
+      skip = 1
+      next
+    }
+    skip && /^## / { skip = 0 }
+    skip { next }
+    { print }
+  ' "$usage" > "$usage.new" && mv "$usage.new" "$usage"
+}
+
+# run_reftest_01 <file with the replacement section> — echoes output, returns rc
+run_reftest_01() {
+  rm -rf "$TMP/sbx01"
+  cp -a "$TEMPLATE_DIR" "$TMP/sbx01"
+  rewrite_listing_section "$TMP/sbx01/docs/usage.md" "$1" || return 9
+  ( cd "$TMP/sbx01" && bash "$REFTEST_01" ) 2>&1
+}
+
+# (A) the positive control: calibration run #17's wording.
+cat > "$TMP/section-run17.md" <<'SECTION'
+
+```
+bash bin/calibctl list
+bash bin/calibctl list --priority high
+bash bin/calibctl list --status all
+```
+
+`--status` accepts `open|done|all`. The default is `--status open`, so tasks
+you have already completed are hidden unless you ask for them. `list` exits 1
+when nothing matches, which makes it easy to use in a shell conditional:
+
+```
+if bash bin/calibctl list --priority high >/dev/null; then
+  echo "there is high-priority work outstanding"
+fi
+```
+
+SECTION
+
+# (B) the same facts in a hard-wrapped sentence: `all` lands on the next
+# physical line, so a single-line check would score this correct fix FAIL.
+cat > "$TMP/section-wrapped.md" <<'SECTION'
+
+```
+bash bin/calibctl list
+bash bin/calibctl list --status done
+```
+
+`--status` selects which tasks are listed; it accepts `open`, `done` or
+`all`. The default is `--status open`, so completed tasks stay hidden until
+you ask for them. `list` exits 1 when nothing matches.
+
+SECTION
+
+# (C) under-specified: `--all` is gone and the default is stated, but the
+# docs never name the other two values. This must STAY red.
+cat > "$TMP/section-thin.md" <<'SECTION'
+
+```
+bash bin/calibctl list
+```
+
+`--status` picks which tasks appear; the default is `--status open`. Pass a
+different status when you want something else. `list` exits 1 when nothing
+matches.
+
+SECTION
+
+out=$(run_reftest_01 "$TMP/section-run17.md"); rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "slate 01 reftest passes on run #17's wording (\`--status\` accepts \`open|done|all\`)"
+else
+  fail_msg "slate 01 reftest fails run #17's correct wording (rc=$rc): $(echo "$out" | grep '^FAIL' | tr '\n' ' ')"
+fi
+
+out=$(run_reftest_01 "$TMP/section-wrapped.md"); rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "slate 01 reftest passes when the values are hard-wrapped across lines"
+else
+  fail_msg "slate 01 reftest fails a hard-wrapped correct fix (rc=$rc): $(echo "$out" | grep '^FAIL' | tr '\n' ' ')"
+fi
+
+out=$(run_reftest_01 "$TMP/section-thin.md"); rc=$?
+if [ "$rc" -ne 0 ] \
+   && printf '%s' "$out" | grep -qF "docs/usage.md should document '--status open|done|all'" \
+   && printf '%s' "$out" | grep -qF 'issue 01: FAIL (1 check(s))'; then
+  pass_msg "slate 01 reftest still fails docs that never name done/all, with the stable message"
+else
+  fail_msg "slate 01 reftest should fail ONLY the doc check on under-specified docs (rc=$rc): $(echo "$out" | grep -E '^FAIL|^issue 01' | tr '\n' ' ')"
+fi
+
+# ---------------------------------------------------------------------------
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
