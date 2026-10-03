@@ -25,6 +25,7 @@ On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the V
 
 2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233): `scripts/check-capability-refusal.sh --resolve-sources` resolves the MAIN checkout's log dir, never `$(pwd)` — a feature WORKTREE has no `.claude/logs/` of its own (#1246). Tokens: `resolved` (normal — export the knob), `no-log-dir` (`PIPELINE_LOGS_ENABLED=false` consumer install), `unresolvable-root` (no main checkout above cwd); either fallback leaves the knob unexported (fail-open).
    ```bash
+   # Required env: ISSUE PR_NUM (bound by skills/fullsend/SKILL.md Step 7).
    source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
    CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
    CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}

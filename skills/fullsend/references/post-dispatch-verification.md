@@ -44,6 +44,7 @@ Immediately AFTER the inline foreground `Agent` batch returns (every dispatched 
    **Base-ref drift guard (#1106 — Layer 2, post-batch, mandatory).** Alongside the completion + model/shape checks above, run the cause-agnostic drift guard. BEFORE dispatching the inline foreground batch, snapshot: `BASE0=$(git -C "$MAIN_REPO" rev-parse "$PIPELINE_BASE_BRANCH")`. AFTER the batch returns, call the guard with the wave's feature branches:
 
    ```bash
+   # Required env: BASE0 MAIN_REPO (BASE0 snapshotted pre-dispatch; MAIN_REPO from the ## Boot fence).
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-base-ref-drift.sh" \
      "$PIPELINE_BASE_BRANCH" "$BASE0" <wave-feature-branches...>
    ```

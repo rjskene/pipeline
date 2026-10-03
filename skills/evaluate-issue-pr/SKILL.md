@@ -1,6 +1,6 @@
 ---
 name: evaluate-issue-pr
-description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Auto-merges on green; pass --manual-merge to opt out. Usage: /pipeline:evaluate-issue-pr <issue_number> [--manual-merge]
+description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Posts the verdict and stops — the orchestrator fires the auto-merge gate; --manual-merge records the opt-out for it. Direct invocation never merges: finish by hand with scripts/finish-manual-merge.sh. Usage: /pipeline:evaluate-issue-pr <issue_number> [--manual-merge]
 disable-model-invocation: false
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
 ---

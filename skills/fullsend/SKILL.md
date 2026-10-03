@@ -95,7 +95,7 @@ When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend au
 
 **block-base-mismatch** is enforced as defense-in-depth — PR `baseRefName` must equal `PIPELINE_BASE_BRANCH` (see #295). **Next-branch aware (#1148):** `baseRefName == ${PIPELINE_NEXT_BRANCH:-next}` is ALSO accepted, but ONLY when the PR's issue is next-routed — carries `${PIPELINE_NEXT_LABEL:-next}` or the legacy alias `next-major-release` (resolved via `gh issue view --json labels`). A PR targeting the next branch for a non-next issue still `block-base-mismatch`; an empty base still fails closed. Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge`) → `block-cage-tests-diff` → verdict → `block-capability-refused` → `block-base-mismatch` → CI rollup → mergeable → mergeStateStatus. Tokens: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, `block-mergestate`.
 
-**Three opt-outs:** (1) `FULL SEND --manual-merge` — flag may appear anywhere in argv (cannot collide with issue numbers, which are bare integers); (2) `/pipeline:evaluate-issue-pr <N> --manual-merge` for one-off evaluations; (3) a `manual-merge` label on the issue for per-issue control without re-typing the flag. (`--spawn` is the orthogonal transport flag — see Step 6/7 — not a merge opt-out.)
+**Three opt-outs:** (1) `FULL SEND --manual-merge` — flag may appear anywhere in argv (cannot collide with issue numbers, which are bare integers); (2) `/pipeline:evaluate-issue-pr <N> --manual-merge` — records the opt-out for the orchestrator's gate; a direct evaluator invocation never merges (finish via `scripts/finish-manual-merge.sh`); (3) a `manual-merge` label on the issue for per-issue control without re-typing the flag. (`--spawn` is the orthogonal transport flag — see Step 6/7 — not a merge opt-out.)
 
 ## Auto-merge ownership
 
@@ -230,7 +230,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
    - `EVENT: agent-stalled issue=<N>` — runner reports worker at idle CPU **and** no forward progress (frozen tmux pane) across `PIPELINE_STALL_POLL_THRESHOLD` polls (#641); a healthy API-bound agent emitting pane output is no longer flagged. Runner took no action. Run the four-option triage below; then re-enter `Monitor` with the SAME `timeout_ms` budget (the elapsed wait is preserved by the harness).
    - `EVENT: agent-finished outcome=failed issue=<N>` — per-agent failure. Optional triage (capture pane, inspect PR/branch state); re-enter `Monitor` so the rest of the queue continues to be watched.
    - `EVENT: agent-finished outcome=success issue=<N>` — no-op wake; re-enter `Monitor`.
-   - `EVENT: agent-finished outcome=manual-merge-required reason=<block-reason> issue=<N>` — no-op wake (issue #489); the runner freed a wedged evaluator slot whose PR is awaiting manual merge per the evaluator's Step 11.4 block-* skip. The `reason=` field carries the gate's actual block token (`block-verdict`, `block-ci`, `block-mergeable`, `block-mergestate`, `block-label`, `block-flag`, `block-cage-tests-diff`, `block-capability-refused`, `block-base-mismatch`, or `unknown` if unrecoverable) so the token is NEVER read as an "approved" verdict — a `block-verdict` reason means the evaluator FLAGGED the PR (issue #654); a `block-capability-refused` reason (#1233) means a leaf emitted the `CAPABILITY-REFUSED:` sentinel. Re-enter `Monitor`. The operator merges the PR by hand (`gh pr merge <PR> --merge --delete-branch`) or fullsend's `## Merge orchestration (reference)` greenlight path handles it.
+   - `EVENT: agent-finished outcome=manual-merge-required reason=<block-reason> issue=<N>` — no-op wake (issue #489); the runner freed a wedged evaluator slot whose PR awaits manual merge per the orchestrator gate's `block-*` skip (`references/auto-merge-gate.md` step 4). The `reason=` field carries the gate's actual block token (`block-verdict`, `block-ci`, `block-mergeable`, `block-mergestate`, `block-label`, `block-flag`, `block-cage-tests-diff`, `block-capability-refused`, `block-base-mismatch`, or `unknown` if unrecoverable) so the token is NEVER read as an "approved" verdict — a `block-verdict` reason means the evaluator FLAGGED the PR (issue #654); a `block-capability-refused` reason (#1233) means a leaf emitted the `CAPABILITY-REFUSED:` sentinel. Re-enter `Monitor`. The operator merges the PR by hand (`gh pr merge <PR> --merge --delete-branch`) or fullsend's `## Merge orchestration (reference)` greenlight path handles it.
 
    **Triage on `agent-stalled`.** The event already implies the pane was frozen (no forward progress) across the whole window (#641), so the first triage action is to re-`capture-pane` and confirm it is *still* frozen before acting. Inspect the worker first (tmux pane via `tmux capture-pane -t "$PIPELINE_TMUX_SESSION:issue-<N>" -p`; process tree via `pstree -p <pid>`). Then surface the four-option prompt to the user:
    1. **Kill the wedged subscript only** — `kill <child-pid>` from the pstree output; executor may recover.
@@ -321,7 +321,7 @@ The inter-wave step is a single `git fetch --quiet origin` of the base branch, r
 
 ### Scoped halt-and-report (closure sourced from `--emit-edges`)
 
-Read [references/scoped-halt.md](references/scoped-halt.md) when an `--emit-edges` closure drops an issue from the slate.
+Read [references/scoped-halt.md](references/scoped-halt.md) when a wave-N PR fails to merge — it owns the transient-vs-hard-block call and the `--emit-edges` closure.
 
 ### Self-mutation callout
 
@@ -337,7 +337,7 @@ This issue edits the fullsend machinery the pipeline itself runs. This is a self
    ================================================================
    The `Auto-merged?` column reflects the per-PR gate outcome: `yes (step7)` — the orchestrator's Step 7 gate merged it when that PR's evaluator returned; `yes (step8)` — Step 8's fallback pass merged it; `no (<block-reason>)` — manual merge required.
    ```
-9. **Stop** — do NOT merge unless the greenlight matrix held in Step 8. Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
+9. **Stop** — do NOT merge unless the greenlight matrix held at Step 7 (or Step 8’s fallback pass). Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
 
 ## Dispatch routing by path tier (reference)
 
@@ -345,5 +345,5 @@ Read [references/dispatch-routing.md](references/dispatch-routing.md) when resol
 
 ## Merge orchestration (reference)
 
-Read [references/merge-orchestration.md](references/merge-orchestration.md) at the post-evaluation merge step.
+Read [references/merge-orchestration.md](references/merge-orchestration.md) at the post-evaluation merge step — and its `**Constraints during full send:**` block BEFORE Step 1 builds the slate: the `PIPELINE_LABELS_EXCLUDED`/`LATER`/`HUMAN`/`BRAINSTORM` and blocked-issue skips are slate-selection, not merge-time, contracts.
 
