@@ -122,7 +122,7 @@ When a merged PR still has an active worktree, clean it up automatically here â€
 Detect cleanup candidates inline (do not depend on Step 1 ordering) via the per-worktree merged-PR loop:
 
 ```bash
-for wt in $(git worktree list --porcelain | awk '/^branch refs/{sub("refs/heads/","",$2); print $2}'); do
+for wt in $(git worktree list --porcelain | sed -n 's#^branch refs/heads/##p'); do
   gh pr list --repo "$PIPELINE_REPO" --head "$wt" --state merged --json number,headRefName \
     --jq '.[] | {branch: .headRefName, pr: .number}'
 done
