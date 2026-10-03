@@ -44,7 +44,7 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-for f in "$RUN_SKILL" "$FULLSEND_SKILL" "$EXECUTE_SKILL"; do
+for f in "$RUN_SKILL" "$FULLSEND_SKILL" "$EXECUTE_SKILL" "$SCRIPT_DIR/../skills/execute-issue-plan/references/collapsed-inline-d.md"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: SKILL.md not found at $f" >&2
     exit 1
@@ -55,7 +55,13 @@ done
 # so multi-line markdown bullets match a single-line substring assertion.
 RUN_BODY=$(tr '\n' ' ' < "$RUN_SKILL" | tr -s '[:space:]' ' ')
 FULLSEND_BODY=$(tr '\n' ' ' < "$FULLSEND_SKILL" | tr -s '[:space:]' ' ')
-EXECUTE_BODY=$(tr '\n' ' ' < "$EXECUTE_SKILL" | tr -s '[:space:]' ' ')
+# #1444: the `### Collapsed inline D contract` body was relocated out of the
+# hot-path SKILL.md into references/collapsed-inline-d.md (the heading + a read
+# pointer stay inline). The executor's D contract is the union of the two files,
+# so the body scanned here is their concatenation — a path retarget, not a
+# weakened assertion.
+EXECUTE_D_REF="$SCRIPT_DIR/../skills/execute-issue-plan/references/collapsed-inline-d.md"
+EXECUTE_BODY=$(cat "$EXECUTE_SKILL" "$EXECUTE_D_REF" | tr '\n' ' ' | tr -s '[:space:]' ' ')
 
 # Windowed substring helper: succeeds if NEEDLE appears within WINDOW chars of
 # any ANCHOR occurrence in FILE. Echoes OK / MISS.
