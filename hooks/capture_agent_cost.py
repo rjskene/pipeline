@@ -388,8 +388,9 @@ def build_stop_record(payload, logs_dir):
     # distinct tokens.cache_read field (no information lost). NOTE: inline /
     # headless producers (build_record here, make_record in
     # scripts/capture-agent-costs.sh) keep the all-four-field total — this
-    # carve-out is orchestrator-record-only. Field SET is unchanged so the
-    # schema_version=1 byte-compat contract holds.
+    # carve-out is orchestrator-record-only. Field SET is unchanged BY THIS
+    # CARVE-OUT, so the schema_version=2 field-set contract holds (v2's own
+    # additive turns / ctx_first / ctx_last are what bumped it from 1, #1443).
     work_fields = ("input", "output", "cache_creation")
     tokens["total"] = sum(tokens[f] for f in work_fields)
     if tokens["total"] <= 0:
