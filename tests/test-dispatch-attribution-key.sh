@@ -40,7 +40,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SKILL="$REPO_ROOT/skills/fullsend/SKILL.md"
+# #1444 — the `**Cost attribution key (#1387)` block and the legacy PATH C leaf
+# `**Cost attribution (#1299)` block both moved with
+# `## Dispatch routing by path tier (reference)` into fullsend's reference file.
+SKILL="$REPO_ROOT/skills/fullsend/references/dispatch-routing.md"
 LIB="$REPO_ROOT/scripts/_token-usage-lib.sh"
 HOOK="$REPO_ROOT/hooks/capture_agent_cost.py"
 

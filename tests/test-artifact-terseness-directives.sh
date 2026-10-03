@@ -27,7 +27,8 @@ assert_grep "$PI"   "TERSENESS:" "plan-issue has terseness directive"
 # (b) contract surfaces held — evaluate-issue-pr
 assert_grep "$PR" "## Evaluation"          "pr: ## Evaluation header held"
 assert_grep "$PR" "**Verdict:** Approved"  "pr: Verdict Approved held"
-assert_grep "$PR" "auto_merge_should_fire" "pr: auto-merge gate ref held"
+# #1444: the gate call site is the orchestrator's, not the evaluator's.
+assert_grep "$SK/../skills/fullsend/references/auto-merge-gate.md" "auto_merge_should_fire" "auto-merge gate ref held"
 # (b) evaluate-issue-plan
 assert_grep "$PLAN" "## Plan Evaluation"          "plan-eval: header held"
 assert_grep "$PLAN" "**Verdict:** Approve / Revise" "plan-eval: verdict line held"

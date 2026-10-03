@@ -142,7 +142,9 @@ if grep -q 'PIPELINE_LOGS_ENABLED' "$CONFIG_EXAMPLE" && grep -qi 'usage read-out
 inc_scenario "Scenario 6: surface points wired into status + fullsend"
 
 STATUS_SKILL="$REPO_ROOT/skills/status/SKILL.md"
-FULLSEND_SKILL="$REPO_ROOT/skills/fullsend/SKILL.md"
+# #1444 — the leg-boundary usage read-out (the `usage-surface.sh` call site)
+# moved with `## Campaign mode` into fullsend's reference file.
+FULLSEND_SKILL="$REPO_ROOT/skills/fullsend/references/campaign-mode.md"
 if grep -q 'usage-surface.sh' "$STATUS_SKILL"; then pass_msg "status SKILL references usage-surface.sh"; else fail_msg "status SKILL missing usage-surface.sh"; fi
 if grep -q 'usage-surface.sh' "$FULLSEND_SKILL"; then pass_msg "fullsend SKILL references usage-surface.sh"; else fail_msg "fullsend SKILL missing usage-surface.sh"; fi
 

@@ -5,14 +5,14 @@
 #
 # tests/test-auto-merge-gate-capability-refusal.sh proves the arm works when the
 # caller hands it a source dir directly. That is not how the arm is reached in
-# production: `evaluate-issue-pr` Step 11.2 runs from a feature WORKTREE and
-# must RESOLVE the dir first. Before #1246 it resolved
+# production: step 2 of `skills/fullsend/references/auto-merge-gate.md` runs
+# from a feature WORKTREE and must RESOLVE the dir first. Before #1246 it resolved
 # ${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/logs/subagents — a path that does not
 # exist inside a worktree — so the knob was never threaded and the arm was
 # permanently dormant. This file wires the REAL resolver to the REAL gate over
 # REAL `git worktree` fixtures and asserts the block actually fires.
 #
-# The Step 11.2 call-site contract reproduced here (`resolve_and_thread`):
+# The gate call-site contract reproduced here (`resolve_and_thread`):
 #   run `check-capability-refusal.sh --resolve-sources`, parse the token line,
 #   and export PIPELINE_CAPABILITY_REFUSAL_SOURCES ONLY on SOURCES=resolved.
 # `no-log-dir` and `unresolvable-root` both leave the knob unexported, so the
@@ -174,7 +174,7 @@ CR_LINE=""
 CR_STATE=""
 CR_DIR=""
 
-# resolve_and_thread — mirrors skills/evaluate-issue-pr/SKILL.md Step 11.2:
+# resolve_and_thread — mirrors skills/fullsend/references/auto-merge-gate.md step 2:
 # resolve from the CURRENT working directory, then export the knob only when
 # the resolver reports `resolved`.
 resolve_and_thread() {

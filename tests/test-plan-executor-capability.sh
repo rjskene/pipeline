@@ -40,6 +40,13 @@ PLAN="$SCRIPT_DIR/../skills/plan-issue/SKILL.md"
 AGENT="$SCRIPT_DIR/../agents/tdd-implementer.md"
 EXEC="$SCRIPT_DIR/../skills/execute-issue-plan/SKILL.md"
 FS="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+# #1444: the PATH C execute-routing bullet A10 pins was relocated out of the
+# hot-path fullsend SKILL.md into skills/fullsend/references/dispatch-routing.md.
+# A10 follows the text to its new home (path retarget only — the assertion is
+# unchanged). Deliberately NOT in the hard-existence loop below: a missing
+# reference file must surface as A10 FAILING with its own message, not as an
+# early exit that hides A1-A8.
+FS_ROUTING="$SCRIPT_DIR/../skills/fullsend/references/dispatch-routing.md"
 
 PASS=0
 FAIL=0
@@ -79,8 +86,9 @@ FORBIDDEN=$(awk '/^## Forbidden/{i=1;next} i && /^## /{i=0} i' "$AGENT" || true)
 # execute-issue-plan Step 8, bounded by the Step 9 heading.
 STEP8=$(awk '/^8\. \*\*Pre-PR code review loop/{i=1} i; /^9\. \*\*Open a pull request/{i=0}' "$EXEC" || true)
 
-# The fullsend PATH C execute-routing bullet (the PATH C orchestrator runbook).
-FSC=$(grep -F -- '- **PATH C** (`multi-task`): dispatch inline by DEFAULT' "$FS" | head -1 || true)
+# The fullsend PATH C execute-routing bullet (the PATH C orchestrator runbook),
+# now in skills/fullsend/references/dispatch-routing.md (#1444).
+FSC=$(grep -F -- '- **PATH C** (`multi-task`): dispatch inline by DEFAULT' "$FS_ROUTING" 2>/dev/null | head -1 || true)
 
 # --- A1: planner-side executor-capability rule exists ------------------------
 echo "A1: plan-issue states the executor-capability rule"
@@ -198,10 +206,10 @@ fi
 # --- A10: the fullsend PATH C runbook carries the ownership rule ------------
 # fullsend/SKILL.md is what the PATH C orchestrator actually reads; the rule
 # does not reach it via execute-issue-plan Step 8 alone.
-echo "A10: fullsend PATH C runbook line states the Step 8 ownership rule"
+echo "A10: fullsend PATH C runbook line states the Step 8 ownership rule (references/dispatch-routing.md)"
 inc
 if [ -z "$FSC" ]; then
-  fail_msg "could not find the PATH C execute-routing bullet in skills/fullsend/SKILL.md"
+  fail_msg "could not find the PATH C execute-routing bullet in skills/fullsend/references/dispatch-routing.md"
 elif printf '%s' "$FSC" | grep -qF "Step 8" \
    && printf '%s' "$FSC" | grep -qF '`Skill` tool'; then
   pass_msg "PATH C runbook line names Step 8 and the missing \`Skill\` tool"

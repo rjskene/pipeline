@@ -21,7 +21,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKILL="${ROOT}/skills/evaluate-issue-pr/SKILL.md"
+# #1444: the `gh issue close` guard relocated with the gate procedure.
+SKILL="${ROOT}/skills/fullsend/references/auto-merge-gate.md"
 
 if [ ! -f "$SKILL" ]; then
   echo "FAIL: prerequisite SKILL.md missing"

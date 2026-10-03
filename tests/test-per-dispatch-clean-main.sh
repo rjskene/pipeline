@@ -49,11 +49,21 @@ fi
 
 # Step 6 region — copied UNCHANGED from tests/test-clean-main-untracked-guard.sh
 # so the two guards cannot disagree about where Step 6 ends.
+# #1444 — Step 6a's BODY moved out of the hot path into
+# skills/fullsend/references/post-dispatch-verification.md (SKILL.md keeps the
+# `6a.` step number plus a one-line pointer). Step 6a is part of the Step 6
+# contract, so the region is the SKILL.md window PLUS that reference file —
+# still region-scoped, never a whole-file grep.
+STEP6A_REF="$ROOT/skills/fullsend/references/post-dispatch-verification.md"
+if [ ! -f "$STEP6A_REF" ]; then
+  echo "FAIL: $STEP6A_REF not found" >&2
+  exit 1
+fi
 REGION="$(awk '
   /^[[:space:]]*6\. \*\*Execute \(wave N\)\*\*/ {capturing=1}
   /^[[:space:]]*(\*\*)?6b\./ {capturing=0}
   capturing {print}
-' "$ROOT/$SKILL")"
+' "$ROOT/$SKILL"; cat "$STEP6A_REF")"
 
 if [ -z "$REGION" ]; then
   echo "FAIL: could not extract the Step 6 region from $SKILL (markers moved?)" >&2

@@ -6,13 +6,14 @@
 # (the read-only /pipeline:status skill performs no merges).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKILL="$ROOT/skills/fullsend/SKILL.md"
+# #1444 — the section BODY moved to fullsend's reference file; the heading stays.
+SKILL="$ROOT/skills/fullsend/references/merge-orchestration.md"
 if ! grep -q 'detect_merge_overlap' "$SKILL"; then
-  echo "FAIL: skills/fullsend/SKILL.md does not reference detect_merge_overlap"
+  echo "FAIL: skills/fullsend/references/merge-orchestration.md does not reference detect_merge_overlap"
   exit 1
 fi
 if ! grep -q 'recommend_merge_order' "$SKILL"; then
-  echo "FAIL: skills/fullsend/SKILL.md does not reference recommend_merge_order"
+  echo "FAIL: skills/fullsend/references/merge-orchestration.md does not reference recommend_merge_order"
   exit 1
 fi
 echo "PASS: overlap scan documented in fullsend skill"

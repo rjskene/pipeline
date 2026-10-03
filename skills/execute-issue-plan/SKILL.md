@@ -41,12 +41,7 @@ Every step below behaves identically across modes — only the working-directory
 
 ### Collapsed inline D contract
 
-When dispatched as the collapsed PATH D agent (mode 3), this agent is the PRODUCER of the classify + plan stages, not a downstream consumer of upstream-posted comments. It RUNS classify and plan inline FIRST — emitting the two stage records as inline side-effect checkpoints (see below) — and THEN carries that context straight into execution. So this agent **carries the classify+plan context forward** within its own single session and **does NOT re-read the plan comment** from GitHub: there is no separate plan-comment fetch (step 1's `gh issue view ... ## Implementation Plan` read is skipped on PATH D, and because the plan is already in-context the STOP-on-empty guard never fires). The two inline side-effect **checkpoints**, byte-shaped exactly as the standalone classify/plan stages would have posted them, are:
-
-- a `## Classification` checkpoint carrying the recommended **path label** (`quick-fix` / PATH D);
-- a `## Implementation Plan` checkpoint with the `plan-pending` marker.
-
-**Escalation backstop.** The collapsed D agent runs inside D's small **envelope** (the `## Affected areas` prediction: one file, ≤ ~20 LOC, single precedent). If mid-run it discovers the change **exceeds D's envelope** — it touches more files than `## Affected areas` predicted, needs a real plan, or hits unforeseen coupling — it does NOT force a too-large change through the D lane. It **aborts up** / **escalates** to a **full PATH B run**: real planning plus a full execute session (per #748 PATH B execute now runs as an inline `Agent`, not a spawned `claude -p` worker). This is what makes a wrong B→D down-route cheap and recoverable — the backstop reverses it rather than shipping a too-large diff through D.
+Read [references/collapsed-inline-d.md](references/collapsed-inline-d.md) when the issue carries `quick-fix` (PATH D, mode 3) — it carries the carried-forward classify+plan contract, the two inline side-effect checkpoints, and the escalation backstop for a change that exceeds PATH D's envelope.
 
 # Execution Agent
 
@@ -54,11 +49,11 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 ## Steps
 
-**0b. CI-fix mode.** If `$PIPELINE_CI_FIX_CONTEXT` is non-empty, you were dispatched to fix a red CI run on an existing PR — not to implement a new plan. Skip steps 1–4 and step 9. Read the failure log at `$PIPELINE_CI_FIX_CONTEXT` and run `gh pr diff` to see the PR so far. Diagnose the failure, apply red→green→commit TDD discipline for the fix, run step 6 (Validate) once, then push the follow-up commit to the existing branch with `git push`. Do NOT call `gh pr create`. Do NOT change the `pr-open` label. Report the new commit SHA back to the orchestrator.
+**0b. CI-fix mode.** If `$PIPELINE_CI_FIX_CONTEXT` is non-empty you were dispatched to fix a red CI run on an existing PR, not to implement a new plan — read [references/ci-fix-mode.md](references/ci-fix-mode.md) for the contract.
 
 1. **Fetch the approved plan (trust-gated)** — the ONLY authoritative plan source is a **trusted-authored** `## Implementation Plan` comment (one whose `authorAssociation` is a write-access tier: `OWNER` / `MEMBER` / `COLLABORATOR`). Any comment from an author outside that write-access set is **hard-dropped before selection**, so **trust dominates recency**: a later fake `## Implementation Plan` planted by a non-contributor can never override the operator's plan. Latest trusted wins (supports revisions). **PATH D skip:** the collapsed inline D agent carries the classify+plan context forward and does NOT re-read the plan comment (see the Collapsed inline D contract above) — skip this fetch on PATH D and use the in-context plan.
 
-   Trust is delegated to #545's helper — `filter-trusted-comments.sh --json` hard-drops every comment from an author outside that write-access set (the single source of trust truth; do NOT re-implement or widen the tier set inline) — then `scripts/select-plan-comment.sh` picks the LAST trusted comment whose first heading IS the plan heading. Run the plan-selection block as a SINGLE bash command:
+   Trust is delegated to #545's helper — `filter-trusted-comments.sh --json` hard-drops every comment from an author outside that write-access set (the single source of trust truth; do NOT re-implement or widen the tier set inline) — then `scripts/select-plan-comment.sh` picks the LAST trusted comment whose first heading IS the plan heading. Run the plan-selection block as a SINGLE bash command; its tail lists `.claude/scratch/issue-<N>/` — screenshots/binary evidence the planner saw, mirrored into this worktree by `setup-worktree.sh` / `sync-worktrees.sh` (this skill does NOT re-fetch):
 
    ```bash
    COMMENTS_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N>)
@@ -66,16 +61,12 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    printf '%s\n' "$PLAN"
    PLAN_EVAL=$(printf '%s' "$COMMENTS_JSON" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-eval-comment.sh")
    case "$PLAN_EVAL" in *'**Verdict:** Revise'*) printf 'PLAN-AMENDMENTS\n%s\n' "$PLAN_EVAL" ;; esac
+   ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
    ```
+
    If `PLAN` is empty/`null`, **STOP**: "No implementation plan found on issue #N. Run `/pipeline:plan-issue N` first."
 
    **Plan amendments (#1435):** on `**Verdict:** Revise` the evaluation's `**Recommendations:**` are BINDING amendments to the plan — where a recommendation and a plan step conflict, the recommendation WINS. Append `PLAN-AMENDMENTS: <k>` to Step 11's fixed report line (Step 11 itself stays unedited); `k` counts recommendations APPLIED, not newly applied, since under `GATE=single` or `**Scope:** structural` a re-plan already transcribed them. `Approve`, or no evaluation, leaves behaviour unchanged.
-
-   Then list every file under `.claude/scratch/issue-<N>/` — screenshots/binary evidence the planner saw, mirrored into this worktree by `setup-worktree.sh` / `sync-worktrees.sh` (this skill does NOT re-fetch):
-
-   ```bash
-   ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
-   ```
 
    **For each file printed by `ls -1`, invoke the `Read` tool exactly once before implementing.** If the directory is empty or absent, continue.
 
@@ -98,12 +89,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
    **PATH C (`multi-task`) — inline orchestrator-owned fan-out with per-leaf worktrees (DEFAULT).** On PATH C the orchestrator itself reads the `## Implementation Plan` and, for each `target=<dir>` in the plan, dispatches one leaf `Agent(subagent_type='pipeline:tdd-implementer', description='target=<dir>/ ...', prompt='cd <leaf-worktree>; target=<dir>/ ...')`, then handles push + `gh pr create` + label flip itself (Steps 9–10). The orchestrator MUST NOT `Edit`/`Write` impl files directly: the `enforce-path-c-delegation` hook blocks direct orchestrator Edit/Write and authorizes only files under a dispatched `target=<dir>` sentinel. `tdd-implementer` stays a hard leaf executor (the `Agent` tool is removed from its toolset) dispatched from the top level — no grandchild dispatch. Each dispatch carries a real-subdirectory `target=<dir>/` sentinel (`target=.`/`./`/`/` are rejected by the hook) and applies red→green→commit autonomously.
 
-   **Per-leaf worktrees (the #896 fix — eliminates the shared-index race).** Each leaf gets its OWN worktree+branch off the feature-branch worktree HEAD, so concurrent leaves never share a git index. Without this, leaves committing in the same worktree race: transient `index.lock` collisions and one leaf's files swept into another leaf's commit (the #894 c+d collision), breaking per-target commit isolation and the per-PR CHANGELOG granularity contract. Drive it with `scripts/path-c-split-worktree.sh`:
-   - **Setup** — for each `target=<dir>`: `LEAF=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/path-c-split-worktree.sh" setup <feature-worktree> <target>)`; dispatch that target's leaf with `cd $LEAF` in its prompt.
-   - **Reassemble** — after ALL leaves report committed: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/path-c-split-worktree.sh" reassemble <feature-worktree> <target> [<target> ...]` cherry-picks each leaf's commits onto the feature branch (disjoint targets ⇒ conflict-free; cherry-pick is a git op so it does NOT trip `enforce-path-c-delegation`). A conflict means the targets were not actually disjoint — the helper aborts and errors; re-plan the overlap rather than forcing it.
-   - **Teardown** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/path-c-split-worktree.sh" teardown <feature-worktree> <target> [<target> ...]` removes the leaf worktrees + branches before push.
-
-   Because each leaf has an isolated index, **concurrency is bounded only by orchestrator context, not by a git-index cap** — the live branch test (#894/#896) confirmed leaf returns are ~one line each with negligible context cost, so non-overlapping targets may fan out fully concurrently (keep leaf returns terse). **Under `fullsend --spawn`, PATH C reverts to the legacy `spawn-claude.sh` → `tdd-implementer` fan-out** (the reversible escape hatch, #750) — same per-target sentinel + TDD discipline, different transport; the spawned path already isolates per worker so it needs no split-worktree step.
+   **Per-leaf worktrees (the #896 fix).** PATH C fan-out drives `scripts/path-c-split-worktree.sh` (setup → reassemble → teardown) so concurrent leaves never share a git index. Read [references/path-c-per-leaf-worktrees.md](references/path-c-per-leaf-worktrees.md) before dispatching the fan-out.
 
    On PATH D (label `quick-fix`), you ARE tdd-implementer — apply red→green→commit directly inline in a single pass: single failing test → impl → pass → commit, once. No subagent dispatch, no skill invocations beyond this one. This is single-pass discipline, not ceremony: the failing-test gate (red→green→commit) is mandatory and is NOT skipped — what PATH D drops is the redundant pre-PR review double-check (Step 8, see the PATH D early-return contract below), since `evaluate-issue-pr` is D's sole external review gate. (And if the change turns out to exceed D's envelope mid-run, escalate per the Collapsed inline D contract above rather than forcing it through.)
 
@@ -115,69 +101,32 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
    In all cases: implement ONLY what the plan specifies (no scope creep); never commit to main; never use `--no-verify` or `--force`. If the plan/issue references a GH Actions CI-blocking marker (bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`), do NOT propagate the literal marker into any `git commit -m`, `gh pr create --title`, or `--body` — substitute a safe form: backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` (no brackets). The `check-ci-skip-markers` PreToolUse hook blocks the literal form.
 
-6. **Validate — types, tests, server, and UI.** Fix any failures at each sub-step before proceeding.
+6. **Validate — types, tests, server, and UI.** The three mechanical gates — 6a type check, 6b tests, 6e config-drift — run as ONE sequential chain in the single fence under 6b, each link gated on the previous succeeding. Fix the first failure before re-running the chain.
 
-   **6a. Type check:**
-   ```bash
-   $PIPELINE_TYPECHECK_CMD
-   ```
+   **6a. Type check** — `$PIPELINE_TYPECHECK_CMD`, the chain's first link.
+
    **6b. Run tests (single sequential pass, stdin-guarded).** Run the configured `$PIPELINE_TEST_CMD` — the targeted/relevant test command for this project. Do NOT improvise an unbounded `for t in tests/test*.sh; do bash "$t"; done` sweep over unrelated tests: it pulls in tests this issue did not touch, any one of which may block on an interactive `read`. Always redirect stdin from `/dev/null` and bound each run with `timeout` so a single interactive or hanging test cannot wedge the executor:
    ```bash
-   timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null
+   $PIPELINE_TYPECHECK_CMD \
+     && timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null \
+     && bash scripts/check-config-drift.sh
    ```
    Run exactly ONE verification pass at a time — never launch concurrent full-suite invocations. Concurrent runs of stub/temp-file-sharing tests collide and report spurious failures, driving wasteful retry spins (issue #677). Before reaching this phase, the issue's OWN targeted test MUST already be green: a source edit that leaves the targeted test red is a red→green→commit violation — fix it (red→green→commit) before verification. Never commit past a red targeted test.
-
    **Run the suite SYNCHRONOUSLY in the foreground and read its exit code directly** (the `timeout 600 bash -c ...` line above runs in the foreground; its exit code is the result). Do NOT background a test monitor and then `Read` its `/tmp/...` output to learn the result: the session's permission mode classifies a read under `/tmp` as outside the project boundary, so the `Read` is denied and the agent narrate-and-yields — narrating an intention to "wait" ends the turn and strands committed-but-unpushed work (the #752/#759/#750 drop-out). Never narrate "I'll wait for the suite" and stop; the suite has already finished synchronously when the Bash call returns. If async monitoring is ever genuinely required, write monitor output INSIDE the project boundary (`.claude/logs/` or `.claude/scratch/`, both allow-listed), never `/tmp`. **Monitor-yield ban (#912):** an agent must NEVER yield on a background `Monitor` it cannot resume across a turn boundary. The #912 recurrence (#838/#904) was exactly this — the agent narrated *"...Waiting for the sweep Monitor..."* and ended its turn; a dispatched Agent's turn ends the moment it stops emitting tool calls, so this strands committed-but-unpushed work. If async monitoring is genuinely required, the agent MUST instead block via a bounded `BashOutput` poll to a terminal sentinel inside the project boundary — never narrate-and-yield on an un-awaitable background `Monitor`. **Never `run_in_background` a test run (#1208).** Backgrounding a suite is the same failure class as the `/tmp`-read ban and the Monitor-yield ban above. When base CI is green, run ONE foreground call — `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/run-test-suite.sh" --changed-only "$PWD/tests"` (the diff's touched + subject tests; a selected failure is never `PRE-EXISTING:`) — and read `RESULT=` from its `CHANGED-ONLY:` summary line; it must report `RESULT=pass` before `gh pr create`. `${CLAUDE_PLUGIN_ROOT}` there is valid only in a Bash call that ran the Boot fence first — the session-inherited value is the main checkout under dogfood (`PIPELINE_USE_LOCAL_PLUGIN=true`), so a worktree agent that skips the fence runs the main tree's scripts. ONLY when base CI is red, or that call prints `CHANGED-ONLY: base … unresolved`, run the full suite in the FOREGROUND in chunks: `--chunk 1/4`, then `--chunk 2/4`, `--chunk 3/4`, `--chunk 4/4` — one foreground Bash call each, run sequentially; every chunk must report `RESULT=pass` (or fail only on `PRE-EXISTING:` files, next rule). Chunk it instead of backgrounding it. **CI is the oracle for untouched failures:** a failing file the diff leaves untouched (`git diff --name-only origin/<base>...HEAD` names neither it nor its subject script) while base CI is green is skipped with ONE line `PRE-EXISTING: <file> (untouched; base CI green)` — no throwaway clone, no re-run elsewhere. Only touched-or-subject tests must be green locally; head CI is the full-suite proof. **Subject:** a test that reads, greps, sources or execs a touched path by path, basename, or containing glob/directory (`hooks/*.py`); check: `grep -rlF -e <basename> -e <dir>/ tests/` per touched path. A failing subject test is never `PRE-EXISTING:`; make it green locally. PR body MUST carry every `PRE-EXISTING:` line under `## Pre-existing failures`, or `PRE-EXISTING: none`.
-   **6c. Visual validation with Playwright** (Linux only, UI changes only): use Playwright MCP tools (configured in `.mcp.json`) to navigate to the frontend URL, screenshot affected views, and check `browser_console_messages` for JS errors. Fix and re-validate any visual issues. Backend-only changes do not require this step. (When clicking, prefer the `ref=` from `browser_snapshot` over CSS selectors with embedded quotes like `[type="submit"]` — the MCP server rejects the latter on the literal string; as of 2026-05-26.)
+   **6c. Visual validation with Playwright** (Linux only, UI changes only) and **6d. Visual proof loop** (`needs-browser` issues only) — read [references/visual-validation.md](references/visual-validation.md) when the diff touches UI, or when the issue carries `needs-browser`. Backend-only changes skip both; neither replaces 6a/6b, which always run.
 
-   **6d. Visual proof loop (needs-browser issues only):** If the issue carries the needs-browser label, after each plan section invoke `Skill(skill: "pipeline:visual-proof-from-plan")` passing the plan comment body. Iterate code→proof→code per section until the sub-skill reports `unsatisfied = []`. Commit the section. Proceed to the next section. This is the executor-side TDD loop with browser predicates standing in for unit tests; it does NOT replace 6a/6b which still run.
-
-   **6e. Config-drift check.** Run the config-drift lint to catch any new `PIPELINE_*` variable introduced in this branch that is not yet documented in `pipeline.config.example` (and vice-versa):
-   ```bash
-   bash scripts/check-config-drift.sh
-   ```
-   Assert exit 0. If it exits 1 with an `UNDOCUMENTED` finding, add the new variable to `pipeline.config.example` (with a comment describing its purpose) **or** add it to `tests/config-drift-allowlist.txt` with a justification comment if it is intentionally undocumented. If it exits 1 with an `ORPHAN` finding, remove the dead knob from `pipeline.config.example` or add it to the allowlist. Fix the finding and re-run until exit 0. This catches config drift in-leaf so CI is not the first to surface it.
+   **6e. Config-drift check.** The chain's third link, `bash scripts/check-config-drift.sh`, must exit 0. On an `UNDOCUMENTED` finding, document the new `PIPELINE_*` variable in `pipeline.config.example` **or** add it to `tests/config-drift-allowlist.txt` with a justification comment; on an `ORPHAN` finding, remove the dead knob or allowlist it. Fix and re-run until exit 0, so CI is not the first to surface the drift.
 
    **Always-run cross-cutting guards note (#1132).** Even when only an affected-tests subset was verified in 6b (because the full suite exceeded the Bash timeout), the cross-cutting guards subset — `scripts/check-cross-cutting-guards.sh` — ALWAYS runs pre-PR (Step 9, below). It catches diff-independent repo invariants (config drift, namespace discipline, golden-seed, README-anchor) in seconds regardless of whether the diff touches those surfaces. Do NOT skip it under an "only touched tests" exemption: the #1128 miss was exactly this class.
 
 7. **Self-review checkpoint before opening PR.** Re-read the plan from step 1 and verify every item was implemented; run `git diff --stat` to check no unintended files were modified; grep for leftover debug code (`console.log`, `print(`, `debugger`, `TODO`, `FIXME`); verify no scope creep. Fix any issues found before proceeding.
 
-8. **Pre-PR code review loop.**
-
-   **PATH D early-return contract.** If labels contain `quick-fix` (PATH D), SKIP Step 8 in its entirety (8a–8e) and proceed to Step 9. What is skipped: the **pre-PR code review loop** — author self-check, independent reviewer dispatch, triage, fix commits, re-validate. Why: PATH D issues delegate review entirely to `evaluate-issue-pr` to keep the lane fast (one external review gate, not two). This is the contract `classify-issue` depends on when applying the `quick-fix` label — see `skills/classify-issue/SKILL.md` (PATH D row).
-
-   For all other paths, Step 8 runs BEFORE `gh pr create` to catch plan-compliance gaps and real bugs while the branch is still local-only.
+8. **Pre-PR code review loop.** Read [references/pre-pr-review-loop.md](references/pre-pr-review-loop.md) before `gh pr create` on PATH A/B/C — 8a self-check, 8b independent reviewer dispatch, 8c triage, 8d fix commits, 8e re-validate. On PATH D (`quick-fix`) Step 8 is skipped in its entirety (8a–8e): go straight to Step 9, since PATH D delegates review to `evaluate-issue-pr` as its sole external gate.
 
    **Step 8 owner — the role that opens the PR (#1225).** Step 8's `Agent(...)` dispatch requires tools a leaf executor does not have, so Step 8 is owned by the PR-opening role: on PATH A/B the inline execute `Agent` (`general-purpose`); on PATH C the ORCHESTRATOR, after every `tdd-implementer` leaf has returned and `path-c-split-worktree.sh reassemble` has run, and before `gh pr create` (Step 9). A `tdd-implementer` leaf NEVER runs Step 8; a leaf handed a Step 8-shaped task refuses loudly with `CAPABILITY-REFUSED:` per `agents/tdd-implementer.md` rather than substituting a self-review.
-
-   **8a. Author self-check.** Run this checklist inline against the plan comment body (from step 1): every `**Files to change:**` entry touched, every task deliverable present, `$PIPELINE_TEST_CMD` green, no unrelated diff. Fix any gaps and re-run step 6 before continuing.
-
-   **8b. Independent reviewer dispatch.** The description is FIXED text — the `capture-agent-costs.sh` attribution key (`stage=pr-eval role=review`); append nothing:
-   ```
-   Agent(
-     subagent_type: "general-purpose",
-     description: "code review #<N>",
-     prompt: "<the plan comment body + git diff $PIPELINE_BASE_BRANCH...HEAD — flag plan-compliance gaps and real bugs; do not refactor>"
-   )
-   ```
-
-   Step 8's review flow is synchronous — the `Agent(...)` call blocks until it returns, so there is no poll loop to bound here. If a future revision adds background-task coordination, it MUST wait via `scripts/wait-for-sentinel.sh` (bounded timeout), never an inline `until grep ...; do sleep N; done` poll (see Constraints).
-
-   **8c. Triage findings.** Triage each finding yourself: verify the claim against the code before acting. Classify each as **must-fix** (plan-compliance gap, test gap, real bug → fix), **nice-to-have** (style, rename → skip unless trivial), or **incorrect** (reviewer misread → reject with a one-line rationale in the follow-up commit message).
-
-   Path-specific constraints when applying must-fixes:
-   - **PATH C (`multi-task`):** any must-fix touching impl code MUST go through a fresh inline `Agent(tdd-implementer)` dispatch (or a spawned worker under `--spawn`) — the `enforce-path-c-delegation` hook blocks direct orchestrator `Edit`/`Write` on impl files regardless of transport.
-   - **PATH B (standard):** must-fix code edits follow red→green→commit discipline.
-   - **PATH A (`docs-only`):** must-fix edits are direct.
-   - **PATH D (quick-fix):** step 8 is skipped entirely (see early-return contract above); this row only applies on forced re-entry.
-
-   **8d. Commit fixes.** Commit each must-fix as its own `fix(review): ...` commit (skip if zero must-fixes).
-
-   **8e. Re-validate.** Re-run step 6 once more to confirm the review fixes did not regress anything.
-
 9. **Open a pull request.**
 
-   Before opening the PR, run the `check-branch-cruft.sh` guard (wired below, between 9a and 9b) — a mechanical backstop for the explicit-staging Constraint; it fails the open if any cruft path reached a commit on this branch (#1028).
+   Before opening the PR, run the pre-PR guard aggregator — wired into the 9a fence below, between the title derivation and 9b. It is the mechanical backstop for the explicit-staging Constraint: it fails the open if any cruft path reached a commit on this branch (#1028).
 
    **9a. Derive the PR title from the issue.** The PR title must be a strict Conventional-Commits string (`feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert(<scope>)?: <summary>`) so release-please can drive versioning + CHANGELOG. Issue titles are intentionally expressive (`bug(...)`, `epic(...)`, `skill: ...`) and must NOT pass through verbatim. Run the helper:
 
@@ -191,6 +140,18 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    elif [ "$rc" -ne 0 ]; then
      echo "ABORT: derive-pr-title.sh failed with exit $rc for issue #<N>" >&2
      exit 1
+   fi
+   # Pre-PR guards (#1028/#1102/#1132): ONE aggregator call. It already runs
+   # check-branch-cruft.sh and check-config-drift.sh internally, so this is the
+   # single call site. Its cruft arm prints "INERT: check-branch-cruft.sh" to
+   # stderr WITHOUT failing the aggregator, so INERT aborts here too (#1028
+   # would otherwise degrade from fail-closed to fail-open).
+   GUARD_OUT=$(bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh" 2>&1); GUARD_RC=$?
+   printf '%s\n' "$GUARD_OUT"
+   [ "$GUARD_RC" -eq 0 ] \
+     || { echo "ABORT: cross-cutting guard failure — cruft path on the branch, undocumented PIPELINE_* drift, or a namespace/golden-seed/README-anchor invariant; see above and fix before opening the PR." >&2; exit 1; }
+   if printf '%s\n' "$GUARD_OUT" | grep -q 'INERT: check-branch-cruft.sh'; then
+     echo "ABORT: the #1028 cruft guard went INERT — it did NOT run. Resolve PIPELINE_BASE_BRANCH and re-run from inside the worktree." >&2; exit 1
    fi
    ```
 
@@ -206,31 +167,9 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    | 6 | Labels include `enhancement` | `feat(<scope-or-general>): <summary>` |
    | 7 | default | `chore(general): <summary>` |
 
-   **Pre-PR cruft guard (#1028).** Before `gh pr create`, run the guard against the committed branch-vs-base diff — this is the defense-in-depth backstop for the explicit-staging Constraint above (mirrors the base-branch-enforcement layering: prose directive → mechanical guard). It fails the open if any committed path on this branch is denylisted cruft (e.g. `.claude/migration-cleanup-*`):
+   **Pre-PR guards (#1028/#1102/#1132).** The single `check-cross-cutting-guards.sh` call in the 9a fence above IS the whole pre-PR guard surface: the aggregator runs `scripts/check-branch-cruft.sh` (ABORTs on a denylisted cruft path committed to this branch) and `scripts/check-config-drift.sh` (ABORTs on an undocumented `PIPELINE_*` var) internally, plus the namespace-discipline, golden-seed and README-anchor invariants — diff-independent, in seconds, even when only an affected-tests subset was verified in Step 6b (the #1128 miss class). The cruft arm is **conditional** — INERT (stderr only, aggregator exits 0) when `PIPELINE_BASE_BRANCH` is unresolved or cwd is outside a work tree — so 9a aborts on an `INERT: check-branch-cruft.sh` line as well as a non-zero exit. Do NOT re-add standalone cruft or config-drift fences: one call site, no double-invocation.
 
-   ```bash
-   # Pre-PR cruft guard (#1028): fail if any committed path on this branch is denylisted cruft.
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-branch-cruft.sh" \
-     || { echo "ABORT: branch-vs-base diff contains cruft paths (see above); drop them from the branch before opening the PR." >&2; exit 1; }
-   ```
-
-   **Pre-PR config-drift guard (#1102).** After the cruft guard and before `gh pr create`, run the whole-tree config-drift lint — the same check CI runs — so undocumented `PIPELINE_*` vars are caught in-session rather than as a CI-fail → evaluator-re-watch loop:
-
-   ```bash
-   # Pre-PR config-drift guard (#1102): fail if any PIPELINE_* var is undocumented.
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-config-drift.sh" \
-     || { echo "ABORT: undocumented PIPELINE_* drift detected (see above); add the allowlist entry or document in pipeline.config.example before opening the PR." >&2; exit 1; }
-   ```
-
-   **Pre-PR cross-cutting guards (#1132).** After the config-drift guard and before `gh pr create`, run the fast, diff-independent aggregator — catches config-drift, namespace-discipline, golden-seed, and README-anchor invariants in seconds, always, even when only an affected-tests subset was verified in Step 6b (the #1128 miss class). The aggregator already includes the cruft and config-drift guards above; running it here as the single call site avoids double-invocation:
-
-   ```bash
-   # Pre-PR cross-cutting guards (#1132): fast always-run floor for diff-independent invariants.
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh" \
-     || { echo "ABORT: cross-cutting guard failure — see above; fix before opening the PR." >&2; exit 1; }
-   ```
-
-   **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `evaluate-issue-pr` Step 11 has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
+   **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `auto-merge-gate.sh` — fired by the orchestrator, see `skills/fullsend/references/auto-merge-gate.md` — has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
 
    ```bash
    if [ -z "$PIPELINE_BASE_BRANCH" ]; then echo "FATAL: PIPELINE_BASE_BRANCH unset; refusing to call gh pr create" >&2; exit 1; fi

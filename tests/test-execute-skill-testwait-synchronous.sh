@@ -108,6 +108,45 @@ fi
 
 assert_region_contains "monitor-bashoutput-fallback" 'BashOutput'
 
+# 5) #1444 hot-path mass: this skill is one of the three hot-path SKILL.md files
+#    whose bash-fence count is capped so a dispatched agent is not forced to read
+#    a wall of fences before acting. The ceiling is the #1444 plan evaluation's
+#    BINDING amendment (<=9, not the plan's <=8, which left zero slack against
+#    the plan's own sanctioned "keep the standalone cruft fence" deviation).
+#    Measured on the BODY (frontmatter stripped, #1218) with the #1281 fence
+#    grammar `^[[:space:]]*```bash` so indented fences count.
+source "$ROOT/tests/_lib/skill-body.sh"
+
+FENCE_CEILING=9
+FENCE_FLOOR=4
+FENCES="$(skill_body "$ROOT/$SKILL" | grep -cE '^[[:space:]]*```bash')"
+
+inc
+if [ "$FENCES" -le "$FENCE_CEILING" ]; then
+  pass_msg "fence-ceiling: $SKILL body carries $FENCES bash fences (<= $FENCE_CEILING)"
+else
+  fail_msg "fence-ceiling: $SKILL body carries $FENCES bash fences ($FENCES > $FENCE_CEILING)"
+fi
+
+# Non-vacuity floor: deleting the fences outright is not a way to pass the
+# ceiling. Consolidation keeps the executable gates; deletion removes them.
+inc
+if [ "$FENCES" -ge "$FENCE_FLOOR" ]; then
+  pass_msg "fence-floor: $SKILL body still carries $FENCES bash fences (>= $FENCE_FLOOR)"
+else
+  fail_msg "fence-floor: $SKILL body carries only $FENCES bash fences (< $FENCE_FLOOR) — fences were deleted, not consolidated"
+fi
+
+# 6) The Step 8 pre-PR review loop is relocated to a reference file rather than
+#    carried inline: it is conditional (PATH A/B/C only, PATH D early-returns)
+#    and the PR-opening role reads it on demand.
+inc
+if [ -f "$ROOT/skills/execute-issue-plan/references/pre-pr-review-loop.md" ]; then
+  pass_msg "references: skills/execute-issue-plan/references/pre-pr-review-loop.md exists"
+else
+  fail_msg "references: skills/execute-issue-plan/references/pre-pr-review-loop.md missing — Step 8 was not relocated"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"

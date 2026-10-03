@@ -44,7 +44,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 DETECTOR="$ROOT/scripts/check-capability-refusal.sh"
-EVAL_SKILL="$ROOT/skills/evaluate-issue-pr/SKILL.md"
+# #1444: the gate call site relocated out of evaluate-issue-pr Step 11.2 into
+# the orchestrator-owned reference; the (k)/(l)/(m) assertions follow it.
+EVAL_SKILL="$ROOT/skills/fullsend/references/auto-merge-gate.md"
 GATE="$ROOT/scripts/auto-merge-gate.sh"
 OBSERVABILITY="$ROOT/docs/observability.md"
 

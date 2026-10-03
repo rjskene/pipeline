@@ -307,7 +307,8 @@ else
 fi
 
 inc
-SKILL_MD="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
+# #1444: the finalize-issue-labels call site relocated with the gate procedure.
+SKILL_MD="$REPO_ROOT/skills/fullsend/references/auto-merge-gate.md"
 finalize_line="$(grep -F 'finalize-issue-labels.sh' "$SKILL_MD" | grep -F '"$ISSUE"' | head -1)"
 if grep -qF 'finalize-issue-labels.sh' "$SKILL_MD" \
    && ! grep -qF -- '--add-label "merged" --remove-label "pr-open"' "$SKILL_MD" \

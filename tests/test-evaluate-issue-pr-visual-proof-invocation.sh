@@ -5,7 +5,10 @@ set -euo pipefail
 # surface a Visual proof row in the Step 9 evaluation comment template.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-FILE="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
+# #1444: Step 6 relocated to references/visual-validation.md; the Step 9
+# comment template stays in SKILL.md.
+FILE="$REPO_ROOT/skills/evaluate-issue-pr/references/visual-validation.md"
+SKILL="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
 PASS=0; FAIL=0; TESTS=0
 pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
@@ -33,8 +36,13 @@ assert_contains "pipeline:visual-proof-from-plan" "references pipeline:visual-pr
 assert_contains "the verdict MUST be Flagged" "Flagged-on-unsatisfied verdict prose present"
 assert_contains "unsatisfied" "references unsatisfied predicates"
 
-# (d) Visual proof row in the Step 9 evaluation comment template
-assert_contains "**Visual proof:**" "Visual proof row in eval comment template"
+# (d) Visual proof row in the Step 9 evaluation comment template (SKILL.md)
+inc
+if grep -qF -- "**Visual proof:**" "$SKILL"; then
+  pass_msg "Visual proof row in eval comment template"
+else
+  fail_msg "Visual proof row in eval comment template (missing in $SKILL)"
+fi
 
 echo ""
 echo "================================"
