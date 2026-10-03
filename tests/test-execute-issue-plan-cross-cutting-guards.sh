@@ -16,8 +16,9 @@
 #  (b) skills/execute-issue-plan/SKILL.md carries an ALWAYS-RUN note: the
 #      cross-cutting guards subset runs pre-PR even when only an affected-tests
 #      subset was verified.
-#  (c) skills/evaluate-issue-pr/SKILL.md references 'check-cross-cutting-guards.sh'
-#      (Phase-2 pre-greenlight path — runs even on the #957 green-CI short-circuit).
+#  (c) the pr-eval path reaches the aggregator through a two-link chain (#1445):
+#      scripts/pr-eval-preflight.sh references it AND skills/evaluate-issue-pr/SKILL.md
+#      references scripts/pr-eval-preflight.sh.
 #  (d) skills/fullsend/SKILL.md references 'check-cross-cutting-guards.sh' in its
 #      dispatch-site verification directives.
 
@@ -76,12 +77,34 @@ else
   fail_msg "execute-issue-plan missing always-run note for the cross-cutting guards subset"
 fi
 
-# --- (c) evaluate-issue-pr references the aggregator ---
+# --- (c) the pr-eval path still reaches the aggregator, via a TWO-LINK CHAIN ---
+#
+# #1445 moved the pr-eval-time aggregator call out of the evaluator's Phase 2
+# and into scripts/pr-eval-preflight.sh, which the orchestrator runs BEFORE any
+# evaluator dispatch (fullsend Step 7) and which the evaluator re-runs itself
+# when no preflight line is in its prompt. The guard follows the wiring to its
+# new home instead of being deleted: BOTH links must hold, so this arm is not
+# weaker than the single grep it replaces — it fails if either the preflight
+# stops invoking the aggregator or the evaluator stops invoking the preflight.
+# The executable layer under it is tests/test-pr-eval-preflight.sh case 17
+# (a stubbed aggregator exiting 1 -> `PREFLIGHT=block REASON=guards`).
+PREFLIGHT_SCRIPT="$ROOT/scripts/pr-eval-preflight.sh"
+PREFLIGHT_REF="pr-eval-preflight.sh"
+
 inc
-if grep -qF "$REF" "$PREVAL_SKILL"; then
-  pass_msg "evaluate-issue-pr references $REF"
+if [ ! -f "$PREFLIGHT_SCRIPT" ]; then
+  fail_msg "scripts/pr-eval-preflight.sh does not exist — the pr-eval aggregator chain has no first link"
+elif grep -qF "$REF" "$PREFLIGHT_SCRIPT"; then
+  pass_msg "link 1: scripts/pr-eval-preflight.sh references $REF"
 else
-  fail_msg "evaluate-issue-pr does NOT reference $REF (Phase-2 pre-greenlight wiring missing)"
+  fail_msg "link 1: scripts/pr-eval-preflight.sh does NOT reference $REF (the pr-eval aggregator call was dropped, not relocated)"
+fi
+
+inc
+if grep -qF "$PREFLIGHT_REF" "$PREVAL_SKILL"; then
+  pass_msg "link 2: evaluate-issue-pr references $PREFLIGHT_REF"
+else
+  fail_msg "link 2: evaluate-issue-pr does NOT reference $PREFLIGHT_REF (pre-greenlight wiring missing)"
 fi
 
 # --- (d) fullsend dispatch directives reference the aggregator ---

@@ -64,7 +64,7 @@ This section fires **per claim**, not per evaluation.
 
 A guard that passes is not evidence until you have seen it fail on something.
 
-- **Scope at pr-eval time.** Guard claims are claims about artifacts added or modified by the diff, plus any pre-existing guard the PR claims now covers a case. Execute from the feature worktree; when the invocation needs state (a git repo, a plan comment, a labelled issue), build a throwaway fixture and run the real artifact against it. This is per-claim work inside the existing Phase 2 budget — never a second full-suite sweep (the Step 4 dedup guard is unchanged). **CI is the oracle for pre-existing failures:** read the head's settled CI status (`gh pr checks`, Step 5b; Step 4's #957 short-circuit) and verify only the diff's own claims — never re-prove an untouched failure by re-running it in a throwaway clone of the base. **`PRE-EXISTING:` list check (#1329):** read the PR body's `## Pre-existing failures` list; for each entry run the execute-issue-plan Step 6b subject check (`grep -F -e <basename> -e <dir>/ <test>` per touched path). A listed subject test is Flagged and fixed in-eval; a body claiming untouched failures without the list is Flagged.
+- **Scope at pr-eval time.** Guard claims are claims about artifacts added or modified by the diff, plus any pre-existing guard the PR claims now covers a case. Execute from the feature worktree; when the invocation needs state (a git repo, a plan comment, a labelled issue), build a throwaway fixture and run the real artifact against it. This is per-claim work inside the existing Phase 2 budget — never a second full-suite sweep (the Step 4 dedup guard is unchanged). **CI is the oracle for pre-existing failures:** read the head's settled CI status (`gh pr checks`, Step 5; Step 4's #957 short-circuit) and verify only the diff's own claims — never re-prove an untouched failure by re-running it in a throwaway clone of the base. **`PRE-EXISTING:` list check (#1329):** read the PR body's `## Pre-existing failures` list; for each entry run the execute-issue-plan Step 6b subject check (`grep -F -e <basename> -e <dir>/ <test>` per touched path). A listed subject test is Flagged and fixed in-eval; a body claiming untouched failures without the list is Flagged.
 
 ## Steps
 
@@ -97,19 +97,19 @@ A guard that passes is not evidence until you have seen it fail on something.
 
    **Phase 1 — Plan compliance.** For each plan item: verify "Files to change" were modified and match descriptions; verify "DB schema / API / Frontend / Test changes" were made or correctly skipped; flag scope creep (implemented but not planned) and missing work (planned but not implemented). Every plan Task naming a non-test artifact path must have produced a tracked file at that path (`git ls-files`-visible) — a planned-but-untracked artifact path is missing work → Flagged.
 
-   **Phase 2 — Code quality.** Run checks and review the diff. **Resolve CI status (Step 5) BEFORE deciding whether to run tests** — the test-execution decision keys off the already-settled rollup, so Step 5b's `--watch` is the single source of the settled verdict and Phase 2 never issues a second `--watch`/`--wait`.
+   **Phase 2 — Code quality.** Run checks and review the diff. **Resolve CI status (Step 5) BEFORE deciding whether to run tests** — the decision keys off the already-settled rollup the preflight reported, and Phase 2 never issues a `--watch`/`--wait` of its own.
 
    **Typecheck runs only when `PIPELINE_TYPECHECK_CMD` is set** (cheap; outside the CI-trust rationale); if unset print `typecheck: skipped (PIPELINE_TYPECHECK_CMD unset)` — never substitute an ad-hoc checker.
 
-   **Test execution is CI-aware (green-CI short-circuit, issue #957).** Read the settled `statusCheckRollup` verdict once — reuse the same all-SUCCESS jq predicate as `scripts/auto-merge-gate.sh` (`length > 0 and all(.conclusion == "SUCCESS")`); do NOT re-run the watch/wait (Step 5b already settled the checks).
+   **Test execution is CI-aware (green-CI short-circuit, issue #957).** The settled `statusCheckRollup` verdict is SOURCED FROM the `PREFLIGHT=` line in your prompt — `scripts/pr-eval-preflight.sh` already read it with the same jq predicate as `scripts/auto-merge-gate.sh`. Do NOT query the rollup yourself here (Step 5 explains why that one row is load-bearing).
 
-   **Dedup guard (hard constraint).** The full-suite `$PIPELINE_TEST_CMD` is invoked **at most once** per eval and **never via `run_in_background`** — no overlapping/duplicate full-suite sweeps (the harness auto-backgrounding that caused the #955/#956 duplicate sweeps). It always runs synchronously in the foreground, mirroring the Step 5b `--watch` no-`run_in_background` rule.
+   **Dedup guard (hard constraint).** The full-suite `$PIPELINE_TEST_CMD` is invoked **at most once** per eval and **never via `run_in_background`** — no overlapping/duplicate full-suite sweeps (the harness auto-backgrounding that caused the #955/#956 duplicate sweeps). It always runs synchronously in the foreground, mirroring the Step 5 `--watch` no-`run_in_background` rule.
 
    **Trust boundary (assumption).** The short-circuit trusts that the green CI suite is the SAME suite as `$PIPELINE_TEST_CMD`. This holds for the dogfood repo (CI runs the identical `tests/test*.sh` sweep). Consumers with divergent CI should understand this trust boundary.
 
-   **Cross-cutting guards — unconditional (#1132).** Run the fast, diff-independent aggregator regardless of the green-CI short-circuit above. The #957 short-circuit skips the full `$PIPELINE_TEST_CMD` re-run (heavy, duplicative when CI is green), but it does NOT run any local cross-cutting re-check. The aggregator is seconds-fast and catches diff-independent repo invariants (config drift, namespace discipline, golden-seed, README-anchor) that the CI suite may not cover locally.
+   **Cross-cutting guards (#1132) — the preflight owns them.** `scripts/pr-eval-preflight.sh` ran the diff-independent guard aggregator and the branch-cruft guard from the worktree before this dispatch; a failure there is `PREFLIGHT=block REASON=guards` and no eval runs. Do NOT re-run them here.
 
-   Run all three in ONE `bash` call:
+   Run both in ONE `bash` call:
    ```bash
    # (a) typecheck
    if [ -n "${PIPELINE_TYPECHECK_CMD:-}" ]; then
@@ -117,9 +117,14 @@ A guard that passes is not evidence until you have seen it fail on something.
    else
      echo "typecheck: skipped (PIPELINE_TYPECHECK_CMD unset)"
    fi
-   # (b) tests
-   ROLLUP_GREEN=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup \
-     --jq '.statusCheckRollup | length > 0 and all(.conclusion == "SUCCESS")')
+   # (b) tests — the CI verdict comes from the dispatched preflight line, never
+   # from a rollup query of your own (Step 5 explains what that row costs).
+   # Required env: PREFLIGHT_LINE (the verbatim preflight line; empty if absent)
+   PF_REASON=${PREFLIGHT_LINE##*REASON=}; PF_REASON=${PF_REASON%% *}
+   ROLLUP_GREEN=false
+   case "${PREFLIGHT_LINE%% *}:$PF_REASON" in
+     PREFLIGHT=ok:none|PREFLIGHT=ok:mergeable) ROLLUP_GREEN=true ;;
+   esac
    if [ "$ROLLUP_GREEN" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]; then
      echo "CI: green rollup — trusting CI suite verdict; skipping full local PIPELINE_TEST_CMD re-run (issue #957)"
      # SKIP the full-suite invocation. The green CI rollup ran the same suite; re-running it
@@ -137,48 +142,34 @@ A guard that passes is not evidence until you have seen it fail on something.
        timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null 2>&1 | tail -30
      fi
    fi
-   # (c) guards
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh" \
-     || { echo "WARN: cross-cutting guard failure detected in PR-eval Phase 2 — see above." >&2; }
    ```
+   `no-ci`/`ci-disabled`/`ci-pending` all take that fallback — "no CI" is never trusted as "CI green".
 
    Look for: leftover debug code / console.logs / TODOs; missing error handling at system boundaries; security issues (injection, XSS, unsanitized input); type-safety issues `tsc` missed; test coverage for every implemented feature.
 
    - **Executable verification (#1218):** every diff claim matching the trigger list in the Executable verification section must be verified by EXECUTING it plus a negative control, never by reading. A claim you could not execute is reported as unexecuted, never as verified.
 
 <!-- BEGIN CI_CHECK -->
-5. **Check CI workflow status.** A red PR must never receive Approved.
+5. **CI status — trust the preflight line, re-arm after a push.** A red PR must never receive Approved.
 
-   **5a. Detect CI presence.** Skip if no checks configured:
-   ```bash
-   CHECK_COUNT=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup --jq '.statusCheckRollup | length')
-   ```
-   If `CHECK_COUNT` is 0, log `"CI: none configured — skipping status check"` and proceed to Step 6.
+   `scripts/pr-eval-preflight.sh` settled the rollup before your dispatch, and `REASON=ci-red` blocks it — a red head should never reach you. Act on your prompt's `PREFLIGHT=`/`REASON=` line:
 
-   **5b. Wait for in-progress checks to settle.** Single bounded **foreground** (blocking, in-turn) wait via `Bash` — do NOT use `run_in_background`, and do NOT wrap in a `while ... sleep ... grep` loop. A subagent cannot durably block on a backgrounded monitor: a backgrounded `Bash` returns immediately, ending the subagent's turn before it reaches Step 5c and the verdict (Step 9) (issue #684). The `timeout 600 ... --watch --fail-fast` below IS the hard iteration cap: it runs to completion in this turn, returns nonzero on the first failing check, and blocks until CI settles or the 600s budget elapses (10-min one-shot, 30-second poll):
+   - `ok` + `none`/`mergeable` — green: issue NO rollup read and NO `--watch`.
+   - `ok` + `ci-pending` — unsettled: emit the triple below, then judge it.
+   - `ok` + `no-ci`/`ci-disabled` — untrusted CI; Step 4's fallback ran tests.
+   - no line (a `--spawn` session or direct invocation) — run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pr-eval-preflight.sh" <N> --pr $PR_NUM` ONCE yourself; it is idempotent.
+   - `block` (only from that self-run) — STOP: no verdict, report `block-<REASON>`.
+
+   **The preflight line is STALE the moment you push.** After ANY `git push` — Step 7's fixes or Step 8's rebase — and on `ci-pending`, re-emit all three lines below as THREE SEPARATE foreground `bash` calls (the hook compares row timestamps; one combined call can never satisfy it) before the verdict — a bounded blocking wait (10-min one-shot, 30s poll) returning nonzero on the first failing check. Any FAILURE/CANCELLED in the re-read forbids Approved: fix within budget (≤3 files, no new design decisions), commit, push, re-emit; otherwise post "Flagged" with the failing job names and first error line (`gh run view <RUN_ID> --repo $PIPELINE_REPO --log-failed | head -20`, `RUN_ID` from the failed check's `detailsUrl`) in the `**CI status:**` row (Step 9).
+
    ```bash
+   gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup
    timeout 600 gh pr checks $PR_NUM --repo $PIPELINE_REPO --watch --fail-fast --interval 30
-   ```
-
-   **5c. Inspect final check state.** For each failed check, fetch the first error line. Parse RUN_ID from `detailsUrl`; if parsing yields empty/non-numeric, use the `gh run list` fallback:
-   ```bash
    gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup \
      --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED") | {name: .name, conclusion: .conclusion, url: .detailsUrl}'
-   # Required env: DETAILS_URL (the failed check's .detailsUrl from the rollup query above).
-   RUN_ID=$(echo "$DETAILS_URL" | sed 's|.*/runs/\([0-9]*\)/.*|\1|')
-   if ! [[ "$RUN_ID" =~ ^[0-9]+$ ]]; then
-     BRANCH=$(git rev-parse --abbrev-ref HEAD)
-     RUN_ID=$(gh run list --repo $PIPELINE_REPO --branch "$BRANCH" --status failure --limit 1 --json databaseId --jq '.[0].databaseId')
-   fi
-   gh run view "$RUN_ID" --repo $PIPELINE_REPO --log-failed 2>&1 | head -20
    ```
 
-   **5d. Decide verdict interaction:**
-   - Any FAILURE/CANCELLED → you MUST NOT post Approved.
-   - Fixable within budget (≤3 files, no new design decisions): fix in-worktree, commit, `git push`, re-run 5b with a fresh 10-minute timeout.
-   - Exceeds budget, persists after one fix attempt, or wait timed out: post "Flagged" with failing job names + first error line in the `**CI status:**` row (see Step 9).
-
-   **Hook-enforced.** The `enforce-ci-wait` Stop hook (`hooks/enforce-ci-wait.py`) reads `.claude/logs/tool-use.log` and blocks Stop unless the `gh pr view` → `gh pr checks --watch` → `gh pr view` sequence is recorded; an Approved verdict on a red rollup is also blocked. Prose remains source of truth for HOW; the hook only verifies it happened.
+   **Hook-enforced, conditionally.** `hooks/enforce-ci-wait.py` scopes itself to sessions that issued a rollup read, then blocks Stop until a `--watch` row and a second rollup row follow, and blocks Approved on a red rollup. The triple is therefore ALL-OR-NOTHING: emit three lines or none — a lone rollup read denies Stop and escalates `needs-human` after three blocks. `--watch` must be FOREGROUND: a backgrounded `Bash` returns immediately, ending the turn before the verdict (#684).
 <!-- END CI_CHECK -->
 
 6. **Visual validation** (if UI changes exist in the diff).
@@ -193,6 +184,8 @@ A guard that passes is not evidence until you have seen it fail on something.
    git fetch origin $PIPELINE_BASE_BRANCH; git diff --name-only origin/$PIPELINE_BASE_BRANCH...HEAD
    ```
    `git rebase origin/$PIPELINE_BASE_BRANCH` ONLY when the PR is not `MERGEABLE` + `CLEAN`/`UNSTABLE`, or a file in that list also changed on the base since the merge-base (`git diff --name-only HEAD...origin/$PIPELINE_BASE_BRANCH`, intersected); an advanced base alone is not a reason (merge-commits, #459) and a needless rebase forces a CI re-watch. If conflicts are complex (semantic, not whitespace), flag for user review.
+
+   Read mergeability HERE, unconditionally — never key this rebase off the preflight's `REASON=mergeable`: `REASON` carries exactly ONE advisory, so a concurrent `ci-pending` hides it and the PR strands on the gate's `block-mergeable`. That query is not a rollup read, so the Step 5 hook stays out of scope.
 
 9. **Post evaluation comment on the PR** via `gh pr comment $PR_NUM --repo $PIPELINE_REPO --body "<evaluation>"` using this format:
 
