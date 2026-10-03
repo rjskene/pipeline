@@ -10,6 +10,7 @@ Loaded by `skills/evaluate-issue-pr/SKILL.md` Step 6 when the diff touches UI, o
 
 **Failure-loud verification.** A returned URL is not proof the blob landed on origin — `git push` can fail silently inside the sandbox. Before writing any `![](url)` row, confirm the branch exists on the remote (`git ls-remote --exit-code origin "refs/heads/$BRANCH"`) AND the specific file is present at that branch tip (`gh api repos/$PIPELINE_REPO/contents/.eval-screenshots/$name?ref=$BRANCH`). On failure, emit a `⚠️ screenshot attach failed` row instead of a broken-link image so the human reviewer gets a self-debugging trail.
 ```bash
+# Required env: PR_NUM (bound by `skills/evaluate-issue-pr/SKILL.md` Step 2).
 SCREENSHOT_LINES=()
 BRANCH="$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json headRefName --jq .headRefName)"
 PRIVATE="$(gh repo view "$PIPELINE_REPO" --json isPrivate --jq .isPrivate 2>/dev/null || true)"

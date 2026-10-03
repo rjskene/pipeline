@@ -172,6 +172,22 @@ else
   echo "  PASS: run-queue.sh no longer points at the deleted evaluate-issue-pr Step 11"
 fi
 
+# --- #1444: the relocated Step 6 fences reference $PR_NUM, which is bound in
+# SKILL.md Step 2 — a DIFFERENT file. tests/test-skill-unassigned-vars.sh binds
+# per-file (its pass-1 harvest reads the same file it scans), so the reference
+# file must carry its own `# Required env:` declaration. Without it the relocated
+# fence silently reds the moment that sweep is widened to
+# skills/*/references/*.md (#1215 grammar: a `# Required env:` line inside a
+# bash fence is what binds the name).
+if awk '/^[[:space:]]*```bash[[:space:]]*$/{b=1;next} /^[[:space:]]*```[[:space:]]*$/{b=0;next} \
+        b && /^[[:space:]]*#[[:space:]]*Required env:/ && /PR_NUM/ {found=1} \
+        END{exit (found?0:1)}' "$VISUAL_REF"; then
+  echo "  PASS: references/visual-validation.md declares PR_NUM as required env"
+else
+  echo "  FAIL: references/visual-validation.md references \$PR_NUM with no '# Required env:' declaration (#1215)"
+  FAILED=$((FAILED+1))
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1
