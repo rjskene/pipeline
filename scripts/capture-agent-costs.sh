@@ -12,12 +12,22 @@
 #                `seen` set is normally seeded from the output file, which makes
 #                historical rows uncorrectable; --recompute skips ONLY that
 #                seeding, so a backfill re-emits every row with fresh values.
-#                Consumers take `group_by(.record_key) | last`, so the fresh row
-#                wins. This is the correction path for the pre-#1443 rows that
-#                summed transcript usage per LINE and are ~2x high on the input
-#                side. The in-run `seen.add` calls are UNCONDITIONAL, so one
-#                invocation still never emits a key twice; the #830/#1299
-#                lower-bound suppression (`complete_tuples`) is also unaffected.
+#                The record_key pass in every consumer takes
+#                `group_by(.record_key) | last`, so the fresh row wins THAT pass.
+#                The in-run `seen.add` calls are UNCONDITIONAL, so one invocation
+#                still never emits a key twice; the #830/#1299 lower-bound
+#                suppression (`complete_tuples`) is also unaffected.
+#
+#                PARTIAL CORRECTION — two limits, both out of scope for #1443:
+#                (1) this script re-derives only RETROACTIVE rows; the forward
+#                hook's own rows (hooks/capture_agent_cost.py — every
+#                agent_kind=main orchestrator row) are never recomputed by
+#                anything; (2) scripts/cost-latency-report.sh runs a SECOND
+#                collapse after the record_key pass,
+#                `group_by(.agent_id) | max_by(.tokens.total)`, which keeps the
+#                LARGEST row of a forward+retroactive pair (#880) — so an
+#                inflated pre-#1443 sibling still wins there. Treat pre-#1443
+#                cost figures as inflated, not corrected.
 #
 #   HEADLESS pass — .claude/logs/runs.log
 #       Each run resolves a Claude Code transcript at
