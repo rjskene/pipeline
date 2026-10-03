@@ -21,15 +21,11 @@ _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipe
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-## Invocation mode
+Dispatch modes and the orchestrator-assembled prompt template are documented in `skills/fullsend/references/pr-eval-dispatch.md` — the orchestrator's contract, not the evaluator's.
 
-Three dispatch shapes; every step below is identical, only CWD + visual-proof setup differs:
+On a `needs-browser` issue: `cd` to the worktree absolute path and start the loopback HTTP server BEFORE any other step (see [references/visual-validation.md](references/visual-validation.md)).
 
-1. **Inline `Agent(...)` dispatch (PATH A, docs-only; PATH B, standard).** Worktree absolute path + issue number in the prompt. You are NOT in the worktree CWD — `cd <worktree-absolute-path>` before any step. (Per #748 PATH B PR-eval dispatches inline here, alongside PATH A — the inline B execute Agent and inline B PR-eval Agent are SEPARATE inline contexts for evaluator independence.)
-2. **PATH C (multi-task) PR-eval — inline `Agent(...)` by default (#749/#891/#896); `${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` dispatch only under `--spawn` and explicit requests.** Already in the feature worktree; no `cd`.
-3. **Inline Agent dispatch (browser-eval; triggered by the `needs-browser` label).** Worktree absolute path + issue number + PR + port + target-dir-abs + auto-merge-gate token are pre-resolved by the orchestrator; you `cd <worktree-abs>` and start the loopback HTTP server before any other step. The dispatch path is in-process `Agent()` triggered by the `needs-browser` label on the PR's source issue. Visual proof for these PRs reads from `http://127.0.0.1:$PORT/` against the durable URL substring `raw.githubusercontent.com/<owner>/<repo>/<merge-sha>/.eval-screenshots/` once Step 11.3 rewrites the eval comment — branch-pinned URLs apply during the review window only. See Step 6c for the loopback server setup and Step 11 for the unchanged auto-merge gate.
-
-For PATH A and PATH B (both inline) the orchestrator threads the manual-merge opt-out by including `MANUAL_MERGE=1` in the prompt (mirroring `spawn-claude.sh --manual-merge`). Inline token and env var are equivalent — both suppress the Step 11 greenlight.
+**pr-eval depth is never gated (W3).** This evaluator STAYS Opus in all configurations — the dispatch carries `model=` resolved from `scripts/resolve-stage-model.sh <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`); since #1186 that is an explicit PIN and no execute-side carve-out can lower it.
 
 ## Lifecycle
 
@@ -185,58 +181,9 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Hook-enforced.** The `enforce-ci-wait` Stop hook (`hooks/enforce-ci-wait.py`) reads `.claude/logs/tool-use.log` and blocks Stop unless the `gh pr view` → `gh pr checks --watch` → `gh pr view` sequence is recorded; an Approved verdict on a red rollup is also blocked. Prose remains source of truth for HOW; the hook only verifies it happened.
 <!-- END CI_CHECK -->
 
-6. **Visual validation** (if UI changes exist in the diff). Two tiers: a baseline screenshot/console pass, then a verdict layer for `needs-browser` issues.
+6. **Visual validation** (if UI changes exist in the diff).
 
-   **6a. Baseline — Playwright MCP probe + screenshot plumbing.** Check Playwright MCP via `cat .mcp.json 2>/dev/null`. If available and on Linux: navigate to affected views, screenshot to `<worktree>/.claude/scratch/*.png`, check console for JS errors, verify UI matches the plan. Otherwise note: "Visual validation skipped — Playwright MCP not available."
-
-   **Attach screenshots to the eval comment.** For each PNG, invoke the attach helper, then verify the file actually reached the remote before embedding its link in Step 9's `**Screenshots:**` row. The helper commits the PNG to `<worktree>/.eval-screenshots/`, pushes to the PR branch, and returns a branch-pinned `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/<name>.png` URL. These URLs initially resolve via the branch-pinned form during the PR review window; after auto-merge fires, Step 11.3 rewrites them to the merge-SHA-pinned form (`raw.githubusercontent.com/<owner>/<repo>/<merge-sha>/.eval-screenshots/...`), which is durable for the life of the commit (issue #506, superseding the Option A ephemeral behaviour of tracker #383). Operators who prefer the legacy ephemeral behaviour may set `PIPELINE_SCREENSHOT_REWRITE_ENABLED=false`.
-
-   **Private repos (issue #551).** On a private repo the attach helper emits a `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` URL instead, and Step 6 wraps it as a clickable `[name](url)` link (not `![]()`). Reason: GitHub's camo image proxy fetches `![]()` image URLs anonymously, and a private repo's `raw.githubusercontent.com` content 404s anonymously — so the inline embed renders broken. The blob link routes through GitHub's authenticated file viewer, which renders the PNG for repo members. True inline rendering on a private repo is only possible via GitHub's `user-attachments` CDN (browser drag-drop upload, which needs a browser session + CSRF token and is NOT reachable via `gh`/PAT) — blob links are the CLI-feasible answer; drag-drop is the manual inline alternative. Visibility is detected fail-soft (`gh repo view "$PIPELINE_REPO" --json isPrivate`); any `gh` absence/error/non-`true` value falls back to the public raw + `![]()` behaviour.
-
-   **Failure-loud verification.** A returned URL is not proof the blob landed on origin — `git push` can fail silently inside the sandbox. Before writing any `![](url)` row, confirm the branch exists on the remote (`git ls-remote --exit-code origin "refs/heads/$BRANCH"`) AND the specific file is present at that branch tip (`gh api repos/$PIPELINE_REPO/contents/.eval-screenshots/$name?ref=$BRANCH`). On failure, emit a `⚠️ screenshot attach failed` row instead of a broken-link image so the human reviewer gets a self-debugging trail.
-   ```bash
-   SCREENSHOT_LINES=()
-   BRANCH="$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json headRefName --jq .headRefName)"
-   PRIVATE="$(gh repo view "$PIPELINE_REPO" --json isPrivate --jq .isPrivate 2>/dev/null || true)"
-   for png in .claude/scratch/*.png; do
-     [ -f "$png" ] || continue
-     name="$(basename "$png")"
-     url="$(bash "${CLAUDE_PLUGIN_ROOT}/mock-web-eval/scripts/eval-screenshot-attach.sh" "$PR_NUM" "$(realpath "$png")" 2>/dev/null || true)"
-     if [ -n "$url" ] \
-        && git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1 \
-        && gh api "repos/$PIPELINE_REPO/contents/.eval-screenshots/$name?ref=$BRANCH" --jq .sha >/dev/null 2>&1; then
-       if [ "$PRIVATE" = "true" ]; then
-         # Private repo: camo proxy can't fetch raw.githubusercontent.com anonymously (404),
-         # so use a clickable blob link — GitHub's authenticated viewer renders the PNG for members.
-         SCREENSHOT_LINES+=("- [${name%.*}](${url})")
-       else
-         SCREENSHOT_LINES+=("- ![${name%.*}](${url})")
-       fi
-     else
-       SCREENSHOT_LINES+=("- ⚠️ screenshot attach failed — see .eval-screenshots/${name} in the worktree")
-     fi
-   done
-   ```
-
-   **6b. Visual proof verdict (needs-browser issues only).** If the issue carries the needs-browser label, invoke `Skill(skill: "pipeline:visual-proof-from-plan")` in this evaluator session and parse its JSON output. For every entry in `unsatisfied`, the verdict MUST be Flagged for user review — record the claim and the failing artifact path/URL in the **Remaining issues** row. This is the load-bearing trust layer; `satisfied` predicates from the executor session do NOT carry over.
-
-   **6c. Inline-mode visual proof setup** (issue #517, #527 — applies when invoked via the inline Agent dispatch for browser-eval, dispatch mode #3 above). Before any `browser_navigate` / `browser_evaluate` call, bootstrap the loopback server via the single-responsibility helper `scripts/visual-proof-server-start.sh` (composes the port broker + starts `python3 -m http.server --directory <target> --bind 127.0.0.1` + readiness probe). The helper allocates the port itself, so this path no longer depends on the orchestrator pre-resolving `$PORT`:
-   ```bash
-   # Required env: TARGET_DIR (abs path under the worktree, from PIPELINE_VISUAL_PROOF_TARGET_DIR).
-   SERVER_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/visual-proof-server-start.sh" \
-                   "${SLATE_INDEX:-0}" "$TARGET_DIR" 2>&1) \
-     || { echo "$SERVER_LINE"; exit 1; }   # block-server-start: ... on stderr
-   PORT=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: .*port=\([0-9]*\) .*/\1/p')
-   SERVER_PID=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: pid=\([0-9]*\) .*/\1/p')
-   trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
-   ```
-   `$TARGET_DIR` is the absolute path under the worktree served by the server (from `PIPELINE_VISUAL_PROOF_TARGET_DIR`). For the **single-issue orchestrator-driven path** (fullsend on a 1-issue inline slate) the orchestrator does NOT pre-resolve `$PORT` — it never reaches `run-queue.sh launch_agent()` — so the helper allocating the port closes the #519 gap. `$SLATE_INDEX` defaults to 0 for a single-issue dispatch.
-
-   All subsequent `browser_navigate` / `browser_evaluate` calls target `http://127.0.0.1:$PORT/<path>`. The EXIT trap kills the server on normal exit and most signals; SIGKILL leaks are reaped by `scripts/reap-stale-visual-proof-servers.sh` (tracks by `--directory`, unchanged) invoked from `/pipeline:status` Step 0 housekeeping. `--bind 127.0.0.1` is load-bearing — never bind to `0.0.0.0` (avoids external exposure during concurrent fullsend runs). The queue dispatch-inline path (`run-queue.sh launch_agent()`) emits only the EVENT line and does NOT start a server, so routing the single start through the helper introduces no double-bootstrap.
-
-   **Per-tool wall-clock budget.** Wrap each `browser_evaluate` and `browser_navigate` call in a 60s wall-clock budget. On timeout, post Flagged with a timeout note and exit non-zero — this explicitly prevents the `until-grep DONE_MARKER` wedge pattern from issue #511 from migrating into the inline path. The 60s budget applies to inline-mode dispatch (mode #3) unconditionally.
-
-   **Selector pitfall (as of 2026-05-26).** When clicking elements, prefer the `ref=` identifier returned by `browser_snapshot` over CSS selectors with embedded quotes (e.g. `#echo-form button[type="submit"]`). The Playwright MCP server rejects the latter on the literal string (escaped-quote selectors fail to parse); the `ref=` from the snapshot works instantly. (Upstream Playwright MCP behavior, #525.)
+   Read [references/visual-validation.md](references/visual-validation.md) when the diff touches UI, or when the issue carries `needs-browser`.
 
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
@@ -277,142 +224,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Remaining issues:** (if flagged) <what needs human attention and why>
    ```
 
-10. **Report verdict:** Approved → "PR #X approved — ready for merge." / Flagged → "PR #X flagged for review: <summary>". Step 11 auto-merges unless `--manual-merge` or the `manual-merge` label opts out.
-
-11. **Auto-merge gate.**
-
-    **Authoritative owner of the greenlight check.**
-
-    On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the Visual proof row.
-
-    **Greenlight matrix — all 4 must hold** (otherwise the PR is left for manual merge with a `block-*` reason):
-    1. Latest `## Evaluation` comment contains `**Verdict:** Approved`.
-    2. Every entry in the PR's `statusCheckRollup` has `conclusion == SUCCESS` (or the rollup is empty for repos with no CI configured).
-    3. `mergeable == MERGEABLE`.
-    4. `mergeStateStatus == CLEAN` (not BLOCKED/BEHIND/DIRTY/UNSTABLE).
-
-    **Dual-defense doctrine (issue #295).** Base-branch enforcement is defense-in-depth across four layers: (i) the eval-time `baseRefName == $PIPELINE_BASE_BRANCH` assertion inside `auto-merge-gate.sh` (Step 11.2 — `block-base-mismatch`); (ii) a TOCTOU re-read immediately before `gh pr merge` in Step 11.3; (iii) the skill-level quoted `--base "$PIPELINE_BASE_BRANCH"` in `execute-issue-plan` Step 9b; (iv) the `enforce-base-branch.py` PreToolUse hook over `gh pr create` / `gh pr edit --base`. The hook alone is **insufficient** — bypassed in production (#295; see `dev/audits/295-root-cause.md`). The eval-time gate is the load-bearing zero-data-loss layer.
-
-    1. **Flag parsing.** `--manual-merge` may appear anywhere in argv. Also honored via env: `MANUAL_MERGE=1` (exported by `spawn-claude.sh` when the spawn carried `--manual-merge`) is equivalent. If either signal is set, skip Step 11 entirely and return Approved-but-not-merged.
-
-    2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233): `scripts/check-capability-refusal.sh --resolve-sources` resolves the MAIN checkout's log dir, never `$(pwd)` — a feature WORKTREE has no `.claude/logs/` of its own (#1246). Tokens: `resolved` (normal — export the knob), `no-log-dir` (`PIPELINE_LOGS_ENABLED=false` consumer install), `unresolvable-root` (no main checkout above cwd); either fallback leaves the knob unexported (fail-open).
-       ```bash
-       source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
-       CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
-       CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
-       CR_DIR=${CR_LINE##*DIR=}
-       case "$CR_STATE" in
-         resolved)          export PIPELINE_CAPABILITY_REFUSAL_SOURCES="$CR_DIR" ;;
-         no-log-dir)        echo "NOTE: no subagent log dir on the main checkout (PIPELINE_LOGS_ENABLED=false?) — capability arm skipped: $CR_LINE" >&2 ;;
-         unresolvable-root) echo "WARN: capability-refusal sources UNRESOLVABLE from $(pwd) — gate arm DORMANT (#1246): $CR_LINE" >&2 ;;
-       esac
-       REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
-       ```
-       Checks in order: `MANUAL_MERGE` env, `manual-merge` label, the 4 greenlight conditions, capability-refusal, `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`. The gate may also print `NOTE: capability-refusal arm skipped (REASON=async-dispatch …)` on stderr — expected for background-dispatch records, not a WARN, never reported as "unproven".
-
-       **pr-eval depth is never gated (W3).** pr-eval itself STAYS Opus in all configurations, never gated by any execute-side knob. Since #1186 that is an explicit PIN, not an inheritance side-effect: the dispatch carries `model=` resolved from `scripts/resolve-stage-model.sh <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`). No carve-out can lower the pin; an explicit knob below the resolved execute tier is honored but emits a stderr WARN (an operator override is allowed, silence is not).
-
-    3. **On `green`:**
-       - **TOCTOU re-check (issue #295).** Immediately before the merge, re-read `baseRefName`. A malicious or buggy actor could retarget the PR between Step 11.2's gate and the merge call.
-         ```bash
-         BASE_RECHECK=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json baseRefName --jq .baseRefName 2>/dev/null)
-         if [ -z "$BASE_RECHECK" ] || [ "$BASE_RECHECK" != "$PIPELINE_BASE_BRANCH" ]; then
-           REASON="block-base-mismatch"
-           # Fall through to Step 11.4: post the block comment and skip merge.
-         fi
-         ```
-         If `REASON` is now `block-base-mismatch`, jump to Step 11.4 — do not invoke `gh pr merge`.
-       - Merge synchronously (NOT `--auto`), then capture the merge-commit SHA (empty `$SHA` from rare API lag → omit from close comment; the merge is authoritative):
-         ```bash
-         gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch
-         SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
-         ```
-       - **Rewrite screenshot URLs to the merge SHA (issue #506, extended #551).** The eval comment embeds branch-pinned screenshot URLs that 404 once `--delete-branch` removes the feature branch. On public repos these are `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...`; on private repos they are `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` (the blob-link form from Step 6). The rewriter branch-scope-pins BOTH host forms to the durable merge-SHA equivalent (`.../<merge-sha>/.eval-screenshots/...`) in one pass. Now that the authoritative merge SHA is captured, rewrite them. Must run AFTER the SHA capture (the SHA it pins to) and BEFORE the footer-append (so the rewriter targets the screenshot comment, not the footer). Fail-soft — never block the merge that already completed:
-         ```bash
-         if [ -n "$SHA" ] && [ "${PIPELINE_SCREENSHOT_REWRITE_ENABLED:-true}" = "true" ]; then
-           bash "${CLAUDE_PLUGIN_ROOT}/scripts/rewrite-eval-screenshot-urls.sh" "$PR_NUM" "$SHA" \
-             || echo "WARN: post-merge URL rewrite failed for PR #${PR_NUM}"
-         fi
-         ```
-       - Append the auto-merged footer (exact literal prefix — Step 8 of `run/SKILL.md` greps it):
-         ```bash
-         TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-         FOOTER="Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at ${TS}"
-         gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" --body "$FOOTER"
-         ```
-       - Flip labels and close the issue (omit `(${SHA})` if `$SHA` is empty). **Swallow the benign "already closed" non-error (issue #813).** `gh pr merge` auto-closes the linked issue via `closingIssuesReferences` a beat before this explicit `gh issue close` runs, so the explicit close routinely fails with an "already closed" message. That is cosmetic — the final state (merged + closed) is already correct — so the guard treats an `already closed` stderr as success and only re-raises a genuine close failure (e.g. a transient API error). The label flip and close comment still run for the case where the PR body carried no `Closes #N` link:
-         The label flip is delegated to the shared `finalize-issue-labels.sh` helper (issue #866): it adds `merged` and strips the full pipeline lifecycle/path/priority set (not just `pr-open`), keeping all three merge-completion sites (this path, `finish-manual-merge.sh`, `cleanup-worktree.sh`) in lockstep. The close-comment / "already closed" guard (#813) is unchanged. Step 11.3 now passes `--repo "$PIPELINE_REPO"` explicitly (this subshell may not export it) and surfaces a `WARN` on finalize failure rather than silently no-op'ing on stale labels (issue #888).
-         ```bash
-         bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/finalize-issue-labels.sh" "$ISSUE" --repo "$PIPELINE_REPO" \
-           || echo "WARN: finalize-issue-labels exited non-zero for issue #${ISSUE}; labels may be stale (merge already completed)."
-         CLOSE_SUFFIX=$([ -n "$SHA" ] && echo " (${SHA})" || echo "")
-         CLOSE_ERR=$(gh issue close "$ISSUE" --repo "$PIPELINE_REPO" --comment "Merged via #${PR_NUM}${CLOSE_SUFFIX}. ${FOOTER}" 2>&1)
-         if [ $? -ne 0 ]; then
-           if printf '%s' "$CLOSE_ERR" | grep -qi 'already closed'; then
-             echo "Issue #${ISSUE} already closed by gh pr merge (closingIssuesReferences) — benign (issue #813)."
-           else
-             echo "$CLOSE_ERR" >&2
-             exit 1
-           fi
-         fi
-         ```
-       - Screenshots: no cleanup needed — the `.eval-screenshots/` commit collapses into the merge-commit and the feature branch is deleted by `--delete-branch`. Step 11.3 (above) has already rewritten the eval comment's branch-pinned URLs — both the public `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...` form and the private `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` blob link (issue #551) — to the merge-SHA-pinned form (`.../<merge-sha>/.eval-screenshots/...`), so the embedded screenshots stay durable for the life of the commit even after the feature branch is deleted (issue #506). Operators who deliberately want the legacy ephemeral behaviour (e.g. external or legal-hold screenshot capture) set `PIPELINE_SCREENSHOT_REWRITE_ENABLED=false`, which skips the Step 11.3 rewrite and restores the tracker-#383 post-merge-404 semantics.
-
-    4. **On any `block-*` reason:** post a single comment explaining why auto-merge was skipped, then return Approved-but-not-merged. Do not flip labels or close the issue.
-       ```bash
-       gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" \
-         --body "Auto-merge skipped: ${REASON}. Run \`gh pr merge\` manually."
-       ```
-
-       **`block-base-mismatch` extension.** When `REASON == block-base-mismatch` (from Step 11.2's gate or Step 11.3's TOCTOU re-check), the comment body MUST also include a retarget suggestion:
-       ```bash
-       gh pr comment "$PR_NUM" --repo "$PIPELINE_REPO" \
-         --body "Auto-merge skipped: block-base-mismatch — PR baseRefName diverges from \$PIPELINE_BASE_BRANCH ($PIPELINE_BASE_BRANCH).
-
-Run \`\$CLAUDE_PLUGIN_ROOT/scripts/retarget-pr.sh $PR_NUM $PIPELINE_BASE_BRANCH\` to retarget (or \`gh pr edit $PR_NUM --base $PIPELINE_BASE_BRANCH\` if retarget-pr.sh is unavailable)."
-       ```
-
-       **Auto-apply the `manual-merge` label (issue #489).** After posting the `Auto-merge skipped:` comment — for ANY `block-*` reason — add the `manual-merge` label to the issue so the wedge becomes terminal-detectable by the run-queue runner on its next poll:
-       ```bash
-       gh issue edit "$ISSUE" --repo "$PIPELINE_REPO" --add-label "manual-merge" 2>/dev/null || true
-       ```
-       The label flip is what lets the runner (`scripts/run-queue.sh` `evaluator_finished_terminal()`) free the queue slot immediately instead of waiting for the per-agent 90-min timeout. Fails OPEN on `gh` error — the worst case is the pre-#489 behaviour (queue waits for the timeout). The label is permanent post-merge (`cleanup-worktree.sh` leaves it as a historical "this PR did not auto-merge" signal).
-
-       **`block-capability-refused` remediation (#1233).** No new arm is needed — the ANY-`block-*` handling above already posts the skip comment and applies `manual-merge`. The remediation is: re-dispatch the refused task to the PR-opening role (the inline execute `Agent` on PATH A/B, the orchestrator on PATH C) per `execute-issue-plan` Step 8's owner rule, then re-run this evaluation.
-
-    Release-please PRs are out of scope for this gate — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in Step 7b of `run/SKILL.md`.
-
-## Canonical Agent prompt template (assembled by orchestrator)
-
-The inline Agent dispatch (mode #3 above) is launched by the orchestrator with the following prompt body. Fields are pre-resolved by the orchestrator — the subagent does NOT re-derive them:
-
-```
-You are dispatched to run /pipeline:evaluate-issue-pr <N> inline.
-Context (pre-resolved by orchestrator — do not re-derive):
-  - Worktree:   <abs-path>
-  - PR:         <PR-num>
-  - Target dir: <PIPELINE_VISUAL_PROOF_TARGET_DIR resolved abs-path>
-  - Port:       <P>  (advisory; the helper re-allocates via the broker, --bind 127.0.0.1)
-  - Auto-merge: <gated|allowed>  (per manual-merge label check)
-Setup: cd <worktree>;
-       SERVER_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/visual-proof-server-start.sh" "${SLATE_INDEX:-0}" "$TARGET_DIR" 2>&1) || { echo "$SERVER_LINE"; exit 1; };
-       PORT=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: .*port=\([0-9]*\) .*/\1/p');
-       SERVER_PID=$(printf '%s\n' "$SERVER_LINE" | sed -n 's/^SERVER: pid=\([0-9]*\) .*/\1/p');
-       trap 'kill "$SERVER_PID" 2>/dev/null' EXIT
-Then: follow skills/evaluate-issue-pr/SKILL.md verbatim against http://127.0.0.1:$PORT.
-Terminal state: post `## Evaluation` comment via gh; report verdict + auto-merge-gate token.
-```
-
-Field semantics:
-- **Worktree** — absolute path to the feature worktree; subagent `cd`s here before any other step.
-- **PR** — PR number; threaded as `$PR_NUM` for the rest of the skill.
-- **Target dir** — absolute path under the worktree served by `python3 -m http.server`; resolved from `PIPELINE_VISUAL_PROOF_TARGET_DIR`.
-- **Port** — advisory only. `scripts/visual-proof-server-start.sh` re-allocates the port via the broker (`scripts/visual-proof-port-broker.sh <slate_index>`) at start time and emits the actual `port=` on its `SERVER:` line; the Setup block parses `$PORT` from there. The single-issue orchestrator path (#527) does not pre-resolve this field at all.
-- **Auto-merge** — gate token threaded through to Step 11; `gated` mirrors `--manual-merge` / `MANUAL_MERGE=1`, `allowed` lets the Step 11 greenlight matrix decide.
-
-## Migration warning (issue #517 — owner: `scripts/run-queue.sh launch_agent()`)
-
-When a PR carries the `needs-browser` label but `PIPELINE_VISUAL_PROOF_TARGET_DIR` is unset on the operator's `pipeline.config`, the orchestrator (in `scripts/run-queue.sh launch_agent()`, NOT this skill) emits a **one-time stderr warning** plus a Notes column entry on the status table. Evaluation proceeds **without visual proof** — the warning is non-blocking and never blocks the verdict. This is the documented consumer-migration story for operators upgrading from 0.17.x to a release that defaults the inline browser-eval path; set `PIPELINE_VISUAL_PROOF_TARGET_DIR` to opt into inline visual proof; otherwise evaluation proceeds without it (non-blocking). The warning surface lives in `run-queue.sh launch_agent()` so it fires once per dispatch — this skill only documents the contract.
+10. **Report verdict:** Approved → "PR #X approved — ready for merge." / Flagged → "PR #X flagged for review: <summary>". That verdict line is this skill's terminal state — the orchestrator fires the greenlight auto-merge gate afterwards (`skills/fullsend/references/auto-merge-gate.md`), and `--manual-merge` / the `manual-merge` label opt out of it.
 
 ## Constraints
 - Do NOT read the executor's session logs or conversation history.
@@ -421,4 +233,4 @@ When a PR carries the `needs-browser` label but `PIPELINE_VISUAL_PROOF_TARGET_DI
 - If a fix requires touching >3 files or new design decisions, flag instead of fixing.
 - Never skip tsc or test validation.
 - All PRs target `PIPELINE_BASE_BRANCH`. All commits go to the feature branch.
-- Outside the Step 11 auto-merge gate, the evaluator does NOT merge, close issues, or change `pr-open` labels — only reviews, posts verdict, and (optionally) rebases against the base branch.
+- The evaluator does NOT merge, close issues, or change `pr-open` labels — only reviews, posts verdict, and (optionally) rebases against the base branch. The greenlight auto-merge gate belongs to the orchestrator (`skills/fullsend/references/auto-merge-gate.md`).

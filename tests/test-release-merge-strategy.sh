@@ -24,7 +24,7 @@ assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  
 # relocated into skills/fullsend/SKILL.md, already in this list). The remaining
 # FILES still each carry a live `gh pr merge ... --merge` command.
 FILES=(
-  "skills/evaluate-issue-pr/SKILL.md"
+  "skills/fullsend/references/auto-merge-gate.md"
   "skills/fullsend/SKILL.md"
   "docs/release-cadence.md"
 )

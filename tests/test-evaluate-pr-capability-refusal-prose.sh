@@ -15,7 +15,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-EVAL_SKILL="$ROOT/skills/evaluate-issue-pr/SKILL.md"
+# #1444: (a)/(b)/(i) assert the GATE prose, which relocated to the
+# orchestrator-owned reference file.
+EVAL_SKILL="$ROOT/skills/fullsend/references/auto-merge-gate.md"
 FULLSEND_SKILL="$ROOT/skills/fullsend/SKILL.md"
 GATE="$ROOT/scripts/auto-merge-gate.sh"
 RUN_QUEUE="$ROOT/scripts/run-queue.sh"

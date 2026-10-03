@@ -11,27 +11,33 @@ fail_msg(){ echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 assert(){ if eval "$2"; then pass_msg "$1"; else fail_msg "$1"; fi; }
 
 SKILL="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
+# #1444 relocations: Step 6 (visual validation) -> the evaluator's own
+# references/; the Step 11 gate and the three orchestrator-facing sections ->
+# skills/fullsend/references/. Each assertion follows its text to the new file.
+VIS="$REPO_ROOT/skills/evaluate-issue-pr/references/visual-validation.md"
+GATE="$REPO_ROOT/skills/fullsend/references/auto-merge-gate.md"
+DISPATCH="$REPO_ROOT/skills/fullsend/references/pr-eval-dispatch.md"
 
 assert "skill file exists" "[ -f '$SKILL' ]"
-assert "skill references eval-screenshot-attach.sh"      "grep -q 'eval-screenshot-attach.sh' '$SKILL'"
-assert "skill no longer references eval-screenshot-cleanup.sh" "! grep -q 'eval-screenshot-cleanup.sh' '$SKILL'"
+assert "visual-validation references eval-screenshot-attach.sh" "grep -q 'eval-screenshot-attach.sh' '$VIS'"
+assert "visual-validation no longer references eval-screenshot-cleanup.sh" "! grep -q 'eval-screenshot-cleanup.sh' '$VIS'"
 
 # attach call must appear under Step 6 (visual-validation), bounded by Step 7
-assert "attach call appears under Step 6 (visual validation)" \
-  "awk '/^6\\. \\*\\*Visual validation/,/^7\\. \\*\\*If fixable/' '$SKILL' | grep -q 'eval-screenshot-attach.sh'"
+assert "attach call appears in references/visual-validation.md" \
+  "grep -q 'eval-screenshot-attach.sh' '$VIS'"
 
 # Step 11 green path must NOT invoke the (now-deleted) cleanup helper.
-assert "cleanup call ABSENT from Step 11 green path" \
-  "! awk '/On .green.:/,/On any .block-/' '$SKILL' | grep -q 'eval-screenshot-cleanup.sh'"
+assert "cleanup call ABSENT from the gate green path" \
+  "! awk '/On .green.:/,/On any .block-/' '$GATE' | grep -q 'eval-screenshot-cleanup.sh'"
 
 # Step 6 must verify each screenshot actually landed on the remote branch
 # (git ls-remote / gh api contents) BEFORE emitting an image markdown row.
 assert "Step 6 verifies screenshot reached remote before emitting image" \
-  "awk '/^6\\. \\*\\*Visual validation/,/^7\\. \\*\\*If fixable/' '$SKILL' | grep -qE 'git ls-remote|gh api repos.*/contents/\\.eval-screenshots'"
+  "grep -qE 'git ls-remote|gh api repos.*/contents/\\.eval-screenshots' '$VIS'"
 
 # Step 6 must emit a failure-loud row when verification fails, not a broken link.
 assert "Step 6 emits failure-loud row on attach failure" \
-  "awk '/^6\\. \\*\\*Visual validation/,/^7\\. \\*\\*If fixable/' '$SKILL' | grep -q '⚠️ screenshot attach failed'"
+  "grep -q '⚠️ screenshot attach failed' '$VIS'"
 
 # Step 9 comment template must include a Screenshot row and an inline image
 # markdown row matching the branch-pinned raw.githubusercontent.com URL shape.
@@ -45,17 +51,17 @@ assert "Step 9 template includes branch-pinned raw image row" \
 
 # (a) The stale "intentionally 404" claim must be gone (it lived in §117 prose).
 assert "no stale 'intentionally 404' claim remains" \
-  "! grep -q 'intentionally 404' '$SKILL'"
+  "! grep -q 'intentionally 404' '$SKILL' '$VIS'"
 
 # (b) §117 (Attach screenshots) must reference the merge-SHA rewrite and opt-out.
-S117="awk '/Attach screenshots to the eval comment/,/Failure-loud verification/' '$SKILL'"
+S117="awk '/Attach screenshots to the eval comment/,/Failure-loud verification/' '$VIS'"
 assert "§117 references merge-SHA rewrite" \
   "$S117 | grep -qi 'merge-sha'"
 assert "§117 references PIPELINE_SCREENSHOT_REWRITE_ENABLED opt-out" \
   "$S117 | grep -q 'PIPELINE_SCREENSHOT_REWRITE_ENABLED'"
 
 # (c) §224 Step 11 green path must invoke the rewrite step and call the URLs durable.
-GREEN="awk '/On .green.:/,/On any .block-/' '$SKILL'"
+GREEN="awk '/On .green.:/,/On any .block-/' '$GATE'"
 assert "§224 green path invokes rewrite-eval-screenshot-urls.sh" \
   "$GREEN | grep -q 'rewrite-eval-screenshot-urls.sh'"
 assert "§224 green path documents durable merge-SHA-pinned URLs" \
@@ -68,10 +74,10 @@ assert "§224 green path documents durable merge-SHA-pinned URLs" \
 # contract. This guards against the inline-mode bullet drifting to a
 # branch-pinned URL shape (which 404s post-merge per issue #506).
 
-INLINE="awk '/Inline Agent dispatch \\(browser-eval/,/## Lifecycle/' '$SKILL'"
+INLINE="cat '$DISPATCH'"
 
 assert "Invocation-mode section names inline Agent dispatch (browser-eval) as default" \
-  "grep -q 'Inline Agent dispatch (browser-eval' '$SKILL'"
+  "grep -q 'Inline Agent dispatch (browser-eval' '$DISPATCH'"
 assert "inline-mode bullet triggered by needs-browser label" \
   "$INLINE | grep -q 'needs-browser'"
 assert "no PIPELINE_EVAL_ISOLATION references remain in SKILL.md" \
@@ -86,9 +92,9 @@ assert "inline-mode bullet preserves the durable raw.githubusercontent.com/<merg
   "$INLINE | grep -qE 'raw\\.githubusercontent\\.com/<owner>/<repo>/<merge-sha>/\\.eval-screenshots/'"
 
 # Step 6c — inline-mode visual proof setup sub-bullet (issue #517).
-S6C="awk '/\\*\\*6c\\. Inline-mode visual proof setup/,/^7\\. \\*\\*If fixable/' '$SKILL'"
+S6C="awk '/\\*\\*6c\\. Inline-mode visual proof setup/,0' '$VIS'"
 assert "Step 6c (inline-mode visual proof setup) is present" \
-  "grep -q '6c\\. Inline-mode visual proof setup' '$SKILL'"
+  "grep -q '6c\\. Inline-mode visual proof setup' '$VIS'"
 assert "Step 6c binds python3 -m http.server to 127.0.0.1" \
   "$S6C | grep -qE 'python3 -m http\\.server.*--bind 127\\.0\\.0\\.1|python3 -m http\\.server.*-b 127\\.0\\.0\\.1'"
 assert "Step 6c includes an EXIT trap for bg server cleanup" \
@@ -101,9 +107,9 @@ assert "Step 6c routes bootstrap through visual-proof-server-start.sh helper" \
   "$S6C | grep -q 'visual-proof-server-start\\.sh'"
 
 # Canonical Agent prompt template fenced block (issue #517).
-TPL="awk '/Canonical Agent prompt template/,/Constraints/' '$SKILL'"
+TPL="cat '$DISPATCH'"
 assert "Canonical Agent prompt template heading present" \
-  "grep -q 'Canonical Agent prompt template' '$SKILL'"
+  "grep -q 'Canonical Agent prompt template' '$DISPATCH'"
 for field in Worktree PR "Target dir" Port Auto-merge; do
   assert "Agent prompt template names field: $field" \
     "$TPL | grep -q '$field'"
@@ -112,18 +118,18 @@ done
 # 60s per-tool wall-clock budget for browser_evaluate / browser_navigate
 # with explicit #511 cross-ref (issue #517).
 assert "skill documents 60s per-tool budget for browser_evaluate / browser_navigate" \
-  "grep -qE '60s.*browser_(evaluate|navigate)|browser_(evaluate|navigate).*60s' '$SKILL'"
+  "grep -qE '60s.*browser_(evaluate|navigate)|browser_(evaluate|navigate).*60s' '$VIS'"
 assert "60s budget paragraph cross-refs issue #511" \
-  "grep -q '#511' '$SKILL'"
+  "grep -q '#511' '$VIS'"
 
 # Migration-warning behavior (issue #517) — orchestrator owns the warning;
 # skill must document the contract so reviewers know where to look.
 assert "skill documents migration-warning behavior for missing TARGET_DIR" \
-  "grep -qE 'TARGET_DIR.*unset|PIPELINE_VISUAL_PROOF_TARGET_DIR.*unset' '$SKILL'"
+  "grep -qE 'TARGET_DIR.*unset|PIPELINE_VISUAL_PROOF_TARGET_DIR.*unset' '$DISPATCH'"
 assert "migration-warning section names run-queue.sh launch_agent as owner" \
-  "grep -qE 'run-queue\\.sh.*launch_agent|launch_agent.*run-queue\\.sh' '$SKILL'"
+  "grep -qE 'run-queue\\.sh.*launch_agent|launch_agent.*run-queue\\.sh' '$DISPATCH'"
 assert "migration-warning section states evaluation proceeds without visual proof / never blocks" \
-  "grep -qE 'never blocks|non-blocking' '$SKILL'"
+  "grep -qE 'never blocks|non-blocking' '$DISPATCH'"
 
 # -----------------------------------------------------------------------------
 # Issue #551 — private-repo blob-link branch (Step 6 wrapper choice). The attach
@@ -133,7 +139,7 @@ assert "migration-warning section states evaluation proceeds without visual proo
 # CHOICE — the runtime `${url}` variable form actually present in the SKILL —
 # NOT a `blob/.eval-screenshots` literal (which only appears in the Step 9
 # template, outside the $S6 range).
-S6="awk '/^6\\. \\*\\*Visual validation/,/^7\\. \\*\\*If fixable/' '$SKILL'"
+S6="cat '$VIS'"
 assert "Step 6 detects repo visibility via isPrivate" \
   "$S6 | grep -qE 'gh repo view.*isPrivate'"
 assert "Step 6 guards the private branch on PRIVATE=true" \
@@ -144,7 +150,7 @@ assert "Step 6 keeps the public inline IMAGE row (- ![name](url))" \
   "$S6 | grep -qE '\"- !\\[\\\$\\{name%\\.\\*\\}\\]\\(\\\$\\{url\\}\\)\"'"
 # Whole-file: user-attachments CDN limitation prose.
 assert "skill documents user-attachments CDN limitation for private inline rendering" \
-  "grep -qi 'user-attachments' '$SKILL'"
+  "grep -qi 'user-attachments' '$VIS'"
 # Step 11.3 GREEN-range: rewrite prose must mention the blob form for private repos.
 assert "Step 11.3 documents blob-URL rewrite for private repos" \
   "$GREEN | grep -qE 'blob/.*\\.eval-screenshots|blob link'"
