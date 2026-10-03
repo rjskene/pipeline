@@ -79,6 +79,8 @@ A guard that passes is not evidence until you have seen it fail on something.
    ```bash
    COMMENTS_JSON=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N>)
    PLAN=$(printf '%s' "$COMMENTS_JSON" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-comment.sh")
+   PLAN_EVAL=$(printf '%s' "$COMMENTS_JSON" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-eval-comment.sh")
+   case "$PLAN_EVAL" in *'**Verdict:** Revise'*) printf 'PLAN-AMENDMENTS\n%s\n' "$PLAN_EVAL" ;; esac
    ```
    If `PLAN` is empty, STOP: "No implementation plan found for issue #N." (Either no plan exists, or every `## Implementation Plan` candidate was authored by an untrusted account — the stderr audit lists the dropped authors.)
 
