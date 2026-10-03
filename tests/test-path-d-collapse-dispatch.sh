@@ -24,8 +24,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # routing was specific to the old run skill's planning section and has no fullsend
 # equivalent; in fullsend the equivalent contract is Group 2's split-dispatch +
 # Step-1b PATH-D exclusion (assertion 2e), which is the canonical home.
-RUN_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
-FULLSEND_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+_FS_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+# #1444 — fullsend's conditional detail was relocated OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins CONTRACT prose, not the file
+# a clause happens to live in, so it reads the UNION of SKILL.md and its
+# references; SKILL.md comes first, so every step-skeleton region extractor
+# below still terminates inside the SKILL.md half.
+_FS_UNION_DIR="$(mktemp -d)"
+trap 'rm -rf "$_FS_UNION_DIR"' EXIT
+RUN_SKILL="$_FS_UNION_DIR/fullsend-union.md"
+cat "$_FS_SKILL" "$SCRIPT_DIR/../skills/fullsend"/references/*.md > "$RUN_SKILL"
+FULLSEND_SKILL="$RUN_SKILL"
 EXECUTE_SKILL="$SCRIPT_DIR/../skills/execute-issue-plan/SKILL.md"
 
 PASS=0

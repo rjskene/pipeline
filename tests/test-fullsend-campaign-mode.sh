@@ -15,11 +15,18 @@ set -euo pipefail
 # the new `## Campaign mode` section where leg-loop ordering matters.
 
 FILE="$(dirname "$0")/../skills/fullsend/SKILL.md"
+# #1444 — the leg-loop BODY moved out of the hot path into its reference file.
+# The `## Campaign mode` HEADING stays in SKILL.md (every cross-reference in
+# CLAUDE.md / docs cites it by heading), so the heading assertion below still
+# reads SKILL.md; the block-scoped prose assertions read the reference file.
+CAMP_FILE="$(dirname "$0")/../skills/fullsend/references/campaign-mode.md"
 
-if [ ! -f "$FILE" ]; then
-  echo "ERROR: $FILE not found" >&2
-  exit 1
-fi
+for f in "$FILE" "$CAMP_FILE"; do
+  if [ ! -f "$f" ]; then
+    echo "ERROR: $f not found" >&2
+    exit 1
+  fi
+done
 
 fail=0
 assert_has() { grep -qiF "$1" "$FILE" || { echo "MISSING: $1"; fail=1; }; }
@@ -30,11 +37,15 @@ assert_has "[issue_numbers...] [--manual-merge] [--spawn] [--campaign]"
 # (2) the new section heading exists.
 assert_has "## Campaign mode"
 
-# Block-scope the rest to the Campaign mode section: starts at the
-# "## Campaign mode" heading, ends at the next H2 heading.
-camp="$(awk '/^## Campaign mode/{f=1; print; next} /^## /{f=0} f' "$FILE")"
+# (2a) #1444 — the SKILL.md stub points at the reference file, so the
+#      orchestrator can still reach the leg-loop machinery from the hot path.
+assert_has "references/campaign-mode.md"
+
+# The rest of the contract is the leg-loop prose, which now IS the reference
+# file in full (no in-file block scoping needed — the file is the section).
+camp="$(cat "$CAMP_FILE")"
 if [ -z "$camp" ]; then
-  echo "VIOLATION: could not locate '## Campaign mode' section"; fail=1
+  echo "VIOLATION: skills/fullsend/references/campaign-mode.md is empty"; fail=1
 fi
 assert_camp() {
   printf '%s' "$camp" | grep -qiF "$1" || { echo "MISSING (Campaign mode): $1"; fail=1; }

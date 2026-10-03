@@ -35,7 +35,17 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-FULLSEND="$ROOT/skills/fullsend/SKILL.md"
+_FS_SKILL="$ROOT/skills/fullsend/SKILL.md"
+# #1444 — fullsend's conditional detail was relocated OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins CONTRACT prose, not the file
+# a clause happens to live in, so it reads the UNION of SKILL.md and its
+# references; SKILL.md comes first, so every step-skeleton region extractor
+# below still terminates inside the SKILL.md half.
+_FS_UNION_DIR="$(mktemp -d)"
+trap 'rm -rf "$_FS_UNION_DIR"' EXIT
+FULLSEND="$_FS_UNION_DIR/fullsend-union.md"
+cat "$_FS_SKILL" "$ROOT/skills/fullsend"/references/*.md > "$FULLSEND"
+
 
 SENTINEL='**Trust profile (#1291):**'
 STEP2_ANCHOR='2. **Evaluate plans**'

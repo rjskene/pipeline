@@ -3,7 +3,9 @@ set -euo pipefail
 # #763: the run→status rename moved the per-path dispatch-routing contract out of
 # the old /pipeline:run skill into fullsend's "## Dispatch routing by path tier
 # (reference)" section (the read-only /pipeline:status skill dispatches nothing).
-SKILL="skills/fullsend/SKILL.md"
+# #1444 — the section BODY moved to fullsend's reference file; the heading stays
+# in SKILL.md with a one-line pointer, so this routing guard follows the prose.
+SKILL="skills/fullsend/references/dispatch-routing.md"
 [ -f "$SKILL" ] || { echo "FAIL: $SKILL missing"; exit 1; }
 
 STEP6=$(awk '/^[[:space:]]*\*\*For execution \(plan-approved/,/^### Anti-patterns|^## Merge orchestration|^8\. \*\*Merge orchestration/' "$SKILL")

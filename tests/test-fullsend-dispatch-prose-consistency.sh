@@ -25,6 +25,10 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FULLSEND="$ROOT/skills/fullsend/SKILL.md"
+# #1444 — regions (B) and (C) live in the `## Dispatch routing by path tier
+# (reference)` section, whose BODY moved out of the hot path into fullsend's
+# reference file. Region (A) is Step 6 prose and stays in SKILL.md.
+FULLSEND_ROUTING="$ROOT/skills/fullsend/references/dispatch-routing.md"
 
 PASS=0
 FAIL=0
@@ -33,7 +37,9 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-if [ ! -f "$FULLSEND" ]; then echo "ERROR: $FULLSEND not found" >&2; exit 1; fi
+for f in "$FULLSEND" "$FULLSEND_ROUTING"; do
+  if [ ! -f "$f" ]; then echo "ERROR: $f not found" >&2; exit 1; fi
+done
 
 echo "== test-fullsend-dispatch-prose-consistency (issue #1095) =="
 
@@ -62,7 +68,7 @@ routing_pathb_execute_block() {
     }
     inblock { buf = buf $0 ORS }
     END { if (inblock && buf ~ /execute-issue-plan/) printf "%s", buf }
-  ' "$FULLSEND"
+  ' "$FULLSEND_ROUTING"
 }
 routing_pathb_execute_flat() { routing_pathb_execute_block | tr "\n" " "; }
 
@@ -75,7 +81,7 @@ resolver_section() {
     /^\s+- \*\*Per-path execute MODEL routing/ { inblock = 1; print; next }
     inblock && /^##/ { inblock = 0 }
     inblock { print }
-  ' "$FULLSEND"
+  ' "$FULLSEND_ROUTING"
 }
 resolver_flat() { resolver_section | tr "\n" " "; }
 

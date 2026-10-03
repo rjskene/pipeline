@@ -20,7 +20,17 @@ set -euo pipefail
 # tests/test-fullsend-skill-setup-worktree-signature.sh.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_PATH="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+_FS_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+# #1444 — fullsend's conditional detail was relocated OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins CONTRACT prose, not the file
+# a clause happens to live in, so it reads the UNION of SKILL.md and its
+# references; SKILL.md comes first, so every step-skeleton region extractor
+# below still terminates inside the SKILL.md half.
+_FS_UNION_DIR="$(mktemp -d)"
+trap 'rm -rf "$_FS_UNION_DIR"' EXIT
+SKILL_PATH="$_FS_UNION_DIR/fullsend-union.md"
+cat "$_FS_SKILL" "$SCRIPT_DIR/../skills/fullsend"/references/*.md > "$SKILL_PATH"
+
 
 PASS=0
 FAIL=0

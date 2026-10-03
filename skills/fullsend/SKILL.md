@@ -57,50 +57,7 @@ Gated by `PIPELINE_FULL_SEND_WAVE_PLANNING_ENABLED` (default `true`); when `fals
 
 ## Usage gate (#969)
 
-> **RED FLAGS — read before acting on any `pause-5h`:**
-> 1. **Auto-resume is the DEFAULT on `pause-5h`.** NEVER stop-and-ask the operator "should I resume?" — arm the cron and yield; the cron resumes the campaign on its own.
-> 2. **NEVER `ScheduleWakeup`** (or any delay-based one-shot) at `resume_at` — a one-shot is turn-coupled, can fire while still throttled, and is silently superseded by intervening conversation (R2/R3).
-> 3. **The ONLY resume mechanism is a recurring `CronCreate` on `13,38 * * * *`** — turn-independent, fires on wall-clock regardless of conversation activity.
-
-**Single source of truth for the usage-aware pause/resume control loop.** `scripts/usage-gate.sh` reads real account usage from the OAuth endpoint behind Claude Code's `/usage` panel and emits ONE deterministic decision line; the script decides, this prose obeys (the `auto-merge-gate.sh` pattern). Call sites below reference this section — no duplicated machinery anywhere. Knobs: `PIPELINE_USAGE_GATE_ENABLED` (default `true`; `false` disables) and `PIPELINE_USAGE_GATE_THRESHOLD_PCT` (default `85`, applies to both windows). Spec: `docs/superpowers/specs/2026-06-10-usage-gate-design.md`.
-
-**Invocation (never gate-fatal):**
-
-```bash
-GATE_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh" || true)
-```
-
-Always relay `$GATE_LINE` in the run log, then branch on its `decision=` token:
-
-- **`decision=proceed` / `decision=skip`** → continue. `skip` ≡ proceed plus an auditable `reason=` (`disabled`, `no-credentials`, `http-<code>`, `fetch-error`, `parse-error`) — the gate is fail-open and NEVER blocks a run on its own failure.
-- **`decision=pause-5h`** → the five-hour window is at/over threshold; the outcome is **arm the recurring re-check cron and yield** (the campaign auto-resumes — this is NOT a stop-and-ask). The line's `resume_at=` is `five_hour.resets_at + 5 min` — treated as a **reporting ceiling + blind backstop only**, NOT a resume time (the endpoint over-states recovery; see spec #1016 R1):
-  1. Report the remaining slate in ONE line — the issue numbers not yet at `pr-open`/merged.
-  2. **Emit the arming spec deterministically, then transcribe it into ONE `CronCreate` call.** Run:
-
-     ```bash
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/arm-usage-resume-cron.sh" \
-       --resume-command "<the exact /pipeline:fullsend command you are running>" \
-       --resume-at <resume_at from this gate line>
-     ```
-
-     then make ONE `CronCreate` call with EXACTLY its emitted args. **Do NOT hand-reconstruct the schedule/marker/prompt** — the script now SOURCES those tokens (fixed `13,38 * * * *` cadence, marker `usage-resume re-check`, the fully-assembled **re-check firing contract** prompt, the `resume_at` value, the `/pipeline:fullsend <remaining issue numbers> <original flags>` resume command form, and the "resumed after usage pause; delete the usage-resume cron if present" idempotency note). The cron id does not exist until `CronCreate` returns, so "delete self" means `CronList` → match the marker → `CronDelete`. Report: remaining slate + "worst-case resume by `<resume_at>`" + the cron id.
-  3. STOP the turn. Labels untouched; in-flight agents have already drained (the gate runs only BETWEEN waves — pause = do not dispatch the next wave).
-
-  **`ScheduleWakeup` is NEVER the resume mechanism.** Do not arm a `ScheduleWakeup` (or any delay-based one-shot) at `resume_at` — a one-shot can fire while still throttled and is turn-coupled, so intervening conversation silently supersedes it (R2/R3). The recurring `CronCreate` above is the single, turn-independent mechanism.
-
-  **Re-check firing contract** (each cron firing is a deliberately tiny turn): run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-gate.sh"`, relay the line, then branch on its `decision=`:
-  - **`proceed`** → `CronList` → match marker `usage-resume re-check` → `CronDelete` self, then fire the resume command.
-  - **`pause-5h`** → STOP the turn (one line). The cron PERSISTS; the next firing re-checks. A firing killed by the account cap self-heals — the cron recurs (this resilience is the core win over the one-shot).
-  - **`halt-7d`** → `CronList` → `CronDelete` self, then a LOUD report (seven-day %, reset date, exact manual resume command). NEVER auto-resume a seven-day trip.
-  - **`skip`** → NEVER resume on `skip` (a paused headless host has an ~hourly-expiring OAuth token; fail-open on `http-401` would resume at ~99%, R4) UNLESS `now ≥ resume_at + 10 min` → treat as `proceed` (R5 blind backstop — never worse than the old one-shot, even when the endpoint is unreadable). Otherwise STOP; the cron persists and the next firing's session refreshes creds.
-- **`decision=halt-7d`** → same stop, NO schedule (a seven-day reset can be days away — never auto-resume). Loud report: the seven-day utilization %, the reset date, and the exact manual resume command (`/pipeline:fullsend <remaining issue numbers> <original flags>`).
-
-**On resume** the pre-flight gate re-checks naturally: still over threshold → re-pause/halt again (re-arming the recurring re-check cron). A headless re-check firing with an expired access token degrades fail-open (`skip reason=http-401`); the re-check contract's `skip` branch governs it — the cron persists and the next firing re-checks once the session has refreshed creds, so a stale-token firing never resumes at ~99% (R4).
-
-**Call sites** (each points here; one-line references only):
-1. **Pre-flight** — before wave 1 of ANY stage (classify, plan, and execute waves all burn budget).
-2. **Top of EVERY wave iteration** — the Step 1b classify/plan waves AND the `### Execute the slate WAVE BY WAVE` loop (before Step 5).
-3. **Campaign leg boundary** — `## Campaign mode` (e)3, BESIDE the `usage-surface.sh` advisory (which stays read-only per #725; different substrate, untouched).
+Read [references/usage-gate.md](references/usage-gate.md) at the first wave top; the decision-line branch is: `proceed` → continue, `pause-5h`/`halt-7d` → obey it.
 
 ## Headless contract
 
@@ -117,110 +74,7 @@ Interactive mode (knob unset/false) is unchanged — operator prompts stay.
 
 ## Campaign mode
 
-**This section is the single source of truth for the campaign machinery.** `/pipeline:campaign` is an **equivalent standalone entry point** into the SAME loop documented here — it owns no leg-loop prose of its own and defers to this section verbatim (see `skills/campaign/SKILL.md`). `--campaign` on `/pipeline:fullsend` remains supported on an ongoing basis and is **NOT deprecated**; the two entries are interchangeable and execute identical machinery, so they can never drift.
-
-`--campaign` is an **OUTER loop above the existing wave-by-wave steps** — it **does not replace** them. Each **LEG** is one full pass of Steps 1→8 over that leg's issues; the wave-by-wave `### Execute the slate WAVE BY WAVE` machinery (Steps 5–7, the `### Inter-wave base refresh`, the `### Scoped halt-and-report`) runs unchanged *inside* each leg. Campaign mode WRAPS that pass and sequences multiple legs so the global rate-limit budget is spent in bounded batches rather than a single flat blast of the entire set.
-
-**Global-budget rule (applies to ALL stages).** Every agent dispatch — **classify and plan INCLUDED, not just execute** — is **batched under the caps**. There is **NO flat parallel blast of the whole set even for the read-only stages** (classify/plan): the rate-limit budget is GLOBAL, so a flat read-only blast still burns the same shared budget that execute needs. Batch classify/plan dispatch under the same concurrency cap as everything else.
-
-**Campaign flow:**
-
-(a) **Classify the ENTIRE set, BATCHED under a FLAT concurrency cap.** Paths are unknown *before* classify runs, so the set cannot be per-path-capped at this stage (the chicken-and-egg: per-path caps need path labels, but path labels are exactly what classify produces). Use a single FLAT cap across the whole set for classify; do not flat-blast it.
-
-(b) **Plan the ENTIRE set, BATCHED and path-aware.** By plan time the classify labels exist, so the plan batch may honor per-path caps.
-
-(c) **Eval-plan the ENTIRE set, BATCHED, and APPROVE ALL up front.** There is **no per-leg re-plan**: every approved issue is flipped to `plan-approved` before any leg executes. Staleness between approval and a late leg's execute is absorbed downstream — the execute-agent rebases on the fresh base tip, and the `evaluate-issue-pr` gate re-validates against the merged base — so re-planning per leg buys nothing.
-
-(d) **Partition the approved set into legs** via:
-
-```bash
-PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh <approved-set>
-```
-
-The partitioner honors `PIPELINE_CAMPAIGN_MAX_BC` (B/C-pool per-leg cap) and `PIPELINE_CAMPAIGN_MAX_AD` (A/D-pool per-leg cap) from the environment. A user instruction at invocation overrides those via the script's `--max-bc=N` / `--max-ad=N` flags. Parse the emitted `Leg <K>: #a, #b, ... (BC=<n> AD=<m>)` lines into ordered per-leg issue lists; legs run **in order**.
-
-(e) **For each leg IN ORDER**, run the existing wave-by-wave pass over ONLY that leg's issues, then advance the base, then collect (NOT file) that leg's bug signals, then move to the next leg:
-
-1. Run the existing **execute → 6b → eval-pr → greenlight-merge** machinery (Steps 5–7 wave-by-wave) scoped to this leg's issue numbers.
-2. **Base advance** — perform a fetch-only base refresh: a single `git -C "$MAIN_REPO" fetch --quiet origin "$PIPELINE_BASE_BRANCH"` so the next leg's worktrees (via Step 5's always-explicit `--base "$PIPELINE_BASE_BRANCH"`) are cut from `origin/<base>`'s tip and inherit this leg's merged work (same #626 reason as the `### Inter-wave base refresh`). This is one atomic command: it moves no local ref, no HEAD, and writes nothing to the working tree — the orchestrator's primary checkout is NEVER checked out or pulled (#1214).
-2a. **Leg-boundary base-ref drift guard (#1106 — Layer 2).** After the base advance and beside the usage gate below, snapshot `BASE0` before this leg's dispatch (at the START of step 1 above, `BASE0=$(git -C "$MAIN_REPO" rev-parse "$PIPELINE_BASE_BRANCH")`), then call the guard with the leg's feature branches:
-   ```bash
-   # Required env: BASE0 (base-tip sha snapshotted before this leg's dispatch, step 1).
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-base-ref-drift.sh" \
-     "$PIPELINE_BASE_BRANCH" "$BASE0" <leg-feature-branches...>
-   ```
-   Act on the token identically to the Step 6a post-batch guard: `BASE=ok`/`BASE=recovered` → continue to next leg; `BASE=drift-unsafe ORPHANS=<shas>` → **halt the campaign** and report the orphan shas for manual recovery; `BASE=error REASON=<...>` → relay advisory, do NOT halt (fail-open). No checkout precondition — the guard is HEAD-aware (#1214) and self-selects `branch -f` vs `reset --hard` based on where HEAD is, so it is safe to call regardless of what branch the primary checkout happens to be standing on.
-3. **Usage read-out at the leg boundary** (dogfood-only, #725) — after the base advance, render the rolling-window usage read-out and surface its headroom / throttle-ETA so the operator can size the next leg with the headroom number in hand. READ-ONLY advisory; never gate-fatal. **NO automated hold / queue / pacing is performed** — the read-out is purely informational (the control loop is explicitly out of scope per #725):
-   ```bash
-   PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" \
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/usage-surface.sh" || true
-   ```
-   Then run the **usage gate** at this leg boundary and obey its decision line per `## Usage gate (#969)` — unlike the read-out above (advisory, #725), the gate DOES pause (`pause-5h`) or halt (`halt-7d`) the campaign between legs.
-4. **Collect this leg's bug signals** (NO `gh issue create` per leg). Append every signal from this leg — eval-pr `block-*` flags, Step-6b CI-fix repairs, execute `FAILED`/off-plan reports, and any skipped/halted-closure issues — to the running campaign signal log as one `SIGNAL issue=#<N> kind=<...> title="<conventional-commit title>" detail="<short>"` record per signal. **Preserve the per-leg race guard:** before recording, dedup against (1) currently-open issues and (2) the running campaign-filed set, so a leg never re-records a signal a prior leg already filed (the cross-leg race guard). Actual filing is deferred to **End-of-campaign bug filing** below, after the last leg.
-5. Proceed to the next leg.
-
-**End-of-campaign fold wave (#838).** AFTER the last regular leg's `(e)` step completes but BEFORE **End-of-campaign bug filing** below, run ONE bounded fold wave over bugs filed *this campaign*. This is the ONLY place mid-campaign-filed signals re-enter the wave machinery; during the legs, bug handling is unchanged (collect-only, deferred filing). Steps:
-
-1. **Select up to `PIPELINE_CAMPAIGN_MAX_FOLD` (default 3) signals, FIFO.** Pipe the running campaign signal log through the mechanical selector, which walks records in filing (FIFO) order, applies the ceiling, and skips high-uncertainty TITLE-keyword hits without consuming budget:
-   ```bash
-   # Required env: CAMPAIGN_SIGNALS (bash array of this campaign's collected signal lines).
-   printf '%s\n' "${CAMPAIGN_SIGNALS[@]}" \
-     | PIPELINE_REPO="$PIPELINE_REPO" \
-       PIPELINE_CAMPAIGN_MAX_FOLD="${PIPELINE_CAMPAIGN_MAX_FOLD:-3}" \
-       bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh fold-select
-   ```
-   It emits `FOLD issue=#<N> title="..."` (selected), `SKIP issue=#<N> reason=high-uncertainty title="..."` (left posted), and `OVERFLOW issue=#<N> title="..."` (beyond ceiling, left posted) lines.
-2. **Apply the classify-clean skip (model judgment, NOT mechanized).** For each `FOLD` line, additionally **skip (leave posted)** any signal that would classify `human` / `brainstorm` / `excluded` — these always wait for human review. The `fold-select` script only does the mechanical FIFO + ceiling + high-uncertainty keyword skip over the **word-bound** shared regex (`concurrency` / `race` / `lock` / `deadlock` / `security` / `auth` / `crypto` / `migration` / `data-loss`, sourced from `scripts/_high-uncertainty-match.sh` so `authoring`/`block`/`trace` do NOT false-trigger — #1039); the **non-autonomous** classify-clean decision is yours here and is a **semantic** judgment, not a substring match. A `FOLD` line that you classify non-autonomous is demoted to the leave-posted set exactly like `SKIP`/`OVERFLOW`.
-3. **File the surviving FOLD signals as issues FIRST** (the wave machinery needs issue NUMBERS). For each surviving `FOLD` signal, `gh issue create` it via the same standard body template + path-hint marker used by **End-of-campaign bug filing**, re-checking the open-issue + campaign-filed sets immediately before create (the dedup contract), then add the new number to the campaign-filed set AND remove its signal from `CAMPAIGN_SIGNALS` so the filing step below does not re-file it.
-4. **Run ONE wave** over exactly those newly-filed fold issue numbers through the normal wave machinery — classify → plan → eval-plan → execute → eval-PR → auto-merge — the same `### Execute the slate WAVE BY WAVE` pass used by every leg, respecting `--manual-merge`. **Conflicts are handled at merge, not pre-filtered:** a folded PR that collides with just-merged leg work surfaces as a normal merge conflict and rides the standard eval/merge path (no file-conflict eligibility predicate).
-5. **Bound — one wave, NO recursion.** Any NEW signal collected DURING this fold wave is appended to `CAMPAIGN_SIGNALS` and **just posts** in the **End-of-campaign bug filing** step below — it is **never folded again**. The fold wave is single-shot; `fold-select` reads the already-serialized, dedup-guarded filed set ONCE.
-
-**Overflow + SKIP signals stay posted.** Every `OVERFLOW`/`SKIP` signal and every classify-clean-demoted signal remains in `CAMPAIGN_SIGNALS` and flows into **End-of-campaign bug filing** below — they are filed for the NEXT campaign (no loss; nothing is dropped). Only the surviving FOLD signals filed in step 3 are removed from the file-only set.
-
-**End-of-campaign bug filing.** AFTER the last leg's `(e)` step completes (campaign completion), a **SINGLE serialized orchestrator action** routes the aggregated signal log through the **deterministic, NON-INTERACTIVE subset** of the create-issues flow — the combine-bias scope-check heuristic + the grouping-detection script + the standard issue-body template + the advisory path-hint marker. It **NEVER runs the interactive create-issues refinement dialogue** (no one-question-at-a-time loop) and does **NOT** call the full `/pipeline:create-issues` skill — it calls the three deterministic helpers directly, because campaign completion is autonomous (the #863 autonomy constraint). Steps:
-
-1. **Aggregate + dedup the signals** across all legs via `plan-campaign.sh aggregate-signals`, passing the open-issue set and the running campaign-filed set so completion-time filing cannot double-file what a leg already filed (the dedup contract is two-layer: per-leg collection AND here):
-   ```bash
-   printf '%s\n' "${CAMPAIGN_SIGNALS[@]}" \
-     | PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh \
-         aggregate-signals --open="<open-issue-csv>" --filed="<campaign-filed-csv>"
-   ```
-   Each emitted `CANDIDATE scope=<scope> issues=#a,#b title="<derived title>" kinds=<csv>` line is one proposed issue.
-2. **Apply the combine-bias scope-check heuristic** (from `skills/create-issues/SKILL.md` step 3) to the candidate set: default toward FEWER issues; split only on genuinely independent surfaces (disjoint files, distinct subsystems). This is model judgment over the candidate lines — no interactive prompt.
-3. **Run grouping detection** over the surviving candidate titles and honor its recommendations (tracker auto-append / GROUP→tracker create; opt-out via `PIPELINE_GROUPING_DETECTION_ENABLED=false`):
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/find-grouping-candidates.sh" \
-     --title "<candidate-title-1>" --title "<candidate-title-2>"
-   ```
-4. **File each surviving issue** with the standard create-issues body template (Context / Scope / Affected areas / Notes) and the advisory `<!-- pipeline:path-hint=A|B|C -->` marker when a clear A/B/C signal exists:
-   ```bash
-   gh issue create --repo $PIPELINE_REPO --title "<title>" --body "$(cat <<'EOF'
-   ## Context
-   <1-3 sentences: which leg/stage surfaced this and the failure shape>
-
-   ## Scope
-   - <what this issue covers>
-
-   ## Affected areas
-   - <file paths or system areas likely involved>
-
-   ## Notes
-   - <constraints / dependencies surfaced during the campaign>
-   <!-- pipeline:path-hint=B -->
-   EOF
-   )"
-   ```
-   Before each `gh issue create`, re-check the open-issue set + campaign-filed set one final time (the second dedup layer), then add the new number to the campaign-filed set. This consolidated end-of-campaign pass replaces the old per-leg file-only path: grouping/dedup now operate across the WHOLE campaign rather than one leg at a time.
-
-**Scoped halt (campaign-level mirror of `### Scoped halt-and-report`).** When a leg's issue hard-fails or hard-blocks, compute its **dependency CLOSURE** and drop that closure from the REMAINING legs:
-
-```bash
-PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-campaign.sh closure <blocked-N> <remaining-set>
-```
-
-The closure walks the `--emit-edges` edge map (blocked-by + file-conflict edges) to a fixpoint. **Independent later legs that are NOT in the closure still proceed.** Failed issues plus their skipped-closure dependents are reported at campaign end. Transient blocks (`block-ci` / `pending`) do **NOT** trigger an immediate halt — they defer to the Step-6b CI-fix loop and only become a hard block once the retry budget exhausts (mirroring the transient-vs-hard-block discrimination in `### Scoped halt-and-report`).
-
-**Self-mutation callout.** This `--campaign` mode edits the fullsend machinery the pipeline itself runs; the work happens in an isolated worktree and the running orchestrator keeps its already-loaded skill body until restart, so there is no live-mutation risk (same as `### Self-mutation callout`).
+Read [references/campaign-mode.md](references/campaign-mode.md) when `--campaign` is in argv.
 
 ## Greenlight matrix
 
@@ -386,70 +240,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    Runner NEVER kills autonomously. The orchestrator's prompt to the user is the kill gate.
 
-6a. **Post-dispatch completion verification (mandatory).** Immediately AFTER the inline foreground `Agent` batch returns (every dispatched PATH A/B/D issue in this wave) and BEFORE the Step 6b CI-fix loop, the orchestrator MUST verify each dispatched issue actually reached its terminal state — branch pushed **AND** PR open **AND** issue at `pr-open` — and **MUST NOT trust the agent's narrated self-report**. The #764/#814 dispatch-prompt + SKILL-body directives are necessary but **not** sufficient: they landed and were present, yet the narrate-and-yield drop-out RECURRED (#838/#904 — committed work, then *"...Waiting for the sweep Monitor..."*, no push, no PR, issue stuck at `in-progress`). This sub-step is the missing orchestrator-side backstop. For EVERY PATH A/B/D issue dispatched in the inline foreground batch, run:
-
-   ```bash
-   PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-execute-completion.sh" <N>
-   ```
-
-   and parse the single emitted `ACTION=` line (the token, not the exit code, carries the verdict — the helper exits 0 in every case, mirroring `check-ci-fix-loop.sh`; fail-closed: any unconfirmed terminal state emits a recover token, never `complete`). The helper resolves the feature branch **deterministically** — primary: the issue's worktree from `git worktree list --porcelain` (the `wt-<N>-<slug>` dir → its `branch refs/heads/<...>` ref, read verbatim — there is NO `feature/issue-<N>` convention); secondary: the issue's linked PR head — and pins the git remote to `origin` (`PIPELINE_REPO` is the gh owner/repo slug, not a git remote). Act per the table:
-
-   | ACTION | Behavior |
-   |--------|----------|
-   | `complete` | issue verified pushed + PR-open + labelled; proceed to 6b. |
-   | `recover-push` | branch committed-but-unpushed: **orchestrator-owned** — the orchestrator runs `git push -u origin <branch>` itself for the feature branch (branch as resolved by the helper), then re-runs the helper. The dropped-out agent is never resumed for it. |
-   | `recover-pr` | branch pushed, no PR: orchestrator runs `gh pr create --base "$PIPELINE_BASE_BRANCH"`, then re-run the helper. |
-   | `recover-label` | PR open, issue still `in-progress`: orchestrator applies `pr-open` / removes `in-progress`, then re-run the helper. |
-   | `recover-redispatch` | stranded with no committed work / no resolvable branch: re-dispatch a **FRESH** execute `Agent` for `<N>` (never resume the stranded agent; at most once per issue per wave). Counts against the same wave. |
-
-   **No-re-ask rule (#1208, mandatory).** On ANY `recover-*` token the recovery is **orchestrator-owned**: the orchestrator performs the push / PR / label work ITSELF. It MUST NOT resume, re-prompt, or `SendMessage` the dropped-out agent to finish that work — an agent that narrate-and-yielded once has demonstrated the failure mode and reproduces it on resume (#1208: after `ACTION=recover-push REASON=branch-unpushed` the orchestrator resumed the dropped-out agent with an explicit "STOP WAITING / run everything in the FOREGROUND" message and it dropped out a SECOND time, idle ~11 minutes with the branch still unpushed).
-
-   **Bounded escalation ladder (#1208).** Act on the token, then re-run the helper ONCE. If a different token comes back, act on it (the normal push → pr → label progression). If the same token repeats, the orchestrator's own recovery is not converging: escalate to `recover-redispatch` with a FRESH execute `Agent`, at most once per issue per wave, never a resume of the stranded agent. If the helper still emits a `recover-*` token after that, STOP work on this issue, leave its labels as-is, record `ACTION=recover-exhausted ISSUE=<N>` in the wave report, and CONTINUE the rest of the wave — a scoped halt for that issue only, never a wave halt.
-
-   This complements (does NOT replace) the `--spawn`/run-queue path's existing `executor_finished_terminal()` reap (`scripts/run-queue.sh:595`, #636/#666): that backstop covers the spawned-worker transport only. The gap closed here is specifically the INLINE foreground batch (#838/#904), which has no runner backstop.
-
-   **Post-dispatch model verify (#1056, WARN-level).** For each dispatched **PATH A / PATH B / PATH C / PATH D** issue (#1186 widened this from B/D — A and C now carry real resolved pins, so their dispatches are verifiable too), alongside the `ACTION=` completion check above, also run the additive `--verify-dispatch` mode so a silent model regression becomes VISIBLE in the run log (the #1056 invisible-cost gap — the inline path dispatched every PATH B/D execute WITHOUT a `model=`, inheriting Opus when config said Sonnet, with no signal). Thread the resolver's spec (the `MODEL=` the orchestrator just consumed in Step 6) and the model actually dispatched:
-
-   ```bash
-   # Required env: MODEL (token consumed verbatim from resolve-execute-dispatch.sh).
-   VED_EXPECT_MODEL="$MODEL" VED_OBSERVED_MODEL="<model-dispatched>" \
-     PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-execute-completion.sh" --verify-dispatch <N> <A|B|C|D>
-   ```
-
-   Run `--verify-dispatch` immediately after the dispatch returns; it also surfaces the advisory FIRST line `COST=miss ISSUE=<N> REASON=unattributed-row` (#1387) — ahead of the `DISPATCH=` verdict line — at WARN level: it never halts the wave and is silent when `PIPELINE_LOGS_ENABLED` is not `true`.
-
-   **The same WARN-level check extends to the pinned STAGE dispatches (#1186).** For each `plan` / `plan-eval` / `pr-eval` Agent dispatched in Steps 1b / 2 / 7, thread the stage resolver's `MODEL=` as `VED_EXPECT_MODEL` and the model actually passed as `VED_OBSERVED_MODEL`, using the issue's path letter:
-   ```bash
-   VED_EXPECT_MODEL="$MODEL" VED_OBSERVED_MODEL="<model-dispatched>" \
-     PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-execute-completion.sh" --verify-dispatch <N> <A|B|C|D>
-   ```
-   `--verify-dispatch` is a pure model check for every path and stage (#1420 retired the shape half): it makes a silently-unpinned stage dispatch VISIBLE instead of invisible, which is the whole failure class #1186 closes.
-
-   It emits a single `DISPATCH=` token (`match` / `mismatch REASON=model:<got>!=<want>` / `warn REASON=model-unrecoverable`). Surface a `DISPATCH=mismatch` in the run log; it is WARN-level and does **not** by itself halt the wave — it is the missing feedback surface, not a new hard gate (it FAILs only on a definite mismatch and WARNs when the observed model is unrecoverable, e.g. the inline path with no `runs` row).
-
-   **Base-ref drift guard (#1106 — Layer 2, post-batch, mandatory).** Alongside the completion + model/shape checks above, run the cause-agnostic drift guard. BEFORE dispatching the inline foreground batch, snapshot: `BASE0=$(git -C "$MAIN_REPO" rev-parse "$PIPELINE_BASE_BRANCH")`. AFTER the batch returns, call the guard with the wave's feature branches:
-
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-base-ref-drift.sh" \
-     "$PIPELINE_BASE_BRANCH" "$BASE0" <wave-feature-branches...>
-   ```
-
-   Parse the single emitted token and act:
-   - `BASE=ok` → base unchanged; continue.
-   - `BASE=recovered` → base drifted but every stray was reachable from a feature branch; guard already ran `git reset --hard origin/<base>`; report the recovery in the run log and continue.
-   - `BASE=drift-unsafe ORPHANS=<shas>` → a stray commit is on no feature branch; **scoped HALT** — do NOT proceed to Step 6b. Report the orphan shas for manual recovery (`git reset --hard origin/<base>` once the orphan is confirmed or cherry-picked to a feature branch).
-   - `BASE=error REASON=<...>` → internal guard failure; relay as advisory in the run log; do NOT halt (fail-open).
-
-   **Clean-main guard (#1122, post-batch, advisory).** After the base-ref drift guard, run the `--clean-main` mode of `verify-execute-completion.sh` against the orchestrator main checkout:
-
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-execute-completion.sh" --clean-main "$MAIN_REPO"
-   ```
-
-   Parse the `CLEAN=` token and act:
-   - `CLEAN=ok` → main checkout index and tracked worktree are both clean; continue.
-   - `CLEAN=untracked-only` → the checkout carries ONLY untracked paths — typically operator-owned files that predate the run (`mock-web/`, `scratchpad/`, local notes). This is **not** the #1122 leak (that leak is an INDEX/tracked-file condition), and untracked paths cannot abort a fetch-only base advance. Surface them in the run log as a WARN-level advisory (`git -C "$MAIN_REPO" status --short`) and continue. **Do NOT stash here** — never add the untracked flag (`-u`) to a stash at this boundary; it sweeps the operator's own untracked working files (#1207).
-   - `CLEAN=dirty` → staged index entries and/or modified tracked files: a dispatched subagent's `git add` leaked into the main checkout index (the #1122 leak: an execute subagent's bare `git add` staged files in the MAIN index instead of its worktree index). Surface the dirty paths in the run log as a WARN-level advisory (`git -C "$MAIN_REPO" status --short`), then auto-recover with `git -C "$MAIN_REPO" stash push` — plain, with no untracked flag: the dirty verdict is index/tracked-only by construction (#1207), so a plain stash fully clears it and can never touch untracked operator files — BEFORE the inter-wave / inter-leg base advance; then continue. A fetch-only advance is no longer *aborted* by a dirty index (#1214) — this stash is now hygienic housekeeping rather than unblocking a fast-forward — but leaving a leaked stage around is still worth clearing. Note that base-ref-drift (committed) and clean-main (uncommitted index/worktree) are complementary guards — the drift guard compares committed base SHAs and cannot catch a leaked-but-uncommitted `git add` (which produces no stray commit); the clean-main guard closes that specific gap.
+6a. **Post-dispatch completion verification (mandatory).** Read [references/post-dispatch-verification.md](references/post-dispatch-verification.md) immediately after the inline foreground Agent batch returns and before Step 6b.
 
 6b. CI-fix loop (wave N) — gated on `[ "${PIPELINE_CI_FIX_LOOP_ENABLED-true}" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]` (colon-LESS fallback per #858: unset ⇒ ON to match the documented `.example` default; explicit `=""` ⇒ OFF to preserve the no-CI consumer contract; `="true"/"false"` honored). For each of wave N's `pr-open` issues, fullsend invokes `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-ci-fix-loop.sh <N>` and parses the emitted `ACTION=` line. The helper resolves issue→PR **deterministically per-issue** — closing-PR ref → the issue's `git worktree list` branch ref (`--head <ref>`) → body reference, from the orchestrator CWD where the worktrees are siblings — so a concurrent wave with ≥2 open PRs never misroutes to another issue's PR (#909). The invocation takes a single `<N>` arg (no branch/PR wiring). Act per the table:
 
@@ -507,20 +298,7 @@ The inter-wave step is a single `git fetch --quiet origin` of the base branch, r
 
 ### Scoped halt-and-report (closure sourced from `--emit-edges`)
 
-If a wave-N PR fails to merge, fullsend does **not** blindly halt every later wave. First discriminate transient from hard blocks:
-
-- **Transient (defer, do NOT halt):** a wave-N PR that lands `block-ci` or `pending` is NOT an immediate halt — let the existing **Step 6b** CI-fix loop run to terminal. If it resolves green, proceed. If it exhausts the red-retry budget (`red-budget-exhausted`, PR is `human`-flagged), only then treat it as a hard block.
-- **Hard block (triggers a scoped halt):** `block-mergestate`, `block-mergeable`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-cage-tests-diff`, or a CI failure whose retry budget is exhausted — unlike `block-ci`, a cage-tests diff never self-clears on retry and always needs an operator. When such a block leaves a wave-N issue's PR unmerged, compute its **dependency closure** and halt only that closure.
-
-**Closure computation — from the `--emit-edges` edge map, NOT the human-readable `Wave N:` lines.** Seed the closure with `{blocked issue}`. Then walk the parsed `EDGE` map to a fixpoint: add any issue whose `blockers=` csv contains a current closure member, and add any issue whose `files=` csv shares a path with any closure member; repeat **transitively** until no new issue is added. The closure is computed from the **emitted edges**, **not** from the human-readable `Wave N:` lines — because multi-issue waves print **no per-issue reason** strings, so a grouped issue's blocker would be invisible there; `--emit-edges` emits every issue's edges regardless of wave grouping, which is why the closure is reliable even for multi-issue waves.
-
-Then:
-
-- Later-wave issues **in** the closure are reported `Skipped (depends on blocked #<N>)`.
-- **Independent later-wave issues that are NOT in the closure MAY still proceed** off the current merged base — honoring the issue body's "don't over-serialize" constraint.
-- Earlier-wave and this-wave issues that already merged are **preserved** — a scoped halt never rolls back merged work.
-
-The Step 8 report names the issue that hard-blocked, its `block-*` reason token, and which downstream issues were skipped (with the dependency chain read from the edge map), so the operator can merge the blocker by hand and re-run `/pipeline:fullsend` for the remainder.
+Read [references/scoped-halt.md](references/scoped-halt.md) when an `--emit-edges` closure drops an issue from the slate.
 
 ### Self-mutation callout
 
@@ -540,110 +318,9 @@ This issue edits the fullsend machinery the pipeline itself runs. This is a self
 
 ## Dispatch routing by path tier (reference)
 
-This section consolidates the per-path dispatch contract for the autonomous flow — the canonical home for the routing detail that previously lived in `/pipeline:run`. `/pipeline:status` is read-only and no longer dispatches; fullsend owns all dispatch.
-
-**Cost attribution key (#1387) — every dispatch description carries the literal `#<N>`.** Binding on every dispatch the orchestrator authors anywhere in this file, above and below (classify, plan, plan-eval, execute, PATH C leaf, pr-eval, closing review — the classify/plan/plan-eval sites are authored in Steps 1b/2 ABOVE): a bare integer attributes to nothing and its cost vanishes from that issue's row. Canonical shapes: `classify-issue #<N>`, `plan-issue #<N>`, `evaluate-issue-plan #<N>`, `execute-issue-plan #<N>`, `execute-issue-plan #<N> target=<dir>/`, `evaluate-issue-pr #<N>`, `code review #<N>`. Two hard rules: suffixes are append-only (`(PATH B inline)`, `(PATH D collapsed inline tdd)`, `target=<dir>/` — free-form, appended, never prepended or substituted); and the description MUST BEGIN with its canonical stage token — `plan evaluation for #<N>` parses as `stage=plan`, not `plan-eval` (positional match-start resolution).
-
-**Agent `subagent_type` namespacing convention (#1238/#1262 — settle it once, not per line).** Every `Agent(...)` shape below names an agent type. Whether that name carries a `<plugin>:` prefix is NOT a style choice and NOT a coin-flip per line — it is decided by ONE axis: **built-in vs plugin-provided**. State it here once so a newly-added dispatch shape does not have to re-guess it:
-
-- **Harness built-ins are BARE.** `general-purpose`, `Explore`, `Plan`, `statusline-setup` and the other agent types the harness itself registers carry NO prefix. Every `general-purpose` dispatch documented below is correct exactly as written — do NOT "settle" the convention by namespacing them.
-- **Plugin-provided agents are NAMESPACED.** An agent shipped by a plugin — i.e. declared in that plugin's `.claude-plugin/plugin.json` `agents[]` array — is registered ONLY under `<plugin manifest \`name\`>:<agent frontmatter \`name\`>`. For this plugin that key is `pipeline:tdd-implementer`. The bare form is absent from the registry, so a dispatch that uses it hard-fails at dispatch time (#1238) — the PATH D collapsed-execute failure that motivated this rule.
-- **Third-party plugin agents obey the same rule** (`<plugin>:<agent>`). There is no per-plugin exception.
-- **Resolution rule — DERIVE, never guess.** Read the namespace segment off the providing plugin's `.claude-plugin/plugin.json` `name` field, and the agent segment off that agent's own file frontmatter `name:` field. Never infer either from the filename, the directory, or a nearby prose mention.
-- **This is NOT host-dependent.** Any host that loads the plugin registers it under the same `<plugin>:<agent>` key, so there is no per-host variant to detect and no fallback form to try. One key, derived from the two manifest/frontmatter fields above.
-- **Guard:** `tests/test-dispatch-namespace-convention.sh` pins this convention and sweeps the tree for bare dispatches of any agent declared in `agents[]` — the forbidden-name set is derived from the manifest, so adding a second agent extends coverage automatically. `tests/test-subagent-type-namespace.sh` pins the `pipeline:`-prefixed literal itself.
-
-**For PR evaluation (pr-open → evaluated).** Use the same launch flow as execution — the worktree already exists from execute-issue-plan, no setup needed. Read each PR-open issue's labels and route by tier. **Every** shape below carries `model=$MODEL` from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`) — the W3 pin, #1186:
-   - **PATH A** (`docs-only`): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. Reuse the existing `<worktree-path>`:
-     ```
-     Agent(subagent_type='general-purpose',
-           model='<resolved-pr-eval-model>',
-           description='evaluate-issue-pr #<N> (PATH A inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
-     ```
-   - **PATH B** (standard): dispatch inline — No spawn-claude.sh, no `claude -p`, no tmux. The worktree already exists; reuse it:
-     ```
-     Agent(subagent_type='general-purpose',
-           model='<resolved-pr-eval-model>',
-           description='evaluate-issue-pr #<N> (PATH B inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
-     ```
-     No spawn-claude.sh, no run-queue.sh, no tmux. The inline B execute Agent and the inline B PR-eval Agent are SEPARATE inline contexts — an agent must not evaluate its own work.
-   - **PATH C** (`multi-task`): proceed with the existing terminal/tmux/remote-control/manual launch flow via `spawn-claude.sh` / `run-queue.sh`.
-   - **PATH D**: PR evaluation stays `general-purpose` (NOT `tdd-implementer`) — inline dispatch shape identical to PATH A.
-
-**For execution (plan-approved → worktree setup).** After the worktree is set up, read each approved issue's labels and route by tier:
-   - **PATH A** (`docs-only`): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux. Resolve the spec first (`scripts/resolve-execute-dispatch.sh <N> A`, #1186 — A was previously dispatched with NO `model=` at all) and carry `model=$MODEL` (`PIPELINE_PATH_A_MODEL_EXECUTE`, unset ⇒ `opus`):
-     ```
-     Agent(subagent_type='general-purpose',
-           model='<resolved-model>',
-           description='execute-issue-plan #<N> (PATH A inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
-     ```
-   - **PATH B** (standard): dispatch inline — resolver-driven via `scripts/resolve-execute-dispatch.sh`. No spawn-claude.sh, no run-queue.sh, no tmux. The execute model is ALWAYS resolved from the single-source resolver (see **Per-path execute MODEL routing** below), which emits `ROLES=single` for every path (#1420 retired the two-phase lane). Dispatch ONE execute agent in the worktree:
-     ```
-     Agent(subagent_type='general-purpose',
-           model='<resolved-model>',
-           description='execute-issue-plan #<N> (PATH B inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')
-     ```
-     That one agent applies the `tdd-implementer` discipline per plan task — failing test, red for the right reason, minimum implementation, green, commit — completes ALL approved-plan tasks incl. the non-test deliverables, and runs the FULL local suite green before `gh pr create` (#1108). The PATH B execute `model=` param defaults to `opus` when `PIPELINE_PATH_B_MODEL_EXECUTE` is unset (#1420: the one agent carries the whole cycle; opt out with an explicit knob value). `PIPELINE_PATH_B_ELIGIBLE_SCOPE` defaults to `all`, so non-W2 PATH B routes the resolved model even on a `high-blast` verdict; under the `scope=low-blast` opt-out a `high-blast` verdict pins opus instead (see **Per-path execute MODEL routing** below). A W2 carve-out always pins opus (`model=opus`) — never an inherit (#1186).
-   - **PATH C** (`multi-task`): dispatch inline by DEFAULT — resolve the spec ONCE via `scripts/resolve-execute-dispatch.sh <N> C` (#1186 — C leaves previously carried NO `model=`) and give EVERY leaf the same `model=$MODEL` (`PIPELINE_PATH_C_MODEL_EXECUTE`, unset ⇒ `opus`). The orchestrator reads the `## Implementation Plan` and fans out one `Agent(subagent_type='pipeline:tdd-implementer', model='<resolved-model>', description='execute-issue-plan #<N> target=<dir>/ ...', prompt: 'cd <leaf-worktree>; target=<dir>/ ...')` per `target=<dir>`, **each in its OWN per-leaf worktree** via `scripts/path-c-split-worktree.sh setup` (#896) so concurrent leaves never share a git index (the #894 c+d collision: transient `index.lock` + one leaf's files folded into another's commit). Concurrency is therefore **bounded only by orchestrator context** — fan out non-overlapping targets up to the **max-3 foreground bound** (keep leaf returns terse); the earlier conservative 1–2 git-index cap is retired by this fix. When every leaf reports committed, the orchestrator runs `path-c-split-worktree.sh reassemble <feature-worktree> <target>...` (cherry-picks each leaf's commits onto the feature branch — disjoint targets ⇒ conflict-free; a conflict aborts and signals non-disjoint targets), then `teardown`, then handles push + `gh pr create` + labels itself. Before `gh pr create` the orchestrator ALSO runs the plan's closing code-review task itself (`execute-issue-plan` Step 8) — it is NEVER emitted as a `target=<dir>` leaf, because `tdd-implementer` has no `Skill` tool (#1225). **Cost attribution (#1299) — dispatch descriptions are the attribution key.** Every leaf MUST be described `execute-issue-plan #<N> target=<dir>/ …`. A description lacking `#<N>` or its stage/`target=` token attributes to nothing and its cost vanishes from that issue's row. The orchestrator MUST NOT `Edit`/`Write` impl files directly — the `enforce-path-c-delegation` hook blocks it and authorizes only files under a dispatched `target=<dir>` sentinel; cherry-pick is a git op and is unaffected. `tdd-implementer` is dispatched from the top level as a hard leaf executor (no grandchild dispatch). **Under `--spawn`, revert to the legacy `spawn-claude.sh` / `run-queue.sh` → `tdd-implementer` fan-out** (the reversible #750 escape hatch — already per-worker isolated, so no split-worktree step). **Live branch-test merge gate (satisfied by #894/#896):** inline-C's first rollout was operator-gated — one real PATH C issue (the #892/#894 probes) was run through inline fan-out FROM THE FEATURE BRANCH with `--manual-merge`; that test surfaced the shared-index race now fixed by per-leaf worktrees, clearing the gate.
-   - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='pipeline:tdd-implementer', description='execute-issue-plan #<N> (PATH D collapsed inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. The subagent_type uses the PLUGIN-NAMESPACED `pipeline:tdd-implementer` form — the bare `tdd-implementer` string does NOT resolve and the dispatch hard-fails (#1238). The `pipeline:` prefix is the `name` field of `.claude-plugin/plugin.json`.
-
-     **Collapsed-D ceremony.** That single dispatch is **one collapsed inline `Agent`** doing **classify+plan+execute** in a single carried-forward context — NOT three separate Agent dispatches. The classify and plan stages run inside that same single context (carried-forward, not re-spawned). pr-eval stays a SEPARATE inline agent — evaluator independence is the reason it is never folded in. Bound the foreground batch at **max 3 concurrent inline** D agents.
-
-   - **Per-path execute MODEL routing — SINGLE-SOURCE resolver (#1056).** Before dispatching a PATH A, PATH B, PATH C or PATH D **execute** `Agent` (for PATH C, before dispatching the leaves — every `target=<dir>` leaf carries the SAME resolved model), do **NOT** hand-apply the model/scope decision — that hand-applied prose drifting from the config knobs WAS the #1056 root cause (every PATH B/D execute silently inherited Opus, defeating the entire #1042 cheaper-execute default). Instead, resolve the FULL dispatch spec from the single-source resolver and consume its emitted tokens **verbatim**:
-
-     ```bash
-     SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-execute-dispatch.sh" <N> <A|B|C|D>)
-     ```
-
-     The resolver emits one token per line — `MODEL=`, `ROLES=` (always `single` since #1420), plus the advisory `ELIGIBLE=`/`SCOPE=`/`REASON=` audit (it ALWAYS exits 0; the verdict rides the tokens, mirroring `path-b-execute-eligible.sh`). Apply them:
-     - **ALWAYS pass `model=$MODEL`** on the execute `Agent(...)` dispatch. There is no longer a no-`model=` special case: since #1186 the resolver emits a NAMED model in every configuration (`inherit` is retired), because an unpinned dispatch does not inherit Opus — it inherits whatever the session model happens to be, which under a Fable-ceiling session is Fable.
-     - **`ROLES=single` is the only shape (#1420).** Dispatch ONE execute `Agent` in the existing worktree, described `execute-issue-plan #<N>` per the cost-attribution key: it applies the `tdd-implementer` discipline per plan task (failing test → red for the right reason → minimum implementation → green → commit), completes ALL approved-plan tasks incl. the non-test deliverables — a green suite is necessary but not sufficient for plan completeness — and runs the FULL local suite green before `gh pr create` (#1108).
-     - **Relay `ELIGIBLE=`/`SCOPE=`/`REASON=` in the run log** as the advisory audit of *why* the model resolved as it did.
-     - **Trust profile (#1291):** log one `TRUST-PROFILE: profile=<p> issue=#N plan_eval=<run|skip> plan_gate=<full|single|none> plan_rounds=<k>` line per issue — `profile` is `PIPELINE_TRUST_PROFILE` (unset ⇒ `strict`), `plan_eval=skip` iff Step 2 skipped it (#1420: `lean` now only skips the non-W2 PATH A/D plan-eval second opinion) — `plan_gate` is the resolved `GATE=` and `k` the evaluate dispatches actually made (0 when skipped).
-
-     The resolver is the **single place** the #1042 model knobs + carve-outs are applied — it folds the model knob (`PIPELINE_PATH_B_MODEL_EXECUTE` for PATH B, `PIPELINE_PATH_D_MODEL_EXECUTE` for PATH D) into one emitted spec, so config and prose can no longer drift. For **PATH D**, when that knob is **unset or empty** the resolver now defaults the effective value to `opus` (`REASON=default-opus`, #1428 — an operator opts back to Sonnet by setting `=sonnet`, honored verbatim). The resolver likewise resolves `PIPELINE_PATH_B_ELIGIBLE_SCOPE` — which, when **unset or empty, defaults to `all`** (opt-OUT `=low-blast`). Since #1186 the resolver also resolves **PATH A** (`PIPELINE_PATH_A_MODEL_EXECUTE`) and **PATH C** (`PIPELINE_PATH_C_MODEL_EXECUTE`), and since #1420/#1428 **PATH B and PATH D** too, each defaulting to `opus` when unset (`REASON=default-opus`) — those dispatches previously carried no `model=` at all — and the read-site rule is now unconditional: ALWAYS pass `model=$MODEL` (the resolver never emits `inherit`). It REUSES `scripts/path-b-execute-eligible.sh` + `scripts/_high-uncertainty-match.sh` for the carve-out machinery — never redefining the high-uncertainty regex (#1039).
-
-     **Load-bearing carve-out summary (the resolver encodes these — do NOT re-derive them by hand).** Three carve-outs ALWAYS force Opus regardless of the knobs, and the resolver applies them so the read-site does not:
-     - **W2 high-uncertainty → Opus.** A PATH B issue whose `path-b-execute-eligible.sh` REASON is `high-uncertainty`, or a PATH D issue matching `_high-uncertainty-match.sh`'s word-bound vocab (`concurrency`/`auth`/`lock`/`race`/`deadlock`/`security`/`crypto`/`migration`/`data-loss`), resolves `MODEL=opus`. Under the default `all` scope this carve-out is the **sole safety boundary** keeping genuinely risky PATH B work on Opus.
-     - **PATH B eligibility gate (#955) — `low-blast` lane.** For **PATH B**, `path-b-execute-eligible.sh <N>`'s `ELIGIBLE=<low-blast|high-blast>` is a pre-execute classify/plan-time **estimate** (added-LOC is not known from a diff at dispatch — proxied from module/file bounds plus an optional `~N LOC` override). Under `SCOPE=low-blast`, a **high-blast** PATH B resolves `MODEL=opus` and the dispatch pins opus (`model=opus`) — #1186 named what the branch always meant instead of passing no `model=`; only a `low-blast` verdict routes the resolved model. Under the default `SCOPE=all`, every non-W2 PATH B routes the resolved model even on a `high-blast` verdict (the eligibility verdict is then advisory only, relayed in the run log).
-     - **needs-browser PATH D → Opus (#960).** PATH D stays **unconditional** (all D is in-lane, no eligibility predicate) EXCEPT a `needs-browser` PATH D, which resolves `MODEL=opus` and pins opus (`model=opus`, #1186 — it no longer passes NO `model=`, which under a Fable-ceiling session would have upshifted browser/UI execute to Fable, the opposite of the #960 intent); the #950 Sonnet pilot validated shell-helper fixtures only, so browser/UI execute must not downshift. (For PATH B, needs-browser surfaces as `path-b-execute-eligible.sh` REASON `needs-browser` and is treated as a W2-equivalent Opus carve-out.)
-
-     **W3 — pr-eval is NEVER defaulted to Sonnet.** This routing applies to the **execute** dispatch ONLY: the **pr-eval dispatch is NEVER gated** and is never defaulted to Sonnet — pr-eval is **pinned `opus`** in every configuration via `PIPELINE_STAGE_MODEL_PR_EVAL`, resolved by `scripts/resolve-stage-model.sh <N> pr-eval` (#1186). That pin replaces the old inheritance backstop, which only held while the session model happened to be Opus. The execute resolver has **no pr-eval mode** and rejects every argument that is not a path letter — stage words included (exit 2) — so it physically cannot emit a model for pr-eval (dropping the evaluator's tier would remove the regression catcher that makes a cheaper-execute default safe). The knobs are host-overridable (gitignored `pipeline.config`); since #1428 the shipped execute default is `opus` on **every path** (A/B/C/D) — an operator buys the cheap Sonnet lane back per-path with `PIPELINE_PATH_D_MODEL_EXECUTE=sonnet` / `PIPELINE_PATH_B_MODEL_EXECUTE=sonnet`; the resolver honors either verbatim.
+Read [references/dispatch-routing.md](references/dispatch-routing.md) when resolving a path tier's dispatch shape.
 
 ## Merge orchestration (reference)
 
-After all evaluations complete, fullsend merges via the greenlight gate (the per-PR auto-merge loop, `## Greenlight matrix` above). Default is **autonomous merge for the green subset**.
+Read [references/merge-orchestration.md](references/merge-orchestration.md) at the post-evaluation merge step.
 
-**Pre-merge pairwise overlap scan.** Before the sequential merge loop, source `${CLAUDE_PLUGIN_ROOT}/scripts/detect-merge-overlap.sh` and run `detect_merge_overlap` over the approved-PR set to surface pairwise file overlaps; `recommend_merge_order` returns a fewest-overlap-first ordering to use for the loop. Advisory — does not block.
-
-```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/detect-merge-overlap.sh"
-APPROVED=( $(gh pr list --repo "$PIPELINE_REPO" --label pr-open --json number --jq '.[].number') )
-if [ "${#APPROVED[@]}" -ge 2 ]; then
-  echo "=== Pre-merge pairwise overlap scan ==="
-  detect_merge_overlap "${APPROVED[@]}"
-  echo "=== Recommended merge order (fewest overlap first) ==="
-  ORDERED=( $(recommend_merge_order "${APPROVED[@]}") )
-  printf '  %s\n' "${ORDERED[@]}"
-else
-  ORDERED=( "${APPROVED[@]}" )
-fi
-```
-
-Use `${ORDERED[@]}` as the iteration order for the sequential merge loop. Before each merge: detect the PR's base branch; if it diverges from `.claude/base-branch` (or `PIPELINE_BASE_BRANCH`), call `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE`. Check `mergeable`; on conflict, rebase in the worktree and force-push with `--force-with-lease`, retrying merge. Merge PRs sequentially to avoid cascading conflicts. Validate the PR title against the Conventional Commits format (`scripts/check-conventional-title.sh`).
-
-**Constraints during full send:**
-
-Slate-pre-hygiene (housekeeping, worktree cleanup, discovery) is owned by `/pipeline:status`; fullsend assumes a clean slate and does not re-implement that flow.
-
-- Issues labeled `PIPELINE_LABELS_EXCLUDED` are always skipped.
-- Issues labeled `PIPELINE_LABELS_LATER` are shown in the final report (stage = `PIPELINE_LABELS_LATER`) but not processed.
-- Issues labeled `PIPELINE_LABELS_HUMAN` are shown in the final report (stage = `PIPELINE_LABELS_HUMAN`) but never processed by autonomous full send. These need a human in the loop — usually for architecture decisions, cross-platform validation, production deploy risk, or items where the planner can't make the right call without you. They must be picked up manually with `/pipeline:plan-issue` / `/pipeline:execute-issue-plan`, never via full send.
-- Issues labeled `PIPELINE_LABELS_BRAINSTORM` are shown in the final report (stage = `PIPELINE_LABELS_BRAINSTORM`) but never processed by autonomous full send — same handling as `PIPELINE_LABELS_HUMAN`. The body is open-ended discussion/architectural critique, not a commit-to-act spec. Manual pickup via `/pipeline:plan-issue` is allowed once the idea crystallizes.
-- Blocked issues (blocked-by dependency not yet merged) are skipped; noted in final report as "Blocked".
-- The re-plan loop cap of 3 prevents infinite loops on stubborn issues.
-- If any stage fails unexpectedly (script error, API failure), stop full send and report the failure with enough detail for the user to diagnose.

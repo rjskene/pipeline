@@ -35,7 +35,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"
-SKILL="$ROOT/skills/fullsend/SKILL.md"
+# #1444 — the `Per-path execute MODEL routing` block moved with
+# `## Dispatch routing by path tier (reference)` into fullsend's reference file.
+SKILL="$ROOT/skills/fullsend/references/dispatch-routing.md"
 INIT="$ROOT/scripts/init.sh"
 
 PASS=0

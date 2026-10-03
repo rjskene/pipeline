@@ -18,7 +18,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HELPER="$REPO_ROOT/scripts/arm-usage-resume-cron.sh"
-SKILL="$REPO_ROOT/skills/fullsend/SKILL.md"
+# #1444 — the `## Usage gate (#969)` body moved to fullsend's reference file.
+SKILL="$REPO_ROOT/skills/fullsend/references/usage-gate.md"
 
 PASS=0
 FAIL=0
@@ -136,11 +137,9 @@ fi
 inc_scenario "Scenario 5: ## Usage gate (#969) prose hardening"
 
 # Extract ONLY the `## Usage gate (#969)` section body (heading to next `## `).
-GATE_SECTION="$(awk '
-  /^## Usage gate \(#969\)/ { inside=1; next }
-  inside && /^## / { inside=0 }
-  inside { print }
-' "$SKILL")"
+# The reference file IS the section (its H1 is the only heading), so the
+# extractor is now a plain read.
+GATE_SECTION="$(cat "$SKILL")"
 
 if printf '%s' "$GATE_SECTION" | grep -qF "arm-usage-resume-cron.sh"; then
   pass_msg "section references arm-usage-resume-cron.sh (no hand-reconstruction)"

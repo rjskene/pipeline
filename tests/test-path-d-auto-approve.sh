@@ -16,7 +16,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # #763: the run→status rename moved PATH-D auto-flip + inline tdd-implementer
 # dispatch wiring out of the old /pipeline:run skill into skills/fullsend/SKILL.md.
 # The read-only /pipeline:status skill carries no dispatch wiring.
-SKILL_FILE="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+_FS_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+# #1444 — fullsend's conditional detail was relocated OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins CONTRACT prose, not the file
+# a clause happens to live in, so it reads the UNION of SKILL.md and its
+# references; SKILL.md comes first, so every step-skeleton region extractor
+# below still terminates inside the SKILL.md half.
+_FS_UNION_DIR="$(mktemp -d)"
+trap 'rm -rf "$_FS_UNION_DIR"' EXIT
+SKILL_FILE="$_FS_UNION_DIR/fullsend-union.md"
+cat "$_FS_SKILL" "$SCRIPT_DIR/../skills/fullsend"/references/*.md > "$SKILL_FILE"
+
 
 PASS=0
 FAIL=0
