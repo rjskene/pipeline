@@ -85,10 +85,10 @@
 #               is worth (annotate = one eval, a Revise carried into execute as
 #               binding amendments, #1435 | full = the explicit 3-round loop |
 #               single = one eval + one re-plan | none = skip the gate); the
-#               resolver itself makes no
-#               skip decision beyond SKIP=, and a caller that IGNORES GATE=
-#               behaves exactly as pre-#1429. When lean SKIP=true and GATE=none
-#               both fire, SKIP wins at the call-site.
+#               resolver itself makes no skip decision beyond SKIP=, and a
+#               caller that IGNORES GATE= behaves exactly as pre-#1429. When
+#               lean SKIP=true and GATE=none both fire, SKIP wins at the
+#               call-site.
 #
 # Tier order for max/WARN comparisons: haiku(1) < sonnet(2) < opus(3) < fable(4).
 # An unrecognized knob token is honored VERBATIM in MODEL= (fail-loud at Agent
