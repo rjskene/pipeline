@@ -205,6 +205,7 @@ fi
 assert_contains "$DOC" '`--plan-gate full|single|none|annotate`' "documents the --plan-gate arm"
 assert_contains "$DOC" '[--plan-gate full|single|none|annotate]' "the usage synopsis names --plan-gate"
 assert_contains "$DOC" '-plan-gate-<v>' "documents the -plan-gate-<v> artifact suffix"
+assert_contains "$DOC" 'the harness default (`annotate`' "names annotate as the harness default (#1437)"
 
 # #1435: the annotate arm gets its OWN paragraph with its OWN 30-word budget,
 # placed AFTER the first `--plan-gate` paragraph and deliberately NOT containing

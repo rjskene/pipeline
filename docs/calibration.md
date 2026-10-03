@@ -86,9 +86,10 @@ never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
 `--plan-gate full|single|none|annotate` (default unset, #1429) sets `PIPELINE_PLAN_GATE`
 in the sandbox session — the knob `resolve-stage-model.sh`'s plan-eval arm reads
 to emit `GATE=<v>`, capping how many plan-eval dispatches fullsend makes. Unset
-means the harness default (`full`). A set run is tagged `plan_gate=<v>` on the
-total line and carries a `-plan-gate-<v>` artifact suffix after `-bexec-<M>`,
-composable with `--hooks off`.
+means the harness default (`annotate`, #1437); artifacts predating it meant
+`full`. A set run is tagged `plan_gate=<v>` on the total line and carries a
+`-plan-gate-<v>` artifact suffix after `-bexec-<M>`, composable with
+`--hooks off`.
 
 `annotate` (#1435) goes further: ONE evaluation, and a `Revise` is carried into
 execute as binding amendments — no re-plan round. A `**Scope:** structural`

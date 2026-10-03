@@ -544,12 +544,13 @@ assert_tok "(22) plan-gate none" "GATE=none" "$OUT22"
 assert_tok "(22) plan-gate none" "MODEL=opus" "$OUT22"
 assert_tok "(22) plan-gate none" "REASON=default-pin" "$OUT22"
 
-# (23) No knob line at all -> GATE=full (the default is EMITTED, not omitted)
-#      and NOTHING on the WARN channel. The unset default must be silent.
+# (23) No knob line at all -> GATE=annotate (the default is EMITTED, not
+#      omitted, and since #1437 the default is `annotate`) and NOTHING on the
+#      WARN channel. The unset default must be silent.
 CFG23=$(make_config_root)
 FIX23=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
 OUT23=$(run_stage "$FIX23" "$CFG23" plan-eval)
-assert_tok "(23) plan-gate unset" "GATE=full" "$OUT23"
+assert_tok "(23) plan-gate unset -> annotate" "GATE=annotate" "$OUT23"
 inc
 WARN23="$(run_stage_err "$FIX23" "$CFG23" plan-eval | grep -c '^WARN:')"
 if [ "$WARN23" -eq 0 ]; then
@@ -558,12 +559,12 @@ else
   fail_msg "(23) expected 0 '^WARN:' stderr lines for an unset knob, got $WARN23"
 fi
 
-# (24) An UNRECOGNIZED value falls back to full, with exactly ONE WARN on
-#      stderr — a typo'd knob must never silently DELETE the plan gate.
+# (24) An UNRECOGNIZED value falls back to annotate (#1437), with exactly ONE
+#      WARN on stderr — a typo'd knob must never silently DELETE the plan gate.
 CFG24=$(make_config_root 'PIPELINE_PLAN_GATE=garbage')
 FIX24=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
 OUT24=$(run_stage "$FIX24" "$CFG24" plan-eval)
-assert_tok "(24) unknown plan-gate falls back to full" "GATE=full" "$OUT24"
+assert_tok "(24) unknown plan-gate falls back to annotate" "GATE=annotate" "$OUT24"
 inc
 WARN24="$(run_stage_err "$FIX24" "$CFG24" plan-eval | grep -c '^WARN:.*PIPELINE_PLAN_GATE')"
 if [ "$WARN24" -eq 1 ]; then
