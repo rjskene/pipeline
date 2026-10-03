@@ -102,10 +102,10 @@ Options:
                    sandbox session, pinning the model of the SINGLE PATH B
                    execute agent (backlog #2/#28).
   --plan-gate F    full|single|none|annotate  (default unset = the harness
-                   default, `full`) — sets PIPELINE_PLAN_GATE in the sandbox
-                   session, varying how many plan-eval dispatches the
-                   plan-approval gate is worth (outer-loop step 4, #1429;
-                   annotate, #1435).
+                   default, `annotate` since #1437) — sets PIPELINE_PLAN_GATE
+                   in the sandbox session, varying how many plan-eval
+                   dispatches the plan-approval gate is worth (outer-loop
+                   step 4, #1429; annotate, #1435).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -129,8 +129,8 @@ HOOKS="on"
 # pinning one would silently make every run an arm of this experiment (#1414).
 EXECUTOR_MODEL=""
 # Same contract for the plan-gate arm (#1429): empty = "leave PIPELINE_PLAN_GATE
-# unset", so the sandbox session keeps the harness default (`full`). Pinning a
-# value here would make every run an arm of this experiment.
+# unset", so the sandbox session keeps the harness default (`annotate` since
+# #1437). Pinning a value here would make every run an arm of this experiment.
 PLAN_GATE=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }

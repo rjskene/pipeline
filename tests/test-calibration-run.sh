@@ -405,7 +405,8 @@ refute_sub "the default preview sets no PIPELINE_PATH_B_MODEL_EXECUTE" \
   "$LAUNCH" "PIPELINE_PATH_B_MODEL_EXECUTE="
 refute_sub "the default preview names no bexec arm" "$LAUNCH" "bexec="
 # #1429: the plan-gate arm is OPT-IN the same way — an unset arm must be the
-# harness default (`full`), never a pinned value in the measured session.
+# harness default (`annotate` since #1437), never a pinned value in the
+# measured session.
 refute_sub "the default preview sets no PIPELINE_PLAN_GATE" \
   "$LAUNCH" "PIPELINE_PLAN_GATE="
 refute_sub "the default preview names no plan_gate arm" "$LAUNCH" "plan_gate="
