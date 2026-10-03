@@ -1,0 +1,8 @@
+calib: cost backfill appended 32 record(s)
+CALIB issue=164 path=A cost=$7.48 wall=3356 verdicts=n/a/Approved reftest=fail unexpected-files=0
+CALIB issue=165 path=D cost=$5.12 wall=3364 verdicts=n/a/Approved reftest=pass unexpected-files=0
+CALIB issue=166 path=B cost=$13.48 wall=5741 verdicts=Approve/Approved reftest=pass unexpected-files=1
+CALIB issue=167 path=B cost=$22.80 wall=3608 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB issue=168 path=B cost=$11.55 wall=3464 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB issue=169 path=B cost=$16.27 wall=5738 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB-TOTAL cost=$76.70 wall=5810 issues=6 reftest-pass=5/6 planted=caught hooks=on bexec=opus plan_gate=full bridge_prompts=0
