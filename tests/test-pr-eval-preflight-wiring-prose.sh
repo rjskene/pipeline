@@ -266,6 +266,99 @@ else
   fail_msg "negative control did NOT block (rc=$RC_CONTROL) — this test cannot prove the hook interaction; stderr: $(cat "$WORK/err.txt")"
 fi
 
+# ===========================================================================
+# (f) fullsend Step 7 — the ORDER rule
+# ===========================================================================
+inc_scenario "(f) fullsend Step 7 runs the preflight BEFORE any evaluator dispatch"
+PREFLIGHT_DOC="$ROOT/skills/fullsend/references/pr-eval-preflight.md"
+step7_window() {
+  skill_body "$FULLSEND" | awk '/^7\. \*\*Evaluate PRs \(wave N\)/{f=1} /^7b\. /{f=0} f'
+}
+S7="$(step7_window | tr '\n' ' ')"
+if [ -z "$S7" ]; then
+  fail_msg "could not extract the fullsend Step 7 (Evaluate PRs) window"
+else
+  pass_msg "the fullsend Step 7 window is extractable"
+  case "$S7" in
+    *pr-eval-preflight.sh*) pass_msg "Step 7 invokes scripts/pr-eval-preflight.sh" ;;
+    *) fail_msg "Step 7 does not invoke scripts/pr-eval-preflight.sh" ;;
+  esac
+  # Byte-offset comparison inside the window: the preflight must be named
+  # BEFORE the evaluator dispatch, because "run them both" without an order is
+  # exactly the wiring that spends an Opus eval on a PR the preflight blocks.
+  if case "$S7" in *preflight*) true ;; *) false ;; esac \
+     && case "$S7" in *"/pipeline:evaluate-issue-pr"*) true ;; *) false ;; esac; then
+    _pre="${S7%%preflight*}"
+    _dis="${S7%%/pipeline:evaluate-issue-pr*}"
+    if [ "${#_pre}" -lt "${#_dis}" ]; then
+      pass_msg "the preflight (offset ${#_pre}) precedes the evaluator dispatch (offset ${#_dis}) in Step 7"
+    else
+      fail_msg "the evaluator dispatch (offset ${#_dis}) precedes the preflight (offset ${#_pre}) — the order rule is inverted"
+    fi
+  else
+    fail_msg "Step 7 does not mention both the preflight and the /pipeline:evaluate-issue-pr dispatch"
+  fi
+  case "$S7" in
+    *PREFLIGHT=ok*) pass_msg "Step 7 gates the dispatch on PREFLIGHT=ok" ;;
+    *) fail_msg "Step 7 does not name the PREFLIGHT=ok gate condition" ;;
+  esac
+fi
+
+# ===========================================================================
+# (g) the --spawn rule, and that run-queue.sh is NOT modified
+# ===========================================================================
+inc_scenario "(g) the --spawn gate is orchestrator-side; run-queue.sh is unchanged"
+# Hot-path mass: skills/fullsend/SKILL.md is ceiling-bound
+# (tests/test-skill-hot-path-mass.sh), so the long-form rationale lives in
+# references/pr-eval-preflight.md, read when the `--spawn` trigger fires. The
+# POINTER must be inline, and the rule must be written down somewhere.
+case "$S7" in
+  *references/pr-eval-preflight.md*) pass_msg "Step 7 points at references/pr-eval-preflight.md" ;;
+  *) fail_msg "Step 7 carries no pointer to references/pr-eval-preflight.md" ;;
+esac
+if [ ! -f "$PREFLIGHT_DOC" ]; then
+  fail_msg "skills/fullsend/references/pr-eval-preflight.md does not exist"
+else
+  pass_msg "skills/fullsend/references/pr-eval-preflight.md exists"
+  for needle in 'run-queue.sh' '--skill evaluate-issue-pr' 'PREFLIGHT=ok'; do
+    if grep -qF -- "$needle" "$PREFLIGHT_DOC"; then
+      pass_msg "the reference states the --spawn rule: $needle"
+    else
+      fail_msg "the reference does not mention $needle"
+    fi
+  done
+  if grep -qE 'run-queue\.sh.{0,60}(NOT|not) (modified|changed)|(NOT|not) (modified|changed).{0,60}run-queue\.sh' "$PREFLIGHT_DOC"; then
+    pass_msg "the reference records that run-queue.sh is NOT modified (no per-issue prompt channel)"
+  else
+    fail_msg "the reference does not record that run-queue.sh is unmodified"
+  fi
+fi
+# Executable half of the same claim: run-queue.sh really does carry no
+# per-issue prompt channel, which is WHY the gate cannot live in the queue.
+if grep -qE -- '--prompt|PIPELINE_PR_EVAL_PROMPT' "$ROOT/scripts/run-queue.sh"; then
+  fail_msg "scripts/run-queue.sh now exposes a per-issue prompt channel — the orchestrator-side gate rationale needs revisiting"
+else
+  pass_msg "scripts/run-queue.sh exposes no per-issue prompt channel (the gate must precede the queue launch)"
+fi
+
+# ===========================================================================
+# (h) the Step 7 prompt contract no longer orders a Phase-2 aggregator re-run
+# ===========================================================================
+inc_scenario "(h) the Step 7 prompt contract stops ordering the aggregator re-run"
+case "$S7" in
+  *check-cross-cutting-guards.sh*)
+    fail_msg "the Step 7 prompt contract still directs the evaluator to run check-cross-cutting-guards.sh in Phase 2 (the preflight owns it now)" ;;
+  *)
+    pass_msg "the Step 7 prompt contract no longer orders a Phase-2 aggregator re-run" ;;
+esac
+# Non-vacuity: the aggregator directive must still exist elsewhere in fullsend
+# (the Step 6 execute dispatch contract), so this is a RELOCATION, not a drop.
+if skill_body_has "$FULLSEND" 'check-cross-cutting-guards.sh'; then
+  pass_msg "fullsend still carries the aggregator directive outside Step 7 (execute dispatch contract)"
+else
+  fail_msg "fullsend no longer mentions check-cross-cutting-guards.sh at all — the execute-side directive was dropped"
+fi
+
 echo ""
 echo "=============================="
 echo "  PASS: $PASS   FAIL: $FAIL"
