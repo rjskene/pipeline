@@ -541,4 +541,48 @@ pass "re-backfill: all record_keys unique across the widening"
 
 rm -rf "$home" "$proj"
 
+# ---------------------------------------------------------------------------
+# message.id dedupe (#1443). Fully hermetic: its OWN home + proj and its OWN
+# single-line runs.log, so the shared tests/fixtures/token-usage/runs.log (whose
+# row counts tests/test-agent-costs-schema.sh and
+# tests/test-agent-costs-stage-map.sh pin) is untouched. The msgid fixture is
+# msg_A x3 (output 5/40/90) + msg_B + msg_C: deduped 60/106/6000/300 vs a naive
+# per-line 80/151/8000/500 (total 6466 vs 8731). HEADLESS rows carry the
+# all-four-bucket total, so cache_read IS included here.
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/subagents.log"      # headless pass only
+msgid_wt="/home/fix/claude-pipeline/.claude/worktrees/wt-1443"
+printf '%s\tsession=%s\tissue=%s\tpath=B\tskill=execute-issue-plan\tworktree=%s\n' \
+  "2026-06-01T10:00:00Z" "sess-msgid-1443" "1443" "$msgid_wt" \
+  > "$proj/.claude/logs/runs.log"
+msgid_slug="$(tu_worktree_slug "$msgid_wt")"
+mkdir -p "$home/.claude/projects/$msgid_slug"
+cp "$FIX/transcript-msgid.jsonl" \
+  "$home/.claude/projects/$msgid_slug/sess-msgid-1443.jsonl"
+msgid_out="$proj/.claude/logs/agent-costs.jsonl"
+
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+
+n_msgid="$(wc -l < "$msgid_out" | tr -d ' ')"
+[ "$n_msgid" = "1" ] || fail "msgid dedupe: expected 1 headless record, got $n_msgid"
+
+python3 - "$msgid_out" <<'PY' || exit 1
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert len(rows) == 1, "expected 1 row, got %d" % len(rows)
+r = rows[0]
+t = r["tokens"]
+got = (t["input"], t["output"], t["cache_read"], t["cache_creation"])
+assert got == (60, 106, 6000, 300), \
+    "msgid dedupe buckets: got %r want (60, 106, 6000, 300)" % (got,)
+assert t["total"] == 6466, "msgid dedupe total: got %r want 6466" % t["total"]
+print("msgid dedupe (#1443) assertions OK")
+PY
+pass "backfill dedupes transcript usage by message.id"
+
+rm -rf "$home" "$proj"
+
 echo "all tests passed"

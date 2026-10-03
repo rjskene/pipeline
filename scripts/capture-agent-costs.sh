@@ -190,16 +190,30 @@ def worktree_slug(path):
 
 
 def transcript_sum(path):
-    inp = out = cr = cc = 0
+    # Aggregates per API RESPONSE, DEDUPED BY message.id (#1443). Claude Code
+    # writes one API response as 2-3 assistant lines (thinking / text /
+    # tool_use) sharing message.id; input/cache_read/cache_creation repeat
+    # verbatim while output_tokens is progressive, so per-LINE summing inflated
+    # the input side ~2x. Each bucket is reduced with max() per id, then summed
+    # across ids. A usage line with no message.id keys on "__noid__<line_no>",
+    # so legacy transcripts sum byte-identically to the old behaviour and each
+    # such line is its own turn. Also returns turns (distinct ids) and
+    # ctx_first/ctx_last (cache_read+cache_creation of the FIRST/LAST id -
+    # absolute context SIZES, never sums). Mirrors
+    # scripts/_token-usage-lib.sh:tu_transcript_sum and
+    # hooks/capture_agent_cost.py:transcript_sum by contract.
     ts_start = ts_end = None
     model = ""
+    ids = []
+    per_id = {}
     try:
         fh = open(path)
     except OSError:
         return {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0,
-                "ts_start": "", "ts_end": "", "model": ""}
+                "ts_start": "", "ts_end": "", "model": "",
+                "turns": 0, "ctx_first": 0, "ctx_last": 0}
     with fh:
-        for line in fh:
+        for line_no, line in enumerate(fh):
             line = line.strip()
             if not line:
                 continue
@@ -221,15 +235,33 @@ def transcript_sum(path):
             usage = msg.get("usage")
             if not isinstance(usage, dict):
                 continue
-            inp += usage.get("input_tokens") or 0
-            out += usage.get("output_tokens") or 0
-            cr += usage.get("cache_read_input_tokens") or 0
-            cc += usage.get("cache_creation_input_tokens") or 0
+            mid = msg.get("id")
+            key = mid or ("__noid__%d" % line_no)
+            vals = [
+                usage.get("input_tokens") or 0,
+                usage.get("output_tokens") or 0,
+                usage.get("cache_read_input_tokens") or 0,
+                usage.get("cache_creation_input_tokens") or 0,
+            ]
+            if key in per_id:
+                prev = per_id[key]
+                per_id[key] = [max(prev[i], vals[i]) for i in range(4)]
+            else:
+                ids.append(key)
+                per_id[key] = vals
             m = msg.get("model")
             if m:
                 model = m
+    inp = sum(per_id[k][0] for k in ids)
+    out = sum(per_id[k][1] for k in ids)
+    cr = sum(per_id[k][2] for k in ids)
+    cc = sum(per_id[k][3] for k in ids)
+    turns = len(ids)
+    ctx_first = (per_id[ids[0]][2] + per_id[ids[0]][3]) if ids else 0
+    ctx_last = (per_id[ids[-1]][2] + per_id[ids[-1]][3]) if ids else 0
     return {"input": inp, "output": out, "cache_read": cr, "cache_creation": cc,
-            "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model}
+            "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model,
+            "turns": turns, "ctx_first": ctx_first, "ctx_last": ctx_last}
 
 
 def duration_ms(ts_start, ts_end):
