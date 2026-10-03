@@ -26,8 +26,9 @@ Gated behind PIPELINE_LOGS_ENABLED=="true" (strict lowercase, mirroring
 scripts/_logging.sh). When disabled, the hook writes NOTHING and exits 0.
 
 Output is one JSON Lines record appended to .claude/logs/agent-costs.jsonl,
-byte-compatible with the schema_version=1 contract frozen in
-scripts/capture-agent-costs.sh. A forward inline record and a retroactive inline
+field-set-compatible with the schema_version=2 contract frozen in
+scripts/capture-agent-costs.sh (v2 is #1443's ADDITIVE turns / ctx_first /
+ctx_last plus the message.id dedupe of transcript usage). A forward inline record and a retroactive inline
 record for the same agent now differ ONLY in source (forward vs retroactive):
 both carry usage_complete=false (lower-bound final-turn snapshot), reconciled
 per #765.
@@ -311,7 +312,7 @@ def _save_state(logs_dir, state):
 
 
 def build_stop_record(payload, logs_dir):
-    """Build a schema_version=1 orchestrator record from a Stop payload, or None.
+    """Build a schema_version=2 orchestrator record from a Stop payload, or None.
 
     The Stop payload carries {session_id, transcript_path} but no usage; the
     transcript JSONL carries per-assistant-message `message.usage`. We sum the
@@ -360,7 +361,17 @@ def build_stop_record(payload, logs_dir):
         # cache_read leaves the work-total delta at 0): emit nothing.
         return None
 
+    # `turns` is a per-fire DELTA, mirroring the token delta above: the
+    # transcript's distinct-message.id count is CUMULATIVE over the session, so
+    # emitting it raw would make a downstream SUM over a session's deltas
+    # multiply the turn count (the #668 mistake). Persist the cumulative in the
+    # state sidecar alongside the four token fields — _load_state passes extra
+    # keys through untouched and the token delta above reads only the four named
+    # fields, so this cannot perturb token math (the same guarantee the `model`
+    # key relies on below).
+    turns = summ["turns"] - (last.get("turns") or 0)
     state[session_id] = {f: summ[f] for f in fields}
+    state[session_id]["turns"] = summ["turns"]
     # Also persist the resolved session model so inline forward records (which
     # carry no model of their own) can inherit it via _session_model, keyed by
     # this same session_id (#699). Prefer the freshly-resolved model, else carry
@@ -387,7 +398,7 @@ def build_stop_record(payload, logs_dir):
     # grows, so ts_end (the MAX, which advances with each new assistant
     # message) is what differentiates successive session deltas.
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "record_key": record_key(source, agent_kind, session_id, issue, stage, ts_end),
         "issue": issue,
         "stage": stage,
@@ -414,6 +425,16 @@ def build_stop_record(payload, logs_dir):
         "ts_end": ts_end,
         "source": source,
         "usage_complete": True,
+        # ASYMMETRY (#1443, by design): `turns` is a per-fire DELTA (computed
+        # above against the persisted cumulative) because a turn count is a FLOW
+        # that a consumer legitimately sums over a session. ctx_first/ctx_last
+        # are ABSOLUTE transcript bounds, NOT deltas — a context SIZE is a level,
+        # not a flow; delta-ing it is meaningless and summing it over a session
+        # is exactly the #668 mistake. They are emitted verbatim from the
+        # transcript sum on every fire.
+        "turns": turns,
+        "ctx_first": summ["ctx_first"],
+        "ctx_last": summ["ctx_last"],
     }
 
 
@@ -498,7 +519,7 @@ def _normalize_payload(payload):
 
 
 def build_record(payload, logs_dir=None):
-    """Return a schema_version=1 forward record dict, or None to skip.
+    """Return a schema_version=2 forward record dict, or None to skip.
 
     `logs_dir` (when given) is the .claude/logs dir; it lets the inline `model`
     fall back to the session model persisted in the orchestrator state sidecar
@@ -604,6 +625,13 @@ def build_record(payload, logs_dir=None):
     agent_id = _first(payload, "agent_id")
     usage_complete = usage_is_cumulative
     summ = _subagent_transcript_sum(session_id, agent_id) if agent_id else None
+    # schema_version=2 structural fields (#1443): stamped whenever the subagent
+    # transcript RESOLVES, independent of the adopt-only-when-exceeds token gate
+    # below — a resolved-but-not-adopted transcript still tells the truth about
+    # turn count and context size. 0 means "no transcript resolved".
+    turns = summ["turns"] if summ is not None else 0
+    ctx_first = summ["ctx_first"] if summ is not None else 0
+    ctx_last = summ["ctx_last"] if summ is not None else 0
     if summ is not None:
         summ_total = summ["input"] + summ["output"] + summ["cache_read"] + summ["cache_creation"]
         if summ_total > tokens["total"]:
@@ -624,7 +652,7 @@ def build_record(payload, logs_dir=None):
         model = "claude-opus-4-8"
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         # Seed the idempotency key off ts_start (now non-empty after the backfill
         # above, so it carries per-record entropy) or ts_end if a degenerate path
         # (no duration_ms) left ts_start empty -- ts_end is always populated. Was
@@ -662,6 +690,13 @@ def build_record(payload, logs_dir=None):
         # honestly marked lower-bound — reconciling with the
         # scripts/capture-agent-costs.sh inline lower-bound contract (#765).
         "usage_complete": usage_complete,
+        # turns / ctx_first / ctx_last: resolved-transcript structural facts
+        # (#1443), 0 when no subagent transcript resolved. ctx_* are absolute
+        # context SIZES (cache_read + cache_creation of the first / last
+        # message.id), never sums.
+        "turns": turns,
+        "ctx_first": ctx_first,
+        "ctx_last": ctx_last,
     }
 
 

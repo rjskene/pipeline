@@ -9,6 +9,9 @@
 #   3. skip non-stage descriptions (no record)
 #   3b. attribute a PATH C leaf description (target=<dir> + #N) (#1299)
 #   4. fail open when no usage field is present (no record, exit 0)
+#   6. dedupe transcript usage by message.id on the Stop branch (#1443)
+#   7. stamp turns/ctx_first/ctx_last on an inline record that ADOPTS the
+#      durable subagent transcript (#1443)
 #
 # Hermetic: temp $HOME and $CLAUDE_PROJECT_DIR; the only side effect under test
 # is .claude/logs/agent-costs.jsonl inside the temp project dir.
@@ -81,7 +84,7 @@ def expect(cond, msg):
     if not cond:
         raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
 
-expect(rec["schema_version"] == 1, "schema_version==1")
+expect(rec["schema_version"] == 2, "schema_version==2")
 expect(rec["issue"] == "134", "issue==134")
 expect(rec["stage"] == "pr-eval", "stage==pr-eval")
 expect(rec["agent_kind"] == "inline", "agent_kind==inline")
@@ -244,6 +247,64 @@ expect(t["output"] == 106, "tokens.output is the per-id max sum 106 (naive 151)"
 expect(t["cache_read"] == 6000, "tokens.cache_read deduped to 6000 (naive 8000)")
 expect(t["cache_creation"] == 300, "tokens.cache_creation deduped to 300 (naive 500)")
 expect(t["total"] == 466, "work-total 60+106+300 (cache_read excluded)")
+expect(rec["schema_version"] == 2, "schema_version==2")
+# turns is a per-fire DELTA on the orchestrator record (mirroring the token
+# delta); this is session stop-dedupe's FIRST fire, so the delta IS the
+# absolute 3. ctx_first/ctx_last are absolute transcript bounds, never deltas.
+expect(rec["turns"] == 3, "turns==3 (3 distinct message ids)")
+expect(rec["ctx_first"] == 1100, "ctx_first==1100 (msg_A cache_read+creation)")
+expect(rec["ctx_last"] == 3000, "ctx_last==3000 (msg_C cache_read+creation)")
+PY
+
+# ---------------------------------------------------------------------------
+# Case 7 (#1443): an INLINE record that adopts the durable subagent transcript
+# carries turns/ctx_first/ctx_last from that transcript. The payload needs a
+# stage-resolving `description` -- without one stage_from_description returns ""
+# and build_record returns None, so NO record would be written and the
+# turns/ctx assertions would fail for an incidental reason. The `usage` block is
+# a deliberately tiny final-turn lower-bound so the transcript sum EXCEEDS it
+# and is adopted (usage_complete flips to true).
+# ---------------------------------------------------------------------------
+mkdir -p "$HOME/.claude/projects/any-slug/sess-adopt/subagents"
+cp "$REPO_ROOT/tests/fixtures/token-usage/transcript-msgid.jsonl" \
+  "$HOME/.claude/projects/any-slug/sess-adopt/subagents/agent-aid1.jsonl"
+PAYLOAD_ADOPT='{
+  "session_id": "sess-adopt",
+  "agent_id": "aid1",
+  "subagent_type": "general-purpose",
+  "description": "Evaluate PR #1443 for #1443",
+  "total_duration_ms": 1500,
+  "usage": {
+    "input_tokens": 1,
+    "output_tokens": 1,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0
+  }
+}'
+run_hook "$PAYLOAD_ADOPT" || fail "case7: hook exited non-zero"
+COUNT="$(wc -l < "$OUT" | tr -d ' ')"
+[ "$COUNT" = "5" ] || fail "case7: expected 5 records, got $COUNT"
+
+python3 - "$OUT" <<'PY' || fail "case7: inline-adopt record failed assertions"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readlines()[-1])
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["agent_kind"] == "inline", "agent_kind==inline")
+expect(rec["session_id"] == "sess-adopt", "session_id==sess-adopt")
+expect(rec["schema_version"] == 2, "schema_version==2")
+expect(rec["usage_complete"] is True, "transcript sum exceeded the lower-bound")
+t = rec["tokens"]
+expect((t["input"], t["output"], t["cache_read"], t["cache_creation"])
+       == (60, 106, 6000, 300), "adopted deduped buckets")
+expect(t["total"] == 6466, "inline total includes cache_read")
+expect(rec["turns"] == 3, "turns==3 from the resolved subagent transcript")
+expect(rec["ctx_first"] == 1100, "ctx_first==1100")
+expect(rec["ctx_last"] == 3000, "ctx_last==3000")
 PY
 
 echo "PASS: test-capture-agent-cost-hook.sh"

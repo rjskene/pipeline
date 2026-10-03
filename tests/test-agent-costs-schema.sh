@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Cross-producer schema field-set guard (the #643 consumption-interface guard).
 #
-# BOTH agent-cost producers must emit the EXACT schema_version=1 field set:
+# BOTH agent-cost producers must emit the EXACT schema_version=2 field set:
 #   top-level: schema_version record_key issue stage agent_kind agent_type
 #              agent_id session_id model tokens duration_ms ts_start ts_end
-#              source usage_complete
+#              source usage_complete turns ctx_first ctx_last
 #   tokens.* : input output cache_read cache_creation total
+#
+# v2 (#1443) is ADDITIVE: `turns` (distinct message.id count on the resolved
+# transcript) plus `ctx_first` / `ctx_last` (cache_read+cache_creation of the
+# first / last message.id, i.e. absolute context sizes). Nothing renamed or
+# removed; tokens.* is unchanged. The bump exists because THIS guard pins the
+# exact top-level field set.
 #
 # We drive each producer to emit a real record and assert the emitted JSON
 # object has EXACTLY that key set (top-level + tokens.*). We ALSO grep both
@@ -29,7 +35,7 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-EXPECTED_TOP='agent_id agent_kind agent_type duration_ms issue model record_key role schema_version session_id source stage tokens ts_end ts_start usage_complete'
+EXPECTED_TOP='agent_id agent_kind agent_type ctx_first ctx_last duration_ms issue model record_key role schema_version session_id source stage tokens ts_end ts_start turns usage_complete'
 EXPECTED_TOKENS='cache_creation cache_read input output total'
 
 # --- drive the RETROACTIVE producer against the fixtures ------------------

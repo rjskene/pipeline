@@ -24,9 +24,9 @@
 #       (usage_complete=false). Never a fabricated cumulative, never a downgrade.
 #
 # ===========================================================================
-# OUTPUT RECORD SCHEMA (schema_version=1) — #643 CONSUMPTION CONTRACT, STABLE.
+# OUTPUT RECORD SCHEMA (schema_version=2) — #643 CONSUMPTION CONTRACT, STABLE.
 #   {
-#     schema_version: 1,
+#     schema_version: 2,
 #     record_key:   sha1("<source>|<agent_kind>|<session_id>|<issue>|<stage>|<ts_start>"),
 #     issue:        <string>,
 #     stage:        one of {classify, plan, plan-eval, execute, pr-eval},
@@ -50,9 +50,27 @@
 #     ts_end:       <iso8601|"">,
 #     source:       "retroactive",
 #     usage_complete: true (headless) | inline: false (sidecar lower-bound) |
-#                     true (subagent-transcript-summed cumulative)
+#                     true (subagent-transcript-summed cumulative),
+#     turns:        distinct message.id count on the resolved transcript, 0 when
+#                   no transcript resolved (#1443),
+#     ctx_first:    cache_read + cache_creation of the FIRST message.id (#1443),
+#     ctx_last:     cache_read + cache_creation of the LAST message.id (#1443)
 #   }
 #   tokens.total = input + output + cache_read + cache_creation.
+#
+#   v2 (#1443) is ADDITIVE: the three fields above are new TOP-LEVEL keys;
+#   nothing was renamed or removed and tokens.* is unchanged. The bump exists
+#   because tests/test-agent-costs-schema.sh pins the EXACT top-level field set.
+#   v2 ALSO changes the token VALUES: transcript usage is now DEDUPED BY
+#   message.id (Claude Code writes one API response as 2-3 assistant lines that
+#   share message.id and repeat input/cache_read/cache_creation verbatim), so
+#   rows written before #1443 are ~2x high on the input side. Re-emit them with
+#   `capture-agent-costs.sh --recompute`; consumers take
+#   `group_by(.record_key) | last`, so the fresh row wins.
+#   turns / ctx_first / ctx_last are STRUCTURAL facts: they are stamped whenever
+#   a transcript resolves, independent of the adopt-only-when-exceeds gate that
+#   governs token totals. ctx_* are absolute context SIZES (levels), never
+#   summed or delta-ed.
 #
 #   record_key is a LOGICAL idempotency key — the same key denotes the same
 #   logical agent finish (last-write-wins). Producers dedup on append (the
@@ -285,11 +303,12 @@ def record_key(source, agent_kind, session_id, issue, stage, ts_start):
 
 
 def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
-                tokens, ts_start, ts_end, usage_complete, agent_id="", role="single"):
+                tokens, ts_start, ts_end, usage_complete, agent_id="", role="single",
+                turns=0, ctx_first=0, ctx_last=0):
     total = sum(tokens[k] for k in ("input", "output", "cache_read", "cache_creation"))
     source = "retroactive"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "record_key": record_key(source, agent_kind, session_id, issue, stage, ts_start),
         "issue": issue,
         "stage": stage,
@@ -319,6 +338,17 @@ def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
         "ts_end": ts_end,
         "source": source,
         "usage_complete": usage_complete,
+        # schema_version=2 structural fields (#1443). `turns` is the distinct
+        # message.id count on the resolved transcript; ctx_first/ctx_last are
+        # cache_read+cache_creation of the FIRST/LAST message.id — absolute
+        # context SIZES, never sums. All three are stamped whenever a transcript
+        # RESOLVES, independent of the adopt-only-when-exceeds token gate: a
+        # resolved-but-not-adopted transcript still tells the truth about turn
+        # count and context size. 0 means "no transcript resolved" — the same
+        # honest-unknown sentinel usage_complete=false already carries.
+        "turns": turns,
+        "ctx_first": ctx_first,
+        "ctx_last": ctx_last,
     }
 
 
@@ -396,7 +426,9 @@ if os.path.exists(runs_log):
                 issue=issue, stage=stage, agent_kind="headless", agent_type="skill",
                 session_id=session, model=model,
                 tokens=summ, ts_start=summ["ts_start"], ts_end=summ["ts_end"],
-                usage_complete=True)
+                usage_complete=True,
+                turns=summ["turns"], ctx_first=summ["ctx_first"],
+                ctx_last=summ["ctx_last"])
             if rec["record_key"] in seen:
                 continue
             seen.add(rec["record_key"])
@@ -449,6 +481,16 @@ if os.path.exists(subagents_log):
             # then the inline record becomes a usage_complete=true cumulative.
             model = ""
             usage_complete = False
+            # Per-iteration resets (#1443). `summ` is a MODULE-SCOPE name in this
+            # python block and is also assigned by the HEADLESS pass above, so the
+            # call site below MUST read these locals, never summ[...]: otherwise an
+            # inline row whose glob did NOT match would be stamped with a previous
+            # iteration's (or an unrelated headless transcript's) turn count and
+            # context bounds — fabricated structural data on exactly the rows that
+            # must read 0.
+            turns = 0
+            ctx_first = 0
+            ctx_last = 0
             if agent_id and session:
                 pattern = os.path.join(
                     home, ".claude", "projects", "*", session,
@@ -456,6 +498,11 @@ if os.path.exists(subagents_log):
                 matches = glob.glob(pattern)
                 if matches:
                     summ = transcript_sum(matches[0])
+                    # Structural facts, stamped on RESOLVE — not gated on the
+                    # never-downgrade token adopt rule below (#1443).
+                    turns = summ["turns"]
+                    ctx_first = summ["ctx_first"]
+                    ctx_last = summ["ctx_last"]
                     summ_total = (summ["input"] + summ["output"]
                                   + summ["cache_read"] + summ["cache_creation"])
                     lb_total = (usage["input"] + usage["output"]
@@ -496,7 +543,8 @@ if os.path.exists(subagents_log):
                 issue=issue, stage=stage, agent_kind="inline", agent_type=agent_type,
                 session_id=session, model=model,
                 tokens=usage, ts_start=ts, ts_end=ts,
-                usage_complete=usage_complete, agent_id=agent_id, role=role)
+                usage_complete=usage_complete, agent_id=agent_id, role=role,
+                turns=turns, ctx_first=ctx_first, ctx_last=ctx_last)
             if rec["record_key"] in seen:
                 continue
             seen.add(rec["record_key"])

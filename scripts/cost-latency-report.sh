@@ -337,10 +337,10 @@ load_issue_view() {
 # so the report still works (all token/duration cells render `--`).
 #
 # This is the ONLY coupling point with #642's writer (merged via #653). Schema
-# (schema_version=1, see scripts/capture-agent-costs.sh OUTPUT RECORD SCHEMA):
-#   {"schema_version":1,"issue":"<string>","stage":"classify|plan|plan-eval|execute|pr-eval",
+# (schema_version=2, see scripts/capture-agent-costs.sh OUTPUT RECORD SCHEMA):
+#   {"schema_version":2,"issue":"<string>","stage":"classify|plan|plan-eval|execute|pr-eval",
 #    "tokens":{"input":<int>,"output":<int>,"cache_read":<int>,"cache_creation":<int>,"total":<int>},
-#    "duration_ms":<int>}
+#    "duration_ms":<int>,"turns":<int>,"ctx_first":<int>,"ctx_last":<int>}
 # NOTE: #642 emits `issue` as a STRING and `tokens.total` = input+output+
 # cache_read+cache_creation. Reads below coerce issue with `tostring` and sum
 # `.tokens.total` (the all-in count). A #642 rename is a one-line CAPTURE_LOG change.
