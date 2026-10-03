@@ -99,7 +99,7 @@ When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend au
 
 ## Auto-merge ownership
 
-The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token). `/pipeline:evaluate-issue-pr` Step 11 fires the gate inline immediately after posting its Approved verdict — that is the primary auto-merge path. Fullsend's Step 8 (Report) is the **fallback** auto-merge path; it re-runs the gate only for any `pr-open` issue the evaluator did not already auto-merge (e.g. the evaluator crashed between verdict post and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. This section names ownership; do not re-document the gate body — that's evaluate-issue-pr's territory.
+The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token — it performs NO merge). **THE ORCHESTRATOR fires the gate** at Step 7, once per `pr-open` PR, immediately after that PR's evaluator returns its verdict (#1444): inline PATH A/B/C/D evaluations and `--spawn` queued ones alike. `/pipeline:evaluate-issue-pr` posts a verdict and stops — it no longer merges. Step 8 (Report) remains the **fallback** pass: it re-runs the gate for any `pr-open` issue Step 7 did not merge (e.g. the orchestrator was interrupted between verdict and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. The post-token merge procedure lives in [references/auto-merge-gate.md](references/auto-merge-gate.md); do not re-document it here.
 
 1. **Plan**
 
@@ -255,6 +255,29 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
 7. **Evaluate PRs (wave N)** — once wave N's agents finish (queue complete), run `/pipeline:evaluate-issue-pr N` for every wave-N `pr-open` issue (via `run-queue.sh --skip-permissions --skill evaluate-issue-pr`), and apply the per-PR greenlight auto-merge gate from the `## Greenlight matrix` above to each.
 
+   **Fire the gate per PR (#1444, mandatory).** The evaluator posts a verdict and STOPS — it no longer merges.
+   For EACH wave-N `pr-open` PR, as soon as that PR's evaluator returns, the orchestrator runs the gate itself
+   (`$ISSUE` / `$PR_NUM` are that PR's issue and PR numbers). This applies to inline PATH A/B/C/D evaluations
+   and to `--spawn` queued ones alike:
+
+   ```bash
+   ISSUE=<N>     # the wave-N pr-open issue whose evaluator just returned
+   PR_NUM=<PR>   # its PR, already resolved deterministically by Step 6b's check-ci-fix-loop.sh
+   source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
+   CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
+   CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
+   CR_DIR=${CR_LINE##*DIR=}
+   case "$CR_STATE" in
+     resolved)          export PIPELINE_CAPABILITY_REFUSAL_SOURCES="$CR_DIR" ;;
+     no-log-dir)        echo "NOTE: no subagent log dir on the main checkout (PIPELINE_LOGS_ENABLED=false?) — capability arm skipped: $CR_LINE" >&2 ;;
+     unresolvable-root) echo "WARN: capability-refusal sources UNRESOLVABLE from $(pwd) — gate arm DORMANT (#1246): $CR_LINE" >&2 ;;
+   esac
+   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+   echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
+   ```
+
+   On any token, follow [references/auto-merge-gate.md](references/auto-merge-gate.md).
+
    **Stage-model pin (#1186, mandatory).** Every `evaluate-issue-pr` dispatch — inline or queued — resolves its model from the single source and **ALWAYS passes `model=$MODEL`**:
    ```bash
    PR_EVAL_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> pr-eval)
@@ -263,7 +286,7 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    **`--spawn` override (#750).** When `--spawn` is present, route **every path's PR-eval through `run-queue.sh --skill evaluate-issue-pr`** — including the paths whose PR-eval is inline by default (PATH B). PATH C PR-eval is already queued, so for C this is a documented no-op. When `--spawn` is absent, the default below applies (PATH B PR-eval inline, others via the run-queue). Launch this queue via `Bash` with `run_in_background: true` as described in step 6, then wait on it with the same event-driven waiter (identical to Step 6's waiter): a single `Monitor` invocation against the bash task's captured stdout stream (queried via the `BashOutput` tool — do NOT tail `queue-*.log`), with filter regex `EVENT: (agent-stalled|agent-finished|queue-complete)` and `timeout_ms=7200000`. Apply the same wake-loop dispatch and "Triage on agent-stalled wakes" sub-section above — `agent-finished outcome=failed` is the per-agent failure signal (no separate `agent-failed`), `queue-complete` is terminal.
 
-   **Inline PR-eval dispatch prompt contract (mandatory).** Whenever an `evaluate-issue-pr` evaluation is dispatched as an inline `Agent` (PATH A/B/D re-dispatch, or any pr-open issue evaluated inline rather than via the run-queue), the Agent prompt MUST end with a directive stating the dispatched evaluator's *only* valid terminal states are: **(a)** a `## Evaluation` comment posted with an explicit `**Verdict:**` line AND the greenlight gate fired (merged on `green`, or left with a `block-*` reason token); or **(b)** the eval failed, reporting a FAILED line. Narrating an intention to "wait" / "await CI" (e.g. *"All plan items verified. Awaiting the suite/CI output."*) — or returning verification prose instead of posting the verdict and firing the gate — is explicitly a **failure**: a dispatched `Agent`'s turn ends the moment it stops emitting tool calls, so narrate-and-yield strands the PR un-evaluated at `pr-open` and forces a fresh re-dispatch (the #765 drop-out). The evaluator must instead run to completion (post `## Evaluation` → fire greenlight gate) or actually block on pending CI via `Monitor`/`BashOutput` before yielding. A `general-purpose` subagent may never load `skills/evaluate-issue-pr/SKILL.md`, so this dispatch-site directive — not the skill body — is the binding contract. **Pre-greenlight cross-cutting guards (#1132): the prompt MUST direct the dispatched evaluator to run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh"` in Phase 2 even when the #957 green-CI short-circuit skips the full `$PIPELINE_TEST_CMD` re-run — the short-circuit runs no local cross-cutting re-check, and the aggregator is the seconds-fast diff-independent floor.** (Fullsend is now the sole owner of this PR-eval dispatch contract; `/pipeline:status` is read-only and no longer dispatches, mirroring the #764/#771 execute precedent.) **Friction capture:** the prompt MUST also direct the subagent to end its final report with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines, one per doc/skill/hook claim that disagreed with reality. **Headless:** under `PIPELINE_HEADLESS=true` never end your turn on a question — apply the documented default, log `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>`, continue.
+   **Inline PR-eval dispatch prompt contract (mandatory).** Whenever an `evaluate-issue-pr` evaluation is dispatched as an inline `Agent` (PATH A/B/D re-dispatch, or any pr-open issue evaluated inline rather than via the run-queue), the Agent prompt MUST end with a directive stating the dispatched evaluator's *only* valid terminal states are: **(a)** a `## Evaluation` comment posted with an explicit `**Verdict:**` line; or **(b)** the eval failed, reporting a FAILED line. The evaluator does NOT fire the auto-merge gate (#1444) — the ORCHESTRATOR fires it at Step 7 after the evaluator returns, per [references/auto-merge-gate.md](references/auto-merge-gate.md) — so the prompt must not demand a gate token the evaluator cannot produce. Narrating an intention to "wait" / "await CI" (e.g. *"All plan items verified. Awaiting the suite/CI output."*) — or returning verification prose instead of posting the verdict — is explicitly a **failure**: a dispatched `Agent`'s turn ends the moment it stops emitting tool calls, so narrate-and-yield strands the PR un-evaluated at `pr-open` and forces a fresh re-dispatch (the #765 drop-out). The evaluator must instead run to completion (post `## Evaluation` with its `**Verdict:**` line) or actually block on pending CI via `Monitor`/`BashOutput` before yielding. A `general-purpose` subagent may never load `skills/evaluate-issue-pr/SKILL.md`, so this dispatch-site directive — not the skill body — is the binding contract. **Pre-greenlight cross-cutting guards (#1132): the prompt MUST direct the dispatched evaluator to run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh"` in Phase 2 even when the #957 green-CI short-circuit skips the full `$PIPELINE_TEST_CMD` re-run — the short-circuit runs no local cross-cutting re-check, and the aggregator is the seconds-fast diff-independent floor.** (Fullsend is now the sole owner of this PR-eval dispatch contract; `/pipeline:status` is read-only and no longer dispatches, mirroring the #764/#771 execute precedent.) **Friction capture:** the prompt MUST also direct the subagent to end its final report with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines, one per doc/skill/hook claim that disagreed with reality. **Headless:** under `PIPELINE_HEADLESS=true` never end your turn on a question — apply the documented default, log `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>`, continue.
 7b. **Auto-merge green release PRs (opt-in)** — runs after step 7 (Evaluate PRs) and before step 8 (Report). Only fires when `PIPELINE_RELEASE_PR_AUTO_MERGE=true` AND at least one release PR has `ci=pass`. Feature PRs land first; the release PR consolidates them so version bumps + CHANGELOG stay coherent.
 
    ```bash
@@ -312,7 +335,7 @@ This issue edits the fullsend machinery the pipeline itself runs. This is a self
    #N     <title>                  B / C (med)               no (block-ci)  PR approved / Flagged / Skipped (plan failed)
    #N     <title>                                            yes (step8)    PR merged
    ================================================================
-   The `Auto-merged?` column reflects Step 8's outcome per PR: `yes (eval)` — the evaluator's Step 11 already merged it; `yes (step8)` — Step 8 merged it on the greenlight path; `no (<block-reason>)` — manual merge required.
+   The `Auto-merged?` column reflects the per-PR gate outcome: `yes (step7)` — the orchestrator's Step 7 gate merged it when that PR's evaluator returned; `yes (step8)` — Step 8's fallback pass merged it; `no (<block-reason>)` — manual merge required.
    ```
 9. **Stop** — do NOT merge unless the greenlight matrix held in Step 8. Auto-merged PRs are already listed in the report's `Auto-merged?` column. Wait for explicit user confirmation before any non-greenlight merge.
 
