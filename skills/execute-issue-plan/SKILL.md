@@ -150,8 +150,9 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    printf '%s\n' "$GUARD_OUT"
    [ "$GUARD_RC" -eq 0 ] \
      || { echo "ABORT: cross-cutting guard failure — cruft path on the branch, undocumented PIPELINE_* drift, or a namespace/golden-seed/README-anchor invariant; see above and fix before opening the PR." >&2; exit 1; }
-   printf '%s\n' "$GUARD_OUT" | grep -q 'INERT: check-branch-cruft.sh' \
-     && { echo "ABORT: the #1028 cruft guard went INERT — it did NOT run. Resolve PIPELINE_BASE_BRANCH and re-run from inside the worktree." >&2; exit 1; }
+   if printf '%s\n' "$GUARD_OUT" | grep -q 'INERT: check-branch-cruft.sh'; then
+     echo "ABORT: the #1028 cruft guard went INERT — it did NOT run. Resolve PIPELINE_BASE_BRANCH and re-run from inside the worktree." >&2; exit 1
+   fi
    ```
 
    Rule table (source of truth: `scripts/derive-pr-title.sh`):
@@ -168,7 +169,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
    **Pre-PR guards (#1028/#1102/#1132).** The single `check-cross-cutting-guards.sh` call in the 9a fence above IS the whole pre-PR guard surface: the aggregator runs `scripts/check-branch-cruft.sh` (ABORTs on a denylisted cruft path committed to this branch) and `scripts/check-config-drift.sh` (ABORTs on an undocumented `PIPELINE_*` var) internally, plus the namespace-discipline, golden-seed and README-anchor invariants — diff-independent, in seconds, even when only an affected-tests subset was verified in Step 6b (the #1128 miss class). The cruft arm is **conditional** — INERT (stderr only, aggregator exits 0) when `PIPELINE_BASE_BRANCH` is unresolved or cwd is outside a work tree — so 9a aborts on an `INERT: check-branch-cruft.sh` line as well as a non-zero exit. Do NOT re-add standalone cruft or config-drift fences: one call site, no double-invocation.
 
-   **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `auto-merge-gate.sh` — fired by the orchestrator, see `evaluate-issue-pr` Step 11 — has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
+   **9b. Open the PR.** Quote the `--base` value and guard against an unset `PIPELINE_BASE_BRANCH`: even when `enforce-base-branch.py` is absent or unregistered, the executor must pass `--base` quoted and non-empty so the eval-time `baseRefName` assertion in `auto-merge-gate.sh` — fired by the orchestrator, see `skills/fullsend/references/auto-merge-gate.md` — has a meaningful base to compare against. This is the second of three defense-in-depth layers (PreToolUse hook → this guard → eval-time check).
 
    ```bash
    if [ -z "$PIPELINE_BASE_BRANCH" ]; then echo "FATAL: PIPELINE_BASE_BRANCH unset; refusing to call gh pr create" >&2; exit 1; fi
