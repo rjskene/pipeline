@@ -3,12 +3,24 @@
 #
 # Functions:
 #   tu_transcript_sum <jsonl-path>
-#       Print ONE tab-separated line:
-#         input <TAB> output <TAB> cache_read <TAB> cache_creation <TAB> ts_start <TAB> ts_end <TAB> model
-#       Sums message.usage.{input,output,cache_read_input,cache_creation_input}_tokens
-#       over every line that carries message.usage. ts_start/ts_end are the
-#       min/max top-level "timestamp"; model is the last non-empty message.model.
-#       Lines without message.usage and non-JSON lines are tolerated (skipped).
+#       Print ONE tab-separated line (10 fields):
+#         input <TAB> output <TAB> cache_read <TAB> cache_creation <TAB> ts_start
+#         <TAB> ts_end <TAB> model <TAB> turns <TAB> ctx_first <TAB> ctx_last
+#       Aggregates message.usage.{input,output,cache_read_input,cache_creation_input}_tokens
+#       DEDUPED BY message.id (#1443): Claude Code writes one API response as
+#       2-3 assistant lines (thinking / text / tool_use) that share message.id,
+#       repeating input/cache_read/cache_creation verbatim while output_tokens is
+#       progressive. Each bucket is reduced with max() per id (the final count
+#       for output; a robust "count once" for the verbatim buckets), then summed
+#       across ids. A usage line with no message.id keys on "__noid__<line_no>"
+#       so legacy transcripts sum exactly as before and each such line is its
+#       own turn. ts_start/ts_end are the min/max top-level "timestamp"; model is
+#       the last non-empty message.model; turns is the distinct-id count;
+#       ctx_first/ctx_last are cache_read+cache_creation of the FIRST/LAST id
+#       (absolute context sizes, never summed). Lines without message.usage and
+#       non-JSON lines are tolerated (skipped).
+#       Mirrors hooks/capture_agent_cost.py:transcript_sum and
+#       scripts/capture-agent-costs.sh:transcript_sum byte-for-byte by contract.
 #
 #   tu_worktree_slug <abs-worktree-path>
 #       Print the Claude Code transcript-dir slug: re.sub(r"[/.]","-",path).
@@ -38,16 +50,20 @@ tu_transcript_sum() {
   python3 - "$path" <<'PY'
 import json, sys
 path = sys.argv[1]
-inp = out = cr = cc = 0
 ts_start = ts_end = None
 model = ""
+# Per-message.id aggregation (#1443). `ids` preserves first-sight order so
+# ctx_first/ctx_last are the FIRST/LAST response's context size; `per_id` maps
+# key -> [input, output, cache_read, cache_creation] reduced with max().
+ids = []
+per_id = {}
 try:
     fh = open(path)
 except OSError:
-    print("0\t0\t0\t0\t\t\t")
+    print("0\t0\t0\t0\t\t\t\t0\t0\t0")
     sys.exit(0)
 with fh:
-    for line in fh:
+    for line_no, line in enumerate(fh):
         line = line.strip()
         if not line:
             continue
@@ -69,15 +85,33 @@ with fh:
         usage = msg.get("usage")
         if not isinstance(usage, dict):
             continue
-        inp += usage.get("input_tokens") or 0
-        out += usage.get("output_tokens") or 0
-        cr += usage.get("cache_read_input_tokens") or 0
-        cc += usage.get("cache_creation_input_tokens") or 0
+        mid = msg.get("id")
+        key = mid or ("__noid__%d" % line_no)
+        vals = [
+            usage.get("input_tokens") or 0,
+            usage.get("output_tokens") or 0,
+            usage.get("cache_read_input_tokens") or 0,
+            usage.get("cache_creation_input_tokens") or 0,
+        ]
+        if key in per_id:
+            prev = per_id[key]
+            per_id[key] = [max(prev[i], vals[i]) for i in range(4)]
+        else:
+            ids.append(key)
+            per_id[key] = vals
         m = msg.get("model")
         if m:
             model = m
-print("%d\t%d\t%d\t%d\t%s\t%s\t%s" % (
-    inp, out, cr, cc, ts_start or "", ts_end or "", model))
+inp = sum(per_id[k][0] for k in ids)
+out = sum(per_id[k][1] for k in ids)
+cr = sum(per_id[k][2] for k in ids)
+cc = sum(per_id[k][3] for k in ids)
+turns = len(ids)
+ctx_first = (per_id[ids[0]][2] + per_id[ids[0]][3]) if ids else 0
+ctx_last = (per_id[ids[-1]][2] + per_id[ids[-1]][3]) if ids else 0
+print("%d\t%d\t%d\t%d\t%s\t%s\t%s\t%d\t%d\t%d" % (
+    inp, out, cr, cc, ts_start or "", ts_end or "", model,
+    turns, ctx_first, ctx_last))
 PY
 }
 
