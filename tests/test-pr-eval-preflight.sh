@@ -122,7 +122,11 @@ case "$ALL" in
     ;;
   *"pr view"*"statusCheckRollup"*)
     [ "${STUB_ROLLUP_FAIL:-0}" = "1" ] && exit 1
-    printf '%s\n' "${STUB_ROLLUP:-{\"statusCheckRollup\":[]}}"
+    # No `${VAR:-{...}}` default here: a brace inside a parameter-expansion
+    # default terminates the expansion early and leaks a stray `}`, which makes
+    # the payload invalid JSON — and then every CI case "passes" vacuously as
+    # ci-red. reset_env always sets STUB_ROLLUP explicitly.
+    printf '%s\n' "${STUB_ROLLUP-}"
     exit 0
     ;;
   *"pr view"*"baseRefName"*)
@@ -341,5 +345,213 @@ fi
 run_pf 1445 --pr 200 --worktree "$TMP/wt"
 expect_line "12KB body claim is SEEN" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
 expect_shape "case 7"
+
+# From here on every body already carries the section, so arm 1 is a no-op and
+# the arm under test owns the verdict.
+BODY_OK="$BODY_CLEAN_TESTPLAN
+## Pre-existing failures
+PRE-EXISTING: none
+"
+reset_with_section() { reset_env; printf '%s' "$BODY_OK" > "$STUB_BODY_FILE"; }
+
+# ===========================================================================
+# ARM 2 — ci
+# ===========================================================================
+
+inc_scenario "Case 8: a FAILURE latest run -> block REASON=ci-red"
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "red rollup" "PREFLIGHT=block REASON=ci-red PR=200 FIXED=none"
+expect_shape "case 8"
+
+inc_scenario "Case 9: re-run PR (latest-per-name SUCCESS) -> ok REASON=none"
+# This is the discriminating case between the gate's predicate
+# (group_by(.name) | all(last.conclusion == "SUCCESS")) and the eval skill's
+# old `all(.conclusion == "SUCCESS")` form, which mis-reads a re-run PR as red.
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"},{"name":"ci","conclusion":"SUCCESS"}]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "re-run, latest green" "PREFLIGHT=ok REASON=none PR=200 FIXED=none"
+expect_shape "case 9"
+
+inc_scenario "Case 9b: genuinely red (a second check FAILED) -> block ci-red"
+# Negative control for case 9: the two inputs differ in exactly one property —
+# whether the FAILURE is the LATEST run of its own check name.
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"},{"name":"lint","conclusion":"FAILURE"}]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "distinct failing check" "PREFLIGHT=block REASON=ci-red PR=200 FIXED=none"
+expect_shape "case 9b"
+
+inc_scenario "Case 10: unsettled rollup (conclusion null) -> ok REASON=ci-pending"
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":null}]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "pending rollup" "PREFLIGHT=ok REASON=ci-pending PR=200 FIXED=none"
+expect_shape "case 10"
+
+inc_scenario "Case 11: EMPTY rollup -> ok REASON=no-ci (NOT 'none')"
+# "No CI" is not "CI green". Reporting `none` here would make the evaluator's
+# ROLLUP_GREEN true and skip ALL local testing on a no-CI consumer repo.
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "empty rollup" "PREFLIGHT=ok REASON=no-ci PR=200 FIXED=none"
+expect_shape "case 11"
+
+inc_scenario "Case 12: unreadable rollup -> block REASON=ci-red (fail CLOSED)"
+reset_with_section
+export STUB_ROLLUP_FAIL=1
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "gh rollup read failed" "PREFLIGHT=block REASON=ci-red PR=200 FIXED=none"
+expect_shape "case 12"
+if printf '%s\n' "$ERR" | grep -qi 'warn'; then
+  pass_msg "case 12: the fail-closed path emits a stderr WARN"
+else
+  fail_msg "case 12: no stderr WARN on the unreadable rollup: ${ERR:-<none>}"
+fi
+export STUB_ROLLUP_FAIL=0
+
+inc_scenario "Case 13: PIPELINE_CI_CHECK_ENABLED=\"\" -> ok REASON=ci-disabled, arm SKIPPED"
+reset_with_section
+export PIPELINE_CI_CHECK_ENABLED=""
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "ci gating disabled" "PREFLIGHT=ok REASON=ci-disabled PR=200 FIXED=none"
+expect_shape "case 13"
+if grep -q 'statusCheckRollup' "$STUB_GH_CALLS"; then
+  fail_msg "case 13: the CI arm still queried the rollup with gating disabled"
+else
+  pass_msg "case 13: no rollup query when PIPELINE_CI_CHECK_ENABLED is disabled"
+fi
+export PIPELINE_CI_CHECK_ENABLED="true"
+
+# ===========================================================================
+# ARM 3 — base / mergeable
+# ===========================================================================
+
+inc_scenario "Case 14: baseRefName is an unrelated branch -> block REASON=base"
+reset_with_section
+export STUB_BASE="main"
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "base mismatch" "PREFLIGHT=block REASON=base PR=200 FIXED=none"
+expect_shape "case 14"
+
+inc_scenario "Case 15: next-branch awareness (#1131/#1148)"
+reset_with_section
+export STUB_BASE="next"
+export STUB_LABELS='["next"]'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "base=next + next label" "PREFLIGHT=ok REASON=none PR=200 FIXED=none"
+expect_shape "case 15 (labelled)"
+reset_with_section
+export STUB_BASE="next"
+export STUB_LABELS='[]'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "base=next, NOT next-routed" "PREFLIGHT=block REASON=base PR=200 FIXED=none"
+expect_shape "case 15 (unlabelled)"
+reset_with_section
+export STUB_BASE="next"
+export STUB_LABELS='["next-major-release"]'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "base=next + legacy alias" "PREFLIGHT=ok REASON=none PR=200 FIXED=none"
+expect_shape "case 15 (legacy alias)"
+
+inc_scenario "Case 16: mergeable != MERGEABLE -> ok REASON=mergeable (ADVISORY)"
+reset_with_section
+export STUB_MERGEABLE="CONFLICTING"
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "non-mergeable PR" "PREFLIGHT=ok REASON=mergeable PR=200 FIXED=none"
+expect_shape "case 16"
+
+inc_scenario "Case 16b: REASON carries ONE advisory — ci-pending HIDES mergeable"
+# This is why the evaluator's Step 8 must keep reading mergeability itself
+# instead of keying off `REASON=mergeable`: whenever `ci-pending` wins the
+# ordering, the `mergeable` advisory is lost and the rebase would never fire.
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":null}]}'
+export STUB_MERGEABLE="CONFLICTING"
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "pending hides mergeable" "PREFLIGHT=ok REASON=ci-pending PR=200 FIXED=none"
+expect_shape "case 16b"
+
+# ===========================================================================
+# ARM 4 — guards
+# ===========================================================================
+
+inc_scenario "Case 17: check-cross-cutting-guards.sh exits 1 -> block REASON=guards"
+reset_with_section
+export STUB_GUARD_RC=1
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "aggregator red" "PREFLIGHT=block REASON=guards PR=200 FIXED=none"
+expect_shape "case 17"
+export STUB_GUARD_RC=0
+
+inc_scenario "Case 18: check-branch-cruft.sh exits 1 -> block REASON=guards"
+reset_with_section
+export STUB_CRUFT_RC=1
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "cruft guard red" "PREFLIGHT=block REASON=guards PR=200 FIXED=none"
+expect_shape "case 18"
+export STUB_CRUFT_RC=0
+
+inc_scenario "Case 18b: the guards run with cwd set to the WORKTREE"
+# check-branch-cruft.sh diffs origin/<base>..HEAD relative to the CALLER's cwd
+# (scripts/check-branch-cruft.sh L26-38). Run from the orchestrator checkout it
+# would see zero paths and the arm would be vacuous, so --worktree is
+# load-bearing, not cosmetic. The stubs echo their own $PWD.
+reset_with_section
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+if printf '%s\n' "$ERR" | grep -qF "cwd=$TMP/wt"; then
+  pass_msg "case 18b: both guards ran with cwd=$TMP/wt"
+else
+  fail_msg "case 18b: guards did not run from the worktree; stderr: ${ERR:-<none>}"
+fi
+
+inc_scenario "Case 19: unresolvable worktree -> guards INERT, verdict unaffected"
+reset_with_section
+export STUB_GUARD_RC=1
+export STUB_CRUFT_RC=1
+# cwd is a non-repo temp dir, so the `git worktree list` fallback resolves
+# nothing and --worktree is deliberately omitted.
+: > "$STUB_GH_CALLS"
+OUT="$(cd "$TMP" && bash "$PF" 1445 --pr 200 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+expect_line "no worktree -> arm skipped" "PREFLIGHT=ok REASON=none PR=200 FIXED=none"
+expect_shape "case 19"
+if printf '%s\n' "$ERR" | grep -q 'INERT'; then
+  pass_msg "case 19: the skipped arm announces itself INERT on stderr"
+else
+  fail_msg "case 19: the guards arm was skipped SILENTLY (no INERT line): ${ERR:-<none>}"
+fi
+export STUB_GUARD_RC=0
+export STUB_CRUFT_RC=0
+
+# ===========================================================================
+# Precedence + resolution
+# ===========================================================================
+
+inc_scenario "Case 20: precedence — body-contract outranks a simultaneous ci-red"
+reset_env
+printf 'Closes #1445\n\n## Test plan\n- [x] suite run — 2 tests fail here\n' > "$STUB_BODY_FILE"
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}'
+export STUB_GUARD_RC=1
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "arm order is the precedence contract" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
+expect_shape "case 20"
+export STUB_GUARD_RC=0
+
+inc_scenario "Case 21: no resolvable PR -> block REASON=no-pr PR=0"
+reset_with_section
+export STUB_CLOSING_PR=""
+export STUB_PR_LIST=""
+: > "$STUB_GH_CALLS"
+OUT="$(cd "$TMP" && bash "$PF" 1445 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+expect_line "unresolvable PR" "PREFLIGHT=block REASON=no-pr PR=0 FIXED=none"
+expect_shape "case 21"
 
 summary_and_exit

@@ -122,6 +122,11 @@ else
     fi
   fi
   if [ -z "$PR" ]; then
+    # SC2097/SC2098 are expected and benign here (verbatim from
+    # check-ci-fix-loop.sh L75-78): the `ISSUE=` prefix exports the value for
+    # gh's `env.ISSUE` jq reference, while `"$ISSUE in:body"` reads the
+    # identical outer value.
+    # shellcheck disable=SC2097,SC2098
     PR="$(ISSUE="$ISSUE" gh pr list --repo "$PIPELINE_REPO" --state open \
             --search "$ISSUE in:body" --json number,body \
             --jq '[.[] | select(.body | test("#" + env.ISSUE + "\\b"))] | .[0].number // empty' 2>/dev/null)"
@@ -194,6 +199,140 @@ else
   else
     echo "pr-eval-preflight: BLOCK body-contract — 'gh pr edit' failed for PR #$PR; the section was NOT appended" >&2
     fatal body-contract
+  fi
+fi
+
+# ===========================================================================
+# ARM 2 — ci. The green predicate is the LITERAL jq program from
+# scripts/auto-merge-gate.sh, reused rather than re-derived: the eval skill's
+# old `length > 0 and all(.conclusion == "SUCCESS")` form mis-reads a re-run PR
+# (an earlier FAILURE for a check whose LATEST run is SUCCESS) as red.
+#
+# The empty-rollup branch is evaluated FIRST, before that predicate, because
+# the predicate maps `[]` to TRUE. See the `no-ci` note in the header.
+# ===========================================================================
+
+if [ "${PIPELINE_CI_CHECK_ENABLED-true}" != "true" ]; then
+  # Colon-LESS fallback (#858): unset => ON; explicit "" => OFF (the no-CI
+  # consumer contract). Reported as an ADVISORY so the evaluator's local-test
+  # fallback stays armed — a disabled CI check is not a green one.
+  echo "pr-eval-preflight: NOTE ci arm skipped (PIPELINE_CI_CHECK_ENABLED disabled)" >&2
+  advisory ci-disabled
+else
+  ROLLUP_JSON="$(gh pr view "$PR" --repo "$PIPELINE_REPO" --json statusCheckRollup 2>/dev/null)"
+  ROLLUP_RC=$?
+  ROLLUP_LEN="$(tr -d '\r' <<<"$(jq -r '.statusCheckRollup | length' <<<"$ROLLUP_JSON" 2>/dev/null)")"
+  if [ "$ROLLUP_RC" -ne 0 ] || [ -z "$ROLLUP_JSON" ] || ! [[ "$ROLLUP_LEN" =~ ^[0-9]+$ ]]; then
+    # Fail CLOSED, mirroring the gate's cage-diff doctrine: an unreadable
+    # rollup must never become an evasion vector for the check it replaces.
+    echo "pr-eval-preflight: WARN ci arm unproven for PR #$PR (gh rc=$ROLLUP_RC, unreadable statusCheckRollup) — failing closed as ci-red" >&2
+    fatal ci-red
+  elif [ "$ROLLUP_LEN" -eq 0 ]; then
+    echo "pr-eval-preflight: NOTE PR #$PR has an EMPTY statusCheckRollup — no CI ran; this is not a green verdict" >&2
+    advisory no-ci
+  elif jq -e '.statusCheckRollup | length == 0 or (group_by(.name) | all(last.conclusion == "SUCCESS"))' <<<"$ROLLUP_JSON" >/dev/null 2>&1; then
+    :
+  else
+    CI_BAD="$(tr -d '\r' <<<"$(jq -r '[.statusCheckRollup | group_by(.name)[] | last.conclusion]
+        | map(select(. == "FAILURE" or . == "CANCELLED" or . == "TIMED_OUT"
+                     or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE"))
+        | length' <<<"$ROLLUP_JSON" 2>/dev/null)")"
+    if ! [[ "$CI_BAD" =~ ^[0-9]+$ ]]; then
+      echo "pr-eval-preflight: WARN could not classify PR #$PR's rollup conclusions — failing closed as ci-red" >&2
+      fatal ci-red
+    elif [ "$CI_BAD" -gt 0 ]; then
+      echo "pr-eval-preflight: BLOCK ci-red — PR #$PR has $CI_BAD definitely-failed check(s) in its latest-per-name rollup" >&2
+      fatal ci-red
+    else
+      echo "pr-eval-preflight: NOTE PR #$PR's rollup is UNSETTLED (no definite failure) — advisory ci-pending" >&2
+      advisory ci-pending
+    fi
+  fi
+fi
+
+# ===========================================================================
+# ARM 3 — base / mergeable.
+# ===========================================================================
+
+# Recover an unexported PIPELINE_BASE_BRANCH exactly as auto-merge-gate.sh does
+# (#801): callers source pipeline.config in one bash step and run this in a
+# separate subshell, where a non-exported value is simply absent.
+if [ -z "${PIPELINE_BASE_BRANCH:-}" ]; then
+  _pf_root="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+  _pf_cfg="$_pf_root/pipeline.config"
+  if [ ! -f "$_pf_cfg" ]; then
+    _pf_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    [ -n "$_pf_root" ] && _pf_cfg="$_pf_root/pipeline.config"
+  fi
+  # shellcheck disable=SC1090
+  [ -f "$_pf_cfg" ] && source "$_pf_cfg"
+fi
+
+PR_META="$(gh pr view "$PR" --repo "$PIPELINE_REPO" --json baseRefName,mergeable 2>/dev/null)"
+PR_BASE="$(tr -d '\r' <<<"$(jq -r '.baseRefName // empty' <<<"$PR_META" 2>/dev/null)")"
+PR_MERGEABLE="$(tr -d '\r' <<<"$(jq -r '.mergeable // empty' <<<"$PR_META" 2>/dev/null)")"
+
+if [ -z "${PIPELINE_BASE_BRANCH:-}" ]; then
+  # Fail-safe (#801): an unresolvable base is a config error, not a real
+  # divergence — but exit 0 is contractual here, so it still blocks loudly.
+  echo "pr-eval-preflight: ERROR PIPELINE_BASE_BRANCH is empty (pipeline.config not found/sourced); cannot evaluate PR #$PR's base" >&2
+  fatal base
+elif [ -z "$PR_BASE" ]; then
+  echo "pr-eval-preflight: BLOCK base — could not read PR #$PR's baseRefName" >&2
+  fatal base
+elif [ "$PR_BASE" = "$PIPELINE_BASE_BRANCH" ]; then
+  :
+elif [ "$PR_BASE" = "${PIPELINE_NEXT_BRANCH:-next}" ]; then
+  # Next-branch aware acceptance (#1131/#1148), mirroring auto-merge-gate.sh:
+  # `next` is a valid base ONLY for a next-routed issue (it carries
+  # ${PIPELINE_NEXT_LABEL:-next} or the legacy `next-major-release` alias).
+  PF_LABELS="$(gh issue view "$ISSUE" --repo "$PIPELINE_REPO" --json labels \
+                 --jq '[.labels[].name]' 2>/dev/null)"
+  if jq -e --arg l "${PIPELINE_NEXT_LABEL:-next}" \
+       'index($l) != null or index("next-major-release") != null' \
+       <<<"$PF_LABELS" >/dev/null 2>&1; then
+    :
+  else
+    echo "pr-eval-preflight: BLOCK base — PR #$PR targets '${PIPELINE_NEXT_BRANCH:-next}' but issue #$ISSUE is not next-routed" >&2
+    fatal base
+  fi
+else
+  echo "pr-eval-preflight: BLOCK base — PR #$PR targets '$PR_BASE', expected '$PIPELINE_BASE_BRANCH'" >&2
+  fatal base
+fi
+
+if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then
+  echo "pr-eval-preflight: NOTE PR #$PR mergeable='$PR_MERGEABLE' — ADVISORY only; the evaluator's Step 8 rebase is the remediation" >&2
+  advisory mergeable
+fi
+
+# ===========================================================================
+# ARM 4 — guards. Both run with cwd set to the FEATURE WORKTREE:
+# check-branch-cruft.sh diffs origin/<base>..HEAD relative to the caller's cwd,
+# so from the orchestrator checkout the arm would see zero paths and be
+# VACUOUS. check-cross-cutting-guards.sh already bundles the cruft check as a
+# CONDITIONAL sub-guard that goes INERT when the base is unresolved, so the
+# explicit second call is what makes it unconditional.
+# ===========================================================================
+
+PF_WT="$OPT_WORKTREE"
+if [ -z "$PF_WT" ]; then
+  WT_LIST="$(git worktree list --porcelain 2>/dev/null || true)"
+  PF_WT="$(awk -v p="${PIPELINE_WORKTREE_PREFIX:-wt}-${ISSUE}" '
+    /^worktree / { path=$2; base=path; sub(/.*\//,"",base);
+                   if (base==p || base ~ "^"p"-") { print path; exit } }' <<<"$WT_LIST")"
+fi
+
+if [ -z "$PF_WT" ] || [ ! -d "$PF_WT" ]; then
+  echo "  INERT: guards (worktree unresolved) — this arm did NOT run" >&2
+else
+  if ! ( cd "$PF_WT" && bash "$SELF_DIR/check-cross-cutting-guards.sh" ) >&2; then
+    echo "pr-eval-preflight: BLOCK guards — check-cross-cutting-guards.sh failed in $PF_WT" >&2
+    fatal guards
+  fi
+  if ! ( cd "$PF_WT" && bash "$SELF_DIR/check-branch-cruft.sh" ) >&2; then
+    echo "pr-eval-preflight: BLOCK guards — check-branch-cruft.sh failed in $PF_WT" >&2
+    fatal guards
   fi
 fi
 
