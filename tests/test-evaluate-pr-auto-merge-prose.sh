@@ -151,6 +151,27 @@ else
   FAILED=$((FAILED+1))
 fi
 
+# --- #1444: scripts/run-queue.sh's terminal-detection comments describe the
+# `manual-merge` auto-apply and the `Auto-merge skipped:` fallback shape. Both
+# behaviours are UNCHANGED, but they are no longer documented in the evaluator
+# skill — the doc pointer must follow the gate to the orchestrator's reference.
+# Comments only; zero executable change.
+RUN_QUEUE="${ROOT}/scripts/run-queue.sh"
+
+if grep -qF 'skills/fullsend/references/auto-merge-gate.md' "$RUN_QUEUE"; then
+  echo "  PASS: run-queue.sh cites the relocated auto-merge-gate reference"
+else
+  echo "  FAIL: run-queue.sh does not cite skills/fullsend/references/auto-merge-gate.md"
+  FAILED=$((FAILED+1))
+fi
+
+if grep -qE 'skills/evaluate-issue-pr/SKILL\.md|evaluator skips Step 11' "$RUN_QUEUE"; then
+  echo "  FAIL: run-queue.sh still points at the deleted evaluate-issue-pr Step 11"
+  FAILED=$((FAILED+1))
+else
+  echo "  PASS: run-queue.sh no longer points at the deleted evaluate-issue-pr Step 11"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1
