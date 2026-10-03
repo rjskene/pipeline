@@ -1,9 +1,23 @@
 #!/usr/bin/env bash
 # capture-agent-costs.sh — retroactive agent token-cost parser (dogfood-only).
 #
+# Usage: capture-agent-costs.sh [--recompute]
+#
 # Reads the dogfood observability logs and emits one normalized cost record per
 # agent invocation to .claude/logs/agent-costs.jsonl (JSON Lines, append-only,
 # idempotent by record_key). Gated behind PIPELINE_LOGS_ENABLED.
+#
+#   --recompute  Re-emit rows for record_keys ALREADY present in
+#                agent-costs.jsonl instead of skipping them. The idempotency
+#                `seen` set is normally seeded from the output file, which makes
+#                historical rows uncorrectable; --recompute skips ONLY that
+#                seeding, so a backfill re-emits every row with fresh values.
+#                Consumers take `group_by(.record_key) | last`, so the fresh row
+#                wins. This is the correction path for the pre-#1443 rows that
+#                summed transcript usage per LINE and are ~2x high on the input
+#                side. The in-run `seen.add` calls are UNCONDITIONAL, so one
+#                invocation still never emits a key twice; the #830/#1299
+#                lower-bound suppression (`complete_tuples`) is also unaffected.
 #
 #   HEADLESS pass — .claude/logs/runs.log
 #       Each run resolves a Claude Code transcript at
@@ -88,6 +102,23 @@ source "$THIS_DIR/_logging.sh"
 # shellcheck source=/dev/null
 source "$THIS_DIR/_token-usage-lib.sh"
 
+# Argument parsing runs BEFORE the logging gate so --help answers even when
+# logging is disabled.
+RECOMPUTE=false
+for arg in "$@"; do
+  case "$arg" in
+    --recompute) RECOMPUTE=true ;;
+    -h|--help)
+      echo "Usage: capture-agent-costs.sh [--recompute]   (--recompute re-emits rows for already-seen record_keys)"
+      exit 0
+      ;;
+    *)
+      echo "capture-agent-costs: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
 if ! pipeline_logging_enabled; then
   # Loud, machine-detectable skip signal (#790). The stderr line is the human
   # message; the stdout marker is what the tokenomics skill greps for so it can
@@ -127,10 +158,11 @@ mkdir -p "$logs_dir" "$out_logs_dir"
 # All record emission, parsing, idempotency, and counters happen in python so
 # JSON construction matches the #643 contract exactly.
 python3 - \
-  "$runs_log" "$subagents_log" "$sidecar_dir" "$out" "${HOME:-}" <<'PY'
+  "$runs_log" "$subagents_log" "$sidecar_dir" "$out" "${HOME:-}" "$RECOMPUTE" <<'PY'
 import datetime, glob, hashlib, json, os, re, sys
 
-runs_log, subagents_log, sidecar_dir, out_path, home = sys.argv[1:6]
+runs_log, subagents_log, sidecar_dir, out_path, home, recompute_s = sys.argv[1:7]
+recompute = recompute_s == "true"
 
 STAGE_PATTERNS = [
     (r"\b(eval(uate)?[ -]?(issue[ -]?)?pr|pr[ -]?eval|finish[ -]?eval[ -]?pr)\b", "pr-eval"),
@@ -383,10 +415,17 @@ if os.path.exists(out_path):
                 rec = json.loads(line)
             except ValueError:
                 continue
-            try:
-                seen.add(rec["record_key"])
-            except (KeyError, TypeError):
-                pass
+            # --recompute (#1443) skips ONLY this seeding, so already-emitted
+            # record_keys are re-emitted with fresh values (last-write-wins at
+            # the consumer). complete_tuples below stays UNCONDITIONAL so the
+            # #830/#1299 lower-bound suppression still holds on a recompute, and
+            # the in-run seen.add calls stay unconditional so one invocation
+            # never emits a key twice.
+            if not recompute:
+                try:
+                    seen.add(rec["record_key"])
+                except (KeyError, TypeError):
+                    pass
             if rec.get("usage_complete") is True:
                 complete_tuples.add((
                     rec.get("session_id", ""),

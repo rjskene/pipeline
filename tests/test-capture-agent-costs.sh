@@ -628,4 +628,95 @@ pass "backfill dedupes by message.id; stamps turns/ctx (0 when no transcript)"
 
 rm -rf "$home" "$proj"
 
+# ---------------------------------------------------------------------------
+# --recompute (#1443). Rows written before the message.id dedupe are ~2x high on
+# the input side, and plain idempotency (the `seen` set seeded from disk) makes
+# them uncorrectable: a re-run appends nothing. --recompute skips ONLY that
+# seeding, so already-seen record_keys are re-emitted with fresh values;
+# consumers take `group_by(.record_key) | last`, so the fresh row wins. Own
+# mktemp env so it cannot perturb the "all record_keys unique" assertions above
+# (a recompute DELIBERATELY duplicates keys).
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/subagents.log"      # headless pass only
+rc_wt="/home/fix/claude-pipeline/.claude/worktrees/wt-recomp"
+printf '%s\tsession=%s\tissue=%s\tpath=B\tskill=execute-issue-plan\tworktree=%s\n' \
+  "2026-05-30T10:00:00Z" "sess-recomp" "1443" "$rc_wt" \
+  > "$proj/.claude/logs/runs.log"
+rc_slug="$(tu_worktree_slug "$rc_wt")"
+mkdir -p "$home/.claude/projects/$rc_slug"
+rc_transcript="$home/.claude/projects/$rc_slug/sess-recomp.jsonl"
+cp "$FIX/transcript.jsonl" "$rc_transcript"
+rc_out="$proj/.claude/logs/agent-costs.jsonl"
+
+run_rc() {
+  HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+    bash "$SCRIPT" "$@" >/dev/null 2>&1
+}
+count_rc() {
+  if [ -f "$rc_out" ]; then wc -l < "$rc_out" | tr -d ' '; else echo 0; fi
+}
+
+run_rc
+n_rc1="$(count_rc)"
+[ "$n_rc1" = "1" ] || fail "--recompute: first run must append 1 record, got $n_rc1"
+
+run_rc
+n_rc2="$(count_rc)"
+[ "$n_rc2" = "1" ] || fail "--recompute: a plain re-run must append 0 (1 -> $n_rc2)"
+pass "--recompute: plain re-run is still idempotent"
+
+# Change the transcript's token values WITHOUT touching its timestamps, so the
+# re-emitted row keeps the SAME record_key but carries fresh sums (350/70/16/5
+# -> 350/149/16/5, total 441 -> 520). That makes "the fresh row wins" observable.
+sed -i 's/"output_tokens":20/"output_tokens":99/' "$rc_transcript"
+
+run_rc --recompute
+n_rc3="$(count_rc)"
+[ "$n_rc3" = "2" ] || fail "--recompute: must re-emit the seen record_key (1 -> $n_rc3, want 2)"
+pass "--recompute: re-emits rows for already-seen record_keys"
+
+python3 - "$rc_out" <<'PY' || exit 1
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert len(rows) == 2, "expected 2 rows, got %d" % len(rows)
+assert rows[0]["record_key"] == rows[1]["record_key"], \
+    "recompute must reuse the SAME record_key: %r vs %r" % (
+        rows[0]["record_key"], rows[1]["record_key"])
+assert rows[0]["tokens"]["total"] == 441, "stale row total: %r" % rows[0]["tokens"]["total"]
+# group_by(.record_key) | last semantics: the LAST row on disk is the fresh one.
+last = {}
+for r in rows:
+    last[r["record_key"]] = r
+fresh = last[rows[0]["record_key"]]
+assert fresh is rows[1], "the last row for the key must be the re-emitted one"
+assert fresh["tokens"]["output"] == 149, "fresh output: %r" % fresh["tokens"]["output"]
+assert fresh["tokens"]["total"] == 520, "fresh total: %r" % fresh["tokens"]["total"]
+print("--recompute (#1443) last-write-wins assertions OK")
+PY
+pass "--recompute: the LAST row for a re-emitted record_key carries fresh values"
+
+# Negative control: an unknown argument must be REJECTED (non-zero), not
+# silently ignored, and must append nothing.
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" --totally-bogus >/dev/null 2>&1
+rc_bogus=$?
+[ "$rc_bogus" != "0" ] || fail "--recompute: unknown argument must exit non-zero, got 0"
+n_rc4="$(count_rc)"
+[ "$n_rc4" = "2" ] || fail "--recompute: unknown argument must append nothing (2 -> $n_rc4)"
+pass "--recompute: unknown argument exits non-zero and writes nothing"
+
+# --help is answered before the logging gate, so it works with logging off.
+help_out="$(env -u PIPELINE_LOGS_ENABLED HOME="$home" CLAUDE_PROJECT_DIR="$proj" \
+  bash "$SCRIPT" --help 2>&1)"
+rc_help=$?
+[ "$rc_help" = "0" ] || fail "--recompute: --help must exit 0, got $rc_help"
+case "$help_out" in
+  *--recompute*) pass "--help documents --recompute" ;;
+  *) fail "--help output does not mention --recompute: $help_out" ;;
+esac
+
+rm -rf "$home" "$proj"
+
 echo "all tests passed"
