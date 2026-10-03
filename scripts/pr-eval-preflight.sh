@@ -12,6 +12,7 @@
 # ARM ORDER IS THE PRECEDENCE CONTRACT (same convention as
 # scripts/auto-merge-gate.sh's token order):
 #
+#   0. argv/config     fatal: usage, config, no-pr
 #   1. body-contract   fatal: body-contract            fixes: body-contract
 #   2. ci              fatal: ci-red                   advisory: ci-pending,
 #                                                                no-ci,
@@ -55,10 +56,27 @@ ISSUE=""
 OPT_PR=""
 OPT_WORKTREE=""
 
+USAGE=""
+
+# A value-taking flag MUST be followed by a value: `shift 2` with one word left
+# FAILS, and without `set -e` the loop then re-matches the same flag FOREVER —
+# no stdout line, no exit, the caller's foreground Bash call hangs to its
+# timeout. fullsend Step 7 renders `--worktree <abs>` as the last argv pair, so
+# an unsubstituted placeholder is one token away from stranding a wave.
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --pr)       OPT_PR="${2:-}"; shift 2 ;;
-    --worktree) OPT_WORKTREE="${2:-}"; shift 2 ;;
+    --pr|--worktree)
+      if [ "$#" -lt 2 ]; then
+        echo "pr-eval-preflight: ERROR $1 requires a value" >&2
+        USAGE=1
+        shift
+        continue
+      fi
+      case "$1" in
+        --pr)       OPT_PR="$2" ;;
+        --worktree) OPT_WORKTREE="$2" ;;
+      esac
+      shift 2 ;;
     --help|-h)
       echo "Usage: pr-eval-preflight.sh <issue> [--pr <num>] [--worktree <abs-path>]" >&2
       exit 0 ;;
@@ -68,12 +86,40 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$ISSUE" ]; then
-  echo "pr-eval-preflight: ERROR missing <issue> argument" >&2
+if [ -n "$USAGE" ] || [ -z "$ISSUE" ]; then
+  [ -z "$ISSUE" ] && echo "pr-eval-preflight: ERROR missing <issue> argument" >&2
   echo "PREFLIGHT=block REASON=usage PR=0 FIXED=none"
   exit 0
 fi
-: "${PIPELINE_REPO:?pr-eval-preflight: PIPELINE_REPO must be set}"
+
+# ---------------------------------------------------------------------------
+# #801 config recovery, BEFORE any arm reads a knob. Callers source
+# pipeline.config in one bash step and run this in a SEPARATE subshell, where a
+# non-exported value is simply absent. Same recovery as auto-merge-gate.sh, but
+# hoisted ABOVE every arm: read from below ARM 2, a pipeline.config-only
+# `PIPELINE_CI_CHECK_ENABLED=""` opt-out would be silently inverted into a
+# `ci-red` block, and PIPELINE_WORKTREE_PREFIX would be out of scope for the
+# PR-resolution cascade while in scope for ARM 4's identical lookup.
+# ---------------------------------------------------------------------------
+if [ -z "${PIPELINE_REPO:-}" ] || [ -z "${PIPELINE_BASE_BRANCH:-}" ]; then
+  _pf_root="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
+  _pf_cfg="$_pf_root/pipeline.config"
+  if [ ! -f "$_pf_cfg" ]; then
+    _pf_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    [ -n "$_pf_root" ] && _pf_cfg="$_pf_root/pipeline.config"
+  fi
+  # shellcheck disable=SC1090
+  [ -f "$_pf_cfg" ] && source "$_pf_cfg"
+fi
+
+# PIPELINE_REPO is the one knob with no in-band fallback — every arm needs it
+# to reach GitHub. Report it as a LINE, never as a bare nonzero exit: the
+# orchestrator parses a line and has no handling for "no output at all".
+if [ -z "${PIPELINE_REPO:-}" ]; then
+  echo "pr-eval-preflight: ERROR PIPELINE_REPO is unset and pipeline.config could not be sourced" >&2
+  echo "PREFLIGHT=block REASON=config PR=0 FIXED=none"
+  exit 0
+fi
 
 FATAL=""
 ADVISORY=""
@@ -150,12 +196,25 @@ SECTION_RE='^##[[:space:]]+Pre-existing failures[[:space:]]*$'
 # body_has_section <scan-copy>
 body_has_section() { grep -qE "$SECTION_RE" <<<"$1"; }
 
-# body_claims_failures <scan-copy> — TRUE when the body asserts that failures
-# exist, in which case the section is missing INFORMATION and only a human (or
-# the evaluator) can supply it. Two arms:
+# body_claims_failures <scan-copy> — TRUE when the body asserts that STANDING
+# failures exist, in which case the section is missing INFORMATION and only a
+# human (or the evaluator) can supply it. Two arms:
 #   (A) whole body — a `PRE-EXISTING:` line with a non-blank, non-`none` value.
-#   (B) the `## Test plan` section ONLY — a line mentioning a failure that is
-#       not one of the recognised negations.
+#   (B) the `## Test plan` section ONLY — a line that pairs a failure word with
+#       a STANDING-failure qualifier (`pre-existing` / `known failure`).
+#
+# WHY ARM B DEMANDS THE QUALIFIER. A bare `fail` keyword scan cannot tell a
+# standing failure from the tdd-implementer discipline describing itself
+# ("RED: the test fails before the fix", "watched it fail for the right
+# reason", "negative control: the guard FAILS", a filename like
+# `test-fallback-on-failure.sh`). Those phrasings are the normal content of
+# this repo's own PR bodies, and this arm's verdict is FATAL and sits BEFORE
+# any evaluator dispatch — so a false positive does not degrade, it WEDGES the
+# wave (no eval, no label change, nothing to retry). The qualifier is what
+# makes the signal precise enough to carry a pre-dispatch block; the residual
+# risk runs the other way (a vague "2 tests fail" body gets auto-fixed to
+# `PRE-EXISTING: none`), which is bounded: the write is surfaced as
+# `FIXED=body-contract` for audit and the evaluator runs the suite itself.
 body_claims_failures() {
   local scan="$1" hits tp
   hits="$(grep -E 'PRE-EXISTING:[[:space:]]*[^[:space:]]' <<<"$scan" || true)"
@@ -163,18 +222,32 @@ body_claims_failures() {
   [ -n "$hits" ] && return 0
 
   tp="$(awk '/^##[[:space:]]+Test plan/{f=1;next} f && /^##[[:space:]]/{f=0} f' <<<"$scan")"
-  hits="$(grep -iE 'fail' <<<"$tp" || true)"
+  hits="$(grep -iE 'pre-?existing|pre existing|known (test )?failure' <<<"$tp" || true)"
+  hits="$(grep -iE 'fail' <<<"$hits" || true)"
   hits="$(grep -ivE '(no|zero|none|0) (known )?(pre-?existing )?fail|fail[a-z]*[:=][[:space:]]*(none|0)|all (tests|checks) pass' <<<"$hits" || true)"
   [ -n "$hits" ] && return 0
   return 1
 }
 
 BODY="$(gh pr view "$PR" --repo "$PIPELINE_REPO" --json body --jq .body 2>/dev/null)"
+BODY_RC=$?
 # Strip CR into the SCAN COPY ONLY — never rewrite the stored body's line
 # endings (the #1158 CRLF seam cuts both ways).
 SCAN="$(tr -d '\r' <<<"$BODY")"
 
-if body_has_section "$SCAN"; then
+# FAIL CLOSED ON AN UNREADABLE BODY, exactly as the ci arm does for an
+# unreadable rollup. A `gh` blip (rate limit, 5xx, network) returns rc!=0 with
+# EMPTY stdout, which is byte-identical to "the body is empty" — and the fix
+# below is an APPEND to `$BODY`, so an empty `$BODY` silently turns it into a
+# FULL OVERWRITE of a live PR description. That is irreversible (GitHub keeps
+# no body history) and it destroys the `Closes #<N>` line that
+# closedByPullRequestsReferences — and this script's own stage-1 PR cascade —
+# depends on. An rc=0 empty body is treated the same way: there is nothing to
+# append TO, and an empty body is itself a #1329 violation a human must fix.
+if [ "$BODY_RC" -ne 0 ] || [ -z "$SCAN" ]; then
+  echo "pr-eval-preflight: BLOCK body-contract — PR #$PR's body is unreadable or empty (gh rc=$BODY_RC); NOT writing, an append over an unread body would clobber the description" >&2
+  fatal body-contract
+elif body_has_section "$SCAN"; then
   :
 elif body_claims_failures "$SCAN"; then
   echo "pr-eval-preflight: BLOCK body-contract — PR #$PR describes pre-existing failures but carries no '## Pre-existing failures' section (#1329); a human or the evaluator must list them" >&2
@@ -233,9 +306,20 @@ else
   elif jq -e '.statusCheckRollup | length == 0 or (group_by(.name) | all(last.conclusion == "SUCCESS"))' <<<"$ROLLUP_JSON" >/dev/null 2>&1; then
     :
   else
-    CI_BAD="$(tr -d '\r' <<<"$(jq -r '[.statusCheckRollup | group_by(.name)[] | last.conclusion]
+    # statusCheckRollup is HETEROGENEOUS: CheckRun rows carry .name/.conclusion,
+    # StatusContext rows (commit statuses — Buildkite/CircleCI/Jenkins/Travis)
+    # carry .context/.state. Reading only .conclusion sees `null` for a
+    # definitely-FAILED commit status and calls the rollup merely unsettled, so
+    # an Opus eval gets dispatched on a red head — the exact spend this script
+    # exists to prevent. Group by `.name // .context` and read
+    # `.conclusion // .state`. SKIPPED/NEUTRAL stay UNCLASSIFIED on purpose:
+    # they are already non-green under the gate's predicate (so no eval trusts
+    # them), and calling them fatal here would newly block evals the pipeline
+    # runs today over a benignly-skipped conditional job.
+    CI_BAD="$(tr -d '\r' <<<"$(jq -r '[.statusCheckRollup | group_by(.name // .context)[] | last | (.conclusion // .state)]
         | map(select(. == "FAILURE" or . == "CANCELLED" or . == "TIMED_OUT"
-                     or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE"))
+                     or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE"
+                     or . == "ERROR"))
         | length' <<<"$ROLLUP_JSON" 2>/dev/null)")"
     if ! [[ "$CI_BAD" =~ ^[0-9]+$ ]]; then
       echo "pr-eval-preflight: WARN could not classify PR #$PR's rollup conclusions — failing closed as ci-red" >&2
@@ -253,20 +337,6 @@ fi
 # ===========================================================================
 # ARM 3 — base / mergeable.
 # ===========================================================================
-
-# Recover an unexported PIPELINE_BASE_BRANCH exactly as auto-merge-gate.sh does
-# (#801): callers source pipeline.config in one bash step and run this in a
-# separate subshell, where a non-exported value is simply absent.
-if [ -z "${PIPELINE_BASE_BRANCH:-}" ]; then
-  _pf_root="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
-  _pf_cfg="$_pf_root/pipeline.config"
-  if [ ! -f "$_pf_cfg" ]; then
-    _pf_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    [ -n "$_pf_root" ] && _pf_cfg="$_pf_root/pipeline.config"
-  fi
-  # shellcheck disable=SC1090
-  [ -f "$_pf_cfg" ] && source "$_pf_cfg"
-fi
 
 PR_META="$(gh pr view "$PR" --repo "$PIPELINE_REPO" --json baseRefName,mergeable 2>/dev/null)"
 PR_BASE="$(tr -d '\r' <<<"$(jq -r '.baseRefName // empty' <<<"$PR_META" 2>/dev/null)")"

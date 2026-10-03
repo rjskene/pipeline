@@ -12,12 +12,17 @@ PREFLIGHT=ok|block REASON=<token> PR=<n> FIXED=<csv|none>
 
 | # | Arm | Fatal | Advisory | Fix |
 |---|-----|-------|----------|-----|
+| 0 | argv / config (pre-arm) | `usage`, `config`, `no-pr` | — | — |
 | 1 | body-contract (`## Pre-existing failures`, #1329) | `body-contract` | — | `body-contract` |
 | 2 | ci rollup (the `auto-merge-gate.sh` jq predicate) | `ci-red` | `ci-pending`, `no-ci`, `ci-disabled` | — |
 | 3 | base / mergeable (next-branch aware, #1131) | `base` | `mergeable` | — |
 | 4 | guards (cross-cutting aggregator + branch cruft) | `guards` | — | — |
 
-The first fatal arm wins. With no fatal, the first advisory is reported. Neither ⇒ `REASON=none`.
+The first fatal arm wins. With no fatal, the first advisory is reported. Neither ⇒ `REASON=none`. Arm 0 exists so a config/argv problem is still a LINE: `PIPELINE_REPO` unset (the #801 subshell seam) reports `block REASON=config` rather than exiting silently, and a value-less `--pr`/`--worktree` reports `block REASON=usage` rather than spinning in the argv loop.
+
+### What arm 1 will and will not write
+
+The auto-fix APPENDS; it never replaces. So an unreadable or empty body (`gh` rc != 0 — rate limit, 5xx) is fatal `body-contract` with NO write at all: appending to an unread body is a full-description overwrite, and GitHub keeps no body history. The fatal-claim arm also demands a STANDING-failure qualifier (`pre-existing`, `known failure`) rather than a bare `fail` keyword — the `tdd-implementer` discipline describes itself as "RED: the test fails before the fix" and #1218 demands negative controls ("the guard FAILS on the unfixed script"). This verdict sits BEFORE any dispatch, so a false positive does not degrade: it wedges the wave.
 
 ## Acting on the line (Step 7)
 
@@ -43,7 +48,7 @@ An `ok` with `REASON=no-ci` / `ci-disabled` / `ci-pending` is NOT a green verdic
 Compensating controls, in order of when they fire:
 
 1. The preflight blocks `ci-red` **before** any Opus token is spent.
-2. `scripts/auto-merge-gate.sh` re-reads the rollup at merge time and emits `block-ci`; it is fail-closed on a pending conclusion, so no bad merge is reachable.
+2. `scripts/auto-merge-gate.sh` re-reads the rollup at merge time and emits `block-ci`, plus `block-mergestate` on any non-`CLEAN` `mergeStateStatus` — which covers `UNSTABLE` (a failing or pending non-required check). One window survives: in the seconds between a push and GitHub CREATING the check run, the new head's rollup is EMPTY and `mergeStateStatus` is `CLEAN`, so the gate greenlights. That is why control 3 is not optional.
 3. The `ci-pending` branch and every post-push re-check still emit the full rollup → `--watch` → rollup triple, so the hook keeps its teeth exactly where CI is genuinely unsettled. The evaluator's Step 5 states this: the preflight line is stale the moment it pushes.
 
 No hook file is edited, so `tests/test-cage-invariant-enforce-ci-wait.sh` is unaffected — what changed is the hook's reach, pinned by `tests/test-pr-eval-preflight-wiring-prose.sh`.

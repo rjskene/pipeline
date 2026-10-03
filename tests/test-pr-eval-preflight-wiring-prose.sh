@@ -161,12 +161,40 @@ inc_scenario "(i) a Step 7 fix push re-arms the full rollup -> watch -> rollup t
 # 5d). A `git push` invalidates the preflight line, and on that one path the
 # hook's teeth are the only thing standing between an Approved verdict and a
 # red head — so the triple must be re-emitted there.
-want_body "$EVAL_SKILL" 'git push' \
-  "the collapsed Step 5 names the invalidating event (git push)"
-if printf '%s\n' "$CI_REGION" | grep -qiE 'stale|invalidat|re-?(emit|arm|read|watch|run)'; then
-  pass_msg "the CI_CHECK region states the preflight line goes stale on a push and the triple is re-emitted"
+#
+# ANCHORED, not two loose keyword greps. `want_body … 'git push'` is satisfied
+# by Step 7's own `git push`, and a bare `re-read`/`stale` grep over the region
+# is satisfied by the `ci-pending` bullet — so the pair passed with this whole
+# amendment deleted. The claim being pinned is a CO-LOCATION: ONE line must
+# name the invalidating event AND order the re-emit.
+PUSH_LINES="$(grep -iE 'push' <<<"$CI_REGION" || true)"
+# The step TITLE also says "re-arm after a push", so the co-location test
+# additionally demands the ORDER itself — the three lines / the triple. A title
+# cannot satisfy that, only an instruction can.
+PUSH_ORDER="$(grep -iE 'stale|invalidat|re-?(emit|arm)' <<<"$PUSH_LINES" || true)"
+if [ -z "$PUSH_LINES" ]; then
+  fail_msg "the CI_CHECK region never names a push — old Step 5d was deleted without a replacement"
+elif grep -qiE 'three|triple' <<<"$PUSH_ORDER"; then
+  pass_msg "one CI_CHECK line co-locates the push with the order to re-emit all three lines"
 else
-  fail_msg "the CI_CHECK region carries no post-push re-watch instruction — old Step 5d was deleted without a replacement"
+  fail_msg "no single CI_CHECK line pairs the push with an order to re-emit the triple (the post-push re-watch is unpinned)"
+fi
+# The Step 8 rebase also pushes, so scoping the re-arm to Step 7 alone leaves
+# the rebase path with neither prose nor hook coverage.
+if grep -qiE 'rebase|step 8' <<<"$PUSH_LINES"; then
+  pass_msg "the re-arm instruction covers the Step 8 rebase push, not just Step 7 fixes"
+else
+  fail_msg "the re-arm instruction names only Step 7 — a Step 8 rebase push re-arms nothing"
+fi
+# hooks/enforce-ci-wait.py requires the SECOND rollup row's timestamp to be
+# strictly LATER than the --watch row's, and hooks/log-tool-use.sh writes one
+# row per Bash call. Three commands in ONE call therefore share a timestamp and
+# can NEVER satisfy the hook: Stop is denied three times and the issue is
+# escalated `needs-human`. The prose must order separate calls.
+if grep -qiE 'separate' <<<"$CI_REGION"; then
+  pass_msg "the CI_CHECK region orders the triple as SEPARATE bash calls (one combined call can never satisfy the hook)"
+else
+  fail_msg "the CI_CHECK region does not require separate bash calls — one combined call denies Stop and escalates needs-human"
 fi
 
 # ===========================================================================

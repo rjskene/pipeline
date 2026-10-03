@@ -152,14 +152,15 @@ A guard that passes is not evidence until you have seen it fail on something.
 <!-- BEGIN CI_CHECK -->
 5. **CI status — trust the preflight line, re-arm after a push.** A red PR must never receive Approved.
 
-   `scripts/pr-eval-preflight.sh` settled the rollup before you were dispatched, and `REASON=ci-red` blocks that dispatch — a definitely-red head should never reach you. Act on your prompt's `PREFLIGHT=`/`REASON=` line:
+   `scripts/pr-eval-preflight.sh` settled the rollup before your dispatch, and `REASON=ci-red` blocks it — a red head should never reach you. Act on your prompt's `PREFLIGHT=`/`REASON=` line:
 
    - `ok` + `none`/`mergeable` — green: issue NO rollup read and NO `--watch`.
-   - `ok` + `ci-pending` — unsettled: emit the triple below, then judge the re-read.
-   - `ok` + `no-ci`/`ci-disabled` — untrustworthy CI; Step 4's fallback already ran tests.
-   - no line (a `--spawn` session or a direct invocation) — run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pr-eval-preflight.sh" <N> --pr $PR_NUM` ONCE yourself and read its single line; it is idempotent.
+   - `ok` + `ci-pending` — unsettled: emit the triple below, then judge it.
+   - `ok` + `no-ci`/`ci-disabled` — untrusted CI; Step 4's fallback ran tests.
+   - no line (a `--spawn` session or direct invocation) — run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pr-eval-preflight.sh" <N> --pr $PR_NUM` ONCE yourself; it is idempotent.
+   - `block` (only from that self-run) — STOP: no verdict, report `block-<REASON>`.
 
-   **The preflight line is STALE the moment you push.** After ANY `git push` in Step 7, and on `ci-pending`, re-emit all three lines below in the FOREGROUND before the verdict — a bounded blocking wait (10-min one-shot, 30s poll) returning nonzero on the first failing check. Any FAILURE/CANCELLED in the re-read forbids Approved: fix within budget (≤3 files, no new design decisions), commit, push, re-emit; otherwise post "Flagged" with the failing job names and first error line (`gh run view <RUN_ID> --repo $PIPELINE_REPO --log-failed | head -20`, `RUN_ID` from the failed check's `detailsUrl`) in the `**CI status:**` row (Step 9).
+   **The preflight line is STALE the moment you push.** After ANY `git push` — Step 7's fixes or Step 8's rebase — and on `ci-pending`, re-emit all three lines below as THREE SEPARATE foreground `bash` calls (the hook compares row timestamps; one combined call can never satisfy it) before the verdict — a bounded blocking wait (10-min one-shot, 30s poll) returning nonzero on the first failing check. Any FAILURE/CANCELLED in the re-read forbids Approved: fix within budget (≤3 files, no new design decisions), commit, push, re-emit; otherwise post "Flagged" with the failing job names and first error line (`gh run view <RUN_ID> --repo $PIPELINE_REPO --log-failed | head -20`, `RUN_ID` from the failed check's `detailsUrl`) in the `**CI status:**` row (Step 9).
 
    ```bash
    gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup

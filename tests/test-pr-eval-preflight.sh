@@ -117,6 +117,11 @@ case "$ALL" in
     exit 0
     ;;
   *"pr view"*"--json body"*)
+    # STUB_BODY_READ_FAIL simulates the `gh` blip class (rate limit, 5xx,
+    # network): NONZERO exit with EMPTY stdout. Indistinguishable from an empty
+    # body unless the caller checks the exit status — which is the whole point
+    # of case 2b.
+    [ "${STUB_BODY_READ_FAIL:-0}" = "1" ] && exit 1
     [ -n "${STUB_BODY_FILE:-}" ] && [ -f "$STUB_BODY_FILE" ] && cat "$STUB_BODY_FILE"
     exit 0
     ;;
@@ -193,6 +198,7 @@ reset_env() {
   export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}'
   export STUB_ROLLUP_FAIL=0
   export STUB_EDIT_FAIL=0
+  export STUB_BODY_READ_FAIL=0
   export STUB_BASE="staging"
   export STUB_MERGEABLE="MERGEABLE"
   export STUB_LABELS='[]'
@@ -264,6 +270,48 @@ else
   fail_msg "case 2: the append CLOBBERED the original body"
 fi
 
+inc_scenario "Case 2b: an UNREADABLE body never gets written -> block, body intact"
+#
+# The read is `gh pr view … --json body`; a `gh` blip returns rc!=0 with EMPTY
+# stdout, which is byte-identical to "the body is empty". If the arm ignores
+# the exit status, the "append" becomes a FULL OVERWRITE of a live PR
+# description — irreversible (GitHub keeps no body history) and it destroys the
+# `Closes #<N>` line that closedByPullRequestsReferences (and this script's own
+# stage-1 PR cascade) depends on. Fail CLOSED like the ci arm: no write at all.
+reset_env
+printf 'Closes #1445\n\n## Summary\n- real content worth keeping\n' > "$STUB_BODY_FILE"
+BODY_BEFORE="$(cat "$STUB_BODY_FILE")"
+export STUB_BODY_READ_FAIL=1
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "unreadable body" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
+expect_shape "case 2b"
+if grep -q 'pr edit' "$STUB_GH_CALLS"; then
+  fail_msg "case 2b: the arm WROTE the body after a failed read (clobber)"
+else
+  pass_msg "case 2b: no 'pr edit' after a failed read"
+fi
+if [ "$(cat "$STUB_BODY_FILE")" = "$BODY_BEFORE" ]; then
+  pass_msg "case 2b: the stored body is byte-identical to before the run"
+else
+  fail_msg "case 2b: the stored body CHANGED: [$(cat "$STUB_BODY_FILE")]"
+fi
+export STUB_BODY_READ_FAIL=0
+
+inc_scenario "Case 2c: an EMPTY body is unproven, not appendable -> block"
+# rc=0 with an empty body: still nothing to append TO, and an empty PR body is
+# itself a #1329 violation (no Summary, no Test plan). A write here would be a
+# full-body replacement dressed up as an append.
+reset_env
+: > "$STUB_BODY_FILE"
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "empty body" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
+expect_shape "case 2c"
+if grep -q 'pr edit' "$STUB_GH_CALLS"; then
+  fail_msg "case 2c: the arm wrote a body over an empty read"
+else
+  pass_msg "case 2c: no 'pr edit' on an empty body"
+fi
+
 inc_scenario "Case 3: section absent + un-negated PRE-EXISTING line -> block"
 reset_env
 printf '%s\n\nPRE-EXISTING: tests/foo.sh (untouched; base CI green)\n' "$BODY_CLEAN_TESTPLAN" > "$STUB_BODY_FILE"
@@ -276,7 +324,7 @@ else
   pass_msg "case 3: no auto-fix on a body claiming failures"
 fi
 
-inc_scenario "Case 4: section absent + test plan describing a failure -> block"
+inc_scenario "Case 4: section absent + test plan claiming PRE-EXISTING failures -> block"
 reset_env
 cat > "$STUB_BODY_FILE" <<'BODY'
 Closes #1445
@@ -285,11 +333,23 @@ Closes #1445
 - did the thing
 
 ## Test plan
-- [x] suite run — 2 tests fail on this branch
+- [x] suite run — 2 pre-existing failures on this branch (tests/foo.sh)
 BODY
 run_pf 1445 --pr 200 --worktree "$TMP/wt"
-expect_line "test plan describes a failure" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
+expect_line "test plan claims pre-existing failures" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
 expect_shape "case 4"
+
+inc_scenario "Case 4a: 'known failure' is the second recognised standing-failure phrasing"
+reset_env
+cat > "$STUB_BODY_FILE" <<'BODY'
+Closes #1445
+
+## Test plan
+- [x] suite run — one known failure in tests/bar.sh, untouched by this PR
+BODY
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "known failure claim" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
+expect_shape "case 4a"
 
 inc_scenario "Case 4b: 'no pre-existing failures' prose is NEGATED, not a claim"
 reset_env
@@ -302,6 +362,33 @@ BODY
 run_pf 1445 --pr 200 --worktree "$TMP/wt"
 expect_line "negated failure prose" "PREFLIGHT=ok REASON=none PR=200 FIXED=body-contract"
 expect_shape "case 4b"
+
+inc_scenario "Case 4c: ORDINARY TDD PROSE is not a standing-failure claim"
+#
+# This arm sits BEFORE any evaluator dispatch, so a false positive does not
+# degrade — it WEDGES the wave (no eval, no label change, nothing to retry).
+# Every phrasing below is the tdd-implementer discipline or a #1218 negative
+# control described verbatim, i.e. the normal content of this repo's own PR
+# bodies. A bare `fail` keyword scan blocks all of them; the arm must require a
+# STANDING-failure qualifier (pre-existing / known failure) before it fires.
+TDD_LINES=(
+  '- [x] RED: new test fails before the fix, green after'
+  '- [x] watched the test fail for the right reason, then pass'
+  '- [x] negative control: the guard FAILS on the unfixed script'
+  '- [x] mutation-tested: the assertion fails when the feature is removed'
+  '- [x] added tests/test-fallback-on-failure.sh'
+)
+for _tdd in "${TDD_LINES[@]}"; do
+  reset_env
+  printf 'Closes #1445\n\n## Test plan\n%s\n' "$_tdd" > "$STUB_BODY_FILE"
+  run_pf 1445 --pr 200 --worktree "$TMP/wt"
+  if [ "$OUT" = "PREFLIGHT=ok REASON=none PR=200 FIXED=body-contract" ]; then
+    pass_msg "case 4c: TDD prose auto-fixed, not blocked -> [$_tdd]"
+  else
+    fail_msg "case 4c: TDD prose WEDGED the wave -> [$_tdd] gave [$OUT]"
+  fi
+  expect_shape "case 4c"
+done
 
 inc_scenario "Case 5: gh pr edit fails -> block, FIXED=none (never claim a write)"
 reset_env
@@ -399,6 +486,35 @@ export STUB_ROLLUP='{"statusCheckRollup":[]}'
 run_pf 1445 --pr 200 --worktree "$TMP/wt"
 expect_line "empty rollup" "PREFLIGHT=ok REASON=no-ci PR=200 FIXED=none"
 expect_shape "case 11"
+
+inc_scenario "Case 11b: a FAILED COMMIT STATUS is ci-red, not ci-pending"
+#
+# statusCheckRollup is heterogeneous: CheckRun entries carry .name/.conclusion,
+# StatusContext entries (Buildkite, CircleCI, Jenkins, Travis — i.e. commit
+# statuses) carry .context/.state. A classifier that reads only .conclusion
+# sees `null` for a definitely-FAILED commit status and calls the rollup
+# unsettled, so an Opus eval is dispatched on a red head — which is precisely
+# the spend the preflight exists to prevent. auto-merge-gate.sh's predicate
+# already treats this as non-green, so classifying it as pending also diverges
+# from the gate.
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[{"__typename":"StatusContext","context":"buildkite/build","state":"FAILURE"}]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+expect_line "failed commit status" "PREFLIGHT=block REASON=ci-red PR=200 FIXED=none"
+expect_shape "case 11b"
+
+inc_scenario "Case 11c: a green COMMIT STATUS is not reported as a definite failure"
+# Negative control for 11b: the classifier must key off the BAD state values,
+# not merely off "this entry has no .conclusion".
+reset_with_section
+export STUB_ROLLUP='{"statusCheckRollup":[{"__typename":"StatusContext","context":"buildkite/build","state":"SUCCESS"}]}'
+run_pf 1445 --pr 200 --worktree "$TMP/wt"
+if [ "$OUT" = "PREFLIGHT=block REASON=ci-red PR=200 FIXED=none" ]; then
+  fail_msg "case 11c: a SUCCESS commit status was classified as a definite failure: [$OUT]"
+else
+  pass_msg "case 11c: a SUCCESS commit status is not ci-red -> $OUT"
+fi
+expect_shape "case 11c"
 
 inc_scenario "Case 12: unreadable rollup -> block REASON=ci-red (fail CLOSED)"
 reset_with_section
@@ -535,13 +651,35 @@ export STUB_CRUFT_RC=0
 
 inc_scenario "Case 20: precedence — body-contract outranks a simultaneous ci-red"
 reset_env
-printf 'Closes #1445\n\n## Test plan\n- [x] suite run — 2 tests fail here\n' > "$STUB_BODY_FILE"
+printf 'Closes #1445\n\n## Test plan\n- [x] suite run — 2 pre-existing failures here\n' > "$STUB_BODY_FILE"
 export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}'
 export STUB_GUARD_RC=1
 run_pf 1445 --pr 200 --worktree "$TMP/wt"
 expect_line "arm order is the precedence contract" "PREFLIGHT=block REASON=body-contract PR=200 FIXED=none"
 expect_shape "case 20"
 export STUB_GUARD_RC=0
+
+inc_scenario "Case 20b: a value-less --pr / --worktree still emits one line and exits"
+#
+# `shift 2` with only one argv word left FAILS (and there is no `set -e`), so
+# the `while` re-matches the same flag forever: no stdout line, no exit, the
+# caller's foreground Bash call hangs to its timeout. fullsend Step 7 renders
+# `--worktree <worktree-abs-path>` as the LAST argv pair, so an unresolved
+# placeholder is exactly one token away from stranding the wave. `timeout 10`
+# below is the detector: a hang reports rc=124 and an empty OUT.
+for _flag in --pr --worktree; do
+  reset_with_section
+  : > "$STUB_GH_CALLS"
+  OUT="$(timeout 10 bash "$PF" 1445 "$_flag" 2>"$TMP/err.txt")"
+  RC=$?
+  ERR="$(cat "$TMP/err.txt")"
+  if [ "$RC" = "124" ]; then
+    fail_msg "case 20b: '$_flag' with no value HUNG (rc=124, timeout) — the one-line/exit-0 contract is violated"
+  else
+    pass_msg "case 20b: '$_flag' with no value terminated (rc=$RC)"
+  fi
+  expect_shape "case 20b ($_flag)"
+done
 
 inc_scenario "Case 21: no resolvable PR -> block REASON=no-pr PR=0"
 reset_with_section
@@ -553,5 +691,43 @@ RC=$?
 ERR="$(cat "$TMP/err.txt")"
 expect_line "unresolvable PR" "PREFLIGHT=block REASON=no-pr PR=0 FIXED=none"
 expect_shape "case 21"
+
+inc_scenario "Case 22: unset PIPELINE_REPO -> block REASON=config, still ONE line"
+# `: "${PIPELINE_REPO:?…}"` would exit 1 with ZERO stdout lines. The
+# orchestrator parses a LINE and has no handling for "no output at all", so the
+# #801 subshell seam (config sourced in one bash step, script run in another)
+# must surface as a verdict, not as silence.
+reset_with_section
+: > "$STUB_GH_CALLS"
+OUT="$(cd "$TMP" && env -u PIPELINE_REPO -u PIPELINE_BASE_BRANCH \
+         timeout 10 bash "$PF" 1445 --pr 200 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+expect_line "unset PIPELINE_REPO" "PREFLIGHT=block REASON=config PR=0 FIXED=none"
+expect_shape "case 22"
+
+inc_scenario "Case 23: a pipeline.config-only CI opt-out is HONOURED, not inverted"
+#
+# #801 seam again, from the other side: the operator's documented no-CI opt-out
+# is `PIPELINE_CI_CHECK_ENABLED=""` in pipeline.config, which is NOT exported
+# into this script's subshell. If the knob is read BEFORE the config recovery,
+# a red rollup becomes `block ci-red` — the opt-out silently inverted into a
+# hard block that strands the PR at `pr-open` with no eval.
+reset_with_section
+mkdir -p "$TMP/cfgroot"
+cat > "$TMP/cfgroot/pipeline.config" <<'CFG'
+PIPELINE_REPO="test/repo"
+PIPELINE_BASE_BRANCH="staging"
+PIPELINE_CI_CHECK_ENABLED=""
+CFG
+export STUB_ROLLUP='{"statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}'
+: > "$STUB_GH_CALLS"
+OUT="$(env -u PIPELINE_REPO -u PIPELINE_BASE_BRANCH -u PIPELINE_CI_CHECK_ENABLED \
+         PIPELINE_PROJECT_ROOT="$TMP/cfgroot" \
+         timeout 10 bash "$PF" 1445 --pr 200 --worktree "$TMP/wt" 2>"$TMP/err.txt")"
+RC=$?
+ERR="$(cat "$TMP/err.txt")"
+expect_line "config-only CI opt-out" "PREFLIGHT=ok REASON=ci-disabled PR=200 FIXED=none"
+expect_shape "case 23"
 
 summary_and_exit
