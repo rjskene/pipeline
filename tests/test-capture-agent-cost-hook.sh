@@ -12,6 +12,8 @@
 #   6. dedupe transcript usage by message.id on the Stop branch (#1443)
 #   7. stamp turns/ctx_first/ctx_last on an inline record that ADOPTS the
 #      durable subagent transcript (#1443)
+#   8. resync a pre-#1443 orchestrator state baseline instead of wedging the
+#      session, then emit a correct per-fire delta (turns is a DELTA) (#1443)
 #
 # Hermetic: temp $HOME and $CLAUDE_PROJECT_DIR; the only side effect under test
 # is .claude/logs/agent-costs.jsonl inside the temp project dir.
@@ -305,6 +307,85 @@ expect(t["total"] == 6466, "inline total includes cache_read")
 expect(rec["turns"] == 3, "turns==3 from the resolved subagent transcript")
 expect(rec["ctx_first"] == 1100, "ctx_first==1100")
 expect(rec["ctx_last"] == 3000, "ctx_last==3000")
+PY
+
+# ---------------------------------------------------------------------------
+# Case 8 (#1443): the orchestrator state sidecar carries a PRE-#1443 baseline
+# written by the old per-LINE summing, so it is ~2x high. The deduped
+# cumulative is now BELOW it, every token delta goes negative, and the
+# work-total <= 0 guard returns BEFORE _save_state -- which would wedge the
+# session on the stale baseline forever (every later fire recomputing the same
+# negative delta). The fire must RESYNC the baseline and emit nothing; the NEXT
+# fire must then measure a correct delta. That second fire also pins `turns` as
+# a DELTA (1), not the raw cumulative (4) -- the #668 mistake.
+# ---------------------------------------------------------------------------
+STATE="$CLAUDE_PROJECT_DIR/.claude/logs/agent-cost-orchestrator-state.json"
+python3 - "$STATE" <<'PY' || fail "case8: could not seed the v1 state sidecar"
+import json, os, sys
+path = sys.argv[1]
+try:
+    state = json.load(open(path))
+except (OSError, ValueError):
+    state = {}
+# the NAIVE per-line sums of transcript-msgid.jsonl (what v1 would have left)
+state["stop-v1mig"] = {"input": 80, "output": 151, "cache_read": 8000,
+                       "cache_creation": 500, "model": "claude-opus-4-8"}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+json.dump(state, open(path, "w"))
+PY
+
+PAYLOAD_V1MIG="$(printf '{"session_id":"stop-v1mig","transcript_path":"%s"}' \
+  "$WORK/transcript-msgid.jsonl")"
+run_hook "$PAYLOAD_V1MIG" || fail "case8: hook exited non-zero"
+COUNT="$(wc -l < "$OUT" | tr -d ' ')"
+[ "$COUNT" = "5" ] || fail "case8: resync fire must emit NO record (count=$COUNT, want 5)"
+
+python3 - "$STATE" <<'PY' || fail "case8: baseline was NOT resynced (session wedged)"
+import json, sys
+entry = json.load(open(sys.argv[1]))["stop-v1mig"]
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (entry=%r)" % (msg, entry))
+
+expect(entry["input"] == 60, "baseline input resynced to the deduped 60")
+expect(entry["output"] == 106, "baseline output resynced to 106")
+expect(entry["cache_read"] == 6000, "baseline cache_read resynced to 6000")
+expect(entry["cache_creation"] == 300, "baseline cache_creation resynced to 300")
+expect(entry["turns"] == 3, "baseline turns persisted as the cumulative 3")
+expect(entry["model"] == "claude-opus-4-8", "model carried forward")
+PY
+
+# Second fire: the transcript GREW by one more API response (msg_D). The delta
+# is now measured against the resynced baseline.
+cp "$WORK/transcript-msgid.jsonl" "$WORK/transcript-msgid-grown.jsonl"
+cat >> "$WORK/transcript-msgid-grown.jsonl" <<'JSONL'
+{"type":"assistant","timestamp":"2026-06-01T10:00:05.000Z","message":{"id":"msg_D","usage":{"input_tokens":40,"output_tokens":50,"cache_read_input_tokens":4000,"cache_creation_input_tokens":0}}}
+JSONL
+PAYLOAD_V1MIG2="$(printf '{"session_id":"stop-v1mig","transcript_path":"%s"}' \
+  "$WORK/transcript-msgid-grown.jsonl")"
+run_hook "$PAYLOAD_V1MIG2" || fail "case8b: hook exited non-zero"
+COUNT="$(wc -l < "$OUT" | tr -d ' ')"
+[ "$COUNT" = "6" ] || fail "case8b: expected 6 records, got $COUNT"
+
+python3 - "$OUT" <<'PY' || fail "case8b: post-resync delta record failed assertions"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readlines()[-1])
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["session_id"] == "stop-v1mig", "session_id==stop-v1mig")
+t = rec["tokens"]
+expect((t["input"], t["output"], t["cache_read"], t["cache_creation"])
+       == (40, 50, 4000, 0), "msg_D delta only")
+expect(t["total"] == 90, "work-total 40+50+0")
+# turns is a DELTA: the cumulative is 4, the previous fire persisted 3.
+expect(rec["turns"] == 1, "turns is the DELTA 1, not the cumulative 4")
+expect(rec["ctx_first"] == 1100, "ctx_first stays absolute (1100)")
+expect(rec["ctx_last"] == 4000, "ctx_last is absolute and advanced to 4000")
 PY
 
 echo "PASS: test-capture-agent-cost-hook.sh"

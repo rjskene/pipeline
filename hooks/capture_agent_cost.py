@@ -246,7 +246,7 @@ def _subagent_transcript_sum(session_id, agent_id):
     """Sum the durable subagent transcript for (session_id, agent_id), or None.
 
     Resolves the same path the backfill INLINE pass uses
-    (scripts/capture-agent-costs.sh:346-348):
+    (scripts/capture-agent-costs.sh, the INLINE-pass glob):
         $HOME/.claude/projects/*/<session_id>/subagents/agent-<agent_id>.jsonl
     where <session_id> is the orchestrator session that dispatched the subagent
     (the id the payload carries and the backfill keys on). This transcript is the
@@ -311,6 +311,26 @@ def _save_state(logs_dir, state):
     os.replace(tmp, path)
 
 
+def _stop_state_entry(summ, last, fields):
+    """Build the per-session baseline to persist for the next Stop delta.
+
+    Carries the fresh CUMULATIVE token fields, the cumulative turn count
+    (#1443), and the resolved session model. Prefer the freshly-resolved model,
+    else carry forward the one a prior Stop recorded (`last`) — the entry is a
+    wholesale rebuild, so a model-less transcript (summ["model"]=="", reachable
+    after compaction/truncation) must RESTORE it here rather than clobber a
+    previously-known model. Never store an empty model. _load_state passes the
+    extra `turns` / `model` keys through untouched and the delta math in
+    build_stop_record reads only the four named token fields, so neither key
+    can perturb token deltas (#699, #1443)."""
+    entry = {f: summ[f] for f in fields}
+    entry["turns"] = summ["turns"]
+    model = summ["model"] or last.get("model")
+    if model:
+        entry["model"] = model
+    return entry
+
+
 def build_stop_record(payload, logs_dir):
     """Build a schema_version=2 orchestrator record from a Stop payload, or None.
 
@@ -343,6 +363,22 @@ def build_stop_record(payload, logs_dir):
     state = _load_state(logs_dir)
     last = state.get(session_id) or {}
     fields = ("input", "output", "cache_read", "cache_creation")
+    # BASELINE RESYNC (#1443). The persisted baseline is a PREFIX of this
+    # session's cumulative, so no persisted field can EXCEED the fresh sum. When
+    # one does, the baseline is not comparable to this transcript. The case that
+    # matters in practice is a pre-#1443 baseline written by the old per-LINE
+    # summing (~2x high on the input side); a compacted/truncated transcript is
+    # the other. Either way the deltas below go negative, the work-total <= 0
+    # guard returns BEFORE _save_state, and the stale baseline is never
+    # rewritten — so EVERY later fire recomputes the same negative delta and the
+    # session stops emitting orchestrator records for good. Resync the baseline
+    # to the fresh cumulative, emit nothing for this fire (the already-emitted
+    # rows cover that span — re-emitting it would double-count), and let the
+    # NEXT fire measure a correct delta against the corrected baseline.
+    if any((last.get(f) or 0) > summ[f] for f in fields):
+        state[session_id] = _stop_state_entry(summ, last, fields)
+        _save_state(logs_dir, state)
+        return None
     tokens = {f: summ[f] - (last.get(f) or 0) for f in fields}
     # tokens.total for the ORCHESTRATOR record is the WORK-TOTAL: input +
     # output + cache_creation, EXCLUDING cache_read. cache_read is the full
@@ -364,26 +400,12 @@ def build_stop_record(payload, logs_dir):
     # `turns` is a per-fire DELTA, mirroring the token delta above: the
     # transcript's distinct-message.id count is CUMULATIVE over the session, so
     # emitting it raw would make a downstream SUM over a session's deltas
-    # multiply the turn count (the #668 mistake). Persist the cumulative in the
-    # state sidecar alongside the four token fields — _load_state passes extra
-    # keys through untouched and the token delta above reads only the four named
-    # fields, so this cannot perturb token math (the same guarantee the `model`
-    # key relies on below).
-    turns = summ["turns"] - (last.get("turns") or 0)
-    state[session_id] = {f: summ[f] for f in fields}
-    state[session_id]["turns"] = summ["turns"]
-    # Also persist the resolved session model so inline forward records (which
-    # carry no model of their own) can inherit it via _session_model, keyed by
-    # this same session_id (#699). Prefer the freshly-resolved model, else carry
-    # forward the one a prior Stop recorded (`last`) — the wholesale dict rebuild
-    # above drops the old key, so a model-less transcript (summ["model"]=="",
-    # reachable after compaction/truncation) must restore it here rather than
-    # clobber a previously-known model. Never store an empty model. _load_state
-    # passes this extra key through untouched and the delta math above reads only
-    # the four token fields by name, so this does not perturb token deltas.
-    model = summ["model"] or last.get("model")
-    if model:
-        state[session_id]["model"] = model
+    # multiply the turn count (the #668 mistake). The cumulative is persisted
+    # below. Clamped at 0: the resync guard above catches a baseline whose TOKEN
+    # fields exceed the fresh sum, but a transcript can in principle lose ids
+    # while still growing a token bucket, and a negative FLOW is never honest.
+    turns = max(0, summ["turns"] - (last.get("turns") or 0))
+    state[session_id] = _stop_state_entry(summ, last, fields)
     _save_state(logs_dir, state)
 
     ts_start = summ["ts_start"]
@@ -618,7 +640,8 @@ def build_record(payload, logs_dir=None):
     # projects/*/<session>/subagents/agent-<id>.jsonl is present at agent-finish
     # (before pruning), so sum it and ADOPT-ONLY-WHEN-EXCEEDS the lower-bound
     # (never downgrade — a partial/empty transcript can never understate a
-    # record). Mirrors the backfill (scripts/capture-agent-costs.sh:356-365):
+    # record). Mirrors the backfill (scripts/capture-agent-costs.sh, the
+    # INLINE-pass adopt-only-when-exceeds branch):
     # transcript model wins on adopt; usage_complete flips to True only on a real
     # adopted cumulative. Fail-open: a missing transcript (pruned race / empty
     # agent_id) leaves the honest lower-bound and usage_complete=False.
