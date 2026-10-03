@@ -116,7 +116,7 @@ legacy escape hatch (formerly C-only).
 | C    | inline `Agent(tdd-implementer)` per `target=<dir>` leaf, each in its own per-leaf worktree + cherry-pick reassemble (#896); `--spawn` = legacy run-queue | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
 | D    | inline `Agent(tdd-implementer)`    | Inline `tdd-implementer` in the orchestrator session. Skips the pre-PR review loop in `execute-issue-plan` Step 8.|
 
-> **Pre-PR guards.** Before `gh pr create`, execute runs `scripts/check-cross-cutting-guards.sh` (#1132/#1143) — the always-run, diff-independent invariant floor bundling config-drift (`check-config-drift.sh`, #1103: any new `PIPELINE_*` var undocumented in `pipeline.config.example`), namespace-discipline, golden-seed, and README-anchor checks. It runs regardless of PATH or whether the diff touched the guarded surface (the #1128 "only touched tests" miss), wired pre-PR into `execute-issue-plan` Step 9 and the `evaluate-issue-pr`/`fullsend` dispatch paths.
+> **Pre-PR guards.** Before `gh pr create`, execute runs `scripts/check-cross-cutting-guards.sh` (#1132/#1143) — the always-run, diff-independent invariant floor bundling config-drift (`check-config-drift.sh`, #1103: any new `PIPELINE_*` var undocumented in `pipeline.config.example`), namespace-discipline, golden-seed, and README-anchor checks. It runs regardless of PATH or whether the diff touched the guarded surface (the #1128 "only touched tests" miss), wired pre-PR into `execute-issue-plan` Step 9 and, at pr-eval time, into `scripts/pr-eval-preflight.sh` — which `fullsend` Step 7 runs BEFORE any `evaluate-issue-pr` dispatch (#1445). The evaluator itself no longer invokes the aggregator; a guard failure is `PREFLIGHT=block REASON=guards` and no eval runs.
 
 ## Wave-plan flow
 
@@ -175,8 +175,8 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
            |
            v
   +--------+----------+
-  | evaluate-issue-pr |
-  +--------+----------+
+  | evaluate-issue-pr |   gated by pr-eval-preflight.sh (#1445): block -> NO eval
+  +--------+----------+   dispatch (block-<reason> row); ok -> line rides in the prompt
            |
            v
   +--------+--------------+
