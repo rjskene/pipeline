@@ -335,7 +335,9 @@ else
 fi
 # Executable half of the same claim: run-queue.sh really does carry no
 # per-issue prompt channel, which is WHY the gate cannot live in the queue.
-if grep -qE -- '--prompt|PIPELINE_PR_EVAL_PROMPT' "$ROOT/scripts/run-queue.sh"; then
+# (The pattern deliberately names no PIPELINE_* knob — a knob name mentioned
+# anywhere under tests/ is a check-config-drift.sh UNDOCUMENTED finding.)
+if grep -qE -- '--prompt|--append-prompt' "$ROOT/scripts/run-queue.sh"; then
   fail_msg "scripts/run-queue.sh now exposes a per-issue prompt channel — the orchestrator-side gate rationale needs revisiting"
 else
   pass_msg "scripts/run-queue.sh exposes no per-issue prompt channel (the gate must precede the queue launch)"
