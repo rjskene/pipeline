@@ -699,7 +699,13 @@ inc_scenario "Case 22: unset PIPELINE_REPO -> block REASON=config, still ONE lin
 # must surface as a verdict, not as silence.
 reset_with_section
 : > "$STUB_GH_CALLS"
-OUT="$(cd "$TMP" && env -u PIPELINE_REPO -u PIPELINE_BASE_BRANCH \
+# PIPELINE_PROJECT_ROOT must be unset too: pipeline.config auto-EXPORTS it
+# (`set -a`), so an operator shell that sourced the config — or the evaluator's
+# own Phase-2 touched-test loop, which runs `bash <test>` directly rather than
+# through scripts/run-test-suite.sh (which scrubs the var) — leaks the real repo
+# root in. The script's #801 recovery then finds the live pipeline.config, and
+# this case measures `block REASON=base` instead of `block REASON=config`.
+OUT="$(cd "$TMP" && env -u PIPELINE_REPO -u PIPELINE_BASE_BRANCH -u PIPELINE_PROJECT_ROOT \
          timeout 10 bash "$PF" 1445 --pr 200 2>"$TMP/err.txt")"
 RC=$?
 ERR="$(cat "$TMP/err.txt")"
