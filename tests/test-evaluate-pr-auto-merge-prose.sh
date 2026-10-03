@@ -128,6 +128,29 @@ else
   FAILED=$((FAILED+1))
 fi
 
+# --- #1444 hot-path mass: the evaluator is the second-most-expensive skill in
+# the pipeline and is loaded on EVERY PR. This is the local half of the ceiling
+# contract (tests/test-skill-hot-path-mass.sh pins all three hot-path skills).
+# BODY words only (frontmatter stripped, #1218); open-`bash`-fence count uses
+# the #1281 grammar. The floor is the non-vacuity guard — a ceiling alone is
+# satisfied by deleting the skill.
+EVAL_WORDS=$(skill_body "$SKILL" | wc -w)
+EVAL_FENCES=$(grep -cE '^[[:space:]]*```bash' "$SKILL")
+
+if [ "$EVAL_WORDS" -le 3000 ] && [ "$EVAL_WORDS" -ge 1200 ]; then
+  echo "  PASS: body is $EVAL_WORDS words (floor 1200, ceiling 3000)"
+else
+  echo "  FAIL: body is $EVAL_WORDS words — must be >= 1200 and <= 3000"
+  FAILED=$((FAILED+1))
+fi
+
+if [ "$EVAL_FENCES" -le 9 ]; then
+  echo "  PASS: $EVAL_FENCES open bash fences (ceiling 9)"
+else
+  echo "  FAIL: $EVAL_FENCES open bash fences — must be <= 9"
+  FAILED=$((FAILED+1))
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1

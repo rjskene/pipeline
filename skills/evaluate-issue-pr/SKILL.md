@@ -25,7 +25,7 @@ Dispatch modes and the orchestrator-assembled prompt template are documented in 
 
 On a `needs-browser` issue: `cd` to the worktree absolute path and start the loopback HTTP server BEFORE any other step (see [references/visual-validation.md](references/visual-validation.md)).
 
-**pr-eval depth is never gated (W3).** This evaluator STAYS Opus in all configurations — the dispatch carries `model=` resolved from `scripts/resolve-stage-model.sh <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`); since #1186 that is an explicit PIN and no execute-side carve-out can lower it.
+**pr-eval depth is never gated (W3).** This evaluator STAYS Opus — `model=` resolves from `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`, an explicit PIN since #1186); no execute-side carve-out lowers it.
 
 ## Lifecycle
 
@@ -84,7 +84,7 @@ A guard that passes is not evidence until you have seen it fail on something.
 
 2. **Fetch the PR number and diff:**
    ```bash
-   ISSUE=<N>          # this skill's issue argument — consumed by Step 11.2's gate call
+   ISSUE=<N>          # this skill's issue argument
    BRANCH=$(git rev-parse --abbrev-ref HEAD)
    PR_NUM=$(gh pr list --repo $PIPELINE_REPO --head "$BRANCH" --json number --jq '.[0].number')
    gh pr diff $PR_NUM --repo $PIPELINE_REPO
@@ -99,13 +99,25 @@ A guard that passes is not evidence until you have seen it fail on something.
 
    **Phase 2 — Code quality.** Run checks and review the diff. **Resolve CI status (Step 5) BEFORE deciding whether to run tests** — the test-execution decision keys off the already-settled rollup, so Step 5b's `--watch` is the single source of the settled verdict and Phase 2 never issues a second `--watch`/`--wait`.
 
-   **Typecheck runs only when `PIPELINE_TYPECHECK_CMD` is set** (cheap; outside the CI-trust rationale); if unset print `typecheck: skipped (PIPELINE_TYPECHECK_CMD unset)` — never substitute an ad-hoc checker:
-   ```bash
-   $PIPELINE_TYPECHECK_CMD 2>&1 | head -50
-   ```
+   **Typecheck runs only when `PIPELINE_TYPECHECK_CMD` is set** (cheap; outside the CI-trust rationale); if unset print `typecheck: skipped (PIPELINE_TYPECHECK_CMD unset)` — never substitute an ad-hoc checker.
 
-   **Test execution is CI-aware (green-CI short-circuit, issue #957).** Read the settled `statusCheckRollup` verdict once — reuse the same all-SUCCESS jq predicate as `scripts/auto-merge-gate.sh` (`length > 0 and all(.conclusion == "SUCCESS")`); do NOT re-run the watch/wait (Step 5b already settled the checks):
+   **Test execution is CI-aware (green-CI short-circuit, issue #957).** Read the settled `statusCheckRollup` verdict once — reuse the same all-SUCCESS jq predicate as `scripts/auto-merge-gate.sh` (`length > 0 and all(.conclusion == "SUCCESS")`); do NOT re-run the watch/wait (Step 5b already settled the checks).
+
+   **Dedup guard (hard constraint).** The full-suite `$PIPELINE_TEST_CMD` is invoked **at most once** per eval and **never via `run_in_background`** — no overlapping/duplicate full-suite sweeps (the harness auto-backgrounding that caused the #955/#956 duplicate sweeps). It always runs synchronously in the foreground, mirroring the Step 5b `--watch` no-`run_in_background` rule.
+
+   **Trust boundary (assumption).** The short-circuit trusts that the green CI suite is the SAME suite as `$PIPELINE_TEST_CMD`. This holds for the dogfood repo (CI runs the identical `tests/test*.sh` sweep). Consumers with divergent CI should understand this trust boundary.
+
+   **Cross-cutting guards — unconditional (#1132).** Run the fast, diff-independent aggregator regardless of the green-CI short-circuit above. The #957 short-circuit skips the full `$PIPELINE_TEST_CMD` re-run (heavy, duplicative when CI is green), but it does NOT run any local cross-cutting re-check. The aggregator is seconds-fast and catches diff-independent repo invariants (config drift, namespace discipline, golden-seed, README-anchor) that the CI suite may not cover locally.
+
+   Run all three in ONE `bash` call:
    ```bash
+   # (a) typecheck
+   if [ -n "${PIPELINE_TYPECHECK_CMD:-}" ]; then
+     $PIPELINE_TYPECHECK_CMD 2>&1 | head -50
+   else
+     echo "typecheck: skipped (PIPELINE_TYPECHECK_CMD unset)"
+   fi
+   # (b) tests
    ROLLUP_GREEN=$(gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup \
      --jq '.statusCheckRollup | length > 0 and all(.conclusion == "SUCCESS")')
    if [ "$ROLLUP_GREEN" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]; then
@@ -125,15 +137,7 @@ A guard that passes is not evidence until you have seen it fail on something.
        timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null 2>&1 | tail -30
      fi
    fi
-   ```
-
-   **Dedup guard (hard constraint).** The full-suite `$PIPELINE_TEST_CMD` is invoked **at most once** per eval and **never via `run_in_background`** — no overlapping/duplicate full-suite sweeps (the harness auto-backgrounding that caused the #955/#956 duplicate sweeps). It always runs synchronously in the foreground, mirroring the Step 5b `--watch` no-`run_in_background` rule.
-
-   **Trust boundary (assumption).** The short-circuit trusts that the green CI suite is the SAME suite as `$PIPELINE_TEST_CMD`. This holds for the dogfood repo (CI runs the identical `tests/test*.sh` sweep). Consumers with divergent CI should understand this trust boundary.
-
-   **Cross-cutting guards — unconditional (#1132).** Run the fast, diff-independent aggregator regardless of the green-CI short-circuit above. The #957 short-circuit skips the full `$PIPELINE_TEST_CMD` re-run (heavy, duplicative when CI is green), but it does NOT run any local cross-cutting re-check. The aggregator is seconds-fast and catches diff-independent repo invariants (config drift, namespace discipline, golden-seed, README-anchor) that the CI suite may not cover locally:
-
-   ```bash
+   # (c) guards
    bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh" \
      || { echo "WARN: cross-cutting guard failure detected in PR-eval Phase 2 — see above." >&2; }
    ```
@@ -151,19 +155,15 @@ A guard that passes is not evidence until you have seen it fail on something.
    ```
    If `CHECK_COUNT` is 0, log `"CI: none configured — skipping status check"` and proceed to Step 6.
 
-   **5b. Wait for in-progress checks to settle.** Single bounded **foreground** (blocking, in-turn) wait via `Bash` — do NOT use `run_in_background`, and do NOT wrap in a `while ... sleep ... grep` loop. A subagent cannot durably block on a backgrounded monitor: a backgrounded `Bash` returns immediately, ending the subagent's turn before it reaches Step 5c → the verdict (Step 9) → the auto-merge gate (Step 11) (issue #684). The `timeout 600 ... --watch --fail-fast` below IS the hard iteration cap: it runs to completion in this turn, returns nonzero on the first failing check, and blocks until CI settles or the 600s budget elapses (10-min one-shot, 30-second poll):
+   **5b. Wait for in-progress checks to settle.** Single bounded **foreground** (blocking, in-turn) wait via `Bash` — do NOT use `run_in_background`, and do NOT wrap in a `while ... sleep ... grep` loop. A subagent cannot durably block on a backgrounded monitor: a backgrounded `Bash` returns immediately, ending the subagent's turn before it reaches Step 5c and the verdict (Step 9) (issue #684). The `timeout 600 ... --watch --fail-fast` below IS the hard iteration cap: it runs to completion in this turn, returns nonzero on the first failing check, and blocks until CI settles or the 600s budget elapses (10-min one-shot, 30-second poll):
    ```bash
    timeout 600 gh pr checks $PR_NUM --repo $PIPELINE_REPO --watch --fail-fast --interval 30
    ```
 
-   **5c. Inspect final check state.**
+   **5c. Inspect final check state.** For each failed check, fetch the first error line. Parse RUN_ID from `detailsUrl`; if parsing yields empty/non-numeric, use the `gh run list` fallback:
    ```bash
    gh pr view $PR_NUM --repo $PIPELINE_REPO --json statusCheckRollup \
      --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED") | {name: .name, conclusion: .conclusion, url: .detailsUrl}'
-   ```
-
-   For each failed check, fetch the first error line. Parse RUN_ID from `detailsUrl`; if parsing yields empty/non-numeric, use the `gh run list` fallback:
-   ```bash
    # Required env: DETAILS_URL (the failed check's .detailsUrl from the rollup query above).
    RUN_ID=$(echo "$DETAILS_URL" | sed 's|.*/runs/\([0-9]*\)/.*|\1|')
    if ! [[ "$RUN_ID" =~ ^[0-9]+$ ]]; then
@@ -224,7 +224,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Remaining issues:** (if flagged) <what needs human attention and why>
    ```
 
-10. **Report verdict:** Approved → "PR #X approved — ready for merge." / Flagged → "PR #X flagged for review: <summary>". That verdict line is this skill's terminal state — the orchestrator fires the greenlight auto-merge gate afterwards (`skills/fullsend/references/auto-merge-gate.md`), and `--manual-merge` / the `manual-merge` label opt out of it.
+10. **Report verdict:** Approved → "PR #X approved — ready for merge." / Flagged → "PR #X flagged for review: <summary>". That verdict line is this skill's terminal state; the orchestrator then fires the greenlight gate (`skills/fullsend/references/auto-merge-gate.md`), which `--manual-merge` / the `manual-merge` label opt out of.
 
 ## Constraints
 - Do NOT read the executor's session logs or conversation history.
@@ -233,4 +233,4 @@ A guard that passes is not evidence until you have seen it fail on something.
 - If a fix requires touching >3 files or new design decisions, flag instead of fixing.
 - Never skip tsc or test validation.
 - All PRs target `PIPELINE_BASE_BRANCH`. All commits go to the feature branch.
-- The evaluator does NOT merge, close issues, or change `pr-open` labels — only reviews, posts verdict, and (optionally) rebases against the base branch. The greenlight auto-merge gate belongs to the orchestrator (`skills/fullsend/references/auto-merge-gate.md`).
+- The evaluator does NOT merge, close issues, or change `pr-open` labels — only reviews, posts verdict, and (optionally) rebases against the base branch. The gate is the orchestrator's (`skills/fullsend/references/auto-merge-gate.md`).
