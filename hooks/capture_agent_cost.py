@@ -154,22 +154,43 @@ def record_key(source, agent_kind, session_id, issue, stage, ts_start):
 
 
 def transcript_sum(path):
-    """Sum per-assistant-message token usage over a transcript JSONL.
+    """Aggregate per-API-RESPONSE token usage over a transcript JSONL.
 
-    Mirrors scripts/capture-agent-costs.sh:transcript_sum so both producers
-    parse identically: skip blank/non-JSON/non-dict lines, track min/max
-    `timestamp`, accumulate the four `*_tokens` fields from `message.usage`,
-    capture the last non-empty `message.model`. Returns zeros on OSError."""
-    inp = out = cr = cc = 0
+    Mirrors scripts/_token-usage-lib.sh:tu_transcript_sum and
+    scripts/capture-agent-costs.sh:transcript_sum so all three producers parse
+    identically: skip blank/non-JSON/non-dict lines, track min/max `timestamp`,
+    capture the last non-empty `message.model`. Returns zeros on OSError.
+
+    DEDUPED BY `message.id` (#1443). Claude Code writes ONE API response as 2-3
+    `assistant` lines (thinking / text / tool_use blocks) that share
+    `message.id`; `input_tokens`, `cache_read_input_tokens` and
+    `cache_creation_input_tokens` repeat verbatim on each line while
+    `output_tokens` is progressive (the last line carries the final count). The
+    pre-#1443 per-LINE accumulation therefore counted the input side ~2x. Each
+    bucket is reduced with max() per id (the final count for `output`; a robust
+    "count once" for the verbatim-repeated buckets) and then summed across ids.
+    A usage line carrying no `message.id` keys on "__noid__<line_no>", so legacy
+    transcripts sum byte-identically to the old behaviour and each such line
+    counts as its own turn.
+
+    Also returns `turns` (distinct ids), plus `ctx_first` / `ctx_last` — the
+    `cache_read + cache_creation` of the FIRST / LAST id, i.e. absolute context
+    SIZES, never sums."""
     ts_start = ts_end = None
     model = ""
+    # Per-message.id aggregation (#1443). `ids` preserves first-sight order so
+    # ctx_first/ctx_last are the FIRST/LAST response's context size; `per_id`
+    # maps key -> [input, output, cache_read, cache_creation] reduced with max().
+    ids = []
+    per_id = {}
     try:
         fh = open(path)
     except OSError:
         return {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0,
-                "ts_start": "", "ts_end": "", "model": ""}
+                "ts_start": "", "ts_end": "", "model": "",
+                "turns": 0, "ctx_first": 0, "ctx_last": 0}
     with fh:
-        for line in fh:
+        for line_no, line in enumerate(fh):
             line = line.strip()
             if not line:
                 continue
@@ -191,15 +212,33 @@ def transcript_sum(path):
             usage = msg.get("usage")
             if not isinstance(usage, dict):
                 continue
-            inp += usage.get("input_tokens") or 0
-            out += usage.get("output_tokens") or 0
-            cr += usage.get("cache_read_input_tokens") or 0
-            cc += usage.get("cache_creation_input_tokens") or 0
+            mid = msg.get("id")
+            key = mid or ("__noid__%d" % line_no)
+            vals = [
+                usage.get("input_tokens") or 0,
+                usage.get("output_tokens") or 0,
+                usage.get("cache_read_input_tokens") or 0,
+                usage.get("cache_creation_input_tokens") or 0,
+            ]
+            if key in per_id:
+                prev = per_id[key]
+                per_id[key] = [max(prev[i], vals[i]) for i in range(4)]
+            else:
+                ids.append(key)
+                per_id[key] = vals
             m = msg.get("model")
             if m:
                 model = m
+    inp = sum(per_id[k][0] for k in ids)
+    out = sum(per_id[k][1] for k in ids)
+    cr = sum(per_id[k][2] for k in ids)
+    cc = sum(per_id[k][3] for k in ids)
+    turns = len(ids)
+    ctx_first = (per_id[ids[0]][2] + per_id[ids[0]][3]) if ids else 0
+    ctx_last = (per_id[ids[-1]][2] + per_id[ids[-1]][3]) if ids else 0
     return {"input": inp, "output": out, "cache_read": cr, "cache_creation": cc,
-            "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model}
+            "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model,
+            "turns": turns, "ctx_first": ctx_first, "ctx_last": ctx_last}
 
 
 def _subagent_transcript_sum(session_id, agent_id):

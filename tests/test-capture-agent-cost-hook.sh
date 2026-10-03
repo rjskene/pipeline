@@ -207,4 +207,43 @@ expect(rec["usage_complete"] is True, "cumulative-source usage_complete==true")
 expect(rec["tokens"]["total"] == 63, "tokens.total == 50+10+2+1")
 PY
 
+# ---------------------------------------------------------------------------
+# Case 6 (#1443): Stop-branch transcript summing DEDUPES by message.id. Claude
+# Code writes one API response as 2-3 assistant lines sharing message.id;
+# input/cache_read/cache_creation repeat verbatim and output_tokens is
+# progressive, so per-line summing inflated the input side ~2x. The shared
+# msgid fixture is msg_A x3 (output 5/40/90) + msg_B + msg_C: deduped
+# 60/106/6000/300 vs a naive per-line 80/151/8000/500. tokens.total is the
+# orchestrator WORK-TOTAL (input+output+cache_creation, cache_read excluded).
+# APPENDED after Case 5 on purpose: the cumulative `wc -l` assertions above
+# would all drift if a new record were inserted earlier.
+# ---------------------------------------------------------------------------
+cp "$REPO_ROOT/tests/fixtures/token-usage/transcript-msgid.jsonl" \
+  "$WORK/transcript-msgid.jsonl"
+PAYLOAD_STOP_DEDUPE="$(printf '{"session_id":"stop-dedupe","transcript_path":"%s"}' \
+  "$WORK/transcript-msgid.jsonl")"
+run_hook "$PAYLOAD_STOP_DEDUPE" || fail "case6: hook exited non-zero"
+COUNT="$(wc -l < "$OUT" | tr -d ' ')"
+[ "$COUNT" = "4" ] || fail "case6: expected 4 records, got $COUNT"
+
+python3 - "$OUT" <<'PY' || fail "case6: msgid-dedupe Stop record failed assertions"
+import json, sys
+with open(sys.argv[1]) as fh:
+    rec = json.loads(fh.readlines()[-1])
+
+def expect(cond, msg):
+    if not cond:
+        raise SystemExit("assert failed: %s (rec=%r)" % (msg, rec))
+
+expect(rec["stage"] == "orchestrator", "stage==orchestrator")
+expect(rec["agent_kind"] == "main", "agent_kind==main")
+expect(rec["session_id"] == "stop-dedupe", "session_id==stop-dedupe")
+t = rec["tokens"]
+expect(t["input"] == 60, "tokens.input deduped to 60 (naive 80)")
+expect(t["output"] == 106, "tokens.output is the per-id max sum 106 (naive 151)")
+expect(t["cache_read"] == 6000, "tokens.cache_read deduped to 6000 (naive 8000)")
+expect(t["cache_creation"] == 300, "tokens.cache_creation deduped to 300 (naive 500)")
+expect(t["total"] == 466, "work-total 60+106+300 (cache_read excluded)")
+PY
+
 echo "PASS: test-capture-agent-cost-hook.sh"
