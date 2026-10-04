@@ -662,6 +662,90 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 5c: --reset removes stale sandbox worktrees before the branch sweep (#1453)"
+# ---------------------------------------------------------------------------
+# Every reset from run 19 on printed 87 x `error: cannot delete branch '...'
+# used by worktree at ...`: delete_stale_branches() swept refs/heads/feature/*
+# while the PREVIOUS run's .claude/worktrees/wt-* checkouts still held those
+# branches, so git refused, the branches survived, and the dirs accumulated.
+# The worktrees have to go FIRST. The fixture lives under the suite's own
+# mktemp -d $SANDBOX, so nothing here can reach a real pipeline worktree.
+rm -f "$CALLS" "$TMP/issue-counter"
+WT_ROOT="$SANDBOX/.claude/worktrees"
+mkdir -p "$WT_ROOT"
+for n in 1 2; do
+  git -C "$SANDBOX" worktree add -b "feature/calib-wt$n" "$WT_ROOT/wt-$n-calib" calib-base >/dev/null 2>&1
+done
+STALE_WTS="$(git -C "$SANDBOX" worktree list | wc -l | tr -d ' ')"
+if [ "$STALE_WTS" = "3" ]; then
+  pass_msg "fixture: the sandbox carries two stale wt-* worktrees"
+else
+  fail_msg "fixture: two stale wt-* worktrees (worktree list lines=$STALE_WTS)"
+fi
+
+# Control: the free --dry-run preview must NAME the removal and remove nothing.
+run_helper --dry-run --reset --harness "$HARNESS"
+expect_sub "--dry-run --reset previews the stale-worktree removal" \
+  "$OUT" "worktree remove --force $WT_ROOT/wt-1-calib"
+if [ -d "$WT_ROOT/wt-1-calib" ] && [ -d "$WT_ROOT/wt-2-calib" ]; then
+  pass_msg "--dry-run --reset leaves the stale worktrees in place"
+else
+  fail_msg "--dry-run --reset must not remove worktrees (list: $(git -C "$SANDBOX" worktree list | tr '\n' ';'))"
+fi
+
+# Real run: the worktrees go, and the branch sweep that follows succeeds.
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (stale worktrees) exits 0" 0
+refute_sub "--reset prints no cannot-delete-branch error" "$OUT" "cannot delete branch"
+WT_LINES="$(git -C "$SANDBOX" worktree list | wc -l | tr -d ' ')"
+if [ "$WT_LINES" = "1" ]; then
+  pass_msg "--reset leaves exactly one worktree (the sandbox main checkout)"
+else
+  fail_msg "--reset must leave one worktree (got $WT_LINES: $(git -C "$SANDBOX" worktree list | tr '\n' ';'))"
+fi
+STALE_BRANCHES="$(git -C "$SANDBOX" for-each-ref --format='%(refname:short)' 'refs/heads/feature/*')"
+if [ -z "$STALE_BRANCHES" ]; then
+  pass_msg "--reset deletes every local feature/* branch once the worktrees are gone"
+else
+  fail_msg "--reset must delete every local feature/* branch (survivors: $(printf '%s' "$STALE_BRANCHES" | tr '\n' ';'))"
+fi
+if [ -d "$WT_ROOT/wt-1-calib" ] || [ -d "$WT_ROOT/wt-2-calib" ]; then
+  fail_msg "--reset must delete the stale wt-* checkout dirs"
+else
+  pass_msg "--reset deletes the stale wt-* checkout dirs"
+fi
+
+# Containment: the sweep is PATH-SCOPED to $SANDBOX/.claude/worktrees/. The
+# harness stage ($STAGE_DIR) belongs to a DIFFERENT repo and never appears in
+# this list at all; the sandbox's own main checkout and any checkout elsewhere
+# must survive.
+OUTSIDE_WT="$TMP/outside-wt"
+git -C "$SANDBOX" worktree add -b keep/outside "$OUTSIDE_WT" calib-base >/dev/null 2>&1
+git -C "$SANDBOX" worktree add -b feature/calib-wt3 "$WT_ROOT/wt-3-calib" calib-base >/dev/null 2>&1
+rm -f "$CALLS" "$TMP/issue-counter"
+run_helper --reset --harness "$HARNESS"
+expect_rc "--reset (worktree containment) exits 0" 0
+if [ -e "$OUTSIDE_WT/.git" ]; then
+  pass_msg "a sandbox worktree outside .claude/worktrees/ survives the sweep"
+else
+  fail_msg "--reset removed a worktree outside .claude/worktrees/ ($OUTSIDE_WT)"
+fi
+if [ -d "$SANDBOX/.git" ]; then
+  pass_msg "the sandbox main checkout survives the sweep"
+else
+  fail_msg "--reset removed the sandbox main checkout"
+fi
+if [ -d "$WT_ROOT/wt-3-calib" ]; then
+  fail_msg "--reset must still remove the in-scope wt-* checkout"
+else
+  pass_msg "--reset removes the in-scope wt-* checkout alongside the out-of-scope keeper"
+fi
+# Teardown by literal path, so later scenarios see a one-worktree sandbox.
+git -C "$SANDBOX" worktree remove --force "$OUTSIDE_WT" >/dev/null 2>&1
+git -C "$SANDBOX" branch -D keep/outside >/dev/null 2>&1
+git -C "$SANDBOX" worktree prune >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
 scenario "Scenario 6: --reset refuses to nuke a non-sandbox repo"
 # ---------------------------------------------------------------------------
 # --reset force-pushes a branch back to a tag and DELETES issues. Pointed at
