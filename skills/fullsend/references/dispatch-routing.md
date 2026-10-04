@@ -56,10 +56,15 @@ This section consolidates the per-path dispatch contract for the autonomous flow
    - **Per-path execute MODEL routing — SINGLE-SOURCE resolver (#1056).** Before dispatching a PATH A, PATH B, PATH C or PATH D **execute** `Agent` (for PATH C, before dispatching the leaves — every `target=<dir>` leaf carries the SAME resolved model), do **NOT** hand-apply the model/scope decision — that hand-applied prose drifting from the config knobs WAS the #1056 root cause (every PATH B/D execute silently inherited Opus, defeating the entire #1042 cheaper-execute default). Instead, resolve the FULL dispatch spec from the single-source resolver and consume its emitted tokens **verbatim**:
 
      ```bash
-     SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-execute-dispatch.sh" <N> <A|B|C|D>)
+     DISPATCH_SET="<wave-N issue numbers to dispatch>"
+     for N in $DISPATCH_SET; do
+       LBL=$(gh issue view "$N" --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(" ")')
+       case "$LBL" in *docs-only*) P=A ;; *multi-task*) P=C ;; *quick-fix*) P=D ;; *) P=B ;; esac
+       echo "DISPATCH issue=#$N $(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-execute-dispatch.sh" "$N" "$P" | tr '\n' ' ')"
+     done
      ```
 
-     The resolver emits one token per line — `MODEL=`, `ROLES=` (always `single` since #1420), plus the advisory `ELIGIBLE=`/`SCOPE=`/`REASON=` audit (it ALWAYS exits 0; the verdict rides the tokens, mirroring `path-b-execute-eligible.sh`). Apply them:
+     ONE Bash call per wave (#1452). The PATH letter is DERIVED from the issue's own label — `docs-only`→A, `multi-task`→C, `quick-fix`→D, else B — never recalled from orchestrator context, and `tr` flattens the resolver's token lines onto that issue's single `DISPATCH` line. The resolver emits one token per FIELD on that line — `MODEL=`, `ROLES=` (always `single` since #1420), plus the advisory `ELIGIBLE=`/`SCOPE=`/`REASON=` audit (it ALWAYS exits 0; the verdict rides the tokens, mirroring `path-b-execute-eligible.sh`). Read `MODEL=`/`ROLES=` off that issue's line and apply them:
      - **ALWAYS pass `model=$MODEL`** on the execute `Agent(...)` dispatch. There is no longer a no-`model=` special case: since #1186 the resolver emits a NAMED model in every configuration (`inherit` is retired), because an unpinned dispatch does not inherit Opus — it inherits whatever the session model happens to be, which under a Fable-ceiling session is Fable.
      - **`ROLES=single` is the only shape (#1420).** Dispatch ONE execute `Agent` in the existing worktree, described `execute-issue-plan #<N>` per the cost-attribution key: it applies the `tdd-implementer` discipline per plan task (failing test → red for the right reason → minimum implementation → green → commit), completes ALL approved-plan tasks incl. the non-test deliverables — a green suite is necessary but not sufficient for plan completeness — and runs the FULL local suite green before `gh pr create` (#1108).
      - **Relay `ELIGIBLE=`/`SCOPE=`/`REASON=` in the run log** as the advisory audit of *why* the model resolved as it did.
