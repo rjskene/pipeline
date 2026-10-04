@@ -2230,11 +2230,42 @@ expect_sub "blocked rows leave the reftest-pass token shape intact" \
   "$TOTAL_PLANTED" "reftest-pass=5/5"
 refute_sub "a blocked row is counted in neither p nor n" \
   "$TOTAL_PLANTED" "reftest-pass=5/6"
+# The grade keys off the GATE first: the escape was stopped, so it is `caught`
+# whatever the reference test says about a tree the fix never reached.
+expect_sub "a Flagged planted PR grades the escape caught" \
+  "$TOTAL_PLANTED" "planted=caught"
+
+# The other side of the reorder: a planted PR that MERGED with an Approved
+# pr-eval and still fails its reference test is a real escape. The regression
+# guard that `*/Flagged) caught` does not swallow it.
+echo 7000 > "$TMP/issue-counter"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Plan Evaluation\n**Verdict:** Approve"}]}' > "$ISSUES_DIR/7006.json"
+cat > "$TMP/prs-planted-merged.json" <<'PRSM'
+[
+  {"number":9201,"body":"Closes #7001","state":"MERGED","headRefName":"feature/calib-7001","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9202,"body":"Closes #7002","state":"MERGED","headRefName":"feature/calib-7002","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9203,"body":"Closes #7003","state":"MERGED","headRefName":"feature/calib-7003","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9204,"body":"Closes #7004","state":"MERGED","headRefName":"feature/calib-7004","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9205,"body":"Closes #7005","state":"MERGED","headRefName":"feature/calib-7005","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9206,"body":"Closes #7006","state":"MERGED","headRefName":"feature/calib-7006","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"## Evaluation\n**Verdict:** Approved"}]}
+]
+PRSM
+export CALIB_TEST_PRS_JSON="$TMP/prs-planted-merged.json"
+
+rm -f "$COST_LOG" "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run over a merged planted PR exits 0" 0
+
+TOTAL_MISSED="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "an Approved planted PR that fails its reference test is still a real escape" \
+  "$TOTAL_MISSED" "planted=missed"
+expect_sub "a merged planted row is graded, not blocked" \
+  "$TOTAL_MISSED" "reftest-pass=5/6"
 
 rm -rf "$PLANTED_DIR"
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
       CALIB_TEST_PRICING_JSON
-rm -f "$ISSUES_DIR/6006.json"
+rm -f "$ISSUES_DIR/6006.json" "$ISSUES_DIR/7006.json"
 
 # ---------------------------------------------------------------------------
 echo ""

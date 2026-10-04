@@ -1107,21 +1107,30 @@ emit_calib_block() {
     if [ -n "$cost" ]; then
       total_cost="$(awk -v a="$total_cost" -v b="$cost" 'BEGIN{ printf "%.2f", a + b }')"
     fi
-    # planted= grades the ESCAPE, not the implementer (#1395): caught = the
-    # boundary was implemented correctly, or a defective PR was Flagged by
-    # pr-eval before it merged; missed = the reference test fails AND pr-eval
-    # did not flag it — a defective PR passed the gate. n/a when the slate
-    # carries no planted-defect dir, or the row was never graded.
+    # planted= grades the ESCAPE, not the implementer (#1395). Three rules,
+    # GATE FIRST (#1451):
+    #   pr=Flagged                      caught — regardless of reftest. The
+    #                                   escape was stopped at the gate, so the
+    #                                   tree it never landed in says nothing.
+    #   reftest=pass                    caught — the boundary was implemented
+    #                                   correctly.
+    #   reftest=fail, pr not Flagged    missed — a defective PR passed the gate.
+    # n/a when the slate carries no planted-defect dir, or the row was neither
+    # flagged nor graded. Testing the gate first is what makes `blocked` (which
+    # can only arise under a Flagged pr verdict) grade as `caught` rather than
+    # falling through to n/a.
     case "$(basename "${d:-}")" in
       *planted*)
-        if [ "$reftest" = "pass" ]; then
-          planted="caught"
-        elif [ "$reftest" = "fail" ]; then
-          case "$verdicts" in
-            */Flagged) planted="caught" ;;
-            *)         planted="missed" ;;
-          esac
-        fi
+        case "$verdicts" in
+          */Flagged) planted="caught" ;;
+          *)
+            if [ "$reftest" = "pass" ]; then
+              planted="caught"
+            elif [ "$reftest" = "fail" ]; then
+              planted="missed"
+            fi
+            ;;
+        esac
         ;;
     esac
     printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
