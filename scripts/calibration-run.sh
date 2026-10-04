@@ -754,6 +754,7 @@ ROWS_JSON=""
 PRICING_TOTAL=""
 PRS_JSON=""
 MERGED_JSON=""
+OPEN_JSON="[]"
 ISSUE_JSON="{}"
 ISSUE_JSON_FOR=""
 
@@ -855,10 +856,17 @@ load_run_substrate() {
   # mergedAt carries both the merged filter and each issue's wall-clock end;
   # comments carry the PR-eval verdict — so no second round trip per PR.
   PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state all --limit 50 \
-    --json number,body,headRefName,files,mergedAt,comments 2>/dev/null)"
+    --json number,body,headRefName,files,mergedAt,comments,state 2>/dev/null)"
   [ -n "$PRS_JSON" ] || PRS_JSON="[]"
   MERGED_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.mergedAt != null)]' 2>/dev/null)"
   [ -n "$MERGED_JSON" ] || MERGED_JSON="[]"
+  # The open subset, cached beside MERGED_JSON and taken the same way (#1451):
+  # a Flagged-and-unmerged PR is the gate WORKING, so the pr-eval verdict has
+  # to be readable off it. `state == "OPEN"`, not `mergedAt == null`:
+  # `--state all` also returns CLOSED-unmerged PRs, which are abandoned work
+  # rather than a blocked gate. `state` joins the --json list above for this.
+  OPEN_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.state == "OPEN")]' 2>/dev/null)"
+  [ -n "$OPEN_JSON" ] || OPEN_JSON="[]"
 }
 
 # load_issue_json <issue> — ONE `gh issue view` per issue, cached and fetched
@@ -880,6 +888,17 @@ load_issue_json() {
 merged_pr_field() {
   printf '%s' "$MERGED_JSON" | jq -r --arg n "$1" --arg f "$2" \
     '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {} | .[$f] // empty' 2>/dev/null
+}
+
+# pr_verdict_from <prs-json> <issue> — the last `**Verdict:**` in the comments
+# of the FIRST PR in <prs-json> whose body references #<issue>, else empty.
+# Same body-references scoping as merged_pr_field, so the two agree on which PR
+# belongs to an issue. Unfiltered by heading: a PR's own comments carry only
+# the eval.
+pr_verdict_from() {
+  printf '%s' "$1" | jq -r --arg n "$2" \
+    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
+     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null
 }
 
 # detect_abort — did the run FAIL TO START (or fail to finish) rather than do
@@ -985,9 +1004,8 @@ issue_verdicts() {
   plan="$(printf '%s' "$ISSUE_JSON" | jq -r \
     '[(.comments // [])[] | .body // "" | select(contains("## Plan Evaluation"))
       | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
-  pr="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
-    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
-     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+  pr="$(pr_verdict_from "$MERGED_JSON" "$issue")"
+  [ -n "$pr" ] || pr="$(pr_verdict_from "$OPEN_JSON" "$issue")"
   printf '%s/%s' "${plan:-n/a}" "${pr:-n/a}"
 }
 
