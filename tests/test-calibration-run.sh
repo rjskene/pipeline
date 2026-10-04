@@ -2222,6 +2222,14 @@ refute_sub "a run that produced PRs emits no CALIB-ABORT line" "$OUT" "CALIB-ABO
 ROW_6006="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=6006 ')"
 expect_sub "the pr half comes from the OPEN PR when nothing merged" \
   "$ROW_6006" "verdicts=Revise/Flagged "
+expect_sub "a Flagged-and-open PR blocks the reference test rather than failing it" \
+  "$ROW_6006" "reftest=blocked "
+
+TOTAL_PLANTED="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "blocked rows leave the reftest-pass token shape intact" \
+  "$TOTAL_PLANTED" "reftest-pass=5/5"
+refute_sub "a blocked row is counted in neither p nor n" \
+  "$TOTAL_PLANTED" "reftest-pass=5/6"
 
 rm -rf "$PLANTED_DIR"
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \

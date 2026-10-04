@@ -1068,7 +1068,7 @@ pricing_is_zero() {
 emit_calib_block() {
   local wall_total="$1"
   local i=0 issue d path cost wall verdicts reftest unexpected
-  local total_cost=0 pass=0 count=0 planted="n/a" cost_display
+  local total_cost=0 pass=0 count=0 graded=0 planted="n/a" cost_display
   load_run_substrate
   detect_abort
   if [ -n "$ABORT_REASON" ]; then
@@ -1088,11 +1088,22 @@ emit_calib_block() {
     # sandbox and report `fail` — a regression the run never got near.
     if [ -n "$ABORT_REASON" ] && [ -z "$(merged_pr_field "$issue" mergedAt)" ]; then
       reftest="n/a"
+    # The gate stopped this one (#1451): nothing merged for the issue and
+    # pr-eval Flagged its open PR, so the reference test would grade the
+    # UNFIXED tree and report `fail` — a defect the gate actually caught.
+    # `blocked` says so, and is excluded from the total's k/n below. The
+    # abort arm stays FIRST so an aborted run still reports `n/a` on every
+    # row. A Flagged-then-fixed-then-merged PR still runs its reference test.
+    elif [ -z "$(merged_pr_field "$issue" mergedAt)" ] && [ "${verdicts##*/}" = "Flagged" ]; then
+      reftest="blocked"
     else
       reftest="$(issue_reftest "$d")"
     fi
     unexpected="$(issue_unexpected "$issue" "$d")"
     [ "$reftest" = "pass" ] && pass=$((pass + 1))
+    # The k/n denominator counts GRADED rows only, so a blocked row lands in
+    # neither p nor n; `issues=` keeps reporting the full slate width.
+    [ "$reftest" = "blocked" ] || graded=$((graded + 1))
     if [ -n "$cost" ]; then
       total_cost="$(awk -v a="$total_cost" -v b="$cost" 'BEGIN{ printf "%.2f", a + b }')"
     fi
@@ -1164,7 +1175,7 @@ emit_calib_block() {
   bridge_atom=" bridge_prompts=$n_bridge"
   if [ -z "$ABORT_REASON" ]; then
     printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s\n' \
-      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" \
+      "$cost_display" "$wall_total" "$count" "$pass" "$graded" "$planted" "$HOOKS" \
       "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
