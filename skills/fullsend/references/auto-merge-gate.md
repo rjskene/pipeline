@@ -25,7 +25,9 @@ On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the V
 
 2. **Source the helper and run the gate.** Thread `PIPELINE_CAPABILITY_REFUSAL_SOURCES` (#1233): `scripts/check-capability-refusal.sh --resolve-sources` resolves the MAIN checkout's log dir, never `$(pwd)` — a feature WORKTREE has no `.claude/logs/` of its own (#1246). Tokens: `resolved` (normal — export the knob), `no-log-dir` (`PIPELINE_LOGS_ENABLED=false` consumer install), `unresolvable-root` (no main checkout above cwd); either fallback leaves the knob unexported (fail-open).
    ```bash
-   # Required env: ISSUE PR_NUM (bound by skills/fullsend/SKILL.md Step 7).
+   # Required env: GATED ISSUE PR_NUM (bound by skills/fullsend/SKILL.md Step 7).
+   WT_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/worktrees"
+   GATED="<wave-N pr-open issues whose evaluator returned>"
    source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
    CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
    CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
@@ -35,8 +37,15 @@ On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the V
      no-log-dir)        echo "NOTE: no subagent log dir on the main checkout (PIPELINE_LOGS_ENABLED=false?) — capability arm skipped: $CR_LINE" >&2 ;;
      unresolvable-root) echo "WARN: capability-refusal sources UNRESOLVABLE from $(pwd) — gate arm DORMANT (#1246): $CR_LINE" >&2 ;;
    esac
-   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+   for N in $GATED; do
+     ISSUE="$N"
+     WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
+     PR_NUM=$([ -n "$WT" ] && gh pr list --repo "$PIPELINE_REPO" --head "$(git -C "$WT" branch --show-current)" --json number --jq '.[0].number')
+     REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+     echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
+   done
    ```
+   **ONE Bash call per wave (#1452).** `source` + the `--resolve-sources` resolution are wave-invariant and hoisted ABOVE the loop; only the per-issue gate call repeats. Each issue's `WT` / `PR_NUM` are DERIVED in-loop (worktree glob → that worktree's branch → `gh pr list --head`), never recalled from orchestrator context. The `[ -n "$WT" ]` test is the fail-closed guard, NOT `git`'s exit status: `git -C "" branch --show-current` exits 0 and prints the ORCHESTRATOR's own branch, so a glob miss would otherwise resolve `--head <base>` and name an unrelated PR (a #909-class misroute). An empty `$PR_NUM` makes the gate emit a `block-*` token — a visible `GATE:` line, never a silent skip.
    Checks in order: `MANUAL_MERGE` env, `manual-merge` label, the 4 greenlight conditions, capability-refusal, `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`. The gate may also print `NOTE: capability-refusal arm skipped (REASON=async-dispatch …)` on stderr — expected for background-dispatch records, not a WARN, never reported as "unproven".
 
    **pr-eval depth is never gated (W3).** pr-eval itself STAYS Opus in all configurations, never gated by any execute-side knob. Since #1186 that is an explicit PIN, not an inheritance side-effect: the dispatch carries `model=` resolved from `scripts/resolve-stage-model.sh <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`). No carve-out can lower the pin; an explicit knob below the resolved execute tier is honored but emits a stderr WARN (an operator override is allowed, silence is not).
