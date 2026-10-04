@@ -194,6 +194,132 @@ for lit in "$HELPER_NAME" '--to plan-reviewed' '--from plan-pending'; do
   fi
 done
 
+# ===========================================================================
+# H-series — the `## Headless contract` classifier-deny arm (#1449).
+# ===========================================================================
+
+SECTION_HEADING='## Headless contract'
+GRAMMAR_TEMPLATE='HEADLESS-DEFAULT: <site> decision=<what> reason=<why>'
+GRAMMAR_RE='HEADLESS-DEFAULT: [a-z0-9-]+ decision=[^[:space:]]+ reason='
+CLASSIFIER_LIT='denied by the Claude Code auto mode classifier'
+
+# Copied VERBATIM from tests/test-fullsend-headless-contract.sh so both guards
+# agree on the section boundary.
+section_body() {
+  awk -v heading="$SECTION_HEADING" '
+    $0 == heading { inblock = 1; next }
+    inblock && /^## / { inblock = 0 }
+    inblock { print }
+  ' "$1"
+}
+
+# The concrete permission-denied example line inside the section.
+pd_line() { grep -F -- 'HEADLESS-DEFAULT: permission-denied' <<<"$1" | sed -n '1p'; }
+
+h1_ok() { grep -qF -- "$CLASSIFIER_LIT" <<<"$1"; }
+
+# H2 — the classifier-deny arm names ONE identical-command retry, the
+# reason token, and (plan-eval amendment 1) the issue's own `site=` / `issue=#`
+# tokens, all on a line that still satisfies A4's grammar.
+h2_ok() {
+  local s="$1" L
+  L="$(pd_line "$s")"
+  [ -n "$L" ] || return 1
+  grep -qF -- 'reason=classifier-deny' <<<"$L" || return 1
+  grep -qE -- "$GRAMMAR_RE"            <<<"$L" || return 1
+  grep -qF -- 'site='                  <<<"$L" || return 1
+  grep -qF -- 'issue=#'                <<<"$L" || return 1
+  grep -qF -- 'identical'              <<<"$s" || return 1
+  grep -qF -- 'ONCE'                   <<<"$s" || return 1
+}
+
+# H3 — the skip is spelled out: label untouched, Flagged in Step 8's table,
+# slate continues.
+h3_ok() {
+  local L
+  L="$(pd_line "$1")"
+  [ -n "$L" ] || return 1
+  grep -qF -- 'label'          <<<"$L" || return 1
+  grep -qF -- 'Flagged'        <<<"$L" || return 1
+  grep -qF -- "Step 8's table" <<<"$L" || return 1
+  grep -qF -- 'slate'          <<<"$L" || return 1
+}
+
+# H4 — the no-`echo` rule exists AND sits where A4 tolerates it.
+#
+# This is plan-eval amendment 1, pinned rather than merely avoided.
+# tests/test-fullsend-headless-contract.sh A4 requires every section line
+# carrying `HEADLESS-DEFAULT:` — except the verbatim GRAMMAR_TEMPLATE — to match
+# GRAMMAR_RE. A new prose bullet quoting `HEADLESS-DEFAULT:` to say "never via
+# echo" therefore REDS A4 (demonstrated by the plan evaluation's control). The
+# rule must live on the grammar-template INTRO line, which A4 filters out.
+h4_ok() {
+  local s="$1" ECHO_LINES NONCONF l
+  ECHO_LINES="$(grep -F -- 'echo' <<<"$s" || true)"
+  [ -n "$ECHO_LINES" ] || return 1
+  grep -qE -- '(never|NEVER|not)' <<<"$ECHO_LINES" || return 1
+  # Every `echo` line that also names HEADLESS-DEFAULT must BE the template line.
+  while IFS= read -r l; do
+    case "$l" in
+      *HEADLESS-DEFAULT:*) grep -qF -- "$GRAMMAR_TEMPLATE" <<<"$l" || return 1 ;;
+    esac
+  done <<<"$ECHO_LINES"
+  # A4's own invariant, re-asserted here so the hazard is pinned in THIS file.
+  NONCONF="$(grep -F -- 'HEADLESS-DEFAULT:' <<<"$s" \
+    | grep -vF -- "$GRAMMAR_TEMPLATE" \
+    | grep -vE -- "$GRAMMAR_RE" || true)"
+  [ -z "$NONCONF" ]
+}
+
+SECTION="$(section_body "$FULLSEND")"
+
+scenario "H1-H4: the headless contract names the classifier-deny arm"
+
+declare -a H_FN=(h1_ok h2_ok h3_ok h4_ok)
+declare -a H_DESC=(
+  "H1: the section names the literal '$CLASSIFIER_LIT'"
+  "H2: the classifier-deny line names reason=classifier-deny, site=, issue=# and ONE identical retry, and obeys A4's grammar"
+  "H3: the classifier-deny line states the label is untouched, the issue is Flagged in Step 8's table, and the slate continues"
+  "H4: a never/not clause forbids \`echo\` for HEADLESS-DEFAULT: lines, and no non-template HEADLESS-DEFAULT: line breaks A4's grammar"
+)
+
+for i in 0 1 2 3; do
+  inc
+  if "${H_FN[$i]}" "$SECTION"; then
+    pass_msg "${H_DESC[$i]}"
+  else
+    fail_msg "${H_DESC[$i]} — NOT satisfied"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+scenario "H5: negative control — H1-H4 all FAIL on a section-stripped copy"
+
+NEG="$TMP/fullsend-stripped.md"
+awk -v heading="$SECTION_HEADING" '
+  $0 == heading { strip = 1; next }
+  strip && /^## / { strip = 0 }
+  strip { next }
+  { print }
+' "$FULLSEND" > "$NEG"
+NEG_SECTION="$(section_body "$NEG")"
+
+inc
+if [ -z "$NEG_SECTION" ]; then
+  pass_msg "H5.0 tripwire: the stripped copy yields an EMPTY headless section"
+else
+  fail_msg "H5.0 tripwire: the stripped copy still yields a non-empty headless section — the stripper is broken"
+fi
+
+for i in 0 1 2 3; do
+  inc
+  if "${H_FN[$i]}" "$NEG_SECTION"; then
+    fail_msg "H5: predicate ${H_FN[$i]} still passes on the section-stripped copy — it is reading prose OUTSIDE the section"
+  else
+    pass_msg "H5: predicate ${H_FN[$i]} FAILS on the section-stripped copy (as it must)"
+  fi
+done
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: PASS=$PASS FAIL=$FAIL"

@@ -61,16 +61,16 @@ Read [references/usage-gate.md](references/usage-gate.md) at the first wave top;
 
 ## Headless contract
 
-When `PIPELINE_HEADLESS=true`, fullsend and every dispatched stage MUST NOT end a turn on a question — at each site below apply the named default, log one `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continue.
+When `PIPELINE_HEADLESS=true`, fullsend and every dispatched stage MUST NOT end a turn on a question — apply the named default below, log one `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line in the turn's TEXT (never via `echo`), and continue.
 
-- **merge-policy** covers Step 9's non-greenlight-merge confirmation. `HEADLESS-DEFAULT: merge-policy decision=apply-greenlight-gate reason=flag-is-the-answer` — gate the green subset (`--manual-merge` opts out); leave non-greenlight PRs unmerged, reported.
+- **merge-policy** covers Step 9's non-greenlight-merge confirmation. `HEADLESS-DEFAULT: merge-policy decision=apply-greenlight-gate reason=flag-is-the-answer` — gate the green subset (`--manual-merge` opts out); leave the rest unmerged.
 - **unread-config-knob** covers any config key with no read site. `HEADLESS-DEFAULT: unread-config-knob decision=ignore-and-continue reason=not-a-contradiction` — ignore and continue.
-- **stall-triage** covers Step 6/7's four-option `agent-stalled` prompt. `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the remaining budget.
-- **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — retry autonomously; on exhaustion mark Flagged, skip `evaluate-issue-pr`, continue the wave.
-- **permission-denied** covers a `PermissionRequest` bridge timeout or deny. `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=bridge-timeout|operator-deny` — skip the step, never retry.
-- **ci-wait** covers every wait on PR CI; never end a turn while CI or an agent is still running. `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — the orchestrator waits FOREGROUND via `timeout 590 gh pr checks <PR> --repo "$PIPELINE_REPO" --watch --interval 30`, repeated across turns until terminal; never `Monitor`, never `run_in_background`, never narrate waiting.
+- **stall-triage** covers Step 6/7's `agent-stalled` prompt. `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the remaining budget.
+- **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — retry autonomously, then mark Flagged and continue.
+- **permission-denied** covers a `PermissionRequest` bridge timeout/deny, or a Bash result containing `denied by the Claude Code auto mode classifier`. `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=classifier-deny site=<step> issue=#<N>` — retry an identical classifier-denied command ONCE, then skip the step, label unchanged, list it Flagged in Step 8's table, continue the slate; a bridge timeout/deny skips without retry.
+- **ci-wait** covers any PR-CI wait. `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — poll FOREGROUND via `timeout 590 gh pr checks --watch` until terminal.
 
-Interactive mode (knob unset/false) is unchanged — operator prompts stay.
+Interactive mode (knob unset/false) is unchanged.
 
 ## Campaign mode
 
