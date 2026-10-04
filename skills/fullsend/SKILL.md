@@ -93,13 +93,13 @@ When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend au
 
 **block-cage-tests-diff** (#1304) fires when the PR modifies, removes, or renames (either direction — the old path is matched too) any `tests/test-cage-invariant-*.sh`, the behaviour tests pinning each guard hook's deny contract. Newly added cage tests never fire it; an unreadable file list blocks with a WARN. It is a **hard block**: only an operator may weaken the cage.
 
-**block-base-mismatch** is enforced as defense-in-depth — PR `baseRefName` must equal `PIPELINE_BASE_BRANCH` (see #295). **Next-branch aware (#1148):** `baseRefName == ${PIPELINE_NEXT_BRANCH:-next}` is ALSO accepted, but ONLY when the PR's issue is next-routed — carries `${PIPELINE_NEXT_LABEL:-next}` or the legacy alias `next-major-release` (resolved via `gh issue view --json labels`). A PR targeting the next branch for a non-next issue still `block-base-mismatch`; an empty base still fails closed. Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge`) → `block-cage-tests-diff` → verdict → `block-capability-refused` → `block-base-mismatch` → CI rollup → mergeable → mergeStateStatus. Tokens: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, `block-mergestate`.
+**block-base-mismatch** is enforced as defense-in-depth — PR `baseRefName` must equal `PIPELINE_BASE_BRANCH` (see #295). **Next-branch aware (#1148):** `baseRefName == ${PIPELINE_NEXT_BRANCH:-next}` is ALSO accepted, but ONLY when the PR's issue is next-routed — carries `${PIPELINE_NEXT_LABEL:-next}` or the legacy alias `next-major-release` (resolved via `gh issue view --json labels`). A PR targeting the next branch for a non-next issue still `block-base-mismatch`; an empty base still fails closed. Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge`) → `block-cage-tests-diff` → verdict → `block-capability-refused` → `block-base-mismatch` → CI rollup → mergeable → mergeStateStatus. Tokens: `green`, else one `block-*` per arm.
 
 **Three opt-outs:** (1) `FULL SEND --manual-merge` — flag may appear anywhere in argv (cannot collide with issue numbers, which are bare integers); (2) `/pipeline:evaluate-issue-pr <N> --manual-merge` — records the opt-out for the orchestrator's gate; a direct evaluator invocation never merges (finish via `scripts/finish-manual-merge.sh`); (3) a `manual-merge` label on the issue for per-issue control without re-typing the flag. (`--spawn` is the orthogonal transport flag — see Step 6/7 — not a merge opt-out.)
 
 ## Auto-merge ownership
 
-The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token — it performs NO merge). **THE ORCHESTRATOR fires the gate** at Step 7, once per `pr-open` PR, immediately after that PR's evaluator returns its verdict (#1444): inline PATH A/B/C/D evaluations and `--spawn` queued ones alike. `/pipeline:evaluate-issue-pr` posts a verdict and stops — it no longer merges. Step 8 (Report) remains the **fallback** pass: it re-runs the gate for any `pr-open` issue Step 7 did not merge (e.g. the orchestrator was interrupted between verdict and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. The post-token merge procedure lives in [references/auto-merge-gate.md](references/auto-merge-gate.md); do not re-document it here.
+The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token — it performs NO merge). **THE ORCHESTRATOR fires the gate** at Step 7, ONE batched call per wave once the wave's evaluators return (#1444/#1452): inline PATH A/B/C/D and `--spawn` queued alike. `/pipeline:evaluate-issue-pr` posts a verdict and stops — it no longer merges. Step 8 (Report) remains the **fallback** pass: it re-runs the gate for any `pr-open` issue Step 7 did not merge (e.g. the orchestrator was interrupted between verdict and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. The post-token merge procedure lives in [references/auto-merge-gate.md](references/auto-merge-gate.md); do not re-document it here.
 
 1. **Plan**
 
@@ -268,27 +268,27 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
      echo "PREFLIGHT issue=#$N $(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-eval-preflight.sh" "$N" --pr "$PR_NUM" --worktree "$WT")"
    done
    ```
-   Both per-issue inputs are DERIVED in-loop, never recalled; an empty `$WT` fails closed (`REASON=no-pr`).
 
-   **Fire the gate per PR (#1444, mandatory).** The evaluator posts a verdict and STOPS — it no longer merges.
-   For EACH wave-N `pr-open` PR, as soon as that PR's evaluator returns, the orchestrator runs the gate itself
-   (`$ISSUE` / `$PR_NUM` are that PR's issue and PR numbers). This applies to inline PATH A/B/C/D evaluations
-   and to `--spawn` queued ones alike:
+   **Fire the gate per WAVE (#1452, mandatory).** The evaluator posts a verdict and STOPS — it no longer merges.
+   Once the wave's evaluators return, the orchestrator runs ONE gate call and branches on the emitted `GATE:` lines — inline PATH A/B/C/D and `--spawn` queued alike:
 
    ```bash
-   ISSUE=<N>     # the wave-N pr-open issue whose evaluator just returned
-   PR_NUM=<PR>   # its PR, already resolved deterministically by Step 6b's check-ci-fix-loop.sh
+   WT_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/worktrees"
+   GATED="<wave-N pr-open issues whose evaluator returned>"
    source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
    CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
    CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
-   CR_DIR=${CR_LINE##*DIR=}
    case "$CR_STATE" in
-     resolved)          export PIPELINE_CAPABILITY_REFUSAL_SOURCES="$CR_DIR" ;;
-     no-log-dir)        echo "NOTE: no subagent log dir on the main checkout (PIPELINE_LOGS_ENABLED=false?) — capability arm skipped: $CR_LINE" >&2 ;;
-     unresolvable-root) echo "WARN: capability-refusal sources UNRESOLVABLE from $(pwd) — gate arm DORMANT (#1246): $CR_LINE" >&2 ;;
+     resolved)                     export PIPELINE_CAPABILITY_REFUSAL_SOURCES="${CR_LINE##*DIR=}" ;;
+     no-log-dir|unresolvable-root) echo "NOTE: capability arm skipped/DORMANT (#1246): $CR_LINE" >&2 ;;
    esac
-   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
-   echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
+   for N in $GATED; do
+     ISSUE="$N"
+     WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
+     PR_NUM=$([ -n "$WT" ] && gh pr list --repo "$PIPELINE_REPO" --head "$(git -C "$WT" branch --show-current)" --json number --jq '.[0].number')
+     REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+     echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
+   done
    ```
 
    On any token, follow [references/auto-merge-gate.md](references/auto-merge-gate.md).
