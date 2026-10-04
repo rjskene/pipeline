@@ -99,7 +99,7 @@ When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend au
 
 ## Auto-merge ownership
 
-The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token — it performs NO merge). **THE ORCHESTRATOR fires the gate** at Step 7, ONE batched call per wave once the wave's evaluators return (#1444/#1452): inline PATH A/B/C/D and `--spawn` queued alike. `/pipeline:evaluate-issue-pr` posts a verdict and stops — it no longer merges. Step 8 (Report) remains the **fallback** pass: it re-runs the gate for any `pr-open` issue Step 7 did not merge (e.g. the orchestrator was interrupted between verdict and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. The post-token merge procedure lives in [references/auto-merge-gate.md](references/auto-merge-gate.md); do not re-document it here.
+The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token — it performs NO merge). **THE ORCHESTRATOR fires the gate** at Step 7, ONE batched call per wave (#1444/#1452): inline PATH A/B/C/D and `--spawn` queued alike. `/pipeline:evaluate-issue-pr` posts a verdict and stops — it no longer merges. Step 8 (Report) remains the **fallback** pass: it re-runs the gate for any `pr-open` issue Step 7 did not merge (e.g. the orchestrator was interrupted between verdict and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. The post-token merge procedure lives in [references/auto-merge-gate.md](references/auto-merge-gate.md); do not re-document it here.
 
 1. **Plan**
 
@@ -137,7 +137,7 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    PLAN_EVAL_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> plan-eval)
    ```
    The resolver emits `tier-max(this issue's plan model, PIPELINE_STAGE_MODEL_PLAN_EVAL)` (unset ⇒ `opus`), so the **gate never lands below its producer** — a PATH C plan produced on `fable` is gated on `fable` (`REASON=follows-producer`), and a knob set below the producer cannot drop it. Plan approval is an auto-gate with no human behind it in fullsend, which is why equal-tier is acceptable but below-tier is not.
-   **Trust profile (#1291):** if `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D), do NOT dispatch the evaluator: Step 4's `transition-issue.sh` fence, (`plan-pending`→`plan-approved`), `--comment "plan-eval skipped: lean profile"`, and record `plan_eval=skip` for Step 6's log line.
+   **Trust profile (#1291):** if `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D), do NOT dispatch the evaluator: run Step 4's `transition-issue.sh` fence `--to plan-approved --from plan-pending --comment "plan-eval skipped: lean profile"`, and record `plan_eval=skip` for Step 6's log line.
    **Plan gate (#1429):** read the optional `GATE=<full|single|none|annotate>` token from `PLAN_EVAL_SPEC` (absent ⇒ `annotate`). `GATE=none` → do NOT dispatch the evaluator: same skip path as `SKIP=true` above, audit comment `plan-eval skipped: plan-gate=none`, record `plan_eval=skip`. `GATE=single` → dispatch the evaluator exactly ONCE, then hand its verdict to Step 3's capped arm. `GATE=full` → today's loop. `SKIP=true` wins when both fire.
    **Plan gate — annotate (#1435):** `GATE=annotate` → dispatch the evaluator exactly once, then hand its verdict to Step 3's annotate arm. `SKIP=true` still wins.
 3. **Re-plan loop** — for any issue whose evaluation verdict is "Revise": re-run `/pipeline:plan-issue N`, then `/pipeline:evaluate-issue-plan N` — **each re-dispatch re-resolves its stage pin** exactly as in Step 1b / Step 2 (`resolve-stage-model.sh <N> plan` / `<N> plan-eval`) and always passes `model=$MODEL`. Repeat until all pass (max 3 iterations per issue). If an issue still fails after 3 iterations, skip it and flag it in the final report.
@@ -264,17 +264,18 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
    PROPEN="<wave-N pr-open issues>"
    for N in $PROPEN; do
      WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
-     PR_NUM=$([ -n "$WT" ] && gh pr list --repo "$PIPELINE_REPO" --head "$(git -C "$WT" branch --show-current)" --json number --jq '.[0].number')
+     BR=$([ -n "$WT" ] && git -C "$WT" branch --show-current)
+     PR_NUM=$([ -n "$BR" ] && gh pr list --repo "$PIPELINE_REPO" --head "$BR" --json number --jq '.[0].number')
      echo "PREFLIGHT issue=#$N $(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-eval-preflight.sh" "$N" --pr "$PR_NUM" --worktree "$WT")"
    done
    ```
 
-   **Fire the gate per WAVE (#1452, mandatory).** The evaluator posts a verdict and STOPS — it no longer merges.
-   Once the wave's evaluators return, the orchestrator runs ONE gate call and branches on the emitted `GATE:` lines — inline PATH A/B/C/D and `--spawn` queued alike:
+   **Fire the gate per WAVE (#1452, mandatory).** The evaluator posts a verdict and STOPS.
+   Once the wave's evaluators return, the orchestrator runs ONE gate call — inline PATH A/B/C/D and `--spawn` queued alike:
 
    ```bash
    WT_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/worktrees"
-   GATED="<wave-N pr-open issues whose evaluator returned>"
+   GATED="<wave-N issues whose evaluator returned>"
    source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
    CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
    CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
@@ -285,7 +286,8 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
    for N in $GATED; do
      ISSUE="$N"
      WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
-     PR_NUM=$([ -n "$WT" ] && gh pr list --repo "$PIPELINE_REPO" --head "$(git -C "$WT" branch --show-current)" --json number --jq '.[0].number')
+     BR=$([ -n "$WT" ] && git -C "$WT" branch --show-current)
+     PR_NUM=$([ -n "$BR" ] && gh pr list --repo "$PIPELINE_REPO" --head "$BR" --json number --jq '.[0].number')
      REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
      echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
    done

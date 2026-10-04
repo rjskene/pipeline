@@ -40,24 +40,27 @@ On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the V
    for N in $GATED; do
      ISSUE="$N"
      WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
-     PR_NUM=$([ -n "$WT" ] && gh pr list --repo "$PIPELINE_REPO" --head "$(git -C "$WT" branch --show-current)" --json number --jq '.[0].number')
+     BR=$([ -n "$WT" ] && git -C "$WT" branch --show-current)
+     PR_NUM=$([ -n "$BR" ] && gh pr list --repo "$PIPELINE_REPO" --head "$BR" --json number --jq '.[0].number')
      REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
      echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
    done
    ```
-   **ONE Bash call per wave (#1452).** `source` + the `--resolve-sources` resolution are wave-invariant and hoisted ABOVE the loop; only the per-issue gate call repeats. Each issue's `WT` / `PR_NUM` are DERIVED in-loop (worktree glob → that worktree's branch → `gh pr list --head`), never recalled from orchestrator context. The `[ -n "$WT" ]` test is the fail-closed guard, NOT `git`'s exit status: `git -C "" branch --show-current` exits 0 and prints the ORCHESTRATOR's own branch, so a glob miss would otherwise resolve `--head <base>` and name an unrelated PR (a #909-class misroute). An empty `$PR_NUM` makes the gate emit a `block-*` token — a visible `GATE:` line, never a silent skip.
+   **ONE Bash call per wave (#1452).** `source` + the `--resolve-sources` resolution are wave-invariant and hoisted ABOVE the loop; only the per-issue gate call repeats. Each issue's `WT` / `PR_NUM` are DERIVED in-loop (worktree glob → that worktree's branch → `gh pr list --head`), never recalled from orchestrator context. The TWO `[ -n … ]` tests are the fail-closed guards, NOT the commands' exit statuses: `git -C "" branch --show-current` exits 0 and prints the ORCHESTRATOR's own branch, and `gh pr list --head ""` exits 0 and returns the repo's newest open PR — so a glob miss (empty `WT`) or a detached/stale worktree (empty `BR`) would otherwise name an unrelated PR (a #909-class misroute). An empty `$PR_NUM` makes the gate emit a `block-*` token — a visible `GATE:` line, never a silent skip.
    Checks in order: `MANUAL_MERGE` env, `manual-merge` label, the 4 greenlight conditions, capability-refusal, `baseRefName == $PIPELINE_BASE_BRANCH`. Prints exactly one token: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, or `block-mergestate`. The gate may also print `NOTE: capability-refusal arm skipped (REASON=async-dispatch …)` on stderr — expected for background-dispatch records, not a WARN, never reported as "unproven".
 
    **pr-eval depth is never gated (W3).** pr-eval itself STAYS Opus in all configurations, never gated by any execute-side knob. Since #1186 that is an explicit PIN, not an inheritance side-effect: the dispatch carries `model=` resolved from `scripts/resolve-stage-model.sh <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`). No carve-out can lower the pin; an explicit knob below the resolved execute tier is honored but emits a stderr WARN (an operator override is allowed, silence is not).
 
 3. **On `green`:** ONE batched wave loop (#1452). The whole green path — TOCTOU re-check, merge, SHA capture, screenshot rewrite, footer, label flip, close — is ONE Bash call over the wave's greenlit issues, emitting one line per issue: `MERGE: issue=#<N> pr=#<P> reason=<green|block-base-mismatch|block-no-pr|block-merge-failed> [sha=<sha>]`. The line ORDER inside the loop is load-bearing — the rationale bullets below say why; do not reorder them.
    ```bash
-   # Required env: GREEN (the Step 7 GATE lines whose reason=green, space-separated issue numbers).
+   # No inherited env: GREEN is bound HERE, from the Step 7 GATE lines.
+   GREEN="<issue numbers whose Step 7 GATE line read reason=green>"
    WT_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/worktrees"
    for N in $GREEN; do
      ISSUE="$N"
      WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
-     PR_NUM=$([ -n "$WT" ] && gh pr list --repo "$PIPELINE_REPO" --head "$(git -C "$WT" branch --show-current)" --json number --jq '.[0].number')
+     BR=$([ -n "$WT" ] && git -C "$WT" branch --show-current)
+     PR_NUM=$([ -n "$BR" ] && gh pr list --repo "$PIPELINE_REPO" --head "$BR" --json number --jq '.[0].number')
      [ -n "$PR_NUM" ] || { echo "MERGE: issue=#$ISSUE pr=#none reason=block-no-pr"; continue; }
      BASE_RECHECK=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json baseRefName --jq .baseRefName 2>/dev/null)
      if [ -z "$BASE_RECHECK" ] || [ "$BASE_RECHECK" != "$PIPELINE_BASE_BRANCH" ]; then
@@ -91,7 +94,7 @@ On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the V
    ```
    - **Every `block-*` line is DEFERRED to step 4, never dropped.** A per-iteration `continue` ends that issue's merge, not its handling: every `MERGE: … reason=block-*` line here — exactly like every Step 7 `GATE: … reason=block-*` line — is then run through **step 4** below, per PR, which posts the `Auto-merge skipped:` comment AND applies the `manual-merge` label (#489's run-queue slot-freeing signal). One blocked PR never stops its siblings, and no blocked PR loses its step-4 routing.
    - **TOCTOU re-check (issue #295).** Immediately before the merge, re-read `baseRefName`. A malicious or buggy actor could retarget the PR between step 2's gate and the merge call. On a mismatch the loop sets `REASON="block-base-mismatch"`, emits its `MERGE:` line and `continue`s — `gh pr merge` is never invoked for that PR.
-   - **The `PR_NUM=` derivation fails closed on the `[ -n "$WT" ]` test, not on `git`.** `git -C "" branch --show-current` exits 0 and prints the ORCHESTRATOR's own branch, so a worktree-glob miss would otherwise resolve `--head <base>` and name an unrelated PR (a #909-class misroute). An empty `$PR_NUM` emits `reason=block-no-pr` so `gh pr merge ""` is unreachable.
+   - **The `PR_NUM=` derivation fails closed on the `[ -n "$WT" ]` / `[ -n "$BR" ]` tests, not on `git` or `gh`.** `git -C "" branch --show-current` exits 0 printing the ORCHESTRATOR's own branch, and `gh pr list --head ""` exits 0 returning the repo's newest open PR, so a worktree-glob miss (empty `WT`) or a detached/stale worktree (empty `BR`) would otherwise name an unrelated PR (a #909-class misroute). An empty `$PR_NUM` emits `reason=block-no-pr` so `gh pr merge ""` is unreachable.
    - Merge synchronously (NOT `--auto`), then capture the merge-commit SHA (empty `$SHA` from rare API lag → omit from close comment; the merge is authoritative). **The merge itself is guarded (#1452):** batching runs every gate BEFORE any merge, so each post-first PR's `mergeStateStatus` is stale by the time its turn comes; a failed `gh pr merge` emits `reason=block-merge-failed` and `continue`s instead of posting the `Auto-merged:` footer, applying `merged` and closing the issue on an UNMERGED PR.
    - **Rewrite screenshot URLs to the merge SHA (issue #506, extended #551).** The eval comment embeds branch-pinned screenshot URLs that 404 once `--delete-branch` removes the feature branch. On public repos these are `raw.githubusercontent.com/<owner>/<repo>/<branch>/.eval-screenshots/...`; on private repos they are `github.com/<owner>/<repo>/blob/<branch>/.eval-screenshots/...` (the blob-link form from Step 6). The rewriter branch-scope-pins BOTH host forms to the durable merge-SHA equivalent (`.../<merge-sha>/.eval-screenshots/...`) in one pass. Must run AFTER the SHA capture (the SHA it pins to) and BEFORE the footer-append (so the rewriter targets the screenshot comment, not the footer). Fail-soft — never block the merge that already completed.
    - Append the auto-merged footer (exact literal prefix — `skills/fullsend/SKILL.md` Step 8 greps it). The green `MERGE:` line is emitted immediately AFTER that footer and BEFORE the label flip, so the retained `exit 1` below can never abort the batch while HIDING a merge that completed.
