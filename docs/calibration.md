@@ -201,7 +201,7 @@ artifact:
 
 ```
 CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
-CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
+CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail|blocked|n/a> unexpected-files=<n>
 CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
 ```
 
@@ -221,15 +221,26 @@ the first line of the block.
   backfills the sandbox's retroactive costs (async `Agent` dispatches carry no
   usage at PostToolUse) and dedups forward/retroactive duplicates by
   `agent_id`, keeping the max `tokens.total` (#1406).
-- `verdicts` — plan-eval and pr-eval verdicts, slash-separated.
-- `reftest` — the sandbox issue's reference test after the PR lands.
+- `verdicts` — plan-eval and pr-eval verdicts, slash-separated. Each half has
+  its own source: the plan half is the last `**Verdict:**` inside a
+  `## Plan Evaluation` comment on the issue, and no other comment — the PR
+  evaluator posts its `## Evaluation` on the issue too, so an unfiltered read
+  reports the PR verdict twice. The pr half is the last `**Verdict:**` in the
+  merging PR's own comments, else the OPEN PR referencing the issue, else `n/a`.
+- `reftest` — the sandbox issue's reference test after the PR lands. `pass` /
+  `fail` were graded against the merged tree; `blocked` means the PR was
+  Flagged and never merged, so the test would have graded the unfixed tree;
+  `n/a` means the run aborted before reaching the issue.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
 - `planted` — a per-RUN atom on the `CALIB-TOTAL` line only: did the slate's
-  planted-boundary-defect issue escape the pr-eval gate? `caught` (the
-  boundary was implemented correctly, or a defective PR was Flagged before it
-  merged), `missed` (the reference test fails and pr-eval did not flag it — a
-  defective PR passed the gate), or `n/a` (the slate carries no
-  planted-defect dir, or the row was never graded).
+  planted-boundary-defect issue escape the pr-eval gate? Graded gate-first:
+
+  | observation | grade |
+  |---|---|
+  | pr-eval verdict is `Flagged` | `caught`, regardless of `reftest` — the escape was stopped at the gate, so a tree the fix never reached says nothing |
+  | `reftest=pass` | `caught` — the boundary was implemented correctly |
+  | `reftest=fail` with a non-Flagged pr verdict | `missed` — a defective PR passed the gate |
+  | no `*planted*` slate dir, or the row was neither flagged nor graded | `n/a` |
 - `hooks` — a per-RUN atom on the `CALIB-TOTAL` line only: `on` (default) or
   `off`, the arm `--hooks` launched under (#1409, see Running above).
 - `bexec` — a per-RUN atom on the `CALIB-TOTAL` line only, and the only
@@ -303,7 +314,12 @@ older-format one from the same day.
   number of `CALIB` rows read. The `CALIB-TOTAL` line is not parsed at all; its
   `reftest-pass` field is a convenience for human readers that happens to count
   the same rows. Without an artifact the row reports
-  `n/a (no calibration slate; ...)`.
+  `n/a (no calibration slate; ...)`. Caveat since #1451: the two denominators
+  can disagree. `reftest-pass` excludes `blocked` rows from both its numerator
+  and its denominator, while this row's own
+  k/n counts every `reftest=` atom it reads, `blocked` included — so the two
+  diverge by exactly the number of blocked rows. Reconciling
+  `run-retro.sh`'s `compute_calib()` with that exclusion is a follow-up.
 - **`median path b pr/usd`** — the computed value that is otherwise
   `n/a (no per-issue cost in rows JSON)`. It is the median of the `cost=` atoms
   of the `path=B` rows only — rows on every other path are skipped — and the
