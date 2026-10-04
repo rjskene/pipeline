@@ -93,13 +93,13 @@ When `/pipeline:evaluate-issue-pr` returns Approved on a feature PR, fullsend au
 
 **block-cage-tests-diff** (#1304) fires when the PR modifies, removes, or renames (either direction — the old path is matched too) any `tests/test-cage-invariant-*.sh`, the behaviour tests pinning each guard hook's deny contract. Newly added cage tests never fire it; an unreadable file list blocks with a WARN. It is a **hard block**: only an operator may weaken the cage.
 
-**block-base-mismatch** is enforced as defense-in-depth — PR `baseRefName` must equal `PIPELINE_BASE_BRANCH` (see #295). **Next-branch aware (#1148):** `baseRefName == ${PIPELINE_NEXT_BRANCH:-next}` is ALSO accepted, but ONLY when the PR's issue is next-routed — carries `${PIPELINE_NEXT_LABEL:-next}` or the legacy alias `next-major-release` (resolved via `gh issue view --json labels`). A PR targeting the next branch for a non-next issue still `block-base-mismatch`; an empty base still fails closed. Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge`) → `block-cage-tests-diff` → verdict → `block-capability-refused` → `block-base-mismatch` → CI rollup → mergeable → mergeStateStatus. Tokens: `green`, `block-flag`, `block-label`, `block-cage-tests-diff`, `block-verdict`, `block-capability-refused`, `block-base-mismatch`, `block-ci`, `block-mergeable`, `block-mergestate`.
+**block-base-mismatch** is enforced as defense-in-depth — PR `baseRefName` must equal `PIPELINE_BASE_BRANCH` (see #295). **Next-branch aware (#1148):** `baseRefName == ${PIPELINE_NEXT_BRANCH:-next}` is ALSO accepted, but ONLY when the PR's issue is next-routed — carries `${PIPELINE_NEXT_LABEL:-next}` or the legacy alias `next-major-release` (resolved via `gh issue view --json labels`). A PR targeting the next branch for a non-next issue still `block-base-mismatch`; an empty base still fails closed. Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge`) → `block-cage-tests-diff` → verdict → `block-capability-refused` → `block-base-mismatch` → CI rollup → mergeable → mergeStateStatus. Tokens: `green`, else one `block-*` per arm.
 
 **Three opt-outs:** (1) `FULL SEND --manual-merge` — flag may appear anywhere in argv (cannot collide with issue numbers, which are bare integers); (2) `/pipeline:evaluate-issue-pr <N> --manual-merge` — records the opt-out for the orchestrator's gate; a direct evaluator invocation never merges (finish via `scripts/finish-manual-merge.sh`); (3) a `manual-merge` label on the issue for per-issue control without re-typing the flag. (`--spawn` is the orthogonal transport flag — see Step 6/7 — not a merge opt-out.)
 
 ## Auto-merge ownership
 
-The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token — it performs NO merge). **THE ORCHESTRATOR fires the gate** at Step 7, once per `pr-open` PR, immediately after that PR's evaluator returns its verdict (#1444): inline PATH A/B/C/D evaluations and `--spawn` queued ones alike. `/pipeline:evaluate-issue-pr` posts a verdict and stops — it no longer merges. Step 8 (Report) remains the **fallback** pass: it re-runs the gate for any `pr-open` issue Step 7 did not merge (e.g. the orchestrator was interrupted between verdict and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. The post-token merge procedure lives in [references/auto-merge-gate.md](references/auto-merge-gate.md); do not re-document it here.
+The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_should_fire <issue> <pr>` returning a single token — it performs NO merge). **THE ORCHESTRATOR fires the gate** at Step 7, ONE batched call per wave (#1444/#1452): inline PATH A/B/C/D and `--spawn` queued alike. `/pipeline:evaluate-issue-pr` posts a verdict and stops — it no longer merges. Step 8 (Report) remains the **fallback** pass: it re-runs the gate for any `pr-open` issue Step 7 did not merge (e.g. the orchestrator was interrupted between verdict and gate fire). Release-please PRs are out of scope of this gate; they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` (Step 7b), unchanged. The post-token merge procedure lives in [references/auto-merge-gate.md](references/auto-merge-gate.md); do not re-document it here.
 
 1. **Plan**
 
@@ -137,20 +137,23 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    PLAN_EVAL_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> plan-eval)
    ```
    The resolver emits `tier-max(this issue's plan model, PIPELINE_STAGE_MODEL_PLAN_EVAL)` (unset ⇒ `opus`), so the **gate never lands below its producer** — a PATH C plan produced on `fable` is gated on `fable` (`REASON=follows-producer`), and a knob set below the producer cannot drop it. Plan approval is an auto-gate with no human behind it in fullsend, which is why equal-tier is acceptable but below-tier is not.
-   **Trust profile (#1291):** if `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D), do NOT dispatch the evaluator: run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-pending --comment "plan-eval skipped: lean profile"`, and record `plan_eval=skip` for Step 6's log line.
+   **Trust profile (#1291):** if `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D), do NOT dispatch the evaluator: run Step 4's `transition-issue.sh` fence `--to plan-approved --from plan-pending --comment "plan-eval skipped: lean profile"`, and record `plan_eval=skip` for Step 6's log line.
    **Plan gate (#1429):** read the optional `GATE=<full|single|none|annotate>` token from `PLAN_EVAL_SPEC` (absent ⇒ `annotate`). `GATE=none` → do NOT dispatch the evaluator: same skip path as `SKIP=true` above, audit comment `plan-eval skipped: plan-gate=none`, record `plan_eval=skip`. `GATE=single` → dispatch the evaluator exactly ONCE, then hand its verdict to Step 3's capped arm. `GATE=full` → today's loop. `SKIP=true` wins when both fire.
    **Plan gate — annotate (#1435):** `GATE=annotate` → dispatch the evaluator exactly once, then hand its verdict to Step 3's annotate arm. `SKIP=true` still wins.
 3. **Re-plan loop** — for any issue whose evaluation verdict is "Revise": re-run `/pipeline:plan-issue N`, then `/pipeline:evaluate-issue-plan N` — **each re-dispatch re-resolves its stage pin** exactly as in Step 1b / Step 2 (`resolve-stage-model.sh <N> plan` / `<N> plan-eval`) and always passes `model=$MODEL`. Repeat until all pass (max 3 iterations per issue). If an issue still fails after 3 iterations, skip it and flag it in the final report.
 
    **Binding rule (#1317):** from round 2 on, the re-plan dispatch prompt MUST quote the evaluator's `Revise` prescription verbatim with "apply exactly this; add no new scenarios, tests or sections". The follow-up evaluate dispatch MUST say "verify only that the prescribed change landed; a new finding is a new round only if BLOCKING".
 
-   **Plan gate (#1429):** `GATE=single` caps this loop at ONE evaluate dispatch plus ONE re-plan — on `Revise`, re-plan once with the binding #1317 prescription above, then approve HERE with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-pending` (Step 4's `plan-reviewed` filter never sees it) and NO second `evaluate-issue-plan` dispatch; record `plan_rounds=1`. `GATE=full` keeps the 3-iteration cap.
+   **Plan gate (#1429):** `GATE=single` caps this loop at ONE evaluate dispatch plus ONE re-plan — on `Revise`, re-plan once with the binding #1317 prescription above, then approve HERE via Step 4's `transition-issue.sh` fence (`plan-pending`→`plan-approved`; Step 4's `plan-reviewed` filter never sees it) and NO second `evaluate-issue-plan` dispatch; record `plan_rounds=1`. `GATE=full` keeps the 3-iteration cap.
 
-   **Plan gate — annotate (#1435):** under `GATE=annotate` a `Revise` triggers NO re-plan and NO re-evaluate: approve HERE with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-pending --comment "plan-eval: Revise carried into execute (plan-gate=annotate)"`, and record `plan_gate=annotate`, `plan_rounds=1` — execute reads the evaluation's `**Recommendations:**` as binding amendments. The ONE exception: a `Revise` carrying `**Scope:** structural` runs ONE binding #1317 re-plan, then approves the same way without re-evaluating.
+   **Plan gate — annotate (#1435):** under `GATE=annotate` a `Revise` triggers NO re-plan and NO re-evaluate: approve HERE via Step 4's `transition-issue.sh` fence (`plan-pending`→`plan-approved`), `--comment "plan-eval: Revise carried into execute (plan-gate=annotate)"`, and record `plan_gate=annotate`, `plan_rounds=1` — execute reads the evaluation's `**Recommendations:**` as binding amendments. The ONE exception: a `Revise` carrying `**Scope:** structural` runs ONE binding #1317 re-plan, then approves the same way without re-evaluating.
 
-4. **Approve** — for every issue now at `plan-reviewed`, run:
+4. **Approve** — for every issue now at `plan-reviewed`, ONE wave call:
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-reviewed
+   APPROVE="<issues now at plan-reviewed>"
+   for N in $APPROVE; do
+     bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" "$N" --to plan-approved --from plan-reviewed
+   done
    ```
 ### Execute the slate WAVE BY WAVE (Steps 5–7 per wave)
 
@@ -257,28 +260,37 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    **Preflight (#1445).** A `block` dispatches nothing and reports a `block-<REASON>` row (`ci-red` folds into Step 6b's row); `ok` dispatches with the line VERBATIM in the prompt. Tokens, `--spawn` gate, absent-line fallback: [references/pr-eval-preflight.md](references/pr-eval-preflight.md).
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-eval-preflight.sh" <N> --pr $PR_NUM --worktree <worktree-abs-path>
+   WT_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/worktrees"
+   PROPEN="<wave-N pr-open issues>"
+   for N in $PROPEN; do
+     WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
+     BR=$([ -n "$WT" ] && git -C "$WT" branch --show-current)
+     PR_NUM=$([ -n "$BR" ] && gh pr list --repo "$PIPELINE_REPO" --head "$BR" --json number --jq '.[0].number')
+     echo "PREFLIGHT issue=#$N $(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-eval-preflight.sh" "$N" --pr "$PR_NUM" --worktree "$WT")"
+   done
    ```
 
-   **Fire the gate per PR (#1444, mandatory).** The evaluator posts a verdict and STOPS — it no longer merges.
-   For EACH wave-N `pr-open` PR, as soon as that PR's evaluator returns, the orchestrator runs the gate itself
-   (`$ISSUE` / `$PR_NUM` are that PR's issue and PR numbers). This applies to inline PATH A/B/C/D evaluations
-   and to `--spawn` queued ones alike:
+   **Fire the gate per WAVE (#1452, mandatory).** The evaluator posts a verdict and STOPS.
+   Once the wave's evaluators return, the orchestrator runs ONE gate call — inline PATH A/B/C/D and `--spawn` queued alike:
 
    ```bash
-   ISSUE=<N>     # the wave-N pr-open issue whose evaluator just returned
-   PR_NUM=<PR>   # its PR, already resolved deterministically by Step 6b's check-ci-fix-loop.sh
+   WT_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/worktrees"
+   GATED="<wave-N issues whose evaluator returned>"
    source "${CLAUDE_PLUGIN_ROOT}/scripts/auto-merge-gate.sh"
    CR_LINE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-capability-refusal.sh" --resolve-sources)
    CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
-   CR_DIR=${CR_LINE##*DIR=}
    case "$CR_STATE" in
-     resolved)          export PIPELINE_CAPABILITY_REFUSAL_SOURCES="$CR_DIR" ;;
-     no-log-dir)        echo "NOTE: no subagent log dir on the main checkout (PIPELINE_LOGS_ENABLED=false?) — capability arm skipped: $CR_LINE" >&2 ;;
-     unresolvable-root) echo "WARN: capability-refusal sources UNRESOLVABLE from $(pwd) — gate arm DORMANT (#1246): $CR_LINE" >&2 ;;
+     resolved)                     export PIPELINE_CAPABILITY_REFUSAL_SOURCES="${CR_LINE##*DIR=}" ;;
+     no-log-dir|unresolvable-root) echo "NOTE: capability arm skipped/DORMANT (#1246): $CR_LINE" >&2 ;;
    esac
-   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
-   echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
+   for N in $GATED; do
+     ISSUE="$N"
+     WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
+     BR=$([ -n "$WT" ] && git -C "$WT" branch --show-current)
+     PR_NUM=$([ -n "$BR" ] && gh pr list --repo "$PIPELINE_REPO" --head "$BR" --json number --jq '.[0].number')
+     REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+     echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
+   done
    ```
 
    On any token, follow [references/auto-merge-gate.md](references/auto-merge-gate.md).

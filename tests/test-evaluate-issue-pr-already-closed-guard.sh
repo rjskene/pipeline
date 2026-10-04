@@ -47,18 +47,48 @@ done
 
 # -----------------------------------------------------------------------------
 # Extract the guard snippet from the SKILL so the test exercises the SAME
-# code the skill prescribes (not a private re-implementation). We pull the
-# fenced bash block containing the `gh issue close` call from Step 11.
+# code the skill prescribes (not a private re-implementation).
+#
+# #1452 NARROWED THE SLICE. The gate reference's step-3 green path collapsed
+# into ONE batched `for N in $GREEN` wave loop, so "the whole fenced bash block
+# containing `gh issue close`" is no longer sourceable in isolation (it opens
+# with a loop header and derives `$PR_NUM` from `gh`). The guard under test is
+# the `CLOSE_SUFFIX=` .. `fi` run at the tail of that loop, so we take exactly
+# that contiguous slice — still EXTRACTED from the skill, never re-implemented.
+#
+# The stop `fi` is the one at which the running if/fi BALANCE returns to zero,
+# NOT the first `fi`: the slice nests two `if`s and the extractor strips leading
+# whitespace, so indentation cannot disambiguate them and a first-`fi` stop
+# would emit a snippet that dies with `unexpected end of file` (a vacuous red).
 # -----------------------------------------------------------------------------
 SNIPPET="$TMP/close_snippet.sh"
 awk '
-  /^[[:space:]]*```bash/ { inblk=1; buf=""; next }
-  /^[[:space:]]*```/      { if (inblk && buf ~ /gh issue close/) { printf "%s", buf; exit } inblk=0; next }
-  inblk { line=$0; sub(/^[[:space:]]+/, "", line); buf = buf line "\n" }
+  /^[[:space:]]*```bash/ { inblk=1; next }
+  /^[[:space:]]*```/      { inblk=0; next }
+  !inblk { next }
+  {
+    line=$0; sub(/^[[:space:]]+/, "", line)
+    if (!slicing) {
+      if (line !~ /^CLOSE_SUFFIX=/) next
+      slicing=1; depth=0
+    }
+    print line
+    if (line ~ /^if |; then$/) depth++
+    if (line ~ /^fi$/) { depth--; if (depth <= 0) exit }
+  }
 ' "$SKILL" > "$SNIPPET"
 
-if ! grep -q 'gh issue close' "$SNIPPET"; then
-  fail "could not locate a Step 11 'gh issue close' bash block in SKILL.md"
+# Tripwire: a relocation must red the extractor LOUDLY, not pass vacuously.
+for need in 'gh issue close' 'already closed' 'exit 1'; do
+  if ! grep -qF -- "$need" "$SNIPPET"; then
+    fail "extracted close-guard slice does not contain '$need' — the guard moved; fix the extractor, not the skill"
+  fi
+done
+if ! bash -n "$SNIPPET" 2>/dev/null; then
+  fail "extracted close-guard slice is not syntactically valid bash (truncated slice?)"
+fi
+if [ "$FAILED" -ne 0 ]; then
+  echo "    extracted slice:"; sed 's/^/      /' "$SNIPPET"
   echo "RESULT: $FAILED assertion(s) failed"
   exit 1
 fi
