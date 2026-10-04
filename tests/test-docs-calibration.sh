@@ -87,7 +87,7 @@ assert_matches "$DOC" 'once per seven cycles[^.]*strict|strict[^.]*sonnet' \
 echo ""
 echo "docs/calibration.md — CALIB line grammar"
 assert_contains "$DOC" \
-  'CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>' \
+  'CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail|blocked|n/a> unexpected-files=<n>' \
   "per-issue CALIB line grammar"
 assert_contains "$DOC" \
   'CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>' \

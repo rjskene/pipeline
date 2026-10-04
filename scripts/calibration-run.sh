@@ -754,6 +754,7 @@ ROWS_JSON=""
 PRICING_TOTAL=""
 PRS_JSON=""
 MERGED_JSON=""
+OPEN_JSON="[]"
 ISSUE_JSON="{}"
 ISSUE_JSON_FOR=""
 
@@ -855,10 +856,17 @@ load_run_substrate() {
   # mergedAt carries both the merged filter and each issue's wall-clock end;
   # comments carry the PR-eval verdict — so no second round trip per PR.
   PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state all --limit 50 \
-    --json number,body,headRefName,files,mergedAt,comments 2>/dev/null)"
+    --json number,body,headRefName,files,mergedAt,comments,state 2>/dev/null)"
   [ -n "$PRS_JSON" ] || PRS_JSON="[]"
   MERGED_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.mergedAt != null)]' 2>/dev/null)"
   [ -n "$MERGED_JSON" ] || MERGED_JSON="[]"
+  # The open subset, cached beside MERGED_JSON and taken the same way (#1451):
+  # a Flagged-and-unmerged PR is the gate WORKING, so the pr-eval verdict has
+  # to be readable off it. `state == "OPEN"`, not `mergedAt == null`:
+  # `--state all` also returns CLOSED-unmerged PRs, which are abandoned work
+  # rather than a blocked gate. `state` joins the --json list above for this.
+  OPEN_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.state == "OPEN")]' 2>/dev/null)"
+  [ -n "$OPEN_JSON" ] || OPEN_JSON="[]"
 }
 
 # load_issue_json <issue> — ONE `gh issue view` per issue, cached and fetched
@@ -880,6 +888,17 @@ load_issue_json() {
 merged_pr_field() {
   printf '%s' "$MERGED_JSON" | jq -r --arg n "$1" --arg f "$2" \
     '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {} | .[$f] // empty' 2>/dev/null
+}
+
+# pr_verdict_from <prs-json> <issue> — the last `**Verdict:**` in the comments
+# of the FIRST PR in <prs-json> whose body references #<issue>, else empty.
+# Same body-references scoping as merged_pr_field, so the two agree on which PR
+# belongs to an issue. Unfiltered by heading: a PR's own comments carry only
+# the eval.
+pr_verdict_from() {
+  printf '%s' "$1" | jq -r --arg n "$2" \
+    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
+     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null
 }
 
 # detect_abort — did the run FAIL TO START (or fail to finish) rather than do
@@ -969,16 +988,24 @@ issue_wall() {
 }
 
 # issue_verdicts <issue> — `<plan-eval>/<pr-eval>`, each `n/a` when absent.
-# Both halves are reduced locally: the plan half from the cached issue blob,
-# the PR half from the merging PR's own comments inside the single PR fetch.
+# Both halves are reduced locally, each from its OWN source (#1451):
+#   plan half  the last `**Verdict:**` inside a `## Plan Evaluation` comment on
+#              the issue. The heading filter is load-bearing, not cosmetic: the
+#              PR evaluator posts its `## Evaluation` on the ISSUE too, so an
+#              unfiltered `last` across all comments reports the PR verdict as
+#              the plan half (run 20 printed `verdicts=Flagged/n/a`).
+#   PR half    the last `**Verdict:**` in the merging PR's own comments, else
+#              the OPEN PR referencing the issue — a Flagged-and-unmerged PR is
+#              the gate working, and must not read as `n/a`. Unfiltered by
+#              heading: a PR's own comments carry only the eval.
 issue_verdicts() {
   local issue="$1" plan pr
   load_issue_json "$issue"
   plan="$(printf '%s' "$ISSUE_JSON" | jq -r \
-    '[(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
-  pr="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
-    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
-     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+    '[(.comments // [])[] | .body // "" | select(contains("## Plan Evaluation"))
+      | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+  pr="$(pr_verdict_from "$MERGED_JSON" "$issue")"
+  [ -n "$pr" ] || pr="$(pr_verdict_from "$OPEN_JSON" "$issue")"
   printf '%s/%s' "${plan:-n/a}" "${pr:-n/a}"
 }
 
@@ -1041,7 +1068,7 @@ pricing_is_zero() {
 emit_calib_block() {
   local wall_total="$1"
   local i=0 issue d path cost wall verdicts reftest unexpected
-  local total_cost=0 pass=0 count=0 planted="n/a" cost_display
+  local total_cost=0 pass=0 count=0 graded=0 planted="n/a" cost_display
   load_run_substrate
   detect_abort
   if [ -n "$ABORT_REASON" ]; then
@@ -1061,29 +1088,49 @@ emit_calib_block() {
     # sandbox and report `fail` — a regression the run never got near.
     if [ -n "$ABORT_REASON" ] && [ -z "$(merged_pr_field "$issue" mergedAt)" ]; then
       reftest="n/a"
+    # The gate stopped this one (#1451): nothing merged for the issue and
+    # pr-eval Flagged its open PR, so the reference test would grade the
+    # UNFIXED tree and report `fail` — a defect the gate actually caught.
+    # `blocked` says so, and is excluded from the total's k/n below. The
+    # abort arm stays FIRST so an aborted run still reports `n/a` on every
+    # row. A Flagged-then-fixed-then-merged PR still runs its reference test.
+    elif [ -z "$(merged_pr_field "$issue" mergedAt)" ] && [ "${verdicts##*/}" = "Flagged" ]; then
+      reftest="blocked"
     else
       reftest="$(issue_reftest "$d")"
     fi
     unexpected="$(issue_unexpected "$issue" "$d")"
     [ "$reftest" = "pass" ] && pass=$((pass + 1))
+    # The k/n denominator counts GRADED rows only, so a blocked row lands in
+    # neither p nor n; `issues=` keeps reporting the full slate width.
+    [ "$reftest" = "blocked" ] || graded=$((graded + 1))
     if [ -n "$cost" ]; then
       total_cost="$(awk -v a="$total_cost" -v b="$cost" 'BEGIN{ printf "%.2f", a + b }')"
     fi
-    # planted= grades the ESCAPE, not the implementer (#1395): caught = the
-    # boundary was implemented correctly, or a defective PR was Flagged by
-    # pr-eval before it merged; missed = the reference test fails AND pr-eval
-    # did not flag it — a defective PR passed the gate. n/a when the slate
-    # carries no planted-defect dir, or the row was never graded.
+    # planted= grades the ESCAPE, not the implementer (#1395). Three rules,
+    # GATE FIRST (#1451):
+    #   pr=Flagged                      caught — regardless of reftest. The
+    #                                   escape was stopped at the gate, so the
+    #                                   tree it never landed in says nothing.
+    #   reftest=pass                    caught — the boundary was implemented
+    #                                   correctly.
+    #   reftest=fail, pr not Flagged    missed — a defective PR passed the gate.
+    # n/a when the slate carries no planted-defect dir, or the row was neither
+    # flagged nor graded. Testing the gate first is what makes `blocked` (which
+    # can only arise under a Flagged pr verdict) grade as `caught` rather than
+    # falling through to n/a.
     case "$(basename "${d:-}")" in
       *planted*)
-        if [ "$reftest" = "pass" ]; then
-          planted="caught"
-        elif [ "$reftest" = "fail" ]; then
-          case "$verdicts" in
-            */Flagged) planted="caught" ;;
-            *)         planted="missed" ;;
-          esac
-        fi
+        case "$verdicts" in
+          */Flagged) planted="caught" ;;
+          *)
+            if [ "$reftest" = "pass" ]; then
+              planted="caught"
+            elif [ "$reftest" = "fail" ]; then
+              planted="missed"
+            fi
+            ;;
+        esac
         ;;
     esac
     printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
@@ -1137,7 +1184,7 @@ emit_calib_block() {
   bridge_atom=" bridge_prompts=$n_bridge"
   if [ -z "$ABORT_REASON" ]; then
     printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s\n' \
-      "$cost_display" "$wall_total" "$count" "$pass" "$count" "$planted" "$HOOKS" \
+      "$cost_display" "$wall_total" "$count" "$pass" "$graded" "$planted" "$HOOKS" \
       "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total

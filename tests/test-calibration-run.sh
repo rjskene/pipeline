@@ -927,7 +927,12 @@ printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing.json"
 # assertions below stay meaningful while the path assertions fail.
 ISSUES_DIR="$TMP/issues"
 mkdir -p "$ISSUES_DIR"
-printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** A\n- rationale: single doc file"},{"body":"**Verdict:** Approve"}]}' > "$ISSUES_DIR/5001.json"
+# 5001 carries BOTH evaluator comments in the order the real pipeline posts
+# them: the plan-eval's `## Plan Evaluation` first, then the PR-eval's
+# `## Evaluation` — which it posts on the ISSUE as well as the PR (#1451). A
+# driver that takes the LAST `**Verdict:**` across all comments therefore reads
+# the pr-eval verdict as the plan half, which is exactly the run-20 defect.
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** A\n- rationale: single doc file"},{"body":"## Plan Evaluation\n**Verdict:** Approve"},{"body":"## Evaluation\n**Verdict:** Flagged"}]}' > "$ISSUES_DIR/5001.json"
 printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** B\n"}]}' > "$ISSUES_DIR/5003.json"
 printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** D\n"}]}' > "$ISSUES_DIR/5004.json"
 printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[]}' > "$ISSUES_DIR/5002.json"
@@ -1004,8 +1009,10 @@ expect_sub "an unclassified issue reports path=? rather than a label guess" \
 ROW_5001="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
 expect_sub "wall= spans the issue createdAt -> merging PR mergedAt" \
   "$ROW_5001" "wall=1800 "
-expect_sub "verdicts= pair the plan-eval and the merged PR's own comments" \
+expect_sub "verdicts= pair the ## Plan Evaluation comment with the merging PR's own comments" \
   "$ROW_5001" "verdicts=Approve/Approved "
+refute_sub "the pr-eval's ## Evaluation on the issue never becomes the plan half" \
+  "$ROW_5001" "verdicts=Flagged/"
 refute_sub "a run that produced merged PRs emits no CALIB-ABORT line" \
   "$OUT" "CALIB-ABORT"
 if printf '%s\n' "$OUT" | grep -q '^CALIB issue=5001 .*cost=\$n/a'; then
@@ -2136,6 +2143,129 @@ TOTAL_NO_PG="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
 refute_sub "an unset-arm CALIB-TOTAL carries no plan_gate atom" "$TOTAL_NO_PG" "plan_gate="
 
 unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 25: a Flagged-and-open PR grades the gate, not an escape (#1451)"
+# ---------------------------------------------------------------------------
+# Run 20 printed `verdicts=Flagged/n/a reftest=fail` for the planted-defect
+# issue and `planted=missed` on the total — for a PR the evaluator had
+# correctly FLAGGED and left unmerged. The pr half read MERGED_JSON only, so a
+# blocked gate was indistinguishable from an unevaluated row, and the reference
+# test graded a tree the fix had never landed in. The grader reported an escape
+# when the gate worked.
+
+PLANTED_DIR="$HARNESS/dev/calib/slate/06-planted-boundary"
+mkdir -p "$PLANTED_DIR"
+echo "calib: 06-planted-boundary" > "$PLANTED_DIR/title.txt"
+printf 'Body for 06-planted-boundary.\n' > "$PLANTED_DIR/body.md"
+# Same decoy as the other five dirs (see the slate loop at the top).
+echo X > "$PLANTED_DIR/path.txt"
+echo "docs/guide.md" > "$PLANTED_DIR/expected-files.txt"
+# Can never pass against the merged tree: the stub lands `fixed`, never
+# `fixed-boundary`. That IS the blocked case — the defect was stopped at the
+# gate, so there is no fix in the tree to grade.
+printf '#!/bin/bash\ngrep -qx fixed-boundary docs/guide.md\n' > "$PLANTED_DIR/reference-test.sh"
+# The dir name has to match the emitter's `*planted*` glob; the real slate's is
+# dev/calib/slate/06-planted-defect.
+
+# --reset assigns the ids, so pin the counter: six dirs now, so cmd_reset's six
+# `gh issue create` calls hand out 6001..6006 and the glob order makes 6006 the
+# planted row.
+echo 6000 > "$TMP/issue-counter"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Plan Evaluation\n**Verdict:** Revise"},{"body":"## Evaluation\n**Verdict:** Flagged"}]}' > "$ISSUES_DIR/6006.json"
+
+# Five merged PRs plus the planted issue's OPEN, Flagged one. `state` is
+# present only where openness is the point — every other fixture in this file
+# omits it and so reads as not-open, which is what keeps the merged path
+# byte-identical.
+cat > "$TMP/prs-planted.json" <<'PRSP'
+[
+  {"number":9101,"body":"Closes #6001","state":"MERGED","headRefName":"feature/calib-6001","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9102,"body":"Closes #6002","state":"MERGED","headRefName":"feature/calib-6002","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9103,"body":"Closes #6003","state":"MERGED","headRefName":"feature/calib-6003","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9104,"body":"Closes #6004","state":"MERGED","headRefName":"feature/calib-6004","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9105,"body":"Closes #6005","state":"MERGED","headRefName":"feature/calib-6005","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9106,"body":"Closes #6006","state":"OPEN","headRefName":"feature/calib-6006","mergedAt":null,"files":[{"path":"docs/guide.md"}],"comments":[{"body":"## Evaluation\n**Verdict:** Flagged"}]}
+]
+PRSP
+
+# Scenario 8's stub, made idempotent: by this point the remote already carries
+# `fixed`, and an unguarded `commit` under the stub's own `set -e` would kill it
+# before the push.
+cat > "$TMP/claude-merge-planted.sh" <<'MERGEP'
+#!/bin/bash
+set -e
+mkdir -p "$(dirname "$CALIB_TEST_COST_LOG")"
+printf '%s\n' '{"schema_version":1,"issue":"5001","stage":"execute","tokens":{"total":1000}}' \
+  >> "$CALIB_TEST_COST_LOG"
+git -C "$CALIB_TEST_PUSHER" fetch --quiet origin
+git -C "$CALIB_TEST_PUSHER" checkout --quiet -B main origin/main
+printf 'fixed\n' > "$CALIB_TEST_PUSHER/docs/guide.md"
+git -C "$CALIB_TEST_PUSHER" add docs/guide.md
+git -C "$CALIB_TEST_PUSHER" commit --quiet -m "merge: slate fix" || true
+git -C "$CALIB_TEST_PUSHER" push --quiet origin main
+MERGEP
+chmod +x "$TMP/claude-merge-planted.sh"
+
+# Re-exported explicitly, NOT inherited: both were unset at the end of
+# Scenario 17, so without these the run is unpriced.
+export CALIB_TEST_ROWS_JSON="$TMP/rows.json"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+export CALIB_TEST_PRS_JSON="$TMP/prs-planted.json"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-merge-planted.sh"
+
+rm -f "$COST_LOG" "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run exits 0" 0
+refute_sub "a run that produced PRs emits no CALIB-ABORT line" "$OUT" "CALIB-ABORT"
+
+ROW_6006="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=6006 ')"
+expect_sub "the pr half comes from the OPEN PR when nothing merged" \
+  "$ROW_6006" "verdicts=Revise/Flagged "
+expect_sub "a Flagged-and-open PR blocks the reference test rather than failing it" \
+  "$ROW_6006" "reftest=blocked "
+
+TOTAL_PLANTED="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "blocked rows leave the reftest-pass token shape intact" \
+  "$TOTAL_PLANTED" "reftest-pass=5/5"
+refute_sub "a blocked row is counted in neither p nor n" \
+  "$TOTAL_PLANTED" "reftest-pass=5/6"
+# The grade keys off the GATE first: the escape was stopped, so it is `caught`
+# whatever the reference test says about a tree the fix never reached.
+expect_sub "a Flagged planted PR grades the escape caught" \
+  "$TOTAL_PLANTED" "planted=caught"
+
+# The other side of the reorder: a planted PR that MERGED with an Approved
+# pr-eval and still fails its reference test is a real escape. The regression
+# guard that `*/Flagged) caught` does not swallow it.
+echo 7000 > "$TMP/issue-counter"
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Plan Evaluation\n**Verdict:** Approve"}]}' > "$ISSUES_DIR/7006.json"
+cat > "$TMP/prs-planted-merged.json" <<'PRSM'
+[
+  {"number":9201,"body":"Closes #7001","state":"MERGED","headRefName":"feature/calib-7001","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9202,"body":"Closes #7002","state":"MERGED","headRefName":"feature/calib-7002","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9203,"body":"Closes #7003","state":"MERGED","headRefName":"feature/calib-7003","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9204,"body":"Closes #7004","state":"MERGED","headRefName":"feature/calib-7004","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9205,"body":"Closes #7005","state":"MERGED","headRefName":"feature/calib-7005","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9206,"body":"Closes #7006","state":"MERGED","headRefName":"feature/calib-7006","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"## Evaluation\n**Verdict:** Approved"}]}
+]
+PRSM
+export CALIB_TEST_PRS_JSON="$TMP/prs-planted-merged.json"
+
+rm -f "$COST_LOG" "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run over a merged planted PR exits 0" 0
+
+TOTAL_MISSED="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "an Approved planted PR that fails its reference test is still a real escape" \
+  "$TOTAL_MISSED" "planted=missed"
+expect_sub "a merged planted row is graded, not blocked" \
+  "$TOTAL_MISSED" "reftest-pass=5/6"
+
+rm -rf "$PLANTED_DIR"
+unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
+      CALIB_TEST_PRICING_JSON
+rm -f "$ISSUES_DIR/6006.json" "$ISSUES_DIR/7006.json"
 
 # ---------------------------------------------------------------------------
 echo ""
