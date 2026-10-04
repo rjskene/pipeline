@@ -585,6 +585,36 @@ close_stale_prs() {
   [ "$closed" -gt 0 ] && warn "closed $closed stale PR(s) in $CALIB_REPO"
 }
 
+# remove_stale_worktrees — unregister and delete the PREVIOUS run's
+# .claude/worktrees/wt-* checkouts, which MUST happen before
+# delete_stale_branches() (#1453). A checked-out branch cannot be deleted: with
+# 87 stale worktrees still holding refs/heads/feature/*, every reset printed 87
+# x `error: cannot delete branch '...' used by worktree at ...`, left the
+# branches in place, and kept the dirs on disk forever.
+#
+# CONTAINMENT (load-bearing): the sweep is PATH-SCOPED to the sandbox's own
+# .claude/worktrees/ dir. The sandbox MAIN checkout ($SANDBOX itself) is
+# excluded by the prefix test by construction, as is any sandbox worktree
+# checked out elsewhere; the harness ($HARNESS) and its stage ($STAGE_DIR) are
+# a DIFFERENT repo and never appear in this list at all. Removal failures warn
+# and continue — like close_stale_prs, the sweep must never fail the reset.
+remove_stale_worktrees() {
+  local line path wt_root removed=0
+  wt_root="$(abs_path "$SANDBOX")/.claude/worktrees"
+  while IFS= read -r line; do
+    case "$line" in 'worktree '*) path="${line#worktree }" ;; *) continue ;; esac
+    case "$(abs_path "$path")/" in "$wt_root"/*) ;; *) continue ;; esac
+    dispatch git -C "$SANDBOX" worktree remove --force "$path" \
+      || warn "could not remove the stale sandbox worktree $path"
+    removed=$((removed + 1))
+  done < <(git -C "$SANDBOX" worktree list --porcelain 2>/dev/null)
+  dispatch git -C "$SANDBOX" worktree prune
+  if [ "$removed" -gt 0 ] && [ "$DRY" -eq 0 ]; then
+    echo "calib: removed $removed stale sandbox worktree(s) before the branch sweep"
+  fi
+  return 0
+}
+
 # delete_stale_branches — delete every remote branch but main, then prune the
 # sandbox's local feature/* branches (an undeleted PR branch could resurface).
 delete_stale_branches() {
@@ -648,6 +678,7 @@ cmd_reset() {
   guard_sandbox_repo
   [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
   close_stale_prs
+  remove_stale_worktrees
   delete_stale_branches
   # --reset --dry-run is a free PREVIEW: it must also preview (and not mutate)
   # the settings refresh, so materialize_local_settings() runs here INSTEAD of
