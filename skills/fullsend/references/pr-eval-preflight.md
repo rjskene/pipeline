@@ -2,7 +2,7 @@
 
 Read this when a Step 7 preflight returns anything other than `PREFLIGHT=ok REASON=none`, or when `--spawn` is in the fullsend argv.
 
-`scripts/pr-eval-preflight.sh <N> --pr <P> --worktree <abs>` runs, before any evaluator token is spent, the four mechanical checks the Opus evaluator used to repeat inside its own turn budget. `<P>` is the `PR=` field of that issue's Step 6b `check-ci-fix-loop.sh` line; `<abs>` is the issue's worktree (the guards are cwd-relative — from the orchestrator checkout the branch-cruft arm would see zero paths and be vacuous). Stdout is exactly one line and the exit status is always 0: the ORCHESTRATOR decides what a block means.
+`scripts/pr-eval-preflight.sh <N> --pr <P> --worktree <abs>` runs, before any evaluator token is spent, the four mechanical checks the Opus evaluator used to repeat inside its own turn budget. Both are DERIVED inside the Step 7 wave loop, never recalled from orchestrator context: `<abs>` from the Step 5 worktree naming rule `.claude/worktrees/${PIPELINE_WORKTREE_PREFIX}-<N>-<slug>` (glob on `-<N>-`), `<P>` from that worktree's branch via `gh pr list --head`. A worktree-glob miss leaves `<abs>` empty, and the `[ -n "$WT" ]` test in the loop's `PR_NUM=` substitution is what fails closed — `git -C ""` is a no-op that exits 0 and prints the ORCHESTRATOR's own branch, so `git`'s exit status is NOT a guard. `<abs>` is the issue's worktree because the guards are cwd-relative — from the orchestrator checkout the branch-cruft arm would see zero paths and be vacuous. Stdout is exactly one line and the exit status is always 0: the ORCHESTRATOR decides what a block means.
 
 ```
 PREFLIGHT=ok|block REASON=<token> PR=<n> FIXED=<csv|none>

@@ -260,8 +260,15 @@ For each wave N, in wave order, serially run Steps 5 → 6 → 6b → 7 against 
 
    **Preflight (#1445).** A `block` dispatches nothing and reports a `block-<REASON>` row (`ci-red` folds into Step 6b's row); `ok` dispatches with the line VERBATIM in the prompt. Tokens, `--spawn` gate, absent-line fallback: [references/pr-eval-preflight.md](references/pr-eval-preflight.md).
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-eval-preflight.sh" <N> --pr $PR_NUM --worktree <worktree-abs-path>
+   WT_ROOT="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/worktrees"
+   PROPEN="<wave-N pr-open issues>"
+   for N in $PROPEN; do
+     WT=$(ls -d "$WT_ROOT/${PIPELINE_WORKTREE_PREFIX:-wt}-$N-"* 2>/dev/null | head -1)
+     PR_NUM=$([ -n "$WT" ] && gh pr list --repo "$PIPELINE_REPO" --head "$(git -C "$WT" branch --show-current)" --json number --jq '.[0].number')
+     echo "PREFLIGHT issue=#$N $(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-eval-preflight.sh" "$N" --pr "$PR_NUM" --worktree "$WT")"
+   done
    ```
+   Both per-issue inputs are DERIVED in-loop, never recalled; an empty `$WT` fails closed (`REASON=no-pr`).
 
    **Fire the gate per PR (#1444, mandatory).** The evaluator posts a verdict and STOPS — it no longer merges.
    For EACH wave-N `pr-open` PR, as soon as that PR's evaluator returns, the orchestrator runs the gate itself
