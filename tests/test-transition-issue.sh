@@ -131,6 +131,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+scenario "C2: an EMPTY --from value is an argv error, not a malformed audit line"
+# Closing-review finding: `--from ""` set FROM_SET=1 with FROM="", so the audit
+# line read `from=` — violating both the documented `from=<label|->` shape and
+# the anchored SHAPE_RE below (`from=[^ ]+`). A caller parsing the line
+# positionally mis-reads the field. Same argv-error family as A/B/C.
+inc
+reset_case case-c2
+bash "$HELPER" 191 --to plan-approved --from "" >"$CASE_DIR/out" 2>"$CASE_DIR/err"; rc=$?
+if [ "$rc" -eq 2 ] && grep -qi 'usage' "$CASE_DIR/err" && ! grep -q 'TRANSITION=' "$CASE_DIR/out"; then
+  pass_msg "C2: empty --from exits 2 with a usage line and emits no TRANSITION= line"
+else
+  fail_msg "C2: expected exit 2 + usage + no TRANSITION= line; got rc=$rc, stdout: $(cat "$CASE_DIR/out")"
+fi
+
+# ---------------------------------------------------------------------------
 scenario "D: present --from -> ok, one combined edit, no comment"
 inc
 reset_case case-d

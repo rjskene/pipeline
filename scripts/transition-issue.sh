@@ -65,7 +65,9 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die_usage "--to requires a label"
       TO="$2"; shift 2 ;;
     --from)
-      [ $# -ge 2 ] || die_usage "--from requires a label"
+      # An EMPTY value is an argv error, not a `from=` field: it would break the
+      # documented `from=<label|->` shape for every caller parsing the line.
+      [ $# -ge 2 ] && [ -n "$2" ] || die_usage "--from requires a label"
       FROM="$2"; FROM_SET=1; shift 2 ;;
     --comment)
       [ $# -ge 2 ] || die_usage "--comment requires text"
