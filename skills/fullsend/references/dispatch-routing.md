@@ -59,7 +59,7 @@ This section consolidates the per-path dispatch contract for the autonomous flow
      DISPATCH_SET="<wave-N issue numbers to dispatch>"
      for N in $DISPATCH_SET; do
        LBL=$(gh issue view "$N" --repo "$PIPELINE_REPO" --json labels --jq '[.labels[].name] | join(" ")')
-       case "$LBL" in *docs-only*) P=A ;; *multi-task*) P=C ;; *quick-fix*) P=D ;; *) P=B ;; esac
+       case "$LBL" in *docs-only*) P=A ;; *quick-fix*) P=D ;; *multi-task*) P=C ;; *) P=B ;; esac
        echo "DISPATCH issue=#$N $(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-execute-dispatch.sh" "$N" "$P" | tr '\n' ' ')"
      done
      ```

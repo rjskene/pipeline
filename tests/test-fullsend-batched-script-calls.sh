@@ -16,6 +16,13 @@ set -uo pipefail
 # wave, not once per issue), so the assertion is "the enclosing FENCE carries a
 # `for N in` header".
 #
+# RESIDUAL GAP, STATED SO IT IS NOT MISTAKEN FOR COVERAGE: because the unit is
+# the fence, a PER-ISSUE call parked above (or after) the loop in a fence that
+# happens to carry a `for N in` header would read as batched here. Telling the
+# two apart needs loop-BODY parsing (`do`/`done` depth) of a markdown-embedded
+# snippet; the cheap discriminator is that an out-of-loop call cannot reference
+# `$N`, which every per-issue site this test asserts on does. Left to review.
+#
 # PROSE IS NOT SCANNED, BY CONSTRUCTION — and that is load-bearing, not lazy:
 #   - tests/test-lifecycle-flip-via-script.sh L4 REQUIRES `transition-issue.sh`
 #     to be named on three specific SKILL.md PROSE lines (occurrences 1/2/2).
