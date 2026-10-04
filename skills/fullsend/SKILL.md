@@ -61,16 +61,16 @@ Read [references/usage-gate.md](references/usage-gate.md) at the first wave top;
 
 ## Headless contract
 
-When `PIPELINE_HEADLESS=true`, fullsend and every dispatched stage MUST NOT end a turn on a question — at each site below apply the named default, log one `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continue.
+When `PIPELINE_HEADLESS=true`, fullsend and every dispatched stage MUST NOT end a turn on a question — apply the named default below, log one `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line in the turn's TEXT (never via `echo`), and continue.
 
-- **merge-policy** covers Step 9's non-greenlight-merge confirmation. `HEADLESS-DEFAULT: merge-policy decision=apply-greenlight-gate reason=flag-is-the-answer` — gate the green subset (`--manual-merge` opts out); leave non-greenlight PRs unmerged, reported.
+- **merge-policy** covers Step 9's non-greenlight-merge confirmation. `HEADLESS-DEFAULT: merge-policy decision=apply-greenlight-gate reason=flag-is-the-answer` — gate the green subset (`--manual-merge` opts out); leave the rest unmerged.
 - **unread-config-knob** covers any config key with no read site. `HEADLESS-DEFAULT: unread-config-knob decision=ignore-and-continue reason=not-a-contradiction` — ignore and continue.
-- **stall-triage** covers Step 6/7's four-option `agent-stalled` prompt. `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the remaining budget.
-- **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — retry autonomously; on exhaustion mark Flagged, skip `evaluate-issue-pr`, continue the wave.
-- **permission-denied** covers a `PermissionRequest` bridge timeout or deny. `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=bridge-timeout|operator-deny` — skip the step, never retry.
-- **ci-wait** covers every wait on PR CI; never end a turn while CI or an agent is still running. `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — the orchestrator waits FOREGROUND via `timeout 590 gh pr checks <PR> --repo "$PIPELINE_REPO" --watch --interval 30`, repeated across turns until terminal; never `Monitor`, never `run_in_background`, never narrate waiting.
+- **stall-triage** covers Step 6/7's `agent-stalled` prompt. `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the remaining budget.
+- **ci-red-budget** covers Step 6b's `red-retry`/`red-budget-exhausted` rows. `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave` — retry autonomously, then mark Flagged and continue.
+- **permission-denied** covers a `PermissionRequest` bridge timeout/deny, or a Bash result containing `denied by the Claude Code auto mode classifier`. `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=classifier-deny site=<step> issue=#<N>` — retry an identical classifier-denied command ONCE, then skip the step, label unchanged, list it Flagged in Step 8's table, continue the slate; a bridge timeout/deny skips without retry.
+- **ci-wait** covers any PR-CI wait. `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — poll FOREGROUND via `timeout 590 gh pr checks --watch` until terminal.
 
-Interactive mode (knob unset/false) is unchanged — operator prompts stay.
+Interactive mode (knob unset/false) is unchanged.
 
 ## Campaign mode
 
@@ -137,20 +137,20 @@ The gate logic lives in `scripts/auto-merge-gate.sh` (function `auto_merge_shoul
    PLAN_EVAL_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> plan-eval)
    ```
    The resolver emits `tier-max(this issue's plan model, PIPELINE_STAGE_MODEL_PLAN_EVAL)` (unset ⇒ `opus`), so the **gate never lands below its producer** — a PATH C plan produced on `fable` is gated on `fable` (`REASON=follows-producer`), and a knob set below the producer cannot drop it. Plan approval is an auto-gate with no human behind it in fullsend, which is why equal-tier is acceptable but below-tier is not.
-   **Trust profile (#1291):** if `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D), do NOT dispatch the evaluator: run `gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-pending"`, post the audit comment `plan-eval skipped: lean profile`, and record `plan_eval=skip` for Step 6's log line.
+   **Trust profile (#1291):** if `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D), do NOT dispatch the evaluator: run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-pending --comment "plan-eval skipped: lean profile"`, and record `plan_eval=skip` for Step 6's log line.
    **Plan gate (#1429):** read the optional `GATE=<full|single|none|annotate>` token from `PLAN_EVAL_SPEC` (absent ⇒ `annotate`). `GATE=none` → do NOT dispatch the evaluator: same skip path as `SKIP=true` above, audit comment `plan-eval skipped: plan-gate=none`, record `plan_eval=skip`. `GATE=single` → dispatch the evaluator exactly ONCE, then hand its verdict to Step 3's capped arm. `GATE=full` → today's loop. `SKIP=true` wins when both fire.
    **Plan gate — annotate (#1435):** `GATE=annotate` → dispatch the evaluator exactly once, then hand its verdict to Step 3's annotate arm. `SKIP=true` still wins.
 3. **Re-plan loop** — for any issue whose evaluation verdict is "Revise": re-run `/pipeline:plan-issue N`, then `/pipeline:evaluate-issue-plan N` — **each re-dispatch re-resolves its stage pin** exactly as in Step 1b / Step 2 (`resolve-stage-model.sh <N> plan` / `<N> plan-eval`) and always passes `model=$MODEL`. Repeat until all pass (max 3 iterations per issue). If an issue still fails after 3 iterations, skip it and flag it in the final report.
 
    **Binding rule (#1317):** from round 2 on, the re-plan dispatch prompt MUST quote the evaluator's `Revise` prescription verbatim with "apply exactly this; add no new scenarios, tests or sections". The follow-up evaluate dispatch MUST say "verify only that the prescribed change landed; a new finding is a new round only if BLOCKING".
 
-   **Plan gate (#1429):** `GATE=single` caps this loop at ONE evaluate dispatch plus ONE re-plan — on `Revise`, re-plan once with the binding #1317 prescription above, then approve HERE with `gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-pending"` (Step 4's `plan-reviewed` filter never sees it) and NO second `evaluate-issue-plan` dispatch; record `plan_rounds=1`. `GATE=full` keeps the 3-iteration cap.
+   **Plan gate (#1429):** `GATE=single` caps this loop at ONE evaluate dispatch plus ONE re-plan — on `Revise`, re-plan once with the binding #1317 prescription above, then approve HERE with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-pending` (Step 4's `plan-reviewed` filter never sees it) and NO second `evaluate-issue-plan` dispatch; record `plan_rounds=1`. `GATE=full` keeps the 3-iteration cap.
 
-   **Plan gate — annotate (#1435):** under `GATE=annotate` a `Revise` triggers NO re-plan and NO re-evaluate: approve HERE with `gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-pending"`, post the audit comment `plan-eval: Revise carried into execute (plan-gate=annotate)`, and record `plan_gate=annotate`, `plan_rounds=1` — execute reads the evaluation's `**Recommendations:**` as binding amendments. The ONE exception: a `Revise` carrying `**Scope:** structural` runs ONE binding #1317 re-plan, then approves the same way without re-evaluating.
+   **Plan gate — annotate (#1435):** under `GATE=annotate` a `Revise` triggers NO re-plan and NO re-evaluate: approve HERE with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-pending --comment "plan-eval: Revise carried into execute (plan-gate=annotate)"`, and record `plan_gate=annotate`, `plan_rounds=1` — execute reads the evaluation's `**Recommendations:**` as binding amendments. The ONE exception: a `Revise` carrying `**Scope:** structural` runs ONE binding #1317 re-plan, then approves the same way without re-evaluating.
 
 4. **Approve** — for every issue now at `plan-reviewed`, run:
    ```bash
-   gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-approved" --remove-label "plan-reviewed"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-approved --from plan-reviewed
    ```
 ### Execute the slate WAVE BY WAVE (Steps 5–7 per wave)
 

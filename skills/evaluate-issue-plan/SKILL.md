@@ -180,7 +180,7 @@ This skill reads issue comments to select the plan it evaluates, so its inputs a
 
    If **Approve**:
    ```bash
-   gh issue edit <N> --repo $PIPELINE_REPO --add-label "plan-reviewed" --remove-label "plan-pending"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-reviewed --from plan-pending
    ```
 
    If **Revise**: do NOT change labels. Leave `plan-pending` in place — the pipeline detects the evaluation comment and awaits user feedback before re-planning.
