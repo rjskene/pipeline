@@ -969,13 +969,22 @@ issue_wall() {
 }
 
 # issue_verdicts <issue> — `<plan-eval>/<pr-eval>`, each `n/a` when absent.
-# Both halves are reduced locally: the plan half from the cached issue blob,
-# the PR half from the merging PR's own comments inside the single PR fetch.
+# Both halves are reduced locally, each from its OWN source (#1451):
+#   plan half  the last `**Verdict:**` inside a `## Plan Evaluation` comment on
+#              the issue. The heading filter is load-bearing, not cosmetic: the
+#              PR evaluator posts its `## Evaluation` on the ISSUE too, so an
+#              unfiltered `last` across all comments reports the PR verdict as
+#              the plan half (run 20 printed `verdicts=Flagged/n/a`).
+#   PR half    the last `**Verdict:**` in the merging PR's own comments, else
+#              the OPEN PR referencing the issue — a Flagged-and-unmerged PR is
+#              the gate working, and must not read as `n/a`. Unfiltered by
+#              heading: a PR's own comments carry only the eval.
 issue_verdicts() {
   local issue="$1" plan pr
   load_issue_json "$issue"
   plan="$(printf '%s' "$ISSUE_JSON" | jq -r \
-    '[(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+    '[(.comments // [])[] | .body // "" | select(contains("## Plan Evaluation"))
+      | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
   pr="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
     '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
      | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"

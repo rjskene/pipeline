@@ -927,7 +927,12 @@ printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing.json"
 # assertions below stay meaningful while the path assertions fail.
 ISSUES_DIR="$TMP/issues"
 mkdir -p "$ISSUES_DIR"
-printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** A\n- rationale: single doc file"},{"body":"**Verdict:** Approve"}]}' > "$ISSUES_DIR/5001.json"
+# 5001 carries BOTH evaluator comments in the order the real pipeline posts
+# them: the plan-eval's `## Plan Evaluation` first, then the PR-eval's
+# `## Evaluation` — which it posts on the ISSUE as well as the PR (#1451). A
+# driver that takes the LAST `**Verdict:**` across all comments therefore reads
+# the pr-eval verdict as the plan half, which is exactly the run-20 defect.
+printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** A\n- rationale: single doc file"},{"body":"## Plan Evaluation\n**Verdict:** Approve"},{"body":"## Evaluation\n**Verdict:** Flagged"}]}' > "$ISSUES_DIR/5001.json"
 printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** B\n"}]}' > "$ISSUES_DIR/5003.json"
 printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Classification\n- **recommended_path:** D\n"}]}' > "$ISSUES_DIR/5004.json"
 printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[]}' > "$ISSUES_DIR/5002.json"
@@ -1004,8 +1009,10 @@ expect_sub "an unclassified issue reports path=? rather than a label guess" \
 ROW_5001="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
 expect_sub "wall= spans the issue createdAt -> merging PR mergedAt" \
   "$ROW_5001" "wall=1800 "
-expect_sub "verdicts= pair the plan-eval and the merged PR's own comments" \
+expect_sub "verdicts= pair the ## Plan Evaluation comment with the merging PR's own comments" \
   "$ROW_5001" "verdicts=Approve/Approved "
+refute_sub "the pr-eval's ## Evaluation on the issue never becomes the plan half" \
+  "$ROW_5001" "verdicts=Flagged/"
 refute_sub "a run that produced merged PRs emits no CALIB-ABORT line" \
   "$OUT" "CALIB-ABORT"
 if printf '%s\n' "$OUT" | grep -q '^CALIB issue=5001 .*cost=\$n/a'; then
