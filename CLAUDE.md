@@ -63,7 +63,7 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 ## Design Principles
 
 1. **Issues are the unit of work.** All planned work lives in GitHub issues. Specs, brainstorm notes, and design docs are transient — they get converted to issues and deleted.
-2. **Human gates matter.** Plan approval and PR merge are manual. The pipeline automates the work between human decisions, not the decisions themselves.
+2. **Human gates matter.** Plan review and PR review are independent agents with their own context; a Revise that cannot be bound as amendments, a `block-*` verdict, or a permission denial holds for the operator instead of being routed around, and `--manual-merge` keeps the merge itself manual. The pipeline automates the work between human decisions, not the decisions themselves.
 3. **Procedures are inline.** Pipeline skills carry their own procedures — no external skill plugin is required at any stage.
 4. **Isolation by default.** Execution happens in git worktrees. The main workspace stays clean.
 

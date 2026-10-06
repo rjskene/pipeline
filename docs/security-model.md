@@ -14,8 +14,9 @@ Treat every in-repo guard as a **best-effort tripwire**, not a wall.
 The pipeline ships **no path-boundary or deletion guard hook** — #1418 retired
 that class, so nothing it ships stands between an agent and a path or a delete.
 What survives (`enforce-base-branch.py`, `enforce-path-c-delegation.py`,
-`check-ci-skip-markers.py`, `enforce-ci-wait.py`, and `enforce-comment-trust.py`
-on comment bytes) are **denylist tripwires over pipeline RULES a permission
+`check-ci-skip-markers.py`, `enforce-ci-wait.py` in the published manifest, plus
+`enforce-comment-trust.py` on comment bytes, registered on this repo's dogfood
+`.claude/settings.json` only) are **denylist tripwires over pipeline RULES a permission
 classifier cannot know**: they string-scan tool calls for a narrow set of
 pipeline control shapes and block the literal match.
 

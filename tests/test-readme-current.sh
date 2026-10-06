@@ -1,10 +1,12 @@
 #!/bin/bash
-# Lint README.md against the canonical-entry contract established by #397.
-# The README has 7 sections (hero+lifecycle strip, Canonical entry points,
-# Install + first run, Project layout, Where to look, Prerequisites) in that
-# order. Detailed lifecycle prose, the per-command Usage table, the label
-# flow line, and the subtree-migration pointer were deliberately retired by
-# the rewrite — their content lives in docs/process-maps.md or skill files.
+# Lint README.md against the canonical-entry contract established by #397 and
+# extended by the 0.24 rewrite. The pinned skeleton is hero+lifecycle strip,
+# Canonical entry points, Install + first run, Project layout, Where to look,
+# Prerequisites, in that order; the rewrite adds the rail-diagram sections
+# (How a run flows, Paths, Trust and permissions, Branches and releases) and
+# the run transcript between the entry points and Install. The per-command
+# Usage table, the label flow line, and the subtree-migration pointer stay
+# retired — their content lives in docs/process-maps.md or skill files.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 README="$REPO_ROOT/README.md"
@@ -58,12 +60,13 @@ else
   echo "  PASS: README contains no anchored cross-references"; PASS=$((PASS+1))
 fi
 
-# Line budget — plan target ≤150 (current rewrite is well under)
+# Line budget — ≤240 since the 0.24 rewrite (was 150 before the rail sections
+# and the run transcript joined the skeleton)
 LINES=$(wc -l < "$README")
-if [ "$LINES" -le 150 ]; then
-  echo "  PASS: README ≤150 lines (actual: $LINES)"; PASS=$((PASS+1))
+if [ "$LINES" -le 240 ]; then
+  echo "  PASS: README ≤240 lines (actual: $LINES)"; PASS=$((PASS+1))
 else
-  echo "  FAIL: README exceeds 150 lines (actual: $LINES)"; FAIL=$((FAIL+1))
+  echo "  FAIL: README exceeds 240 lines (actual: $LINES)"; FAIL=$((FAIL+1))
 fi
 
 echo "RESULT: $PASS passed, $FAIL failed"

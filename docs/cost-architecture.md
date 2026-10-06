@@ -1,6 +1,6 @@
 # Cost & Billing Architecture — Analysis & Path-2 Decision
 
-**Date:** 2026-05-31 · **Status:** decision recorded, build queued · **Epic:** #450
+**Date:** 2026-05-31 · **Updated:** 2026-10-06 (model-tier sections rewritten to the shipped #1420 / #1428 state) · **Status:** decision recorded, build shipped · **Epic:** #450
 
 This doc captures a full cost/billing analysis of the pipeline and the strategic
 decision it forced. It is the durable record behind issues #721, #723, #707,
@@ -16,14 +16,14 @@ decision it forced. It is the durable record behind issues #721, #723, #707,
 - **Decision: Path 2** — keep work on the subscription's *interactive pool* by running execute+pr-eval as **inline subagents from a human-attended orchestrator**, `claude -p` opt-in. As of #749/#891/#896 this now applies to PATH C as well: C execute/PR-eval fan out inline by default (one `tdd-implementer` per `target=<dir>` leaf in its own per-leaf worktree, reassembled by cherry-pick), with `--spawn` as the opt-in legacy `claude -p` worker transport. Path 1 (API-key, full automation) is the documented later-option.
 - **Two parallel workstreams, both required:** migrate to inline (#723/#707) AND drive down tokens (#648/#420/#700).
 - **Everything gates on #721** (measurement) — it also produces the execute-concurrency assessment that sizes the migration and feeds the governor.
-- **Model-tier lever (shipped DEFAULT, opt-OUT as of #1042; PATH B reverted to Opus by #1420):** a third axis —
-  routing the **execute** stage to cheaper Sonnet — ships on (`scope=all`) for PATH D; PATH B's unset default
-  returned to Opus with #1420. It is controlled by the host vars
-  `PIPELINE_PATH_B_MODEL_EXECUTE` / `PIPELINE_PATH_D_MODEL_EXECUTE` (+ the `PIPELINE_PATH_B_ELIGIBLE_SCOPE`
-  scope knob), which ship **active = sonnet / all**; an operator opts OUT with `=opus` / `low-blast`. The W2
-  high-uncertainty carve-out (the sole safety boundary under the default, depends on #1039) and **pr-eval
-  always staying Opus (W3)** are unchanged. Full decision + the ~80% execute-cost ratio in
-  [analysis/model-downsampling.md](analysis/model-downsampling.md).
+- **Model-tier lever (shipped; execute defaults to Opus on every path, Sonnet is opt-IN):** a third axis —
+  routing the **execute** stage to cheaper Sonnet — was piloted (#868/#950), shipped as the default (#1042),
+  and then reverted to an Opus default for PATH B (#1420) and PATH D (#1428) once calibration showed the
+  executor-model split never moved cost. The knobs `PIPELINE_PATH_B_MODEL_EXECUTE` /
+  `PIPELINE_PATH_D_MODEL_EXECUTE` (+ `PIPELINE_PATH_B_ELIGIBLE_SCOPE`) stay as the opt-in: `=sonnet` re-enters
+  the cheap lane. The W2 high-uncertainty carve-out and **pr-eval always staying Opus (W3)** are unchanged.
+  Pilot data + decision history in [analysis/model-downsampling.md](analysis/model-downsampling.md); the
+  live routing surface is §9 below.
 
 ---
 
@@ -259,35 +259,46 @@ The cost analysis above (§2) found **execute = 74% of spend**, and §1 of
 the execute tier to Sonnet (1/5 of Opus across every token bucket ⇒ ~**−80% execute cost** on the eligible
 traffic) while keeping the independent evaluator on Opus. As realized in the live routing surface:
 
-**#1042 — Sonnet-on-execute is now the shipped DEFAULT (opt-OUT), not opt-in.** The polarity flipped: a
-fresh install runs Sonnet for eligible PATH B + all PATH D execute, with `scope=all`. Operators who want the
-conservative Opus-everywhere tier **opt OUT** (`=opus` / `scope=low-blast` / comment the knobs). The model
-knobs ship **active** in `pipeline.config.example` and are generated active by `/pipeline:init`.
+**Current state (#1420 PATH B, #1428 PATH D): execute defaults to Opus on every path; Sonnet is opt-IN.**
+The #1042 flip made Sonnet the shipped default for eligible PATH B + all PATH D. It was reverted in two steps:
+#1420 removed the split-lane test-author and with it PATH B's Sonnet default, and #1428 retired PATH D's own
+Sonnet default after calibration runs #11–#13 measured no cost movement from the executor-model split. The
+knobs survive as the opt-in. `scripts/resolve-execute-dispatch.sh` is the single read-site and emits
+`MODEL=<model> REASON=default-opus|explicit-knob|high-uncertainty`.
 
 - **`PIPELINE_PATH_B_MODEL_EXECUTE` / `PIPELINE_PATH_D_MODEL_EXECUTE`** — per-path Agent `model` enum
-  (`sonnet`|`opus`|`haiku`) in the gitignored `pipeline.config`. **Unset/empty now defaults to `sonnet`** at
-  the fullsend read-site (#1042 flip; the old default was unset ⇒ inherit Opus). Ships **active = sonnet** in
-  `pipeline.config.example`; an explicit `=opus` is honored verbatim (the opt-out to the old inherit-Opus tier).
-- **`PIPELINE_PATH_B_ELIGIBLE_SCOPE`** (now defaults to `"all"`, #1042) — gates **which** PATH B issues route
-  Sonnet. Default `"all"` widens to every non-W2 PATH B issue (high-blast included); opt OUT with
-  `"low-blast"` to restrict the downshift to the low-blast lane via `scripts/path-b-execute-eligible.sh`
-  (≤1 source module, ≤6 files, ≤150 added-LOC proxy, no security/migration/auth/concurrency signal).
-- **PATH D is unconditional Sonnet EXCEPT `needs-browser` → Opus** (#960 — browser/UI execute unmeasured).
-- **W2 carve-out is now the SOLE safety boundary.** Under the default `scope=all`, the W2 high-uncertainty
-  regex (`concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss`) is the only thing keeping
-  genuinely risky PATH B work on Opus — so it **depends on #1039's word-bound regex correctness**. Once Sonnet
-  is the default, the dangerous failure direction inverts from false-POSITIVE (benign work costly-on-Opus) to
-  false-NEGATIVE (risky work silently on Sonnet); #1039 landed the word-bound fix FIRST so the carve-out is
-  correct before the default flipped.
-- **Invariant: pr-eval is NEVER tier-dropped (W3).** No host var gates the evaluator and it is **never
-  defaulted to Sonnet**; the Opus backstop is the property that makes a cheaper-execute default safe (a Sonnet
-  execute defect was caught pre-merge in the pilot — see model-downsampling.md §3.3).
+  (`sonnet`|`opus`|`haiku`|`fable`) in the gitignored `pipeline.config`. **Unset/empty resolves to `opus`**
+  (`REASON=default-opus`) on both paths; an explicit value is honored verbatim (`REASON=explicit-knob`). Ship
+  **commented = opus** in `pipeline.config.example`, and `/pipeline:init` writes them commented.
+- **`PIPELINE_PATH_B_ELIGIBLE_SCOPE`** (default `"all"`) — only bites once an operator sets
+  `PIPELINE_PATH_B_MODEL_EXECUTE=sonnet`. Under `all`, every non-W2 PATH B issue takes the knob's model;
+  under `low-blast`, only issues that `scripts/path-b-execute-eligible.sh` scores `low-blast` (≤1 source
+  module, ≤6 files, ≤150 added-LOC proxy, no security/migration/auth/concurrency signal) do, and
+  `high-blast` pins `opus`.
+- **PATH D takes the knob with no eligibility predicate**, but keeps the `needs-browser` → Opus carve-out
+  (#960); on PATH B `needs-browser` surfaces as the eligibility script's `REASON=needs-browser` and is treated
+  as W2-equivalent.
+- **`PIPELINE_PATH_A_MODEL_EXECUTE` / `PIPELINE_PATH_C_MODEL_EXECUTE`** (#1186) — same unset ⇒ `opus` rule;
+  A and C run no eligibility predicate and no carve-outs (the default already is the carve-out target). For C
+  the resolved model applies to every `target=<dir>` leaf.
+- **W2 high-uncertainty carve-out (PATH B and D)** — the word-bound regex (`concurrency|race|lock|deadlock|
+  security|auth|crypto|migration|data-loss`, #1039, shared via `scripts/_high-uncertainty-match.sh`) forces
+  `opus` over any explicit knob (`REASON=high-uncertainty`). Under the Opus default it is a belt-and-braces
+  check; it is the safety boundary again the moment a consumer opts B or D into Sonnet.
+- **Invariant: pr-eval is NEVER tier-dropped (W3).** `PIPELINE_STAGE_MODEL_PR_EVAL` defaults to `opus`; an
+  explicit knob below the resolved execute tier is honored but warns on stderr. The Opus backstop is the
+  property that made the cheaper-execute default safe while it was live (a Sonnet execute defect was caught
+  pre-merge in the pilot — see model-downsampling.md §3.3).
+- **Plan-stage pins (`scripts/resolve-stage-model.sh`)** — PATH C plans on
+  `PIPELINE_PATH_C_MODEL_PLAN` (default `fable`: cross-worktree splits are the most expensive failure mode),
+  PATH A/B plan on `opus`, and plan-eval resolves to tier-max(producer, `PIPELINE_STAGE_MODEL_PLAN_EVAL`)
+  so the gate never lands below its producer. W2 downgrades a Fable plan to Opus (refusal-risk).
 
-Net cost framing: with `scope=all` the default now downshifts the broad eligible PATH B + all PATH D lane to
-Sonnet (~−80% execute cost on that traffic), de-risked by the mandatory Opus pr-eval backstop. The opt-OUT is
-the host-flag kill switch (`=opus` / `low-blast` = instant Opus revert, zero code change); the #950 §5 kill
-conditions (first-pass approval <75%, eval re-runs >0.5/PR, any tier-traceable post-merge defect) become the
-post-GA monitoring bar.
+Net cost framing: the live lever on execute cost is no longer the model tier — it is the plan gate
+(`PIPELINE_PLAN_GATE=annotate`, #1437: one evaluate, amendments bound into execute, no re-plan round) and the
+per-wave batched helper calls (#1455). The Sonnet opt-in remains the host-flag kill switch in the other
+direction (`=sonnet` = instant −80% execute on that path, zero code change) for a consumer who accepts the
+#950 §5 monitoring bar (first-pass approval <75%, eval re-runs >0.5/PR, any tier-traceable post-merge defect).
 
 **Trust profile (#1291) — `PIPELINE_TRUST_PROFILE=strict|lean`, default `strict`.** Under `lean`, `scripts/resolve-stage-model.sh` adds `SKIP=true` to non-W2 PATH A/D `plan-eval`, which fullsend honours by flipping `plan-pending → plan-approved` with the audit comment `plan-eval skipped: lean profile`; that skip is the profile's only effect, because the split-role RED/GREEN lane was removed by #1420 (calibration runs #11–#13: no cost or latency return). `strict` is byte-identical to pre-#1291 behaviour; pr-eval depth (W3) is untouched.
 
