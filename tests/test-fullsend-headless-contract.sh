@@ -211,7 +211,7 @@ for site in "${SITES[@]}"; do
   fi
 
   inc
-  if grep -F -- "$site" <<<"$SECTION" | grep -qF 'decision='; then
+  if grep -F -- "$site" <<<"$SECTION" | grep -F 'decision=' >/dev/null; then
     pass_msg "A3: site '$site' names a decision= default on its own line"
   else
     fail_msg "A3: site '$site' has no 'decision=' on its line — enumerated without a default is not a contract"

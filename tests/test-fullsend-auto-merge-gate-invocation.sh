@@ -162,7 +162,7 @@ STEP7_NEEDLES=(
 )
 for needle in "${STEP7_NEEDLES[@]}"; do
   inc
-  if printf '%s\n' "$STEP7" | grep -qF -- "$needle"; then
+  if grep -qF -- "$needle" <<<"$STEP7"; then
     pass_msg "C: Step 7 carries \"$needle\""
   else
     fail_msg "C: Step 7 MISSING \"$needle\" — the gate call site is still prose-only (#1444)"
@@ -177,7 +177,7 @@ STEP7_FENCED="$(printf '%s\n' "$STEP7" | awk '
   inb { print }
 ')"
 inc
-if printf '%s\n' "$STEP7_FENCED" | grep -qF 'auto_merge_should_fire'; then
+if grep -qF 'auto_merge_should_fire' <<<"$STEP7_FENCED"; then
   pass_msg "C: the auto_merge_should_fire call is INSIDE a bash fence (an executable call site, not prose)"
 else
   fail_msg "C: auto_merge_should_fire does not appear inside any Step 7 bash fence — prose is what #1444 is fixing"
@@ -197,13 +197,13 @@ else
   fail_msg "D0: '## Auto-merge ownership' section is missing"
 fi
 inc
-if printf '%s\n' "$OWNERSHIP" | grep -qiF 'orchestrator'; then
+if grep -qiF 'orchestrator' <<<"$OWNERSHIP"; then
   pass_msg "D1: ownership section names the orchestrator as the firing party"
 else
   fail_msg "D1: ownership section does not name the orchestrator"
 fi
 inc
-if printf '%s\n' "$OWNERSHIP" | grep -qE '`?/pipeline:evaluate-issue-pr`? Step 11'; then
+if grep -qE '`?/pipeline:evaluate-issue-pr`? Step 11' <<<"$OWNERSHIP"; then
   fail_msg "D1: ownership section still says evaluate-issue-pr Step 11 fires the gate (that step is deleted)"
 else
   pass_msg "D1: ownership section no longer credits evaluate-issue-pr Step 11"
