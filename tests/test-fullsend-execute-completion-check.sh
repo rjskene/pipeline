@@ -56,7 +56,7 @@ fi
 assert_region_contains() {
   local label="$1" needle="$2"
   inc
-  if printf '%s' "$REGION" | grep -F -q -- "$needle"; then
+  if grep -F -q -- "$needle" <<<"$REGION"; then
     pass_msg "$label: Step 6 region contains \"$needle\""
   else
     fail_msg "$label: Step 6 region missing \"$needle\""
@@ -78,8 +78,8 @@ assert_region_contains "recover-redispatch" "recover-redispatch"
 # 4) A negation/MUST directive that the orchestrator does NOT trust the agent's
 #    narrated self-report.
 inc
-if printf '%s' "$REGION" | grep -E -q -- 'self-report' \
-   && printf '%s' "$REGION" | grep -E -q -- 'MUST|do NOT|never|NEVER|not trust'; then
+if grep -E -q -- 'self-report' <<<"$REGION" \
+   && grep -E -q -- 'MUST|do NOT|never|NEVER|not trust' <<<"$REGION"; then
   pass_msg "no-trust-directive: Step 6 region states orchestrator MUST/never-trust the agent self-report"
 else
   fail_msg "no-trust-directive: Step 6 region missing a no-trust self-report directive"

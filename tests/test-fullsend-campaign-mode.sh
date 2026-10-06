@@ -48,7 +48,7 @@ if [ -z "$camp" ]; then
   echo "VIOLATION: skills/fullsend/references/campaign-mode.md is empty"; fail=1
 fi
 assert_camp() {
-  printf '%s' "$camp" | grep -qiF "$1" || { echo "MISSING (Campaign mode): $1"; fail=1; }
+  grep -qiF "$1" <<<"$camp" || { echo "MISSING (Campaign mode): $1"; fail=1; }
 }
 
 # (3) OUTER loop above the existing wave-by-wave steps; does NOT replace them.
@@ -63,14 +63,14 @@ assert_camp "PIPELINE_CAMPAIGN_MAX_AD"
 # (5) classify + plan are batched-under-caps (no flat parallel blast of the
 #     whole read-only set — the rate-limit budget is GLOBAL).
 assert_camp "batched"
-printf '%s' "$camp" | grep -qiE 'classify' || { echo "MISSING (Campaign mode): classify"; fail=1; }
-printf '%s' "$camp" | grep -qiE 'plan'     || { echo "MISSING (Campaign mode): plan"; fail=1; }
+grep -qiE 'classify' <<<"$camp" || { echo "MISSING (Campaign mode): classify"; fail=1; }
+grep -qiE 'plan' <<<"$camp"     || { echo "MISSING (Campaign mode): plan"; fail=1; }
 
 # (6) leg-loop ORDER tokens, in order: execute -> eval-pr -> greenlight ->
 #     base advance -> bug filing. Assert each token is present AND the ordinal
 #     positions are monotonically non-decreasing.
 camp_lc="$(printf '%s' "$camp" | tr '[:upper:]' '[:lower:]')"
-ord_execute=$(printf '%s' "$camp_lc" | grep -n "execute" | head -1 | cut -d: -f1)
+ord_execute=$(grep -n "execute" <<<"$camp_lc" | head -1 | cut -d: -f1)
 ord_evalpr=$(printf '%s'  "$camp_lc" | grep -n "eval-pr" | head -1 | cut -d: -f1)
 ord_green=$(printf '%s'   "$camp_lc" | grep -n "greenlight" | head -1 | cut -d: -f1)
 ord_base=$(printf '%s'    "$camp_lc" | grep -n "base advance" | head -1 | cut -d: -f1)
@@ -90,35 +90,35 @@ if [ -n "${ord_execute:-}" ] && [ -n "${ord_evalpr:-}" ] && [ -n "${ord_green:-}
 fi
 
 # (7) bug filing dedups against open issues + the campaign-filed set.
-printf '%s' "$camp" | grep -qiE 'dedups?' || { echo "MISSING (Campaign mode): dedup/dedups"; fail=1; }
+grep -qiE 'dedups?' <<<"$camp" || { echo "MISSING (Campaign mode): dedup/dedups"; fail=1; }
 
 # (7a) Filing happens at END OF CAMPAIGN (consolidated), not per-leg create.
-printf '%s' "$camp" | grep -qiE 'end-of-campaign|campaign completion' \
+grep -qiE 'end-of-campaign|campaign completion' <<<"$camp" \
   || { echo "MISSING (Campaign mode): end-of-campaign / campaign completion filing trigger"; fail=1; }
 
 # (7b) Routes through the deterministic create-issues subset (#863):
 #      scope-check / combine-bias heuristic, find-grouping-candidates.sh,
 #      the Context/Scope/Affected-areas/Notes body template, and a path-hint.
-printf '%s' "$camp" | grep -qiE 'scope-check|combine bias|combine-bias' \
+grep -qiE 'scope-check|combine bias|combine-bias' <<<"$camp" \
   || { echo "MISSING (Campaign mode): scope-check / combine-bias heuristic"; fail=1; }
 assert_camp "find-grouping-candidates.sh"
 assert_camp "## Context"
 assert_camp "## Scope"
 assert_camp "## Affected areas"
 assert_camp "## Notes"
-printf '%s' "$camp" | grep -qiE 'path-hint' \
+grep -qiE 'path-hint' <<<"$camp" \
   || { echo "MISSING (Campaign mode): path-hint marker"; fail=1; }
 
 # (7c) Autonomy constraint (#863): the deterministic NON-INTERACTIVE subset
 #      only — never the interactive brainstorming dialogue.
-printf '%s' "$camp" | grep -qiE 'non-interactive|not the interactive|no brainstorming|never .*brainstorming' \
+grep -qiE 'non-interactive|not the interactive|no brainstorming|never .*brainstorming' <<<"$camp" \
   || { echo "MISSING (Campaign mode): non-interactive autonomy constraint"; fail=1; }
-printf '%s' "$camp" | grep -qiF "aggregate-signals" \
+grep -qiF "aggregate-signals" <<<"$camp" \
   || { echo "MISSING (Campaign mode): aggregate-signals invocation"; fail=1; }
 
 # (7d) Per-leg dedup against open issues + campaign-filed set is PRESERVED
 #      (signal COLLECTION still race-guards across legs).
-printf '%s' "$camp" | grep -qiE 'campaign-filed' \
+grep -qiE 'campaign-filed' <<<"$camp" \
   || { echo "MISSING (Campaign mode): campaign-filed set preserved"; fail=1; }
 
 # (8) scoped halt computes a dependency closure (via plan-campaign.sh closure).
@@ -129,22 +129,22 @@ assert_camp "closure"
 assert_camp "End-of-campaign fold wave"
 assert_camp "PIPELINE_CAMPAIGN_MAX_FOLD"
 assert_camp "fold-select"
-printf '%s' "$camp" | grep -qiF "FIFO" \
+grep -qiF "FIFO" <<<"$camp" \
   || { echo "MISSING (Campaign mode): FIFO fold order"; fail=1; }
-printf '%s' "$camp" | grep -qiE 'skip .*non-autonomous|non-autonomous .*skip|human / brainstorm / excluded|human/brainstorm/excluded' \
+grep -qiE 'skip .*non-autonomous|non-autonomous .*skip|human / brainstorm / excluded|human/brainstorm/excluded' <<<"$camp" \
   || { echo "MISSING (Campaign mode): skip non-autonomous"; fail=1; }
-printf '%s' "$camp" | grep -qiE 'overflow .*(stay|post)|stay posted' \
+grep -qiE 'overflow .*(stay|post)|stay posted' <<<"$camp" \
   || { echo "MISSING (Campaign mode): overflow stays posted"; fail=1; }
-printf '%s' "$camp" | grep -qiE 'no recursion|never fold(ed)? again|just posts' \
+grep -qiE 'no recursion|never fold(ed)? again|just posts' <<<"$camp" \
   || { echo "MISSING (Campaign mode): no recursion / fold-once bound"; fail=1; }
-printf '%s' "$camp" | grep -qiE 'high-uncertainty' \
+grep -qiE 'high-uncertainty' <<<"$camp" \
   || { echo "MISSING (Campaign mode): high-uncertainty skip vocabulary"; fail=1; }
 
 # (9a) Fold wave is placed BEFORE the End-of-campaign bug filing step (ordinal).
 # Anchor on the bug-filing HEADING (line-leading bold marker), not the prose
 # forward-references in the leg loop / fold subsection that also mention it.
-ord_fold=$(printf '%s' "$camp_lc" | grep -n "end-of-campaign fold wave" | head -1 | cut -d: -f1)
-ord_bug_heading=$(printf '%s' "$camp_lc" | grep -n '^\*\*end-of-campaign bug filing\.\*\*' | head -1 | cut -d: -f1)
+ord_fold=$(grep -n "end-of-campaign fold wave" <<<"$camp_lc" | head -1 | cut -d: -f1)
+ord_bug_heading=$(grep -n '^\*\*end-of-campaign bug filing\.\*\*' <<<"$camp_lc" | head -1 | cut -d: -f1)
 if [ -z "${ord_fold:-}" ]; then
   echo "MISSING (Campaign mode): end-of-campaign fold wave ordinal"; fail=1
 elif [ -z "${ord_bug_heading:-}" ]; then
