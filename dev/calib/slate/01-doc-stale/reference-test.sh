@@ -43,7 +43,18 @@ else
   ok "docs/usage.md no longer documents --all"
 fi
 
-if grep -qE -- '--status[[:space:]]+open\|done\|all' docs/usage.md; then
+# Semantic, not literal: the docs are right whenever one sentence / paragraph /
+# code block names --status together with all three values, however it is
+# phrased. Calibration run #17 wrote "`--status` accepts `open|done|all`" — a
+# correct fix the old literal grep for '--status open|done|all' scored FAIL.
+# awk RS="" walks blank-line-delimited blocks, so a hard-wrapped sentence still
+# counts; the value patterns reject `--all`, `total` and `reopen`.
+if awk 'BEGIN { RS = "" }
+  $0 ~ /--status/ \
+  && $0 ~ /(^|[^a-zA-Z0-9_-])open([^a-zA-Z0-9_-]|$)/ \
+  && $0 ~ /(^|[^a-zA-Z0-9_-])done([^a-zA-Z0-9_-]|$)/ \
+  && $0 ~ /(^|[^a-zA-Z0-9_-])all([^a-zA-Z0-9_-]|$)/ { found = 1 }
+  END { if (found) exit 0; exit 1 }' docs/usage.md; then
   ok "docs/usage.md documents --status open|done|all"
 else
   bad "docs/usage.md should document '--status open|done|all'"

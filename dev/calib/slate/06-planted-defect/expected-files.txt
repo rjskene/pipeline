@@ -1,0 +1,3 @@
+lib/store.sh
+bin/calibctl
+tests/case-truncate.sh

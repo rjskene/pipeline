@@ -24,8 +24,16 @@
 #   PATH=<A|B|C|D>
 #   MODEL=<fable|opus|sonnet|haiku>   # ALWAYS named; `inherit` is NEVER emitted
 #   REASON=<default-pin|path-c-fable|follows-producer|high-uncertainty|explicit-knob>
+#   GATE=<full|single|none|annotate>  # OPTIONAL (#1429) — emitted on EVERY
+#                                     # plan-eval resolution (including the
+#                                     # `annotate` default) and on NO other stage.
+#                                     # Callers may ignore it.
 #   SKIP=true                         # OPTIONAL (#1291) — emitted ONLY when the
 #                                     # stage may be elided. Absent otherwise.
+#
+# Token order is ISSUE/STAGE/PATH/MODEL/REASON, then the optional GATE=, then
+# the conditional SKIP=true LAST — so the pre-#1429 tail shape is preserved for
+# any caller that matches by name and ignores GATE=.
 #
 # === Encoded routing rules (the single place the stage knobs + carve-outs apply) ===
 #
@@ -66,6 +74,21 @@
 #               elided; and pr-eval — the W3 auto-merge gate — NEVER carries
 #               SKIP at all. MODEL=/REASON= are emitted verbatim alongside it,
 #               so a caller that IGNORES SKIP behaves exactly as pre-#1291.
+#               #1429 plan gate — PIPELINE_PLAN_GATE (annotate, the DEFAULT
+#               and the fallback for any unrecognized value with a stderr WARN
+#               (#1437) | full | single | none) is normalized INLINE in this
+#               arm, its ONLY read-site, and emitted as the optional second
+#               token GATE=<full|single|none|annotate> (annotate, #1435)
+#               after REASON= and before the conditional SKIP=true. It is
+#               stage-scoped: `plan` and `pr-eval` emit no GATE= line at all.
+#               GATE= tells fullsend how many evaluate DISPATCHES the plan gate
+#               is worth (annotate = one eval, a Revise carried into execute as
+#               binding amendments, #1435 | full = the explicit 3-round loop |
+#               single = one eval + one re-plan | none = skip the gate); the
+#               resolver itself makes no skip decision beyond SKIP=, and a
+#               caller that IGNORES GATE= behaves exactly as pre-#1429. When
+#               lean SKIP=true and GATE=none both fire, SKIP wins at the
+#               call-site.
 #
 # Tier order for max/WARN comparisons: haiku(1) < sonnet(2) < opus(3) < fable(4).
 # An unrecognized knob token is honored VERBATIM in MODEL= (fail-loud at Agent
@@ -160,6 +183,7 @@ tier() {
 MODEL=""
 REASON=""
 SKIP_OUT=""   # #1291: non-empty ⇒ emit the optional SKIP=true token
+GATE_OUT=""   # #1429: non-empty ⇒ emit the optional GATE=<v> token
 
 # --- plan ---------------------------------------------------------------------
 # Sets PLAN_MODEL / PLAN_REASON. Also consumed by the plan-eval branch so the
@@ -212,6 +236,19 @@ case "$STAGE" in
        && { [ "$PATH_LETTER" = "A" ] || [ "$PATH_LETTER" = "D" ]; }; then
       SKIP_OUT="true"
     fi
+    # #1429 plan gate — normalized HERE and nowhere else (this arm is the knob's
+    # only read-site, so a sourceable helper would create a second home for a
+    # decision only this arm makes). Unset AND empty ⇒ annotate, silently
+    # (#1437); an unrecognized value ⇒ annotate plus exactly ONE stderr WARN
+    # (stdout is a machine-parsed token block, so the WARN must never reach it).
+    PLAN_GATE_RAW="${PIPELINE_PLAN_GATE:-annotate}"
+    case "$PLAN_GATE_RAW" in
+      full|single|none|annotate) GATE_OUT="$PLAN_GATE_RAW" ;;
+      *)
+        echo "WARN: PIPELINE_PLAN_GATE='$PLAN_GATE_RAW' is not full|single|none|annotate — falling back to annotate." >&2
+        GATE_OUT="annotate"
+        ;;
+    esac
     ;;
 
   pr-eval)
@@ -239,6 +276,9 @@ echo "STAGE=$STAGE"
 echo "PATH=$PATH_LETTER"
 echo "MODEL=$MODEL"
 echo "REASON=$REASON"
+if [ -n "$GATE_OUT" ]; then
+  echo "GATE=$GATE_OUT"
+fi
 if [ -n "$SKIP_OUT" ]; then
   echo "SKIP=true"
 fi

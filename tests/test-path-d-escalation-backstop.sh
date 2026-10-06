@@ -17,6 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXECUTE_SKILL="$SCRIPT_DIR/../skills/execute-issue-plan/SKILL.md"
+EXECUTE_D_REF="$SCRIPT_DIR/../skills/execute-issue-plan/references/collapsed-inline-d.md"
 CLASSIFY_SKILL="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
 
 PASS=0
@@ -26,14 +27,18 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-for f in "$EXECUTE_SKILL" "$CLASSIFY_SKILL"; do
+for f in "$EXECUTE_SKILL" "$EXECUTE_D_REF" "$CLASSIFY_SKILL"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: SKILL.md not found at $f" >&2
     exit 1
   fi
 done
 
-EXECUTE_BODY=$(tr '\n' ' ' < "$EXECUTE_SKILL" | tr -s '[:space:]' ' ')
+# #1444: the escalation backstop paragraph was relocated out of the hot-path
+# SKILL.md into references/collapsed-inline-d.md together with the rest of the
+# `### Collapsed inline D contract` body. The executor's D contract is the union
+# of the two files — path retarget only; no assertion is relaxed.
+EXECUTE_BODY=$(cat "$EXECUTE_SKILL" "$EXECUTE_D_REF" | tr '\n' ' ' | tr -s '[:space:]' ' ')
 CLASSIFY_BODY=$(tr '\n' ' ' < "$CLASSIFY_SKILL" | tr -s '[:space:]' ' ')
 
 # Windowed proximity helper.
@@ -87,9 +92,9 @@ fi
 # (d) proximity: the escalation verb sits near the envelope/B-run tokens, so
 # the three pieces describe a single backstop rather than scattered mentions.
 inc
-NEAR1=$(near "$EXECUTE_SKILL" "envelope" "escalat" 400)
-NEAR2=$(near "$EXECUTE_SKILL" "envelope" "abort up" 400)
-NEAR3=$(near "$EXECUTE_SKILL" "envelope" "spawned" 400)
+NEAR1=$(near "$EXECUTE_D_REF" "envelope" "escalat" 400)
+NEAR2=$(near "$EXECUTE_D_REF" "envelope" "abort up" 400)
+NEAR3=$(near "$EXECUTE_D_REF" "envelope" "spawned" 400)
 if { [ "$NEAR1" = "OK" ] || [ "$NEAR2" = "OK" ]; } && [ "$NEAR3" = "OK" ]; then
   pass_msg "(d) escalate/abort-up + spawned both within 400 chars of 'envelope'"
 else

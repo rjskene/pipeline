@@ -33,7 +33,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-FULLSEND="skills/fullsend/SKILL.md"
+_FS_SKILL="skills/fullsend/SKILL.md"
 MANIFEST=".claude-plugin/plugin.json"
 
 PASS=0; FAIL=0; TESTS=0
@@ -43,7 +43,7 @@ inc()      { TESTS=$((TESTS + 1)); }
 
 cd "$ROOT" || { echo "FAIL: cannot cd to repo root $ROOT" >&2; exit 1; }
 
-for f in "$FULLSEND" "$MANIFEST"; do
+for f in "$_FS_SKILL" "$MANIFEST"; do
   if [ ! -f "$f" ]; then
     echo "FAIL: $f not found under $ROOT" >&2
     exit 1
@@ -52,6 +52,14 @@ done
 
 TMPD=$(mktemp -d)
 trap 'rm -rf "$TMPD"' EXIT
+
+# #1444 — fullsend's `**Agent `subagent_type` namespacing convention` block and
+# most of its dispatch bullets moved OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins the CONVENTION, not the file a
+# dispatch happens to live in, so it reads the UNION of SKILL.md and its
+# references (SKILL.md first, so any region extractor still sees it first).
+FULLSEND="$TMPD/fullsend-union.md"
+cat "$_FS_SKILL" skills/fullsend/references/*.md > "$FULLSEND"
 
 # ---------------------------------------------------------------------------
 # Shared matchers.

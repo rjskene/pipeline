@@ -18,10 +18,10 @@ Logging hooks and substrate for this repo's own dogfood operation. Most are regi
 
 ## Hook-denial log
 
-**dogfood-only, gated (#1352).** PreToolUse guard hooks that deny (exit 2) leave no trace in `tool-use.log` — that log is written by a PostToolUse hook, which never fires for a denied call, so a false positive was previously unauditable. `hooks/_deny_log.py` closes that gap: each guard hook (`block_deletions.py`, `restrict_paths.py`, `enforce-base-branch.py`, `enforce-comment-trust.py`, `check-ci-skip-markers.py`, `enforce-ci-wait.py`, `enforce-path-c-delegation.py`) calls `log_denial(hook, tool_name, reason, command_text="")` immediately before its `sys.exit(2)` / `return 2`, appending one JSONL record to `.claude/logs/hook-denials.jsonl`:
+**dogfood-only, gated (#1352).** PreToolUse guard hooks that deny (exit 2) leave no trace in `tool-use.log` — that log is written by a PostToolUse hook, which never fires for a denied call, so a false positive was previously unauditable. `hooks/_deny_log.py` closes that gap: each guard hook (`enforce-base-branch.py`, `enforce-comment-trust.py`, `check-ci-skip-markers.py`, `enforce-ci-wait.py`, `enforce-path-c-delegation.py`) calls `log_denial(hook, tool_name, reason, command_text="")` immediately before its `sys.exit(2)` / `return 2`, appending one JSONL record to `.claude/logs/hook-denials.jsonl`:
 
 ```json
-{"ts":"2026-09-21T13:05:00Z","hook":"restrict_paths","tool":"Bash","session":"<CLAUDE_SESSION_ID or unknown>","reason":"<first line of the stderr reason>","command":"<masked command text via hooks/command_mask.py, truncated to 512 chars>"}
+{"ts":"2026-09-21T13:05:00Z","hook":"enforce-base-branch","tool":"Bash","session":"<CLAUDE_SESSION_ID or unknown>","reason":"<first line of the stderr reason>","command":"<masked command text via hooks/command_mask.py, truncated to 512 chars>"}
 ```
 
 `enforce-ci-wait.py` denies from a **Stop** hook, not PreToolUse — its record carries `tool:"Stop"`, a deliberate widening of the "PreToolUse denials" framing.
@@ -48,19 +48,21 @@ Use `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh [--last N | --path X | 
 
 The `usage_complete` field records token-completeness provenance, reconciled across both producers (the forward hook `hooks/capture_agent_cost.py` and the retroactive parser) per #765: **inline records (forward AND retroactive) carry `usage_complete=false`** — a lower-bound, because in this harness the inline `usage` is the subagent's final-turn snapshot, not a cumulative multi-turn total. **Orchestrator-Stop, headless, and cumulative-source (`total_usage`/`cumulative_usage`) records carry `usage_complete=true`** — those are genuine cumulative totals (transcript-summed or cumulative-field). SUM-ming consumers must treat `false` records as lower-bound, not complete.
 
-**`/pipeline:tokenomics`** (`skills/tokenomics/SKILL.md`, dogfood-only, issue #721) is the backfill + report entrypoint over `agent-costs.jsonl`: it runs `capture-agent-costs.sh` (Step 1 backfill) then `cost-latency-report.sh --tokenomics` (Step 2), and presents every cost table — per-bucket (token-share vs cost-share), per-stage cost, session-structure (spawn vs in-session) + stage×structure cross-tab, B→D breakeven, coverage-health, per-day/per-PR trend with outlier flagging — plus the concurrency assessment. Per-model pricing is config-driven via `PIPELINE_PRICE_<MODEL>_<BUCKET>` rates (Opus list-price defaults; see `pipeline.config.example`). Reads only the `PIPELINE_LOGS_ENABLED`-gated `agent-costs.jsonl` (see [the gate above](#pipeline_logs_enabled-gate)); writes nothing to consumer `.claude/{skills,hooks,scripts,agents}/`.
+**`message.id` dedupe + `schema_version: 2` (#1443).** Pre-#1443 rows are ~2x high on input-side tokens: `input` / `cache_read` / `cache_creation` were summed per transcript LINE, but Claude Code writes 2-3 lines per API response sharing one `message.id`. Records now dedupe by `message.id` and carry `turns` / `ctx_first` / `ctx_last`. `scripts/capture-agent-costs.sh --recompute` re-emits retroactive rows only — forward-hook rows are never re-derived and the report's `agent_id` collapse keeps the larger sibling, so treat pre-#1443 figures as inflated.
+
+**`/pipeline:tokenomics`** (`skills/tokenomics/SKILL.md`, dogfood-only, issue #721) is the backfill + report entrypoint over `agent-costs.jsonl`: it runs `capture-agent-costs.sh` (Step 1 backfill) then `cost-latency-report.sh --tokenomics` (Step 2), and presents every cost table — per-bucket (token-share vs cost-share), per-stage cost, session-structure (spawn vs in-session) + stage×structure cross-tab, B→D breakeven, coverage-health, per-day/per-PR trend with outlier flagging — plus the concurrency assessment. Per-model pricing is config-driven via `PIPELINE_PRICE_<MODEL>_<BUCKET>` rates (Opus 4.8 list-price default fallback; see `pipeline.config.example`). An unrecognized model falls back to those Opus 4.8 rates loudly (#1416): it WARNs once per distinct unknown model per invocation on stderr, and is counted in the `fallback_priced_count` field on `--emit-pricing-json`. Reads only the `PIPELINE_LOGS_ENABLED`-gated `agent-costs.jsonl` (see [the gate above](#pipeline_logs_enabled-gate)); writes nothing to consumer `.claude/{skills,hooks,scripts,agents}/`.
 
 Report-surface flags (forwarded to `cost-latency-report.sh`):
 - **Per-day windowing** — `--since DATE` / `--until DATE` form a closed `[since, until]` window over `ts_start`; `--per-day` walks it day-by-day (default: last 5 days, UTC), one report block per `=== DAY YYYY-MM-DD ===`.
 - **Token columns** — per-stage / per-structure / per-PATH tables carry per-N token-bucket columns (input / output / cache_creation / cache_read) from the reconciled substrate; the trend table adds per-N and per-LOC cost columns.
 - **Durable history** — `scripts/snapshot-tokenomics-history.sh` upserts a per-day aggregate into `.claude/logs/tokenomics-history.jsonl` (keyed by date, last-write-wins) so a day survives raw-log pruning; `--emit-day-json` is its machine-mode source, and `--history [PATH]` renders the report from the persisted store (no PR join, no `gh`) once the live log is gone.
 
-**Split-role RED/GREEN cost attribution (#1098/#1104).** Split-role PATH B runs
-now emit role-attributed cost records — the Opus RED test-author and the cheaper
-GREEN implementer are captured as distinct roles in `agent-costs.jsonl` — so
-`/pipeline:tokenomics` can break the per-issue cost down by split-role role. This
-makes the cost posture of the two-model lane (expensive authorship vs. cheap
-greening) directly measurable rather than lumped into a single PATH B figure.
+**Execute-role cost attribution (#1098/#1104).** Every execute dispatch emits a
+role-attributed cost record in `agent-costs.jsonl`, and `/pipeline:tokenomics`
+breaks the per-issue cost down by that `role` field. The field reads `single` for
+every execute since #1420 retired the split-role RED/GREEN lane; the `red`/`green`
+rows already on disk are historical and are still parsed and priced, so windows
+spanning the cutover keep reporting.
 
 ## Log retention (`scripts/prune-logs.sh`)
 

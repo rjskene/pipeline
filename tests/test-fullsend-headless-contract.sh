@@ -15,7 +15,7 @@ set -uo pipefail
 #
 #     HEADLESS-DEFAULT: <site> decision=<what> reason=<why>
 #
-# and continues. Four decision sites are enumerated (a CLOSED vocabulary, so the
+# and continues. Six decision sites are enumerated (a CLOSED vocabulary, so the
 # assertions below can pin them exactly):
 #
 #   merge-policy        — Step 9's "Wait for explicit user confirmation before
@@ -25,6 +25,16 @@ set -uo pipefail
 #                         by Step 7's wake loop.
 #   ci-red-budget       — Step 6b's `red-retry` "Interactive mode: propose ..."
 #                         branch and the `red-budget-exhausted` row.
+#   permission-denied   — a `PermissionRequest` bridge timeout or operator deny
+#                         (#1421). Headless sessions no longer run under
+#                         --dangerously-skip-permissions, so an escalation can
+#                         now come back DENIED mid-run; without a named default
+#                         a stage would stop and ask what to do about it.
+#   ci-wait             — any wait on PR CI (#1424). Print mode waits only on
+#                         dispatched background Agents, so a backgrounded
+#                         Bash/`Monitor` poll plus a narrated "will continue
+#                         when it lands" IS the silent abort: the process exits
+#                         the moment the model stops calling tools.
 #
 # This file is the ONLY thing pinning fullsend's prose size for this change:
 # there is no `tests/test-fullsend-*budget*`, `tests/test-evolve-skill-budget.sh`
@@ -32,7 +42,10 @@ set -uo pipefail
 # directives.sh` does not cover fullsend. So A6 (section body 1..200 words),
 # A6b (each dispatch sentence 1..25 words) and A6c (sum <= 250) together enforce
 # the issue's "<= 250 words added to skills/fullsend/SKILL.md" budget. If the
-# prose overruns, CUT THE PROSE — never raise a ceiling here.
+# prose overruns, CUT THE PROSE — never raise a ceiling here. #1421 added the
+# fifth site by REWRITING the whole section body to 199 words rather than
+# appending a bullet: appending would have put the body at 223 (> 200) and the
+# total at 265 (> 250), and the ceilings are not the thing that gives.
 #
 # Non-vacuity discipline: every ceiling is paired with a `1 <=` floor, because
 # `wc -w` of a missing/empty extract is 0, which satisfies any ceiling and turns
@@ -41,12 +54,14 @@ set -uo pipefail
 # moved marker cannot masquerade as a missing directive — the same shape as H9
 # in tests/test-no-hypothesised-writer-clause.sh.
 #
-# HARD BAN inherited from the plan: `PIPELINE_HEADLESS` is the ONLY new
-# `PIPELINE_*` token this change may name anywhere. `scripts/`, `skills/`,
-# `hooks/`, `tests/` and `docs/` are all scan dirs for
-# `scripts/check-config-drift.sh`, whose referenced-set pattern is
-# `\bPIPELINE_[A-Z0-9_]+\b` — a bare prose mention counts as a reference. A8
-# asserts the lint's EXIT CODE, which is the mechanical enforcement of that ban.
+# CONFIG-DRIFT SYMMETRY: `scripts/`, `skills/`, `hooks/`, `tests/` and `docs/`
+# are all scan dirs for `scripts/check-config-drift.sh`, whose referenced-set
+# pattern is `\bPIPELINE_[A-Z0-9_]+\b` — a bare PROSE mention counts as a
+# reference. #1286 read that as "PIPELINE_HEADLESS is the only new token this
+# change may name"; the durable rule is the weaker and truer one: any PIPELINE_*
+# token named anywhere must be DECLARED (commented is enough) in
+# pipeline.config.example. #1421 names three more and declares all three. A8
+# asserts the lint's EXIT CODE, which is the mechanical enforcement.
 #
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,7 +77,7 @@ LOG_PREFIX="HEADLESS-DEFAULT:"
 GRAMMAR_TEMPLATE="HEADLESS-DEFAULT: <site> decision=<what> reason=<why>"
 GRAMMAR_RE="HEADLESS-DEFAULT: [a-z0-9-]+ decision=[^[:space:]]+ reason="
 SENTINEL='**Headless:**'
-SITES=(merge-policy unread-config-knob stall-triage ci-red-budget)
+SITES=(merge-policy unread-config-knob stall-triage ci-red-budget permission-denied ci-wait)
 
 SECTION_MAX_WORDS=200
 SENTENCE_MAX_WORDS=25
@@ -103,12 +118,13 @@ section_body() {
 
 # The inline EXECUTE dispatch prompt contract paragraph. Copied VERBATIM from
 # tests/test-execute-dispatch-prompt-hardening.sh / test-no-hypothesised-writer-
-# clause.sh / test-dispatch-no-background-test-run.sh / test-split-role-green-
-# full-suite-pre-pr.sh so all five guards agree on the region boundary: the
-# paragraph terminates on the next `   **` sub-heading. This boundary is exactly
-# why the headless directive must be appended to the END of the SAME physical
-# line — a new line beginning `   **Headless:**` would TERMINATE the region
-# instead of joining it, silently emptying four existing guards.
+# clause.sh / test-dispatch-no-background-test-run.sh so all four guards agree on
+# the region boundary: the paragraph terminates on the next `   **` sub-heading.
+# (#1420 deleted the fifth copy, test-split-role-green-full-suite-pre-pr.sh, with
+# the split-role lane.) This boundary is exactly why the headless directive must
+# be appended to the END of the SAME physical line — a new line beginning
+# `   **Headless:**` would TERMINATE the region instead of joining it, silently
+# emptying three existing guards.
 exec_contract_region() {
   awk '
     /\*\*Inline execute dispatch prompt contract \(mandatory\)\.\*\*/ { inblock = 1; print; next }
@@ -182,9 +198,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# A3 — all four decision sites are enumerated, each with a default.
+# A3 — all six decision sites are enumerated, each with a default.
 # ---------------------------------------------------------------------------
-scenario "A3: four enumerated decision sites, each naming a default"
+scenario "A3: six enumerated decision sites, each naming a default"
 
 for site in "${SITES[@]}"; do
   inc
@@ -392,6 +408,20 @@ if grep -qE '\.md#[A-Za-z0-9_-]+' <<<"$DOCS_SECTION"; then
 else
   pass_msg "A9: the headless docs section uses file-level links only (no \`.md#anchor\`)"
 fi
+
+# A9b — the operator docs must enumerate the SAME closed vocabulary as the
+#       skill, or the two lists drift and an operator reading the docs cannot
+#       tell which decision sites have a documented default.
+scenario "A9b: the docs headless section names every site in the closed vocabulary"
+
+for site in "${SITES[@]}"; do
+  inc
+  if grep -qF -- "$site" <<<"$DOCS_SECTION"; then
+    pass_msg "A9b: docs headless section names site '$site'"
+  else
+    fail_msg "A9b: site '$site' missing from the docs headless section — the operator list has drifted from the skill's closed vocabulary"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # A10 — negative control. Strip the section from a throwaway copy and re-run

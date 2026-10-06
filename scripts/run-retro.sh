@@ -14,12 +14,19 @@ set -uo pipefail
 #   bash scripts/run-retro.sh --cycle N --fixture DIR     # fixture mode
 #   bash scripts/run-retro.sh --cycle N --post            # post-run mode
 #   bash scripts/run-retro.sh --cycle N --write PATH      # full report to PATH
+#   bash scripts/run-retro.sh --rows-moved N              # early-exit: scorecard rows moved since N-1
+#   bash scripts/run-retro.sh --index                     # early-exit: regenerate docs/retros/README.md ## Index
 #   bash scripts/run-retro.sh --help
 #
 # Degradation contract: every row is produced by a helper that renders
 # `n/a (<reason>)` on missing substrate rather than failing. `set -uo
 # pipefail` (no -e). Exit non-zero ONLY on invalid args (unknown flag,
-# missing --cycle, non-integer --cycle).
+# missing --cycle/--rows-moved/--index, non-integer --cycle/--rows-moved).
+#
+# --rows-moved / --index (#1398) are early-exit modes that short-circuit
+# BEFORE the live-fetch/file-resolution block below, so neither pays for
+# `gh issue list --limit 300` or cost-latency-report.sh. --cycle is not
+# required when either is present; a bare invocation still exits non-zero.
 #
 # Fixture seam (`--fixture DIR`) mirrors cost-latency-report.sh --fixture:
 # reads tracker.md, rows.json, tool-use.log, usage-gate.jsonl, cycle-<NN>.md,
@@ -52,6 +59,15 @@ Options:
   --fixture DIR    Read tracker.md / rows.json / tool-use.log /
                     usage-gate.jsonl / cycle-<NN>.md / issues.json / prs.json
                     from DIR instead of calling gh / git / cost-latency-report.sh.
+  --rows-moved N   Early-exit mode: print `rows-moved: <m>` — the count of
+                    COMPUTED scorecard keys present in both cycle-N.md and
+                    cycle-(N-1).md whose values differ and neither is `n/a`.
+                    No gh/git/jq call, no filesystem write. --cycle not
+                    required alongside this flag.
+  --index          Early-exit mode: regenerate the `## Index` section of
+                    docs/retros/README.md (or `--fixture DIR`'s README.md)
+                    from the cycle-<NN>.md files present. --cycle not
+                    required alongside this flag.
   --limit N        PR window size passed through to cost-latency-report.sh
                     in live mode (default 50).
   --dump-baseline  Debug: emit only `BASELINE <row>/<label> = <value>` lines.
@@ -83,6 +99,8 @@ LIMIT=50
 DUMP_BASELINE=0
 DUMP_COMPUTED=0
 NOW_ARG=""
+ROWS_MOVED_CYCLE=""
+DO_INDEX=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -98,6 +116,9 @@ while [ $# -gt 0 ]; do
     --write=*)        WRITE_PATH="${1#--write=}"; shift ;;
     --fixture)        FIXTURE_DIR="${2:-}"; shift 2 ;;
     --fixture=*)      FIXTURE_DIR="${1#--fixture=}"; shift ;;
+    --rows-moved)     ROWS_MOVED_CYCLE="${2:-}"; shift 2 ;;
+    --rows-moved=*)   ROWS_MOVED_CYCLE="${1#--rows-moved=}"; shift ;;
+    --index)          DO_INDEX=1; shift ;;
     --limit)          LIMIT="${2:-}"; shift 2 ;;
     --limit=*)        LIMIT="${1#--limit=}"; shift ;;
     --now)            NOW_ARG="${2:-}"; shift 2 ;;
@@ -111,12 +132,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -z "$CYCLE" ]; then
+if [ -z "$CYCLE" ] && [ -z "$ROWS_MOVED_CYCLE" ] && [ "$DO_INDEX" -eq 0 ]; then
   echo "run-retro: ERROR: --cycle is required" >&2
   exit 1
 fi
-if ! [[ "$CYCLE" =~ ^[0-9]+$ ]]; then
+if [ -n "$CYCLE" ] && ! [[ "$CYCLE" =~ ^[0-9]+$ ]]; then
   echo "run-retro: ERROR: --cycle must be a non-negative integer (got: $CYCLE)" >&2
+  exit 1
+fi
+if [ -n "$ROWS_MOVED_CYCLE" ] && ! [[ "$ROWS_MOVED_CYCLE" =~ ^[0-9]+$ ]]; then
+  echo "run-retro: ERROR: --rows-moved must be a non-negative integer (got: $ROWS_MOVED_CYCLE)" >&2
   exit 1
 fi
 
@@ -329,33 +354,38 @@ parse_cycle_issues() {  # <body> <N> -> prints space-separated issue numbers
   printf '%s' "${nums[*]:-}"
 }
 
-# cycle_window <body> <cycle N> <cur ids json> <issues_file> -> sets
-# CYCLE_SINCE / CYCLE_UNTIL (#1281, item 3a).
+# cycle_window <body> <cycle N> <cur ids json> <issues_file> <tracker> -> sets
+# CYCLE_SINCE / CYCLE_UNTIL (#1281 item 3a; #1396 items 1+2).
 #
-# CYCLE_SINCE is the date captured from the tracker body's own
-# `Cycle N (<YYYY-MM-DD>` header; when no header carries cycle N, it falls
-# back to the MIN createdAt over the cycle's own issues. CYCLE_UNTIL is the
-# date from the `Cycle N+1 (` header when present, else the injected clock
-# ($RETRO_NOW) — only the newest cycle (no successor header) needs a clock,
-# which is why every earlier cycle's window is fully clock-independent.
-# The bound is uniformly EXCLUSIVE (mergedAt/createdAt >= SINCE and < UNTIL);
-# a bare YYYY-MM-DD upper bound already excludes every same-day timestamp
-# under lexicographic compare.
+# CYCLE_SINCE is read from the tracker body's own `Cycle N (<date-or-ISO8601>`
+# header; the captured token may be a bare `YYYY-MM-DD` (historical headers)
+# or a full ISO-8601 timestamp (from #1396 onward) — both compare correctly
+# as plain strings. CYCLE_UNTIL is read the same way from the `Cycle N+1 (`
+# header when present, else the injected clock ($RETRO_NOW) — only the
+# newest cycle (no successor header) needs a clock, which is why every
+# earlier cycle's window is fully clock-independent. The bound is uniformly
+# EXCLUSIVE (mergedAt/createdAt >= SINCE and < UNTIL).
 #
-# If CYCLE_SINCE cannot be resolved at all (no header, no cycle issues to
-# fall back on): CYCLE_SINCE stays empty. Callers must treat that as "no
-# window" and render a named `n/a (no cycle window)` reason — NEVER fall back
-# to a repo-wide count.
+# When cycle N's header does not exist yet — `skills/evolve/SKILL.md` Step 1
+# runs this BEFORE Step 3 appends the header (#1396) — CYCLE_SINCE instead
+# dates from the PREVIOUS cycle's own tracker retro comment (`## Cycle N-1`
+# with a `- retro:` line): that comment's `createdAt`. Only when NEITHER the
+# header NOR a previous-cycle retro comment resolves a bound does CYCLE_SINCE
+# fall back to the MIN createdAt over the cycle's own issues.
+#
+# If CYCLE_SINCE cannot be resolved at all: CYCLE_SINCE stays empty. Callers
+# must treat that as "no window" and render a named `n/a (no cycle window)`
+# reason — NEVER fall back to a repo-wide count.
 CYCLE_SINCE=""
 CYCLE_UNTIL=""
 
 cycle_window() {
-  local body="$1" n="$2" ids_json="$3" issues_file="$4" line found_n date next
+  local body="$1" n="$2" ids_json="$3" issues_file="$4" tracker="$5" line found_n date next
   CYCLE_SINCE=""
   CYCLE_UNTIL=""
   next=$((n + 1))
   while IFS= read -r line; do
-    if [[ "$line" =~ ^Cycle\ ([0-9]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+    if [[ "$line" =~ ^Cycle\ ([0-9]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?) ]]; then
       found_n="${BASH_REMATCH[1]}"
       date="${BASH_REMATCH[2]}"
       if [ "$found_n" = "$n" ]; then
@@ -365,6 +395,10 @@ cycle_window() {
       fi
     fi
   done <<< "$body"
+
+  if [ -z "$CYCLE_SINCE" ] && [ "$n" -gt 0 ] && [ -f "$issues_file" ]; then
+    CYCLE_SINCE="$(prev_cycle_retro_timestamp "$issues_file" "$tracker" $((n - 1)))"
+  fi
 
   if [ -z "$CYCLE_SINCE" ] && [ -f "$issues_file" ]; then
     CYCLE_SINCE="$(jq -r --argjson ids "$ids_json" '
@@ -406,6 +440,295 @@ prev_cycle_comment() {
   ' "$issues_file" 2>/dev/null
 }
 
+# prev_cycle_retro_timestamp <issues_file> <tracker> <prev cycle N> -> the
+# `createdAt` of the tracker's own LAST comment whose body opens
+# `## Cycle <prev cycle N>` AND carries a `- retro:` line (the final retro
+# post for that cycle, not an interim one) — empty if none (#1396, item 1).
+prev_cycle_retro_timestamp() {
+  local issues_file="$1" tracker="$2" prev_n="$3"
+  [ -f "$issues_file" ] || return 0
+  jq -r --arg tracker "$tracker" --arg hdr "^## Cycle ${prev_n}\\b" '
+    [.[] | select((.number|tostring) == $tracker) | .comments[]?
+      | select((.body // "") | test($hdr))
+      | select((.body // "") | test("(?m)^- retro:"))
+      | .createdAt] | last // empty
+  ' "$issues_file" 2>/dev/null
+}
+
+# resolved_verdicts <comment body> -> space-separated issue numbers the
+# comment's `- verdicts:` line already records a verdict for (#1281). Only
+# `#N <verdict-word>` pairs count — the same comment's `(reverted by PR #p)`
+# and `| pending: #q (retro next cycle)` fragments carry no verdict word
+# right after the `#`, so they are excluded by construction.
+#
+# HOISTED (#1398): this function (and PREV_COMP_VAL / resolve_prev_retro_file
+# / load_prev_computed below) used to live ~600 lines further down, past the
+# live-fetch block. The --rows-moved / --index short-circuit below needs
+# load_prev_computed / resolve_prev_retro_file BEFORE the live-fetch block, so
+# all four moved up together rather than splitting the short-circuit in two.
+resolved_verdicts() {
+  local body="$1" line
+  [ -n "$body" ] || { printf ''; return 0; }
+  line="$(printf '%s\n' "$body" | grep '^- verdicts:')"
+  [ -n "$line" ] || { printf ''; return 0; }
+  printf '%s\n' "$line" \
+    | grep -oE '#[0-9]+ +(confirmed|no-effect|regressed)' \
+    | sed -E 's/^#([0-9]+).*/\1/' \
+    | tr '\n' ' ' | sed -E 's/[[:space:]]+$//'
+}
+
+declare -A PREV_COMP_VAL=()
+
+# resolve_prev_retro_file <cycle N> -> path to cycle (N-1)'s retro file, or
+# empty at cycle 0.
+resolve_prev_retro_file() {
+  local n="$1" prevnn
+  if [ "$n" -le 0 ]; then printf ''; return 0; fi
+  prevnn="$(printf '%02d' $((n - 1)))"
+  if [ -n "$FIXTURE_DIR" ]; then
+    printf '%s' "$FIXTURE_DIR/cycle-$prevnn.md"
+  else
+    printf '%s' "$REPO_ROOT/docs/retros/cycle-$prevnn.md"
+  fi
+}
+
+# load_prev_computed <file> [target array name, default PREV_COMP_VAL] ->
+# parses every whole-file `COMPUTED <key> = <val>` line into the named
+# associative array (not scoped to `## Post` — real retros carry COMPUTED
+# rows there, but the fixture substrate puts them at top level and this
+# loader is section-agnostic either way). The optional 2nd arg (#1398) lets
+# `--rows-moved` load TWO cycle files into two distinct arrays for the inner
+# join below; every pre-#1398 call site passes only <file> and keeps writing
+# the original global PREV_COMP_VAL.
+load_prev_computed() {
+  local f="$1" target="${2:-PREV_COMP_VAL}" line rest key val
+  local -n _load_prev_computed_target="$target"
+  [ -n "$f" ] && [ -f "$f" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "COMPUTED "*)
+        rest="${line#COMPUTED }"
+        key="${rest%% = *}"
+        val="${rest#* = }"
+        _load_prev_computed_target["$key"]="$val"
+        ;;
+    esac
+  done < "$f"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# --rows-moved / --index early-exit modes (#1398)
+# ---------------------------------------------------------------------------
+# Both short-circuit BEFORE the live-fetch/file-resolution block below, so
+# --rows-moved makes NO gh/git/jq call and --index costs at most two cheap
+# `gh issue view` calls (none under --fixture). Degradation contract is
+# inherited verbatim: every row renders `n/a (<reason>)` / `—` on missing
+# substrate and exits 0; non-zero exit is reserved for invalid args (already
+# handled above, in arg validation).
+
+# compute_rows_moved <cycle N> -> prints exactly one `rows-moved: <m>` or
+# `rows-moved: n/a (<reason>)` line. A key counts as MOVED only when it is
+# present in BOTH cycle-N.md and cycle-(N-1).md, neither value starts with
+# `n/a`, and the values differ — an unpaired key (present in only one file)
+# or an `n/a` side (a row that merely started/stopped being measurable) is
+# never counted as movement.
+compute_rows_moved() {
+  local n="$1" retro_dir curnn prevnn cur_file prev_file
+  retro_dir="${FIXTURE_DIR:-$REPO_ROOT/docs/retros}"
+  if [ "$n" -le 0 ]; then
+    printf 'rows-moved: n/a (no previous cycle)\n'
+    return 0
+  fi
+  curnn="$(printf '%02d' "$n")"
+  prevnn="$(printf '%02d' $((n - 1)))"
+  cur_file="$retro_dir/cycle-$curnn.md"
+  prev_file="$retro_dir/cycle-$prevnn.md"
+  if [ ! -f "$cur_file" ] || [ ! -f "$prev_file" ]; then
+    printf 'rows-moved: n/a (missing cycle-%s.md or cycle-%s.md)\n' "$curnn" "$prevnn"
+    return 0
+  fi
+  local -A cur_vals=() prev_vals=()
+  load_prev_computed "$cur_file" cur_vals
+  load_prev_computed "$prev_file" prev_vals
+  if [ "${#cur_vals[@]}" -eq 0 ] && [ "${#prev_vals[@]}" -eq 0 ]; then
+    printf 'rows-moved: n/a (no COMPUTED rows)\n'
+    return 0
+  fi
+  local key moved=0
+  for key in "${!cur_vals[@]}"; do
+    [ -n "${prev_vals[$key]+x}" ] || continue
+    case "${cur_vals[$key]}" in n/a*) continue ;; esac
+    case "${prev_vals[$key]}" in n/a*) continue ;; esac
+    [ "${cur_vals[$key]}" = "${prev_vals[$key]}" ] && continue
+    moved=$((moved + 1))
+  done
+  printf 'rows-moved: %d\n' "$moved"
+}
+
+# index_cycle_date <tracker body> <cycle N> -> YYYY-MM-DD or empty. Reuses
+# the SAME `Cycle <n> (<date>` header regex as cycle_window() above (not a
+# call to cycle_window() itself — that function's fallbacks need an
+# issues_file/ids_json this early-exit mode has no reason to fetch).
+index_cycle_date() {
+  local body="$1" n="$2" line found_n date
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^Cycle\ ([0-9]+)\ \(([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+      found_n="${BASH_REMATCH[1]}"
+      date="${BASH_REMATCH[2]}"
+      [ "$found_n" = "$n" ] && { printf '%s' "$date"; return 0; }
+    fi
+  done <<< "$body"
+  printf ''
+}
+
+# index_row_verdicts <cycle comment body> -> "<confirmed>/<no-effect>/<regressed>"
+# or empty. resolved_verdicts() cannot be reused here — it strips the verdict
+# word and returns issue NUMBERS only — so this is its own counter over the
+# same `#[0-9]+ +(confirmed|no-effect|regressed)` grammar.
+index_row_verdicts() {
+  local body="$1" line c ne rg
+  [ -n "$body" ] || { printf ''; return 0; }
+  line="$(printf '%s\n' "$body" | grep '^- verdicts:')"
+  [ -n "$line" ] || { printf ''; return 0; }
+  c="$(printf '%s\n' "$line" | grep -oE '#[0-9]+ +confirmed' | grep -c .)"
+  ne="$(printf '%s\n' "$line" | grep -oE '#[0-9]+ +no-effect' | grep -c .)"
+  rg="$(printf '%s\n' "$line" | grep -oE '#[0-9]+ +regressed' | grep -c .)"
+  printf '%d/%d/%d' "$c" "$ne" "$rg"
+}
+
+# index_row_tokens <cycle file> -> "<X.Y>M" or the em-dash placeholder when
+# the file carries no `cost: loop-own tokens/issue median = <int>` line.
+index_row_tokens() {
+  local f="$1" raw
+  raw="$(sed -nE 's/^cost: loop-own tokens\/issue median = ([0-9]+)$/\1/p' "$f" 2>/dev/null | head -1)"
+  if [ -n "$raw" ]; then
+    awk -v t="$raw" 'BEGIN{printf "%.1fM", t/1000000}'
+  else
+    printf '\xe2\x80\x94'
+  fi
+}
+
+# index_table <tracker> <tracker body> <comments file> <cycle files...> ->
+# the full markdown table (header + separator + one row per cycle file) on
+# stdout.
+index_table() {
+  local tracker="$1" body="$2" comments_file="$3"; shift 3
+  local f nn n date issues_list issues_rendered comment_body verdicts tokens
+  echo "| cycle | date | issues | verdicts | tokens |"
+  echo "|---|---|---|---|---|"
+  for f in "$@"; do
+    nn="$(basename "$f" .md)"; nn="${nn#cycle-}"
+    n="$((10#$nn))"
+
+    date="$(index_cycle_date "$body" "$n")"
+    [ -n "$date" ] || date='—'
+
+    issues_list="$(parse_cycle_issues "$body" "$n")"
+    if [ -n "$issues_list" ]; then
+      issues_rendered="$(printf '#%s ' $issues_list)"
+      issues_rendered="${issues_rendered% }"
+    else
+      issues_rendered='—'
+    fi
+
+    comment_body="$(prev_cycle_comment "$comments_file" "$tracker" "$n")"
+    verdicts="$(index_row_verdicts "$comment_body")"
+    [ -n "$verdicts" ] || verdicts='—'
+
+    tokens="$(index_row_tokens "$f")"
+
+    echo "| $nn | $date | $issues_rendered | $verdicts | $tokens |"
+  done
+}
+
+# splice_index_section <readme path> <table text> -> the full new file
+# content on stdout. Replaces everything from `^## Index` to the next `^## `
+# heading or EOF wholesale (full-section replacement, not append — this is
+# what makes a second run byte-identical). When the README exists but
+# carries no `^## Index` heading yet, the section is appended at EOF instead;
+# every run from the second one onward then takes the replacement path.
+splice_index_section() {
+  local readme="$1" table="$2" intro
+  intro='Cycle-by-cycle index, regenerated by `run-retro.sh --index`.'
+  if grep -qE '^## Index' "$readme"; then
+    awk -v intro="$intro" -v table="$table" '
+      BEGIN { in_index = 0; done = 0 }
+      /^## Index/ && !done {
+        print "## Index"
+        print ""
+        print intro
+        print ""
+        print table
+        in_index = 1
+        done = 1
+        next
+      }
+      in_index && /^## / { in_index = 0 }
+      in_index { next }
+      { print }
+    ' "$readme"
+  else
+    cat "$readme"
+    printf '\n## Index\n\n%s\n\n%s\n' "$intro" "$table"
+  fi
+}
+
+# run_index <tracker N> -> regenerates RETRO_DIR/README.md's `## Index`
+# section from the cycle-<NN>.md files present, numerically sorted. Never
+# aborts, never touches the file when the README or cycle files are absent.
+run_index() {
+  local tracker="$1" retro_dir readme body comments_file tmp_comments=""
+  retro_dir="${FIXTURE_DIR:-$REPO_ROOT/docs/retros}"
+  readme="$retro_dir/README.md"
+  if [ ! -f "$readme" ]; then
+    printf 'index: n/a (no README.md at %s)\n' "$retro_dir"
+    return 0
+  fi
+
+  local -a cycle_files=()
+  while IFS= read -r f; do [ -n "$f" ] && cycle_files+=("$f"); done < <(
+    find "$retro_dir" -maxdepth 1 -type f -name 'cycle-*.md' 2>/dev/null | sort
+  )
+  if [ "${#cycle_files[@]}" -eq 0 ]; then
+    printf 'index: n/a (no cycle-*.md files in %s)\n' "$retro_dir"
+    return 0
+  fi
+
+  body=""
+  comments_file=""
+  if [ -n "$FIXTURE_DIR" ]; then
+    [ -f "$FIXTURE_DIR/tracker.md" ] && body="$(cat "$FIXTURE_DIR/tracker.md")"
+    comments_file="$FIXTURE_DIR/issues.json"
+  elif command -v gh >/dev/null 2>&1 && [ -n "${PIPELINE_REPO:-}" ]; then
+    body="$(gh issue view "$tracker" --repo "$PIPELINE_REPO" --json body --jq .body 2>/dev/null)"
+    tmp_comments="$(mktemp)"
+    gh issue view "$tracker" --repo "$PIPELINE_REPO" --json number,comments 2>/dev/null \
+      | jq -s '.' > "$tmp_comments" 2>/dev/null
+    comments_file="$tmp_comments"
+  fi
+
+  local table new_readme
+  table="$(index_table "$tracker" "$body" "$comments_file" "${cycle_files[@]}")"
+  new_readme="$(splice_index_section "$readme" "$table")"
+  printf '%s\n' "$new_readme" > "$readme"
+
+  [ -n "$tmp_comments" ] && rm -f "$tmp_comments"
+
+  printf 'index: %d rows -> %s\n' "${#cycle_files[@]}" "$readme"
+  return 0
+}
+
+if [ -n "$ROWS_MOVED_CYCLE" ]; then
+  compute_rows_moved "$ROWS_MOVED_CYCLE"
+  exit 0
+fi
+
+if [ "$DO_INDEX" -eq 1 ]; then
+  run_index "$TRACKER"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # File-path resolution (fixture seam vs live)
 # ---------------------------------------------------------------------------
@@ -427,7 +750,14 @@ if [ -n "$FIXTURE_DIR" ]; then
   ROWS_FILE="$FIXTURE_DIR/rows.json"
   TOOLOG="$FIXTURE_DIR/tool-use.log"
   USAGE_FILE="$FIXTURE_DIR/usage-gate.jsonl"
-  CALIB_FILE="$FIXTURE_DIR/calib.txt"
+  # Dated form first (calib/<YYYY-MM-DD>.txt or, since #1408, the minute-
+  # granular calib/<YYYY-MM-DD>T<HHMM>Z.txt — mirrors live mode's newest-by-
+  # filename resolution), falling back to the legacy flat calib.txt when no
+  # dated artifact exists (#1395). Newest by SORT ORDER of the filename: the
+  # `T<HHMM>Z` suffix sorts after the bare date, so a same-day timestamped
+  # artifact always wins over an older-format one from the same day.
+  CALIB_FILE="$(ls -1 "$FIXTURE_DIR"/calib/*.txt 2>/dev/null | sort | tail -1)"
+  [ -n "$CALIB_FILE" ] || CALIB_FILE="$FIXTURE_DIR/calib.txt"
   AGENT_COSTS_FILE="$FIXTURE_DIR/agent-costs.jsonl"
   DENY_LOG="$FIXTURE_DIR/hook-denials.jsonl"
 else
@@ -456,9 +786,13 @@ else
   TOOLOG="$REPO_ROOT/.claude/logs/tool-use.log"
   USAGE_FILE="$REPO_ROOT/.claude/logs/usage-gate.jsonl"
   # Newest calibration block tee'd by scripts/calibration-run.sh --run (#1280).
-  # Newest by FILENAME (the artifacts are <UTC date>.txt, so lexical order is
-  # date order), not by mtime: a re-teed older day, a `cp -r` or a restore all
-  # reshuffle mtimes, and docs/calibration.md promises the newest date.
+  # Newest by FILENAME, not by mtime: a re-teed older day, a `cp -r` or a
+  # restore all reshuffle mtimes, and docs/calibration.md promises the newest
+  # artifact. Since #1408 the artifact is minute-granular
+  # (<UTC date>T<HHMM>Z.txt, legacy <UTC date>.txt still read) precisely so a
+  # same-day re-run gets its OWN file instead of overwriting the prior run's;
+  # the `T<HHMM>Z` suffix sorts after the bare legacy date, keeping "newest by
+  # filename" correct for both forms.
   CALIB_FILE="$(ls -1 "$REPO_ROOT"/docs/retros/calib/*.txt 2>/dev/null | sort | tail -1)"
   AGENT_COSTS_FILE="${CLAUDE_PROJECT_DIR:-$REPO_ROOT}/.claude/logs/agent-costs.jsonl"
   # Mirrors AGENT_COSTS_FILE resolution (#1352/#1360): denials from linked
@@ -487,7 +821,7 @@ if [ "$CYCLE" -gt 0 ]; then
 fi
 PREV_IDS_JSON="$(ids_json "$PREV_ISSUES")"
 
-cycle_window "$TRACKER_BODY" "$CYCLE" "$CUR_IDS_JSON" "$ISSUES_FILE"
+cycle_window "$TRACKER_BODY" "$CYCLE" "$CUR_IDS_JSON" "$ISSUES_FILE" "$TRACKER"
 BASE="${PIPELINE_BASE_BRANCH:-evolve}"
 
 # ---------------------------------------------------------------------------
@@ -505,16 +839,21 @@ MISSING_ROW_ISSUES=""
 #
 # scripts/calibration-run.sh --run tees a block of
 #   CALIB issue=<n> path=<X> cost=$<usd> wall=<s> verdicts=<a/b> reftest=<pass|fail> unexpected-files=<n>
-#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n>
-#   CALIB-ABORT reason=<no-pr|held|timeout>
-# to docs/retros/calib/<UTC date>.txt. Two retro rows read it: the weak-model
+#   CALIB-TOTAL cost=$<usd> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
+#   CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
+# to docs/retros/calib/<UTC date>T<HHMM>Z.txt (#1408; legacy <UTC date>.txt
+# artifacts are still read — fixture mode mirrors either form at
+# <FIXTURE_DIR>/calib/<date-or-timestamp>.txt). Two retro rows read it: the weak-model
 # guarantee (a k/n over the `reftest=` atoms) and the path-B $ median (over the
 # `cost=` atoms of the `path=B` rows only — the fixed slate is the ONLY place
 # this harness has a per-issue dollar figure, since the rows JSON carries none).
+# `planted=` is a per-RUN atom on the total line and is not parsed here.
 # Degradation contract: a missing / CALIB-row-free file leaves both reasons
 # exactly as they render with no calibration substrate at all.
 CALIB_WEAK="n/a (no calibration slate; spec §8 cycle-1 deliverable)"
 CALIB_USD="n/a (no per-issue cost in rows JSON)"
+CALIB_RUN_DATE=""
+CALIB_STALE=""
 
 compute_calib() {
   local f="${1:-}"
@@ -566,7 +905,75 @@ compute_calib() {
   fi
 }
 
+# calib_provenance <file> — dates the chosen calibration artifact off its own
+# FILENAME (never off a CALIB atom — the grammar carries none) and counts
+# tracker `## Cycle <k>` comments posted strictly AFTER that day (#1395). Both
+# globals stay empty when the filename carries no `YYYY-MM-DD` (the undated
+# calib.txt fallback), which is what keeps that fallback rendering the bare
+# value. The `2>/dev/null` plus the numeric `case` guard on CALIB_STALE are
+# required: in live mode with no PIPELINE_REPO reachable (Scenario 6) the
+# issues substrate is never created, so an unguarded jq would write to stderr;
+# non-numeric / absent substrate degrades silently to "date only", never a
+# failed retro.
+calib_provenance() {
+  local f="${1:-}" base cutoff peeled
+  CALIB_RUN_DATE=""
+  CALIB_STALE=""
+  CALIB_HOOKS=""
+  CALIB_SUPERPOWERS=""
+  CALIB_BEXEC=""
+  CALIB_PLAN_GATE=""
+  [ -n "$f" ] || return 0
+  base="$(basename "$f" .txt)"
+  # #1409/#1412/#1414/#1429: a non-default arm suffixes its artifact
+  # `-hooks-off`, `-superpowers-off`, `-bexec-<M>` and/or `-plan-gate-<v>`
+  # (composable, emitted in that order)
+  # — strip them (and remember the arm(s)) BEFORE the date-shape match below,
+  # so both the bare and the T<HHMM>Z form are recognized regardless of arm.
+  # Peeled in a LOOP, not a case over the combinations: two arms were three
+  # cases, three arms are seven, and every further arm doubles them.
+  peeled=1
+  while [ "$peeled" -eq 1 ]; do
+    peeled=0
+    case "$base" in
+      *-plan-gate-full)   CALIB_PLAN_GATE="full";   base="${base%-plan-gate-full}";   peeled=1 ;;
+      *-plan-gate-single) CALIB_PLAN_GATE="single"; base="${base%-plan-gate-single}"; peeled=1 ;;
+      *-plan-gate-none)   CALIB_PLAN_GATE="none";   base="${base%-plan-gate-none}";   peeled=1 ;;
+      *-plan-gate-annotate) CALIB_PLAN_GATE="annotate"; base="${base%-plan-gate-annotate}"; peeled=1 ;;
+      *-bexec-opus)   CALIB_BEXEC="opus";   base="${base%-bexec-opus}";   peeled=1 ;;
+      *-bexec-sonnet) CALIB_BEXEC="sonnet"; base="${base%-bexec-sonnet}"; peeled=1 ;;
+      *-superpowers-off)
+        CALIB_SUPERPOWERS="off"; base="${base%-superpowers-off}"; peeled=1 ;;
+      *-hooks-off) CALIB_HOOKS="off"; base="${base%-hooks-off}"; peeled=1 ;;
+    esac
+  done
+  case "$base" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) CALIB_RUN_DATE="$base" ;;
+    # #1408: minute-granular <date>T<HHMM>Z artifact — the run date is the
+    # portion before the `T`.
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9][0-9][0-9]Z) CALIB_RUN_DATE="${base%%T*}" ;;
+    *) return 0 ;;
+  esac
+  # The artifact is DAY-keyed, so a same-day cycle comment does not count as
+  # "since" — the cutoff is the end of the run's own day.
+  cutoff="${CALIB_RUN_DATE}T23:59:59Z"
+  CALIB_STALE="$(jq -r --arg t "$TRACKER" --arg after "$cutoff" '
+    [.[] | select((.number|tostring) == $t) | .comments[]?
+     | select((.body // "") | test("^## Cycle [0-9]+"))
+     | select(.createdAt > $after)] | length' "$ISSUES_FILE" 2>/dev/null)"
+  case "$CALIB_STALE" in ''|*[!0-9]*) CALIB_STALE="" ;; esac
+}
+
+# calib_prov_add <marker> — appends one comma-separated marker to CALIB_PROV.
+# The provenance list grew a third arm with #1414; composing it through one
+# helper keeps "first marker takes no comma" in a single place instead of one
+# nested if per arm.
+calib_prov_add() {
+  if [ -n "$CALIB_PROV" ]; then CALIB_PROV="$CALIB_PROV, $1"; else CALIB_PROV="$1"; fi
+}
+
 compute_calib "$CALIB_FILE"
+calib_provenance "$CALIB_FILE"
 
 compute_cost_latency() {
   local rows_file="$1"
@@ -910,7 +1317,6 @@ compute_friction() {
   # Deliberately NON-NUMERIC: it must never join a delta, so Scenario 13's
   # `deltas == joined` invariant (numeric-only) cannot shift.
   EXTRA_COMP_VAL["friction/harness-friction-window"]="$FRICTION_WINDOW";   EXTRA_COMP_UNIT["friction/harness-friction-window"]=""
-  EXTRA_COMP_VAL["friction/compactions"]="n/a (no transcript substrate)";   EXTRA_COMP_UNIT["friction/compactions"]=""
   EXTRA_COMP_VAL["friction/hotfix"]="$FRICTION_HOTFIX";                    EXTRA_COMP_UNIT["friction/hotfix"]=""
   EXTRA_COMP_VAL["friction/manual-merge"]="$FRICTION_MANUAL_MERGE";        EXTRA_COMP_UNIT["friction/manual-merge"]=""
   EXTRA_COMP_VAL["friction/human"]="$FRICTION_HUMAN";                      EXTRA_COMP_UNIT["friction/human"]=""
@@ -1016,22 +1422,6 @@ verdict_candidates() {  # <issues_file> <ids_json> -> space-separated issue numb
   ' "$issues_file" 2>/dev/null
 }
 
-# resolved_verdicts <comment body> -> space-separated issue numbers the
-# comment's `- verdicts:` line already records a verdict for (#1281). Only
-# `#N <verdict-word>` pairs count — the same comment's `(reverted by PR #p)`
-# and `| pending: #q (retro next cycle)` fragments carry no verdict word
-# right after the `#`, so they are excluded by construction.
-resolved_verdicts() {
-  local body="$1" line
-  [ -n "$body" ] || { printf ''; return 0; }
-  line="$(printf '%s\n' "$body" | grep '^- verdicts:')"
-  [ -n "$line" ] || { printf ''; return 0; }
-  printf '%s\n' "$line" \
-    | grep -oE '#[0-9]+ +(confirmed|no-effect|regressed)' \
-    | sed -E 's/^#([0-9]+).*/\1/' \
-    | tr '\n' ' ' | sed -E 's/[[:space:]]+$//'
-}
-
 VERDICT_CANDIDATES="$(verdict_candidates "$ISSUES_FILE" "$CUR_IDS_JSON")"
 
 PENDING_VERDICTS=""
@@ -1055,35 +1445,7 @@ if [ "$CYCLE" -gt 0 ] && [ -n "$PREV_ISSUES" ]; then
   fi
 fi
 
-declare -A PREV_COMP_VAL=()
 PREV_RETRO_FOUND=""
-
-resolve_prev_retro_file() {
-  local n="$1" prevnn
-  if [ "$n" -le 0 ]; then printf ''; return 0; fi
-  prevnn="$(printf '%02d' $((n - 1)))"
-  if [ -n "$FIXTURE_DIR" ]; then
-    printf '%s' "$FIXTURE_DIR/cycle-$prevnn.md"
-  else
-    printf '%s' "$REPO_ROOT/docs/retros/cycle-$prevnn.md"
-  fi
-}
-
-load_prev_computed() {
-  local f="$1" line rest key val
-  [ -n "$f" ] && [ -f "$f" ] || return 1
-  while IFS= read -r line; do
-    case "$line" in
-      "COMPUTED "*)
-        rest="${line#COMPUTED }"
-        key="${rest%% = *}"
-        val="${rest#* = }"
-        PREV_COMP_VAL["$key"]="$val"
-        ;;
-    esac
-  done < "$f"
-  return 0
-}
 
 PREV_RETRO_FILE="$(resolve_prev_retro_file "$CYCLE")"
 if load_prev_computed "$PREV_RETRO_FILE"; then
@@ -1166,7 +1528,6 @@ build_full_report() {
   echo "friction: denials = $FRICTION_DENIALS"
   echo "friction: harness-friction-lines = $FRICTION_LINES_COUNT"
   echo "friction: harness-friction-window = $FRICTION_WINDOW"
-  echo "friction: compactions = n/a (no transcript substrate)"
   echo "friction: hotfix = $FRICTION_HOTFIX"
   echo "friction: manual-merge = $FRICTION_MANUAL_MERGE"
   echo "friction: human = $FRICTION_HUMAN"
@@ -1233,7 +1594,25 @@ build_full_report() {
   echo "gate-yield: Revise/plans = ${GATE_REVISE}/${GATE_PLANS}"
 
   echo ""
-  echo "weak-model pass: $CALIB_WEAK"
+  # #1409/#1412/#1414/#1429: a non-default-arm artifact is tagged `hooks=off`,
+  # `superpowers=off`, `bexec=<M>` and/or `plan_gate=<v>` (composable) so it can
+  # never silently read as the baseline; the default arms stay unlabeled. Each
+  # marker is
+  # independent of the run date, so an undated artifact still names its arms.
+  CALIB_PROV=""
+  [ -n "$CALIB_RUN_DATE" ] && calib_prov_add "run $CALIB_RUN_DATE"
+  if [ -n "$CALIB_RUN_DATE" ] && [ -n "$CALIB_STALE" ] && [ "$CALIB_STALE" -ge 3 ]; then
+    calib_prov_add "stale $CALIB_STALE cycles"
+  fi
+  [ "$CALIB_HOOKS" = "off" ] && calib_prov_add "hooks=off"
+  [ "$CALIB_SUPERPOWERS" = "off" ] && calib_prov_add "superpowers=off"
+  [ -n "$CALIB_BEXEC" ] && calib_prov_add "bexec=$CALIB_BEXEC"
+  [ -n "$CALIB_PLAN_GATE" ] && calib_prov_add "plan_gate=$CALIB_PLAN_GATE"
+  if [ -n "$CALIB_PROV" ]; then
+    echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
+  else
+    echo "weak-model pass: $CALIB_WEAK"
+  fi
 
   echo ""
   echo "usage: $USAGE_LINE"

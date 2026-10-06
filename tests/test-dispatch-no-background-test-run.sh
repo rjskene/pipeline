@@ -162,11 +162,12 @@ fi
 
 # ---------------------------------------------------------------------------
 # 10. Preservation: the append must not truncate the contract paragraph. These
-#     four keys are the ones tests/test-execute-dispatch-prompt-hardening.sh
-#     already pins inside the same region.
+#     keys are the ones tests/test-execute-dispatch-prompt-hardening.sh already
+#     pins inside the same region (#1420 retired the two SPLIT_ROLE keys along
+#     with the split-role lane).
 # ---------------------------------------------------------------------------
 
-for key in 'valid terminal states are' 'SPLIT_ROLE' '[split-role-red]' 'worktree index'; do
+for key in 'valid terminal states are' 'worktree index'; do
   assert_needle "contract-preservation" "$F_FLAT" F "$key"
 done
 

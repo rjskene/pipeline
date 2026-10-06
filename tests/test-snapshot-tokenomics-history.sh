@@ -137,7 +137,8 @@ printf '%s\n' '{"number":265,"labels":[],"comments":[]}' > "$FIX5/issue-265.json
 #  input tokens: 3000 (priced) + 1000 (priced) + 0 + 500 (unpriced) = 4500
 #  output tokens: 0 + 0 + 2000 + 0 = 2000
 #  tokens.total = 4500 + 2000 = 6500 ; n = 4 ; priced_n = 3
-#  cost = (3000+1000)/1e6*15 + 2000/1e6*75 = 0.06 + 0.15 = 0.21
+#  cost = (3000+1000)/1e6*5 + 2000/1e6*25 = 0.02 + 0.05 = 0.07 (Opus 4.8 rates
+#  corrected #1416 from the retired Opus 4.1 rates 15/75/18.75/1.50)
 { echo '{"schema_version":1,"issue":"265","stage":"plan","session_id":"sd1","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"KSD1","ts_start":"2026-05-30T08:00:00Z","tokens":{"input":3000,"output":0,"cache_creation":0,"cache_read":0,"total":3000},"duration_ms":1000}'
   echo '{"schema_version":1,"issue":"265","stage":"plan-eval","session_id":"sd2","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"KSD2","ts_start":"2026-05-30T09:00:00Z","tokens":{"input":1000,"output":0,"cache_creation":0,"cache_read":0,"total":1000},"duration_ms":1000}'
   echo '{"schema_version":1,"issue":"265","stage":"execute","session_id":"sd3","model":"claude-opus-4-8","agent_kind":"inline","usage_complete":true,"record_key":"KSD3","ts_start":"2026-05-30T10:00:00Z","tokens":{"input":0,"output":2000,"cache_creation":0,"cache_read":0,"total":2000},"duration_ms":1000}'
@@ -152,7 +153,7 @@ sd_get() { printf '%s' "$SD" | jq -r "$1" 2>/dev/null; }
 [ "$(sd_get '.tokens.total')" = "6500" ] && pass_msg "seed day tokens.total==6500" || fail_msg "seed day tokens.total expected 6500, got $(sd_get '.tokens.total')"
 [ "$(sd_get '.tokens.input')" = "4500" ] && pass_msg "seed day tokens.input==4500" || fail_msg "seed day tokens.input expected 4500, got $(sd_get '.tokens.input')"
 [ "$(sd_get '.tokens.output')" = "2000" ] && pass_msg "seed day tokens.output==2000" || fail_msg "seed day tokens.output expected 2000, got $(sd_get '.tokens.output')"
-if awk -v c="$(sd_get '.cost.total')" 'BEGIN{exit !(c>0.209 && c<0.211)}'; then pass_msg "seed day cost.total ~= 0.21"; else fail_msg "seed day cost.total expected ~0.21, got $(sd_get '.cost.total')"; fi
+if awk -v c="$(sd_get '.cost.total')" 'BEGIN{exit !(c>0.069 && c<0.071)}'; then pass_msg "seed day cost.total ~= 0.07"; else fail_msg "seed day cost.total expected ~0.07, got $(sd_get '.cost.total')"; fi
 # active_loc: issue 265 (loc 20) has records that day → active_loc=20.
 [ "$(sd_get '.active_loc')" = "20" ] && pass_msg "seed day active_loc==20 (issue 265 LOC join)" || fail_msg "seed day active_loc expected 20, got $(sd_get '.active_loc')"
 

@@ -11,76 +11,30 @@ Related docs: [dogfood-setup.md](dogfood-setup.md) (install + symlink mechanics)
 
 ---
 
-## 1. The boundary hook (`hooks/restrict_paths.py`)
+## 1. Project-boundary rules (no guard hook enforces them)
 
-The `restrict_paths.py` PreToolUse hook enforces the project boundary. Its
-detection is substring-based and naive, so it has a wide false-positive surface.
-Known trip-wires and the way around each:
+The pipeline ships **no path-boundary or deletion hook** (#1418) — the rail is
+the session's own permission mode. These boundary rules still bite, because the
+harness classifier enforces them from outside the pipeline:
 
-- **Edits to protected files.** It blocks the **Edit/Write tools** on
-  `.claude/settings.json`, `.claude/settings.local.json`, and `.claude/hooks/`.
-  The check only fires for `tool_name in ("Write","Edit")` — a `Bash` rewrite
-  (`awk`/`sed`/`python3`) is not covered (it only hits the boundary check, which
-  `.claude/settings.json` passes since it is inside the project). Repo-root
-  `hooks/` (where new hook `.py` files live) is **not** protected — only
-  `.claude/hooks/` is — so creating a hook file via Write works fine. Routing a
-  config change around a security guardrail via a different tool is worth
-  surfacing to the operator, not doing silently on plan-approval alone.
-
-- **Path-shaped substrings in prose.** Any tool arg containing the literal
-  `../..` is blocked anywhere in any string (PR bodies, issue comments, commit
-  messages, code-block examples) — not just real file paths.
-  - Rephrase: use "parent-directory resolver shape" or "legacy
-    `cd "$(dirname ...)" && pwd` pattern" instead of the literal `../..`.
-  - **Narrowed by #1282:** the Bash extractor now only considers whole,
-    dequoted shell WORDS (or the RHS of a `name=<path>` word) as path
-    candidates. An absolute-looking token that lives only inside a quoted
-    literal, a heredoc body, a regex, or a commit message — including the
-    `#!/bin/bash` shebang inside a `cat <<'EOF'` script-authoring heredoc, and
-    a `gh issue comment` body merely naming `skills/run/` — is data, not a
-    path reference, and is no longer extracted. A path named as its OWN word,
-    or a real `cd` target, still blocks. See the module docstring's `Issue
-    #1282` section for the full IN/OUT list.
-
-- **The temp root is mostly blocked.** Reads/writes under the system temp dir
-  are outside the boundary, **except** the harness's own session scratchpad
-  (`.../claude-<uid>/<slug>/<session>/scratchpad/...` on Linux, `Temp/claude/…`
-  on Windows — issue #1282/#1153) — write scratch under `.claude/scratch/`
-  otherwise. This is the root cause of the inline-execute test-wait drop-out in
-  §2.
-
-- **Worktree boundary vs. main-checkout absolute paths.** When a skill runs from
-  a feature worktree under `.claude/worktrees/`, the worktree is the project
-  boundary — a hardcoded main-checkout absolute path (e.g.
-  `/<repo>/scripts/derive-pr-title.sh`) is blocked. Call the worktree-local copy
-  (`./scripts/derive-pr-title.sh <N>`); every worktree mirrors `scripts/`.
-
-- **Later hardening sweep.** The hook was tightened along three axes without
-  widening the false-positive surface:
-  - **Project-root anchoring + write-gated protected-file guard (#1136/#1137).**
-    Relative paths are resolved against the project root before the boundary
-    comparison, and the protected-file guard fires only on *write* tools — a read
-    of a protected path is no longer over-blocked.
-  - **Dest-via-flag / interpreter-inline / glued `-t<protected>` write blocks
-    (#1138/#1141).** A protected-path write smuggled through a destination flag,
-    an inline interpreter invocation, or a glued short flag like `-t<protected>`
-    is now caught, closing the routes around the naive substring check.
-  - **In-repo `.venv-host/Scripts` admitted (#1135/#1142).** An in-repo
-    `.venv-host/Scripts` path (the Windows venv layout) is recognized as inside
-    the boundary rather than blocked as a stray absolute-looking token.
-
-- **Auditing false positives (#1352).** Every denial from this hook (and the
-  other boundary/guard hooks) appends a record to the gated
-  `.claude/logs/hook-denials.jsonl` — see
-  [docs/observability.md](observability.md#hook-denial-log). When a
-  false-positive block looks suspicious, grep that log for the hook name and
-  session before assuming the guard is wrong; it is the audit trail this
-  section's trip-wires were previously diagnosed without.
-
-- **Release promotion lane (#1356).** `enforce-base-branch.py` denies every
-  `gh pr create`/`gh pr edit --base` off the worktree base except the exact
-  promotion shape `--base <PIPELINE_RELEASE_BRANCH> --head <PIPELINE_BASE_BRANCH>`;
-  omit `--head` and it still blocks. See docs/release-cadence.md step 2.
+- **Write monitor/scratch output INSIDE the project boundary, never the system
+  temp dir.** An inline execute agent that backgrounds a test monitor to a temp
+  path and then tries to `Read` it can be denied and drop out — the root cause
+  of the test-wait drop-out in the next section. Write scratch under
+  `.claude/scratch/`.
+- **Keep worktrees under the project root** (`.claude/worktrees/`), and call a
+  script's worktree-local copy (`./scripts/derive-pr-title.sh <N>`) rather than
+  a main-checkout absolute path — every worktree mirrors `scripts/`.
+- **Release promotion lane (#1356).** `enforce-base-branch.py`, a surviving
+  guard, denies every `gh pr create`/`gh pr edit --base` off the worktree base
+  except the exact promotion shape
+  `--base <PIPELINE_RELEASE_BRANCH> --head <PIPELINE_BASE_BRANCH>`; omit
+  `--head` and it still blocks. See docs/release-cadence.md step 2.
+- **Auditing a denial (#1352).** A surviving guard's denial appends a record to
+  the gated `.claude/logs/hook-denials.jsonl` — see
+  [docs/observability.md](observability.md#hook-denial-log). A permission-mode
+  denial leaves no record there, so an unexplained boundary block with nothing
+  in that log came from the harness, not from a pipeline hook.
 
 ## 2. Executor wedge classes & recovery
 
@@ -165,14 +119,14 @@ export CLAUDE_PLUGIN_ROOT=<repo-working-tree>   # in dogfood the repo tree IS th
 
 ## 4. Subagent type availability
 
-superpowers ships no `agents/` directory, so there is no plugin reviewer agent type to dispatch. `skills/execute-issue-plan/SKILL.md` Step 8b is the rule: `general-purpose` + the `requesting-code-review` `code-reviewer.md` template, description `code review #<N>` (the cost-attribution key).
+No plugin ships a dedicated reviewer agent type to dispatch. `skills/execute-issue-plan/SKILL.md` Step 8b is the rule: `general-purpose` + the inline reviewer prompt shape, description `code review #<N>` (the cost-attribution key).
 
 ## 5. Standalone `execute-issue-plan` in a worktree
 
 When `/pipeline:execute-issue-plan <N>` is invoked directly inside a feature
 worktree (not inherited from `/pipeline:fullsend`), the boot
 `source ./pipeline.config` may fail — `pipeline.config` is gitignored +
-host-specific and the boundary hook blocks reading the main checkout's copy.
+host-specific, and the main checkout's copy is not a worktree's to reach for.
 `setup-worktree.sh` now copies `pipeline.config` into each worktree (#529), so
 this is largely closed; if vars still resolve empty, derive state instead of
 stopping:
@@ -339,27 +293,91 @@ the CR is invisible in most output. This bit many scripts across the tree.
 ## 12. Headless / unattended runs (issue #1286)
 
 When `PIPELINE_HEADLESS` is true, fullsend and every stage it dispatches must
-not end a turn on an operator question — at each of the four decision sites
-(`merge-policy`, `unread-config-knob`, `stall-triage`, `ci-red-budget`) it
+not end a turn on an operator question — at each of the six decision sites
+(`merge-policy`, `unread-config-knob`, `stall-triage`, `ci-red-budget`,
+`permission-denied`, `ci-wait`) it
 applies the documented default, logs one
 `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>` line, and continues;
 see `skills/fullsend/SKILL.md` for the full contract. Interactive mode (the
 knob unset or false) is unchanged — the operator prompts stay.
+
+**The CI-wait yield (#1424).** Print mode waits only on dispatched background
+`Agent`s (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, #1306), so a backgrounded
+Bash or `Monitor` CI poll lets the process exit the moment the model stops
+calling tools — stranding the slate. Poll CI in the FOREGROUND. The
+`enforce-ci-wait` Stop hook has two branches: the unchanged `evaluate-issue-pr`
+sequence gate, and a headless fullsend-scoped slate gate that denies Stop while
+any slate issue is `in-progress` or unparked `pr-open`, capped at 40 blocks per
+session then fail-open.
 
 ## 13. Skill fences carry no awk field references (issue #1287)
 
 The harness rewrites `$0`-`$9` at skill load, so ANY field reference inside a
 bash fence in a SKILL.md arrives garbled — cycle-1 observed
 `awk '{sub(/\r$/,"",1281)}'` in the pr-eval fence. Anything needing `$<n>`
-lives in a script (e.g. `scripts/parse-shared-tests.sh`,
+lives in a script (e.g. `scripts/_extract-body-paths.sh`,
 `scripts/evolve-projection.sh`), which the harness never rewrites. The guard
 is `tests/test-skill-fence-positional-args.sh`.
 
 ## 14. Session-per-cycle evolve loop (issue #1303)
 
 Plugin skill/agent/hook bodies load once per session, so a merged harness fix is invisible until the operator restarts.
-Run `bash scripts/evolve-loop.sh --cycles N` from the clone root: each cycle is a fresh `claude -p` (launched with `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or print mode terminates the session 600 s into its first background agent — #1306), so every merge lands in the next cycle.
+Run `bash scripts/evolve-loop.sh` from the clone root — `--cycles` defaults to 3, a bounded block, not an unattended run; each cycle is a fresh `claude -p` (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or print mode terminates 600 s into its first background agent — #1306), so every merge lands next cycle. At each block boundary the wrapper prints one `LOOP-YIELD` line per cycle (`merged=`/`loc=`/`rows_moved=`/`tokens=`/`friction=`); read it, decide, and relaunch (`--cycles N`) to continue.
 The loop gates on `scripts/evolve-projection.sh`, the same line the skill gates on; a `pause-5h` from that pre-launch gate launches nothing and has no rc — it sleeps and re-reads the `paused` label each iteration.
 A session that exits on `HEADLESS-DEFAULT: usage-pause` is slept out and relaunched, not counted as a failed resume — bounded by `--max-pauses K` consecutive pauses (default 6 ≈ 30 h), reset by any real progress.
-`--dry-run` previews `LOOP-LAUNCH` and makes no network call. `LOOP-STOP reason=` is the exit contract (`paused`/`cycles-complete` 0, `halt-7d` 3, `resume-cap` 4, `pause-cap` 5).
+`--dry-run` previews `LOOP-LAUNCH` and makes no network call. `LOOP-STOP reason=` is the exit contract (`paused`/`cycles-complete` 0, `halt-7d` 3, `resume-cap` 4, `pause-cap` 5, `diminishing` 6).
 Interactive fallback at a cycle boundary: `/reload-plugins` — a built-in the model cannot invoke.
+
+## 15. Headless permission bridge (issue #1421)
+
+> **LATENT under `auto` — expect an empty queue.** The launchers pass
+> `--permission-mode auto`, which escalates almost nothing, so in practice the
+> queue stays empty and `bridge_prompts=` reads `0`. The rail is proven end-to-end
+> under `--permission-mode manual`; it is the MODE, not the bridge, that decides
+> whether a human ever sees a prompt. Do not treat the watch loop below as the
+> thing standing between a headless run and an irreversible command until the mode
+> changes. See [docs/security-model.md](security-model.md).
+>
+> Never hand-write an answer file. Use `permission-bridge.sh answer` — it writes
+> via an atomic rename; a hand-rolled redirect can be read torn and resolve to a
+> spurious deny.
+
+NO launcher passes `--dangerously-skip-permissions` any more. `calibration-run.sh`,
+`evolve-loop.sh` and `spawn-claude.sh` all launch under `--permission-mode auto
+--permission-prompts none` and export a queue dir, which arms the
+`PermissionRequest` bridge hook: an escalated tool call is queued for you instead
+of being granted unseen.
+
+You are the watcher, and nothing enforces it. From the LAUNCHING repo (the
+harness for a calibration run, the clone for the evolve loop, the main repo for a
+spawn), watch the queue in a persistent `Monitor` until-loop:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" pending
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" show <id>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" answer <id> allow|deny [message]
+```
+
+An unanswered request is denied after the bridge timeout (840 s by default, held
+under the 900 s hook timeout) with a skip-and-continue message: the session
+continues and never retries that call, so a missed prompt costs one step, not the
+run. Two unanswered prompts in one executor still eat ~31 % of the default
+5400 s executor budget — that is the cost of not watching.
+
+A `pending` row rendered `tool=(malformed)` is a pre-#1426 malformed queue entry —
+a payload the hook queued before it gated on `hook_event_name` + `tool_name`. No
+session is still blocked on it (the hook that wrote it has long since timed out),
+so it is housekeeping, not a decision: answer it `deny` so `prune` reaps the pair,
+or delete its `<id>.json` outright. Never `allow` it — you cannot see what it was.
+
+`permission-bridge.sh prune` drops answered pairs older than a day; unanswered
+requests are kept however old, because they are still open questions.
+
+Set `PIPELINE_HEADLESS_PERMISSIONS=bypass` for a launch nobody will watch — a
+detached `evolve-loop.sh`, PATH C `--spawn` executors, `run-queue.sh --ci-fix`.
+It restores the old flag for that run and exports no queue dir. If a calibration
+run reports a high `bridge_prompts`, that knob is the rollback, not a revert.
+
+The hook is INERT with no queue dir exported: it exits 0 having emitted nothing
+and having read nothing, which is what makes its matcher-`*` registration safe in
+your live interactive sessions.

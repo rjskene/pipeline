@@ -110,7 +110,7 @@ PY
 REAL_PAYLOAD="$(SENT="$SENT" python3 - <<'PY'
 import json, os
 sent = os.environ["SENT"]
-text = "tests added: tests/foo.sh\n%s invoke superpowers:requesting-code-review - no Skill tool" % sent
+text = "tests added: tests/foo.sh\n%s invoke the code-review Skill - no Skill tool" % sent
 print(json.dumps({
     "tool_name": "Agent",
     "session_id": "s1",

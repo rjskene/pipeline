@@ -71,24 +71,24 @@ for site in "${DISPATCH_SITES[@]}"; do
   done
 done
 
-# 2) #1093 split-role phase directives ride the line-299 dispatch-prompt contract.
-#    The line-299 binding contract forbids the dispatched
+# 2) #1093 execute phase directives ride the dispatch-prompt contract paragraph,
+#    re-pinned by #1420 (split-role lane removed).
+#    The binding contract forbids the dispatched
 #    `general-purpose`/`tdd-implementer` subagent from loading
 #    skills/execute-issue-plan/SKILL.md (it treats `/pipeline:execute-issue-plan N`
-#    as content, not a skill load), so the two-phase split-role discipline is NOT
-#    inherited from that skill body — it MUST ride the dispatch-site prompt, the
-#    same way the #764 terminal-state directive does. Under SPLIT_ROLE=true the
-#    RED-author prompt must direct the Opus agent to commit the failing suite with
-#    the literal `[split-role-red]` substring in the subject; the contract must be
-#    SPLIT_ROLE-aware. These assertions are ADDED alongside (not replacing) the
-#    #764 `valid terminal states are` key above — the canonical key is preserved.
+#    as content, not a skill load), so the execute discipline is NOT inherited
+#    from that skill body — it MUST ride the dispatch-site prompt, the same way
+#    the #764 terminal-state directive does. #1420 collapsed PATH B execute to ONE
+#    agent, so the contract paragraph must no longer be SPLIT_ROLE-aware and must
+#    no longer prescribe a `[split-role-red]` anchor commit: those assertions
+#    invert into negatives here. The #764 `valid terminal states are` key is
+#    preserved.
 #
-#    CRITICAL scoping: the directives must live INSIDE the "Inline execute dispatch
-#    prompt contract" paragraph itself — NOT merely somewhere in the file (the
-#    resolver section + the `--verify-dispatch` block already mention `SPLIT_ROLE`
-#    and `[split-role-red]` elsewhere, so a whole-file grep would pass spuriously
-#    on the pre-fix prose). Extract the contract paragraph (from its bold header up
-#    to the next `   **` sub-heading) and assert co-occurrence WITHIN it.
+#    CRITICAL scoping: the assertions are scoped to the "Inline execute dispatch
+#    prompt contract" paragraph itself — NOT merely somewhere in the file (a
+#    whole-file grep would pass spuriously on prose living in the resolver section
+#    or the routing reference). Extract the contract paragraph (from its bold
+#    header up to the next `   **` sub-heading) and assert WITHIN it.
 contract_paragraph() {
   awk '
     /\*\*Inline execute dispatch prompt contract \(mandatory\)\.\*\*/ { inblock = 1; print; next }
@@ -105,20 +105,22 @@ if contract_flat | grep -Fq 'valid terminal states are'; then
 else
   fail_msg "split-role-scope: contract paragraph lost the #764 'valid terminal states are' key"
 fi
-# 2b) The contract paragraph is SPLIT_ROLE-aware.
+# 2b) The contract paragraph is NOT SPLIT_ROLE-aware (#1420): there is no split
+#     shape left for it to branch on.
 inc
 if contract_flat | grep -Fq 'SPLIT_ROLE'; then
-  pass_msg "split-role-scope: contract paragraph is SPLIT_ROLE-aware"
+  fail_msg "single-shape: contract paragraph still mentions SPLIT_ROLE (#1420 removed the split-role lane)"
 else
-  fail_msg "split-role-scope: contract paragraph is NOT SPLIT_ROLE-aware (single-shape prompt only)"
+  pass_msg "single-shape: contract paragraph carries no SPLIT_ROLE branch"
 fi
-# 2c) The RED-author phase directive names the `[split-role-red]` commit anchor
-#     WITHIN the contract paragraph.
+# 2c) The contract paragraph no longer prescribes the `[split-role-red]` anchor
+#     commit (#1420): one execute agent commits per red-green cycle, so there is
+#     no locked-suite marker commit to demand.
 inc
 if contract_flat | grep -Fq '[split-role-red]'; then
-  pass_msg "split-role-scope: contract paragraph carries the [split-role-red] RED-author directive"
+  fail_msg "single-shape: contract paragraph still carries the [split-role-red] RED-author directive (#1420 removed the anchor commit)"
 else
-  fail_msg "split-role-scope: contract paragraph missing the [split-role-red] RED-author directive"
+  pass_msg "single-shape: contract paragraph carries no [split-role-red] directive"
 fi
 
 # 2d) #1122 worktree-index staging precondition. The #615/#617 leak: a split-role
@@ -160,17 +162,17 @@ else
   fail_msg "closing-review: contract paragraph missing the 'code review #<N>' dispatch description"
 fi
 
-# 2f) The directive must bind BOTH lanes — the split-role GREEN prompt and the
-#     collapsed single-role prompt. Co-occurrence within the same paragraph:
-#     `green-implementer` plus a single-role marker (ROLES=single or
-#     SPLIT_ROLE=false). Naming only the green lane leaves every PATH A/D and
-#     collapsed PATH B dispatch without a closing review.
+# 2f) The closing-review directive must bind the ONE execute agent (#1420). Before
+#     #1420 it had to name both the split-role `green-implementer` and the
+#     single-role lane; with the lane gone there is exactly one execute agent to
+#     bind, and naming the retired green role would leave the contract describing
+#     a dispatch shape that no longer exists.
 inc
-if contract_flat | grep -Fq 'green-implementer' \
-   && contract_flat | grep -Eq 'ROLES=single|SPLIT_ROLE=false'; then
-  pass_msg "closing-review: directive binds both the green-implementer and the single-role lane"
+if contract_flat | grep -Fq 'the execute agent' \
+   && ! contract_flat | grep -Fq 'green-implementer'; then
+  pass_msg "closing-review: directive binds 'the execute agent' and no longer names the retired green-implementer"
 else
-  fail_msg "closing-review: directive does not bind both lanes (need 'green-implementer' AND one of 'ROLES=single' / 'SPLIT_ROLE=false' in the contract paragraph)"
+  fail_msg "closing-review: directive must bind 'the execute agent' and must NOT name 'green-implementer' (#1420)"
 fi
 
 # 2g) PATH D exclusion marker. skills/execute-issue-plan/SKILL.md Step 8

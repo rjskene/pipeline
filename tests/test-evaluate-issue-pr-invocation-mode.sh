@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SKILL="skills/evaluate-issue-pr/SKILL.md"
+# #1444: the `## Invocation mode` + `## Canonical Agent prompt template`
+# sections are the ORCHESTRATOR's contract and relocated there.
+SKILL="skills/fullsend/references/pr-eval-dispatch.md"
 grep -q "Invocation mode" "$SKILL" || { echo "FAIL: evaluate-issue-pr missing 'Invocation mode' preamble"; exit 1; }
 grep -q "Agent(" "$SKILL" || { echo "FAIL: evaluate-issue-pr preamble does not name Agent(...) dispatch"; exit 1; }
 grep -qE "worktree.*absolute path|cd .*<worktree" "$SKILL" || { echo "FAIL: evaluate-issue-pr preamble does not require cd to worktree on Agent dispatch"; exit 1; }

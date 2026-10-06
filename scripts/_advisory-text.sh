@@ -13,15 +13,19 @@ if [ -z "${__ADVISORY_TEXT_LOADED:-}" ]; then
 
   declare -gA __ADVISORY_TABLE=()
 
+  # block_deletions.py / restrict_paths.py are RETIRED (#1418) but keep their
+  # rows on purpose: a consumer is most likely to still carry a stale local copy
+  # of exactly those two, and advisory_for_hook must answer rc=0 with the
+  # delete-local guidance rather than rc=1 "unknown hook".
   while IFS="|" read -r __k __v; do
     [ -z "$__k" ] && continue
     __ADVISORY_TABLE["$__k"]="$__v"
   done <<'TABLE'
-block_deletions.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/block_deletions.py
+block_deletions.py|retired: the plugin no longer ships this hook — delete the local copy
 enforce-base-branch.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-base-branch.py
 check-ci-skip-markers.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/check-ci-skip-markers.py
 enforce-path-c-delegation.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py
-restrict_paths.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/restrict_paths.py
+restrict_paths.py|retired: the plugin no longer ships this hook — delete the local copy
 enforce-ci-wait.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py
 log-tool-use.sh|dogfood-only, not part of the published plugin manifest — no functional change
 log_subagent.py|dogfood-only, not part of the published plugin manifest — no functional change

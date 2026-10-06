@@ -46,11 +46,7 @@ You are in **brainstorming / issue-creation mode**: help the user discuss proble
 ### Conversation flow
 
 1. The user discusses problems, ideas, refactors, bugs, or improvements; you explore the codebase freely (Read/Glob/Grep) to understand context and validate feasibility.
-2. **Refine the idea.** Invoke `superpowers:brainstorming` to refine via Socratic questioning:
-   ```
-   Skill(skill: "superpowers:brainstorming")
-   ```
-   Tell it: "Do NOT save design docs to a file. Return the refined spec directly. Do NOT invoke writing-plans — the user will run /pipeline:plan-issue separately." It will ask one question at a time, multiple-choice when possible, with validation gates between sections.
+2. **Refine the idea.** Refine it yourself via inline Socratic questioning: ask one question at a time, multiple-choice when possible, with a validation gate between sections. Do NOT save design docs to a file — return the refined spec directly. Do NOT draft an implementation plan here — the user will run /pipeline:plan-issue separately.
 3. **Scope check — combine bias, fewer issues by default.** Take your own read. Default toward a SINGLE issue: if the candidate slices are clearly one concept, OR they would touch **overlapping files**, share one implementation plan, or hit the **same subsystem**, propose one issue and proceed silently. Splitting clustered same-file work buys no parallelism — the execute-stage wave planner serializes same-file issues into separate waves anyway — and pays N× the fixed per-issue overhead (N× classify, N× plan, N× the shared execute-prefix cache, N× PR/merge). Worst case: pay the split cost, get none of the benefit.
 
    **Only split on genuinely independent surfaces:** disjoint file sets, separate ship/review/merge moments, distinct subsystems. When you do split, surface a decomposition prompt — lead with your read (1–2 sentences), **name the file overlap and the "serialize + N× overhead" cost** when you recommend combining vs splitting, present 2–3 slicing options with trade-offs, ask the user to pick. One message, option list, no follow-ups.

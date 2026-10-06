@@ -90,7 +90,7 @@ Per-file drift classification on top of `skill_files_residual`'s duplicate prese
 
 **Check verdict.**
 - **B.bug** row → `fail` (active bug — stale local overrides correct plugin behavior).
-- **A / B / C / E** row whose basename is in `LOAD_BEARING_HOOKS` → `fail` (#295). The array in `scripts/doctor.sh` (currently `enforce-base-branch.py`, `enforce-path-c-delegation.py`, `block_deletions.py`) names hooks the pipeline depends on for defense-in-depth; stale local copies silently defeat the guardrail. Detail line: `<n> load-bearing hook(s) drifted (<csv>) — defense-in-depth at risk`.
+- **A / B / C / E** row whose basename is in `LOAD_BEARING_HOOKS` → `fail` (#295). The array in `scripts/doctor.sh` (currently `enforce-base-branch.py`, `enforce-path-c-delegation.py`) names hooks the pipeline depends on for defense-in-depth; stale local copies silently defeat the guardrail. Detail line: `<n> load-bearing hook(s) drifted (<csv>) — defense-in-depth at risk`.
 - Other **A / B / C / E** row → `warn` (drift exists but not breaking).
 - Only **D / F** rows (or no rows) → `pass`.
 

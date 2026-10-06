@@ -129,7 +129,7 @@ else
   fail_msg "--help printed no usage banner (got: $(printf '%s' "$HELP_OUT" | head -1))"
 fi
 
-for flag in --cycle --post --tracker --since --write --fixture --now; do
+for flag in --cycle --post --tracker --since --write --fixture --now --rows-moved --index; do
   if printf '%s' "$HELP_OUT" | grep -qF -- "$flag"; then
     pass_msg "--help banner names $flag"
   else
@@ -477,8 +477,12 @@ DUMP_SINCE="$(bash "$HELPER" --cycle 0 --fixture "$FIXTURE_DIR" --since 2026-09-
 expect_line "--since excludes HARNESS-FRICTION comments older than the window (2 -> 1)" \
   "$DUMP_SINCE" "COMPUTED friction/harness-friction-lines = 1"
 
-expect_line "compactions have no substrate and say so" \
-  "$DUMP_C" "COMPUTED friction/compactions = n/a (no transcript substrate)"
+# friction/compactions never had a code path that could set it — a permanent
+# `n/a (no transcript substrate)` literal — so #1396 deletes the row entirely.
+refute_sub "friction/compactions row is REMOVED, not renders n/a (#1396)" \
+  "$DUMP_C" "friction/compactions"
+refute_sub "the human-readable report no longer prints a compactions line (#1396)" \
+  "$REPORT0" "friction: compactions"
 
 # The hotfix / manual-merge / human rows are CYCLE-SCOPED (#1281). Cycle 0's
 # window is [2026-09-05, 2026-09-12): BOTH bounds come from the tracker's own
@@ -559,6 +563,55 @@ expect_line "friction/hotfix renders a named reason when no cycle window resolve
   "$DUMP_C5" "COMPUTED friction/hotfix = n/a (no cycle window)"
 expect_line "escapes/hotfix renders a named reason when no cycle window resolves" \
   "$DUMP_C5" "COMPUTED escapes/hotfix = n/a (no cycle window)"
+
+# ---------------------------------------------------------------------------
+# Scenario 11c: NO `Cycle N` header yet (Step 1 runs before Step 3 appends it,
+# #1396), but the PREVIOUS cycle's tracker comment (`## Cycle 0`, with a
+# `- retro:` line) exists. The window must date from THAT comment's own
+# `createdAt` through `$RETRO_NOW`, not degrade to "no cycle window" — the
+# same PR universe Scenario 11 already pins (#2101/#2102/#2103/#2104), so the
+# expected numbers are identical.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 11c: cycle window dates from the prior cycle's comment when no header exists"
+
+FIX_NOHDR="$(mkfix cycle1-noheader tracker=tracker-cycle1-noheader.md)"
+DUMP_NOHDR="$(PIPELINE_RETRO_NOW="$CYCLE1_NOW" bash "$HELPER" --cycle 1 --fixture "$FIX_NOHDR" --dump-computed 2>/dev/null)"
+
+expect_line "escapes/hotfix renders numeric, not n/a, with no Cycle 1 header" \
+  "$DUMP_NOHDR" "COMPUTED escapes/hotfix = 1"
+expect_line "escapes/revert renders numeric, not n/a, with no Cycle 1 header" \
+  "$DUMP_NOHDR" "COMPUTED escapes/revert = 1"
+expect_line "friction/hotfix renders numeric, not n/a, with no Cycle 1 header (#2103 in window)" \
+  "$DUMP_NOHDR" "COMPUTED friction/hotfix = 1"
+expect_line "friction/manual-merge renders numeric, not n/a, with no Cycle 1 header" \
+  "$DUMP_NOHDR" "COMPUTED friction/manual-merge = 0"
+
+# ---------------------------------------------------------------------------
+# Scenario 11d: two cycles dated the SAME calendar day but distinct
+# timestamps must not share a window / double-count a PR (backlog #80;
+# cycles 13/14, 15/16). `tracker-sameday.md` carries `Cycle 20
+# (2026-09-12T06:00:00Z…)` and `Cycle 21 (2026-09-12T18:00:00Z…)`; one hotfix
+# PR merges in each half of the day.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 11d: same-day cycles are timestamp-granular, not date-granular"
+
+FIX_SAMEDAY="$(mkfix sameday tracker=tracker-sameday.md)"
+# Neither PR body carries a `Closes #` — the window (base + mergedAt) arm of
+# cycle_prs() is the ONLY arm that can match, isolating the timestamp compare.
+cat > "$FIX_SAMEDAY/prs.json" <<'JSON'
+[
+  {"number": 3101, "title": "fix(evolve): sameday early", "headRefName": "feature/hotfix-a", "baseRefName": "evolve", "body": "No linked issue.", "mergedAt": "2026-09-12T10:00:00Z", "labels": [], "files": ["a.txt"]},
+  {"number": 3102, "title": "fix(evolve): sameday late", "headRefName": "feature/hotfix-b", "baseRefName": "evolve", "body": "No linked issue.", "mergedAt": "2026-09-12T19:00:00Z", "labels": [], "files": ["b.txt"]}
+]
+JSON
+
+DUMP_SD20="$(bash "$HELPER" --cycle 20 --fixture "$FIX_SAMEDAY" --dump-computed 2>/dev/null)"
+expect_line "cycle 20 (06:00-18:00 window) counts only its own early hotfix PR" \
+  "$DUMP_SD20" "COMPUTED friction/hotfix = 1"
+
+DUMP_SD21="$(PIPELINE_RETRO_NOW="2026-09-19T00:00:00Z" bash "$HELPER" --cycle 21 --fixture "$FIX_SAMEDAY" --dump-computed 2>/dev/null)"
+expect_line "cycle 21 (18:00-now window) counts only its own late hotfix PR, not cycle 20's" \
+  "$DUMP_SD21" "COMPUTED friction/hotfix = 1"
 
 # ---------------------------------------------------------------------------
 # Scenario 12: gate yield, weak-model pass, usage snapshot
@@ -891,6 +944,214 @@ fi
 STATUS_HEAD="$(printf '%s\n' "$REPORT1W" | head -12)"
 expect_re "evolve status: cycle-issues: matches inside head -12" "$STATUS_HEAD" '^cycle-issues:'
 expect_re "evolve status: pending-verdicts: matches inside head -12" "$STATUS_HEAD" '^pending-verdicts:'
+
+# ---------------------------------------------------------------------------
+# #1398 — two early-exit modes the evolve wrapper's per-cycle LOOP-YIELD line
+# needs. Both are ADDITIVE; nothing above this line is modified.
+# ---------------------------------------------------------------------------
+
+# write_cycle01 <fixture-dir> — the cycle-1 retro both scenarios below join
+# against the fixture's own cycle-00.md. The join is engineered so exactly ONE
+# row counts as moved:
+#   harness mass/skills      10  -> 10             paired, UNCHANGED  -> no
+#   harness mass/scripts     80  -> 84             paired, MOVED      -> YES
+#   median path b pr/loc    310  -> n/a (no rows)  paired, n/a side   -> no
+#   friction/denials          -  -> 12             UNPAIRED           -> no
+write_cycle01() { # <fixture-dir>
+  cat > "$1/cycle-01.md" <<'CYC01'
+# Cycle 01 retro
+
+cycle-issues: 1281 1282
+
+COMPUTED harness mass/skills = 10
+COMPUTED harness mass/scripts = 84
+COMPUTED median path b pr/loc = n/a (no rows)
+COMPUTED friction/denials = 12
+
+## Diagnose
+
+One row moved.
+CYC01
+}
+
+# ---------------------------------------------------------------------------
+# Scenario 19: --rows-moved N
+#
+# "How many scorecard rows moved this cycle" without paying for a full retro:
+# an INNER JOIN over COMPUTED keys with the `n/a` sides excluded, so a row that
+# merely started or stopped being measurable is not reported as movement. The
+# mode is read-only and costs zero network calls.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 19: --rows-moved"
+
+IDX="$(mkfix idx)"
+write_cycle01 "$IDX"
+
+# Captured BEFORE any run so the no-write assert covers every run below. `%y`
+# is nanosecond-granular, so a same-second rewrite cannot hide.
+RM_MTIME_BEFORE="$(stat -c %y "$IDX/README.md" 2>/dev/null)"
+RM_SUM_BEFORE="$(cksum < "$IDX/README.md")"
+
+ROWS1="$(bash "$HELPER" --rows-moved 1 --fixture "$IDX" 2>/dev/null)"
+ROWS1_RC=$?
+if [ "$ROWS1_RC" -eq 0 ]; then
+  pass_msg "--rows-moved 1 exits 0"
+else
+  fail_msg "--rows-moved 1 exited $ROWS1_RC (expected 0)"
+fi
+if [ "$ROWS1" = "rows-moved: 1" ]; then
+  pass_msg "--rows-moved 1 prints exactly 'rows-moved: 1' (unchanged, n/a and unpaired keys all excluded)"
+else
+  fail_msg "--rows-moved 1 printed '${ROWS1:-<empty>}' (expected exactly 'rows-moved: 1')"
+fi
+
+ROWS0="$(bash "$HELPER" --rows-moved 0 --fixture "$IDX" 2>/dev/null)"
+ROWS0_RC=$?
+if [ "$ROWS0_RC" -eq 0 ]; then
+  pass_msg "--rows-moved 0 exits 0"
+else
+  fail_msg "--rows-moved 0 exited $ROWS0_RC (expected 0)"
+fi
+if [ "$ROWS0" = "rows-moved: n/a (no previous cycle)" ]; then
+  pass_msg "--rows-moved 0 prints exactly 'rows-moved: n/a (no previous cycle)'"
+else
+  fail_msg "--rows-moved 0 printed '${ROWS0:-<empty>}' (expected 'rows-moved: n/a (no previous cycle)')"
+fi
+
+ROWS9="$(bash "$HELPER" --rows-moved 9 --fixture "$IDX" 2>/dev/null)"
+ROWS9_RC=$?
+if [ "$ROWS9_RC" -eq 0 ]; then
+  pass_msg "--rows-moved 9 (absent substrate) exits 0 — missing input never aborts"
+else
+  fail_msg "--rows-moved 9 exited $ROWS9_RC (expected 0: missing substrate degrades, never aborts)"
+fi
+expect_re "--rows-moved 9 degrades to a NAMED reason" "$ROWS9" '^rows-moved: n/a \('
+
+bash "$HELPER" --rows-moved abc --fixture "$IDX" >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+  pass_msg "--rows-moved abc exits non-zero (non-zero is reserved for invalid args)"
+else
+  fail_msg "--rows-moved abc exited 0 (expected non-zero)"
+fi
+
+RM_MTIME_AFTER="$(stat -c %y "$IDX/README.md" 2>/dev/null)"
+RM_SUM_AFTER="$(cksum < "$IDX/README.md")"
+if [ "$RM_SUM_BEFORE" = "$RM_SUM_AFTER" ] && [ "$RM_MTIME_BEFORE" = "$RM_MTIME_AFTER" ]; then
+  pass_msg "--rows-moved writes nothing (README.md content and mtime unchanged)"
+else
+  fail_msg "--rows-moved touched README.md (sum $RM_SUM_BEFORE -> $RM_SUM_AFTER, mtime $RM_MTIME_BEFORE -> $RM_MTIME_AFTER)"
+fi
+
+# ---------------------------------------------------------------------------
+# Scenario 20: --index
+#
+# SUBSTRATE NOTE: `tests/fixtures/run-retro/README.md` is the fixture-CONTRACT
+# document (`## Canonical names the script reads`, `## Variant files`, `##
+# Numbers the test pins`). It carries NEITHER a `^## Index` heading NOR the
+# `_(none yet)_` placeholder, so using it here would make every "gone after"
+# assert pass vacuously. The scenario OVERWRITES the mkfix copy's README.md
+# with a synthetic file reproducing `docs/retros/README.md`'s shape, and
+# assert (a) proves the placeholder is there to be removed.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 20: --index"
+
+IDX="$(mkfix idx)"
+write_cycle01 "$IDX"
+cat > "$IDX/README.md" <<'SUBSTRATE'
+## Calibration substrate
+
+Calibration artifacts live in `docs/retros/calib/`; an artifact whose first line is `CALIB-ABORT reason=...` renders as a degraded row.
+
+## Index
+
+No cycles have been posted yet (issue #1272 is the cycle-0 tooling deliverable).
+
+- _(none yet)_
+SUBSTRATE
+
+# (a) non-vacuity control — BEFORE the run.
+if grep -qF -- '_(none yet)_' "$IDX/README.md" && \
+   grep -qF -- 'No cycles have been posted yet' "$IDX/README.md"; then
+  pass_msg "non-vacuity control: the placeholder is PRESENT before --index runs"
+else
+  fail_msg "non-vacuity control: the substrate carries no placeholder, so the 'gone after' asserts would be vacuous"
+fi
+
+# (b) the run itself.
+IDX_OUT="$(bash "$HELPER" --index --fixture "$IDX" 2>/dev/null)"
+IDX_RC=$?
+if [ "$IDX_RC" -eq 0 ]; then
+  pass_msg "--index exits 0"
+else
+  fail_msg "--index exited $IDX_RC (expected 0)"
+fi
+
+IDX_AFTER="$(cat "$IDX/README.md" 2>/dev/null)"
+refute_sub "--index retires the '_(none yet)_' placeholder" "$IDX_AFTER" '_(none yet)_'
+refute_sub "--index retires the 'no cycles posted' sentence" "$IDX_AFTER" 'No cycles have been posted yet'
+
+if grep -qiE '^\|.*cycle.*\|.*date.*\|.*issues.*\|.*verdicts.*\|.*tokens.*\|' "$IDX/README.md"; then
+  pass_msg "--index writes a header row naming cycle/date/issues/verdicts/tokens in order"
+else
+  fail_msg "--index wrote no cycle/date/issues/verdicts/tokens header row"
+fi
+
+ROW00="$(grep -E '^\|[[:space:]]*00[[:space:]]*\|' "$IDX/README.md" 2>/dev/null | head -1)"
+if [ -n "$ROW00" ]; then
+  pass_msg "--index writes a row for cycle 00"
+else
+  fail_msg "--index wrote no row for cycle 00"
+fi
+expect_sub "the cycle-00 row carries its tracker date" "$ROW00" "2026-09-05"
+expect_sub "the cycle-00 row carries its parsed issue list" "$ROW00" "#1272 #1273 #1274"
+expect_sub "the cycle-00 row carries confirmed/no-effect/regressed counts" "$ROW00" "1/1/1"
+# cycle-00.md carries no `cost: loop-own` line, so its tokens cell — the LAST
+# cell of the row — is the em-dash placeholder, not a fabricated number.
+if printf '%s\n' "$ROW00" | grep -qE '\|[[:space:]]*—[[:space:]]*\|[[:space:]]*$'; then
+  pass_msg "the cycle-00 tokens cell is the em-dash placeholder (no cost: loop-own line in that file)"
+else
+  fail_msg "the cycle-00 tokens cell is not the em-dash placeholder (row: ${ROW00:-<absent>})"
+fi
+
+if grep -qE '^\|[[:space:]]*01[[:space:]]*\|' "$IDX/README.md"; then
+  pass_msg "--index writes a row for cycle 01"
+else
+  fail_msg "--index wrote no row for cycle 01"
+fi
+
+# (c) everything above `## Index` survives verbatim.
+expect_sub "the pre-existing '## Calibration substrate' heading survives" "$IDX_AFTER" '## Calibration substrate'
+expect_sub "the calib directory pointer survives verbatim" "$IDX_AFTER" 'docs/retros/calib/'
+expect_sub "the CALIB-ABORT contract text survives verbatim" "$IDX_AFTER" 'CALIB-ABORT'
+CALIB_LN="$(grep -nF -- 'docs/retros/calib/' "$IDX/README.md" 2>/dev/null | head -1 | cut -d: -f1)"
+INDEX_LN="$(grep -nE '^## Index' "$IDX/README.md" 2>/dev/null | head -1 | cut -d: -f1)"
+if [ -n "$CALIB_LN" ] && [ -n "$INDEX_LN" ] && [ "$CALIB_LN" -lt "$INDEX_LN" ]; then
+  pass_msg "the calib section still sits ABOVE ## Index (L$CALIB_LN < L$INDEX_LN)"
+else
+  fail_msg "the calib section no longer precedes ## Index (calib=${CALIB_LN:-absent} index=${INDEX_LN:-absent})"
+fi
+
+# (d) idempotency — full-section replacement, never append.
+IDX_SNAPSHOT="$TMP_ROOT/index-run1.md"
+cp "$IDX/README.md" "$IDX_SNAPSHOT"
+bash "$HELPER" --index --fixture "$IDX" >/dev/null 2>&1
+if cmp -s "$IDX_SNAPSHOT" "$IDX/README.md"; then
+  pass_msg "a second --index run is byte-identical (full-section replacement, not append)"
+else
+  fail_msg "a second --index run changed the file (not idempotent)"
+fi
+INDEX_HEADINGS="$(grep -cE '^## Index' "$IDX/README.md" 2>/dev/null)" || true
+if [ "${INDEX_HEADINGS:-0}" -eq 1 ]; then
+  pass_msg "exactly one ## Index heading after two runs"
+else
+  fail_msg "found ${INDEX_HEADINGS:-0} '## Index' headings after two runs (expected 1)"
+fi
+DATA_ROWS="$(grep -cE '^\|[[:space:]]*[0-9][0-9][[:space:]]*\|' "$IDX/README.md" 2>/dev/null)" || true
+if [ "${DATA_ROWS:-0}" -eq 2 ]; then
+  pass_msg "exactly two data rows after two runs (cycle 00 + cycle 01)"
+else
+  fail_msg "found ${DATA_ROWS:-0} data rows after two runs (expected 2)"
+fi
 
 echo ""
 echo "== RESULTS =="

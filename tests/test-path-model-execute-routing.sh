@@ -6,9 +6,10 @@ set -uo pipefail
 # Contract (Surface A containment, #868 comment 4):
 #   - New vars PIPELINE_PATH_B_MODEL_EXECUTE / PIPELINE_PATH_D_MODEL_EXECUTE,
 #     default EMPTY. When set, fullsend's execute dispatch pins that model for
-#     eligible PATH B / PATH D issues; when unset, NO model= param is passed and
-#     the inline subagent inherits the orchestrator's Opus — byte-for-byte current
-#     behavior. pr-eval dispatch is NEVER gated (independent Opus backstop).
+#     eligible PATH B / PATH D issues; when unset, the resolver supplies the
+#     read-site default (#1186/#1420/#1428: opus for A/B/C/D — always a NAMED
+#     model, never an inherit). pr-eval dispatch is NEVER gated (independent Opus
+#     backstop).
 #   - Documented (commented, default-off) in pipeline.config.example.
 #   - Wired at the fullsend execute dispatch site (skill prose references the vars).
 #
@@ -19,7 +20,17 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"
-SKILL="$ROOT/skills/fullsend/SKILL.md"
+_FS_SKILL="$ROOT/skills/fullsend/SKILL.md"
+# #1444 — fullsend's conditional detail was relocated OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins CONTRACT prose, not the file
+# a clause happens to live in, so it reads the UNION of SKILL.md and its
+# references; SKILL.md comes first, so every step-skeleton region extractor
+# below still terminates inside the SKILL.md half.
+_FS_UNION_DIR="$(mktemp -d)"
+trap 'rm -rf "$_FS_UNION_DIR"' EXIT
+SKILL="$_FS_UNION_DIR/fullsend-union.md"
+cat "$_FS_SKILL" "$ROOT/skills/fullsend"/references/*.md > "$SKILL"
+
 
 PASS=0
 FAIL=0
@@ -46,16 +57,25 @@ for v in "${VARS[@]}"; do
 done
 
 # 2. #1052 (defaults-in-code) supersedes the #1042 "ship active" polarity for the
-#    example: the Sonnet default lives at the scripts/resolve-execute-dispatch.sh read
-#    site (unset -> sonnet), so each model var is now COMMENTED in the example and
-#    --fix config does NOT seed it. The shipped Sonnet default is unchanged (asserted at
-#    the resolver read site); the example carries the documented default in commented form.
+#    example: each default lives at the scripts/resolve-execute-dispatch.sh read
+#    site, so each model var is COMMENTED in the example and --fix config does NOT
+#    seed it. The example carries the documented default in commented form.
+#    #1420 flipped PATH B's unset default sonnet -> opus when the #881 two-agent
+#    lane was collapsed to a single execute agent (the always-Opus test-author
+#    that made a cheap PATH B executor safe is gone); #1428 flipped PATH D's
+#    unset default the same way (the executor-model split never moved cost in
+#    calibration), so both vars now share the same default literal.
+declare -A WANT_DEFAULT=(
+  [PIPELINE_PATH_B_MODEL_EXECUTE]=opus
+  [PIPELINE_PATH_D_MODEL_EXECUTE]=opus
+)
 for v in "${VARS[@]}"; do
   inc
-  if grep -Eq "^[[:space:]]*#[[:space:]]*${v}=sonnet" "$EXAMPLE"; then
-    pass_msg "example: $v documented (commented) = sonnet per #1052"
+  want="${WANT_DEFAULT[$v]}"
+  if grep -Eq "^[[:space:]]*#[[:space:]]*${v}=${want}" "$EXAMPLE"; then
+    pass_msg "example: $v documented (commented) = $want per #1052/#1420"
   else
-    fail_msg "example: $v not documented as commented = sonnet (#1052)"
+    fail_msg "example: $v not documented as commented = $want (#1052/#1420)"
   fi
 done
 

@@ -1,18 +1,18 @@
 #!/bin/bash
 set -uo pipefail
 
-# RED anchor (#1106, split-role PATH B) — failing suite for the Layer-2
-# cause-agnostic base-ref drift guard. Authored by the RED test-author; the
-# GREEN role implements scripts/check-base-ref-drift.sh + the Layer-1 skill
-# directives that green this suite. RED must NOT create the script or edit the
-# skills — until they exist this suite is RED for the RIGHT reason:
+# RED anchor (#1106) — failing suite for the Layer-2 cause-agnostic base-ref
+# drift guard, authored ahead of scripts/check-base-ref-drift.sh + the Layer-1
+# skill directives that green it. The suite must NOT create the script or edit
+# the skills — until they exist it is RED for the RIGHT reason:
 #   - cases (a)-(d): scripts/check-base-ref-drift.sh is missing.
 #   - case  (e):     skills/fullsend/SKILL.md + skills/execute-issue-plan/SKILL.md
 #                    lack the `git -C` + `symbolic-ref --short HEAD` directive.
 #
 # Contract under test — scripts/check-base-ref-drift.sh <base> <expected-sha> [feature-branch...]:
 #   Emits EXACTLY ONE token on stdout; ALWAYS exits 0 (the verdict rides the
-#   token, mirroring scripts/verify-execute-completion.sh / scripts/split-role-gate.sh):
+#   token, mirroring scripts/verify-execute-completion.sh /
+#   scripts/check-capability-refusal.sh):
 #     BASE=ok                         local base SHA == expected; no mutation.
 #     BASE=recovered                  drifted, but every stray commit in
 #                                     origin/<base>..<local-base> is reachable
@@ -35,7 +35,7 @@ set -uo pipefail
 #                            EXISTING token, no new token enters the contract)
 # Cases (f) and (g) pin those two new behaviours.
 #
-# Fixture convention mirrors tests/test-split-role-gate.sh: an isolated mktemp
+# Fixture convention: an isolated mktemp
 # repo per case with a real local `origin` remote (so `origin/<base>` resolves),
 # trap-cleaned even on failure, with PASS/FAIL counters; this suite only exits
 # nonzero on an assertion failure of its OWN, NEVER from the guard's exit code.
@@ -316,9 +316,9 @@ fi
 # the Layer-1 directive — a literal `git -C` occurrence AND a
 # `symbolic-ref --short HEAD` branch-assert occurrence — so a dispatched agent
 # anchors every git command at the worktree and asserts the branch before any
-# commit (the #1106 root-cause fix). Static named-file grep only (mirrors
-# tests/test-fullsend-split-role-dispatch.sh): never a whole-repo grep, never a
-# version-literal compare, per CLAUDE.md release-hygiene.
+# commit (the #1106 root-cause fix). Static named-file grep only: never a
+# whole-repo grep, never a version-literal compare, per CLAUDE.md
+# release-hygiene.
 echo "Case (e): both skill files carry the git -C + symbolic-ref --short HEAD dispatch directive"
 FULLSEND="$REPO_ROOT/skills/fullsend/SKILL.md"
 EXECUTE="$REPO_ROOT/skills/execute-issue-plan/SKILL.md"

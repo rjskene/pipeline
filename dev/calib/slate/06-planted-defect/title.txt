@@ -1,0 +1,1 @@
+feat(cli): truncate long titles in calibctl list output

@@ -1,0 +1,9 @@
+calib: cost backfill appended 15 record(s)
+CALIB-ABORT reason=held
+CALIB issue=188 path=A cost=$n/a wall=n/a verdicts=n/a/n/a reftest=n/a unexpected-files=0
+CALIB issue=189 path=D cost=$n/a wall=n/a verdicts=n/a/n/a reftest=n/a unexpected-files=0
+CALIB issue=190 path=B cost=$n/a wall=n/a verdicts=Revise/n/a reftest=n/a unexpected-files=0
+CALIB issue=191 path=B cost=$n/a wall=n/a verdicts=Revise/n/a reftest=n/a unexpected-files=0
+CALIB issue=192 path=B cost=$n/a wall=n/a verdicts=Revise/n/a reftest=n/a unexpected-files=0
+CALIB issue=193 path=B cost=$n/a wall=n/a verdicts=Approve/n/a reftest=n/a unexpected-files=0
+CALIB-TOTAL cost=$0 wall=3143 issues=6 reftest-pass=n/a planted=n/a hooks=on bexec=opus plan_gate=annotate bridge_prompts=2

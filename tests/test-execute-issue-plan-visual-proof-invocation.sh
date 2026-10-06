@@ -4,7 +4,13 @@ set -euo pipefail
 # sub-skill as a per-section TDD loop, gated behind the needs-browser label.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-FILE="$REPO_ROOT/skills/execute-issue-plan/SKILL.md"
+# #1444: Steps 6c/6d were relocated out of the hot-path SKILL.md into
+# references/visual-validation.md (the skill keeps the step headings + a read
+# pointer). The contract text follows the text to its new file; SKILL.md is
+# asserted separately to still carry the pointer, so the relocation cannot
+# silently become a deletion.
+SKILL="$REPO_ROOT/skills/execute-issue-plan/SKILL.md"
+FILE="$REPO_ROOT/skills/execute-issue-plan/references/visual-validation.md"
 PASS=0; FAIL=0; TESTS=0
 pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
@@ -21,6 +27,20 @@ assert_contains() {
 }
 
 echo "execute-issue-plan visual-proof-from-plan invocation wiring"
+
+# (0) the relocation target exists and SKILL.md Steps 6c/6d point at it.
+inc
+if [ -f "$FILE" ]; then
+  pass_msg "references/visual-validation.md exists"
+else
+  fail_msg "references/visual-validation.md missing (6c/6d relocation target)"
+fi
+inc
+if grep -qF -- "references/visual-validation.md" "$SKILL" && grep -qF -- "**6c." "$SKILL"; then
+  pass_msg "SKILL.md keeps the 6c/6d step heading and the read pointer"
+else
+  fail_msg "SKILL.md must keep the **6c. heading and a references/visual-validation.md pointer"
+fi
 
 # (a) needs-browser label appears within the per-section loop section
 assert_contains "needs-browser" "references needs-browser label"

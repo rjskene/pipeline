@@ -8,7 +8,7 @@ set -euo pipefail
 # than silently substituting a manual approximation.
 #
 # The concrete defect: `skills/plan-issue/SKILL.md` emitted an unattributed
-# closing task ("Task N: PATH A/B/C — invoke `superpowers:requesting-code-review`")
+# closing task ("Task N: PATH A/B/C — invoke the code-review Skill")
 # while `agents/tdd-implementer.md` declares `tools: Read, Write, Edit, Bash,
 # Grep, Glob` — no `Skill`, no `Agent`. Any PATH C `target=<dir>` leaf (or
 # PATH D task) that inherits that directive is structurally unexecutable.
@@ -16,9 +16,11 @@ set -euo pipefail
 # Shape mirrors tests/test-plan-issue-path-tasks.sh (counters + summary rule).
 #
 # ---------------------------------------------------------------------------
-# Assertion ledger at the `[split-role-red]` marker commit
+# Assertion ledger at the RED commit
 # ---------------------------------------------------------------------------
-#   RED   : A1 A2 A3 A4 A6 A7 A8 A9 A10 — the target prose does not exist yet.
+#   RED   : A1 A2 A3 A4 A6 A7 A8 A10 — the target prose does not exist yet.
+#           (A9 pinned a row in docs/superpowers-integration.md; #1419 deleted
+#           that doc along with the dependency, so the assertion went with it.)
 #   GREEN : A5 ONLY. A5 is the Direction-3 regression guard: it asserts the
 #           `tdd-implementer` `tools:` line still EXCLUDES `Agent` and `Skill`.
 #           That is already true at HEAD *by design* and must stay true
@@ -38,7 +40,13 @@ PLAN="$SCRIPT_DIR/../skills/plan-issue/SKILL.md"
 AGENT="$SCRIPT_DIR/../agents/tdd-implementer.md"
 EXEC="$SCRIPT_DIR/../skills/execute-issue-plan/SKILL.md"
 FS="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
-DOC="$SCRIPT_DIR/../docs/superpowers-integration.md"
+# #1444: the PATH C execute-routing bullet A10 pins was relocated out of the
+# hot-path fullsend SKILL.md into skills/fullsend/references/dispatch-routing.md.
+# A10 follows the text to its new home (path retarget only — the assertion is
+# unchanged). Deliberately NOT in the hard-existence loop below: a missing
+# reference file must surface as A10 FAILING with its own message, not as an
+# early exit that hides A1-A8.
+FS_ROUTING="$SCRIPT_DIR/../skills/fullsend/references/dispatch-routing.md"
 
 PASS=0
 FAIL=0
@@ -48,7 +56,7 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-for f in "$PLAN" "$AGENT" "$EXEC" "$FS" "$DOC"; do
+for f in "$PLAN" "$AGENT" "$EXEC" "$FS"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: required file not found: $f" >&2
     exit 1
@@ -78,11 +86,9 @@ FORBIDDEN=$(awk '/^## Forbidden/{i=1;next} i && /^## /{i=0} i' "$AGENT" || true)
 # execute-issue-plan Step 8, bounded by the Step 9 heading.
 STEP8=$(awk '/^8\. \*\*Pre-PR code review loop/{i=1} i; /^9\. \*\*Open a pull request/{i=0}' "$EXEC" || true)
 
-# The fullsend PATH C execute-routing bullet (the PATH C orchestrator runbook).
-FSC=$(grep -F -- '- **PATH C** (`multi-task`): dispatch inline by DEFAULT' "$FS" | head -1 || true)
-
-# The superpowers-integration row for plan-issue -> requesting-code-review.
-DOCROW=$(grep -F '| `plan-issue` |' "$DOC" | grep -F 'requesting-code-review' || true)
+# The fullsend PATH C execute-routing bullet (the PATH C orchestrator runbook),
+# now in skills/fullsend/references/dispatch-routing.md (#1444).
+FSC=$(grep -F -- '- **PATH C** (`multi-task`): dispatch inline by DEFAULT' "$FS_ROUTING" 2>/dev/null | head -1 || true)
 
 # --- A1: planner-side executor-capability rule exists ------------------------
 echo "A1: plan-issue states the executor-capability rule"
@@ -110,16 +116,21 @@ fi
 # --- A3: PATH A/B closing task is role-attributed ---------------------------
 # Anchored on the EM DASH form; bare 'PATH A/B' is a substring of 'PATH A/B/C'
 # and would make this assertion vacuous.
-echo "A3: closing task is scoped to PATH A/B and still names the review skill"
+# The role attribution is what #1225 bought; #1419 changed only WHAT the role
+# does — run the self-check inline instead of dispatching a skill. Both halves
+# are asserted, plus the negative, so the retired invocation cannot satisfy it.
+echo "A3: closing task is scoped to PATH A/B and runs the review inline"
 inc
 if [ -z "$TASKN" ]; then
   fail_msg "no '- Task N:' bullet found in skills/plan-issue/SKILL.md"
 elif grep -qF -- "Task N: PATH A/B —" "$PLAN" \
    && printf '%s' "$TASKN" | grep -qF -- "Task N: PATH A/B —" \
-   && printf '%s' "$TASKN" | grep -qF "superpowers:requesting-code-review"; then
-  pass_msg "Task N bullet is anchored to 'Task N: PATH A/B —' and names requesting-code-review"
+   && printf '%s' "$TASKN" | grep -qF "self-check" \
+   && printf '%s' "$TASKN" | grep -qF "inline" \
+   && ! printf '%s' "$TASKN" | grep -qF "superpowers:"; then
+  pass_msg "Task N bullet is anchored to 'Task N: PATH A/B —' and runs the self-check inline"
 else
-  fail_msg "Task N bullet must carry the literal 'Task N: PATH A/B —' (space + em dash) and 'superpowers:requesting-code-review'"
+  fail_msg "Task N bullet must carry the literal 'Task N: PATH A/B —' (space + em dash) plus an inline 'self-check', and NO 'superpowers:' invocation"
 fi
 
 # --- A4: closing task assigns PATH C ownership to the orchestrator ----------
@@ -192,24 +203,13 @@ else
   fail_msg "Step 8 must contain the literal 'Step 8 owner', 'CAPABILITY-REFUSED', and an 'orchestrator' owner"
 fi
 
-# --- A9: superpowers-integration row attributes the invocation --------------
-echo "A9: superpowers-integration row attributes requesting-code-review to a role"
-inc
-if [ -z "$DOCROW" ]; then
-  fail_msg "no plan-issue -> requesting-code-review row in docs/superpowers-integration.md"
-elif printf '%s' "$DOCROW" | grep -qE 'orchestrator|PR-opening role'; then
-  pass_msg "doc row attributes the invocation to the orchestrator / PR-opening role"
-else
-  fail_msg "doc row must attribute the invocation ('orchestrator' or 'PR-opening role'), not just 'final Task N in plan output'"
-fi
-
 # --- A10: the fullsend PATH C runbook carries the ownership rule ------------
 # fullsend/SKILL.md is what the PATH C orchestrator actually reads; the rule
 # does not reach it via execute-issue-plan Step 8 alone.
-echo "A10: fullsend PATH C runbook line states the Step 8 ownership rule"
+echo "A10: fullsend PATH C runbook line states the Step 8 ownership rule (references/dispatch-routing.md)"
 inc
 if [ -z "$FSC" ]; then
-  fail_msg "could not find the PATH C execute-routing bullet in skills/fullsend/SKILL.md"
+  fail_msg "could not find the PATH C execute-routing bullet in skills/fullsend/references/dispatch-routing.md"
 elif printf '%s' "$FSC" | grep -qF "Step 8" \
    && printf '%s' "$FSC" | grep -qF '`Skill` tool'; then
   pass_msg "PATH C runbook line names Step 8 and the missing \`Skill\` tool"

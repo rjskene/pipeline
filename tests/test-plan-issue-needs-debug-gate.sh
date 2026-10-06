@@ -3,7 +3,7 @@ set -euo pipefail
 # Guard: the needs-debug / --debug-first root-cause diagnosis gate (#997).
 # Static grep-based contract over the now-edited skills (mirrors the
 # tests/test-plan-issue-needs-browser-predicates.sh style). Asserts that
-# skills/plan-issue/SKILL.md documents the gate (label, flag, sub-skill,
+# skills/plan-issue/SKILL.md documents the gate (label, flag, inline diagnosis,
 # comment name, gate condition) and that skills/fullsend/SKILL.md propagates
 # the one-off --debug-first flag to the dispatched plan-issue stage. Runtime
 # behavior is covered by the impl commits; this is a documentation/contract
@@ -33,8 +33,24 @@ echo "plan-issue needs-debug / --debug-first root-cause diagnosis gate (#997)"
 assert_contains "$PLAN_FILE" "needs-debug" "plan-issue references needs-debug label"
 # (b) references the --debug-first flag
 assert_contains "$PLAN_FILE" "--debug-first" "plan-issue references --debug-first flag"
-# (c) references the systematic-debugging superpower
-assert_contains "$PLAN_FILE" "superpowers:systematic-debugging" "plan-issue references superpowers:systematic-debugging"
+# (c) carries the INLINE 4-step root-cause diagnosis. #1419 removed the
+# `superpowers:systematic-debugging` invocation this used to pin, so the gate
+# now has to spell the procedure out itself. Scoped to the Step 4a "Produce"
+# branch so prose elsewhere in the skill cannot satisfy it, and paired with the
+# negative so the retired invocation cannot either.
+PRODUCE=$(awk 'index($0,"**Produce (no fresh diagnosis exists)")>0{i=1} i && $0 ~ "^[0-9]+\\. \\*\\*"{i=0} i' "$PLAN_FILE" || true)
+inc
+if [ -z "$PRODUCE" ]; then
+  fail_msg "plan-issue carries the inline 4-step diagnosis (no '**Produce (no fresh diagnosis exists)' branch found)"
+elif printf '%s' "$PRODUCE" | grep -qi "reproduce" \
+   && printf '%s' "$PRODUCE" | grep -qi "isolate" \
+   && printf '%s' "$PRODUCE" | grep -qi "hypothes" \
+   && printf '%s' "$PRODUCE" | grep -qi "confirm" \
+   && ! printf '%s' "$PRODUCE" | grep -qF "superpowers:"; then
+  pass_msg "plan-issue Step 4a carries the inline reproduce/isolate/hypothesize/confirm diagnosis"
+else
+  fail_msg "plan-issue Step 4a must carry the inline 4-step diagnosis (reproduce -> isolate -> hypothesize -> confirm) and NO 'superpowers:' invocation"
+fi
 # (d) names the Root-Cause Diagnosis comment
 assert_contains "$PLAN_FILE" "## Root-Cause Diagnosis" "plan-issue names the ## Root-Cause Diagnosis comment"
 # (e) documents the gate condition (needs-debug present OR --debug-first)

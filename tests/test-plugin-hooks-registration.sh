@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Asserts .claude-plugin/plugin.json registers each of the seven expected
+# Asserts .claude-plugin/plugin.json registers each of the five expected
 # hook entries with a ${CLAUDE_PLUGIN_ROOT}/hooks/<filename> command.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,12 +17,10 @@ hooks = manifest.get("hooks", {})
 
 # (event, matcher, filename)
 EXPECTED = [
-    ("PreToolUse",  "Bash",  "block_deletions.py"),
     ("PreToolUse",  "Bash",  "enforce-base-branch.py"),
     ("PreToolUse",  "Bash",  "check-ci-skip-markers.py"),
     ("PreToolUse",  "Edit",  "enforce-path-c-delegation.py"),
     ("PreToolUse",  "Write", "enforce-path-c-delegation.py"),
-    ("PreToolUse",  "*",     "restrict_paths.py"),
     ("Stop",        "*",     "enforce-ci-wait.py"),
 ]
 

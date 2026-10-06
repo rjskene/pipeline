@@ -13,7 +13,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # column now live in fullsend; the `Auto-merged: ...` confirmation FOOTER (fired
 # by the evaluator's Step 11 gate) lives in skills/evaluate-issue-pr/SKILL.md.
 FS_SKILL="${ROOT}/skills/fullsend/SKILL.md"
-EVAL_SKILL="${ROOT}/skills/evaluate-issue-pr/SKILL.md"
+# #1444: the `Auto-merged: ...` footer relocated out of the evaluator into the
+# orchestrator-owned gate reference.
+EVAL_SKILL="${ROOT}/skills/fullsend/references/auto-merge-gate.md"
 FAILED=0
 
 want_in() {
@@ -28,7 +30,7 @@ want_in() {
 
 want_in "$FS_SKILL"   "fullsend Step 8 references auto-merge-gate.sh helper"    'scripts/auto-merge-gate.sh'
 want_in "$FS_SKILL"   "fullsend FULL SEND header documents argv position"      'manual-merge.* anywhere in argv'
-want_in "$EVAL_SKILL" "evaluate-issue-pr emits auto-merged footer prefix"      'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
+want_in "$EVAL_SKILL" "auto-merge-gate reference emits auto-merged footer prefix" 'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
 want_in "$FS_SKILL"   "fullsend Step 9 prose is conditional, not absolute"     'do NOT merge unless'
 want_in "$FS_SKILL"   "fullsend report table has Auto-merged column"           'Auto-merged\?'
 

@@ -15,8 +15,12 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-EVAL_SKILL="$ROOT/skills/evaluate-issue-pr/SKILL.md"
+# #1444: (a)/(b)/(i) assert the GATE prose, which relocated to the
+# orchestrator-owned reference file.
+EVAL_SKILL="$ROOT/skills/fullsend/references/auto-merge-gate.md"
 FULLSEND_SKILL="$ROOT/skills/fullsend/SKILL.md"
+# #1444: the wave-halt "Hard block" list relocated with `### Scoped halt-and-report`.
+SCOPED_HALT="$ROOT/skills/fullsend/references/scoped-halt.md"
 GATE="$ROOT/scripts/auto-merge-gate.sh"
 RUN_QUEUE="$ROOT/scripts/run-queue.sh"
 ALLOWLIST="$ROOT/tests/config-drift-allowlist.txt"
@@ -133,7 +137,7 @@ if require_file "$FULLSEND_SKILL" "(c)"; then
   else
     fail "(c) the 'reason=' field list does not list $TOKEN"
   fi
-  if grep -F "$TOKEN" "$FULLSEND_SKILL" | grep -qF 'Hard block'; then
+  if grep -F "$TOKEN" "$SCOPED_HALT" | grep -qF 'Hard block'; then
     pass "(c) the wave-halt Hard block list lists the token"
   else
     fail "(c) the 'Hard block' list does not list $TOKEN"

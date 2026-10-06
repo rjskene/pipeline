@@ -44,7 +44,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 DETECTOR="$ROOT/scripts/check-capability-refusal.sh"
-EVAL_SKILL="$ROOT/skills/evaluate-issue-pr/SKILL.md"
+# #1444: the gate call site relocated out of evaluate-issue-pr Step 11.2 into
+# the orchestrator-owned reference; the (k)/(l)/(m) assertions follow it.
+EVAL_SKILL="$ROOT/skills/fullsend/references/auto-merge-gate.md"
 GATE="$ROOT/scripts/auto-merge-gate.sh"
 OBSERVABILITY="$ROOT/docs/observability.md"
 
@@ -365,7 +367,9 @@ echo "=== (m) Step 11.2 names all three resolver tokens ==="
 if [ ! -f "$EVAL_SKILL" ]; then
   fail "(m) $EVAL_SKILL does not exist"
 else
-  M_SLICE="$(slice_between "$EVAL_SKILL" '**Source the helper and run the gate.**' '**Split-role gate')"
+  # END anchor re-pinned by #1420: Step 11.2b (the split-role gate) is gone, so
+  # the heading that now follows Step 11.2 is the `green` branch.
+  M_SLICE="$(slice_between "$EVAL_SKILL" '**Source the helper and run the gate.**' '3. **On `green`:**')"
   if [ -z "$M_SLICE" ]; then
     fail "(m) Step 11.2 ('Source the helper and run the gate.') not found in $EVAL_SKILL"
   else
