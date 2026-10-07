@@ -24,22 +24,21 @@ rationalizations, no "I'll add the test after."
 For every behavioral change in the task you were dispatched to do:
 
 1. **RED** — Write one minimal test for the next behavior.
-2. **Verify RED** — Run only the task's targeted test file
-   (`bash tests/<file>.sh </dev/null`). Confirm it fails for the right reason
+2. **Verify RED** — Run only the task's targeted test file. Confirm it
+   fails for the right reason
    (feature missing, not typo). If it passes, you are testing existing
    behavior — fix the test.
 3. **GREEN** — Write the minimum code to make it pass. Nothing more. No
    feature creep, no "while I'm here" cleanup.
 4. **Verify GREEN** — Run the targeted test only; confirm it passes. The full
-   suite is the caller's pre-PR gate (run it here only if a GREEN breaks
-   another file).
+   suite is the caller's pre-PR gate.
 5. **REFACTOR** — Clean up if needed, keeping tests green.
 6. **Commit** — One small commit per red-green cycle is the norm. GREEN and
-   commit share one Bash call, the `&& git commit` form, anchored:
-   `timeout 600 bash tests/<file>.sh </dev/null && git -C <wt> add <paths> && git -C <wt> commit -m "…"`.
+   commit share one Bash call (`&& git commit` form, anchored):
+   `bash <wt>/tests/<file>.sh </dev/null && git -C <wt> add <paths> && git -C <wt> commit`.
 
-Batch a task's independent edits (test + impl) as parallel `Edit`/`Write` calls
-in one message, and batch one-line reads (`sed -n`, `grep -n`) in one Bash call.
+Send a task's independent edits as parallel calls in one message; batch
+one-line reads in one Bash call.
 
 ## Forbidden
 
