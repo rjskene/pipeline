@@ -235,10 +235,17 @@ fi
 # into every spawned agent. EMPTY_MCP_FILE is initialised here (single
 # definition point) so cleanup_temp_files and the dry-run dump can reference
 # it under `set -u` regardless of which branch is taken.
+# Private temp dir for this spawn (issue #1185).
+# BSD/macOS mktemp requires the XXXXXX placeholder at the end of the template.
+# Templates like /tmp/foo-XXXXXX.json are treated as literal paths: the first
+# call returns the fixed name and a second concurrent call fails. Create one
+# randomized directory, then place named files with meaningful suffixes inside.
+SPAWN_TMPDIR=$(mktemp -d /tmp/claude-spawn-XXXXXX)
+
 EMPTY_MCP_FILE=""
 MCP_EXTRA_ARGV=()
 if [ "${HAS_NEEDS_BROWSER:-0}" = "0" ]; then
-  EMPTY_MCP_FILE=$(mktemp /tmp/claude-mcp-empty-XXXXXX.json)
+  EMPTY_MCP_FILE="$SPAWN_TMPDIR/mcp-empty.json"
   printf '%s\n' '{"mcpServers": {}}' > "$EMPTY_MCP_FILE"
   MCP_EXTRA_ARGV=(--mcp-config "$EMPTY_MCP_FILE" --strict-mcp-config)
 fi
@@ -289,16 +296,14 @@ fi
 APPEND_PROMPT_FILE=""
 LAUNCHER=""
 cleanup_temp_files() {
-  local files=()
-  [ -n "$APPEND_PROMPT_FILE" ] && files+=("$APPEND_PROMPT_FILE")
-  [ -n "$LAUNCHER" ] && files+=("$LAUNCHER")
-  [ -n "$EMPTY_MCP_FILE" ] && files+=("$EMPTY_MCP_FILE")
-  [ ${#files[@]} -eq 0 ] && return 0
+  # Remove the whole spawn temp dir (files + directory) after the async
+  # launcher has had time to read them. See issue #1185.
+  [ -z "${SPAWN_TMPDIR:-}" ] && return 0
   # 60s is ~1000x longer than any realistic launcher cold-start.
   if command -v setsid >/dev/null 2>&1; then
-    setsid -f bash -c "sleep 60; rm -f $(printf '%q ' "${files[@]}")" </dev/null >/dev/null 2>&1 &
+    setsid -f bash -c "sleep 60; rm -rf $(printf '%q' "$SPAWN_TMPDIR")" </dev/null >/dev/null 2>&1 &
   else
-    nohup bash -c "sleep 60; rm -f $(printf '%q ' "${files[@]}")" </dev/null >/dev/null 2>&1 &
+    nohup bash -c "sleep 60; rm -rf $(printf '%q' "$SPAWN_TMPDIR")" </dev/null >/dev/null 2>&1 &
   fi
   disown 2>/dev/null || true
 }
@@ -311,7 +316,7 @@ if [ -n "$SKILL_ALIAS" ]; then
   REVIEWER="${!reviewer_var:-}"
 
   if [ -n "$REQUIRED_SKILLS" ] || [ -n "$REVIEWER" ]; then
-    APPEND_PROMPT_FILE=$(mktemp /tmp/claude-sysprompt-XXXXXX.txt)
+    APPEND_PROMPT_FILE="$SPAWN_TMPDIR/sysprompt.txt"
     {
       if [ -n "$REQUIRED_SKILLS" ]; then
         echo "REQUIRED STARTUP SEQUENCE: Your first tool calls MUST be Skill invocations, in order:"
@@ -363,7 +368,7 @@ fi
 # PR. Creates the system-prompt file if no other directive populated it.
 if [ -n "${PIPELINE_CI_FIX_CONTEXT:-}" ]; then
   if [ -z "$APPEND_PROMPT_FILE" ]; then
-    APPEND_PROMPT_FILE=$(mktemp /tmp/claude-sysprompt-XXXXXX.txt)
+    APPEND_PROMPT_FILE="$SPAWN_TMPDIR/sysprompt.txt"
   fi
   {
     echo ""
@@ -476,7 +481,9 @@ if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
 fi
 
 # Write a temp launcher script to avoid nested quoting issues with tmux
-LAUNCHER=$(mktemp /tmp/claude-launch-XXXXXX.sh)
+LAUNCHER="$SPAWN_TMPDIR/launch.sh"
+# touch first so chmod succeeds before the mode-specific heredoc writes the body
+: > "$LAUNCHER"
 chmod +x "$LAUNCHER"
 
 # Precompute the launcher's session-start banner and exec line based on the
