@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 262" width="920" height="262" role="img" aria-label="Path routing fan" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="#4E5B60"/></marker></defs>
+<rect x="0" y="0" width="920" height="262" fill="#F6F7F5"/>
+
+<rect x="17" y="112" width="100" height="40" rx="6" fill="#E3F1F3" stroke="#0B6E7F" stroke-width="1.4"/><text x="67" y="136.375" fill="#1C2326" font-size="12.5" text-anchor="middle">classify</text>
+<text x="67" y="168" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">agent · decides</text>
+<path d="M117,132 H134 M134,42 V222" fill="none" stroke="#4E5B60" stroke-width="1.4"/>
+<g stroke="#4E5B60" stroke-width="1.4" fill="none" marker-end="url(#ah)">
+<path d="M134,42 H150"/>
+<path d="M134,102 H150"/>
+<path d="M134,162 H150"/>
+<path d="M134,222 H150"/>
+</g>
+<g stroke="#4E5B60" stroke-width="1.2" fill="none" marker-end="url(#ah)">
+<path d="M264,42 H280"/><path d="M400,42 H416"/>
+<path d="M264,102 H280"/><path d="M400,102 H416"/>
+<path d="M264,162 H280"/><path d="M400,162 H416"/>
+<path d="M264,222 H280"/><path d="M400,222 H416"/>
+</g>
+<rect x="152" y="28" width="112" height="28" rx="4" fill="#EEF2F1"/>
+<text x="162" y="46" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#1C2326">A · docs-only</text>
+<rect x="282" y="28" width="118" height="28" rx="5" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="341" y="46.375" fill="#1C2326" font-size="12.5" text-anchor="middle">plan</text>
+<rect x="418" y="28" width="232" height="28" rx="5" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="534" y="46.375" fill="#1C2326" font-size="12.5" text-anchor="middle">flat edit → commit, no test cycle</text>
+<text x="668" y="46" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">opus</text>
+<rect x="152" y="88" width="112" height="28" rx="4" fill="#EEF2F1"/>
+<text x="162" y="106" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#1C2326">B · standard</text>
+<rect x="282" y="88" width="118" height="28" rx="5" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="341" y="106.375" fill="#1C2326" font-size="12.5" text-anchor="middle">plan</text>
+<rect x="418" y="88" width="232" height="28" rx="5" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="534" y="106.375" fill="#1C2326" font-size="12.5" text-anchor="middle">red → green → commit, per task</text>
+<text x="668" y="106" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">opus</text>
+<rect x="152" y="148" width="112" height="28" rx="4" fill="#EEF2F1"/>
+<text x="162" y="166" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#1C2326">C · multi-task</text>
+<rect x="282" y="148" width="118" height="28" rx="5" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="341" y="166.375" fill="#1C2326" font-size="12.5" text-anchor="middle">plan</text>
+<rect x="418" y="148" width="232" height="28" rx="5" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="534" y="166.375" fill="#1C2326" font-size="12.5" text-anchor="middle">fan-out per target dir → cherry-pick</text>
+<text x="668" y="166" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">opus</text>
+<rect x="152" y="208" width="112" height="28" rx="4" fill="#EEF2F1"/>
+<text x="162" y="226" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#1C2326">D · quick-fix</text>
+<rect x="282" y="208" width="118" height="28" rx="5" fill="none" stroke="#DDE2E0" stroke-dasharray="4 3"/><text x="341" y="226.025" fill="#4E5B60" font-size="11.5" text-anchor="middle">auto-approved</text>
+<rect x="418" y="208" width="232" height="28" rx="5" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="534" y="226.375" fill="#1C2326" font-size="12.5" text-anchor="middle">inline red → green → commit</text>
+<text x="668" y="226" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">opus</text>
+<text x="668" y="18" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">execute model</text>
+<g stroke="#4E5B60" stroke-width="1.4" fill="none">
+<path d="M650,42 H658"/>
+<path d="M650,102 H658"/>
+<path d="M650,162 H658"/>
+<path d="M650,222 H658"/>
+<path d="M704,42 V222"/>
+<path d="M696,42 H704"/>
+<path d="M696,102 H704"/>
+<path d="M696,162 H704"/>
+<path d="M696,222 H704"/>
+</g>
+<path d="M704,132 H720" fill="none" stroke="#4E5B60" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="722" y="112" width="80" height="40" rx="6" fill="#FFFFFF" stroke="#DDE2E0" stroke-width="1.2"/><text x="762" y="136.375" fill="#1C2326" font-size="12.5" text-anchor="middle">PR</text>
+<path d="M802,132 H818" fill="none" stroke="#4E5B60" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="820" y="112" width="84" height="40" rx="6" fill="#E3F1F3" stroke="#0B6E7F" stroke-width="1.4"/><text x="862" y="136.375" fill="#1C2326" font-size="12.5" text-anchor="middle">pr-eval</text>
+<text x="762" y="168" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">→ staging</text>
+<text x="862" y="168" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7A878C">+ merge gate</text>
+</svg>

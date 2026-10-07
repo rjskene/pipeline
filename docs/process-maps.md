@@ -203,8 +203,10 @@ Campaign mode (`/pipeline:fullsend --campaign`, or the equivalent standalone `/p
 
 Top-level slash commands that drive the maps above:
 
-- `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) — orchestrator session: prioritize, group, and dispatch the action queue. It also renders an **UNMERGED PRs advisory ledger** (#1168/#1172) — a full open-PR view sourced from `scripts/list-open-prs.sh` and emitted by a dedicated renderer section, so open PRs that are not tied to a queued action are still visible at a glance.
-- `/pipeline:fullsend` — wave-plan flow across a slate of issues (the map above).
+- `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) — read-only survey: housekeeping, then the prioritized and grouped status table; it never dispatches or merges. It also renders an **UNMERGED PRs advisory ledger** (#1168/#1172) — a full open-PR view sourced from `scripts/list-open-prs.sh` and emitted by a dedicated renderer section, so open PRs that are not tied to a queued action are still visible at a glance.
+- `/pipeline:fullsend` — wave-plan flow across a slate of issues (the map above); `--campaign` (or the equivalent standalone `/pipeline:campaign`) wraps it in cap-bounded per-path legs.
+- `/pipeline:hotfix` — in-session emergency lane that bypasses every gate above; see [skills/hotfix/SKILL.md](../skills/hotfix/SKILL.md).
+- `/pipeline:visualize plan <file> | recap [git-range]` — local HTML render of a plan or a diff; see [skills/visualize/SKILL.md](../skills/visualize/SKILL.md).
 - `/pipeline:analyze-issues` — read-only hygiene pass over the open-issue set; see [skills/analyze-issues/SKILL.md](../skills/analyze-issues/SKILL.md). `/pipeline:status --analyze` delegates to `/pipeline:analyze-issues` for back-compat.
 - `/pipeline:evolve start|stop|pause|resume|status` — harness-evolve loop driver on the `evolve` integration branch (dogfood, run from the loop clone); see [skills/evolve/SKILL.md](../skills/evolve/SKILL.md) and the spec `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md`.
 
