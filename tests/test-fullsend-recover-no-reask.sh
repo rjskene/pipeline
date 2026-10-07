@@ -25,7 +25,10 @@ set -uo pipefail
 # tests/test-execute-dispatch-prompt-hardening.sh.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKILL="skills/fullsend/SKILL.md"
+# #1444 — the Step 6a BODY moved out of the hot path; SKILL.md keeps the step
+# number plus a one-line pointer, and the recovery procedure this guard pins
+# now IS the reference file in full.
+SKILL="skills/fullsend/references/post-dispatch-verification.md"
 
 PASS=0
 FAIL=0
@@ -43,11 +46,7 @@ fi
 # Extract the Step 6a region: from the `6a. **Post-dispatch completion
 # verification` marker line up to (but not including) the next `6b.` /  `**6b.`
 # step marker.
-REGION="$(awk '
-  /6a\. \*\*Post-dispatch completion verification/ {capturing=1}
-  capturing && /^[[:space:]]*(\*\*)?6b\./ {capturing=0}
-  capturing {print}
-' "$ROOT/$SKILL")"
+REGION="$(cat "$ROOT/$SKILL")"
 
 if [ -z "$REGION" ]; then
   echo "FAIL: could not extract the Step 6a region from $SKILL (markers '6a. **Post-dispatch completion verification' / '6b.' moved?)" >&2

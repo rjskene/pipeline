@@ -20,10 +20,24 @@ source "$LIB"
 # ---------------------------------------------------------------------------
 # tu_transcript_sum
 # ---------------------------------------------------------------------------
+# Negative control (#1443): the LEGACY fixture carries no message.id, so every
+# usage line is its own turn and the four token sums are byte-identical to the
+# pre-dedupe behaviour. ctx_first/ctx_last are the first/last line's
+# cache_read+cache_creation (5+2=7 / 1+0=1).
 got="$(tu_transcript_sum "$FIX/transcript.jsonl")"
-want=$'350\t70\t16\t5\t2026-05-30T10:00:00.000Z\t2026-05-30T10:00:09.000Z\tclaude-opus-4-8'
+want=$'350\t70\t16\t5\t2026-05-30T10:00:00.000Z\t2026-05-30T10:00:09.000Z\tclaude-opus-4-8\t3\t7\t1'
 [ "$got" = "$want" ] || fail "tu_transcript_sum: got [$got] want [$want]"
-pass "tu_transcript_sum sums + ts-range + last non-empty model"
+pass "tu_transcript_sum sums + ts-range + last non-empty model + turns/ctx bounds"
+
+# Dedupe by message.id (#1443): Claude Code writes one API response as 2-3
+# assistant lines sharing message.id; input/cache_read/cache_creation repeat
+# verbatim and output_tokens is progressive. Per id each bucket is counted ONCE
+# (max over the id's lines). The msgid fixture is msg_A x3 (output 5/40/90),
+# msg_B, msg_C: deduped 60/106/6000/300 vs a naive per-line 80/151/8000/500.
+got="$(tu_transcript_sum "$FIX/transcript-msgid.jsonl")"
+want=$'60\t106\t6000\t300\t2026-06-01T10:00:00.000Z\t2026-06-01T10:00:04.000Z\tclaude-opus-4-8\t3\t1100\t3000'
+[ "$got" = "$want" ] || fail "tu_transcript_sum msgid dedupe: got [$got] want [$want]"
+pass "tu_transcript_sum dedupes by message.id (turns=3, ctx 1100/3000)"
 
 # ---------------------------------------------------------------------------
 # tu_worktree_slug  (Finding-1: .claude -> --claude DOUBLE dash)

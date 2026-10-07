@@ -4,12 +4,6 @@
 
 Claude Pipeline is a **CI workflow for automating code updates** through GitHub issues. It manages the full lifecycle: issue creation, planning, plan review, execution, and PR evaluation.
 
-## Pipeline vs Superpowers
-
-Pipeline is the outer workflow — slash commands that advance an issue through the lifecycle. Superpowers are inner tools — skills like brainstorming, writing-plans, TDD, and debugging that pipeline stages use internally to do their work well.
-
-Pipeline orchestrates. Superpowers execute.
-
 Full process maps (lifecycle, label flow, dispatch model, paths A/B/C/D, wave plan) in docs/process-maps.md.
 
 Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
@@ -50,7 +44,7 @@ The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks
 **Runtime allow-list (consumer-owned, pipeline may read/write):**
 - `.claude/logs/` — observability artifacts (tool-use, subagents, runs). Plugin writes here are opt-in via `PIPELINE_LOGS_ENABLED` (default `false`); the allow-list permission is unchanged, but the plugin's default behavior is now no-write.
 - `.claude/worktrees/` — pipeline-managed worktree checkouts.
-- `.claude/scratch/` — ephemeral evidence ingested from issue/comment attachments by `scripts/fetch-issue-attachments.sh` (slate-gated by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; never run from worktrees). Gitignored by default; auto-pruning is a follow-up.
+- `.claude/scratch/` — ephemeral evidence ingested from issue/comment attachments by `scripts/filter-trusted-comments.sh fetch-attachments <N>` (the hook-sanctioned wrapper around `fetch-issue-attachments.sh`; a direct call is denied by `enforce-comment-trust.py`) (slate-gated by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; never run from worktrees). Gitignored by default; auto-pruning is a follow-up.
 
 Everything else under consumer `.claude/` is consumer-owned. CI enforces this via `scripts/check-no-consumer-claude-writes.sh` — adding any new source reference to `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json` requires an explicit entry in `tests/no-consumer-claude-writes.allow` with a justification comment. Allow-list entries are the audit trail for legacy code waiting to be retired.
 
@@ -69,8 +63,8 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 ## Design Principles
 
 1. **Issues are the unit of work.** All planned work lives in GitHub issues. Specs, brainstorm notes, and design docs are transient — they get converted to issues and deleted.
-2. **Human gates matter.** Plan approval and PR merge are manual. The pipeline automates the work between human decisions, not the decisions themselves.
-3. **Superpowers are composable.** Pipeline skills declare which superpowers they use. A skill can compose with any superpowers available in the environment — if a superpowers skill isn't installed, the pipeline skill falls back to inline behavior.
+2. **Human gates matter.** Plan review and PR review are independent agents with their own context; a Revise that cannot be bound as amendments, a `block-*` verdict, or a permission denial holds for the operator instead of being routed around, and `--manual-merge` keeps the merge itself manual. The pipeline automates the work between human decisions, not the decisions themselves.
+3. **Procedures are inline.** Pipeline skills carry their own procedures — no external skill plugin is required at any stage.
 4. **Isolation by default.** Execution happens in git worktrees. The main workspace stays clean.
 
 ## Observability (dogfood-only)

@@ -39,3 +39,46 @@
 #
 # This file is sourceable-only: a single assignment, no shebang side-effects.
 HIGH_UNCERTAINTY_RE='concurrency|\bauth(entication|enticate[ds]?|orization|orize[ds]?|n|z)?\b|deadlock|\block contention\b|\block-free\b|\bfile lock\b|\bmutex\b|\brace(s)?\b|race condition|security|crypto|migration|data-loss'
+
+# hu_strip_path_tokens — stdin/stdout filter (issue #1381). Removes backticked
+# PATH-SHAPED spans before the carve-out grep: a listed filename such as
+# `docs/security-model.md` is a file reference, not a risk claim, so merely
+# NAMING it must not buy an opus execute. Per physical line, per `…` span: the
+# span is dropped only when the token (backticks removed) matches
+# _extract-body-paths.sh's FILE_PATH_RE. Everything else — bare prose
+# ("this changes the security model"), unbackticked paths
+# ("see docs/security-model.md") and backticked NON-path tokens (`security`) —
+# is emitted verbatim, so the fail-CLOSED-to-Opus posture is preserved.
+#
+# The path predicate is REUSED, never duplicated: a second copy of the path
+# regex assigned into this file reds the tests/test-body-path-extractor.sh S1
+# single-source sweep. _extract-body-paths.sh is sourced LAZILY from inside the function
+# (guarded on FILE_PATH_RE being unset) so this file keeps its sourceable-only,
+# no-side-effects-at-source-time contract and the three consumers that never
+# strip pay no transitive source. No cycle: _extract-body-paths.sh sources
+# nothing.
+#
+# The regex reaches awk via ENVIRON, not -v: gawk applies escape-sequence
+# processing to -v values, which would degrade the predicate's `\.` to a bare
+# `.` (matching any character) and emit a warning on the resolvers' stderr.
+#
+# A stripped span becomes a single SPACE, never the empty string, so two
+# adjacent tokens cannot weld into a new word that accidentally matches.
+hu_strip_path_tokens() {
+  if [ -z "${FILE_PATH_RE:-}" ]; then
+    # shellcheck source=scripts/_extract-body-paths.sh
+    . "$(dirname "${BASH_SOURCE[0]:-$0}")/_extract-body-paths.sh"
+  fi
+  HU_PATH_RE="$FILE_PATH_RE" awk '
+    BEGIN { re = ENVIRON["HU_PATH_RE"] }
+    {
+      line = $0; out = ""
+      while (match(line, /`[^`]*`/)) {
+        pre = substr(line, 1, RSTART - 1)
+        tok = substr(line, RSTART + 1, RLENGTH - 2)
+        line = substr(line, RSTART + RLENGTH)
+        out = out pre ((tok ~ re) ? " " : "`" tok "`")
+      }
+      print out line
+    }'
+}

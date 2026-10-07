@@ -6,7 +6,7 @@ set -uo pipefail
 # docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §8).
 #
 # Real-work retros cannot isolate cause: the workload differs every cycle.
-# The calibration slate holds the INPUTS fixed (five template issues at tag
+# The calibration slate holds the INPUTS fixed (six template issues at tag
 # `calib-base` in a purpose-built consumer sandbox) so the harness version is
 # the only variable, and doubles as the end-to-end regression suite the unit
 # tests are not.
@@ -16,18 +16,26 @@ set -uo pipefail
 #                template into it, seed labels, tag `calib-base`. Idempotent:
 #                every step is guarded, so a re-run is a no-op.
 #   --reset      Force the sandbox back to `calib-base`, reap stale calib
-#                issues, recreate the five slate issues. Prints `CALIB-ISSUES`.
+#                issues, recreate the six slate issues, and re-materialize
+#                .claude/settings.local.json from the harness template so the
+#                sandbox always carries the current cost-capture hooks. Prints
+#                `CALIB-ISSUES`.
 #   --dry-run    Print the headless launch command that --run would execute
 #                and exit 0. Makes NO network call and launches NO claude.
-#   --run        --reset, stage the harness for the session to load, then run
-#                the launch for real under `timeout`, then emit the per-issue
-#                `CALIB` block + `CALIB-TOTAL`, tee'd to
-#                $HARNESS/docs/retros/calib/<UTC date>.txt for the retro to
-#                ingest (scripts/run-retro.sh). The session's own output is
-#                tee'd beside it as <UTC date>.log. A run that never really
-#                started (no PR, stopped to ask, hit the cap) leads the block
-#                with `CALIB-ABORT reason=<no-pr|held|timeout>` and reports no
-#                score rather than grading the failure as a regression.
+#   --run        --reset (which now also archives the sandbox's PREVIOUS run
+#                logs, #1408), stage the harness for the session to load,
+#                then run the launch for real under `timeout`, then emit the
+#                per-issue `CALIB` block + `CALIB-TOTAL`, tee'd to
+#                $HARNESS/docs/retros/calib/<UTC date>T<HHMM>Z.txt for the
+#                retro to ingest (scripts/run-retro.sh) — minute-granular so a
+#                same-day re-run gets its own artifact rather than
+#                overwriting the prior run's. The session's own output is
+#                tee'd beside it as <UTC date>T<HHMM>Z.log. A run that never
+#                really started (no PR, stopped to ask, hit the cap, or wrote no
+#                capture log) leads the block with
+#                `CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>` and
+#                reports no score rather than grading the failure as a
+#                regression.
 #
 # EVERY network / launch call goes through the single dispatch() seam below,
 # which --dry-run replaces with a printf. That is what makes the test suite
@@ -38,7 +46,8 @@ set -uo pipefail
 #   PIPELINE_CALIB_REPO      sandbox repo slug        (default rjskene/pipeline-calib)
 #   PIPELINE_CALIB_DIR       sandbox clone dir        (default $HOME/.claude/calib/pipeline-calib)
 #   PIPELINE_CALIB_REMOTE    git URL to clone         (default: `gh repo clone`)
-#   PIPELINE_CALIB_TIMEOUT   headless run cap, sec    (default 5400)
+#   PIPELINE_CALIB_TIMEOUT   headless run cap, sec    (default 10800: the
+#                            six-issue slate is three inline execute waves)
 #   PIPELINE_CALIB_BASE_TAG  reset anchor tag         (default calib-base)
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
 # Plus PIPELINE_TRUST_PROFILE, which this script EXPORTS (never reads) into the
@@ -65,14 +74,15 @@ print_usage() {
   cat <<'USAGE'
 Usage: scripts/calibration-run.sh (--bootstrap|--reset|--dry-run|--run) [options]
 
-Drives the §8 calibration slate: a fixed five-issue workload run against a
+Drives the §8 calibration slate: a fixed six-issue workload run against a
 purpose-built consumer sandbox so the harness version is the only variable.
 
 Modes (exactly one, mutually exclusive):
   --bootstrap      Create/adopt + clone the sandbox, sync the harness
                    template, seed labels, tag calib-base. Idempotent.
-  --reset          Force the sandbox back to calib-base and recreate the five
-                   slate issues. Prints `CALIB-ISSUES <n1> ... <n5>`.
+  --reset          Force the sandbox back to calib-base, recreate the six
+                   slate issues, and refresh .claude/settings.local.json from
+                   the harness template. Prints `CALIB-ISSUES <n1> ... <n6>`.
   --dry-run        Print the headless launch command and exit. No network
                    call, no claude launch, no sandbox mutation.
   --run            --reset, then run the launch for real, then emit the
@@ -84,6 +94,18 @@ Options:
   --harness DIR    Harness (pipeline repo) under test; becomes both
                    CLAUDE_PLUGIN_ROOT and --plugin-dir for the headless run.
                    Default: the repo containing this script.
+  --hooks H        on|off  (default on) — off strips every PreToolUse guard
+                   hook and the enforce-ci-wait Stop hook from the STAGED
+                   manifest (hook-necessity experiment, backlog #12).
+  --executor-model M  opus|sonnet  (default unset = the harness default, Opus
+                   per #1420) — sets PIPELINE_PATH_B_MODEL_EXECUTE in the
+                   sandbox session, pinning the model of the SINGLE PATH B
+                   execute agent (backlog #2/#28).
+  --plan-gate F    full|single|none|annotate  (default unset = the harness
+                   default, `annotate` since #1437) — sets PIPELINE_PLAN_GATE
+                   in the sandbox session, varying how many plan-eval
+                   dispatches the plan-approval gate is worth (outer-loop
+                   step 4, #1429; annotate, #1435).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -101,6 +123,15 @@ PROFILE="strict"
 MODEL="sonnet"
 HARNESS_ARG=""
 DRY_RESET=0
+HOOKS="on"
+# Empty = "do not set it at all", so the sandbox session keeps whatever the
+# harness resolves on its own (Sonnet, #1042). Never defaulted to a value here:
+# pinning one would silently make every run an arm of this experiment (#1414).
+EXECUTOR_MODEL=""
+# Same contract for the plan-gate arm (#1429): empty = "leave PIPELINE_PLAN_GATE
+# unset", so the sandbox session keeps the harness default (`annotate` since
+# #1437). Pinning a value here would make every run an arm of this experiment.
+PLAN_GATE=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -136,6 +167,12 @@ while [ $# -gt 0 ]; do
     --model=*)    MODEL="${1#--model=}"; shift ;;
     --harness)    require_value "$@"; HARNESS_ARG="$2"; shift 2 ;;
     --harness=*)  HARNESS_ARG="${1#--harness=}"; shift ;;
+    --hooks)      require_value "$@"; HOOKS="$2"; shift 2 ;;
+    --hooks=*)    HOOKS="${1#--hooks=}"; shift ;;
+    --executor-model)   require_value "$@"; EXECUTOR_MODEL="$2"; shift 2 ;;
+    --executor-model=*) EXECUTOR_MODEL="${1#--executor-model=}"; shift ;;
+    --plan-gate)        require_value "$@"; PLAN_GATE="$2"; shift 2 ;;
+    --plan-gate=*)      PLAN_GATE="${1#--plan-gate=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -147,6 +184,20 @@ esac
 case "$MODEL" in
   sonnet|opus) ;;
   *) die_usage "--model must be one of sonnet|opus (got: ${MODEL:-<empty>})" ;;
+esac
+case "$HOOKS" in
+  on|off) ;;
+  *) die_usage "--hooks must be one of on|off (got: ${HOOKS:-<empty>})" ;;
+esac
+# Empty is legal here (and is the default): it means "leave the knob unset".
+case "$EXECUTOR_MODEL" in
+  ''|opus|sonnet) ;;
+  *) die_usage "--executor-model must be one of opus|sonnet (got: $EXECUTOR_MODEL)" ;;
+esac
+# Empty is legal here too (and is the default): "leave the knob unset".
+case "$PLAN_GATE" in
+  ''|full|single|none|annotate) ;;
+  *) die_usage "--plan-gate must be one of full|single|none|annotate (got: $PLAN_GATE)" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
@@ -163,7 +214,7 @@ HARNESS="${HARNESS_ARG:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 CALIB_REPO="${PIPELINE_CALIB_REPO:-rjskene/pipeline-calib}"
 SANDBOX="${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}"
 CALIB_REMOTE="${PIPELINE_CALIB_REMOTE:-}"
-CALIB_TIMEOUT="${PIPELINE_CALIB_TIMEOUT:-5400}"
+CALIB_TIMEOUT="${PIPELINE_CALIB_TIMEOUT:-10800}"
 BASE_TAG="${PIPELINE_CALIB_BASE_TAG:-calib-base}"
 ISSUE_IDS="${PIPELINE_CALIB_ISSUE_IDS:-}"
 
@@ -176,10 +227,11 @@ CALIB_OUT_DIR="$HARNESS/docs/retros/calib"
 abs_path() { ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s' "$1"; }
 
 # needs_staging — TRUE when the harness lives OUTSIDE ~/.claude. The sandbox
-# session's own restrict_paths hook allows exactly two roots: the session's
-# project dir (the sandbox) and ~/.claude. A --plugin-dir anywhere else has its
-# own scripts blocked from inside the run — run #1 died 87 s in that way. See
-# stage_harness().
+# session classifies every read/write against its OWN project boundary: the
+# session's project dir (the sandbox) and ~/.claude pass unprompted, anything
+# else needs an escalation nobody is there to grant. A --plugin-dir anywhere
+# else therefore has its own scripts blocked from inside the run — run #1 died
+# 87 s in that way. See stage_harness().
 needs_staging() {
   local h c
   h="$(abs_path "$HARNESS")"
@@ -224,20 +276,80 @@ dispatch() {
   "$@"
 }
 
+# calib_env_prefix — one `-u <name>` token per line, per PIPELINE_* variable
+# name currently EXPORTED in this shell. An operator shell that has sourced
+# the clone's pipeline.config (`set -a`) exports PIPELINE_REPO,
+# PIPELINE_PROJECT_ROOT, PIPELINE_USE_LOCAL_PLUGIN, PIPELINE_BASE_BRANCH and
+# ~25 more; left alone `env`'s default "inherit everything" behavior passes
+# every one of them straight through into both the headless launch and the
+# label-seed subshell, redirecting either at the operator's own harness repo
+# instead of the sandbox under test (#1390 — calibration run #6: 0/5,
+# CALIB-ABORT reason=no-pr after the slate lookup ran against the inherited
+# PIPELINE_REPO). Callers `readarray` this into an argv array and splice it
+# into an `env` invocation BEFORE their own explicit KEY=value settings, so
+# the unset happens first and the explicit set wins.
+calib_env_prefix() {
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    printf -- '-u\n%s\n' "$name"
+  done < <(compgen -e | grep '^PIPELINE_')
+}
+
 build_launch() {
   local ids="$ISSUE_IDS"
   if [ -z "$ids" ]; then
-    ids="N1 N2 N3 N4 N5"   # --dry-run preview before --reset has resolved ids
+    # --dry-run preview before --reset has resolved real ids: one N<k> slot
+    # per slate dir, derived from the slate itself so an added/removed dir
+    # never leaves the preview showing the wrong width (#1395).
+    ids="$(slate_titles | awk '{ printf "N%d ", NR }')"
+    ids="${ids% }"
   fi
+  local -a scrub
+  readarray -t scrub < <(calib_env_prefix)
+  # #1414: the executor-model arm is an ENV knob, not a `claude` CLI flag —
+  # resolve-execute-dispatch.sh reads PIPELINE_PATH_B_MODEL_EXECUTE inside the
+  # sandbox session. Spliced AFTER ${scrub[@]} (which `-u`s it along with every
+  # other inherited PIPELINE_*), so the explicit set wins exactly the way
+  # PIPELINE_TRUST_PROFILE does. Empty arm = no token at all, not an empty set.
+  local -a bexec_env=()
+  [ -n "$EXECUTOR_MODEL" ] && bexec_env=("PIPELINE_PATH_B_MODEL_EXECUTE=$EXECUTOR_MODEL")
+  # #1429: the plan-gate arm is an ENV knob too — resolve-stage-model.sh's
+  # plan-eval arm reads PIPELINE_PLAN_GATE inside the sandbox session and emits
+  # GATE=<v> for fullsend to consume. Same splice position and same empty-arm
+  # semantics as bexec_env above.
+  local -a plan_gate_env=()
+  [ -n "$PLAN_GATE" ] && plan_gate_env=("PIPELINE_PLAN_GATE=$PLAN_GATE")
   # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
-  LAUNCH=(env -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
-          "PIPELINE_TRUST_PROFILE=$PROFILE" PIPELINE_HEADLESS=true
+  # `${scrub[@]}` comes FIRST so every inherited PIPELINE_* is unset before the
+  # explicit sets below run (#1390).
+  # #1421: the headless rail is the operator-owned permission mode plus the
+  # PermissionRequest bridge, not "grant everything unseen".
+  #   auto (default) -> `--permission-mode auto --permission-prompts none` and an
+  #                     exported bridge dir, so an escalation is QUEUED for the
+  #                     operator instead of denied outright or granted blind.
+  #   bypass         -> the old flag, no bridge dir: the one-run escape hatch for
+  #                     a launch nobody is watching.
+  # The queue dir is $HARNESS, NOT $LAUNCH_HARNESS: the stage is refreshed by
+  # `checkout --force --detach` every run, and it is not where the operator's
+  # interactive session is sitting. It is spliced AFTER "${scrub[@]}" (which
+  # `-u`s every inherited PIPELINE_*, #1390), so the explicit set wins.
+  local -a perm_argv bridge_env=()
+  case "${PIPELINE_HEADLESS_PERMISSIONS:-auto}" in
+    bypass) perm_argv=(--dangerously-skip-permissions) ;;
+    *)      perm_argv=(--permission-mode auto --permission-prompts none)
+            bridge_env=("PIPELINE_PERMISSION_BRIDGE_DIR=$HARNESS/.claude/scratch/permission-queue") ;;
+  esac
+  LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
+          "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" "${plan_gate_env[@]}"
+          PIPELINE_HEADLESS=true
+          "${bridge_env[@]}"
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
           timeout "$CALIB_TIMEOUT"
           claude -p "/pipeline:fullsend $ids"
-          --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" --dangerously-skip-permissions)
+          --plugin-dir "$LAUNCH_HARNESS" --model "$MODEL" "${perm_argv[@]}")
 }
 
 # ---------------------------------------------------------------------------
@@ -275,16 +387,57 @@ sync_template() {
   fi
 }
 
+# materialize_local_settings — refresh the sandbox's .claude/settings.local.json
+# from the HARNESS TEMPLATE (never from the sandbox's own flat copy). #1395: on
+# the operator's host the sandbox's settings.local.json is untracked AND
+# covered by a global git-ignore rule, so neither `--bootstrap` (a one-time
+# write) nor `git reset --hard` ever refreshes it — every hook added to the
+# template since the first bootstrap (log_subagent.py, capture_agent_cost.py)
+# never reached a single measured run. Called from both cmd_bootstrap() and
+# cmd_reset(), so every reset re-syncs it, not just the first one.
+#
+# All three mutating calls are routed through dispatch() so `--reset --dry-run`
+# previews the copy and mutates nothing; the hook-count line is an OBSERVATION,
+# not a mutation, so it is unconditional and appears in the dry-run preview too.
 materialize_local_settings() {
-  local flat="$SANDBOX/$TEMPLATE_SETTINGS_BASENAME"
-  [ -f "$flat" ] || return 0
-  local dest_dir="$SANDBOX/.claude"
-  mkdir -p "$dest_dir" || return 1
-  mv -f "$flat" "$dest_dir/$LOCAL_SETTINGS_BASENAME" || return 1
+  local src="$TEMPLATE_DIR/$TEMPLATE_SETTINGS_BASENAME"
+  [ -f "$src" ] || { warn "no template settings at $src"; return 0; }
+  dispatch mkdir -p "$SANDBOX/.claude" || return 1
+  dispatch cp -f "$src" "$SANDBOX/.claude/$LOCAL_SETTINGS_BASENAME" || return 1
+  # sync_template rsyncs the template's flat file into the sandbox root; the
+  # real refresh consumes it so it is never left behind as sandbox cruft.
+  dispatch rm -f "$SANDBOX/$TEMPLATE_SETTINGS_BASENAME" || return 1
+  # #1404: Claude Code refuses ${CLAUDE_PLUGIN_ROOT} in a settings-level hook
+  # (the variable is only honored inside a plugin's own hooks/hooks.json), so
+  # the template's placeholder is dead on arrival in the sandbox — every
+  # PostToolUse(Agent) hook exited 1 with that exact message in run #7 and the
+  # cost log was never written. Rewrite the literal token to the absolute
+  # staged-harness path on every refresh; sed against an already-rewritten
+  # file matches nothing, so this is idempotent by construction.
+  dispatch sed -i "s|\${CLAUDE_PLUGIN_ROOT}|$LAUNCH_HARNESS|g" \
+    "$SANDBOX/.claude/$LOCAL_SETTINGS_BASENAME" || return 1
+  local n
+  n="$(jq '[.hooks[]?[]?.hooks[]?] | length' "$src" 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  echo "calib: settings.local.json refreshed from template ($n hooks) -> $LAUNCH_HARNESS"
 }
 
 commit_sandbox() {
   git -C "$SANDBOX" add --all -- . || return 1
+  # #1412: keep .claude/settings.local.json perpetually UNTRACKED, on every
+  # host. materialize_local_settings() only ever mutates it in the working
+  # tree (never commits it) — on operators' hosts that happen to carry a
+  # global git-ignore rule for it (#1395), `git add --all` above silently
+  # skips it and this is a no-op. Without such a rule (every CI runner: a
+  # bare container with no ~/.config/git/ignore) `git add --all` stages it
+  # like any other file, it gets committed here, and the very next
+  # sync_sandbox_after_run() `git reset --hard origin/main` — which runs
+  # AFTER every measured launch — throws away whatever
+  # materialize_local_settings() wrote for THIS run and restores the stale
+  # committed copy instead.
+  # `--ignore-unmatch` makes this safe whether or not `add --all` staged it.
+  git -C "$SANDBOX" rm --cached --ignore-unmatch --quiet \
+    -- ".claude/$LOCAL_SETTINGS_BASENAME" || return 1
   if git -C "$SANDBOX" diff --cached --quiet 2>/dev/null; then
     return 0   # already in sync — no commit, no churn
   fi
@@ -318,8 +471,11 @@ seed_labels() {
     warn "no doctor.sh at $doctor — skipping label seed"
     return 0
   fi
+  local -a scrub
+  readarray -t scrub < <(calib_env_prefix)
   ( cd "$SANDBOX" \
-    && PIPELINE_REPO="$CALIB_REPO" \
+    && env "${scrub[@]}" \
+       PIPELINE_REPO="$CALIB_REPO" \
        PIPELINE_PROJECT_ROOT="$SANDBOX" \
        PIPELINE_BASE_BRANCH=main \
        bash "$doctor" --fix labels ) || return 1
@@ -429,6 +585,36 @@ close_stale_prs() {
   [ "$closed" -gt 0 ] && warn "closed $closed stale PR(s) in $CALIB_REPO"
 }
 
+# remove_stale_worktrees — unregister and delete the PREVIOUS run's
+# .claude/worktrees/wt-* checkouts, which MUST happen before
+# delete_stale_branches() (#1453). A checked-out branch cannot be deleted: with
+# 87 stale worktrees still holding refs/heads/feature/*, every reset printed 87
+# x `error: cannot delete branch '...' used by worktree at ...`, left the
+# branches in place, and kept the dirs on disk forever.
+#
+# CONTAINMENT (load-bearing): the sweep is PATH-SCOPED to the sandbox's own
+# .claude/worktrees/ dir. The sandbox MAIN checkout ($SANDBOX itself) is
+# excluded by the prefix test by construction, as is any sandbox worktree
+# checked out elsewhere; the harness ($HARNESS) and its stage ($STAGE_DIR) are
+# a DIFFERENT repo and never appear in this list at all. Removal failures warn
+# and continue — like close_stale_prs, the sweep must never fail the reset.
+remove_stale_worktrees() {
+  local line path wt_root removed=0
+  wt_root="$(abs_path "$SANDBOX")/.claude/worktrees"
+  while IFS= read -r line; do
+    case "$line" in 'worktree '*) path="${line#worktree }" ;; *) continue ;; esac
+    case "$(abs_path "$path")/" in "$wt_root"/*) ;; *) continue ;; esac
+    dispatch git -C "$SANDBOX" worktree remove --force "$path" \
+      || warn "could not remove the stale sandbox worktree $path"
+    removed=$((removed + 1))
+  done < <(git -C "$SANDBOX" worktree list --porcelain 2>/dev/null)
+  dispatch git -C "$SANDBOX" worktree prune
+  if [ "$removed" -gt 0 ] && [ "$DRY" -eq 0 ]; then
+    echo "calib: removed $removed stale sandbox worktree(s) before the branch sweep"
+  fi
+  return 0
+}
+
 # delete_stale_branches — delete every remote branch but main, then prune the
 # sandbox's local feature/* branches (an undeleted PR branch could resurface).
 delete_stale_branches() {
@@ -444,12 +630,62 @@ delete_stale_branches() {
       done
 }
 
+# archive_run_logs — move the PREVIOUS run's cost/observability logs out of
+# the way before create_slate_issues() seeds the fresh slate (#1408). The
+# sandbox's .claude/logs/ dir is gitignored, so cmd_reset's hard git reset
+# above never touches it: agent-costs.jsonl accumulated EVERY prior run's
+# rows forever, diluting the next run's pricing (run #9 priced run #8's
+# tokens too). usage-gate.jsonl is left in place — it is cross-run by design.
+# dispatch-aware (mkdir/mv) so a future dry-run caller previews, never mutates.
+archive_run_logs() {
+  local ts dest f any=0
+  local files=(
+    "$SANDBOX/.claude/logs/agent-costs.jsonl"
+    "$SANDBOX/.claude/logs/subagents.log"
+    "$SANDBOX/.claude/logs/subagents"
+    "$SANDBOX/.claude/logs/tool-use.log"
+    "$SANDBOX/.claude/logs/runs.log"
+    "$SANDBOX/.claude/logs/agent-cost-orchestrator-state.json"
+  )
+  for f in "${files[@]}"; do [ -e "$f" ] && any=1; done
+  [ "$any" -eq 1 ] || return 0
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  dest="$SANDBOX/.claude/logs-archive/$ts"
+  # The timestamp is second-granular, so two archives inside one UTC second
+  # (a --reset immediately followed by a --run, or the reverse) resolve the
+  # SAME dest — and `mv -f <dir> <dest>/` FAILS "Directory not empty" when
+  # <dest>/subagents/ already holds the earlier archive's sidecars. That
+  # aborted the loop half-done (agent-costs.jsonl moved, tool-use.log left
+  # behind) and returned before the log line below, silently: cmd_reset does
+  # not check this function's exit status. Suffix an unused dir instead of
+  # merging two runs' logs into one archive.
+  if [ -e "$dest" ]; then
+    local n=2
+    while [ -e "${dest}-${n}" ]; do n=$((n + 1)); done
+    dest="${dest}-${n}"
+  fi
+  dispatch mkdir -p "$dest" \
+    || { warn "could not create the log archive dir $dest — previous run logs left in place"; return 1; }
+  for f in "${files[@]}"; do
+    [ -e "$f" ] || continue
+    dispatch mv -f "$f" "$dest/" \
+      || { warn "could not archive $f -> $dest — previous run logs only PARTIALLY archived"; return 1; }
+  done
+  echo "calib: archived previous run logs -> $dest"
+}
+
 cmd_reset() {
   guard_sandbox_repo
   [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
   close_stale_prs
+  remove_stale_worktrees
   delete_stale_branches
-  [ "$DRY" -eq 1 ] && return 0
+  # --reset --dry-run is a free PREVIEW: it must also preview (and not mutate)
+  # the settings refresh, so materialize_local_settings() runs here INSTEAD of
+  # the hard reset below rather than being skipped outright (#1395). Every
+  # mutating call inside it is routed through dispatch(), which is what keeps
+  # this branch hermetic under DRY=1.
+  if [ "$DRY" -eq 1 ]; then materialize_local_settings; return 0; fi
   dispatch git -C "$SANDBOX" fetch --quiet --tags origin || warn "sandbox fetch failed — resetting against the local $BASE_TAG"
   git -C "$SANDBOX" rev-parse -q --verify "refs/tags/$BASE_TAG" >/dev/null 2>&1 \
     || die_run "$BASE_TAG does not exist in $SANDBOX (run --bootstrap first)"
@@ -457,13 +693,43 @@ cmd_reset() {
   git -C "$SANDBOX" reset --hard --quiet "$BASE_TAG" || die_run "could not reset the sandbox to $BASE_TAG"
   dispatch git -C "$SANDBOX" push --quiet --force-with-lease origin main \
     || die_run "could not force the sandbox main branch back to $BASE_TAG"
+  # Refresh AFTER the hard reset, every time: --bootstrap was the only writer
+  # of the sandbox's local-settings file, and it is untracked on the operator's
+  # host, so `git reset --hard` never touches it (#1395).
+  materialize_local_settings || die_run "could not refresh the sandbox local-settings file"
   reap_stale_issues
+  archive_run_logs
   create_slate_issues
 }
 
 # ---------------------------------------------------------------------------
 # --run harness staging
 # ---------------------------------------------------------------------------
+
+# strip_guard_hooks — arm 2 of the hook-necessity experiment (backlog #12,
+# #1409): remove every PreToolUse entry and the Stop entry running
+# enforce-ci-wait.py from the STAGED manifest, in place. SessionStart /
+# UserPromptSubmit (doctor-on-update.sh) are not guards and stay untouched.
+# Called only from stage_harness(), so the edit lives in the stage only — the
+# next refresh's `checkout --force --detach` discards it.
+strip_guard_hooks() {
+  local manifest="$STAGE_DIR/.claude-plugin/plugin.json" n tmp
+  [ -f "$manifest" ] || { warn "no manifest at $manifest — --hooks off has nothing to strip"; return 0; }
+  n="$(jq '(.hooks.PreToolUse // [] | length)
+           + ([(.hooks.Stop // [])[] | select((.hooks[]?.command // "") | contains("enforce-ci-wait.py"))] | length)' \
+        "$manifest" 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  tmp="$(mktemp)"
+  if jq '.hooks.PreToolUse = []
+         | .hooks.Stop = [(.hooks.Stop // [])[] | select((.hooks[]?.command // "") | contains("enforce-ci-wait.py") | not)]' \
+       "$manifest" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv "$tmp" "$manifest"
+    echo "calib: hooks=off — removed $n guard hook entries from the staged manifest"
+  else
+    rm -f "$tmp"
+    die_run "could not rewrite the staged manifest at $manifest"
+  fi
+}
 
 # stage_harness — materialize the harness under the calib dir as a DETACHED
 # worktree at the harness's current HEAD, so the sandbox session can actually
@@ -504,6 +770,7 @@ stage_harness() {
   # Without this copy the staged harness runs with no config at all.
   [ -f "$HARNESS/pipeline.config" ] && cp -f "$HARNESS/pipeline.config" "$STAGE_DIR/"
   echo "calib: staged harness $sha at $STAGE_DIR"
+  [ "$HOOKS" = "off" ] && strip_guard_hooks
 }
 
 # ---------------------------------------------------------------------------
@@ -518,11 +785,55 @@ ROWS_JSON=""
 PRICING_TOTAL=""
 PRS_JSON=""
 MERGED_JSON=""
+OPEN_JSON="[]"
 ISSUE_JSON="{}"
 ISSUE_JSON_FOR=""
 
+# backfill_costs — retroactive pass before pricing (#1406): async Agent
+# dispatches carry no usage at PostToolUse, so $CAPTURE_LOG under-attributes.
+# CLAUDE_PROJECT_DIR pins capture-agent-costs.sh's input+output to the
+# sandbox. Idempotent (record_key dedup); a failure WARNs, never aborts —
+# CALIB-ABORT reason=no-cost-log stays the only abort path.
+backfill_costs() {
+  local out rc n
+  out="$(CLAUDE_PROJECT_DIR="$SANDBOX" PIPELINE_LOGS_ENABLED=true \
+    bash "$HARNESS/scripts/capture-agent-costs.sh" 2>&1)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    warn "cost backfill failed (rc=$rc): $out"
+    return 0
+  fi
+  n="$(printf '%s' "$out" | sed -n 's/.*appended \([0-9][0-9]*\) record.*/\1/p' | head -1)"
+  echo "calib: cost backfill appended ${n:-0} record(s)"
+}
+
+# dedup_capture_log <path> — collapse forward+retroactive dupes by agent_id,
+# keeping max tokens.total (mirrors run-retro.sh's #1346 rule). Echoes a
+# deduped temp copy's path, or the original when absent/empty.
+dedup_capture_log() {
+  local src="$1" dst
+  [ -s "$src" ] || { printf '%s' "$src"; return 0; }
+  dst="$(mktemp)"
+  if jq -c -s '
+      ([ .[] | select((.agent_id // "") != "") ]
+         | group_by(.agent_id) | map(max_by(.tokens.total)))
+      + ([ .[] | select((.agent_id // "") == "")
+                | select(has("session_id") and .session_id != null) ]
+         | group_by(.session_id, .issue, .stage) | map(max_by(.tokens.total)))
+      + [ .[] | select((.agent_id // "") == "")
+              | select((has("session_id") | not) or .session_id == null) ]
+      | .[]
+    ' "$src" > "$dst" 2>/dev/null && [ -s "$dst" ]; then
+    printf '%s' "$dst"
+  else
+    rm -f "$dst"
+    printf '%s' "$src"
+  fi
+}
+
 load_run_substrate() {
   CAPTURE_LOG="$SANDBOX/.claude/logs/agent-costs.jsonl"
+  backfill_costs
   local clr="$HARNESS/scripts/cost-latency-report.sh"
   ROWS_JSON="[]"
   PRICING_TOTAL=""
@@ -532,12 +843,43 @@ load_run_substrate() {
     # the harness it would either error out (`ROWS_JSON=[]`) or join the
     # HARNESS's PRs against sandbox issue ids — silently wrong rows. Pin both
     # the repo and the cwd, in a subshell so the harness-side env is untouched.
+    local dedup_log
+    dedup_log="$(dedup_capture_log "$CAPTURE_LOG")"
     ROWS_JSON="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
-      bash "$clr" --emit-rows-json --capture-log "$CAPTURE_LOG" 2>/dev/null )"
+      bash "$clr" --emit-rows-json --capture-log "$dedup_log" 2>/dev/null )"
     [ -n "$ROWS_JSON" ] || ROWS_JSON="[]"
+    # Belt and braces (#1408): run #9 priced run #8's leftover rows too
+    # because nothing scoped pricing to THIS run's window. --since is
+    # DAY-granularity (cost-latency-report.sh compares ts_start's date
+    # prefix), so pass RUN_START_TS's date portion only — a full timestamp
+    # would exclude same-day rows from THIS run as well. The precise
+    # (sub-day) cut is the ROWS_JSON filter below.
     PRICING_TOTAL="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
-      bash "$clr" --emit-pricing-json --capture-log "$CAPTURE_LOG" 2>/dev/null \
+      bash "$clr" --emit-pricing-json --capture-log "$dedup_log" \
+      ${RUN_START_TS:+--since "${RUN_START_TS%%T*}"} 2>/dev/null \
       | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
+    # Second layer: restrict ROWS_JSON itself (issue_cost()'s apportionment
+    # sum, below) to issues carrying a FRESH capture record — ts_end at/after
+    # RUN_START_TS — so a stale row that survives the cmd_reset archive can
+    # never dilute a fresh issue's share of the priced total.
+    if [ -n "${RUN_START_TS:-}" ] && [ -s "$dedup_log" ]; then
+      local fresh_issues
+      # tostring both sides: dedup_log's .issue is a STRING (capture-agent-
+      # costs.sh's #issue tag), ROWS_JSON's .issue is a bare JSON NUMBER
+      # (cost-latency-report.sh's TSV column) — an untyped comparison would
+      # never match and silently zero ROWS_JSON on every run. A record with
+      # NO ts_end at all (unknown timing, never emitted by the real capture
+      # schema but possible from an older/foreign writer) fails OPEN — this
+      # is a belt-and-braces layer on top of the archive above, not the sole
+      # defense, so it must never zero a run's pricing over missing metadata.
+      fresh_issues="$(jq -c -s --arg t "$RUN_START_TS" \
+        '[.[] | select((.ts_end // "") == "" or .ts_end >= $t) | (.issue | tostring)] | unique' \
+        "$dedup_log" 2>/dev/null)"
+      [ -n "$fresh_issues" ] || fresh_issues="[]"
+      ROWS_JSON="$(printf '%s' "$ROWS_JSON" | jq -c --argjson f "$fresh_issues" \
+        '[.[] | select((.issue | tostring) as $i | $f | any(. == $i))]' 2>/dev/null)"
+      [ -n "$ROWS_JSON" ] || ROWS_JSON="[]"
+    fi
   fi
   # ONE PR fetch for the whole run. `--state all` because "this run opened no
   # PR at all" is a distinct, load-bearing observation (see the abort detector)
@@ -545,10 +887,17 @@ load_run_substrate() {
   # mergedAt carries both the merged filter and each issue's wall-clock end;
   # comments carry the PR-eval verdict — so no second round trip per PR.
   PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state all --limit 50 \
-    --json number,body,headRefName,files,mergedAt,comments 2>/dev/null)"
+    --json number,body,headRefName,files,mergedAt,comments,state 2>/dev/null)"
   [ -n "$PRS_JSON" ] || PRS_JSON="[]"
   MERGED_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.mergedAt != null)]' 2>/dev/null)"
   [ -n "$MERGED_JSON" ] || MERGED_JSON="[]"
+  # The open subset, cached beside MERGED_JSON and taken the same way (#1451):
+  # a Flagged-and-unmerged PR is the gate WORKING, so the pr-eval verdict has
+  # to be readable off it. `state == "OPEN"`, not `mergedAt == null`:
+  # `--state all` also returns CLOSED-unmerged PRs, which are abandoned work
+  # rather than a blocked gate. `state` joins the --json list above for this.
+  OPEN_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.state == "OPEN")]' 2>/dev/null)"
+  [ -n "$OPEN_JSON" ] || OPEN_JSON="[]"
 }
 
 # load_issue_json <issue> — ONE `gh issue view` per issue, cached and fetched
@@ -570,6 +919,17 @@ load_issue_json() {
 merged_pr_field() {
   printf '%s' "$MERGED_JSON" | jq -r --arg n "$1" --arg f "$2" \
     '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {} | .[$f] // empty' 2>/dev/null
+}
+
+# pr_verdict_from <prs-json> <issue> — the last `**Verdict:**` in the comments
+# of the FIRST PR in <prs-json> whose body references #<issue>, else empty.
+# Same body-references scoping as merged_pr_field, so the two agree on which PR
+# belongs to an issue. Unfiltered by heading: a PR's own comments carry only
+# the eval.
+pr_verdict_from() {
+  printf '%s' "$1" | jq -r --arg n "$2" \
+    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
+     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null
 }
 
 # detect_abort — did the run FAIL TO START (or fail to finish) rather than do
@@ -609,6 +969,15 @@ detect_abort() {
   case "$n" in
     ''|0) ABORT_REASON="no-pr" ;;
   esac
+  # no-cost-log: the sandbox session registered no cost-capture hooks, so
+  # nothing was priced (#1395). Guarded on `-z "$ABORT_REASON"` rather than
+  # placed after a `return` — the `no-pr` arm above assigns WITHOUT returning,
+  # so an unguarded append here would OVERWRITE it and invert the documented
+  # precedence (timeout > held > no-pr > no-cost-log). CAPTURE_LOG is already
+  # set by load_run_substrate(), which emit_calib_block() calls before this.
+  if [ -z "$ABORT_REASON" ] && [ ! -s "$CAPTURE_LOG" ]; then
+    ABORT_REASON="no-cost-log"
+  fi
 }
 
 # row_field <issue> <jq field> — echoes the rows-JSON field or empty.
@@ -650,16 +1019,24 @@ issue_wall() {
 }
 
 # issue_verdicts <issue> — `<plan-eval>/<pr-eval>`, each `n/a` when absent.
-# Both halves are reduced locally: the plan half from the cached issue blob,
-# the PR half from the merging PR's own comments inside the single PR fetch.
+# Both halves are reduced locally, each from its OWN source (#1451):
+#   plan half  the last `**Verdict:**` inside a `## Plan Evaluation` comment on
+#              the issue. The heading filter is load-bearing, not cosmetic: the
+#              PR evaluator posts its `## Evaluation` on the ISSUE too, so an
+#              unfiltered `last` across all comments reports the PR verdict as
+#              the plan half (run 20 printed `verdicts=Flagged/n/a`).
+#   PR half    the last `**Verdict:**` in the merging PR's own comments, else
+#              the OPEN PR referencing the issue — a Flagged-and-unmerged PR is
+#              the gate working, and must not read as `n/a`. Unfiltered by
+#              heading: a PR's own comments carry only the eval.
 issue_verdicts() {
   local issue="$1" plan pr
   load_issue_json "$issue"
   plan="$(printf '%s' "$ISSUE_JSON" | jq -r \
-    '[(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
-  pr="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
-    '[.[] | select((.body // "") | test("#" + $n + "\\b"))] | first // {}
-     | [(.comments // [])[] | .body // "" | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+    '[(.comments // [])[] | .body // "" | select(contains("## Plan Evaluation"))
+      | capture("Verdict:\\*\\*\\s*(?<v>[A-Za-z-]+)"; "g").v] | last // empty' 2>/dev/null)"
+  pr="$(pr_verdict_from "$MERGED_JSON" "$issue")"
+  [ -n "$pr" ] || pr="$(pr_verdict_from "$OPEN_JSON" "$issue")"
   printf '%s/%s' "${plan:-n/a}" "${pr:-n/a}"
 }
 
@@ -711,10 +1088,18 @@ issue_unexpected() {
   printf '%s' "$n"
 }
 
+# pricing_is_zero <value> — TRUE when <value> is numeric and equal to zero.
+# cost-latency-report.sh --emit-pricing-json returns the NON-empty string
+# "0.00" for a missing/empty capture log (#1395), so an emptiness-only guard
+# on PRICING_TOTAL is inert — the numeric check is what actually fires.
+pricing_is_zero() {
+  awk -v v="${1:-}" 'BEGIN{ if (v ~ /^[0-9.]+$/ && v + 0 == 0) exit 0; exit 1 }'
+}
+
 emit_calib_block() {
   local wall_total="$1"
   local i=0 issue d path cost wall verdicts reftest unexpected
-  local total_cost=0 pass=0 count=0
+  local total_cost=0 pass=0 count=0 graded=0 planted="n/a" cost_display
   load_run_substrate
   detect_abort
   if [ -n "$ABORT_REASON" ]; then
@@ -734,26 +1119,111 @@ emit_calib_block() {
     # sandbox and report `fail` — a regression the run never got near.
     if [ -n "$ABORT_REASON" ] && [ -z "$(merged_pr_field "$issue" mergedAt)" ]; then
       reftest="n/a"
+    # The gate stopped this one (#1451): nothing merged for the issue and
+    # pr-eval Flagged its open PR, so the reference test would grade the
+    # UNFIXED tree and report `fail` — a defect the gate actually caught.
+    # `blocked` says so, and is excluded from the total's k/n below. The
+    # abort arm stays FIRST so an aborted run still reports `n/a` on every
+    # row. A Flagged-then-fixed-then-merged PR still runs its reference test.
+    elif [ -z "$(merged_pr_field "$issue" mergedAt)" ] && [ "${verdicts##*/}" = "Flagged" ]; then
+      reftest="blocked"
     else
       reftest="$(issue_reftest "$d")"
     fi
     unexpected="$(issue_unexpected "$issue" "$d")"
     [ "$reftest" = "pass" ] && pass=$((pass + 1))
+    # The k/n denominator counts GRADED rows only, so a blocked row lands in
+    # neither p nor n; `issues=` keeps reporting the full slate width.
+    [ "$reftest" = "blocked" ] || graded=$((graded + 1))
     if [ -n "$cost" ]; then
       total_cost="$(awk -v a="$total_cost" -v b="$cost" 'BEGIN{ printf "%.2f", a + b }')"
     fi
+    # planted= grades the ESCAPE, not the implementer (#1395). Three rules,
+    # GATE FIRST (#1451):
+    #   pr=Flagged                      caught — regardless of reftest. The
+    #                                   escape was stopped at the gate, so the
+    #                                   tree it never landed in says nothing.
+    #   reftest=pass                    caught — the boundary was implemented
+    #                                   correctly.
+    #   reftest=fail, pr not Flagged    missed — a defective PR passed the gate.
+    # n/a when the slate carries no planted-defect dir, or the row was neither
+    # flagged nor graded. Testing the gate first is what makes `blocked` (which
+    # can only arise under a Flagged pr verdict) grade as `caught` rather than
+    # falling through to n/a.
+    case "$(basename "${d:-}")" in
+      *planted*)
+        case "$verdicts" in
+          */Flagged) planted="caught" ;;
+          *)
+            if [ "$reftest" = "pass" ]; then
+              planted="caught"
+            elif [ "$reftest" = "fail" ]; then
+              planted="missed"
+            fi
+            ;;
+        esac
+        ;;
+    esac
     printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
       "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected"
   done
+  # A $0 total is never printable UNPRICED (#1395): render n/a on the TOTAL
+  # line whenever the capture log is missing/empty, PRICING_TOTAL is empty, or
+  # PRICING_TOTAL is numerically zero — the zero/missing-log arms are the ones
+  # that actually fire in production (see pricing_is_zero() above).
+  cost_display="$total_cost"
+  if [ ! -s "$CAPTURE_LOG" ] || [ -z "$PRICING_TOTAL" ] || pricing_is_zero "$PRICING_TOTAL"; then
+    cost_display="n/a"
+  fi
+  # hooks=<on|off> (#1409) is recorded on every CALIB-TOTAL line, all arms, so
+  # an off-arm run is never mistaken for the on-arm baseline. bexec=<opus|
+  # sonnet> (#1414) is OPTIONAL — appended as one pre-built atom rather than a
+  # format field, because the unset arm is the harness default rather than an
+  # arm, and because the CALIB-TOTAL grammar contract
+  # (tests/test-calibration-contract.sh (d)) pins the six named fields shared
+  # by doc / emitter / run-retro.sh header.
+  local bexec_atom=""
+  [ -n "$EXECUTOR_MODEL" ] && bexec_atom=" bexec=$EXECUTOR_MODEL"
+  # plan_gate=<full|single|none|annotate> (#1429, #1435) is OPTIONAL for the same reason
+  # and is a PRE-BUILT atom for exactly the same reason: a literal `plan_gate=`
+  # in the format string would be read by the (d) grammar contract's
+  # `[a-z][a-z-]*=` extractor as a bogus SEVENTH field `gate=` (the char class
+  # breaks at `_`).
+  local plan_gate_atom=""
+  [ -n "$PLAN_GATE" ] && plan_gate_atom=" plan_gate=$PLAN_GATE"
+  # bridge_prompts=<n> (#1421) — how many permission escalations THIS run raised
+  # through the PermissionRequest bridge. It is the measurement that says whether
+  # replacing --dangerously-skip-permissions with `--permission-mode auto` turned
+  # a $60-120 run into a wall of unanswered prompts, each burning
+  # PIPELINE_PERMISSION_BRIDGE_TIMEOUT seconds (expected <= 3). A pre-built atom
+  # for the same reason bexec= is: the CALIB-TOTAL grammar contract
+  # (tests/test-calibration-contract.sh (d)) greps `[a-z][a-z-]*=` out of the
+  # EMITTER'S FORMAT STRING, and `bridge_prompts=` in there would add a bogus
+  # `prompts` field that docs/calibration.md and run-retro.sh's header would then
+  # have to declare too.
+  # `-newermt "$RUN_START_TS"` is load-bearing: the queue dir is never cleaned
+  # between runs, so an unpruned request from a previous run would inflate every
+  # later run's count. Unlike RUN_TS, RUN_START_TS is second-precision — minute
+  # truncation would count the prior minute's requests.
+  local bridge_atom bridge_q n_bridge=0
+  bridge_q="$HARNESS/.claude/scratch/permission-queue"
+  if [ -d "$bridge_q" ] && [ -n "${RUN_START_TS:-}" ]; then
+    n_bridge="$(find "$bridge_q" -maxdepth 1 -type f -name '*.json' \
+                  -newermt "$RUN_START_TS" 2>/dev/null | wc -l | tr -d ' ')"
+    case "$n_bridge" in ''|*[!0-9]*) n_bridge=0 ;; esac
+  fi
+  bridge_atom=" bridge_prompts=$n_bridge"
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s\n' \
-      "$total_cost" "$wall_total" "$count" "$pass" "$count"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "$pass" "$graded" "$planted" "$HOOKS" \
+      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s\n' \
-      "$total_cost" "$wall_total" "$count" "n/a"
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s\n' \
+      "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" \
+      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
   fi
 }
 
@@ -778,21 +1248,35 @@ cmd_run() {
   # cwd. The dir is created BEFORE the launch because the session log is tee'd
   # as the run happens — it is the only evidence of what a run that stopped to
   # ask a question actually said, and detect_abort reads its last line.
-  # TRUNCATING, not appending: one artifact per UTC day, last run wins.
-  # run-retro.sh's compute_calib() sums the `reftest=` atoms of EVERY CALIB
-  # line in the newest artifact, so two same-day runs appended to one file
-  # double-count (5/5 -> 10/10). run-retro.sh picks the newest artifact by
-  # FILENAME, which this <date>.txt name keeps stable across the rewrite; the
-  # <date>.log beside it follows the same day-keyed rule.
+  # RUN_TS is MINUTE-granular, not day-granular (#1408): a same-day re-run
+  # gets its OWN artifact pair instead of truncating the prior run's (run #9
+  # silently erased run #8's `reason=timeout` record). run-retro.sh picks the
+  # newest artifact by FILENAME sort, and the `T<HHMM>Z` suffix keeps that
+  # order (it sorts after the bare legacy `<date>.txt`, which run-retro.sh
+  # still reads for older artifacts). RUN_START_TS is second-precision and
+  # recorded separately — load_run_substrate()'s ts_end filter needs that
+  # resolution, which RUN_TS's minute truncation cannot give it.
   mkdir -p "$CALIB_OUT_DIR" 2>/dev/null
-  RUN_LOG="$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).log"
+  RUN_TS="$(date -u +%Y-%m-%dT%H%MZ)"
+  RUN_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # #1409/#1414: a non-default arm suffixes both artifacts so it can never be
+  # mistaken for the baseline; the default arms keep the plain name.
+  # Composable in a FIXED order — -hooks-off, then -bexec-<M>, then
+  # -plan-gate-<v> (#1429) — so an every-arm run names
+  # <ts>-hooks-off-bexec-opus-plan-gate-single and run-retro.sh has one order to
+  # peel.
+  local run_suffix=""
+  [ "$HOOKS" = "off" ] && run_suffix="${run_suffix}-hooks-off"
+  [ -n "$EXECUTOR_MODEL" ] && run_suffix="${run_suffix}-bexec-$EXECUTOR_MODEL"
+  [ -n "$PLAN_GATE" ] && run_suffix="${run_suffix}-plan-gate-$PLAN_GATE"
+  RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
   RUN_RC=${PIPESTATUS[0]}
   t1="$(date +%s)"
   [ "$RUN_RC" -eq 0 ] || warn "headless run exited $RUN_RC (124 = hit the ${CALIB_TIMEOUT}s cap) — summarizing anyway"
   sync_sandbox_after_run
-  emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/$(date -u +%Y-%m-%d).txt"
+  emit_calib_block "$((t1 - t0))" | tee "$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.txt"
 }
 
 # ---------------------------------------------------------------------------
@@ -802,7 +1286,15 @@ cmd_run() {
 case "$MODE" in
   dry-run)
     build_launch
-    dispatch "${LAUNCH[@]}"   # DRY=1 -> exactly one CALIB-LAUNCH preview line
+    # DRY=1 here always (MODE=dry-run forces it), so this never reaches the
+    # real "$@" branch of dispatch() — the trailing hooks=<val>/bexec=<val>
+    # tokens are safe as informational-only preview text (#1409/#1414), never
+    # passed to `claude`. bexec= is printed only when the arm is set, matching
+    # its CALIB-TOTAL atom.
+    ARM_TOKENS=("hooks=$HOOKS")
+    [ -n "$EXECUTOR_MODEL" ] && ARM_TOKENS+=("bexec=$EXECUTOR_MODEL")
+    [ -n "$PLAN_GATE" ] && ARM_TOKENS+=("plan_gate=$PLAN_GATE")
+    dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;
   bootstrap) cmd_bootstrap ;;

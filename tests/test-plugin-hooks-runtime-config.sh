@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Asserts the renamed plugin-rooted hooks (enforce-base-branch.py,
-# restrict_paths.py, enforce-path-c-delegation.py) resolve their
-# PIPELINE_* values from $CLAUDE_PROJECT_DIR/pipeline.config at fire time
-# rather than via install-time envsubst substitution.
+# enforce-path-c-delegation.py) resolve their PIPELINE_* values from
+# $CLAUDE_PROJECT_DIR/pipeline.config at fire time rather than via
+# install-time envsubst substitution.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0
@@ -16,7 +16,7 @@ note_pass() { PASS=$((PASS + 1)); }
 
 # --- Sandbox 1: enforce-base-branch.py reads PIPELINE_BASE_BRANCH ---
 SANDBOX1=$(mktemp -d)
-trap 'rm -rf "$SANDBOX1" "$SANDBOX2" "$SANDBOX3"' EXIT
+trap 'rm -rf "$SANDBOX1" "$SANDBOX3"' EXIT
 cat > "$SANDBOX1/pipeline.config" <<'EOF'
 PIPELINE_BASE_BRANCH="custom-base"
 PIPELINE_WORKTREE_PREFIX="alt"
@@ -50,37 +50,6 @@ unset CLAUDE_PROJECT_DIR
 # Assert no literal ${PIPELINE_BASE_BRANCH} remains in the source.
 if grep -q '${PIPELINE_BASE_BRANCH}' "$REPO_ROOT/hooks/enforce-base-branch.py"; then
   note_fail "enforce-base-branch.py still contains literal \${PIPELINE_BASE_BRANCH}"
-else
-  note_pass
-fi
-
-# --- Sandbox 2: restrict_paths.py reads PIPELINE_WORKTREE_PREFIX ---
-SANDBOX2=$(mktemp -d)
-cat > "$SANDBOX2/pipeline.config" <<'EOF'
-PIPELINE_WORKTREE_PREFIX="alt"
-EOF
-
-# A sibling worktree under the configured prefix should be allowed.
-PARENT="$(dirname "$SANDBOX2")"
-WORKTREE_DIR="$PARENT/alt-99-foo"
-mkdir -p "$WORKTREE_DIR"
-TARGET_FILE="$WORKTREE_DIR/file.py"
-touch "$TARGET_FILE"
-
-restrict_input=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1]}}))' "$TARGET_FILE")
-export CLAUDE_PROJECT_DIR="$SANDBOX2"
-if printf '%s' "$restrict_input" | python3 "$REPO_ROOT/hooks/restrict_paths.py" >/dev/null 2>&1; then
-  note_pass
-else
-  err=$(printf '%s' "$restrict_input" | python3 "$REPO_ROOT/hooks/restrict_paths.py" 2>&1 >/dev/null || true)
-  note_fail "restrict_paths.py blocked an 'alt-99-foo' worktree path despite PIPELINE_WORKTREE_PREFIX=alt (err: $err)"
-fi
-unset CLAUDE_PROJECT_DIR
-
-rm -rf "$WORKTREE_DIR"
-
-if grep -q '${PIPELINE_WORKTREE_PREFIX}' "$REPO_ROOT/hooks/restrict_paths.py"; then
-  note_fail "restrict_paths.py still contains literal \${PIPELINE_WORKTREE_PREFIX}"
 else
   note_pass
 fi
@@ -124,7 +93,7 @@ else
 fi
 
 # --- Invariant: renamed plain .py files exist, old .template files do not ---
-for f in enforce-base-branch.py restrict_paths.py enforce-path-c-delegation.py; do
+for f in enforce-base-branch.py enforce-path-c-delegation.py; do
   if [ -f "$REPO_ROOT/hooks/$f" ]; then note_pass; else note_fail "hooks/$f missing"; fi
   if [ -f "$REPO_ROOT/hooks/$f.template" ]; then note_fail "hooks/$f.template should be removed"; else note_pass; fi
 done

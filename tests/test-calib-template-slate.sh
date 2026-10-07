@@ -4,10 +4,13 @@
 #   dev/calib/template/ — a consumer-shaped sandbox project the pipeline can be
 #                         pointed at (its own pipeline.config, its own test
 #                         runner, its own CI workflow).
-#   dev/calib/slate/    — five canned issues (title/body/reference test/expected
+#   dev/calib/slate/    — six canned issues (title/body/reference test/expected
 #                         files) covering the routing shapes the calibration
 #                         run needs: docs-only, quick-fix, plain feature,
-#                         high-uncertainty (race + auth), and multi-directory.
+#                         high-uncertainty (race + auth), multi-directory, and
+#                         the planted boundary defect (a hidden reference-test
+#                         assertion the obvious implementation fails, so the
+#                         pr-eval gate has something to catch).
 #
 # Nothing here shells out to the network or to `gh`; every assertion is a
 # filesystem / content / exit-code check, plus a live run of the template test
@@ -102,16 +105,20 @@ check_cfg PIPELINE_REPO "rjskene/pipeline-calib"
 check_cfg PIPELINE_BASE_BRANCH "main"
 check_cfg PIPELINE_TEST_CMD "bash tests/run.sh"
 check_cfg PIPELINE_LOGS_ENABLED "true"
-check_cfg PIPELINE_TEST_FILE_GLOBS "case-*.sh"
 
 # The sandbox config carries EXACTLY the knobs the sandbox consumes, and every
 # one of them is declared in pipeline.config.example. Pinning the SET (rather
 # than naming the knobs that were dropped) keeps this file free of tokens the
 # config-drift lint would flag, and catches any future inert knob for free.
-want_knobs="PIPELINE_BASE_BRANCH PIPELINE_INSTALL_CMD PIPELINE_LOGS_ENABLED PIPELINE_REPO PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TEST_FILE_GLOBS PIPELINE_TRUST_PROFILE PIPELINE_WORKTREE_PREFIX"
+# #1420 dropped the #1201 discoverable-test basename-glob knob (nine -> eight): its
+# sole reader was the retired split-role W7 locked-test gate, so declaring it in the
+# sandbox would leave an ORPHAN knob the drift lint reports. Named descriptively
+# rather than spelled out, because check-config-drift.sh scans tests/ and a literal
+# here would report the retired knob as referenced-but-undeclared forever.
+want_knobs="PIPELINE_BASE_BRANCH PIPELINE_INSTALL_CMD PIPELINE_LOGS_ENABLED PIPELINE_REPO PIPELINE_SEED_CMD PIPELINE_TEST_CMD PIPELINE_TRUST_PROFILE PIPELINE_WORKTREE_PREFIX"
 got_knobs=$(grep -oE '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$cfg" | sed 's/[[:space:]]//g; s/=$//' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')
 if [ "$got_knobs" = "$want_knobs" ]; then
-  pass_msg "pipeline.config knob set is exactly the nine declared knobs"
+  pass_msg "pipeline.config knob set is exactly the eight declared knobs"
 else
   fail_msg "pipeline.config knob set is '$got_knobs' (want '$want_knobs')"
 fi
@@ -133,6 +140,18 @@ if python3 -c "$JSON_LOAD" "$settings" >/dev/null 2>&1; then
   pass_msg "claude-settings.local.json is valid JSON"
 else
   fail_msg "claude-settings.local.json is not valid JSON"
+fi
+
+# #1404: Claude Code refuses ${CLAUDE_PLUGIN_ROOT} in a settings-level hook —
+# the template keeps the placeholder to document intent, but calibration-run.sh
+# substitutes it for the absolute staged-harness path on every reset. The
+# $comment has to say so, or a reader sees a dead-looking variable with no clue
+# the launcher is the one making it work.
+comment=$(python3 -c "import json; print(json.load(open('$settings')).get('\$comment', ''))" 2>/dev/null)
+if printf '%s' "$comment" | grep -qi 'substitut'; then
+  pass_msg '$comment documents that the launcher substitutes ${CLAUDE_PLUGIN_ROOT}'
+else
+  fail_msg '$comment does not document the launcher substitution of ${CLAUDE_PLUGIN_ROOT}'
 fi
 
 for plugin in "pipeline@claude-pipeline" "pipeline@claude-pipeline-local"; do
@@ -234,10 +253,10 @@ echo "== (d) slate shape =="
 # ---------------------------------------------------------------------------
 
 mapfile -t slate_dirs < <(find "$SLATE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
-if [ "${#slate_dirs[@]}" -eq 5 ]; then
-  pass_msg "slate has exactly 5 issue directories"
+if [ "${#slate_dirs[@]}" -eq 6 ]; then
+  pass_msg "slate has exactly 6 issue directories"
 else
-  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 5)"
+  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 6)"
 fi
 
 for d in "${slate_dirs[@]}"; do
@@ -300,7 +319,11 @@ check_count() {
 }
 check_count "docs-only issues" "$docs_only" 1
 check_count "quick-fix issues" "$quick_fix" 1
-check_count "feat-titled issues" "$feature" 1
+# 2, not 1: the planted-defect slate issue (#1395) is the second `feat(`-titled
+# one. The other four counts stay at 1 — the new dir must not perturb them, so a
+# body that says `quick fix`, or names both `race` and `auth`, or spans lib/ +
+# docs/, would red one of the rows below.
+check_count "feat-titled issues" "$feature" 2
 check_count "race+auth issues" "$race_auth" 1
 check_count "lib/+docs/ multi-dir issues" "$lib_and_docs" 1
 
@@ -333,6 +356,114 @@ for d in "${slate_dirs[@]}"; do
     fail_msg "$name reference test PASSES against the untouched template (should fail)"
   fi
 done
+
+# ---------------------------------------------------------------------------
+echo "== (i) slate 01 reference test scores correctness, not wording =="
+# ---------------------------------------------------------------------------
+# The issue-01 doc check must accept ANY phrasing that names `--status`
+# together with open/done/all — not one blessed literal. Calibration run #17
+# wrote "`--status` accepts `open|done|all`", which is correct, and the old
+# literal grep for '--status open|done|all' scored it FAIL (5/6, #1438).
+
+REFTEST_01="$SLATE_DIR/01-doc-stale/reference-test.sh"
+
+# rewrite_listing_section <sandbox docs/usage.md> <file with the replacement>
+# Swaps everything between "## Listing tasks" and the next "## " heading.
+rewrite_listing_section() {
+  local usage="$1" repl="$2"
+  awk -v repl="$repl" '
+    $0 == "## Listing tasks" {
+      print
+      while ((getline line < repl) > 0) print line
+      skip = 1
+      next
+    }
+    skip && /^## / { skip = 0 }
+    skip { next }
+    { print }
+  ' "$usage" > "$usage.new" && mv "$usage.new" "$usage"
+}
+
+# run_reftest_01 <file with the replacement section> — echoes output, returns rc
+run_reftest_01() {
+  rm -rf "$TMP/sbx01"
+  cp -a "$TEMPLATE_DIR" "$TMP/sbx01"
+  rewrite_listing_section "$TMP/sbx01/docs/usage.md" "$1" || return 9
+  ( cd "$TMP/sbx01" && bash "$REFTEST_01" ) 2>&1
+}
+
+# (A) the positive control: calibration run #17's wording.
+cat > "$TMP/section-run17.md" <<'SECTION'
+
+```
+bash bin/calibctl list
+bash bin/calibctl list --priority high
+bash bin/calibctl list --status all
+```
+
+`--status` accepts `open|done|all`. The default is `--status open`, so tasks
+you have already completed are hidden unless you ask for them. `list` exits 1
+when nothing matches, which makes it easy to use in a shell conditional:
+
+```
+if bash bin/calibctl list --priority high >/dev/null; then
+  echo "there is high-priority work outstanding"
+fi
+```
+
+SECTION
+
+# (B) the same facts in a hard-wrapped sentence: `all` lands on the next
+# physical line, so a single-line check would score this correct fix FAIL.
+cat > "$TMP/section-wrapped.md" <<'SECTION'
+
+```
+bash bin/calibctl list
+bash bin/calibctl list --status done
+```
+
+`--status` selects which tasks are listed; it accepts `open`, `done` or
+`all`. The default is `--status open`, so completed tasks stay hidden until
+you ask for them. `list` exits 1 when nothing matches.
+
+SECTION
+
+# (C) under-specified: `--all` is gone and the default is stated, but the
+# docs never name the other two values. This must STAY red.
+cat > "$TMP/section-thin.md" <<'SECTION'
+
+```
+bash bin/calibctl list
+```
+
+`--status` picks which tasks appear; the default is `--status open`. Pass a
+different status when you want something else. `list` exits 1 when nothing
+matches.
+
+SECTION
+
+out=$(run_reftest_01 "$TMP/section-run17.md"); rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "slate 01 reftest passes on run #17's wording (\`--status\` accepts \`open|done|all\`)"
+else
+  fail_msg "slate 01 reftest fails run #17's correct wording (rc=$rc): $(echo "$out" | grep '^FAIL' | tr '\n' ' ')"
+fi
+
+out=$(run_reftest_01 "$TMP/section-wrapped.md"); rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass_msg "slate 01 reftest passes when the values are hard-wrapped across lines"
+else
+  fail_msg "slate 01 reftest fails a hard-wrapped correct fix (rc=$rc): $(echo "$out" | grep '^FAIL' | tr '\n' ' ')"
+fi
+
+out=$(run_reftest_01 "$TMP/section-thin.md"); rc=$?
+if [ "$rc" -ne 0 ] \
+   && printf '%s' "$out" | grep -qF "docs/usage.md should document '--status open|done|all'" \
+   && printf '%s' "$out" | grep -qF 'issue 01: FAIL (1 check(s))'; then
+  pass_msg "slate 01 reftest still fails docs that never name done/all, with the stable message"
+else
+  fail_msg "slate 01 reftest should fail ONLY the doc check on under-specified docs (rc=$rc): $(echo "$out" | grep -E '^FAIL|^issue 01' | tr '\n' ' ')"
+fi
 
 # ---------------------------------------------------------------------------
 echo

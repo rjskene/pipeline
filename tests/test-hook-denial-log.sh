@@ -41,8 +41,9 @@ inc()      { TESTS=$((TESTS + 1)); }
 WORK=$(mktemp -d)
 PROJ="$WORK/project"
 STUB_DIR="$WORK/stub"
+GWORK=""
 cleanup() {
-  rm -rf "$WORK"
+  rm -rf "$WORK" "${GWORK:-}"
   rm -f /tmp/claude-path-c-denylog-*.cache
 }
 trap cleanup EXIT
@@ -70,8 +71,8 @@ esac
 EOF
 chmod +x "$STUB_DIR/gh"
 
-for h in block_deletions.py check-ci-skip-markers.py enforce-base-branch.py \
-         enforce-comment-trust.py restrict_paths.py enforce-ci-wait.py \
+for h in check-ci-skip-markers.py enforce-base-branch.py \
+         enforce-comment-trust.py enforce-ci-wait.py \
          enforce-path-c-delegation.py; do
   if [ ! -f "$HOOKS_DIR/$h" ]; then
     echo "ERROR: hook not found at $HOOKS_DIR/$h" >&2
@@ -111,16 +112,12 @@ reset_log() { rm -rf "${PROJ:?}/$LOG_REL"; }
 payload_for() {
   local stem="$1" sid="$2"
   case "$stem" in
-    block_deletions)
-      printf '{"tool_name":"Bash","session_id":"%s","tool_input":{"command":"rm -rf /some/path"}}' "$sid" ;;
     check-ci-skip-markers)
       printf '{"tool_name":"Bash","session_id":"%s","tool_input":{"command":"git commit -m \\"fix [skip ci] handling\\""}}' "$sid" ;;
     enforce-base-branch)
       printf '{"tool_name":"Bash","session_id":"%s","tool_input":{"command":"gh pr create --title T --body B"}}' "$sid" ;;
     enforce-comment-trust)
       printf '{"tool_name":"Bash","session_id":"%s","tool_input":{"command":"gh issue view 1 --json comments"}}' "$sid" ;;
-    restrict_paths)
-      printf '{"tool_name":"Write","session_id":"%s","tool_input":{"file_path":"/etc/shadow"}}' "$sid" ;;
     enforce-ci-wait)
       printf '{"session_id":"%s","cwd":"%s"}' "$sid" "$PROJ" ;;
     enforce-path-c-delegation)
@@ -131,7 +128,6 @@ payload_for() {
 # tool_for <hook-stem> — the `tool` field the record must carry.
 tool_for() {
   case "$1" in
-    restrict_paths)            printf 'Write' ;;
     enforce-ci-wait)           printf 'Stop' ;;
     enforce-path-c-delegation) printf 'Edit' ;;
     *)                         printf 'Bash' ;;
@@ -235,8 +231,8 @@ PY
 # Case (a) — gate ON: exactly one well-formed record per denied hook.
 # ---------------------------------------------------------------------------
 echo "Case (a): gate ON -> one well-formed record per denied hook"
-HOOK_STEMS=(block_deletions check-ci-skip-markers enforce-base-branch \
-            enforce-comment-trust restrict_paths enforce-ci-wait \
+HOOK_STEMS=(check-ci-skip-markers enforce-base-branch \
+            enforce-comment-trust enforce-ci-wait \
             enforce-path-c-delegation)
 
 declare -A STDERR_SNAPSHOT=()
@@ -350,12 +346,12 @@ fi
 
 inc
 reset_log
-LONG_CMD="rm -rf /some/$(python3 -c 'print("a"*900)')"
+LONG_CMD="gh pr create --title T --body $(python3 -c 'print("a"*900)')"
 LONG_PAYLOAD=$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","session_id":"denylog-d2","tool_input":{"command":sys.argv[1]}}))' "$LONG_CMD")
-rc=$(run_hook block_deletions.py "$LONG_PAYLOAD" \
+rc=$(run_hook enforce-base-branch.py "$LONG_PAYLOAD" \
       CLAUDE_SESSION_ID=denylog-d2 PIPELINE_LOGS_ENABLED=true)
 if [ "$rc" != "2" ]; then
-  fail_msg "(d) truncation: expected exit 2 from block_deletions, got $rc"
+  fail_msg "(d) truncation: expected exit 2 from enforce-base-branch, got $rc"
 elif [ ! -f "$PROJ/$LOG_REL" ]; then
   fail_msg "(d) truncation: no $LOG_REL written"
 else
@@ -369,7 +365,7 @@ rec = json.loads(lines[-1])
 cmd = rec.get("command", "")
 if len(cmd) > 512:
     print("command not truncated: %d chars" % len(cmd))
-elif not cmd.startswith("rm -rf /some/"):
+elif not cmd.startswith("gh pr create --title T --body "):
     print("truncation dropped the command head: %r" % (cmd[:60],))
 else:
     print("OK")
@@ -387,7 +383,7 @@ fi
 # The jsonl path is created as a DIRECTORY so every open() for append raises.
 # ---------------------------------------------------------------------------
 echo "Case (e): unwritable log path -> still exit 2 with unchanged stderr"
-for stem in block_deletions restrict_paths enforce-comment-trust; do
+for stem in enforce-base-branch enforce-comment-trust; do
   inc
   reset_log
   mkdir -p "$PROJ/$LOG_REL"
@@ -410,17 +406,6 @@ echo "Case (f): allowed calls under gate ON write zero records"
 
 inc
 reset_log
-rc=$(run_hook block_deletions.py \
-      '{"tool_name":"Bash","session_id":"denylog-f1","tool_input":{"command":"ls -la"}}' \
-      CLAUDE_SESSION_ID=denylog-f1 PIPELINE_LOGS_ENABLED=true)
-if [ "$rc" = "0" ] && [ "$(log_lines)" = "0" ]; then
-  pass_msg "(f) block_deletions allow (ls -la): exit 0, zero records"
-else
-  fail_msg "(f) block_deletions allow: rc=$rc, records=$(log_lines)"
-fi
-
-inc
-reset_log
 rc=$(run_hook enforce-base-branch.py \
       '{"tool_name":"Bash","session_id":"denylog-f2","tool_input":{"command":"gh pr create --base staging --title T --body B"}}' \
       CLAUDE_SESSION_ID=denylog-f2 PIPELINE_LOGS_ENABLED=true)
@@ -440,6 +425,36 @@ if [ "$rc" = "0" ] && [ "$(log_lines)" = "0" ]; then
 else
   fail_msg "(f) enforce-comment-trust allow: rc=$rc, records=$(log_lines)"
 fi
+
+# ---------------------------------------------------------------------------
+# Case (g) — worktree-aware resolution (#1380): CLAUDE_PROJECT_DIR set to a
+# LINKED worktree resolves the log to the MAIN checkout, not the worktree.
+# Cases (a)-(f) above already cover the git-absent fallback ($PROJ has no
+# .git, so today's Path(project_dir) behavior stays exercised).
+# ---------------------------------------------------------------------------
+echo "Case (g): CLAUDE_PROJECT_DIR=<linked worktree> -> log lands in MAIN checkout"
+inc
+GWORK=$(mktemp -d)
+git -c init.defaultBranch=main init -q "$GWORK/main"
+git -C "$GWORK/main" config user.email t@t.t
+git -C "$GWORK/main" config user.name t
+git -C "$GWORK/main" config commit.gpgsign false
+git -C "$GWORK/main" commit -q --allow-empty -m init
+git -C "$GWORK/main" worktree add -q -b denylog-g-branch "$GWORK/wt" >/dev/null
+set +e
+printf '%s' '{"tool_name":"Bash","session_id":"denylog-g","tool_input":{"command":"gh pr create --title T --body B"}}' \
+  | env -i HOME="$HOME" PATH="$STUB_DIR:/usr/bin:/bin" CLAUDE_PROJECT_DIR="$GWORK/wt" \
+    PIPELINE_LOGS_ENABLED=true python3 "$HOOKS_DIR/enforce-base-branch.py" >/dev/null 2>"$GWORK/err"
+rc=$?
+set -e
+main_lines="$(grep -c . "$GWORK/main/$LOG_REL" 2>/dev/null || echo 0)"
+if [ "$rc" = "2" ] && [ "$main_lines" = "1" ] && [ ! -e "$GWORK/wt/$LOG_REL" ]; then
+  pass_msg "(g) worktree denial logs to MAIN checkout, no worktree-local file"
+else
+  fail_msg "(g) rc=$rc main-lines=$main_lines wt-file=$([ -e "$GWORK/wt/$LOG_REL" ] && echo yes || echo no)"
+fi
+rm -rf "$GWORK"
+GWORK=""
 
 echo ""
 echo "================================"

@@ -4,7 +4,9 @@
 # Three assertions:
 #  (a) Quoted form --base "$PIPELINE_BASE_BRANCH" appears in Step 9b; unquoted form does not.
 #  (b) A non-empty guard `if [ -z "$PIPELINE_BASE_BRANCH" ]; then` precedes `gh pr create \`.
-#  (c) Prose cross-references the eval-time defense in evaluate-issue-pr Step 11.
+#  (c) Prose cross-references the eval-time defense and names the orchestrator-owned
+#      merge procedure that fires it (#1444 relocated it out of evaluate-issue-pr Step 11
+#      into skills/fullsend/references/auto-merge-gate.md).
 
 set -euo pipefail
 
@@ -55,7 +57,8 @@ if ! grep -B 4 -E '^[[:space:]]+gh pr create \\' "$F" \
 fi
 
 # (c) Prose cross-reference: the surrounding prose mentions enforce-base-branch.py absence
-# AND references evaluate-issue-pr Step 11 in the same general paragraph block.
+# AND references the orchestrator's auto-merge-gate reference in the same general
+# paragraph block.
 if ! printf '%s\n' "$section" | grep -qF 'even when `enforce-base-branch.py` is absent'; then
   if ! printf '%s\n' "$section" | grep -qF 'even when enforce-base-branch.py is absent'; then
     echo "FAIL: Step 9b prose missing 'even when enforce-base-branch.py is absent' rationale"
@@ -63,32 +66,32 @@ if ! printf '%s\n' "$section" | grep -qF 'even when `enforce-base-branch.py` is 
   fi
 fi
 
-if ! printf '%s\n' "$section" | grep -qF 'evaluate-issue-pr'; then
-  echo "FAIL: Step 9b prose missing cross-reference to 'evaluate-issue-pr'"
+if ! printf '%s\n' "$section" | grep -qF 'auto-merge-gate.sh'; then
+  echo "FAIL: Step 9b prose missing cross-reference to 'auto-merge-gate.sh'"
   exit 1
 fi
 
-if ! printf '%s\n' "$section" | grep -qF 'Step 11'; then
-  echo "FAIL: Step 9b prose missing cross-reference to 'Step 11'"
+if ! printf '%s\n' "$section" | grep -qF 'references/auto-merge-gate.md'; then
+  echo "FAIL: Step 9b prose missing cross-reference to 'references/auto-merge-gate.md'"
   exit 1
 fi
 
-# Both 'evaluate-issue-pr' and 'Step 11' must appear in the same paragraph
+# Both 'auto-merge-gate.sh' and 'references/auto-merge-gate.md' must appear in the same paragraph
 # (i.e., within a contiguous non-empty block).
 if ! printf '%s\n' "$section" | awk '
   BEGIN { para=""; found=0 }
   /^[[:space:]]*$/ {
-    if (para ~ /evaluate-issue-pr/ && para ~ /Step 11/) { found=1 }
+    if (para ~ /auto-merge-gate\.sh/ && para ~ /references\/auto-merge-gate\.md/) { found=1 }
     para=""
     next
   }
   { para = para " " $0 }
   END {
-    if (para ~ /evaluate-issue-pr/ && para ~ /Step 11/) { found=1 }
+    if (para ~ /auto-merge-gate\.sh/ && para ~ /references\/auto-merge-gate\.md/) { found=1 }
     exit (found ? 0 : 1)
   }
 '; then
-  echo "FAIL: 'evaluate-issue-pr' and 'Step 11' must appear in the same paragraph"
+  echo "FAIL: 'auto-merge-gate.sh' and 'references/auto-merge-gate.md' must appear in the same paragraph"
   exit 1
 fi
 

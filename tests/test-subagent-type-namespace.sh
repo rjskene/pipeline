@@ -145,11 +145,15 @@ done
 # =====================================================================
 echo "A4: fullsend carries >= 4 namespaced dispatch literals"
 inc
-A4_COUNT=$( { grep -o "subagent_type='pipeline:tdd-implementer'" skills/fullsend/SKILL.md || true; } | wc -l | tr -d ' ')
+# #1444 — two of the four literals moved with `## Dispatch routing by path tier
+# (reference)` into skills/fullsend/references/dispatch-routing.md. The
+# partial-edit guard counts across fullsend's SKILL.md AND its references, so it
+# still catches a half-flipped edit wherever the dispatch bullets live.
+A4_COUNT=$( { grep -o "subagent_type='pipeline:tdd-implementer'" skills/fullsend/SKILL.md skills/fullsend/references/*.md || true; } | wc -l | tr -d ' ')
 if [ "${A4_COUNT:-0}" -ge 4 ]; then
-  pass_msg "skills/fullsend/SKILL.md has $A4_COUNT subagent_type='pipeline:tdd-implementer' literals (>= 4)"
+  pass_msg "fullsend (SKILL.md + references/) has $A4_COUNT subagent_type='pipeline:tdd-implementer' literals (>= 4)"
 else
-  fail_msg "skills/fullsend/SKILL.md has only $A4_COUNT subagent_type='pipeline:tdd-implementer' literals, expected >= 4 (partial edit)"
+  fail_msg "fullsend (SKILL.md + references/) has only $A4_COUNT subagent_type='pipeline:tdd-implementer' literals, expected >= 4 (partial edit)"
 fi
 
 # =====================================================================

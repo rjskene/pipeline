@@ -27,7 +27,8 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HELPER="${ROOT}/scripts/auto-merge-gate.sh"
-SKILL="${ROOT}/skills/evaluate-issue-pr/SKILL.md"
+# #1444: the Step 11 gate prose relocated to the orchestrator-owned reference.
+SKILL="${ROOT}/skills/fullsend/references/auto-merge-gate.md"
 HARNESS="${ROOT}/tests/_lib/auto-merge-gate-harness.sh"
 
 if [ ! -f "$HELPER" ] || [ ! -f "$SKILL" ] || [ ! -f "$HARNESS" ]; then

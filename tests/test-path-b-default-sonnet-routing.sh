@@ -1,16 +1,31 @@
 #!/bin/bash
 set -uo pipefail
 
-# Regression guard for #1042: Sonnet-on-execute is the shipped DEFAULT (opt-OUT),
-# not opt-in. Two layers, both required:
-#   1. Read-site default flip in skills/fullsend/SKILL.md "Per-path execute MODEL
-#      routing": unset PIPELINE_PATH_B_MODEL_EXECUTE / PIPELINE_PATH_D_MODEL_EXECUTE
-#      => default `sonnet` (was: unset => Opus); unset PIPELINE_PATH_B_ELIGIBLE_SCOPE
-#      => default `all` (was: low-blast). The W2 high-uncertainty carve-out and the
-#      PATH D needs-browser carve-out (#960) STILL force Opus. pr-eval is NEVER
-#      defaulted to Sonnet (W3).
-#   2. The three knobs ship ACTIVE (=sonnet, scope=all) in pipeline.config.example
-#      and scripts/init.sh's generated config, with opt-OUT framing.
+# Regression guard, originally for #1042 (Sonnet-on-execute shipped as the
+# opt-OUT default); #1420 and #1428 have since retired that default entirely.
+# Two layers, both required:
+#   1. Read-site default in skills/fullsend/SKILL.md "Per-path execute MODEL
+#      routing": unset PIPELINE_PATH_{B,D}_MODEL_EXECUTE => default `opus`;
+#      unset PIPELINE_PATH_B_ELIGIBLE_SCOPE => default `all`. The W2
+#      high-uncertainty carve-out and the PATH D needs-browser carve-out (#960)
+#      STILL force Opus (they are no-ops now that the default IS Opus, but the
+#      carve-out machinery itself is unchanged). pr-eval is NEVER defaulted to
+#      Sonnet (W3).
+#   2. The knobs are documented at their read-site defaults in
+#      pipeline.config.example and scripts/init.sh's generated config, with
+#      opt-OUT framing (opt OUT of Opus, down to the cheaper Sonnet lane).
+#
+# #1420 — the PATH B half of the original opt-OUT default is retired. #881's
+# split lane paired a cheap implementer with an ALWAYS-Opus test-author;
+# collapsing PATH B to one execute agent removed that Opus half, so PATH B's
+# unset-knob default became `opus` (REASON=default-opus).
+# #1428 — the PATH D half is retired too: quick-fix was never a split lane, so
+# there was nothing to compensate for, but the Sonnet-vs-Opus executor split
+# never moved cost in any priced calibration run either. PATH D's unset-knob
+# default is now ALSO `opus` (REASON=default-opus), matching A/B/C uniformly.
+# The OLD "unset => default sonnet" sentence for PATH D is retired below in
+# favor of "unset => default opus" — an explicit PIPELINE_PATH_D_MODEL_EXECUTE=
+# sonnet remains the documented way back to the cheap lane.
 #
 # Static-grep/awk over the named source files only (no live dispatch) — mirrors the
 # shape of tests/test-path-model-execute-routing.sh. Per CLAUDE.md release-hygiene
@@ -20,7 +35,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"
-SKILL="$ROOT/skills/fullsend/SKILL.md"
+# #1444 — the `Per-path execute MODEL routing` block moved with
+# `## Dispatch routing by path tier (reference)` into fullsend's reference file.
+SKILL="$ROOT/skills/fullsend/references/dispatch-routing.md"
 INIT="$ROOT/scripts/init.sh"
 
 PASS=0
@@ -46,15 +63,27 @@ routing_block() {
   ' "$SKILL"
 }
 
-# 1. SKILL routing block: B/D execute model DEFAULTS to sonnet when unset.
-#    Require unset/empty + default(s) + sonnet to co-occur on the SAME line, so the
-#    OLD un-flipped wording ("when unset/empty ... inherits Opus") does NOT spuriously
-#    pass on the strewn-across-the-block presence of those words.
+# 1. SKILL routing block: B/D execute model DEFAULTS to opus when unset (#1428
+#    retires the last "default sonnet" path — PATH D now matches A/B/C).
+#    Require unset/empty + default(s) + opus to co-occur on the SAME line, so the
+#    OLD un-flipped wording does NOT spuriously pass on the strewn-across-the-block
+#    presence of those words.
 inc
-if routing_block | grep -Ei "(unset|empty)[^.]*(default[s]?)[^.]*sonnet|(default[s]?)[^.]*(unset|empty)[^.]*sonnet|sonnet[^.]*(default[s]?)[^.]*(unset|empty)" >/dev/null; then
-  pass_msg "skill: routing block documents unset B/D model => default sonnet"
+if routing_block | grep -Ei "(unset|empty)[^.]*(default[s]?)[^.]*opus|(default[s]?)[^.]*(unset|empty)[^.]*opus|opus[^.]*(default[s]?)[^.]*(unset|empty)" >/dev/null; then
+  pass_msg "skill: routing block documents unset B/D model => default opus"
 else
-  fail_msg "skill: routing block does NOT document unset => default sonnet"
+  fail_msg "skill: routing block does NOT document unset => default opus"
+fi
+
+# 1b. PROSE-DRIFT REGRESSION: the OLD PATH D "default sonnet" wording (REASON=
+#     default-sonnet, or "defaults ... to `sonnet`") must be GONE — #1428 retired
+#     it. Only the explicit opt-back-to-sonnet knob (`=sonnet`) may still mention
+#     the word "sonnet" in the block.
+inc
+if routing_block | grep -Ei "default-sonnet|defaults? (the effective value )?to \`sonnet\`" >/dev/null; then
+  fail_msg "skill: routing block still documents the retired 'default sonnet' wording (#1428)"
+else
+  pass_msg "skill: retired 'default sonnet' wording is gone from the routing block (#1428)"
 fi
 
 # 2. SKILL routing block: PIPELINE_PATH_B_ELIGIBLE_SCOPE defaults to `all` when unset.
@@ -82,6 +111,16 @@ elif routing_block | grep -Ei "$HIGH_UNCERTAINTY_RE" >/dev/null \
   pass_msg "skill: W2 carve-out still forces Opus (shared high-uncertainty regex + inherit/Opus)"
 else
   fail_msg "skill: W2 carve-out -> Opus clause missing from the routing block"
+fi
+
+# 3b. The SAME shared helper must also define hu_strip_path_tokens (#1381): the
+#     two carve-out call sites now require it, so this file's own source of the
+#     helper cannot drift from what they need.
+inc
+if declare -F hu_strip_path_tokens >/dev/null 2>&1; then
+  pass_msg "helper: hu_strip_path_tokens is defined alongside HIGH_UNCERTAINTY_RE"
+else
+  fail_msg "helper: hu_strip_path_tokens missing from scripts/_high-uncertainty-match.sh"
 fi
 
 # 4. SKILL routing block: PATH D needs-browser carve-out (#960) STILL forces Opus.
@@ -113,21 +152,21 @@ else
 fi
 
 # 6. pipeline.config.example: #1052 (defaults-in-code) — the three knobs are now
-#    COMMENTED at their documented defaults (the Sonnet/all default is single-sourced
+#    COMMENTED at their documented defaults (the Opus/all default is single-sourced
 #    at the scripts/resolve-execute-dispatch.sh read site, so --fix config must NOT seed
-#    them). Assert each is documented as a commented knob (NOT a live line). The Sonnet
+#    them). Assert each is documented as a commented knob (NOT a live line). The Opus
 #    default itself is asserted at the SKILL/resolver read site by the checks above.
 inc
-if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet documented (commented) per #1052"
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=opus' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=opus documented (commented) per #1052/#1420"
 else
-  fail_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=sonnet not documented as commented (#1052)"
+  fail_msg "example: PIPELINE_PATH_B_MODEL_EXECUTE=opus not documented as commented (#1052/#1420)"
 fi
 inc
-if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet' "$EXAMPLE"; then
-  pass_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=sonnet documented (commented) per #1052"
+if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=opus' "$EXAMPLE"; then
+  pass_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=opus documented (commented) per #1052/#1428"
 else
-  fail_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=sonnet not documented as commented (#1052)"
+  fail_msg "example: PIPELINE_PATH_D_MODEL_EXECUTE=opus not documented as commented (#1052/#1428)"
 fi
 inc
 if grep -Eq '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_ELIGIBLE_SCOPE="?all"?' "$EXAMPLE"; then
@@ -160,8 +199,8 @@ else
   fail_msg "example: opt-out values (opus / low-blast) not both named in the routing knob block"
 fi
 
-# 8. scripts/init.sh: the generated-config heredoc emits the three knobs ACTIVE at
-#    the Sonnet defaults inside the `cat > pipeline.config` body.
+# 8. scripts/init.sh: the generated-config heredoc emits the model knobs COMMENTED
+#    at their read-site opus defaults, and PIPELINE_PATH_B_ELIGIBLE_SCOPE ACTIVE.
 heredoc_body() {
   awk '
     /cat > pipeline.config <<EOF/ { inheredoc = 1; next }
@@ -169,17 +208,35 @@ heredoc_body() {
     inheredoc { print }
   ' "$INIT"
 }
+# #1420/#1428: BOTH the B and D knobs are seeded COMMENTED at the read-site
+# default (#1052 defaults-in-code) — an ACTIVE line would PIN opus into every
+# greenfield config and defeat central default evolution on plugin upgrade.
+# #1428 retired PATH D's old ACTIVE =sonnet seed (its default has now moved, so
+# seeding it active would silently re-pin the retired default via
+# REASON=explicit-knob on every fresh install).
 inc
-if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=sonnet' >/dev/null; then
-  pass_msg "init.sh: heredoc emits PIPELINE_PATH_B_MODEL_EXECUTE=sonnet"
+if heredoc_body | grep -E '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=opus' >/dev/null; then
+  pass_msg "init.sh: heredoc seeds #PIPELINE_PATH_B_MODEL_EXECUTE=opus (commented, #1052/#1420)"
 else
-  fail_msg "init.sh: heredoc does NOT emit PIPELINE_PATH_B_MODEL_EXECUTE=sonnet"
+  fail_msg "init.sh: heredoc does NOT seed commented #PIPELINE_PATH_B_MODEL_EXECUTE=opus (#1052/#1420)"
 fi
 inc
-if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=sonnet' >/dev/null; then
-  pass_msg "init.sh: heredoc emits PIPELINE_PATH_D_MODEL_EXECUTE=sonnet"
+if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_B_MODEL_EXECUTE=' >/dev/null; then
+  fail_msg "init.sh: heredoc seeds an ACTIVE PIPELINE_PATH_B_MODEL_EXECUTE line (must stay commented, #1052)"
 else
-  fail_msg "init.sh: heredoc does NOT emit PIPELINE_PATH_D_MODEL_EXECUTE=sonnet"
+  pass_msg "init.sh: heredoc seeds no ACTIVE PIPELINE_PATH_B_MODEL_EXECUTE line"
+fi
+inc
+if heredoc_body | grep -E '^[[:space:]]*#[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=opus' >/dev/null; then
+  pass_msg "init.sh: heredoc seeds #PIPELINE_PATH_D_MODEL_EXECUTE=opus (commented, #1052/#1428)"
+else
+  fail_msg "init.sh: heredoc does NOT seed commented #PIPELINE_PATH_D_MODEL_EXECUTE=opus (#1052/#1428)"
+fi
+inc
+if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_D_MODEL_EXECUTE=' >/dev/null; then
+  fail_msg "init.sh: heredoc seeds an ACTIVE PIPELINE_PATH_D_MODEL_EXECUTE line (must stay commented, #1052/#1428)"
+else
+  pass_msg "init.sh: heredoc seeds no ACTIVE PIPELINE_PATH_D_MODEL_EXECUTE line"
 fi
 inc
 if heredoc_body | grep -E '^[[:space:]]*PIPELINE_PATH_B_ELIGIBLE_SCOPE="?all"?' >/dev/null; then

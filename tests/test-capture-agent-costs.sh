@@ -98,11 +98,12 @@ for r in rows:
 # schema contract: required fields present on EVERY row
 required = {"schema_version","record_key","issue","stage","agent_kind",
            "agent_type","session_id","model","tokens","duration_ms",
-           "ts_start","ts_end","source","usage_complete"}
+           "ts_start","ts_end","source","usage_complete",
+           "turns","ctx_first","ctx_last"}
 for r in rows:
     missing = required - set(r)
     assert not missing, "missing fields %s in %r" % (missing, r)
-    assert r["schema_version"] == 1, "schema_version must be 1"
+    assert r["schema_version"] == 2, "schema_version must be 2 (#1443)"
     assert set(r["tokens"]) == {"input","output","cache_read","cache_creation","total"}, \
         "tokens shape: %r" % r["tokens"]
     t = r["tokens"]
@@ -538,6 +539,183 @@ PY
 )"
 [ "$uniq2" = "OK" ] || fail "re-backfill: duplicate record_keys after the widening"
 pass "re-backfill: all record_keys unique across the widening"
+
+rm -rf "$home" "$proj"
+
+# ---------------------------------------------------------------------------
+# message.id dedupe (#1443). Fully hermetic: its OWN home + proj and its OWN
+# single-line runs.log, so the shared tests/fixtures/token-usage/runs.log (whose
+# row counts tests/test-agent-costs-schema.sh and
+# tests/test-agent-costs-stage-map.sh pin) is untouched. The msgid fixture is
+# msg_A x3 (output 5/40/90) + msg_B + msg_C: deduped 60/106/6000/300 vs a naive
+# per-line 80/151/8000/500 (total 6466 vs 8731). HEADLESS rows carry the
+# all-four-bucket total, so cache_read IS included here. The block also pins the
+# schema_version=2 structural fields turns/ctx_first/ctx_last on BOTH producer
+# passes, including the 0 sentinel on an inline row with no resolvable
+# transcript.
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+msgid_wt="/home/fix/claude-pipeline/.claude/worktrees/wt-1443"
+printf '%s\tsession=%s\tissue=%s\tpath=B\tskill=execute-issue-plan\tworktree=%s\n' \
+  "2026-06-01T10:00:00Z" "sess-msgid-1443" "1443" "$msgid_wt" \
+  > "$proj/.claude/logs/runs.log"
+msgid_slug="$(tu_worktree_slug "$msgid_wt")"
+mkdir -p "$home/.claude/projects/$msgid_slug"
+cp "$FIX/transcript-msgid.jsonl" \
+  "$home/.claude/projects/$msgid_slug/sess-msgid-1443.jsonl"
+# A SECOND row, INLINE, whose subagent transcript does NOT resolve (agent_id
+# noxcript has no staged transcript). It must carry turns/ctx_first/ctx_last ==
+# 0: the HEADLESS pass above resolves a 3-turn transcript first, so a producer
+# that read the module-scope `summ` at the inline call site instead of
+# per-iteration locals would fabricate turns=3 / ctx 1100/3000 on this row.
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "2026-06-01T11:00:00Z" "sess-inline-1443" "Evaluate PR #1500 for #1443" \
+  "1500" "0" "0" "agent-noxcript-1443.json" \
+  > "$proj/.claude/logs/subagents.log"
+cat > "$proj/.claude/logs/subagents/agent-noxcript-1443.json" <<'JSON'
+{
+  "ts": "2026-06-01T11:00:00Z",
+  "session": "sess-inline-1443",
+  "description": "Evaluate PR #1500 for #1443",
+  "subagent_type": "general-purpose",
+  "agent_id": "noxcript",
+  "usage": {
+    "input_tokens": 11,
+    "output_tokens": 3,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0
+  }
+}
+JSON
+msgid_out="$proj/.claude/logs/agent-costs.jsonl"
+
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+
+n_msgid="$(wc -l < "$msgid_out" | tr -d ' ')"
+[ "$n_msgid" = "2" ] || fail "msgid dedupe: expected 2 records (1 headless + 1 inline), got $n_msgid"
+
+python3 - "$msgid_out" <<'PY' || exit 1
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert len(rows) == 2, "expected 2 rows, got %d" % len(rows)
+by_kind = {}
+for r in rows:
+    by_kind.setdefault(r["agent_kind"], []).append(r)
+
+h = by_kind["headless"][0]
+t = h["tokens"]
+got = (t["input"], t["output"], t["cache_read"], t["cache_creation"])
+assert got == (60, 106, 6000, 300), \
+    "msgid dedupe buckets: got %r want (60, 106, 6000, 300)" % (got,)
+assert t["total"] == 6466, "msgid dedupe total: got %r want 6466" % t["total"]
+assert h["schema_version"] == 2, "headless schema_version: %r" % h["schema_version"]
+assert h["turns"] == 3, "headless turns: got %r want 3" % h["turns"]
+assert h["ctx_first"] == 1100, "headless ctx_first: got %r want 1100" % h["ctx_first"]
+assert h["ctx_last"] == 3000, "headless ctx_last: got %r want 3000" % h["ctx_last"]
+
+# No subagent transcript resolved for this inline row -> the structural fields
+# are the honest 0 sentinel, NOT the headless pass's leaked values.
+i = by_kind["inline"][0]
+assert i["usage_complete"] is False, "inline row must stay a lower-bound"
+assert i["turns"] == 0, "inline turns must be 0 (no transcript), got %r" % i["turns"]
+assert i["ctx_first"] == 0, "inline ctx_first must be 0, got %r" % i["ctx_first"]
+assert i["ctx_last"] == 0, "inline ctx_last must be 0, got %r" % i["ctx_last"]
+print("msgid dedupe (#1443) assertions OK")
+PY
+pass "backfill dedupes by message.id; stamps turns/ctx (0 when no transcript)"
+
+rm -rf "$home" "$proj"
+
+# ---------------------------------------------------------------------------
+# --recompute (#1443). Rows written before the message.id dedupe are ~2x high on
+# the input side, and plain idempotency (the `seen` set seeded from disk) makes
+# them uncorrectable: a re-run appends nothing. --recompute skips ONLY that
+# seeding, so already-seen record_keys are re-emitted with fresh values;
+# consumers take `group_by(.record_key) | last`, so the fresh row wins. Own
+# mktemp env so it cannot perturb the "all record_keys unique" assertions above
+# (a recompute DELIBERATELY duplicates keys).
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/subagents.log"      # headless pass only
+rc_wt="/home/fix/claude-pipeline/.claude/worktrees/wt-recomp"
+printf '%s\tsession=%s\tissue=%s\tpath=B\tskill=execute-issue-plan\tworktree=%s\n' \
+  "2026-05-30T10:00:00Z" "sess-recomp" "1443" "$rc_wt" \
+  > "$proj/.claude/logs/runs.log"
+rc_slug="$(tu_worktree_slug "$rc_wt")"
+mkdir -p "$home/.claude/projects/$rc_slug"
+rc_transcript="$home/.claude/projects/$rc_slug/sess-recomp.jsonl"
+cp "$FIX/transcript.jsonl" "$rc_transcript"
+rc_out="$proj/.claude/logs/agent-costs.jsonl"
+
+run_rc() {
+  HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+    bash "$SCRIPT" "$@" >/dev/null 2>&1
+}
+count_rc() {
+  if [ -f "$rc_out" ]; then wc -l < "$rc_out" | tr -d ' '; else echo 0; fi
+}
+
+run_rc
+n_rc1="$(count_rc)"
+[ "$n_rc1" = "1" ] || fail "--recompute: first run must append 1 record, got $n_rc1"
+
+run_rc
+n_rc2="$(count_rc)"
+[ "$n_rc2" = "1" ] || fail "--recompute: a plain re-run must append 0 (1 -> $n_rc2)"
+pass "--recompute: plain re-run is still idempotent"
+
+# Change the transcript's token values WITHOUT touching its timestamps, so the
+# re-emitted row keeps the SAME record_key but carries fresh sums (350/70/16/5
+# -> 350/149/16/5, total 441 -> 520). That makes "the fresh row wins" observable.
+sed -i 's/"output_tokens":20/"output_tokens":99/' "$rc_transcript"
+
+run_rc --recompute
+n_rc3="$(count_rc)"
+[ "$n_rc3" = "2" ] || fail "--recompute: must re-emit the seen record_key (1 -> $n_rc3, want 2)"
+pass "--recompute: re-emits rows for already-seen record_keys"
+
+python3 - "$rc_out" <<'PY' || exit 1
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert len(rows) == 2, "expected 2 rows, got %d" % len(rows)
+assert rows[0]["record_key"] == rows[1]["record_key"], \
+    "recompute must reuse the SAME record_key: %r vs %r" % (
+        rows[0]["record_key"], rows[1]["record_key"])
+assert rows[0]["tokens"]["total"] == 441, "stale row total: %r" % rows[0]["tokens"]["total"]
+# group_by(.record_key) | last semantics: the LAST row on disk is the fresh one.
+last = {}
+for r in rows:
+    last[r["record_key"]] = r
+fresh = last[rows[0]["record_key"]]
+assert fresh is rows[1], "the last row for the key must be the re-emitted one"
+assert fresh["tokens"]["output"] == 149, "fresh output: %r" % fresh["tokens"]["output"]
+assert fresh["tokens"]["total"] == 520, "fresh total: %r" % fresh["tokens"]["total"]
+print("--recompute (#1443) last-write-wins assertions OK")
+PY
+pass "--recompute: the LAST row for a re-emitted record_key carries fresh values"
+
+# Negative control: an unknown argument must be REJECTED (non-zero), not
+# silently ignored, and must append nothing.
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" --totally-bogus >/dev/null 2>&1
+rc_bogus=$?
+[ "$rc_bogus" != "0" ] || fail "--recompute: unknown argument must exit non-zero, got 0"
+n_rc4="$(count_rc)"
+[ "$n_rc4" = "2" ] || fail "--recompute: unknown argument must append nothing (2 -> $n_rc4)"
+pass "--recompute: unknown argument exits non-zero and writes nothing"
+
+# --help is answered before the logging gate, so it works with logging off.
+help_out="$(env -u PIPELINE_LOGS_ENABLED HOME="$home" CLAUDE_PROJECT_DIR="$proj" \
+  bash "$SCRIPT" --help 2>&1)"
+rc_help=$?
+[ "$rc_help" = "0" ] || fail "--recompute: --help must exit 0, got $rc_help"
+case "$help_out" in
+  *--recompute*) pass "--help documents --recompute" ;;
+  *) fail "--help output does not mention --recompute: $help_out" ;;
+esac
 
 rm -rf "$home" "$proj"
 

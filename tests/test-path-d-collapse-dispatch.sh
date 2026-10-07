@@ -24,8 +24,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # routing was specific to the old run skill's planning section and has no fullsend
 # equivalent; in fullsend the equivalent contract is Group 2's split-dispatch +
 # Step-1b PATH-D exclusion (assertion 2e), which is the canonical home.
-RUN_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
-FULLSEND_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+_FS_SKILL="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+# #1444 — fullsend's conditional detail was relocated OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins CONTRACT prose, not the file
+# a clause happens to live in, so it reads the UNION of SKILL.md and its
+# references; SKILL.md comes first, so every step-skeleton region extractor
+# below still terminates inside the SKILL.md half.
+_FS_UNION_DIR="$(mktemp -d)"
+trap 'rm -rf "$_FS_UNION_DIR"' EXIT
+RUN_SKILL="$_FS_UNION_DIR/fullsend-union.md"
+cat "$_FS_SKILL" "$SCRIPT_DIR/../skills/fullsend"/references/*.md > "$RUN_SKILL"
+FULLSEND_SKILL="$RUN_SKILL"
 EXECUTE_SKILL="$SCRIPT_DIR/../skills/execute-issue-plan/SKILL.md"
 
 PASS=0
@@ -35,7 +44,7 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-for f in "$RUN_SKILL" "$FULLSEND_SKILL" "$EXECUTE_SKILL"; do
+for f in "$RUN_SKILL" "$FULLSEND_SKILL" "$EXECUTE_SKILL" "$SCRIPT_DIR/../skills/execute-issue-plan/references/collapsed-inline-d.md"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: SKILL.md not found at $f" >&2
     exit 1
@@ -46,7 +55,13 @@ done
 # so multi-line markdown bullets match a single-line substring assertion.
 RUN_BODY=$(tr '\n' ' ' < "$RUN_SKILL" | tr -s '[:space:]' ' ')
 FULLSEND_BODY=$(tr '\n' ' ' < "$FULLSEND_SKILL" | tr -s '[:space:]' ' ')
-EXECUTE_BODY=$(tr '\n' ' ' < "$EXECUTE_SKILL" | tr -s '[:space:]' ' ')
+# #1444: the `### Collapsed inline D contract` body was relocated out of the
+# hot-path SKILL.md into references/collapsed-inline-d.md (the heading + a read
+# pointer stay inline). The executor's D contract is the union of the two files,
+# so the body scanned here is their concatenation — a path retarget, not a
+# weakened assertion.
+EXECUTE_D_REF="$SCRIPT_DIR/../skills/execute-issue-plan/references/collapsed-inline-d.md"
+EXECUTE_BODY=$(cat "$EXECUTE_SKILL" "$EXECUTE_D_REF" | tr '\n' ' ' | tr -s '[:space:]' ' ')
 
 # Windowed substring helper: succeeds if NEEDLE appears within WINDOW chars of
 # any ANCHOR occurrence in FILE. Echoes OK / MISS.

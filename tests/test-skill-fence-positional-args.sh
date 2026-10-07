@@ -144,7 +144,16 @@ while IFS= read -r skill_md; do
     [ -n "$FIRST_HIT" ] || FIRST_HIT="$rel:$ln: $tok"
     fail_msg "$rel:$ln: $tok is a positional-argument token inside a bash fence — the harness rewrites it with the invocation args (#1281)"
   done <<< "$hits"
-done <<< "$(find "$SKILL_ROOT" -maxdepth 2 -name SKILL.md | sort)"
+done <<< "$(
+  # #1444 WIDENED the sweep root to skills/*/references/*.md. Relocating a
+  # section out of a SKILL.md body does not make its fences safe — the harness
+  # rewrites `$1`.. in a reference file's fence exactly as it does in SKILL.md —
+  # and before #1444 a `-maxdepth 2 -name SKILL.md` glob exempted every one of
+  # them. Both roots are swept in one pass so a hit reports its own path.
+  find "$SKILL_ROOT" -maxdepth 2 -name SKILL.md
+  find "$SKILL_ROOT" -mindepth 3 -maxdepth 3 -path '*/references/*.md'
+)"
+
 
 # Both units are printed so a future drift is legible: a hit is a <file>:<line>
 # pair, an occurrence is a single token (one line can carry several).

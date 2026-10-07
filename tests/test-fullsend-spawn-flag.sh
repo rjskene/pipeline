@@ -9,12 +9,21 @@ set -euo pipefail
 # block-scoped via awk to distinguish the Step 6 vs Step 7 branches so a future
 # prose refactor that drops a branch fails loudly.
 
-FILE="$(dirname "$0")/../skills/fullsend/SKILL.md"
+_FS_SKILL="$(dirname "$0")/../skills/fullsend/SKILL.md"
 
-if [ ! -f "$FILE" ]; then
-  echo "ERROR: $FILE not found" >&2
+if [ ! -f "$_FS_SKILL" ]; then
+  echo "ERROR: $_FS_SKILL not found" >&2
   exit 1
 fi
+# #1444 — fullsend's conditional detail was relocated OUT of the hot path into
+# skills/fullsend/references/*.md. This guard pins CONTRACT prose, not the file
+# a clause happens to live in, so it reads the UNION of SKILL.md and its
+# references; SKILL.md comes first, so every step-skeleton region extractor
+# below still terminates inside the SKILL.md half.
+_FS_UNION_DIR="$(mktemp -d)"
+trap 'rm -rf "$_FS_UNION_DIR"' EXIT
+FILE="$_FS_UNION_DIR/fullsend-union.md"
+cat "$_FS_SKILL" "$(dirname "$0")/../skills/fullsend"/references/*.md > "$FILE"
 
 fail=0
 assert_has() { grep -qiF "$1" "$FILE" || { echo "MISSING: $1"; fail=1; }; }

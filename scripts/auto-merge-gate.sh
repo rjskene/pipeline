@@ -142,6 +142,9 @@ auto_merge_should_fire() {
       _amg_cr_scanned=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'SCANNED=[0-9]+' | cut -d= -f2)
       _amg_cr_with_output=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'WITH_OUTPUT=[0-9]+' | cut -d= -f2)
       echo "[auto-merge-gate] WARN: capability-refusal check unproven (REASON=${_amg_cr_reason} SCANNED=${_amg_cr_scanned} WITH_OUTPUT=${_amg_cr_with_output}) SOURCES=${PIPELINE_CAPABILITY_REFUSAL_SOURCES}" >&2
+    elif [ "$_amg_cr_reason" = "async-dispatch" ]; then
+      _amg_cr_scanned=$(printf '%s\n' "$_amg_cr_line" | grep -oE 'SCANNED=[0-9]+' | cut -d= -f2)
+      echo "[auto-merge-gate] NOTE: capability-refusal arm skipped (REASON=async-dispatch SCANNED=${_amg_cr_scanned} — background dispatch records carry no leaf text) SOURCES=${PIPELINE_CAPABILITY_REFUSAL_SOURCES}" >&2
     fi
   fi
 

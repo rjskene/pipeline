@@ -91,16 +91,40 @@ fi
 # Task 3 — every hook importing subagent_log_utils stays win32 import-clean.
 # Loads each hook file via importlib (filenames use hyphens so they cannot be
 # `import`ed by module name); exec_module runs the top-level imports we guard.
+#
+# `< /dev/null` on the importlib probe is LOAD-BEARING, not tidiness. One entry
+# (log_subagent) calls read_event_stdin from top-level code, and this sweep
+# DELETES signal.SIGALRM, which is the only
+# thing bounding that read. Inheriting a still-open stdin from the caller (an
+# interactive shell, a CI runner that leaves the pipe open) therefore hangs the
+# sweep for as long as the caller lives — measured at 6 s+ per entry against an
+# open fifo, indefinite against a tty. Closing stdin gives every entry a
+# deterministic EOF, so the assertion measures IMPORT cleanliness, which is what
+# it is for.
 # ---------------------------------------------------------------------------
 echo "Task 3: all subagent_log_utils importers stay win32 import-clean"
 
 # _deny_log (#1352) consumes subagent_log_utils.append_locked, so it joins the
 # win32 import-cleanliness sweep alongside the guard hooks that call it.
-HOOKS=(enforce-comment-trust enforce-base-branch restrict_paths block_deletions \
+# permission-bridge (#1421) imports read_event_stdin too. It is also the one
+# entry whose top-level main() RUNS here rather than just importing — with
+# PIPELINE_PERMISSION_BRIDGE_DIR unset it returns 0 BEFORE touching stdin,
+# so exec_module raises SystemExit(0) and the sweep sees rc 0. If that
+# inertness gate ever moves below the stdin read, this entry hangs on the
+# inherited stdin (SIGALRM is deleted here) — which is the regression to catch.
+# That var is now EXPLICITLY scrubbed with `env -u` below (#1426), so the sweep
+# cannot inherit a live queue dir from a bridge-armed session, queue a malformed
+# request and then block for the bridge timeout. Strictly belt-and-braces, not
+# load-bearing: the hook's own env and payload-shape gates already hold here
+# (including when this sweep is hand-run outside the runner), and the runner
+# scrubs the same two knobs in scrub_roots(). `env -u` just makes the precondition
+# this Task ALREADY asserts ("with the dir unset ...") true by construction rather
+# than by whatever the caller happened to export.
+HOOKS=(enforce-comment-trust enforce-base-branch \
        log_subagent enforce-ci-wait check-ci-skip-markers enforce-path-c-delegation \
-       capture_agent_cost _deny_log)
+       capture_agent_cost _deny_log permission-bridge)
 for h in "${HOOKS[@]}"; do
-  if python3 -c "
+  if env -u PIPELINE_PERMISSION_BRIDGE_DIR python3 -c "
 import sys, signal
 sys.modules['fcntl'] = None
 if hasattr(signal,'SIGALRM'): del signal.SIGALRM
@@ -109,7 +133,7 @@ import importlib.util as u
 spec = u.spec_from_file_location('h_$h', '$HOOKS_DIR/$h.py')
 mod = u.module_from_spec(spec)
 spec.loader.exec_module(mod)   # executes top-level imports; must NOT raise
-" 2>/dev/null; then
+" 2>/dev/null < /dev/null; then
     pass "3: import-clean: $h"
   else
     fail "3: import FAILED: $h"

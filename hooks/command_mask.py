@@ -6,8 +6,8 @@ grep/awk/sed pattern is never a command. Segments headed by a shell word
 unterminated quote leaves the text unmasked (fail closed).
 
 Public API: mask_command(text), segments(text), head_index(words).
-Shared by hooks/block_deletions.py and hooks/enforce-comment-trust.py
-(issue #1321). Import-clean with `re` only (win32-safe).
+Shared by hooks/enforce-comment-trust.py, hooks/enforce-base-branch.py and
+hooks/_deny_log.py (issue #1321). Import-clean with `re` only (win32-safe).
 """
 import re
 

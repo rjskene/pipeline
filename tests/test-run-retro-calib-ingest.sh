@@ -175,8 +175,11 @@ NEW
 touch -d '2020-01-01T00:00:00Z' "$LIVE/docs/retros/calib/2026-09-05.txt"
 
 LIVE_REPORT="$(env -u PIPELINE_REPO bash "$LIVE/scripts/run-retro.sh" --cycle 0 2>&1)"
+# The chosen filename IS the run date, so the row reports it (#1395). No
+# tracker substrate is reachable here (no PIPELINE_REPO, so live mode makes no
+# gh call), which is exactly the case that must degrade to the date alone.
 expect_line "live mode reads the newest artifact by filename, not by mtime" \
-  "$LIVE_REPORT" "weak-model pass: 0/2"
+  "$LIVE_REPORT" "weak-model pass: 0/2 (run 2026-09-05)"
 
 # ---------------------------------------------------------------------------
 scenario "Scenario 7: an aborted calibration artifact renders the reason, never a k/n"
@@ -209,6 +212,302 @@ expect_line "the weak-model row renders the abort reason instead of a score" \
   "$REPORT_ABORT" "weak-model pass: n/a (calibration run aborted: reason=held)"
 refute_sub "an aborted run is never scored over the rows it did reach" \
   "$REPORT_ABORT" "weak-model pass: 3/5"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 8: the weak-model row dates its artifact and flags a stale one"
+# ---------------------------------------------------------------------------
+# Cycles 12 through 17 all cited the SAME calibration run — the ingest is
+# newest-artifact-wins and never expires, and nothing in the row said how old
+# the evidence was. The row now carries the artifact's own day (read off the
+# FILENAME, not off any CALIB atom) and, once three or more tracker cycle
+# comments have been posted since that day, says so out loud.
+#
+# A dedicated fixture copy: the shared $FIX tree is what Scenarios 1-7 pin the
+# UNDATED fallback against, and both forms have to keep working.
+
+FIX2="$TMP/fixture-dated"
+cp -r "$FIXTURE_SRC" "$FIX2"
+retro2() { bash "$HELPER" --cycle 0 --fixture "$FIX2" "$@" 2>&1; }
+
+write_calib_at() { # <path> — the same 4-pass-of-5 block write_calib emits
+  mkdir -p "$(dirname "$1")"
+  cat > "$1" <<'CALIB'
+CALIB issue=101 path=A cost=$3.10 wall=420 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=102 path=D cost=$5.00 wall=600 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=103 path=B cost=$12.00 wall=1800 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=104 path=B cost=$20.00 wall=2400 verdicts=Approved/Flagged reftest=fail unexpected-files=2
+CALIB issue=105 path=B cost=$31.00 wall=3000 verdicts=Approved/Approved reftest=pass unexpected-files=1
+CALIB-TOTAL cost=$71.10 wall=8220 issues=5 reftest-pass=4/5 planted=missed
+CALIB
+}
+
+# The dated form ONLY — no calib.txt — so fixture mode has to resolve the
+# day-keyed artifact the way live mode does.
+rm -f "$FIX2/calib.txt"
+write_calib_at "$FIX2/calib/2026-09-05.txt"
+
+# The shared fixture's tracker (#1271) carries exactly ONE `## Cycle N` comment,
+# posted 2026-09-12 — one cycle since the run, below the marker's threshold.
+REPORT_FRESH="$(retro2)"
+expect_line "a dated artifact reports its run date" \
+  "$REPORT_FRESH" "weak-model pass: 4/5 (run 2026-09-05)"
+refute_sub "one cycle since the run is not stale" "$REPORT_FRESH" "stale"
+
+# Four more numbered cycle comments after the run day (five in total), plus
+# three controls that must NOT be counted: a `## Cycle`-prefixed comment that
+# carries no number, one posted LATER ON the run's own day (the artifact is
+# day-keyed, so same-day is not "since"), and one posted before it.
+jq '(.[] | select(.number == 1271) | .comments) +=
+      [ {"createdAt":"2026-09-13T08:00:00Z","body":"## Cycle 1\n- issues: #1301\n"},
+        {"createdAt":"2026-09-14T08:00:00Z","body":"## Cycle 2\n- issues: #1302\n"},
+        {"createdAt":"2026-09-15T08:00:00Z","body":"## Cycle 3\n- issues: #1303\n"},
+        {"createdAt":"2026-09-16T08:00:00Z","body":"## Cycle 4\n- issues: #1304\n"},
+        {"createdAt":"2026-09-14T09:00:00Z","body":"## Cycle notes, not a numbered cycle comment\n"},
+        {"createdAt":"2026-09-05T18:00:00Z","body":"## Cycle 98\n- issues: #1398\n"},
+        {"createdAt":"2026-09-04T08:00:00Z","body":"## Cycle 99\n- issues: #1399\n"} ]' \
+   "$FIX2/issues.json" > "$TMP/issues-stale.json" \
+  && mv "$TMP/issues-stale.json" "$FIX2/issues.json"
+
+REPORT_STALE="$(retro2)"
+# Exactly 5: if the un-numbered comment, the same-day one or the earlier one
+# leaked in, this reads 6, 7 or 8 and the line does not match.
+expect_line "five cycles since the run renders the stale marker" \
+  "$REPORT_STALE" "weak-model pass: 4/5 (run 2026-09-05, stale 5 cycles)"
+
+# No tracker substrate at all: the marker degrades to the date alone, silently
+# — no stderr noise, and never a failed retro.
+rm -f "$FIX2/issues.json"
+REPORT_NOTRACKER="$(retro2)"
+RC_NOTRACKER=$?
+if [ "$RC_NOTRACKER" -eq 0 ]; then
+  pass_msg "a missing tracker substrate still exits 0"
+else
+  fail_msg "a missing tracker substrate must not fail the retro (rc=$RC_NOTRACKER)"
+fi
+expect_line "no tracker substrate degrades to the run date alone" \
+  "$REPORT_NOTRACKER" "weak-model pass: 4/5 (run 2026-09-05)"
+refute_sub "the stale lookup writes no jq error to stderr" "$REPORT_NOTRACKER" "jq: error"
+
+# The UNDATED fallback keeps rendering a bare value: an artifact with no date
+# in its name cannot be dated, and Scenario 1's exact line must stay green.
+rm -rf "$FIX2/calib"
+write_calib_at "$FIX2/calib.txt"
+REPORT_UNDATED="$(retro2)"
+expect_line "the undated calib.txt fallback renders the bare value" \
+  "$REPORT_UNDATED" "weak-model pass: 4/5"
+refute_sub "an undated artifact is never given a run date" "$REPORT_UNDATED" "(run "
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 9: two same-day <date>T<HHMM>Z artifacts — the later one wins (#1408)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --run now names its artifact docs/retros/calib/<UTC
+# date>T<HHMM>Z.txt instead of the legacy day-granular <date>.txt, so a
+# same-day re-run gets its OWN file instead of silently overwriting the
+# prior run's (run #9 erased run #8's `reason=timeout` record this way).
+# run-retro.sh must still pick the NEWEST artifact by filename sort — the
+# T<HHMM>Z suffix keeps lexical order — and still date its provenance off
+# the filename.
+
+FIX3="$TMP/fixture-timestamped"
+cp -r "$FIXTURE_SRC" "$FIX3"
+retro3() { bash "$HELPER" --cycle 0 --fixture "$FIX3" "$@" 2>&1; }
+rm -f "$FIX3/calib.txt"
+
+# EARLIER same-day artifact: 3/5, aborted with reason=timeout (run #8's shape).
+mkdir -p "$FIX3/calib"
+cat > "$FIX3/calib/2026-09-05T1451Z.txt" <<'EARLY'
+CALIB-ABORT reason=timeout
+CALIB issue=101 path=A cost=$3.10 wall=420 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=102 path=D cost=$5.00 wall=600 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB issue=103 path=B cost=$12.00 wall=1800 verdicts=Approved/Approved reftest=pass unexpected-files=0
+CALIB-TOTAL cost=$20.10 wall=2820 issues=3 reftest-pass=n/a
+EARLY
+
+# LATER same-day artifact: the full 4/5 run.
+write_calib_at "$FIX3/calib/2026-09-05T1601Z.txt"
+
+REPORT_TS="$(retro3)"
+expect_line "the later T<HHMM>Z artifact's content wins, not the earlier one's" \
+  "$REPORT_TS" "weak-model pass: 4/5 (run 2026-09-05)"
+refute_sub "the earlier same-day artifact's aborted score is never read" \
+  "$REPORT_TS" "calibration run aborted"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 10: an arm-2 (--hooks off) artifact renders hooks=off (#1409)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --hooks off suffixes its artifact filename with
+# `-hooks-off` (issue #1409) so an arm-2 run never silently reads as the
+# hooks-on baseline. The marker is read off the FILENAME, like the run date,
+# never off a CALIB atom.
+
+FIX4="$TMP/fixture-hooks-off"
+cp -r "$FIXTURE_SRC" "$FIX4"
+retro4() { bash "$HELPER" --cycle 0 --fixture "$FIX4" "$@" 2>&1; }
+rm -f "$FIX4/calib.txt"
+mkdir -p "$FIX4/calib"
+# write_calib_at() is Scenario 8's helper — still in scope here, same 4-of-5
+# block it wrote there.
+write_calib_at "$FIX4/calib/2026-09-06T1200Z-hooks-off.txt"
+
+REPORT_HOOKS_OFF="$(retro4)"
+expect_line "an arm-2 artifact's weak-model row names hooks=off" \
+  "$REPORT_HOOKS_OFF" "weak-model pass: 4/5 (run 2026-09-06, hooks=off)"
+
+# Control: the default hooks-on artifact (no suffix) never renders a hooks=
+# marker — arm 1 is the baseline and stays unlabeled.
+FIX5="$TMP/fixture-hooks-on"
+cp -r "$FIXTURE_SRC" "$FIX5"
+retro5() { bash "$HELPER" --cycle 0 --fixture "$FIX5" "$@" 2>&1; }
+rm -f "$FIX5/calib.txt"
+mkdir -p "$FIX5/calib"
+write_calib_at "$FIX5/calib/2026-09-06T1200Z.txt"
+
+REPORT_HOOKS_ON="$(retro5)"
+expect_line "a default hooks-on artifact carries no hooks= marker" \
+  "$REPORT_HOOKS_ON" "weak-model pass: 4/5 (run 2026-09-06)"
+refute_sub "a hooks-on artifact is never mislabeled hooks=off" \
+  "$REPORT_HOOKS_ON" "hooks=off"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 11: an arm-2 (--superpowers off) artifact renders superpowers=off (backlog #11, #1412)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --superpowers off suffixes its artifact filename with
+# `-superpowers-off` (issue #1412), composable with `-hooks-off`, so an
+# off-arm run never silently reads as the on-arm baseline. The marker is read
+# off the FILENAME, like the run date, never off a CALIB atom.
+
+FIX6="$TMP/fixture-superpowers-off"
+cp -r "$FIXTURE_SRC" "$FIX6"
+retro6() { bash "$HELPER" --cycle 0 --fixture "$FIX6" "$@" 2>&1; }
+rm -f "$FIX6/calib.txt"
+mkdir -p "$FIX6/calib"
+write_calib_at "$FIX6/calib/2026-09-07T1200Z-superpowers-off.txt"
+
+REPORT_SUPERPOWERS_OFF="$(retro6)"
+expect_line "an arm-2 artifact's weak-model row names superpowers=off" \
+  "$REPORT_SUPERPOWERS_OFF" "weak-model pass: 4/5 (run 2026-09-07, superpowers=off)"
+
+# Composability: both arms off at once names both markers.
+FIX7="$TMP/fixture-both-off"
+cp -r "$FIXTURE_SRC" "$FIX7"
+retro7() { bash "$HELPER" --cycle 0 --fixture "$FIX7" "$@" 2>&1; }
+rm -f "$FIX7/calib.txt"
+mkdir -p "$FIX7/calib"
+write_calib_at "$FIX7/calib/2026-09-07T1200Z-hooks-off-superpowers-off.txt"
+
+REPORT_BOTH_OFF="$(retro7)"
+expect_line "a both-arms-off artifact's weak-model row names both markers" \
+  "$REPORT_BOTH_OFF" "weak-model pass: 4/5 (run 2026-09-07, hooks=off, superpowers=off)"
+
+# Control: the default arm-1 artifact (no suffix) never renders a
+# superpowers= marker.
+refute_sub "a superpowers-on artifact is never mislabeled superpowers=off" \
+  "$REPORT_HOOKS_ON" "superpowers=off"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 12: a --executor-model artifact renders bexec=<M> (backlog #2/#28, #1414)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --executor-model M suffixes its artifact `-bexec-<M>`
+# (issue #1414), composable with `-hooks-off` / `-superpowers-off` in that
+# fixed order. A run with an opus PATH B executor is not comparable with the
+# default-executor baseline, so the row has to say which one it graded. The
+# marker is read off the FILENAME, like the run date, never off a CALIB atom.
+
+FIX8="$TMP/fixture-bexec"
+cp -r "$FIXTURE_SRC" "$FIX8"
+retro8() { bash "$HELPER" --cycle 0 --fixture "$FIX8" "$@" 2>&1; }
+rm -f "$FIX8/calib.txt"
+mkdir -p "$FIX8/calib"
+write_calib_at "$FIX8/calib/2026-09-08T1200Z-bexec-opus.txt"
+
+REPORT_BEXEC="$(retro8)"
+expect_line "an executor-model artifact's weak-model row names bexec=opus" \
+  "$REPORT_BEXEC" "weak-model pass: 4/5 (run 2026-09-08, bexec=opus)"
+
+# Composability: all three arms at once names all three markers, and the date
+# still parses — the suffixes must be peeled BEFORE the date-shape match.
+FIX9="$TMP/fixture-all-arms"
+cp -r "$FIXTURE_SRC" "$FIX9"
+retro9() { bash "$HELPER" --cycle 0 --fixture "$FIX9" "$@" 2>&1; }
+rm -f "$FIX9/calib.txt"
+mkdir -p "$FIX9/calib"
+write_calib_at "$FIX9/calib/2026-09-08T1200Z-hooks-off-superpowers-off-bexec-opus.txt"
+
+REPORT_ALL_ARMS="$(retro9)"
+expect_line "an all-arms artifact's weak-model row names all three markers" \
+  "$REPORT_ALL_ARMS" "weak-model pass: 4/5 (run 2026-09-08, hooks=off, superpowers=off, bexec=opus)"
+
+# Control: the default (unset) executor-model artifact never renders a bexec
+# marker — unset is the harness default, not an arm.
+refute_sub "a default-executor artifact is never labelled bexec=" \
+  "$REPORT_HOOKS_ON" "bexec="
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 13: a --plan-gate artifact renders plan_gate=<v> (#1429)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --plan-gate <v> suffixes its artifact `-plan-gate-<v>`
+# (issue #1429), appended AFTER `-bexec-<M>` in the fixed order. A run that
+# elided the plan-approval gate is not comparable with the full-gate baseline,
+# so the row has to say which gate it graded. Read off the FILENAME, like the
+# run date and the other arm markers, never off a CALIB atom.
+
+FIX10="$TMP/fixture-plan-gate"
+cp -r "$FIXTURE_SRC" "$FIX10"
+retro10() { bash "$HELPER" --cycle 0 --fixture "$FIX10" "$@" 2>&1; }
+rm -f "$FIX10/calib.txt"
+mkdir -p "$FIX10/calib"
+write_calib_at "$FIX10/calib/2026-09-08T1200Z-plan-gate-none.txt"
+
+REPORT_PG="$(retro10)"
+expect_line "a plan-gate artifact's weak-model row names plan_gate=none" \
+  "$REPORT_PG" "weak-model pass: 4/5 (run 2026-09-08, plan_gate=none)"
+
+# Composability: the every-arm name must still parse its date — the suffixes are
+# peeled BEFORE the date-shape match, in a loop, so order does not matter.
+FIX11="$TMP/fixture-all-arms-plan-gate"
+cp -r "$FIXTURE_SRC" "$FIX11"
+retro11() { bash "$HELPER" --cycle 0 --fixture "$FIX11" "$@" 2>&1; }
+rm -f "$FIX11/calib.txt"
+mkdir -p "$FIX11/calib"
+write_calib_at "$FIX11/calib/2026-09-08T1200Z-hooks-off-superpowers-off-bexec-opus-plan-gate-single.txt"
+
+REPORT_ALL_ARMS_PG="$(retro11)"
+expect_line "an every-arm artifact's weak-model row names all four markers" \
+  "$REPORT_ALL_ARMS_PG" "weak-model pass: 4/5 (run 2026-09-08, hooks=off, superpowers=off, bexec=opus, plan_gate=single)"
+
+# Control: the default (unset) plan-gate artifact never renders a plan_gate
+# marker — unset is the harness default, not an arm.
+refute_sub "a default plan-gate artifact is never labelled plan_gate=" \
+  "$REPORT_HOOKS_ON" "plan_gate="
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 13b: a --plan-gate annotate artifact renders plan_gate=annotate (#1435)"
+# ---------------------------------------------------------------------------
+# The annotate arm is the fourth accepted value; the suffix must be peeled
+# BEFORE the date-shape match or the row loses both its date and its provenance.
+
+FIX12="$TMP/fixture-plan-gate-annotate"
+cp -r "$FIXTURE_SRC" "$FIX12"
+retro12() { bash "$HELPER" --cycle 0 --fixture "$FIX12" "$@" 2>&1; }
+rm -f "$FIX12/calib.txt"
+mkdir -p "$FIX12/calib"
+write_calib_at "$FIX12/calib/2026-09-08T1200Z-plan-gate-annotate.txt"
+
+REPORT_PGA="$(retro12)"
+expect_line "an annotate artifact's weak-model row names plan_gate=annotate" \
+  "$REPORT_PGA" "weak-model pass: 4/5 (run 2026-09-08, plan_gate=annotate)"
+
+# Composed with -bexec-<M>, the fixed suffix order.
+FIX13="$TMP/fixture-bexec-plan-gate-annotate"
+cp -r "$FIXTURE_SRC" "$FIX13"
+retro13() { bash "$HELPER" --cycle 0 --fixture "$FIX13" "$@" 2>&1; }
+rm -f "$FIX13/calib.txt"
+mkdir -p "$FIX13/calib"
+write_calib_at "$FIX13/calib/2026-09-08T1200Z-bexec-opus-plan-gate-annotate.txt"
+
+REPORT_BEXEC_PGA="$(retro13)"
+expect_line "a composed bexec+annotate artifact names both markers" \
+  "$REPORT_BEXEC_PGA" "weak-model pass: 4/5 (run 2026-09-08, bexec=opus, plan_gate=annotate)"
 
 # ---------------------------------------------------------------------------
 echo ""

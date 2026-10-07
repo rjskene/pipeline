@@ -110,6 +110,17 @@ SITES=(
 # reads it from there; the two eval stages consume the $PLAN variable).
 STDOUT_SITE="skills/execute-issue-plan/SKILL.md"
 
+# The site whose extracted block must ALSO read the plan EVALUATION's binding
+# amendments (#1440). Under PIPELINE_PLAN_GATE=annotate a `Revise` plan
+# evaluation is never folded back into the plan comment, so its
+# `**Recommendations:**` are amendments to the plan of record. execute reads
+# them (#1435, pinned by tests/test-select-plan-eval-comment.sh Cases G1-G3);
+# rows M1-M3 below pin the pr-eval site, so the evaluator judges the PR against
+# the SAME plan of record the executor implemented — otherwise an
+# amendment-driven change reads as scope creep and a DROPPED amendment is
+# invisible to the only stage that could catch it.
+AMEND_SITE="skills/evaluate-issue-pr/SKILL.md"
+
 # The SINGLE-bash-command directive every site's step-1 prose must carry —
 # the block's shell variables (COMMENTS_JSON / KEEP / TRUSTED_JSON) only
 # survive within one Bash invocation, so an agent that splits the block across
@@ -289,6 +300,9 @@ for ROW in "${SITES[@]}"; do
     if [ "$REL" = "$STDOUT_SITE" ]; then
       SKIPPED+=(S-static S)
     fi
+    if [ "$REL" = "$AMEND_SITE" ]; then
+      SKIPPED+=(M1 M2 M3)
+    fi
     for _skipped in "${SKIPPED[@]}"; do
       inc
       fail_msg "$TAG: assertion $SITE_N.$_skipped not evaluated (no usable block to test)"
@@ -349,6 +363,70 @@ for ROW in "${SITES[@]}"; do
     pass_msg "$TAG: prose carries \"$PROSE_DIRECTIVE\""
   else
     fail_msg "$TAG: prose is missing \"$PROSE_DIRECTIVE\" — an agent splitting the block across Bash calls loses COMMENTS_JSON/KEEP/TRUSTED_JSON silently"
+  fi
+
+  # -------------------------------------------------------------------------
+  # M — the PLAN-AMENDMENTS read (#1440), amendment site only. M1/M2 are static
+  # (the block invokes the plan-eval selector over the SAME $COMMENTS_JSON and
+  # gates the print on the verdict); M3 is the behavioral control that makes
+  # them non-vacuous — Approved and Revise differ in exactly one property (the
+  # verdict word) and must produce different output.
+  # -------------------------------------------------------------------------
+  if [ "$REL" = "$AMEND_SITE" ]; then
+    echo "Test $SITE_N.M1: block invokes select-plan-eval-comment.sh on a NON-COMMENT line over \$COMMENTS_JSON"
+    inc
+    FTC_CALLS=$(grep -cE 'filter-trusted-comments\.sh' <<<"$NONCOMMENT" || true)
+    if grep -qE 'bash[[:space:]]+"?\$\{CLAUDE_PLUGIN_ROOT[^}]*\}/scripts/select-plan-eval-comment\.sh' <<<"$NONCOMMENT" \
+       && grep -E 'select-plan-eval-comment\.sh' <<<"$NONCOMMENT" | grep -qF '"$COMMENTS_JSON"' \
+       && [ "$FTC_CALLS" = "1" ]; then
+      pass_msg "$TAG: plan-eval selector invoked over the same \$COMMENTS_JSON (one filter-trusted-comments.sh call — no second trust fetch)"
+    else
+      fail_msg "$TAG: Step 1 block does not invoke \${CLAUDE_PLUGIN_ROOT}/scripts/select-plan-eval-comment.sh over \"\$COMMENTS_JSON\" (filter-trusted-comments.sh calls: $FTC_CALLS, expected 1)"
+      printf '%s\n' "$NONCOMMENT" | sed 's/^/      /'
+    fi
+
+    echo "Test $SITE_N.M2: the amendment print is gated on '**Verdict:** Revise' and labelled PLAN-AMENDMENTS"
+    inc
+    if grep -qF '**Verdict:** Revise' <<<"$NONCOMMENT" && grep -qF 'PLAN-AMENDMENTS' <<<"$NONCOMMENT"; then
+      pass_msg "$TAG: Revise-gated PLAN-AMENDMENTS print present in the Step 1 block"
+    else
+      fail_msg "$TAG: Step 1 block is missing the '**Verdict:** Revise' gate and/or the PLAN-AMENDMENTS label"
+      printf '%s\n' "$NONCOMMENT" | sed 's/^/      /'
+    fi
+
+    echo "Test $SITE_N.M3: BEHAVIORAL — the evaluation body prints ONLY on '**Verdict:** Revise'"
+    inc
+    mk_amend_fixture() {  # $1 = verdict word
+      jq -n --arg v "$1" '{body:"b", comments:[
+        {authorAssociation:"OWNER", body:"## Implementation Plan\n\n**Files to change:**\n- `scripts/alpha.sh` — TRUSTED-PLAN-BODY\n"},
+        {authorAssociation:"OWNER", body:("## Plan Evaluation\n\n**Verdict:** " + $v + "\n\n**Recommendations:**\n- AMEND-EVAL-BODY\n")}
+      ]}' > "$TMP/amend-comments.json"
+    }
+    run_amend_block() {
+      PATH="$TMP/bin:$PATH" \
+      PIPELINE_REPO="rjskene/pipeline" \
+      CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+      GH_COMMENTS_JSON="$TMP/amend-comments.json" \
+      bash "$RAW_FILE" 2>"$TMP/stderr-amend-$SITE_N"
+    }
+    mk_amend_fixture "Approve"
+    M_RC_A=0; M_OUT_A=$(run_amend_block) || M_RC_A=$?
+    mk_amend_fixture "Revise"
+    M_RC_R=0; M_OUT_R=$(run_amend_block) || M_RC_R=$?
+    if [ "$M_RC_A" -eq 0 ] && [ "$M_RC_R" -eq 0 ] \
+       && ! grep -qF 'PLAN-AMENDMENTS' <<<"$M_OUT_A" \
+       && ! grep -qF 'AMEND-EVAL-BODY' <<<"$M_OUT_A" \
+       && grep -qF 'PLAN-AMENDMENTS' <<<"$M_OUT_R" \
+       && grep -qF 'AMEND-EVAL-BODY' <<<"$M_OUT_R"; then
+      pass_msg "$TAG: Approve -> no amendments on stdout; Revise -> PLAN-AMENDMENTS + the evaluation body"
+    else
+      fail_msg "$TAG: verdict gate wrong (rc Approve=$M_RC_A Revise=$M_RC_R)"
+      echo "    Approve stdout:"; printf '%s\n' "$M_OUT_A" | sed 's/^/      /'
+      echo "    Revise stdout:";  printf '%s\n' "$M_OUT_R" | sed 's/^/      /'
+      if [ -s "$TMP/stderr-amend-$SITE_N" ]; then
+        echo "    stderr:"; sed 's/^/      /' "$TMP/stderr-amend-$SITE_N"
+      fi
+    fi
   fi
 
   # -------------------------------------------------------------------------

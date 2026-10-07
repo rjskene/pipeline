@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 215" width="920" height="215" role="img" aria-label="Pipeline lifecycle rail" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="#AEBCB9"/></marker><marker id="aha" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="#5FC2D1"/></marker></defs>
+<rect x="0" y="0" width="920" height="215" fill="#0F1516"/>
+
+<path d="M204,62 V34 H460 V62" fill="none" stroke="#7E8F8C" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ah)"/>
+<text x="332" y="28" text-anchor="middle" font-size="11" fill="#7E8F8C">PATH D skips plan-eval (auto-approved)</text>
+<g stroke="#AEBCB9" stroke-width="1.4" fill="none" marker-end="url(#ah)">
+<path d="M135,82 H143"/>
+<path d="M263,82 H271"/>
+<path d="M391,82 H399"/>
+<path d="M519,82 H527"/>
+<path d="M647,82 H655"/>
+<path d="M775,82 H783"/>
+</g>
+<rect x="17" y="62" width="118" height="40" rx="6" fill="#161E20" stroke="#2A3537" stroke-width="1.2"/><text x="76" y="86.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">classify</text>
+<text x="76" y="118" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">agent</text>
+<rect x="145" y="62" width="118" height="40" rx="6" fill="#161E20" stroke="#2A3537" stroke-width="1.2"/><text x="204" y="86.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">plan</text>
+<text x="204" y="118" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">agent</text>
+<rect x="273" y="62" width="118" height="40" rx="6" fill="#15363B" stroke="#5FC2D1" stroke-width="1.4"/><text x="332" y="86.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">plan-eval</text>
+<text x="332" y="118" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">agent · decides</text>
+<rect x="401" y="62" width="118" height="40" rx="6" fill="#161E20" stroke="#2A3537" stroke-width="1.2"/><text x="460" y="86.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">execute</text>
+<text x="460" y="118" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">agent · own worktree</text>
+<rect x="529" y="62" width="118" height="40" rx="6" fill="#161E20" stroke="#2A3537" stroke-width="1.2"/><text x="588" y="86.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">pr-eval preflight</text>
+<text x="588" y="118" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">script</text>
+<rect x="657" y="62" width="118" height="40" rx="6" fill="#15363B" stroke="#5FC2D1" stroke-width="1.4"/><text x="716" y="86.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">pr-eval</text>
+<text x="716" y="118" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">agent · decides</text>
+<rect x="785" y="62" width="118" height="40" rx="6" fill="#15363B" stroke="#5FC2D1" stroke-width="1.4"/><text x="844" y="86.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">auto-merge gate</text>
+<text x="844" y="118" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">script · decides</text>
+<text x="332" y="140" text-anchor="middle" font-size="11" fill="#AEBCB9">Approve · Revise → amendments bind execute</text>
+<path d="M716,126 V150 H588 V126" fill="none" stroke="#5FC2D1" stroke-width="1.3" marker-end="url(#aha)"/>
+<text x="652" y="164" text-anchor="middle" font-size="11" fill="#5FC2D1">Revise → fix → re-check</text>
+<path d="M844,126 V142" fill="none" stroke="#AEBCB9" stroke-width="1.2"/>
+<text x="903" y="158" text-anchor="end" font-size="11" fill="#5BC77A">green → merged</text>
+<text x="903" y="176" text-anchor="end" font-size="11" fill="#E6A23C">block-* → held for operator</text>
+</svg>

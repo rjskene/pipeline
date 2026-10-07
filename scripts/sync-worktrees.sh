@@ -178,7 +178,7 @@ for wt in "${WORKTREES[@]}"; do
   fi
 
   # 4. Sync additional files (e.g., .mcp.json)
-  for syncfile in $PIPELINE_SYNC_FILES; do
+  for syncfile in ${PIPELINE_SYNC_FILES:-}; do
     if [ -f "$MAIN_REPO/$syncfile" ]; then
       if [ -f "$wt/$syncfile" ]; then
         if diff -q "$MAIN_REPO/$syncfile" "$wt/$syncfile" >/dev/null 2>&1; then
@@ -197,7 +197,7 @@ for wt in "${WORKTREES[@]}"; do
   done
 
   # 5. Sync CLAUDE.md / doc files (tracked, but worktrees may be on older commits)
-  for mdfile in $PIPELINE_SYNC_DOCS; do
+  for mdfile in ${PIPELINE_SYNC_DOCS:-}; do
     if [ -f "$MAIN_REPO/$mdfile" ]; then
       if [ -f "$wt/$mdfile" ]; then
         if diff -q "$MAIN_REPO/$mdfile" "$wt/$mdfile" >/dev/null 2>&1; then

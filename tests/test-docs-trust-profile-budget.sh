@@ -42,7 +42,7 @@ fi
 
 s9_text=""
 if [ -n "$s9_line" ]; then s9_text="$(sed -n "${s9_line}p" "$COST")"; fi
-for needle in 'PIPELINE_TRUST_PROFILE' 'lean-single' 'SKIP=true' 'plan-eval skipped: lean profile'; do
+for needle in 'PIPELINE_TRUST_PROFILE' 'SKIP=true' 'plan-eval skipped: lean profile'; do
   inc
   if printf '%s' "$s9_text" | grep -qF -- "$needle"; then
     pass_msg "paragraph names '$needle'"

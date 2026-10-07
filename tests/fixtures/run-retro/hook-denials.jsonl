@@ -1,0 +1,5 @@
+{"ts":"2026-09-04T08:00:00Z","hook":"restrict_paths","tool":"Bash","session":"s1","reason":"before cycle window","command":"echo before"}
+{"ts":"2026-09-06T09:00:00Z","hook":"block_deletions","tool":"Bash","session":"s2","reason":"delete blocked","command":"rm -rf foo"}
+{"ts":"2026-09-06T10:00:00Z","hook":"block_deletions","tool":"Bash","session":"s3","reason":"delete blocked again","command":"rm -rf bar"}
+{"ts":"2026-09-07T09:00:00Z","hook":"restrict_paths","tool":"Bash","session":"s4","reason":"boundary path","command":"cat outside.txt"}
+{"ts":"2026-09-07T10:00:00Z","hook":"enforce-ci-wait","tool":"Stop","session":"s5","reason":"ci not green","command":""}

@@ -104,7 +104,7 @@ UNDOCUMENTED=()
 # ORPHAN = declared \ referenced
 while IFS= read -r token; do
   [ -z "$token" ] && continue
-  if ! printf '%s\n' "$REFERENCED" | grep -qxF "$token"; then
+  if ! grep -qxF "$token" <<<"$REFERENCED"; then
     is_allowed "$token" || ORPHANS+=("$token")
   fi
 done <<<"$DECLARED"
@@ -112,7 +112,7 @@ done <<<"$DECLARED"
 # UNDOCUMENTED = referenced \ declared
 while IFS= read -r token; do
   [ -z "$token" ] && continue
-  if ! printf '%s\n' "$DECLARED" | grep -qxF "$token"; then
+  if ! grep -qxF "$token" <<<"$DECLARED"; then
     is_allowed "$token" || UNDOCUMENTED+=("$token")
   fi
 done <<<"$REFERENCED"

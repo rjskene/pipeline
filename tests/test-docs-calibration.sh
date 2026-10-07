@@ -9,10 +9,11 @@ set -euo pipefail
 #
 # Both files must describe run-retro.sh's ingest AS IMPLEMENTED (#1280 review):
 # the weak-model ratio is counted from the per-issue `reftest=` atoms (the
-# CALIB-TOTAL line is not parsed), the row carries no profile/model/date
-# because the grammar has no such atom, the path-B median reads `path=B` rows
-# only, and the per-issue `cost=` is a token-share apportionment of the run's
-# priced total (an estimate, not a measured per-issue charge).
+# CALIB-TOTAL line is not parsed), the CALIB grammar carries no profile/model/
+# date atom while the row itself still dates the run from the artifact FILENAME
+# and flags a stale one (#1395), the path-B median reads `path=B` rows only,
+# and the per-issue `cost=` is a token-share apportionment of the run's priced
+# total (an estimate, not a measured per-issue charge).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOC="$REPO_ROOT/docs/calibration.md"
@@ -86,15 +87,16 @@ assert_matches "$DOC" 'once per seven cycles[^.]*strict|strict[^.]*sonnet' \
 echo ""
 echo "docs/calibration.md — CALIB line grammar"
 assert_contains "$DOC" \
-  'CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>' \
+  'CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail|blocked|n/a> unexpected-files=<n>' \
   "per-issue CALIB line grammar"
 assert_contains "$DOC" \
-  'CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>' \
+  'CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a>' \
   "CALIB-TOTAL line grammar"
 
 echo ""
 echo "docs/calibration.md — artifact + retro ingest"
-assert_contains "$DOC" '$HARNESS/docs/retros/calib/<date>.txt' "harness-rooted tee target"
+assert_contains "$DOC" '$HARNESS/docs/retros/calib/<UTC date>T<HHMM>Z.txt' \
+  "harness-rooted tee target (#1408)"
 assert_contains "$DOC" 'run-retro.sh' "names the retro ingest script"
 assert_contains "$DOC" 'weak-model pass' "ingest: weak-model pass row"
 assert_contains "$DOC" 'median path b pr/usd' "ingest: median path b pr/usd computed value"
@@ -111,8 +113,19 @@ for f in "$DOC" "$RETRO_README"; do
     "$n: says the CALIB-TOTAL line is not parsed"
   assert_matches "$f" 'grammar carries no profile' \
     "$n: says the CALIB grammar has no profile/model/date atom"
-  assert_not_matches "$f" 'report (names|reports|surfaces|carries)[^.]*(date|profile|model)' \
-    "$n: does not claim the report surfaces run provenance"
+  # #1395 flipped this row's polarity. The weak-model row USED to render as a
+  # bare value with no provenance at all, so a cycle-12 retro could cite a
+  # cycle-2 run and nothing said so. It now renders `<value> (run <date>)`, and
+  # `<value> (run <date>, stale N cycles)` once N tracker cycle comments have
+  # been posted since the run, at N >= 3. The date is read off the artifact
+  # FILENAME, so `grammar carries no profile` above stays true and must stay
+  # asserted — that is the distinction these two assertions pin together.
+  assert_contains "$f" '(run <date>)' \
+    "$n: the weak-model pass row renders the artifact's run date"
+  assert_contains "$f" '(run <date>, stale N cycles)' \
+    "$n: the weak-model pass row carries a stale-cycle marker"
+  assert_matches "$f" '[Nn] ?(≥|>=) ?3' \
+    "$n: names the N >= 3 threshold the stale marker fires at"
 done
 
 echo ""
@@ -128,34 +141,87 @@ done
 
 echo ""
 echo "docs/calibration.md — abort, harness staging, launch env (#1285)"
-assert_contains "$DOC" 'CALIB-ABORT reason=<no-pr|held|timeout>' \
+assert_contains "$DOC" 'CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>' \
   "CALIB-ABORT line grammar"
 assert_contains "$DOC" 'calib/harness' "names the staged harness location"
 assert_matches "$DOC" 'detached[^.]*worktree' "staging is a detached git worktree"
 assert_contains "$DOC" 'env -u ALLOW_ORCHESTRATOR_EDIT' \
   "launch env unsets the orchestrator-edit override"
 assert_contains "$DOC" 'PIPELINE_HEADLESS=true' "launch env sets the headless marker"
-assert_contains "$DOC" '<date>.log' "names the run-log artifact beside the .txt"
+assert_contains "$DOC" 'T<HHMM>Z.log' "names the run-log artifact beside the .txt (#1408)"
 assert_matches "$DOC" 'run #1|run 1' "records the run #1 lesson"
 assert_matches "$DOC" 'run #2|run 2' "records the run #2 lesson"
 
 echo ""
 echo "docs/calibration.md — PIPELINE_* token set"
-# The doc may name only knobs pipeline.config.example declares plus the one
-# allow-listed injected var; a removed/inert knob name here would red
-# scripts/check-config-drift.sh.
+# The doc may name only knobs pipeline.config.example declares plus the two
+# allow-listed injected vars (PIPELINE_HEADLESS, PIPELINE_TRUST_PROFILE); a
+# removed/inert knob name here would red scripts/check-config-drift.sh.
+# PIPELINE_PATH_B_MODEL_EXECUTE joined the list with the --executor-model arm
+# (#1414): the doc names it because the flag sets it, and
+# pipeline.config.example declares it (line ~401).
+# PIPELINE_HEADLESS_PERMISSIONS + PIPELINE_PERMISSION_BRIDGE_TIMEOUT joined with
+# the headless permission bridge (#1421): the `## Permission bridge` subsection
+# documents the one-run escape hatch and the answer deadline, and
+# pipeline.config.example declares both (commented, defaults-in-code).
+# PIPELINE_PLAN_GATE joined with the --plan-gate arm (#1429): the doc names it
+# because the flag sets it in the sandbox session, and pipeline.config.example
+# declares it (commented, defaults-in-code, beside PIPELINE_TRUST_PROFILE).
 TESTS=$((TESTS + 1))
 extra=""
 if [ -f "$DOC" ]; then
   extra="$(grep -oE '\bPIPELINE_[A-Z0-9_]+\b' "$DOC" | sort -u \
     | grep -vxF -e PIPELINE_CALIB_DIR -e PIPELINE_CALIB_REPO \
         -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS -e PIPELINE_TRUST_PROFILE \
+        -e PIPELINE_PATH_B_MODEL_EXECUTE \
+        -e PIPELINE_HEADLESS_PERMISSIONS -e PIPELINE_PERMISSION_BRIDGE_TIMEOUT \
+        -e PIPELINE_PLAN_GATE \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then
-  pass_msg "names no PIPELINE_* token beyond the three calib knobs, PIPELINE_HEADLESS and PIPELINE_TRUST_PROFILE"
+  pass_msg "names no PIPELINE_* token beyond the three calib knobs, PIPELINE_HEADLESS, PIPELINE_TRUST_PROFILE, PIPELINE_PATH_B_MODEL_EXECUTE and the two bridge knobs"
 else
   fail_msg "names undeclared PIPELINE_* token(s): $extra"
+fi
+
+echo ""
+echo "docs/calibration.md — --plan-gate arm paragraph (#1429)"
+# The arm gets ONE paragraph and a synopsis-fence entry, capped at 80 words. The
+# `1 <=` floor pairs with the ceiling because `wc -w` of a missing extract is 0,
+# which satisfies any ceiling and turns the assertion into a vacuous pass. If it
+# overruns, CUT THE PROSE — never raise the ceiling.
+PG_MAX_WORDS=80
+TESTS=$((TESTS + 1))
+PG_PARA=""
+if [ -f "$DOC" ]; then
+  PG_PARA="$(awk 'BEGIN{RS=""} /--plan-gate/ && !/^```/ {print; exit}' "$DOC")"
+fi
+PG_WORDS="$(printf '%s' "$PG_PARA" | wc -w | tr -d ' ')"
+if [ "$PG_WORDS" -ge 1 ] && [ "$PG_WORDS" -le "$PG_MAX_WORDS" ]; then
+  pass_msg "the --plan-gate arm paragraph exists and is $PG_WORDS words (1..$PG_MAX_WORDS)"
+else
+  fail_msg "the --plan-gate arm paragraph is $PG_WORDS words, outside 1..$PG_MAX_WORDS — cut prose, never raise the ceiling"
+fi
+assert_contains "$DOC" '`--plan-gate full|single|none|annotate`' "documents the --plan-gate arm"
+assert_contains "$DOC" '[--plan-gate full|single|none|annotate]' "the usage synopsis names --plan-gate"
+assert_contains "$DOC" '-plan-gate-<v>' "documents the -plan-gate-<v> artifact suffix"
+assert_contains "$DOC" 'the harness default (`annotate`' "names annotate as the harness default (#1437)"
+
+# #1435: the annotate arm gets its OWN paragraph with its OWN 30-word budget,
+# placed AFTER the first `--plan-gate` paragraph and deliberately NOT containing
+# the literal `--plan-gate` — so the 80-word extractor above stays unambiguous
+# and its ceiling is untouched.
+ANN_MAX_WORDS=30
+TESTS=$((TESTS + 1))
+ANN_PARA=""
+if [ -f "$DOC" ]; then
+  ANN_PARA="$(awk 'BEGIN{RS=""} /annotate/ && !/--plan-gate/ && !/^```/ {print; exit}' "$DOC")"
+fi
+ANN_WORDS="$(printf '%s' "$ANN_PARA" | wc -w | tr -d ' ')"
+if [ "$ANN_WORDS" -ge 1 ] && [ "$ANN_WORDS" -le "$ANN_MAX_WORDS" ]; then
+  pass_msg "the annotate paragraph exists and is $ANN_WORDS words (1..$ANN_MAX_WORDS)"
+else
+  fail_msg "the annotate paragraph is $ANN_WORDS words, outside 1..$ANN_MAX_WORDS — cut prose, never raise the ceiling"
 fi
 
 echo ""

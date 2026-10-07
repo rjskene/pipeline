@@ -2,7 +2,7 @@
 
 Real-work retros cannot isolate cause: every cycle's workload differs, so a cost or
 latency delta between cycles says nothing about the harness. The calibration slate
-holds the *inputs* fixed — same sandbox repo, same five issues, same base commit —
+holds the *inputs* fixed — same sandbox repo, same six issues, same base commit —
 so the harness version under test is the only variable. It doubles as the
 end-to-end regression suite the unit tests are not.
 
@@ -13,37 +13,39 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 - **Repo:** `rjskene/pipeline-calib` (private) — a small purpose-built consumer
   project (scripts, tests, docs, CI workflow, `pipeline.config`, seeded labels).
 - **Clone location:** `${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}` —
-  inside the boundary `restrict_paths.py` already allows, so no hook change.
-- **Slate:** five template issues committed at tag `calib-base`, each with a
+  inside the boundary the sandbox session already allows, so no config change.
+- **Slate:** six template issues committed at tag `calib-base`, each with a
   reference test and an expected-files list:
 
   | Issue | Path | Exercises |
   |---|---|---|
   | stale doc line | A | docs-only routing |
   | one-line script bug, failing test present | D | quick-fix lane |
-  | small feature needing a new test | B | full lifecycle, split-role, pr-eval |
+  | small feature needing a new test | B | full lifecycle, single execute agent, pr-eval |
   | body with `race`/`auth` vocabulary | B + W2 | carve-out routing to opus |
   | two-directory change | C | per-leaf worktree fan-out, cherry-pick reassembly |
+  | planted boundary defect | B | pr-eval gate yield |
 
 ## Running
 
 ```
 bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
-    [--profile strict|lean] [--model sonnet|opus] [--harness <dir>]
+    [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
+    [--executor-model opus|sonnet] \
+    [--plan-gate full|single|none|annotate]
 ```
 
 | Mode | What it does | Costs money |
 |---|---|---|
 | `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. | no |
-| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the five slate issues from their templates. `--reset --dry-run` previews the PR/branch sweep for free. | no |
+| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the six slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
-`--profile` sets `PIPELINE_TRUST_PROFILE` in the sandbox session — `strict` is today's
-split-role execute plus full plan-eval; `lean` runs opus/fable executors single-role
-outside W2 and skips PATH A/D plan-eval (docs/cost-architecture.md §9). `--model` picks
-the executor model. `--harness <dir>` points at the harness working tree under test — it
-defaults to this repo's root.
+`--profile` sets `PIPELINE_TRUST_PROFILE` in the sandbox session — `strict` runs full
+plan-eval; `lean` skips the non-W2 PATH A/D plan-eval (docs/cost-architecture.md §9).
+`--model` picks the executor model. `--harness <dir>` points at the harness working
+tree under test — it defaults to this repo's root.
 
 `--reset` is what makes a run comparable to the previous one: inputs are pinned to
 the `calib-base` tag, so a delta between two `CALIB-TOTAL` lines is attributable to
@@ -61,11 +63,44 @@ delegation hook the measured run exists to exercise, and with
 `PIPELINE_HEADLESS=true` — the seam the fullsend headless contract (#1286) will
 read. Nothing consumes that marker yet.
 
+The launcher scrubs every inherited `PIPELINE_*` env var before setting only
+what the run needs; sourcing the clone config in the launching shell is
+harmless after this fix (#1390).
+
+`--hooks off` (default `on`) is arm 2 of the hook-necessity experiment
+(backlog #12): it strips every `PreToolUse` guard hook and the
+`enforce-ci-wait.py` Stop hook from the STAGED manifest only, keeping
+`SessionStart`/`UserPromptSubmit`. Off runs are tagged `hooks=off` in
+`CALIB-TOTAL` and in the `<date>T<HHMM>Z-hooks-off.txt`/`.log` artifact names,
+so an arm-2 run can never be mistaken for the hooks-on baseline (#1409).
+
+`--executor-model opus|sonnet` (default unset, backlog #2/#10/#28) sets
+`PIPELINE_PATH_B_MODEL_EXECUTE` in the sandbox session — the knob
+`resolve-execute-dispatch.sh` and `resolve-stage-model.sh` read to pin the
+single PATH B execute agent's model. Unset means "whatever the resolver defaults
+to" (Opus for PATH B since #1420); no value is pinned by default, so a plain run is
+never silently an arm of this experiment. A set run is tagged `bexec=<M>` in
+`CALIB-TOTAL` and carries a `-bexec-<M>` artifact suffix, composable with
+`-hooks-off` (#1414).
+
+`--plan-gate full|single|none|annotate` (default unset, #1429) sets `PIPELINE_PLAN_GATE`
+in the sandbox session — the knob `resolve-stage-model.sh`'s plan-eval arm reads
+to emit `GATE=<v>`, capping how many plan-eval dispatches fullsend makes. Unset
+means the harness default (`annotate`, #1437); artifacts predating it meant
+`full`. A set run is tagged `plan_gate=<v>` on the total line and carries a
+`-plan-gate-<v>` artifact suffix after `-bexec-<M>`, composable with
+`--hooks off`.
+
+`annotate` (#1435) goes further: ONE evaluation, and a `Revise` is carried into
+execute as binding amendments — no re-plan round. A `**Scope:** structural`
+Revise still re-plans once.
+
 ## Harness staging
 
-`hooks/restrict_paths.py` allows only the session's own project dir and
-`~/.claude`, so a harness tree living anywhere else has its scripts blocked
-inside the sandbox session (run #1 died that way, in 87 seconds).
+The sandbox session treats only its own project dir and `~/.claude` as inside
+its boundary, so a harness tree living anywhere else has its scripts blocked by
+that session's own permission classification (run #1 died that way, in 87
+seconds).
 
 `--run` therefore stages the harness before launching: its committed HEAD is
 checked out as a detached git worktree at `$HOME/.claude/calib/harness` — the
@@ -88,6 +123,46 @@ Consequences:
 | `PIPELINE_CALIB_DIR` | `$HOME/.claude/calib/pipeline-calib` | Where the sandbox clone lives. |
 | `PIPELINE_CALIB_TIMEOUT` | see `pipeline.config.example` | Wall-clock ceiling (seconds) for the headless run before it is killed and the partial summary emitted. |
 | `PIPELINE_CALIB_REPO` | `rjskene/pipeline-calib` | `owner/name` of the sandbox repo, for forks or a re-homed sandbox. |
+
+## Permission bridge
+
+> **Expect `bridge_prompts=0` today.** The launchers pass `--permission-mode auto`,
+> which escalates almost nothing, so the queue usually stays empty and the watch
+> loop below has nothing to answer. The rail is proven (see #1421) but LATENT until
+> the mode moves to `manual` / `default`. See [docs/security-model.md](security-model.md).
+
+Headless runs no longer pass `--dangerously-skip-permissions`. They launch under
+`--permission-mode auto --permission-prompts none` with the `PermissionRequest`
+bridge hook as the escalation channel (issue #1421): an escalated tool call is
+written to a queue file, the session BLOCKS, and the launching interactive
+session answers it.
+
+The launching session is the watcher, and there is no mechanism that enforces
+that — watch the queue from the harness repo with a persistent `Monitor`
+until-loop over
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/permission-bridge.sh" pending
+```
+
+then `permission-bridge.sh show <id>` anything unfamiliar and
+`permission-bridge.sh answer <id> allow|deny [message]` to decide. `pending` on
+an empty or missing queue dir prints nothing and exits 0, so the loop is quiet
+while there is nothing to answer.
+
+- The queue dir is the LAUNCHING repo's `.claude/scratch/permission-queue` (the
+  harness for `--run`, the clone for `scripts/evolve-loop.sh`), exported per run.
+  The hook is inert without it.
+- An unanswered request is denied after `PIPELINE_PERMISSION_BRIDGE_TIMEOUT`
+  seconds (840 by default, under the 900 s hook timeout) with a
+  skip-and-continue message. The session continues; it does not retry the call.
+- `--hooks off` does NOT strip the bridge. It is the deny rail, not a guard, and
+  stripping it would confound arm 2 of the hook-necessity experiment.
+- `PIPELINE_HEADLESS_PERMISSIONS=bypass` restores the old flag for one run, with
+  no bridge dir exported — honoured by all three launchers (`calibration-run.sh`,
+  `evolve-loop.sh`, `spawn-claude.sh`). Reach for it when nobody will be watching
+  the queue; every unanswered escalation otherwise costs the full timeout.
+- `bridge_prompts=<n>` on the `CALIB-TOTAL` line is the measurement. Expect ≤ 3.
 
 ## Cost
 
@@ -125,9 +200,9 @@ One `CALIB` line per slate issue, then one total, both on stdout and teed to the
 artifact:
 
 ```
-CALIB-ABORT reason=<no-pr|held|timeout>
-CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail> unexpected-files=<n>
-CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n>
+CALIB-ABORT reason=<no-pr|held|timeout|no-cost-log>
+CALIB issue=<n> path=<X> cost=<$> wall=<s> verdicts=<plan-eval/pr-eval> reftest=<pass|fail|blocked|n/a> unexpected-files=<n>
+CALIB-TOTAL cost=<$> wall=<s> issues=<n> reftest-pass=<n>/<n> planted=<caught|missed|n/a> hooks=<on|off>
 ```
 
 The `CALIB-ABORT` line is written only when the run did not finish, and is then
@@ -142,42 +217,109 @@ the first line of the block.
 - `cost` — the issue's **apportioned** share of the run's priced total, split by
   that issue's share of the run's total tokens. The rows JSON carries no
   per-issue dollar figure, so this is an estimate, not a measured per-issue charge.
-  Only `CALIB-TOTAL cost` is a real priced number.
-- `verdicts` — plan-eval and pr-eval verdicts, slash-separated.
-- `reftest` — the sandbox issue's reference test after the PR lands.
+  Only `CALIB-TOTAL cost` is a real priced number. Before pricing, `--run`
+  backfills the sandbox's retroactive costs (async `Agent` dispatches carry no
+  usage at PostToolUse) and dedups forward/retroactive duplicates by
+  `agent_id`, keeping the max `tokens.total` (#1406).
+- `verdicts` — plan-eval and pr-eval verdicts, slash-separated. Each half has
+  its own source: the plan half is the last `**Verdict:**` inside a
+  `## Plan Evaluation` comment on the issue, and no other comment — the PR
+  evaluator posts its `## Evaluation` on the issue too, so an unfiltered read
+  reports the PR verdict twice. The pr half is the last `**Verdict:**` in the
+  merging PR's own comments, else the OPEN PR referencing the issue, else `n/a`.
+- `reftest` — the sandbox issue's reference test after the PR lands. `pass` /
+  `fail` were graded against the merged tree; `blocked` means the PR was
+  Flagged and never merged, so the test would have graded the unfixed tree;
+  `n/a` means the run aborted before reaching the issue.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
+- `planted` — a per-RUN atom on the `CALIB-TOTAL` line only: did the slate's
+  planted-boundary-defect issue escape the pr-eval gate? Graded gate-first:
+
+  | observation | grade |
+  |---|---|
+  | pr-eval verdict is `Flagged` | `caught`, regardless of `reftest` — the escape was stopped at the gate, so a tree the fix never reached says nothing |
+  | `reftest=pass` | `caught` — the boundary was implemented correctly |
+  | `reftest=fail` with a non-Flagged pr verdict | `missed` — a defective PR passed the gate |
+  | no `*planted*` slate dir, or the row was neither flagged nor graded | `n/a` |
+- `hooks` — a per-RUN atom on the `CALIB-TOTAL` line only: `on` (default) or
+  `off`, the arm `--hooks` launched under (#1409, see Running above).
+- `bexec` — a per-RUN atom on the `CALIB-TOTAL` line only, and the only
+  OPTIONAL one: `opus` or `sonnet`, the arm `--executor-model` launched under
+  (#1414, see Running above). Absent entirely when the flag was not passed,
+  because the unset arm is the harness default rather than an arm — so the
+  seven-field `CALIB-TOTAL` grammar above is unchanged for a default run.
+- `bridge_prompts` — a per-RUN atom on the `CALIB-TOTAL` line only: how many
+  permission escalations the run raised through the `PermissionRequest` bridge
+  (#1421, see Permission bridge above). `0` when the queue dir is absent or
+  empty. Only requests written after the run started are counted — the queue dir
+  is not cleaned between runs. Like `bexec` it is appended rather than being a
+  grammar field, so the `CALIB-TOTAL` grammar above is unchanged.
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
-  there to answer) or `timeout` (the wall-clock ceiling killed it); `timeout`
-  wins over `held`, which wins over `no-pr`. Issues the run never reached read
+  there to answer), `timeout` (the wall-clock ceiling killed it), or
+  `no-cost-log` (the sandbox session registered no cost-capture hooks, so
+  nothing was priced — the run is not graded rather than reported as `$0`);
+  `timeout` wins over `held`, which wins over `no-pr`, which wins over
+  `no-cost-log`. Issues the run never reached read
   `reftest=n/a` and the total reads `reftest-pass=n/a`, so a failed start can
   never be graded `0/5`.
 
 The tee target is **harness-rooted**, not sandbox-rooted:
 
 ```
-$HARNESS/docs/retros/calib/<date>.txt
+$HARNESS/docs/retros/calib/<UTC date>T<HHMM>Z.txt
 ```
 
 The artifact belongs to the harness whose behaviour it measures, so it is committed
 alongside the retro that cites it. The sandbox clone is disposable — `--reset`
 destroys its history every run.
 
-`--run` also writes `<date>.log` beside it: the headless session's own output,
-truncated per run like the `.txt`. That is where the question a `held` run
-stopped on is visible.
+The filename is **minute-granular**, not day-granular (#1408): a same-day
+re-run gets its own artifact instead of silently overwriting the prior run's
+(run #9 once erased run #8's `reason=timeout` record this way). Older,
+day-only `<date>.txt` artifacts committed before #1408 are still read by
+`scripts/run-retro.sh` — nothing rewrites history. A `--hooks off` run
+suffixes its artifact `-hooks-off` (`<UTC date>T<HHMM>Z-hooks-off.txt`); a run
+with `--executor-model` set suffixes `-bexec-<M>`. The two compose in that
+fixed order (`<UTC date>T<HHMM>Z-hooks-off-bexec-opus.txt`) and the default
+arms keep the plain name (#1409/#1414). `run-retro.sh` peels the suffixes off
+the filename and renders them on the `weak-model pass:` row, so an arm run
+can never be read as the baseline. Legacy `-superpowers-off`-suffixed
+artifacts (written before #1419 retired the experiment arm) are still read
+and dated/labelled correctly — the read-side peel was deliberately kept.
+
+`--run` also writes `<UTC date>T<HHMM>Z.log` beside it: the headless session's
+own output, truncated per run like the `.txt`. That is where the question a
+`held` run stopped on is visible.
+
+Before staging the next run, `--reset` (hence every `--run`) also archives the
+PREVIOUS run's sandbox cost/observability logs — `.claude/logs/{agent-costs.jsonl,
+subagents.log, subagents/, tool-use.log, runs.log,
+agent-cost-orchestrator-state.json}` — into `.claude/logs-archive/<UTC
+timestamp>/` inside the sandbox, so the next run's pricing is never diluted by
+a prior run's rows (`.claude/logs/` is gitignored and untouched by the sandbox's
+own hard git reset). `usage-gate.jsonl` is left in place — it is cross-run by
+design. `--run` also records the run's own start time and scopes its pricing
+to records at or after it, as a second, belt-and-braces layer.
 
 ## Retro ingest
 
 `scripts/run-retro.sh` reads the **newest** `docs/retros/calib/*.txt` by filename
-date and feeds two places in the cycle report:
+sort and feeds two places in the cycle report. The `T<HHMM>Z` suffix keeps
+lexical order, so a same-day timestamped artifact still sorts after an
+older-format one from the same day.
 
 - **`weak-model pass:`** — the spec section 7 row, counted over the `reftest=`
   atoms of the per-issue `CALIB` rows: the rows reading `reftest=pass`, over the
   number of `CALIB` rows read. The `CALIB-TOTAL` line is not parsed at all; its
   `reftest-pass` field is a convenience for human readers that happens to count
   the same rows. Without an artifact the row reports
-  `n/a (no calibration slate; ...)`.
+  `n/a (no calibration slate; ...)`. Caveat since #1451: the two denominators
+  can disagree. `reftest-pass` excludes `blocked` rows from both its numerator
+  and its denominator, while this row's own
+  k/n counts every `reftest=` atom it reads, `blocked` included — so the two
+  diverge by exactly the number of blocked rows. Reconciling
+  `run-retro.sh`'s `compute_calib()` with that exclusion is a follow-up.
 - **`median path b pr/usd`** — the computed value that is otherwise
   `n/a (no per-issue cost in rows JSON)`. It is the median of the `cost=` atoms
   of the `path=B` rows only — rows on every other path are skipped — and the
@@ -185,14 +327,20 @@ date and feeds two places in the cycle report:
   median is approximate: it estimates the typical path-B share of the run, not a
   billed per-PR amount.
 
-Both rows render as bare values. The CALIB grammar carries no profile, model or
-run-date atom, so the cycle report cannot state which `--profile`/`--model`
-produced a ratio, or when. Ingest is newest-artifact-wins and never expires, so
-a stale artifact keeps being cited until a newer run replaces it, and nothing in
-the report says how old it is — read the filenames under `docs/retros/calib/` to
-date the evidence yourself. Surfacing provenance in the row would mean adding
-atoms to the CALIB grammar; that is a follow-up, not current behaviour. See
-`docs/retros/README.md` for the retro-file layout.
+The CALIB grammar carries no profile, model or date atom, so neither row can
+state which `--profile`/`--model` produced it. The `weak-model pass:` row is
+the exception on DATE: it reads the chosen artifact's own FILENAME (never a
+CALIB atom) and renders `<value> (run <date>)` when that filename resolves a
+`YYYY-MM-DD` date — from either the legacy `<date>.txt` form or the `<date>T
+<HHMM>Z.txt` form (#1408; only the date portion before the `T` is used) — or
+the bare `<value>` when it does not (the undated `calib.txt` fallback). Once
+N ≥ 3 tracker `## Cycle <k>` comments have been
+posted after that day, the row instead renders
+`<value> (run <date>, stale N cycles)` — a cycle-12 retro citing a cycle-2
+run used to say nothing about its age; now it does. Ingest itself is still
+newest-artifact-wins and never expires, so a stale artifact keeps being cited
+until a newer run replaces it — the stale marker says so instead of the
+report staying silent. See `docs/retros/README.md` for the retro-file layout.
 
 ## Lessons from runs #1 and #2
 

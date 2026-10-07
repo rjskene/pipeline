@@ -1,0 +1,8 @@
+CALIB-ABORT reason=no-cost-log
+CALIB issue=45 path=A cost=$n/a wall=2519 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB issue=46 path=D cost=$n/a wall=2540 verdicts=n/a/Approved reftest=pass unexpected-files=0
+CALIB issue=47 path=B cost=$n/a wall=3487 verdicts=Approve/Approved reftest=pass unexpected-files=1
+CALIB issue=48 path=B cost=$n/a wall=2696 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB issue=49 path=B cost=$n/a wall=2585 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB issue=50 path=B cost=$n/a wall=4473 verdicts=Approve/Approved reftest=pass unexpected-files=0
+CALIB-TOTAL cost=$n/a wall=4529 issues=6 reftest-pass=n/a planted=caught

@@ -7,7 +7,7 @@ chosen to cover the routing shapes a calibration run needs to distinguish.
 |-----|-------|---------------------------|
 | `01-doc-stale` | documentation only, no source or test change | PATH A |
 | `02-quick-fix` | one-line source fix plus a regression assertion | PATH D |
-| `03-feature`   | a new command that needs a new test case | split-role (test then code) |
+| `03-feature`   | a new command that needs a new test case | single execute agent (test then code) |
 | `04-race-auth` | a concurrency bug with an explicitly under-specified fix | high uncertainty |
 | `05-two-dir`   | edits required in two disjoint directories | PATH C fan-out |
 

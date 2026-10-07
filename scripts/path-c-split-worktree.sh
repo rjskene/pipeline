@@ -59,6 +59,7 @@ case "$CMD" in
     # Branch each leaf off the parent worktree's CURRENT HEAD so it inherits all
     # work merged into the feature branch so far, with its own isolated index.
     git -C "$PARENT" worktree add -q -b "$LEAF_BRANCH" "$LEAF_WT" HEAD
+    mkdir -p "$LEAF_WT/.claude/scratch"
     printf '%s\n' "$LEAF_WT"
     ;;
 

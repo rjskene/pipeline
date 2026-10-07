@@ -36,10 +36,10 @@ fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 # hook returns in ~timeout seconds with exit 0. The producer is reaped after.
 # Env vars that short-circuit a hook's escape-hatch path BEFORE it reaches its
 # stdin read. The orchestrator session exports ALLOW_ORCHESTRATOR_EDIT=true (the
-# PATH C escape hatch) and may export ALLOW_DELETIONS; if either leaks into the
-# test process, enforce-path-c-delegation.py / block_deletions.py exit 0 before
-# the read and the timeout assertion passes for the WRONG reason. Strip them so
-# each hook genuinely exercises read_event_stdin.
+# PATH C escape hatch); if it leaks into the test process,
+# enforce-path-c-delegation.py exits 0 before the read and the timeout assertion
+# passes for the WRONG reason. Strip it so each hook genuinely exercises
+# read_event_stdin.
 run_with_blocking_stdin() {
   local start end fifo hookpid producerpid
   fifo="$(mktemp -u)"
@@ -48,7 +48,7 @@ run_with_blocking_stdin() {
   # Open the FIFO write end with a long sleep so the read end never sees EOF.
   ( sleep 30 > "$fifo" ) &
   producerpid=$!
-  env -u ALLOW_ORCHESTRATOR_EDIT -u ALLOW_DELETIONS "$@" < "$fifo" >/dev/null 2>&1 &
+  env -u ALLOW_ORCHESTRATOR_EDIT "$@" < "$fifo" >/dev/null 2>&1 &
   hookpid=$!
   wait "$hookpid"
   RUN_RC=$?
@@ -126,17 +126,23 @@ fi
 # ---------------------------------------------------------------------------
 echo "Task 2: shipped Python hooks bound their stdin reads"
 
+# permission-bridge.py (#1421) needs a queue dir to get PAST its inertness gate:
+# with PIPELINE_PERMISSION_BRIDGE_DIR unset it returns 0 BEFORE touching stdin,
+# so (a) below would pass for the wrong reason and (b) would be pinning a path
+# the hook never takes in production. The 1 s bridge deadline keeps
+# 5 s (read_event_stdin's alarm) + the answer poll under this task's 8 s ceiling.
+BRIDGE_Q="$(mktemp -d)"
+
 # name|env-prefix(space-separated VAR=val, or empty)
 PY_HOOKS=(
   "log_subagent.py|"
   "capture_agent_cost.py|PIPELINE_LOGS_ENABLED=true"
   "enforce-ci-wait.py|CLAUDE_PIPELINE_SKILL=evaluate-issue-pr"
   "enforce-path-c-delegation.py|CLAUDE_PIPELINE_ISSUE_NUMBER=917"
-  "block_deletions.py|"
-  "restrict_paths.py|CLAUDE_PLUGIN_ROOT=$REPO_ROOT"
   "enforce-base-branch.py|"
   "enforce-comment-trust.py|"
   "check-ci-skip-markers.py|"
+  "permission-bridge.py|PIPELINE_PERMISSION_BRIDGE_DIR=$BRIDGE_Q PIPELINE_PERMISSION_BRIDGE_TIMEOUT=1"
 )
 
 for row in "${PY_HOOKS[@]}"; do
@@ -169,6 +175,8 @@ for row in "${PY_HOOKS[@]}"; do
     pass_msg "2[$hook]: no bare json.load(sys.stdin)/sys.stdin.read()"
   fi
 done
+
+rm -rf "$BRIDGE_Q"
 
 # ---------------------------------------------------------------------------
 # Task 3 — bash hook log-tool-use.sh bounds its `cat` stdin read with timeout.

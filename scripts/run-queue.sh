@@ -547,29 +547,29 @@ check_issue_outcome() {
 # Detect evaluator sessions that have completed their work but whose claude
 # child has not exited (manual-merge / block-* branch — issue #489). The
 # tmux-window-presence check in is_agent_running() is necessary but not
-# sufficient: when the evaluator skips Step 11 auto-merge (verdict recommends
-# manual merge, or any block-* reason fires), the spawned `claude -p` process
-# can sit indefinitely until the per-agent timeout fires, never closing its
-# tmux window. This predicate gives the runner a second terminal signal sourced
+# sufficient: when the orchestrator's auto-merge gate is skipped (verdict
+# recommends manual merge, or any block-* reason fires), the spawned
+# `claude -p` process can sit indefinitely until the per-agent timeout fires,
+# never closing its tmux window. This predicate gives the runner a second terminal signal sourced
 # from GitHub state.
 #
 # Returns 0 (terminal) iff EITHER:
-#   (a) the issue carries the `manual-merge` label (the evaluator auto-applies
-#       this on every block-* skip per skills/evaluate-issue-pr/SKILL.md Step
-#       11.4; before that change rolls out, only operator-pre-labelled issues
-#       match this arm), OR
+#   (a) the issue carries the `manual-merge` label (the gate auto-applies this
+#       on every block-* skip per step 4 of
+#       skills/fullsend/references/auto-merge-gate.md; before that change
+#       rolls out, only operator-pre-labelled issues match this arm), OR
 #   (b) the issue's linked PR's latest comment body starts with
 #       `Auto-merge skipped:` (the block-* fallback shape from
-#       skills/evaluate-issue-pr/SKILL.md) AND the latest `## Evaluation` PR
-#       comment contains `**Verdict:** Approved`.
+#       skills/fullsend/references/auto-merge-gate.md) AND the latest
+#       `## Evaluation` PR comment contains `**Verdict:** Approved`.
 # Returns 1 otherwise. Fails closed: any gh error, empty PR lookup, or missing
 # `## Evaluation` payload returns 1 so a transient API blip cannot prematurely
 # terminate a healthy worker.
 
 # Recover the gate's actual block-reason for a wedged evaluator's PR. The
-# evaluator posts `Auto-merge skipped: <REASON>. Run gh pr merge manually.`
-# for ANY block-* skip (skills/evaluate-issue-pr/SKILL.md Step 11.4), where
-# <REASON> is one of the auto-merge-gate.sh tokens (block-verdict, block-ci,
+# orchestrator posts `Auto-merge skipped: <REASON>. Run gh pr merge manually.`
+# for ANY block-* skip (step 4 of skills/fullsend/references/auto-merge-gate.md),
+# where <REASON> is one of the auto-merge-gate.sh tokens (block-verdict, block-ci,
 # block-mergeable, block-mergestate, block-label, block-flag,
 # block-capability-refused, block-base-mismatch). Scan ALL PR comments (the
 # skipped line is not always the last comment under the manual-merge label

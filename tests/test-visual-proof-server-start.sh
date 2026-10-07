@@ -83,7 +83,7 @@ fi
 
 # ---- Case (e): doc-contract — evaluate-issue-pr Step 6c routes through the
 #      new script (the wiring is the contract; SKILL.md is prose). ----
-SKILL_MD="$REPO_ROOT/skills/evaluate-issue-pr/SKILL.md"
+SKILL_MD="$REPO_ROOT/skills/evaluate-issue-pr/references/visual-validation.md"
 if grep -q "visual-proof-server-start.sh" "$SKILL_MD"; then
   pass_msg "evaluate-issue-pr SKILL.md references visual-proof-server-start.sh"
 else

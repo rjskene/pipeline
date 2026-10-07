@@ -9,22 +9,29 @@ set -euo pipefail
 # (`grep -rn "assertEqual" skills/ scripts/` returns zero hits). Plan-time
 # detection of exact-match guards was improvised per-evaluator, which produced
 # the consumer's keyset-caught / literal-missed asymmetry: an undeclared
-# `assertEqual(msgs, [{...}])` contradicted the RED-authored suite mid-leg and
-# the GREEN implementer correctly STOPPED with no legal resolution.
+# `assertEqual(msgs, [{...}])` contradicted the planned change mid-task, and the
+# executor correctly STOPPED with no way to tell a sanctioned re-pin from a
+# regression it had just caused.
 #
-# The fix (authored by the GREEN implementer, NOT here) adds
-# `scripts/exact-match-guard-sweep.sh` — a sibling of `split-role-gate.sh` that
+# The fix adds `scripts/exact-match-guard-sweep.sh` — a mechanical helper that
 # scans the resolved test roots and emits one token line per exact-match guard —
 # and wires it into `skills/evaluate-issue-plan/SKILL.md` Step 3 Phase 1 (the
 # README anchor guard of #1059 is the structural precedent) plus
 # `skills/plan-issue/SKILL.md` Step 4.
+#
+# #1420: the sweep's output lands in the plan's `**Test changes:**` section. It
+# used to land under a dedicated shared-tests declaration that existed only so the
+# #881 two-agent PATH B lane's implementer could be granted write access to a
+# locked test; that lane is gone, the single execute agent may edit any test the
+# plan names, and Case 17b (which pinned the old declaration heading in
+# plan-issue/SKILL.md) went with it.
 #
 # CONTRACT UNDER TEST
 # -------------------
 #   Usage: exact-match-guard-sweep.sh [<test-path>...]
 #   NEVER sources pipeline.config — the caller exports env.
 #
-#   Scope resolution, three tiers (byte-mirroring split-role-gate.sh:138-153):
+#   Scope resolution, three tiers:
 #     1. positional <test-path>... args (highest)
 #     2. else $PIPELINE_TEST_ROOTS, word-split + glob-EXPANDED
 #     3. else default `tests/`
@@ -44,8 +51,8 @@ set -euo pipefail
 #   Exit codes (fail loud — the #1182 lesson): 0 swept (GUARDS=0 is a real clean
 #   result), 2 usage, 3 vacuous scope (no-test-root / no-test-files). The sweep
 #   must NEVER exit 0 on a scope it could not prove anything about. This
-#   deliberately DIVERGES from split-role-gate.sh's always-exit-0 contract: that
-#   gate's verdict rides a token consumed by an auto-merge parser, whereas this
+#   deliberately DIVERGES from the always-exit-0 contract the pipeline's auto-merge
+#   gates use: their verdict rides a token consumed by a parser, whereas this
 #   sweep's caller is an LLM evaluator that must be forced to notice a vacuous run.
 #
 # FIXTURES
@@ -490,11 +497,13 @@ fi
 
 # ---------------------------------------------------------------------------
 # Case 17 — planner wiring: plan-issue prompts the sweep at authoring time so the
-# declaration is produced in the plan, not only demanded at evaluation.
+# declaration is produced in the plan, not only demanded at evaluation. #1420
+# dropped 17b: the sweep's hits are now declared under the plan template's
+# existing `**Test changes:**` section (pinned by the plan-issue template guards),
+# not under a split-lane-specific heading of its own.
 # ---------------------------------------------------------------------------
-echo "Case 17: plan-issue/SKILL.md references the sweep + the Shared tests declaration"
+echo "Case 17: plan-issue/SKILL.md references the sweep"
 assert_file_contains "17a plan-issue references sweep" "$PLAN_SKILL" "exact-match-guard-sweep.sh"
-assert_file_contains "17b plan-issue names the declaration" "$PLAN_SKILL" "**Shared tests (split-role):**"
 
 # ---------------------------------------------------------------------------
 # Case 18 — packaging: executable, bash shebang.

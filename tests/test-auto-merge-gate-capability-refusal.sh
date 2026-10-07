@@ -107,11 +107,14 @@ make_rollup() {
 
 make_eval() { printf '## Evaluation\n\n**Verdict:** %s\n' "$1"; }
 
-# mk_record <dir> <filename> <result-text>
+# mk_record <dir> <filename> <result-text> [<status-text>]
+# <status-text> mirrors the PostToolUse(Agent) payload's `status` field
+# (#1233/#1361) — "" (default) for the ordinary case, "async_launched" for a
+# background-dispatch stub.
 mk_record() {
-  local dir="$1" fname="$2" result="$3"
+  local dir="$1" fname="$2" result="$3" status="${4:-}"
   mkdir -p "$dir"
-  RESULT_TEXT="$result" python3 - "$dir/$fname" <<'PY'
+  RESULT_TEXT="$result" STATUS_TEXT="$status" python3 - "$dir/$fname" <<'PY'
 import json, os, sys
 rec = {
     "schema_version": 1,
@@ -124,6 +127,7 @@ rec = {
     "prompt_truncated": False,
     "result": os.environ.get("RESULT_TEXT", ""),
     "result_truncated": False,
+    "status": os.environ.get("STATUS_TEXT", ""),
     "usage": {"input_tokens": 0, "output_tokens": 0,
               "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
     "total_tokens": 0,
@@ -154,6 +158,10 @@ mk_record "$EMPTY_RESULT_DIR" "execute-${ISSUE}-path-b_dddd4444.json" ""
 mk_record "$EMPTY_RESULT_DIR" "plan-issue-${ISSUE}_dddd5555.json" ""
 
 MISSING_DIR="$TMP/src-does-not-exist"
+
+ASYNC_DIR="$TMP/src-async"
+mk_record "$ASYNC_DIR" "execute-${ISSUE}-path-b_ffff6666.json" "" "async_launched"
+mk_record "$ASYNC_DIR" "execute-${ISSUE}-path-c_ffff7777.json" "" "async_launched"
 
 # --- runners ---------------------------------------------------------------
 # STDOUT_LINE / STDERR_TXT / GATE_RC are set by run_gate.
@@ -237,6 +245,20 @@ check "(f) token" "green" "$STDOUT_LINE"
 case "$STDERR_TXT" in
   *WARN*no-sources*) pass "(f) stderr WARN names no-sources" ;;
   *) fail "(f) expected a stderr WARN naming no-sources, got: '$STDERR_TXT'" ;;
+esac
+
+echo "=== (async) all-async records => green + stderr NOTE naming async-dispatch, NO WARN ==="
+reset_env
+export PIPELINE_CAPABILITY_REFUSAL_SOURCES="$ASYNC_DIR"
+run_gate "(async)"
+check "(async) token" "green" "$STDOUT_LINE"
+case "$STDERR_TXT" in
+  *NOTE*async-dispatch*) pass "(async) stderr NOTE names async-dispatch" ;;
+  *) fail "(async) expected a stderr NOTE naming async-dispatch, got: '$STDERR_TXT'" ;;
+esac
+case "$STDERR_TXT" in
+  *WARN*) fail "(async) expected NO WARN, got: '$STDERR_TXT'" ;;
+  *) pass "(async) no WARN emitted" ;;
 esac
 
 echo "=== (g) precedence ABOVE: flag / label / verdict still win ==="

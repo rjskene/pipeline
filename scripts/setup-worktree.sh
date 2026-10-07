@@ -140,19 +140,21 @@ fi
 # Step 2: Sync untracked .claude/ files (settings.local.json, untracked hooks, .env files, venvs)
 echo "[2/6] Syncing untracked files (.claude/, .env)..."
 mkdir -p "$WORKTREE_PATH/.claude/hooks"
+mkdir -p "$WORKTREE_PATH/.claude/scratch"
 if [ -f "$MAIN_REPO/.claude/settings.local.json" ]; then
   cp "$MAIN_REPO/.claude/settings.local.json" "$WORKTREE_PATH/.claude/settings.local.json"
 fi
 # Copy host-specific pipeline.config so the worktree-local `source ./pipeline.config`
-# in execute-issue-plan / evaluate-issue-pr Boot resolves PIPELINE_* vars. The main
-# checkout's copy is unreadable from inside a worktree (restrict_paths.py boundary).
-# gitignored + host-specific, so this is a runtime copy, not tracked (#529).
+# in execute-issue-plan / evaluate-issue-pr Boot resolves PIPELINE_* vars. Worktrees
+# live under .claude/worktrees/ inside the project root, so a worktree session's own
+# root is the worktree: it reads the config sitting beside itself, not the main
+# checkout's. gitignored + host-specific, so this is a runtime copy, not tracked (#529).
 if [ -f "$MAIN_REPO/pipeline.config" ]; then
   cp "$MAIN_REPO/pipeline.config" "$WORKTREE_PATH/pipeline.config"
   echo "  Copied pipeline.config"
 fi
 # Sync .env files
-for envfile in $PIPELINE_SYNC_ENVS; do
+for envfile in ${PIPELINE_SYNC_ENVS:-}; do
   if [ -f "$MAIN_REPO/$envfile" ]; then
     mkdir -p "$WORKTREE_PATH/$(dirname "$envfile")"
     cp "$MAIN_REPO/$envfile" "$WORKTREE_PATH/$envfile"
@@ -160,7 +162,7 @@ for envfile in $PIPELINE_SYNC_ENVS; do
   fi
 done
 # Symlink venvs from main repo (avoids duplicating large venvs)
-for venvdir in $PIPELINE_SYNC_VENVS; do
+for venvdir in ${PIPELINE_SYNC_VENVS:-}; do
   if [ -d "$MAIN_REPO/$venvdir" ]; then
     mkdir -p "$WORKTREE_PATH/$(dirname "$venvdir")"
     ln -sfn "$MAIN_REPO/$venvdir" "$WORKTREE_PATH/$venvdir"
@@ -180,7 +182,6 @@ done
 # Step 3: Mirror per-issue scratch attachments into the worktree
 if [ -n "${ISSUE_NUM:-}" ] && [ -d "$MAIN_REPO/.claude/scratch/issue-${ISSUE_NUM}" ]; then
   echo "[3/6] Mirroring .claude/scratch/issue-${ISSUE_NUM}/ into worktree..."
-  mkdir -p "$WORKTREE_PATH/.claude/scratch"
   cp -R "$MAIN_REPO/.claude/scratch/issue-${ISSUE_NUM}" "$WORKTREE_PATH/.claude/scratch/"
   echo "  Copied issue-${ISSUE_NUM} attachments into worktree scratch"
 else

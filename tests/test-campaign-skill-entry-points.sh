@@ -23,6 +23,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CAMP="$ROOT/skills/campaign/SKILL.md"
 FS="$ROOT/skills/fullsend/SKILL.md"
+# #1444 — the leg-loop prose moved OUT of the fullsend hot path into its
+# reference file. The `## Campaign mode` heading stays in SKILL.md (this guard
+# and every docs cross-reference cite it by heading); the canonical leg-loop
+# SENTENCES are now asserted against the reference file, which is still exactly
+# ONE copy and still fullsend's property — so the SSoT contract is unchanged.
+FS_CAMP="$ROOT/skills/fullsend/references/campaign-mode.md"
 
 fail=0
 
@@ -49,6 +55,9 @@ assert_camp() {
 # (2) routes into the SAME machinery (canonical source, not a copy).
 assert_camp "skills/fullsend/SKILL.md"
 assert_camp "## Campaign mode"
+# #1444 — and names the reference file the machinery now lives in, so a reader
+# of the thin entry can reach the leg loop in one hop.
+assert_camp "skills/fullsend/references/campaign-mode.md"
 assert_camp "plan-campaign.sh"
 # Carries the cap contracts BY REFERENCE.
 assert_camp "PIPELINE_CAMPAIGN_MAX_BC"
@@ -57,10 +66,10 @@ assert_camp "PIPELINE_CAMPAIGN_MAX_AD"
 # (3) single-source-of-truth: the verbatim leg-ordering sentence appears in
 #     fullsend but NOT in the campaign skill (no forked leg-loop prose).
 LEG_SENTENCE='execute → 6b → eval-pr → greenlight-merge'
-if grep -qF "$LEG_SENTENCE" "$FS"; then
-  echo "  PASS: leg-ordering sentence present in fullsend (canonical home)"
+if grep -qF "$LEG_SENTENCE" "$FS_CAMP"; then
+  echo "  PASS: leg-ordering sentence present in fullsend's campaign-mode reference (canonical home)"
 else
-  echo "  FAIL: leg-ordering sentence absent from fullsend: $LEG_SENTENCE"; fail=1
+  echo "  FAIL: leg-ordering sentence absent from skills/fullsend/references/campaign-mode.md: $LEG_SENTENCE"; fail=1
 fi
 if [ -f "$CAMP" ] && grep -qF "$LEG_SENTENCE" "$CAMP"; then
   echo "  FAIL: campaign skill RE-EMBEDS the leg-ordering sentence (forked prose)"; fail=1
@@ -75,7 +84,7 @@ if grep -qF "[issue_numbers...] [--manual-merge] [--spawn] [--campaign]" "$FS"; 
 else
   echo "  FAIL: fullsend argv shape no longer advertises --campaign"; fail=1
 fi
-if grep -qiF "/pipeline:campaign" "$FS"; then
+if grep -qiF "/pipeline:campaign" "$FS_CAMP"; then
   echo "  PASS: fullsend names /pipeline:campaign as equivalent entry"
 else
   echo "  FAIL: fullsend does not mention /pipeline:campaign equivalent entry"; fail=1

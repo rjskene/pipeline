@@ -32,11 +32,21 @@ fi
 
 # Extract Step 6: from the `6. **Execute (wave N)**` marker up to (but not
 # including) the `6b.` marker. END tolerates bold and non-bold via `(\*\*)?6b\.`.
+# #1444 — Step 6a's BODY moved out of the hot path into
+# skills/fullsend/references/post-dispatch-verification.md (SKILL.md keeps the
+# `6a.` step number plus a one-line pointer). Step 6a is part of the Step 6
+# contract, so the region is the SKILL.md window PLUS that reference file —
+# still region-scoped, never a whole-file grep.
+STEP6A_REF="$ROOT/skills/fullsend/references/post-dispatch-verification.md"
+if [ ! -f "$STEP6A_REF" ]; then
+  echo "FAIL: $STEP6A_REF not found" >&2
+  exit 1
+fi
 REGION="$(awk '
   /^[[:space:]]*6\. \*\*Execute \(wave N\)\*\*/ {capturing=1}
   /^[[:space:]]*(\*\*)?6b\./ {capturing=0}
   capturing {print}
-' "$ROOT/$SKILL")"
+' "$ROOT/$SKILL"; cat "$STEP6A_REF")"
 
 if [ -z "$REGION" ]; then
   echo "FAIL: could not extract Step 6 region from $SKILL (markers '6. **Execute (wave N)**' / '6b.' moved?)" >&2
@@ -46,7 +56,7 @@ fi
 assert_region_contains() {
   local label="$1" needle="$2"
   inc
-  if printf '%s' "$REGION" | grep -F -q -- "$needle"; then
+  if grep -F -q -- "$needle" <<<"$REGION"; then
     pass_msg "$label: Step 6 region contains \"$needle\""
   else
     fail_msg "$label: Step 6 region missing \"$needle\""
@@ -68,8 +78,8 @@ assert_region_contains "recover-redispatch" "recover-redispatch"
 # 4) A negation/MUST directive that the orchestrator does NOT trust the agent's
 #    narrated self-report.
 inc
-if printf '%s' "$REGION" | grep -E -q -- 'self-report' \
-   && printf '%s' "$REGION" | grep -E -q -- 'MUST|do NOT|never|NEVER|not trust'; then
+if grep -E -q -- 'self-report' <<<"$REGION" \
+   && grep -E -q -- 'MUST|do NOT|never|NEVER|not trust' <<<"$REGION"; then
   pass_msg "no-trust-directive: Step 6 region states orchestrator MUST/never-trust the agent self-report"
 else
   fail_msg "no-trust-directive: Step 6 region missing a no-trust self-report directive"

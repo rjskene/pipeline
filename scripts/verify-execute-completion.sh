@@ -26,10 +26,10 @@
 # Fail-closed: any check that cannot confirm a satisfied terminal state emits a
 # recover token, never `complete`.
 #
-# #1056 — ADDITIVE `--verify-dispatch <N> <A|B|C|D>` mode (post-hoc model + shape
-# verify): asserts the dispatched model + dispatch shape match what
-# scripts/resolve-execute-dispatch.sh specified, closing the invisible
-# cost-regression property. It emits its OWN `DISPATCH=` token contract and never
+# #1056 — ADDITIVE `--verify-dispatch <N> <A|B|C|D>` mode (post-hoc model verify):
+# asserts the dispatched model matches what scripts/resolve-execute-dispatch.sh
+# specified, closing the invisible cost-regression property. (#1420 retired the
+# shape half of this check — see the dispatch block below.) It emits its OWN `DISPATCH=` token contract and never
 # alters the default-mode `ACTION=` output above. See the dispatch block below.
 # #1186 widened the accepted path set to A|B|C|D alongside the resolver: PATH A
 # execute and every PATH C leaf now carry a real resolved `model=`, so their
@@ -46,18 +46,37 @@ if [ $# -lt 1 ]; then
   exit 2
 fi
 
-# ---- #1056: additive --verify-dispatch mode (post-hoc model + shape verify) --
+# ---- #1056: additive --verify-dispatch mode (post-hoc model verify) ----------
 # When invoked as `--verify-dispatch <N> <path>`, the helper does NOT run the
 # default ACTION-token completion checks; it instead asserts the dispatched model
-# + dispatch shape MATCH what resolve-execute-dispatch.sh specified, closing the
-# "invisible cost regression" property (#1056). This is purely additive — the
-# default positional `<issue-number>` ACTION= contract below is byte-for-byte
-# unchanged. The new mode emits its OWN single-line token contract:
+# MATCHES what resolve-execute-dispatch.sh specified, closing the "invisible cost
+# regression" property (#1056). This is purely additive — the default positional
+# `<issue-number>` ACTION= contract below is byte-for-byte unchanged. The mode
+# emits its OWN single-line token contract:
 #
 #   DISPATCH=match    ISSUE=<N>
 #   DISPATCH=mismatch ISSUE=<N> REASON=model:<got>!=<want>
-#   DISPATCH=mismatch ISSUE=<N> REASON=shape:single!=split-role
 #   DISPATCH=warn     ISSUE=<N> REASON=model-unrecoverable
+#
+# #1420 — this is now a PURE MODEL check on every path. It used to carry a second
+# half: when the resolver asked for the #881 two-agent PATH B lane, the mode
+# scanned <base>..<feature-ref> for the test-author's locked-RED anchor commit and
+# reported a shape mismatch on its absence, catching an orchestrator that silently
+# collapsed the pair into one agent. #1420 makes that collapse the DESIGNED shape,
+# so the scan's only remaining verdict was a false alarm: the scan, its REASON
+# token, and its expected-shape env input are all gone. A legacy shape env var left
+# exported by an in-flight orchestrator is IGNORED, never an error — a stale export
+# must degrade to the model check, not hard-fail a live wave.
+#
+# #1387 — ADVISORY cost-attribution miss signal, emitted as the FIRST line of
+# stdout (ahead of every DISPATCH= verdict above, ahead of every early-exit
+# branch too):
+#
+#   COST=miss ISSUE=<N> REASON=unattributed-row
+#
+# echo-only: no exit-code change, no halt, no gate. MISS-ONLY — there is no
+# COST=ok; silence covers an attributed last row, PIPELINE_LOGS_ENABLED not
+# exactly "true", jq unavailable, and an absent/empty cost log.
 #
 # Fail-soft, fail-CLOSED parity with the rest of the helper: any check that
 # cannot CONFIRM a match emits `warn`/`mismatch`, never a spurious `match`. The
@@ -70,7 +89,6 @@ fi
 # site via env (so the positional contract is untouched):
 #   VED_EXPECT_MODEL       — resolver MODEL= (sonnet|opus|haiku|fable; #1186
 #                            retired `inherit` — MODEL= is always named)
-#   VED_EXPECT_SPLIT_ROLE  — resolver SPLIT_ROLE= (true|false)
 #   VED_OBSERVED_MODEL     — the model actually dispatched; recorded at dispatch
 #                            for the inline path. Empty => try the spawn-claude
 #                            runs log `model=` column (the --spawn transport),
@@ -82,9 +100,8 @@ if [ "$1" = "--verify-dispatch" ]; then
   fi
   VD_ISSUE="$2"
   VD_PATH="$3"
-  # #1186: accept every path letter the execute resolver resolves. The shape
-  # scan keys off VED_EXPECT_SPLIT_ROLE, which is false for A/C/D, so those are
-  # a pure model check. Stage words still exit 2 (W3).
+  # #1186: accept every path letter the execute resolver resolves. Since #1420
+  # every path is a pure model check. Stage words still exit 2 (W3).
   case "$VD_PATH" in
     A|B|C|D) ;;
     *)
@@ -98,10 +115,32 @@ if [ "$1" = "--verify-dispatch" ]; then
     # shellcheck disable=SC1090,SC1091
     source "${_vec_dir}/_resolve-config.sh"
   fi
-  VD_BASE="${PIPELINE_BASE_BRANCH:-staging}"
+  # --- #1387: advisory cost-attribution miss signal, dispatch-time. -----------
+  # Sits at the TOP of the branch, ahead of the model verify, so
+  # the advisory is always the FIRST line of stdout, ahead of every DISPATCH=
+  # verdict below (every early-exit branch still carries it). echo-only: no
+  # exit-code change, no halt, no gate. MISS-ONLY: there is no COST=ok —
+  # silence covers an attributed row, PIPELINE_LOGS_ENABLED not exactly
+  # "true", jq unavailable, and an absent/empty cost log (never manufacture a
+  # miss from a missing file). PIPELINE_COST_LOG_OVERRIDE mirrors the
+  # PIPELINE_RUNS_LOG_OVERRIDE read below — a test-injected path, allow-listed
+  # in tests/config-drift-allowlist.txt, not a pipeline.config.example knob.
+  if [ -f "${_vec_dir}/_logging.sh" ]; then
+    # shellcheck disable=SC1090,SC1091
+    source "${_vec_dir}/_logging.sh"
+  fi
+  if command -v pipeline_logging_enabled >/dev/null 2>&1 && pipeline_logging_enabled \
+     && command -v jq >/dev/null 2>&1; then
+    _cost_log="${PIPELINE_COST_LOG_OVERRIDE:-.claude/logs/agent-costs.jsonl}"
+    if [ -s "$_cost_log" ]; then
+      _cost_last_issue="$(tail -n 1 "$_cost_log" | jq -r '.issue // ""' 2>/dev/null || true)"
+      if [ -z "$_cost_last_issue" ]; then
+        echo "COST=miss ISSUE=$VD_ISSUE REASON=unattributed-row"
+      fi
+    fi
+  fi
 
   EXPECT_MODEL="${VED_EXPECT_MODEL:-}"
-  EXPECT_SPLIT="${VED_EXPECT_SPLIT_ROLE:-false}"
   OBSERVED="${VED_OBSERVED_MODEL:-}"
 
   # Inline path records no spawn-claude runs row; for the --spawn transport,
@@ -112,39 +151,6 @@ if [ "$1" = "--verify-dispatch" ]; then
     if [ -f "$_runs_log" ]; then
       OBSERVED="$(grep -E "issue=${VD_ISSUE}([^0-9]|$)" "$_runs_log" 2>/dev/null \
         | sed -n 's/.*model=\([A-Za-z0-9-]*\).*/\1/p' | tail -1 || true)"
-    fi
-  fi
-
-  # --- Shape verify FIRST (a collapsed split-role pair is a definite mismatch) -
-  # Resolve the feature ref deterministically — the same cascade as the default
-  # ACTION= mode below — so the anchor scan works when the orchestrator session
-  # sits on the base branch (HEAD == base → <base>..HEAD window is empty, #1077).
-  # Cascade: worktree-porcelain → closedByPullRequestsReferences → gh pr list.
-  # Falls back to HEAD when no ref resolves (preserves original behaviour for
-  # the case where HEAD IS the feature branch, e.g. called from a worktree).
-  if [ "$EXPECT_SPLIT" = "true" ]; then
-    _vd_wt_prefix="${PIPELINE_WORKTREE_PREFIX:-wt}"
-    _vd_feature_ref=$(git worktree list --porcelain 2>/dev/null | awk \
-      -v p="${_vd_wt_prefix}-${VD_ISSUE}" '
-      /^worktree / { base=$2; sub(/.*\//,"",base); inmatch=(base==p || base ~ "^"p"-") }
-      inmatch && /^branch / { sub(/^branch refs\/heads\//,"",$0); print $0; exit }')
-    if [ -z "$_vd_feature_ref" ]; then
-      _vd_feature_ref=$(gh issue view "$VD_ISSUE" --repo "${PIPELINE_REPO:-fake/repo}" \
-        --json closedByPullRequestsReferences \
-        --jq '.closedByPullRequestsReferences[0].headRefName // empty' 2>/dev/null || true)
-    fi
-    if [ -z "$_vd_feature_ref" ]; then
-      _vd_feature_ref=$(gh pr list --repo "${PIPELINE_REPO:-fake/repo}" \
-        --search "linked:$VD_ISSUE" \
-        --state open --json headRefName --jq '.[0].headRefName // empty' 2>/dev/null || true)
-    fi
-    # Fall back to HEAD when no ref resolved (called from a worktree with HEAD on
-    # the feature branch — the original behaviour is preserved exactly).
-    _vd_scan_ref="${_vd_feature_ref:-HEAD}"
-    _log="$(git log --format=%s "${VD_BASE}..${_vd_scan_ref}" 2>/dev/null || true)"
-    if ! printf '%s\n' "$_log" | grep -qF '[split-role-red]'; then
-      echo "DISPATCH=mismatch ISSUE=$VD_ISSUE REASON=shape:single!=split-role"
-      exit 0
     fi
   fi
 
