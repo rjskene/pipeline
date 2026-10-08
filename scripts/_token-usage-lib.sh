@@ -134,7 +134,7 @@ d = sys.argv[1]
 # the bare "plan" it contains.
 patterns = [
     (r"\b(eval(uate)?[ -]?(issue[ -]?)?pr|pr[ -]?eval|finish[ -]?eval[ -]?pr)\b", "pr-eval"),
-    (r"\b(eval(uate)?[ -]?(issue[ -]?)?plan|eval[ -]?plan|re[ -]?eval(uate)?[ -]?plan)\b", "plan-eval"),
+    (r"\b(eval(uate)?[ -]?(issue[ -]?)?plan|eval[ -]?plan|re[ -]?eval(uate)?[ -]?plan|plan[ -]?eval(uation)?)\b", "plan-eval"),
     (r"\bexecut(e|e[ -]?issue[ -]?plan)\b", "execute"),
     (r"\b(re[ -]?)?plan([ -]?issue)?\b", "plan"),
     (r"\b(re[ -]?)?classif(y|y[ -]?issue)\b", "classify"),

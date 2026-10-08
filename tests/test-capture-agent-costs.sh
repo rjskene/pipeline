@@ -335,6 +335,35 @@ git -C "$mainrepo" worktree remove "$wt" --force 2>/dev/null || rm -rf "$wt"
 rm -rf "$home" "$mainrepo"
 
 # ---------------------------------------------------------------------------
+# #1469: plan-first word order ("Plan-eval #N") attributes to plan-eval, not
+# plan; bare "Plan #N" still resolves to plan. Mirrors test-token-usage-lib.sh.
+# ---------------------------------------------------------------------------
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/runs.log"
+{
+  i=0
+  for d in "Plan-eval #220" "plan eval #1" "Plan evaluation for #3" "Plan #221"; do
+    i=$((i+1))
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "2026-06-02T12:0$i:00.000Z" "sess-pe" "$d" "x" "x" "x" "pe-$i.json"
+    printf '{"subagent_type":"general-purpose","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}\n' \
+      > "$proj/.claude/logs/subagents/pe-$i.json"
+  done
+} > "$proj/.claude/logs/subagents.log"
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+python3 - "$proj/.claude/logs/agent-costs.jsonl" <<'PY' || fail "plan-eval word order (#1469) assertions failed"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+got = sorted((str(r["issue"]), r["stage"]) for r in rows)
+exp = sorted([("220","plan-eval"),("1","plan-eval"),("3","plan-eval"),("221","plan")])
+assert got == exp, "got %r exp %r" % (got, exp)
+PY
+pass "plan-eval word order (#1469): Plan-eval/plan eval/Plan evaluation -> plan-eval; Plan #N -> plan"
+rm -rf "$home" "$proj"
+
+# ---------------------------------------------------------------------------
 # Cross-source reconciliation (#830): a pre-existing usage_complete=true record
 # for (session_id, issue, stage) SUPPRESSES the stranded retroactive lower-bound
 # the INLINE pass would otherwise append for the SAME tuple (no transcript ->

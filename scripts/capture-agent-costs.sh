@@ -29,6 +29,12 @@
 #                inflated pre-#1443 sibling still wins there. Treat pre-#1443
 #                cost figures as inflated, not corrected.
 #
+#                Stage regex changes (e.g. #1469: "Plan-eval #N" -> plan-eval,
+#                previously mis-staged as plan) also take effect on history
+#                via --recompute: it re-derives and RE-STAGES existing rows.
+#                stage is part of record_key, so a re-staged row gets a NEW key
+#                and the old mis-staged row is not overwritten in place.
+#
 #   HEADLESS pass — .claude/logs/runs.log
 #       Each run resolves a Claude Code transcript at
 #       ~/.claude/projects/<slug>/<session>.jsonl, where <slug> sanitizes BOTH
@@ -176,7 +182,7 @@ recompute = recompute_s == "true"
 
 STAGE_PATTERNS = [
     (r"\b(eval(uate)?[ -]?(issue[ -]?)?pr|pr[ -]?eval|finish[ -]?eval[ -]?pr)\b", "pr-eval"),
-    (r"\b(eval(uate)?[ -]?(issue[ -]?)?plan|eval[ -]?plan|re[ -]?eval(uate)?[ -]?plan)\b", "plan-eval"),
+    (r"\b(eval(uate)?[ -]?(issue[ -]?)?plan|eval[ -]?plan|re[ -]?eval(uate)?[ -]?plan|plan[ -]?eval(uation)?)\b", "plan-eval"),
     (r"\bexecut(e|e[ -]?issue[ -]?plan)\b", "execute"),
     (r"\b(re[ -]?)?plan([ -]?issue)?\b", "plan"),
     (r"\b(re[ -]?)?classif(y|y[ -]?issue)\b", "classify"),
