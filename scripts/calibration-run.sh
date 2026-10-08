@@ -805,6 +805,8 @@ RUN_RC=0
 ABORT_REASON=""
 ROWS_JSON=""
 PRICING_TOTAL=""
+OC_N=""
+OC_TOTAL=""
 PRS_JSON=""
 MERGED_JSON=""
 OPEN_JSON="[]"
@@ -859,6 +861,8 @@ load_run_substrate() {
   local clr="$HARNESS/scripts/cost-latency-report.sh"
   ROWS_JSON="[]"
   PRICING_TOTAL=""
+  OC_N=""
+  OC_TOTAL=""
   if [ -f "$clr" ]; then
     # SCOPING IS LOAD-BEARING (#1280): cost-latency-report.sh joins merged PRs
     # against issue numbers and reads PIPELINE_REPO to know whose PRs. Run from
@@ -876,10 +880,25 @@ load_run_substrate() {
     # prefix), so pass RUN_START_TS's date portion only — a full timestamp
     # would exclude same-day rows from THIS run as well. The precise
     # (sub-day) cut is the ROWS_JSON filter below.
-    PRICING_TOTAL="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
+    # The full pricing JSON is captured ONCE; PRICING_TOTAL and the #1470
+    # output_complete counts both derive from it.
+    local pricing_json
+    pricing_json="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
       bash "$clr" --emit-pricing-json --capture-log "$dedup_log" \
-      ${RUN_START_TS:+--since "${RUN_START_TS%%T*}"} 2>/dev/null \
-      | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
+      ${RUN_START_TS:+--since "${RUN_START_TS%%T*}"} 2>/dev/null )"
+    PRICING_TOTAL="$(printf '%s' "$pricing_json" \
+      | jq -r '.priced_cost_usd // empty' 2>/dev/null)"
+    # #1470: "<complete> <complete+incomplete>" priced rows, or empty when the
+    # pricing JSON predates the keys (rendered n/a on CALIB-TOTAL).
+    local oc_pair
+    oc_pair="$(printf '%s' "$pricing_json" | jq -r '
+      if (.output_complete_rows | type) == "number"
+         and (.output_incomplete_rows | type) == "number"
+      then "\(.output_complete_rows) \(.output_complete_rows + .output_incomplete_rows)"
+      else empty end' 2>/dev/null)"
+    if [ -n "$oc_pair" ]; then
+      OC_N="${oc_pair% *}"; OC_TOTAL="${oc_pair#* }"
+    fi
     # Second layer: restrict ROWS_JSON itself (issue_cost()'s apportionment
     # sum, below) to issues carrying a FRESH capture record — ts_end at/after
     # RUN_START_TS — so a stale row that survives the cmd_reset archive can
@@ -1238,17 +1257,27 @@ emit_calib_block() {
     case "$n_bridge" in ''|*[!0-9]*) n_bridge=0 ;; esac
   fi
   bridge_atom=" bridge_prompts=$n_bridge"
+  # #1470 output_complete=<n>/<N>: priced rows whose output tokens are complete
+  # (Claude Code >=2.1.291 subagent transcripts under-measure output). PRE-BUILT
+  # like bridge_atom — a literal in the format string would read to the grammar
+  # extractor as a bogus `complete` field.
+  local oc_atom
+  if [ -n "${OC_N:-}" ] && [ -n "${OC_TOTAL:-}" ]; then
+    oc_atom=" output_complete=$OC_N/$OC_TOTAL"
+  else
+    oc_atom=" output_complete=n/a"
+  fi
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "$pass" "$graded" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom" "$oc_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom" "$oc_atom"
   fi
 }
 

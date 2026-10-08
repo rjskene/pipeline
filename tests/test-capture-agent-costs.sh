@@ -748,4 +748,103 @@ esac
 
 rm -rf "$home" "$proj"
 
+# ---------------------------------------------------------------------------
+# #1470: Claude Code >=2.1.291 subagent transcripts carry MESSAGE-START usage
+# only (every assistant record stop_reason:null, output_tokens tiny). Fixtures
+# under tests/fixtures/token-usage/1470/:
+#   old1470     2.1.278 shape (final records carry stop_reason) -> complete
+#   new1470     2.1.291 shape + COMPLETED parent handback (usage, 7 tools,
+#               208037 ms) -> last id's output REPLACED by 1293
+#   nohb1470    2.1.291 shape, no parent record -> unknowns stay unknown
+#   async1470   2.1.291 shape, async_launched ack + two task-notifications
+#               -> duration/tool_calls from the LAST notification; no output
+#   ackonly1470 2.1.291 shape, async_launched ack only -> no handback
+# New-shape transcript: msg_n1 out 8->30, msg_n2 out 5->20 (message-start sum
+# 50); input 5, cache_read 2200, cache_creation 300.
+# ---------------------------------------------------------------------------
+F1470="$FIX/1470"
+home="$(mktemp -d)"; proj="$(mktemp -d)"
+mkdir -p "$proj/.claude/logs/subagents"
+: > "$proj/.claude/logs/runs.log"
+cp "$F1470/subagents.log" "$proj/.claude/logs/subagents.log"
+cp "$F1470"/subagents/*.json "$proj/.claude/logs/subagents/"
+sa_dir="$home/.claude/projects/slug-1470/sess-1470/subagents"
+mkdir -p "$sa_dir"
+cp "$F1470/parent-1470.jsonl" "$home/.claude/projects/slug-1470/sess-1470.jsonl"
+cp "$F1470/agent-old-1470.jsonl" "$sa_dir/agent-old1470.jsonl"
+for id in new1470 nohb1470 async1470 ackonly1470; do
+  cp "$F1470/agent-new-1470.jsonl" "$sa_dir/agent-$id.jsonl"
+done
+oc_out="$proj/.claude/logs/agent-costs.jsonl"
+
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+
+python3 - "$oc_out" <<'PY' || fail "#1470 output_complete / handback recovery assertions failed"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+by = {r["agent_id"]: r for r in rows}
+assert set(by) == {"old1470", "new1470", "nohb1470", "async1470", "ackonly1470"}, sorted(by)
+for r in rows:
+    assert "output_complete" in r, "output_complete key missing: %r" % r
+    assert "tool_calls" in r, "tool_calls key missing: %r" % r
+
+o = by["old1470"]
+assert o["output_complete"] is True, "old: output_complete %r" % o["output_complete"]
+assert o["tokens"]["output"] == 160, "old: output %r" % o["tokens"]["output"]
+assert o["duration_ms"] == 0, "old: duration %r" % o["duration_ms"]
+assert o["tool_calls"] is None, "old: tool_calls %r" % o["tool_calls"]
+
+n = by["new1470"]
+assert n["output_complete"] is False, "new: output_complete %r" % n["output_complete"]
+assert n["tokens"]["output"] == 30 + 1293, "new: output %r (want 1323)" % n["tokens"]["output"]
+assert (n["tokens"]["input"], n["tokens"]["cache_read"], n["tokens"]["cache_creation"]) == (5, 2200, 300), n["tokens"]
+assert n["duration_ms"] == 208037, "new: duration %r" % n["duration_ms"]
+assert n["tool_calls"] == 7, "new: tool_calls %r" % n["tool_calls"]
+assert n["usage_complete"] is True, "new: usage_complete %r" % n["usage_complete"]
+
+for aid in ("nohb1470", "ackonly1470"):
+    r = by[aid]
+    assert r["output_complete"] is False, "%s: output_complete %r" % (aid, r["output_complete"])
+    assert r["tokens"]["output"] == 50, "%s: output %r" % (aid, r["tokens"]["output"])
+    assert r["duration_ms"] == 0, "%s: duration %r" % (aid, r["duration_ms"])
+    assert r["tool_calls"] is None, "%s: tool_calls %r" % (aid, r["tool_calls"])
+
+a = by["async1470"]
+assert a["output_complete"] is False, "async: output_complete %r" % a["output_complete"]
+assert a["tokens"]["output"] == 50, "async: output %r (no output recovery)" % a["tokens"]["output"]
+assert a["duration_ms"] == 17056, "async: duration %r (want LAST notification)" % a["duration_ms"]
+assert a["tool_calls"] == 4, "async: tool_calls %r" % a["tool_calls"]
+print("#1470 output_complete / handback recovery assertions OK")
+PY
+pass "#1470: 2.1.291 transcripts flagged output_complete=false; handback/notification recovery"
+
+# --recompute over pre-#1470 rows (no output_complete/tool_calls keys) re-emits
+# each record_key carrying the new fields.
+python3 - "$oc_out" <<'PY'
+import json, sys
+p = sys.argv[1]
+rows = [json.loads(l) for l in open(p) if l.strip()]
+with open(p, "w") as fh:
+    for r in rows:
+        r.pop("output_complete", None); r.pop("tool_calls", None)
+        fh.write(json.dumps(r) + "\n")
+PY
+HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \
+  bash "$SCRIPT" --recompute >/dev/null 2>&1 || true
+python3 - "$oc_out" <<'PY' || fail "#1470 --recompute upgrade assertions failed"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert len(rows) == 10, "expected 5 legacy + 5 recomputed rows, got %d" % len(rows)
+last = {}
+for r in rows:
+    last[r["record_key"]] = r
+assert len(last) == 5, "recompute must reuse the 5 record_keys, got %d" % len(last)
+for r in last.values():
+    assert "output_complete" in r and "tool_calls" in r, "recomputed row lacks fields: %r" % r
+PY
+pass "#1470: --recompute re-emits pre-existing rows carrying output_complete/tool_calls"
+
+rm -rf "$home" "$proj"
+
 echo "all tests passed"

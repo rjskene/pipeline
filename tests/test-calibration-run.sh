@@ -2433,6 +2433,36 @@ refute_sub "an unset-arm CALIB-TOTAL carries no pre_pr_review atom" "$TOTAL_NO_P
 unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 27: CALIB-TOTAL carries output_complete=<n>/<N> (#1470)"
+# ---------------------------------------------------------------------------
+# Claude Code >=2.1.291 subagent transcripts under-measure output tokens; the
+# pricing JSON's output_complete_rows / output_incomplete_rows surface as a
+# per-RUN atom so a calibration arm's cost is read with its measurement caveat.
+# A pricing JSON without the keys (older cost-latency-report) renders n/a.
+printf '{"priced_cost_usd": 30, "output_complete_rows": 3, "output_incomplete_rows": 2}\n' \
+  > "$TMP/pricing-1470.json"
+echo 6900 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-1470.json"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with output_complete counts exits 0" 0
+TOTAL_OC="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "CALIB-TOTAL records output_complete=3/5" "$TOTAL_OC" " output_complete=3/5"
+
+printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing-1470-nokeys.json"
+echo 7000 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-1470-nokeys.json"
+run_helper --run --harness "$HARNESS" --hooks off
+expect_rc "--run without output_complete keys exits 0" 0
+TOTAL_OC_NA="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "CALIB-TOTAL renders output_complete=n/a without the keys" "$TOTAL_OC_NA" " output_complete=n/a"
+
+export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"

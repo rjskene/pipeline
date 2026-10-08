@@ -84,8 +84,23 @@
 #     turns:        distinct message.id count on the resolved transcript, 0 when
 #                   no transcript resolved (#1443),
 #     ctx_first:    cache_read + cache_creation of the FIRST message.id (#1443),
-#     ctx_last:     cache_read + cache_creation of the LAST message.id (#1443)
+#     ctx_last:     cache_read + cache_creation of the LAST message.id (#1443),
+#     output_complete: false when the resolved transcript is the Claude Code
+#                   >=2.1.291 subagent shape (every assistant record
+#                   stop_reason:null -> message-start output only); the row's
+#                   output is then a flagged LOWER BOUND. true otherwise
+#                   (incl. no transcript resolved). Absent on legacy rows =
+#                   complete (#1470),
+#     tool_calls:   parent-handback totalToolUseCount, or the LAST
+#                   task-notification <tool_uses> for async agents; null when
+#                   unknown (#1470)
 #   }
+#   #1470 recovery: for an output_complete=false subagent the parent session
+#   transcript (<projects>/<slug>/<session>.jsonl) is scanned — a COMPLETED
+#   toolUseResult handback REPLACES the last call's output and sets
+#   duration_ms/tool_calls; else the LAST queue-operation task-notification
+#   sets duration_ms/tool_calls only. Both fields are retroactive-only (the
+#   forward hook does not emit them); schema_version stays 2.
 #   tokens.total = input + output + cache_read + cache_creation.
 #
 #   v2 (#1443) is ADDITIVE: the three fields above are new TOP-LEVEL keys;
@@ -268,16 +283,26 @@ def transcript_sum(path):
     # absolute context SIZES, never sums). Mirrors
     # scripts/_token-usage-lib.sh:tu_transcript_sum and
     # hooks/capture_agent_cost.py:transcript_sum by contract.
+    #
+    # output_complete (#1470): Claude Code >=2.1.291 writes subagent assistant
+    # records with MESSAGE-START usage only — every record stop_reason:null and
+    # output_tokens a tiny start count. An id is FINAL when any of its records
+    # carries a non-null stop_reason, or omits the key entirely (legacy/fixture
+    # shape: no format loss detectable). output_complete = every id final.
+    # last_output is the LAST id's (max) output, which the INLINE pass replaces
+    # with the parent handback's true last-call output when one resolves.
     ts_start = ts_end = None
     model = ""
     ids = []
     per_id = {}
+    final = {}
     try:
         fh = open(path)
     except OSError:
         return {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0,
                 "ts_start": "", "ts_end": "", "model": "",
-                "turns": 0, "ctx_first": 0, "ctx_last": 0}
+                "turns": 0, "ctx_first": 0, "ctx_last": 0,
+                "output_complete": True, "last_output": 0}
     with fh:
         for line_no, line in enumerate(fh):
             line = line.strip()
@@ -315,6 +340,8 @@ def transcript_sum(path):
             else:
                 ids.append(key)
                 per_id[key] = vals
+            if "stop_reason" not in msg or msg.get("stop_reason") is not None:
+                final[key] = True
             m = msg.get("model")
             if m:
                 model = m
@@ -325,9 +352,74 @@ def transcript_sum(path):
     turns = len(ids)
     ctx_first = (per_id[ids[0]][2] + per_id[ids[0]][3]) if ids else 0
     ctx_last = (per_id[ids[-1]][2] + per_id[ids[-1]][3]) if ids else 0
+    output_complete = bool(ids) and all(final.get(k) for k in ids)
+    last_output = per_id[ids[-1]][1] if ids else 0
     return {"input": inp, "output": out, "cache_read": cr, "cache_creation": cc,
             "ts_start": ts_start or "", "ts_end": ts_end or "", "model": model,
-            "turns": turns, "ctx_first": ctx_first, "ctx_last": ctx_last}
+            "turns": turns, "ctx_first": ctx_first, "ctx_last": ctx_last,
+            "output_complete": output_complete, "last_output": last_output}
+
+
+TASK_NOTE_USAGE_RE = re.compile(r"<usage>(.*?)</usage>", re.S)
+
+
+def _int_tag(body, tag):
+    m = re.search(r"<%s>\s*(\d+)\s*</%s>" % (tag, tag), body)
+    return int(m.group(1)) if m else None
+
+
+def parent_handback(parent_path, agent_id):
+    # Recover what a >=2.1.291 subagent transcript lost (#1470) from the PARENT
+    # session transcript (<projects>/<slug>/<session>.jsonl):
+    #   (1) a COMPLETED handback — toolUseResult.agentId == agent_id,
+    #       status == "completed", usage a dict -> last-call output_tokens,
+    #       totalDurationMs, totalToolUseCount;
+    #   (2) else (background/async agents: the toolUseResult is only an
+    #       "async_launched" ack with no usage) the LAST queue-operation
+    #       <task-notification> for <task-id>agent_id</task-id> carrying a
+    #       <usage> block -> duration_ms + tool_uses; output NOT recovered;
+    #   (3) else None (no handback).
+    # Returns {"output": int|None, "duration_ms": int|None, "tool_calls": int|None}.
+    try:
+        fh = open(parent_path)
+    except OSError:
+        return None
+    completed = None
+    note = None
+    tid = "<task-id>%s</task-id>" % agent_id
+    with fh:
+        for line in fh:
+            if agent_id not in line:
+                continue
+            try:
+                obj = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(obj, dict):
+                continue
+            tur = obj.get("toolUseResult")
+            if (isinstance(tur, dict) and tur.get("agentId") == agent_id
+                    and tur.get("status") == "completed"
+                    and isinstance(tur.get("usage"), dict)):
+                completed = {
+                    "output": tur["usage"].get("output_tokens"),
+                    "duration_ms": tur.get("totalDurationMs"),
+                    "tool_calls": tur.get("totalToolUseCount"),
+                }
+                continue
+            if obj.get("type") == "queue-operation":
+                content = obj.get("content")
+                if isinstance(content, str) and tid in content:
+                    # LAST <usage> block: the harness's own block follows
+                    # <result>, which may quote a "<usage>" literal.
+                    blocks = TASK_NOTE_USAGE_RE.findall(content)
+                    if blocks:
+                        note = {
+                            "output": None,
+                            "duration_ms": _int_tag(blocks[-1], "duration_ms"),
+                            "tool_calls": _int_tag(blocks[-1], "tool_uses"),
+                        }
+    return completed or note
 
 
 def duration_ms(ts_start, ts_end):
@@ -352,7 +444,8 @@ def record_key(source, agent_kind, session_id, issue, stage, ts_start):
 
 def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
                 tokens, ts_start, ts_end, usage_complete, agent_id="", role="single",
-                turns=0, ctx_first=0, ctx_last=0):
+                turns=0, ctx_first=0, ctx_last=0, output_complete=True,
+                tool_calls=None, duration_override=None):
     total = sum(tokens[k] for k in ("input", "output", "cache_read", "cache_creation"))
     source = "retroactive"
     return {
@@ -381,7 +474,11 @@ def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
             "cache_creation": tokens["cache_creation"],
             "total": total,
         },
-        "duration_ms": duration_ms(ts_start, ts_end),
+        # duration_override (#1470): the parent handback's totalDurationMs /
+        # task-notification duration_ms. ts_start/ts_end stay untouched so
+        # record_key is stable and --recompute replaces rows in place.
+        "duration_ms": (duration_override if duration_override is not None
+                        else duration_ms(ts_start, ts_end)),
         "ts_start": ts_start,
         "ts_end": ts_end,
         "source": source,
@@ -397,6 +494,13 @@ def make_record(*, issue, stage, agent_kind, agent_type, session_id, model,
         "turns": turns,
         "ctx_first": ctx_first,
         "ctx_last": ctx_last,
+        # #1470 retroactive-only fields. output_complete=false flags a
+        # >=2.1.291 subagent transcript whose output tokens are message-start
+        # counts (a flagged LOWER BOUND on output, even after the last call is
+        # recovered from the parent handback). tool_calls is the handback's
+        # totalToolUseCount / task-notification tool_uses; null when unknown.
+        "output_complete": output_complete,
+        "tool_calls": tool_calls,
     }
 
 
@@ -483,7 +587,8 @@ if os.path.exists(runs_log):
                 tokens=summ, ts_start=summ["ts_start"], ts_end=summ["ts_end"],
                 usage_complete=True,
                 turns=summ["turns"], ctx_first=summ["ctx_first"],
-                ctx_last=summ["ctx_last"])
+                ctx_last=summ["ctx_last"],
+                output_complete=summ["output_complete"])
             if rec["record_key"] in seen:
                 continue
             seen.add(rec["record_key"])
@@ -546,6 +651,11 @@ if os.path.exists(subagents_log):
             turns = 0
             ctx_first = 0
             ctx_last = 0
+            # #1470: no transcript resolved -> no format loss detected
+            # (usage_complete=false already flags the lower bound).
+            output_complete = True
+            tool_calls = None
+            duration_override = None
             if agent_id and session:
                 pattern = os.path.join(
                     home, ".claude", "projects", "*", session,
@@ -558,6 +668,21 @@ if os.path.exists(subagents_log):
                     turns = summ["turns"]
                     ctx_first = summ["ctx_first"]
                     ctx_last = summ["ctx_last"]
+                    output_complete = summ["output_complete"]
+                    if not output_complete:
+                        # >=2.1.291 shape (#1470): recover from the parent
+                        # session transcript, the sibling of <session>/.
+                        parent = os.path.dirname(os.path.dirname(matches[0])) + ".jsonl"
+                        hb = parent_handback(parent, agent_id)
+                        if hb is not None:
+                            hb_out = hb["output"]
+                            if isinstance(hb_out, int) and hb_out > summ["last_output"]:
+                                # REPLACE the last id's message-start output.
+                                summ["output"] += hb_out - summ["last_output"]
+                            if isinstance(hb["duration_ms"], int):
+                                duration_override = hb["duration_ms"]
+                            if isinstance(hb["tool_calls"], int):
+                                tool_calls = hb["tool_calls"]
                     summ_total = (summ["input"] + summ["output"]
                                   + summ["cache_read"] + summ["cache_creation"])
                     lb_total = (usage["input"] + usage["output"]
@@ -599,7 +724,9 @@ if os.path.exists(subagents_log):
                 session_id=session, model=model,
                 tokens=usage, ts_start=ts, ts_end=ts,
                 usage_complete=usage_complete, agent_id=agent_id, role=role,
-                turns=turns, ctx_first=ctx_first, ctx_last=ctx_last)
+                turns=turns, ctx_first=ctx_first, ctx_last=ctx_last,
+                output_complete=output_complete, tool_calls=tool_calls,
+                duration_override=duration_override)
             if rec["record_key"] in seen:
                 continue
             seen.add(rec["record_key"])
