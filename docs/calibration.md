@@ -97,8 +97,7 @@ execute as binding amendments — no re-plan round. A `**Scope:** structural`
 Revise still re-plans once.
 
 `--pre-pr-review on|off` (default unset, #1464; `--no-pre-pr-review` = `off`) sets
-the `#1464 pre-PR review loop` knob from `pipeline.config.example` to
-`true|false` in the sandbox session — `false` skips execute
+`PIPELINE_PRE_PR_REVIEW` to `true|false` in the sandbox session — `false` skips execute
 Step 8's pre-PR review loop on PATH A/B/C exactly as on PATH D. Unset means the
 harness default (`true`). A set run is tagged `pre_pr_review=<v>` on the total
 line; it carries NO artifact suffix (`run-retro.sh` peels a fixed list), so read

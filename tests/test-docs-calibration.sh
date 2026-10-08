@@ -167,6 +167,8 @@ echo "docs/calibration.md — PIPELINE_* token set"
 # PIPELINE_PLAN_GATE joined with the --plan-gate arm (#1429): the doc names it
 # because the flag sets it in the sandbox session, and pipeline.config.example
 # declares it (commented, defaults-in-code, beside PIPELINE_TRUST_PROFILE).
+# PIPELINE_PRE_PR_REVIEW joined with the --pre-pr-review arm (#1464): same
+# reason — the flag sets it and pipeline.config.example declares it (commented).
 TESTS=$((TESTS + 1))
 extra=""
 if [ -f "$DOC" ]; then
@@ -175,7 +177,7 @@ if [ -f "$DOC" ]; then
         -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS -e PIPELINE_TRUST_PROFILE \
         -e PIPELINE_PATH_B_MODEL_EXECUTE \
         -e PIPELINE_HEADLESS_PERMISSIONS -e PIPELINE_PERMISSION_BRIDGE_TIMEOUT \
-        -e PIPELINE_PLAN_GATE \
+        -e PIPELINE_PLAN_GATE -e PIPELINE_PRE_PR_REVIEW \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then
