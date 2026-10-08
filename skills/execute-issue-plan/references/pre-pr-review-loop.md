@@ -1,8 +1,11 @@
 # Step 8 — pre-PR code review loop
 
-**Knob (#1464).** When `${PIPELINE_PRE_PR_REVIEW:-true}` is `false`, Step 8 is
-skipped on every path exactly as the PATH D early-return below, and the run log
-carries `PRE-PR-REVIEW: skipped reason=knob`.
+**Knob (#1464, #1468).** When your dispatch prompt carries `PRE_PR_REVIEW=off`
+(emitted by `scripts/resolve-execute-dispatch.sh`), Step 8 is skipped on every
+path exactly as the PATH D early-return below, and the run log carries
+`PRE-PR-REVIEW: skipped reason=knob`. Direct invocation
+(`/pipeline:execute-issue-plan N`, no dispatch prompt) falls back to
+`${PIPELINE_PRE_PR_REVIEW:-true}` = `false`.
 
 `skills/execute-issue-plan/SKILL.md` Step 8 points here. Read it before
 `gh pr create` on PATH A, B and C. On PATH D (`quick-fix`) Step 8 is skipped in

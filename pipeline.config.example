@@ -504,8 +504,8 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # --- #1464 pre-PR review loop ---
 # true (default) runs execute-issue-plan Step 8 (8a–8e) on PATH A/B/C; false
 # skips it exactly as PATH D does (logs `PRE-PR-REVIEW: skipped reason=knob`).
-# The calibration A/B lever (`calibration-run.sh --pre-pr-review on|off`). Read
-# at the execute Step 8 site as ${PIPELINE_PRE_PR_REVIEW:-true}.
+# The calibration A/B lever (`calibration-run.sh --pre-pr-review on|off`).
+# Resolved by scripts/resolve-execute-dispatch.sh into the PRE_PR_REVIEW= dispatch token.
 # Override anchor (#1052): defaults-in-code — stays COMMENTED.
 #PIPELINE_PRE_PR_REVIEW="true"
 
