@@ -1,5 +1,9 @@
 # Step 8 — pre-PR code review loop
 
+**Knob (#1464).** When `${PIPELINE_PRE_PR_REVIEW:-true}` is `false`, Step 8 is
+skipped on every path exactly as the PATH D early-return below, and the run log
+carries `PRE-PR-REVIEW: skipped reason=knob`.
+
 `skills/execute-issue-plan/SKILL.md` Step 8 points here. Read it before
 `gh pr create` on PATH A, B and C. On PATH D (`quick-fix`) Step 8 is skipped in
 its entirety and this file is not read — see the early-return contract below.
