@@ -410,12 +410,14 @@ def parent_handback(parent_path, agent_id):
             if obj.get("type") == "queue-operation":
                 content = obj.get("content")
                 if isinstance(content, str) and tid in content:
-                    um = TASK_NOTE_USAGE_RE.search(content)
-                    if um:
+                    # LAST <usage> block: the harness's own block follows
+                    # <result>, which may quote a "<usage>" literal.
+                    blocks = TASK_NOTE_USAGE_RE.findall(content)
+                    if blocks:
                         note = {
                             "output": None,
-                            "duration_ms": _int_tag(um.group(1), "duration_ms"),
-                            "tool_calls": _int_tag(um.group(1), "tool_uses"),
+                            "duration_ms": _int_tag(blocks[-1], "duration_ms"),
+                            "tool_calls": _int_tag(blocks[-1], "tool_uses"),
                         }
     return completed or note
 
