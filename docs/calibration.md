@@ -265,6 +265,9 @@ the first line of the block.
 - `pre_pr_review` — an OPTIONAL per-RUN atom like `bexec`: `on` or `off`, the
   arm `--pre-pr-review` launched under (#1464). Absent when the flag was not
   passed.
+- `output_complete` — a per-RUN atom on the `CALIB-TOTAL` line only: `<n>/<N>`
+  priced rows whose output tokens are complete (`n/a` when the pricing JSON lacks
+  the keys); appended rather than a grammar field (#1470).
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
   there to answer), `timeout` (the wall-clock ceiling killed it), or
