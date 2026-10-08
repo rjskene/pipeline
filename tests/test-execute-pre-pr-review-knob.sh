@@ -119,6 +119,23 @@ else
   fail_msg "SKILL.md Step 8 must name the PRE_PR_REVIEW=off prompt token"
 fi
 
+# --- (9) #1474: fullsend Step 6 closing-review directive yields to the knob --
+# The #1387 directive paragraph (up to the next `**Git-anchoring` heading)
+# must name BOTH branches: `code review #<N>` (on) and the `PRE_PR_REVIEW=off`
+# token + `skipped reason=knob` log line (off). An unconditional MUST here
+# overrode the resolver knob in calib 24.
+FULLSEND="$ROOT/skills/fullsend/SKILL.md"
+DIRECTIVE="$(grep -oE '\*\*Closing-review dispatch directive \(#1387[^)]*\)\.\*\*.*' "$FULLSEND" \
+               | sed 's/\*\*Git-anchoring.*//' || true)"
+for tok in 'code review #<N>' 'PRE_PR_REVIEW=off' 'skipped reason=knob'; do
+  inc
+  if [ -n "$DIRECTIVE" ] && grep -qF "$tok" <<<"$DIRECTIVE"; then
+    pass_msg "fullsend Step 6 closing-review directive names '$tok'"
+  else
+    fail_msg "fullsend Step 6 closing-review directive must name '$tok'"
+  fi
+done
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"
