@@ -37,6 +37,11 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
 EXPECTED_TOP='agent_id agent_kind agent_type ctx_first ctx_last duration_ms issue model record_key role schema_version session_id source stage tokens ts_end ts_start turns usage_complete'
 EXPECTED_TOKENS='cache_creation cache_read input output total'
+# #1470: retroactive-only extras. The forward hook is untouched (no hook
+# edits), so the retroactive exact set = shared EXPECTED_TOP + RETRO_EXTRA and
+# the forward exact set = EXPECTED_TOP alone.
+RETRO_EXTRA='output_complete tool_calls'
+RETRO_TOP=$(printf '%s\n' $EXPECTED_TOP $RETRO_EXTRA | sort | tr '\n' ' ' | sed 's/ $//')
 
 # --- drive the RETROACTIVE producer against the fixtures ------------------
 RHOME="$TMP/rhome"
@@ -78,14 +83,14 @@ FWD_REC=$(head -n 1 "$FWD_OUT")
 
 # --- assert EXACT field sets on both records -----------------------------
 assert_keys() {
-  local label="$1" rec="$2"
+  local label="$1" rec="$2" want_top="$3"
   local top tokens
   top=$(printf '%s' "$rec" | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin).keys())))')
   tokens=$(printf '%s' "$rec" | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin)["tokens"].keys())))')
-  if [ "$top" = "$EXPECTED_TOP" ]; then
+  if [ "$top" = "$want_top" ]; then
     pass_msg "$label top-level field set is exact"
   else
-    fail_msg "$label top-level field set: got [$top] want [$EXPECTED_TOP]"
+    fail_msg "$label top-level field set: got [$top] want [$want_top]"
   fi
   if [ "$tokens" = "$EXPECTED_TOKENS" ]; then
     pass_msg "$label tokens.* field set is exact"
@@ -94,8 +99,8 @@ assert_keys() {
   fi
 }
 
-assert_keys "retroactive" "$RETRO_REC"
-assert_keys "forward" "$FWD_REC"
+assert_keys "retroactive" "$RETRO_REC" "$RETRO_TOP"
+assert_keys "forward" "$FWD_REC" "$EXPECTED_TOP"
 
 # --- source-level field-name guard ---------------------------------------
 # Every field name must appear quoted in BOTH record-assembling source files.
@@ -109,6 +114,14 @@ for field in $EXPECTED_TOP $EXPECTED_TOKENS; do
     pass_msg "forward source names \"$field\""
   else
     fail_msg "forward source missing \"$field\" ($FWD_SRC)"
+  fi
+done
+# Retroactive-only extras (#1470) are named in the retroactive source only.
+for field in $RETRO_EXTRA; do
+  if grep -q "\"$field\"" "$RETRO_SRC"; then
+    pass_msg "retroactive source names \"$field\""
+  else
+    fail_msg "retroactive source missing \"$field\" ($RETRO_SRC)"
   fi
 done
 
