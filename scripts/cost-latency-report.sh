@@ -461,6 +461,19 @@ price_default() {
         INPUT) printf '2' ;; OUTPUT) printf '10' ;;
         CACHE_CREATION) printf '2.50' ;; CACHE_READ) printf '0.20' ;;
       esac ;;
+    # #1470: the 5.5 generation has its OWN rates (pricing page retrieved
+    # 2026-10-08) — NOT the Opus 5 / Sonnet 5 rates. Cache hits are a
+    # non-standard 0.05x base input on both 5.5 models.
+    CLAUDE_OPUS_5_5)
+      case "$bucket" in
+        INPUT) printf '4' ;; OUTPUT) printf '20' ;;
+        CACHE_CREATION) printf '5' ;; CACHE_READ) printf '0.20' ;;
+      esac ;;
+    CLAUDE_SONNET_5_5)
+      case "$bucket" in
+        INPUT) printf '2' ;; OUTPUT) printf '10' ;;
+        CACHE_CREATION) printf '2.50' ;; CACHE_READ) printf '0.10' ;;
+      esac ;;
     # Fable 5.1's cache read is a NON-STANDARD 0.025x base input (0.25), not
     # the usual 0.1x — do not "fix" this to 1.00, it is correct per source.
     CLAUDE_FABLE_5_1)
@@ -505,7 +518,7 @@ price_default() {
 # its own case in price_default() (i.e. would NOT hit the `*` fallback arm).
 price_is_known() {
   case "$1" in
-    CLAUDE_OPUS_4_8|CLAUDE_OPUS_5|CLAUDE_SONNET_5|CLAUDE_FABLE_5_1|CLAUDE_SONNET_4_6|CLAUDE_HAIKU_4_5|CLAUDE_FABLE_5)
+    CLAUDE_OPUS_4_8|CLAUDE_OPUS_5|CLAUDE_OPUS_5_5|CLAUDE_SONNET_5|CLAUDE_SONNET_5_5|CLAUDE_FABLE_5_1|CLAUDE_SONNET_4_6|CLAUDE_HAIKU_4_5|CLAUDE_FABLE_5)
       return 0 ;;
     *)
       return 1 ;;

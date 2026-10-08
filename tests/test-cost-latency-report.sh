@@ -2775,6 +2775,49 @@ fi
 rm -f "$TMP48E_ERR"
 rm -rf "$TMP48E"
 
+# ---------------------------------------------------------------------------
+# Scenario 49 (#1470): claude-opus-5-5 / claude-sonnet-5-5 price at their OWN
+# rates (pricing page retrieved 2026-10-08): Opus 5.5 4/20/5/0.20 = $29.20 and
+# Sonnet 5.5 2/10/2.50/0.10 = $14.60 per 1M in each bucket -> $43.80; neither
+# hits the unknown-model fallback (fallback_priced_count 0, no WARN).
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 49: 5.5 model ids price at their own rates (#1470)"
+
+TMP49="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP49/" 2>/dev/null
+printf '%s\n' '[{"number":149,"title":"feat: 5.5 records","additions":300,"deletions":100,"body":"Closes #249","mergedAt":"2026-10-01T12:00:00Z","labels":[]}]' > "$TMP49/prs.json"
+printf '%s\n' '{"number":149,"additions":300,"deletions":100,"comments":[]}' > "$TMP49/pr-149.json"
+printf '%s\n' '{"number":249,"labels":[],"comments":[]}' > "$TMP49/issue-249.json"
+{
+  printf '%s\n' '{"schema_version":2,"issue":"249","stage":"execute","session_id":"s49","model":"claude-opus-5-5","agent_kind":"headless","record_key":"K249A","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}'
+  printf '%s\n' '{"schema_version":2,"issue":"249","stage":"plan","session_id":"s49","model":"claude-sonnet-5-5","agent_kind":"headless","record_key":"K249B","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}'
+} > "$TMP49/capture.jsonl"
+TMP49_ERR="$(mktemp)"
+PRICING49="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_INPUT -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_OUTPUT \
+                 -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_CACHE_READ \
+                 -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_INPUT -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_OUTPUT \
+                 -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_CACHE_READ \
+             bash "$HELPER" --fixture "$TMP49" --emit-pricing-json 2>"$TMP49_ERR")"
+COST49="$(printf '%s' "$PRICING49" | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST49" = "43.80" ]; then
+  pass_msg "opus-5-5 + sonnet-5-5 priced at 29.20 + 14.60 == 43.80"
+else
+  fail_msg "opus-5-5 + sonnet-5-5 should price at 43.80, got $COST49"
+fi
+FALLBACK49="$(printf '%s' "$PRICING49" | jq -r '.fallback_priced_count' 2>/dev/null)"
+if [ "$FALLBACK49" = "0" ]; then
+  pass_msg "fallback_priced_count == 0 for 5.5 model ids"
+else
+  fail_msg "fallback_priced_count should be 0 for 5.5 model ids, got $FALLBACK49"
+fi
+if grep -q 'WARN: no price for model' "$TMP49_ERR" 2>/dev/null; then
+  fail_msg "5.5 model ids wrongly emitted an unknown-model WARN (got: $(cat "$TMP49_ERR"))"
+else
+  pass_msg "5.5 model ids emitted no unknown-model WARN"
+fi
+rm -f "$TMP49_ERR"
+rm -rf "$TMP49"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
