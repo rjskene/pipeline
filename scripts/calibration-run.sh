@@ -106,6 +106,10 @@ Options:
                    in the sandbox session, varying how many plan-eval
                    dispatches the plan-approval gate is worth (outer-loop
                    step 4, #1429; annotate, #1435).
+  --pre-pr-review R  on|off  (default unset = the harness default, on) — sets
+                   PIPELINE_PRE_PR_REVIEW (true|false) in the sandbox session,
+                   toggling execute Step 8's pre-PR review loop on PATH A/B/C
+                   (#1464). --no-pre-pr-review = off.
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -132,6 +136,9 @@ EXECUTOR_MODEL=""
 # unset", so the sandbox session keeps the harness default (`annotate` since
 # #1437). Pinning a value here would make every run an arm of this experiment.
 PLAN_GATE=""
+# Same contract for the pre-PR-review arm (#1464): empty = "leave
+# PIPELINE_PRE_PR_REVIEW unset" (harness default on).
+PRE_PR_REVIEW=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -173,6 +180,9 @@ while [ $# -gt 0 ]; do
     --executor-model=*) EXECUTOR_MODEL="${1#--executor-model=}"; shift ;;
     --plan-gate)        require_value "$@"; PLAN_GATE="$2"; shift 2 ;;
     --plan-gate=*)      PLAN_GATE="${1#--plan-gate=}"; shift ;;
+    --pre-pr-review)    require_value "$@"; PRE_PR_REVIEW="$2"; shift 2 ;;
+    --pre-pr-review=*)  PRE_PR_REVIEW="${1#--pre-pr-review=}"; shift ;;
+    --no-pre-pr-review) PRE_PR_REVIEW="off"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -198,6 +208,10 @@ esac
 case "$PLAN_GATE" in
   ''|full|single|none|annotate) ;;
   *) die_usage "--plan-gate must be one of full|single|none|annotate (got: $PLAN_GATE)" ;;
+esac
+case "$PRE_PR_REVIEW" in
+  ''|on|off) ;;
+  *) die_usage "--pre-pr-review must be one of on|off (got: $PRE_PR_REVIEW)" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
@@ -320,6 +334,13 @@ build_launch() {
   # semantics as bexec_env above.
   local -a plan_gate_env=()
   [ -n "$PLAN_GATE" ] && plan_gate_env=("PIPELINE_PLAN_GATE=$PLAN_GATE")
+  # #1464: the pre-PR-review arm — on|off maps onto the boolean knob execute
+  # Step 8 reads; empty sets nothing (same splice semantics as above).
+  local -a pre_pr_env=()
+  case "$PRE_PR_REVIEW" in
+    on)  pre_pr_env=("PIPELINE_PRE_PR_REVIEW=true") ;;
+    off) pre_pr_env=("PIPELINE_PRE_PR_REVIEW=false") ;;
+  esac
   # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
@@ -344,6 +365,7 @@ build_launch() {
   esac
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" "${plan_gate_env[@]}"
+          "${pre_pr_env[@]}"
           PIPELINE_HEADLESS=true
           "${bridge_env[@]}"
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
@@ -1191,6 +1213,9 @@ emit_calib_block() {
   # breaks at `_`).
   local plan_gate_atom=""
   [ -n "$PLAN_GATE" ] && plan_gate_atom=" plan_gate=$PLAN_GATE"
+  # pre_pr_review=<on|off> (#1464): OPTIONAL and pre-built for the same reason.
+  local pre_pr_atom=""
+  [ -n "$PRE_PR_REVIEW" ] && pre_pr_atom=" pre_pr_review=$PRE_PR_REVIEW"
   # bridge_prompts=<n> (#1421) — how many permission escalations THIS run raised
   # through the PermissionRequest bridge. It is the measurement that says whether
   # replacing --dangerously-skip-permissions with `--permission-mode auto` turned
@@ -1214,16 +1239,16 @@ emit_calib_block() {
   fi
   bridge_atom=" bridge_prompts=$n_bridge"
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "$pass" "$graded" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom"
   fi
 }
 
@@ -1294,6 +1319,7 @@ case "$MODE" in
     ARM_TOKENS=("hooks=$HOOKS")
     [ -n "$EXECUTOR_MODEL" ] && ARM_TOKENS+=("bexec=$EXECUTOR_MODEL")
     [ -n "$PLAN_GATE" ] && ARM_TOKENS+=("plan_gate=$PLAN_GATE")
+    [ -n "$PRE_PR_REVIEW" ] && ARM_TOKENS+=("pre_pr_review=$PRE_PR_REVIEW")
     dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;

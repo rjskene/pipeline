@@ -501,6 +501,14 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # Override anchor (#1052): defaults-in-code — stays COMMENTED.
 #PIPELINE_PLAN_GATE="annotate"
 
+# --- #1464 pre-PR review loop ---
+# true (default) runs execute-issue-plan Step 8 (8a–8e) on PATH A/B/C; false
+# skips it exactly as PATH D does (logs `PRE-PR-REVIEW: skipped reason=knob`).
+# The calibration A/B lever (`calibration-run.sh --pre-pr-review on|off`). Read
+# at the execute Step 8 site as ${PIPELINE_PRE_PR_REVIEW:-true}.
+# Override anchor (#1052): defaults-in-code — stays COMMENTED.
+#PIPELINE_PRE_PR_REVIEW="true"
+
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 # Override anchor (#1052): defaults-in-code — default true lives at the read site
 # (fullsend 6b reads colon-less ${VAR-true}), so this stays COMMENTED and `--fix config`
