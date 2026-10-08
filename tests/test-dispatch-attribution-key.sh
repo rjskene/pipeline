@@ -126,10 +126,12 @@ assert_both_producers() {
 echo "== #1387 negative controls (the cycle-16 defect) =="
 
 # The mis-stage: `stage_from_description` resolves by (match-start, table-rank).
-# A description whose FIRST token is `plan` matches the `plan` pattern at
-# position 0, so plan-eval can never win — hence the positional rule that a
-# dispatch description must BEGIN with its canonical stage token.
-assert_both_producers "neg-mis-stage" "plan evaluation for #1387" "plan/single/1387"
+# Before #1469 a description whose FIRST token is `plan` matched only the `plan`
+# pattern at position 0, so `plan evaluation for #N` mis-staged as plan. #1469
+# added `plan[ -]?eval(uation)?` to the plan-eval pattern (rank beats plan at the
+# same start), so this cycle-16 shape now resolves to plan-eval in BOTH
+# producers. Bare `plan` still resolves to plan (neg-bare-integer below).
+assert_both_producers "neg-mis-stage" "plan evaluation for #1387" "plan-eval/single/1387"
 
 # The bare-integer miss: every `issue_from_description` pattern requires the
 # literal '#'. A bare integer yields "" — the entire cycle-16 failure.
