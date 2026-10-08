@@ -80,7 +80,8 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
   --emit-rows-json     Debug: emit the per-issue rows as a JSON array to
                        stdout instead of the formatted tables.
   --emit-pricing-json  Debug: emit aggregate pricing as JSON
-                       {priced_cost_usd, unpriced_count, fallback_priced_count}
+                       {priced_cost_usd, unpriced_count, fallback_priced_count,
+                        output_complete_rows, output_incomplete_rows}
                        and exit. Prices each capture record from per-model rate
                        env vars (Opus 4.8 default fallback, WARNs on stderr);
                        model=="" records are UNPRICED (excluded from the $
@@ -644,6 +645,24 @@ compute_pricing() {
   printf '%s %s %s' "$(awk -v t="$total" 'BEGIN { printf "%.2f", t }')" "$unpriced" "$fallback"
 }
 
+# output_complete_counts — "<complete> <incomplete>" over the SAME priced
+# (model != "") substrate compute_pricing reads (#1470). A row is incomplete
+# only on an explicit output_complete == false (Claude Code >=2.1.291 subagent
+# transcripts carry message-start output only); an ABSENT field counts as
+# complete (main-session / forward / legacy rows).
+output_complete_counts() {
+  printf '%s' "$CAPTURE_JSON" | jqr -r '
+    [ .[] | select((.model // "") != "") ] as $p
+    | "\([ $p[] | select(.output_complete != false) ] | length) \([ $p[] | select(.output_complete == false) ] | length)"' 2>/dev/null
+}
+
+# output_note_line <incomplete> — the under-measurement disclosure; prints
+# nothing when <incomplete> is 0.
+output_note_line() {
+  [ "${1:-0}" -gt 0 ] 2>/dev/null || return 0
+  printf 'NOTE: output tokens under-measured on %s rows (Claude Code ≥2.1.291 subagent transcripts)\n' "$1"
+}
+
 # priced_records_tsv — emit one TSV line per PRICED capture record (model!=""):
 #   stage <TAB> agent_kind <TAB> tok_in <TAB> tok_out <TAB> tok_cc <TAB> tok_cr <TAB>
 #   cost_in <TAB> cost_out <TAB> cost_cc <TAB> cost_cr
@@ -1020,9 +1039,14 @@ EXCLUDED_LOWER_BOUND="$(printf '%s' "$CAPTURE_ALL" | jqr -r '[ .[] | select(.usa
 # --- emit aggregate pricing as JSON (debug; feeds Task-3 tokenomics) ---
 if [ "$EMIT_PRICING_JSON" -eq 1 ]; then
   read -r _priced_cost _unpriced_count _fallback_priced_count < <(compute_pricing)
+  read -r _oc_complete _oc_incomplete < <(output_complete_counts)
   jqr -cn --arg cost "$_priced_cost" --argjson unpriced "${_unpriced_count:-0}" \
     --argjson fallback_priced "${_fallback_priced_count:-0}" \
-    '{priced_cost_usd: $cost, unpriced_count: $unpriced, fallback_priced_count: $fallback_priced}'
+    --argjson oc_complete "${_oc_complete:-0}" --argjson oc_incomplete "${_oc_incomplete:-0}" \
+    '{priced_cost_usd: $cost, unpriced_count: $unpriced, fallback_priced_count: $fallback_priced,
+      output_complete_rows: $oc_complete, output_incomplete_rows: $oc_incomplete}'
+  # stdout stays pure JSON; the #1470 disclosure goes to stderr.
+  output_note_line "${_oc_incomplete:-0}" >&2
   exit 0
 fi
 
@@ -1824,6 +1848,11 @@ emit_coverage_health() {
   # cost/token magnitude tables, so the scoping is explicit (issue #816; CLAUDE.md
   # Observability → no silent drops).
   printf 'excluded from cost tables (usage_complete=false lower-bounds): %s — cost/token magnitude tables aggregate the reconciled substrate only (issue #816)\n' "$EXCLUDED_LOWER_BOUND"
+
+  # #1470: priced rows whose output tokens are message-start counts only.
+  local _oc_c _oc_i
+  read -r _oc_c _oc_i < <(output_complete_counts)
+  output_note_line "${_oc_i:-0}"
 }
 
 # emit_trend — per-day + per-PR $ trend with outlier flagging.
