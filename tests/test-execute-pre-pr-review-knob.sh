@@ -14,6 +14,7 @@ SKILL="$ROOT/skills/execute-issue-plan/SKILL.md"
 REF="$ROOT/skills/execute-issue-plan/references/pre-pr-review-loop.md"
 EXAMPLE="$ROOT/pipeline.config.example"
 LIVE="$ROOT/pipeline.config"
+ROUTING="$ROOT/skills/fullsend/references/dispatch-routing.md"
 
 PASS=0
 FAIL=0
@@ -23,7 +24,7 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-for f in "$SKILL" "$REF" "$EXAMPLE"; do
+for f in "$SKILL" "$REF" "$EXAMPLE" "$ROUTING"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: $f not found" >&2
     exit 1
@@ -74,6 +75,48 @@ if [ -f "$LIVE" ]; then
   fi
 else
   pass_msg "live pipeline.config absent (CI) — nothing to scan"
+fi
+
+# --- (5) #1468: PATH A/B execute prompt templates carry PRE_PR_REVIEW= -----
+# Select ONLY the A/B prompt lines (the PATH D template stays token-free).
+AB_PROMPTS="$(grep -A1 -E "description='execute-issue-plan #<N> \(PATH [AB] inline\)'" "$ROUTING" | grep "prompt: 'cd" || true)"
+AB_COUNT="$(printf '%s\n' "$AB_PROMPTS" | grep -c "prompt: 'cd" || true)"
+AB_TOK="$(printf '%s\n' "$AB_PROMPTS" | grep -c 'PRE_PR_REVIEW=' || true)"
+inc
+if [ "$AB_COUNT" = "2" ] && [ "$AB_TOK" = "2" ]; then
+  pass_msg "dispatch-routing.md: both PATH A/B execute prompts carry PRE_PR_REVIEW="
+else
+  fail_msg "dispatch-routing.md: expected exactly 2 PATH A/B prompt lines both carrying PRE_PR_REVIEW= (lines=$AB_COUNT, with-token=$AB_TOK)"
+fi
+inc
+if grep -F "(PATH D collapsed inline tdd)" "$ROUTING" | grep -qF 'PRE_PR_REVIEW='; then
+  fail_msg "dispatch-routing.md: PATH D prompt must NOT carry PRE_PR_REVIEW= (D skips Step 8 regardless)"
+else
+  pass_msg "dispatch-routing.md: PATH D prompt carries no PRE_PR_REVIEW="
+fi
+
+# --- (6) #1468: PATH C bullet tells the orchestrator to honor the token -----
+inc
+if grep -E '^   - \*\*PATH C\*\* \(`multi-task`\): dispatch inline' "$ROUTING" | grep -qF 'PRE_PR_REVIEW'; then
+  pass_msg "dispatch-routing.md: PATH C bullet names PRE_PR_REVIEW"
+else
+  fail_msg "dispatch-routing.md: PATH C bullet must name PRE_PR_REVIEW"
+fi
+
+# --- (7) #1468: reference names the prompt token near the top --------------
+inc
+if head -n 10 "$REF" | grep -qF 'PRE_PR_REVIEW=off'; then
+  pass_msg "pre-pr-review-loop.md names PRE_PR_REVIEW=off in its first 10 lines"
+else
+  fail_msg "pre-pr-review-loop.md must name PRE_PR_REVIEW=off in its first 10 lines"
+fi
+
+# --- (8) #1468: SKILL.md Step 8 keys off the dispatch-prompt token ----------
+inc
+if printf '%s\n' "$STEP8" | grep -qF 'PRE_PR_REVIEW=off'; then
+  pass_msg "SKILL.md Step 8 names the PRE_PR_REVIEW=off prompt token"
+else
+  fail_msg "SKILL.md Step 8 must name the PRE_PR_REVIEW=off prompt token"
 fi
 
 echo ""
