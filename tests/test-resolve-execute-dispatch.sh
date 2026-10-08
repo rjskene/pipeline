@@ -164,6 +164,7 @@ run_resolver() {
         -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
         -u PIPELINE_PATH_B_SPLIT_ROLE \
         -u PIPELINE_TRUST_PROFILE \
+        -u PIPELINE_PRE_PR_REVIEW \
     bash "$HELPER" 999 "$pathletter" 2>/dev/null)"
   printf '%s\n' "$out" >> "$ALL_OUT_FILE"
   printf '%s\n' "$out"
@@ -551,6 +552,71 @@ OUT28=$(run_resolver "$FIX28" "$CFG28" B)
 assert_no_key "(28) lean + retired split-role knob" "SPLIT_ROLE" "$OUT28"
 assert_tok "(28) lean + retired split-role knob" "ROLES=single" "$OUT28"
 assert_tok "(28) lean + retired split-role knob" "REASON=explicit-knob" "$OUT28"
+
+# ---- #1468 PRE_PR_REVIEW dispatch token --------------------------------------
+# The resolver maps PIPELINE_PRE_PR_REVIEW onto a PRE_PR_REVIEW=<on|off> token the
+# orchestrator relays into the execute dispatch prompt (the dispatched agent never
+# reads env). false|off|0 -> off; unset/true|on -> on; other -> on + one WARN.
+# PATH D is always off (D already skips Step 8), with no WARN.
+FIX29=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
+
+# (29) no knob, PATH B -> on
+OUT29=$(run_resolver "$FIX29" "$(make_config_root)" B)
+assert_tok "(29) no knob PATH B" "PRE_PR_REVIEW=on" "$OUT29"
+
+# (30) false|off|0 -> off (PATH A and B)
+for v in false off 0; do
+  CFG30=$(make_config_root "PIPELINE_PRE_PR_REVIEW=$v")
+  for pl in A B; do
+    assert_tok "(30) PIPELINE_PRE_PR_REVIEW=$v PATH $pl" "PRE_PR_REVIEW=off" "$(run_resolver "$FIX29" "$CFG30" "$pl")"
+  done
+done
+
+# (31) true|on -> on
+for v in true on; do
+  CFG31=$(make_config_root "PIPELINE_PRE_PR_REVIEW=$v")
+  assert_tok "(31) PIPELINE_PRE_PR_REVIEW=$v PATH B" "PRE_PR_REVIEW=on" "$(run_resolver "$FIX29" "$CFG31" B)"
+done
+
+# (32) garbage -> on + exactly one stderr WARN naming the knob. run_resolver drops
+#      stderr, so invoke directly with the same hermetic env prefix.
+CFG32=$(make_config_root 'PIPELINE_PRE_PR_REVIEW=bogus')
+OUT32="$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIX29" \
+  PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$CFG32" \
+  env -u PIPELINE_BASE_BRANCH \
+      -u PIPELINE_PATH_A_MODEL_EXECUTE \
+      -u PIPELINE_PATH_B_MODEL_EXECUTE \
+      -u PIPELINE_PATH_C_MODEL_EXECUTE \
+      -u PIPELINE_PATH_D_MODEL_EXECUTE \
+      -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
+      -u PIPELINE_PATH_B_SPLIT_ROLE \
+      -u PIPELINE_TRUST_PROFILE \
+      -u PIPELINE_PRE_PR_REVIEW \
+  bash "$HELPER" 999 B 2>"$WORKDIR/err32")"
+assert_tok "(32) garbage knob PATH B" "PRE_PR_REVIEW=on" "$OUT32"
+inc
+WARN32=$(grep -cE '^WARN:.*PIPELINE_PRE_PR_REVIEW' "$WORKDIR/err32" || true)
+if [ "$WARN32" = "1" ]; then
+  pass_msg "(32) garbage knob -> exactly one stderr WARN"
+else
+  fail_msg "(32) garbage knob: expected 1 WARN line, got $WARN32:
+$(cat "$WORKDIR/err32")"
+fi
+
+# (33) PATH D always off (knob true, and unset)
+assert_tok "(33) PATH D knob=true" "PRE_PR_REVIEW=off" "$(run_resolver "$FIX29" "$(make_config_root 'PIPELINE_PRE_PR_REVIEW=true')" D)"
+assert_tok "(33) PATH D knob unset" "PRE_PR_REVIEW=off" "$(run_resolver "$FIX29" "$(make_config_root)" D)"
+
+# (34) existing keys unchanged on PATH B no-knob output
+assert_tok "(34) existing keys PATH B" "ROLES=single" "$OUT29"
+inc
+if printf '%s\n' "$OUT29" | grep -qE '^MODEL=' && printf '%s\n' "$OUT29" | grep -qE '^REASON='; then
+  pass_msg "(34) MODEL= and REASON= still emitted"
+else
+  fail_msg "(34) MODEL=/REASON= missing:
+$OUT29"
+fi
+assert_no_key "(34) existing keys PATH B" "SPLIT_ROLE" "$OUT29"
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="
