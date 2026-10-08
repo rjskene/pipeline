@@ -32,7 +32,8 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
     [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
     [--executor-model opus|sonnet] \
-    [--plan-gate full|single|none|annotate]
+    [--plan-gate full|single|none|annotate] \
+    [--pre-pr-review on|off | --no-pre-pr-review]
 ```
 
 | Mode | What it does | Costs money |
@@ -94,6 +95,13 @@ means the harness default (`annotate`, #1437); artifacts predating it meant
 `annotate` (#1435) goes further: ONE evaluation, and a `Revise` is carried into
 execute as binding amendments — no re-plan round. A `**Scope:** structural`
 Revise still re-plans once.
+
+`--pre-pr-review on|off` (default unset, #1464; `--no-pre-pr-review` = `off`) sets
+`PIPELINE_PRE_PR_REVIEW=true|false` in the sandbox session — `false` skips execute
+Step 8's pre-PR review loop on PATH A/B/C exactly as on PATH D. Unset means the
+harness default (`true`). A set run is tagged `pre_pr_review=<v>` on the total
+line; it carries NO artifact suffix (`run-retro.sh` peels a fixed list), so read
+the atom to tell an off-arm artifact from a baseline one.
 
 ## Harness staging
 
@@ -254,6 +262,9 @@ the first line of the block.
   empty. Only requests written after the run started are counted — the queue dir
   is not cleaned between runs. Like `bexec` it is appended rather than being a
   grammar field, so the `CALIB-TOTAL` grammar above is unchanged.
+- `pre_pr_review` — an OPTIONAL per-RUN atom like `bexec`: `on` or `off`, the
+  arm `--pre-pr-review` launched under (#1464). Absent when the flag was not
+  passed.
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
   there to answer), `timeout` (the wall-clock ceiling killed it), or

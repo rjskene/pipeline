@@ -227,6 +227,8 @@ if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
     # session ONLY as this env var (resolve-stage-model.sh's plan-eval arm reads
     # it), so this dump is the only place the value and the scrub are observable.
     echo "PIPELINE_PLAN_GATE=${PIPELINE_PLAN_GATE:-unset}"
+    # #1464: same story for the --pre-pr-review arm (execute Step 8 reads it).
+    echo "PIPELINE_PRE_PR_REVIEW=${PIPELINE_PRE_PR_REVIEW:-unset}"
   } > "$CALIB_TEST_LAUNCH_ENV"
 fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
@@ -443,6 +445,41 @@ LAUNCH_PGA="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
 expect_sub "--plan-gate annotate previews the PIPELINE_PLAN_GATE token" \
   "$LAUNCH_PGA" "PIPELINE_PLAN_GATE=annotate"
 expect_sub "--plan-gate annotate is named in the dry-run preview" "$LAUNCH_PGA" "plan_gate=annotate"
+
+# #1464: the --pre-pr-review arm — on|off maps onto the boolean knob, and the
+# unset default pins nothing (harness default = on).
+refute_sub "the default preview sets no PIPELINE_PRE_PR_REVIEW" \
+  "$LAUNCH" "PIPELINE_PRE_PR_REVIEW="
+refute_sub "the default preview names no pre_pr_review arm" "$LAUNCH" "pre_pr_review="
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --pre-pr-review off
+expect_rc "--pre-pr-review off dry-run exits 0" 0
+LAUNCH_PPR_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--pre-pr-review off previews PIPELINE_PRE_PR_REVIEW=false" \
+  "$LAUNCH_PPR_OFF" "PIPELINE_PRE_PR_REVIEW=false"
+expect_sub "--pre-pr-review off is named in the dry-run preview" "$LAUNCH_PPR_OFF" "pre_pr_review=off"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --no-pre-pr-review
+expect_rc "--no-pre-pr-review dry-run exits 0" 0
+LAUNCH_PPR_NO="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--no-pre-pr-review previews PIPELINE_PRE_PR_REVIEW=false" \
+  "$LAUNCH_PPR_NO" "PIPELINE_PRE_PR_REVIEW=false"
+expect_sub "--no-pre-pr-review is named as pre_pr_review=off" "$LAUNCH_PPR_NO" "pre_pr_review=off"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --pre-pr-review=on
+expect_rc "--pre-pr-review=on dry-run exits 0" 0
+LAUNCH_PPR_ON="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--pre-pr-review=on previews PIPELINE_PRE_PR_REVIEW=true" \
+  "$LAUNCH_PPR_ON" "PIPELINE_PRE_PR_REVIEW=true"
+expect_sub "--pre-pr-review=on is named in the dry-run preview" "$LAUNCH_PPR_ON" "pre_pr_review=on"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --pre-pr-review garbage
+expect_rc "--pre-pr-review garbage is a usage error" 2
+expect_sub "--pre-pr-review garbage names the accepted values" "$OUT" "on|off"
 
 # #1421 escape hatch: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old
 # flag for one run and exports NO bridge dir, so an unattended launch with no
@@ -2350,6 +2387,50 @@ rm -rf "$PLANTED_DIR"
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
       CALIB_TEST_PRICING_JSON
 rm -f "$ISSUES_DIR/6006.json" "$ISSUES_DIR/7006.json"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 26: --pre-pr-review reaches the sandbox session and labels the run (#1464)"
+# ---------------------------------------------------------------------------
+# Same contract as Scenario 24: the explicit set must come AFTER #1390's scrub,
+# so a poison value in the launching shell loses to the flag and is gone
+# entirely when the flag is absent. No artifact suffix (run-retro.sh peels a
+# fixed list) — the arm is recorded in the CALIB-TOTAL atom.
+
+echo 7200 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export PIPELINE_PRE_PR_REVIEW="bogus"
+run_helper --run --harness "$HARNESS" --pre-pr-review off
+expect_rc "--run --pre-pr-review off exits 0" 0
+
+LAUNCH_ENV_PPR="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_PPR" | grep -qxF -- "PIPELINE_PRE_PR_REVIEW=false"; then
+  pass_msg "--pre-pr-review off hands the session PIPELINE_PRE_PR_REVIEW=false"
+else
+  fail_msg "the launched session's environment must carry PIPELINE_PRE_PR_REVIEW=false (got: $(printf '%s' "$LAUNCH_ENV_PPR" | tr '\n' ' '))"
+fi
+
+TOTAL_PPR="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the CALIB-TOTAL line records the pre-PR-review arm" "$TOTAL_PPR" "pre_pr_review=off"
+
+# Control: same poisoned launching shell, flag ABSENT.
+echo 7300 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with no --pre-pr-review exits 0" 0
+
+LAUNCH_ENV_NO_PPR="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_NO_PPR" | grep -qxF -- "PIPELINE_PRE_PR_REVIEW=unset"; then
+  pass_msg "an inherited PIPELINE_PRE_PR_REVIEW is scrubbed when the flag is absent"
+else
+  fail_msg "the launched session must NOT inherit PIPELINE_PRE_PR_REVIEW (got: $(printf '%s' "$LAUNCH_ENV_NO_PPR" | tr '\n' ' '))"
+fi
+unset PIPELINE_PRE_PR_REVIEW
+
+TOTAL_NO_PPR="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+refute_sub "an unset-arm CALIB-TOTAL carries no pre_pr_review atom" "$TOTAL_NO_PPR" "pre_pr_review="
+
+unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
 echo ""
