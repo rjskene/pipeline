@@ -621,6 +621,47 @@ else
   pass_msg "--bootstrap never launches claude"
 fi
 
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 4b: the seed commit never carries .claude/logs or .claude/logs-archive (#1478)"
+# ---------------------------------------------------------------------------
+# commit_sandbox's `git add --all` swallowed archived cost logs into calib-base,
+# so every --reset restored a prior run's agent-costs.jsonl rows. The seed must
+# carry template content only — and a sandbox whose logs were ALREADY committed
+# gets them dropped from the index on the next --bootstrap (one-time cleanup).
+logs_tracked() { git -C "$SANDBOX" ls-tree -r --name-only "$1" -- .claude/logs .claude/logs-archive 2>/dev/null; }
+mkdir -p "$SANDBOX/.claude/logs" "$SANDBOX/.claude/logs-archive/x"
+echo '{"agent_id":"a1"}' > "$SANDBOX/.claude/logs/agent-costs.jsonl"
+echo '{"agent_id":"a0"}' > "$SANDBOX/.claude/logs-archive/x/agent-costs.jsonl"
+run_helper --bootstrap --harness "$HARNESS"
+expect_rc "--bootstrap with run logs on disk exits 0" 0
+LT_HEAD="$(logs_tracked HEAD)"
+LT_BASE="$(logs_tracked calib-base)"
+if [ -z "$LT_HEAD" ] && [ -z "$LT_BASE" ]; then
+  pass_msg "the seed commit carries no .claude/logs / .claude/logs-archive path"
+else
+  fail_msg "the seed commit swallowed run logs (HEAD: $LT_HEAD | calib-base: $LT_BASE)"
+fi
+
+# One-time cleanup: logs already committed AT calib-base (the 2026-10-08 state).
+git -C "$SANDBOX" add -f -- .claude/logs .claude/logs-archive
+git -C "$SANDBOX" commit --quiet -m "legacy seed that swallowed logs" >/dev/null
+git -C "$SANDBOX" tag -f calib-base >/dev/null
+run_helper --bootstrap --harness "$HARNESS"
+expect_rc "--bootstrap over already-committed logs exits 0" 0
+LT_HEAD="$(logs_tracked HEAD)"
+LT_BASE="$(logs_tracked calib-base)"
+if [ -z "$LT_HEAD" ] && [ -z "$LT_BASE" ]; then
+  pass_msg "--bootstrap drops already-committed logs from HEAD and calib-base"
+else
+  fail_msg "already-committed logs survived --bootstrap (HEAD: $LT_HEAD | calib-base: $LT_BASE)"
+fi
+if [ -f "$SANDBOX/.claude/logs-archive/x/agent-costs.jsonl" ]; then
+  pass_msg "the cleanup untracks the logs without deleting them from disk"
+else
+  fail_msg "the cleanup deleted the archived logs from disk"
+fi
+rm -rf "$SANDBOX/.claude/logs" "$SANDBOX/.claude/logs-archive"
 # ---------------------------------------------------------------------------
 scenario "Scenario 5: --reset recreates the five slate issues"
 # ---------------------------------------------------------------------------
