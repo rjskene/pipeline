@@ -32,7 +32,8 @@
 #                                       # path-b-execute-eligible.sh (B only)
 #   REASON=<token>                      # why MODEL resolved as it did (audit)
 #   PRE_PR_REVIEW=<on|off>              # #1468: resolved PIPELINE_PRE_PR_REVIEW, relayed
-#                                       # into the execute prompt. D always off; garbage -> on + WARN.
+#                                       # into the execute prompt. Default off (#1482);
+#                                       # D always off; garbage -> off + WARN.
 #
 # REASON tokens: default-opus | explicit-knob | high-uncertainty
 #                | needs-browser | scope-low-blast-gated
@@ -162,16 +163,16 @@ SCOPE="${PIPELINE_PATH_B_ELIGIBLE_SCOPE:-all}"
 
 # #1468: Step 8 pre-PR review knob, resolved HERE so it rides the dispatch prompt
 # (the dispatched agent never reads env). PATH D skips Step 8 regardless: fixed
-# `off`, no WARN. At most one WARN per invocation.
-PRE_PR_RAW="${PIPELINE_PRE_PR_REVIEW:-true}"
+# `off`, no WARN. Default off since #1482 (opt-in). At most one WARN per invocation.
+PRE_PR_RAW="${PIPELINE_PRE_PR_REVIEW:-false}"
 if [ "$PATH_LETTER" = "D" ]; then
   PRE_PR_REVIEW=off
 else
   case "$PRE_PR_RAW" in
     false|off|0) PRE_PR_REVIEW=off ;;
     true|on)     PRE_PR_REVIEW=on ;;
-    *) PRE_PR_REVIEW=on
-       echo "WARN: PIPELINE_PRE_PR_REVIEW='$PRE_PR_RAW' unrecognized (want true|false); defaulting PRE_PR_REVIEW=on" >&2 ;;
+    *) PRE_PR_REVIEW=off
+       echo "WARN: PIPELINE_PRE_PR_REVIEW='$PRE_PR_RAW' unrecognized (want true|false); defaulting PRE_PR_REVIEW=off" >&2 ;;
   esac
 fi
 
