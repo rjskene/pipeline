@@ -5,7 +5,7 @@
 path exactly as the PATH D early-return below, and the run log carries
 `PRE-PR-REVIEW: skipped reason=knob`. Direct invocation
 (`/pipeline:execute-issue-plan N`, no dispatch prompt) falls back to
-`${PIPELINE_PRE_PR_REVIEW:-true}` = `false`.
+`${PIPELINE_PRE_PR_REVIEW:-false}` = `false` (default off since #1482).
 
 `skills/execute-issue-plan/SKILL.md` Step 8 points here. Read it before
 `gh pr create` on PATH A, B and C. On PATH D (`quick-fix`) Step 8 is skipped in

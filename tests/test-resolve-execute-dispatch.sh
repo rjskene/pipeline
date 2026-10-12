@@ -548,13 +548,14 @@ assert_tok "(28) lean + retired split-role knob" "REASON=explicit-knob" "$OUT28"
 # ---- #1468 PRE_PR_REVIEW dispatch token --------------------------------------
 # The resolver maps PIPELINE_PRE_PR_REVIEW onto a PRE_PR_REVIEW=<on|off> token the
 # orchestrator relays into the execute dispatch prompt (the dispatched agent never
-# reads env). false|off|0 -> off; unset/true|on -> on; other -> on + one WARN.
+# reads env). unset/false|off|0 -> off (#1482: default off); true|on -> on;
+# other -> off + one WARN.
 # PATH D is always off (D already skips Step 8), with no WARN.
 FIX29=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 
-# (29) no knob, PATH B -> on
+# (29) no knob, PATH B -> off (#1482: pre-PR review is opt-in)
 OUT29=$(run_resolver "$FIX29" "$(make_config_root)" B)
-assert_tok "(29) no knob PATH B" "PRE_PR_REVIEW=on" "$OUT29"
+assert_tok "(29) no knob PATH B" "PRE_PR_REVIEW=off" "$OUT29"
 
 # (30) false|off|0 -> off (PATH A and B)
 for v in false off 0; do
@@ -570,7 +571,7 @@ for v in true on; do
   assert_tok "(31) PIPELINE_PRE_PR_REVIEW=$v PATH B" "PRE_PR_REVIEW=on" "$(run_resolver "$FIX29" "$CFG31" B)"
 done
 
-# (32) garbage -> on + exactly one stderr WARN naming the knob. run_resolver drops
+# (32) garbage -> off (#1482) + exactly one stderr WARN naming the knob. run_resolver drops
 #      stderr, so invoke directly with the same hermetic env prefix.
 CFG32=$(make_config_root 'PIPELINE_PRE_PR_REVIEW=bogus')
 OUT32="$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIX29" \
@@ -585,7 +586,7 @@ OUT32="$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIX29" \
       -u PIPELINE_TRUST_PROFILE \
       -u PIPELINE_PRE_PR_REVIEW \
   bash "$HELPER" 999 B 2>"$WORKDIR/err32")"
-assert_tok "(32) garbage knob PATH B" "PRE_PR_REVIEW=on" "$OUT32"
+assert_tok "(32) garbage knob PATH B" "PRE_PR_REVIEW=off" "$OUT32"
 inc
 WARN32=$(grep -cE '^WARN:.*PIPELINE_PRE_PR_REVIEW' "$WORKDIR/err32" || true)
 if [ "$WARN32" = "1" ]; then
