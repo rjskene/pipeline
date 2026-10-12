@@ -1,7 +1,7 @@
 #!/bin/bash
 set -uo pipefail
 
-# Guard (issue #1464): PIPELINE_PRE_PR_REVIEW (default true) — `false` skips
+# Guard (issue #1464): PIPELINE_PRE_PR_REVIEW (default false since #1482) — `false` skips
 # execute-issue-plan Step 8 (8a–8e) on PATH A/B/C exactly as on PATH D. The
 # knob is the calibration A/B lever for the pre-PR review loop, so the skill
 # text, the reference, and the config example must all name it.
@@ -55,12 +55,28 @@ else
   fail_msg "pre-pr-review-loop.md must name PIPELINE_PRE_PR_REVIEW in its first 10 lines"
 fi
 
+# --- (2b) #1482: the default is false — reference fallback + SKILL Step 8 ---
+for f in "$REF" "$SKILL"; do
+  inc
+  if grep -qF '${PIPELINE_PRE_PR_REVIEW:-false}' "$f" && ! grep -qF '${PIPELINE_PRE_PR_REVIEW:-true}' "$f"; then
+    pass_msg "$(basename "$f"): direct-invocation fallback is \${PIPELINE_PRE_PR_REVIEW:-false}"
+  else
+    fail_msg "$(basename "$f"): direct-invocation fallback must be \${PIPELINE_PRE_PR_REVIEW:-false} (#1482)"
+  fi
+done
+
 # --- (3) config example documents the knob as a COMMENTED line -------------
 inc
 if grep -Eq '^#[[:space:]]*PIPELINE_PRE_PR_REVIEW=' "$EXAMPLE"; then
   pass_msg "example: PIPELINE_PRE_PR_REVIEW documented as a commented template line"
 else
   fail_msg "example: PIPELINE_PRE_PR_REVIEW missing a commented '#PIPELINE_PRE_PR_REVIEW=' line"
+fi
+inc
+if grep -qxF '#PIPELINE_PRE_PR_REVIEW="false"' "$EXAMPLE"; then
+  pass_msg "example: template line names the default \"false\" (#1482)"
+else
+  fail_msg "example: template line must be #PIPELINE_PRE_PR_REVIEW=\"false\" (#1482)"
 fi
 
 # --- (4) live pipeline.config (host-only): any value is true|false ---------
