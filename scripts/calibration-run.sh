@@ -113,7 +113,7 @@ Options:
                    in the sandbox session, varying how many plan-eval
                    dispatches the plan-approval gate is worth (outer-loop
                    step 4, #1429; annotate, #1435).
-  --pre-pr-review R  on|off  (default unset = the harness default, on) — sets
+  --pre-pr-review R  on|off  (default unset = the harness default, off) — sets
                    PIPELINE_PRE_PR_REVIEW (true|false) in the sandbox session,
                    toggling execute Step 8's pre-PR review loop on PATH A/B/C
                    (#1464). --no-pre-pr-review = off.
@@ -144,7 +144,8 @@ EXECUTOR_MODEL=""
 # #1437). Pinning a value here would make every run an arm of this experiment.
 PLAN_GATE=""
 # Same contract for the pre-PR-review arm (#1464): empty = "leave
-# PIPELINE_PRE_PR_REVIEW unset" (harness default on).
+# PIPELINE_PRE_PR_REVIEW unset" (harness default off since #1482; `on` is the
+# opt-in arm).
 PRE_PR_REVIEW=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }

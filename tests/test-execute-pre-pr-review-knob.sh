@@ -152,6 +152,23 @@ for tok in 'code review #<N>' 'PRE_PR_REVIEW=off' 'skipped reason=knob'; do
   fi
 done
 
+# --- (10) #1482: calibration surfaces name the harness default as off ------
+CALDOC="$ROOT/docs/calibration.md"
+CALRUN="$ROOT/scripts/calibration-run.sh"
+inc
+if grep -qF 'harness default (`false`' "$CALDOC" && ! grep -qF 'harness default (`true`)' "$CALDOC"; then
+  pass_msg "docs/calibration.md names the harness default as \`false\`"
+else
+  fail_msg "docs/calibration.md must name the harness default as \`false\` (#1482)"
+fi
+inc
+if grep -qF 'harness default, off' "$CALRUN" && grep -qF '(harness default off' "$CALRUN" \
+   && ! grep -qE 'harness default,? on\b' "$CALRUN"; then
+  pass_msg "calibration-run.sh comments name the harness default as off"
+else
+  fail_msg "calibration-run.sh comments must name the harness default as off (#1482)"
+fi
+
 echo ""
 echo "================================"
 echo "  $TESTS tests: $PASS passed, $FAIL failed"

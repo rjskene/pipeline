@@ -109,9 +109,10 @@ Revise still re-plans once.
 `--pre-pr-review on|off` (default unset, #1464; `--no-pre-pr-review` = `off`) sets
 `PIPELINE_PRE_PR_REVIEW` to `true|false` in the sandbox session — `false` skips execute
 Step 8's pre-PR review loop on PATH A/B/C exactly as on PATH D. Unset means the
-harness default (`true`). A set run is tagged `pre_pr_review=<v>` on the total
-line; it carries NO artifact suffix (`run-retro.sh` peels a fixed list), so read
-the atom to tell an off-arm artifact from a baseline one.
+harness default (`false`, #1482); `--pre-pr-review on` is the opt-in arm. A set
+run is tagged `pre_pr_review=<v>` on the total line; it carries NO artifact
+suffix (`run-retro.sh` peels a fixed list), so read the atom to tell an arm
+artifact from a baseline one.
 
 ## Harness staging
 
