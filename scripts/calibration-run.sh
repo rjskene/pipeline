@@ -468,6 +468,12 @@ commit_sandbox() {
   # `--ignore-unmatch` makes this safe whether or not `add --all` staged it.
   git -C "$SANDBOX" rm --cached --ignore-unmatch --quiet \
     -- ".claude/$LOCAL_SETTINGS_BASENAME" || return 1
+  # #1478: run artefacts never ride the seed commit. A tracked
+  # .claude/logs-archive/<ts>/agent-costs.jsonl in calib-base is restored by
+  # every --reset and re-prices a prior run's rows. On a sandbox whose logs were
+  # already committed this also stages their removal (one-time cleanup).
+  git -C "$SANDBOX" rm --cached -r --ignore-unmatch --quiet \
+    -- .claude/logs .claude/logs-archive || return 1
   if git -C "$SANDBOX" diff --cached --quiet 2>/dev/null; then
     return 0   # already in sync — no commit, no churn
   fi
