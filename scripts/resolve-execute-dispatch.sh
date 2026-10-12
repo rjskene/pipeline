@@ -27,7 +27,6 @@
 #   MODEL=<sonnet|opus|haiku|fable>     # the model= to pass to the execute Agent.
 #                                       # ALWAYS a NAMED model (#1186) — `inherit`
 #                                       # is NOT a valid emission.
-#   ROLES=single                        # #1420: the ONLY dispatch shape
 #   SCOPE=<all|low-blast>               # resolved PIPELINE_PATH_B_ELIGIBLE_SCOPE (B only)
 #   ELIGIBLE=<low-blast|high-blast>     # advisory passthrough from
 #                                       # path-b-execute-eligible.sh (B only)
@@ -42,12 +41,10 @@
 # half of this resolver's contract. PATH B used to dispatch TWO sequential agents
 # (an always-Opus test-author committing the complete locked failing suite, then a
 # cheaper implementer greening it additive-only under an eval-time git invariant),
-# and this resolver emitted that pairing as its own boolean key plus
-# `ROLES=red:opus,green:<model>`. Calibration runs #11-#13 measured NO cost or
-# latency return for the redundancy, so every path now dispatches ONE execute
-# agent: `ROLES=single` unconditionally, and the boolean key is REMOVED outright
-# rather than pinned to false — a surviving `false` emission would keep every
-# downstream parser reading a dead token. Three consequences:
+# and this resolver emitted that pairing as shape keys. Calibration runs #11-#13
+# measured NO cost or latency return for the redundancy, so every path now
+# dispatches ONE execute agent and the resolver emits NO shape key at all (#1476
+# dropped the last, constant one). Three consequences:
 #   - The #881 shape knob is no longer read. A stale value in a consumer's config
 #     is SILENTLY ignored, with no WARN: there is nothing left to opt out of, and
 #     warning on it would fire on every dispatch of every #1057-era config until
@@ -211,10 +208,6 @@ emit() {
   echo "ISSUE=$N"
   echo "PATH=$PATH_LETTER"
   echo "MODEL=$MODEL"
-  # #1420: ROLES is a constant. It is still EMITTED (unlike the retired shape
-  # boolean, which is dropped outright) so a consumer reading the shape gets an
-  # explicit `single` rather than silence it would have to interpret.
-  echo "ROLES=single"
   echo "PRE_PR_REVIEW=$PRE_PR_REVIEW"
   if [ "$PATH_LETTER" = "B" ]; then
     echo "SCOPE=$SCOPE"

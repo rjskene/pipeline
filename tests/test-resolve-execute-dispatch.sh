@@ -14,8 +14,8 @@ set -uo pipefail
 # never redefines the carve-out regex (that was bug #1039).
 #
 # #1420 — the #881 split-role dispatch SHAPE is retired. Every path now
-# dispatches ONE execute agent, so the resolver emits `ROLES=single`
-# unconditionally and emits NO `SPLIT_ROLE=` line at all; a
+# dispatches ONE execute agent, so the resolver emits NO shape key at all —
+# neither `SPLIT_ROLE=` nor (#1476) the constant `ROLES=single`; a
 # PIPELINE_PATH_B_SPLIT_ROLE value left in a consumer's config is silently
 # ignored (no WARN — there is nothing left to opt out of). PATH B's unset-knob
 # default also flips sonnet -> `opus` (REASON=default-opus): the split lane's
@@ -28,7 +28,6 @@ set -uo pipefail
 #   ISSUE=<N>
 #   PATH=<A|B|C|D>
 #   MODEL=<sonnet|opus|haiku|fable>     # ALWAYS a NAMED model (#1186)
-#   ROLES=single                        # #1420: the ONLY dispatch shape
 #   SCOPE=<all|low-blast>               # resolved PIPELINE_PATH_B_ELIGIBLE_SCOPE (B)
 #   ELIGIBLE=<low-blast|high-blast>     # advisory passthrough (B only)
 #   REASON=<token>                      # why MODEL resolved as it did (audit)
@@ -227,7 +226,7 @@ FIX1=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT1=$(run_resolver "$FIX1" "$CFG1" B)
 assert_tok "(1) B knobs unset" "MODEL=opus" "$OUT1"
 assert_tok "(1) B knobs unset" "REASON=default-opus" "$OUT1"
-assert_tok "(1) B knobs unset" "ROLES=single" "$OUT1"
+assert_no_key "(1) B knobs unset" "ROLES" "$OUT1"
 assert_no_key "(1) B knobs unset" "SPLIT_ROLE" "$OUT1"
 assert_tok "(1) B knobs unset" "SCOPE=all" "$OUT1"
 assert_tok "(1) B knobs unset" "PATH=B" "$OUT1"
@@ -250,7 +249,7 @@ FIX2B=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT2B=$(run_resolver "$FIX2B" "$CFG2B" B)
 assert_tok "(2b) B explicit sonnet" "MODEL=sonnet" "$OUT2B"
 assert_tok "(2b) B explicit sonnet" "REASON=explicit-knob" "$OUT2B"
-assert_tok "(2b) B explicit sonnet" "ROLES=single" "$OUT2B"
+assert_no_key "(2b) B explicit sonnet" "ROLES" "$OUT2B"
 
 # (3) PATH B, W2 vocab in body, knobs default -> opus, reason high-uncertainty.
 CFG3=$(make_config_root)
@@ -296,7 +295,7 @@ FIX7=$(make_fixture "fix(foo): quick" "$BODY_LOW" '[]')
 OUT7=$(run_resolver "$FIX7" "$CFG7" D)
 assert_tok "(7) D knobs unset" "MODEL=opus" "$OUT7"
 assert_tok "(7) D knobs unset" "REASON=default-opus" "$OUT7"
-assert_tok "(7) D knobs unset" "ROLES=single" "$OUT7"
+assert_no_key "(7) D knobs unset" "ROLES" "$OUT7"
 assert_no_key "(7) D knobs unset" "SPLIT_ROLE" "$OUT7"
 assert_tok "(7) D knobs unset" "PATH=D" "$OUT7"
 
@@ -386,7 +385,7 @@ fi
 # (SPLIT_ROLE=true, ROLES=red:opus,green:<model>) against the
 # PIPELINE_PATH_B_SPLIT_ROLE knob. Calibration runs #11-#13 showed no cost or
 # latency return for the split, so the lane is gone and cases (11)-(15) collapse
-# into ONE property: EVERY path emits `ROLES=single` and NO `SPLIT_ROLE=` line,
+# into ONE property: EVERY path emits NO `ROLES=`/`SPLIT_ROLE=` line (#1476),
 # and a stale `PIPELINE_PATH_B_SPLIT_ROLE=true` left behind in a consumer's
 # config is SILENTLY IGNORED — not honored, and not an error either. Ignoring it
 # rather than erroring is what lets an existing consumer upgrade without editing
@@ -399,15 +398,8 @@ for pl in A B C D; do
   CFG11=$(make_config_root 'PIPELINE_PATH_B_SPLIT_ROLE=true')
   FIX11=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
   OUT11=$(run_resolver "$FIX11" "$CFG11" "$pl")
-  assert_tok     "(11) PATH $pl + ignored PIPELINE_PATH_B_SPLIT_ROLE=true" "ROLES=single" "$OUT11"
+  assert_no_key  "(11) PATH $pl + ignored PIPELINE_PATH_B_SPLIT_ROLE=true" "ROLES" "$OUT11"
   assert_no_key  "(11) PATH $pl + ignored PIPELINE_PATH_B_SPLIT_ROLE=true" "SPLIT_ROLE" "$OUT11"
-  inc
-  if printf '%s\n' "$OUT11" | grep -qE '^ROLES=.*(red:|green:)'; then
-    fail_msg "(11) PATH $pl emitted a red/green ROLES shape:
-$OUT11"
-  else
-    pass_msg "(11) PATH $pl -> ROLES names no red:/green: role"
-  fi
 done
 
 # ---- #1186: PATH A / PATH C acceptance --------------------------------------
@@ -426,7 +418,7 @@ assert_tok "(16) A knobs unset" "PATH=A" "$OUT16"
 assert_tok "(16) A knobs unset" "MODEL=opus" "$OUT16"
 assert_tok "(16) A knobs unset" "REASON=default-opus" "$OUT16"
 assert_no_key "(16) A knobs unset" "SPLIT_ROLE" "$OUT16"
-assert_tok "(16) A knobs unset" "ROLES=single" "$OUT16"
+assert_no_key "(16) A knobs unset" "ROLES" "$OUT16"
 assert_no_key "(16) A knobs unset" "SCOPE" "$OUT16"
 assert_no_key "(16) A knobs unset" "ELIGIBLE" "$OUT16"
 
@@ -447,7 +439,7 @@ assert_tok "(18) C knobs unset" "PATH=C" "$OUT18"
 assert_tok "(18) C knobs unset" "MODEL=opus" "$OUT18"
 assert_tok "(18) C knobs unset" "REASON=default-opus" "$OUT18"
 assert_no_key "(18) C knobs unset" "SPLIT_ROLE" "$OUT18"
-assert_tok "(18) C knobs unset" "ROLES=single" "$OUT18"
+assert_no_key "(18) C knobs unset" "ROLES" "$OUT18"
 assert_no_key "(18) C knobs unset" "SCOPE" "$OUT18"
 assert_no_key "(18) C knobs unset" "ELIGIBLE" "$OUT18"
 
@@ -550,7 +542,7 @@ CFG28=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_B_MODEL_EX
 FIX28=$(make_fixture "fix(foo): tweak" "$BODY_LOW" '[]')
 OUT28=$(run_resolver "$FIX28" "$CFG28" B)
 assert_no_key "(28) lean + retired split-role knob" "SPLIT_ROLE" "$OUT28"
-assert_tok "(28) lean + retired split-role knob" "ROLES=single" "$OUT28"
+assert_no_key "(28) lean + retired split-role knob" "ROLES" "$OUT28"
 assert_tok "(28) lean + retired split-role knob" "REASON=explicit-knob" "$OUT28"
 
 # ---- #1468 PRE_PR_REVIEW dispatch token --------------------------------------
@@ -608,7 +600,7 @@ assert_tok "(33) PATH D knob=true" "PRE_PR_REVIEW=off" "$(run_resolver "$FIX29" 
 assert_tok "(33) PATH D knob unset" "PRE_PR_REVIEW=off" "$(run_resolver "$FIX29" "$(make_config_root)" D)"
 
 # (34) existing keys unchanged on PATH B no-knob output
-assert_tok "(34) existing keys PATH B" "ROLES=single" "$OUT29"
+assert_no_key "(34) existing keys PATH B" "ROLES" "$OUT29"
 inc
 if printf '%s\n' "$OUT29" | grep -qE '^MODEL=' && printf '%s\n' "$OUT29" | grep -qE '^REASON='; then
   pass_msg "(34) MODEL= and REASON= still emitted"
