@@ -34,7 +34,9 @@ HARNESS="$TMP/harness"
 TEMPLATE="$HARNESS/dev/calib/template"
 mkdir -p "$HARNESS/scripts" "$TEMPLATE"
 echo "# calib sandbox" > "$TEMPLATE/README.md"
-printf 'PIPELINE_REPO=owner/pipeline-calib\nPIPELINE_AUTO_MERGE=false\n' > "$TEMPLATE/pipeline.config"
+# A stale inert line the template later drops (Calib 25's shape; a non-PIPELINE_
+# key so check-config-drift.sh does not read it as an undeclared knob).
+printf 'PIPELINE_REPO=owner/pipeline-calib\nSTALE_INERT_KNOB=false\n' > "$TEMPLATE/pipeline.config"
 printf '{"permissions":{"allow":["Bash"]}}\n' > "$TEMPLATE/claude-settings.local.json"
 printf '#!/bin/bash\necho "doctor stub: $*"\n' > "$HARNESS/scripts/doctor.sh"
 chmod +x "$HARNESS/scripts/doctor.sh"
@@ -109,7 +111,7 @@ refute_sub "a fresh anchor is not reported as a re-anchor" "$OUT" "re-anchored"
 # ---------------------------------------------------------------------------
 scenario "Scenario 3: template change -> --bootstrap re-anchors calib-base"
 # ---------------------------------------------------------------------------
-# The Calib 25 shape: the template drops the inert PIPELINE_AUTO_MERGE line.
+# The Calib 25 shape: the template drops the stale inert line.
 printf 'PIPELINE_REPO=owner/pipeline-calib\n' > "$TEMPLATE/pipeline.config"
 run_helper --bootstrap --harness "$HARNESS"
 expect_rc "--bootstrap after a template change exits 0" 0
