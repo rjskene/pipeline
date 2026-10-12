@@ -29,7 +29,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
 ## Running
 
 ```
-bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
+bash scripts/calibration-run.sh --bootstrap|--retag|--reset|--dry-run|--run \
     [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
     [--executor-model opus|sonnet] \
     [--plan-gate full|single|none|annotate] \
@@ -38,7 +38,8 @@ bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
 
 | Mode | What it does | Costs money |
 |---|---|---|
-| `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. | no |
+| `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. A template sync that commits re-anchors `calib-base` to it. | no |
+| `--retag` | Force `calib-base` onto the sandbox `HEAD`, locally and on the remote — for a sandbox edited and committed by hand. No-op when the tag is already there. | no |
 | `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the six slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
@@ -51,6 +52,15 @@ tree under test — it defaults to this repo's root.
 `--reset` is what makes a run comparable to the previous one: inputs are pinned to
 the `calib-base` tag, so a delta between two `CALIB-TOTAL` lines is attributable to
 the harness version, not to the workload.
+
+The tag follows the template (#1477). When `--bootstrap`'s template sync commits on
+top of `calib-base`, it re-anchors the tag to that commit (`git tag -f` + a force
+push, reported as `calib: calib-base re-anchored <old> -> <new>`); when nothing
+changed, the tag stays put. So `--bootstrap` after a template change is the
+documented way to roll a template fix into the slate — run `--reset` first so the
+sandbox sits on `calib-base`; a sandbox left on a post-run `main` only warns and
+keeps the old tag, since anchoring there would bake the run's merged fixes into
+the seed. Hand edits to the sandbox use `--retag` instead.
 
 The launch exports both `CLAUDE_PLUGIN_ROOT=<harness>` and passes
 `--plugin-dir <harness>` to `claude -p`. Both are required: the env var is what

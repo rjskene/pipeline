@@ -14,7 +14,11 @@ set -uo pipefail
 # Modes (mutually exclusive):
 #   --bootstrap  Create/adopt the sandbox repo, clone it, sync the harness
 #                template into it, seed labels, tag `calib-base`. Idempotent:
-#                every step is guarded, so a re-run is a no-op.
+#                every step is guarded, so a re-run is a no-op. A template
+#                sync that commits on top of `calib-base` re-anchors the tag
+#                to it (#1477), so the next --reset keeps the fix.
+#   --retag      Force `calib-base` onto the sandbox HEAD (local + remote) —
+#                the explicit form, for a sandbox edited by hand (#1477).
 #   --reset      Force the sandbox back to `calib-base`, reap stale calib
 #                issues, recreate the six slate issues, and re-materialize
 #                .claude/settings.local.json from the harness template so the
@@ -72,14 +76,17 @@ set -uo pipefail
 
 print_usage() {
   cat <<'USAGE'
-Usage: scripts/calibration-run.sh (--bootstrap|--reset|--dry-run|--run) [options]
+Usage: scripts/calibration-run.sh (--bootstrap|--retag|--reset|--dry-run|--run) [options]
 
 Drives the §8 calibration slate: a fixed six-issue workload run against a
 purpose-built consumer sandbox so the harness version is the only variable.
 
 Modes (exactly one, mutually exclusive):
   --bootstrap      Create/adopt + clone the sandbox, sync the harness
-                   template, seed labels, tag calib-base. Idempotent.
+                   template, seed labels, tag calib-base. Idempotent. A
+                   template sync that commits re-anchors calib-base to it.
+  --retag          Force calib-base onto the sandbox HEAD (local + remote),
+                   for a sandbox edited by hand. No-op when already there.
   --reset          Force the sandbox back to calib-base, recreate the six
                    slate issues, and refresh .claude/settings.local.json from
                    the harness template. Prints `CALIB-ISSUES <n1> ... <n6>`.
@@ -150,7 +157,7 @@ set_mode() {
     MODE=reset; DRY_RESET=1; return 0
   fi
   if [ -n "$MODE" ]; then
-    die_usage "--$MODE and --$1 are mutually exclusive (pick one of --bootstrap|--reset|--dry-run|--run)"
+    die_usage "--$MODE and --$1 are mutually exclusive (pick one of --bootstrap|--retag|--reset|--dry-run|--run)"
   fi
   MODE="$1"
 }
@@ -165,6 +172,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)    print_usage; exit 0 ;;
     --bootstrap)  set_mode bootstrap; shift ;;
+    --retag)      set_mode retag; shift ;;
     --reset)      set_mode reset; shift ;;
     --dry-run)    set_mode dry-run; shift ;;
     --run)        set_mode run; shift ;;
@@ -214,7 +222,7 @@ case "$PRE_PR_REVIEW" in
   *) die_usage "--pre-pr-review must be one of on|off (got: $PRE_PR_REVIEW)" ;;
 esac
 if [ -z "$MODE" ]; then
-  die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
+  die_usage "one of --bootstrap|--retag|--reset|--dry-run|--run is required"
 fi
 
 # ---------------------------------------------------------------------------
@@ -478,6 +486,21 @@ tag_base() {
   dispatch git -C "$SANDBOX" push --quiet origin "refs/tags/$BASE_TAG"
 }
 
+# reanchor_base <old-sha> — force $BASE_TAG onto the sandbox HEAD, locally and
+# on the remote (#1477). tag_base() never moves an existing tag, so before this
+# a template sync committed by --bootstrap was discarded by the very next
+# --reset (Calib 25). No-op when the tag already sits at HEAD.
+reanchor_base() {
+  local old="$1" new
+  new="$(git -C "$SANDBOX" rev-parse HEAD)" || return 1
+  [ "$old" = "$new" ] && return 0
+  git -C "$SANDBOX" tag -f "$BASE_TAG" "$new" >/dev/null || return 1
+  dispatch git -C "$SANDBOX" push --quiet --force origin "refs/tags/$BASE_TAG" || return 1
+  echo "calib: $BASE_TAG re-anchored $old -> $new"
+}
+
+base_sha() { git -C "$SANDBOX" rev-parse -q --verify "refs/tags/$BASE_TAG^{commit}" 2>/dev/null; }
+
 # Seed the canonical labels ON THE SANDBOX REPO. Scoping here is load-bearing
 # (#1280): doctor.sh --fix labels sources ./pipeline.config from its OWN cwd and
 # seeds whatever PIPELINE_REPO it ends up with, and this script runs from the
@@ -509,11 +532,34 @@ cmd_bootstrap() {
   ensure_clone                || die_run "could not clone the sandbox into $SANDBOX"
   sync_template               || die_run "template sync failed"
   materialize_local_settings  || die_run "could not materialize the sandbox local-settings file"
+  local pre_head old_base
+  pre_head="$(git -C "$SANDBOX" rev-parse -q --verify HEAD 2>/dev/null)"
   commit_sandbox              || die_run "sandbox commit failed"
   push_main                   || die_run "could not push the sandbox main branch"
+  # #1477: the tag follows the template. Re-anchor only when THIS sync committed
+  # on top of the tag itself — a sandbox left on a post-run main would bake the
+  # run's merged fixes into the seed, so that case warns and leaves the tag.
+  old_base="$(base_sha)"
+  if [ -n "$old_base" ] && [ "$(git -C "$SANDBOX" rev-parse HEAD)" != "$pre_head" ]; then
+    if [ "$pre_head" = "$old_base" ]; then
+      reanchor_base "$old_base" || die_run "could not re-anchor the $BASE_TAG tag"
+    else
+      warn "sandbox HEAD was not at $BASE_TAG before the template sync — $BASE_TAG left at $old_base (run --reset then --bootstrap, or --retag)"
+    fi
+  fi
   tag_base                    || die_run "could not anchor the $BASE_TAG tag"
   seed_labels                 || warn "label seed reported a failure"
   echo "calib: bootstrap complete — sandbox=$SANDBOX repo=$CALIB_REPO tag=$BASE_TAG"
+}
+
+# --retag (#1477): the explicit form, for a sandbox edited (and committed) by
+# hand. Force-pushes a tag, so it carries the same blast-radius guard as --reset.
+cmd_retag() {
+  guard_sandbox_repo
+  [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
+  local old_base
+  old_base="$(base_sha)" || die_run "$BASE_TAG does not exist in $SANDBOX (run --bootstrap first)"
+  reanchor_base "$old_base" || die_run "could not re-anchor the $BASE_TAG tag"
 }
 
 # ---------------------------------------------------------------------------
@@ -1353,6 +1399,7 @@ case "$MODE" in
     exit 0
     ;;
   bootstrap) cmd_bootstrap ;;
+  retag)     cmd_retag ;;
   reset)     cmd_reset ;;
   run)       cmd_run ;;
 esac
