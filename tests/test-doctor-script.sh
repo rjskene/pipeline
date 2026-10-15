@@ -63,7 +63,8 @@ CLAUDE
 }
 
 # canonical all-17-labels payload (used as default by passing cases).
-# 17 since #997 added needs-debug to doctor.sh LABEL_TABLE.
+# 17 since #1484 removed needs-browser from doctor.sh LABEL_TABLE (#997 added
+# needs-debug, #1128 added next).
 ALL_LABELS_JSON='[
   {"name":"plan-pending","color":"C2E0C6","description":"Plan posted, awaiting review"},
   {"name":"plan-reviewed","color":"BFD4F2","description":"Plan evaluated"},
@@ -78,7 +79,6 @@ ALL_LABELS_JSON='[
   {"name":"docs-only","color":"D4C5F9","description":"Documentation-only change — no implementation"},
   {"name":"multi-task","color":"5319e7","description":"Issue too large for one PR; requires decomposition into sub-issues"},
   {"name":"quick-fix","color":"0E8A16","description":"Quick-fix path — inline TDD, single failing test"},
-  {"name":"needs-browser","color":"1F77B4","description":"Gates Playwright MCP attachment and visual-proof-from-plan sub-skill"},
   {"name":"needs-debug","color":"D93F0B","description":"Gates root-cause diagnosis via systematic-debugging before planning"},
   {"name":"tracker","color":"0E8A16","description":"Coordination issue rolling up child issues under a Rollout sequence checklist"},
   {"name":"manual-merge","color":"F9D0C4","description":"Suppress auto-merge for this issue; merge by hand"},
@@ -229,12 +229,12 @@ grep -qE '^CHECK: gh_repo_reachable status=fail.*not reachable' <<<"$out" \
 # ---------------------------------------------------------------------------
 # Case 5: labels_exist
 # ---------------------------------------------------------------------------
-echo "Case 5a: all 18 labels present"
+echo "Case 5a: all 17 labels present"
 FX=$(fresh_fx fx-labels-pass)
 run_helper "$FX" LABELS_JSON="$ALL_LABELS_JSON"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: labels_exist status=pass detail=18/18' <<<"$out" \
-  && pass_msg "labels-pass: 18/18 detail" \
+grep -qE '^CHECK: labels_exist status=pass detail=17/17' <<<"$out" \
+  && pass_msg "labels-pass: 17/17 detail" \
   || { fail_msg "labels-pass: wrong detail"; echo "$out" | sed 's/^/    /'; }
 
 echo "Case 5b: two labels missing"
@@ -266,17 +266,17 @@ OVERRIDE_JSON='[
   {"name":"in-progress"},{"name":"pr-open"},{"name":"merged"},
   {"name":"skip"},{"name":"later"},{"name":"human"},{"name":"brainstorm"},
   {"name":"docs-only"},{"name":"multi-task"},{"name":"quick-fix"},
-  {"name":"needs-browser"},{"name":"needs-debug"},{"name":"tracker"},{"name":"manual-merge"},
+  {"name":"needs-debug"},{"name":"tracker"},{"name":"manual-merge"},
   {"name":"next"}
 ]'
 run_helper "$FX" LABELS_JSON="$OVERRIDE_JSON"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: labels_exist status=pass detail=18/18' <<<"$out" \
+grep -qE '^CHECK: labels_exist status=pass detail=17/17' <<<"$out" \
   && pass_msg "labels-override: pass when PIPELINE_LABELS_EXCLUDED=skip" \
   || { fail_msg "labels-override: failed"; echo "$out" | sed 's/^/    /'; }
 
 # #1274 scope 5: a pipe-separated override is TWO labels, so the expected set
-# (and therefore the pass detail total) grows from 18 to 19. Mirrors Case 5c.
+# (and therefore the pass detail total) grows from 17 to 18. Mirrors Case 5c.
 echo "Case 5d: pipe-separated override expands the expected set"
 FX=$(fresh_fx fx-labels-split)
 cat > "$FX/pipeline.config" <<'CFG'
@@ -289,14 +289,14 @@ SPLIT_JSON='[
   {"name":"in-progress"},{"name":"pr-open"},{"name":"merged"},
   {"name":"excluded"},{"name":"evolve"},{"name":"later"},{"name":"human"},
   {"name":"brainstorm"},{"name":"docs-only"},{"name":"multi-task"},{"name":"quick-fix"},
-  {"name":"needs-browser"},{"name":"needs-debug"},{"name":"tracker"},{"name":"manual-merge"},
+  {"name":"needs-debug"},{"name":"tracker"},{"name":"manual-merge"},
   {"name":"next"}
 ]'
 run_helper "$FX" LABELS_JSON="$SPLIT_JSON"
 out="$(cat "$FX/out")"; rc="$(cat "$FX/rc")"
-grep -qE '^CHECK: labels_exist status=pass detail=19/19' <<<"$out" \
-  && pass_msg "labels-split: 19/19 when PIPELINE_LABELS_EXCLUDED=\"excluded|evolve\"" \
-  || { fail_msg "labels-split: expected pass detail=19/19"; grep -E '^CHECK: labels_exist' <<<"$out" | sed 's/^/    /'; }
+grep -qE '^CHECK: labels_exist status=pass detail=18/18' <<<"$out" \
+  && pass_msg "labels-split: 18/18 when PIPELINE_LABELS_EXCLUDED=\"excluded|evolve\"" \
+  || { fail_msg "labels-split: expected pass detail=18/18"; grep -E '^CHECK: labels_exist' <<<"$out" | sed 's/^/    /'; }
 
 # ---------------------------------------------------------------------------
 # Case 6: plugin_loaded

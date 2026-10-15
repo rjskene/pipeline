@@ -166,39 +166,12 @@ FIX_G=$(make_fixture "fix(scripts): multi-file single module" "$BODY_G" '[]')
 assert_token "(g) single-module + 3 src files (2-6) no signal" \
   "low-blast" "single-module" "$(run_helper "$FIX_G")"
 
-# (g2) needs-browser label, otherwise low-blast (single module, no other signal)
-#      -> high-blast needs-browser (issue #960: browser/UI execute never validated on Sonnet).
-BODY_G2=$'## Affected areas\n- `scripts/foo.sh`\n'
-FIX_G2=$(make_fixture "fix(ui): tweak admin events table" "$BODY_G2" '[{"name":"needs-browser"}]')
-assert_token "(g2) needs-browser label single src -> browser carve-out" \
-  "high-blast" "needs-browser" "$(run_helper "$FIX_G2")"
-
-# (nb-fp) needs-browser as PROSE only (no label), single src, no other signal
-#      -> low-blast (issue #1063: prose mentions of the `needs-browser` label name
-#      no longer trip the browser carve-out; only the real LABEL does).
-BODY_NBFP=$'## Summary\nMeta-issue about the needs-browser carve-out; mentions needs-browser repeatedly.\n\n## Affected areas\n- `scripts/foo.sh`\n'
-FIX_NBFP=$(make_fixture "fix(scripts): meta needs-browser doc tweak" "$BODY_NBFP" '[]')
-assert_token "(nb-fp) prose-only needs-browser mention, no label -> NOT browser carve-out" \
-  "low-blast" "single-module" "$(run_helper "$FIX_NBFP")"
-
 # (lock-fp) locked-tests meta-prose (no label, single src) -> low-blast
 #      (issue #1063: ties Task 1's lock disambiguation into the eligibility path).
 BODY_LOCKFP=$'## Summary\nRefresh the locked tests and the locked suite for the renamed helper.\n\n## Affected areas\n- `scripts/foo.sh`\n'
 FIX_LOCKFP=$(make_fixture "fix(scripts): refresh locked tests" "$BODY_LOCKFP" '[]')
 assert_token "(lock-fp) locked tests/suite meta-prose -> NOT high-uncertainty" \
   "low-blast" "single-module" "$(run_helper "$FIX_LOCKFP")"
-
-# (nb-rb) real web-eval jargon in body (no label), single src -> stay high-blast.
-BODY_NBRB=$'## Summary\nWire the web-eval harness into the new view.\n\n## Affected areas\n- `scripts/foo.sh`\n'
-FIX_NBRB=$(make_fixture "fix(scripts): web-eval harness" "$BODY_NBRB" '[]')
-assert_token "(nb-rb) real web-eval jargon, no label -> browser carve-out" \
-  "high-blast" "needs-browser" "$(run_helper "$FIX_NBRB")"
-
-# (nb-rc) real playwright jargon in body (no label), single src -> stay high-blast.
-BODY_NBRC=$'## Summary\nAdd a playwright spec covering the modal.\n\n## Affected areas\n- `scripts/foo.sh`\n'
-FIX_NBRC=$(make_fixture "fix(scripts): playwright spec" "$BODY_NBRC" '[]')
-assert_token "(nb-rc) real playwright jargon, no label -> browser carve-out" \
-  "high-blast" "needs-browser" "$(run_helper "$FIX_NBRC")"
 
 # (nb-rd) real lock contention in body (no label), single src -> stay high-blast
 #      (issue #1063: genuine concurrency phrase still trips high-uncertainty).

@@ -45,7 +45,6 @@ assert_grep "$CLS" "is-trusted-author"        "classify: trust helper ref held"
 # (b) plan-issue
 assert_grep "$PI" "## Implementation Plan"  "plan: header held"
 assert_grep "$PI" "**Tasks (ordered):**"    "plan: Tasks (ordered) held"
-assert_grep "$PI" "**Predicates:**"         "plan: Predicates held"
 assert_grep "$PI" "post-plan.sh"            "plan: post-plan.sh ref held"
 
 # (c) #1435 — the optional `**Scope:**` line on a Revise verdict. The template

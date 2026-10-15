@@ -88,7 +88,7 @@ Receive an issue number as argument (or from context).
 
    ```bash
    LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
-   # needs-debug resolution (mirrors the needs-browser precedent in Step 3c): the
+   # needs-debug resolution: the
    # root-cause diagnosis gate (Step 4a) fires when the one-off `--debug-first` flag is
    # passed OR the issue carries the `needs-debug` label. Per-invocation only — no
    # persistent pipeline.config default. `$ARGV` is the raw invocation argv captured at
@@ -129,8 +129,6 @@ Receive an issue number as argument (or from context).
    ```
 
    **For each file printed by `ls -1`, invoke the `Read` tool exactly once before drafting.** Mandatory for `bug`, `user-submitted`, `regression` labels; recommended otherwise. Screenshots/binary evidence steer codebase exploration in step 4 (which symbols to grep, which routes to read, which test files to touch).
-
-3c. **needs-browser predicate requirement.** If the labels resolved in step 3a include `needs-browser`, the plan MUST include a section titled `**Predicates:**` listing acceptance criteria as machine-checkable predicates: JS expressions that the visual-proof-from-plan sub-skill can pass to mcp__playwright_*browser_evaluate. Example: `predicate: document.querySelectorAll("#events-table tbody tr").length > 0 after navigate to /admin/events`. Prose acceptance criteria ("the table renders") are NOT acceptable for needs-browser issues. This is a planner-side requirement only; an automated label-aware lint in `post-plan.sh` is a planned follow-up and is NOT yet wired up.
 
 4. **Explore the codebase** — use Glob, Grep, and Read to find files relevant to this issue (schemas if data, routes if API, components if UI, tests if behavior changes). (See Step 3b for attachment handling.)
 
@@ -204,7 +202,6 @@ Receive an issue number as argument (or from context).
    **DB schema changes:** (or "None")
    **API changes:** (or "None")
    **Frontend changes:** (or "None")
-   **Predicates:** (required for needs-browser-labeled issues)
    **Test changes:** (or "None") — one test file per `bash` invocation
    **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
    **Risks/unknowns:** (or "None")
