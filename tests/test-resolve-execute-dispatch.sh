@@ -163,6 +163,7 @@ run_resolver() {
         -u PIPELINE_PATH_B_SPLIT_ROLE \
         -u PIPELINE_TRUST_PROFILE \
         -u PIPELINE_PRE_PR_REVIEW \
+        -u PIPELINE_PATH_C_FANOUT \
     bash "$HELPER" 999 "$pathletter" 2>/dev/null)"
   printf '%s\n' "$out" >> "$ALL_OUT_FILE"
   printf '%s\n' "$out"
@@ -569,6 +570,7 @@ OUT32="$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIX29" \
       -u PIPELINE_PATH_B_SPLIT_ROLE \
       -u PIPELINE_TRUST_PROFILE \
       -u PIPELINE_PRE_PR_REVIEW \
+      -u PIPELINE_PATH_C_FANOUT \
   bash "$HELPER" 999 B 2>"$WORKDIR/err32")"
 assert_tok "(32) garbage knob PATH B" "PRE_PR_REVIEW=off" "$OUT32"
 inc
@@ -594,6 +596,57 @@ else
 $OUT29"
 fi
 assert_no_key "(34) existing keys PATH B" "SPLIT_ROLE" "$OUT29"
+
+# ---- #1486 PATH_C_FANOUT dispatch token --------------------------------------
+# PIPELINE_PATH_C_FANOUT gates the PATH C per-leaf tdd-implementer fan-out.
+# unset/false|off|0 -> off (default: PATH C runs as one inline execute agent, as
+# PATH B); true|on -> on; other -> off + one WARN. Emitted on PATH C ONLY.
+
+# (35) PATH C, knob unset -> off
+assert_tok "(35) PATH C knob unset" "PATH_C_FANOUT=off" "$(run_resolver "$FIX29" "$(make_config_root)" C)"
+
+# (36) true|on -> on
+for v in true on; do
+  assert_tok "(36) PIPELINE_PATH_C_FANOUT=$v PATH C" "PATH_C_FANOUT=on" \
+    "$(run_resolver "$FIX29" "$(make_config_root "PIPELINE_PATH_C_FANOUT=$v")" C)"
+done
+
+# (37) false|off|0 -> off
+for v in false off 0; do
+  assert_tok "(37) PIPELINE_PATH_C_FANOUT=$v PATH C" "PATH_C_FANOUT=off" \
+    "$(run_resolver "$FIX29" "$(make_config_root "PIPELINE_PATH_C_FANOUT=$v")" C)"
+done
+
+# (38) garbage -> off + exactly one stderr WARN naming the knob.
+CFG38=$(make_config_root 'PIPELINE_PATH_C_FANOUT=bogus')
+OUT38="$(PATH="$STUB_DIR:$PATH" GH_FIXTURE="$FIX29" \
+  PIPELINE_REPO="owner/repo" PIPELINE_PROJECT_ROOT="$CFG38" \
+  env -u PIPELINE_BASE_BRANCH \
+      -u PIPELINE_PATH_A_MODEL_EXECUTE \
+      -u PIPELINE_PATH_B_MODEL_EXECUTE \
+      -u PIPELINE_PATH_C_MODEL_EXECUTE \
+      -u PIPELINE_PATH_D_MODEL_EXECUTE \
+      -u PIPELINE_PATH_B_ELIGIBLE_SCOPE \
+      -u PIPELINE_PATH_B_SPLIT_ROLE \
+      -u PIPELINE_TRUST_PROFILE \
+      -u PIPELINE_PRE_PR_REVIEW \
+      -u PIPELINE_PATH_C_FANOUT \
+  bash "$HELPER" 999 C 2>"$WORKDIR/err38")"
+assert_tok "(38) garbage knob PATH C" "PATH_C_FANOUT=off" "$OUT38"
+inc
+WARN38=$(grep -cE '^WARN:.*PIPELINE_PATH_C_FANOUT' "$WORKDIR/err38" || true)
+if [ "$WARN38" = "1" ]; then
+  pass_msg "(38) garbage knob -> exactly one stderr WARN"
+else
+  fail_msg "(38) garbage knob: expected 1 WARN line, got $WARN38:
+$(cat "$WORKDIR/err38")"
+fi
+
+# (39) PATH A/B/D with the knob on emit NO PATH_C_FANOUT= line
+CFG39=$(make_config_root 'PIPELINE_PATH_C_FANOUT=true')
+for pl in A B D; do
+  assert_no_key "(39) PATH $pl knob=true" "PATH_C_FANOUT" "$(run_resolver "$FIX29" "$CFG39" "$pl")"
+done
 
 echo ""
 echo "== summary: $PASS passed, $FAIL failed (of $TESTS) =="

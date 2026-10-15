@@ -34,6 +34,11 @@
 #   PRE_PR_REVIEW=<on|off>              # #1468: resolved PIPELINE_PRE_PR_REVIEW, relayed
 #                                       # into the execute prompt. Default off (#1482);
 #                                       # D always off; garbage -> off + WARN.
+#   PATH_C_FANOUT=<on|off>              # #1486: resolved PIPELINE_PATH_C_FANOUT, PATH C
+#                                       # ONLY. off (default) => PATH C runs as ONE
+#                                       # inline execute agent, exactly as PATH B;
+#                                       # on (true|on) => the per-leaf tdd-implementer
+#                                       # fan-out. garbage -> off + WARN.
 #
 # REASON tokens: default-opus | explicit-knob | high-uncertainty
 #                | scope-low-blast-gated
@@ -172,6 +177,20 @@ else
   esac
 fi
 
+# #1486: PATH C fan-out knob. Resolved ONLY on PATH C (A/B/D emit no token and
+# never WARN on it). Default off: Opus/Fable executors carry a multi-task plan in
+# one context, so the per-leaf fan-out is opt-in. At most one WARN per invocation.
+PATH_C_FANOUT=""
+if [ "$PATH_LETTER" = "C" ]; then
+  FANOUT_RAW="${PIPELINE_PATH_C_FANOUT:-false}"
+  case "$FANOUT_RAW" in
+    false|off|0) PATH_C_FANOUT=off ;;
+    true|on)     PATH_C_FANOUT=on ;;
+    *) PATH_C_FANOUT=off
+       echo "WARN: PIPELINE_PATH_C_FANOUT='$FANOUT_RAW' unrecognized (want true|false); defaulting PATH_C_FANOUT=off" >&2 ;;
+  esac
+fi
+
 case "$PATH_LETTER" in
   A) KNOB="${PIPELINE_PATH_A_MODEL_EXECUTE:-}" ;;
   B) KNOB="${PIPELINE_PATH_B_MODEL_EXECUTE:-}" ;;
@@ -206,6 +225,7 @@ emit() {
   echo "PATH=$PATH_LETTER"
   echo "MODEL=$MODEL"
   echo "PRE_PR_REVIEW=$PRE_PR_REVIEW"
+  [ "$PATH_LETTER" = "C" ] && echo "PATH_C_FANOUT=$PATH_C_FANOUT"
   if [ "$PATH_LETTER" = "B" ]; then
     echo "SCOPE=$SCOPE"
     [ -n "$ELIGIBLE" ] && echo "ELIGIBLE=$ELIGIBLE"
