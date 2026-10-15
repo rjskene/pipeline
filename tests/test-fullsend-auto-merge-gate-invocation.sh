@@ -119,10 +119,6 @@ fi
 
 DISPATCH_NEEDLES=(
   'Invocation mode'
-  'Canonical Agent prompt template'
-  'Migration warning'
-  'visual-proof-server-start.sh'
-  'PIPELINE_VISUAL_PROOF_TARGET_DIR'
 )
 for needle in "${DISPATCH_NEEDLES[@]}"; do
   inc

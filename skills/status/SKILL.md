@@ -135,7 +135,7 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
 
 ## Steps
 
-0. **Housekeeping** — concerns covered before any discovery: orchestrator branch check, base-branch hook wiring advisory, next-branch routing (PIPELINE_NEXT_LABEL → PIPELINE_NEXT_BRANCH; legacy `next-major-release` alias), worktree sync, release-PR discovery, stale tmux cleanup, auto-close trackers, reap stale visual-proof servers, and auto-cleanup of merged worktrees (unless `--keep-trees`). Full detail in [references/housekeeping.md](references/housekeeping.md). **Auto-cleanup placement:** detect cleanup candidates inline here (reuse the per-worktree merged-PR loop — `gh pr list --head <wt> --state merged` — so detection does not depend on Step 1 ordering), then run cleanup as Step 0's NON-BLOCKING tail pass. When `--keep-trees` is in argv, SKIP the auto-cleanup (candidates are still detected and surfaced downstream in the status table, just not acted on). The branch check must use `git pull --quiet origin "${EXPECTED_BASE}"` (quiet flag is required so the orchestrator does not pull the fast-forward file list into context). Discover release PRs with `list-release-prs.sh` (which lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL`, default `autorelease: pending`), auto-close finished trackers, sync worktrees, and reap stale visual-proof servers — all wrapped with `PIPELINE_REPO=` per Issue #288:
+0. **Housekeeping** — concerns covered before any discovery: orchestrator branch check, base-branch hook wiring advisory, next-branch routing (PIPELINE_NEXT_LABEL → PIPELINE_NEXT_BRANCH; legacy `next-major-release` alias), worktree sync, release-PR discovery, stale tmux cleanup, auto-close trackers, and auto-cleanup of merged worktrees (unless `--keep-trees`). Full detail in [references/housekeeping.md](references/housekeeping.md). **Auto-cleanup placement:** detect cleanup candidates inline here (reuse the per-worktree merged-PR loop — `gh pr list --head <wt> --state merged` — so detection does not depend on Step 1 ordering), then run cleanup as Step 0's NON-BLOCKING tail pass. When `--keep-trees` is in argv, SKIP the auto-cleanup (candidates are still detected and surfaced downstream in the status table, just not acted on). The branch check must use `git pull --quiet origin "${EXPECTED_BASE}"` (quiet flag is required so the orchestrator does not pull the fast-forward file list into context). Discover release PRs with `list-release-prs.sh` (which lists PRs carrying the label configured by `PIPELINE_RELEASE_PR_LABEL`, default `autorelease: pending`), auto-close finished trackers, and sync worktrees — all wrapped with `PIPELINE_REPO=` per Issue #288:
 
    ```bash
    RELEASE_PRS=$(PIPELINE_REPO="$PIPELINE_REPO" bash "$CLAUDE_PLUGIN_ROOT/scripts/list-release-prs.sh" 2>/dev/null || true)
@@ -146,9 +146,6 @@ The non-default NOTES footer now surfaces `needs-debug` as a `Dbg` column — a 
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/auto-close-trackers.sh" --apply || \
      echo "[status] WARN: auto-close-trackers.sh exited non-zero (continuing)"
    PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-worktrees.sh
-   # Reap stale visual-proof servers (orphaned python http.servers whose
-   # worktree has been pruned). Housekeeping; never gate-fatal. See #517.
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/reap-stale-visual-proof-servers.sh" || true
    # Log retention dry-run (#1353). READ-ONLY advisory over .claude/logs/ —
    # gated on PIPELINE_LOGS_ENABLED (nothing to prune when logs are off).
    # Relay ONLY the SUMMARY line. Status NEVER passes --apply; deleting is
