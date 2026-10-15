@@ -23,8 +23,6 @@ source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 
 Dispatch modes and the orchestrator-assembled prompt template are documented in `skills/fullsend/references/pr-eval-dispatch.md` — the orchestrator's contract, not the evaluator's.
 
-On a `needs-browser` issue: `cd` to the worktree absolute path and start the loopback HTTP server BEFORE any other step (see [references/visual-validation.md](references/visual-validation.md)).
-
 **pr-eval depth is never gated (W3).** This evaluator STAYS Opus — `model=` resolves from `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`, an explicit PIN since #1186); no execute-side carve-out lowers it.
 
 ## Lifecycle
@@ -172,9 +170,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Hook-enforced, conditionally.** `hooks/enforce-ci-wait.py` scopes itself to sessions that issued a rollup read, then blocks Stop until a `--watch` row and a second rollup row follow, and blocks Approved on a red rollup. The triple is therefore ALL-OR-NOTHING: emit three lines or none — a lone rollup read denies Stop and escalates `needs-human` after three blocks. `--watch` must be FOREGROUND: a backgrounded `Bash` returns immediately, ending the turn before the verdict (#684).
 <!-- END CI_CHECK -->
 
-6. **Visual validation** (if UI changes exist in the diff).
-
-   Read [references/visual-validation.md](references/visual-validation.md) when the diff touches UI, or when the issue carries `needs-browser`.
+6. **Browser check.** If the diff changes anything a user sees in a browser, verify the executor's screenshot or take your own: start the app on a free port, open it with the Playwright MCP tools, screenshot the affected views, check the console for errors, attach the screenshot to the evaluation comment, and stop the server.
 
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
@@ -206,11 +202,7 @@ A guard that passes is not evidence until you have seen it fail on something.
 
    **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out
 
-   **Screenshots:** (one row per entry in `$SCREENSHOT_LINES` from Step 6 — already formatted as either an image row or a `⚠️` failure-loud row; `None` if empty)
-   - ![screenshot 1](https://raw.githubusercontent.com/owner/repo/<branch>/.eval-screenshots/<filename>.png)   <!-- public repo: inline embed -->
-   - [screenshot 1](https://github.com/owner/repo/blob/<branch>/.eval-screenshots/<filename>.png)             <!-- private repo: clickable blob link (#551) -->
-
-   **Visual proof:** satisfied=N/M; unsatisfied=[<claim>...] (or `N/A — needs-browser not applied`)
+   **Screenshots:** <links, or None>
 
    **Fixes applied:** `<commit hash>` — <description> (or "None")
 
