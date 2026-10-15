@@ -1,13 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# Tests for label-gated MCP attachment in spawn-claude.sh (issue #347):
-#   A. issue WITHOUT `needs-browser` -> --mcp-config + --strict-mcp-config injected,
+# Tests for MCP gating in spawn-claude.sh (issue #347). Gating is
+# unconditional: spawned agents ALWAYS get zero MCP servers (no label opt-in).
+#   A. a plain issue          -> --mcp-config + --strict-mcp-config injected,
 #      synthesised tempfile content is {"mcpServers": {}}.
-#   B. issue WITH `needs-browser`    -> neither flag injected (inherits .mcp.json).
-#   C. `gh issue view` fails         -> fail-safe to default-deny (empty MCP).
-#   D. colliding labels (needs-browser + docs-only) -> needs-browser honoured
-#      independently of PATH precedence (PATH stays A, MCP still gated).
+#   C. `gh issue view` fails  -> still default-deny (empty MCP).
 #
 # Runs spawn-claude.sh with PIPELINE_SPAWN_DRY_RUN=1 and a stubbed `gh` so no
 # network is required. Follows the pattern of test-spawn-claude-runs-log.sh.
@@ -85,9 +83,9 @@ run_dryrun() {
 build_block() { echo "$1" | sed -n '/^=== BUILD_ARGV ===$/,/^=== END BUILD_ARGV ===$/p'; }
 
 # -------------------------------------------------------------------------
-# Test A: no `needs-browser` label -> empty-MCP config injected.
+# Test A: plain issue -> empty-MCP config injected.
 # -------------------------------------------------------------------------
-echo "Test A: no needs-browser -> --mcp-config + --strict-mcp-config injected"
+echo "Test A: plain issue -> --mcp-config + --strict-mcp-config injected"
 OUT=$(run_dryrun "" 900)
 BLOCK=$(build_block "$OUT")
 MCP_FILE=$(echo "$OUT" | sed -n 's/^EMPTY_MCP_FILE=//p' | head -1)
@@ -133,36 +131,6 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# Test B: `needs-browser` label present -> neither flag injected.
-# -------------------------------------------------------------------------
-echo "Test B: needs-browser present -> no MCP gating (inherits .mcp.json)"
-OUT=$(run_dryrun "needs-browser" 901)
-BLOCK=$(build_block "$OUT")
-
-inc
-if ! echo "$BLOCK" | grep -qF -- '--mcp-config'; then
-  pass_msg "B: --mcp-config absent"
-else
-  fail_msg "B: --mcp-config unexpectedly present"
-  echo "$BLOCK" | sed 's/^/    /'
-fi
-
-inc
-if ! echo "$BLOCK" | grep -qF -- '--strict-mcp-config'; then
-  pass_msg "B: --strict-mcp-config absent"
-else
-  fail_msg "B: --strict-mcp-config unexpectedly present"
-fi
-
-inc
-if echo "$OUT" | grep -qE '^EMPTY_MCP_FILE=$'; then
-  pass_msg "B: EMPTY_MCP_FILE dump line present and empty (branch taken)"
-else
-  fail_msg "B: EMPTY_MCP_FILE expected empty"
-  echo "$OUT" | grep -E '^EMPTY_MCP_FILE=' | sed 's/^/    /' || true
-fi
-
-# -------------------------------------------------------------------------
 # Test C: gh fails -> fail-safe to default-deny (empty MCP injected).
 # -------------------------------------------------------------------------
 echo "Test C: gh failure -> default-deny (empty MCP, no .mcp.json leak)"
@@ -175,29 +143,6 @@ if echo "$BLOCK" | grep -qE 'CLAUDE_ARGV\+=\(--mcp-config\)' \
   pass_msg "C: empty-MCP injected on gh failure (default-deny)"
 else
   fail_msg "C: gh failure regressed to inheriting .mcp.json (no --mcp-config)"
-  echo "$BLOCK" | sed 's/^/    /'
-fi
-
-# -------------------------------------------------------------------------
-# Test D: colliding labels (docs-only + needs-browser) -> PATH A, still gated.
-# -------------------------------------------------------------------------
-echo "Test D: docs-only + needs-browser -> PATH A and MCP still gated"
-OUT=$(run_dryrun "docs-only"$'\n'"needs-browser" 903)
-BLOCK=$(build_block "$OUT")
-
-inc
-if echo "$OUT" | grep -qE '^PATH_LETTER=A$'; then
-  pass_msg "D: PATH stays A (existing precedence)"
-else
-  fail_msg "D: expected PATH_LETTER=A"
-  echo "$OUT" | grep -E '^PATH_LETTER=' | sed 's/^/    /' || true
-fi
-
-inc
-if ! echo "$BLOCK" | grep -qF -- '--mcp-config'; then
-  pass_msg "D: needs-browser honoured independently of path (no --mcp-config)"
-else
-  fail_msg "D: --mcp-config unexpectedly present despite needs-browser"
   echo "$BLOCK" | sed 's/^/    /'
 fi
 

@@ -6,9 +6,8 @@ set -uo pipefail
 # The resolver is the SINGLE SOURCE OF TRUTH for the inline execute dispatch
 # spec: given an issue number and a path letter (A|B|C|D), it resolves the full
 # dispatch spec the orchestrator must apply — the execute `model=` plus an
-# advisory eligibility/scope/reason audit — folding the #1042 model knob, the W2
-# high-uncertainty always-Opus carve-out and the needs-browser PATH-D
-# always-Opus carve-out (#960) into ONE place so config + SKILL prose can no
+# advisory eligibility/scope/reason audit — folding the #1042 model knob and the
+# W2 high-uncertainty always-Opus carve-out into ONE place so config + SKILL prose can no
 # longer drift (the #1056 root cause). It REUSES
 # scripts/_high-uncertainty-match.sh and scripts/path-b-execute-eligible.sh — it
 # never redefines the carve-out regex (that was bug #1039).
@@ -35,7 +34,7 @@ set -uo pipefail
 # #1186 — `inherit` is RETIRED as an emission. Under a Fable-ceiling session an
 # unpinned dispatch silently becomes Fable, so "inherit the strong safe model"
 # stopped being true: the two carve-out branches that emitted `MODEL=inherit`
-# (`scope-low-blast-gated` and PATH-D `needs-browser`) now emit the NAMED
+# (`scope-low-blast-gated` and the since-removed PATH-D label carve-out) now emit the NAMED
 # `MODEL=opus` they always meant. The resolver additionally accepts PATH A and
 # PATH C — previously those dispatched with no `model=` at all (no knob existed)
 # — reading PIPELINE_PATH_{A,C}_MODEL_EXECUTE, unset ⇒ `opus`
@@ -258,13 +257,6 @@ OUT3=$(run_resolver "$FIX3" "$CFG3" B)
 assert_tok "(3) B W2 vocab" "MODEL=opus" "$OUT3"
 assert_tok "(3) B W2 vocab" "REASON=high-uncertainty" "$OUT3"
 
-# (4) PATH B, needs-browser label -> opus, reason needs-browser.
-CFG4=$(make_config_root)
-FIX4=$(make_fixture "fix(ui): table tweak" "$BODY_LOW" '[{"name":"needs-browser"}]')
-OUT4=$(run_resolver "$FIX4" "$CFG4" B)
-assert_tok "(4) B needs-browser" "MODEL=opus" "$OUT4"
-assert_tok "(4) B needs-browser" "REASON=needs-browser" "$OUT4"
-
 # (5) PATH B, scope=low-blast, high-blast (multi-module) issue -> the conservative
 #     lane PINS opus (#1186: was MODEL=inherit — the reason token is unchanged,
 #     only the emission is now the NAMED model the branch always meant).
@@ -298,14 +290,6 @@ assert_tok "(7) D knobs unset" "REASON=default-opus" "$OUT7"
 assert_no_key "(7) D knobs unset" "ROLES" "$OUT7"
 assert_no_key "(7) D knobs unset" "SPLIT_ROLE" "$OUT7"
 assert_tok "(7) D knobs unset" "PATH=D" "$OUT7"
-
-# (8) PATH D, needs-browser label -> opus (#1186: the #960 carve-out semantics are
-#     preserved verbatim; only the emission changes inherit -> the named model).
-CFG8=$(make_config_root)
-FIX8=$(make_fixture "fix(ui): quick" "$BODY_LOW" '[{"name":"needs-browser"}]')
-OUT8=$(run_resolver "$FIX8" "$CFG8" D)
-assert_tok "(8) D needs-browser" "MODEL=opus" "$OUT8"
-assert_tok "(8) D needs-browser" "REASON=needs-browser" "$OUT8"
 
 # (9) PATH D, W2 vocab (concurrency/deadlock) -> opus, reason high-uncertainty.
 CFG9=$(make_config_root)
@@ -407,8 +391,8 @@ done
 # with NO `model=` at all (no knob existed), so they silently rode the session
 # model. They now resolve through this same resolver: unset knob ⇒ the `opus`
 # execute ceiling (REASON=default-opus), an explicit knob honored verbatim
-# (REASON=explicit-knob). No eligibility predicate, no W2/needs-browser
-# carve-outs (the default IS already the carve-out target).
+# (REASON=explicit-knob). No eligibility predicate, no W2
+# carve-out (the default IS already the carve-out target).
 
 # (16) PATH A, knobs unset -> opus default, single shape.
 CFG16=$(make_config_root)

@@ -11,8 +11,6 @@ of the helper. Steps 1-4 below are the renumbered `11.1`-`11.4`.
 
 **Authoritative owner of the greenlight check.**
 
-On `needs-browser` issues, gate (1) requires zero `unsatisfied` entries in the Visual proof row.
-
 **Greenlight matrix — all 4 must hold** (otherwise the PR is left for manual merge with a `block-*` reason):
 1. Latest `## Evaluation` comment contains `**Verdict:** Approved`.
 2. Every entry in the PR's `statusCheckRollup` has `conclusion == SUCCESS` (or the rollup is empty for repos with no CI configured).

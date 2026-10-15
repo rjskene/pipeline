@@ -7,9 +7,8 @@ set -uo pipefail
 #   1. Read-site default in skills/fullsend/SKILL.md "Per-path execute MODEL
 #      routing": unset PIPELINE_PATH_{B,D}_MODEL_EXECUTE => default `opus`;
 #      unset PIPELINE_PATH_B_ELIGIBLE_SCOPE => default `all`. The W2
-#      high-uncertainty carve-out and the PATH D needs-browser carve-out (#960)
-#      STILL force Opus (they are no-ops now that the default IS Opus, but the
-#      carve-out machinery itself is unchanged). pr-eval is NEVER defaulted to
+#      high-uncertainty carve-out STILL forces Opus (a no-op now that the
+#      default IS Opus, but the carve-out machinery itself is unchanged). pr-eval is NEVER defaulted to
 #      Sonnet (W3).
 #   2. The knobs are documented at their read-site defaults in
 #      pipeline.config.example and scripts/init.sh's generated config, with
@@ -121,25 +120,6 @@ if declare -F hu_strip_path_tokens >/dev/null 2>&1; then
   pass_msg "helper: hu_strip_path_tokens is defined alongside HIGH_UNCERTAINTY_RE"
 else
   fail_msg "helper: hu_strip_path_tokens missing from scripts/_high-uncertainty-match.sh"
-fi
-
-# 4. SKILL routing block: PATH D needs-browser carve-out (#960) STILL forces Opus.
-#    #1186 changes the MECHANISM, not the carve-out: the branch now PINS the named
-#    `model=opus` instead of suppressing model= and inheriting the session model
-#    (which, under a Fable-ceiling session, would have upshifted browser/UI execute
-#    to Fable — the opposite of the #960 intent). The old NO-model=/suppress/inherit
-#    phrasings are no longer accepted.
-inc
-if routing_block | awk '
-  /PATH D/ && /needs-browser/ {
-    l = tolower($0)
-    if (l ~ /model=opus/ || l ~ /pins opus/ || l ~ /pinned opus/ || l ~ /pin opus/) f = 1
-  }
-  END { exit (f ? 0 : 1) }
-'; then
-  pass_msg "skill: PATH D needs-browser carve-out pins opus (#960 preserved, #1186 named)"
-else
-  fail_msg "skill: PATH D needs-browser -> pinned-opus carve-out missing from the block (#1186)"
 fi
 
 # 5. SKILL routing block: pr-eval is NEVER gated / stays Opus (W3 backstop).

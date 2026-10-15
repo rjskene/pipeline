@@ -11,7 +11,7 @@
 # REASON tokens:
 #   low-blast:  single-module
 #   high-blast: multi-module | too-many-files | loc-over | high-uncertainty
-#               | needs-browser | indeterminate
+#               | indeterminate
 #
 # The token carries the verdict; the script exits 0 in EVERY case (mirrors
 # scripts/check-ci-fix-loop.sh / scripts/verify-execute-completion.sh). The
@@ -59,36 +59,6 @@ RAW="$(gh issue view "$N" --repo "$REPO" --json title,body,labels 2>/dev/null)" 
 TITLE="$(printf '%s' "$RAW" | jq -r '.title // ""' 2>/dev/null)" || emit high-blast indeterminate
 BODY="$(printf '%s' "$RAW" | jq -r '.body // ""' 2>/dev/null)" || emit high-blast indeterminate
 LABELS="$(printf '%s' "$RAW" | jq -r '[.labels[].name] | join(" ")' 2>/dev/null)" || LABELS=""
-
-# --- Browser/UI carve-out (issue #960) --------------------------------------
-# needs-browser / web-eval / playwright signals force high-blast: the #950
-# Sonnet-on-execute pilot validated SHELL-helper fixtures only and said "do not
-# widen ... without a separate pilot." Browser/UI execute was never measured, so
-# a needs-browser issue must stay on Opus for execute.
-# Two split signals (issue #1063 — kill the prose-token false positive):
-#   1. The `needs-browser` LABEL — the real signal. It is now LABEL-GATED: prose
-#      mentions of the literal token `needs-browser` (e.g. a meta-issue body that
-#      names the label) no longer match, because `needs-browser` is scanned ONLY
-#      in the LABELS stream with a space-anchored regex. LABELS is built via
-#      `jq '[.labels[].name] | join(" ")'`, so the space-anchor isolates the real
-#      label from a join.
-#   2. `web-eval`/`playwright` JARGON — distinctive enough to scan prose too, so
-#      these stay matched across TITLE/BODY/LABELS (a `web-eval` LABEL still
-#      matches via this jargon scan).
-# The bare words `browser`/`visual` remain INTENTIONALLY excluded to avoid false
-# positives on common prose (e.g. "visual diff", "browser tab").
-# INTENTIONAL DIVERGENCE from classify-issue's high-uncertainty vocabulary:
-# classify's carve-out gates B->D DOWN-routing (correctness uncertainty); this is
-# a MODEL-TIER gate. Browser is added HERE only — adding it to classify would
-# wrongly suppress legitimate B->D down-routing of browser fixes (issue #960).
-# REASON stays `needs-browser` either way (downstream resolve-execute-dispatch.sh
-# is unchanged).
-NB_LABEL_RE='(^|[[:space:]])needs-browser([[:space:]]|$)'
-BROWSER_JARGON_RE='web-eval|playwright'
-if printf '%s' "$LABELS" | grep -iEq "$NB_LABEL_RE" \
-   || printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" | grep -iEq "$BROWSER_JARGON_RE"; then
-  emit high-blast needs-browser
-fi
 
 # --- High-uncertainty carve-out (the protected axis) ------------------------
 # REUSE classify-issue's exact vocabulary via the shared single source of truth

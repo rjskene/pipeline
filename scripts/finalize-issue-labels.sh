@@ -19,8 +19,7 @@
 #         multi-task, quick-fix), all priority tiers (priority/P0..P3).
 #   OUT — `merged` (the terminal marker render-status-table.sh reads — KEEP it),
 #         non-pipeline type labels `bug`/`enhancement` (CHANGELOG signal read by
-#         derive-pr-title.sh), `needs-browser` (issue-intrinsic capability flag),
-#         and `tracker` (trackers are never merge-completed by these paths).
+#         derive-pr-title.sh), and `tracker` (trackers are never merge-completed by these paths).
 # The strip-set is hardcoded, NOT derived from doctor.sh's LABEL_TABLE — that
 # table also holds EXCLUDED/LATER/HUMAN/BRAINSTORM triage labels that must NOT
 # be stripped. A new lifecycle/path label registered later must be added to the

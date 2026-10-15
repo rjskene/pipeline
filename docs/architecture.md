@@ -119,11 +119,6 @@ layer 3: hook        enforce-base-branch.py PreToolUse  (gh pr create + gh pr ed
   - Note: this is `spawn-claude.sh`'s own internal default — it does NOT imply PATH B's normal dispatch is spawned. Post-#748 B's normal execute/PR-eval runs inline; `spawn-claude.sh` only runs for C — though a manual/explicit spawn can target a B issue.
 - **Skill args file configured but missing on disk** → logs `WARNING: args file not found for <skill>: <path>` to stderr, emits the `Skill()` line WITHOUT an `args=` field. Skill still fires; just runs without its project-specific directive. Fix the typo / restore the file to clear the warning.
 
-## Web-surface routing
-
-- PRs labelled `needs-browser` route through inline `Agent(general-purpose)` dispatch with the visual-proof preflight (`scripts/visual-proof-server-start.sh`).
-- No separate classifier consulted.
-
 ## MCP gating for spawned agents
 
 - Orchestrator session (running `/pipeline:status` or `/pipeline:fullsend`) auto-loads repo-root `.mcp.json` (Playwright MCP) from its working directory — unaffected by this gating.
@@ -131,6 +126,4 @@ layer 3: hook        enforce-base-branch.py PreToolUse  (gh pr create + gh pr ed
   - synthesises a transient `/tmp/claude-mcp-empty-*.json` = `{"mcpServers": {}}`, passes `--mcp-config <file> --strict-mcp-config` to the spawned `claude` CLI.
   - `--strict-mcp-config` is essential — without it `claude` can still discover user-/system-level MCP servers, defeating the gate.
   - tempfile unlinked by the deferred-cleanup trap (alongside system-prompt file + launcher).
-- **Opt-in** via `needs-browser` label → `spawn-claude.sh` inspects labels via `gh issue view --json labels` and skips the empty-config injection (restores project `.mcp.json`). Seed with `/pipeline:doctor --fix labels`.
-- **Fail-safe:** if `gh issue view` fails (offline/auth/rate-limit), `HAS_NEEDS_BROWSER` stays `0` → no MCP, rather than silently inheriting Playwright across every spawned agent in a wave.
-- `needs-browser` is the single source of truth shared with the visual-proof-from-plan sub-skill (#368).
+- Spawned agents always get zero MCP servers (no label opt-in) — so the browser directive in execute/pr-eval is unavailable to `--spawn` agents; UI issues should run on the inline default.

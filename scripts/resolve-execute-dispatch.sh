@@ -36,7 +36,7 @@
 #                                       # D always off; garbage -> off + WARN.
 #
 # REASON tokens: default-opus | explicit-knob | high-uncertainty
-#                | needs-browser | scope-low-blast-gated
+#                | scope-low-blast-gated
 #
 # #1420 — the #881 two-agent PATH B execute lane is GONE, and with it the SHAPE
 # half of this resolver's contract. PATH B used to dispatch TWO sequential agents
@@ -82,7 +82,7 @@
 #     ceiling, which is what those dispatches silently assumed they were getting
 #     from the session model). An explicit value is honored verbatim
 #     (REASON=explicit-knob), consistent with the B/D rule. A/C run NO
-#     eligibility predicate and NO W2/needs-browser carve-outs — the default IS
+#     eligibility predicate and NO W2 carve-out — the default IS
 #     already the carve-out target — so they emit neither SCOPE= nor ELIGIBLE=.
 #     For PATH C the resolved model applies to EVERY `target=<dir>` leaf dispatch.
 #   PIPELINE_PATH_B_ELIGIBLE_SCOPE — default `all`. Under `all`, every non-W2
@@ -97,10 +97,6 @@
 #     scripts/_high-uncertainty-match.sh against title+body+labels (PATH D, which
 #     never calls the B-only eligibility script). The regex is NEVER redefined
 #     here — that was bug #1039.
-#   needs-browser PATH-D always-Opus carve-out (#960) — PATH D + the
-#     `needs-browser` label ⇒ MODEL=opus. For PATH B, needs-browser surfaces as
-#     path-b-execute-eligible.sh's REASON=needs-browser and is treated as a
-#     W2-equivalent carve-out (→ Opus), per fullsend's read-site.
 #   W3 pr-eval-never-Sonnet — STRUCTURAL: this resolver has NO pr-eval mode and
 #     REFUSES any argument that is not a path letter (exit 2), stage words
 #     included. It therefore physically cannot emit a model for pr-eval. Since
@@ -229,18 +225,16 @@ if [ "$PATH_LETTER" = "A" ] || [ "$PATH_LETTER" = "C" ]; then
 elif [ "$PATH_LETTER" = "B" ]; then
   # === PATH B ================================================================
   # Run the eligibility predicate (the SAME machinery the read-site uses). It
-  # carries the W2 high-uncertainty signal (REASON=high-uncertainty) and the
-  # needs-browser signal (REASON=needs-browser) — we do NOT redefine the regex.
+  # carries the W2 high-uncertainty signal (REASON=high-uncertainty) — we do
+  # NOT redefine the regex.
   ELIG_LINE="$(PIPELINE_REPO="$REPO" bash "${_red_dir}/path-b-execute-eligible.sh" "$N" 2>/dev/null | grep -E '^ELIGIBLE=' | head -1 || true)"
   ELIGIBLE="$(printf '%s' "$ELIG_LINE" | sed -n 's/.*ELIGIBLE=\([a-z-]*\).*/\1/p')"
   ELIG_REASON="$(printf '%s' "$ELIG_LINE" | sed -n 's/.*REASON=\([a-z-]*\).*/\1/p')"
   [ -n "$ELIGIBLE" ] || ELIGIBLE="high-blast"   # fail-closed if predicate silent
 
-  # W2 high-uncertainty OR needs-browser ⇒ always Opus (the protected carve-out).
+  # W2 high-uncertainty ⇒ always Opus (the protected carve-out).
   if [ "$ELIG_REASON" = "high-uncertainty" ]; then
     MODEL="opus"; REASON="high-uncertainty"
-  elif [ "$ELIG_REASON" = "needs-browser" ]; then
-    MODEL="opus"; REASON="needs-browser"
   elif [ "$SCOPE" = "low-blast" ] && [ "$ELIGIBLE" != "low-blast" ]; then
     # scope=low-blast restricts the resolved model to low-blast verdicts only;
     # a high-blast verdict PINS opus (the pre-#1042 conservative lane — named,
@@ -253,34 +247,29 @@ elif [ "$PATH_LETTER" = "B" ]; then
   fi
 else
   # === PATH D ================================================================
-  # No eligibility predicate (all D is in-lane by construction). Two carve-outs:
-  # needs-browser label ⇒ pinned Opus (#960); W2 vocab ⇒ Opus.
+  # No eligibility predicate (all D is in-lane by construction). One carve-out:
+  # W2 vocab ⇒ Opus.
   RAW="$(gh issue view "$N" --repo "$REPO" --json title,body,labels 2>/dev/null || true)"
   TITLE="$(printf '%s' "$RAW" | jq -r '.title // ""' 2>/dev/null || true)"
   BODY="$(printf '%s' "$RAW" | jq -r '.body // ""' 2>/dev/null || true)"
   LABELS="$(printf '%s' "$RAW" | jq -r '[.labels[].name] | join(" ")' 2>/dev/null || true)"
 
-  # needs-browser carve-out (#960) — the LABEL is the primary signal.
-  if printf '%s\n' "$LABELS" | grep -iqwE 'needs-browser'; then
-    MODEL="opus"; REASON="needs-browser"
+  # W2 high-uncertainty — DIRECT match of the shared regex (PATH D never calls
+  # the B-only eligibility script). REUSE _high-uncertainty-match.sh; do NOT
+  # redefine the regex (bug #1039).
+  # shellcheck source=scripts/_high-uncertainty-match.sh
+  . "${_red_dir}/_high-uncertainty-match.sh"
+  # #1381: strip backticked path-shaped tokens first — a listed filename such
+  # as `docs/security-model.md` is a file reference, not a risk claim, so
+  # merely naming it must not buy an opus execute.
+  # CAPTURE first, then match with a here-string: the producer must finish
+  # writing before `grep -q` can exit, or SIGPIPE + `pipefail` silently voids
+  # the carve-out on a large body.
+  HU_TEXT="$(printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" | hu_strip_path_tokens)"
+  if grep -iEq "$HIGH_UNCERTAINTY_RE" <<<"$HU_TEXT"; then
+    MODEL="opus"; REASON="high-uncertainty"
   else
-    # W2 high-uncertainty — DIRECT match of the shared regex (PATH D never calls
-    # the B-only eligibility script). REUSE _high-uncertainty-match.sh; do NOT
-    # redefine the regex (bug #1039).
-    # shellcheck source=scripts/_high-uncertainty-match.sh
-    . "${_red_dir}/_high-uncertainty-match.sh"
-    # #1381: strip backticked path-shaped tokens first — a listed filename such
-    # as `docs/security-model.md` is a file reference, not a risk claim, so
-    # merely naming it must not buy an opus execute.
-    # CAPTURE first, then match with a here-string: the producer must finish
-    # writing before `grep -q` can exit, or SIGPIPE + `pipefail` silently voids
-    # the carve-out on a large body.
-    HU_TEXT="$(printf '%s\n%s\n%s\n' "$TITLE" "$BODY" "$LABELS" | hu_strip_path_tokens)"
-    if grep -iEq "$HIGH_UNCERTAINTY_RE" <<<"$HU_TEXT"; then
-      MODEL="opus"; REASON="high-uncertainty"
-    else
-      MODEL="$RESOLVED_KNOB"; REASON="$KNOB_REASON"
-    fi
+    MODEL="$RESOLVED_KNOB"; REASON="$KNOB_REASON"
   fi
 fi
 

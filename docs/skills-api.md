@@ -24,7 +24,6 @@ The exhaustive catalogue of pipeline slash commands — invocation form, args/fl
 | [`/pipeline:hotfix`](../skills/hotfix/SKILL.md) | `"<problem>" \| <issue-number> [--inline\|--subagent] [--auto-merge]` | Emergency-lane in-session worktree fix bypassing lifecycle gates. |
 | [`/pipeline:tokenomics`](../skills/tokenomics/SKILL.md) | `[--limit N] [--since DATE] [--until DATE] [--per-day]` | Dogfood-only cost/latency report (default `--limit 50`). |
 | [`/pipeline:worktree-sync`](../skills/worktree-sync/SKILL.md) | (none) | Sync untracked `.claude/` files to active worktrees + report setup health. |
-| [`/pipeline:visual-proof-from-plan`](../skills/visual-proof-from-plan/SKILL.md) | (internal sub-skill, not a top-level command) | Browser-predicate verification invoked by execute-issue-plan and evaluate-issue-pr. |
 | [`/pipeline:visualize`](../skills/visualize/SKILL.md) | `plan <file> \| recap [git-range] [--out <dir>]` | Render a plan file or a diff as one self-contained local HTML page and open it; no network, no upload. |
 | [`/pipeline:evolve`](../skills/evolve/SKILL.md) | `start [--cycles N] \| stop \| pause \| resume \| status [--tracker N]` | Dogfood-only harness-evolve loop driver (observe → diagnose → file → fullsend → measure → decide) on the `evolve` branch, run from the loop clone. |
 
@@ -92,7 +91,7 @@ Beyond argv, commands read and write these shared surfaces.
 
 - **Lifecycle:** `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`.
 - **Path labels:** `docs-only` (A), `multi-task` (C), `quick-fix` (D); default PATH B when none.
-- **Control labels:** `manual-merge` (per-issue auto-merge opt-out), `tracker` (coordination issue, excluded from the action queue), `next` (routes the feature PR onto `PIPELINE_NEXT_BRANCH`; legacy alias `next-major-release`), `needs-debug` (plan-issue runs its diagnosis gate first), `needs-browser` (visual-proof lane).
+- **Control labels:** `manual-merge` (per-issue auto-merge opt-out), `tracker` (coordination issue, excluded from the action queue), `next` (routes the feature PR onto `PIPELINE_NEXT_BRANCH`; legacy alias `next-major-release`), `needs-debug` (plan-issue runs its diagnosis gate first).
 - **Triage labels** (`PIPELINE_LABELS_*`, defaults `excluded` / `later` / `human` / `brainstorm`): shown in the status table, never entered into an autonomous run.
 - Full flow: [docs/process-maps.md](process-maps.md).
 
@@ -103,7 +102,7 @@ Beyond argv, commands read and write these shared surfaces.
 - `PIPELINE_BASE_BRANCH` — PR target branch (default `staging`). `PIPELINE_NEXT_BRANCH` / `PIPELINE_NEXT_LABEL` route `next`-labelled issues onto the next-integration branch; `PIPELINE_RELEASE_BRANCH` (default `main`) is the branch the promotion PR targets.
 - `PIPELINE_CAMPAIGN_MAX_BC` / `PIPELINE_CAMPAIGN_MAX_AD` / `PIPELINE_CAMPAIGN_MAX_FOLD` — `--campaign` leg caps (default 2 / 5) and the end-of-campaign fold-wave ceiling (default 3).
 - `PIPELINE_PLAN_GATE` — `annotate` (default) | `full` | `none` | `single` (legacy); see the fullsend bullets above.
-- `PIPELINE_PATH_{A,B,C,D}_MODEL_EXECUTE` — execute-stage model per path; unset resolves to `opus` (#1186 / #1420 / #1428). `=sonnet` opts a path into the cheaper lane; on B and D the high-uncertainty and `needs-browser` carve-outs still pin `opus`, and `PIPELINE_PATH_B_ELIGIBLE_SCOPE` (`all` | `low-blast`) narrows which PATH B issues the knob applies to.
+- `PIPELINE_PATH_{A,B,C,D}_MODEL_EXECUTE` — execute-stage model per path; unset resolves to `opus` (#1186 / #1420 / #1428). `=sonnet` opts a path into the cheaper lane; on B and D the high-uncertainty carve-out still pins `opus`, and `PIPELINE_PATH_B_ELIGIBLE_SCOPE` (`all` | `low-blast`) narrows which PATH B issues the knob applies to.
 - `PIPELINE_PATH_C_MODEL_PLAN` (default `fable`), `PIPELINE_STAGE_MODEL_PLAN_EVAL` and `PIPELINE_STAGE_MODEL_PR_EVAL` (default `opus`) — stage model pins resolved by `scripts/resolve-stage-model.sh`; the high-uncertainty carve-out downgrades a Fable plan to `opus`, plan-eval never resolves below its producer, and an explicit pr-eval knob below the execute tier is honored with a stderr warning.
 - `PIPELINE_TRUST_PROFILE` — `strict` (default) | `lean` (lean may skip plan-eval on non-high-uncertainty PATH A/D).
 - `PIPELINE_USAGE_GATE_ENABLED` / `PIPELINE_USAGE_GATE_THRESHOLD_PCT` — the pause-5h / halt-7d gate (default on, 85%).

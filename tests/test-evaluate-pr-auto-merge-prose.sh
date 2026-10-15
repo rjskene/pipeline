@@ -95,14 +95,11 @@ fi
 
 # --- #1444: the auto-merge gate and the three orchestrator-facing sections are
 # RELOCATED out of the evaluator. This is the INVERSE contract: the evaluator's
-# BODY must no longer carry any of them, and the visual-validation reference
-# must exist. Asserted against the BODY via skill_body_has, never a whole-file
+# BODY must no longer carry any of them. Asserted against the BODY via skill_body_has, never a whole-file
 # grep — the YAML frontmatter `description:` line can satisfy a whole-file grep
 # on its own (#1218).
 # shellcheck source=tests/_lib/skill-body.sh
 source "$(cd "$(dirname "$0")" && pwd)/_lib/skill-body.sh"
-
-VISUAL_REF="${ROOT}/skills/evaluate-issue-pr/references/visual-validation.md"
 
 want_absent_body() {
   local name="$1" needle="$2"
@@ -121,12 +118,6 @@ want_absent_body "## Invocation mode relocated"                  '## Invocation 
 want_absent_body "## Canonical Agent prompt template relocated"  '## Canonical Agent prompt template'
 want_absent_body "## Migration warning relocated"                '## Migration warning'
 
-if [ -f "$VISUAL_REF" ]; then
-  echo "  PASS: references/visual-validation.md exists"
-else
-  echo "  FAIL: references/visual-validation.md missing ($VISUAL_REF)"
-  FAILED=$((FAILED+1))
-fi
 
 # --- #1444 hot-path mass: the evaluator is the second-most-expensive skill in
 # the pipeline and is loaded on EVERY PR. This is the local half of the ceiling
@@ -170,22 +161,6 @@ if grep -qE 'skills/evaluate-issue-pr/SKILL\.md|evaluator skips Step 11' "$RUN_Q
   FAILED=$((FAILED+1))
 else
   echo "  PASS: run-queue.sh no longer points at the deleted evaluate-issue-pr Step 11"
-fi
-
-# --- #1444: the relocated Step 6 fences reference $PR_NUM, which is bound in
-# SKILL.md Step 2 — a DIFFERENT file. tests/test-skill-unassigned-vars.sh binds
-# per-file (its pass-1 harvest reads the same file it scans), so the reference
-# file must carry its own `# Required env:` declaration. Without it the relocated
-# fence silently reds the moment that sweep is widened to
-# skills/*/references/*.md (#1215 grammar: a `# Required env:` line inside a
-# bash fence is what binds the name).
-if awk '/^[[:space:]]*```bash[[:space:]]*$/{b=1;next} /^[[:space:]]*```[[:space:]]*$/{b=0;next} \
-        b && /^[[:space:]]*#[[:space:]]*Required env:/ && /PR_NUM/ {found=1} \
-        END{exit (found?0:1)}' "$VISUAL_REF"; then
-  echo "  PASS: references/visual-validation.md declares PR_NUM as required env"
-else
-  echo "  FAIL: references/visual-validation.md references \$PR_NUM with no '# Required env:' declaration (#1215)"
-  FAILED=$((FAILED+1))
 fi
 
 if [ "$FAILED" -ne 0 ]; then

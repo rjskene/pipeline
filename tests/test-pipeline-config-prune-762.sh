@@ -6,8 +6,8 @@ set -uo pipefail
 # Two distinct prune operations are pinned here:
 #
 #   1. STALE REMOVAL — PIPELINE_FRONTEND_PORT_OFFSET has zero readers repo-wide
-#      (the frontend port lives in check-server.sh's positional ${2:-5173} and
-#      visual-proof in PIPELINE_VISUAL_PROOF_PORT_BASE). It is fully removed,
+#      (the frontend port lives in check-server.sh's positional ${2:-5173}).
+#      It is fully removed,
 #      not demoted: it must NOT appear (commented OR uncommented) in
 #      pipeline.config.example, nor in the live host pipeline.config, nor in
 #      the greenfield generator scripts/init.sh.
@@ -202,7 +202,6 @@ DEMOTED_VARS=(
   PIPELINE_EXECUTOR_REAP_GRACE_POLLS
   PIPELINE_REAP_SIGKILL_GRACE_SEC
   PIPELINE_EXECUTOR_TIMEOUT_SECONDS
-  PIPELINE_VISUAL_PROOF_PORT_BASE
   PIPELINE_CI_FIX_RETRY_BUDGET
   PIPELINE_CI_FIX_LOG_LINES
   PIPELINE_USE_LOCAL_PLUGIN

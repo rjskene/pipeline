@@ -275,9 +275,7 @@ knobs survive as the opt-in. `scripts/resolve-execute-dispatch.sh` is the single
   under `low-blast`, only issues that `scripts/path-b-execute-eligible.sh` scores `low-blast` (≤1 source
   module, ≤6 files, ≤150 added-LOC proxy, no security/migration/auth/concurrency signal) do, and
   `high-blast` pins `opus`.
-- **PATH D takes the knob with no eligibility predicate**, but keeps the `needs-browser` → Opus carve-out
-  (#960); on PATH B `needs-browser` surfaces as the eligibility script's `REASON=needs-browser` and is treated
-  as W2-equivalent.
+- **PATH D takes the knob with no eligibility predicate**.
 - **`PIPELINE_PATH_A_MODEL_EXECUTE` / `PIPELINE_PATH_C_MODEL_EXECUTE`** (#1186) — same unset ⇒ `opus` rule;
   A and C run no eligibility predicate and no carve-outs (the default already is the carve-out target). For C
   the resolved model applies to every `target=<dir>` leaf.
@@ -332,7 +330,6 @@ the contract the `test-json-markdown-surface-guard.sh` test enforces.
 | *-report.sh --emit-rows-json / --emit-pricing-json | JSON | tests + metrics-snapshot | script-parsed | KEEP JSON |
 | metrics-snapshot.sh | JSONL record | timeseries | machine record | KEEP JSON |
 | analyze-issues.sh shortlist | JSON (4 keys) | Stage-2 subagent prompt (key-addressed) | effective parse contract | KEEP JSON |
-| visual-proof-from-plan {satisfied,unsatisfied} | JSON | evaluate-issue-pr Step 6b (parsed) | machine-parse contract | KEEP JSON |
 
 **Hard line:** never markdown-ify a `--emit-rows-json`/JSONL/key-addressed surface —
 those are parsed downstream. The guard test pins both halves: model surfaces stay

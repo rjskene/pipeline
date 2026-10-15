@@ -37,7 +37,7 @@ Graduating to 1.0 (future, not now): set both flags to `false` and push to `main
 
 ### Breaking changes
 
-- Container-isolation opt-ins and the pre-spawn eval-classifier hook were removed in #514 (see that PR for the full list of retired `pipeline.config` knobs) — web-eval is now inline-only via the `needs-browser` label.
+- Container-isolation opt-ins and the pre-spawn eval-classifier hook were removed in #514 (see that PR for the full list of retired `pipeline.config` knobs).
 
 ### Next-branch base routing (#1131)
 
@@ -105,8 +105,7 @@ migration (#1052).** A knob with a read-site `${VAR:-default}` is COMMENTED in
 model — see the `--fix config` section of `skills/doctor/SKILL.md`). Changing such a
 default ships via plugin upgrade and applies on the next run to any host that has not
 explicitly overridden it — there is nothing to seed and no migration to run. Only
-no-safe-default keys (`PIPELINE_REPO`, per-operator paths, the `PIPELINE_MOCK_WEB_EVAL_*`
-family) are seeded by `--fix config`. The golden guard `tests/test-doctor-golden-seed-set.sh`
+no-safe-default keys (`PIPELINE_REPO`, per-operator paths) are seeded by `--fix config`. The golden guard `tests/test-doctor-golden-seed-set.sh`
 pins the seeded set so a newly-added uncommented-defaulted knob can't silently slip in.
 
 ## Migration & rollback

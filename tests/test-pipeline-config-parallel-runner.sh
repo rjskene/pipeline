@@ -14,7 +14,7 @@ set -uo pipefail
 # the live pipeline.config is gitignored and patched by hand on the host, so the
 # tracked surface a PR lands on is pipeline.config.example + this guard.
 #
-# Modeled on tests/test-pipeline-config-mock-web-eval-paths.sh.
+# Dual-scan shape: pipeline.config.example + the gitignored pipeline.config.
 #
 # Dual-scan per CLAUDE.md: pipeline.config.example is always present;
 # pipeline.config is gitignored and host-only (no-op in CI).
