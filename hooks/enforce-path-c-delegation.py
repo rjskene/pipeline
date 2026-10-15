@@ -5,6 +5,14 @@ Blocks Edit/Write from the orchestrator session unless a tdd-implementer
 subagent has been dispatched for the file's directory (via a `target=<dir>`
 sentinel in the subagent prompt or description).
 
+#1486: the hook is gated on PIPELINE_PATH_C_FANOUT (env first, then
+pipeline.config; default false). With the fan-out off (the default) a PATH C
+issue runs as ONE execute agent that edits impl files itself, so the hook is a
+no-op. It only ever fires in spawn-claude.sh sessions (CLAUDE_PIPELINE_ISSUE_NUMBER
+is exported by spawn-claude.sh alone); the knob gate keeps a spawned PATH C
+off-arm session from being blocked. `true`/`on` restores enforcement; any other
+value is treated as off (quietly — hooks stay fail-open).
+
 Fail-open semantics: any uncaught error logs to
 .claude/logs/enforce-path-c-errors.log and exits 0. The hook is an advisory
 guardrail; a hook bug must never brick the pipeline.
@@ -223,6 +231,14 @@ def is_authorized(file_path: str, authorized_dirs: set[PurePosixPath]) -> bool:
     return False
 
 
+def _fanout_enabled() -> bool:
+    """#1486: PATH C per-leaf fan-out knob. Env wins over pipeline.config."""
+    raw = os.environ.get("PIPELINE_PATH_C_FANOUT")
+    if raw is None:
+        raw = _read_config("PIPELINE_PATH_C_FANOUT", "false")
+    return raw.strip().lower() in ("true", "on")
+
+
 def main() -> int:
     # Escape hatch + non-pipeline session: cheap exits before any I/O work.
     if os.environ.get("ALLOW_ORCHESTRATOR_EDIT") == "true":
@@ -248,6 +264,11 @@ def main() -> int:
         return 0
 
     if is_allowlisted(file_path):
+        return 0
+
+    # #1486: fan-out off => PATH C runs as one inline execute agent; nothing to
+    # delegate. Checked BEFORE the label lookup so the off arm costs no gh call.
+    if not _fanout_enabled():
         return 0
 
     session_id = data.get("session_id") or os.environ.get("CLAUDE_SESSION_ID", "unknown")

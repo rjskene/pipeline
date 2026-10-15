@@ -28,7 +28,8 @@ trap 'rm -rf "$WORKDIR"; rm -f /tmp/claude-path-c-cage-path-c-*-999.cache' EXIT
 
 PROJ="$WORKDIR/proj"
 mkdir -p "$PROJ/.claude/logs/subagents" "$PROJ/web"
-printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
+# #1486: the delegation hook only fires with the PATH C fan-out knob on.
+printf 'PIPELINE_REPO="fake/repo"\nPIPELINE_PATH_C_FANOUT="true"\n' > "$PROJ/pipeline.config"
 
 # gh stub: reports the issue's labels. `multi-task` is what makes the session
 # PATH C, which is the precondition for the gate.
