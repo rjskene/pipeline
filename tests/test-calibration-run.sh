@@ -481,6 +481,33 @@ run_helper --dry-run --harness "$HARNESS" --pre-pr-review garbage
 expect_rc "--pre-pr-review garbage is a usage error" 2
 expect_sub "--pre-pr-review garbage names the accepted values" "$OUT" "on|off"
 
+# #1486: the --path-c-fanout arm — on|off maps onto PIPELINE_PATH_C_FANOUT, and
+# the unset default pins nothing (harness default = off).
+refute_sub "the default preview sets no PIPELINE_PATH_C_FANOUT" \
+  "$LAUNCH" "PIPELINE_PATH_C_FANOUT="
+refute_sub "the default preview names no path_c_fanout arm" "$LAUNCH" "path_c_fanout="
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --path-c-fanout on
+expect_rc "--path-c-fanout on dry-run exits 0" 0
+LAUNCH_PCF_ON="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--path-c-fanout on previews PIPELINE_PATH_C_FANOUT=true" \
+  "$LAUNCH_PCF_ON" "PIPELINE_PATH_C_FANOUT=true"
+expect_sub "--path-c-fanout on is named in the dry-run preview" "$LAUNCH_PCF_ON" "path_c_fanout=on"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --path-c-fanout=off
+expect_rc "--path-c-fanout=off dry-run exits 0" 0
+LAUNCH_PCF_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--path-c-fanout=off previews PIPELINE_PATH_C_FANOUT=false" \
+  "$LAUNCH_PCF_OFF" "PIPELINE_PATH_C_FANOUT=false"
+expect_sub "--path-c-fanout=off is named in the dry-run preview" "$LAUNCH_PCF_OFF" "path_c_fanout=off"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --path-c-fanout garbage
+expect_rc "--path-c-fanout garbage is a usage error" 2
+expect_sub "--path-c-fanout garbage names the accepted values" "$OUT" "on|off"
+
 # #1421 escape hatch: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old
 # flag for one run and exports NO bridge dir, so an unattended launch with no
 # operator watching the queue cannot stall 840 s per escalation.
