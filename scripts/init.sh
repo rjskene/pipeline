@@ -207,7 +207,6 @@ PIPELINE_USE_LOCAL_PLUGIN=false
 PIPELINE_CI_FIX_LOOP_ENABLED="true"
 PIPELINE_CI_FIX_RETRY_BUDGET="2"
 PIPELINE_CI_FIX_LOG_LINES="200"
-PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 
 # --- Per-path execute MODEL routing (#1042 / #1420 / #1428) ---
 # fullsend's execute dispatch pins this model for PATH B / PATH D issues
@@ -217,9 +216,8 @@ PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 # longer a cheap-by-default path). Leaving them commented is the #1052
 # defaults-in-code convention: an active line would PIN today's default and
 # defeat central default evolution on upgrade. Uncomment with =sonnet on either
-# to buy the cheap lane back. The W2 high-uncertainty carve-out and the PATH D
-# needs-browser carve-out (#960) always force Opus; pr-eval is NEVER defaulted
-# to Sonnet (the W3 Opus backstop).
+# to buy the cheap lane back. The W2 high-uncertainty carve-out always forces
+# Opus; pr-eval is NEVER defaulted to Sonnet (the W3 Opus backstop).
 #PIPELINE_PATH_B_MODEL_EXECUTE=opus
 #PIPELINE_PATH_D_MODEL_EXECUTE=opus
 # Scope of the PATH B execute-model routing. Ships ACTIVE at "all": every PATH B

@@ -10,7 +10,7 @@
 #   - preserve host comments / ordering / non-PIPELINE lines (append-only — no
 #     in-place rewrite of existing lines);
 #   - surface placeholder / no-safe-default keys (empty default, owner/repo,
-#     /path/..., PIPELINE_MOCK_WEB_EVAL_*) as "added — needs your value" rather
+#     /path/...) as "added — needs your value" rather
 #     than silently running empty;
 #   - print a change report (version X->Y, labels added, envvars added, envvars
 #     still needing a value).
@@ -43,7 +43,6 @@ set -a
 PIPELINE_REPO="owner/repo"                # placeholder default
 PIPELINE_ALPHA=1                           # has a safe default
 PIPELINE_BETA=2                            # missing from host — should be added
-PIPELINE_MOCK_WEB_EVAL_X=""                # placeholder family — needs your value
 #PIPELINE_COMMENTED=9                       # commented template — NOT a required live key
 set +a
 EOF
@@ -102,18 +101,6 @@ if grep -Eq '^[[:space:]]*PIPELINE_REPO="rjskene/pipeline"' "$HOST" \
   pass_msg "PIPELINE_REPO sacred value preserved, not duplicated"
 else
   fail_msg "PIPELINE_REPO host value was altered or duplicated"
-fi
-
-# Case 5: placeholder family key appended AND surfaced as "needs your value".
-if grep -Eq '^[[:space:]]*PIPELINE_MOCK_WEB_EVAL_X=' "$HOST"; then
-  pass_msg "PIPELINE_MOCK_WEB_EVAL_X placeholder key appended"
-else
-  fail_msg "PIPELINE_MOCK_WEB_EVAL_X placeholder key not appended"
-fi
-if printf '%s\n' "$OUT" | grep -Eqi 'PIPELINE_MOCK_WEB_EVAL_X.*needs your value'; then
-  pass_msg "placeholder key surfaced as 'needs your value'"
-else
-  fail_msg "placeholder key NOT surfaced as 'needs your value'"
 fi
 
 # Case 6: commented example template line is NOT force-appended as a live key.

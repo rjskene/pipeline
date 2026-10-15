@@ -305,16 +305,6 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # and fork() fails inside the scope, leaving siblings + host pid space intact.
 # Default 512, single-sourced at the read site (${VAR:-512}).
 #PIPELINE_AGENT_TASKS_MAX=512
-#
-# PIPELINE_AGENT_MEMORY_MAX_BROWSER is the MemoryMax ceiling applied INSTEAD of
-# PIPELINE_AGENT_MEMORY_MAX for spawned agents that run browser/Playwright work
-# under --spawn. Chromium plus a loaded page can exceed the 2G default and get
-# OOM-killed inside the cgroup scope (a spurious visual-proof failure), so the
-# browser default is higher. Default 4G, single-sourced at the read site
-# (${VAR:-4G}); independent of PIPELINE_AGENT_MEMORY_MAX (lowering the base knob
-# does NOT clamp browser agents). Only the --spawn transport is affected; the
-# default inline path does not go through this scope.
-#PIPELINE_AGENT_MEMORY_MAX_BROWSER=4G
 
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
@@ -390,10 +380,9 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 
 # --- per-path execute MODEL routing (Opus is the DEFAULT on every path) ---
 # Value = Agent `model` enum (sonnet|opus|haiku|fable). Unset -> opus on PATH A/B/C/D.
-# To opt OUT per path, uncomment the line with `=sonnet`. Three carve-outs ALWAYS
+# To opt OUT per path, uncomment the line with `=sonnet`. Two carve-outs ALWAYS
 # force opus regardless: W2 high-uncertainty vocab (concurrency|race|lock|deadlock|
-# security|auth|crypto|migration|data-loss), the PATH D browser-eval label (#960),
-# and pr-eval (pinned via PIPELINE_STAGE_MODEL_PR_EVAL). Defaults live in
+# security|auth|crypto|migration|data-loss) and pr-eval (pinned via PIPELINE_STAGE_MODEL_PR_EVAL). Defaults live in
 # scripts/resolve-execute-dispatch.sh (the single routing source), so keep these
 # COMMENTED — `--fix config` does not seed them; uncomment only to override.
 # history: #1052 #1056 #1186 #1420 #1428
@@ -404,7 +393,7 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # Controls WHICH PATH B issues the resolved execute model (PIPELINE_PATH_B_MODEL_EXECUTE
 # above) applies to. Ships ACTIVE at "all" (#1042): every PATH B issue WITHOUT a
 # permanent Opus carve-out (W2 — high-uncertainty vocab concurrency|race|lock|deadlock|
-# security|auth|crypto|migration|data-loss, or the browser-eval carve-out label #960)
+# security|auth|crypto|migration|data-loss)
 # routes the resolved model on execute even on a high-blast eligibility verdict. To opt
 # OUT, set "low-blast" (or comment the line) to restrict it to the §4 low-blast lane
 # only: issues passing scripts/path-b-execute-eligible.sh's single-module / <=6-file
@@ -514,15 +503,6 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # tests/test-skill-helper-env-export.sh to verify cross-repo env propagation.
 # Test fixture — operators do not need to set this in a normal install.
 # PIPELINE_REPO_CONSUMERS=()
-
-# --- Inline visual-proof loopback server (issue #517) ---
-#
-# Relative path under the worktree served by inline-mode loopback python http.server.
-# PIPELINE_VISUAL_PROOF_TARGET_DIR=""
-
-# Base TCP port for the inline visual-proof loopback python http.server.
-# Default 8080, single-sourced at the read site (${VAR:-8080}); uncomment to override.
-#PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 
 # --- Doctor-on-update detector (issue #1038) ---
 #

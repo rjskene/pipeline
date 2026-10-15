@@ -79,9 +79,9 @@ Operator playbook — boundary-hook gotchas, executor wedge recovery, hand-drivi
 
 ## Configuration conventions
 
-`pipeline.config` at the repo root is **gitignored** (`/pipeline.config` at line 8 of `.gitignore`) and **host-specific** — it contains per-operator paths (e.g., `PIPELINE_MOCK_WEB_EVAL_*`) that must not be tracked. Two consequences for contributors:
+`pipeline.config` at the repo root is **gitignored** (`/pipeline.config` at line 8 of `.gitignore`) and **host-specific** — it contains per-operator paths (e.g., `PIPELINE_REPO` and local paths) that must not be tracked. Two consequences for contributors:
 
-1. **Bugs that surface only in the live `pipeline.config` cannot ship in a PR.** There is no tracked file for the patch to land on. The fix-shape is (a) update `pipeline.config.example` if the same drift applies there, and/or (b) add a regression-guard test that scans both `pipeline.config.example` (always present) and the gitignored `pipeline.config` (dogfood-host-only) — see `tests/test-pipeline-config-mock-web-eval-paths.sh` (introduced by #357) as the reference shape.
+1. **Bugs that surface only in the live `pipeline.config` cannot ship in a PR.** There is no tracked file for the patch to land on. The fix-shape is (a) update `pipeline.config.example` if the same drift applies there, and/or (b) add a regression-guard test that scans both `pipeline.config.example` (always present) and the gitignored `pipeline.config` (dogfood-host-only) — see `tests/test-pipeline-config-parallel-runner.sh` as the reference shape.
 2. **The live `pipeline.config` is patched by hand on the operator's host.** When filing such a bug, call this out in the issue body so the operator applies the local edit alongside the regression-guard PR.
 
 The bug-report template at `.github/ISSUE_TEMPLATE/bug_report.md` prefills this guidance.

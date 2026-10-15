@@ -122,7 +122,7 @@ fi
 #     single-sourced at the read site (${VAR:-default}), NOT required live keys
 #     — they are skipped, never force-appended;
 #   - surface placeholder / no-safe-default keys (empty default, owner/repo,
-#     /path/..., PIPELINE_MOCK_WEB_EVAL_*) as "added — needs your value".
+#     /path/...) as "added — needs your value".
 # Prints a per-key report. Exits 0. The example file is the source of defaults;
 # the host file is the only thing mutated (append-only).
 # --------------------------------------------------------------------------
@@ -152,13 +152,10 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
                    | sed -E 's/^[[:space:]]*//; s/=$//' | sort -u)"
 
   # Decide whether an example default value has no safe default (placeholder).
-  # Empty string, owner/repo sentinel, /path/... sentinels, and the
-  # PIPELINE_MOCK_WEB_EVAL_* family are all "needs your value".
+  # Empty string, owner/repo sentinel, and /path/... sentinels are all
+  # "needs your value".
   cfg_is_placeholder() {
-    local key="$1" val="$2"
-    case "$key" in
-      PIPELINE_MOCK_WEB_EVAL_*) return 0 ;;
-    esac
+    local val="$2"
     # Strip surrounding quotes for the value test.
     local bare="$val"
     bare="${bare%\"}"; bare="${bare#\"}"
