@@ -471,6 +471,20 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # Override anchor (#1052): defaults-in-code — stays COMMENTED.
 #PIPELINE_PRE_PR_REVIEW="false"
 
+# --- #1486 PATH C fan-out ---
+# Default false: a `multi-task` (PATH C) issue executes exactly like PATH B -- ONE
+# inline execute agent runs the plan's `target=<dir>` tasks sequentially in the
+# issue worktree. Opus/Fable executors carry a multi-task plan in one context; the
+# fan-out costs N loaded agent contexts plus cherry-pick/orphan/attribution overhead.
+# true restores the per-leaf `tdd-implementer` fan-out (per-leaf worktrees via
+# scripts/path-c-split-worktree.sh) and arms hooks/enforce-path-c-delegation.py.
+# `--spawn` selects the legacy spawn-claude.sh transport only; the spawned session
+# honors this knob. Unknown values fall back to false with one stderr WARN.
+# The calibration A/B lever (`calibration-run.sh --path-c-fanout on|off`).
+# Resolved by scripts/resolve-execute-dispatch.sh into the PATH_C_FANOUT= dispatch token.
+# Override anchor (#1052): defaults-in-code — stays COMMENTED.
+#PIPELINE_PATH_C_FANOUT="false"
+
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 # Override anchor (#1052): defaults-in-code — default true lives at the read site
 # (fullsend 6b reads colon-less ${VAR-true}), so this stays COMMENTED and `--fix config`

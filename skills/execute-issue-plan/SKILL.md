@@ -26,7 +26,7 @@ State (slate, base branch, repo) is inherited from `/pipeline:fullsend`; if thes
 ## Lifecycle
 
 ```
-worktree spawn → inline orchestrator-owned Agent(tdd-implementer) fan-out (PATH C, DEFAULT; spawn-claude tdd-implementer only under `--spawn`) | inline Agent (PATH A/B, PATH D tdd) → push → PR
+worktree spawn → inline Agent (PATH A/B, PATH C with `PIPELINE_PATH_C_FANOUT` off — DEFAULT, PATH D tdd) | inline orchestrator-owned Agent(tdd-implementer) fan-out (PATH C under `PIPELINE_PATH_C_FANOUT=true`) → push → PR  (`--spawn` swaps the transport to spawn-claude / `claude -p` only)
 ```
 
 ## Invocation mode
@@ -35,8 +35,8 @@ Every step below behaves identically across modes — only the working-directory
 
 | # | Mode | CWD setup | Used by |
 |---|------|-----------|---------|
-| 1 | Inline `Agent(...)` dispatch | `cd <worktree-absolute-path>` (prompt provides it) | PATH A (docs-only), PATH B (standard) |
-| 2 | Inline orchestrator-owned `Agent(tdd-implementer)` fan-out (DEFAULT); `spawn-claude.sh` / `claude -p` dispatch only under `fullsend --spawn` | each leaf `cd`s into its OWN per-leaf worktree (`path-c-split-worktree.sh setup`); orchestrator reassembles into the feature worktree via cherry-pick (#896) | PATH C (multi-task) |
+| 1 | Inline `Agent(...)` dispatch | `cd <worktree-absolute-path>` (prompt provides it) | PATH A (docs-only), PATH B (standard), PATH C (PIPELINE_PATH_C_FANOUT off, default) |
+| 2 | Inline orchestrator-owned `Agent(tdd-implementer)` fan-out (under `PIPELINE_PATH_C_FANOUT=true`); `spawn-claude.sh` / `claude -p` transport only under `fullsend --spawn` | each leaf `cd`s into its OWN per-leaf worktree (`path-c-split-worktree.sh setup`); orchestrator reassembles into the feature worktree via cherry-pick (#896) | PATH C (multi-task, `PIPELINE_PATH_C_FANOUT=true`) |
 | 3 | PATH D inline tdd-implementer | `cd <worktree-absolute-path>` (same as mode 1) | PATH D (quick-fix) |
 
 ### Collapsed inline D contract
@@ -83,13 +83,15 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
    gh issue edit <N> --repo $PIPELINE_REPO --add-label "in-progress" --remove-label "plan-approved"
    ```
 
-5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: red→green→commit inline (discipline: `agents/tdd-implementer.md`); PATH C: dispatch `tdd-implementer` subagents with `target=<dir>` sentinels).
+5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` section exactly — it carries the path-specific Task 0 directive (PATH A: flat edits; PATH B: red→green→commit inline (discipline: `agents/tdd-implementer.md`); PATH C: one task per `target=<dir>` — run inline in sequence by default, dispatched as `tdd-implementer` subagents only under `PIPELINE_PATH_C_FANOUT=true`).
 
    **PATH B single execute agent.** One `general-purpose` agent applies the `tdd-implementer` discipline inline per plan task: failing test → `$PIPELINE_TEST_CMD` red → minimum impl → green → commit; it may edit any test the plan names under `**Test changes:**`; runs the FULL suite green before `gh pr create`.
 
    **Turn discipline.** (1) Send a task's independent edits (test + impl) as parallel `Edit`/`Write` calls in ONE message. (2) Inside RED/GREEN run only the targeted test file (`bash tests/<file>.sh </dev/null`), never the suite; the suite runs at 6b (before Step 8 and `gh pr create`) or when a GREEN breaks another file. (3) GREEN and commit share one Bash call, the `&& git commit` form, anchored: `timeout 600 bash <wt>/tests/<file>.sh </dev/null && git -C <wt> add <paths> && git -C <wt> commit -m "…"`. (4) Batch one-line reads (`sed -n`, `grep -n`) into one Bash call.
 
-   **PATH C (`multi-task`) — inline orchestrator-owned fan-out with per-leaf worktrees (DEFAULT).** On PATH C the orchestrator itself reads the `## Implementation Plan` and, for each `target=<dir>` in the plan, dispatches one leaf `Agent(subagent_type='pipeline:tdd-implementer', description='target=<dir>/ ...', prompt='cd <leaf-worktree>; target=<dir>/ ...')`, then handles push + `gh pr create` + label flip itself (Steps 9–10). The orchestrator MUST NOT `Edit`/`Write` impl files directly: the `enforce-path-c-delegation` hook blocks direct orchestrator Edit/Write and authorizes only files under a dispatched `target=<dir>` sentinel. `tdd-implementer` stays a hard leaf executor (the `Agent` tool is removed from its toolset) dispatched from the top level — no grandchild dispatch. Each dispatch carries a real-subdirectory `target=<dir>/` sentinel (`target=.`/`./`/`/` are rejected by the hook) and applies red→green→commit autonomously.
+   **PATH C (`multi-task`) — fan-out knob (#1486).** Branch on the `PATH_C_FANOUT=` token in your dispatch prompt (direct invocation, no token: `${PIPELINE_PATH_C_FANOUT:-false}` — `true`/`on` ⇒ on, anything else ⇒ off). **`off` (DEFAULT)** — you are the single inline execute agent, exactly as PATH B: run the plan's tasks sequentially in the issue worktree under the PATH B discipline above (red→green→commit per task), reading the plan's Task 0 leaf-dispatch wording as "one task per `target=<dir>`, executed inline" — do NOT dispatch `tdd-implementer` leaves, do NOT run `path-c-split-worktree.sh`; you own Step 8 (per `PRE_PR_REVIEW=`), push, `gh pr create` and the label flip. The `enforce-path-c-delegation` hook is inert when the knob is off. `--spawn` selects only the transport (`spawn-claude.sh` → `claude -p`); a spawned session follows this same branch.
+
+   **`PIPELINE_PATH_C_FANOUT=true` — inline orchestrator-owned fan-out with per-leaf worktrees.** On PATH C the orchestrator itself reads the `## Implementation Plan` and, for each `target=<dir>` in the plan, dispatches one leaf `Agent(subagent_type='pipeline:tdd-implementer', description='target=<dir>/ ...', prompt='cd <leaf-worktree>; target=<dir>/ ...')`, then handles push + `gh pr create` + label flip itself (Steps 9–10). The orchestrator MUST NOT `Edit`/`Write` impl files directly: the `enforce-path-c-delegation` hook blocks direct orchestrator Edit/Write and authorizes only files under a dispatched `target=<dir>` sentinel. `tdd-implementer` stays a hard leaf executor (the `Agent` tool is removed from its toolset) dispatched from the top level — no grandchild dispatch. Each dispatch carries a real-subdirectory `target=<dir>/` sentinel (`target=.`/`./`/`/` are rejected by the hook) and applies red→green→commit autonomously.
 
    **Per-leaf worktrees (the #896 fix).** PATH C fan-out drives `scripts/path-c-split-worktree.sh` (setup → reassemble → teardown) so concurrent leaves never share a git index. Read [references/path-c-per-leaf-worktrees.md](references/path-c-per-leaf-worktrees.md) before dispatching the fan-out.
 
@@ -123,7 +125,7 @@ You will receive an issue number as the argument. Ensure CWD is the feature work
 
 8. **Pre-PR code review loop.** Read [references/pre-pr-review-loop.md](references/pre-pr-review-loop.md) before `gh pr create` on PATH A/B/C — 8a self-check, 8b independent reviewer dispatch, 8c triage, 8d fix commits, 8e re-validate. Skip Step 8 in its entirety (8a–8e) and go straight to Step 9 on PATH D (`quick-fix`; `evaluate-issue-pr` is its sole external gate), or when your dispatch prompt carries `PRE_PR_REVIEW=off` (no dispatch prompt: `${PIPELINE_PRE_PR_REVIEW:-false}` is `false`) — then emit `PRE-PR-REVIEW: skipped reason=knob` as assistant text, not `echo`.
 
-   **Step 8 owner — the role that opens the PR (#1225).** Step 8's `Agent(...)` dispatch requires tools a leaf executor does not have, so Step 8 is owned by the PR-opening role: on PATH A/B the inline execute `Agent` (`general-purpose`); on PATH C the ORCHESTRATOR, after every `tdd-implementer` leaf has returned and `path-c-split-worktree.sh reassemble` has run, and before `gh pr create` (Step 9). A `tdd-implementer` leaf NEVER runs Step 8; a leaf handed a Step 8-shaped task refuses loudly with `CAPABILITY-REFUSED:` per `agents/tdd-implementer.md` rather than substituting a self-review.
+   **Step 8 owner — the role that opens the PR (#1225).** Step 8's `Agent(...)` dispatch requires tools a leaf executor does not have, so Step 8 is owned by the PR-opening role: on PATH A/B — and on PATH C with the fan-out knob off (default) — the inline execute `Agent` (`general-purpose`); on PATH C under `PIPELINE_PATH_C_FANOUT=true` the ORCHESTRATOR, after every `tdd-implementer` leaf has returned and `path-c-split-worktree.sh reassemble` has run, and before `gh pr create` (Step 9). A `tdd-implementer` leaf NEVER runs Step 8; a leaf handed a Step 8-shaped task refuses loudly with `CAPABILITY-REFUSED:` per `agents/tdd-implementer.md` rather than substituting a self-review.
 9. **Open a pull request.**
 
    Before opening the PR, run the pre-PR guard aggregator — wired into the 9a fence below, between the title derivation and 9b. It is the mechanical backstop for the explicit-staging Constraint: it fails the open if any cruft path reached a commit on this branch (#1028).
