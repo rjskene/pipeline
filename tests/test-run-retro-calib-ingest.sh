@@ -510,6 +510,35 @@ expect_line "a composed bexec+annotate artifact names both markers" \
   "$REPORT_BEXEC_PGA" "weak-model pass: 4/5 (run 2026-09-08, bexec=opus, plan_gate=annotate)"
 
 # ---------------------------------------------------------------------------
+scenario "Scenario 14: a --path-c-fanout artifact renders path_c_fanout=<v> (#1486)"
+# ---------------------------------------------------------------------------
+# calibration-run.sh --path-c-fanout on|off suffixes its artifact
+# `-path-c-fanout-<v>` LAST (after -plan-gate-<v>). The suffix must be peeled
+# BEFORE the date-shape match or the row loses its date and provenance.
+
+FIX14="$TMP/fixture-path-c-fanout-composed"
+cp -r "$FIXTURE_SRC" "$FIX14"
+retro14() { bash "$HELPER" --cycle 0 --fixture "$FIX14" "$@" 2>&1; }
+rm -f "$FIX14/calib.txt"
+mkdir -p "$FIX14/calib"
+write_calib_at "$FIX14/calib/2026-10-15T1200Z-bexec-opus-plan-gate-annotate-path-c-fanout-on.txt"
+
+REPORT_PCF_ON="$(retro14)"
+expect_line "a composed bexec+annotate+fanout artifact names all three markers" \
+  "$REPORT_PCF_ON" "weak-model pass: 4/5 (run 2026-10-15, bexec=opus, plan_gate=annotate, path_c_fanout=on)"
+
+FIX15="$TMP/fixture-path-c-fanout-off"
+cp -r "$FIXTURE_SRC" "$FIX15"
+retro15() { bash "$HELPER" --cycle 0 --fixture "$FIX15" "$@" 2>&1; }
+rm -f "$FIX15/calib.txt"
+mkdir -p "$FIX15/calib"
+write_calib_at "$FIX15/calib/2026-10-15T1200Z-path-c-fanout-off.txt"
+
+REPORT_PCF_OFF="$(retro15)"
+expect_line "a bare -path-c-fanout-off artifact names path_c_fanout=off" \
+  "$REPORT_PCF_OFF" "weak-model pass: 4/5 (run 2026-10-15, path_c_fanout=off)"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"
