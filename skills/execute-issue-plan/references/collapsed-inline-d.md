@@ -5,7 +5,12 @@ Read it when the issue carries `quick-fix` — PATH D, invocation mode 3 (the
 collapsed inline `tdd-implementer` that runs classify + plan + execute in one
 session). On every other path this file is irrelevant.
 
-When dispatched as the collapsed PATH D agent (mode 3), this agent is the PRODUCER of the classify + plan stages, not a downstream consumer of upstream-posted comments. It RUNS classify and plan inline FIRST — emitting the two stage records as inline side-effect checkpoints (see below) — and THEN carries that context straight into execution. So this agent **carries the classify+plan context forward** within its own single session and **does NOT re-read the plan comment** from GitHub: there is no separate plan-comment fetch (step 1's `gh issue view ... ## Implementation Plan` read is skipped on PATH D, and because the plan is already in-context the STOP-on-empty guard never fires). The two inline side-effect **checkpoints**, byte-shaped exactly as the standalone classify/plan stages would have posted them, are:
+When dispatched as the collapsed PATH D agent (mode 3), this agent is CONSUME-or-PRODUCE (#1485) — the mode depends on whether the upstream stage records already exist:
+
+- **CONSUME** — a trusted `## Classification` and/or `## Implementation Plan` comment is already posted (planner-classified D: since #1485 `plan-issue` classifies inline and posts both). Use them when they exist: read them via the Step 1 trust-gated fetch like any other path and do NOT re-post the checkpoints.
+- **PRODUCE** — only when absent (pre-labelled `quick-fix` or a `<!-- pipeline:path=D -->` body marker, so no planner ran). RUN classify (the shared procedure in `skills/plan-issue/references/classification.md`) and plan inline FIRST — emitting the two stage records as inline side-effect checkpoints (see below) — and THEN carry that context straight into execution. In this mode the agent **carries the classify+plan context forward** within its own single session and **does NOT re-read the plan comment** from GitHub: step 1's plan-comment fetch is skipped (the plan was produced in-context, so the STOP-on-empty guard never fires).
+
+The two inline side-effect **checkpoints** (PRODUCE mode only), byte-shaped exactly as the standalone classify/plan stages would have posted them, are:
 
 - a `## Classification` checkpoint carrying the recommended **path label** (`quick-fix` / PATH D);
 - a `## Implementation Plan` checkpoint with the `plan-pending` marker.
