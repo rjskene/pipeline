@@ -101,6 +101,8 @@ cache-write $18.75 / cache-read $1.50 per 1M tokens).
 
 **execute + pr-eval = 94% of spend.** Classify/plan optimization is rounding error.
 
+#1485 folded classify into the plan dispatch (6→5 agents per issue; calibration run 31 verifies the −6–9% expectation).
+
 ### By token bucket — token share ≠ cost share
 | bucket | tokens | % tokens | $ | % cost |
 |---|---|---|---|---|

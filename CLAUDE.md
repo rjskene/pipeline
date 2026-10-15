@@ -6,7 +6,7 @@ Claude Pipeline is a **CI workflow for automating code updates** through GitHub 
 
 Full process maps (lifecycle, label flow, dispatch model, paths A/B/C/D, wave plan) in docs/process-maps.md.
 
-Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
+Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged` (classify runs inline in `plan-issue` since #1485; `/pipeline:classify-issue` is standalone)
 
 ## Emergency lane
 
@@ -58,7 +58,7 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 
 - When working in a worktree on a PATH D (`quick-fix`) issue, the issue-body marker takes precedence over the heuristic detection.
 - PATH D runs the `tdd-implementer` discipline inline (no subagent dispatch, no spawn-claude) and goes through `evaluate-issue-pr` like any other path.
-- Authoritative spec lives in `skills/classify-issue/SKILL.md` and `skills/execute-issue-plan/SKILL.md`.
+- Authoritative spec lives in `skills/classify-issue/SKILL.md`, `skills/plan-issue/references/classification.md`, and `skills/execute-issue-plan/SKILL.md`.
 
 ## Design Principles
 
