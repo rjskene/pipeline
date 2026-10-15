@@ -65,7 +65,7 @@ run_fix() {
 # ---------------------------------------------------------------------------
 # Case A: all 17 canonical labels are seeded with exact color/description.
 # (18 since #1128 added next to doctor.sh LABEL_TABLE; 17 came from #997's
-# needs-debug row; back to 17 since #1484 removed the needs-browser row.)
+# needs-debug row; back to 17 since #1484 removed the browser-gating row.)
 # ---------------------------------------------------------------------------
 echo "Case A: seeds all 17 labels"
 FX=$(mk_fixture fx-a)

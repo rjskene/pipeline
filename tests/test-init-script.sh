@@ -386,7 +386,7 @@ grep -qE '^PIPELINE_REPO="pre/existing"' "$FX/pipeline.config" \
 # Case 9: full run appends pipeline.config to .gitignore (idempotent), seeds
 #         the 17 canonical labels via doctor.sh --fix labels, and tails the
 #         read-only doctor audit (=== Summary ===). 17 since #1484 removed
-#         the needs-browser row from doctor.sh LABEL_TABLE (which init
+#         the browser-gating row from doctor.sh LABEL_TABLE (which init
 #         delegates to); #1128 added next, #997 added needs-debug.
 # ---------------------------------------------------------------------------
 echo "Case 9: gitignore + label seed + doctor tail"

@@ -178,10 +178,10 @@ so the sentinel must name an absolute dir.
   `CLAUDE_PROJECT_DIR`. (The `*:tdd-implementer` / `endswith("tdd-implementer")`
   suffix-match candidate is DONE — see root cause (1) above.)
 
-## 7. `doctor.sh` LABEL_TABLE — two test files
+## 7. `doctor.sh` LABEL_TABLE — three test files
 
 Changing the canonical label set in `scripts/doctor.sh` `LABEL_TABLE` requires
-updating **two** tests, not one:
+updating **three** tests, not one:
 
 1. `tests/test-doctor-fix-labels.sh` — the Case A count literal + append the row
    to the `expected=( ... )` array.
@@ -189,8 +189,10 @@ updating **two** tests, not one:
    `labels_exist status=pass detail=N/N` assertions, AND the `OVERRIDE_JSON`
    payload in Case 5c. (`doctor.sh`'s own count is dynamic
    `${#LABEL_TABLE[@]}`, so the all-clean case fails when the fixture is stale.)
+3. `tests/test-init-script.sh` — the Case 9 `gh label create` count literal
+   (`/pipeline:init` delegates to `doctor.sh --fix labels`).
 
-When planning a LABEL_TABLE change, list BOTH test files.
+When planning a LABEL_TABLE change, list ALL THREE test files.
 
 ## 8. Campaign / wave operations
 

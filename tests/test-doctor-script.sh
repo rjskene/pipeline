@@ -63,7 +63,7 @@ CLAUDE
 }
 
 # canonical all-17-labels payload (used as default by passing cases).
-# 17 since #1484 removed needs-browser from doctor.sh LABEL_TABLE (#997 added
+# 17 since #1484 removed the browser-gating row from doctor.sh LABEL_TABLE (#997 added
 # needs-debug, #1128 added next).
 ALL_LABELS_JSON='[
   {"name":"plan-pending","color":"C2E0C6","description":"Plan posted, awaiting review"},

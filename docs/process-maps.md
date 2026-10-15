@@ -211,25 +211,3 @@ Top-level slash commands that drive the maps above:
 - `/pipeline:evolve start|stop|pause|resume|status` — harness-evolve loop driver on the `evolve` integration branch (dogfood, run from the loop clone); see [skills/evolve/SKILL.md](../skills/evolve/SKILL.md) and the spec `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md`.
 
 `analyze-issues` surfaces four detection categories (no mutations): duplicate candidates, standalones that fit an existing tracker, issues with missing labels, and merged-PR supersession candidates.
-
-## Visual proof sub-skill (needs-browser lane)
-
-`needs-browser` issues carry a UI acceptance criterion unit tests can't cover.
-The `visual-proof-from-plan` sub-skill emits a `{satisfied, unsatisfied}` result
-and has two callers (the **two-caller pattern**):
-
-- **Executor (TDD loop)** — `execute-issue-plan` runs it inside red->green; an
-  `unsatisfied` entry behaves like a failing test (iterate until satisfied). The
-  `needs-browser` label routes the executor through inline `Agent()` dispatch with
-  the visual-proof preflight in `scripts/visual-proof-server-start.sh`.
-- **Evaluator (verdict)** — `evaluate-issue-pr` runs the same sub-skill; any
-  `unsatisfied` entry is a blocking verdict finding.
-
-Both callers share one `{satisfied, unsatisfied}` contract. Definition lives in
-[skills/visual-proof-from-plan/SKILL.md](../skills/visual-proof-from-plan/SKILL.md).
-
-**Assigner (#1015).** `needs-browser` now has an assigner — closing the
-"consumers but no assigner" gap: `create-issues` carries a filing-time advisory
-(default-no operator prompt) and `classify-issue` carries an autonomous
-comment-path backstop for externally-filed issues, both gated by the same
-browser-UI conjunction + suppressors (pure-logic/server-side/docs).

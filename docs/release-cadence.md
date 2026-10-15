@@ -37,7 +37,7 @@ Graduating to 1.0 (future, not now): set both flags to `false` and push to `main
 
 ### Breaking changes
 
-- Container-isolation opt-ins and the pre-spawn eval-classifier hook were removed in #514 (see that PR for the full list of retired `pipeline.config` knobs) — web-eval is now inline-only via the `needs-browser` label.
+- Container-isolation opt-ins and the pre-spawn eval-classifier hook were removed in #514 (see that PR for the full list of retired `pipeline.config` knobs).
 
 ### Next-branch base routing (#1131)
 
