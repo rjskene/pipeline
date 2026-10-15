@@ -216,8 +216,8 @@ fi
 # (2e) Step 1b explicitly EXCLUDES PATH D from per-stage classify/plan dispatch
 # (D's classify+plan run inside the collapsed foreground inline Agent at execute).
 inc
-STEP1B_D=$(near "$FULLSEND_SKILL" "1b. Dispatch classify and plan" "PATH D exclusion" 1400)
-STEP1B_D2=$(near "$FULLSEND_SKILL" "1b. Dispatch classify and plan" "EXCLUDED from this per-stage classify/plan dispatch" 1400)
+STEP1B_D=$(near "$FULLSEND_SKILL" "1b. Dispatch plan (classify inline)" "PATH D exclusion" 1400)
+STEP1B_D2=$(near "$FULLSEND_SKILL" "1b. Dispatch plan (classify inline)" "EXCLUDED from this per-stage classify/plan dispatch" 1400)
 if [ "$STEP1B_D" = "OK" ] || [ "$STEP1B_D2" = "OK" ]; then
   pass_msg "(2e) fullsend Step 1b EXCLUDES PATH D from per-stage classify/plan dispatch"
 else

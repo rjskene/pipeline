@@ -33,7 +33,7 @@ The bash code blocks referenced below resolve `PIPELINE_REPO`, `PIPELINE_BASE_BR
 
 ## Single source of truth — defer to fullsend's `## Campaign mode`
 
-This skill is a **THIN entry point**: it owns NO leg-loop prose of its own. The campaign machinery — campaign flow (a)→(e), the global-budget rule, the base-advance + usage read-out at each leg boundary, the per-leg two-layer signal dedup, the **End-of-campaign fold wave (#838)**, **End-of-campaign bug filing**, the **scoped halt** (dependency-closure drop), and the **self-mutation callout** — is documented as the **single source of truth** in `skills/fullsend/SKILL.md` `## Campaign mode`, whose body lives in `skills/fullsend/references/campaign-mode.md` (#1444).
+This skill is a **THIN entry point**: it owns NO leg-loop prose of its own. The campaign machinery — campaign flow (a)→(d), the global-budget rule, the base-advance + usage read-out at each leg boundary, the per-leg two-layer signal dedup, the **End-of-campaign fold wave (#838)**, **End-of-campaign bug filing**, the **scoped halt** (dependency-closure drop), and the **self-mutation callout** — is documented as the **single source of truth** in `skills/fullsend/SKILL.md` `## Campaign mode`, whose body lives in `skills/fullsend/references/campaign-mode.md` (#1444).
 
 **Follow that `## Campaign mode` section verbatim** — read `skills/fullsend/references/campaign-mode.md` — over this skill's slate. `/pipeline:fullsend --campaign` enters the **identical** machinery — the two entry points share one copy of the leg-loop prose, so they can never drift. Carry forward all of that section's contracts by reference:
 

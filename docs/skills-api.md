@@ -12,8 +12,8 @@ The exhaustive catalogue of pipeline slash commands — invocation form, args/fl
 | [`/pipeline:run`](../skills/run/SKILL.md) | (none) | Deprecated alias forwarding to `/pipeline:status`. |
 | [`/pipeline:fullsend`](../skills/fullsend/SKILL.md) | `[issue_numbers...] [--manual-merge] [--spawn] [--campaign] [--debug-first]` | Autonomous end-to-end run; flags position-independent. |
 | [`/pipeline:campaign`](../skills/campaign/SKILL.md) | `[issue_numbers...] [--manual-merge] [--spawn] [--max-bc=N] [--max-ad=N]` | Standalone coordinated-leg campaign; equivalent to `/pipeline:fullsend --campaign` (same machinery). |
-| [`/pipeline:classify-issue`](../skills/classify-issue/SKILL.md) | `<issue_number>` | Triage → PATH A/B/C/D; applies the path label, posts `## Classification`. |
-| [`/pipeline:plan-issue`](../skills/plan-issue/SKILL.md) | `<issue_number>` | Produce + post `## Implementation Plan`; label `plan-pending`. |
+| [`/pipeline:classify-issue`](../skills/classify-issue/SKILL.md) | `<issue_number>` | Standalone/optional triage → PATH A/B/C/D; applies the path label, posts `## Classification` (fullsend no longer dispatches it; `plan-issue` classifies inline). |
+| [`/pipeline:plan-issue`](../skills/plan-issue/SKILL.md) | `<issue_number>` | Classify inline (consume fresh `## Classification` or post + label), then produce + post `## Implementation Plan`; label `plan-pending`. |
 | [`/pipeline:evaluate-issue-plan`](../skills/evaluate-issue-plan/SKILL.md) | `<issue_number>` | Independent plan review; label `plan-reviewed`. |
 | [`/pipeline:execute-issue-plan`](../skills/execute-issue-plan/SKILL.md) | `<issue_number>` | Implement the approved plan; run from inside the feature worktree. |
 | [`/pipeline:evaluate-issue-pr`](../skills/evaluate-issue-pr/SKILL.md) | `<issue_number> [--manual-merge]` | Independent PR review; auto-merges on green unless `--manual-merge`; run from inside the worktree. |
@@ -57,7 +57,7 @@ Only the load-bearing nuance is captured here; see each SKILL.md for the full sp
 ### create-issues
 
 - `--confirm` forces the confirmation gate on the single-standalone auto-create path (one-off, no config key).
-- Body markers: authoritative `<!-- pipeline:path=D -->` forces PATH D; advisory `<!-- pipeline:path-hint=A|B|C -->` is one prior that `classify-issue` may override (`D` is never a hint).
+- Body markers: authoritative `<!-- pipeline:path=D -->` forces PATH D; advisory `<!-- pipeline:path-hint=A|B|C -->` is one prior that the classification procedure may override (`D` is never a hint).
 
 ### tokenomics
 
@@ -114,7 +114,7 @@ Beyond argv, commands read and write these shared surfaces.
 ### Body markers
 
 - `<!-- pipeline:path=D -->` — authoritative; forces PATH D.
-- `<!-- pipeline:path-hint=A|B|C -->` — advisory; one prior in `classify-issue`'s score table, may be overridden (`D` is never a hint).
+- `<!-- pipeline:path-hint=A|B|C -->` — advisory; one prior in the classification procedure's score table, may be overridden (`D` is never a hint).
 
 ### Lifecycle scripts
 

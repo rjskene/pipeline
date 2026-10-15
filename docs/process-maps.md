@@ -21,14 +21,10 @@ How a single issue moves from filed to merged. Label is shown on each edge.
                        |
                        v
                   +----+----+
-                  |classify |   applies one of:
-                  | -issue  |    docs-only / multi-task / quick-fix / (none)
-                  +----+----+
-                       |
-                       v
-                  +----+----+
-                  |  plan-  |   adds: plan-pending
-                  |  issue  |
+                  |  plan-  |   classify inline: applies one of
+                  |  issue  |    docs-only / multi-task / quick-fix / (none)
+                  |(classify|   then adds: plan-pending
+                  | inline) |
                   +----+----+
                        |
                        v
@@ -66,7 +62,7 @@ until a verdict sticks or the iteration budget (3) is exhausted.
 
 ## PATH dispatch decision tree
 
-How `classify-issue` resolves an issue to one of PATH A/B/C/D. The body marker
+How the shared classification procedure (`skills/plan-issue/references/classification.md`, run inline by `plan-issue` or standalone by `classify-issue`) resolves an issue to one of PATH A/B/C/D. The body marker
 short-circuits; otherwise label, then heuristics.
 
 ```
@@ -134,14 +130,14 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
            v
   +--------+----------+
   | plan-waves.sh     |   group issues into waves by:
-  |  --stage=classify |    - file-conflict (path overlap)
+  |  --stage=plan     |    - file-conflict (path overlap)
   +--------+----------+    - blocked-by graph
            |
            v
   +--------+---------------+
   | for each wave (parallel) |
-  |   classify-issue        |
   |   plan-issue            |
+  |   (classify inline)     |
   +--------+---------------+
            |
            v

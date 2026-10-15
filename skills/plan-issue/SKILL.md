@@ -30,7 +30,7 @@ ARGV="<the raw flags this skill was invoked with, e.g. --debug-first; empty if n
 ## Lifecycle
 
 ```
-issue → writing-plans superpower → PATH-aware Task shape → comment → label plan-pending
+issue → classify (inline) → plan → PATH-aware Task shape → comment → label plan-pending
 ```
 
 ## Caller contract
@@ -84,10 +84,15 @@ Receive an issue number as argument (or from context).
 
 3. **Read project context:** Read each file listed in `PIPELINE_CONTEXT_FILES`.
 
-3a. **Determine PATH** — the plan needs a path-specific Task 0:
+3a. **Classify inline, then determine PATH (#1485)** — the plan needs a path-specific Task 0. The procedure lives in `${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/references/classification.md` (shared with standalone `/pipeline:classify-issue`); `Read` it, then:
+
+   - **Freshness.** Run its `BEGIN-CLASS-FRESHNESS` block against `$TRUSTED` (step 1). A trusted `## Classification` with `createdAt >= issue.updatedAt` is fresh — **skip when fresh**: consume `CACHED_PATH` as `PATH_LETTER` and do NOT re-post or re-label.
+   - **Otherwise produce.** Fetch attachments first when `.claude/scratch/issue-<N>/` is absent (the Step 3b `filter-trusted-comments.sh fetch-attachments <N>` fence — idempotent), run the reference steps 3c→4a and its `BEGIN-PATH-DECIDE` block (decision order `marker ⇒ hint ⇒ fresh comment ⇒ rule table ⇒ B`; log its `PATH_SOURCE=`), then post the `## Classification` comment and apply the path label — step 5 compose, step 5a `BEGIN-LABEL-APPLY` (allow-set `{docs-only|multi-task|quick-fix}`), step 6 post, step 7 verify-post.
 
    ```bash
    LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
+   ISSUE_BODY=$(gh issue view <N> --repo $PIPELINE_REPO --json body --jq .body)
+   CURRENT_LABELS="$LABELS"   # reference env; $TRUSTED (step 1) feeds BEGIN-CLASS-FRESHNESS
    # needs-debug resolution: the
    # root-cause diagnosis gate (Step 4a) fires when the one-off `--debug-first` flag is
    # passed OR the issue carries the `needs-debug` label. Per-invocation only — no
@@ -97,26 +102,9 @@ Receive an issue number as argument (or from context).
    DEBUG_FIRST=false
    case " ${ARGV:-} " in *" --debug-first "*) DEBUG_FIRST=true ;; esac
    if echo "$LABELS" | grep -qx "needs-debug"; then DEBUG_FIRST=true; fi
-   if echo "$LABELS" | grep -qx "docs-only"; then
-     PATH_LETTER=A
-   elif echo "$LABELS" | grep -qx "quick-fix"; then
-     PATH_LETTER=D
-   elif echo "$LABELS" | grep -qx "multi-task"; then
-     PATH_LETTER=C
-   else
-     PATH_LETTER=B
-   fi
-   # Fallback: if the label is missing AND a Classification comment exists,
-   # parse `recommended_path` from its body. If still indeterminate, default
-   # to B. Label always wins.
-   if [ -z "$PATH_LETTER" ]; then
-     # Parse recommended_path from the trusted working set (`$TRUSTED` from step 1),
-     # never from a raw `--json comments` fetch. Pipeline-posted `## Classification`
-     # comments survive the filter because the operator account is OWNER.
-     CACHED=$(printf '%s\n' "$TRUSTED" \
-       | grep -oE 'recommended_path:\*\* [ABCD]' | awk '{print $NF}' | tail -1)
-     case "$CACHED" in A|B|C|D) PATH_LETTER="$CACHED" ;; *) PATH_LETTER=B ;; esac
-   fi
+   # PATH_LETTER = CACHED_PATH (fresh) or BEGIN-PATH-DECIDE's PATH_LETTER (produced);
+   # labels docs-only / multi-task / quick-fix map to A / C / D. Normalize A|B|C|D, default B:
+   case "$PATH_LETTER" in A) PATH_LETTER=A ;; C) PATH_LETTER=C ;; D) PATH_LETTER=D ;; *) PATH_LETTER=B ;; esac
    echo "Planning issue #<N> as PATH $PATH_LETTER"
    ```
 
@@ -257,10 +245,12 @@ When revising (user feedback on a prior plan exists), `**Changes from previous p
 - **The issue BODY's trust is the opener's association** (step 0a), resolved via `gh api repos/$PIPELINE_REPO/issues/<N> --jq .author_association` (the GraphQL `author` object has no association field) and checked with the single-arg `is-trusted-author "$ASSOC"` primitive. An untrusted opener is refused-and-surfaced for human triage: no plan, no draft, no `post-plan.sh`, no `plan-pending`.
 - **The refusal is idempotent and durable** (issue #1196): `scripts/refuse-untrusted-opener.sh` skips posting a duplicate triage comment when one is already present (no unbounded accumulation across nightly re-runs) and applies the `PIPELINE_LABELS_HUMAN` (default `` `human` ``) label so the issue leaves the ready bucket for good.
 - **Pipeline-posted artifacts survive the filter.** `## Implementation Plan` / `## Classification` comments are authored by the OWNER operator account, so cache-check and the recommended_path fallback keep working.
+- **Inline classification reads `$TRUSTED` only** (step 3a): freshness and `recommended_path` come from trusted `## Classification` comments; the comment step 3a posts is OWNER-authored, so later consumers keep trusting it.
 - **Plan-revision keys off trusted content only.** Because `$TRUSTED` excludes outsider comments by construction, an outsider can never force a `**Changes from previous plan:**` rewrite.
 
 ## Constraints
 - READ ONLY — do not modify any source files.
+- Label edits are limited to the three path labels (`docs-only`, `multi-task`, `quick-fix`) via step 3a's `BEGIN-LABEL-APPLY`, plus `plan-pending` via `post-plan.sh`.
 - Bullet points only, no prose padding.
 - Do not scope-creep beyond what the issue asks for.
 - If two issues share a branch (e.g. #13 and #12 both on feature/ui-polish), you may be called for both at once — post a separate comment on each issue.
