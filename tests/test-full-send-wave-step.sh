@@ -66,19 +66,19 @@ fi
 # 3. Existing step 1 anchor sentence is preserved verbatim (no rewrites).
 # This guards merge surface with #31 / #122 — see plan.
 inc
-ANCHOR='before dispatching plan-issue, run `/pipeline:classify-issue N` for every ready issue that lacks a fresh `## Classification` comment'
+ANCHOR='run `/pipeline:plan-issue N` for every ready issue with no pipeline label'
 if grep -qF "$ANCHOR" "$SKILL_PATH"; then
   pass_msg "step 1 anchor sentence preserved verbatim"
 else
   fail_msg "step 1 anchor sentence missing or modified: '$ANCHOR'"
 fi
 
-# 4. wave-plan section passes --stage=classify so classify/plan dispatch is not over-serialized
+# 4. wave-plan section passes --stage=plan so plan dispatch (classify inline, #1485) is not over-serialized
 inc
-if echo "$SECTION_BETWEEN" | grep -qF 'plan-waves.sh --stage=classify'; then
-  pass_msg "wave-plan section invokes plan-waves.sh with --stage=classify"
+if echo "$SECTION_BETWEEN" | grep -qF 'plan-waves.sh --stage=plan'; then
+  pass_msg "wave-plan section invokes plan-waves.sh with --stage=plan"
 else
-  fail_msg "wave-plan section does not pass --stage=classify to plan-waves.sh"
+  fail_msg "wave-plan section does not pass --stage=plan to plan-waves.sh"
 fi
 
 echo ""
