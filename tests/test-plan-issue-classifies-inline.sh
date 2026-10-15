@@ -131,6 +131,9 @@ run_decide "x"           ""           false "" D  D table   "no marker/fresh/lab
 run_decide "x $H_A"      ""           false "" "" A hint    "only hint A"
 run_decide "x"           ""           false "" "" B default "nothing"
 run_decide "x $H_D"      ""           false "" "" B default "path-hint=D rejected"
+run_decide "x"           "multi-task" true  A ""  A cached  "fresh A beats multi-task label"
+run_decide "x"           "multi-task" false "" D  C label   "multi-task label beats table D"
+run_decide "x $H_A"      ""           false "" D  D table   "table D beats hint A"
 
 echo ""
 echo "================================"
