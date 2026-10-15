@@ -1,7 +1,7 @@
 #!/bin/bash
 # Guard: classify-issue/SKILL.md has a PATH D section + sentinel blocks preserved.
 set -euo pipefail
-FILE="skills/classify-issue/SKILL.md"
+FILE="skills/plan-issue/references/classification.md"  # #1485: moved to the shared reference
 [ -f "$FILE" ] || { echo "FAIL: $FILE not present"; exit 1; }
 grep -qE '(## )?PATH D|PATH D \(quick-fix\)' "$FILE" || { echo "FAIL: no PATH D section found"; exit 1; }
 grep -qF '<!-- pipeline:path=D -->' "$FILE" || { echo "FAIL: PATH D body marker example missing"; exit 1; }

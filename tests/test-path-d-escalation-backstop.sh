@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXECUTE_SKILL="$SCRIPT_DIR/../skills/execute-issue-plan/SKILL.md"
 EXECUTE_D_REF="$SCRIPT_DIR/../skills/execute-issue-plan/references/collapsed-inline-d.md"
 CLASSIFY_SKILL="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
+CLASSIFY_REF="$SCRIPT_DIR/../skills/plan-issue/references/classification.md"
 
 PASS=0
 FAIL=0
@@ -27,7 +28,7 @@ pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail_msg() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 inc()      { TESTS=$((TESTS + 1)); }
 
-for f in "$EXECUTE_SKILL" "$EXECUTE_D_REF" "$CLASSIFY_SKILL"; do
+for f in "$EXECUTE_SKILL" "$EXECUTE_D_REF" "$CLASSIFY_SKILL" "$CLASSIFY_REF"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: SKILL.md not found at $f" >&2
     exit 1
@@ -39,7 +40,12 @@ done
 # `### Collapsed inline D contract` body. The executor's D contract is the union
 # of the two files — path retarget only; no assertion is relaxed.
 EXECUTE_BODY=$(cat "$EXECUTE_SKILL" "$EXECUTE_D_REF" | tr '\n' ' ' | tr -s '[:space:]' ' ')
-CLASSIFY_BODY=$(tr '\n' ' ' < "$CLASSIFY_SKILL" | tr -s '[:space:]' ' ')
+# #1485: the PATH D section moved to plan-issue/references/classification.md;
+# the classify contract is the union of the two files (path retarget only).
+CLASSIFY_UNION=$(mktemp)
+trap 'rm -f "$CLASSIFY_UNION"' EXIT
+cat "$CLASSIFY_SKILL" "$CLASSIFY_REF" > "$CLASSIFY_UNION"
+CLASSIFY_BODY=$(tr '\n' ' ' < "$CLASSIFY_UNION" | tr -s '[:space:]' ' ')
 
 # Windowed proximity helper.
 near() {
@@ -128,9 +134,9 @@ fi
 
 # (g) the backstop reference lives in the PATH D section (proximity to 'PATH D').
 inc
-NEAR_D=$(near "$CLASSIFY_SKILL" "PATH D" "backstop" 800)
-NEAR_D2=$(near "$CLASSIFY_SKILL" "PATH D" "escalat" 800)
-NEAR_D3=$(near "$CLASSIFY_SKILL" "PATH D" "down-route" 800)
+NEAR_D=$(near "$CLASSIFY_UNION" "PATH D" "backstop" 800)
+NEAR_D2=$(near "$CLASSIFY_UNION" "PATH D" "escalat" 800)
+NEAR_D3=$(near "$CLASSIFY_UNION" "PATH D" "down-route" 800)
 if [ "$NEAR_D" = "OK" ] || [ "$NEAR_D2" = "OK" ] || [ "$NEAR_D3" = "OK" ]; then
   pass_msg "(g) backstop/down-route reference sits within the PATH D section"
 else
