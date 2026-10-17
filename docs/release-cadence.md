@@ -73,8 +73,13 @@ ignored, and the `feat!` commits inside the promoted range did not register eith
 the 0.24.0 cut enumerated 162 entries and still found no breaking marker (on its own it
 would have cut 0.23.27). Force the bump explicitly on every breaking promotion: merge with
 `gh pr merge --merge --subject "feat!: <summary>"` so the merge commit itself carries the
-marker, or add release-please's `Release-As` footer (value `X.Y.0`) to the merge body —
-the footer is what cut 0.24.0.
+marker. A release-please `Release-As` footer (value `X.Y.Z`) in the merge body forces an
+exact version — but ONLY when the merge subject parses as a conventional commit; the
+default `Merge pull request #N from …` subject fails the parser (`unexpected token ' '`)
+and the whole commit, footer included, is dropped. Always pair the footer with
+`--subject "<type>: …"`. The same applies to a docs-only promotion: `docs:` is a hidden
+type, so without `--subject` + the footer release-please reports `No user facing commits
+found` and opens nothing (the 0.25.1 cut hit exactly this).
 
 **GitHub Actions PR permission (first-run install).** release-please (and any
 Action that opens PRs) fails with `GitHub Actions is not permitted to create or
