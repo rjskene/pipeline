@@ -38,7 +38,7 @@ Read-only survey: `housekeeping → discover → status table`. The orchestrator
 ## Canonical entry points
 
 - `/pipeline:status` — read-only **status and reporting** survey (this skill). Renders the prioritization+grouping status table; never dispatches or merges.
-- `/pipeline:fullsend` — autonomous **end-to-end** execution (`skills/fullsend/SKILL.md`): classify → plan → evaluate plan → execute → evaluate PR → auto-merge greenlit PRs without intermediate confirmations.
+- `/pipeline:fullsend` — autonomous **end-to-end** execution (`skills/fullsend/SKILL.md`): plan (classify inline, #1485) → evaluate plan → execute → evaluate PR → auto-merge greenlit PRs without intermediate confirmations.
 
 PATH labels (A=docs-only, B=standard, C=multi-task, D=quick-fix) are owned by `skills/classify-issue/SKILL.md`; the lifecycle ASCII ladder lives in `docs/process-maps.md`. This skill references them by letter without redefining.
 
@@ -111,7 +111,7 @@ gh issue list --repo $PIPELINE_REPO --state open --json number,title,labels --li
 (no label) → [classified: docs-only | multi-task | none] → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged → (cleaned up)
 ```
 
-- `docs-only` / `multi-task` — PATH tag applied by classify-issue; persists through the rest of the lifecycle. Read by plan-issue (to emit PATH-aware Task 0/N), by spawn-claude.sh under `--spawn` (the legacy transport — to inject the path-specific execute skills; the default `multi-task` execute is the inline orchestrator-owned per-leaf-worktree fan-out), and by the enforce-path-c-delegation hook (to block direct orchestrator edits on multi-task issues).
+- `docs-only` / `multi-task` — PATH tag applied by the classification procedure (inline in plan-issue since #1485, or the standalone classify-issue); persists through the rest of the lifecycle. Read by plan-issue (to emit PATH-aware Task 0/N), by spawn-claude.sh under `--spawn` (the legacy transport — to inject the path-specific execute skills; the default `multi-task` execute is one inline execute agent as on PATH B, with the per-leaf-worktree fan-out behind `PIPELINE_PATH_C_FANOUT=true`, #1486), and by the enforce-path-c-delegation hook (to block direct orchestrator edits on multi-task issues while the fan-out is on).
 - `plan-pending` — plan posted, awaiting evaluation.
 - `plan-reviewed` — evaluation posted, awaiting user approval.
 - `plan-approved` — user approved the plan; ready for execution.

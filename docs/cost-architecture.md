@@ -212,7 +212,7 @@ trade.** What you give up moving inline:
 2. **Per-agent cwd isolation** — none in the public Agent SDK (open: anthropics/claude-code
    #31940). Subagents inherit parent cwd; concurrent inline agents `cd`-ing into different
    worktrees can **race** on shared filesystem/git state. (This harness's `isolation:"worktree"`
-   gives first-class isolation; public SDK does not.) The pipeline's PATH C fan-out works
+   gives first-class isolation; public SDK does not.) The pipeline's opt-in PATH C fan-out (`PIPELINE_PATH_C_FANOUT=true`, #1486) works
    around this with **per-leaf worktrees** (#896): each `target=<dir>` leaf gets its own
    worktree+branch off feature HEAD so leaves never share a git index, reassembled onto the
    feature branch by cherry-pick — see `docs/architecture.md` and `scripts/path-c-split-worktree.sh`.
