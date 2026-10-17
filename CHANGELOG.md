@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.25.0](https://github.com/rjskene/pipeline/compare/v0.24.0...v0.25.0) (2026-10-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* PIPELINE_PRE_PR_REVIEW defaults to false; the needs-browser label, visual-proof-from-plan sub-skill and PIPELINE_VISUAL_PROOF_* / PIPELINE_MOCK_WEB_EVAL_* / PIPELINE_AGENT_MEMORY_MAX_BROWSER knobs are removed; fullsend no longer dispatches classify-issue; PATH C executes as one inline agent unless PIPELINE_PATH_C_FANOUT=true.
+* **dispatch:** PATH C (multi-task) now executes as a single inline execute agent like PATH B by default; set PIPELINE_PATH_C_FANOUT=true to restore the per-leaf tdd-implementer fan-out.
+* **fullsend:** fullsend no longer dispatches /pipeline:classify-issue.
+* **skills:** plan-issue posts ## Classification and applies the path label itself; the classify procedure text lives only in the shared reference.
+* **skills:** the needs-browser label, the /pipeline:visual-proof-from-plan sub-skill, and the PIPELINE_VISUAL_PROOF_TARGET_DIR, PIPELINE_VISUAL_PROOF_PORT_BASE, PIPELINE_MOCK_WEB_EVAL_* and PIPELINE_AGENT_MEMORY_MAX_BROWSER knobs are removed; browser checks are now a one-line directive in execute-issue-plan and evaluate-issue-pr.
+
+### Features
+
+* **calib:** flag path-mismatch against the slate README's expected path ([#1487](https://github.com/rjskene/pipeline/issues/1487)) ([e9a8659](https://github.com/rjskene/pipeline/commit/e9a8659a514e765c2c7d88719f3a04472f142b20))
+* **calibration:** --path-c-fanout on|off arm ([#1486](https://github.com/rjskene/pipeline/issues/1486)) ([8cf125a](https://github.com/rjskene/pipeline/commit/8cf125aa392ec2d45d5af02f181809aaa3841365))
+* **calibration:** --pre-pr-review on|off arm for the Step 8 A/B ([#1464](https://github.com/rjskene/pipeline/issues/1464)) ([1fcc98a](https://github.com/rjskene/pipeline/commit/1fcc98a0577c3fd58c3dc4526f1e2dc5c71a76c0))
+* **calibration:** output_complete=&lt;n&gt;/&lt;N&gt; on CALIB-TOTAL ([#1470](https://github.com/rjskene/pipeline/issues/1470)) ([c532e00](https://github.com/rjskene/pipeline/commit/c532e003346a78c5002fb468128b0a27684bd82e))
+* **calib:** rework slate 05 into a three-directory PATH C probe and flag path-mismatch ([#1487](https://github.com/rjskene/pipeline/issues/1487)) ([1f66a75](https://github.com/rjskene/pipeline/commit/1f66a752eebc1b5717a861b31ac5a53c92652faa))
+* **cost:** flag output-under-measured rows in cost-latency-report ([#1470](https://github.com/rjskene/pipeline/issues/1470)) ([9bf6774](https://github.com/rjskene/pipeline/commit/9bf6774f97d62657cf0b02161611284a54bdbbdb))
+* **dispatch:** resolve PIPELINE_PATH_C_FANOUT into PATH_C_FANOUT token, default off ([#1486](https://github.com/rjskene/pipeline/issues/1486)) ([3caad7e](https://github.com/rjskene/pipeline/commit/3caad7ef081e2c67ca240955cbeaccc12ae94606))
+* **execute:** collapsed D consumes upstream classify/plan comments ([#1485](https://github.com/rjskene/pipeline/issues/1485)) ([6ddaf60](https://github.com/rjskene/pipeline/commit/6ddaf6009dc6da221e8691b077fe4c957b35a323))
+* **execute:** PIPELINE_PRE_PR_REVIEW knob + calibration --pre-pr-review arm ([#1464](https://github.com/rjskene/pipeline/issues/1464)) ([0e19a51](https://github.com/rjskene/pipeline/commit/0e19a51009cfa9fcce95109eb579765ee8b2e412))
+* **execute:** PIPELINE_PRE_PR_REVIEW knob skips Step 8 pre-PR review ([#1464](https://github.com/rjskene/pipeline/issues/1464)) ([bf718d8](https://github.com/rjskene/pipeline/commit/bf718d87a9b19ee98dfe2cf3848d001767c1abe4))
+* **execute:** resolve-execute-dispatch emits PRE_PR_REVIEW=&lt;on|off&gt; ([#1468](https://github.com/rjskene/pipeline/issues/1468)) ([87a8e8b](https://github.com/rjskene/pipeline/commit/87a8e8b40ee229bc048a893ff96174fb57e8240a))
+* **fullsend:** drop classify dispatch; plan-issue classifies inline ([#1485](https://github.com/rjskene/pipeline/issues/1485)) ([16b4ba5](https://github.com/rjskene/pipeline/commit/16b4ba558a74e1fb29954344aec83c8d2d88d7a8))
+* **hooks:** enforce-path-c-delegation only fires when PIPELINE_PATH_C_FANOUT is on ([#1486](https://github.com/rjskene/pipeline/issues/1486)) ([66dfc83](https://github.com/rjskene/pipeline/commit/66dfc83e6f4588de7f59a3728486f148d470b723))
+* promote staging to main for the 0.25 line (strong-model mass cut) ([495533c](https://github.com/rjskene/pipeline/commit/495533c07dac814620a54b313691ee2b095ca64a))
+* **retro:** peel -path-c-fanout-&lt;v&gt; calibration suffix ([#1486](https://github.com/rjskene/pipeline/issues/1486)) ([31f7653](https://github.com/rjskene/pipeline/commit/31f765301880eb20d53d21fb23ed90eb6d2189d8))
+* **skills:** branch PATH C execute on PATH_C_FANOUT — off runs as PATH B ([#1486](https://github.com/rjskene/pipeline/issues/1486)) ([6d058e0](https://github.com/rjskene/pipeline/commit/6d058e023b9d14c6d88137ef2706c921f09a9fc3))
+* **skills:** classify inline in plan-issue via shared classification reference ([#1485](https://github.com/rjskene/pipeline/issues/1485)) ([4e5d011](https://github.com/rjskene/pipeline/commit/4e5d0114b6a5b43529b76f7299e4c63c4e51821a))
+* **skills:** collapse browser-eval structure to a one-line directive ([#1484](https://github.com/rjskene/pipeline/issues/1484)) ([0b87f5b](https://github.com/rjskene/pipeline/commit/0b87f5bb092314ce529bec0f1fa2e937cfa9bdcb))
+
+
+### Bug Fixes
+
+* **calibration:** --bootstrap re-anchors calib-base when the template sync commits ([fd11ae3](https://github.com/rjskene/pipeline/commit/fd11ae35891e691bb963be425ca8e723de9ec61d))
+* **calibration:** --bootstrap re-anchors calib-base when the template sync commits ([#1477](https://github.com/rjskene/pipeline/issues/1477)) ([481f259](https://github.com/rjskene/pipeline/commit/481f25992f05dbf530c17430fdf702267bde26df))
+* **calibration:** seed commit excludes .claude/logs and .claude/logs-archive ([#1478](https://github.com/rjskene/pipeline/issues/1478)) ([3fb2578](https://github.com/rjskene/pipeline/commit/3fb25780031cb6b6e57fb0fd9d0981d90481b2fa))
+* **calibration:** seed commit excludes .claude/logs and .claude/logs-archive ([#1478](https://github.com/rjskene/pipeline/issues/1478)) ([75ed7e7](https://github.com/rjskene/pipeline/commit/75ed7e779f1807bd1281efac99fe83168b2aabfe))
+* **cost:** attribute `Plan-eval #N` dispatches to stage plan-eval, not plan ([ba896f4](https://github.com/rjskene/pipeline/commit/ba896f4cf4022aa460c937d4aa16d837f306b0f8))
+* **cost:** attribute Plan-eval #N dispatches to stage plan-eval ([#1469](https://github.com/rjskene/pipeline/issues/1469)) ([b0876fc](https://github.com/rjskene/pipeline/commit/b0876fc6d13a0c94d294e820c56eba4cb2cd1458))
+* **cost:** mirror plan-eval word-order pattern into forward cost hook ([#1469](https://github.com/rjskene/pipeline/issues/1469)) ([6cab96e](https://github.com/rjskene/pipeline/commit/6cab96ef7a271aeb44b3dcbc3860809cae935b88))
+* **cost:** price claude-opus-5-5 / claude-sonnet-5-5 at their own rates ([#1470](https://github.com/rjskene/pipeline/issues/1470)) ([7f17a55](https://github.com/rjskene/pipeline/commit/7f17a55d4375dd6a31218c0c168b6021516e5386))
+* **cost:** recover subagent output/duration from parent handback for Claude Code &gt;=2.1.291 transcripts ([#1470](https://github.com/rjskene/pipeline/issues/1470)) ([adffc0c](https://github.com/rjskene/pipeline/commit/adffc0cb3a63ff0f43c6f105712637161a2af8b0))
+* **cost:** survive Claude Code ≥2.1.291 subagent transcripts — last-call output + duration from the parent handback, output_complete flag, 5.5 model prices ([bc68a1a](https://github.com/rjskene/pipeline/commit/bc68a1a58f07cdf88194e8bf9f4d8365a3e31e1c))
+* **eval:** keep canonical exec-verification block identical across evaluators ([#1463](https://github.com/rjskene/pipeline/issues/1463)) ([7da95e6](https://github.com/rjskene/pipeline/commit/7da95e68366ce138fd080ca60b3d9eb95a961ace))
+* **evaluate-issue-plan:** executable verification runs existing artifacts only ([cfa6a17](https://github.com/rjskene/pipeline/commit/cfa6a178d9a1b88ea2c220638aeacd5ba93a6813))
+* **evaluate-issue-plan:** executable verification runs existing artifacts only ([#1462](https://github.com/rjskene/pipeline/issues/1462)) ([d949b5f](https://github.com/rjskene/pipeline/commit/d949b5fdb49b8e7853bc811c1f2fcf9d43e9a095))
+* **evaluate-issue-plan:** keep canonical verification block identical across evaluators ([#1462](https://github.com/rjskene/pipeline/issues/1462)) ([c34801f](https://github.com/rjskene/pipeline/commit/c34801f928bf282fced9a3545a76ed399a2c5fcc))
+* evaluation fixes for [#1464](https://github.com/rjskene/pipeline/issues/1464) — name PIPELINE_PRE_PR_REVIEW in calibration doc ([1916271](https://github.com/rjskene/pipeline/commit/1916271ec3aff437cad8fd1543ee2e1dd52991f6))
+* evaluation fixes for [#1470](https://github.com/rjskene/pipeline/issues/1470) — parse the LAST &lt;usage&gt; block of a task-notification ([f61f424](https://github.com/rjskene/pipeline/commit/f61f424817fc14bd0786617bfe3bc3507e82db1b))
+* evaluation fixes for [#1474](https://github.com/rjskene/pipeline/issues/1474) — restore (append nothing) + resolver source-of-truth sentence ([4aa5177](https://github.com/rjskene/pipeline/commit/4aa51772673747dca977161c08e95944d1c3f892))
+* evaluation fixes for [#1492](https://github.com/rjskene/pipeline/issues/1492) — restore test-edit clause, repoint layered-base assertion ([a7f6e6b](https://github.com/rjskene/pipeline/commit/a7f6e6b8e0db10cc391052465d7043f171569cb9))
+* **execute:** carry PRE_PR_REVIEW in the execute dispatch prompt ([#1468](https://github.com/rjskene/pipeline/issues/1468)) ([6c1be2d](https://github.com/rjskene/pipeline/commit/6c1be2df4b41716421e202875cf000f4d512fe99))
+* **execute:** carry PRE_PR_REVIEW=&lt;on|off&gt; in the execute dispatch prompt — the env-only read site never fires inside a dispatched agent ([da690e8](https://github.com/rjskene/pipeline/commit/da690e872a6a36eb141c92b11b1fa53d7092a453))
+* **fullsend:** closing-review directive yields to resolver PRE_PR_REVIEW=off ([#1474](https://github.com/rjskene/pipeline/issues/1474)) ([e12ddbe](https://github.com/rjskene/pipeline/commit/e12ddbee120be4d54669ec7784d8677144559c77))
+* **fullsend:** closing-review directive yields to resolver PRE_PR_REVIEW=off ([#1474](https://github.com/rjskene/pipeline/issues/1474)) ([b127341](https://github.com/rjskene/pipeline/commit/b127341e8d57d5eff72c6668efd8b3c028a3b251))
+* **review:** anchor GREEN test path; trim agent prose to budget ([#1463](https://github.com/rjskene/pipeline/issues/1463)) ([ebddc26](https://github.com/rjskene/pipeline/commit/ebddc26186096bdc176b7f782dae2edfda6f800d))
+* **skills:** keep the namespaced subagent_type literal on the PATH C fan-out line ([#1486](https://github.com/rjskene/pipeline/issues/1486)) ([c3451be](https://github.com/rjskene/pipeline/commit/c3451be1be123369857c1661c897004660757da2))
+
 ## [0.24.0](https://github.com/rjskene/pipeline/compare/v0.23.26...v0.24.0) (2026-10-07)
 
 

@@ -19,7 +19,7 @@ The exhaustive catalogue of pipeline slash commands — invocation form, args/fl
 | [`/pipeline:evaluate-issue-pr`](../skills/evaluate-issue-pr/SKILL.md) | `<issue_number> [--manual-merge]` | Independent PR review; auto-merges on green unless `--manual-merge`; run from inside the worktree. |
 | [`/pipeline:create-issues`](../skills/create-issues/SKILL.md) | `[--confirm]` | Brainstorm → file issues; `--confirm` forces the gate on the single-standalone path. |
 | [`/pipeline:analyze-issues`](../skills/analyze-issues/SKILL.md) | (none) | Read-only hygiene pass (dupes / tracker-fit / missing-label / supersession). |
-| [`/pipeline:doctor`](../skills/doctor/SKILL.md) | `[--fix labels]` | Read-only install audit; `--fix labels` seeds canonical labels idempotently. |
+| [`/pipeline:doctor`](../skills/doctor/SKILL.md) | `[--fix labels\|config [vOLD vNEW]\|residual\|stdin-guards]` | Read-only install audit; `--fix labels` seeds canonical labels idempotently, `--fix config` appends missing `PIPELINE_*` keys to the host config. |
 | [`/pipeline:init`](../skills/init/SKILL.md) | (none) | Greenfield bootstrap (preflight → config → gitignore → label seed → doctor tail). |
 | [`/pipeline:hotfix`](../skills/hotfix/SKILL.md) | `"<problem>" \| <issue-number> [--inline\|--subagent] [--auto-merge]` | Emergency-lane in-session worktree fix bypassing lifecycle gates. |
 | [`/pipeline:tokenomics`](../skills/tokenomics/SKILL.md) | `[--limit N] [--since DATE] [--until DATE] [--per-day]` | Dogfood-only cost/latency report (default `--limit 50`). |
@@ -33,7 +33,7 @@ Only the load-bearing nuance is captured here; see each SKILL.md for the full sp
 
 ### fullsend
 
-- `--spawn` routes every path's execute (Step 6) and PR-eval (Step 7) through the tmux run-queue — purely additive; A/B/D execute inline by default, C is always queued.
+- `--spawn` routes every path's execute (Step 6) and PR-eval (Step 7) through the tmux run-queue — purely additive; without it all four paths execute inline (C as one execute agent, or as the per-leaf fan-out under `PIPELINE_PATH_C_FANOUT=true`).
 - `--manual-merge` skips auto-merge (also settable per-issue via a `manual-merge` label).
 - `--debug-first` forces every dispatched `/pipeline:plan-issue N` through plan-issue's diagnosis gate before drafting; without it the gate fires only for issues carrying the durable `needs-debug` label.
 - Plan approval is an auto-gate governed by `PIPELINE_PLAN_GATE` (default `annotate`: one evaluate, a Revise binds its amendments into execute, no re-plan; `full`: evaluate → re-plan → re-evaluate, cap 3; `none`: skip). The resolver emits it as `GATE=<v>` on every plan-eval resolution.
@@ -102,6 +102,8 @@ Beyond argv, commands read and write these shared surfaces.
 - `PIPELINE_BASE_BRANCH` — PR target branch (default `staging`). `PIPELINE_NEXT_BRANCH` / `PIPELINE_NEXT_LABEL` route `next`-labelled issues onto the next-integration branch; `PIPELINE_RELEASE_BRANCH` (default `main`) is the branch the promotion PR targets.
 - `PIPELINE_CAMPAIGN_MAX_BC` / `PIPELINE_CAMPAIGN_MAX_AD` / `PIPELINE_CAMPAIGN_MAX_FOLD` — `--campaign` leg caps (default 2 / 5) and the end-of-campaign fold-wave ceiling (default 3).
 - `PIPELINE_PLAN_GATE` — `annotate` (default) | `full` | `none` | `single` (legacy); see the fullsend bullets above.
+- `PIPELINE_PATH_C_FANOUT` — `false` (default, #1486): PATH C executes as one inline agent like B; `true` restores the per-leaf `tdd-implementer` fan-out with per-leaf worktrees and cherry-pick reassembly. Resolved into the `PATH_C_FANOUT=` dispatch token.
+- `PIPELINE_PRE_PR_REVIEW` — `false` (default, #1482): execute's Step 8 pre-PR review loop is skipped on every path; `true` re-enables it on A/B/C (D never runs it). Resolved into the `PRE_PR_REVIEW=` dispatch token.
 - `PIPELINE_PATH_{A,B,C,D}_MODEL_EXECUTE` — execute-stage model per path; unset resolves to `opus` (#1186 / #1420 / #1428). `=sonnet` opts a path into the cheaper lane; on B and D the high-uncertainty carve-out still pins `opus`, and `PIPELINE_PATH_B_ELIGIBLE_SCOPE` (`all` | `low-blast`) narrows which PATH B issues the knob applies to.
 - `PIPELINE_PATH_C_MODEL_PLAN` (default `fable`), `PIPELINE_STAGE_MODEL_PLAN_EVAL` and `PIPELINE_STAGE_MODEL_PR_EVAL` (default `opus`) — stage model pins resolved by `scripts/resolve-stage-model.sh`; the high-uncertainty carve-out downgrades a Fable plan to `opus`, plan-eval never resolves below its producer, and an explicit pr-eval knob below the execute tier is honored with a stderr warning.
 - `PIPELINE_TRUST_PROFILE` — `strict` (default) | `lean` (lean may skip plan-eval on non-high-uncertainty PATH A/D).
