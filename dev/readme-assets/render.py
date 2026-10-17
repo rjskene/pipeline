@@ -74,7 +74,7 @@ def svg_open(w: int, h: int, label: str, p: dict, defs: str) -> str:
 
 def lifecycle(p: dict) -> str:
     stages = [
-        ("plan", "agent · classify inline", False),
+        ("plan", "agent · classifies first", False),
         ("plan-eval", "agent · decides", True),
         ("execute", "agent · own worktree", False),
         ("pr-eval preflight", "script", False),
@@ -120,9 +120,9 @@ def paths(p: dict) -> str:
     ]
     ys = [42, 102, 162, 222]
     out = [svg_open(920, 262, "Path routing fan", p, marker("ah", p["ink2"]))]
-    out.append(pill(17, 112, 100, 40, "classify", p, decides=True))
+    out.append(pill(17, 112, 100, 40, "plan", p, decides=True))
     out.append(f'<text x="67" y="168" text-anchor="middle" font-family="{MONO}" font-size="10.5" '
-               f'fill="{p["muted"]}">inline in plan</text>')
+               f'fill="{p["muted"]}">agent · classifies</text>')
     out.append(f'<path d="M117,132 H134 M134,42 V222" fill="none" stroke="{p["ink2"]}" stroke-width="1.4"/>')
     out.append(f'<g stroke="{p["ink2"]}" stroke-width="1.4" fill="none" marker-end="url(#ah)">')
     for y in ys:
