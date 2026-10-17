@@ -101,7 +101,7 @@ FIVE=$(sed -nE 's/.* five=([0-9]+).*/\1/p' <<<"$PROJ"); SEVEN=$(sed -nE 's/.* se
 RESUME_AT=$(sed -nE 's/.*resume_at=([^ ]+).*/\1/p' <<<"$PROJ")
 ```
 
-Branch on `$DECISION` exactly as `skills/fullsend/SKILL.md` `## Usage gate (#969)` prescribes — that section is the single source of truth, do not restate it here:
+Branch on `$DECISION` exactly as `skills/fullsend/SKILL.md` `## Usage gate` prescribes — that section is the single source of truth, do not restate it here:
 
 - `proceed` / `skip` → continue; `skip` NEVER resumes a paused loop (R4).
 - `pause-5h` → fence 3 with the current step, then `bash "${CLAUDE_PLUGIN_ROOT}/scripts/arm-usage-resume-cron.sh" --resume-command "/pipeline:evolve resume" --resume-at "$RESUME_AT"` and transcribe its output into exactly ONE recurring `CronCreate` (NEVER `ScheduleWakeup`), then STOP the turn.

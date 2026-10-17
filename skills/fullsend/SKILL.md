@@ -75,7 +75,7 @@ When `PIPELINE_HEADLESS=true`, fullsend and every dispatched stage MUST NOT end 
 - **unread-config-knob** (config key with no read site). `HEADLESS-DEFAULT: unread-config-knob decision=ignore-and-continue reason=not-a-contradiction`.
 - **stall-triage** (Step 6/7 `agent-stalled`). `HEADLESS-DEFAULT: stall-triage decision=wait-out-timeout reason=never-kill-autonomously` — re-enter `Monitor` with the remaining budget.
 - **ci-red-budget** (Step 6b `red-retry`/`red-budget-exhausted`). `HEADLESS-DEFAULT: ci-red-budget decision=autonomous-retry-then-flag reason=continue-the-wave`.
-- **permission-denied** (`PermissionRequest` bridge timeout/deny, or a Bash result containing `denied by the Claude Code auto mode classifier`). `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=classifier-deny site=<step> issue=#<N>` — retry an identical classifier-denied command ONCE, then skip the step, label unchanged, list it Flagged in Step 8, continue; a bridge timeout/deny skips without retry.
+- **permission-denied** (`PermissionRequest` bridge timeout/deny, or a Bash result containing `denied by the Claude Code auto mode classifier`). `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=classifier-deny site=<step> issue=#<N>` — retry an identical classifier-denied command ONCE, then skip the step, label unchanged, list it Flagged in Step 8's table, continue the slate; a bridge timeout/deny skips without retry.
 - **ci-wait** (any PR-CI wait). `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — poll FOREGROUND via `timeout 590 gh pr checks --watch` until terminal.
 
 Interactive mode (knob unset/false) is unchanged.
@@ -140,7 +140,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
    ```
    It emits `tier-max(plan model, PIPELINE_STAGE_MODEL_PLAN_EVAL)` (unset ⇒ `opus`): the **gate never lands below its producer** (`REASON=follows-producer`).
    **Trust profile:** `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D) ⇒ do NOT dispatch: run `transition-issue.sh <N> --to plan-approved --from plan-pending --comment "plan-eval skipped: lean profile"` (Step 4's helper) and record `plan_eval=skip`.
-   **Plan gate:** `GATE=<full|single|none|annotate>` (absent ⇒ `annotate`). `none` → the `SKIP=true` path via `transition-issue.sh`, comment `plan-eval skipped: plan-gate=none`. `single` → evaluate ONCE, then Step 3's capped arm. `full` → the full loop. `SKIP=true` wins.
+   **Plan gate:** read `GATE=<full|single|none|annotate>` (absent ⇒ `annotate`). `GATE=none` → the `SKIP=true` path via `transition-issue.sh`, comment `plan-eval skipped: plan-gate=none`, record `plan_eval=skip`. `GATE=single` → evaluate ONCE, then Step 3's capped arm. `GATE=full` → the full loop. `SKIP=true` wins.
    **Plan gate — annotate:** `GATE=annotate` → evaluate exactly once, then Step 3's annotate arm (approve via `transition-issue.sh`). `SKIP=true` still wins.
 3. **Re-plan loop** — on "Revise": re-run `/pipeline:plan-issue N` then `/pipeline:evaluate-issue-plan N`, **each re-dispatch re-resolving its stage pin** (`resolve-stage-model.sh <N> plan` / `<N> plan-eval`, `model=$MODEL`). Max 3 iterations; still failing ⇒ skip and flag.
 
@@ -148,7 +148,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
 
    **Plan gate:** `GATE=single` ⇒ ONE evaluate + ONE binding re-plan, then approve HERE via `transition-issue.sh` (`plan-pending`→`plan-approved`), no second evaluate; record `plan_rounds=1`. `GATE=full` keeps the 3-iteration cap.
 
-   **Plan gate — annotate:** a `Revise` triggers NO re-plan: approve HERE via `transition-issue.sh` (`plan-pending`→`plan-approved`) `--comment "plan-eval: Revise carried into execute (plan-gate=annotate)"`, record `plan_gate=annotate`, `plan_rounds=1`; execute applies `**Recommendations:**` as binding amendments. Exception: `**Scope:** structural` runs ONE binding re-plan, then approves without re-evaluating.
+   **Plan gate — annotate:** under `GATE=annotate` a `Revise` triggers NO re-plan: approve HERE via `transition-issue.sh` (`plan-pending`→`plan-approved`) `--comment "plan-eval: Revise carried into execute (plan-gate=annotate)"`, record `plan_gate=annotate`, `plan_rounds=1`; execute applies `**Recommendations:**` as binding amendments. Exception: `**Scope:** structural` runs ONE binding re-plan, then approves without re-evaluating.
 
 4. **Approve** — ONE wave call for every `plan-reviewed` issue; it runs `transition-issue.sh <N> --to plan-approved --from plan-reviewed` per issue (one `TRANSITION=` line each). Steps 2/3 call it with `--from plan-pending --comment "<text>"`:
    ```bash
@@ -259,7 +259,7 @@ Per wave N: usage gate, then Steps 5 → 6 → 6a → 6b → 7 on ONLY that wave
    `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`) is a REAL pin; relay any stderr WARN.
 
    **PR-eval invocation mode.** Same evaluator steps, only CWD differs:
-   1. **Inline `Agent(...)` (default — PATH A/B/C/D).** The prompt carries the worktree path + issue number; the evaluator first runs `cd <worktree-absolute-path>`. Thread the opt-out as `MANUAL_MERGE=1` in the prompt.
+   1. **Inline `Agent(...)` (default — PATH A, PATH B, PATH C, PATH D).** The prompt carries the worktree path + issue number; the evaluator first runs `cd <worktree-absolute-path>`. Thread the opt-out as `MANUAL_MERGE=1` in the prompt.
    2. **`--spawn` — `${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` via the run-queue (all paths; the legacy PATH C transport).** Starts in the worktree, no `cd`; `spawn-claude.sh --manual-merge` exports `MANUAL_MERGE=1`.
 
    **`--spawn` override.** Route PR-eval through `run-queue.sh --skill evaluate-issue-pr` (`PREFLIGHT=ok` issues only), `run_in_background: true`, awaited with Step 6's waiter (one `Monitor` via `BashOutput`, filter `EVENT: (agent-stalled|agent-finished|queue-complete)`, `timeout_ms=7200000`) and triage.

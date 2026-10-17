@@ -4,7 +4,7 @@
 #
 # LINE ORDER IS LOAD-BEARING — do not reorder:
 #   PR derivation (fail-closed) -> TOCTOU baseRefName re-read -> guarded
-#   `gh pr merge --merge --delete-branch` (synchronous, never --auto) -> merge
+#   `gh pr merge --merge --delete-branch` (synchronous, never auto-merge) -> merge
 #   SHA capture -> screenshot-URL rewrite (after the SHA it pins to, before the
 #   footer) -> `Auto-merged:` footer -> green MERGE: line (before the label flip,
 #   so the fail-loud exit below can never hide a completed merge) ->
