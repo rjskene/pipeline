@@ -10,7 +10,7 @@ set -uo pipefail
 # emitted block carries the required tokens, exits 2 on a missing required
 # arg, and contains NO ScheduleWakeup / one-shot wakeup language (R2/R3).
 #
-# Also guards the hardened `## Usage gate (#969)` prose in
+# Also guards the hardened `## Usage gate` prose in
 # skills/fullsend/SKILL.md so a regression back to hand-reconstructed cron
 # args fails CI.
 #
@@ -18,7 +18,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HELPER="$REPO_ROOT/scripts/arm-usage-resume-cron.sh"
-# #1444 — the `## Usage gate (#969)` body moved to fullsend's reference file.
+# #1444 — the `## Usage gate` body moved to fullsend's reference file.
 SKILL="$REPO_ROOT/skills/fullsend/references/usage-gate.md"
 
 PASS=0
@@ -133,10 +133,10 @@ else
   fail_msg "missing --resume-command: expected exit 2, got rc=$RC"
 fi
 
-# --- Scenario 5: SKILL-prose guard for hardened ## Usage gate (#969) ---
-inc_scenario "Scenario 5: ## Usage gate (#969) prose hardening"
+# --- Scenario 5: SKILL-prose guard for hardened ## Usage gate ---
+inc_scenario "Scenario 5: ## Usage gate prose hardening"
 
-# Extract ONLY the `## Usage gate (#969)` section body (heading to next `## `).
+# Extract ONLY the `## Usage gate` section body (heading to next `## `).
 # The reference file IS the section (its H1 is the only heading), so the
 # extractor is now a plain read.
 GATE_SECTION="$(cat "$SKILL")"

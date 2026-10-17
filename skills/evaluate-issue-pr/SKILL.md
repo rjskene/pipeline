@@ -21,7 +21,7 @@ _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipe
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-Dispatch modes and the orchestrator-assembled prompt template are documented in `skills/fullsend/references/pr-eval-dispatch.md` — the orchestrator's contract, not the evaluator's.
+Dispatch modes and the orchestrator-assembled prompt template are documented in `skills/fullsend/SKILL.md` Step 7 (`**PR-eval invocation mode.**`) — the orchestrator's contract, not the evaluator's.
 
 **pr-eval depth is never gated (W3).** This evaluator STAYS Opus — `model=` resolves from `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`, an explicit PIN since #1186); no execute-side carve-out lowers it.
 

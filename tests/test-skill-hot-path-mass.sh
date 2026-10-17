@@ -56,7 +56,7 @@ bash_fences() { grep -cE '^[[:space:]]*```bash' "$1"; }
 #   <repo-relative path>|<max body words>|<min body words>|<max bash fences>
 # ---------------------------------------------------------------------------
 ROWS=(
-  "skills/fullsend/SKILL.md|8000|4000|20"
+  "skills/fullsend/SKILL.md|4000|2000|20"
   "skills/evaluate-issue-pr/SKILL.md|3000|1200|9"
   "skills/execute-issue-plan/SKILL.md|4000|1500|9"
 )

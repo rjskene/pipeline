@@ -133,8 +133,8 @@ sentinel_line() {
 # Occurrence indices pinned so a relocation reds loudly instead of silently
 # selecting a different line: in SKILL.md the Trust-profile sentinel appears
 # once, each Plan-gate sentinel twice (the Step 2 read site, then the Step 3 arm).
-declare -a SENT_DESC=('Trust profile (#1291) Step 2 arm' 'Plan gate (#1429) Step 3 arm' 'Plan gate — annotate (#1435) Step 3 arm')
-declare -a SENT_LIT=('**Trust profile (#1291):**' '**Plan gate (#1429):**' '**Plan gate — annotate (#1435):**')
+declare -a SENT_DESC=('Trust profile Step 2 arm' 'Plan gate Step 3 arm' 'Plan gate — annotate Step 3 arm')
+declare -a SENT_LIT=('**Trust profile:**' '**Plan gate:**' '**Plan gate — annotate:**')
 declare -a SENT_IDX=(1 2 2)
 declare -a SENT_EXPECT_COUNT=(1 2 2)
 

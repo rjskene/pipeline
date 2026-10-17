@@ -568,7 +568,8 @@ check_issue_outcome() {
 
 # Recover the gate's actual block-reason for a wedged evaluator's PR. The
 # orchestrator posts `Auto-merge skipped: <REASON>. Run gh pr merge manually.`
-# for ANY block-* skip (step 4 of skills/fullsend/references/auto-merge-gate.md),
+# for ANY block-* skip (step 4 of skills/fullsend/references/auto-merge-gate.md,
+# run by scripts/fullsend-block-merge.sh),
 # where <REASON> is one of the auto-merge-gate.sh tokens (block-verdict, block-ci,
 # block-mergeable, block-mergestate, block-label, block-flag,
 # block-capability-refused, block-base-mismatch). Scan ALL PR comments (the

@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# #1444: the `## Invocation mode` + `## Canonical Agent prompt template`
-# sections are the ORCHESTRATOR's contract and relocated there.
-SKILL="skills/fullsend/references/pr-eval-dispatch.md"
-grep -q "Invocation mode" "$SKILL" || { echo "FAIL: evaluate-issue-pr missing 'Invocation mode' preamble"; exit 1; }
+# The PR-eval invocation-mode contract is the ORCHESTRATOR's: it lives in
+# skills/fullsend/SKILL.md Step 7's `**PR-eval invocation mode.**` paragraph
+# (and its numbered list), extracted here up to the next bold paragraph.
+SRC="skills/fullsend/SKILL.md"
+SKILL="$(mktemp)"; trap 'rm -f "$SKILL"' EXIT
+awk '!f && index($0, "**PR-eval invocation mode.**") { f=1; print; next }
+     f && /^[[:space:]]*\*\*/ { exit }
+     f { sub(/^[[:space:]]+/, ""); print }' "$SRC" > "$SKILL"
+[ -s "$SKILL" ] || { echo "FAIL: $SRC has no '**PR-eval invocation mode.**' paragraph"; exit 1; }
+grep -qi "invocation mode" "$SKILL" || { echo "FAIL: evaluate-issue-pr missing 'Invocation mode' preamble"; exit 1; }
 grep -q "Agent(" "$SKILL" || { echo "FAIL: evaluate-issue-pr preamble does not name Agent(...) dispatch"; exit 1; }
 grep -qE "worktree.*absolute path|cd .*<worktree" "$SKILL" || { echo "FAIL: evaluate-issue-pr preamble does not require cd to worktree on Agent dispatch"; exit 1; }
 grep -q "MANUAL_MERGE=1" "$SKILL" || { echo "FAIL: evaluate-issue-pr does not document inline MANUAL_MERGE=1 plumbing"; exit 1; }
