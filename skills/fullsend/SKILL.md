@@ -78,8 +78,6 @@ When `PIPELINE_HEADLESS=true`, fullsend and every dispatched stage MUST NOT end 
 - **permission-denied** (`PermissionRequest` bridge timeout/deny, or a Bash result containing `denied by the Claude Code auto mode classifier`). `HEADLESS-DEFAULT: permission-denied decision=skip-step reason=classifier-deny site=<step> issue=#<N>` — retry an identical classifier-denied command ONCE, then skip the step, label unchanged, list it Flagged in Step 8's table, continue the slate; a bridge timeout/deny skips without retry.
 - **ci-wait** (any PR-CI wait). `HEADLESS-DEFAULT: ci-wait decision=foreground-poll reason=print-mode-exits-on-idle` — poll FOREGROUND via `timeout 590 gh pr checks --watch` until terminal.
 
-Interactive mode (knob unset/false) is unchanged.
-
 ## Campaign mode
 
 Read [references/campaign-mode.md](references/campaign-mode.md) when `--campaign` is in argv.
@@ -103,7 +101,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
 
 **block-base-mismatch** — `baseRefName` must equal `PIPELINE_BASE_BRANCH`; `${PIPELINE_NEXT_BRANCH:-next}` is ALSO accepted ONLY when the issue carries `${PIPELINE_NEXT_LABEL:-next}` or legacy `next-major-release`; an empty base fails closed. Order of evaluation: env (`MANUAL_MERGE=1`) → label (`manual-merge`) → `block-cage-tests-diff` → verdict → `block-capability-refused` → `block-base-mismatch` → CI rollup → mergeable → mergeStateStatus. Tokens: `green`, else one `block-*` per arm.
 
-**Three opt-outs:** (1) `FULL SEND --manual-merge` — flag may appear anywhere in argv (cannot collide with issue numbers, which are bare integers); (2) `/pipeline:evaluate-issue-pr <N> --manual-merge` — records the opt-out for the orchestrator's gate; a direct evaluator invocation never merges (finish via `scripts/finish-manual-merge.sh`); (3) a `manual-merge` issue label. `--spawn` is transport, not an opt-out.
+**Three opt-outs:** (1) `FULL SEND --manual-merge` — flag may appear anywhere in argv; (2) `/pipeline:evaluate-issue-pr <N> --manual-merge` — records the opt-out for the orchestrator's gate; a direct evaluator invocation never merges (finish via `scripts/finish-manual-merge.sh`); (3) a `manual-merge` issue label. `--spawn` is transport, not an opt-out.
 
 ## Auto-merge ownership
 
@@ -117,7 +115,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-fetch-attachments.sh" <slate-issue-numbers>
    ```
 
-   **1b. Dispatch plan (classify inline).** Wave by wave per `## Wave plan (pre-think)`, run `/pipeline:plan-issue N` for every ready issue with no pipeline label (one Agent per issue, parallel); wait for all. The planner consumes a fresh trusted `## Classification` (`createdAt >= issue.updatedAt`) or posts one and applies the path label — NO `/pipeline:classify-issue N` Agent. **PATH D exclusion.** Issues already carrying `quick-fix` or a `<!-- pipeline:path=D -->` marker are EXCLUDED here: their collapsed Step 6 Agent PRODUCES `## Classification`+`quick-fix` and `## Implementation Plan`+`plan-pending`. A planner-classified D lands `quick-fix`+`plan-pending`, takes the D auto-flip, and Step 6 CONSUMES those comments. The wave plan still includes D.
+   **1b. Dispatch plan (classify inline).** Wave by wave per `## Wave plan (pre-think)`, run `/pipeline:plan-issue N` for every ready issue with no pipeline label (one parallel Agent per issue, `description='plan-issue #<N> (PATH <X>)'`, or `plan-issue #<N>` pre-classification); wait for all. The planner consumes a fresh trusted `## Classification` (`createdAt >= issue.updatedAt`) or posts one and applies the path label — NO `/pipeline:classify-issue N` Agent. **PATH D exclusion.** Issues already carrying `quick-fix` or a `<!-- pipeline:path=D -->` marker are EXCLUDED here: their collapsed Step 6 Agent PRODUCES `## Classification`+`quick-fix` and `## Implementation Plan`+`plan-pending`. A planner-classified D lands `quick-fix`+`plan-pending`, takes the D auto-flip, and Step 6 CONSUMES those comments. The wave plan still includes D.
    - **Stage-model pin (mandatory):** before EACH plan dispatch resolve the model:
      ```bash
      PLAN_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> plan)
@@ -132,7 +130,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
        | jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
      ```
      `PLAN_COUNT == 0` (regardless of `plan-pending`) ⇒ re-run `/pipeline:plan-issue N` once; still missing ⇒ "Skipped (plan not posted)".
-2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel); wait for all.
+2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel, `description='evaluate-issue-plan #<N>'`); wait for all.
 
    **Stage-model pin (mandatory)** — **ALWAYS pass `model=$MODEL`**:
    ```bash
@@ -142,7 +140,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
    **Trust profile:** `PLAN_EVAL_SPEC` carries `SKIP=true` (`PIPELINE_TRUST_PROFILE=lean`, non-W2 PATH A/D) ⇒ do NOT dispatch: run `transition-issue.sh <N> --to plan-approved --from plan-pending --comment "plan-eval skipped: lean profile"` (Step 4's helper) and record `plan_eval=skip`.
    **Plan gate:** read `GATE=<full|single|none|annotate>` (absent ⇒ `annotate`). `GATE=none` → the `SKIP=true` path via `transition-issue.sh`, comment `plan-eval skipped: plan-gate=none`, record `plan_eval=skip`. `GATE=single` → evaluate ONCE, then Step 3's capped arm. `GATE=full` → the full loop. `SKIP=true` wins.
    **Plan gate — annotate:** `GATE=annotate` → evaluate exactly once, then Step 3's annotate arm (approve via `transition-issue.sh`). `SKIP=true` still wins.
-3. **Re-plan loop** — on "Revise": re-run `/pipeline:plan-issue N` then `/pipeline:evaluate-issue-plan N`, **each re-dispatch re-resolving its stage pin** (`resolve-stage-model.sh <N> plan` / `<N> plan-eval`, `model=$MODEL`). Max 3 iterations; still failing ⇒ skip and flag.
+3. **Re-plan loop** — on "Revise": re-run `/pipeline:plan-issue N` then `/pipeline:evaluate-issue-plan N` (same descriptions), **each re-dispatch re-resolving its stage pin** (`resolve-stage-model.sh <N> plan` / `<N> plan-eval`, `model=$MODEL`). Max 3 iterations; still failing ⇒ skip and flag.
 
    **Binding rule:** from round 2, the re-plan prompt quotes the `Revise` prescription verbatim with "apply exactly this; add no new scenarios, tests or sections"; the re-evaluate prompt says "verify only that the prescribed change landed; a new finding is a new round only if BLOCKING".
 

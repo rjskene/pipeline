@@ -129,6 +129,18 @@ for shape in \
   esac
 done
 
+# #1499: plan / plan-eval dispatch descriptions are pinned in the SKILL BODY
+# itself (not just a reference), so the orchestrator authors `#<N>` there.
+for shape in \
+  "description='plan-issue #<N> (PATH <X>)'" \
+  "description='evaluate-issue-plan #<N>'" \
+  "(same descriptions)"; do
+  case "$BODY" in
+    *"$shape"*) pass_msg "body shape present: $shape" ;;
+    *) fail_msg "body shape missing: $shape" ;;
+  esac
+done
+
 # ---------------------------------------------------------------------------
 scenario "B7: folded references are gone; B8: rationale archived"
 
