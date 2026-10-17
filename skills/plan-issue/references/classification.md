@@ -35,7 +35,7 @@ PATH D is the body-marker primary route: declare `<!-- pipeline:path=D -->` in t
 - Guard-test addition to an existing test file (one new assertion; no new file).
 - One-bullet bug report with a quoted error and an obvious one-liner.
 
-Execution: collapsed single-pass inline `tdd-implementer` in the orchestrator session (no spawned worker); `evaluate-issue-pr` is the sole review gate — `execute-issue-plan` Step 8 is skipped. In the autonomous run/fullsend lanes, PATH D classify is the FIRST stage run INSIDE that single collapsed inline context (classify → plan → execute carried forward as one context), so the recommended_path / `quick-fix` label checkpoint is emitted by that same collapsed agent rather than by a separate upstream classify dispatch. The standalone interactive `/pipeline:classify-issue N` invocation and the `<!-- pipeline:path=D -->` body-marker route are UNCHANGED — they still post a `## Classification` comment and apply the path label directly.
+Execution: collapsed single-pass inline `tdd-implementer` in the orchestrator session (no spawned worker); `evaluate-issue-pr` is the sole review gate — `execute-issue-plan` Step 8 is skipped. Classification runs inline for every path; on PATH D the same collapsed agent carries classify → plan → execute forward in one context. The standalone interactive `/pipeline:classify-issue N` invocation and the `<!-- pipeline:path=D -->` body-marker route are UNCHANGED — they still post a `## Classification` comment and apply the path label directly.
 
 **Escalation backstop (down-route safety net).** The collapsed D lane has an escalation backstop: if the executor finds mid-run that the change exceeds D's envelope, it aborts up to a spawned PATH B run (see `execute-issue-plan`'s Collapsed inline D contract). That backstop is the precondition that makes a wrong B→D down-route (the #707 dependency) cheap and recoverable — mis-routing B work into D is reversed by escalation, not by shipping a too-large diff, so classification may lean D without fear.
 
@@ -95,11 +95,11 @@ Run before anything else. A trusted `## Classification` whose `createdAt >= issu
 
    ```bash
    # BEGIN-PATH-MARKER-PARSE
-   # Required env: ISSUE_BODY (issue body markdown, may be multi-line).
+   # Required env: ISSUE_BODY (issue body markdown, may be multi-line), CLAUDE_PLUGIN_ROOT.
    # Sets: MARKER_PATH ("A"|"B"|"C"|"D" or empty string).
    # Regex: <!--\s*pipeline:path=[A-Da-d]\s*--> (POSIX equivalent below).
    MARKER_PATH=""
-   _raw=$(printf '%s' "$ISSUE_BODY" \
+   _raw=$(printf '%s\n' "$ISSUE_BODY" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/strip-code-spans.sh" \
      | grep -oE '<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->' \
      | head -1)
    if [ -n "$_raw" ]; then
@@ -121,8 +121,8 @@ Run before anything else. A trusted `## Classification` whose `createdAt >= issu
    Pinned regex: `<!--\s*pipeline:path-hint=[A-Ca-c]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path-hint=[A-Ca-c][[:space:]]*-->`).
 
    ```bash
-   # BEGIN-PATH-HINT-PARSE  (env: ISSUE_BODY; sets HINT_PATH = A|B|C or "". D rejected to "".)
-   HINT_PATH=$(printf '%s' "$ISSUE_BODY" \
+   # BEGIN-PATH-HINT-PARSE  (env: ISSUE_BODY, CLAUDE_PLUGIN_ROOT; sets HINT_PATH = A|B|C or "". D rejected to "".)
+   HINT_PATH=$(printf '%s\n' "$ISSUE_BODY" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/strip-code-spans.sh" \
      | grep -oE '<!--[[:space:]]*pipeline:path-hint=[A-Za-z][[:space:]]*-->' | head -1 \
      | grep -oE '=[A-Za-z]' | tr -d '=' | tr 'a-z' 'A-Z')
    case "$HINT_PATH" in A|B|C) ;; *) HINT_PATH="" ;; esac
