@@ -63,6 +63,23 @@ for name in 01-stale-doc 02-script-bug 03-small-feature 04-race-vocab 05-two-dir
   i=$((i + 1))
 done
 
+# The slate README's `path` column (#1487) — the EXPECTED classification, the
+# last cell of each row. Unlike the path.txt decoy above, the grader reads it,
+# but only to append `path-mismatch=<expected>` when the OBSERVED path= differs;
+# path= itself stays the observation. 5001 (A/A) and 5003 (B/B) agree, 5004 is
+# classified D against an expected B, 5002/5005 are never classified.
+cat > "$HARNESS/dev/calib/slate/README.md" <<'SLATE'
+# synthetic slate
+
+| dir | shape | expected routing pressure | path |
+|-----|-------|---------------------------|------|
+| `01-stale-doc` | docs | PATH A | A |
+| `02-script-bug` | script bug | PATH D | D |
+| `03-small-feature` | feature | single execute agent | B |
+| `04-race-vocab` | race vocabulary | high uncertainty | B |
+| `05-two-dir` | three independent deliverables | PATH C fan-out | C |
+SLATE
+
 # The harness's cost/latency reporter. Records the environment it is invoked
 # with: it joins PRs against issue numbers, so an invocation carrying the
 # HARNESS's PIPELINE_REPO would join the WRONG repo's PRs against sandbox issue
@@ -1194,6 +1211,21 @@ expect_sub "path= comes from the ## Classification comment (5004)" \
   "$OUT" "CALIB issue=5004 path=D "
 expect_sub "an unclassified issue reports path=? rather than a label guess" \
   "$OUT" "CALIB issue=5002 path=? "
+
+# path-mismatch (#1487): the slate README's expected path is COMPARED against
+# the observed one, and only a disagreement is flagged.
+ROW_5004_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5004 ')"
+expect_sub "a row classified against its slate expectation flags path-mismatch (5004 D vs B)" \
+  "$ROW_5004_PM" " path-mismatch=B"
+ROW_5001_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
+refute_sub "a row whose path matches the slate carries no path-mismatch (5001 A/A)" \
+  "$ROW_5001_PM" "path-mismatch"
+ROW_5003_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5003 ')"
+refute_sub "a row whose path matches the slate carries no path-mismatch (5003 B/B)" \
+  "$ROW_5003_PM" "path-mismatch"
+ROW_5002_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5002 ')"
+refute_sub "an unclassified row (path=?) never reports path-mismatch (5002)" \
+  "$ROW_5002_PM" "path-mismatch"
 
 ROW_5001="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
 expect_sub "wall= spans the issue createdAt -> merging PR mergedAt" \
