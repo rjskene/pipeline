@@ -11,6 +11,11 @@ set -uo pipefail
 # deterministic 1/n slice of the corpus in the FOREGROUND so the operator/agent
 # can run `--chunk 1/4 … --chunk 4/4` as four sequential foreground Bash calls.
 #
+# Per #1508, `--chunk k/n` is the split mechanism of THIS repo's dogfood
+# `$PIPELINE_TEST_CMD` (`bash scripts/run-test-suite.sh`); the dispatch
+# contracts reference only `$PIPELINE_TEST_CMD`, never this plugin script, so
+# the mechanism is pinned here on the script rather than in skill prose.
+#
 # Contracts pinned here:
 #   1. `--chunk k/n` emits exactly one `CHUNK=<k>/<n> FILES=<count> RESULT=<pass|fail>`
 #      summary line and exits 0/1 accordingly.
