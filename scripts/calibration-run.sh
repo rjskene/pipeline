@@ -117,6 +117,10 @@ Options:
                    PIPELINE_PRE_PR_REVIEW (true|false) in the sandbox session,
                    toggling execute Step 8's pre-PR review loop on PATH A/B/C
                    (#1464). --no-pre-pr-review = off.
+  --path-c-fanout F  on|off  (default unset = the harness default, off) — sets
+                   PIPELINE_PATH_C_FANOUT (true|false) in the sandbox session,
+                   toggling the PATH C per-leaf tdd-implementer fan-out vs one
+                   inline execute agent (#1486).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -147,6 +151,9 @@ PLAN_GATE=""
 # PIPELINE_PRE_PR_REVIEW unset" (harness default off since #1482; `on` is the
 # opt-in arm).
 PRE_PR_REVIEW=""
+# Same contract for the PATH C fan-out arm (#1486): empty = "leave
+# PIPELINE_PATH_C_FANOUT unset" (harness default off; `on` is the opt-in arm).
+PATH_C_FANOUT=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -192,6 +199,8 @@ while [ $# -gt 0 ]; do
     --pre-pr-review)    require_value "$@"; PRE_PR_REVIEW="$2"; shift 2 ;;
     --pre-pr-review=*)  PRE_PR_REVIEW="${1#--pre-pr-review=}"; shift ;;
     --no-pre-pr-review) PRE_PR_REVIEW="off"; shift ;;
+    --path-c-fanout)    require_value "$@"; PATH_C_FANOUT="$2"; shift 2 ;;
+    --path-c-fanout=*)  PATH_C_FANOUT="${1#--path-c-fanout=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -221,6 +230,10 @@ esac
 case "$PRE_PR_REVIEW" in
   ''|on|off) ;;
   *) die_usage "--pre-pr-review must be one of on|off (got: $PRE_PR_REVIEW)" ;;
+esac
+case "$PATH_C_FANOUT" in
+  ''|on|off) ;;
+  *) die_usage "--path-c-fanout must be one of on|off (got: $PATH_C_FANOUT)" ;;
 esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--retag|--reset|--dry-run|--run is required"
@@ -350,6 +363,13 @@ build_launch() {
     on)  pre_pr_env=("PIPELINE_PRE_PR_REVIEW=true") ;;
     off) pre_pr_env=("PIPELINE_PRE_PR_REVIEW=false") ;;
   esac
+  # #1486: the PATH C fan-out arm — on|off maps onto the boolean knob the
+  # resolver + delegation hook read; empty sets nothing (same splice semantics).
+  local -a path_c_fanout_env=()
+  case "$PATH_C_FANOUT" in
+    on)  path_c_fanout_env=("PIPELINE_PATH_C_FANOUT=true") ;;
+    off) path_c_fanout_env=("PIPELINE_PATH_C_FANOUT=false") ;;
+  esac
   # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
@@ -374,7 +394,7 @@ build_launch() {
   esac
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" "${plan_gate_env[@]}"
-          "${pre_pr_env[@]}"
+          "${pre_pr_env[@]}" "${path_c_fanout_env[@]}"
           PIPELINE_HEADLESS=true
           "${bridge_env[@]}"
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
@@ -1288,6 +1308,9 @@ emit_calib_block() {
   # pre_pr_review=<on|off> (#1464): OPTIONAL and pre-built for the same reason.
   local pre_pr_atom=""
   [ -n "$PRE_PR_REVIEW" ] && pre_pr_atom=" pre_pr_review=$PRE_PR_REVIEW"
+  # path_c_fanout=<on|off> (#1486): OPTIONAL and pre-built for the same reason.
+  local path_c_fanout_atom=""
+  [ -n "$PATH_C_FANOUT" ] && path_c_fanout_atom=" path_c_fanout=$PATH_C_FANOUT"
   # bridge_prompts=<n> (#1421) — how many permission escalations THIS run raised
   # through the PermissionRequest bridge. It is the measurement that says whether
   # replacing --dangerously-skip-permissions with `--permission-mode auto` turned
@@ -1321,16 +1344,16 @@ emit_calib_block() {
     oc_atom=" output_complete=n/a"
   fi
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "$pass" "$graded" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom" "$oc_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$path_c_fanout_atom" "$bridge_atom" "$oc_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$bridge_atom" "$oc_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$path_c_fanout_atom" "$bridge_atom" "$oc_atom"
   fi
 }
 
@@ -1369,13 +1392,14 @@ cmd_run() {
   # #1409/#1414: a non-default arm suffixes both artifacts so it can never be
   # mistaken for the baseline; the default arms keep the plain name.
   # Composable in a FIXED order — -hooks-off, then -bexec-<M>, then
-  # -plan-gate-<v> (#1429) — so an every-arm run names
-  # <ts>-hooks-off-bexec-opus-plan-gate-single and run-retro.sh has one order to
-  # peel.
+  # -plan-gate-<v> (#1429), then -path-c-fanout-<v> (#1486) — so an every-arm
+  # run names <ts>-hooks-off-bexec-opus-plan-gate-single-path-c-fanout-on and
+  # run-retro.sh has one order to peel.
   local run_suffix=""
   [ "$HOOKS" = "off" ] && run_suffix="${run_suffix}-hooks-off"
   [ -n "$EXECUTOR_MODEL" ] && run_suffix="${run_suffix}-bexec-$EXECUTOR_MODEL"
   [ -n "$PLAN_GATE" ] && run_suffix="${run_suffix}-plan-gate-$PLAN_GATE"
+  [ -n "$PATH_C_FANOUT" ] && run_suffix="${run_suffix}-path-c-fanout-$PATH_C_FANOUT"
   RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
@@ -1402,6 +1426,7 @@ case "$MODE" in
     [ -n "$EXECUTOR_MODEL" ] && ARM_TOKENS+=("bexec=$EXECUTOR_MODEL")
     [ -n "$PLAN_GATE" ] && ARM_TOKENS+=("plan_gate=$PLAN_GATE")
     [ -n "$PRE_PR_REVIEW" ] && ARM_TOKENS+=("pre_pr_review=$PRE_PR_REVIEW")
+    [ -n "$PATH_C_FANOUT" ] && ARM_TOKENS+=("path_c_fanout=$PATH_C_FANOUT")
     dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;

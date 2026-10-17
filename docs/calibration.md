@@ -33,7 +33,8 @@ bash scripts/calibration-run.sh --bootstrap|--retag|--reset|--dry-run|--run \
     [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
     [--executor-model opus|sonnet] \
     [--plan-gate full|single|none|annotate] \
-    [--pre-pr-review on|off | --no-pre-pr-review]
+    [--pre-pr-review on|off | --no-pre-pr-review] \
+    [--path-c-fanout on|off]
 ```
 
 | Mode | What it does | Costs money |
@@ -113,6 +114,14 @@ harness default (`false`, #1482); `--pre-pr-review on` is the opt-in arm. A set
 run is tagged `pre_pr_review=<v>` on the total line; it carries NO artifact
 suffix (`run-retro.sh` peels a fixed list), so read the atom to tell an arm
 artifact from a baseline one.
+
+`--path-c-fanout on|off` (default unset, #1486) sets the PATH C fan-out knob
+(see `pipeline.config.example`, `#1486` block) to `true|false` in the sandbox session — `on` restores the PATH C per-leaf
+`tdd-implementer` fan-out (and arms the delegation hook); `off` runs a
+`multi-task` issue as ONE inline execute agent, exactly as PATH B. Unset means
+the harness default (`false`, off). A set run is tagged `path_c_fanout=<v>` on
+the total line and carries a `-path-c-fanout-<v>` artifact suffix after
+`-plan-gate-<v>`, composable with the other suffixes.
 
 ## Harness staging
 
@@ -275,6 +284,9 @@ the first line of the block.
   grammar field, so the `CALIB-TOTAL` grammar above is unchanged.
 - `pre_pr_review` — an OPTIONAL per-RUN atom like `bexec`: `on` or `off`, the
   arm `--pre-pr-review` launched under (#1464). Absent when the flag was not
+  passed.
+- `path_c_fanout` — an OPTIONAL per-RUN atom like `bexec`: `on` or `off`, the
+  arm `--path-c-fanout` launched under (#1486). Absent when the flag was not
   passed.
 - `output_complete` — a per-RUN atom on the `CALIB-TOTAL` line only: `<n>/<N>`
   priced rows whose output tokens are complete (`n/a` when the pricing JSON lacks

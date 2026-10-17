@@ -43,8 +43,10 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 PROJ="$WORKDIR/proj"
 mkdir -p "$PROJ/.claude/logs/subagents" "$PROJ/web"
-# pipeline.config provides PIPELINE_REPO at hook fire time.
-printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
+# pipeline.config provides PIPELINE_REPO at hook fire time. #1486: the hook only
+# fires when the PATH C fan-out knob is on, so the shared fixture turns it on and
+# every existing block case keeps its meaning; Tests 23-26 vary the knob.
+printf 'PIPELINE_REPO="fake/repo"\nPIPELINE_PATH_C_FANOUT="true"\n' > "$PROJ/pipeline.config"
 
 # Stub gh on PATH. Returns labels from STUB_LABELS (newline-separated). Fails if STUB_GH_FAIL=1.
 STUB_DIR="$WORKDIR/stub"
@@ -366,6 +368,48 @@ write_dispatch "sess-evil" "evil:tdd-implementer-x" "target=web/" "Add foo"
 PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.sh"},"session_id":"sess-evil"}'
 RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
 if [ "$RC" = "2" ]; then pass_msg "exit 2 (impostor suffix does not authorize)"; else fail_msg "expected exit 2 for evil:tdd-implementer-x dispatch, got $RC"; fi
+
+# --- Tests 23-26 (#1486): PIPELINE_PATH_C_FANOUT gate ---
+# Fan-out off (the default) means PATH C runs as ONE inline execute agent that
+# edits impl files itself, so the delegation hook must stay inert. Env wins over
+# pipeline.config (calibration exports the knob into the sandbox session).
+write_fanout_cfg() {
+  if [ -n "$1" ]; then
+    printf 'PIPELINE_REPO="fake/repo"\nPIPELINE_PATH_C_FANOUT="%s"\n' "$1" > "$PROJ/pipeline.config"
+  else
+    printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
+  fi
+}
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"web/foo.ts"},"session_id":"sess-knob"}'
+
+echo "Test 23 (#1486): knob absent from config, PATH C, no dispatch -> exit 0"
+inc
+reset_state
+write_fanout_cfg ""
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (fan-out off by default)"; else fail_msg "expected exit 0 with knob absent, got $RC"; fi
+
+echo "Test 24 (#1486): config PIPELINE_PATH_C_FANOUT=false -> exit 0"
+inc
+reset_state
+write_fanout_cfg "false"
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (knob false)"; else fail_msg "expected exit 0 with knob false, got $RC"; fi
+
+echo "Test 25 (#1486): config PIPELINE_PATH_C_FANOUT=bogus -> exit 0 (garbage = off)"
+inc
+reset_state
+write_fanout_cfg "bogus"
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task")
+if [ "$RC" = "0" ]; then pass_msg "exit 0 (garbage knob)"; else fail_msg "expected exit 0 with garbage knob, got $RC"; fi
+
+echo "Test 26 (#1486): config knob absent + env PIPELINE_PATH_C_FANOUT=true -> exit 2 (env wins)"
+inc
+reset_state
+write_fanout_cfg ""
+RC=$(run_hook "$PAYLOAD" CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS="multi-task" PIPELINE_PATH_C_FANOUT=true)
+if [ "$RC" = "2" ]; then pass_msg "exit 2 (env knob on)"; else fail_msg "expected exit 2 with env knob on, got $RC"; fi
+write_fanout_cfg "true"
 
 echo ""
 echo "================================"

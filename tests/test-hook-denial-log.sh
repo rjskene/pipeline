@@ -157,7 +157,7 @@ drive_deny() {
     enforce-ci-wait)
       extra=(CLAUDE_PIPELINE_SKILL=evaluate-issue-pr STUB_GH_ROLLUP_LEN=1) ;;
     enforce-path-c-delegation)
-      extra=(CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS=multi-task) ;;
+      extra=(CLAUDE_PIPELINE_ISSUE_NUMBER=999 STUB_LABELS=multi-task PIPELINE_PATH_C_FANOUT=true) ;;
   esac
   run_hook "$stem.py" "$(payload_for "$stem" "$sid")" \
     CLAUDE_SESSION_ID="$sid" "${extra[@]+"${extra[@]}"}" "$@"
