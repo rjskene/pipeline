@@ -30,10 +30,17 @@ set -uo pipefail
 #     `bash .../pr-eval-preflight.sh` in prose to explain a hook's reach, in a
 #     file with zero bash fences.
 # A prose-scanning guard could therefore never go green.
+#
+# HELPER SCRIPTS. The wave loops moved out of the markdown into
+# scripts/fullsend-*.sh (each SKILL.md fence is now ONE helper call carrying the
+# whole wave's issue list). Each helper is scanned as ONE whole fence, so the
+# same rule applies there: every call to the six scripts sits in a file with a
+# `for N in` wave loop.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKILL="$ROOT/skills/fullsend/SKILL.md"
 REF_DIR="$ROOT/skills/fullsend/references"
+SCRIPTS_DIR="$ROOT/scripts"
 
 # The six scripts calibration run 20 measured as per-issue turn amplifiers.
 BASENAMES="transition-issue.sh pr-eval-preflight.sh auto-merge-gate.sh resolve-execute-dispatch.sh finalize-issue-labels.sh rewrite-eval-screenshot-urls.sh"
@@ -54,22 +61,26 @@ fi
 # site, where the flag reports whether the ENCLOSING fence carries a
 # `for N in` header. Fence grammar is the #1281 one (indented fences count —
 # the fences nested under numbered list items are exactly the ones at issue).
+# scan <file> [whole] — with `whole` the file is ONE fence (a helper script);
+# comment lines are skipped there. A call names `scripts/<b>` (markdown) or
+# `"$SELF_DIR/<b>"` (helper), so the basename must follow a `/` or `"`.
 # ---------------------------------------------------------------------------
 scan() {
-  awk -v names="$BASENAMES" '
+  awk -v names="$BASENAMES" -v whole="${2:-}" '
     function is_open(l)  { return l ~ /^[[:space:]]*```bash[[:space:]]*$/ }
     function is_close(l) { return l ~ /^[[:space:]]*```[[:space:]]*$/ }
     function flush_fence(   i) {
       for (i = 1; i <= nc; i++) printf "%d\t%s\t%s\n", cl[i], cn[i], (hasfor ? "YES" : "NO")
       nc = 0; hasfor = 0
     }
-    BEGIN { n = split(names, a, " ") }
+    BEGIN { n = split(names, a, " "); if (whole != "") inb = 1 }
     {
+      if (whole != "" && $0 ~ /^[[:space:]]*#/) next
       if (!inb) { if (is_open($0)) { inb = 1; nc = 0; hasfor = 0 } next }
-      if (is_close($0)) { flush_fence(); inb = 0; next }
+      if (whole == "" && is_close($0)) { flush_fence(); inb = 0; next }
       if ($0 ~ /^[[:space:]]*for N in /) hasfor = 1
       for (i = 1; i <= n; i++) {
-        if ($0 ~ ("(bash|source)[[:space:]][^|]*scripts/" a[i])) {
+        if ($0 ~ ("(bash|source)[[:space:]][^|]*[/\"]" a[i])) {
           nc++; cl[nc] = FNR; cn[nc] = a[i]
         }
       }
@@ -132,6 +143,28 @@ else
   pass_msg "scanner ignores the prose call-site line (prose is out of scope)"
 fi
 
+cat > "$SELF_DIR/fixture-helper.sh" <<'SELFTEST'
+#!/bin/bash
+# bash "$SELF_DIR/transition-issue.sh" in a comment is ignored
+source "$SELF_DIR/auto-merge-gate.sh"
+for N in "$@"; do
+  bash "$SELF_DIR/finalize-issue-labels.sh" "$N"
+done
+SELFTEST
+cat > "$SELF_DIR/fixture-bare.sh" <<'SELFTEST'
+#!/bin/bash
+bash "$SELF_DIR/pr-eval-preflight.sh" "$1"
+SELFTEST
+H_HITS="$(scan "$SELF_DIR/fixture-helper.sh" whole)"
+B_HITS="$(scan "$SELF_DIR/fixture-bare.sh" whole)"
+if [ "$(printf '%s\n' "$H_HITS" | grep -c 'YES$')" = "2" ] \
+   && ! printf '%s\n' "$H_HITS" | grep -q 'transition-issue.sh' \
+   && [ "$(printf '%s\n' "$B_HITS" | grep -c 'NO$')" = "1" ]; then
+  pass_msg "whole-file helper scan: loop file reads batched, loop-less file reads un-batched, comments ignored"
+else
+  fail_msg "whole-file helper scan is not trustworthy (helper: ${H_HITS:-<none>}; bare: ${B_HITS:-<none>})"
+fi
+
 # ---------------------------------------------------------------------------
 scenario "every in-fence call site is batched by a 'for N in' wave loop"
 
@@ -141,9 +174,15 @@ for f in "$REF_DIR"/*.md; do
   SCAN_FILES="$SCAN_FILES $f"
 done
 
+HELPER_FILES=""
+for f in "$SCRIPTS_DIR"/fullsend-*.sh; do
+  [ -f "$f" ] || continue
+  HELPER_FILES="$HELPER_FILES $f"
+done
+
 ALL_HITS=""
-for f in $SCAN_FILES; do
-  hits="$(scan "$f")"
+for f in $SCAN_FILES $HELPER_FILES; do
+  case "$f" in *.sh) hits="$(scan "$f" whole)" ;; *) hits="$(scan "$f")" ;; esac
   [ -n "$hits" ] || continue
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
@@ -156,7 +195,7 @@ OFFENDERS="$(printf '%s' "$ALL_HITS" | grep 'NO$' || true)"
 OFF_N="$(printf '%s' "$OFFENDERS" | grep -c . || true)"
 
 if [ "$OFF_N" -eq 0 ]; then
-  pass_msg "zero un-batched in-fence call sites across SKILL.md + references/"
+  pass_msg "zero un-batched in-fence call sites across SKILL.md + references/ + scripts/fullsend-*.sh"
 else
   fail_msg "$OFF_N in-fence call site(s) are NOT inside a 'for N in' fence — batch them per wave (#1452)"
   printf '%s\n' "$OFFENDERS" | sed 's/^/    /'

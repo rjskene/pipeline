@@ -32,16 +32,16 @@ set -uo pipefail
 # PRODUCING side (the descriptions the orchestrator authors), so what this test
 # pins is the DOC that binds the producer.
 #
-# ANCHOR NOTE: the anchor is the literal `**Cost attribution key (#1387)` — NOT
+# ANCHOR NOTE: the anchor is the literal `**Cost attribution key —` — NOT
 # the bare `**Cost attribution`, which already matches the legacy PATH C leaf
-# block (skills/fullsend/SKILL.md:586, header `**Cost attribution (#1299)`).
+# block (header `**Cost attribution — `).
 # The exactly-one-match assertion below is what keeps the extractor from binding
 # that legacy block.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# #1444 — the `**Cost attribution key (#1387)` block and the legacy PATH C leaf
-# `**Cost attribution (#1299)` block both moved with
+# The `**Cost attribution key —` block and the legacy PATH C leaf
+# `**Cost attribution — ` block both live with
 # `## Dispatch routing by path tier (reference)` into fullsend's reference file.
 SKILL="$REPO_ROOT/skills/fullsend/references/dispatch-routing.md"
 LIB="$REPO_ROOT/scripts/_token-usage-lib.sh"
@@ -143,8 +143,8 @@ assert_both_producers "neg-bare-integer" "plan-issue 1387" "plan/single/"
 echo ""
 echo "== #1387 hoisted canonical-shape block =="
 
-ANCHOR='**Cost attribution key (#1387)'
-LEGACY_ANCHOR='**Cost attribution (#1299)'
+ANCHOR='**Cost attribution key —'
+LEGACY_ANCHOR='**Cost attribution — '
 
 ANCHOR_COUNT=$(grep -cF -- "$ANCHOR" "$SKILL" || true)
 
@@ -162,7 +162,7 @@ if [ "$ANCHOR_COUNT" -eq 1 ] && [ -n "$BLOCK" ]; then
   pass_msg "anchor: canonical-shape block extracted"
 else
   if [ "$ANCHOR_COUNT" -eq 0 ]; then
-    fail_msg "anchor: canonical-shape block extracted — the literal '$ANCHOR' is ABSENT from skills/fullsend/SKILL.md (the hoisted block does not exist yet)"
+    fail_msg "anchor: canonical-shape block extracted — the literal '$ANCHOR' is ABSENT from $SKILL (the hoisted block does not exist yet)"
   elif [ "$ANCHOR_COUNT" -gt 1 ]; then
     fail_msg "anchor: canonical-shape block extracted — the literal '$ANCHOR' matches $ANCHOR_COUNT times; it MUST match exactly once or the extractor binds the wrong block"
   else

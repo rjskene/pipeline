@@ -25,9 +25,10 @@ set -uo pipefail
 #      `rewrite-eval-screenshot-urls.sh`, the `Auto-merged: eval Approved …`
 #      footer, `finalize-issue-labels.sh`, the #813 already-closed guard, the
 #      `Auto-merge skipped:` comment and the #489 `manual-merge` auto-apply exist
-#      ONLY as skill prose. Deleting Step 11 without relocating them would leave
-#      inline PATH A/B/D PRs unmerged. They must be present in
-#      `skills/fullsend/references/auto-merge-gate.md`.
+#      ONLY in the orchestrator's procedure. Deleting them would leave inline
+#      PATH A/B/D PRs unmerged. They must be present in the union of
+#      `skills/fullsend/references/auto-merge-gate.md` and the Step 7 helpers
+#      it calls (`scripts/fullsend-{gate,merge-green,block-merge}.sh`).
 #
 # Plus the three OWNERSHIP sites that must stop naming the evaluator as the
 # firing party: `## Auto-merge ownership`, the Step 8 report legend, and the
@@ -46,7 +47,13 @@ source "$SCRIPT_DIR/_lib/skill-body.sh"
 
 FS="$REPO_ROOT/skills/fullsend/SKILL.md"
 GATE_REF="$REPO_ROOT/skills/fullsend/references/auto-merge-gate.md"
-DISPATCH_REF="$REPO_ROOT/skills/fullsend/references/pr-eval-dispatch.md"
+GATE_HELPER="$REPO_ROOT/scripts/fullsend-gate.sh"
+GATE_PROC=(
+  "$GATE_REF"
+  "$GATE_HELPER"
+  "$REPO_ROOT/scripts/fullsend-merge-green.sh"
+  "$REPO_ROOT/scripts/fullsend-block-merge.sh"
+)
 
 PASS=0; FAIL=0; TESTS=0
 pass_msg() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
@@ -89,10 +96,20 @@ GATE_NEEDLES=(
 )
 for needle in "${GATE_NEEDLES[@]}"; do
   inc
-  if [ -f "$GATE_REF" ] && grep -qF -- "$needle" "$GATE_REF"; then
-    pass_msg "A: gate reference carries \"$needle\""
+  if cat "${GATE_PROC[@]}" 2>/dev/null | grep -qF -- "$needle"; then
+    pass_msg "A: gate procedure carries \"$needle\""
   else
-    fail_msg "A: gate reference MISSING \"$needle\" — scripts/auto-merge-gate.sh does not do this, so the prose is the only copy"
+    fail_msg "A: gate procedure MISSING \"$needle\" — scripts/auto-merge-gate.sh does not do this, so the procedure is the only copy"
+  fi
+done
+
+# The reference must name every helper it delegates to.
+for h in fullsend-merge-green.sh fullsend-block-merge.sh fullsend-gate.sh; do
+  inc
+  if grep -qF -- "$h" "$GATE_REF"; then
+    pass_msg "A: gate reference names $h"
+  else
+    fail_msg "A: gate reference does not name $h"
   fi
 done
 
@@ -106,28 +123,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# B. The orchestrator-facing PR-eval dispatch sections were relocated too.
+# B. The orchestrator-facing PR-eval dispatch contract lives in Step 7.
 # ---------------------------------------------------------------------------
-inc_scenario "B: skills/fullsend/references/pr-eval-dispatch.md carries the dispatch contract"
+inc_scenario "B: fullsend SKILL.md carries the PR-eval invocation-mode contract"
 
 inc
-if [ -f "$DISPATCH_REF" ]; then
-  pass_msg "B0: references/pr-eval-dispatch.md exists"
+if skill_body_has "$FS" '**PR-eval invocation mode.**'; then
+  pass_msg "B: SKILL.md body carries the '**PR-eval invocation mode.**' paragraph"
 else
-  fail_msg "B0: references/pr-eval-dispatch.md is MISSING"
+  fail_msg "B: SKILL.md body MISSING the '**PR-eval invocation mode.**' paragraph"
 fi
-
-DISPATCH_NEEDLES=(
-  'Invocation mode'
-)
-for needle in "${DISPATCH_NEEDLES[@]}"; do
-  inc
-  if [ -f "$DISPATCH_REF" ] && grep -qF -- "$needle" "$DISPATCH_REF"; then
-    pass_msg "B: dispatch reference carries \"$needle\""
-  else
-    fail_msg "B: dispatch reference MISSING \"$needle\""
-  fi
-done
 
 # ---------------------------------------------------------------------------
 # C. Step 7 carries the REAL call site — a bash fence, not prose.
@@ -148,12 +153,12 @@ else
   fail_msg "C0: could not extract the Step 7 region (markers moved?)"
 fi
 
-# The fence the whole issue turns on: sourced helper + resolved sources + token.
+# Step 7 names the procedure and calls the gate helper from a fence.
 STEP7_NEEDLES=(
   'scripts/auto-merge-gate.sh'
-  'check-capability-refusal.sh" --resolve-sources'
+  'scripts/fullsend-gate.sh'
+  '--resolve-sources'
   'PIPELINE_CAPABILITY_REFUSAL_SOURCES'
-  'REASON=$(auto_merge_should_fire'
   'references/auto-merge-gate.md'
 )
 for needle in "${STEP7_NEEDLES[@]}"; do
@@ -165,7 +170,17 @@ for needle in "${STEP7_NEEDLES[@]}"; do
   fi
 done
 
-# Non-vacuity: the needles above must sit INSIDE a bash fence, not in prose.
+# The helper is the executable call site: sourced gate + resolved sources + token.
+for needle in 'source "$SELF_DIR/auto-merge-gate.sh"' 'check-capability-refusal.sh" --resolve-sources' 'PIPELINE_CAPABILITY_REFUSAL_SOURCES' 'REASON=$(auto_merge_should_fire'; do
+  inc
+  if grep -vE '^[[:space:]]*#' "$GATE_HELPER" | grep -qF -- "$needle"; then
+    pass_msg "C: fullsend-gate.sh carries \"$needle\""
+  else
+    fail_msg "C: fullsend-gate.sh MISSING \"$needle\""
+  fi
+done
+
+# Non-vacuity: Step 7 must call the helper INSIDE a bash fence, not in prose.
 # Without this the whole scenario is satisfiable by a sentence.
 STEP7_FENCED="$(printf '%s\n' "$STEP7" | awk '
   /^[[:space:]]*```bash[[:space:]]*$/ { inb = 1; next }
@@ -173,10 +188,10 @@ STEP7_FENCED="$(printf '%s\n' "$STEP7" | awk '
   inb { print }
 ')"
 inc
-if grep -qF 'auto_merge_should_fire' <<<"$STEP7_FENCED"; then
-  pass_msg "C: the auto_merge_should_fire call is INSIDE a bash fence (an executable call site, not prose)"
+if grep -qF 'scripts/fullsend-gate.sh' <<<"$STEP7_FENCED"; then
+  pass_msg "C: the fullsend-gate.sh call is INSIDE a bash fence (an executable call site, not prose)"
 else
-  fail_msg "C: auto_merge_should_fire does not appear inside any Step 7 bash fence — prose is what #1444 is fixing"
+  fail_msg "C: fullsend-gate.sh does not appear inside any Step 7 bash fence — a prose-only gate never fires"
 fi
 
 # ---------------------------------------------------------------------------
@@ -205,30 +220,8 @@ else
   pass_msg "D1: ownership section no longer credits evaluate-issue-pr Step 11"
 fi
 
-# D2 — the Step 8 report legend.
-inc
-if skill_body_has "$FS" "the evaluator's Step 11 already merged it"; then
-  fail_msg "D2: the Step 8 report legend still attributes 'yes (eval)' to the evaluator's Step 11"
-else
-  pass_msg "D2: the Step 8 report legend no longer attributes a merge to the evaluator's Step 11"
-fi
-
-# D3 — the inline PR-eval dispatch prompt contract. It made "the greenlight gate
-# fired" a MANDATORY terminal state of the dispatched evaluator; the evaluator
-# can no longer satisfy that, so a dispatch built from it would strand every PR.
-inc
-if skill_body_has "$FS" "the greenlight gate fired"; then
-  fail_msg "D3: the inline PR-eval dispatch contract still requires 'the greenlight gate fired' as an evaluator terminal state"
-else
-  pass_msg "D3: the inline PR-eval dispatch contract no longer requires the evaluator to fire the gate"
-fi
-inc
-if skill_body_has "$FS" "post \`## Evaluation\` → fire greenlight gate"; then
-  fail_msg "D3: the dispatch contract still tells the evaluator to 'post ## Evaluation → fire greenlight gate'"
-else
-  pass_msg "D3: the dispatch contract no longer tells the evaluator to fire the gate"
-fi
-# ...and replaces it with the two terminal states it CAN satisfy.
+# D3 — the inline PR-eval dispatch contract names a terminal state the
+# evaluator CAN satisfy.
 inc
 if skill_body_has "$FS" '**Verdict:**'; then
   pass_msg "D3: the dispatch contract still requires an explicit **Verdict:** line"

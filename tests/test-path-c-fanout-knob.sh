@@ -87,10 +87,10 @@ fi
 
 # --- (6) the resolver token list + relay sentence cover C-off ----------------
 inc
-if grep -qF '`PATH_C_FANOUT=` (#1486' "$ROUTING"; then
+if grep -qF '`PATH_C_FANOUT=` (PATH C only)' "$ROUTING"; then
   pass_msg "dispatch-routing.md resolver token list names PATH_C_FANOUT="
 else
-  fail_msg "dispatch-routing.md resolver token list must name \`PATH_C_FANOUT=\` (#1486 ...)"
+  fail_msg "dispatch-routing.md resolver token list must name \`PATH_C_FANOUT=\` (PATH C only)"
 fi
 inc
 if grep -qF 'into the A/B (and PATH C PATH_C_FANOUT=off) execute prompt' "$ROUTING"; then

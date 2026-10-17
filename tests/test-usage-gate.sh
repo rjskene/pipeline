@@ -382,7 +382,7 @@ if [ "$LEAK_FOUND" -eq 0 ]; then pass_msg "canary absent from all breadcrumb fil
 # --- Scenario 13: fullsend SKILL.md integration (prose guard) ---
 inc_scenario "Scenario 13: fullsend SKILL.md wires the gate (prose guard)"
 
-# #1444 — the `## Usage gate (#969)` BODY moved out of the fullsend hot path
+# #1444 — the `## Usage gate` BODY moved out of the fullsend hot path
 # into its reference file; the heading + decision-line branch stay in SKILL.md.
 # This scenario pins the gate PROCEDURE, so it follows the prose to its new home.
 FULLSEND_SKILL="$REPO_ROOT/skills/fullsend/references/usage-gate.md"

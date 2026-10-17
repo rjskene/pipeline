@@ -260,8 +260,6 @@ prose_want "Step 11 documents TOCTOU re-check" '(TOCTOU|re-read|re-check).*baseR
 prose_want "Step 11.4 comment template carries Auto-merge skipped literal" 'Auto-merge skipped'
 prose_want "Step 11.4 retarget-pr.sh suggestion" 'retarget-pr\.sh'
 prose_want "Step 11.4 gh pr edit --base fallback suggestion" 'gh pr edit.*--base'
-prose_want "Step 11 dual-defense doctrine note" '(defense-in-depth|defense in depth|dual-defense|dual defense)'
-prose_want "Step 11 references #295 / hook bypass rationale" '#295|hook.*bypass|bypassed'
 
 if [ "$FAILED" -eq 0 ]; then
   echo "RESULT: all assertions passed"

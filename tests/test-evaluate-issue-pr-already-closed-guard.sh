@@ -23,9 +23,11 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # #1444: the `gh issue close` guard relocated with the gate procedure.
 SKILL="${ROOT}/skills/fullsend/references/auto-merge-gate.md"
+# The green merge loop (and its close guard) is the fullsend Step 7 helper.
+HELPER="${ROOT}/scripts/fullsend-merge-green.sh"
 
-if [ ! -f "$SKILL" ]; then
-  echo "FAIL: prerequisite SKILL.md missing"
+if [ ! -f "$SKILL" ] || [ ! -f "$HELPER" ]; then
+  echo "FAIL: prerequisite auto-merge-gate.md or fullsend-merge-green.sh missing"
   exit 1
 fi
 
@@ -46,8 +48,8 @@ for util in grep head awk cat sed; do
 done
 
 # -----------------------------------------------------------------------------
-# Extract the guard snippet from the SKILL so the test exercises the SAME
-# code the skill prescribes (not a private re-implementation).
+# Extract the guard snippet from the helper so the test exercises the SAME
+# code the pipeline runs (not a private re-implementation).
 #
 # #1452 NARROWED THE SLICE. The gate reference's step-3 green path collapsed
 # into ONE batched `for N in $GREEN` wave loop, so "the whole fenced bash block
@@ -63,9 +65,6 @@ done
 # -----------------------------------------------------------------------------
 SNIPPET="$TMP/close_snippet.sh"
 awk '
-  /^[[:space:]]*```bash/ { inblk=1; next }
-  /^[[:space:]]*```/      { inblk=0; next }
-  !inblk { next }
   {
     line=$0; sub(/^[[:space:]]+/, "", line)
     if (!slicing) {
@@ -76,7 +75,7 @@ awk '
     if (line ~ /^if |; then$/) depth++
     if (line ~ /^fi$/) { depth--; if (depth <= 0) exit }
   }
-' "$SKILL" > "$SNIPPET"
+' "$HELPER" > "$SNIPPET"
 
 # Tripwire: a relocation must red the extractor LOUDLY, not pass vacuously.
 for need in 'gh issue close' 'already closed' 'exit 1'; do
@@ -184,7 +183,6 @@ prose_want() {
   fi
 }
 prose_want "Step 11 documents already-closed benign swallow" 'already closed|already-closed'
-prose_want "Step 11 references #813" '#813'
 
 if [ "$FAILED" -eq 0 ]; then
   echo "RESULT: all assertions passed"

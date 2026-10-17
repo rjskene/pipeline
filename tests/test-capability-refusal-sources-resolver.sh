@@ -44,9 +44,10 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 DETECTOR="$ROOT/scripts/check-capability-refusal.sh"
-# #1444: the gate call site relocated out of evaluate-issue-pr Step 11.2 into
-# the orchestrator-owned reference; the (k)/(l)/(m) assertions follow it.
-EVAL_SKILL="$ROOT/skills/fullsend/references/auto-merge-gate.md"
+# The gate call site lives in the fullsend Step 7 helper script (it moved out
+# of evaluate-issue-pr Step 11.2, then out of the auto-merge-gate reference
+# fence); the (k)/(l)/(m) assertions follow it.
+EVAL_SKILL="$ROOT/scripts/fullsend-gate.sh"
 GATE="$ROOT/scripts/auto-merge-gate.sh"
 OBSERVABILITY="$ROOT/docs/observability.md"
 
@@ -369,9 +370,9 @@ if [ ! -f "$EVAL_SKILL" ]; then
 else
   # END anchor re-pinned by #1420: Step 11.2b (the split-role gate) is gone, so
   # the heading that now follows Step 11.2 is the `green` branch.
-  M_SLICE="$(slice_between "$EVAL_SKILL" '**Source the helper and run the gate.**' '3. **On `green`:**')"
+  M_SLICE="$(slice_between "$EVAL_SKILL" 'source "$SELF_DIR/auto-merge-gate.sh"' 'for N in')"
   if [ -z "$M_SLICE" ]; then
-    fail "(m) Step 11.2 ('Source the helper and run the gate.') not found in $EVAL_SKILL"
+    fail "(m) the gate helper's resolve-sources block not found in $EVAL_SKILL"
   else
     for tok in resolved no-log-dir unresolvable-root; do
       if printf '%s' "$M_SLICE" | grep -qF "$tok"; then
