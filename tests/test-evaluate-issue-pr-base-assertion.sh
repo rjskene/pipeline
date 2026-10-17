@@ -256,6 +256,7 @@ prose_want() {
 }
 
 prose_want "Step 11 enumerates block-base-mismatch token" 'block-base-mismatch'
+prose_want "Step 11 layered base-enforcement note" '(defense-in-depth|defense in depth|layered)'
 prose_want "Step 11 documents TOCTOU re-check" '(TOCTOU|re-read|re-check).*baseRefName|baseRefName.*(TOCTOU|re-read|re-check)'
 prose_want "Step 11.4 comment template carries Auto-merge skipped literal" 'Auto-merge skipped'
 prose_want "Step 11.4 retarget-pr.sh suggestion" 'retarget-pr\.sh'
