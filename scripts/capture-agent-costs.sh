@@ -247,6 +247,11 @@ def issue_from_description(d):
         if m:
             return m.group(1)
     m = re.search(r"#(\d+)", d)
+    if m:
+        return m.group(1)
+    # No-'#' fallback (#1499): consulted ONLY when no '#N' matched, so the
+    # widening is monotone ("" -> N). 2+ digits keeps `plan 3 waves` unattributed.
+    m = re.search(r"\b(?:issue|plan|eval(?:uate)?)\s+(\d{2,})\b", d, re.IGNORECASE)
     return m.group(1) if m else ""
 
 
