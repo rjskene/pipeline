@@ -97,18 +97,10 @@ TMUX_WINDOW="issue-${ISSUE_NUM}"
 # probe is `command -v systemd-run` AND a cheap live `systemd-run --user`
 # smoke, because presence on PATH alone is insufficient (a Git-Bash host may
 # have the binary but no user manager).
-#   MemoryMax (browser) — needs-browser spawned agents run chromium, which plus a
-#               loaded page can exceed the 2G default and get OOM-killed inside the
-#               scope (a spurious visual-proof failure). They get a higher ceiling
-#               via PIPELINE_AGENT_MEMORY_MAX_BROWSER (default 4G) selected AFTER
-#               label detection (issue #961).
 AGENT_MEMORY_MAX="${PIPELINE_AGENT_MEMORY_MAX:-2G}"
-AGENT_MEMORY_MAX_BROWSER="${PIPELINE_AGENT_MEMORY_MAX_BROWSER:-4G}"
 AGENT_TASKS_MAX="${PIPELINE_AGENT_TASKS_MAX:-512}"
-# Probe systemd-run availability now, but DEFER building SCOPE_PREFIX until after
-# HAS_NEEDS_BROWSER is known (below), so the MemoryMax ceiling can be chosen from
-# the label (#961). The probe AND-s `command -v` with a cheap live smoke per the
-# block comment above.
+# Probe systemd-run availability now; SCOPE_PREFIX is built below. The probe
+# AND-s `command -v` with a cheap live smoke per the block comment above.
 SCOPE_PREFIX=""
 SYSTEMD_SCOPE_OK=0
 if command -v systemd-run >/dev/null 2>&1 \
@@ -173,12 +165,10 @@ if [ -n "$SKILL_ALIAS" ] && [ -n "$ISSUE_NUM" ]; then
     HAS_DOCS=0
     HAS_QUICK=0
     HAS_MULTI=0
-    HAS_NEEDS_BROWSER=0
     while IFS= read -r lbl; do
       [ "$lbl" = "docs-only" ] && HAS_DOCS=1
       [ "$lbl" = "quick-fix" ] && HAS_QUICK=1
       [ "$lbl" = "multi-task" ] && HAS_MULTI=1
-      [ "$lbl" = "needs-browser" ] && HAS_NEEDS_BROWSER=1
     done <<< "$LABELS"
     # Apply precedence A > D > C > B.
     if [ "$HAS_DOCS" = "1" ]; then
@@ -208,40 +198,23 @@ if [ -n "$SKILL_ALIAS" ] && [ -n "$ISSUE_NUM" ]; then
   fi
 fi
 
-# --- Build SCOPE_PREFIX now that HAS_NEEDS_BROWSER is known (issue #961) ---
-# needs-browser agents run chromium and need a higher MemoryMax than the 2G
-# default; pick PIPELINE_AGENT_MEMORY_MAX_BROWSER (default 4G) for them, the base
-# PIPELINE_AGENT_MEMORY_MAX (default 2G) otherwise. The browser default is
-# independent of the base knob: setting only PIPELINE_AGENT_MEMORY_MAX does NOT
-# clamp browser agents. SYSTEMD_SCOPE_OK was probed above; when 0, SCOPE_PREFIX
-# stays empty (the graceful-degrade unbounded launch + WARNING already emitted).
-EFFECTIVE_MEMORY_MAX="$AGENT_MEMORY_MAX"
-[ "${HAS_NEEDS_BROWSER:-0}" = "1" ] && EFFECTIVE_MEMORY_MAX="$AGENT_MEMORY_MAX_BROWSER"
+# --- Build SCOPE_PREFIX ---
+# SYSTEMD_SCOPE_OK was probed above; when 0, SCOPE_PREFIX stays empty (the
+# graceful-degrade unbounded launch + WARNING already emitted).
 if [ "$SYSTEMD_SCOPE_OK" = "1" ]; then
   # Trailing `-- ` (with a space) so concatenation with the timeout line yields
   # `systemd-run … -- timeout …`; empty otherwise collapses to a clean `timeout …`.
-  SCOPE_PREFIX="systemd-run --user --scope -p MemoryMax=${EFFECTIVE_MEMORY_MAX} -p TasksMax=${AGENT_TASKS_MAX} -- "
+  SCOPE_PREFIX="systemd-run --user --scope -p MemoryMax=${AGENT_MEMORY_MAX} -p TasksMax=${AGENT_TASKS_MAX} -- "
 fi
 
-# --- Label-gated MCP attachment (issue #347) ---
-# Spawned per-issue agents default to ZERO MCP servers. Opt-in by labelling
-# the issue `needs-browser` — the agent then inherits the project `.mcp.json`
-# (current behaviour). The orchestrator session (which sources `.mcp.json`
-# directly via the working directory) is unaffected by this gating.
-#
-# Fail-safe: when `gh issue view` failed above, HAS_NEEDS_BROWSER stays 0
-# (or unset for bare/unknown-skill spawns) and we default to the empty-MCP
-# path. A transient gh outage MUST NOT silently regress to leaking Playwright
-# into every spawned agent. EMPTY_MCP_FILE is initialised here (single
-# definition point) so cleanup_temp_files and the dry-run dump can reference
-# it under `set -u` regardless of which branch is taken.
-EMPTY_MCP_FILE=""
-MCP_EXTRA_ARGV=()
-if [ "${HAS_NEEDS_BROWSER:-0}" = "0" ]; then
-  EMPTY_MCP_FILE=$(mktemp /tmp/claude-mcp-empty-XXXXXX.json)
-  printf '%s\n' '{"mcpServers": {}}' > "$EMPTY_MCP_FILE"
-  MCP_EXTRA_ARGV=(--mcp-config "$EMPTY_MCP_FILE" --strict-mcp-config)
-fi
+# --- MCP gating (issue #347) ---
+# Spawned per-issue agents ALWAYS get ZERO MCP servers — there is no label
+# opt-in. The orchestrator session (which sources `.mcp.json` directly via the
+# working directory) is unaffected by this gating. EMPTY_MCP_FILE is the single
+# definition point so cleanup_temp_files and the dry-run dump can reference it.
+EMPTY_MCP_FILE=$(mktemp /tmp/claude-mcp-empty-XXXXXX.json)
+printf '%s\n' '{"mcpServers": {}}' > "$EMPTY_MCP_FILE"
+MCP_EXTRA_ARGV=(--mcp-config "$EMPTY_MCP_FILE" --strict-mcp-config)
 
 # --- Generate session id and bind to CLI via --session-id flag ---
 # The claude CLI's --session-id flag (verified in claude --help) accepts a UUID
@@ -385,7 +358,7 @@ fi
 # tool-use.log / subagents.log and runs.log.
 #
 # LAUNCH_CMD wraps `claude` directly (container-isolation dispatch was
-# removed in #514; web-eval is inline-only via the needs-browser label).
+# removed in #514).
 # EXTRA_CLAUDE_ARGV holds tokens forwarded from the pre-spawn classifier via
 # --classifier-passthrough=<token>; they are appended verbatim.
 _launch_cmd_quoted="claude"
@@ -430,7 +403,7 @@ _extra_argv_lines=""
 for tok in ${EXTRA_CLAUDE_ARGV[@]+"${EXTRA_CLAUDE_ARGV[@]}"}; do
   _extra_argv_lines+="CLAUDE_ARGV+=($(printf '%q' "$tok"))"$'\n'
 done
-# One `CLAUDE_ARGV+=(<tok>)` line per label-gated MCP token (issue #347).
+# One `CLAUDE_ARGV+=(<tok>)` line per MCP-gating token (issue #347).
 _mcp_argv_lines=""
 for tok in ${MCP_EXTRA_ARGV[@]+"${MCP_EXTRA_ARGV[@]}"}; do
   _mcp_argv_lines+="CLAUDE_ARGV+=($(printf '%q' "$tok"))"$'\n'
@@ -461,7 +434,6 @@ if [ "${PIPELINE_SPAWN_DRY_RUN:-}" = "1" ]; then
   echo "SYSPROMPT_FILE=$APPEND_PROMPT_FILE"
   echo "EMPTY_MCP_FILE=$EMPTY_MCP_FILE"
   echo "AGENT_MEMORY_MAX=$AGENT_MEMORY_MAX"
-  echo "AGENT_MEMORY_MAX_BROWSER=$AGENT_MEMORY_MAX_BROWSER"
   echo "AGENT_TASKS_MAX=$AGENT_TASKS_MAX"
   echo "SCOPE_PREFIX=$SCOPE_PREFIX"
   echo "=== BUILD_ARGV ==="

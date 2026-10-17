@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 #
-# Acceptance check for calibration issue 05 (edits in two disjoint dirs).
+# Acceptance check for calibration issue 05 (three independent deliverables in
+# three directories — the PATH C fan-out probe).
 #
 #   bash reference-test.sh [sandbox-root]     # default: $PWD
 #
-# Fails against the untouched template (the report has no completion rate and
-# docs/architecture.md does not mention one) and passes once both lib/report.sh
-# and docs/architecture.md are updated.
+# The three deliverables, each with its own assertions below:
+#   1. lib/  — report_render prints a `completion  NN%` line under `total`
+#              (tests/case-report.sh covers it)
+#   2. bin/  — `calibctl report --json` prints {"open":N,"done":N,"total":N};
+#              an unknown report option exits 2 (tests/case-report-json.sh)
+#   3. docs/ — docs/architecture.md documents the completion rate and --json;
+#              docs/usage.md shows `calibctl report --json`
+#
+# Fails against the untouched template and passes only once all three land.
 set -uo pipefail
 
 SANDBOX="${1:-$PWD}"
@@ -80,6 +87,48 @@ else
   bad "a fully completed ledger should report 100%, got: $(printf '%s' "$out" | head -6 | tr '\n' '|')"
 fi
 
+# --- deliverable 2: report --json ----------------------------------------------------
+
+json() { calib report --json 2>/dev/null | tr -d ' \n'; }
+
+# Fresh ledger for the JSON checks: the one above is now fully completed.
+rm -rf "$CALIB_HOME"
+CALIB_HOME="$(mktemp -d)"
+export CALIB_HOME
+
+got="$(json)"
+if [ "$got" = '{"open":0,"done":0,"total":0}' ]; then
+  ok "report --json on an empty ledger prints zero counts"
+else
+  bad "report --json on an empty ledger should print {\"open\":0,\"done\":0,\"total\":0}, got: $got"
+fi
+
+calib add "cut the release" --priority high >/dev/null
+calib add "answer the review" --priority med >/dev/null
+calib add "tidy the changelog" --priority low >/dev/null
+calib add "delete dead code" --priority high >/dev/null
+calib complete 2 >/dev/null
+
+got="$(json)"
+if [ "$got" = '{"open":3,"done":1,"total":4}' ]; then
+  ok "report --json on a partial ledger prints the three counts in order"
+else
+  bad "report --json on a partial ledger should print {\"open\":3,\"done\":1,\"total\":4}, got: $got"
+fi
+
+calib report --bogus >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ]; then
+  ok "an unknown report option exits 2"
+else
+  bad "report --bogus should exit 2 (usage error), got rc=$rc"
+fi
+
+if [ -f tests/case-report-json.sh ] && grep -q -- '--json' tests/case-report-json.sh; then
+  ok "tests/case-report-json.sh asserts on report --json"
+else
+  bad "tests/case-report-json.sh is missing or does not exercise --json"
+fi
+
 # --- the docs describe it ----------------------------------------------------------
 
 if grep -qi 'completion' docs/architecture.md; then
@@ -93,6 +142,18 @@ if grep -qi 'completion' docs/architecture.md \
   ok "docs/architecture.md says how the completion rate is derived"
 else
   bad "docs/architecture.md should say how the completion rate is derived"
+fi
+
+if grep -q -- '--json' docs/architecture.md; then
+  ok "docs/architecture.md documents the --json form"
+else
+  bad "docs/architecture.md does not mention the --json form"
+fi
+
+if grep -q 'report --json' docs/usage.md; then
+  ok "docs/usage.md shows calibctl report --json"
+else
+  bad "docs/usage.md does not show 'report --json'"
 fi
 
 # --- covered by the suite -----------------------------------------------------------

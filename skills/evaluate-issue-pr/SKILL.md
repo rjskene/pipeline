@@ -21,9 +21,7 @@ _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipe
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-Dispatch modes and the orchestrator-assembled prompt template are documented in `skills/fullsend/references/pr-eval-dispatch.md` — the orchestrator's contract, not the evaluator's.
-
-On a `needs-browser` issue: `cd` to the worktree absolute path and start the loopback HTTP server BEFORE any other step (see [references/visual-validation.md](references/visual-validation.md)).
+Dispatch modes and the orchestrator-assembled prompt template are documented in `skills/fullsend/SKILL.md` Step 7 (`**PR-eval invocation mode.**`) — the orchestrator's contract, not the evaluator's.
 
 **pr-eval depth is never gated (W3).** This evaluator STAYS Opus — `model=` resolves from `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`, an explicit PIN since #1186); no execute-side carve-out lowers it.
 
@@ -64,7 +62,7 @@ This section fires **per claim**, not per evaluation.
 
 A guard that passes is not evidence until you have seen it fail on something.
 
-- **Scope at pr-eval time.** Guard claims are claims about artifacts added or modified by the diff, plus any pre-existing guard the PR claims now covers a case. Execute from the feature worktree; when the invocation needs state (a git repo, a plan comment, a labelled issue), build a throwaway fixture and run the real artifact against it. This is per-claim work inside the existing Phase 2 budget — never a second full-suite sweep (the Step 4 dedup guard is unchanged). **CI is the oracle for pre-existing failures:** read the head's settled CI status (`gh pr checks`, Step 5; Step 4's #957 short-circuit) and verify only the diff's own claims — never re-prove an untouched failure by re-running it in a throwaway clone of the base. **`PRE-EXISTING:` list check (#1329):** read the PR body's `## Pre-existing failures` list; for each entry run the execute-issue-plan Step 6b subject check (`grep -F -e <basename> -e <dir>/ <test>` per touched path). A listed subject test is Flagged and fixed in-eval; a body claiming untouched failures without the list is Flagged.
+- **Scope at pr-eval time.** Guard claims are claims about artifacts added or modified by the diff, plus any pre-existing guard the PR claims now covers a case. Execute from the feature worktree, with a fixture (above) when the invocation needs state. Per-claim work within the Phase 2 budget: run the positive and negative probe of ONE guard claim in one Bash call (`cmd A; echo "rc=$?"; cmd B; echo "rc=$?"`); re-run the suite at most once per evaluation, never per probe. **CI is the oracle for pre-existing failures:** read the head's settled CI status (`gh pr checks`, Step 5; Step 4's #957 short-circuit) and verify only the diff's own claims — never re-prove an untouched failure in a throwaway base clone. **`PRE-EXISTING:` list check (#1329):** read the PR body's `## Pre-existing failures` list; for each entry run the execute-issue-plan Step 6b subject check (`grep -F -e <basename> -e <dir>/ <test>` per touched path). A listed subject test is Flagged and fixed in-eval; a body claiming untouched failures without the list is Flagged.
 
 ## Steps
 
@@ -172,9 +170,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Hook-enforced, conditionally.** `hooks/enforce-ci-wait.py` scopes itself to sessions that issued a rollup read, then blocks Stop until a `--watch` row and a second rollup row follow, and blocks Approved on a red rollup. The triple is therefore ALL-OR-NOTHING: emit three lines or none — a lone rollup read denies Stop and escalates `needs-human` after three blocks. `--watch` must be FOREGROUND: a backgrounded `Bash` returns immediately, ending the turn before the verdict (#684).
 <!-- END CI_CHECK -->
 
-6. **Visual validation** (if UI changes exist in the diff).
-
-   Read [references/visual-validation.md](references/visual-validation.md) when the diff touches UI, or when the issue carries `needs-browser`.
+6. **Browser check.** If the diff changes anything a user sees in a browser, verify the executor's screenshot or take your own: start the app on a free port, open it with the Playwright MCP tools, screenshot the affected views, check the console for errors, attach the screenshot to the evaluation comment, and stop the server.
 
 7. **If fixable issues found** (≤3 files, no new design decisions): fix in-worktree, then `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, and re-run tsc + tests to confirm fixes don't break anything.
 
@@ -206,11 +202,7 @@ A guard that passes is not evidence until you have seen it fail on something.
 
    **CI status:** All checks passed / No CI configured / FAILED: <job names> — <first error line> / Timed out
 
-   **Screenshots:** (one row per entry in `$SCREENSHOT_LINES` from Step 6 — already formatted as either an image row or a `⚠️` failure-loud row; `None` if empty)
-   - ![screenshot 1](https://raw.githubusercontent.com/owner/repo/<branch>/.eval-screenshots/<filename>.png)   <!-- public repo: inline embed -->
-   - [screenshot 1](https://github.com/owner/repo/blob/<branch>/.eval-screenshots/<filename>.png)             <!-- private repo: clickable blob link (#551) -->
-
-   **Visual proof:** satisfied=N/M; unsatisfied=[<claim>...] (or `N/A — needs-browser not applied`)
+   **Screenshots:** <links, or None>
 
    **Fixes applied:** `<commit hash>` — <description> (or "None")
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Guard: classify-issue/SKILL.md has a PATH D section + sentinel blocks preserved.
 set -euo pipefail
-FILE="skills/classify-issue/SKILL.md"
+FILE="skills/plan-issue/references/classification.md"  # #1485: moved to the shared reference
 [ -f "$FILE" ] || { echo "FAIL: $FILE not present"; exit 1; }
 grep -qE '(## )?PATH D|PATH D \(quick-fix\)' "$FILE" || { echo "FAIL: no PATH D section found"; exit 1; }
 grep -qF '<!-- pipeline:path=D -->' "$FILE" || { echo "FAIL: PATH D body marker example missing"; exit 1; }
@@ -19,8 +19,8 @@ grep -qF '#698' "$FILE" || { echo "FAIL: blast-radius boundary exemplar #698 mis
 # carve-out + two exemplar tables, ~25 lines); 270 -> 290 by #759 (advisory
 # path-hint overridable-prior step 3d + parse block + step-4 prior + override
 # rationale; parse block condensed to keep the delta ~14 lines); 290 -> 300 by
-# #1015 (autonomous `## needs-browser backstop` section — comment-path assigner
-# mirroring the create-issues needs-browser advisory, ~8 lines).
+# #1015 (an autonomous comment-path assigner section, ~8 lines; since removed
+# by #1484).
 LINES=$(wc -l < "$FILE")
 [ "$LINES" -le 300 ] || { echo "FAIL: $FILE has $LINES lines (cap is 300)"; exit 1; }
 echo "PASS: PATH D section + sentinels present, ${LINES}/300 lines"

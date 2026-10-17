@@ -16,7 +16,7 @@ set -uo pipefail
 #      </dev/null and timeout. The operator hand-patches the live file
 #      (see the PR body); the PR itself cannot ship that gitignored edit.
 #
-# Modeled on tests/test-pipeline-config-mock-web-eval-paths.sh.
+# Modeled on tests/test-pipeline-config-parallel-runner.sh.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"

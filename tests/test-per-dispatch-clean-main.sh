@@ -175,7 +175,7 @@ fi
 #       as the backstop: the `--spawn` run-queue transport has no inline
 #       return point where a per-dispatch check could fire.
 # =====================================================================
-assert_region_contains "P10" '**Clean-main guard (#1122'
+assert_region_contains "P10" '**Clean-main guard'
 assert_region_contains "P10" 'CLEAN=ok'
 assert_region_contains "P10" 'CLEAN=untracked-only'
 assert_region_contains "P10" 'CLEAN=dirty'

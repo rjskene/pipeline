@@ -63,22 +63,22 @@ run_fix() {
 }
 
 # ---------------------------------------------------------------------------
-# Case A: all 18 canonical labels are seeded with exact color/description.
+# Case A: all 17 canonical labels are seeded with exact color/description.
 # (18 since #1128 added next to doctor.sh LABEL_TABLE; 17 came from #997's
-# needs-debug row.)
+# needs-debug row; back to 17 since #1484 removed the browser-gating row.)
 # ---------------------------------------------------------------------------
-echo "Case A: seeds all 18 labels"
+echo "Case A: seeds all 17 labels"
 FX=$(mk_fixture fx-a)
 run_fix "$FX"
 rc="$(cat "$FX/rc")"
 [ "$rc" = "0" ] && pass_msg "A: exit 0" || { fail_msg "A: exit $rc"; cat "$FX/out" | sed 's/^/    /'; }
 count=$(wc -l < "$FX/shim.log" | tr -d ' ')
-[ "$count" = "18" ] && pass_msg "A: 18 label create calls" || fail_msg "A: got $count label create calls"
+[ "$count" = "17" ] && pass_msg "A: 17 label create calls" || fail_msg "A: got $count label create calls"
 # Byte-stability control for the Case F count change: no default name contains
-# a `|`, so the split is a no-op here and the report must still say 18.
-grep -Fq "Seeded 18 labels" "$FX/out" \
-  && pass_msg "A: stdout reports 'Seeded 18 labels'" \
-  || fail_msg "A: stdout missing 'Seeded 18 labels' (got: $(grep -F 'Seeded' "$FX/out" || true))"
+# a `|`, so the split is a no-op here and the report must still say 17.
+grep -Fq "Seeded 17 labels" "$FX/out" \
+  && pass_msg "A: stdout reports 'Seeded 17 labels'" \
+  || fail_msg "A: stdout missing 'Seeded 17 labels' (got: $(grep -F 'Seeded' "$FX/out" || true))"
 
 # Canonical (name, color, description) — must match doctor.sh LABEL_TABLE and README.
 expected=(
@@ -95,7 +95,6 @@ expected=(
   "later|D4C5F9|Deferred"
   "human|F9D0C4|Needs human in the loop"
   "brainstorm|FEF2C0|Non-actionable discussion/exploration"
-  "needs-browser|1F77B4|Gates Playwright MCP attachment and visual-proof-from-plan sub-skill"
   "needs-debug|D93F0B|Gates root-cause diagnosis via systematic-debugging before planning"
   "tracker|0E8A16|Coordination issue rolling up child issues under a Rollout sequence checklist"
   "manual-merge|F9D0C4|Suppress auto-merge for this issue; merge by hand"
@@ -196,11 +195,11 @@ else
 fi
 
 count=$(wc -l < "$FX/shim.log" | tr -d ' ')
-[ "$count" = "19" ] && pass_msg "F: 19 label create calls" || fail_msg "F: got $count label create calls (expected 19)"
+[ "$count" = "18" ] && pass_msg "F: 18 label create calls" || fail_msg "F: got $count label create calls (expected 18)"
 
-grep -Fq "Seeded 19 labels" "$FX/out" \
-  && pass_msg "F: stdout reports 'Seeded 19 labels' (counts NAMES, not table rows)" \
-  || fail_msg "F: stdout missing 'Seeded 19 labels' (got: $(grep -F 'Seeded' "$FX/out" || true))"
+grep -Fq "Seeded 18 labels" "$FX/out" \
+  && pass_msg "F: stdout reports 'Seeded 18 labels' (counts NAMES, not table rows)" \
+  || fail_msg "F: stdout missing 'Seeded 18 labels' (got: $(grep -F 'Seeded' "$FX/out" || true))"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

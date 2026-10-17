@@ -923,11 +923,12 @@ calib_provenance() {
   CALIB_SUPERPOWERS=""
   CALIB_BEXEC=""
   CALIB_PLAN_GATE=""
+  CALIB_PATH_C_FANOUT=""
   [ -n "$f" ] || return 0
   base="$(basename "$f" .txt)"
-  # #1409/#1412/#1414/#1429: a non-default arm suffixes its artifact
-  # `-hooks-off`, `-superpowers-off`, `-bexec-<M>` and/or `-plan-gate-<v>`
-  # (composable, emitted in that order)
+  # #1409/#1412/#1414/#1429/#1486: a non-default arm suffixes its artifact
+  # `-hooks-off`, `-superpowers-off`, `-bexec-<M>`, `-plan-gate-<v>` and/or
+  # `-path-c-fanout-<v>` (composable, emitted in that order)
   # — strip them (and remember the arm(s)) BEFORE the date-shape match below,
   # so both the bare and the T<HHMM>Z form are recognized regardless of arm.
   # Peeled in a LOOP, not a case over the combinations: two arms were three
@@ -936,6 +937,8 @@ calib_provenance() {
   while [ "$peeled" -eq 1 ]; do
     peeled=0
     case "$base" in
+      *-path-c-fanout-on)  CALIB_PATH_C_FANOUT="on";  base="${base%-path-c-fanout-on}";  peeled=1 ;;
+      *-path-c-fanout-off) CALIB_PATH_C_FANOUT="off"; base="${base%-path-c-fanout-off}"; peeled=1 ;;
       *-plan-gate-full)   CALIB_PLAN_GATE="full";   base="${base%-plan-gate-full}";   peeled=1 ;;
       *-plan-gate-single) CALIB_PLAN_GATE="single"; base="${base%-plan-gate-single}"; peeled=1 ;;
       *-plan-gate-none)   CALIB_PLAN_GATE="none";   base="${base%-plan-gate-none}";   peeled=1 ;;
@@ -1608,6 +1611,7 @@ build_full_report() {
   [ "$CALIB_SUPERPOWERS" = "off" ] && calib_prov_add "superpowers=off"
   [ -n "$CALIB_BEXEC" ] && calib_prov_add "bexec=$CALIB_BEXEC"
   [ -n "$CALIB_PLAN_GATE" ] && calib_prov_add "plan_gate=$CALIB_PLAN_GATE"
+  [ -n "$CALIB_PATH_C_FANOUT" ] && calib_prov_add "path_c_fanout=$CALIB_PATH_C_FANOUT"
   if [ -n "$CALIB_PROV" ]; then
     echo "weak-model pass: $CALIB_WEAK ($CALIB_PROV)"
   else

@@ -5,7 +5,7 @@ set -euo pipefail
 # .claude/scratch/issue-, placed AFTER step 2 cache check.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
+TARGET="$SCRIPT_DIR/../skills/plan-issue/references/classification.md"  # #1485: moved to the shared reference
 
 PASS=0; FAIL=0
 ok()   { echo "  PASS: $1"; PASS=$((PASS + 1)); }

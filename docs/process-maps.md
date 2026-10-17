@@ -21,14 +21,10 @@ How a single issue moves from filed to merged. Label is shown on each edge.
                        |
                        v
                   +----+----+
-                  |classify |   applies one of:
-                  | -issue  |    docs-only / multi-task / quick-fix / (none)
-                  +----+----+
-                       |
-                       v
-                  +----+----+
-                  |  plan-  |   adds: plan-pending
-                  |  issue  |
+                  |  plan-  |   classify inline: applies one of
+                  |  issue  |    docs-only / multi-task / quick-fix / (none)
+                  |(classify|   then adds: plan-pending
+                  | inline) |
                   +----+----+
                        |
                        v
@@ -66,7 +62,7 @@ until a verdict sticks or the iteration budget (3) is exhausted.
 
 ## PATH dispatch decision tree
 
-How `classify-issue` resolves an issue to one of PATH A/B/C/D. The body marker
+How the shared classification procedure (`skills/plan-issue/references/classification.md`, run inline by `plan-issue` or standalone by `classify-issue`) resolves an issue to one of PATH A/B/C/D. The body marker
 short-circuits; otherwise label, then heuristics.
 
 ```
@@ -113,7 +109,7 @@ legacy escape hatch (formerly C-only).
 |------|------------------------------------|-----------------------------------------|
 | A    | inline `Agent(general-purpose)`    | Flat edits in the worktree. No TDD cycle.|
 | B    | inline `Agent(general-purpose)`    | TDD discipline (red->green->commit) inline; no spawned worker.|
-| C    | inline `Agent(tdd-implementer)` per `target=<dir>` leaf, each in its own per-leaf worktree + cherry-pick reassemble (#896); `--spawn` = legacy run-queue | One or more `tdd-implementer` subagents, scoped per target dir. A delegation hook blocks orchestrator-side Edit/Write on impl files.|
+| C    | default: inline `Agent(general-purpose)`, one execute agent as on B (#1486); `PIPELINE_PATH_C_FANOUT=true`: inline `Agent(tdd-implementer)` per `target=<dir>` leaf, each in its own per-leaf worktree + cherry-pick reassemble (#896); `--spawn` = legacy run-queue transport (the spawned session honors the knob) | Default: the plan's `target=<dir>` tasks run sequentially under red->green->commit in one context. Fan-out on: one `tdd-implementer` subagent per target dir, and a delegation hook blocks orchestrator-side Edit/Write on impl files.|
 | D    | inline `Agent(tdd-implementer)`    | Inline `tdd-implementer` in the orchestrator session. Skips the pre-PR review loop in `execute-issue-plan` Step 8.|
 
 > **Pre-PR guards.** Before `gh pr create`, execute runs `scripts/check-cross-cutting-guards.sh` (#1132/#1143) — the always-run, diff-independent invariant floor bundling config-drift (`check-config-drift.sh`, #1103: any new `PIPELINE_*` var undocumented in `pipeline.config.example`), namespace-discipline, golden-seed, and README-anchor checks. It runs regardless of PATH or whether the diff touched the guarded surface (the #1128 "only touched tests" miss), wired pre-PR into `execute-issue-plan` Step 9 and, at pr-eval time, into `scripts/pr-eval-preflight.sh` — which `fullsend` Step 7 runs BEFORE any `evaluate-issue-pr` dispatch (#1445). The evaluator itself no longer invokes the aggregator; a guard failure is `PREFLIGHT=block REASON=guards` and no eval runs.
@@ -134,14 +130,14 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
            v
   +--------+----------+
   | plan-waves.sh     |   group issues into waves by:
-  |  --stage=classify |    - file-conflict (path overlap)
+  |  --stage=plan     |    - file-conflict (path overlap)
   +--------+----------+    - blocked-by graph
            |
            v
   +--------+---------------+
   | for each wave (parallel) |
-  |   classify-issue        |
   |   plan-issue            |
+  |   (classify inline)     |
   +--------+---------------+
            |
            v
@@ -163,8 +159,10 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
            v
   +--------+----------+
   | execute           |   A/B/D: inline Agent() in orchestrator
-  |                   |   C: inline tdd-implementer per leaf,
-  |                   |      per-leaf worktree, max 3 concurrent
+  |                   |   C: one inline Agent() (default); with
+  |                   |      PIPELINE_PATH_C_FANOUT=true, inline
+  |                   |      tdd-implementer per leaf, per-leaf
+  |                   |      worktree, max 3 concurrent
   +--------+----------+
            |
            v
@@ -211,25 +209,3 @@ Top-level slash commands that drive the maps above:
 - `/pipeline:evolve start|stop|pause|resume|status` — harness-evolve loop driver on the `evolve` integration branch (dogfood, run from the loop clone); see [skills/evolve/SKILL.md](../skills/evolve/SKILL.md) and the spec `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md`.
 
 `analyze-issues` surfaces four detection categories (no mutations): duplicate candidates, standalones that fit an existing tracker, issues with missing labels, and merged-PR supersession candidates.
-
-## Visual proof sub-skill (needs-browser lane)
-
-`needs-browser` issues carry a UI acceptance criterion unit tests can't cover.
-The `visual-proof-from-plan` sub-skill emits a `{satisfied, unsatisfied}` result
-and has two callers (the **two-caller pattern**):
-
-- **Executor (TDD loop)** — `execute-issue-plan` runs it inside red->green; an
-  `unsatisfied` entry behaves like a failing test (iterate until satisfied). The
-  `needs-browser` label routes the executor through inline `Agent()` dispatch with
-  the visual-proof preflight in `scripts/visual-proof-server-start.sh`.
-- **Evaluator (verdict)** — `evaluate-issue-pr` runs the same sub-skill; any
-  `unsatisfied` entry is a blocking verdict finding.
-
-Both callers share one `{satisfied, unsatisfied}` contract. Definition lives in
-[skills/visual-proof-from-plan/SKILL.md](../skills/visual-proof-from-plan/SKILL.md).
-
-**Assigner (#1015).** `needs-browser` now has an assigner — closing the
-"consumers but no assigner" gap: `create-issues` carries a filing-time advisory
-(default-no operator prompt) and `classify-issue` carries an autonomous
-comment-path backstop for externally-filed issues, both gated by the same
-browser-UI conjunction + suppressors (pure-logic/server-side/docs).

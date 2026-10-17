@@ -134,13 +134,6 @@ PIPELINE_COMMENTED
 # PIPELINE_DELTA for the EOF-fallback / no-set+a case). Same exemption class.
 PIPELINE_GAMMA
 PIPELINE_DELTA
-# PIPELINE_MOCK_WEB_EVAL_* is the per-operator, host-only mock-web-eval family
-# (intentionally NOT documented in pipeline.config.example — it carries
-# per-operator paths per CLAUDE.md config-conventions). It appears here both as
-# the placeholder-classification glob in scripts/doctor.sh's --fix config block
-# and as a fixture key in tests/test-doctor-fix-config.sh. The bare prefix is a
-# concat-prefix wildcard covering PIPELINE_MOCK_WEB_EVAL_X and any sibling.
-PIPELINE_MOCK_WEB_EVAL_
 
 # #1233 capability-refusal sentinel source knob. PIPELINE_CAPABILITY_REFUSAL_SOURCES
 # is an eval-caller-set-ONLY var: evaluate-issue-pr's Step 11.2 resolves the

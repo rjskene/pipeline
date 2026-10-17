@@ -49,7 +49,7 @@ for rail in lifecycle paths branches trust; do
 done
 
 echo "(4) rail content pins"
-for stage in classify plan plan-eval execute "pr-eval preflight" pr-eval "auto-merge gate"; do
+for stage in plan plan-eval execute "pr-eval preflight" pr-eval "auto-merge gate"; do
   if grep -qF ">$stage<" "$ASSETS/lifecycle.svg"; then pass "lifecycle names $stage"; else fail "lifecycle lacks stage $stage"; fi
 done
 for lane in docs-only standard multi-task quick-fix; do

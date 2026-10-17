@@ -15,7 +15,7 @@ set -uo pipefail
 #
 # Both directives are ONE PHYSICAL LINE each, carrying the shared sentinel
 #
-#     **Trust profile (#1291):**
+#     **Trust profile:**
 #
 # which is what makes the extraction below unambiguous on lines that already
 # carry other bolded directives.
@@ -47,12 +47,12 @@ FULLSEND="$_FS_UNION_DIR/fullsend-union.md"
 cat "$_FS_SKILL" "$ROOT/skills/fullsend"/references/*.md > "$FULLSEND"
 
 
-SENTINEL='**Trust profile (#1291):**'
+SENTINEL='**Trust profile:**'
 STEP2_ANCHOR='2. **Evaluate plans**'
 STEP3_ANCHOR='3. **Re-plan loop**'
 ROUTING_ANCHOR='**Per-path execute MODEL routing'
 # #1429 plan gate — its own sentinel, its own 120-word budget (B-series below).
-PG_SENTINEL='**Plan gate (#1429):**'
+PG_SENTINEL='**Plan gate:**'
 STEP4_ANCHOR='4. **Approve**'
 PG_MAX_WORDS=120
 # #1420 removed the split-role lane, so the logged grammar drops `split_role=`.
@@ -268,7 +268,7 @@ scenario "B3: the Step 3 directive caps the re-plan loop under GATE=single"
 # `plan-pending` and Step 4's approve site filters on `plan-reviewed` — an arm
 # that says "approve" without naming the transition drops the issue out of the
 # execute slate silently.
-for lit in 'GATE=single' '#1317' 'plan-approved' 'plan-pending'; do
+for lit in 'GATE=single' 'plan-approved' 'plan-pending'; do
   inc
   if [ -n "$P2_TEXT" ] && grep -qF -- "$lit" <<<"$P2_TEXT"; then
     pass_msg "B3: second plan-gate line names '$lit'"
@@ -320,7 +320,7 @@ fi
 # budget: the two #1429 lines already consume 116 of their 120-word B4 ceiling,
 # so widening them is not available. B1 also pins #1429 at exactly 2 lines.
 # ---------------------------------------------------------------------------
-PGA_SENTINEL='**Plan gate — annotate (#1435):**'
+PGA_SENTINEL='**Plan gate — annotate:**'
 PGA_MAX_WORDS=100
 
 PGA_LINES=()
@@ -378,7 +378,7 @@ scenario "C3: the Step 3 annotate arm deletes the re-plan round"
 # the `plan-pending -> plan-approved` transition must be NAMED or the issue
 # silently drops out of Step 4's `plan-reviewed`-filtered execute slate. The
 # `**Scope:** structural` exception is the ONE arm that still re-plans (#1317).
-for lit in 'GATE=annotate' 'plan-approved' 'plan-pending' 'plan_gate=annotate' 'plan_rounds=1' '**Scope:** structural' '#1317'; do
+for lit in 'GATE=annotate' 'plan-approved' 'plan-pending' 'plan_gate=annotate' 'plan_rounds=1' '**Scope:** structural'; do
   inc
   if [ -n "$G2_TEXT" ] && grep -qF -- "$lit" <<<"$G2_TEXT"; then
     pass_msg "C3: second annotate line names '$lit'"

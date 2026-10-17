@@ -7,7 +7,7 @@ set -euo pipefail
 #           run it under synthetic ISSUE_BODY inputs.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_FILE="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
+SKILL_FILE="$SCRIPT_DIR/../skills/plan-issue/references/classification.md"  # #1485: moved to the shared reference
 
 PASS=0
 FAIL=0

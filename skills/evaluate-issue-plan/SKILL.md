@@ -70,7 +70,7 @@ This section fires **per claim**, not per evaluation.
 
 A guard that passes is not evidence until you have seen it fail on something.
 
-- **Scope at plan-eval time.** Guard claims are (a) claims the plan makes about EXISTING guard/gate/matcher/assertion/security artifacts it relies on — execute those against the current tree; and (b) the plan's proposed REDs — run the stated assertion against current HEAD and confirm it fails for the STATED reason. For an artifact the plan proposes but that does not exist yet, (b) alone applies.
+- **Scope at plan-eval time.** Guard claims are (a) claims the plan makes about EXISTING guard/gate/matcher/assertion/security artifacts it relies on — execute those against the current tree; and (b) the plan's proposed REDs — run the stated RED against unmodified HEAD and confirm it fails for the STATED reason; never materialise (apply, patch, copy) a proposed edit, in place or in scratch. A not-yet-existing proposed artifact is `not-executed: proposed artifact`, left for execute + pr-eval. A fixture runs an EXISTING artifact, never builds a proposed one; probe write-arm scripts (e.g. `scripts/pr-eval-preflight.sh`) only via a fixture or documented `--dry-run`, never a real issue/PR/branch.
 
 ## Comment trust
 

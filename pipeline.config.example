@@ -305,16 +305,6 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # and fork() fails inside the scope, leaving siblings + host pid space intact.
 # Default 512, single-sourced at the read site (${VAR:-512}).
 #PIPELINE_AGENT_TASKS_MAX=512
-#
-# PIPELINE_AGENT_MEMORY_MAX_BROWSER is the MemoryMax ceiling applied INSTEAD of
-# PIPELINE_AGENT_MEMORY_MAX for spawned agents that run browser/Playwright work
-# under --spawn. Chromium plus a loaded page can exceed the 2G default and get
-# OOM-killed inside the cgroup scope (a spurious visual-proof failure), so the
-# browser default is higher. Default 4G, single-sourced at the read site
-# (${VAR:-4G}); independent of PIPELINE_AGENT_MEMORY_MAX (lowering the base knob
-# does NOT clamp browser agents). Only the --spawn transport is affected; the
-# default inline path does not go through this scope.
-#PIPELINE_AGENT_MEMORY_MAX_BROWSER=4G
 
 # --- Dogfood-only: local-working-tree plugin override (issue #294) ---
 #
@@ -388,43 +378,14 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # PIPELINE_PATH_C_REVIEWER_EXECUTE="superpowers:code-reviewer"
 # PIPELINE_PATH_C_SKILL_ARGS_EXECUTE_SUBAGENT_DRIVEN_DEVELOPMENT="scripts/skill-args/c-execute-subagent-driven-development.txt"
 
-# --- per-path execute MODEL routing (#1428: Opus is the DEFAULT on every path) ---
-#
-# fullsend's execute dispatch (Step 6) pins this model for eligible PATH B / PATH D
-# issues; the value is the Agent `model` enum: sonnet | opus | haiku | fable. Both
-# lines below ship COMMENTED (unset -> opus since #1420/#1428, for B and D alike) —
-# a fresh install runs Opus on PATH A/B/C/D execute. To opt OUT to the cheaper
-# Sonnet lane, uncomment the relevant line with `=sonnet`; the resolver honors
-# either verbatim.
-# Three carve-outs ALWAYS force Opus regardless of these knobs: the W2 high-uncertainty
-# vocab (concurrency|race|lock|deadlock|security|auth|crypto|migration|data-loss), the
-# PATH D browser-eval carve-out label (#960), and — the safety-critical one — pr-eval,
-# which is NEVER defaulted to Sonnet: the independent evaluator is PINNED opus via
-# PIPELINE_STAGE_MODEL_PR_EVAL (the W3 property that makes a cheaper-execute default safe).
-# #1186: the carve-outs force opus as a NAMED model — `inherit` is RETIRED as a resolver
-# emission, because an unpinned dispatch silently rides whatever the session model is
-# (under a Fable-ceiling session that upshifted every carve-out to Fable, not Opus).
-# SINGLE SOURCE OF TRUTH (#1056): these knobs are applied at dispatch time in exactly
-# ONE place — scripts/resolve-execute-dispatch.sh — which fullsend's Step 6 sources and
-# consumes verbatim (campaign inherits by reference). Do NOT re-encode the routing in
-# SKILL prose; the resolver folding config + carve-outs into one emitted spec is what
-# keeps config and prose from drifting (that drift WAS the #1056 root cause).
-# #1420: PATH B's unset default is `opus`, NOT sonnet. PATH B used to dispatch TWO
-# sequential execute agents — an always-Opus test-author authoring the complete
-# failing suite, then a cheaper implementer greening it — and the cheap half was
-# safe precisely because the expensive half designed the suite. Collapsing PATH B
-# to ONE execute agent (calibration runs #11-#13 measured no cost or latency return
-# for the pair) removed that Opus half, so the resolved model IS the quality floor
-# and PATH B joins PATH A/C at the ceiling. Uncomment =sonnet below to buy the
-# cheap single-agent lane back — deliberate and reversible, per consumer.
-# #1428: PATH D's unset default is ALSO `opus` now — the Sonnet-vs-Opus executor
-# split never moved cost in any priced calibration run, so the last path-specific
-# default is retired. Uncomment =sonnet below to buy the cheap PATH D lane back.
-# Override anchors (#1052): defaults-in-code — every default lives at the read
-# site (scripts/resolve-execute-dispatch.sh resolves unset -> opus for A/B/C/D),
-# so these stay COMMENTED and `--fix config` does NOT seed them.
-# Seeding would PIN the current default and defeat central default evolution on
-# plugin upgrade. Uncomment only to override.
+# --- per-path execute MODEL routing (Opus is the DEFAULT on every path) ---
+# Value = Agent `model` enum (sonnet|opus|haiku|fable). Unset -> opus on PATH A/B/C/D.
+# To opt OUT per path, uncomment the line with `=sonnet`. Two carve-outs ALWAYS
+# force opus regardless: W2 high-uncertainty vocab (concurrency|race|lock|deadlock|
+# security|auth|crypto|migration|data-loss) and pr-eval (pinned via PIPELINE_STAGE_MODEL_PR_EVAL). Defaults live in
+# scripts/resolve-execute-dispatch.sh (the single routing source), so keep these
+# COMMENTED — `--fix config` does not seed them; uncomment only to override.
+# history: #1052 #1056 #1186 #1420 #1428
 #PIPELINE_PATH_B_MODEL_EXECUTE=opus
 #PIPELINE_PATH_D_MODEL_EXECUTE=opus
 
@@ -432,7 +393,7 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # Controls WHICH PATH B issues the resolved execute model (PIPELINE_PATH_B_MODEL_EXECUTE
 # above) applies to. Ships ACTIVE at "all" (#1042): every PATH B issue WITHOUT a
 # permanent Opus carve-out (W2 — high-uncertainty vocab concurrency|race|lock|deadlock|
-# security|auth|crypto|migration|data-loss, or the browser-eval carve-out label #960)
+# security|auth|crypto|migration|data-loss)
 # routes the resolved model on execute even on a high-blast eligibility verdict. To opt
 # OUT, set "low-blast" (or comment the line) to restrict it to the §4 low-blast lane
 # only: issues passing scripts/path-b-execute-eligible.sh's single-module / <=6-file
@@ -501,6 +462,29 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # Override anchor (#1052): defaults-in-code — stays COMMENTED.
 #PIPELINE_PLAN_GATE="annotate"
 
+# --- #1464 pre-PR review loop ---
+# Default false since #1482 (calibration 22–28: −12% cost, no quality delta);
+# set true to re-enable the pre-PR review subagent (Step 8) on PATH A/B/C.
+# false skips Step 8 exactly as PATH D does (logs `PRE-PR-REVIEW: skipped reason=knob`).
+# The calibration A/B lever (`calibration-run.sh --pre-pr-review on|off`).
+# Resolved by scripts/resolve-execute-dispatch.sh into the PRE_PR_REVIEW= dispatch token.
+# Override anchor (#1052): defaults-in-code — stays COMMENTED.
+#PIPELINE_PRE_PR_REVIEW="false"
+
+# --- #1486 PATH C fan-out ---
+# Default false: a `multi-task` (PATH C) issue executes exactly like PATH B -- ONE
+# inline execute agent runs the plan's `target=<dir>` tasks sequentially in the
+# issue worktree. Opus/Fable executors carry a multi-task plan in one context; the
+# fan-out costs N loaded agent contexts plus cherry-pick/orphan/attribution overhead.
+# true restores the per-leaf `tdd-implementer` fan-out (per-leaf worktrees via
+# scripts/path-c-split-worktree.sh) and arms hooks/enforce-path-c-delegation.py.
+# `--spawn` selects the legacy spawn-claude.sh transport only; the spawned session
+# honors this knob. Unknown values fall back to false with one stderr WARN.
+# The calibration A/B lever (`calibration-run.sh --path-c-fanout on|off`).
+# Resolved by scripts/resolve-execute-dispatch.sh into the PATH_C_FANOUT= dispatch token.
+# Override anchor (#1052): defaults-in-code — stays COMMENTED.
+#PIPELINE_PATH_C_FANOUT="false"
+
 # CI-fix loop (issue #52) — autonomous re-dispatch of executor on red CI runs.
 # Override anchor (#1052): defaults-in-code — default true lives at the read site
 # (fullsend 6b reads colon-less ${VAR-true}), so this stays COMMENTED and `--fix config`
@@ -533,15 +517,6 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # tests/test-skill-helper-env-export.sh to verify cross-repo env propagation.
 # Test fixture — operators do not need to set this in a normal install.
 # PIPELINE_REPO_CONSUMERS=()
-
-# --- Inline visual-proof loopback server (issue #517) ---
-#
-# Relative path under the worktree served by inline-mode loopback python http.server.
-# PIPELINE_VISUAL_PROOF_TARGET_DIR=""
-
-# Base TCP port for the inline visual-proof loopback python http.server.
-# Default 8080, single-sourced at the read site (${VAR:-8080}); uncomment to override.
-#PIPELINE_VISUAL_PROOF_PORT_BASE="8080"
 
 # --- Doctor-on-update detector (issue #1038) ---
 #

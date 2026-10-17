@@ -3,6 +3,7 @@
 
 # pipeline runtime artifacts
 .claude/logs/
+.claude/logs-archive/
 .claude/worktrees/
 .claude/scratch/
 

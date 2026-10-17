@@ -6,14 +6,23 @@
 # (the read-only /pipeline:status skill performs no merges).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# #1444 — the section BODY moved to fullsend's reference file; the heading stays.
-SKILL="$ROOT/skills/fullsend/references/merge-orchestration.md"
-if ! grep -q 'detect_merge_overlap' "$SKILL"; then
-  echo "FAIL: skills/fullsend/references/merge-orchestration.md does not reference detect_merge_overlap"
-  exit 1
-fi
-if ! grep -q 'recommend_merge_order' "$SKILL"; then
-  echo "FAIL: skills/fullsend/references/merge-orchestration.md does not reference recommend_merge_order"
+# The section lives in fullsend SKILL.md; the scan itself is the
+# scripts/fullsend-merge-order.sh helper it calls.
+SKILL="$ROOT/skills/fullsend/SKILL.md"
+HELPER="$ROOT/scripts/fullsend-merge-order.sh"
+SECTION="$(awk '/^## Merge orchestration \(reference\)/{f=1; next} f && /^## /{f=0} f' "$SKILL")"
+for fn in detect_merge_overlap recommend_merge_order; do
+  if ! grep -q "$fn" <<<"$SECTION"; then
+    echo "FAIL: fullsend SKILL.md '## Merge orchestration (reference)' does not reference $fn"
+    exit 1
+  fi
+  if ! grep -vE '^[[:space:]]*#' "$HELPER" | grep -q "$fn"; then
+    echo "FAIL: scripts/fullsend-merge-order.sh does not call $fn"
+    exit 1
+  fi
+done
+if ! grep -qF 'scripts/fullsend-merge-order.sh"' <<<"$SECTION"; then
+  echo "FAIL: '## Merge orchestration (reference)' does not call scripts/fullsend-merge-order.sh"
   exit 1
 fi
 echo "PASS: overlap scan documented in fullsend skill"

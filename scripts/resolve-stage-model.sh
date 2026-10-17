@@ -101,6 +101,12 @@
 #
 # The EXECUTE stage is NOT resolved here: use
 # scripts/resolve-execute-dispatch.sh <N> <A|B|C|D>.
+#
+# NOTE (#1485): there is NO `classify` stage arm.
+# Classification runs inline in the `plan` dispatch (plan-issue Step 3a),
+# so it shares the plan pin.
+# The standalone `/pipeline:classify-issue` inherits the session model.
+# `$0 <N> classify` is a usage error (exit 2) by design.
 
 set -uo pipefail
 

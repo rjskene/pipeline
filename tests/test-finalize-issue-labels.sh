@@ -145,18 +145,18 @@ fi
 echo "Case D: strip-set contract (lifecycle/path/priority in; type-labels out)"
 inc
 D="$TMP/case-d"; reset_case "$D"
-export LABELS="$(IFS=,; echo "${STRIP_SET[*]}"),bug,enhancement,needs-browser,tracker"
+export LABELS="$(IFS=,; echo "${STRIP_SET[*]}"),bug,enhancement,tracker"
 if bash "$HELPER" 866 >"$D/stdout" 2>"$D/stderr"; then
   ok=1
   for l in plan-reviewed plan-approved in-progress priority/P2 docs-only quick-fix multi-task; do
     grep -qF -- "--remove-label $l" "$SHIM_LOG" || { ok=0; fail_msg "contract: $l should be stripped but was not"; }
   done
-  for l in bug enhancement needs-browser tracker merged; do
+  for l in bug enhancement tracker merged; do
     if grep -qF -- "--remove-label $l" "$SHIM_LOG"; then
       ok=0; fail_msg "contract: $l must NOT be in the strip-set but --remove-label $l was recorded"
     fi
   done
-  [ "$ok" = "1" ] && pass_msg "contract: lifecycle/path/priority stripped; bug/enhancement/needs-browser/tracker/merged preserved"
+  [ "$ok" = "1" ] && pass_msg "contract: lifecycle/path/priority stripped; bug/enhancement/tracker/merged preserved"
   [ "$ok" = "1" ] || sed 's/^/    /' "$SHIM_LOG"
 else
   rc=$?

@@ -14,7 +14,11 @@ set -uo pipefail
 # Modes (mutually exclusive):
 #   --bootstrap  Create/adopt the sandbox repo, clone it, sync the harness
 #                template into it, seed labels, tag `calib-base`. Idempotent:
-#                every step is guarded, so a re-run is a no-op.
+#                every step is guarded, so a re-run is a no-op. A template
+#                sync that commits on top of `calib-base` re-anchors the tag
+#                to it (#1477), so the next --reset keeps the fix.
+#   --retag      Force `calib-base` onto the sandbox HEAD (local + remote) —
+#                the explicit form, for a sandbox edited by hand (#1477).
 #   --reset      Force the sandbox back to `calib-base`, reap stale calib
 #                issues, recreate the six slate issues, and re-materialize
 #                .claude/settings.local.json from the harness template so the
@@ -72,14 +76,17 @@ set -uo pipefail
 
 print_usage() {
   cat <<'USAGE'
-Usage: scripts/calibration-run.sh (--bootstrap|--reset|--dry-run|--run) [options]
+Usage: scripts/calibration-run.sh (--bootstrap|--retag|--reset|--dry-run|--run) [options]
 
 Drives the §8 calibration slate: a fixed six-issue workload run against a
 purpose-built consumer sandbox so the harness version is the only variable.
 
 Modes (exactly one, mutually exclusive):
   --bootstrap      Create/adopt + clone the sandbox, sync the harness
-                   template, seed labels, tag calib-base. Idempotent.
+                   template, seed labels, tag calib-base. Idempotent. A
+                   template sync that commits re-anchors calib-base to it.
+  --retag          Force calib-base onto the sandbox HEAD (local + remote),
+                   for a sandbox edited by hand. No-op when already there.
   --reset          Force the sandbox back to calib-base, recreate the six
                    slate issues, and refresh .claude/settings.local.json from
                    the harness template. Prints `CALIB-ISSUES <n1> ... <n6>`.
@@ -106,6 +113,14 @@ Options:
                    in the sandbox session, varying how many plan-eval
                    dispatches the plan-approval gate is worth (outer-loop
                    step 4, #1429; annotate, #1435).
+  --pre-pr-review R  on|off  (default unset = the harness default, off) — sets
+                   PIPELINE_PRE_PR_REVIEW (true|false) in the sandbox session,
+                   toggling execute Step 8's pre-PR review loop on PATH A/B/C
+                   (#1464). --no-pre-pr-review = off.
+  --path-c-fanout F  on|off  (default unset = the harness default, off) — sets
+                   PIPELINE_PATH_C_FANOUT (true|false) in the sandbox session,
+                   toggling the PATH C per-leaf tdd-implementer fan-out vs one
+                   inline execute agent (#1486).
   --help           Print this banner and exit 0.
 
 The headless session is launched with ALLOW_ORCHESTRATOR_EDIT unset, so the
@@ -132,6 +147,13 @@ EXECUTOR_MODEL=""
 # unset", so the sandbox session keeps the harness default (`annotate` since
 # #1437). Pinning a value here would make every run an arm of this experiment.
 PLAN_GATE=""
+# Same contract for the pre-PR-review arm (#1464): empty = "leave
+# PIPELINE_PRE_PR_REVIEW unset" (harness default off since #1482; `on` is the
+# opt-in arm).
+PRE_PR_REVIEW=""
+# Same contract for the PATH C fan-out arm (#1486): empty = "leave
+# PIPELINE_PATH_C_FANOUT unset" (harness default off; `on` is the opt-in arm).
+PATH_C_FANOUT=""
 
 die_usage() { echo "calibration-run: ERROR: $1" >&2; exit 2; }
 die_run()   { echo "calibration-run: ERROR: $1" >&2; exit 1; }
@@ -143,7 +165,7 @@ set_mode() {
     MODE=reset; DRY_RESET=1; return 0
   fi
   if [ -n "$MODE" ]; then
-    die_usage "--$MODE and --$1 are mutually exclusive (pick one of --bootstrap|--reset|--dry-run|--run)"
+    die_usage "--$MODE and --$1 are mutually exclusive (pick one of --bootstrap|--retag|--reset|--dry-run|--run)"
   fi
   MODE="$1"
 }
@@ -158,6 +180,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)    print_usage; exit 0 ;;
     --bootstrap)  set_mode bootstrap; shift ;;
+    --retag)      set_mode retag; shift ;;
     --reset)      set_mode reset; shift ;;
     --dry-run)    set_mode dry-run; shift ;;
     --run)        set_mode run; shift ;;
@@ -173,6 +196,11 @@ while [ $# -gt 0 ]; do
     --executor-model=*) EXECUTOR_MODEL="${1#--executor-model=}"; shift ;;
     --plan-gate)        require_value "$@"; PLAN_GATE="$2"; shift 2 ;;
     --plan-gate=*)      PLAN_GATE="${1#--plan-gate=}"; shift ;;
+    --pre-pr-review)    require_value "$@"; PRE_PR_REVIEW="$2"; shift 2 ;;
+    --pre-pr-review=*)  PRE_PR_REVIEW="${1#--pre-pr-review=}"; shift ;;
+    --no-pre-pr-review) PRE_PR_REVIEW="off"; shift ;;
+    --path-c-fanout)    require_value "$@"; PATH_C_FANOUT="$2"; shift 2 ;;
+    --path-c-fanout=*)  PATH_C_FANOUT="${1#--path-c-fanout=}"; shift ;;
     *)            die_usage "unknown arg: $1" ;;
   esac
 done
@@ -199,8 +227,16 @@ case "$PLAN_GATE" in
   ''|full|single|none|annotate) ;;
   *) die_usage "--plan-gate must be one of full|single|none|annotate (got: $PLAN_GATE)" ;;
 esac
+case "$PRE_PR_REVIEW" in
+  ''|on|off) ;;
+  *) die_usage "--pre-pr-review must be one of on|off (got: $PRE_PR_REVIEW)" ;;
+esac
+case "$PATH_C_FANOUT" in
+  ''|on|off) ;;
+  *) die_usage "--path-c-fanout must be one of on|off (got: $PATH_C_FANOUT)" ;;
+esac
 if [ -z "$MODE" ]; then
-  die_usage "one of --bootstrap|--reset|--dry-run|--run is required"
+  die_usage "one of --bootstrap|--retag|--reset|--dry-run|--run is required"
 fi
 
 # ---------------------------------------------------------------------------
@@ -320,6 +356,20 @@ build_launch() {
   # semantics as bexec_env above.
   local -a plan_gate_env=()
   [ -n "$PLAN_GATE" ] && plan_gate_env=("PIPELINE_PLAN_GATE=$PLAN_GATE")
+  # #1464: the pre-PR-review arm — on|off maps onto the boolean knob execute
+  # Step 8 reads; empty sets nothing (same splice semantics as above).
+  local -a pre_pr_env=()
+  case "$PRE_PR_REVIEW" in
+    on)  pre_pr_env=("PIPELINE_PRE_PR_REVIEW=true") ;;
+    off) pre_pr_env=("PIPELINE_PRE_PR_REVIEW=false") ;;
+  esac
+  # #1486: the PATH C fan-out arm — on|off maps onto the boolean knob the
+  # resolver + delegation hook read; empty sets nothing (same splice semantics).
+  local -a path_c_fanout_env=()
+  case "$PATH_C_FANOUT" in
+    on)  path_c_fanout_env=("PIPELINE_PATH_C_FANOUT=true") ;;
+    off) path_c_fanout_env=("PIPELINE_PATH_C_FANOUT=false") ;;
+  esac
   # `-u ALLOW_ORCHESTRATOR_EDIT`: the loop session that drives this script
   # exports it, and inheriting it would disable the delegation hook inside the
   # very run being measured. PIPELINE_HEADLESS marks the session as unattended.
@@ -344,6 +394,7 @@ build_launch() {
   esac
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" "${plan_gate_env[@]}"
+          "${pre_pr_env[@]}" "${path_c_fanout_env[@]}"
           PIPELINE_HEADLESS=true
           "${bridge_env[@]}"
           CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
@@ -438,6 +489,12 @@ commit_sandbox() {
   # `--ignore-unmatch` makes this safe whether or not `add --all` staged it.
   git -C "$SANDBOX" rm --cached --ignore-unmatch --quiet \
     -- ".claude/$LOCAL_SETTINGS_BASENAME" || return 1
+  # #1478: run artefacts never ride the seed commit. A tracked
+  # .claude/logs-archive/<ts>/agent-costs.jsonl in calib-base is restored by
+  # every --reset and re-prices a prior run's rows. On a sandbox whose logs were
+  # already committed this also stages their removal (one-time cleanup).
+  git -C "$SANDBOX" rm --cached -r --ignore-unmatch --quiet \
+    -- .claude/logs .claude/logs-archive || return 1
   if git -C "$SANDBOX" diff --cached --quiet 2>/dev/null; then
     return 0   # already in sync — no commit, no churn
   fi
@@ -455,6 +512,21 @@ tag_base() {
   git -C "$SANDBOX" tag "$BASE_TAG" || return 1
   dispatch git -C "$SANDBOX" push --quiet origin "refs/tags/$BASE_TAG"
 }
+
+# reanchor_base <old-sha> — force $BASE_TAG onto the sandbox HEAD, locally and
+# on the remote (#1477). tag_base() never moves an existing tag, so before this
+# a template sync committed by --bootstrap was discarded by the very next
+# --reset (Calib 25). No-op when the tag already sits at HEAD.
+reanchor_base() {
+  local old="$1" new
+  new="$(git -C "$SANDBOX" rev-parse HEAD)" || return 1
+  [ "$old" = "$new" ] && return 0
+  git -C "$SANDBOX" tag -f "$BASE_TAG" "$new" >/dev/null || return 1
+  dispatch git -C "$SANDBOX" push --quiet --force origin "refs/tags/$BASE_TAG" || return 1
+  echo "calib: $BASE_TAG re-anchored $old -> $new"
+}
+
+base_sha() { git -C "$SANDBOX" rev-parse -q --verify "refs/tags/$BASE_TAG^{commit}" 2>/dev/null; }
 
 # Seed the canonical labels ON THE SANDBOX REPO. Scoping here is load-bearing
 # (#1280): doctor.sh --fix labels sources ./pipeline.config from its OWN cwd and
@@ -487,11 +559,34 @@ cmd_bootstrap() {
   ensure_clone                || die_run "could not clone the sandbox into $SANDBOX"
   sync_template               || die_run "template sync failed"
   materialize_local_settings  || die_run "could not materialize the sandbox local-settings file"
+  local pre_head old_base
+  pre_head="$(git -C "$SANDBOX" rev-parse -q --verify HEAD 2>/dev/null)"
   commit_sandbox              || die_run "sandbox commit failed"
   push_main                   || die_run "could not push the sandbox main branch"
+  # #1477: the tag follows the template. Re-anchor only when THIS sync committed
+  # on top of the tag itself — a sandbox left on a post-run main would bake the
+  # run's merged fixes into the seed, so that case warns and leaves the tag.
+  old_base="$(base_sha)"
+  if [ -n "$old_base" ] && [ "$(git -C "$SANDBOX" rev-parse HEAD)" != "$pre_head" ]; then
+    if [ "$pre_head" = "$old_base" ]; then
+      reanchor_base "$old_base" || die_run "could not re-anchor the $BASE_TAG tag"
+    else
+      warn "sandbox HEAD was not at $BASE_TAG before the template sync — $BASE_TAG left at $old_base (run --reset then --bootstrap, or --retag)"
+    fi
+  fi
   tag_base                    || die_run "could not anchor the $BASE_TAG tag"
   seed_labels                 || warn "label seed reported a failure"
   echo "calib: bootstrap complete — sandbox=$SANDBOX repo=$CALIB_REPO tag=$BASE_TAG"
+}
+
+# --retag (#1477): the explicit form, for a sandbox edited (and committed) by
+# hand. Force-pushes a tag, so it carries the same blast-radius guard as --reset.
+cmd_retag() {
+  guard_sandbox_repo
+  [ -d "$SANDBOX/.git" ] || die_run "sandbox is not bootstrapped at $SANDBOX (run --bootstrap first)"
+  local old_base
+  old_base="$(base_sha)" || die_run "$BASE_TAG does not exist in $SANDBOX (run --bootstrap first)"
+  reanchor_base "$old_base" || die_run "could not re-anchor the $BASE_TAG tag"
 }
 
 # ---------------------------------------------------------------------------
@@ -783,6 +878,8 @@ RUN_RC=0
 ABORT_REASON=""
 ROWS_JSON=""
 PRICING_TOTAL=""
+OC_N=""
+OC_TOTAL=""
 PRS_JSON=""
 MERGED_JSON=""
 OPEN_JSON="[]"
@@ -837,6 +934,8 @@ load_run_substrate() {
   local clr="$HARNESS/scripts/cost-latency-report.sh"
   ROWS_JSON="[]"
   PRICING_TOTAL=""
+  OC_N=""
+  OC_TOTAL=""
   if [ -f "$clr" ]; then
     # SCOPING IS LOAD-BEARING (#1280): cost-latency-report.sh joins merged PRs
     # against issue numbers and reads PIPELINE_REPO to know whose PRs. Run from
@@ -854,10 +953,25 @@ load_run_substrate() {
     # prefix), so pass RUN_START_TS's date portion only — a full timestamp
     # would exclude same-day rows from THIS run as well. The precise
     # (sub-day) cut is the ROWS_JSON filter below.
-    PRICING_TOTAL="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
+    # The full pricing JSON is captured ONCE; PRICING_TOTAL and the #1470
+    # output_complete counts both derive from it.
+    local pricing_json
+    pricing_json="$( cd "$SANDBOX" 2>/dev/null && PIPELINE_REPO="$CALIB_REPO" \
       bash "$clr" --emit-pricing-json --capture-log "$dedup_log" \
-      ${RUN_START_TS:+--since "${RUN_START_TS%%T*}"} 2>/dev/null \
-      | jq -r '.priced_cost_usd // empty' 2>/dev/null )"
+      ${RUN_START_TS:+--since "${RUN_START_TS%%T*}"} 2>/dev/null )"
+    PRICING_TOTAL="$(printf '%s' "$pricing_json" \
+      | jq -r '.priced_cost_usd // empty' 2>/dev/null)"
+    # #1470: "<complete> <complete+incomplete>" priced rows, or empty when the
+    # pricing JSON predates the keys (rendered n/a on CALIB-TOTAL).
+    local oc_pair
+    oc_pair="$(printf '%s' "$pricing_json" | jq -r '
+      if (.output_complete_rows | type) == "number"
+         and (.output_incomplete_rows | type) == "number"
+      then "\(.output_complete_rows) \(.output_complete_rows + .output_incomplete_rows)"
+      else empty end' 2>/dev/null)"
+    if [ -n "$oc_pair" ]; then
+      OC_N="${oc_pair% *}"; OC_TOTAL="${oc_pair#* }"
+    fi
     # Second layer: restrict ROWS_JSON itself (issue_cost()'s apportionment
     # sum, below) to issues carrying a FRESH capture record — ts_end at/after
     # RUN_START_TS — so a stale row that survives the cmd_reset archive can
@@ -1051,7 +1165,9 @@ issue_verdicts() {
 # the run under test, and a slate `path.txt` would report the routing we hoped
 # for even when the harness misrouted — exactly the regression the calibration
 # slate exists to catch. `?` therefore means "this run never classified the
-# issue" and is a real signal.
+# issue" and is a real signal. The slate's expectation IS now compared (#1487):
+# slate_expected_path() below feeds a separate `path-mismatch=` atom, but `path=`
+# stays the observation.
 issue_path() {
   local issue="$1" p
   load_issue_json "$issue"
@@ -1061,6 +1177,19 @@ issue_path() {
     A|B|C|D) printf '%s' "$p" ;;
     *)       printf '?' ;;
   esac
+}
+
+# slate_expected_path <slate dir> — the last cell of the dir's row in the
+# sibling README.md (A|B|C|D), else empty. Reads $(dirname dir)/README.md so a
+# staged harness worktree resolves its own copy. Never a per-dir path.txt.
+slate_expected_path() {
+  local d="${1:-}" readme p
+  [ -n "$d" ] || return 0
+  readme="$(dirname "$d")/README.md"
+  [ -f "$readme" ] || return 0
+  p="$(awk -F'|' -v want="\`$(basename "$d")\`" \
+    '{c=$2; gsub(/^[ \t]+|[ \t]+$/,"",c)} c==want {v=$(NF-1); gsub(/[ \t]/,"",v); print v; exit}' "$readme")"
+  case "$p" in A|B|C|D) printf '%s' "$p" ;; esac
 }
 
 # issue_reftest <slate dir> — runs the slate's reference test IN THE SANDBOX.
@@ -1098,7 +1227,7 @@ pricing_is_zero() {
 
 emit_calib_block() {
   local wall_total="$1"
-  local i=0 issue d path cost wall verdicts reftest unexpected
+  local i=0 issue d path cost wall verdicts reftest unexpected exp mismatch
   local total_cost=0 pass=0 count=0 graded=0 planted="n/a" cost_display
   load_run_substrate
   detect_abort
@@ -1111,6 +1240,12 @@ emit_calib_block() {
     load_issue_json "$issue"   # once per issue, in THIS shell (see the cache note)
     path="$(issue_path "$issue")"
     [ -n "$path" ] || path="?"
+    # path-mismatch (#1487): an appended atom, outside the 7-field CALIB grammar.
+    # path=? never mismatches — unclassified is its own signal.
+    exp="$(slate_expected_path "$d")"; mismatch=""
+    case "$path" in
+      A|B|C|D) [ -n "$exp" ] && [ "$path" != "$exp" ] && mismatch=" path-mismatch=$exp" ;;
+    esac
     cost="$(issue_cost "$issue")"
     wall="$(issue_wall "$issue")"
     verdicts="$(issue_verdicts "$issue")"
@@ -1164,8 +1299,8 @@ emit_calib_block() {
         esac
         ;;
     esac
-    printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
-      "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected"
+    printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s%s\n' \
+      "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected" "$mismatch"
   done
   # A $0 total is never printable UNPRICED (#1395): render n/a on the TOTAL
   # line whenever the capture log is missing/empty, PRICING_TOTAL is empty, or
@@ -1191,6 +1326,12 @@ emit_calib_block() {
   # breaks at `_`).
   local plan_gate_atom=""
   [ -n "$PLAN_GATE" ] && plan_gate_atom=" plan_gate=$PLAN_GATE"
+  # pre_pr_review=<on|off> (#1464): OPTIONAL and pre-built for the same reason.
+  local pre_pr_atom=""
+  [ -n "$PRE_PR_REVIEW" ] && pre_pr_atom=" pre_pr_review=$PRE_PR_REVIEW"
+  # path_c_fanout=<on|off> (#1486): OPTIONAL and pre-built for the same reason.
+  local path_c_fanout_atom=""
+  [ -n "$PATH_C_FANOUT" ] && path_c_fanout_atom=" path_c_fanout=$PATH_C_FANOUT"
   # bridge_prompts=<n> (#1421) — how many permission escalations THIS run raised
   # through the PermissionRequest bridge. It is the measurement that says whether
   # replacing --dangerously-skip-permissions with `--permission-mode auto` turned
@@ -1213,17 +1354,27 @@ emit_calib_block() {
     case "$n_bridge" in ''|*[!0-9]*) n_bridge=0 ;; esac
   fi
   bridge_atom=" bridge_prompts=$n_bridge"
+  # #1470 output_complete=<n>/<N>: priced rows whose output tokens are complete
+  # (Claude Code >=2.1.291 subagent transcripts under-measure output). PRE-BUILT
+  # like bridge_atom — a literal in the format string would read to the grammar
+  # extractor as a bogus `complete` field.
+  local oc_atom
+  if [ -n "${OC_N:-}" ] && [ -n "${OC_TOTAL:-}" ]; then
+    oc_atom=" output_complete=$OC_N/$OC_TOTAL"
+  else
+    oc_atom=" output_complete=n/a"
+  fi
   if [ -z "$ABORT_REASON" ]; then
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s/%s planted=%s hooks=%s%s%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "$pass" "$graded" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$path_c_fanout_atom" "$bridge_atom" "$oc_atom"
   else
     # No k/n for an aborted run, in either direction: `0/5` reads as a total
     # regression and `3/5` as a partial one, when the denominator was never
     # attempted. run-retro.sh renders this as the abort reason.
-    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s\n' \
+    printf 'CALIB-TOTAL cost=$%s wall=%s issues=%s reftest-pass=%s planted=%s hooks=%s%s%s%s%s%s%s\n' \
       "$cost_display" "$wall_total" "$count" "n/a" "$planted" "$HOOKS" \
-      "$bexec_atom" "$plan_gate_atom" "$bridge_atom"
+      "$bexec_atom" "$plan_gate_atom" "$pre_pr_atom" "$path_c_fanout_atom" "$bridge_atom" "$oc_atom"
   fi
 }
 
@@ -1262,13 +1413,14 @@ cmd_run() {
   # #1409/#1414: a non-default arm suffixes both artifacts so it can never be
   # mistaken for the baseline; the default arms keep the plain name.
   # Composable in a FIXED order — -hooks-off, then -bexec-<M>, then
-  # -plan-gate-<v> (#1429) — so an every-arm run names
-  # <ts>-hooks-off-bexec-opus-plan-gate-single and run-retro.sh has one order to
-  # peel.
+  # -plan-gate-<v> (#1429), then -path-c-fanout-<v> (#1486) — so an every-arm
+  # run names <ts>-hooks-off-bexec-opus-plan-gate-single-path-c-fanout-on and
+  # run-retro.sh has one order to peel.
   local run_suffix=""
   [ "$HOOKS" = "off" ] && run_suffix="${run_suffix}-hooks-off"
   [ -n "$EXECUTOR_MODEL" ] && run_suffix="${run_suffix}-bexec-$EXECUTOR_MODEL"
   [ -n "$PLAN_GATE" ] && run_suffix="${run_suffix}-plan-gate-$PLAN_GATE"
+  [ -n "$PATH_C_FANOUT" ] && run_suffix="${run_suffix}-path-c-fanout-$PATH_C_FANOUT"
   RUN_LOG="$CALIB_OUT_DIR/${RUN_TS}${run_suffix}.log"
   t0="$(date +%s)"
   ( cd "$SANDBOX" && dispatch "${LAUNCH[@]}" ) 2>&1 | tee "$RUN_LOG"
@@ -1294,10 +1446,13 @@ case "$MODE" in
     ARM_TOKENS=("hooks=$HOOKS")
     [ -n "$EXECUTOR_MODEL" ] && ARM_TOKENS+=("bexec=$EXECUTOR_MODEL")
     [ -n "$PLAN_GATE" ] && ARM_TOKENS+=("plan_gate=$PLAN_GATE")
+    [ -n "$PRE_PR_REVIEW" ] && ARM_TOKENS+=("pre_pr_review=$PRE_PR_REVIEW")
+    [ -n "$PATH_C_FANOUT" ] && ARM_TOKENS+=("path_c_fanout=$PATH_C_FANOUT")
     dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;
   bootstrap) cmd_bootstrap ;;
+  retag)     cmd_retag ;;
   reset)     cmd_reset ;;
   run)       cmd_run ;;
 esac

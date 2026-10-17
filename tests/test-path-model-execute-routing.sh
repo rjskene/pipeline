@@ -207,24 +207,6 @@ else
   fail_msg "skill: missing the estimate-not-diff rationale in the block"
 fi
 
-# 12. needs-browser PATH D (issue #960 — browser/UI execute never validated on
-#     Sonnet). #1186 keeps the carve-out and changes only its emission: it now
-#     PINS `model=opus` instead of suppressing model= and inheriting.
-inc
-if awk '
-  /Per-path execute MODEL routing/ { inblock = 1 }
-  inblock && /^## / { inblock = 0 }
-  inblock && /PATH D/ && /needs-browser/ {
-    l = tolower($0)
-    if (l ~ /model=opus/ || l ~ /pins opus/ || l ~ /pinned opus/ || l ~ /pin opus/) f = 1
-  }
-  END { exit (f ? 0 : 1) }
-' "$SKILL"; then
-  pass_msg "skill: needs-browser PATH D pins opus (browser carve-out, named model)"
-else
-  fail_msg "skill: needs-browser PATH D still suppresses model=/inherits (#1186 pin contract)"
-fi
-
 # --- #1056: the inline execute dispatch is routed through the single-source
 #     resolver (resolve-execute-dispatch.sh), and the post-dispatch verify is
 #     wired (verify-execute-completion.sh --verify-dispatch). The #1056 root

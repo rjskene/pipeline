@@ -66,7 +66,7 @@ from subagent_log_utils import append_locked, read_event_stdin  # noqa: E402
 
 STAGE_PATTERNS = [
     (r"\b(eval(uate)?[ -]?(issue[ -]?)?pr|pr[ -]?eval|finish[ -]?eval[ -]?pr)\b", "pr-eval"),
-    (r"\b(eval(uate)?[ -]?(issue[ -]?)?plan|eval[ -]?plan|re[ -]?eval(uate)?[ -]?plan)\b", "plan-eval"),
+    (r"\b(eval(uate)?[ -]?(issue[ -]?)?plan|eval[ -]?plan|re[ -]?eval(uate)?[ -]?plan|plan[ -]?eval(uation)?)\b", "plan-eval"),
     (r"\bexecut(e|e[ -]?issue[ -]?plan)\b", "execute"),
     (r"\b(re[ -]?)?plan([ -]?issue)?\b", "plan"),
     (r"\b(re[ -]?)?classif(y|y[ -]?issue)\b", "classify"),

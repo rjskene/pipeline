@@ -22,9 +22,11 @@ assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  
 # the now read-only /pipeline:status skill and DELETED
 # skills/run/references/merge-orchestration.md (the merge-orchestration prose
 # relocated into skills/fullsend/SKILL.md, already in this list). The remaining
-# FILES still each carry a live `gh pr merge ... --merge` command.
+# FILES still each carry a live `gh pr merge ... --merge` command. The
+# feature-PR and release-PR merge loops live in the fullsend Step 7/7b helpers.
 FILES=(
-  "skills/fullsend/references/auto-merge-gate.md"
+  "scripts/fullsend-merge-green.sh"
+  "scripts/fullsend-release-prs.sh"
   "skills/fullsend/SKILL.md"
   "docs/release-cadence.md"
 )
