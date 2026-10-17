@@ -107,10 +107,25 @@ fi
 
 # Pathological double-prefix unwrap: chore(general): dogfood(mock-web): X
 # Strip the outer canonical prefix and let normalization re-run on the inner.
-# See issue #507.
-DOUBLE_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)\([a-z0-9_-]+\)!?:[[:space:]]+([a-z][a-z0-9_-]*\([a-z0-9_-]+\):[[:space:]]+.+)$'
+# See issue #507. Either side may carry the breaking bang before or after the
+# scope (`type!(scope):` / `type(scope)!:`, #1498).
+DOUBLE_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)(!?\([a-z0-9_-]+\)|\([a-z0-9_-]+\)!):[[:space:]]+([a-z][a-z0-9_-]*(!?\([a-z0-9_-]+\)|\([a-z0-9_-]+\)!):[[:space:]]+.+)$'
 if [[ "$TITLE" =~ $DOUBLE_RE ]]; then
-  TITLE="${BASH_REMATCH[2]}"
+  TITLE="${BASH_REMATCH[3]}"
+fi
+
+normalize_scope() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9_-]/-/g; s/^-*//; s/-*$//'
+}
+
+# Bang-before-scope variant: type!(scope): rest -> canonical type(scope)!: rest
+# so the CC_RE passthrough below emits a breaking marker release-please
+# understands. See issue #1498.
+BANG_SCOPE_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)!\(([^\)]+)\):[[:space:]]+(.+)$'
+if [[ "$TITLE" =~ $BANG_SCOPE_RE ]]; then
+  TITLE="${BASH_REMATCH[1]}($(normalize_scope "${BASH_REMATCH[2]}"))!: ${BASH_REMATCH[3]}"
 fi
 
 # Conventional-commits passthrough — keep this regex in sync with
@@ -120,12 +135,6 @@ if [[ "$TITLE" =~ $CC_RE ]]; then
   emit_title "$TITLE"
   exit 0
 fi
-
-normalize_scope() {
-  printf '%s' "$1" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed 's/[^a-z0-9_-]/-/g; s/^-*//; s/-*$//'
-}
 
 # bug(<scope>): <rest> → fix(<normalized-scope>): <rest>
 if [[ "$TITLE" =~ ^bug\(([^\)]+)\):[[:space:]]+(.+)$ ]]; then
