@@ -105,7 +105,7 @@ if [[ "$TITLE" =~ ^epic\( ]]; then
   refuse_tracker
 fi
 
-# Pathological double-prefix unwrap: chore(general): dogfood(visual-proof): X
+# Pathological double-prefix unwrap: chore(general): dogfood(mock-web): X
 # Strip the outer canonical prefix and let normalization re-run on the inner.
 # See issue #507.
 DOUBLE_RE='^(feat|fix|chore|refactor|docs|ci|perf|test|build|style|revert)\([a-z0-9_-]+\)!?:[[:space:]]+([a-z][a-z0-9_-]*\([a-z0-9_-]+\):[[:space:]]+.+)$'

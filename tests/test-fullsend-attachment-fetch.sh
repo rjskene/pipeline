@@ -8,21 +8,28 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
+# Step 1a calls the wave helper, which owns the per-issue sanctioned loop.
+HELPER="$SCRIPT_DIR/../scripts/fullsend-fetch-attachments.sh"
 
 PASS=0; FAIL=0
 ok()   { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 nope() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-if grep -qF 'scripts/filter-trusted-comments.sh" fetch-attachments "$N"' "$TARGET"; then
-  ok "fullsend SKILL.md invokes the sanctioned fetch-attachments fence"
+if grep -qF 'scripts/fullsend-fetch-attachments.sh"' "$TARGET"; then
+  ok "fullsend SKILL.md invokes the fullsend-fetch-attachments.sh helper"
 else
-  nope "fullsend SKILL.md does not invoke filter-trusted-comments.sh fetch-attachments"
+  nope "fullsend SKILL.md does not invoke the fullsend-fetch-attachments.sh helper"
+fi
+if grep -qF 'filter-trusted-comments.sh" fetch-attachments "$N"' "$HELPER"; then
+  ok "the helper invokes the sanctioned filter-trusted-comments.sh fetch-attachments call"
+else
+  nope "the helper does not invoke filter-trusted-comments.sh fetch-attachments"
 fi
 
-if grep -qF 'scripts/fetch-issue-attachments.sh" "$N"' "$TARGET"; then
-  nope "fullsend SKILL.md still directly invokes fetch-issue-attachments.sh (bypasses the trust-filter hook)"
+if grep -qF 'fetch-issue-attachments.sh" "$N"' "$TARGET" "$HELPER"; then
+  nope "fullsend SKILL.md or its helper directly invokes fetch-issue-attachments.sh (bypasses the trust-filter hook)"
 else
-  ok "fullsend SKILL.md no longer directly invokes fetch-issue-attachments.sh"
+  ok "neither fullsend SKILL.md nor its helper directly invokes fetch-issue-attachments.sh"
 fi
 
 # Sanity: the invocation should land in step 1 (Plan), BEFORE the plan-issue

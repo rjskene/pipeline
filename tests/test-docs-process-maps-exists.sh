@@ -6,8 +6,8 @@ FILE="docs/process-maps.md"
 for heading in "Full lifecycle map" "PATH dispatch decision tree" "Wave-plan flow"; do
   grep -qF "$heading" "$FILE" || { echo "FAIL: $FILE missing heading '$heading'"; exit 1; }
 done
-# Cap raised 200 -> 220 (#368): the doc gained the "Visual proof sub-skill
-# (needs-browser lane)" subsection for a genuinely new pipeline lane. The new
+# Cap raised 200 -> 220 (#368): the doc gained a browser sub-skill subsection
+# (since removed by #1484) for a genuinely new pipeline lane. The new
 # section is kept tight; the bump is the proportionate alternative to gutting
 # the unrelated ASCII maps to preserve an arbitrary 200.
 # Cap raised 220 -> 235 (#777): the doc gained the "Dispatch transport" section

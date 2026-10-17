@@ -36,7 +36,7 @@ Full command catalogue (every skill, all flags, interaction surfaces): [docs/ski
 
 | Stage | Who | What it produces | Label after |
 |---|---|---|---|
-| classify | agent | `## Classification` comment and the path label (`docs-only` / `multi-task` / `quick-fix`; none means PATH B) | (none) |
+| classify | agent (inline in plan since #1485) | `## Classification` comment and the path label (`docs-only` / `multi-task` / `quick-fix`; none means PATH B) | (none) |
 | plan | agent | `## Implementation Plan` comment | `plan-pending` |
 | plan-eval | agent, independent context | Approve or Revise. Under the default `annotate` gate a Revise binds its amendments into execute instead of re-planning | `plan-reviewed` → `plan-approved` |
 | execute | agent, own worktree | conventional commits on `feature/<slug>` and a PR against the base branch | `in-progress` → `pr-open` |
@@ -68,7 +68,6 @@ Two issues, one `/pipeline:fullsend 1352 1353`, condensed:
 
 ```
 usage-gate: decision=proceed five_hour=41 seven_day=23 threshold=85 resume_at=
-Wave 1: classify #1352, #1353 in parallel
 Wave 1: plan #1352, #1353 in parallel
 plan-eval   #1352 Approve · #1353 Revise → annotate: amendments bound into execute
 Wave 1: execute #1352 (B, opus) #1353 (B, opus) in parallel   wt-1352-hook-denial-log  wt-1353-prune-logs

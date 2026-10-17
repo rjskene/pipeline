@@ -60,7 +60,6 @@ LABEL_TABLE=(
   "docs-only|docs-only|D4C5F9|Documentation-only change — no implementation"
   "multi-task|multi-task|5319e7|Issue too large for one PR; requires decomposition into sub-issues"
   "quick-fix|quick-fix|0E8A16|Quick-fix path — inline TDD, single failing test"
-  "needs-browser|needs-browser|1F77B4|Gates Playwright MCP attachment and visual-proof-from-plan sub-skill"
   "needs-debug|needs-debug|D93F0B|Gates root-cause diagnosis via systematic-debugging before planning"
   "manual-merge|manual-merge|F9D0C4|Suppress auto-merge for this issue; merge by hand"
   "EXCLUDED|excluded|E4E669|Excluded from pipeline"
@@ -123,7 +122,7 @@ fi
 #     single-sourced at the read site (${VAR:-default}), NOT required live keys
 #     — they are skipped, never force-appended;
 #   - surface placeholder / no-safe-default keys (empty default, owner/repo,
-#     /path/..., PIPELINE_MOCK_WEB_EVAL_*) as "added — needs your value".
+#     /path/...) as "added — needs your value".
 # Prints a per-key report. Exits 0. The example file is the source of defaults;
 # the host file is the only thing mutated (append-only).
 # --------------------------------------------------------------------------
@@ -153,13 +152,10 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
                    | sed -E 's/^[[:space:]]*//; s/=$//' | sort -u)"
 
   # Decide whether an example default value has no safe default (placeholder).
-  # Empty string, owner/repo sentinel, /path/... sentinels, and the
-  # PIPELINE_MOCK_WEB_EVAL_* family are all "needs your value".
+  # Empty string, owner/repo sentinel, and /path/... sentinels are all
+  # "needs your value".
   cfg_is_placeholder() {
-    local key="$1" val="$2"
-    case "$key" in
-      PIPELINE_MOCK_WEB_EVAL_*) return 0 ;;
-    esac
+    local val="$2"
     # Strip surrounding quotes for the value test.
     local bare="$val"
     bare="${bare%\"}"; bare="${bare#\"}"

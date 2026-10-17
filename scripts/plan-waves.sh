@@ -18,15 +18,17 @@ set -f
 # pipeline.config (or env).
 #
 # Input:   issue numbers via argv (space-separated) OR stdin (newline-separated).
-# Output:  one line per wave on stdout, verb reflecting --stage (classify|plan|execute):
+# Output:  one line per wave on stdout, verb reflecting --stage (plan|execute)
+#          (classify: deprecated alias of plan, removed next release) #1485:
 #            Wave 1: <stage> #A, #B in parallel
 #            Wave 2: <stage> #C (serial — shares <file> with #A)
 #            Wave 3: <stage> #D (serial — blocked by #C)
 
 usage() {
   cat >&2 <<EOF
-Usage: $0 [--stage=classify|plan|execute] <issue-num> [<issue-num> ...]
-   or: echo "<num>\\n<num>" | $0 [--stage=classify|plan|execute]
+Usage: $0 [--stage=plan|execute] <issue-num> [<issue-num> ...]
+   or: echo "<num>\\n<num>" | $0 [--stage=plan|execute]
+       (classify: deprecated alias of plan, removed next release)
 EOF
 }
 
@@ -39,7 +41,7 @@ for arg in "$@"; do
       STAGE="${arg#--stage=}"
       ;;
     --stage=*)
-      echo "plan-waves: invalid --stage value: ${arg#--stage=} (expected classify|plan|execute)" >&2
+      echo "plan-waves: invalid --stage value: ${arg#--stage=} (expected plan|execute; classify is a deprecated alias of plan)" >&2
       exit 1
       ;;
     --emit-edges)
@@ -120,8 +122,9 @@ for N in "${ISSUES[@]}"; do
     | tr '\n' ' '; } || true)
   BLOCKERS[$N]="${BLIST% }"
 
-  # Files: only the `execute` stage runs file-conflict detection; classify/plan
-  # stages skip it (the body heuristic over-serializes cross-references).
+  # Files: only the `execute` stage runs file-conflict detection;
+  # the plan stage (alias classify) skips it (the body heuristic
+  # over-serializes cross-references).
   #
   # UNIFIED A/B/C/D CONFLICT GRAPH (#700): file-conflict detection here reads
   # ONLY the issue body / approved plan comment — it NEVER inspects the path

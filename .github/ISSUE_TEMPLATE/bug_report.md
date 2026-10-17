@@ -13,8 +13,8 @@ host-specific. Path-drift or value-drift bugs that surface only in the live
 If your bug is "line N of pipeline.config is wrong":
   1. Check whether the same drift exists in `pipeline.config.example` and fix
      that file in your PR if so.
-  2. Add a regression-guard test (model: `tests/test-pipeline-config-mock-web-eval-paths.sh`,
-     introduced by #357) that scans both `pipeline.config.example` and the
+  2. Add a regression-guard test (model: `tests/test-pipeline-config-parallel-runner.sh`)
+     that scans both `pipeline.config.example` and the
      gitignored `pipeline.config` when present.
   3. The live `pipeline.config` is patched by hand on the operator's host —
      flag this in the issue body so the operator knows to apply the local edit.

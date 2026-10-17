@@ -29,7 +29,8 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 PROJ="$WORKDIR/proj"
 mkdir -p "$PROJ/.claude/logs/subagents" "$PROJ/web"
-printf 'PIPELINE_REPO="fake/repo"\n' > "$PROJ/pipeline.config"
+# #1486: the delegation hook only fires with the PATH C fan-out knob on.
+printf 'PIPELINE_REPO="fake/repo"\nPIPELINE_PATH_C_FANOUT="true"\n' > "$PROJ/pipeline.config"
 
 STUB_DIR="$WORKDIR/stub"
 mkdir -p "$STUB_DIR"

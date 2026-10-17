@@ -10,7 +10,7 @@ set -euo pipefail
 # (the rule) and skills/create-issues/SKILL.md (the cross-ref).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_FILE="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
+SKILL_FILE="$SCRIPT_DIR/../skills/plan-issue/references/classification.md"  # #1485: moved to the shared reference
 SKILL2="$SCRIPT_DIR/../skills/create-issues/SKILL.md"
 
 PASS=0

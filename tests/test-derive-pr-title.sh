@@ -134,23 +134,23 @@ assert_stdout \
 # chore(general): <verbatim>.
 assert_stdout \
   "non-canonical type with scope, no label -> chore(<scope>)" \
-  "chore(visual-proof): exercise visual-proof end-to-end" \
-  999 --title-override 'dogfood(visual-proof): exercise visual-proof end-to-end' --labels-override ''
+  "chore(mock-web): exercise mock-web end-to-end" \
+  999 --title-override 'dogfood(mock-web): exercise mock-web end-to-end' --labels-override ''
 
 assert_stdout \
   "non-canonical type with scope + enhancement label -> feat(<scope>)" \
-  "feat(visual-proof): X" \
-  999 --title-override 'dogfood(visual-proof): X' --labels-override 'enhancement'
+  "feat(mock-web): X" \
+  999 --title-override 'dogfood(mock-web): X' --labels-override 'enhancement'
 
 assert_stdout \
   "non-canonical type with scope + bug label -> fix(<scope>)" \
-  "fix(visual-proof): X" \
-  999 --title-override 'dogfood(visual-proof): X' --labels-override 'bug'
+  "fix(mock-web): X" \
+  999 --title-override 'dogfood(mock-web): X' --labels-override 'bug'
 
 assert_stdout \
-  "idempotent double-prefix strip: chore(general): dogfood(visual-proof): X -> chore(visual-proof): X" \
-  "chore(visual-proof): X" \
-  999 --title-override 'chore(general): dogfood(visual-proof): X' --labels-override ''
+  "idempotent double-prefix strip: chore(general): dogfood(mock-web): X -> chore(mock-web): X" \
+  "chore(mock-web): X" \
+  999 --title-override 'chore(general): dogfood(mock-web): X' --labels-override ''
 
 assert_stdout \
   "non-canonical type with no scope (no parentheses) -> existing default fallback chore(general)" \

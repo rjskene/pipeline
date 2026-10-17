@@ -1,15 +1,21 @@
 # The calibration slate
 
-Five canned issues, filed against the sandbox built from `dev/calib/template`,
+Six canned issues, filed against the sandbox built from `dev/calib/template`,
 chosen to cover the routing shapes a calibration run needs to distinguish.
 
-| dir | shape | expected routing pressure |
-|-----|-------|---------------------------|
-| `01-doc-stale` | documentation only, no source or test change | PATH A |
-| `02-quick-fix` | one-line source fix plus a regression assertion | PATH D |
-| `03-feature`   | a new command that needs a new test case | single execute agent (test then code) |
-| `04-race-auth` | a concurrency bug with an explicitly under-specified fix | high uncertainty |
-| `05-two-dir`   | edits required in two disjoint directories | PATH C fan-out |
+| dir | shape | expected routing pressure | path |
+|-----|-------|---------------------------|------|
+| `01-doc-stale` | documentation only, no source or test change | PATH A | A |
+| `02-quick-fix` | one-line source fix plus a regression assertion | PATH D | D |
+| `03-feature`   | a new command that needs a new test case | single execute agent (test then code) | B |
+| `04-race-auth` | a concurrency bug with an explicitly under-specified fix | high uncertainty | B |
+| `05-two-dir`   | three independent deliverables in `lib/`, `bin/`, `docs/`, each with its own test | PATH C fan-out | C |
+| `06-planted-defect` | a feature with a planted boundary defect the PR evaluator should catch | pr-eval gate yield | B |
+
+`path` is the expected classification. `scripts/calibration-run.sh` reads this
+column and appends `path-mismatch=<path>` to a `CALIB` line whose classified
+path differs from it. Keep it a single letter (`A`–`D`) in the last cell of
+the row.
 
 ## Per-issue files
 

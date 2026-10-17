@@ -2775,6 +2775,98 @@ fi
 rm -f "$TMP48E_ERR"
 rm -rf "$TMP48E"
 
+# ---------------------------------------------------------------------------
+# Scenario 49 (#1470): claude-opus-5-5 / claude-sonnet-5-5 price at their OWN
+# rates (pricing page retrieved 2026-10-08): Opus 5.5 4/20/5/0.20 = $29.20 and
+# Sonnet 5.5 2/10/2.50/0.10 = $14.60 per 1M in each bucket -> $43.80; neither
+# hits the unknown-model fallback (fallback_priced_count 0, no WARN).
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 49: 5.5 model ids price at their own rates (#1470)"
+
+TMP49="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP49/" 2>/dev/null
+printf '%s\n' '[{"number":149,"title":"feat: 5.5 records","additions":300,"deletions":100,"body":"Closes #249","mergedAt":"2026-10-01T12:00:00Z","labels":[]}]' > "$TMP49/prs.json"
+printf '%s\n' '{"number":149,"additions":300,"deletions":100,"comments":[]}' > "$TMP49/pr-149.json"
+printf '%s\n' '{"number":249,"labels":[],"comments":[]}' > "$TMP49/issue-249.json"
+{
+  printf '%s\n' '{"schema_version":2,"issue":"249","stage":"execute","session_id":"s49","model":"claude-opus-5-5","agent_kind":"headless","record_key":"K249A","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}'
+  printf '%s\n' '{"schema_version":2,"issue":"249","stage":"plan","session_id":"s49","model":"claude-sonnet-5-5","agent_kind":"headless","record_key":"K249B","tokens":{"input":1000000,"output":1000000,"cache_read":1000000,"cache_creation":1000000,"total":4000000},"duration_ms":1000}'
+} > "$TMP49/capture.jsonl"
+TMP49_ERR="$(mktemp)"
+PRICING49="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_INPUT -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_OUTPUT \
+                 -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_OPUS_5_5_CACHE_READ \
+                 -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_INPUT -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_OUTPUT \
+                 -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_SONNET_5_5_CACHE_READ \
+             bash "$HELPER" --fixture "$TMP49" --emit-pricing-json 2>"$TMP49_ERR")"
+COST49="$(printf '%s' "$PRICING49" | jq -r '.priced_cost_usd' 2>/dev/null)"
+if [ "$COST49" = "43.80" ]; then
+  pass_msg "opus-5-5 + sonnet-5-5 priced at 29.20 + 14.60 == 43.80"
+else
+  fail_msg "opus-5-5 + sonnet-5-5 should price at 43.80, got $COST49"
+fi
+FALLBACK49="$(printf '%s' "$PRICING49" | jq -r '.fallback_priced_count' 2>/dev/null)"
+if [ "$FALLBACK49" = "0" ]; then
+  pass_msg "fallback_priced_count == 0 for 5.5 model ids"
+else
+  fail_msg "fallback_priced_count should be 0 for 5.5 model ids, got $FALLBACK49"
+fi
+if grep -q 'WARN: no price for model' "$TMP49_ERR" 2>/dev/null; then
+  fail_msg "5.5 model ids wrongly emitted an unknown-model WARN (got: $(cat "$TMP49_ERR"))"
+else
+  pass_msg "5.5 model ids emitted no unknown-model WARN"
+fi
+rm -f "$TMP49_ERR"
+rm -rf "$TMP49"
+
+# ---------------------------------------------------------------------------
+# Scenario 50 (#1470): output under-measurement disclosure. 3 priced rows, 2
+# with output_complete:false, 1 with no field (absent == complete) ->
+# --emit-pricing-json carries output_complete_rows 1 / output_incomplete_rows
+# 2 with stdout pure JSON and the NOTE on stderr; --tokenomics text prints the
+# NOTE exactly once; a fixture with zero false rows prints no NOTE.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 50: output_complete=false rows flagged as under-measured (#1470)"
+
+NOTE50='NOTE: output tokens under-measured on 2 rows (Claude Code ≥2.1.291 subagent transcripts)'
+TMP50="$(mktemp -d)"
+cp "$FIXTURE_DIR"/*.json "$TMP50/" 2>/dev/null
+printf '%s\n' '[{"number":150,"title":"feat: oc records","additions":300,"deletions":100,"body":"Closes #250","mergedAt":"2026-10-01T12:00:00Z","labels":[]}]' > "$TMP50/prs.json"
+printf '%s\n' '{"number":150,"additions":300,"deletions":100,"comments":[]}' > "$TMP50/pr-150.json"
+printf '%s\n' '{"number":250,"labels":[],"comments":[]}' > "$TMP50/issue-250.json"
+{
+  printf '%s\n' '{"schema_version":2,"issue":"250","stage":"execute","session_id":"s50","model":"claude-opus-5-5","agent_kind":"inline","record_key":"K250A","output_complete":false,"tokens":{"input":10,"output":10,"cache_read":10,"cache_creation":10,"total":40},"duration_ms":1000}'
+  printf '%s\n' '{"schema_version":2,"issue":"250","stage":"plan","session_id":"s50","model":"claude-opus-5-5","agent_kind":"inline","record_key":"K250B","output_complete":false,"tokens":{"input":10,"output":10,"cache_read":10,"cache_creation":10,"total":40},"duration_ms":1000}'
+  printf '%s\n' '{"schema_version":2,"issue":"250","stage":"classify","session_id":"s50","model":"claude-opus-5-5","agent_kind":"headless","record_key":"K250C","tokens":{"input":10,"output":10,"cache_read":10,"cache_creation":10,"total":40},"duration_ms":1000}'
+} > "$TMP50/capture.jsonl"
+TMP50_ERR="$(mktemp)"
+PRICING50="$(bash "$HELPER" --fixture "$TMP50" --emit-pricing-json 2>"$TMP50_ERR")"
+OC50="$(printf '%s' "$PRICING50" | jq -r '"\(.output_complete_rows) \(.output_incomplete_rows)"' 2>/dev/null)"
+if [ "$OC50" = "1 2" ]; then
+  pass_msg "--emit-pricing-json output_complete_rows 1 / output_incomplete_rows 2 (absent == complete)"
+else
+  fail_msg "--emit-pricing-json should carry output_complete_rows 1 / output_incomplete_rows 2, got [$OC50] from $PRICING50"
+fi
+if [ "$(grep -cF "$NOTE50" "$TMP50_ERR")" = "1" ]; then
+  pass_msg "--emit-pricing-json prints the under-measured NOTE once on stderr"
+else
+  fail_msg "--emit-pricing-json should print the NOTE once on stderr (got: $(cat "$TMP50_ERR"))"
+fi
+TXT50="$(bash "$HELPER" --fixture "$TMP50" --tokenomics 2>/dev/null)"
+if [ "$(printf '%s\n' "$TXT50" | grep -cF "$NOTE50")" = "1" ]; then
+  pass_msg "--tokenomics text prints the under-measured NOTE exactly once"
+else
+  fail_msg "--tokenomics text should print the NOTE exactly once"
+fi
+sed -i 's/"output_complete":false,//' "$TMP50/capture.jsonl"
+TXT50B="$(bash "$HELPER" --fixture "$TMP50" --tokenomics 2>&1)"
+if printf '%s\n' "$TXT50B" | grep -q 'NOTE: output tokens under-measured'; then
+  fail_msg "zero output_complete=false rows must print no NOTE"
+else
+  pass_msg "zero output_complete=false rows print no NOTE"
+fi
+rm -f "$TMP50_ERR"
+rm -rf "$TMP50"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

@@ -13,7 +13,7 @@ decision it forced. It is the durable record behind issues #721, #723, #707,
 - The pipeline's real compute cost is **~$15.8k over 17 days (~$900–1000/day list-price-equivalent)** — masked until now by subscription billing.
 - **94% of it is `claude -p` worker stages** (execute 74% + pr-eval 20%); **output tokens are the #1 cost driver (37%) and are uncacheable.**
 - The **2026-06-15 billing change** meters `claude -p`/Agent-SDK usage on subscription against a tiny separate credit (Max 20x = **$200/mo ≈ 5–8 hours** of load), then bills standard API rates. The subscription subsidy on automated work is going away.
-- **Decision: Path 2** — keep work on the subscription's *interactive pool* by running execute+pr-eval as **inline subagents from a human-attended orchestrator**, `claude -p` opt-in. As of #749/#891/#896 this now applies to PATH C as well: C execute/PR-eval fan out inline by default (one `tdd-implementer` per `target=<dir>` leaf in its own per-leaf worktree, reassembled by cherry-pick), with `--spawn` as the opt-in legacy `claude -p` worker transport. Path 1 (API-key, full automation) is the documented later-option.
+- **Decision: Path 2** — keep work on the subscription's *interactive pool* by running execute+pr-eval as **inline subagents from a human-attended orchestrator**, `claude -p` opt-in. As of #749/#891/#896 this now applies to PATH C as well: C execute/PR-eval run inline by default — since #1486 as ONE inline execute agent (exactly as PATH B); the per-leaf fan-out (one `tdd-implementer` per `target=<dir>` leaf in its own per-leaf worktree, reassembled by cherry-pick) is opt-in via `PIPELINE_PATH_C_FANOUT=true` — with `--spawn` as the opt-in legacy `claude -p` worker transport. Path 1 (API-key, full automation) is the documented later-option.
 - **Two parallel workstreams, both required:** migrate to inline (#723/#707) AND drive down tokens (#648/#420/#700).
 - **Everything gates on #721** (measurement) — it also produces the execute-concurrency assessment that sizes the migration and feeds the governor.
 - **Model-tier lever (shipped; execute defaults to Opus on every path, Sonnet is opt-IN):** a third axis —
@@ -100,6 +100,8 @@ cache-write $18.75 / cache-read $1.50 per 1M tokens).
 | plan + plan-eval + classify | ~$179 | 1.1% |
 
 **execute + pr-eval = 94% of spend.** Classify/plan optimization is rounding error.
+
+#1485 folded classify into the plan dispatch (6→5 agents per issue; calibration run 31 verifies the −6–9% expectation).
 
 ### By token bucket — token share ≠ cost share
 | bucket | tokens | % tokens | $ | % cost |
@@ -275,9 +277,7 @@ knobs survive as the opt-in. `scripts/resolve-execute-dispatch.sh` is the single
   under `low-blast`, only issues that `scripts/path-b-execute-eligible.sh` scores `low-blast` (≤1 source
   module, ≤6 files, ≤150 added-LOC proxy, no security/migration/auth/concurrency signal) do, and
   `high-blast` pins `opus`.
-- **PATH D takes the knob with no eligibility predicate**, but keeps the `needs-browser` → Opus carve-out
-  (#960); on PATH B `needs-browser` surfaces as the eligibility script's `REASON=needs-browser` and is treated
-  as W2-equivalent.
+- **PATH D takes the knob with no eligibility predicate**.
 - **`PIPELINE_PATH_A_MODEL_EXECUTE` / `PIPELINE_PATH_C_MODEL_EXECUTE`** (#1186) — same unset ⇒ `opus` rule;
   A and C run no eligibility predicate and no carve-outs (the default already is the carve-out target). For C
   the resolved model applies to every `target=<dir>` leaf.
@@ -332,7 +332,6 @@ the contract the `test-json-markdown-surface-guard.sh` test enforces.
 | *-report.sh --emit-rows-json / --emit-pricing-json | JSON | tests + metrics-snapshot | script-parsed | KEEP JSON |
 | metrics-snapshot.sh | JSONL record | timeseries | machine record | KEEP JSON |
 | analyze-issues.sh shortlist | JSON (4 keys) | Stage-2 subagent prompt (key-addressed) | effective parse contract | KEEP JSON |
-| visual-proof-from-plan {satisfied,unsatisfied} | JSON | evaluate-issue-pr Step 6b (parsed) | machine-parse contract | KEEP JSON |
 
 **Hard line:** never markdown-ify a `--emit-rows-json`/JSONL/key-addressed surface —
 those are parsed downstream. The guard test pins both halves: model surfaces stay

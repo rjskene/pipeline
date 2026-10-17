@@ -63,6 +63,23 @@ for name in 01-stale-doc 02-script-bug 03-small-feature 04-race-vocab 05-two-dir
   i=$((i + 1))
 done
 
+# The slate README's `path` column (#1487) — the EXPECTED classification, the
+# last cell of each row. Unlike the path.txt decoy above, the grader reads it,
+# but only to append `path-mismatch=<expected>` when the OBSERVED path= differs;
+# path= itself stays the observation. 5001 (A/A) and 5003 (B/B) agree, 5004 is
+# classified D against an expected B, 5002/5005 are never classified.
+cat > "$HARNESS/dev/calib/slate/README.md" <<'SLATE'
+# synthetic slate
+
+| dir | shape | expected routing pressure | path |
+|-----|-------|---------------------------|------|
+| `01-stale-doc` | docs | PATH A | A |
+| `02-script-bug` | script bug | PATH D | D |
+| `03-small-feature` | feature | single execute agent | B |
+| `04-race-vocab` | race vocabulary | high uncertainty | B |
+| `05-two-dir` | three independent deliverables | PATH C fan-out | C |
+SLATE
+
 # The harness's cost/latency reporter. Records the environment it is invoked
 # with: it joins PRs against issue numbers, so an invocation carrying the
 # HARNESS's PIPELINE_REPO would join the WRONG repo's PRs against sandbox issue
@@ -227,6 +244,8 @@ if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
     # session ONLY as this env var (resolve-stage-model.sh's plan-eval arm reads
     # it), so this dump is the only place the value and the scrub are observable.
     echo "PIPELINE_PLAN_GATE=${PIPELINE_PLAN_GATE:-unset}"
+    # #1464: same story for the --pre-pr-review arm (execute Step 8 reads it).
+    echo "PIPELINE_PRE_PR_REVIEW=${PIPELINE_PRE_PR_REVIEW:-unset}"
   } > "$CALIB_TEST_LAUNCH_ENV"
 fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
@@ -444,6 +463,68 @@ expect_sub "--plan-gate annotate previews the PIPELINE_PLAN_GATE token" \
   "$LAUNCH_PGA" "PIPELINE_PLAN_GATE=annotate"
 expect_sub "--plan-gate annotate is named in the dry-run preview" "$LAUNCH_PGA" "plan_gate=annotate"
 
+# #1464: the --pre-pr-review arm — on|off maps onto the boolean knob, and the
+# unset default pins nothing (harness default = on).
+refute_sub "the default preview sets no PIPELINE_PRE_PR_REVIEW" \
+  "$LAUNCH" "PIPELINE_PRE_PR_REVIEW="
+refute_sub "the default preview names no pre_pr_review arm" "$LAUNCH" "pre_pr_review="
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --pre-pr-review off
+expect_rc "--pre-pr-review off dry-run exits 0" 0
+LAUNCH_PPR_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--pre-pr-review off previews PIPELINE_PRE_PR_REVIEW=false" \
+  "$LAUNCH_PPR_OFF" "PIPELINE_PRE_PR_REVIEW=false"
+expect_sub "--pre-pr-review off is named in the dry-run preview" "$LAUNCH_PPR_OFF" "pre_pr_review=off"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --no-pre-pr-review
+expect_rc "--no-pre-pr-review dry-run exits 0" 0
+LAUNCH_PPR_NO="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--no-pre-pr-review previews PIPELINE_PRE_PR_REVIEW=false" \
+  "$LAUNCH_PPR_NO" "PIPELINE_PRE_PR_REVIEW=false"
+expect_sub "--no-pre-pr-review is named as pre_pr_review=off" "$LAUNCH_PPR_NO" "pre_pr_review=off"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --pre-pr-review=on
+expect_rc "--pre-pr-review=on dry-run exits 0" 0
+LAUNCH_PPR_ON="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--pre-pr-review=on previews PIPELINE_PRE_PR_REVIEW=true" \
+  "$LAUNCH_PPR_ON" "PIPELINE_PRE_PR_REVIEW=true"
+expect_sub "--pre-pr-review=on is named in the dry-run preview" "$LAUNCH_PPR_ON" "pre_pr_review=on"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --pre-pr-review garbage
+expect_rc "--pre-pr-review garbage is a usage error" 2
+expect_sub "--pre-pr-review garbage names the accepted values" "$OUT" "on|off"
+
+# #1486: the --path-c-fanout arm — on|off maps onto PIPELINE_PATH_C_FANOUT, and
+# the unset default pins nothing (harness default = off).
+refute_sub "the default preview sets no PIPELINE_PATH_C_FANOUT" \
+  "$LAUNCH" "PIPELINE_PATH_C_FANOUT="
+refute_sub "the default preview names no path_c_fanout arm" "$LAUNCH" "path_c_fanout="
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --path-c-fanout on
+expect_rc "--path-c-fanout on dry-run exits 0" 0
+LAUNCH_PCF_ON="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--path-c-fanout on previews PIPELINE_PATH_C_FANOUT=true" \
+  "$LAUNCH_PCF_ON" "PIPELINE_PATH_C_FANOUT=true"
+expect_sub "--path-c-fanout on is named in the dry-run preview" "$LAUNCH_PCF_ON" "path_c_fanout=on"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --path-c-fanout=off
+expect_rc "--path-c-fanout=off dry-run exits 0" 0
+LAUNCH_PCF_OFF="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+expect_sub "--path-c-fanout=off previews PIPELINE_PATH_C_FANOUT=false" \
+  "$LAUNCH_PCF_OFF" "PIPELINE_PATH_C_FANOUT=false"
+expect_sub "--path-c-fanout=off is named in the dry-run preview" "$LAUNCH_PCF_OFF" "path_c_fanout=off"
+
+rm -f "$CALLS"
+run_helper --dry-run --harness "$HARNESS" --path-c-fanout garbage
+expect_rc "--path-c-fanout garbage is a usage error" 2
+expect_sub "--path-c-fanout garbage names the accepted values" "$OUT" "on|off"
+
 # #1421 escape hatch: PIPELINE_HEADLESS_PERMISSIONS=bypass restores the old
 # flag for one run and exports NO bridge dir, so an unattended launch with no
 # operator watching the queue cannot stall 840 s per escalation.
@@ -584,6 +665,47 @@ else
   pass_msg "--bootstrap never launches claude"
 fi
 
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 4b: the seed commit never carries .claude/logs or .claude/logs-archive (#1478)"
+# ---------------------------------------------------------------------------
+# commit_sandbox's `git add --all` swallowed archived cost logs into calib-base,
+# so every --reset restored a prior run's agent-costs.jsonl rows. The seed must
+# carry template content only — and a sandbox whose logs were ALREADY committed
+# gets them dropped from the index on the next --bootstrap (one-time cleanup).
+logs_tracked() { git -C "$SANDBOX" ls-tree -r --name-only "$1" -- .claude/logs .claude/logs-archive 2>/dev/null; }
+mkdir -p "$SANDBOX/.claude/logs" "$SANDBOX/.claude/logs-archive/x"
+echo '{"agent_id":"a1"}' > "$SANDBOX/.claude/logs/agent-costs.jsonl"
+echo '{"agent_id":"a0"}' > "$SANDBOX/.claude/logs-archive/x/agent-costs.jsonl"
+run_helper --bootstrap --harness "$HARNESS"
+expect_rc "--bootstrap with run logs on disk exits 0" 0
+LT_HEAD="$(logs_tracked HEAD)"
+LT_BASE="$(logs_tracked calib-base)"
+if [ -z "$LT_HEAD" ] && [ -z "$LT_BASE" ]; then
+  pass_msg "the seed commit carries no .claude/logs / .claude/logs-archive path"
+else
+  fail_msg "the seed commit swallowed run logs (HEAD: $LT_HEAD | calib-base: $LT_BASE)"
+fi
+
+# One-time cleanup: logs already committed AT calib-base (the 2026-10-08 state).
+git -C "$SANDBOX" add -f -- .claude/logs .claude/logs-archive
+git -C "$SANDBOX" commit --quiet -m "legacy seed that swallowed logs" >/dev/null
+git -C "$SANDBOX" tag -f calib-base >/dev/null
+run_helper --bootstrap --harness "$HARNESS"
+expect_rc "--bootstrap over already-committed logs exits 0" 0
+LT_HEAD="$(logs_tracked HEAD)"
+LT_BASE="$(logs_tracked calib-base)"
+if [ -z "$LT_HEAD" ] && [ -z "$LT_BASE" ]; then
+  pass_msg "--bootstrap drops already-committed logs from HEAD and calib-base"
+else
+  fail_msg "already-committed logs survived --bootstrap (HEAD: $LT_HEAD | calib-base: $LT_BASE)"
+fi
+if [ -f "$SANDBOX/.claude/logs-archive/x/agent-costs.jsonl" ]; then
+  pass_msg "the cleanup untracks the logs without deleting them from disk"
+else
+  fail_msg "the cleanup deleted the archived logs from disk"
+fi
+rm -rf "$SANDBOX/.claude/logs" "$SANDBOX/.claude/logs-archive"
 # ---------------------------------------------------------------------------
 scenario "Scenario 5: --reset recreates the five slate issues"
 # ---------------------------------------------------------------------------
@@ -1089,6 +1211,21 @@ expect_sub "path= comes from the ## Classification comment (5004)" \
   "$OUT" "CALIB issue=5004 path=D "
 expect_sub "an unclassified issue reports path=? rather than a label guess" \
   "$OUT" "CALIB issue=5002 path=? "
+
+# path-mismatch (#1487): the slate README's expected path is COMPARED against
+# the observed one, and only a disagreement is flagged.
+ROW_5004_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5004 ')"
+expect_sub "a row classified against its slate expectation flags path-mismatch (5004 D vs B)" \
+  "$ROW_5004_PM" " path-mismatch=B"
+ROW_5001_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
+refute_sub "a row whose path matches the slate carries no path-mismatch (5001 A/A)" \
+  "$ROW_5001_PM" "path-mismatch"
+ROW_5003_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5003 ')"
+refute_sub "a row whose path matches the slate carries no path-mismatch (5003 B/B)" \
+  "$ROW_5003_PM" "path-mismatch"
+ROW_5002_PM="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5002 ')"
+refute_sub "an unclassified row (path=?) never reports path-mismatch (5002)" \
+  "$ROW_5002_PM" "path-mismatch"
 
 ROW_5001="$(printf '%s\n' "$OUT" | grep -m1 '^CALIB issue=5001 ')"
 expect_sub "wall= spans the issue createdAt -> merging PR mergedAt" \
@@ -2350,6 +2487,80 @@ rm -rf "$PLANTED_DIR"
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
       CALIB_TEST_PRICING_JSON
 rm -f "$ISSUES_DIR/6006.json" "$ISSUES_DIR/7006.json"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 26: --pre-pr-review reaches the sandbox session and labels the run (#1464)"
+# ---------------------------------------------------------------------------
+# Same contract as Scenario 24: the explicit set must come AFTER #1390's scrub,
+# so a poison value in the launching shell loses to the flag and is gone
+# entirely when the flag is absent. No artifact suffix (run-retro.sh peels a
+# fixed list) — the arm is recorded in the CALIB-TOTAL atom.
+
+echo 7200 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export PIPELINE_PRE_PR_REVIEW="bogus"
+run_helper --run --harness "$HARNESS" --pre-pr-review off
+expect_rc "--run --pre-pr-review off exits 0" 0
+
+LAUNCH_ENV_PPR="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_PPR" | grep -qxF -- "PIPELINE_PRE_PR_REVIEW=false"; then
+  pass_msg "--pre-pr-review off hands the session PIPELINE_PRE_PR_REVIEW=false"
+else
+  fail_msg "the launched session's environment must carry PIPELINE_PRE_PR_REVIEW=false (got: $(printf '%s' "$LAUNCH_ENV_PPR" | tr '\n' ' '))"
+fi
+
+TOTAL_PPR="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "the CALIB-TOTAL line records the pre-PR-review arm" "$TOTAL_PPR" "pre_pr_review=off"
+
+# Control: same poisoned launching shell, flag ABSENT.
+echo 7300 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with no --pre-pr-review exits 0" 0
+
+LAUNCH_ENV_NO_PPR="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_NO_PPR" | grep -qxF -- "PIPELINE_PRE_PR_REVIEW=unset"; then
+  pass_msg "an inherited PIPELINE_PRE_PR_REVIEW is scrubbed when the flag is absent"
+else
+  fail_msg "the launched session must NOT inherit PIPELINE_PRE_PR_REVIEW (got: $(printf '%s' "$LAUNCH_ENV_NO_PPR" | tr '\n' ' '))"
+fi
+unset PIPELINE_PRE_PR_REVIEW
+
+TOTAL_NO_PPR="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+refute_sub "an unset-arm CALIB-TOTAL carries no pre_pr_review atom" "$TOTAL_NO_PPR" "pre_pr_review="
+
+unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 27: CALIB-TOTAL carries output_complete=<n>/<N> (#1470)"
+# ---------------------------------------------------------------------------
+# Claude Code >=2.1.291 subagent transcripts under-measure output tokens; the
+# pricing JSON's output_complete_rows / output_incomplete_rows surface as a
+# per-RUN atom so a calibration arm's cost is read with its measurement caveat.
+# A pricing JSON without the keys (older cost-latency-report) renders n/a.
+printf '{"priced_cost_usd": 30, "output_complete_rows": 3, "output_incomplete_rows": 2}\n' \
+  > "$TMP/pricing-1470.json"
+echo 6900 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-1470.json"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run with output_complete counts exits 0" 0
+TOTAL_OC="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "CALIB-TOTAL records output_complete=3/5" "$TOTAL_OC" " output_complete=3/5"
+
+printf '{"priced_cost_usd": 30}\n' > "$TMP/pricing-1470-nokeys.json"
+echo 7000 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS"
+export CALIB_TEST_PRICING_JSON="$TMP/pricing-1470-nokeys.json"
+run_helper --run --harness "$HARNESS" --hooks off
+expect_rc "--run without output_complete keys exits 0" 0
+TOTAL_OC_NA="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "CALIB-TOTAL renders output_complete=n/a without the keys" "$TOTAL_OC_NA" " output_complete=n/a"
+
+export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------
 echo ""

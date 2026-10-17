@@ -1,8 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 # Guard: the needs-debug / --debug-first root-cause diagnosis gate (#997).
-# Static grep-based contract over the now-edited skills (mirrors the
-# tests/test-plan-issue-needs-browser-predicates.sh style). Asserts that
+# Static grep-based contract over the now-edited skills. Asserts that
 # skills/plan-issue/SKILL.md documents the gate (label, flag, inline diagnosis,
 # comment name, gate condition) and that skills/fullsend/SKILL.md propagates
 # the one-off --debug-first flag to the dispatched plan-issue stage. Runtime

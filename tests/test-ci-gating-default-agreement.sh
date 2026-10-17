@@ -21,7 +21,7 @@ set -uo pipefail
 #
 # Dual-scan per CLAUDE.md: pipeline.config.example is always present;
 # pipeline.config is gitignored and host-only (no-op in CI). Modeled on
-# tests/test-pipeline-config-mock-web-eval-paths.sh.
+# tests/test-pipeline-config-parallel-runner.sh.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXAMPLE="$ROOT/pipeline.config.example"

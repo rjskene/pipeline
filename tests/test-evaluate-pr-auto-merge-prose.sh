@@ -9,7 +9,20 @@ SKILL="${ROOT}/skills/evaluate-issue-pr/SKILL.md"
 # reference file. Every gate assertion below follows the text to its new home —
 # prose is never re-inlined into the evaluator to keep a guard green.
 GATE="${ROOT}/skills/fullsend/references/auto-merge-gate.md"
+# The green merge loop itself lives in the Step 7 helper script; the merge,
+# SHA, rewrite and footer asserts (and their ordering) follow the code there.
+HELPER="${ROOT}/scripts/fullsend-merge-green.sh"
 FAILED=0
+
+want_helper() {
+  local name="$1" pat="$2"
+  if grep -vE '^[[:space:]]*#' "$HELPER" | grep -qE -- "$pat"; then
+    echo "  PASS: $name"
+  else
+    echo "  FAIL: $name (pattern not found in $HELPER: $pat)"
+    FAILED=$((FAILED+1))
+  fi
+}
 
 want() {
   local name="$1" pat="$2"
@@ -36,16 +49,17 @@ want "four greenlight conditions (statusCheckRollup)" 'statusCheckRollup'
 want "four greenlight conditions (mergeable)"         'mergeable'
 want "four greenlight conditions (mergeStateStatus)"  'mergeStateStatus'
 
-want "synchronous merge-commit"       'gh pr merge .*--merge --delete-branch'
-if grep -q -- "gh pr merge.*--auto" "$GATE"; then
+want_helper "synchronous merge-commit"       'gh pr merge .*--merge --delete-branch'
+if grep -q -- "gh pr merge.*--auto" "$GATE" "$HELPER"; then
   echo "  FAIL: --auto flag must not appear"
   FAILED=$((FAILED+1))
 else
   echo "  PASS: no --auto flag"
 fi
 
-want "SHA source via mergeCommit.oid" 'gh pr view .* --json mergeCommit --jq .mergeCommit.oid'
+want_helper "SHA source via mergeCommit.oid" 'gh pr view .* --json mergeCommit --jq .mergeCommit.oid'
 want "auto-merged footer literal"     'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
+want_helper "auto-merged footer literal (helper)" 'Auto-merged: eval Approved \+ CI SUCCESS \+ MERGEABLE/CLEAN at'
 want "manual-merge flag mention"      '--manual-merge'
 want "manual-merge label mention"     'manual-merge'
 want "argv-position parser spec"      '--manual-merge.*may appear anywhere in argv'
@@ -56,10 +70,12 @@ want_skill "front-matter usage with flag"   '\[--manual-merge\]'
 # The rewrite helper must fire AFTER `gh pr merge` and AFTER the mergeCommit.oid
 # SHA capture (the SHA it pins to), but BEFORE the footer-append comment (so the
 # rewriter targets the screenshot comment, not the freshly-posted footer).
-first_line() { grep -nE -- "$1" "$GATE" | head -1 | cut -d: -f1; }
+# Line numbers come from the helper's CODE (comment lines skipped).
+first_line() { grep -nE -- "$1" "$HELPER" | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | cut -d: -f1; }
 
-want "Step 11.3 invokes rewrite-eval-screenshot-urls.sh" 'rewrite-eval-screenshot-urls\.sh'
-want "Step 11.3 gates rewrite on PIPELINE_SCREENSHOT_REWRITE_ENABLED" 'PIPELINE_SCREENSHOT_REWRITE_ENABLED'
+want_helper "Step 11.3 invokes rewrite-eval-screenshot-urls.sh" 'rewrite-eval-screenshot-urls\.sh'
+want_helper "Step 11.3 gates rewrite on PIPELINE_SCREENSHOT_REWRITE_ENABLED" 'PIPELINE_SCREENSHOT_REWRITE_ENABLED'
+want "gate reference documents PIPELINE_SCREENSHOT_REWRITE_ENABLED" 'PIPELINE_SCREENSHOT_REWRITE_ENABLED'
 
 MERGE_LINE=$(first_line 'gh pr merge .*--merge --delete-branch')
 SHA_LINE=$(first_line 'gh pr view .* --json mergeCommit --jq .mergeCommit.oid')
@@ -95,14 +111,11 @@ fi
 
 # --- #1444: the auto-merge gate and the three orchestrator-facing sections are
 # RELOCATED out of the evaluator. This is the INVERSE contract: the evaluator's
-# BODY must no longer carry any of them, and the visual-validation reference
-# must exist. Asserted against the BODY via skill_body_has, never a whole-file
+# BODY must no longer carry any of them. Asserted against the BODY via skill_body_has, never a whole-file
 # grep — the YAML frontmatter `description:` line can satisfy a whole-file grep
 # on its own (#1218).
 # shellcheck source=tests/_lib/skill-body.sh
 source "$(cd "$(dirname "$0")" && pwd)/_lib/skill-body.sh"
-
-VISUAL_REF="${ROOT}/skills/evaluate-issue-pr/references/visual-validation.md"
 
 want_absent_body() {
   local name="$1" needle="$2"
@@ -121,12 +134,6 @@ want_absent_body "## Invocation mode relocated"                  '## Invocation 
 want_absent_body "## Canonical Agent prompt template relocated"  '## Canonical Agent prompt template'
 want_absent_body "## Migration warning relocated"                '## Migration warning'
 
-if [ -f "$VISUAL_REF" ]; then
-  echo "  PASS: references/visual-validation.md exists"
-else
-  echo "  FAIL: references/visual-validation.md missing ($VISUAL_REF)"
-  FAILED=$((FAILED+1))
-fi
 
 # --- #1444 hot-path mass: the evaluator is the second-most-expensive skill in
 # the pipeline and is loaded on EVERY PR. This is the local half of the ceiling
@@ -170,22 +177,6 @@ if grep -qE 'skills/evaluate-issue-pr/SKILL\.md|evaluator skips Step 11' "$RUN_Q
   FAILED=$((FAILED+1))
 else
   echo "  PASS: run-queue.sh no longer points at the deleted evaluate-issue-pr Step 11"
-fi
-
-# --- #1444: the relocated Step 6 fences reference $PR_NUM, which is bound in
-# SKILL.md Step 2 — a DIFFERENT file. tests/test-skill-unassigned-vars.sh binds
-# per-file (its pass-1 harvest reads the same file it scans), so the reference
-# file must carry its own `# Required env:` declaration. Without it the relocated
-# fence silently reds the moment that sweep is widened to
-# skills/*/references/*.md (#1215 grammar: a `# Required env:` line inside a
-# bash fence is what binds the name).
-if awk '/^[[:space:]]*```bash[[:space:]]*$/{b=1;next} /^[[:space:]]*```[[:space:]]*$/{b=0;next} \
-        b && /^[[:space:]]*#[[:space:]]*Required env:/ && /PR_NUM/ {found=1} \
-        END{exit (found?0:1)}' "$VISUAL_REF"; then
-  echo "  PASS: references/visual-validation.md declares PR_NUM as required env"
-else
-  echo "  FAIL: references/visual-validation.md references \$PR_NUM with no '# Required env:' declaration (#1215)"
-  FAILED=$((FAILED+1))
 fi
 
 if [ "$FAILED" -ne 0 ]; then

@@ -6,7 +6,7 @@ Claude Pipeline is a **CI workflow for automating code updates** through GitHub 
 
 Full process maps (lifecycle, label flow, dispatch model, paths A/B/C/D, wave plan) in docs/process-maps.md.
 
-Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged`
+Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-progress → pr-open → merged` (classify runs inline in `plan-issue` since #1485; `/pipeline:classify-issue` is standalone)
 
 ## Emergency lane
 
@@ -18,7 +18,7 @@ Label flow: `(none) → plan-pending → plan-reviewed → plan-approved → in-
 - **`main`** — the release branch. release-please tracks `main` and cuts releases from it.
 - **`feature/*`** — feature branches created by `/pipeline:execute-issue-plan` in worktrees, one per issue. Merged back to the base branch via PR.
 - **`next`** — the next-integration branch for breaking-change / next-major work. An issue carrying the `next` label (`PIPELINE_NEXT_LABEL`, default `next`; legacy alias `next-major-release` also honored) has its feature PR base routed onto `PIPELINE_NEXT_BRANCH` (default `next`) instead of `PIPELINE_BASE_BRANCH` (#1131); the auto-merge greenlight base check is next-branch-aware. See [docs/release-cadence.md](docs/release-cadence.md).
-- **Dispatch model:** PATH A/B/D execute as an inline `Agent` in the orchestrator session. PATH C also fans out **inline by default** — the orchestrator dispatches one orchestrator-owned `tdd-implementer` `Agent` per `target=<dir>` leaf, each in its OWN per-leaf worktree (`scripts/path-c-split-worktree.sh`), reassembled onto the feature branch by cherry-pick (#749/#891/#896). `--spawn` reverts PATH C to the legacy `spawn-claude.sh` → `claude -p` run-queue transport (the reversible escape hatch). (Per #748 + the Path-2 cost decision — see [docs/cost-architecture.md](docs/cost-architecture.md).)
+- **Dispatch model:** PATH A/B/D execute as an inline `Agent` in the orchestrator session. PATH C executes as **one inline execute `Agent` by default**, exactly like PATH B (#1486). The per-leaf fan-out sits behind `PIPELINE_PATH_C_FANOUT=true`: the orchestrator dispatches one orchestrator-owned `tdd-implementer` `Agent` per `target=<dir>` leaf, each in its OWN per-leaf worktree (`scripts/path-c-split-worktree.sh`), reassembled onto the feature branch by cherry-pick (#749/#891/#896). `--spawn` reverts PATH C to the legacy `spawn-claude.sh` → `claude -p` run-queue transport (the reversible escape hatch); the spawned session honors the knob. (Per #748 + the Path-2 cost decision — see [docs/cost-architecture.md](docs/cost-architecture.md).)
 - **Campaign mode:** `/pipeline:fullsend --campaign` — or the equivalent standalone `/pipeline:campaign` (same machinery, neither deprecated) — partitions the approved slate into ordered per-path legs capped by `PIPELINE_CAMPAIGN_MAX_BC` (default 2, expensive B/C) / `PIPELINE_CAMPAIGN_MAX_AD` (default 5, cheap A/D), each leg run as a wave. The canonical leg-loop machinery lives once in `skills/fullsend/SKILL.md` `## Campaign mode`; `skills/campaign/SKILL.md` is a thin entry that defers to it. See [docs/process-maps.md](docs/process-maps.md).
 
 Base-branch enforcement is defense-in-depth across three layers (eval-time gate, skill-level `--base`, PreToolUse hook). For the full release procedure and back-sync workflow, see [docs/release-cadence.md](docs/release-cadence.md).
@@ -58,7 +58,7 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 
 - When working in a worktree on a PATH D (`quick-fix`) issue, the issue-body marker takes precedence over the heuristic detection.
 - PATH D runs the `tdd-implementer` discipline inline (no subagent dispatch, no spawn-claude) and goes through `evaluate-issue-pr` like any other path.
-- Authoritative spec lives in `skills/classify-issue/SKILL.md` and `skills/execute-issue-plan/SKILL.md`.
+- Authoritative spec lives in `skills/classify-issue/SKILL.md`, `skills/plan-issue/references/classification.md`, and `skills/execute-issue-plan/SKILL.md`.
 
 ## Design Principles
 
@@ -79,9 +79,9 @@ Operator playbook — boundary-hook gotchas, executor wedge recovery, hand-drivi
 
 ## Configuration conventions
 
-`pipeline.config` at the repo root is **gitignored** (`/pipeline.config` at line 8 of `.gitignore`) and **host-specific** — it contains per-operator paths (e.g., `PIPELINE_MOCK_WEB_EVAL_*`) that must not be tracked. Two consequences for contributors:
+`pipeline.config` at the repo root is **gitignored** (`/pipeline.config` at line 8 of `.gitignore`) and **host-specific** — it contains per-operator paths (e.g., `PIPELINE_REPO` and local paths) that must not be tracked. Two consequences for contributors:
 
-1. **Bugs that surface only in the live `pipeline.config` cannot ship in a PR.** There is no tracked file for the patch to land on. The fix-shape is (a) update `pipeline.config.example` if the same drift applies there, and/or (b) add a regression-guard test that scans both `pipeline.config.example` (always present) and the gitignored `pipeline.config` (dogfood-host-only) — see `tests/test-pipeline-config-mock-web-eval-paths.sh` (introduced by #357) as the reference shape.
+1. **Bugs that surface only in the live `pipeline.config` cannot ship in a PR.** There is no tracked file for the patch to land on. The fix-shape is (a) update `pipeline.config.example` if the same drift applies there, and/or (b) add a regression-guard test that scans both `pipeline.config.example` (always present) and the gitignored `pipeline.config` (dogfood-host-only) — see `tests/test-pipeline-config-parallel-runner.sh` as the reference shape.
 2. **The live `pipeline.config` is patched by hand on the operator's host.** When filing such a bug, call this out in the issue body so the operator applies the local edit alongside the regression-guard PR.
 
 The bug-report template at `.github/ISSUE_TEMPLATE/bug_report.md` prefills this guidance.

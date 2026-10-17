@@ -1,3 +1,6 @@
 lib/report.sh
-docs/architecture.md
 tests/case-report.sh
+bin/calibctl
+tests/case-report-json.sh
+docs/architecture.md
+docs/usage.md

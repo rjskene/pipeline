@@ -23,21 +23,24 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   | one-line script bug, failing test present | D | quick-fix lane |
   | small feature needing a new test | B | full lifecycle, single execute agent, pr-eval |
   | body with `race`/`auth` vocabulary | B + W2 | carve-out routing to opus |
-  | two-directory change | C | per-leaf worktree fan-out, cherry-pick reassembly |
+  | three independent deliverables in `lib/`, `bin/`, `docs/` | C | per-leaf worktree fan-out, cherry-pick reassembly |
   | planted boundary defect | B | pr-eval gate yield |
 
 ## Running
 
 ```
-bash scripts/calibration-run.sh --bootstrap|--reset|--dry-run|--run \
+bash scripts/calibration-run.sh --bootstrap|--retag|--reset|--dry-run|--run \
     [--profile strict|lean] [--model sonnet|opus] [--harness <dir>] [--hooks on|off] \
     [--executor-model opus|sonnet] \
-    [--plan-gate full|single|none|annotate]
+    [--plan-gate full|single|none|annotate] \
+    [--pre-pr-review on|off | --no-pre-pr-review] \
+    [--path-c-fanout on|off]
 ```
 
 | Mode | What it does | Costs money |
 |---|---|---|
-| `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. | no |
+| `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. A template sync that commits re-anchors `calib-base` to it. | no |
+| `--retag` | Force `calib-base` onto the sandbox `HEAD`, locally and on the remote — for a sandbox edited and committed by hand. No-op when the tag is already there. | no |
 | `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the six slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
@@ -50,6 +53,24 @@ tree under test — it defaults to this repo's root.
 `--reset` is what makes a run comparable to the previous one: inputs are pinned to
 the `calib-base` tag, so a delta between two `CALIB-TOTAL` lines is attributable to
 the harness version, not to the workload.
+
+The tag follows the template (#1477). When `--bootstrap`'s template sync commits on
+top of `calib-base`, it re-anchors the tag to that commit (`git tag -f` + a force
+push, reported as `calib: calib-base re-anchored <old> -> <new>`); when nothing
+changed, the tag stays put. So `--bootstrap` after a template change is the
+documented way to roll a template fix into the slate — run `--reset` first so the
+sandbox sits on `calib-base`; a sandbox left on a post-run `main` only warns and
+keeps the old tag, since anchoring there would bake the run's merged fixes into
+the seed. Hand edits to the sandbox use `--retag` instead.
+
+A slate change (`dev/calib/slate/*/` — title, body, reference test, expected
+files; e.g. #1487's 05 rework) needs no reseed: every `--reset` (and every
+`--run`, which calls it) files the slate issues fresh from the harness checkout's
+`dev/calib/slate/`, and reference tests run from there too. `--bootstrap`
+(#1477) is only for `dev/calib/template/` changes. One caveat: the reap matches
+the CURRENT slate titles, so the previous run's issue under 05's old title
+(`fix(report): report omits the completion rate its docs promise`) is not
+reaped — close it by hand once.
 
 The launch exports both `CLAUDE_PLUGIN_ROOT=<harness>` and passes
 `--plugin-dir <harness>` to `claude -p`. Both are required: the env var is what
@@ -94,6 +115,22 @@ means the harness default (`annotate`, #1437); artifacts predating it meant
 `annotate` (#1435) goes further: ONE evaluation, and a `Revise` is carried into
 execute as binding amendments — no re-plan round. A `**Scope:** structural`
 Revise still re-plans once.
+
+`--pre-pr-review on|off` (default unset, #1464; `--no-pre-pr-review` = `off`) sets
+`PIPELINE_PRE_PR_REVIEW` to `true|false` in the sandbox session — `false` skips execute
+Step 8's pre-PR review loop on PATH A/B/C exactly as on PATH D. Unset means the
+harness default (`false`, #1482); `--pre-pr-review on` is the opt-in arm. A set
+run is tagged `pre_pr_review=<v>` on the total line; it carries NO artifact
+suffix (`run-retro.sh` peels a fixed list), so read the atom to tell an arm
+artifact from a baseline one.
+
+`--path-c-fanout on|off` (default unset, #1486) sets the PATH C fan-out knob
+(see `pipeline.config.example`, `#1486` block) to `true|false` in the sandbox session — `on` restores the PATH C per-leaf
+`tdd-implementer` fan-out (and arms the delegation hook); `off` runs a
+`multi-task` issue as ONE inline execute agent, exactly as PATH B. Unset means
+the harness default (`false`, off). A set run is tagged `path_c_fanout=<v>` on
+the total line and carries a `-path-c-fanout-<v>` artifact suffix after
+`-plan-gate-<v>`, composable with the other suffixes.
 
 ## Harness staging
 
@@ -210,8 +247,15 @@ the first line of the block.
 
 - `path` — the PATH letter the harness routed to, read from the issue's
   `## Classification` comment; `?` means it was never classified. Labels are
-  never consulted — after a merge they say only that. Compare against the
-  slate's expected path; a mismatch is a routing regression.
+  never consulted — after a merge they say only that. The comparison against
+  the slate's expected path is automated (see `path-mismatch`); a mismatch is a
+  routing regression.
+- `path-mismatch` — an OPTIONAL trailing atom (#1487), appended only when the
+  classified `path` differs from the `path` column of `dev/calib/slate/README.md`;
+  its value is the EXPECTED letter, so `path=D … path-mismatch=B` reads "routed D,
+  expected B". Never emitted for `path=?` (unclassified is its own signal) or for
+  a slate dir with no README row. It sits outside the seven-field `CALIB issue=`
+  grammar above, like `bexec` on the total line.
 - `wall` — the issue's `createdAt` to the merging PR's `mergedAt`, in seconds;
   `n/a` when nothing merged for that issue or when `date -d` is unavailable.
 - `cost` — the issue's **apportioned** share of the run's priced total, split by
@@ -254,6 +298,15 @@ the first line of the block.
   empty. Only requests written after the run started are counted — the queue dir
   is not cleaned between runs. Like `bexec` it is appended rather than being a
   grammar field, so the `CALIB-TOTAL` grammar above is unchanged.
+- `pre_pr_review` — an OPTIONAL per-RUN atom like `bexec`: `on` or `off`, the
+  arm `--pre-pr-review` launched under (#1464). Absent when the flag was not
+  passed.
+- `path_c_fanout` — an OPTIONAL per-RUN atom like `bexec`: `on` or `off`, the
+  arm `--path-c-fanout` launched under (#1486). Absent when the flag was not
+  passed.
+- `output_complete` — a per-RUN atom on the `CALIB-TOTAL` line only: `<n>/<N>`
+  priced rows whose output tokens are complete (`n/a` when the pricing JSON lacks
+  the keys); appended rather than a grammar field (#1470).
 - `reason` — why an aborted run stopped: `no-pr` (the session opened no pull
   request at all), `held` (its final message ends on a question nobody was
   there to answer), `timeout` (the wall-clock ceiling killed it), or
