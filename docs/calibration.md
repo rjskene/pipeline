@@ -23,7 +23,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   | one-line script bug, failing test present | D | quick-fix lane |
   | small feature needing a new test | B | full lifecycle, single execute agent, pr-eval |
   | body with `race`/`auth` vocabulary | B + W2 | carve-out routing to opus |
-  | two-directory change | C | per-leaf worktree fan-out, cherry-pick reassembly |
+  | three independent deliverables in `lib/`, `bin/`, `docs/` | C | per-leaf worktree fan-out, cherry-pick reassembly |
   | planted boundary defect | B | pr-eval gate yield |
 
 ## Running
@@ -62,6 +62,15 @@ documented way to roll a template fix into the slate — run `--reset` first so 
 sandbox sits on `calib-base`; a sandbox left on a post-run `main` only warns and
 keeps the old tag, since anchoring there would bake the run's merged fixes into
 the seed. Hand edits to the sandbox use `--retag` instead.
+
+A slate change (`dev/calib/slate/*/` — title, body, reference test, expected
+files; e.g. #1487's 05 rework) needs no reseed: every `--reset` (and every
+`--run`, which calls it) files the slate issues fresh from the harness checkout's
+`dev/calib/slate/`, and reference tests run from there too. `--bootstrap`
+(#1477) is only for `dev/calib/template/` changes. One caveat: the reap matches
+the CURRENT slate titles, so the previous run's issue under 05's old title
+(`fix(report): report omits the completion rate its docs promise`) is not
+reaped — close it by hand once.
 
 The launch exports both `CLAUDE_PLUGIN_ROOT=<harness>` and passes
 `--plugin-dir <harness>` to `claude -p`. Both are required: the env var is what
@@ -238,8 +247,15 @@ the first line of the block.
 
 - `path` — the PATH letter the harness routed to, read from the issue's
   `## Classification` comment; `?` means it was never classified. Labels are
-  never consulted — after a merge they say only that. Compare against the
-  slate's expected path; a mismatch is a routing regression.
+  never consulted — after a merge they say only that. The comparison against
+  the slate's expected path is automated (see `path-mismatch`); a mismatch is a
+  routing regression.
+- `path-mismatch` — an OPTIONAL trailing atom (#1487), appended only when the
+  classified `path` differs from the `path` column of `dev/calib/slate/README.md`;
+  its value is the EXPECTED letter, so `path=D … path-mismatch=B` reads "routed D,
+  expected B". Never emitted for `path=?` (unclassified is its own signal) or for
+  a slate dir with no README row. It sits outside the seven-field `CALIB issue=`
+  grammar above, like `bexec` on the total line.
 - `wall` — the issue's `createdAt` to the merging PR's `mergedAt`, in seconds;
   `n/a` when nothing merged for that issue or when `date -d` is unavailable.
 - `cost` — the issue's **apportioned** share of the run's priced total, split by

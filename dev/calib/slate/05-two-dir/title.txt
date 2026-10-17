@@ -1,1 +1,1 @@
-fix(report): report omits the completion rate its docs promise
+fix(report): report has no completion rate, no JSON form, and docs that cover neither

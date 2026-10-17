@@ -1165,7 +1165,9 @@ issue_verdicts() {
 # the run under test, and a slate `path.txt` would report the routing we hoped
 # for even when the harness misrouted — exactly the regression the calibration
 # slate exists to catch. `?` therefore means "this run never classified the
-# issue" and is a real signal.
+# issue" and is a real signal. The slate's expectation IS now compared (#1487):
+# slate_expected_path() below feeds a separate `path-mismatch=` atom, but `path=`
+# stays the observation.
 issue_path() {
   local issue="$1" p
   load_issue_json "$issue"
@@ -1175,6 +1177,19 @@ issue_path() {
     A|B|C|D) printf '%s' "$p" ;;
     *)       printf '?' ;;
   esac
+}
+
+# slate_expected_path <slate dir> — the last cell of the dir's row in the
+# sibling README.md (A|B|C|D), else empty. Reads $(dirname dir)/README.md so a
+# staged harness worktree resolves its own copy. Never a per-dir path.txt.
+slate_expected_path() {
+  local d="${1:-}" readme p
+  [ -n "$d" ] || return 0
+  readme="$(dirname "$d")/README.md"
+  [ -f "$readme" ] || return 0
+  p="$(awk -F'|' -v want="\`$(basename "$d")\`" \
+    '{c=$2; gsub(/^[ \t]+|[ \t]+$/,"",c)} c==want {v=$(NF-1); gsub(/[ \t]/,"",v); print v; exit}' "$readme")"
+  case "$p" in A|B|C|D) printf '%s' "$p" ;; esac
 }
 
 # issue_reftest <slate dir> — runs the slate's reference test IN THE SANDBOX.
@@ -1212,7 +1227,7 @@ pricing_is_zero() {
 
 emit_calib_block() {
   local wall_total="$1"
-  local i=0 issue d path cost wall verdicts reftest unexpected
+  local i=0 issue d path cost wall verdicts reftest unexpected exp mismatch
   local total_cost=0 pass=0 count=0 graded=0 planted="n/a" cost_display
   load_run_substrate
   detect_abort
@@ -1225,6 +1240,12 @@ emit_calib_block() {
     load_issue_json "$issue"   # once per issue, in THIS shell (see the cache note)
     path="$(issue_path "$issue")"
     [ -n "$path" ] || path="?"
+    # path-mismatch (#1487): an appended atom, outside the 7-field CALIB grammar.
+    # path=? never mismatches — unclassified is its own signal.
+    exp="$(slate_expected_path "$d")"; mismatch=""
+    case "$path" in
+      A|B|C|D) [ -n "$exp" ] && [ "$path" != "$exp" ] && mismatch=" path-mismatch=$exp" ;;
+    esac
     cost="$(issue_cost "$issue")"
     wall="$(issue_wall "$issue")"
     verdicts="$(issue_verdicts "$issue")"
@@ -1278,8 +1299,8 @@ emit_calib_block() {
         esac
         ;;
     esac
-    printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s\n' \
-      "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected"
+    printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s%s\n' \
+      "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected" "$mismatch"
   done
   # A $0 total is never printable UNPRICED (#1395): render n/a on the TOTAL
   # line whenever the capture log is missing/empty, PRICING_TOTAL is empty, or
