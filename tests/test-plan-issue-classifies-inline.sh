@@ -110,7 +110,7 @@ chmod +x "$STUB_DIR/gh"
 run_decide() {
   inc
   local out
-  out=$(env -i HOME="$HOME" PATH="$STUB_DIR:/usr/bin:/bin" \
+  out=$(env -i HOME="$HOME" PATH="$STUB_DIR:/usr/bin:/bin" CLAUDE_PLUGIN_ROOT="$SCRIPT_DIR/.." \
     ISSUE_BODY="$1" CURRENT_LABELS="$2" CLASS_FRESH="$3" CACHED_PATH="$4" TABLE_PATH="$5" \
     bash "$DECIDE" 2>&1) || true
   if printf '%s\n' "$out" | grep -qx "PATH_LETTER=$6" \
@@ -124,6 +124,8 @@ run_decide() {
 M_D='<!-- pipeline:path=D -->'
 H_A='<!-- pipeline:path-hint=A -->'
 H_D='<!-- pipeline:path-hint=D -->'
+M_A='<!-- pipeline:path=A -->'
+H_C='<!-- pipeline:path-hint=C -->'
 run_decide "x $M_D $H_A" ""           true  C ""  D marker  "marker D + hint A + fresh C"
 run_decide "x $H_A"      ""           true  C ""  C cached  "no marker + hint A + fresh C"
 run_decide "x"           "multi-task" false "" "" C label   "no marker + stale + multi-task label"
@@ -134,6 +136,22 @@ run_decide "x $H_D"      ""           false "" "" B default "path-hint=D rejecte
 run_decide "x"           "multi-task" true  A ""  A cached  "fresh A beats multi-task label"
 run_decide "x"           "multi-task" false "" D  C label   "multi-task label beats table D"
 run_decide "x $H_A"      ""           false "" D  D table   "table D beats hint A"
+# #1500 — markers / hints quoted inside code (inline span or fenced block)
+# are documentation, not claims; the parsers read prose only.
+run_decide "x \`$H_A\` y" ""          false "" "" B default "hint A only in inline span"
+run_decide "x
+\`\`\`
+$H_A
+\`\`\`
+y"                       ""           false "" "" B default "hint A only in fenced block"
+run_decide "x \`$H_A\` then $H_C" ""  false "" "" C hint    "hint A in span, hint C in prose"
+run_decide "x \`$M_D\` y" ""          false "" "" B default "marker D only in inline span"
+run_decide "x
+\`\`\`
+$M_D
+\`\`\`
+y"                       ""           false "" "" B default "marker D only in fenced block"
+run_decide "x \`$M_D\` then $M_A" ""  false "" "" A marker  "marker D in span, marker A in prose"
 
 echo ""
 echo "================================"

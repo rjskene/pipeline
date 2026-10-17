@@ -95,11 +95,11 @@ Run before anything else. A trusted `## Classification` whose `createdAt >= issu
 
    ```bash
    # BEGIN-PATH-MARKER-PARSE
-   # Required env: ISSUE_BODY (issue body markdown, may be multi-line).
+   # Required env: ISSUE_BODY (issue body markdown, may be multi-line), CLAUDE_PLUGIN_ROOT.
    # Sets: MARKER_PATH ("A"|"B"|"C"|"D" or empty string).
    # Regex: <!--\s*pipeline:path=[A-Da-d]\s*--> (POSIX equivalent below).
    MARKER_PATH=""
-   _raw=$(printf '%s' "$ISSUE_BODY" \
+   _raw=$(printf '%s\n' "$ISSUE_BODY" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/strip-code-spans.sh" \
      | grep -oE '<!--[[:space:]]*pipeline:path=[A-Za-z][[:space:]]*-->' \
      | head -1)
    if [ -n "$_raw" ]; then
@@ -121,8 +121,8 @@ Run before anything else. A trusted `## Classification` whose `createdAt >= issu
    Pinned regex: `<!--\s*pipeline:path-hint=[A-Ca-c]\s*-->` (POSIX equivalent: `<!--[[:space:]]*pipeline:path-hint=[A-Ca-c][[:space:]]*-->`).
 
    ```bash
-   # BEGIN-PATH-HINT-PARSE  (env: ISSUE_BODY; sets HINT_PATH = A|B|C or "". D rejected to "".)
-   HINT_PATH=$(printf '%s' "$ISSUE_BODY" \
+   # BEGIN-PATH-HINT-PARSE  (env: ISSUE_BODY, CLAUDE_PLUGIN_ROOT; sets HINT_PATH = A|B|C or "". D rejected to "".)
+   HINT_PATH=$(printf '%s\n' "$ISSUE_BODY" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/strip-code-spans.sh" \
      | grep -oE '<!--[[:space:]]*pipeline:path-hint=[A-Za-z][[:space:]]*-->' | head -1 \
      | grep -oE '=[A-Za-z]' | tr -d '=' | tr 'a-z' 'A-Z')
    case "$HINT_PATH" in A|B|C) ;; *) HINT_PATH="" ;; esac

@@ -138,6 +138,7 @@ run_parse() {
   env -i \
     HOME="$HOME" \
     PATH="/usr/bin:/bin" \
+    CLAUDE_PLUGIN_ROOT="$SCRIPT_DIR/.." \
     ISSUE_BODY="$body" \
     bash "$PARSE_SCRIPT" 2>"$WORKDIR/parse-err.txt"
   set -e
