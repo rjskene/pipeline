@@ -28,7 +28,8 @@ set -uo pipefail
 #       documents what it guards against.
 #
 # The parsers are NOT under test here and are NOT changed by #1387 — they
-# already resolve every canonical shape correctly. The defect is entirely on the
+# already resolve every canonical shape correctly (#1499 later widened issue
+# parsing with a no-'#' fallback; the `#<N>` shape remains canonical). The defect is entirely on the
 # PRODUCING side (the descriptions the orchestrator authors), so what this test
 # pins is the DOC that binds the producer.
 #
@@ -133,9 +134,16 @@ echo "== #1387 negative controls (the cycle-16 defect) =="
 # producers. Bare `plan` still resolves to plan (neg-bare-integer below).
 assert_both_producers "neg-mis-stage" "plan evaluation for #1387" "plan-eval/single/1387"
 
-# The bare-integer miss: every `issue_from_description` pattern requires the
-# literal '#'. A bare integer yields "" — the entire cycle-16 failure.
-assert_both_producers "neg-bare-integer" "plan-issue 1387" "plan/single/"
+# The bare-integer fallback: before #1499 every `issue_from_description`
+# pattern required the literal '#', so a bare integer yielded "" — the entire
+# cycle-16 failure. #1499 added a no-'#' fallback (`issue|plan|eval(uate)?`
+# followed by a 2+-digit integer, consulted only when no '#N' matched), so this
+# shape now attributes in BOTH producers.
+assert_both_producers "bare-integer-fallback" "plan-issue 1387" "plan/single/1387"
+
+# Negative control: a 1-digit integer stays unattributed (the fallback needs
+# 2+ digits so counts like `plan 3 waves` are never read as issue numbers).
+assert_both_producers "neg-short-integer" "plan-issue 7" "plan/single/"
 
 # ==========================================================================
 # 2) ANCHOR — the hoisted canonical-shape block must exist exactly once.

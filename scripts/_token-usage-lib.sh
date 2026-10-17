@@ -184,6 +184,12 @@ for pat in (r"for[ -]?#(\d+)", r"\(issue[ -]?#(\d+)\)", r"\(#(\d+)\)"):
         sys.exit(0)
 # Otherwise the FIRST '#N' is the issue (any "/ PR #M" or "(PR #M)" is the PR).
 m = re.search(r"#(\d+)", d)
+if m:
+    print(m.group(1))
+    sys.exit(0)
+# No-'#' fallback (#1499): consulted ONLY when no '#N' matched, so the
+# widening is monotone ("" -> N). 2+ digits keeps `plan 3 waves` unattributed.
+m = re.search(r"\b(?:issue|plan|eval(?:uate)?)\s+(\d{2,})\b", d, re.IGNORECASE)
 print(m.group(1) if m else "")
 PY
 }
