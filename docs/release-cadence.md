@@ -16,7 +16,7 @@ This repo uses a **two-branch model** with [release-please](https://github.com/g
    ```
    (If installed via a local marketplace pointing at the working tree, no reload is needed — every edit is already live.)
 
-**Wind-back lines.** Before promoting a breaking retool, cut `release/vX.Y` from the current `main` (`git branch release/v0.23 main && git push origin release/v0.23`) so a consumer who prefers the previous behavior has a stable ref to wind back to. These branches are never deleted by the promotion and never receive back-sync; `release/v0.23` is the line that precedes the 0.24 retool (#1457).
+**Wind-back lines.** Before promoting a breaking retool, cut `release/vX.Y` from the current `main` (`git branch release/v0.23 main && git push origin release/v0.23`) so a consumer who prefers the previous behavior has a stable ref to wind back to. These branches are never deleted by the promotion and never receive back-sync; `release/v0.23` is the line that precedes the 0.24 retool (#1457); `release/v0.24` precedes the 0.25 strong-model mass cut (#1494).
 
 The previous five-step manual ritual (release branch, manual version bumps, hand-written tag, hand-written GitHub Release) is gone — release-please owns version bumps, tags, and the GitHub Release. Back-sync is now fully automated via the back-sync-release workflow; the merge to staging happens without human intervention on the clean path, and only true delete/modify conflicts open a draft fallback PR. The merge strategy is asymmetric between directions: `staging → main` uses `-X ours` (staging is strictly newer in that direction); `main → staging` uses `-X theirs` (main is strictly newer on every file the release commit touched). #205 fixed the regression where #200 had naively used `-X ours` for both directions.
 
@@ -65,6 +65,16 @@ against other next-work before it reaches the release trunk.
   than it already runs.
 
 ## Release gotchas
+
+**A breaking promotion does not bump minor on its own.** release-please types a commit
+from its own subject and footers. The promotion merge commit's default subject is
+`Merge pull request #N from <owner>/staging`, so anything `feat!`-shaped in its body is
+ignored, and the `feat!` commits inside the promoted range did not register either —
+the 0.24.0 cut enumerated 162 entries and still found no breaking marker (on its own it
+would have cut 0.23.27). Force the bump explicitly on every breaking promotion: merge with
+`gh pr merge --merge --subject "feat!: <summary>"` so the merge commit itself carries the
+marker, or add release-please's `Release-As` footer (value `X.Y.0`) to the merge body —
+the footer is what cut 0.24.0.
 
 **GitHub Actions PR permission (first-run install).** release-please (and any
 Action that opens PRs) fails with `GitHub Actions is not permitted to create or
@@ -125,6 +135,13 @@ This repo flipped from squash to merge-commits on 2026-05-24 via #459. Baseline 
 **Context.** An earlier release cut produced exactly one CHANGELOG entry for PR #484 even though that PR carried five conventional sub-commits. This is the intended behavior of the per-PR granularity contract, not a regression: the merge-commit subject is the source of truth, and PR #484's single merge-commit subject became the single CHANGELOG line.
 
 **Why sub-commits collapse.** release-please's simple-mode projection walks `--first-parent` from the release tip. On that line a merged feature PR appears as ONE commit — its merge-commit subject — while the per-sub-commit conventional subjects live only on the merge's second parent (the full DAG), unreachable to a `--first-parent` walk. So a five-commit PR yields one CHANGELOG entry, keyed on the merge-commit subject. (This is the property characterized hermetically in `tests/test-release-please-changelog-fixture.sh`.)
+
+**Observed at v0.24.0.** That cut enumerated 162 CHANGELOG entries for the promoted range,
+sub-commits included (several PRs appear once per sub-commit plus once for the merge
+subject), so the `--first-parent` collapse described above did not hold on this repo's
+GraphQL-backed walk. The decision below stands as written — per-PR granularity is what the
+pipeline is tuned for and nothing depends on sub-commits being hidden — but treat the
+CHANGELOG as a superset, not a one-line-per-PR ledger, until #492 is reopened.
 
 **Rejected alternatives** — each pays a real cost for sub-commit granularity the pipeline does not need (PATH B plans already emit single-purpose commits at the merge-commit-subject level; PATH C plans can be split into multiple PRs when sub-commit granularity matters):
 

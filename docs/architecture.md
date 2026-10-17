@@ -10,15 +10,15 @@ Internal mechanism notes.
 
 ## Dispatch model (hybrid)
 
-Dispatch is keyed off the path label written by `/pipeline:classify-issue`. Inline `Agent()` in the orchestrator session is the default for ALL paths (A/B/C/D); `spawn-claude.sh` is the `--spawn` opt-in (PATH C only).
+Dispatch is keyed off the path label written by the classification procedure (inline in `/pipeline:plan-issue` since #1485; `/pipeline:classify-issue` is the standalone form). Inline `Agent()` in the orchestrator session is the default for ALL paths (A/B/C/D); `spawn-claude.sh` is the `--spawn` opt-in (PATH C only).
 
 ```
 path        transport                         subagent           notes
 ----        ---------                         --------           -----
 A docs-only inline Agent()                    general-purpose    worktree by setup-worktree.sh; launch inline
 B standard  inline Agent() (#748)             general-purpose    TDD via plan Task 0 bookend; separate exec/PR-eval contexts
-C multi     inline Agent() (#749/#896)        tdd-implementer    one per target=<dir> leaf; per-leaf worktree + cherry-pick reassemble; --spawn -> spawn-claude.sh run-queue
-D quick-fix inline Agent()                    tdd-implementer    skips eval-issue-plan + pre-PR review; PR-eval is sole gate
+C multi     inline Agent() (#1486)            general-purpose    one execute agent as on B; PIPELINE_PATH_C_FANOUT=true -> tdd-implementer per target=<dir> leaf, per-leaf worktree + cherry-pick reassemble (#896); --spawn -> spawn-claude.sh run-queue
+D quick-fix inline Agent()                    tdd-implementer    skips eval-issue-plan + Step 8 pre-PR review (opt-in on every path since #1482); PR-eval is sole gate
 precedence: A > D > C > B  (when path labels collide)
 ```
 
@@ -27,12 +27,12 @@ precedence: A > D > C > B  (when path labels collide)
   - Red→green discipline comes from the plan's Task 0 inline TDD bookend inside execute-issue-plan, identical to a spawned B worker. Transport flip changes only the launch — TDD discipline unchanged.
   - The flip eliminated the `claude -p` stream stall (boots, ~13s CPU, frozen log, 0 commits, `Sl+`) and the inverted cache_read:cache_creation ratio it caused.
   - Inline B execute Agent and inline B PR-eval Agent stay SEPARATE inline contexts (evaluator independence).
-- **PATH C** (`multi-task`) — as of #749/#891/#896, execute-issue-plan fans out **inline by default**: the orchestrator reads the plan and dispatches one orchestrator-owned `Agent(subagent_type=pipeline:tdd-implementer, ...)` per `target=<dir>` leaf, each in its OWN per-leaf worktree (`scripts/path-c-split-worktree.sh` setup/reassemble/teardown) so concurrent leaves never share a git index, then reassembles each leaf's commits onto the feature branch by **cherry-pick** (disjoint targets ⇒ conflict-free, #896). `--spawn` (#750) reverts C to the legacy `scripts/spawn-claude.sh` (→ `claude -p`) run-queue/tmux transport (per-worker isolation, no split-worktree step) — the reversible escape hatch.
+- **PATH C** (`multi-task`) — as of #1486, execute-issue-plan runs as **one inline execute agent by default**, exactly like B (`Agent(general-purpose)`; the plan's `target=<dir>` tasks run sequentially under red→green→commit in one context). The per-leaf fan-out shipped in #749/#891/#896 sits behind `PIPELINE_PATH_C_FANOUT=true`: the orchestrator reads the plan and dispatches one orchestrator-owned `Agent(subagent_type=pipeline:tdd-implementer, ...)` per `target=<dir>` leaf, each in its OWN per-leaf worktree (`scripts/path-c-split-worktree.sh` setup/reassemble/teardown) so concurrent leaves never share a git index, then reassembles each leaf's commits onto the feature branch by **cherry-pick** (disjoint targets ⇒ conflict-free, #896). `--spawn` (#750) reverts C to the legacy `scripts/spawn-claude.sh` (→ `claude -p`) run-queue/tmux transport (per-worker isolation, no split-worktree step; the spawned session honors the knob) — the reversible escape hatch.
 - **PATH D** (`quick-fix`) — execute-issue-plan runs inline via `Agent(subagent_type=pipeline:tdd-implementer, ...)` — like A/B but subagent is `tdd-implementer` (leaf executor, strict red→green→commit) not general-purpose.
   - evaluate-issue-pr auto-routes by PATH letter: inline for A/B/C/D by default; spawn-claude for C under `--spawn`.
-  - D ALSO skips evaluate-issue-plan entirely (orchestrator auto-flips `plan-pending` → `plan-approved` on a `quick-fix`+`plan-pending` issue in Step 4) and skips Step 8 (pre-PR review loop) of execute-issue-plan.
+  - D ALSO skips evaluate-issue-plan entirely (orchestrator auto-flips `plan-pending` → `plan-approved` on a `quick-fix`+`plan-pending` issue in Step 4) and skips Step 8 (pre-PR review loop) of execute-issue-plan unconditionally — since #1482 Step 8 is opt-in on A/B/C as well (`PIPELINE_PRE_PR_REVIEW=true`; default `false`).
   - Bet: evaluate-issue-pr is sufficient review at quick-fix scope.
-- **Other stages** (classify-issue, plan-issue, evaluate-issue-plan, create-issues) already invoked inline as `Agent(...)` regardless of path; nothing changes.
+- **Other stages** (plan-issue — which runs classification inline since #1485 — evaluate-issue-plan, create-issues, and the standalone `/pipeline:classify-issue`) already invoked inline as `Agent(...)` regardless of path; nothing changes.
 
 **PATH C inline migration (#80 → shipped #749/#891/#896).** Originally deferred over risks at C scope:
 - subagent context budget
@@ -41,7 +41,7 @@ precedence: A > D > C > B  (when path labels collide)
 - TDD discipline drift
 - crash recovery
 
-As of #748 those risks were accepted at A and B scope. As of #749/#891/#896 they are accepted at C scope too: the per-leaf-worktree fan-out (#896) gives each `target=<dir>` leaf an isolated git index, so concurrency is bounded by orchestrator context (max-3 foreground), not a git-index cap, and leaf returns are ~one line each (negligible context cost — the #894/#896 live branch test). `--spawn` remains the reversible escape hatch back to the legacy spawned transport.
+As of #748 those risks were accepted at A and B scope. As of #749/#891/#896 they are accepted at C scope too: the per-leaf-worktree fan-out (#896) gives each `target=<dir>` leaf an isolated git index, so concurrency is bounded by orchestrator context (max-3 foreground), not a git-index cap, and leaf returns are ~one line each (negligible context cost — the #894/#896 live branch test). `--spawn` remains the reversible escape hatch back to the legacy spawned transport. As of #1486 the fan-out is opt-in (`PIPELINE_PATH_C_FANOUT=true`); the default C execute is one inline agent, as on B.
 
 ## Worktree isolation
 
@@ -52,13 +52,13 @@ orchestrator workspace (base branch)  --- stays clean, never edited by executors
        |
        +-- setup-worktree.sh <branch> [issue] --> feature/<slug> worktree (one per issue)
                 |
-                +-- PATH C only: path-c-split-worktree.sh --> per-leaf worktrees
+                +-- PATH C, PIPELINE_PATH_C_FANOUT=true only: path-c-split-worktree.sh --> per-leaf worktrees
                         (one per target=<dir>; isolated git index; cherry-pick reassemble)
 ```
 
 - `scripts/setup-worktree.sh` does the atomic per-issue worktree setup (`--base <branch>` selects the base; defaults to `$PIPELINE_BASE_BRANCH`). Worktrees live under `.claude/worktrees/` (runtime allow-list, consumer-owned).
-- PATH C additionally splits each `target=<dir>` leaf into its OWN per-leaf worktree via `scripts/path-c-split-worktree.sh`, so concurrent leaves never share a git index; leaf commits are cherry-picked back onto the feature branch (disjoint targets ⇒ conflict-free, #896).
-- The orchestrator session itself never edits implementation files — a delegation hook blocks orchestrator-side Edit/Write on impl files during PATH C dispatch.
+- PATH C under `PIPELINE_PATH_C_FANOUT=true` additionally splits each `target=<dir>` leaf into its OWN per-leaf worktree via `scripts/path-c-split-worktree.sh`, so concurrent leaves never share a git index; leaf commits are cherry-picked back onto the feature branch (disjoint targets ⇒ conflict-free, #896).
+- The orchestrator session itself never edits implementation files — with the fan-out on, `hooks/enforce-path-c-delegation.py` blocks orchestrator-side Edit/Write on impl files during PATH C dispatch; with it off (the default) the hook is a no-op, because the single execute agent edits impl files itself (#1486).
 
 ## Hotfix lane (in-session emergency)
 
@@ -75,7 +75,7 @@ parse args -> file/lookup audit-anchor issue -> setup-worktree.sh -> fix loop (r
 
 ## Full Send wave model
 
-On `/pipeline:fullsend`, the orchestrator runs `scripts/plan-waves.sh` against ready issues before dispatching any classify/plan agents.
+On `/pipeline:fullsend`, the orchestrator runs `scripts/plan-waves.sh` against ready issues before dispatching any plan agents (classification runs inside plan-issue).
 
 ```
 ready issues --> plan-waves.sh --> [ P0 > P1 > P2 > P3 tiers ]

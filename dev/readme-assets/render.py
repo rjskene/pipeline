@@ -74,8 +74,7 @@ def svg_open(w: int, h: int, label: str, p: dict, defs: str) -> str:
 
 def lifecycle(p: dict) -> str:
     stages = [
-        ("classify", "agent", False),
-        ("plan", "agent", False),
+        ("plan", "agent · classify inline", False),
         ("plan-eval", "agent · decides", True),
         ("execute", "agent · own worktree", False),
         ("pr-eval preflight", "script", False),
@@ -85,27 +84,27 @@ def lifecycle(p: dict) -> str:
     out = [svg_open(920, 215, "Pipeline lifecycle rail", p,
                     marker("ah", p["ink2"]) + marker("aha", p["accent"]))]
     # PATH D bypass: plan is posted, plan-eval is skipped (auto-approved).
-    out.append(f'<path d="M204,62 V34 H460 V62" fill="none" stroke="{p["muted"]}" stroke-width="1.2" '
+    out.append(f'<path d="M86,62 V34 H386 V62" fill="none" stroke="{p["muted"]}" stroke-width="1.2" '
                f'stroke-dasharray="4 3" marker-end="url(#ah)"/>')
-    out.append(f'<text x="332" y="28" text-anchor="middle" font-size="11" fill="{p["muted"]}">'
+    out.append(f'<text x="236" y="28" text-anchor="middle" font-size="11" fill="{p["muted"]}">'
                f'PATH D skips plan-eval (auto-approved)</text>')
     out.append(f'<g stroke="{p["ink2"]}" stroke-width="1.4" fill="none" marker-end="url(#ah)">')
-    for i in range(6):
-        x = 135 + i * 128
+    for i in range(5):
+        x = 155 + i * 150
         out.append(f'<path d="M{x},82 H{x + 8}"/>')
     out.append("</g>")
     for i, (label, who, decides) in enumerate(stages):
-        x = 17 + i * 128
-        out.append(pill(x, 62, 118, 40, label, p, decides=decides))
-        out.append(f'<text x="{x + 59}" y="118" text-anchor="middle" font-family="{MONO}" '
+        x = 17 + i * 150
+        out.append(pill(x, 62, 138, 40, label, p, decides=decides))
+        out.append(f'<text x="{x + 69}" y="118" text-anchor="middle" font-family="{MONO}" '
                    f'font-size="10.5" fill="{p["muted"]}">{who}</text>')
-    out.append(f'<text x="332" y="140" text-anchor="middle" font-size="11" fill="{p["ink2"]}">'
+    out.append(f'<text x="236" y="140" text-anchor="middle" font-size="11" fill="{p["ink2"]}">'
                f'Approve · Revise → amendments bind execute</text>')
-    out.append(f'<path d="M716,126 V150 H588 V126" fill="none" stroke="{p["accent"]}" stroke-width="1.3" '
+    out.append(f'<path d="M686,126 V150 H536 V126" fill="none" stroke="{p["accent"]}" stroke-width="1.3" '
                f'marker-end="url(#aha)"/>')
-    out.append(f'<text x="652" y="164" text-anchor="middle" font-size="11" fill="{p["accent"]}">'
+    out.append(f'<text x="611" y="164" text-anchor="middle" font-size="11" fill="{p["accent"]}">'
                f'Revise → fix → re-check</text>')
-    out.append(f'<path d="M844,126 V142" fill="none" stroke="{p["ink2"]}" stroke-width="1.2"/>')
+    out.append(f'<path d="M836,126 V142" fill="none" stroke="{p["ink2"]}" stroke-width="1.2"/>')
     out.append(f'<text x="903" y="158" text-anchor="end" font-size="11" fill="{p["ok"]}">green → merged</text>')
     out.append(f'<text x="903" y="176" text-anchor="end" font-size="11" fill="{p["hold"]}">block-* → held for operator</text>')
     out.append("</svg>\n")
@@ -116,14 +115,14 @@ def paths(p: dict) -> str:
     lanes = [
         ("A · docs-only", "plan", "flat edit → commit, no test cycle"),
         ("B · standard", "plan", "red → green → commit, per task"),
-        ("C · multi-task", "plan", "fan-out per target dir → cherry-pick"),
+        ("C · multi-task", "plan", "one agent (per-dir fan-out opt-in)"),
         ("D · quick-fix", "auto-approved", "inline red → green → commit"),
     ]
     ys = [42, 102, 162, 222]
     out = [svg_open(920, 262, "Path routing fan", p, marker("ah", p["ink2"]))]
     out.append(pill(17, 112, 100, 40, "classify", p, decides=True))
     out.append(f'<text x="67" y="168" text-anchor="middle" font-family="{MONO}" font-size="10.5" '
-               f'fill="{p["muted"]}">agent · decides</text>')
+               f'fill="{p["muted"]}">inline in plan</text>')
     out.append(f'<path d="M117,132 H134 M134,42 V222" fill="none" stroke="{p["ink2"]}" stroke-width="1.4"/>')
     out.append(f'<g stroke="{p["ink2"]}" stroke-width="1.4" fill="none" marker-end="url(#ah)">')
     for y in ys:
