@@ -4,7 +4,8 @@
 # opener's association over REST (`gh issue view --json author` carries none),
 # checks it with the single-arg `is-trusted-author` primitive, and routes a
 # failure through refuse-untrusted-opener.sh (idempotent triage comment + the
-# durable PIPELINE_LABELS_HUMAN label).
+# durable PIPELINE_LABELS_HUMAN label). Siblings: scripts/plan-issue-context.sh,
+# scripts/plan-issue-classify.sh.
 set -uo pipefail
 
 usage() {
