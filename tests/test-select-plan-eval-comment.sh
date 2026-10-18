@@ -421,7 +421,7 @@ fi
 # ---------------------------------------------------------------------------
 # Case H (h) — the Step-1 PROSE sentinel and its hard 80-word budget.
 # ---------------------------------------------------------------------------
-PA_SENTINEL='**Plan amendments (#1435):**'
+PA_SENTINEL='**Plan amendments:**'
 PA_MAX_WORDS=80
 
 echo "Case H1: the sentinel '$PA_SENTINEL' appears on EXACTLY ONE line"
