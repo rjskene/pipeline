@@ -7,6 +7,9 @@ set -uo pipefail
 #   H0  every helper answers --help with rc 0
 #   C*  checks helper: a green preflight line skips the suite; every other
 #       line (or CI checks disabled) runs tests locally, scoped to touched tests
+#   D*  diff helper: PR_NUM=<n> then the diff; no PR -> STOP line, rc 1
+#   R*  rebase-check helper: REBASE=skip only on MERGEABLE + CLEAN|UNSTABLE
+#       with no file changed on both sides since the merge-base
 #
 # `gh` is a PATH stub; fixtures live under one mktemp -d.
 
@@ -41,7 +44,7 @@ chmod +x "$TMP/bin/gh"
 
 printf '%s\n' '#!/bin/bash' 'echo TOUCHED-RAN' > "$TMP/proj/tests/test-touched.sh"
 
-HELPERS="fetch-plan checks"
+HELPERS="fetch-plan checks diff rebase-check"
 
 scenario "H0: --help"
 for h in $HELPERS; do
@@ -109,6 +112,85 @@ if grep -vE '^[[:space:]]*#' "$ROOT/scripts/evaluate-issue-pr-checks.sh" 2>/dev/
   fail_msg "checks helper queries statusCheckRollup (the CI-wait hook would wedge)"
 else
   pass_msg "checks helper issues no statusCheckRollup query"
+fi
+
+# ---------------------------------------------------------------------------
+# Git fixture: a bare origin, a work clone on a feature branch that edits
+# a.txt, and a second clone that advances the base.
+G() { git -c user.email=t@example.com -c user.name=t "$@"; }
+git init -q --bare "$TMP/origin.git"
+G clone -q "$TMP/origin.git" "$TMP/work" 2>/dev/null
+G -C "$TMP/work" checkout -q -b main
+printf 'a\n' > "$TMP/work/a.txt"; printf 'b\n' > "$TMP/work/b.txt"; printf 'c\n' > "$TMP/work/c.txt"
+G -C "$TMP/work" add a.txt b.txt c.txt
+G -C "$TMP/work" commit -q -m base
+G -C "$TMP/work" push -q origin main 2>/dev/null
+G -C "$TMP/work" checkout -q -b feature/x
+printf 'a2\n' > "$TMP/work/a.txt"
+G -C "$TMP/work" commit -q -am feature
+G clone -q -b main "$TMP/origin.git" "$TMP/other" 2>/dev/null
+advance_base() { # <file>
+  printf 'changed\n' >> "$TMP/other/$1"
+  G -C "$TMP/other" commit -q -am "base edits $1"
+  G -C "$TMP/other" push -q origin main 2>/dev/null
+}
+
+run_in_work() { # <script> [args...] — env via the caller's exports
+  local script="$1"; shift
+  ( cd "$TMP/work" && env PATH="$TMP/bin:$PATH" PIPELINE_REPO=fake/repo PIPELINE_BASE_BRANCH=main \
+      bash "$ROOT/scripts/evaluate-issue-pr-$script.sh" "$@" ) > "$TMP/out" 2>&1
+}
+
+scenario "D1: diff helper prints PR_NUM then the diff"
+D_RC=0; STUB_PR=77 run_in_work diff || D_RC=$?
+if [ "$D_RC" -eq 0 ] && [ "$(head -1 "$TMP/out")" = "PR_NUM=77" ] && out_has 'STUB-DIFF'; then
+  pass_msg "PR_NUM=77 + diff"
+else
+  fail_msg "diff helper output wrong (rc=$D_RC): $(tr '\n' ' ' < "$TMP/out")"
+fi
+
+scenario "D2: no open PR -> STOP line, rc 1"
+D_RC=0; STUB_PR='' run_in_work diff || D_RC=$?
+if [ "$D_RC" -eq 1 ] && out_has 'No open PR found for branch feature/x.' && ! out_has 'STUB-DIFF'; then
+  pass_msg "no PR -> 'No open PR found for branch feature/x.' rc 1"
+else
+  fail_msg "no-PR path wrong (rc=$D_RC): $(tr '\n' ' ' < "$TMP/out")"
+fi
+
+CLEAN_VIEW='{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}'
+
+scenario "R1: MERGEABLE/CLEAN, base advanced on an unrelated file -> skip"
+advance_base c.txt
+STUB_VIEW="$CLEAN_VIEW" run_in_work rebase-check 123
+if out_has 'REBASE=skip' && out_has 'OVERLAP=none'; then
+  pass_msg "advanced base alone is not a reason to rebase"
+else
+  fail_msg "expected REBASE=skip OVERLAP=none: $(tr '\n' ' ' < "$TMP/out")"
+fi
+
+scenario "R2: negative control — CONFLICTING -> needed"
+STUB_VIEW='{"mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}' run_in_work rebase-check 123
+if out_has 'REBASE=needed' && out_has 'MERGEABLE=CONFLICTING'; then
+  pass_msg "CONFLICTING -> REBASE=needed"
+else
+  fail_msg "expected REBASE=needed on CONFLICTING: $(tr '\n' ' ' < "$TMP/out")"
+fi
+
+scenario "R3: negative control — MERGEABLE/CLEAN + a file changed on both sides -> needed"
+advance_base a.txt
+STUB_VIEW="$CLEAN_VIEW" run_in_work rebase-check 123
+if out_has 'REBASE=needed' && out_has 'OVERLAP=a.txt'; then
+  pass_msg "base overlap on a.txt -> REBASE=needed"
+else
+  fail_msg "expected REBASE=needed OVERLAP=a.txt: $(tr '\n' ' ' < "$TMP/out")"
+fi
+
+scenario "R4: the rebase-check helper reads mergeability, never the rollup"
+RB="$ROOT/scripts/evaluate-issue-pr-rebase-check.sh"
+if [ -f "$RB" ] && grep -qF -- '--json mergeable,mergeStateStatus' "$RB" && ! grep -qF 'statusCheckRollup' "$RB"; then
+  pass_msg "rebase-check queries mergeable,mergeStateStatus only"
+else
+  fail_msg "rebase-check helper missing the mergeability query or reads the rollup"
 fi
 
 echo ""
