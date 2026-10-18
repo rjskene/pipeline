@@ -101,7 +101,7 @@ The plugin ships no path or deletion guard. Those hooks were retired once a week
 
 ## Cost and observability
 
-- **Models.** Execute runs on Opus for every path; `PIPELINE_PATH_{A,B,C,D}_MODEL_EXECUTE=sonnet` opts a path back into the cheap lane. PATH C plans on Fable because a bad cross-directory split is the most expensive failure. On PATH B and D the high-uncertainty carve-out (security, auth, concurrency, migration, data-loss vocabulary) pins Opus regardless of knob, and pr-eval is never tier-dropped.
+- **Models.** Execute runs on Opus for every path; `PIPELINE_PATH_{A,B,C,D}_MODEL_EXECUTE=sonnet` opts a path back into the cheap lane. PATH C plans on Opus too; `PIPELINE_PATH_C_MODEL_PLAN=fable` opts back in. On PATH B and D the high-uncertainty carve-out (security, auth, concurrency, migration, data-loss vocabulary) pins Opus regardless of knob, and pr-eval is never tier-dropped.
 - **Usage gate.** Real account usage from the `/usage` endpoint gates every wave: pause at the 5-hour threshold with auto-resume, hard halt at the 7-day one. Fail-open, with a kill switch. See [docs/usage-gate.md](docs/usage-gate.md).
 - **Tokenomics.** `/pipeline:tokenomics` renders cost and latency per bucket, stage, structure and path from the gated `agent-costs.jsonl` log (dogfood-only). See [docs/observability.md](docs/observability.md) and [docs/cost-architecture.md](docs/cost-architecture.md).
 - **Logs.** Nothing is written under `.claude/logs/` unless `PIPELINE_LOGS_ENABLED=true`; `scripts/prune-logs.sh` is the dry-run-by-default retention pass.
