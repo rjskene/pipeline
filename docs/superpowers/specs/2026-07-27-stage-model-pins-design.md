@@ -1,5 +1,7 @@
 # Stage-model pins — explicit per-stage model routing under a Fable-ceiling session
 
+> **Update (#1513, 2026-10-18):** the PATH C plan default flipped from `fable` to `opus` (Fable list price 2.5× Opus, no measured quality return); `REASON=path-c-fable` retired. Body below is history.
+
 **Date:** 2026-07-27
 **Status:** Draft — pending operator review
 **Context:** Fable 5 / Opus 5 / Sonnet 5 all available. Operator session model moves to `fable` (`/model fable`). Today's model economy silently assumed the session model was the quality ceiling *and* the cost floor for every dispatched stage.
