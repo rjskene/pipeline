@@ -23,7 +23,7 @@
 #   STAGE=<plan|plan-eval|pr-eval>
 #   PATH=<A|B|C|D>
 #   MODEL=<fable|opus|sonnet|haiku>   # ALWAYS named; `inherit` is NEVER emitted
-#   REASON=<default-pin|path-c-fable|follows-producer|high-uncertainty|explicit-knob>
+#   REASON=<default-pin|follows-producer|high-uncertainty|explicit-knob>
 #   GATE=<full|single|none|annotate>  # OPTIONAL (#1429) — emitted on EVERY
 #                                     # plan-eval resolution (including the
 #                                     # `annotate` default) and on NO other stage.
@@ -43,15 +43,15 @@
 #               an operator override is allowed, silence is not. The execute tier
 #               for that comparison comes from resolve-execute-dispatch.sh — the
 #               SAME single source the execute dispatch consumes.
-#   plan      -> PATH C ⇒ ${PIPELINE_PATH_C_MODEL_PLAN:-fable} (cross-unit
-#               meshing across leaf worktrees is Fable's documented edge, and a
-#               bad split is the pipeline's most expensive failure mode);
-#               PATH A/B ⇒ opus (per-unit depth is Opus territory). PATH D is
+#   plan      -> PATH C ⇒ ${PIPELINE_PATH_C_MODEL_PLAN:-opus}; PATH A/B ⇒ opus
+#               (#1513: Fable list price is 2.5× Opus with no measured quality
+#               return on the calibration slate; set the knob to `fable` to opt
+#               back in). PATH D is
 #               never dispatched through this resolver (its collapsed inline
 #               dispatch carries the resolved EXECUTE model) but resolves
 #               defensively rather than erroring.
 #               W2 high-uncertainty ⇒ opus, REASON=high-uncertainty — overriding
-#               BOTH the fable default AND an explicit knob. For PATH C plan
+#               an explicit knob (incl. `fable`). For a `fable` PATH C plan
 #               that is a deliberate DOWNGRADE: security-vocab issues on Fable
 #               risk `stop_reason: refusal` mid-pipeline and Fable's documented
 #               review gains explicitly exclude security analysis. The carve-out
@@ -200,13 +200,11 @@ resolve_plan() {
   local knob=""
   if [ "$PATH_LETTER" = "C" ]; then
     knob="${PIPELINE_PATH_C_MODEL_PLAN:-}"
-    if [ -n "$knob" ]; then
-      PLAN_MODEL="$knob"; PLAN_REASON="explicit-knob"
-    else
-      PLAN_MODEL="fable"; PLAN_REASON="path-c-fable"
-    fi
+  fi
+  if [ -n "$knob" ]; then
+    PLAN_MODEL="$knob"; PLAN_REASON="explicit-knob"
   else
-    # PATH A/B (and the defensive PATH D case): the opus quality floor.
+    # Every path (incl. PATH C since #1513, and the defensive PATH D case): opus.
     PLAN_MODEL="opus"; PLAN_REASON="default-pin"
   fi
   # W2 refusal-risk carve-out wins over the default AND over an explicit knob.
