@@ -65,7 +65,7 @@ run() {
 comment_calls() { grep -c '^issue comment' "$TMP/gh.log" || true; }
 
 scenario "G1: --help"
-for f in "$GATE"; do
+for f in "$GATE" "$FETCH"; do
   if [ -f "$f" ] && bash "$f" --help >/dev/null 2>&1; then
     pass_msg "$(basename "$f") --help rc 0"
   else
@@ -93,6 +93,24 @@ fi
 scenario "G4: missing <N> -> rc 2"
 ENVS=(STUB_ASSOC=OWNER); run "$GATE"
 if [ "$RC" -eq 2 ]; then pass_msg "no <N> -> rc 2"; else fail_msg "no <N> -> rc $RC"; fi
+
+scenario "F1: fetch-plan prints the issue, then the trusted plan"
+ENVS=(STUB_PLAN_ASSOC=OWNER); run "$FETCH" 42
+ISSUE_LN=$(grep -n 'STUB-ISSUE-TITLE' "$TMP/out" | head -1 | cut -d: -f1)
+PLAN_LN=$(grep -n 'STUB-PLAN-BODY' "$TMP/out" | head -1 | cut -d: -f1)
+if [ "$RC" -eq 0 ] && [ -n "$ISSUE_LN" ] && [ -n "$PLAN_LN" ] && [ "$ISSUE_LN" -lt "$PLAN_LN" ]; then
+  pass_msg "OWNER plan -> issue JSON (line $ISSUE_LN) before plan body (line $PLAN_LN), rc 0"
+else
+  fail_msg "OWNER plan: rc=$RC out=$(tr '\n' ' ' < "$TMP/out") err=$(tr '\n' ' ' < "$TMP/err")"
+fi
+
+scenario "F2: negative control — untrusted plan author -> STOP line, rc 1"
+ENVS=(STUB_PLAN_ASSOC=NONE); run "$FETCH" 42
+if [ "$RC" -eq 1 ] && grep -qx 'No implementation plan found for issue #42.' "$TMP/out" && ! grep -qF 'STUB-PLAN-BODY' "$TMP/out"; then
+  pass_msg "NONE plan -> STOP line, rc 1, plan not printed"
+else
+  fail_msg "NONE plan: rc=$RC out=$(tr '\n' ' ' < "$TMP/out")"
+fi
 
 echo ""
 echo "=============================="

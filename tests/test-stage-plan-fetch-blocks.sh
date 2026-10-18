@@ -56,8 +56,9 @@ set -euo pipefail
 #      the three sites. Its ONLY failure mode — someone renames a step-1
 #      heading — is converted into a LOUD failure by (1) and (3).
 #      *** If you rename a step-1 heading, update the SITES table below. ***
-#   6. HELPER SITES — a `.sh` row (the evaluate-issue-pr and execute-issue-plan
-#      Step 1 fetches live in scripts/evaluate-issue-pr-fetch-plan.sh and
+#   6. HELPER SITES — a `.sh` row (all three Step 1 fetches live in
+#      scripts/evaluate-issue-pr-fetch-plan.sh,
+#      scripts/evaluate-issue-plan-fetch-plan.sh and
 #      scripts/execute-issue-plan-fetch-plan.sh): ANCHOR is the begin sentinel
 #      and BLOCK is the lines strictly between `# BEGIN-PLAN-FETCH` and
 #      `# END-PLAN-FETCH`, with `"$N"` rewritten to `<N>` before clause 4. A
@@ -76,6 +77,8 @@ set -euo pipefail
 #
 # Lines OUTSIDE the core are deliberately stage-local and are NOT compared:
 #   - evaluate-issue-plan PREPENDS `gh issue view <N> ... --json number,title,body`
+#     — in its helper that line sits OUTSIDE the sentinels, so it is not
+#     extracted at all
 #   - execute-issue-plan  APPENDS  `printf '%s\n' "$PLAN"`
 # A whole-block equality assertion would have forced one of those two
 # stage-local lines to be deleted — i.e. it would have made the guard demand a
@@ -107,7 +110,7 @@ inc()      { TESTS=$((TESTS + 1)); }
 # ORDER IS LOAD-BEARING: site 1 is the AGREEMENT CONTRACT's reference core.
 SITES=(
   "scripts/evaluate-issue-pr-fetch-plan.sh|BEGIN-PLAN-FETCH"
-  "skills/evaluate-issue-plan/SKILL.md|Fetch issue details and the trusted plan comment"
+  "scripts/evaluate-issue-plan-fetch-plan.sh|BEGIN-PLAN-FETCH"
   "scripts/execute-issue-plan-fetch-plan.sh|BEGIN-PLAN-FETCH"
 )
 
