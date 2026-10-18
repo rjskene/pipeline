@@ -34,7 +34,7 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/_resolve-config.sh
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
 
-ASSOC=$(gh api "repos/$PIPELINE_REPO/issues/$N" --jq '.author_association')
+ASSOC=$(gh api repos/"$PIPELINE_REPO"/issues/"$N" --jq '.author_association')
 if bash "$SELF_DIR/filter-trusted-comments.sh" is-trusted-author "$ASSOC"; then
   echo "OPENER=trusted assoc=$ASSOC"
   exit 0

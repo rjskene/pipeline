@@ -54,9 +54,16 @@ done
 # -----------------------------------------------------------------------------
 echo "=== SKILL.md prose contract ==="
 
+# The prose contract spans the SKILL body and the two helpers it delegates
+# Step 0a / Step 1 to (#1517) — one concatenated file, so a pattern may live
+# in either and CONTRIBUTOR must be absent from all three.
+PROSE="$TMP/prose.txt"
+cat "$SKILL" "${ROOT}/scripts/evaluate-issue-plan-opener-gate.sh" \
+  "${ROOT}/scripts/evaluate-issue-plan-fetch-plan.sh" > "$PROSE" 2>/dev/null
+
 prose_want() {
   local name="$1" pat="$2"
-  if grep -qE -- "$pat" "$SKILL"; then
+  if grep -qE -- "$pat" "$PROSE"; then
     pass "$name"
   else
     fail "$name (pattern not found: $pat)"
@@ -64,7 +71,7 @@ prose_want() {
 }
 prose_absent() {
   local name="$1" pat="$2"
-  if grep -qE -- "$pat" "$SKILL"; then
+  if grep -qE -- "$pat" "$PROSE"; then
     fail "$name (pattern unexpectedly present: $pat)"
   else
     pass "$name"
