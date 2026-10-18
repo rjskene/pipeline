@@ -336,15 +336,21 @@ fi
 # block UNWRAPPED asserting raw stdout carries no `Plan Evaluation`. Hence the
 # print is GATED on `**Verdict:** Revise`: that guard's decoy says `Approved`.
 # ---------------------------------------------------------------------------
-STEP1_ANCHOR='Fetch the approved plan'
+# The Step-1 fetch lives in scripts/execute-issue-plan-fetch-plan.sh: BLOCK is
+# the span strictly between `# BEGIN-PLAN-FETCH` and `# END-PLAN-FETCH`, with
+# `"$N"` rewritten to `<N>` (the same extraction test-stage-plan-fetch-blocks.sh
+# applies to helper sites).
 SKILL_EXEC="$REPO_ROOT/skills/execute-issue-plan/SKILL.md"
+FETCH_HELPER="$REPO_ROOT/scripts/execute-issue-plan-fetch-plan.sh"
 
-BLOCK=$(awk -v anchor="$STEP1_ANCHOR" '
-  index($0, anchor) { found = 1 }
-  found && !in_b && /^[[:space:]]*```bash[[:space:]]*$/ { in_b = 1; next }
-  in_b && /^[[:space:]]*```[[:space:]]*$/ { exit }
-  in_b { print }
-' "$SKILL_EXEC")
+BLOCK=""
+if [ -f "$FETCH_HELPER" ]; then
+  BLOCK=$(awk '
+    /^[[:space:]]*# END-PLAN-FETCH/ { exit }
+    in_b { print }
+    /^[[:space:]]*# BEGIN-PLAN-FETCH/ { in_b = 1 }
+  ' "$FETCH_HELPER" | sed 's/"\$N"/<N>/g')
+fi
 NONCOMMENT=$(printf '%s\n' "$BLOCK" | { grep -vE '^[[:space:]]*#' || true; })
 
 echo "Case G1: the Step-1 fence invokes select-plan-eval-comment.sh on a NON-COMMENT line"

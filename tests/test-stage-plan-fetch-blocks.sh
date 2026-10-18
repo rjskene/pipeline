@@ -56,8 +56,9 @@ set -euo pipefail
 #      the three sites. Its ONLY failure mode — someone renames a step-1
 #      heading — is converted into a LOUD failure by (1) and (3).
 #      *** If you rename a step-1 heading, update the SITES table below. ***
-#   6. HELPER SITES — a `.sh` row (the evaluate-issue-pr Step 1 fetch lives in
-#      scripts/evaluate-issue-pr-fetch-plan.sh): ANCHOR is the begin sentinel
+#   6. HELPER SITES — a `.sh` row (the evaluate-issue-pr and execute-issue-plan
+#      Step 1 fetches live in scripts/evaluate-issue-pr-fetch-plan.sh and
+#      scripts/execute-issue-plan-fetch-plan.sh): ANCHOR is the begin sentinel
 #      and BLOCK is the lines strictly between `# BEGIN-PLAN-FETCH` and
 #      `# END-PLAN-FETCH`, with `"$N"` rewritten to `<N>` before clause 4. A
 #      script carries no prose, so Test N.P applies to `.md` sites only.
@@ -107,12 +108,12 @@ inc()      { TESTS=$((TESTS + 1)); }
 SITES=(
   "scripts/evaluate-issue-pr-fetch-plan.sh|BEGIN-PLAN-FETCH"
   "skills/evaluate-issue-plan/SKILL.md|Fetch issue details and the trusted plan comment"
-  "skills/execute-issue-plan/SKILL.md|Fetch the approved plan"
+  "scripts/execute-issue-plan-fetch-plan.sh|BEGIN-PLAN-FETCH"
 )
 
 # The site whose extracted block must surface the plan on STDOUT (the executor
 # reads it from there; the two eval stages consume the $PLAN variable).
-STDOUT_SITE="skills/execute-issue-plan/SKILL.md"
+STDOUT_SITE="scripts/execute-issue-plan-fetch-plan.sh"
 
 # The site whose extracted block must ALSO read the plan EVALUATION's binding
 # amendments (#1440). Under PIPELINE_PLAN_GATE=annotate a `Revise` plan
