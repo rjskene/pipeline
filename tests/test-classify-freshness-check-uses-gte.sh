@@ -24,7 +24,7 @@ set -euo pipefail
 # OR-equality asserts (a)/(b) are unchanged.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CLASSIFY_PATH="$SCRIPT_DIR/../skills/plan-issue/references/classification.md"  # #1485: freshness block moved to the shared reference
+CLASSIFY_PATH="$SCRIPT_DIR/../scripts/plan-issue-classify.sh"  # BEGIN-CLASS-FRESHNESS block lives in the helper
 FULLSEND_PATH="$SCRIPT_DIR/../skills/fullsend/SKILL.md"
 
 PASS=0

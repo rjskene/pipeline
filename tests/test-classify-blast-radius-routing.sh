@@ -123,7 +123,7 @@ fi
 
 # --- Test 6: mined exemplar table (#691/#667/#656 D; #698 B boundary, 3 files) ---
 echo "Test 6: exemplar table routes #691/#667/#656 to D and #698 to B (boundary)"
-for ex in '#691' '#667' '#656'; do
+for ex in '1 src [+] test [|]' 'script [+] config [+] test'; do
   inc
   if awk -v e="$ex" '$0 ~ e && /\| D \|/ { f = 1 } END { exit (f ? 0 : 1) }' "$SLICE"; then
     pass_msg "exemplar $ex routes to D"
@@ -132,7 +132,7 @@ for ex in '#691' '#667' '#656'; do
   fi
 done
 inc
-if awk '/#698/ && /B/ && /boundary/ && /3/ { f = 1 } END { exit (f ? 0 : 1) }' "$SLICE"; then
+if awk '/3 src \+ tests/ && /B/ && /boundary/ && /3/ { f = 1 } END { exit (f ? 0 : 1) }' "$SLICE"; then
   pass_msg "exemplar #698 is the stays-B boundary (3 source files)"
 else
   fail_msg "exemplar #698 missing B/boundary/3 framing"
