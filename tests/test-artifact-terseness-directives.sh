@@ -65,7 +65,7 @@ fi
 # are binding amendments to the plan of record, so the evaluator must score the
 # PR against plan + amendments. Pinned here with the issue's HARD 110-word prose
 # budget: the Step 1 sentinel line plus the `## Constraints` inputs-rule phrase.
-PA_PR_SENTINEL='**Plan amendments (#1435):**'
+PA_PR_SENTINEL='**Plan amendments:**'
 PA_PR_INPUTS_PHRASE='plan comment plus its trusted `## Plan Evaluation` when the verdict is `Revise`'
 PA_PR_MAX_WORDS=110
 
