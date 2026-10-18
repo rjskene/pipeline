@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REF="$SCRIPT_DIR/../skills/plan-issue/references/classification.md"
 PLAN="$SCRIPT_DIR/../skills/plan-issue/SKILL.md"
 CLS="$SCRIPT_DIR/../skills/classify-issue/SKILL.md"
+HELPER="$SCRIPT_DIR/../scripts/plan-issue-classify.sh"  # sentinel blocks moved out of the reference
 
 PASS=0
 FAIL=0
@@ -33,7 +34,7 @@ WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
 # --- (a) reference contents -------------------------------------------------
-echo "(a) skills/plan-issue/references/classification.md"
+echo "(a) classification reference + scripts/plan-issue-classify.sh"
 for tok in '## Classification' 'recommended_path:' \
            '# BEGIN-LABEL-APPLY' '# END-LABEL-APPLY' \
            '# BEGIN-PATH-MARKER-PARSE' '# BEGIN-PATH-HINT-PARSE' \
@@ -41,7 +42,7 @@ for tok in '## Classification' 'recommended_path:' \
            '# BEGIN-PATH-DECIDE' '# END-PATH-DECIDE' \
            'marker ⇒ hint ⇒ fresh comment ⇒ rule table ⇒ B'; do
   inc
-  if grep -qF -- "$tok" "$REF"; then
+  if cat "$REF" "$HELPER" | grep -qF -- "$tok"; then
     pass_msg "reference contains '$tok'"
   else
     fail_msg "reference missing '$tok'"
@@ -96,7 +97,7 @@ extract() {
     index($0, b) { inblock = 1 }
     inblock { print }
     index($0, e) { inblock = 0 }
-  ' "$REF"
+  ' "$REF" "$HELPER"
 }
 DECIDE="$WORKDIR/decide.sh"
 { extract PATH-MARKER-PARSE; extract PATH-HINT-PARSE; extract PATH-DECIDE; } > "$DECIDE"

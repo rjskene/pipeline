@@ -8,6 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_FILE="$SCRIPT_DIR/../skills/plan-issue/references/classification.md"  # #1485: moved to the shared reference
+HELPER="$SCRIPT_DIR/../scripts/plan-issue-classify.sh"  # sentinel blocks live in the helper
 
 PASS=0
 FAIL=0
@@ -99,8 +100,8 @@ fi
 
 # (vii) sentinel comments
 inc
-if grep -qE '^[[:space:]]*# BEGIN-PATH-MARKER-PARSE' "$SKILL_FILE" \
-   && grep -qE '^[[:space:]]*# END-PATH-MARKER-PARSE' "$SKILL_FILE"; then
+if grep -qE '^[[:space:]]*# BEGIN-PATH-MARKER-PARSE' "$HELPER" \
+   && grep -qE '^[[:space:]]*# END-PATH-MARKER-PARSE' "$HELPER"; then
   pass_msg "BEGIN-PATH-MARKER-PARSE / END-PATH-MARKER-PARSE sentinels present"
 else
   fail_msg "missing BEGIN-PATH-MARKER-PARSE or END-PATH-MARKER-PARSE sentinel"
@@ -118,7 +119,7 @@ awk '
   /^[[:space:]]*# BEGIN-PATH-MARKER-PARSE/ { inblock = 1 }
   inblock { print }
   /^[[:space:]]*# END-PATH-MARKER-PARSE/   { inblock = 0 }
-' "$SKILL_FILE" > "$PARSE_SCRIPT"
+' "$HELPER" > "$PARSE_SCRIPT"
 
 # Also append a print of MARKER_PATH so the harness can read it.
 echo 'printf "MARKER_PATH=%s\n" "${MARKER_PATH:-}"' >> "$PARSE_SCRIPT"
@@ -181,7 +182,7 @@ awk '
   /^[[:space:]]*# BEGIN-LABEL-APPLY/ { inblock = 1 }
   inblock { print }
   /^[[:space:]]*# END-LABEL-APPLY/   { inblock = 0 }
-' "$SKILL_FILE" > "$APPLY_SCRIPT"
+' "$HELPER" > "$APPLY_SCRIPT"
 
 STUB_DIR="$WORKDIR/stub"
 mkdir -p "$STUB_DIR"

@@ -16,6 +16,7 @@ PR="$SK/evaluate-issue-pr/SKILL.md"
 PLAN="$SK/evaluate-issue-plan/SKILL.md"
 CLS="$SK/classify-issue/SKILL.md"
 CLSREF="$SK/plan-issue/references/classification.md"  # #1485: shared classification procedure
+CLSHELPER="$SK/../scripts/plan-issue-classify.sh"  # classification sentinel blocks live in the helper
 PI="$SK/plan-issue/SKILL.md"
 for f in "$PR" "$PLAN" "$CLS" "$CLSREF" "$PI"; do
   [ -f "$f" ] || { echo "ERROR: missing $f" >&2; exit 1; }
@@ -38,10 +39,10 @@ assert_grep "$PLAN" "is-trusted-author"           "plan-eval: trust helper ref h
 # (b) classify-issue
 assert_grep "$CLS" "## Classification"        "classify: header held"
 assert_grep "$CLSREF" "recommended_path:"        "classify: recommended_path held"
-assert_grep "$CLSREF" "# BEGIN-LABEL-APPLY"      "classify: BEGIN-LABEL-APPLY held"
-assert_grep "$CLSREF" "# END-LABEL-APPLY"        "classify: END-LABEL-APPLY held"
-assert_grep "$CLSREF" "# BEGIN-PATH-MARKER-PARSE" "classify: BEGIN-PATH-MARKER-PARSE held"
-assert_grep "$CLSREF" "# END-PATH-MARKER-PARSE"  "classify: END-PATH-MARKER-PARSE held"
+assert_grep "$CLSHELPER" "# BEGIN-LABEL-APPLY"      "classify: BEGIN-LABEL-APPLY held"
+assert_grep "$CLSHELPER" "# END-LABEL-APPLY"        "classify: END-LABEL-APPLY held"
+assert_grep "$CLSHELPER" "# BEGIN-PATH-MARKER-PARSE" "classify: BEGIN-PATH-MARKER-PARSE held"
+assert_grep "$CLSHELPER" "# END-PATH-MARKER-PARSE"  "classify: END-PATH-MARKER-PARSE held"
 assert_grep "$CLS" "is-trusted-author"        "classify: trust helper ref held"
 # (b) plan-issue
 assert_grep "$PI" "## Implementation Plan"  "plan: header held"
