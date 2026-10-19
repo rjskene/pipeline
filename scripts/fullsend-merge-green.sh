@@ -3,7 +3,9 @@
 # call per wave over the issues whose Step 7 GATE line read reason=green.
 #
 # LINE ORDER IS LOAD-BEARING — do not reorder:
-#   PR derivation (fail-closed) -> TOCTOU baseRefName re-read -> guarded
+#   PR derivation (fail-closed) -> TOCTOU baseRefName re-read -> re-gate
+#   (auto_merge_should_fire on live PR state; non-green => MERGE: reason=<token>,
+#   no merge) -> guarded
 #   `gh pr merge --merge --delete-branch` (synchronous, never auto-merge) -> merge
 #   SHA capture -> screenshot-URL rewrite (after the SHA it pins to, before the
 #   footer) -> `Auto-merged:` footer -> green MERGE: line (before the label flip,
@@ -19,7 +21,7 @@ usage() {
 Usage: fullsend-merge-green.sh <N>...
 
 Merges each greenlit issue's PR and prints ONE line per issue:
-  MERGE: issue=#<N> pr=#<P> reason=<green|block-base-mismatch|block-no-pr|block-merge-failed> [sha=<sha>]
+  MERGE: issue=#<N> pr=#<P> reason=<green|block-base-mismatch|block-no-pr|block-merge-failed|<any fullsend-gate.sh block-* token>> [sha=<sha>]
 Every block-* line still needs fullsend-block-merge.sh. Exit 1 only on a
 genuine `gh issue close` failure (fail-loud).
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
@@ -34,6 +36,14 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/_fullsend-resolve-pr.sh
 source "$SELF_DIR/_fullsend-resolve-pr.sh"
 
+source "$SELF_DIR/auto-merge-gate.sh"
+CR_LINE=$(bash "$SELF_DIR/check-capability-refusal.sh" --resolve-sources)
+CR_STATE=${CR_LINE%% *}; CR_STATE=${CR_STATE#SOURCES=}
+case "$CR_STATE" in
+  resolved)                     export PIPELINE_CAPABILITY_REFUSAL_SOURCES="${CR_LINE##*DIR=}" ;;
+  no-log-dir|unresolvable-root) echo "NOTE: capability arm skipped/DORMANT: $CR_LINE" >&2 ;;
+esac
+
 for N in "$@"; do
   ISSUE="$N"
   fullsend_resolve_pr "$N"
@@ -43,6 +53,8 @@ for N in "$@"; do
     REASON="block-base-mismatch"
     echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"; continue
   fi
+  REGATE=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  [ "$REGATE" = green ] || { echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=$REGATE"; continue; }
   gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch \
     || { echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=block-merge-failed"; continue; }
   SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)

@@ -150,7 +150,11 @@ fi
 scenario "fullsend-merge-green.sh: green loop order, guards, close swallow"
 
 if [ -f "$S/fullsend-merge-green.sh" ]; then
-  run bash "$S/fullsend-merge-green.sh" 9
+  # The loop re-gates each PR (#1540); this stub's `api` exits 1, so the real
+  # gate would block. Run against a fixture copy whose gate answers green.
+  mkdir -p "$TMP/s2" && cp -r "$S/." "$TMP/s2/"
+  echo 'auto_merge_should_fire() { echo green; }' > "$TMP/s2/auto-merge-gate.sh"
+  run bash "$TMP/s2/fullsend-merge-green.sh" 9
   if [ "$RC" -eq 0 ] && [ "$OUT" = "MERGE: issue=#9 pr=#none reason=block-no-pr" ]; then
     pass_msg "empty worktree => reason=block-no-pr"
   else
@@ -159,17 +163,17 @@ if [ -f "$S/fullsend-merge-green.sh" ]; then
   if grep -q 'pr merge' "$GH_LOG"; then fail_msg "gh pr merge ran with no PR"; else pass_msg "gh pr merge unreachable with no PR"; fi
 
   export GH_PR_NUM=42 GH_BASE=main
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$OUT" = "MERGE: issue=#7 pr=#42 reason=block-base-mismatch" ]; then pass_msg "TOCTOU base re-read => block-base-mismatch"; else fail_msg "base mismatch out=$OUT"; fi
   if grep -q 'pr merge' "$GH_LOG"; then fail_msg "gh pr merge ran on a base mismatch"; else pass_msg "no merge on a base mismatch"; fi
 
   export GH_BASE=evolve GH_MERGE_RC=1
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$OUT" = "MERGE: issue=#7 pr=#42 reason=block-merge-failed" ]; then pass_msg "failed merge => block-merge-failed"; else fail_msg "merge-failed out=$OUT"; fi
   if grep -q 'pr comment' "$GH_LOG"; then fail_msg "footer posted on an unmerged PR"; else pass_msg "no footer on a failed merge"; fi
 
   export GH_MERGE_RC=0 GH_CLOSE_MODE=already
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qx 'MERGE: issue=#7 pr=#42 reason=green sha=abc123'; then
     pass_msg "green => MERGE reason=green sha=<sha>, rc 0"
   else
@@ -188,7 +192,7 @@ if [ -f "$S/fullsend-merge-green.sh" ]; then
   if grep -q 'pr comment 42 .*Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at' "$GH_LOG"; then pass_msg "footer literal prefix posted"; else fail_msg "footer literal missing"; fi
 
   export GH_CLOSE_MODE=genuine
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$RC" -ne 0 ]; then pass_msg "genuine close failure exits non-zero (fail-loud kept)"; else fail_msg "genuine close failure was swallowed"; fi
   unset GH_PR_NUM GH_BASE GH_MERGE_RC GH_CLOSE_MODE
 fi
