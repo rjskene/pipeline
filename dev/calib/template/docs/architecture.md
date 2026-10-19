@@ -69,6 +69,8 @@ depending on scheduler luck.
 - the `open`, `done` and `total` counts
 - a `by priority` breakdown (high, med, low)
 - the oldest open task, when there is one
+- the next task to pick up — the oldest open high-priority task — when there
+  is one
 
 Every number comes from `store_rows`, so the report can never disagree with
 `list`.

@@ -2484,6 +2484,69 @@ expect_sub "a merged planted row is graded, not blocked" \
   "$TOTAL_MISSED" "reftest-pass=5/6"
 
 rm -rf "$PLANTED_DIR"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 25b: planted= aggregates across every planted row (#1531)"
+# ---------------------------------------------------------------------------
+# Slate v3 carries two planted dirs (06-planted-defect, 07-planted-regression).
+# planted= used to be overwritten per row, so the LAST planted row won: a
+# missed escape on the glob-earlier row was hidden by a caught later one.
+# The rule now: missed if ANY planted row missed; caught only when ALL caught.
+
+PLANTED_A="$HARNESS/dev/calib/slate/06-planted-a"
+PLANTED_B="$HARNESS/dev/calib/slate/07-planted-b"
+for pd in "$PLANTED_A" "$PLANTED_B"; do
+  mkdir -p "$pd"
+  echo "calib: $(basename "$pd")" > "$pd/title.txt"
+  printf 'Body for %s.\n' "$(basename "$pd")" > "$pd/body.md"
+  echo X > "$pd/path.txt"
+  echo "docs/guide.md" > "$pd/expected-files.txt"
+  # Never passes against the merged tree (the stub lands `fixed`): a merged
+  # Approved row grades missed, an open Flagged row grades caught (blocked).
+  printf '#!/bin/bash\ngrep -qx fixed-boundary docs/guide.md\n' > "$pd/reference-test.sh"
+done
+
+# Seven dirs: --reset hands out 7301..7307; glob order makes 7306 the EARLIER
+# planted row and 7307 the LATER one.
+echo 7300 > "$TMP/issue-counter"
+for n in 7306 7307 7406 7407; do
+  printf '%s\n' '{"createdAt":"2026-09-06T10:00:00Z","comments":[{"body":"## Plan Evaluation\n**Verdict:** Approve"}]}' > "$ISSUES_DIR/$n.json"
+done
+cat > "$TMP/prs-planted-mixed.json" <<'PRSX'
+[
+  {"number":9301,"body":"Closes #7301","state":"MERGED","headRefName":"feature/calib-7301","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9302,"body":"Closes #7302","state":"MERGED","headRefName":"feature/calib-7302","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9303,"body":"Closes #7303","state":"MERGED","headRefName":"feature/calib-7303","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9304,"body":"Closes #7304","state":"MERGED","headRefName":"feature/calib-7304","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9305,"body":"Closes #7305","state":"MERGED","headRefName":"feature/calib-7305","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"**Verdict:** Approved"}]},
+  {"number":9306,"body":"Closes #7306","state":"MERGED","headRefName":"feature/calib-7306","mergedAt":"2026-09-06T11:00:00Z","files":[{"path":"docs/guide.md"}],"comments":[{"body":"## Evaluation\n**Verdict:** Approved"}]},
+  {"number":9307,"body":"Closes #7307","state":"OPEN","headRefName":"feature/calib-7307","mergedAt":null,"files":[{"path":"docs/guide.md"}],"comments":[{"body":"## Evaluation\n**Verdict:** Flagged"}]}
+]
+PRSX
+export CALIB_TEST_PRS_JSON="$TMP/prs-planted-mixed.json"
+
+rm -f "$COST_LOG" "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run over a missed-then-caught planted pair exits 0" 0
+TOTAL_MIXED="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "a missed EARLIER planted row is not hidden by a caught later one" \
+  "$TOTAL_MIXED" "planted=missed"
+
+# Both planted rows Flagged and open: every planted row caught => caught.
+echo 7400 > "$TMP/issue-counter"
+sed -e 's/730\([1-7]\)/740\1/g' -e 's/930\([1-7]\)/940\1/g' "$TMP/prs-planted-mixed.json" \
+  | sed -e '/"Closes #7406"/{s/"state":"MERGED"/"state":"OPEN"/;s/"mergedAt":"[^"]*"/"mergedAt":null/;s/Verdict:\*\* Approved/Verdict:** Flagged/;}' \
+  > "$TMP/prs-planted-both.json"
+export CALIB_TEST_PRS_JSON="$TMP/prs-planted-both.json"
+
+rm -f "$COST_LOG" "$CALLS"
+run_helper --run --harness "$HARNESS"
+expect_rc "--run over two caught planted rows exits 0" 0
+TOTAL_BOTH="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
+expect_sub "every planted row caught grades caught" "$TOTAL_BOTH" "planted=caught"
+
+rm -rf "$PLANTED_A" "$PLANTED_B"
+rm -f "$ISSUES_DIR/7306.json" "$ISSUES_DIR/7307.json" "$ISSUES_DIR/7406.json" "$ISSUES_DIR/7407.json"
 unset CALIB_TEST_CLAUDE_SCRIPT CALIB_TEST_PRS_JSON CALIB_TEST_ROWS_JSON \
       CALIB_TEST_PRICING_JSON
 rm -f "$ISSUES_DIR/6006.json" "$ISSUES_DIR/7006.json"

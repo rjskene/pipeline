@@ -19,8 +19,13 @@ report__oldest_open() {
   store_rows open "" | head -n1
 }
 
+# The task to pick up next: the oldest open high-priority one.
+report__next_up() {
+  store_rows open high 1 | head -n1
+}
+
 report_render() {
-  local open done total high med low oldest
+  local open done total high med low oldest next
   open="$(report__count_status open)"
   done="$(report__count_status done)"
   total="$(report__count_status all)"
@@ -44,5 +49,11 @@ report_render() {
     printf '\n'
     printf 'oldest open: #%s %s\n' \
       "$(store_field "$oldest" 1)" "$(store_field "$oldest" 6)"
+  fi
+
+  next="$(report__next_up)"
+  if [ -n "$next" ]; then
+    printf 'next up:     #%s %s\n' \
+      "$(store_field "$next" 1)" "$(store_field "$next" 6)"
   fi
 }
