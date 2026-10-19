@@ -23,7 +23,7 @@
 - Plan gates `single`/`none` (#1429) and `annotate` (#1435) exist to cut re-plan rounds; annotate carries Revise recommendations into execute as binding amendments, except `**Scope:** structural`.
 - The binding re-plan rule (quote the prescription verbatim, verify only that it landed) stopped evaluators widening scope every round (#1317).
 - Plan-lifecycle flips go through `transition-issue.sh`, never raw `--add-label` (lifecycle-flip guard).
-- Stage agents run as `pipeline:stage-reader` / `pipeline:stage-executor`: a `general-purpose` boot loaded ~13k tokens of tool schemas the stage never calls (#1530).
+- Stage agents run as `pipeline:stage-reader` / `pipeline:stage-executor`: a `general-purpose` boot loaded ~13k tokens of tool schemas the stage never calls (#1530); #1534 dropped the `Skill` tool, whose skills catalogue cost ≈ 9.5k tokens per boot for one call.
 
 ## Execute
 

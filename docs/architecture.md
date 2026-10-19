@@ -20,7 +20,7 @@ B standard  inline Agent() (#748)             stage-executor     TDD via plan Ta
 C multi     inline Agent() (#1486)            stage-executor     one execute agent as on B; PIPELINE_PATH_C_FANOUT=true -> tdd-implementer per target=<dir> leaf, per-leaf worktree + cherry-pick reassemble (#896); --spawn -> spawn-claude.sh run-queue
 D quick-fix inline Agent()                    tdd-implementer    skips eval-issue-plan + Step 8 pre-PR review (opt-in on every path since #1482); PR-eval is sole gate
 precedence: A > D > C > B  (when path labels collide)
-PR-eval on every path (and plan / plan-eval): stage-reader (#1530)
+PR-eval on every path (and plan / plan-eval): stage-reader (#1530); stage types carry no Skill tool, the prompt's absolute SKILL.md path is Read (#1534)
 ```
 
 - **PATH A** (`docs-only`) — execute-issue-plan + evaluate-issue-pr run inline via `Agent(subagent_type='pipeline:stage-executor', ...)` / `Agent(subagent_type='pipeline:stage-reader', ...)` (#1530). No `spawn-claude.sh` / `claude -p` / tmux. Worktree still created by `setup-worktree.sh`; only the launch is inline. Routing in `skills/status/SKILL.md` Step 6 + Step 7.
