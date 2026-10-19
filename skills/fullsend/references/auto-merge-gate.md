@@ -23,7 +23,7 @@ Base-branch enforcement is layered: the gate's `baseRefName` assertion (`block-b
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-merge-green.sh" <issues whose GATE line read reason=green>
    ```
-   It prints one `MERGE: issue=#<N> pr=#<P> reason=<green|block-base-mismatch|block-no-pr|block-merge-failed> [sha=<sha>]` line per issue. Its order is load-bearing:
+   It prints one `MERGE: issue=#<N> pr=#<P> reason=<green|block-base-mismatch|block-no-pr|block-merge-failed> [sha=<sha>]` line per issue. The green loop re-gates each PR with `auto_merge_should_fire` immediately before `gh pr merge`, so a stale `GATE:` token can never merge a moved head (any non-`green` token prints as the `MERGE:` reason). Its order is load-bearing:
    - **TOCTOU re-check** — re-read `baseRefName` right before the merge; a mismatch emits `block-base-mismatch` and never calls `gh pr merge`.
    - Merge synchronously (NOT `--auto`) with `--merge --delete-branch`, guarded: a failed merge (stale `mergeStateStatus` after an earlier merge in the batch) emits `block-merge-failed`.
    - Capture the merge-commit SHA (empty on API lag ⇒ omitted from the close comment).
