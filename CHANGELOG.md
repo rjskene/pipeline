@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.3](https://github.com/rjskene/pipeline/compare/v0.25.2...v0.25.3) (2026-10-19)
+
+
+### Bug Fixes
+
+* **docs:** release-cadence promotion merge recipe ([#1528](https://github.com/rjskene/pipeline/issues/1528)) ([19112ad](https://github.com/rjskene/pipeline/commit/19112ad3e4d110b13e74c589d77047588eb96b8a))
+
 ## [0.25.2](https://github.com/rjskene/pipeline/compare/v0.25.1...v0.25.2) (2026-10-19)
 
 
