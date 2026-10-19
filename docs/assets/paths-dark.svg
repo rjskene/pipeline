@@ -2,8 +2,8 @@
 <defs><marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="#AEBCB9"/></marker></defs>
 <rect x="0" y="0" width="920" height="262" fill="#0F1516"/>
 
-<rect x="17" y="112" width="100" height="40" rx="6" fill="#15363B" stroke="#5FC2D1" stroke-width="1.4"/><text x="67" y="136.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">classify</text>
-<text x="67" y="168" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">inline in plan</text>
+<rect x="17" y="112" width="100" height="40" rx="6" fill="#15363B" stroke="#5FC2D1" stroke-width="1.4"/><text x="67" y="136.375" fill="#E4ECEA" font-size="12.5" text-anchor="middle">plan</text>
+<text x="67" y="168" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#7E8F8C">agent · classifies</text>
 <path d="M117,132 H134 M134,42 V222" fill="none" stroke="#AEBCB9" stroke-width="1.4"/>
 <g stroke="#AEBCB9" stroke-width="1.4" fill="none" marker-end="url(#ah)">
 <path d="M134,42 H150"/>

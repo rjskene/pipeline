@@ -21,7 +21,7 @@ if echo "$ROW16" | grep -qiF 'classif'; then ok "skills-api plan-issue row menti
 
 has   "cost-architecture cites #1485"               docs/cost-architecture.md "#1485"
 has   "CLAUDE.md says classify runs inline"         CLAUDE.md "classify runs inline"
-has   "README lifecycle strip intact"               README.md "create → classify → plan → eval → execute → eval-pr → merge"
+has   "README lifecycle strip intact"               README.md "create → plan → eval → execute → eval-pr → merge"
 hasnt "README transcript drops classify wave"       README.md "Wave 1: classify"
 has   "campaign entry cites flow (a)→(d)"           skills/campaign/SKILL.md "(a)→(d)"
 hasnt "campaign entry drops flow (a)→(e)"           skills/campaign/SKILL.md "(a)→(e)"

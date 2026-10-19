@@ -9,7 +9,7 @@
 Pipeline takes a GitHub issue from filed to merged through automated stages. Every stage is a slash command, every decision point is a script or an independent reviewer with its own context, every change happens in its own git worktree, and anything the reviewers will not sign off on is held for a human.
 
 ```
-create → classify → plan → eval → execute → eval-pr → merge
+create → plan → eval → execute → eval-pr → merge
 ```
 
 Full process maps in docs/process-maps.md.
@@ -31,13 +31,12 @@ Full command catalogue (every skill, all flags, interaction surfaces): [docs/ski
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lifecycle-dark.svg">
-  <img alt="Lifecycle rail: plan (classify inline), plan-eval, execute, pr-eval preflight, pr-eval, auto-merge gate" src="docs/assets/lifecycle.svg" width="920">
+  <img alt="Lifecycle rail: plan, plan-eval, execute, pr-eval preflight, pr-eval, auto-merge gate" src="docs/assets/lifecycle.svg" width="920">
 </picture>
 
 | Stage | Who | What it produces | Label after |
 |---|---|---|---|
-| classify | agent (inline in plan since #1485) | `## Classification` comment and the path label (`docs-only` / `multi-task` / `quick-fix`; none means PATH B) | (none) |
-| plan | agent | `## Implementation Plan` comment | `plan-pending` |
+| plan | agent | classifies first — `## Classification` comment and the path label (`docs-only` / `multi-task` / `quick-fix`; none means PATH B) — then the `## Implementation Plan` comment | `plan-pending` |
 | plan-eval | agent, independent context | Approve or Revise. Under the default `annotate` gate a Revise binds its amendments into execute instead of re-planning | `plan-reviewed` → `plan-approved` |
 | execute | agent, own worktree | conventional commits on `feature/<slug>` and a PR against the base branch; the pre-PR review loop is opt-in (`PIPELINE_PRE_PR_REVIEW=true`) | `in-progress` → `pr-open` |
 | pr-eval preflight | script | one line covering CI state, base branch, guard scan and body contract; a fatal arm skips the model review entirely | `pr-open` |
@@ -50,7 +49,7 @@ Lifecycle labels are flipped through `scripts/transition-issue.sh`, so a permiss
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/paths-dark.svg">
-  <img alt="Path routing fan: classification inside plan-issue sends an issue down one of four lanes that converge on pr-eval" src="docs/assets/paths.svg" width="920">
+  <img alt="Path routing fan: plan-issue classifies an issue into one of four lanes that converge on pr-eval" src="docs/assets/paths.svg" width="920">
 </picture>
 
 | Path | Label | Execution | Review gates |
@@ -60,7 +59,7 @@ Lifecycle labels are flipped through `scripts/transition-issue.sh`, so a permiss
 | C multi-task | `multi-task` | one execute agent as on B; `PIPELINE_PATH_C_FANOUT=true` restores one `tdd-implementer` per `target=<dir>` leaf, each in its own worktree, cherry-picked back onto the feature branch | plan-eval + pr-eval |
 | D quick-fix | `quick-fix` | inline red → green → commit in the orchestrator session; the plan is auto-approved | pr-eval |
 
-The classifier picks the cheapest path that fits; a `<!-- pipeline:path=D -->` body marker forces D. Every path executes on Opus by default, and the pr-eval reviewer is never tier-dropped below the executor. PATH C runs as one inline execute agent by default; `PIPELINE_PATH_C_FANOUT=true` restores the per-leaf fan-out, and `--spawn` reverts it to the headless run-queue transport.
+Classification (inside `plan-issue`; `/pipeline:classify-issue` runs it standalone) picks the cheapest path that fits; a `<!-- pipeline:path=D -->` body marker forces D. Every path executes on Opus by default, and the pr-eval reviewer is never tier-dropped below the executor. PATH C runs as one inline execute agent by default; `PIPELINE_PATH_C_FANOUT=true` restores the per-leaf fan-out, and `--spawn` reverts it to the headless run-queue transport.
 
 ## What a run looks like
 

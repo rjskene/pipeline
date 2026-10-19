@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1](https://github.com/rjskene/pipeline/compare/v0.25.0...v0.25.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **docs:** README no longer presents classify as a lifecycle stage ([#1510](https://github.com/rjskene/pipeline/issues/1510)) ([624eabe](https://github.com/rjskene/pipeline/commit/624eabe76463e73a8707d4280217d6441027849a))
+
 ## [0.25.0](https://github.com/rjskene/pipeline/compare/v0.24.0...v0.25.0) (2026-10-17)
 
 
