@@ -256,8 +256,8 @@ Per wave N: usage gate, then Steps 5 → 6 → 6a → 6b → 7 on ONLY that wave
    ```
    `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`) is a REAL pin; relay any stderr WARN.
 
-   **PR-eval invocation mode.** Same evaluator steps, only CWD differs:
-   1. **Inline `pipeline:stage-reader` `Agent(...)` (default — PATH A, PATH B, PATH C, PATH D).** The prompt carries the worktree path + issue number — `cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md and follow it for issue #<N>`; the evaluator first runs `cd <worktree-absolute-path>`. Thread the opt-out as `MANUAL_MERGE=1` in the prompt.
+   **PR-eval invocation mode.** Only CWD differs:
+   1. **Inline `pipeline:stage-reader` `Agent(...)` (default — every path).** Prompt: `cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md and follow it for issue #<N>`, plus `MANUAL_MERGE=1` for the opt-out.
    2. **`--spawn` — `${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` via the run-queue (all paths; the legacy PATH C transport).** Starts in the worktree, no `cd`; `spawn-claude.sh --manual-merge` exports `MANUAL_MERGE=1`.
 
    **`--spawn` override.** Route PR-eval through `run-queue.sh --skill evaluate-issue-pr` (`PREFLIGHT=ok` issues only), `run_in_background: true`, awaited with Step 6's waiter (one `Monitor` via `BashOutput`, filter `EVENT: (agent-stalled|agent-finished|queue-complete)`, `timeout_ms=7200000`) and triage.
