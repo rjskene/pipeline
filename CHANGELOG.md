@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.25.2](https://github.com/rjskene/pipeline/compare/v0.25.1...v0.25.2) (2026-10-19)
+
+
+### Features
+
+* consumer test-command contract, stage-skill diets, Opus default for PATH C plans ([5dc30cf](https://github.com/rjskene/pipeline/commit/5dc30cfe4644639c446c5d9b7bd57ae19a3a5b39))
+* consumer test-command contract, stage-skill diets, Opus default for PATH C plans ([#1525](https://github.com/rjskene/pipeline/issues/1525)) ([927984a](https://github.com/rjskene/pipeline/commit/927984a99d747443a63f3195ea19fba855cec2db))
+* **resolver:** default PATH C plan model to opus ([5f59f81](https://github.com/rjskene/pipeline/commit/5f59f8123d02e606187f3044d6e86ffbc42e7eab))
+* **resolver:** default PATH C plan model to opus ([8b0494c](https://github.com/rjskene/pipeline/commit/8b0494c80bfe71a4cbf5b9837b54500fde09528d)), closes [#1513](https://github.com/rjskene/pipeline/issues/1513)
+
+
+### Bug Fixes
+
+* **fullsend:** execute dispatch runs the project's $PIPELINE_TEST_CMD, never the plugin's own run-test-suite.sh ([88ef6fb](https://github.com/rjskene/pipeline/commit/88ef6fb7d4323f3a09c4c79a4b483d8261dfde1a))
+
 ## [0.25.1](https://github.com/rjskene/pipeline/compare/v0.25.0...v0.25.1) (2026-10-17)
 
 
