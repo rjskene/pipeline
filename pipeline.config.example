@@ -425,14 +425,14 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 # Two invariants the resolver encodes: (1) GATE NEVER BELOW PRODUCER — plan-eval is
 # tier-max(plan model, knob), and a pr-eval knob below the resolved execute tier is
 # honored but emits a stderr WARN (override allowed, silence is not); (2) the W2
-# high-uncertainty carve-out forces opus on plan/plan-eval too, overriding both the
-# PATH C fable default AND an explicit knob (refusal risk wins).
+# high-uncertainty carve-out forces opus on plan/plan-eval too, overriding an
+# explicit knob (incl. fable) (refusal risk wins).
 # Override anchors (#1052): defaults-in-code — every default below lives at the read
 # site, so these stay COMMENTED and `--fix config` does NOT seed them. Seeding would
 # PIN the current default and defeat central default evolution on plugin upgrade.
 #PIPELINE_STAGE_MODEL_PLAN_EVAL=opus     # evaluator floor; PATH C follows its plan model
 #PIPELINE_STAGE_MODEL_PR_EVAL=opus       # W3 as an explicit pin — NEVER below execute tier
-#PIPELINE_PATH_C_MODEL_PLAN=fable        # cross-unit meshing; W2 carve-out forces opus
+#PIPELINE_PATH_C_MODEL_PLAN=opus         # fable opts back in; W2 carve-out forces opus
 #PIPELINE_PATH_A_MODEL_EXECUTE=opus      # docs-only execute; was a silent inherit
 #PIPELINE_PATH_C_MODEL_EXECUTE=opus      # tdd-implementer leaves; was a silent inherit
 

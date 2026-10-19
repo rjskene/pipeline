@@ -8,6 +8,11 @@ set -uo pipefail
 # The renderer makes ZERO live `gh` calls. All inputs are passed as files,
 # which is what makes this testable in shell.
 
+# Hermeticity (#1501): the fixtures assume the default base branch. A caller
+# that sourced a pipeline.config (which `set -a`-exports every knob) would
+# otherwise leak e.g. PIPELINE_BASE_BRANCH=evolve into the renderer.
+export PIPELINE_BASE_BRANCH=staging
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HELPER="$SCRIPT_DIR/../scripts/render-status-table.sh"
 FIXTURES="$SCRIPT_DIR/fixtures/render-status-table"

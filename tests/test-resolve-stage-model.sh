@@ -21,18 +21,18 @@ set -uo pipefail
 #   STAGE=<plan|plan-eval|pr-eval>
 #   PATH=<A|B|C|D>
 #   MODEL=<fable|opus|sonnet|haiku>   # ALWAYS named; `inherit` is NEVER emitted
-#   REASON=<default-pin|path-c-fable|follows-producer|high-uncertainty|explicit-knob>
+#   REASON=<default-pin|follows-producer|high-uncertainty|explicit-knob>
 #
 # Routing rules under test:
 #   pr-eval   -> ${PIPELINE_STAGE_MODEL_PR_EVAL:-opus}. No carve-out lowers it.
 #               An explicitly-set knob BELOW the resolved execute tier is
 #               HONORED (REASON=explicit-knob) but emits a stderr WARN —
 #               operator override is allowed, silence is not.
-#   plan      -> PATH C ⇒ ${PIPELINE_PATH_C_MODEL_PLAN:-fable} (cross-unit
-#               meshing); PATH A/B ⇒ opus. A W2 high-uncertainty match
+#   plan      -> PATH C ⇒ ${PIPELINE_PATH_C_MODEL_PLAN:-opus} (#1513);
+#               PATH A/B ⇒ opus. A W2 high-uncertainty match
 #               (scripts/_high-uncertainty-match.sh — the regex is NEVER
-#               redefined, #1039) ⇒ opus, overriding BOTH the fable default and
-#               an explicit knob (the refusal-risk carve-out wins, same
+#               redefined, #1039) ⇒ opus, overriding an explicit knob (the
+#               refusal-risk carve-out wins, same
 #               precedence as the execute resolver).
 #   plan-eval -> tier-max(this issue's resolved plan model,
 #               ${PIPELINE_STAGE_MODEL_PLAN_EVAL:-opus}) so the gate NEVER lands
@@ -262,7 +262,7 @@ else
   fail_msg "(2) pr-eval knob below execute tier: expected a stderr WARN, got err='$ERR2'"
 fi
 
-# ---- plan: opus floor, PATH C fable, W2 downgrade ---------------------------
+# ---- plan: opus floor, PATH C opus, W2 downgrade ---------------------------
 
 # (3a) plan, PATH A (docs-only) -> opus default pin.
 CFG3A=$(make_config_root)
@@ -290,12 +290,12 @@ assert_tok "(3c) plan PATH D defensive" "MODEL=opus" "$OUT3C"
 assert_tok "(3c) plan PATH D defensive" "REASON=default-pin" "$OUT3C"
 assert_tok "(3c) plan PATH D defensive" "PATH=D" "$OUT3C"
 
-# (4) plan, PATH C (multi-task) -> fable (cross-unit meshing is Fable's edge).
+# (4) plan, PATH C (multi-task) -> opus default pin, same as A/B (#1513).
 CFG4=$(make_config_root)
 FIX4=$(make_fixture "feat(x): multi-leaf rollout" "$BODY_C" "$LBL_C")
 OUT4=$(run_stage "$FIX4" "$CFG4" plan)
-assert_tok "(4) plan PATH C" "MODEL=fable" "$OUT4"
-assert_tok "(4) plan PATH C" "REASON=path-c-fable" "$OUT4"
+assert_tok "(4) plan PATH C" "MODEL=opus" "$OUT4"
+assert_tok "(4) plan PATH C" "REASON=default-pin" "$OUT4"
 assert_tok "(4) plan PATH C" "PATH=C" "$OUT4"
 
 # (5) plan, PATH C + W2 vocab -> DOWNGRADE to opus. Deliberate: security-vocab
@@ -324,9 +324,9 @@ assert_tok "(6) plan PATH C explicit knob" "REASON=explicit-knob" "$OUT6"
 
 # ---- plan-eval: gate never below producer -----------------------------------
 
-# (7) plan-eval, PATH C -> follows its plan producer (fable), so the gate is not
+# (7) plan-eval, PATH C -> follows an explicitly-Fable producer, so the gate is not
 #     evaluating a fable-produced plan from a lower tier.
-CFG7=$(make_config_root)
+CFG7=$(make_config_root 'PIPELINE_PATH_C_MODEL_PLAN=fable')
 FIX7=$(make_fixture "feat(x): multi-leaf rollout" "$BODY_C" "$LBL_C")
 OUT7=$(run_stage "$FIX7" "$CFG7" plan-eval)
 assert_tok "(7) plan-eval PATH C" "MODEL=fable" "$OUT7"
@@ -342,7 +342,7 @@ assert_tok "(8) plan-eval PATH B" "REASON=default-pin" "$OUT8"
 
 # (9) plan-eval, PATH C + PIPELINE_STAGE_MODEL_PLAN_EVAL=sonnet -> the knob
 #     CANNOT drop the gate below its producer: tier-max(fable, sonnet) = fable.
-CFG9=$(make_config_root 'PIPELINE_STAGE_MODEL_PLAN_EVAL=sonnet')
+CFG9=$(make_config_root 'PIPELINE_STAGE_MODEL_PLAN_EVAL=sonnet' 'PIPELINE_PATH_C_MODEL_PLAN=fable')
 FIX9=$(make_fixture "feat(x): multi-leaf rollout" "$BODY_C" "$LBL_C")
 OUT9=$(run_stage "$FIX9" "$CFG9" plan-eval)
 assert_tok "(9) plan-eval PATH C, knob below producer" "MODEL=fable" "$OUT9"
@@ -460,12 +460,12 @@ OUT14=$(run_stage "$FIX14" "$CFG14" plan-eval)
 assert_tok "(14) lean PATH D plan-eval" "SKIP=true" "$OUT14"
 
 # (15) CONTROL: lean is A/D ONLY. PATH B and PATH C plan-eval keep their gate,
-#      and PATH C still follows its fable producer.
+#      and PATH C still follows an explicit fable producer.
 CFG15B=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
 FIX15B=$(make_fixture "fix(foo): tweak" "$BODY_LOW" "$LBL_NONE")
 OUT15B=$(run_stage "$FIX15B" "$CFG15B" plan-eval)
 assert_no_key "(15) CONTROL lean PATH B plan-eval" "SKIP" "$OUT15B"
-CFG15C=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean')
+CFG15C=$(make_config_root 'PIPELINE_TRUST_PROFILE=lean' 'PIPELINE_PATH_C_MODEL_PLAN=fable')
 FIX15C=$(make_fixture "feat(x): multi-leaf rollout" "$BODY_C" "$LBL_C")
 OUT15C=$(run_stage "$FIX15C" "$CFG15C" plan-eval)
 assert_no_key "(15) CONTROL lean PATH C plan-eval" "SKIP" "$OUT15C"

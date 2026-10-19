@@ -19,11 +19,8 @@ _cpr_dir="${_cpr_dir:-$([ "${PIPELINE_USE_LOCAL_PLUGIN:-}" = true ] && git rev-p
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline-local/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipeline/*/ 2>/dev/null | sort -V | tail -1)}"
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
-# Capture the raw invocation argv so per-invocation flags (e.g. `--debug-first`,
-# consumed in Step 3a) survive into the Bash subshell. The harness does NOT export
-# slash-command args to Bash, so YOU (the model) MUST substitute the literal flags you
-# were invoked with here — exactly the convention `/pipeline:status` uses for
-# `--analyze`/`--keep-trees` (prose-interpreted argv). Default to empty when none.
+# Slash-command args are not exported to Bash: YOU (the model) substitute the literal
+# invocation flags here (prose-interpreted argv, as `/pipeline:status` does).
 ARGV="<the raw flags this skill was invoked with, e.g. --debug-first; empty if none>"
 ```
 
@@ -35,9 +32,7 @@ issue → classify (inline) → plan → PATH-aware Task shape → comment → l
 
 ## Caller contract
 
-When a caller dispatches this skill to a subagent (the `/pipeline:fullsend` Step 1b dispatch — see `skills/fullsend/SKILL.md`), the caller MUST embed in the dispatched Agent's prompt the directive that the subagent's only valid terminal states are `post-plan.sh` exit 0 (report the success line) or `post-plan.sh` exit non-zero (report the FAILED line). Returning the plan body in chat is a skill failure — the plan does not exist until the `## Implementation Plan` comment is posted and `plan-pending` is applied.
-
-This is defense-in-depth: when `general-purpose` is the dispatched subagent type, it may not load this SKILL.md at all — it can treat `/pipeline:plan-issue N` as a content-instruction and simulate the slash command. The caller-side directive at the dispatch site is the only binding contract it is guaranteed to see, so the dispatch call site (`fullsend`) carries the directive verbatim. Keep this note in sync if the dispatch site moves.
+When `/pipeline:fullsend` (Step 1b) dispatches this skill, its prompt MUST carry the terminal contract — the only valid terminal states are `post-plan.sh` exit 0 (success line) or non-zero (FAILED line). Returning the plan body in chat is a skill failure: the plan exists only once the `## Implementation Plan` comment is posted and `plan-pending` applied.
 
 # Planning Agent
 
@@ -45,135 +40,85 @@ Receive an issue number as argument (or from context).
 
 ## Flags
 
-- `--debug-first` — one-off, per-invocation only (mirrors `/pipeline:status`'s `--analyze` / `--keep-trees`): forces the Step 4a root-cause diagnosis gate to run even when the `needs-debug` label is absent. There is NO persistent `pipeline.config` default — the gate otherwise fires only for `needs-debug`-labelled issues. The harness does not export slash-command args to Bash, so the model substitutes the literal invocation flags into `$ARGV` at Boot (the prose-argv convention `--analyze`/`--keep-trees` use); Step 3a then sets `DEBUG_FIRST` from `$ARGV`.
+- `--debug-first` — per-invocation only (no config default): forces the Step 4a gate without the `needs-debug` label. Reaches Step 3a via `$ARGV`.
 
 ## Steps
 
-0a. **Opener-association gate (trust precondition).** Resolve the issue OPENER's GitHub `authorAssociation` and check it against the `is-trusted-author` primitive (exposed by `scripts/filter-trusted-comments.sh`, issue #545). If the opener lacks write access (association not in {OWNER, MEMBER, COLLABORATOR}), the issue BODY is untrusted input: REFUSE to auto-plan. Do NOT draft a plan, do NOT write a draft, do NOT run `post-plan.sh`, do NOT apply `plan-pending`. Instead route the refusal through the shared `scripts/refuse-untrusted-opener.sh` helper (issue #1196), then STOP. Aligns with Design Principle 2 ("human gates matter").
-
-   The helper posts a single triage-request comment surfacing the issue for human triage (a trusted operator re-files or vouches) **idempotently** — it skips the post when a trusted triage comment (legacy wire form or the sentinel marker) already exists, so no duplicate ever accumulates on re-run — and applies the durable `PIPELINE_LABELS_HUMAN` (default `` `human` ``) label so the issue leaves the ready bucket and autonomous runs stop re-selecting it.
-
-   Resolve the association via `gh api` (NOT `gh issue view --json author`, which exposes only `{login,name,id}` and has no association field), then pass the single association string to `is-trusted-author`:
+0a. **Opener-association gate.** The gate checks the OPENER's association with `is-trusted-author "$ASSOC"`; a failure goes through `scripts/refuse-untrusted-opener.sh` (idempotent triage comment for human triage + the `PIPELINE_LABELS_HUMAN` label). Exit 3 (`OPENER=refused`) ⇒ REFUSE and STOP — no draft, no `post-plan.sh`, no `plan-pending`.
 
    ```bash
-   # Resolve the OPENER's authorAssociation (OWNER/MEMBER/COLLABORATOR/CONTRIBUTOR/NONE/...).
-   # NOTE: `gh issue view --json author` returns only {login,name,id} — NO association — so it
-   # CANNOT be used for the trust decision. The issue-level association lives on the REST endpoint.
-   ASSOC=$(gh api repos/$PIPELINE_REPO/issues/<N> --jq '.author_association')
-   # is-trusted-author is a SINGLE-ARG subcommand taking an association STRING (issue #545 contract).
-   if ! bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/filter-trusted-comments.sh" is-trusted-author "$ASSOC"; then
-     bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/refuse-untrusted-opener.sh" <N> "$ASSOC" \
-       --context "A trusted operator must re-file or vouch before this issue is auto-planned."
-     exit 0
-   fi
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/plan-issue-trust-gate.sh" <N>
    ```
 
-1. **Fetch issue details and the trusted comment working set:**
+1. **Fetch the trusted working set** (body + trusted comments). Every comment read below uses `$TRUSTED`, never a raw `gh ... --json comments` fetch.
+
    ```bash
-   gh issue view <N> --repo $PIPELINE_REPO --json number,title,body
-   # Trusted-only working set (#546, helper #545). Default mode = plaintext: body, then
-   # each trusted comment body. `--json <N>` (Step 4a) = a `{"comments":[…]}` dict, no
-   # `body` key. Dropped-author audit ("ignored N comments from untrusted authors: @x")
-   # goes to stderr.
    TRUSTED=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/filter-trusted-comments.sh" <N>)
    ```
 
-   All comment reads below operate on the trusted working set `$TRUSTED`, never on a raw `gh ... --json comments` fetch. (The title/body line above is kept as-is; the body's trust is handled by the opener-association gate in step 0a.)
-
-2. **Analyze existing comments** — operate on the trusted working set `$TRUSTED` from step 1. Look for prior plans (containing `## Implementation Plan`) and **trusted** user feedback (non-plan comments present in `$TRUSTED`). If trusted feedback exists on an existing plan, this is a **plan revision**: the revised plan MUST address every point and lead with a `**Changes from previous plan:**` section. A comment from an untrusted/outsider author never appears in `$TRUSTED` and therefore can never force a `**Changes from previous plan:**` rewrite.
+2. **Analyze existing comments** in `$TRUSTED`. Trusted feedback on a prior `## Implementation Plan` makes this a **plan revision**: address every point and lead with `**Changes from previous plan:**`. Outsider comments never reach `$TRUSTED`.
 
 3. **Read project context:** Read each file listed in `PIPELINE_CONTEXT_FILES`.
 
-3a. **Classify inline, then determine PATH (#1485)** — the plan needs a path-specific Task 0. The procedure lives in `${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/references/classification.md` (shared with standalone `/pipeline:classify-issue`); `Read` it, then:
+3a. **Classify inline, then determine PATH.** `Read` `${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/references/classification.md` (shared with `/pipeline:classify-issue`), then:
 
-   - **Freshness.** Run its `BEGIN-CLASS-FRESHNESS` block against `$TRUSTED` (step 1). A trusted `## Classification` with `createdAt >= issue.updatedAt` is fresh — **skip when fresh**: consume `CACHED_PATH` as `PATH_LETTER` and do NOT re-post or re-label.
-   - **Otherwise produce.** Fetch attachments first when `.claude/scratch/issue-<N>/` is absent (the Step 3b `filter-trusted-comments.sh fetch-attachments <N>` fence — idempotent), run the reference steps 3c→4a and its `BEGIN-PATH-DECIDE` block (decision order `marker ⇒ hint ⇒ fresh comment ⇒ rule table ⇒ B`; log its `PATH_SOURCE=`), then post the `## Classification` comment and apply the path label — step 5 compose, step 5a `BEGIN-LABEL-APPLY` (allow-set `{docs-only|multi-task|quick-fix}`), step 6 post, step 7 verify-post.
+   - **Freshness** (`BEGIN-CLASS-FRESHNESS`, `plan-issue-classify.sh freshness <N>` over `$TRUSTED`): a trusted `## Classification` with `createdAt >= issue.updatedAt` is fresh — **skip when fresh**: consume `CACHED_PATH` as `PATH_LETTER`; no re-post, no re-label.
+   - **Otherwise produce:** attachments first (Step 3b), reference steps 3c→4a, `### Decide` (log `PATH_SOURCE=`), then post the `## Classification` comment and apply the path label — steps 5, 5a `BEGIN-LABEL-APPLY`, 6, 7.
+   - **Normalize:** `docs-only` / `multi-task` / `quick-fix` ⇒ `PATH_LETTER=A` / `PATH_LETTER=C` / `PATH_LETTER=D`; outside `A|B|C|D` ⇒ `PATH_LETTER=B`.
+   - **Context:** `DEBUG_FIRST=true` when `--debug-first` was passed OR the issue carries `needs-debug`; `DIAGNOSIS=fresh|stale|absent` feeds Step 4a.
 
    ```bash
-   LABELS=$(gh issue view <N> --repo $PIPELINE_REPO --json labels --jq '.labels[].name')
-   ISSUE_BODY=$(gh issue view <N> --repo $PIPELINE_REPO --json body --jq .body)
-   CURRENT_LABELS="$LABELS"   # reference env; $TRUSTED (step 1) feeds BEGIN-CLASS-FRESHNESS
-   # needs-debug resolution: the
-   # root-cause diagnosis gate (Step 4a) fires when the one-off `--debug-first` flag is
-   # passed OR the issue carries the `needs-debug` label. Per-invocation only — no
-   # persistent pipeline.config default. `$ARGV` is the raw invocation argv captured at
-   # Boot (the model substitutes the literal flags — same prose-argv convention as
-   # `/pipeline:status` `--analyze`/`--keep-trees`); `${ARGV:-}` guards the unset case.
-   DEBUG_FIRST=false
-   case " ${ARGV:-} " in *" --debug-first "*) DEBUG_FIRST=true ;; esac
-   if echo "$LABELS" | grep -qx "needs-debug"; then DEBUG_FIRST=true; fi
-   # PATH_LETTER = CACHED_PATH (fresh) or BEGIN-PATH-DECIDE's PATH_LETTER (produced);
-   # labels docs-only / multi-task / quick-fix map to A / C / D. Normalize A|B|C|D, default B:
-   case "$PATH_LETTER" in A) PATH_LETTER=A ;; C) PATH_LETTER=C ;; D) PATH_LETTER=D ;; *) PATH_LETTER=B ;; esac
-   echo "Planning issue #<N> as PATH $PATH_LETTER"
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/plan-issue-context.sh" <N> ${ARGV:-}
    ```
 
-3b. **Ingest and read attachments.** In interactive single-issue planning (when `/pipeline:fullsend` is not the caller), run the sanctioned `filter-trusted-comments.sh fetch-attachments <N>` fence (#1340), then `Read` every file under `.claude/scratch/issue-<N>/`. Idempotent — no-op if `/pipeline:fullsend` step 1a already ran.
+3b. **Ingest and read attachments** via the sanctioned `filter-trusted-comments.sh fetch-attachments <N>` fence (idempotent), then list them.
 
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_PROJECT_ROOT="$(pwd)" \
      bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" fetch-attachments <N> 2>/dev/null | head -1
+   ```
+
+   ```bash
    ls -1 .claude/scratch/issue-<N>/ 2>/dev/null || echo "(no attachments)"
    ```
 
-   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before drafting.** Mandatory for `bug`, `user-submitted`, `regression` labels; recommended otherwise. Screenshots/binary evidence steer codebase exploration in step 4 (which symbols to grep, which routes to read, which test files to touch).
+   **For each file printed by `ls -1`, invoke the `Read` tool exactly once before drafting.** Mandatory for `bug`, `user-submitted`, `regression`.
 
-4. **Explore the codebase** — use Glob, Grep, and Read to find files relevant to this issue (schemas if data, routes if API, components if UI, tests if behavior changes). (See Step 3b for attachment handling.)
+4. **Explore the codebase** — Glob, Grep and Read the relevant files.
 
-   Scan the issue title/body/quoted text for GH Actions CI-blocking markers (bracketed forms of `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci`, plus `***NO_CI***`). If any appear in literal form, prepend a `**Heads-up — CI-blocking markers:**` line to the plan body instructing the executor to escape them in PR titles / commit subjects (backticked `` `skip ci` ``, hyphenated `skip-ci`, or `skip CI` without brackets) — the `check-ci-skip-markers` PreToolUse hook will block any unescaped occurrence.
+   - **CI-blocking markers.** A literal bracketed `skip ci`, `ci skip`, `skip-ci`, `ci-skip`, `no ci`, `no-ci` or `***NO_CI***` in the issue ⇒ prepend a `**Heads-up — CI-blocking markers:**` line telling the executor to escape them (`` `skip ci` ``, `skip-ci`, `skip CI`).
+   - **README anchor guard.** Never prescribe anchored `README.md` links (`*.md#anchor`, regex `\.md#[A-Za-z0-9_-]+`, `tests/test-readme-current.sh`); use a file-level reference.
 
-   **README anchor guard (#397/#404):** Do NOT prescribe adding anchored cross-references to `README.md` (links of the form `*.md#anchor`, regex `\.md#[A-Za-z0-9_-]+`). README uses file-level links only; anchored refs are banned by the policy enforced in `tests/test-readme-current.sh`. If the issue asks for such a link, redirect to a file-level reference or a pointer to the relevant doc file instead.
-
-   **Exact-match guard sweep (#1200):** Before drafting, run the mechanical sweep so the plan DECLARES the exact-match tests it will break instead of leaving plan-eval (or, worse, a stalled executor mid-task) to discover them:
-
-   ```bash
-   PIPELINE_TEST_ROOTS="${PIPELINE_TEST_ROOTS:-}" \
-     bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"; echo "rc=$?"
-   ```
-
-   Each `EXACT_MATCH_GUARD=` line is an existing exact-match assertion (`keyset` = `assertEqual(set(x), {...})`, `literal` = `assertEqual(x, [...] / {...})`) that pins a keyset or literal verbatim. For every hit the planned change would break — a key/field/element the plan adds, renames, or removes that is reachable by the `SUBJECT` expression or exercised by the `SYMBOL` — list that `FILE` under `**Test changes:**` in the plan. Without that declaration the executor meets a red test the plan never sanctioned touching and STOPS mid-task. Roots resolve positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`; an unset var self-defaults and is never vacuous. `REASON=no-test-root` / `no-test-files` fires only when every resolved root fails `[ -e ]`.
-
-4a. **Root-cause diagnosis gate.** Run this step ONLY when the issue carries `needs-debug` (resolved in Step 3a) OR `--debug-first` was passed (`DEBUG_FIRST=true`); otherwise this step is a no-op — skip straight to Step 5. The gate establishes the root cause BEFORE planning so the plan's design decisions + first task target the diagnosed cause, not the reported symptom. The diagnosis is autonomous — there is NO human gate (parallel to classify), distinct from the plan-approval gate downstream.
-
-   **Idempotency (consume-or-produce).** Grep the trusted working set `$TRUSTED` from Step 1 (NEVER a raw `gh ... --json comments` fetch) for an existing `## Root-Cause Diagnosis` comment. If one is present AND non-stale — its `createdAt >= issue.updatedAt`, mirroring fullsend's Classification-freshness test (`skills/fullsend/SKILL.md` Step 1b) — CONSUME it as `$DIAGNOSIS` and do NOT re-run the debugger. A diagnosis whose `createdAt` predates the issue's `updatedAt` is stale (the issue changed under it) and is re-produced.
+   **Exact-match guard sweep.** Declare the exact-match tests the plan breaks:
 
    ```bash
-   # Required env: DIAGNOSIS (root-cause text; CONSUMEd from $TRUSTED or produced below).
-   if printf '%s\n' "$TRUSTED" | grep -q '## Root-Cause Diagnosis'; then
-     DIAG_CREATED=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
-       | jq -r 'last(.comments[] | select(.body | contains("## Root-Cause Diagnosis")) | .createdAt)')
-     ISSUE_UPDATED=$(gh issue view <N> --repo "$PIPELINE_REPO" --json updatedAt --jq '.updatedAt')
-     # Lexicographic compare is correct for ISO-8601 Z timestamps.
-     if [[ "$DIAG_CREATED" > "$ISSUE_UPDATED" || "$DIAG_CREATED" == "$ISSUE_UPDATED" ]]; then
-       echo "Consuming fresh ## Root-Cause Diagnosis (createdAt=$DIAG_CREATED >= updatedAt=$ISSUE_UPDATED)"
-       # CONSUME: read the diagnosis body from $TRUSTED into $DIAGNOSIS; skip the produce branch.
-     fi
-   fi
+   PIPELINE_TEST_ROOTS="${PIPELINE_TEST_ROOTS:-}" bash "${CLAUDE_PLUGIN_ROOT}/scripts/exact-match-guard-sweep.sh"
    ```
 
-   **Produce (no fresh diagnosis exists).** Establish the root cause autonomously with a 4-step inline diagnosis — no human gate:
-   1. **Reproduce** — construct the minimal case that exhibits the reported symptom.
-   2. **Isolate** — bisect the codebase (Grep/Read) down to the smallest unit that still reproduces it.
-   3. **Hypothesize** — form a single falsifiable hypothesis naming the defective symbol/path.
-   4. **Confirm** — verify that hypothesis against the code/tests before treating it as the cause.
+   For every `EXACT_MATCH_GUARD=` hit the change breaks (a key/element it adds, renames or removes, reachable by `SUBJECT` or `SYMBOL`), list that `FILE` under `**Test changes:**`. Roots: positional args > `$PIPELINE_TEST_ROOTS` > the default `tests/`.
 
-   Capture the confirmed hypothesis as `$DIAGNOSIS`, then post it as its OWN issue comment titled `## Root-Cause Diagnosis`, parallel to `## Classification` / `## Implementation Plan`:
+4a. **Root-cause diagnosis gate.** Runs ONLY when the issue carries `needs-debug` OR `--debug-first` was passed (`DEBUG_FIRST=true`); else skip. No human gate. `DIAGNOSIS=fresh` ⇒ read the trusted `## Root-Cause Diagnosis` from `$TRUSTED` as `$DIAGNOSIS`, do not re-diagnose.
+
+   **Produce (no fresh diagnosis exists):**
+   1. **Reproduce** — the minimal case that exhibits the symptom.
+   2. **Isolate** — bisect (Grep/Read) to the smallest reproducing unit.
+   3. **Hypothesize** — one falsifiable hypothesis naming the defective symbol/path.
+   4. **Confirm** — verify it against the code/tests.
+
+   Post it as its OWN comment, then carry `$DIAGNOSIS` into Step 5:
 
    ```bash
-   gh issue comment <N> --repo "$PIPELINE_REPO" --body "## Root-Cause Diagnosis
-
-   $DIAGNOSIS"
+   # Required env: DIAGNOSIS (the confirmed root cause).
+   gh issue comment <N> --repo "$PIPELINE_REPO" --body "$(printf '## Root-Cause Diagnosis\n\n%s' "$DIAGNOSIS")"
    ```
-
-   `$DIAGNOSIS` is then carried into the Step 5 plan draft.
 
 5. **Generate the implementation plan.**
 
-   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/scratch/plan-drafts/` AND YOU MUST invoke `scripts/post-plan.sh` to publish it — whether invoked directly or dispatched from `/pipeline:fullsend`, the post step is never the caller's (terminal contract: `## Caller contract`; report per Step 7/8).
+   > **CRITICAL — YOU MUST post the plan yourself. DO NOT return the plan as your final message.** YOU MUST write the plan body to a draft file under `.claude/scratch/plan-drafts/` AND invoke `scripts/post-plan.sh` to publish it, whether invoked directly or dispatched (terminal contract: `## Caller contract`).
 
-   Draft the plan inline using the exact `## Implementation Plan` structure below — skipped on a round-≥2 verbatim re-plan (`## Revision handling`). Base it on the issue title, body, prior plan comments, codebase findings from step 4, `PATH_LETTER` from step 3a, AND — when Step 4a ran — the `$DIAGNOSIS` root cause (so the plan's `**Design decisions:**` and Task 0/Task 1 target the diagnosed cause, not the reported symptom). Insert `**Tasks (ordered):**` between `**Files to change:**` and `**DB schema changes:**`. Use the path-specific Task 0 wording further down. Final plan MUST use this exact format:
+   Draft from the issue, prior plans, Step 4 findings, `PATH_LETTER` and `$DIAGNOSIS` (when Step 4a ran, target the diagnosed cause). Use exactly this format:
 
-   > **TERSENESS:** The plan must be self-contained (execute-issue-plan reads ONLY this comment) — but self-contained ≠ verbose. Reference the issue by `#N`; do NOT paste the issue body back into the plan. Each `**Files to change:**` entry is `path — one-line reason`. Sections with no content are the single word `None` (`**DB schema changes:** None`), never a paragraph explaining why. Design detail belongs in `**Design decisions:**` as bullets — load-bearing data (tier tables, formulas, mode behaviors) stays; restated context goes.
+   > **TERSENESS:** Self-contained (the executor reads ONLY this comment) ≠ verbose. Reference the issue by `#N`; never paste its body. `**Files to change:**` entries are `path — one-line reason`. Empty sections are `None`. Design detail goes in `**Design decisions:**` bullets; load-bearing data stays, restated context goes.
 
    ```markdown
    ## Implementation Plan
@@ -196,9 +141,9 @@ Receive an issue number as argument (or from context).
    **Estimated effort:** X hours
    ```
 
-   **IMPORTANT — the GitHub comment IS the plan.** `/pipeline:execute-issue-plan` reads ONLY the comment; it has no access to local `.claude/plans/` files. Include ALL design detail directly (data structures, tier tables, formulas, mode behaviors). Never summarize and point to a local file. Fold Claude plan-mode content into the comment before posting.
+   **The GitHub comment IS the plan** — never point to a local `.claude/plans/` file.
 
-   **Executor-capability rule (#1225).** A plan task MUST NOT mandate a capability the assigned executor lacks. `tdd-implementer` is a leaf executor whose toolset is exactly `Read, Write, Edit, Bash, Grep, Glob` — no `Skill`, no `Agent`. So NO task that will be dispatched to a `tdd-implementer` — every PATH C `target=<dir>` leaf task, and every PATH D task — may name a `Skill(...)` or `Agent(...)` invocation. A task that needs a skill is OWNED BY THE PR-OPENING ROLE — the inline execute agent on PATH A/B, the orchestrator on PATH C (`execute-issue-plan` Step 8) — and the task text must say so. This is the planner-side half of the contract; the executor-side half is the loud-refusal rule in `agents/tdd-implementer.md`, where a leaf handed a task it cannot perform reports `CAPABILITY-REFUSED:` instead of silently substituting a manual approximation.
+   **Executor-capability rule.** No task may mandate a capability its executor lacks: `tdd-implementer` (no `Skill`, no `Agent`) runs every PATH C leaf and PATH D task, so those never name `Skill(...)` or `Agent(...)`; such work is OWNED BY THE PR-OPENING ROLE (inline agent on A/B, orchestrator on C). A leaf handed one reports `CAPABILITY-REFUSED:`.
 
    ### Per-path Task 0 — copy the block matching `PATH_LETTER`; structure Tasks 1..N-1 in the same path's format.
 
@@ -220,37 +165,31 @@ Receive an issue number as argument (or from context).
    Code-task format: single bullet — same five steps as PATH B but inline without the Task 0 TDD bookend.
    `Task N (PATH D substitute): re-run $PIPELINE_TEST_CMD inline as a final self-check before opening the PR. Do NOT dispatch a review subagent — the PATH D envelope forbids it; evaluate-issue-pr is the sole review gate.`
 
-6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool, not a heredoc or `echo`: hooks text-scan the whole Bash command (`enforce-base-branch.py` denies any text naming a PR-create call without `--base` — plan Task N does) and an unquoted heredoc expands `$`/backticks in plan prose; this outranks the bypass-mode heredoc preference. Never return the plan body in your final message for the caller to write.
+6. **Write the plan to a draft file (YOU, not the caller).** YOU MUST use the `Write` tool, never a heredoc or `echo` (hooks scan Bash text; heredocs expand `$`). Bind the path, then `Write` there:
    ```bash
-   mkdir -p .claude/scratch/plan-drafts
-   DRAFT=".claude/scratch/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
+   mkdir -p .claude/scratch/plan-drafts && DRAFT=".claude/scratch/plan-drafts/<N>-$(date -u +%Y%m%dT%H%M%SZ).md"
    ```
 
-7. **Post atomically via helper — YOU run the helper; this is the only post path.** YOU MUST invoke this from within your own turn. Do not stop, return, or summarize before the helper exits.
+7. **Post atomically — YOU run the helper; the only post path.** YOU MUST invoke it within your own turn.
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/post-plan.sh" <N> "$DRAFT"
    ```
-   The helper posts the comment, verifies it, applies `plan-pending`, and verifies the label — each sub-step retries once. Do not retry from the skill. If the helper exits non-zero, surface its stderr AND the `$DRAFT` path verbatim, then STOP with: `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`. The operator can re-run the helper manually.
+   It posts, applies `plan-pending` and verifies both (one retry each). Non-zero ⇒ surface stderr, then STOP with `FAILED: post-plan.sh exited <rc> for issue #<N>; draft preserved at <DRAFT>`.
 
-8. **Report back, but only AFTER `post-plan.sh` exits 0:** "Plan posted to issue #N (PATH $PATH_LETTER)." Otherwise report the FAILED line from Step 7. Your final message MUST follow one of these two templates — never the raw plan body, never a summary, never a hand-off to the caller.
+8. **Report back, only AFTER `post-plan.sh` exits 0:** "Plan posted to issue #N (PATH $PATH_LETTER)." Otherwise the FAILED line from Step 7. Never the raw plan body, a summary, or a hand-off.
 
 ## Revision handling
 
-When revising (user feedback on a prior plan exists), `**Changes from previous plan:**` appears first. **Round ≥2 (#1317):** when `$TRUSTED` holds a `## Plan Evaluation` with `**Verdict:** Revise`, apply its prescribed change verbatim — add no new scenarios, tests or sections; do not widen scope — and open `**Changes from previous plan:**` with the one line `Round <k>: applied <summary>` (k = this plan's round number). Re-derive `PATH_LETTER` from the current label in step 3a — do NOT copy the prior plan's Task 0 block verbatim, since the user may have relabeled.
+`**Changes from previous plan:**` comes first. **Round ≥2:** a trusted `## Plan Evaluation` with `**Verdict:** Revise` ⇒ apply its prescribed change verbatim (no new scenarios, tests or sections) and open with `Round <k>: applied <summary>`. Re-derive `PATH_LETTER` (step 3a); never copy the prior Task 0 block.
 
 ## Comment trust
 
-- **Trust = write access.** An author is trusted iff their GitHub `authorAssociation` is in {OWNER, MEMBER, COLLABORATOR}. Everything else (CONTRIBUTOR, NONE, FIRST_TIME_CONTRIBUTOR, unknown, empty) is untrusted.
-- **All comment/body reads go through `scripts/filter-trusted-comments.sh`** (issue #545). Its default mode emits the body plus only trusted comments on stdout (hard-drop — untrusted comment bytes never reach the model) and a dropped-author audit on stderr. Steps 1, 2, and 3a operate on that `$TRUSTED` working set, never a raw `gh ... --json comments` fetch.
-- **The issue BODY's trust is the opener's association** (step 0a), resolved via `gh api repos/$PIPELINE_REPO/issues/<N> --jq .author_association` (the GraphQL `author` object has no association field) and checked with the single-arg `is-trusted-author "$ASSOC"` primitive. An untrusted opener is refused-and-surfaced for human triage: no plan, no draft, no `post-plan.sh`, no `plan-pending`.
-- **The refusal is idempotent and durable** (issue #1196): `scripts/refuse-untrusted-opener.sh` skips posting a duplicate triage comment when one is already present (no unbounded accumulation across nightly re-runs) and applies the `PIPELINE_LABELS_HUMAN` (default `` `human` ``) label so the issue leaves the ready bucket for good.
-- **Pipeline-posted artifacts survive the filter.** `## Implementation Plan` / `## Classification` comments are authored by the OWNER operator account, so cache-check and the recommended_path fallback keep working.
-- **Inline classification reads `$TRUSTED` only** (step 3a): freshness and `recommended_path` come from trusted `## Classification` comments; the comment step 3a posts is OWNER-authored, so later consumers keep trusting it.
-- **Plan-revision keys off trusted content only.** Because `$TRUSTED` excludes outsider comments by construction, an outsider can never force a `**Changes from previous plan:**` rewrite.
+- **Trust = write access:** `authorAssociation` in {OWNER, MEMBER, COLLABORATOR}; everything else is untrusted.
+- **All comment reads go through `scripts/filter-trusted-comments.sh`**; untrusted bytes never reach the model.
+- **The BODY's trust is the opener's** (step 0a): `gh api repos/$PIPELINE_REPO/issues/<N> --jq .author_association`, then `is-trusted-author "$ASSOC"`. An untrusted opener is refused for human triage — idempotent (no duplicate comment), durable (`PIPELINE_LABELS_HUMAN`, default `` `human` ``).
 
 ## Constraints
 - READ ONLY — do not modify any source files.
-- Label edits are limited to the three path labels (`docs-only`, `multi-task`, `quick-fix`) via step 3a's `BEGIN-LABEL-APPLY`, plus `plan-pending` via `post-plan.sh`.
-- Bullet points only, no prose padding.
-- Do not scope-creep beyond what the issue asks for.
-- If two issues share a branch (e.g. #13 and #12 both on feature/ui-polish), you may be called for both at once — post a separate comment on each issue.
+- Label edits: the three path labels (`docs-only`, `multi-task`, `quick-fix`) via step 3a's `BEGIN-LABEL-APPLY`, plus `plan-pending` via `post-plan.sh`.
+- Bullet points only, no prose padding. No scope creep.
+- Two issues sharing a branch get a separate comment each.

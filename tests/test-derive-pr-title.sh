@@ -157,5 +157,27 @@ assert_stdout \
   "chore(general): X" \
   999 --title-override 'dogfood: X' --labels-override ''
 
+# Task 9 (#1498): bang-before-scope `type!(scope):` normalises to the
+# canonical `type(scope)!:`; canonical breaking shapes pass through.
+assert_stdout \
+  "bang-before-scope: feat!(skills): x -> feat(skills)!: x" \
+  "feat(skills)!: x" \
+  999 --title-override 'feat!(skills): x' --labels-override ''
+
+assert_stdout \
+  "canonical breaking passthrough: feat(skills)!: x unchanged" \
+  "feat(skills)!: x" \
+  999 --title-override 'feat(skills)!: x' --labels-override ''
+
+assert_stdout \
+  "canonical breaking passthrough: feat!: x unchanged" \
+  "feat!: x" \
+  999 --title-override 'feat!: x' --labels-override ''
+
+assert_stdout \
+  "double-prefix unwrap with bang-before-scope inner: chore(general): feat!(a): x -> feat(a)!: x" \
+  "feat(a)!: x" \
+  999 --title-override 'chore(general): feat!(a): x' --labels-override ''
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

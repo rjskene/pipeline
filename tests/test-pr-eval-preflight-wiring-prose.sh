@@ -35,6 +35,8 @@ source "$SCRIPT_DIR/_lib/skill-body.sh"
 EVAL_SKILL="$ROOT/skills/evaluate-issue-pr/SKILL.md"
 FULLSEND="$ROOT/skills/fullsend/SKILL.md"
 PREFLIGHT="$ROOT/scripts/pr-eval-preflight.sh"
+CHECKS="$ROOT/scripts/evaluate-issue-pr-checks.sh"
+REBASE_CHECK="$ROOT/scripts/evaluate-issue-pr-rebase-check.sh"
 HOOK="$ROOT/hooks/enforce-ci-wait.py"
 
 PASS=0
@@ -114,6 +116,13 @@ elif printf '%s\n' "$S4" | grep -qE 'gh pr view .*--json statusCheckRollup'; the
 else
   pass_msg "Step 4 issues no statusCheckRollup query"
 fi
+if [ ! -f "$CHECKS" ]; then
+  fail_msg "scripts/evaluate-issue-pr-checks.sh (the Step 4 helper) does not exist"
+elif grep -qE 'gh pr view .*--json statusCheckRollup' "$CHECKS"; then
+  fail_msg "the Step 4 checks helper issues a 'gh pr view … --json statusCheckRollup' query"
+else
+  pass_msg "the Step 4 checks helper issues no statusCheckRollup query"
+fi
 
 CI_REGION="$(eval_ci_check)"
 if [ -z "$CI_REGION" ]; then
@@ -133,11 +142,20 @@ fi
 # (d) regression anchors — the collapse must not drop a pinned literal
 # ===========================================================================
 inc_scenario "(d) the 8 test-evaluate-issue-pr-ci-trust.sh anchors survive the collapse"
+# The CI-aware test logic lives in the Step 4 checks helper; its anchors are
+# read from body ∪ helper. The run-discipline anchors stay body-only.
+BODY_CHECKS="$(skill_body "$EVAL_SKILL"; cat "$CHECKS" 2>/dev/null)"
 for needle in 'statusCheckRollup' 'green rollup' 'PIPELINE_CI_CHECK_ENABLED' \
-              'run tests locally' 'touched test' 'at most once' 'run_in_background'; do
+              'run tests locally' 'touched test'; do
+  case "$BODY_CHECKS" in
+    *"$needle"*) pass_msg "ci-trust anchor present (body ∪ checks helper): $needle" ;;
+    *) fail_msg "ci-trust anchor present (body ∪ checks helper): $needle (absent)" ;;
+  esac
+done
+for needle in 'at most once' 'run_in_background'; do
   want_body "$EVAL_SKILL" "$needle" "ci-trust anchor present: $needle"
 done
-if skill_body "$EVAL_SKILL" | grep -qE 'skip(ping)? (the )?full.*PIPELINE_TEST_CMD'; then
+if printf '%s\n' "$BODY_CHECKS" | grep -qE 'skip(ping)? (the )?full.*PIPELINE_TEST_CMD'; then
   pass_msg "ci-trust anchor present: skip-full-PIPELINE_TEST_CMD-re-run directive"
 else
   fail_msg "ci-trust anchor MISSING: skip-full-PIPELINE_TEST_CMD-re-run directive"
@@ -210,12 +228,15 @@ inc_scenario "(j) Step 8 does not key the rebase off REASON=mergeable"
 S8="$(eval_step8)"
 if [ -z "$S8" ]; then
   fail_msg "could not extract the Step 8 (rebase) region"
-elif printf '%s\n' "$S8" | grep -qF -- '--json mergeable,mergeStateStatus'; then
-  pass_msg "Step 8 still reads 'gh pr view … --json mergeable,mergeStateStatus' itself"
+elif ! printf '%s\n' "$S8" | grep -qF 'evaluate-issue-pr-rebase-check.sh'; then
+  fail_msg "Step 8 does not invoke scripts/evaluate-issue-pr-rebase-check.sh"
+elif [ -f "$REBASE_CHECK" ] && grep -qF -- '--json mergeable,mergeStateStatus' "$REBASE_CHECK"; then
+  pass_msg "Step 8's rebase-check helper reads 'gh pr view … --json mergeable,mergeStateStatus' itself"
 else
-  fail_msg "Step 8 no longer reads mergeability directly — a lost 'mergeable' advisory would strand the PR"
+  fail_msg "Step 8's rebase-check helper no longer reads mergeability directly — a lost 'mergeable' advisory would strand the PR"
 fi
-if printf '%s\n' "$S8" | grep -qE 'gh pr view .*--json statusCheckRollup'; then
+if printf '%s\n' "$S8" | grep -qE 'gh pr view .*--json statusCheckRollup' \
+   || { [ -f "$REBASE_CHECK" ] && grep -qF 'statusCheckRollup' "$REBASE_CHECK"; }; then
   fail_msg "Step 8's mergeability query must not be widened to statusCheckRollup (it would re-arm ROLLUP_RE outside the ci-pending branch)"
 else
   pass_msg "Step 8's query does not match the hook's ROLLUP_RE"

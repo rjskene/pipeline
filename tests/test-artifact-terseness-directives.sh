@@ -16,6 +16,7 @@ PR="$SK/evaluate-issue-pr/SKILL.md"
 PLAN="$SK/evaluate-issue-plan/SKILL.md"
 CLS="$SK/classify-issue/SKILL.md"
 CLSREF="$SK/plan-issue/references/classification.md"  # #1485: shared classification procedure
+CLSHELPER="$SK/../scripts/plan-issue-classify.sh"  # classification sentinel blocks live in the helper
 PI="$SK/plan-issue/SKILL.md"
 for f in "$PR" "$PLAN" "$CLS" "$CLSREF" "$PI"; do
   [ -f "$f" ] || { echo "ERROR: missing $f" >&2; exit 1; }
@@ -38,10 +39,10 @@ assert_grep "$PLAN" "is-trusted-author"           "plan-eval: trust helper ref h
 # (b) classify-issue
 assert_grep "$CLS" "## Classification"        "classify: header held"
 assert_grep "$CLSREF" "recommended_path:"        "classify: recommended_path held"
-assert_grep "$CLSREF" "# BEGIN-LABEL-APPLY"      "classify: BEGIN-LABEL-APPLY held"
-assert_grep "$CLSREF" "# END-LABEL-APPLY"        "classify: END-LABEL-APPLY held"
-assert_grep "$CLSREF" "# BEGIN-PATH-MARKER-PARSE" "classify: BEGIN-PATH-MARKER-PARSE held"
-assert_grep "$CLSREF" "# END-PATH-MARKER-PARSE"  "classify: END-PATH-MARKER-PARSE held"
+assert_grep "$CLSHELPER" "# BEGIN-LABEL-APPLY"      "classify: BEGIN-LABEL-APPLY held"
+assert_grep "$CLSHELPER" "# END-LABEL-APPLY"        "classify: END-LABEL-APPLY held"
+assert_grep "$CLSHELPER" "# BEGIN-PATH-MARKER-PARSE" "classify: BEGIN-PATH-MARKER-PARSE held"
+assert_grep "$CLSHELPER" "# END-PATH-MARKER-PARSE"  "classify: END-PATH-MARKER-PARSE held"
 assert_grep "$CLS" "is-trusted-author"        "classify: trust helper ref held"
 # (b) plan-issue
 assert_grep "$PI" "## Implementation Plan"  "plan: header held"
@@ -52,9 +53,9 @@ assert_grep "$PI" "post-plan.sh"            "plan: post-plan.sh ref held"
 # pin plus the prose that defines it, held under ONE 60-word budget so the
 # annotate arm cannot grow unbounded prose in the evaluator.
 assert_grep "$PLAN" "**Scope:** patch | structural" "plan-eval: Scope template line held"
-assert_grep "$PLAN" "**Scope (#1435):**"            "plan-eval: Scope prose line held"
+assert_grep "$PLAN" "**Revise scope:**"            "plan-eval: Scope prose line held"
 SCOPE_MAX_WORDS=60
-SCOPE_WORDS=$({ grep -F -e '**Scope:** patch | structural' -e '**Scope (#1435):**' "$PLAN" || true; } | wc -w | tr -d ' ')
+SCOPE_WORDS=$({ grep -F -e '**Scope:** patch | structural' -e '**Revise scope:**' "$PLAN" || true; } | wc -w | tr -d ' ')
 if [ "$SCOPE_WORDS" -ge 1 ] && [ "$SCOPE_WORDS" -le "$SCOPE_MAX_WORDS" ]; then
   pass_msg "plan-eval: Scope template+prose lines total $SCOPE_WORDS words (<= $SCOPE_MAX_WORDS)"
 else
@@ -65,7 +66,7 @@ fi
 # are binding amendments to the plan of record, so the evaluator must score the
 # PR against plan + amendments. Pinned here with the issue's HARD 110-word prose
 # budget: the Step 1 sentinel line plus the `## Constraints` inputs-rule phrase.
-PA_PR_SENTINEL='**Plan amendments (#1435):**'
+PA_PR_SENTINEL='**Plan amendments:**'
 PA_PR_INPUTS_PHRASE='plan comment plus its trusted `## Plan Evaluation` when the verdict is `Revise`'
 PA_PR_MAX_WORDS=110
 
