@@ -79,7 +79,7 @@ Argument: the issue number. CWD: the feature worktree (table above).
 
 5. **Implement the approved plan.** Follow the plan's `**Tasks (ordered):**` exactly; Task 0 carries the path directive.
 
-   **PATH B single execute agent.** One `general-purpose` agent applies the `tdd-implementer` discipline inline per plan task: failing test → `$PIPELINE_TEST_CMD` red → minimum impl → green → commit; it may edit any test the plan names under `**Test changes:**`; runs the FULL suite green before `gh pr create`.
+   **PATH B single execute agent.** One `pipeline:stage-executor` agent applies the `tdd-implementer` discipline inline per plan task: failing test → `$PIPELINE_TEST_CMD` red → minimum impl → green → commit; it may edit any test the plan names under `**Test changes:**`; runs the FULL suite green before `gh pr create`.
 
    **Turn discipline.** (1) Send a task's independent edits (test + impl) as parallel calls in ONE message. (2) Inside RED/GREEN run only the targeted test file (`bash tests/<file>.sh </dev/null`), never the suite; the suite runs at 6b or when a GREEN breaks another file. (3) GREEN and commit share one Bash call, the `&& git commit` form, anchored: `timeout 600 bash <wt>/tests/<file>.sh </dev/null && git -C <wt> add <paths> && git -C <wt> commit -m "…"`. (4) Batch one-line reads into one Bash call.
 

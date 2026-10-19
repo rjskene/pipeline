@@ -12,8 +12,17 @@ set -uo pipefail
 #   S2  frontmatter name: + exact tools: lines
 #   S3  no model: line (the dispatch model= pins it)
 #   S4  bodies 20..80 words
+#   S5  zero general-purpose stage dispatches left in fullsend + dispatch-routing
+#   S6  every full stage-typed shape in dispatch-routing carries the absolute
+#       SKILL.md path and a description matching its type (>= 7 shapes)
+#   S7  execute-issue-plan names pipeline:stage-executor
+#   S8  left-alone guard: pre-PR reviewer and analyze-issues keep general-purpose
+#   S9  negative controls for the S5 matcher and the S6 path check
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FULLSEND="$ROOT/skills/fullsend/SKILL.md"
+ROUTING="$ROOT/skills/fullsend/references/dispatch-routing.md"
+TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
 MANIFEST="$ROOT/.claude-plugin/plugin.json"
 READER="$ROOT/agents/stage-reader.md"
 EXECUTOR="$ROOT/agents/stage-executor.md"
@@ -73,6 +82,90 @@ for f in "$READER" "$EXECUTOR"; do
   W="$(agent_body "$f" | wc -w | tr -d ' ')"
   if [ "$W" -le 80 ] && [ "$W" -ge 20 ]; then pass_msg "${f#"$ROOT"/} body $W words in 20..80"; else fail_msg "${f#"$ROOT"/} body $W words outside 20..80"; fi
 done
+
+# ---------------------------------------------------------------------------
+scenario "S5: zero general-purpose stage dispatches"
+
+GP_RE="subagent_type[[:space:]]*[:=][[:space:]]*['\"]?general-purpose|Agent\(general-purpose"
+gp_hits() { grep -nE "$GP_RE" "$@" 2>/dev/null || true; }
+for f in "$FULLSEND" "$ROUTING"; do
+  H="$(gp_hits "$f")"
+  if [ -z "$H" ]; then pass_msg "${f#"$ROOT"/}: zero general-purpose dispatch shapes"; else
+    fail_msg "${f#"$ROOT"/}: general-purpose dispatch shape(s): $(printf '%s\n' "$H" | cut -c1-120 | tr '\n' ' ')"; fi
+done
+
+# ---------------------------------------------------------------------------
+scenario "S6: stage-typed shapes carry the absolute SKILL.md path"
+
+# stage_blocks <file> -> one shape per line: from `Agent(subagent_type='pipeline:stage-*'`
+# to its closing `')`. Lines carrying the `, ...)` prose shorthand are skipped —
+# they have no closing `')` and would swallow the next shape.
+stage_blocks() {
+  awk '
+    function flush(t,  k) { k = index(t, "\x27)"); if (k) { print substr(t, 1, k + 1); return 1 } return 0 }
+    inb { buf = buf " " $0; if (flush(buf)) inb = 0; next }
+    {
+      i = match($0, /Agent\(subagent_type=\x27pipeline:stage-(reader|executor)\x27/)
+      if (!i || index($0, ", ...)")) next
+      buf = substr($0, i)
+      if (!flush(buf)) inb = 1
+    }
+  ' "$1"
+}
+
+# check_blocks <file> -> prints one problem line per bad shape; prints COUNT=<n> last
+check_blocks() {
+  local n=0 b d
+  while IFS= read -r b; do
+    n=$((n + 1))
+    case "$b" in
+      *'${CLAUDE_PLUGIN_ROOT}/skills/'*'/SKILL.md'*) ;;
+      *) echo "no absolute SKILL.md path: $(printf '%s' "$b" | cut -c1-100)" ;;
+    esac
+    d="$(printf '%s' "$b" | sed -nE "s/.*description='([^']*)'.*/\1/p")"
+    case "$b" in
+      *pipeline:stage-reader*)
+        case "$d" in "plan-issue #"*|"evaluate-issue-plan #"*|"evaluate-issue-pr #"*) ;; *) echo "stage-reader description '$d'" ;; esac ;;
+      *pipeline:stage-executor*)
+        case "$d" in "execute-issue-plan #"*) ;; *) echo "stage-executor description '$d'" ;; esac ;;
+    esac
+  done < <(stage_blocks "$1")
+  echo "COUNT=$n"
+}
+
+OUT="$(check_blocks "$ROUTING")"
+CNT="$(printf '%s\n' "$OUT" | sed -n 's/^COUNT=//p')"
+BAD="$(printf '%s\n' "$OUT" | grep -v '^COUNT=' || true)"
+if [ "${CNT:-0}" -ge 7 ]; then pass_msg "dispatch-routing: $CNT stage-typed shapes (>= 7)"; else fail_msg "dispatch-routing: ${CNT:-0} stage-typed shapes, want >= 7"; fi
+if [ -z "$BAD" ]; then pass_msg "every stage-typed shape carries the SKILL.md path and a matching description"; else
+  fail_msg "bad stage shape(s): $(printf '%s\n' "$BAD" | tr '\n' ';')"; fi
+
+# ---------------------------------------------------------------------------
+scenario "S7: execute-issue-plan names the stage-executor type"
+
+EIP="$ROOT/skills/execute-issue-plan/SKILL.md"
+if grep -qF 'pipeline:stage-executor' "$EIP"; then pass_msg "execute-issue-plan names pipeline:stage-executor"; else fail_msg "execute-issue-plan lacks pipeline:stage-executor"; fi
+if grep -qF 'One `general-purpose` agent' "$EIP"; then fail_msg "execute-issue-plan still says One \`general-purpose\` agent"; else pass_msg "execute-issue-plan dropped One \`general-purpose\` agent"; fi
+
+# ---------------------------------------------------------------------------
+scenario "S8: left-alone general-purpose sites"
+
+for f in "$ROOT/skills/execute-issue-plan/references/pre-pr-review-loop.md" "$ROOT/skills/analyze-issues/SKILL.md"; do
+  if grep -qF 'general-purpose' "$f"; then pass_msg "${f#"$ROOT"/} still names general-purpose"; else fail_msg "${f#"$ROOT"/} lost general-purpose"; fi
+done
+
+# ---------------------------------------------------------------------------
+scenario "S9: negative controls"
+
+FX="$TMPD/fixture.md"
+printf '%s\n' "     Agent(subagent_type='general-purpose', model='opus', description='plan-issue #<N>', prompt: 'x')" > "$FX"
+if [ -n "$(gp_hits "$FX")" ]; then pass_msg "S5 matcher fires on a general-purpose fixture"; else fail_msg "S5 matcher missed a general-purpose fixture"; fi
+printf '%s\n' "     Agent(subagent_type='pipeline:stage-reader'," "           description='plan-issue #<N>'," "           prompt: 'then follow skills/plan-issue/SKILL.md')" > "$FX"
+OUT="$(check_blocks "$FX")"
+if printf '%s\n' "$OUT" | grep -q 'no absolute SKILL.md path'; then pass_msg "S6 path check fires on a shape lacking \${CLAUDE_PLUGIN_ROOT}"; else fail_msg "S6 path check missed a relative-path fixture: $OUT"; fi
+printf '%s\n' "     Agent(subagent_type='pipeline:stage-executor', description='evaluate-issue-pr #<N>', prompt: 'follow \${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md')" > "$FX"
+OUT="$(check_blocks "$FX")"
+if printf '%s\n' "$OUT" | grep -q 'stage-executor description'; then pass_msg "S6 description check fires on a mistyped shape"; else fail_msg "S6 description check missed a mistyped fixture: $OUT"; fi
 
 echo ""
 echo "=============================="
