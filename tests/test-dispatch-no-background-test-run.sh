@@ -10,14 +10,20 @@ set -uo pipefail
 # do not fit inside one Bash-call timeout, then had nothing left to do in-turn
 # and yielded with the branch committed-but-unpushed.
 #
-# The mechanism fix is `scripts/run-test-suite.sh --chunk k/n` (Task 1). This
-# test pins the PROSE half: both the binding DISPATCH SITE
+# This test pins the PROSE half: both the binding DISPATCH SITE
 # (skills/fullsend/SKILL.md, the inline execute dispatch prompt contract — the
 # only contract a `general-purpose`/`tdd-implementer` subagent that never loads
 # the skill body actually sees) and the SKILL BODY
 # (skills/execute-issue-plan/SKILL.md Step 6b — defense-in-depth) must ban
-# backgrounding a test run AND name the chunked foreground runner as the
-# replacement.
+# backgrounding a test run.
+#
+# Per #1508 the dispatch site pins the PROJECT-command rule only: run
+# `$PIPELINE_TEST_CMD` in the FOREGROUND, splitting into sequential foreground
+# calls — never a plugin script path (in a consumer repo the plugin's
+# `run-test-suite.sh` is not the project's test command). The `--chunk k/n`
+# mechanism itself is pinned on the script by
+# tests/test-run-test-suite-chunked.sh; Step 6b keeps the chunked recipe inside
+# its dogfood-only note, so its needles still include the runner.
 #
 # CRITICAL scoping: assertions are made against the EXTRACTED region, not the
 # whole file — the words `run_in_background`, `foreground`, etc. already appear
@@ -111,12 +117,23 @@ assert_needle() {
 # ---------------------------------------------------------------------------
 # 1-7. The never-background clause, in BOTH prose sites.
 #
-# Needles 1-3 are deliberately THREE separate greps — never joined into one
-# literal such as `scripts/run-test-suite.sh --chunk`, which does not occur
-# (a closing `"` sits between `.sh` and ` --chunk` in the prescribed clause).
+# In the skill-body clause, the runner / `--chunk` needles are deliberately
+# separate greps — never joined into one literal such as
+# `scripts/run-test-suite.sh --chunk`.
 # ---------------------------------------------------------------------------
 
-check_clause() {
+# Dispatch site (#1508): runner-agnostic — the project command only.
+check_contract_clause() {
+  local label="$1" region="$2"
+  assert_needle "$label" "$region" F  'run_in_background'
+  assert_needle "$label" "$region" F  'Run `$PIPELINE_TEST_CMD` in the FOREGROUND'
+  assert_needle "$label" "$region" Fi 'FOREGROUND'
+  assert_needle "$label" "$region" F  'sequential foreground'
+  assert_needle "$label" "$region" Fi 'instead of backgrounding'
+}
+
+# Skill body Step 6b: the chunked recipe survives inside the dogfood note.
+check_skill_clause() {
   local label="$1" region="$2"
   assert_needle "$label" "$region" F  'run_in_background'
   assert_needle "$label" "$region" F  'run-test-suite.sh'
@@ -125,10 +142,11 @@ check_clause() {
   assert_needle "$label" "$region" F  'every chunk'
   assert_needle "$label" "$region" F  'RESULT=pass'
   assert_needle "$label" "$region" Fi 'FOREGROUND'
+  assert_needle "$label" "$region" F  '$PIPELINE_TEST_CMD'
 }
 
-check_clause "no-bg-dispatch-site (fullsend contract paragraph)" "$F_FLAT"
-check_clause "no-bg-skill-body (execute-issue-plan Step 6b)"     "$E_FLAT"
+check_contract_clause "no-bg-dispatch-site (fullsend contract paragraph)" "$F_FLAT"
+check_skill_clause    "no-bg-skill-body (execute-issue-plan Step 6b)"     "$E_FLAT"
 
 # ---------------------------------------------------------------------------
 # 8. Scoped-ban guard: the ban is scoped to TEST RUNS, not to `run_in_background`

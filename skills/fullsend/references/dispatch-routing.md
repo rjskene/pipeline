@@ -2,7 +2,7 @@
 
 The per-path dispatch contract for the autonomous flow. `/pipeline:status` is read-only; fullsend owns all dispatch.
 
-**Cost attribution key — every dispatch description carries the literal `#<N>`.** Binding on every orchestrator dispatch (classify, plan, plan-eval, execute, PATH C leaf, pr-eval, closing review): a bare integer attributes to nothing and its cost vanishes from that issue's row. Canonical shapes: `classify-issue #<N>`, `plan-issue #<N>`, `evaluate-issue-plan #<N>`, `execute-issue-plan #<N>`, `execute-issue-plan #<N> target=<dir>/`, `evaluate-issue-pr #<N>`, `code review #<N>`. Suffixes are append-only (`(PATH B inline)`, `(PATH D collapsed inline tdd)`, `target=<dir>/`), and the description MUST BEGIN with its canonical stage token — `plan evaluation for #<N>` parses as `stage=plan`.
+**Cost attribution key — every dispatch description carries the literal `#<N>`.** Binding on every orchestrator dispatch (classify, plan, plan-eval, execute, PATH C leaf, pr-eval, closing review): a bare integer attributes only via the narrow `issue|plan|eval <NN>` fallback, otherwise to nothing, and its cost vanishes from that issue's row. Canonical shapes: `classify-issue #<N>`, `plan-issue #<N>`, `evaluate-issue-plan #<N>`, `execute-issue-plan #<N>`, `execute-issue-plan #<N> target=<dir>/`, `evaluate-issue-pr #<N>`, `code review #<N>`. Suffixes are append-only (`(PATH B inline)`, `(PATH D collapsed inline tdd)`, `target=<dir>/`), and the description MUST BEGIN with its canonical stage token — `plan evaluation for #<N>` parses as `stage=plan`.
 
 **Agent `subagent_type` namespacing convention.** One axis decides the prefix: **built-in vs plugin-provided**.
 

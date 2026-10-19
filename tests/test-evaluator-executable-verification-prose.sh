@@ -69,7 +69,7 @@ for f in "$SKILL_PLAN" "$SKILL_PR"; do
 done
 
 # ---------------------------------------------------------------------------
-# Anchor set: seven shared + one per-file.
+# Anchor set: six shared + two per-file (pointer, scope).
 # ---------------------------------------------------------------------------
 # Anchor 1 is the FULL heading line on purpose: a bare `## Executable
 # verification` would also be matched by a backticked cross-reference
@@ -80,7 +80,11 @@ A_TRIGGER='**Trigger (mechanical'
 A_NEGCTL='**Run a negative control.**'
 A_NOTEXEC='not-executed: <reason>'
 A_ROW='**Guard claims verified:**'
-A_POINTER='**Executable verification (#1218):**'
+# The Phase pointer bullet is per-label; neither evaluator carries issue
+# citations in its body, so both pointers are the bare label today.
+A_POINTER_PLAN='**Executable verification:**'
+A_POINTER_PR='**Executable verification:**'
+A_POINTER="$A_POINTER_PLAN"
 A_SCOPE_PLAN='**Scope at plan-eval time.**'
 A_SCOPE_PR='**Scope at pr-eval time.**'
 
@@ -91,7 +95,6 @@ SHARED_ANCHORS=(
   "$A_NEGCTL"
   "$A_NOTEXEC"
   "$A_ROW"
-  "$A_POINTER"
 )
 
 # Anchors that must live INSIDE the canonical block (Case G boundary control).
@@ -117,9 +120,17 @@ scope_anchor() {
   esac
 }
 
+pointer_anchor() {
+  case "$1" in
+    plan) printf '%s' "$A_POINTER_PLAN" ;;
+    pr)   printf '%s' "$A_POINTER_PR" ;;
+    *)    echo "ERROR: unknown label $1" >&2; return 1 ;;
+  esac
+}
+
 # Populates the global ANCHORS array for <label>.
 anchors_for() {
-  ANCHORS=("${SHARED_ANCHORS[@]}" "$(scope_anchor "$1")")
+  ANCHORS=("${SHARED_ANCHORS[@]}" "$(pointer_anchor "$1")" "$(scope_anchor "$1")")
 }
 
 # ---------------------------------------------------------------------------
@@ -792,15 +803,15 @@ assert_only M2 pr "$m2r" "$m2_out" "$A_CLOSING"
 # --- M3: the Phase pointer bullet deleted (independent pin) ----------------
 m3p="$TMP/m3-plan.md"
 m3r="$TMP/m3-pr.md"
-mut_drop_lines "$fp" "$m3p" "$A_POINTER"
-mut_drop_lines "$fr" "$m3r" "$A_POINTER"
+mut_drop_lines "$fp" "$m3p" "$A_POINTER_PLAN"
+mut_drop_lines "$fr" "$m3r" "$A_POINTER_PR"
 expect_mutated M3 plan "$fp" "$m3p" || true
 expect_mutated M3 pr "$fr" "$m3r" || true
 m3_out="$TMP/m3.out"
 m3_rc="$(run_inner "$m3p" "$m3r" "$m3_out")"
 expect_rc M3 1 "$m3_rc"
-assert_only M3 plan "$m3p" "$m3_out" "$A_POINTER"
-assert_only M3 pr "$m3r" "$m3_out" "$A_POINTER"
+assert_only M3 plan "$m3p" "$m3_out" "$A_POINTER_PLAN"
+assert_only M3 pr "$m3r" "$m3_out" "$A_POINTER_PR"
 
 # --- M4: the per-skill scoping bullet deleted (independent pin) ------------
 m4p="$TMP/m4-plan.md"

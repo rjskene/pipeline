@@ -267,6 +267,33 @@ type tu_role_from_description >/dev/null 2>&1 \
 pass "tu_role_from_description helper mirrors the split-role regex"
 
 # ---------------------------------------------------------------------------
+# Retroactive-parser mirror (#1499): the embedded python in capture-agent-costs.sh
+# carries its own stage/issue parsers. Extract them and assert the no-'#'
+# issue fallback matches the hook + lib.
+# ---------------------------------------------------------------------------
+PARSER_DEFS="$(awk '/^STAGE_PATTERNS = \[/{f=1} /^def role_from_description/{f=0} f' "$SCRIPT")"
+[ -n "$PARSER_DEFS" ] || fail "retro parser: extracted STAGE_PATTERNS..issue_from_description block is empty"
+printf '%s\n' "$PARSER_DEFS" | grep -q '^def issue_from_description' \
+  || fail "retro parser: extracted block lacks def issue_from_description"
+retro_parse() {
+  python3 -c "import re
+$PARSER_DEFS
+import sys
+d = sys.argv[1]
+print(stage_from_description(d) + ',' + issue_from_description(d))" "$1"
+}
+for row in \
+  "Plan issue 339|plan,339" \
+  "Eval plan 339|plan-eval,339" \
+  "Plan 3 waves|plan," \
+  "Plan issue 339 re #340|plan,340"; do
+  desc="${row%%|*}"; want="${row#*|}"
+  got="$(retro_parse "$desc")" || fail "retro parser: python exec failed for [$desc]"
+  [ "$got" = "$want" ] || fail "retro parser: [$desc] -> $got (want $want)"
+done
+pass "retro parser mirrors the no-# issue fallback (#1499)"
+
+# ---------------------------------------------------------------------------
 # Idempotency: re-run adds NO new records
 # ---------------------------------------------------------------------------
 HOME="$home" CLAUDE_PROJECT_DIR="$proj" PIPELINE_LOGS_ENABLED="true" \

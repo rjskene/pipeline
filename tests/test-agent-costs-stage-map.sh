@@ -77,6 +77,14 @@ CASES=(
   # (\bplan\b wins), so the answer must be UNCHANGED by the fallback. A
   # displaced stage would mint a second record_key and double-count.
   "target=docs/ update the plan #1300|plan|1300"
+  # --- #1499: no-'#' fallback (consulted only when no '#N' matched) --------
+  "Plan issue 339|plan|339"
+  "Eval plan 339|plan-eval|339"
+  "evaluate plan 339|plan-eval|339"
+  # CONTROL: a 1-digit count after a stage word is NOT an issue number.
+  "Plan 3 waves|plan|"
+  # CONTROL: the '#N' form always wins over the bare-integer fallback.
+  "Plan issue 339 re #340|plan|340"
 )
 
 # Python combiner: prints "<stage>\t<issue>" using the REAL hook functions.

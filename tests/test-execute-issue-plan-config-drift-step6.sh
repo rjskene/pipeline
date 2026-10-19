@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Test: execute-issue-plan SKILL.md Step 6 includes a check-config-drift validation step.
+# Test: execute-issue-plan SKILL.md Step 6 does NOT invoke check-config-drift.sh (#1508).
+#
+# Config drift has ONE pre-PR call site: Step 9a's
+# `scripts/check-cross-cutting-guards.sh`, which already runs
+# `check-config-drift.sh` internally (consumer-root aware). The former bare
+# `&& bash scripts/check-config-drift.sh` link in the Step 6b fence (and the 6e
+# paragraph) only resolved inside this repo, so #1508 removed it.
 #
 # Asserts:
-#  (a) Step 6 (the Validate block) references 'check-config-drift' so that a new
-#      PIPELINE_* variable introduced in a feature branch is caught in-leaf, not
-#      only at CI.
-#  (b) The reference is specific enough to invoke the script: 'scripts/check-config-drift.sh'
-#      appears inside the Step 6 region.
-#  (c) Fix guidance (document-or-allowlist) appears near the check-config-drift reference
-#      so executors know how to resolve a finding.
+#  (a) The Step 6 region (`6. **Validate` → `7. **Self-review`) does NOT
+#      contain `scripts/check-config-drift.sh`.
+#  (b) Step 6 still carries the always-run `check-cross-cutting-guards` note,
+#      pointing at the single Step 9a guard surface.
 
 set -euo pipefail
 
@@ -28,26 +31,17 @@ if [ -z "$STEP6" ]; then
   exit 1
 fi
 
-# (a) 'check-config-drift' must appear somewhere in Step 6.
-if ! printf '%s\n' "$STEP6" | grep -q 'check-config-drift'; then
-  echo "FAIL: Step 6 does not reference 'check-config-drift'"
-  echo "Expected: 'bash scripts/check-config-drift.sh' (exit 0) added to the Step 6 validate block"
+# (a) No standalone config-drift invocation in Step 6.
+if printf '%s\n' "$STEP6" | grep -qF 'scripts/check-config-drift.sh'; then
+  echo "FAIL: Step 6 still invokes 'scripts/check-config-drift.sh'"
+  echo "Expected: config drift runs once, via Step 9a check-cross-cutting-guards.sh (#1508)"
   exit 1
 fi
 
-# (b) The full script path 'scripts/check-config-drift.sh' must appear in Step 6.
-if ! printf '%s\n' "$STEP6" | grep -q 'scripts/check-config-drift.sh'; then
-  echo "FAIL: Step 6 references 'check-config-drift' but not 'scripts/check-config-drift.sh'"
-  echo "Expected explicit invocation: 'bash scripts/check-config-drift.sh'"
+# (b) The always-run cross-cutting guards note survives.
+if ! printf '%s\n' "$STEP6" | grep -qF 'check-cross-cutting-guards'; then
+  echo "FAIL: Step 6 lost the always-run 'check-cross-cutting-guards' note"
   exit 1
 fi
 
-# (c) Fix guidance: 'allowlist' or 'pipeline.config.example' must appear near the reference.
-# We accept either word within the Step 6 block.
-if ! printf '%s\n' "$STEP6" | grep -qiE 'allowlist|pipeline\.config\.example'; then
-  echo "FAIL: Step 6 check-config-drift entry missing fix guidance"
-  echo "Expected: document-or-allowlist fix guidance near the check-config-drift invocation"
-  exit 1
-fi
-
-echo "PASS: execute-issue-plan Step 6 references check-config-drift with fix guidance"
+echo "PASS: execute-issue-plan Step 6 has no standalone check-config-drift link; cross-cutting guards note present"

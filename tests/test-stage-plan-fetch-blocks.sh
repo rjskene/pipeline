@@ -56,6 +56,13 @@ set -euo pipefail
 #      the three sites. Its ONLY failure mode — someone renames a step-1
 #      heading — is converted into a LOUD failure by (1) and (3).
 #      *** If you rename a step-1 heading, update the SITES table below. ***
+#   6. HELPER SITES — a `.sh` row (all three Step 1 fetches live in
+#      scripts/evaluate-issue-pr-fetch-plan.sh,
+#      scripts/evaluate-issue-plan-fetch-plan.sh and
+#      scripts/execute-issue-plan-fetch-plan.sh): ANCHOR is the begin sentinel
+#      and BLOCK is the lines strictly between `# BEGIN-PLAN-FETCH` and
+#      `# END-PLAN-FETCH`, with `"$N"` rewritten to `<N>` before clause 4. A
+#      script carries no prose, so Test N.P applies to `.md` sites only.
 #
 # ---------------------------------------------------------------------------
 # AGREEMENT CONTRACT (three-way, span-scoped)
@@ -70,6 +77,8 @@ set -euo pipefail
 #
 # Lines OUTSIDE the core are deliberately stage-local and are NOT compared:
 #   - evaluate-issue-plan PREPENDS `gh issue view <N> ... --json number,title,body`
+#     — in its helper that line sits OUTSIDE the sentinels, so it is not
+#     extracted at all
 #   - execute-issue-plan  APPENDS  `printf '%s\n' "$PLAN"`
 # A whole-block equality assertion would have forced one of those two
 # stage-local lines to be deleted — i.e. it would have made the guard demand a
@@ -98,17 +107,16 @@ inc()      { TESTS=$((TESTS + 1)); }
 # row = <skill-path>|<step-1 heading anchor used to locate the fenced bash block>
 # Every anchor is UNIQUE in its file (asserted per site) and the first
 # ```bash``` fence after it is the intended Step 1 plan-fetch block.
-# ORDER IS LOAD-BEARING: site 1 is the AGREEMENT CONTRACT's reference core —
-# evaluate-issue-pr is the only site with no stage-local prepend/append.
+# ORDER IS LOAD-BEARING: site 1 is the AGREEMENT CONTRACT's reference core.
 SITES=(
-  "skills/evaluate-issue-pr/SKILL.md|Fetch the approved plan"
-  "skills/evaluate-issue-plan/SKILL.md|Fetch issue details and the trusted plan comment"
-  "skills/execute-issue-plan/SKILL.md|Fetch the approved plan"
+  "scripts/evaluate-issue-pr-fetch-plan.sh|BEGIN-PLAN-FETCH"
+  "scripts/evaluate-issue-plan-fetch-plan.sh|BEGIN-PLAN-FETCH"
+  "scripts/execute-issue-plan-fetch-plan.sh|BEGIN-PLAN-FETCH"
 )
 
 # The site whose extracted block must surface the plan on STDOUT (the executor
 # reads it from there; the two eval stages consume the $PLAN variable).
-STDOUT_SITE="skills/execute-issue-plan/SKILL.md"
+STDOUT_SITE="scripts/execute-issue-plan-fetch-plan.sh"
 
 # The site whose extracted block must ALSO read the plan EVALUATION's binding
 # amendments (#1440). Under PIPELINE_PLAN_GATE=annotate a `Revise` plan
@@ -119,7 +127,7 @@ STDOUT_SITE="skills/execute-issue-plan/SKILL.md"
 # the SAME plan of record the executor implemented — otherwise an
 # amendment-driven change reads as scope creep and a DROPPED amendment is
 # invisible to the only stage that could catch it.
-AMEND_SITE="skills/evaluate-issue-pr/SKILL.md"
+AMEND_SITE="scripts/evaluate-issue-pr-fetch-plan.sh"
 
 # The SINGLE-bash-command directive every site's step-1 prose must carry —
 # the block's shell variables (COMMENTS_JSON / KEEP / TRUSTED_JSON) only
@@ -262,7 +270,13 @@ for ROW in "${SITES[@]}"; do
   echo "Test $SITE_N.1: Step 1 bash block extracted and non-empty"
   inc
   BLOCK=""
-  if [ -f "$SKILL" ]; then
+  if [ -f "$SKILL" ] && [ "${REL%.sh}" != "$REL" ]; then
+    BLOCK=$(awk '
+      /^[[:space:]]*# END-PLAN-FETCH/ { exit }
+      in_b { print }
+      /^[[:space:]]*# BEGIN-PLAN-FETCH/ { in_b = 1 }
+    ' "$SKILL" | sed 's/"\$N"/<N>/g')
+  elif [ -f "$SKILL" ]; then
     BLOCK=$(awk -v anchor="$ANCHOR" '
       index($0, anchor) { found = 1 }
       found && !in_b && /^[[:space:]]*```bash[[:space:]]*$/ { in_b = 1; next }
@@ -359,7 +373,9 @@ for ROW in "${SITES[@]}"; do
 
   echo "Test $SITE_N.P: step-1 prose carries the SINGLE-bash-command directive"
   inc
-  if [ -f "$SKILL" ] && grep -qF "$PROSE_DIRECTIVE" "$SKILL"; then
+  if [ "${REL%.sh}" != "$REL" ]; then
+    pass_msg "$TAG: n/a — a helper site is one Bash call by construction"
+  elif [ -f "$SKILL" ] && grep -qF "$PROSE_DIRECTIVE" "$SKILL"; then
     pass_msg "$TAG: prose carries \"$PROSE_DIRECTIVE\""
   else
     fail_msg "$TAG: prose is missing \"$PROSE_DIRECTIVE\" — an agent splitting the block across Bash calls loses COMMENTS_JSON/KEEP/TRUSTED_JSON silently"

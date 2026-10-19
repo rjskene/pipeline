@@ -48,7 +48,7 @@ assert_in "exec-9b-none"    "$STEP9" 'PRE-EXISTING: none'
 
 echo "evaluate-issue-pr Scope-at-pr-eval bullet"
 assert_in "eval-1322-rule"   "$SCOPE" 'CI is the oracle for pre-existing failures:'
-assert_in "eval-list-check"  "$SCOPE" 'list check (#1329):**'
+assert_in "eval-list-check"  "$SCOPE" 'list check:**'
 assert_in "eval-body-heading" "$SCOPE" '## Pre-existing failures'
 assert_in "eval-subject-check" "$SCOPE" 'grep -F -e <basename> -e <dir>/ <test>'
 assert_in "eval-listed-flagged" "$SCOPE" 'A listed subject test is Flagged'

@@ -7,6 +7,10 @@
 # tool against today's data and asserts it exits 0 + prints INSUFFICIENT DATA.
 set -uo pipefail
 
+# Hermeticity (#1501): Scenario 8b's live run must not query the caller's real
+# repo. A sourced pipeline.config (set -a) exports PIPELINE_REPO; drop it.
+unset PIPELINE_REPO
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HELPER="$REPO_ROOT/scripts/combine-hint-impact.sh"
@@ -111,6 +115,10 @@ rc=$?
 [ "$rc" -eq 0 ] && pass_msg "live real-data run exits 0" || fail_msg "live run exit $rc"
 printf '%s' "$LIVE" | grep -q 'INSUFFICIENT DATA' \
   && pass_msg "live run prints INSUFFICIENT DATA (build-only guard)" || fail_msg "live run did not print INSUFFICIENT DATA"
+# Hermeticity (#1501): the live run must not read the caller's real repo, so its
+# post cohort is empty regardless of a sourced pipeline.config or capture log.
+printf '%s' "$LIVE" | grep -q 'N=0,' \
+  && pass_msg "live run sees an empty post cohort (PIPELINE_REPO not leaked)" || fail_msg "live run read a real post cohort (PIPELINE_REPO leaked)"
 
 # 8c. Sufficient — Keep (post cost down, accuracy not worse)
 KOUT="$(bash "$HELPER" --fixture "$KEEP_DIR" 2>/dev/null)"

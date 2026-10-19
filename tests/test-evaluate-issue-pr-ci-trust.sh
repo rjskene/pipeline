@@ -7,30 +7,36 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SKILL="skills/evaluate-issue-pr/SKILL.md"
+CHECKS="scripts/evaluate-issue-pr-checks.sh"
 [ -f "$SKILL" ] || { echo "missing $SKILL"; exit 1; }
+[ -f "$CHECKS" ] || { echo "missing $CHECKS"; exit 1; }
+# Anchors (a)-(d) may live in the SKILL body or in the Step 4 checks helper it
+# invokes (the CI-aware test logic moved there); grep the concatenation.
+SRC="$(mktemp)"; trap 'rm -f "$SRC"' EXIT
+cat "$SKILL" "$CHECKS" > "$SRC"
 
 # (a) green-CI short-circuit: a green statusCheckRollup ⇒ skip the full PIPELINE_TEST_CMD re-run.
-grep -q "statusCheckRollup" "$SKILL" \
+grep -q "statusCheckRollup" "$SRC" \
   || { echo "FAIL(a): $SKILL missing statusCheckRollup short-circuit reference"; exit 1; }
-grep -Eq "green[ -]rollup|green CI rollup|green rollup" "$SKILL" \
+grep -Eq "green[ -]rollup|green CI rollup|green rollup" "$SRC" \
   || { echo "FAIL(a): $SKILL missing green-rollup short-circuit phrase"; exit 1; }
-grep -Eq "skip(ping)? (the )?full.*PIPELINE_TEST_CMD" "$SKILL" \
+grep -Eq "skip(ping)? (the )?full.*PIPELINE_TEST_CMD" "$SRC" \
   || { echo "FAIL(a): $SKILL missing skip-full-PIPELINE_TEST_CMD-re-run directive"; exit 1; }
 
 # (b) fallback: CI absent/red/PIPELINE_CI_CHECK_ENABLED disabled ⇒ tests still run locally.
-grep -q "PIPELINE_CI_CHECK_ENABLED" "$SKILL" \
+grep -q "PIPELINE_CI_CHECK_ENABLED" "$SRC" \
   || { echo "FAIL(b): $SKILL missing PIPELINE_CI_CHECK_ENABLED gate reference"; exit 1; }
-grep -Eq "run tests locally|tests (still )?run locally|run (the )?tests locally" "$SKILL" \
+grep -Eq "run tests locally|tests (still )?run locally|run (the )?tests locally" "$SRC" \
   || { echo "FAIL(b): $SKILL missing non-green/absent-CI run-tests-locally fallback phrase"; exit 1; }
 
 # (c) the fallback is scoped to touched tests, not the whole suite.
-grep -Eq "touched test" "$SKILL" \
+grep -Eq "touched test" "$SRC" \
   || { echo "FAIL(c): $SKILL missing scoped-to-touched-tests fallback phrase"; exit 1; }
 
 # (d) dedup guard: the full-suite sweep runs at most once, never via run_in_background.
-grep -Eq "at most once|at-most-once|once per eval" "$SKILL" \
+grep -Eq "at most once|at-most-once|once per eval" "$SRC" \
   || { echo "FAIL(d): $SKILL missing at-most-once full-suite directive"; exit 1; }
-grep -Eq "overlapping (full-suite )?sweep|duplicate sweep|run_in_background" "$SKILL" \
+grep -Eq "overlapping (full-suite )?sweep|duplicate sweep|run_in_background" "$SRC" \
   || { echo "FAIL(d): $SKILL missing no-overlapping-sweep / never-run_in_background directive"; exit 1; }
 
 # (e) pipeline.config.example (and the gitignored pipeline.config, dual-scan per CLAUDE.md

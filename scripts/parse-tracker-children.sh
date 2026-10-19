@@ -25,6 +25,7 @@
 # the WHOLE body for `#<N>` mentions — deduped, in order of first appearance,
 # numeric only — suppressing fenced code blocks (``` … ```) and inline code
 # spans (`…`) so prose examples like `#999` are not miscounted as children.
+# Suppression is delegated to the sibling scripts/strip-code-spans.sh (#1500).
 # This mode is additive and consumed ONLY by auto-close-trackers.sh as a soft
 # fallback; the default mode is unchanged for render-status-table.sh and
 # analyze-issues.sh, which MUST NOT broaden their orphan classification.
@@ -51,12 +52,11 @@ else
 fi
 
 if [ "$FALLBACK" = "1" ]; then
-  printf '%s\n' "$input" | awk '
-    /^[[:space:]]*```/ { in_code = !in_code; next }
-    in_code { next }
+  printf '%s\n' "$input" \
+    | bash "$(dirname "${BASH_SOURCE[0]}")/strip-code-spans.sh" \
+    | awk '
     {
       line = $0
-      gsub(/`[^`]*`/, "", line)
       while (match(line, /#[0-9]+/)) {
         num = substr(line, RSTART + 1, RLENGTH - 1)
         if (!(num in seen)) {

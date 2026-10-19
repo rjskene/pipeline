@@ -32,6 +32,7 @@ WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
 RENDERED="$SKILL_FILE"
+HELPER="$SCRIPT_DIR/../scripts/plan-issue-classify.sh"  # sentinel blocks live in the helper
 
 # Extract the label-application bash block. Include the BEGIN line (not the
 # END line) so the block is a runnable fragment.
@@ -40,7 +41,7 @@ awk '
   /^[[:space:]]*# BEGIN-LABEL-APPLY/ { inblock = 1 }
   inblock { print }
   /^[[:space:]]*# END-LABEL-APPLY/   { inblock = 0 }
-' "$RENDERED" > "$APPLY_SCRIPT"
+' "$HELPER" > "$APPLY_SCRIPT"
 
 if [ ! -s "$APPLY_SCRIPT" ]; then
   echo "ERROR: could not extract BEGIN-LABEL-APPLY..END-LABEL-APPLY block" >&2

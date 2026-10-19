@@ -290,9 +290,10 @@ knobs survive as the opt-in. `scripts/resolve-execute-dispatch.sh` is the single
   property that made the cheaper-execute default safe while it was live (a Sonnet execute defect was caught
   pre-merge in the pilot — see model-downsampling.md §3.3).
 - **Plan-stage pins (`scripts/resolve-stage-model.sh`)** — PATH C plans on
-  `PIPELINE_PATH_C_MODEL_PLAN` (default `fable`: cross-worktree splits are the most expensive failure mode),
+  `PIPELINE_PATH_C_MODEL_PLAN` (default `opus`: Fable list price is 2.5× Opus with no measured quality gain on
+  calibration runs 32–35, #1513),
   PATH A/B plan on `opus`, and plan-eval resolves to tier-max(producer, `PIPELINE_STAGE_MODEL_PLAN_EVAL`)
-  so the gate never lands below its producer. W2 downgrades a Fable plan to Opus (refusal-risk).
+  so the gate never lands below its producer. W2 forces Opus over a `fable` knob (refusal-risk).
 
 Net cost framing: the live lever on execute cost is no longer the model tier — it is the plan gate
 (`PIPELINE_PLAN_GATE=annotate`, #1437: one evaluate, amendments bound into execute, no re-plan round) and the
