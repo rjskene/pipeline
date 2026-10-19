@@ -11,6 +11,8 @@ set -uo pipefail
 #   S4 worktree-dir is the main checkout   -> exit 2, no mutation
 #   S5 --help exit 0; no args exit 2
 #   S5b --no-gh default view is MERGEABLE/CLEAN
+#   S7 two-commit branch conflicting in f.txt AND g.txt -> FILES=f.txt,g.txt
+#      (the rebase stops on commit 1; merge-tree surfaces the second path)
 #
 # Fixtures: a bare origin, a main checkout (git_init_sandbox) and a feature
 # checkout via `git worktree add`. Runs with --no-gh + REBASE_CHECK_VIEW_JSON; a
@@ -151,6 +153,39 @@ if [ ! -e "$GH_CALLED_MARK" ]; then
   pass_msg "gh never invoked"
 else
   fail_msg "gh stub was invoked under --no-gh"
+fi
+
+scenario "S7: two commits conflicting in two files -> FILES=f.txt,g.txt"
+d="$TMP/s7"
+mkdir -p "$d/main"
+git init -q --bare "$d/origin.git"
+git_init_sandbox "$d/main"
+git -C "$d/main" checkout -q -b main
+seq 1 10 > "$d/main/f.txt"; printf 'g\n' > "$d/main/g.txt"
+git -C "$d/main" add f.txt g.txt
+git -C "$d/main" commit -q -m base
+git -C "$d/main" remote add origin "$d/origin.git"
+git -C "$d/main" push -q origin main 2>/dev/null
+git -C "$d/main" worktree add -q -b feature/x "$d/wt" main 2>/dev/null
+sed -i 's/^5$/feat-five/' "$d/wt/f.txt"
+git -C "$d/wt" commit -q -am "feature f"
+sed -i '1s/.*/feat-g/' "$d/wt/g.txt"
+git -C "$d/wt" commit -q -am "feature g"
+git -C "$d/wt" push -q -u origin feature/x 2>/dev/null
+sed -i 's/^5$/base-five/' "$d/main/f.txt"
+sed -i '1s/.*/base-g/' "$d/main/g.txt"
+git -C "$d/main" commit -q -am "base edit"
+git -C "$d/main" push -q origin main 2>/dev/null
+H0=$(git -C "$d/wt" rev-parse HEAD)
+run --no-gh "$d/wt" 107
+GD=$(git -C "$d/wt" rev-parse --absolute-git-dir)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=conflict FILES=f.txt,g.txt" ] \
+   && [ "$(git -C "$d/wt" rev-parse HEAD)" = "$H0" ] \
+   && [ -z "$(git -C "$d/wt" status --porcelain)" ] \
+   && [ ! -d "$GD/rebase-merge" ] && [ ! -d "$GD/rebase-apply" ]; then
+  pass_msg "both conflicting paths listed, rebase aborted, worktree clean"
+else
+  fail_msg "S7 rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
 fi
 
 echo ""

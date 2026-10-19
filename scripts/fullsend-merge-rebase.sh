@@ -13,7 +13,9 @@ Usage: fullsend-merge-rebase.sh [--no-gh] <worktree-dir> <PR>
 Prints ONE stdout line, exit 0 on every decision:
   REBASE=skip                    no rebase needed
   REBASE=done                    rebased onto origin/<base>, pushed --force-with-lease
-  REBASE=conflict FILES=<csv>    textual conflict (rebase aborted, branch untouched);
+  REBASE=conflict FILES=<csv>    textual conflict — the helper aborted its rebase;
+                                 the branch is untouched. FILES lists every
+                                 conflicting path (U list + merge-tree);
                                  FILES=- when the push after a clean rebase failed
 The rebase-check diagnostic line goes to stderr. Exit 2 on usage errors or when
 <worktree-dir> is the main checkout (never touched).
@@ -71,7 +73,19 @@ if git -C "$WT" rebase "origin/$BASE" >&2; then
   exit 0
 fi
 
-FILES=$(git -C "$WT" diff --name-only --diff-filter=U | paste -sd, -)
+# The rebase stops on the FIRST conflicting commit, so its U list can miss paths
+# a later commit conflicts on. After the abort (HEAD restored — mid-rebase HEAD
+# is a partial replay) a tip-vs-tip merge-tree lists the rest; the union keeps
+# the list never narrower than the U list. merge-tree rc 0/1 = usable (git
+# >= 2.38); any other rc falls back to the U list alone.
+U_LIST=$(git -C "$WT" diff --name-only --diff-filter=U)
 git -C "$WT" rebase --abort >&2
+MT_LIST=""
+MT_OUT=$(git -C "$WT" merge-tree --write-tree --name-only --no-messages "origin/$BASE" HEAD 2>/dev/null)
+MT_RC=$?
+if [ "$MT_RC" -eq 0 ] || [ "$MT_RC" -eq 1 ]; then
+  MT_LIST=$(printf '%s\n' "$MT_OUT" | tail -n +2)
+fi
+FILES=$(printf '%s\n%s\n' "$U_LIST" "$MT_LIST" | sed '/^$/d' | sort -u | paste -sd, -)
 echo "REBASE=conflict FILES=${FILES:--}"
 exit 0
