@@ -12,18 +12,18 @@ The per-path dispatch contract for the autonomous flow. `/pipeline:status` is re
 - **Resolution rule — DERIVE, never guess**: the namespace from the plugin's `.claude-plugin/plugin.json` `name`, the agent from its frontmatter `name:`. It is not host-dependent.
 - **Guard:** `tests/test-dispatch-namespace-convention.sh` (forbidden set derived from the manifest's `agents[]`) and `tests/test-subagent-type-namespace.sh`.
 
-**Stage agent types.** `pipeline:stage-reader` runs plan, plan-eval and pr-eval on every path (D included); `pipeline:stage-executor` runs execute on PATH A/B and PATH C inline. Both carry a narrow `tools:` list instead of the built-in catalogue. Every stage prompt names `${CLAUDE_PLUGIN_ROOT}/skills/<stage>/SKILL.md`; the orchestrator expands it to an absolute path so an agent without a working Skill tool Reads it. The built-in `general-purpose` stays for analyze-issues, evolve diagnose, the pre-PR reviewer and `--spawn`. **Browser-check carve-out.** The orchestrator runs `bash "${CLAUDE_PLUGIN_ROOT}/scripts/execute-issue-plan-fetch-plan.sh" <N>`; a `**Frontend changes:**` line whose value is not `None` routes that issue's execute and pr-eval to the built-in type, since the stage types carry no Playwright MCP tools (execute Step 6c, pr-eval Step 6).
+**Stage agent types.** `pipeline:stage-reader` runs plan, plan-eval and pr-eval on every path (D included); `pipeline:stage-executor` runs execute on PATH A/B and PATH C inline. Both carry a narrow `tools:` list instead of the built-in catalogue. Every stage prompt names `${CLAUDE_PLUGIN_ROOT}/skills/<stage>/SKILL.md`; the orchestrator expands it to the absolute path before dispatch — never the literal placeholder — and the agent Reads it (the stage types carry no Skill tool). The built-in `general-purpose` stays for analyze-issues, evolve diagnose, the pre-PR reviewer and `--spawn`. **Browser-check carve-out.** The orchestrator runs `bash "${CLAUDE_PLUGIN_ROOT}/scripts/execute-issue-plan-fetch-plan.sh" <N>`; a `**Frontend changes:**` line whose value is not `None` routes that issue's execute and pr-eval to the built-in type, since the stage types carry no Playwright MCP tools (execute Step 6c, pr-eval Step 6).
 
 **For planning and plan evaluation.** One `pipeline:stage-reader` per issue; `model=` from `resolve-stage-model.sh <N> plan` / `<N> plan-eval`:
      ```
      Agent(subagent_type='pipeline:stage-reader',
            model='<resolved-plan-model>',
            description='plan-issue #<N> (PATH <X>)',
-           prompt: 'Run /pipeline:plan-issue <N> — load it with the Skill tool; if unavailable Read ${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/SKILL.md and follow it. <terminal contract + HARNESS-FRICTION>')
+           prompt: 'Read ${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/SKILL.md and follow it for issue #<N>. <terminal contract + HARNESS-FRICTION>')
      Agent(subagent_type='pipeline:stage-reader',
            model='<resolved-plan-eval-model>',
            description='evaluate-issue-plan #<N>',
-           prompt: 'Run /pipeline:evaluate-issue-plan <N> — load it with the Skill tool; if unavailable Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md and follow it. <terminal contract + HARNESS-FRICTION>')
+           prompt: 'Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md and follow it for issue #<N>. <terminal contract + HARNESS-FRICTION>')
      ```
 
 **For PR evaluation (pr-open → evaluated).** The worktree already exists; route by tier. **Every** shape carries `model=$MODEL` from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`):
@@ -32,14 +32,14 @@ The per-path dispatch contract for the autonomous flow. `/pipeline:status` is re
      Agent(subagent_type='pipeline:stage-reader',
            model='<resolved-pr-eval-model>',
            description='evaluate-issue-pr #<N> (PATH A inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
+           prompt: 'cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md and follow it for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
      ```
    - **PATH B** (standard): dispatch inline — No spawn-claude.sh, no run-queue.sh, no tmux:
      ```
      Agent(subagent_type='pipeline:stage-reader',
            model='<resolved-pr-eval-model>',
            description='evaluate-issue-pr #<N> (PATH B inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
+           prompt: 'cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md and follow it for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. MANUAL_MERGE=<0|1>')
      ```
      The execute Agent and the PR-eval Agent are SEPARATE inline contexts — an agent must not evaluate its own work.
    - **PATH C** (`multi-task`): inline `Agent(subagent_type='pipeline:stage-reader', ...)` as PATH B by default; under `--spawn`, the `spawn-claude.sh` / `run-queue.sh` launch flow.
@@ -51,17 +51,17 @@ The per-path dispatch contract for the autonomous flow. `/pipeline:status` is re
      Agent(subagent_type='pipeline:stage-executor',
            model='<resolved-model>',
            description='execute-issue-plan #<N> (PATH A inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow ${CLAUDE_PLUGIN_ROOT}/skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. PRE_PR_REVIEW=<on|off>')
+           prompt: 'cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/execute-issue-plan/SKILL.md and follow it for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. PRE_PR_REVIEW=<on|off>')
      ```
    - **PATH B** (standard): dispatch inline — resolver-driven via `scripts/resolve-execute-dispatch.sh`. No spawn-claude.sh, no run-queue.sh, no tmux. ONE execute agent (see **Per-path execute MODEL routing** below):
      ```
      Agent(subagent_type='pipeline:stage-executor',
            model='<resolved-model>',
            description='execute-issue-plan #<N> (PATH B inline)',
-           prompt: 'cd <worktree-absolute-path>; then follow ${CLAUDE_PLUGIN_ROOT}/skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. PRE_PR_REVIEW=<on|off>')
+           prompt: 'cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/execute-issue-plan/SKILL.md and follow it for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. PRE_PR_REVIEW=<on|off>')
      ```
      It applies the `tdd-implementer` discipline per plan task, completes ALL plan deliverables, and runs the FULL local suite green before `gh pr create`. `model=` defaults to `opus` when `PIPELINE_PATH_B_MODEL_EXECUTE` is unset. `PIPELINE_PATH_B_ELIGIBLE_SCOPE` defaults to `all`; a W2 carve-out always pins opus (`model=opus`).
-   - **PATH C** (`multi-task`): dispatch inline by DEFAULT — resolve ONCE via `scripts/resolve-execute-dispatch.sh <N> C` and branch on the `DISPATCH` line's `PATH_C_FANOUT=` token. **`PATH_C_FANOUT=off` (default):** ONE `Agent(subagent_type='pipeline:stage-executor', model=$MODEL, description='execute-issue-plan #<N> (PATH C inline)', prompt: 'cd <worktree-absolute-path>; then follow ${CLAUDE_PLUGIN_ROOT}/skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. PRE_PR_REVIEW=<on|off> PATH_C_FANOUT=off')` exactly as PATH B (`PIPELINE_PATH_C_MODEL_EXECUTE`, unset ⇒ `opus`); it runs the `target=<dir>` tasks sequentially and owns Step 8, push, `gh pr create` and labels; no `path-c-split-worktree.sh`, delegation hook inert. **`PATH_C_FANOUT=on`:** every leaf gets the same `model=$MODEL`; the orchestrator fans out one `Agent(subagent_type='pipeline:tdd-implementer', model='<resolved-model>', description='execute-issue-plan #<N> target=<dir>/ ...', prompt: 'cd <leaf-worktree>; target=<dir>/ ...')` per `target=<dir>`, **each in its OWN per-leaf worktree** (`scripts/path-c-split-worktree.sh setup`) so leaves never share a git index, up to the **max-3 foreground bound**. Then `path-c-split-worktree.sh reassemble <feature-worktree> <target>...` (cherry-pick; a conflict signals non-disjoint targets), `teardown`, push, `gh pr create`, labels. The orchestrator runs Step 8 itself per `PRE_PR_REVIEW=` (`off` ⇒ log `PRE-PR-REVIEW: skipped reason=knob`) — never as a leaf, since `tdd-implementer` has no `Skill` tool. **Cost attribution — dispatch descriptions are the attribution key:** every leaf is described `execute-issue-plan #<N> target=<dir>/ …`. The orchestrator MUST NOT `Edit`/`Write` impl files (`enforce-path-c-delegation` blocks it). **Under `--spawn`, `--spawn` forces the legacy `spawn-claude.sh` / `run-queue.sh` → `claude -p` TRANSPORT**; the spawned session honors `PIPELINE_PATH_C_FANOUT`.
+   - **PATH C** (`multi-task`): dispatch inline by DEFAULT — resolve ONCE via `scripts/resolve-execute-dispatch.sh <N> C` and branch on the `DISPATCH` line's `PATH_C_FANOUT=` token. **`PATH_C_FANOUT=off` (default):** ONE `Agent(subagent_type='pipeline:stage-executor', model=$MODEL, description='execute-issue-plan #<N> (PATH C inline)', prompt: 'cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/execute-issue-plan/SKILL.md and follow it for issue #<N>. <worktree-path>=<abs path>, slug=<slug>. PRE_PR_REVIEW=<on|off> PATH_C_FANOUT=off')` exactly as PATH B (`PIPELINE_PATH_C_MODEL_EXECUTE`, unset ⇒ `opus`); it runs the `target=<dir>` tasks sequentially and owns Step 8, push, `gh pr create` and labels; no `path-c-split-worktree.sh`, delegation hook inert. **`PATH_C_FANOUT=on`:** every leaf gets the same `model=$MODEL`; the orchestrator fans out one `Agent(subagent_type='pipeline:tdd-implementer', model='<resolved-model>', description='execute-issue-plan #<N> target=<dir>/ ...', prompt: 'cd <leaf-worktree>; target=<dir>/ ...')` per `target=<dir>`, **each in its OWN per-leaf worktree** (`scripts/path-c-split-worktree.sh setup`) so leaves never share a git index, up to the **max-3 foreground bound**. Then `path-c-split-worktree.sh reassemble <feature-worktree> <target>...` (cherry-pick; a conflict signals non-disjoint targets), `teardown`, push, `gh pr create`, labels. The orchestrator runs Step 8 itself per `PRE_PR_REVIEW=` (`off` ⇒ log `PRE-PR-REVIEW: skipped reason=knob`) — never as a leaf, since `tdd-implementer` has no `Skill` tool. **Cost attribution — dispatch descriptions are the attribution key:** every leaf is described `execute-issue-plan #<N> target=<dir>/ …`. The orchestrator MUST NOT `Edit`/`Write` impl files (`enforce-path-c-delegation` blocks it). **Under `--spawn`, `--spawn` forces the legacy `spawn-claude.sh` / `run-queue.sh` → `claude -p` TRANSPORT**; the spawned session honors `PIPELINE_PATH_C_FANOUT`.
    - **PATH D** (`quick-fix`): dispatch inline via `Agent(subagent_type='pipeline:tdd-implementer', description='execute-issue-plan #<N> (PATH D collapsed inline tdd)', prompt: 'cd <worktree-absolute-path>; then follow ${CLAUDE_PLUGIN_ROOT}/skills/execute-issue-plan/SKILL.md for issue #<N>. <worktree-path>=<abs path>, slug=<slug>.')`. No spawn-claude.sh, no tmux, no run-queue.sh. The bare `tdd-implementer` does NOT resolve.
 
      **Collapsed-D ceremony.** **One collapsed inline `Agent`** doing **classify+plan+execute** in one carried-forward context — NOT three separate dispatches. pr-eval stays a SEPARATE inline agent (evaluator independence). Bound at **max 3 concurrent inline** D agents. Consume-or-produce: upstream `## Classification` / `## Implementation Plan` comments are read when present, produced only when absent.

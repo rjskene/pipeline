@@ -115,7 +115,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-fetch-attachments.sh" <slate-issue-numbers>
    ```
 
-   **1b. Dispatch plan (classify inline).** Wave by wave per `## Wave plan (pre-think)`, run `/pipeline:plan-issue N` for every ready issue with no pipeline label (one parallel `pipeline:stage-reader` Agent per issue, `description='plan-issue #<N> (PATH <X>)'`, or `plan-issue #<N>` pre-classification); wait for all. The planner consumes a fresh trusted `## Classification` (`createdAt >= issue.updatedAt`) or posts one and applies the path label — NO `/pipeline:classify-issue N` Agent. **PATH D exclusion.** Issues already carrying `quick-fix` or a `<!-- pipeline:path=D -->` marker are EXCLUDED here: their collapsed Step 6 Agent PRODUCES `## Classification`+`quick-fix` and `## Implementation Plan`+`plan-pending`. A planner-classified D lands `quick-fix`+`plan-pending`, takes the D auto-flip, and Step 6 CONSUMES those comments. The wave plan still includes D.
+   **1b. Dispatch plan (classify inline).** Wave by wave per `## Wave plan (pre-think)`, run `/pipeline:plan-issue N` for every ready issue with no pipeline label (one parallel `pipeline:stage-reader` Agent per issue, prompt `Read ${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/SKILL.md and follow it for issue #<N>`, `description='plan-issue #<N> (PATH <X>)'`, or `plan-issue #<N>` pre-classification); wait for all. The planner consumes a fresh trusted `## Classification` (`createdAt >= issue.updatedAt`) or posts one and applies the path label — NO `/pipeline:classify-issue N` Agent. **PATH D exclusion.** Issues already carrying `quick-fix` or a `<!-- pipeline:path=D -->` marker are EXCLUDED here: their collapsed Step 6 Agent PRODUCES `## Classification`+`quick-fix` and `## Implementation Plan`+`plan-pending`. A planner-classified D lands `quick-fix`+`plan-pending`, takes the D auto-flip, and Step 6 CONSUMES those comments. The wave plan still includes D.
    - **Stage-model pin (mandatory):** before EACH plan dispatch resolve the model:
      ```bash
      PLAN_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> plan)
@@ -123,14 +123,14 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
      It emits `ISSUE=`/`STAGE=`/`PATH=`/`MODEL=`/`REASON=` (exit 0; `MODEL=` always named). **ALWAYS pass `model=$MODEL`** — an unpinned dispatch inherits the session model — and relay `REASON=`. PATH A/B ⇒ `opus`; PATH C ⇒ `PIPELINE_PATH_C_MODEL_PLAN` (unset ⇒ `opus`); the W2 high-uncertainty carve-out forces `opus`. Unlabelled ⇒ PATH=B; pre-labelled D skips this (its collapsed dispatch carries the EXECUTE model).
    - **Usage gate** at the top of every plan wave per `## Usage gate`.
    - **Dispatch prompt contract (mandatory):** each plan-issue prompt MUST end with a directive that the *only* valid terminal states are (a) `bash "${CLAUDE_PLUGIN_ROOT}/scripts/post-plan.sh" N <draft-file>` exited 0 → success line, or (b) it exited non-zero → FAILED line. Returning the plan body in chat is a failure — the plan exists only once `post-plan.sh` posted `## Implementation Plan` and applied `plan-pending`. **Friction capture:** the prompt MUST also direct the subagent to end its report with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines.
-   - **`--debug-first` propagation:** under `--debug-first` each prompt carries `/pipeline:plan-issue N --debug-first` (Step 4a).
+   - **`--debug-first` propagation:** under `--debug-first` each prompt appends ` --debug-first` after `for issue #<N>` (plan-issue Step 4a via `$ARGV`).
    - **Verify plan comments** after all plan agents complete:
      ```bash
      PLAN_COUNT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/filter-trusted-comments.sh" --json <N> \
        | jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
      ```
      `PLAN_COUNT == 0` (regardless of `plan-pending`) ⇒ re-run `/pipeline:plan-issue N` once; still missing ⇒ "Skipped (plan not posted)".
-2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel `pipeline:stage-reader`, `description='evaluate-issue-plan #<N>'`); wait for all.
+2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel `pipeline:stage-reader`, prompt as 1b with `Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md`, `description='evaluate-issue-plan #<N>'`); wait for all.
 
    **Stage-model pin (mandatory)** — **ALWAYS pass `model=$MODEL`**:
    ```bash
@@ -250,14 +250,14 @@ Per wave N: usage gate, then Steps 5 → 6 → 6a → 6b → 7 on ONLY that wave
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-preflight.sh" <wave-N pr-open issues>
    ```
 
-   **Stage-model pin (mandatory)** — inline or queued, **ALWAYS pass `model=$MODEL`**:
+   **Stage-model pin (mandatory)** — **ALWAYS pass `model=$MODEL`**:
    ```bash
    PR_EVAL_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> pr-eval)
    ```
    `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`) is a REAL pin; relay any stderr WARN.
 
-   **PR-eval invocation mode.** Same evaluator steps, only CWD differs:
-   1. **Inline `pipeline:stage-reader` `Agent(...)` (default — PATH A, PATH B, PATH C, PATH D).** The prompt carries the worktree path + issue number; the evaluator first runs `cd <worktree-absolute-path>`. Thread the opt-out as `MANUAL_MERGE=1` in the prompt.
+   **PR-eval invocation mode.** Only CWD differs:
+   1. **Inline `pipeline:stage-reader` `Agent(...)` (default — PATH A, PATH B, PATH C, PATH D).** Prompt: `cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md and follow it for issue #<N>`, plus `MANUAL_MERGE=1` for the opt-out.
    2. **`--spawn` — `${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` via the run-queue (all paths; the legacy PATH C transport).** Starts in the worktree, no `cd`; `spawn-claude.sh --manual-merge` exports `MANUAL_MERGE=1`.
 
    **`--spawn` override.** Route PR-eval through `run-queue.sh --skill evaluate-issue-pr` (`PREFLIGHT=ok` issues only), `run_in_background: true`, awaited with Step 6's waiter (one `Monitor` via `BashOutput`, filter `EVENT: (agent-stalled|agent-finished|queue-complete)`, `timeout_ms=7200000`) and triage.

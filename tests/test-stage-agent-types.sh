@@ -18,6 +18,7 @@ set -uo pipefail
 #   S7  execute-issue-plan names pipeline:stage-executor
 #   S8  left-alone guard: pre-PR reviewer and analyze-issues keep general-purpose
 #   S9  negative controls for the S5 matcher and the S6 path check
+#   S10 stage agents load by Read, never the Skill tool (#1534)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FULLSEND="$ROOT/skills/fullsend/SKILL.md"
@@ -63,8 +64,8 @@ check_fm() {
     fail_msg "$name: tools line is '$(printf '%s\n' "$fm" | grep '^tools:')', want 'tools: $tools'"; fi
   if printf '%s\n' "$fm" | grep -q '^description: .'; then pass_msg "$name: description line"; else fail_msg "$name: no description line"; fi
 }
-check_fm "$READER" stage-reader "Read, Write, Edit, Bash, Grep, Glob, Skill"
-check_fm "$EXECUTOR" stage-executor "Read, Write, Edit, Bash, Grep, Glob, Skill, Agent"
+check_fm "$READER" stage-reader "Read, Write, Edit, Bash, Grep, Glob"
+check_fm "$EXECUTOR" stage-executor "Read, Write, Edit, Bash, Grep, Glob, Agent"
 
 # ---------------------------------------------------------------------------
 scenario "S3: no model line"
@@ -166,6 +167,54 @@ if printf '%s\n' "$OUT" | grep -q 'no absolute SKILL.md path'; then pass_msg "S6
 printf '%s\n' "     Agent(subagent_type='pipeline:stage-executor', description='evaluate-issue-pr #<N>', prompt: 'follow \${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md')" > "$FX"
 OUT="$(check_blocks "$FX")"
 if printf '%s\n' "$OUT" | grep -q 'stage-executor description'; then pass_msg "S6 description check fires on a mistyped shape"; else fail_msg "S6 description check missed a mistyped fixture: $OUT"; fi
+
+# ---------------------------------------------------------------------------
+scenario "S10: stage agents load by Read, never the Skill tool"
+
+# (a) agent bodies: no `Skill` word (case-sensitive, so `SKILL.md` does not trip
+#     it); the body names Read and SKILL.md.
+for f in "$READER" "$EXECUTOR"; do
+  [ -f "$f" ] || { fail_msg "${f#"$ROOT"/} missing — cannot check body"; continue; }
+  if agent_body "$f" | grep -qw 'Skill'; then fail_msg "${f#"$ROOT"/} body still names the Skill tool"; else pass_msg "${f#"$ROOT"/} body names no Skill tool"; fi
+  if agent_body "$f" | grep -qF 'Read' && agent_body "$f" | grep -qF 'SKILL.md'; then pass_msg "${f#"$ROOT"/} body loads by Reading SKILL.md"; else
+    fail_msg "${f#"$ROOT"/} body lacks Read + SKILL.md"; fi
+done
+
+# (b) every stage-typed dispatch-routing shape loads the skill by Read.
+# check_read_shapes <file> -> one problem line per shape; COUNT=<n> last
+check_read_shapes() {
+  local n=0 b
+  while IFS= read -r b; do
+    n=$((n + 1))
+    case "$b" in
+      *'Read ${CLAUDE_PLUGIN_ROOT}/skills/'*'/SKILL.md and follow it'*) ;;
+      *) echo "no Read-and-follow load: $(printf '%s' "$b" | cut -c1-100)" ;;
+    esac
+    case "$b" in
+      *'Skill tool'*) echo "names the Skill tool: $(printf '%s' "$b" | cut -c1-100)" ;;
+    esac
+  done < <(stage_blocks "$1")
+  echo "COUNT=$n"
+}
+OUT="$(check_read_shapes "$ROUTING")"
+BAD="$(printf '%s\n' "$OUT" | grep -v '^COUNT=' || true)"
+if [ -z "$BAD" ]; then pass_msg "every stage-typed shape Reads its SKILL.md ($(printf '%s\n' "$OUT" | sed -n 's/^COUNT=//p') shapes)"; else
+  fail_msg "shape(s) not Read-loaded: $(printf '%s\n' "$BAD" | tr '\n' ';')"; fi
+
+# (c) fullsend names the Read prompt shape for plan, plan-eval and pr-eval;
+#     no `load it with the Skill tool` survives in fullsend or dispatch-routing.
+for st in plan-issue evaluate-issue-plan evaluate-issue-pr; do
+  if grep -qF "Read \${CLAUDE_PLUGIN_ROOT}/skills/$st/SKILL.md" "$FULLSEND"; then pass_msg "fullsend names the Read shape for $st"; else
+    fail_msg "fullsend lacks 'Read \${CLAUDE_PLUGIN_ROOT}/skills/$st/SKILL.md'"; fi
+done
+for f in "$FULLSEND" "$ROUTING"; do
+  if grep -qF 'load it with the Skill tool' "$f"; then fail_msg "${f#"$ROOT"/} still says 'load it with the Skill tool'"; else pass_msg "${f#"$ROOT"/} has no 'load it with the Skill tool'"; fi
+done
+
+# (d) negative control: a Skill-tool-first shape trips the (b) check.
+printf '%s\n' "     Agent(subagent_type='pipeline:stage-reader', description='plan-issue #<N>', prompt: 'Run /pipeline:plan-issue <N> — load it with the Skill tool; if unavailable Read \${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/SKILL.md and follow it.')" > "$FX"
+OUT="$(check_read_shapes "$FX")"
+if printf '%s\n' "$OUT" | grep -q 'names the Skill tool'; then pass_msg "S10(b) check fires on a Skill-tool-first fixture"; else fail_msg "S10(b) check missed a Skill-tool-first fixture: $OUT"; fi
 
 echo ""
 echo "=============================="
