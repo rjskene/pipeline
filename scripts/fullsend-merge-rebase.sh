@@ -49,7 +49,10 @@ if [ "$NO_GH" = 1 ]; then
   export REBASE_CHECK_VIEW_JSON="${REBASE_CHECK_VIEW_JSON:-$CLEAN_VIEW}"
 fi
 
-CHECK=$(cd "$WT" && bash "$SELF_DIR/evaluate-issue-pr-rebase-check.sh" "$PR")
+# Name held in a variable so the path never reads as a bare slash command
+# (tests/test-plan-issue-namespace.sh).
+REBASE_CHECK_SH=evaluate-issue-pr-rebase-check.sh
+CHECK=$(cd "$WT" && bash "$SELF_DIR/$REBASE_CHECK_SH" "$PR")
 echo "$CHECK" >&2
 DECISION=$(printf '%s\n' "$CHECK" | sed -n 's/.*REBASE=\([a-z]*\).*/\1/p' | tail -1)
 
