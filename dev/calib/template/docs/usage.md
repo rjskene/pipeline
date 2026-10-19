@@ -74,6 +74,25 @@ bash bin/calibctl auth revoke
 Tokens are 32 hex characters and live in `$CALIB_HOME/auth.token`. `show` and
 `revoke` exit 6 when no token has been issued.
 
+## Output conventions
+
+`list` and `report` are for people. Anything that writes tabular,
+machine-readable output is for scripts, and follows these conventions so a
+script can rely on them:
+
+- one record per task, in id order
+- columns appear in the order `list` shows them: `id`, `status`, `priority`,
+  `title`
+- values are raw: the id is a bare integer (no `#`, no padding); status and
+  priority are written exactly as stored
+- fields follow RFC 4180: a field containing a comma, a double quote or a line
+  break is wrapped in double quotes, and any double quote inside it is
+  doubled (`a "b", c` is written `"a ""b"", c"`); every other field is
+  written bare
+- every record, the header included, ends in `\n`
+- a header row naming the columns (`id,status,priority,title`) is always the
+  first line, even when the ledger is empty
+
 ## Exit codes
 
 | code | meaning                         |
