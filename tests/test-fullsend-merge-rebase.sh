@@ -38,6 +38,8 @@ exit 99
 STUB
 chmod +x "$TMP/bin/gh"
 
+# Identity for the script's own rebase (committer) as well as fixture commits.
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t.t
 export PIPELINE_BASE_BRANCH=main
 export PIPELINE_REPO=fake/repo
 export GH_CALLED_MARK="$TMP/gh-called"
