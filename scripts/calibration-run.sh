@@ -1204,10 +1204,17 @@ issue_reftest() {
 }
 
 # issue_unexpected <issue> <slate dir> — merged-PR files MINUS expected-files.txt.
+# Only the PR(s) that CLOSE the issue count (#1523): a body closing keyword
+# (close[sd]?|fix(e[sd])?|resolve[sd]?) + `#<issue>`, case-insensitive. Only
+# when NO merged PR closes it, fall back to a digit-bounded <issue> token in
+# headRefName. A bare `#<issue>` mention never selects a PR.
 issue_unexpected() {
   local issue="$1" d="$2" expected="$2/expected-files.txt" files f n=0
-  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
-    '[.[] | select((.body // "") | test("#" + $n + "\\b")) | .files[]?.path] | .[]' 2>/dev/null)"
+  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" '
+    [.[] | select((.body // "") | test("\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#" + $n + "\\b"; "i"))] as $closing
+    | (if ($closing | length) > 0 then $closing
+       else [.[] | select((.headRefName // "") | test("(^|[^0-9])" + $n + "([^0-9]|$)"))] end)
+    | .[] | .files[]?.path' 2>/dev/null)"
   [ -n "$files" ] || { printf '0'; return 0; }
   while IFS= read -r f; do
     [ -n "$f" ] || continue
