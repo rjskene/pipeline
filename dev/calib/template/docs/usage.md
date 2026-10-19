@@ -60,8 +60,8 @@ that is already done is a no-op that still exits 0.
 bash bin/calibctl report
 ```
 
-Prints the open/done/total counts, a breakdown by priority, and the oldest
-open task.
+Prints the open/done/total counts, a breakdown by priority, the oldest open
+task, and the next task to pick up (the oldest open high-priority one).
 
 ## The API token
 
