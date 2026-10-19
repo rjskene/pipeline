@@ -14,9 +14,12 @@ Usage: evaluate-issue-pr-rebase-check.sh <PR>
 
 Run from the feature worktree. Prints one line:
   MERGEABLE=<m> MERGE_STATE=<s> OVERLAP=<files|none> REBASE=needed|skip
-REBASE=needed unless the PR is MERGEABLE + CLEAN|UNSTABLE and no file changed
-on this branch also changed on origin/<base> since the merge-base.
+REBASE=needed unless the PR is MERGEABLE (any merge state but DIRTY) and no
+file changed on this branch also changed on origin/<base> since the merge-base.
+An UNKNOWN mergeable is settled by polling first; still UNKNOWN => needed.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH.
+     PIPELINE_MERGEABILITY_POLL_SECS (default 5) — sleep between UNKNOWN reads.
+     PIPELINE_MERGEABILITY_POLL_MAX (default 12) — total reads, first included.
      REBASE_CHECK_VIEW_JSON — a {"mergeable":..,"mergeStateStatus":..} object;
      when set it replaces the gh pr view call (fixtures, fullsend-merge-rebase.sh --no-gh).
 USAGE
@@ -33,10 +36,29 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
 BASE="${PIPELINE_BASE_BRANCH:?PIPELINE_BASE_BRANCH unset}"
 
+read_view() {
+  VIEW=$(gh pr view "$PR" --repo "${PIPELINE_REPO:-}" --json mergeable,mergeStateStatus)
+}
+parse_view() {
+  MERGEABLE=$(printf '%s' "$VIEW" | jq -r '.mergeable // "UNKNOWN"')
+  MERGE_STATE=$(printf '%s' "$VIEW" | jq -r '.mergeStateStatus // "UNKNOWN"')
+}
+
 VIEW="${REBASE_CHECK_VIEW_JSON:-}"
-[ -n "$VIEW" ] || VIEW=$(gh pr view "$PR" --repo "${PIPELINE_REPO:-}" --json mergeable,mergeStateStatus)
-MERGEABLE=$(printf '%s' "$VIEW" | jq -r '.mergeable // "UNKNOWN"')
-MERGE_STATE=$(printf '%s' "$VIEW" | jq -r '.mergeStateStatus // "UNKNOWN"')
+if [ -n "$VIEW" ]; then
+  parse_view
+else
+  # GitHub computes mergeability lazily: right after the base advances it
+  # answers UNKNOWN. Settle it by polling; still UNKNOWN after the budget
+  # falls through to the fail-safe REBASE=needed.
+  read_view; parse_view
+  reads=1
+  while [ "$MERGEABLE" = UNKNOWN ] && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+    sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"
+    read_view; parse_view
+    reads=$((reads + 1))
+  done
+fi
 
 git fetch -q origin "$BASE"
 OVERLAP=$(comm -12 \
@@ -46,6 +68,7 @@ OVERLAP=$(comm -12 \
 
 REBASE=needed
 case "$MERGEABLE:$MERGE_STATE" in
-  MERGEABLE:CLEAN|MERGEABLE:UNSTABLE) [ "$OVERLAP" = none ] && REBASE=skip ;;
+  MERGEABLE:DIRTY) ;;
+  MERGEABLE:*) [ "$OVERLAP" = none ] && REBASE=skip ;;
 esac
 echo "MERGEABLE=$MERGEABLE MERGE_STATE=$MERGE_STATE OVERLAP=$OVERLAP REBASE=$REBASE"
