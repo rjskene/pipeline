@@ -58,6 +58,7 @@
 - The `already closed` close error is benign: the merge auto-closes the issue (#813). Labels go through `finalize-issue-labels.sh` with an explicit `--repo` (#866, #888).
 - The `manual-merge` label lets the run-queue free a slot instead of waiting 90 minutes (#489).
 - `block-cage-tests-diff` stops an agent weakening the cage tests (#1304).
+- Optimistic execute (#1536): sharing a file is not sharing a hunk, so `plan-waves.sh --stage=execute` no longer serializes on shared files by default. Each PR is rebased at merge by `fullsend-merge-rebase.sh`; a textual conflict gets one bounded `rebase-fix` agent, and a second conflict is `block-mergeable` (the scoped halt). A `skip` or a re-fired gate never bypasses the greenlight matrix. `PIPELINE_OPTIMISTIC_EXECUTE=false` restores the #700 unified file-conflict graph, under which PATH D is not exempt from wave discipline: D's inline dispatch is a transport choice downstream of waving.
 
 ## Campaign and usage gate
 
