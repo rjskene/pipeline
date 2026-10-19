@@ -19,6 +19,7 @@ set -uo pipefail
 #   S8  left-alone guard: pre-PR reviewer and analyze-issues keep general-purpose
 #   S9  negative controls for the S5 matcher and the S6 path check
 #   S10 stage agents load by Read, never the Skill tool (#1534)
+#       (e) plan-eval terminal contract + negative control (#1541)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FULLSEND="$ROOT/skills/fullsend/SKILL.md"
@@ -215,6 +216,33 @@ done
 printf '%s\n' "     Agent(subagent_type='pipeline:stage-reader', description='plan-issue #<N>', prompt: 'Run /pipeline:plan-issue <N> — load it with the Skill tool; if unavailable Read \${CLAUDE_PLUGIN_ROOT}/skills/plan-issue/SKILL.md and follow it.')" > "$FX"
 OUT="$(check_read_shapes "$FX")"
 if printf '%s\n' "$OUT" | grep -q 'names the Skill tool'; then pass_msg "S10(b) check fires on a Skill-tool-first fixture"; else fail_msg "S10(b) check missed a Skill-tool-first fixture: $OUT"; fi
+
+# (e) plan-eval terminal contract (#1541): dispatch-routing carries it once,
+#     fullsend Step 2 points at it, evaluate-issue-plan says Revise is by design.
+# check_planeval_contract <file> -> one problem line per missing needle
+check_planeval_contract() {
+  local line needle
+  line="$(grep -m1 '^\*\*Plan-eval terminal contract' "$1" || true)"
+  [ -n "$line" ] || { echo "missing plan-eval contract"; return; }
+  for needle in 'valid terminal states are' '## Plan Evaluation' '**Verdict:** Approve|Revise' \
+    '--to plan-reviewed --from plan-pending' 'Revise leaves `plan-pending` untouched' 'FAILED' 'HARNESS-FRICTION:'; do
+    # `--` is required: the `--to plan-reviewed ...` needle starts with `--`.
+    printf '%s' "$line" | grep -qF -- "$needle" || echo "missing '$needle'"
+  done
+}
+OUT="$(check_planeval_contract "$ROUTING")"
+if [ -z "$OUT" ]; then pass_msg "S10(e) dispatch-routing carries the plan-eval terminal contract"; else
+  fail_msg "S10(e) dispatch-routing plan-eval contract: $(printf '%s\n' "$OUT" | tr '\n' ';')"; fi
+printf '%s\n' '**Plan-eval terminal contract (mandatory).** the only valid terminal states are: label `plan-reviewed` or FAILED.' > "$FX"
+OUT="$(check_planeval_contract "$FX")"
+if printf '%s\n' "$OUT" | grep -qF 'Revise leaves'; then pass_msg "S10(e) contract check fires on the improvised run-38/39 wording"; else
+  fail_msg "S10(e) contract check missed the improvised wording: $OUT"; fi
+if grep -qF 'prompt as 1b' "$FULLSEND"; then fail_msg "S10(e) fullsend Step 2 still says 'prompt as 1b'"; else pass_msg "S10(e) fullsend Step 2 dropped 'prompt as 1b'"; fi
+if grep -qF 'plan-eval terminal contract' "$FULLSEND"; then pass_msg "S10(e) fullsend points at the plan-eval terminal contract"; else
+  fail_msg "S10(e) fullsend lacks 'plan-eval terminal contract'"; fi
+if grep -qF 'stays by design; the fullsend gate arm approves or re-plans' "$ROOT/skills/evaluate-issue-plan/SKILL.md"; then
+  pass_msg "S10(e) evaluate-issue-plan says Revise leaves plan-pending by design"; else
+  fail_msg "S10(e) evaluate-issue-plan lacks 'stays by design; the fullsend gate arm approves or re-plans'"; fi
 
 echo ""
 echo "=============================="

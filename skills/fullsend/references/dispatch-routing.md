@@ -26,6 +26,8 @@ The per-path dispatch contract for the autonomous flow. `/pipeline:status` is re
            prompt: 'Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md and follow it for issue #<N>. <terminal contract + HARNESS-FRICTION>')
      ```
 
+**Plan-eval terminal contract (mandatory).** Each `evaluate-issue-plan` prompt MUST end with: the *only* valid terminal states are **(a)** a `## Plan Evaluation` comment with an explicit `**Verdict:** Approve|Revise` line — on Approve the evaluator also runs `transition-issue.sh <N> --to plan-reviewed --from plan-pending`; Revise leaves `plan-pending` untouched (by design — the orchestrator's gate arm approves or re-plans); **(b)** a FAILED line. Returning the evaluation in chat is a failure. **Friction capture:** end with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines.
+
 **For PR evaluation (pr-open → evaluated).** The worktree already exists; route by tier. **Every** shape carries `model=$MODEL` from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> pr-eval` (`PIPELINE_STAGE_MODEL_PR_EVAL`, unset ⇒ `opus`):
    - **PATH A** (`docs-only`): dispatch inline — no `spawn-claude.sh`, no `claude -p`, no tmux:
      ```
