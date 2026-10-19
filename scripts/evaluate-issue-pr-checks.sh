@@ -18,7 +18,8 @@ usage() {
 Usage: evaluate-issue-pr-checks.sh <PR> --preflight "<PREFLIGHT line>"
 
 Typecheck (only when PIPELINE_TYPECHECK_CMD is set), then tests:
-  PREFLIGHT=ok REASON=none|mergeable  -> prints the green-rollup skip line
+  [PREFLIGHT issue=#<N>] PREFLIGHT=ok REASON=none|mergeable
+                                      -> prints the green-rollup skip line
   any other line, or CI checks off    -> runs touched tests (timeout 300 each),
                                          else the full PIPELINE_TEST_CMD
 Env: PIPELINE_REPO, PIPELINE_TEST_CMD, PIPELINE_TYPECHECK_CMD,
@@ -49,10 +50,13 @@ else
 fi
 
 # (b) tests
+# Read the verdict by PREFLIGHT= token, not position: the fullsend wrapper
+# prefixes `PREFLIGHT issue=#<N>` before it.
+PF_VERDICT=$(sed -nE 's/.*PREFLIGHT=([a-z]+).*/\1/p' <<<"$PREFLIGHT_LINE")
 PF_REASON=${PREFLIGHT_LINE##*REASON=}; PF_REASON=${PF_REASON%% *}
 ROLLUP_GREEN=false
-case "${PREFLIGHT_LINE%% *}:$PF_REASON" in
-  PREFLIGHT=ok:none|PREFLIGHT=ok:mergeable) ROLLUP_GREEN=true ;;
+case "$PF_VERDICT:$PF_REASON" in
+  ok:none|ok:mergeable) ROLLUP_GREEN=true ;;
 esac
 if [ "$ROLLUP_GREEN" = "true" ] && [ "${PIPELINE_CI_CHECK_ENABLED-true}" = "true" ]; then
   echo "CI: green rollup — trusting CI suite verdict; skipping full local PIPELINE_TEST_CMD re-run"
