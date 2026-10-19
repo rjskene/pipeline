@@ -130,7 +130,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
        | jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
      ```
      `PLAN_COUNT == 0` (regardless of `plan-pending`) ⇒ re-run `/pipeline:plan-issue N` once; still missing ⇒ "Skipped (plan not posted)".
-2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel `pipeline:stage-reader`, prompt `Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md and follow it for issue #<N>`, `description='evaluate-issue-plan #<N>'`); wait for all.
+2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel `pipeline:stage-reader`, prompt as 1b with `Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md`, `description='evaluate-issue-plan #<N>'`); wait for all.
 
    **Stage-model pin (mandatory)** — **ALWAYS pass `model=$MODEL`**:
    ```bash
@@ -250,14 +250,14 @@ Per wave N: usage gate, then Steps 5 → 6 → 6a → 6b → 7 on ONLY that wave
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-preflight.sh" <wave-N pr-open issues>
    ```
 
-   **Stage-model pin (mandatory)** — inline or queued, **ALWAYS pass `model=$MODEL`**:
+   **Stage-model pin (mandatory)** — **ALWAYS pass `model=$MODEL`**:
    ```bash
    PR_EVAL_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> pr-eval)
    ```
    `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`) is a REAL pin; relay any stderr WARN.
 
    **PR-eval invocation mode.** Only CWD differs:
-   1. **Inline `pipeline:stage-reader` `Agent(...)` (default — every path).** Prompt: `cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md and follow it for issue #<N>`, plus `MANUAL_MERGE=1` for the opt-out.
+   1. **Inline `pipeline:stage-reader` `Agent(...)` (default — PATH A, PATH B, PATH C, PATH D).** Prompt: `cd <worktree-absolute-path>; then Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-pr/SKILL.md and follow it for issue #<N>`, plus `MANUAL_MERGE=1` for the opt-out.
    2. **`--spawn` — `${CLAUDE_PLUGIN_ROOT}/scripts/spawn-claude.sh` / `claude -p` via the run-queue (all paths; the legacy PATH C transport).** Starts in the worktree, no `cd`; `spawn-claude.sh --manual-merge` exports `MANUAL_MERGE=1`.
 
    **`--spawn` override.** Route PR-eval through `run-queue.sh --skill evaluate-issue-pr` (`PREFLIGHT=ok` issues only), `run_in_background: true`, awaited with Step 6's waiter (one `Monitor` via `BashOutput`, filter `EVENT: (agent-stalled|agent-finished|queue-complete)`, `timeout_ms=7200000`) and triage.
