@@ -130,9 +130,9 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
        | jq '[.comments[] | select(.body | contains("## Implementation Plan"))] | length')
      ```
      `PLAN_COUNT == 0` (regardless of `plan-pending`) ⇒ re-run `/pipeline:plan-issue N` once; still missing ⇒ "Skipped (plan not posted)".
-2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel `pipeline:stage-reader`, prompt as 1b with `Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md`, `description='evaluate-issue-plan #<N>'`); wait for all.
+2. **Evaluate plans** — run `/pipeline:evaluate-issue-plan N` for every `plan-pending` issue (parallel `pipeline:stage-reader`, prompt per the dispatch-routing.md plan-eval terminal contract, with `Read ${CLAUDE_PLUGIN_ROOT}/skills/evaluate-issue-plan/SKILL.md`, `description='evaluate-issue-plan #<N>'`); wait for all.
 
-   **Stage-model pin (mandatory)** — **ALWAYS pass `model=$MODEL`**:
+   **Stage-model pin** — **ALWAYS pass `model=$MODEL`**:
    ```bash
    PLAN_EVAL_SPEC=$(PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-stage-model.sh" <N> plan-eval)
    ```
