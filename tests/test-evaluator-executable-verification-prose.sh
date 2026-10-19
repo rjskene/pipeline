@@ -80,9 +80,9 @@ A_TRIGGER='**Trigger (mechanical'
 A_NEGCTL='**Run a negative control.**'
 A_NOTEXEC='not-executed: <reason>'
 A_ROW='**Guard claims verified:**'
-# The Phase pointer bullet is per-label: evaluate-issue-pr carries no issue
-# citations in its body, so its pointer is the bare label.
-A_POINTER_PLAN='**Executable verification (#1218):**'
+# The Phase pointer bullet is per-label; neither evaluator carries issue
+# citations in its body, so both pointers are the bare label today.
+A_POINTER_PLAN='**Executable verification:**'
 A_POINTER_PR='**Executable verification:**'
 A_POINTER="$A_POINTER_PLAN"
 A_SCOPE_PLAN='**Scope at plan-eval time.**'
