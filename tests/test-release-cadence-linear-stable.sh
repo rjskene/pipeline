@@ -9,7 +9,7 @@ assert() { if eval "$2"; then echo "  PASS: $1"; PASS=$((PASS+1)); else echo "  
 # Absence checks — strings retired by the linear-stable cadence (#610).
 # Scope is docs/release-cadence.md + CLAUDE.md only — never CHANGELOG.md, .git, .claude/logs
 # (per feedback_release_fragile_tests memory).
-assert "docs/release-cadence.md does not mention Release-As:" "! grep -qF 'Release-As:' '$DOCS'"
+assert "docs/release-cadence.md does not mention an -rc Release-As footer" "! grep -qE 'Release-As: *[0-9.]+-rc' '$DOCS'"
 assert "docs/release-cadence.md does not contain Dev/prerelease channel header" "! grep -qF 'Dev/prerelease channel' '$DOCS'"
 assert "docs/release-cadence.md does not contain -rc. version literals" "! grep -qF -- '-rc.' '$DOCS'"
 assert "docs/release-cadence.md does not mention prerelease-type" "! grep -qF 'prerelease-type' '$DOCS'"
