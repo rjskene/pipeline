@@ -17,6 +17,8 @@ Run from the feature worktree. Prints one line:
 REBASE=needed unless the PR is MERGEABLE + CLEAN|UNSTABLE and no file changed
 on this branch also changed on origin/<base> since the merge-base.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH.
+     REBASE_CHECK_VIEW_JSON — a {"mergeable":..,"mergeStateStatus":..} object;
+     when set it replaces the gh pr view call (fixtures, fullsend-merge-rebase.sh --no-gh).
 USAGE
 }
 
@@ -31,7 +33,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
 BASE="${PIPELINE_BASE_BRANCH:?PIPELINE_BASE_BRANCH unset}"
 
-VIEW=$(gh pr view "$PR" --repo "${PIPELINE_REPO:-}" --json mergeable,mergeStateStatus)
+VIEW="${REBASE_CHECK_VIEW_JSON:-}"
+[ -n "$VIEW" ] || VIEW=$(gh pr view "$PR" --repo "${PIPELINE_REPO:-}" --json mergeable,mergeStateStatus)
 MERGEABLE=$(printf '%s' "$VIEW" | jq -r '.mergeable // "UNKNOWN"')
 MERGE_STATE=$(printf '%s' "$VIEW" | jq -r '.mergeStateStatus // "UNKNOWN"')
 

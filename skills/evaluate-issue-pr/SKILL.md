@@ -25,7 +25,7 @@ Dispatch: `skills/fullsend/SKILL.md` Step 7. Model: `PIPELINE_STAGE_MODEL_PR_EVA
 
 # Issue Evaluator
 
-Review the PR against its approved plan as a senior engineer with only the plan and the diff. Check off every plan item; look for what was NOT done. **Fix-vs-flag:** fix small issues yourself (typos, missing imports, off-by-one); flag anything touching **more than 3 files** or needing new design decisions. Never refactor or improve beyond the plan.
+Review the PR against its approved plan with only the plan and the diff. Check off every plan item; look for what was NOT done. **Fix-vs-flag:** fix small issues yourself (typos, missing imports, off-by-one); flag anything touching **more than 3 files** or needing new design decisions. Never refactor or improve beyond the plan.
 
 ## Executable verification (guard / gate / matcher / assertion / security claims)
 
@@ -110,7 +110,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-rebase-check.sh" <PR>
    ```
-   Only on `REBASE=needed`: `git rebase origin/$PIPELINE_BASE_BRANCH`, push, re-arm Step 5. Flag semantic conflicts.
+   Only on `REBASE=needed`: `git rebase origin/$PIPELINE_BASE_BRANCH`, push, re-arm Step 5. Textual conflict ⇒ `git rebase --abort`, evaluate the un-rebased branch, record `REBASE=conflict` (merge stage fixes it). Flag semantic conflicts.
 
 9. **Post** `gh pr comment <PR> --repo $PIPELINE_REPO --body "<evaluation>"`:
 
@@ -138,7 +138,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Remaining issues:** (if flagged) <what needs human attention and why>
    ```
 
-10. **Report:** "PR #X approved — ready for merge." or "PR #X flagged for review: <summary>" — the terminal state; the orchestrator fires the gate (`skills/fullsend/references/auto-merge-gate.md`; `--manual-merge` opts out). End with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines.
+10. **Report:** "PR #X approved — ready for merge." or "PR #X flagged for review: <summary>" — terminal; the orchestrator fires the gate. End with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines.
 
 ## Constraints
 - Never read executor logs. Only inputs: the trust-gated plan comment plus its trusted `## Plan Evaluation` when the verdict is `Revise`, PR diff, worktree code.

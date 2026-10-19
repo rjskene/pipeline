@@ -41,5 +41,20 @@ Base-branch enforcement is layered: the gate's `baseRefName` assertion (`block-b
    - The comment reads `Auto-merge skipped: <reason>. Run \`gh pr merge\` manually.`; for `block-base-mismatch` it also suggests `retarget-pr.sh <PR> <base>` (or `gh pr edit <PR> --base <base>`).
    - `--add-label "manual-merge"` lets `scripts/run-queue.sh` free the queue slot on its next poll instead of the 90-min timeout; it fails open, and the label stays post-merge as history.
    - **`block-capability-refused` remediation:** re-dispatch the refused task to the PR-opening role (the inline execute `Agent` on PATH A/B, the orchestrator on PATH C fan-out) per `execute-issue-plan` Step 8's owner rule, then re-run the evaluation.
+   - **Merge-conflict tokens go through `### Rebase at merge` first:** `block-mergeable`, `block-mergestate` and `block-merge-failed` reach this call only from there (`skip` carrying that token, a non-green re-gate, or a second `conflict`).
+
+### Rebase at merge
+
+Optimistic execute lets file-sharing issues share a wave, so a PR can conflict once a sibling merges. Per PR in `ORDER:` (worktree derived as `fullsend-gate.sh` does), ONE call:
+```bash
+PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-merge-rebase.sh" <worktree-abs-path> <PR>
+```
+Obey its one `REBASE=` line. **Never merge without a green gate token.**
+- `skip` ⇒ use the PR's existing gate token (`green` ⇒ `fullsend-merge-green.sh`; any `block-*` ⇒ `fullsend-block-merge.sh` with that reason).
+- `done` ⇒ re-arm the Step 6b CI wait on the rebased branch, re-fire `fullsend-gate.sh <N>`; `green` ⇒ `fullsend-merge-green.sh <N>`; any `block-*` ⇒ `fullsend-block-merge.sh` (no second pass through Rebase at merge).
+- `conflict FILES=<csv>` ⇒ ONE `Agent(subagent_type='pipeline:stage-executor', model=$MODEL, description='rebase-fix #<N>')`, `$MODEL` from the issue's `DISPATCH` line. Its prompt: rebase the feature branch onto `origin/<base>`, resolve ONLY the `FILES=` paths per the approved plan's intent, run the full suite in the foreground, push `--force-with-lease`, report `REBASE-FIX issue=#<N> files=<csv>`. Then re-dispatch pr-eval on the rebased PR (Step 7 invocation, evaluator independence), re-arm the Step 6b wait and re-fire the gate exactly as for `done`.
+- Second `conflict` on the same PR (the rebase-fix returns no `REBASE-FIX` line) ⇒ `fullsend-block-merge.sh <N>:block-mergeable` (the existing scoped halt).
+
+One run-log line per PR: `REBASE: issue=#<N> outcome=skip|done|conflict`. Headless: the script decides; no operator prompt. The CI wait is Step 6b's, reused — this procedure adds no CI poll of its own.
 
 Release-please PRs are out of scope — they flow through `PIPELINE_RELEASE_PR_AUTO_MERGE` in `skills/fullsend/SKILL.md` Step 7b.

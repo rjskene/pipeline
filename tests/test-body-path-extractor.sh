@@ -78,6 +78,8 @@ GH
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH"
 export PIPELINE_REPO="rjskene/pipeline"
+# Legacy execute-stage file-conflict serialization (#1536 knob default is true).
+export PIPELINE_OPTIMISTIC_EXECUTE=false
 
 # Helper: write a canned issue JSON. Args: dir, number, priority_label, body
 write_issue() {

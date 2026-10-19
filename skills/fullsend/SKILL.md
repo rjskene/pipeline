@@ -156,7 +156,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
 
 Each wave's worktrees are cut from **`origin/<base>`'s tip** (Step 5's explicit `--base`), so wave N+1 inherits wave N's merged work.
 
-**Pass A — wave order (`--stage=execute`, file-conflict waving on).** Parse the `Wave N:` lines:
+**Pass A — wave order (`--stage=execute`; `PIPELINE_OPTIMISTIC_EXECUTE=false` re-enables file-conflict waving).** Parse the `Wave N:` lines:
 
 ```bash
 PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/plan-waves.sh --stage=execute <approved-slate>
@@ -194,8 +194,6 @@ Per wave N: usage gate, then Steps 5 → 6 → 6a → 6b → 7 on ONLY that wave
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-dispatch-specs.sh" <wave-N issues>
    ```
-
-   **D is NOT exempt from wave discipline**: `plan-waves.sh --stage=execute` orders ALL paths over one file-conflict graph.
 
    **Inline execute dispatch prompt contract (mandatory).** Each inline PATH A/B/D (and PATH C under PATH_C_FANOUT=off) execute-issue-plan prompt MUST end with: the *only* valid terminal states are **(a)** PR opened and issue flipped to `pr-open`, reporting PR number + test status; **(b)** a FAILED line. Narrating an intention to "wait" — or returning prose instead of commit → push → `gh pr create` → label flip — is a **failure**: the turn ends when tool calls stop, so run to completion or block via foreground Bash. It MUST carry: stage ONLY plan paths via `git add <paths>`, never `git add -A|.|-u`; run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/check-cross-cutting-guards.sh"` pre-PR, abort on failure; the `tdd-implementer` discipline (failing test, `$PIPELINE_TEST_CMD` red, minimum impl, green, commit; ALL plan deliverables; FULL suite green before `gh pr create`). **Closing-review dispatch directive.** The resolver's `PRE_PR_REVIEW=` is truth: `on` ⇒ the execute agent runs Step 8's review before `gh pr create`, description `code review #<N>`; `off` ⇒ carry `PRE_PR_REVIEW=off`, log `PRE-PR-REVIEW: skipped reason=knob`. PATH D excluded. It may edit tests the plan names under `**Test changes:**`; one it finds WRONG is reported, never contorted around. **Git-anchoring + branch-assert.** Anchor every git command `git -C <worktree-abs-path>`; before ANY commit assert `git -C <worktree-abs-path> symbolic-ref --short HEAD` is the feature branch, else **STOP and report**. **Worktree-index staging.** `git -C <worktree-abs-path> add <paths>` into its OWN worktree index — never a bare `git add`, never `git -C <main-repo> add`. **Never `run_in_background` a test run.** Run `$PIPELINE_TEST_CMD` in the FOREGROUND — the project command, never a plugin script; if it splits, run slices as sequential foreground calls, all green before `gh pr create`. Split it instead of backgrounding it. **No hypothesised concurrent writer.** If changes turn up somewhere you did not expect, report the observed facts (`git -C <dir> status --short`, `log --oneline -5`, the commands you ran) and STOP; never blame a hypothesised concurrent writer you have not directly observed — the likely cause is your own unanchored `git`. **Boot-fence `CLAUDE_PLUGIN_ROOT`.** `${CLAUDE_PLUGIN_ROOT}` is valid only in a Bash call that ran the Boot fence first. **Friction capture:** end the report with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines. **One test file per `bash` invocation.** **Headless:** under `PIPELINE_HEADLESS=true` never end your turn on a question — apply the documented default, log `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>`, continue.
 
@@ -322,4 +320,4 @@ The Step 7 gate merges the green subset. Before the sequential merge loop run th
 PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-merge-order.sh"
 ```
 
-It runs `detect_merge_overlap` pairwise over `pr-open` PRs and `recommend_merge_order` (fewest-overlap-first); merge in its `ORDER:` order. Per merge: base diverges ⇒ `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE`; `mergeable` conflict ⇒ rebase in the worktree, push `--force-with-lease`, retry; check the title with `scripts/check-conventional-title.sh`.
+It runs `detect_merge_overlap` pairwise over `pr-open` PRs and `recommend_merge_order` (fewest-overlap-first); merge in its `ORDER:` order. Per merge: base diverges ⇒ `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE`; then `fullsend-merge-rebase.sh <worktree> <PR>` and obey its `REBASE=` line per [references/auto-merge-gate.md](references/auto-merge-gate.md) `Rebase at merge`; check the title with `scripts/check-conventional-title.sh`.
