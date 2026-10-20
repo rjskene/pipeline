@@ -21,6 +21,7 @@ fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
   ORDER: <pr> <pr> ...
   the relayed MERGE: / BLOCK: lines
   LOOP: issue=#<N> pr=#<P> outcome=<outcome>   (one per issue)
+  LOOP: log=<path>   (stderr log under .claude/scratch/merge-loop/; precedes the trailer)
   LOOP: done | LOOP: pending issues=<csv>      (trailer)
 Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>, block-ci,
 deferred, or the routed block-* token. pending = needs-fix + block-ci +
@@ -40,6 +41,15 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/_resolve-config.sh
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
+# Diagnostic log: stderr is tee'd to a per-run scratch file (named on the
+# LOOP: log= line) so the caller can read what the loop saw. Opened after the
+# config source so PIPELINE_PROJECT_ROOT from pipeline.config applies.
+DEFER_DIR="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/scratch/merge-loop"
+mkdir -p "$DEFER_DIR"
+LOG_FILE="$DEFER_DIR/$(date -u +%Y%m%dT%H%M%SZ).log"
+exec 3>&2
+exec 2> >(tee -a "$LOG_FILE" >&3)
+TEE_PID=$!
 # shellcheck source=scripts/_fullsend-resolve-pr.sh
 source "$SELF_DIR/_fullsend-resolve-pr.sh"
 # shellcheck source=scripts/detect-merge-overlap.sh
@@ -163,7 +173,6 @@ route_block() {
 }
 # defer_or_route <N> <P> <token> — an unsettled merge-state token defers the
 # PR (per-PR counter, removed on merge) until DEFER_MAX re-entries, then routes.
-DEFER_DIR="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/scratch/merge-loop"
 defer_or_route() {
   local f="$DEFER_DIR/$2.deferred" c
   mkdir -p "$DEFER_DIR"
@@ -189,6 +198,8 @@ for N in "${ORDERED[@]}"; do
     PRE_SNAP=$(rollup_snapshot "$PR_NUM")
     PRE=$(jq length <<<"$PRE_SNAP" 2>/dev/null); case "$PRE" in ''|*[!0-9]*) PRE=0 ;; esac
     RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
+    # The helper's final REBASE= line goes to stdout; relay it to the log.
+    echo "REBASE: pr=#$PR_NUM $RB" >&2
     case "$RB" in
       "REBASE=conflict"*)
         RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
@@ -272,9 +283,13 @@ for N in "${ORDERED[@]}"; do
   fi
 done
 
+echo "LOOP: log=$LOG_FILE"
 if [ "${#PENDING[@]}" -gt 0 ]; then
   echo "LOOP: pending issues=$(IFS=,; echo "${PENDING[*]}")"
 else
   echo "LOOP: done"
 fi
+# Restore stderr and wait for tee so the log is flushed when the caller reads it.
+exec 2>&3 3>&-
+wait "$TEE_PID" 2>/dev/null
 exit 0

@@ -272,6 +272,27 @@ RB_READS=$(awk '/^gh pr checks 42 .*--watch/ { exit } /^gh pr view 42 .*statusCh
 unset FAKE_REBASE_42 GH_WATCH_FLIP
 
 # ---------------------------------------------------------------------------
+scenario "(vii) LOOP: log= names a merge-loop scratch file holding the REBASE line"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_WATCH_FLIP=1
+run 7
+rc0 "(vii)"
+LOG=$(printf '%s\n' "$OUT" | sed -n 's/^LOOP: log=//p')
+case "$LOG" in
+  "$PROJ/.claude/scratch/merge-loop/"*.log) pass_msg "(vii) LOOP: log= names a merge-loop scratch .log" ;;
+  *) fail_msg "(vii) LOOP: log= path wrong: '${LOG}' out=$OUT" ;;
+esac
+[ -n "$LOG" ] && [ -f "$LOG" ] && pass_msg "(vii) the log file exists" || fail_msg "(vii) log file missing: '${LOG}'"
+[ -n "$LOG" ] && grep -q 'REBASE=done' "$LOG" 2>/dev/null && pass_msg "(vii) the log holds the REBASE=done relay" || fail_msg "(vii) REBASE=done not in log: $(cat "$LOG" 2>/dev/null)"
+[ "$(printf '%s\n' "$OUT" | tail -1)" = "LOOP: done" ] && pass_msg "(vii) LOOP: done stays the last line" || fail_msg "(vii) last line not LOOP: done: $OUT"
+case "$(printf '%s\n' "$OUT" | tail -2 | head -1)" in
+  "LOOP: log="*) pass_msg "(vii) LOOP: log= immediately precedes the trailer" ;;
+  *) fail_msg "(vii) LOOP: log= not right before the trailer: $OUT" ;;
+esac
+unset FAKE_REBASE_42 GH_WATCH_FLIP
+
+# ---------------------------------------------------------------------------
 DEFER_F="$PROJ/.claude/scratch/merge-loop/42.deferred"
 scenario "(ii) block-mergestate settles to green: merged, no label, counter removed"
 reset_gate
