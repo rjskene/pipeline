@@ -68,7 +68,14 @@ case "$1 $2" in
       *title*) echo "feat: pr $3" ;;
       *baseRefName*) echo "$PIPELINE_BASE_BRANCH" ;;
       *mergeCommit*) echo "abc$3" ;;
-      *statusCheckRollup*) v="GH_ROLLUP_$3"; d='{"statusCheckRollup":[]}'; echo "${!v:-$d}" ;;
+      *statusCheckRollup*)
+        # first line of $FAKE_GATE_DIR/rollup-<P>.seq (consumed) when non-empty
+        rs="$FAKE_GATE_DIR/rollup-$3.seq"
+        if [ -s "$rs" ]; then
+          head -1 "$rs"; tail -n +2 "$rs" > "$rs.t"; mv "$rs.t" "$rs"
+        else
+          v="GH_ROLLUP_$3"; d='{"statusCheckRollup":[]}'; echo "${!v:-$d}"
+        fi ;;
       *) echo "" ;;
     esac ;;
   "pr checks")
@@ -247,6 +254,22 @@ rc0 "(v)"
 has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(v) outcome=merged" || fail_msg "(v) not merged: $OUT"
 [ "$(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")" = 1 ] && pass_msg "(v) exactly one watch (settle reads spend no wait)" || fail_msg "(v) watch count != 1: $(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")"
 unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(vi) rollup unchanged from pre-push snapshot twice, then changed: watch starts only after the change"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_WATCH_FLIP=1
+{
+  for _ in 1 2 3; do echo '{"statusCheckRollup":[{"name":"t","status":"COMPLETED","detailsUrl":"u/1"}]}'; done
+  echo '{"statusCheckRollup":[{"name":"t","status":"QUEUED","detailsUrl":"u/2"}]}'
+} > "$FAKE_GATE_DIR/rollup-42.seq"
+run 7
+rc0 "(vi)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(vi) outcome=merged" || fail_msg "(vi) not merged: $OUT"
+RB_READS=$(awk '/^gh pr checks 42 .*--watch/ { exit } /^gh pr view 42 .*statusCheckRollup/ { c++ } END { print c + 0 }' "$GH_LOG")
+[ "$RB_READS" = 4 ] && pass_msg "(vi) 4 rollup reads (pre-push + 3 settle) precede the first watch" || fail_msg "(vi) rollup reads before the first watch=$RB_READS (want 4)"
+unset FAKE_REBASE_42 GH_WATCH_FLIP
 
 # ---------------------------------------------------------------------------
 DEFER_F="$PROJ/.claude/scratch/merge-loop/42.deferred"

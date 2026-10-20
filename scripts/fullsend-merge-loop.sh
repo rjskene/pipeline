@@ -60,21 +60,26 @@ WALL="${PIPELINE_MERGE_LOOP_WALL_SECS:-540}"
 CI_RERUN="${PIPELINE_MERGE_LOOP_CI_RERUN:-1}"
 TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
 
-# rollup_count <P> — statusCheckRollup length (the gate's own source, so the
-# settle and the gate cannot disagree); empty/garbage reads as 0.
-rollup_count() {
-  local c
-  c=$(gh pr view "$1" --repo "$PIPELINE_REPO" --json statusCheckRollup 2>/dev/null \
-    | jq '.statusCheckRollup | length' 2>/dev/null)
-  case "$c" in ''|*[!0-9]*) c=0 ;; esac
-  echo "$c"
+# rollup_snapshot <P> — statusCheckRollup (the gate's own source, so the
+# settle and the gate cannot disagree) as a compact [name, status, url] list;
+# the run URL is per-head, so a new head's checks differ from the old ones.
+# StatusContext entries fall back to context/state/targetUrl; garbage => [].
+rollup_snapshot() {
+  local s
+  s=$(gh pr view "$1" --repo "$PIPELINE_REPO" --json statusCheckRollup 2>/dev/null \
+    | jq -c '.statusCheckRollup | map([(.name // .context), (.status // .state), (.detailsUrl // .targetUrl)])' 2>/dev/null)
+  case "$s" in '['*) ;; *) s='[]' ;; esac
+  echo "$s"
 }
-# settle_registration <P> — after a rebase push, wait (bounded) for checks to
-# re-register when the PR had checks before ($PRE): an empty rollup reads green.
+# settle_registration <P> — after a rebase push, wait (bounded) for the pushed
+# head's checks when the PR had checks before ($PRE): the rollup still equal
+# to the pre-push snapshot ($PRE_SNAP) is the old head's, and an empty rollup
+# reads green.
 settle_registration() {
-  local reads=0
-  while [ "$PRE" -gt 0 ] && [ "$(rollup_count "$1")" -eq 0 ] \
-    && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+  local reads=0 cur
+  while [ "$PRE" -gt 0 ] && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+    cur=$(rollup_snapshot "$1")
+    [ "$cur" = "$PRE_SNAP" ] || [ "$cur" = '[]' ] || break
     sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
   done
 }
@@ -181,7 +186,8 @@ for N in "${ORDERED[@]}"; do
   fi
   WAITS=0; LAST_CW=-1
   if [ "${MANUAL_MERGE:-}" != 1 ]; then
-    PRE=$(rollup_count "$PR_NUM")
+    PRE_SNAP=$(rollup_snapshot "$PR_NUM")
+    PRE=$(jq length <<<"$PRE_SNAP" 2>/dev/null); case "$PRE" in ''|*[!0-9]*) PRE=0 ;; esac
     RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
     case "$RB" in
       "REBASE=conflict"*)
