@@ -13,10 +13,12 @@ Usage: fullsend-merge-rebase.sh [--no-gh] <worktree-dir> <PR>
 Prints ONE stdout line, exit 0 on every decision:
   REBASE=skip                    no rebase needed
   REBASE=done                    rebased onto origin/<base>, pushed --force-with-lease
-  REBASE=conflict FILES=<csv>    textual conflict — the helper aborted its rebase;
+  REBASE=conflict FILES=<csv> HEAD=<sha>
+                                 textual conflict — the helper aborted its rebase;
                                  the branch is untouched. FILES lists every
                                  conflicting path (U list + merge-tree);
                                  FILES=- when the push after a clean rebase failed
+                                 HEAD = the pre-rebase branch tip
 The rebase-check diagnostic line goes to stderr. Exit 2 on usage errors or when
 <worktree-dir> is the main checkout (never touched).
 --no-gh: no gh call; REBASE_CHECK_VIEW_JSON defaults to MERGEABLE/CLEAN.
@@ -63,12 +65,13 @@ if [ "$DECISION" = skip ]; then
   exit 0
 fi
 
+OLD_HEAD=$(git -C "$WT" rev-parse HEAD)
 if git -C "$WT" rebase "origin/$BASE" >&2; then
   if git -C "$WT" push --force-with-lease origin HEAD >&2; then
     echo "REBASE=done"
   else
     echo "fullsend-merge-rebase: push failed after a clean rebase" >&2
-    echo "REBASE=conflict FILES=-"
+    echo "REBASE=conflict FILES=- HEAD=$OLD_HEAD"
   fi
   exit 0
 fi
@@ -87,5 +90,5 @@ if [ "$MT_RC" -eq 0 ] || [ "$MT_RC" -eq 1 ]; then
   MT_LIST=$(printf '%s\n' "$MT_OUT" | tail -n +2)
 fi
 FILES=$(printf '%s\n%s\n' "$U_LIST" "$MT_LIST" | sed '/^$/d' | sort -u | paste -sd, -)
-echo "REBASE=conflict FILES=${FILES:--}"
+echo "REBASE=conflict FILES=${FILES:--} HEAD=$OLD_HEAD"
 exit 0

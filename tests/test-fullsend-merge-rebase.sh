@@ -3,15 +3,16 @@ set -uo pipefail
 #
 # tests/test-fullsend-merge-rebase.sh — scripts/fullsend-merge-rebase.sh (#1536):
 # the deterministic merge-time rebase. One stdout line REBASE=skip|done|conflict
-# [FILES=<csv>], exit 0 on every decision; refuses the main checkout (exit 2).
+# [FILES=<csv> HEAD=<pre-rebase-sha>], exit 0 on every decision; refuses the
+# main checkout (exit 2).
 #
 #   S1 no overlap + MERGEABLE/CLEAN        -> REBASE=skip, HEAD unchanged
 #   S2 different hunks of f.txt both sides -> REBASE=done, pushed, base ancestor
-#   S3 same line both sides                -> REBASE=conflict FILES=f.txt, clean abort
+#   S3 same line both sides                -> REBASE=conflict FILES=f.txt HEAD=<H0>, clean abort
 #   S4 worktree-dir is the main checkout   -> exit 2, no mutation
 #   S5 --help exit 0; no args exit 2
 #   S5b --no-gh default view is MERGEABLE/CLEAN
-#   S7 two-commit branch conflicting in f.txt AND g.txt -> FILES=f.txt,g.txt
+#   S7 two-commit branch conflicting in f.txt AND g.txt -> FILES=f.txt,g.txt HEAD=<H0>
 #      (the rebase stops on commit 1; merge-tree surfaces the second path)
 #
 # Fixtures: a bare origin, a main checkout (git_init_sandbox) and a feature
@@ -110,7 +111,7 @@ make_fixture s3 's/^5$/base-five/' 's/^5$/feat-five/'
 H0=$(git -C "$TMP/s3/wt" rev-parse HEAD)
 run --no-gh "$TMP/s3/wt" 103
 GD=$(git -C "$TMP/s3/wt" rev-parse --absolute-git-dir)
-if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=conflict FILES=f.txt" ] \
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=conflict FILES=f.txt HEAD=$H0" ] \
    && [ "$(git -C "$TMP/s3/wt" rev-parse HEAD)" = "$H0" ] \
    && [ -z "$(git -C "$TMP/s3/wt" status --porcelain)" ] \
    && [ ! -d "$GD/rebase-merge" ] && [ ! -d "$GD/rebase-apply" ]; then
@@ -179,7 +180,7 @@ git -C "$d/main" push -q origin main 2>/dev/null
 H0=$(git -C "$d/wt" rev-parse HEAD)
 run --no-gh "$d/wt" 107
 GD=$(git -C "$d/wt" rev-parse --absolute-git-dir)
-if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=conflict FILES=f.txt,g.txt" ] \
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=conflict FILES=f.txt,g.txt HEAD=$H0" ] \
    && [ "$(git -C "$d/wt" rev-parse HEAD)" = "$H0" ] \
    && [ -z "$(git -C "$d/wt" status --porcelain)" ] \
    && [ ! -d "$GD/rebase-merge" ] && [ ! -d "$GD/rebase-apply" ]; then
