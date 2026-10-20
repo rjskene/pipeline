@@ -98,7 +98,9 @@ GATE_NEEDLES=(
 )
 for needle in "${GATE_NEEDLES[@]}"; do
   inc
-  if cat "${GATE_PROC[@]}" 2>/dev/null | grep -qF -- "$needle"; then
+  # grep the files directly: `cat | grep -q` under pipefail races SIGPIPE
+  # (grep -q exits on the first match while cat is still writing).
+  if grep -qF -- "$needle" "${GATE_PROC[@]}" 2>/dev/null; then
     pass_msg "A: gate procedure carries \"$needle\""
   else
     fail_msg "A: gate procedure MISSING \"$needle\" — scripts/auto-merge-gate.sh does not do this, so the procedure is the only copy"
