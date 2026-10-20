@@ -27,8 +27,15 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.t GIT_COMMITTER_NAME=t GIT_COMMITT
 mkdir -p "$TMP/scripts"
 cp -r "$ROOT/scripts/." "$TMP/scripts/"
 cat > "$TMP/scripts/auto-merge-gate.sh" <<'FAKE'
-# fake gate (test fixture): token from $FAKE_GATE_DIR/<issue>, default green
-auto_merge_should_fire() { cat "$FAKE_GATE_DIR/$1" 2>/dev/null || echo green; }
+# fake gate (test fixture): first line of $FAKE_GATE_DIR/<issue>.seq (consumed)
+# when non-empty, else the token from $FAKE_GATE_DIR/<issue>, default green
+auto_merge_should_fire() {
+  local s="$FAKE_GATE_DIR/$1.seq"
+  if [ -s "$s" ]; then
+    head -1 "$s"; tail -n +2 "$s" > "$s.t"; mv "$s.t" "$s"; return 0
+  fi
+  cat "$FAKE_GATE_DIR/$1" 2>/dev/null || echo green
+}
 FAKE
 cat > "$TMP/scripts/fullsend-merge-rebase.sh" <<'FAKE'
 #!/bin/bash
@@ -102,7 +109,7 @@ run() {
   OUT="$(cd "$PROJ" && bash "$TMP/scripts/fullsend-merge-loop.sh" "$@" 2>"$TMP/err")"; RC=$?
   ERR="$(cat "$TMP/err")"
 }
-reset_gate() { rm -rf "$FAKE_GATE_DIR"; mkdir -p "$FAKE_GATE_DIR"; }
+reset_gate() { rm -rf "$FAKE_GATE_DIR" "$PROJ/.claude/scratch/merge-loop"; mkdir -p "$FAKE_GATE_DIR"; }
 has_line() { printf '%s\n' "$OUT" | grep -qx -- "$1"; }
 rc0() { if [ "$RC" -eq 0 ]; then pass_msg "$1: rc 0"; else fail_msg "$1: rc=$RC err=$ERR"; fi; }
 
@@ -228,6 +235,43 @@ rc0 "(i)"
 has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(i) outcome=merged" || fail_msg "(i) not merged: $OUT"
 [ "$(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")" = 2 ] && pass_msg "(i) exactly two watches (empty one not counted)" || fail_msg "(i) watch count != 2: $(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")"
 unset FAKE_REBASE_42 GH_ROLLUP_42 GH_WATCH_FLIP GH_WATCH_NOCHECKS_FIRST
+
+# ---------------------------------------------------------------------------
+DEFER_F="$PROJ/.claude/scratch/merge-loop/42.deferred"
+scenario "(ii) block-mergestate settles to green: merged, no label, counter removed"
+reset_gate
+printf '%s\n' block-mergestate block-mergestate green > "$FAKE_GATE_DIR/7.seq"
+mkdir -p "$PROJ/.claude/scratch/merge-loop"; echo 1 > "$DEFER_F"
+run 7
+rc0 "(ii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(ii) outcome=merged" || fail_msg "(ii) not merged: $OUT"
+grep -q -- '--add-label manual-merge' "$GH_LOG" && fail_msg "(ii) manual-merge label applied" || pass_msg "(ii) no manual-merge label"
+printf '%s\n' "$OUT" | grep -q '^BLOCK:' && fail_msg "(ii) BLOCK: line emitted" || pass_msg "(ii) no BLOCK: line"
+[ -e "$DEFER_F" ] && fail_msg "(ii) 42.deferred survives the merge" || pass_msg "(ii) merge removes 42.deferred"
+
+# ---------------------------------------------------------------------------
+scenario "(iii) block-mergestate never settles: deferred, counter=1, no label"
+reset_gate
+echo block-mergestate > "$FAKE_GATE_DIR/7"
+run 7
+rc0 "(iii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=deferred' && pass_msg "(iii) outcome=deferred" || fail_msg "(iii) not deferred: $OUT"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(iii) a label was applied" || pass_msg "(iii) no --add-label call"
+[ "$(cat "$DEFER_F" 2>/dev/null)" = 1 ] && pass_msg "(iii) 42.deferred reads 1" || fail_msg "(iii) 42.deferred=$(cat "$DEFER_F" 2>/dev/null || echo missing)"
+has_line 'LOOP: pending issues=7' && pass_msg "(iii) LOOP: pending issues=7" || fail_msg "(iii) pending trailer wrong: $OUT"
+
+# ---------------------------------------------------------------------------
+scenario "(iv) deferral cap reached: routed block-mergestate once"
+reset_gate
+echo block-mergestate > "$FAKE_GATE_DIR/7"
+mkdir -p "$PROJ/.claude/scratch/merge-loop"; echo 3 > "$DEFER_F"
+run 7
+rc0 "(iv)"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(iv) exactly one manual-merge label call" || fail_msg "(iv) manual-merge label calls != 1"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergestate' && pass_msg "(iv) outcome=block-mergestate" || fail_msg "(iv) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-mergestate' && pass_msg "(iv) BLOCK: line relayed" || fail_msg "(iv) no BLOCK: line: $OUT"
+has_line 'LOOP: done' && pass_msg "(iv) LOOP: done" || fail_msg "(iv) trailer wrong: $OUT"
 
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"

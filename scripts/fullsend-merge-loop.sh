@@ -24,11 +24,14 @@ fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
   LOOP: done | LOOP: pending issues=<csv>      (trailer)
 Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>, block-ci,
 deferred, or the routed block-* token. pending = needs-fix + block-ci +
-deferred. Exit 0 always; exit 2 with no issue argument.
+deferred. A block-mergestate/block-mergeable token is re-gated until it
+settles, then deferred (counter .claude/scratch/merge-loop/<P>.deferred) up to
+DEFER_MAX re-entries before it is routed. Exit 0 always; exit 2 with no issue
+argument.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
 PIPELINE_WORKTREE_PREFIX, MANUAL_MERGE, PIPELINE_MERGE_LOOP_CI_WAIT_SECS (300),
 PIPELINE_MERGE_LOOP_WALL_SECS (540), PIPELINE_MERGE_LOOP_CI_RERUN (1),
-PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
+PIPELINE_MERGE_LOOP_DEFER_MAX (3), PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -139,6 +142,20 @@ route_block() {
   bash "$SELF_DIR/fullsend-block-merge.sh" "$1:$3"
   loop_line "$1" "$2" "$3"
 }
+# defer_or_route <N> <P> <token> — an unsettled merge-state token defers the
+# PR (per-PR counter, removed on merge) until DEFER_MAX re-entries, then routes.
+DEFER_DIR="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/scratch/merge-loop"
+defer_or_route() {
+  local f="$DEFER_DIR/$2.deferred" c
+  mkdir -p "$DEFER_DIR"
+  c=$(cat "$f" 2>/dev/null); case "$c" in ''|*[!0-9]*) c=0 ;; esac
+  if [ "$c" -ge "${PIPELINE_MERGE_LOOP_DEFER_MAX:-3}" ]; then
+    route_block "$1" "$2" "$3"; return
+  fi
+  echo $((c + 1)) > "$f"
+  loop_line "$1" "$2" deferred; PENDING+=("$1")
+}
+is_mergestate() { case "$1" in block-mergestate|block-mergeable) return 0 ;; esac; return 1; }
 
 for N in "${ORDERED[@]}"; do
   ISSUE="$N"; PR_NUM="${PR_OF[$N]}"; WT="${WT_OF[$N]}"
@@ -196,6 +213,17 @@ for N in "${ORDERED[@]}"; do
   if [ "$DEFER" = 1 ]; then
     loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
   fi
+  # Merge-state settle: mergeStateStatus lags a sibling merge / push; re-gate
+  # (bounded by POLL_MAX and the wall) while the token stays merge-state.
+  if is_mergestate "$REASON"; then
+    reads=0
+    while is_mergestate "$REASON" && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ] \
+      && [ $((SECONDS + ${PIPELINE_MERGEABILITY_POLL_SECS:-5})) -le "$WALL" ]; do
+      sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
+      REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+    done
+    if is_mergestate "$REASON"; then defer_or_route "$N" "$PR_NUM" "$REASON"; continue; fi
+  fi
   if [ "$REASON" = block-ci ]; then
     # Step 6b owns repair: no label, no comment.
     loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N"); continue
@@ -209,8 +237,10 @@ for N in "${ORDERED[@]}"; do
     case "$MREASON" in
       green)
         [ "$MRC" -eq 0 ] || echo "WARN: issue #$N merged but fullsend-merge-green.sh exited $MRC (issue close)" >&2
+        rm -f "$DEFER_DIR/$PR_NUM.deferred"
         loop_line "$N" "$PR_NUM" "merged sha=${MLINE##*sha=}" ;;
       block-ci) loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N") ;;
+      block-mergestate|block-mergeable) defer_or_route "$N" "$PR_NUM" "$MREASON" ;;
       *) route_block "$N" "$PR_NUM" "${MREASON:-block-merge-failed}" ;;
     esac
   else
