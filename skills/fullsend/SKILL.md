@@ -262,11 +262,11 @@ Per wave N: usage gate, then Steps 5 → 6 → 6a → 6b → 7 on ONLY that wave
 
    **Inline PR-eval dispatch prompt contract (mandatory).** Every inline `evaluate-issue-pr` prompt MUST end with: the *only* valid terminal states are **(a)** a `## Evaluation` comment with an explicit `**Verdict:**` line; **(b)** a FAILED line. The ORCHESTRATOR, not the evaluator, fires the greenlight gate — the prompt says so and demands no `block-*` token. Narrating an intention to "wait" / "await CI" instead of posting the verdict is a **failure**; block on CI via foreground Bash. **Preflight trust:** carry the preflight line verbatim; the evaluator re-runs none of its checks. **Friction capture:** end with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines. **Headless:** under `PIPELINE_HEADLESS=true` never end your turn on a question — apply the documented default, log `HEADLESS-DEFAULT: <site> decision=<what> reason=<why>`, continue.
 
-   **Fire the gate per WAVE (mandatory).** Once the wave's evaluators return, ONE call — inline and `--spawn` alike. It sources `scripts/auto-merge-gate.sh`, threads `PIPELINE_CAPABILITY_REFUSAL_SOURCES` via `check-capability-refusal.sh --resolve-sources`, and prints `GATE: issue=#<N> pr=#<P> reason=<token>` per issue:
+   **Fire the merge loop per WAVE (mandatory).** Once the wave's evaluators return, ONE foreground call (Bash `timeout: 600000`) — inline and `--spawn` alike. It sources `scripts/auto-merge-gate.sh`, threads `PIPELINE_CAPABILITY_REFUSAL_SOURCES` via `check-capability-refusal.sh --resolve-sources`, then orders, rebases, waits for CI and gates each PR:
    ```bash
-   PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-gate.sh" <wave-N issues whose evaluator returned>
+   PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-merge-loop.sh" <wave-N issues whose evaluator returned>
    ```
-   On any token, follow [references/auto-merge-gate.md](references/auto-merge-gate.md).
+   Obey its `LOOP:` lines per [references/auto-merge-gate.md](references/auto-merge-gate.md).
 7b. **Auto-merge green release PRs (opt-in)** — after step 7 (Evaluate PRs), before step 8. Fires only when `PIPELINE_RELEASE_PR_AUTO_MERGE=true` (default **off**) AND a release PR has `ci=pass`.
 
    ```bash
@@ -314,10 +314,10 @@ Read [references/dispatch-routing.md](references/dispatch-routing.md) when resol
 
 ## Merge orchestration (reference)
 
-The Step 7 gate merges the green subset. Before the sequential merge loop run the advisory overlap scan (never blocks):
+The Step 7 loop owns order, rebase and the title check. Hand-driving and Step 8 run the advisory overlap scan first (`detect_merge_overlap` pairwise, `recommend_merge_order` fewest-overlap-first; never blocks):
 
 ```bash
 PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-merge-order.sh"
 ```
 
-It runs `detect_merge_overlap` pairwise over `pr-open` PRs and `recommend_merge_order` (fewest-overlap-first); merge in its `ORDER:` order. Per merge: base diverges ⇒ `PIPELINE_REPO="$PIPELINE_REPO" bash ${CLAUDE_PLUGIN_ROOT}/scripts/retarget-pr.sh $PR_NUM $EXPECTED_BASE`; then `fullsend-merge-rebase.sh <worktree> <PR>` and obey its `REBASE=` line per [references/auto-merge-gate.md](references/auto-merge-gate.md) `Rebase at merge`; check the title with `scripts/check-conventional-title.sh`.
+Then per PR in `ORDER:`: `fullsend-merge-rebase.sh` → `fullsend-gate.sh` → `fullsend-merge-green.sh` / `fullsend-block-merge.sh`; a diverged base ⇒ `scripts/retarget-pr.sh`.

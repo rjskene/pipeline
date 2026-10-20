@@ -24,7 +24,7 @@ scenario() { echo ""; echo "-- $1 --"; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-HELPERS="fullsend-fetch-attachments.sh fullsend-approve.sh fullsend-preflight.sh fullsend-gate.sh fullsend-merge-green.sh fullsend-block-merge.sh fullsend-dispatch-specs.sh fullsend-release-prs.sh fullsend-merge-order.sh"
+HELPERS="fullsend-fetch-attachments.sh fullsend-approve.sh fullsend-preflight.sh fullsend-gate.sh fullsend-merge-green.sh fullsend-block-merge.sh fullsend-dispatch-specs.sh fullsend-release-prs.sh fullsend-merge-order.sh fullsend-merge-loop.sh"
 
 # ---------------------------------------------------------------------------
 # Stub gh. Knobs: GH_PR_NUM, GH_BASE, GH_MERGE_RC, GH_CLOSE_MODE
@@ -106,6 +106,7 @@ declare -A GRAMMAR=(
   [fullsend-block-merge.sh]='BLOCK: issue=#<N> pr=#<P> reason=<token>'
   [fullsend-approve.sh]='TRANSITION='
   [fullsend-merge-order.sh]='ORDER:'
+  [fullsend-merge-loop.sh]='LOOP: issue=#<N> pr=#<P> outcome='
 )
 for h in "${!GRAMMAR[@]}"; do
   [ -f "$S/$h" ] || continue

@@ -28,7 +28,7 @@ set -uo pipefail
 #      ONLY in the orchestrator's procedure. Deleting them would leave inline
 #      PATH A/B/D PRs unmerged. They must be present in the union of
 #      `skills/fullsend/references/auto-merge-gate.md` and the Step 7 helpers
-#      it calls (`scripts/fullsend-{gate,merge-green,block-merge}.sh`).
+#      it calls (`scripts/fullsend-{merge-loop,gate,merge-green,block-merge}.sh`).
 #
 # Plus the three OWNERSHIP sites that must stop naming the evaluator as the
 # firing party: `## Auto-merge ownership`, the Step 8 report legend, and the
@@ -48,9 +48,11 @@ source "$SCRIPT_DIR/_lib/skill-body.sh"
 FS="$REPO_ROOT/skills/fullsend/SKILL.md"
 GATE_REF="$REPO_ROOT/skills/fullsend/references/auto-merge-gate.md"
 GATE_HELPER="$REPO_ROOT/scripts/fullsend-gate.sh"
+LOOP_HELPER="$REPO_ROOT/scripts/fullsend-merge-loop.sh"
 GATE_PROC=(
   "$GATE_REF"
   "$GATE_HELPER"
+  "$LOOP_HELPER"
   "$REPO_ROOT/scripts/fullsend-merge-green.sh"
   "$REPO_ROOT/scripts/fullsend-block-merge.sh"
 )
@@ -96,7 +98,9 @@ GATE_NEEDLES=(
 )
 for needle in "${GATE_NEEDLES[@]}"; do
   inc
-  if cat "${GATE_PROC[@]}" 2>/dev/null | grep -qF -- "$needle"; then
+  # grep the files directly: `cat | grep -q` under pipefail races SIGPIPE
+  # (grep -q exits on the first match while cat is still writing).
+  if grep -qF -- "$needle" "${GATE_PROC[@]}" 2>/dev/null; then
     pass_msg "A: gate procedure carries \"$needle\""
   else
     fail_msg "A: gate procedure MISSING \"$needle\" — scripts/auto-merge-gate.sh does not do this, so the procedure is the only copy"
@@ -104,7 +108,7 @@ for needle in "${GATE_NEEDLES[@]}"; do
 done
 
 # The reference must name every helper it delegates to.
-for h in fullsend-merge-green.sh fullsend-block-merge.sh fullsend-gate.sh; do
+for h in fullsend-merge-green.sh fullsend-block-merge.sh fullsend-gate.sh fullsend-merge-loop.sh; do
   inc
   if grep -qF -- "$h" "$GATE_REF"; then
     pass_msg "A: gate reference names $h"
@@ -156,7 +160,7 @@ fi
 # Step 7 names the procedure and calls the gate helper from a fence.
 STEP7_NEEDLES=(
   'scripts/auto-merge-gate.sh'
-  'scripts/fullsend-gate.sh'
+  'scripts/fullsend-merge-loop.sh'
   '--resolve-sources'
   'PIPELINE_CAPABILITY_REFUSAL_SOURCES'
   'references/auto-merge-gate.md'
@@ -171,13 +175,17 @@ for needle in "${STEP7_NEEDLES[@]}"; do
 done
 
 # The helper is the executable call site: sourced gate + resolved sources + token.
-for needle in 'source "$SELF_DIR/auto-merge-gate.sh"' 'check-capability-refusal.sh" --resolve-sources' 'PIPELINE_CAPABILITY_REFUSAL_SOURCES' 'REASON=$(auto_merge_should_fire'; do
-  inc
-  if grep -vE '^[[:space:]]*#' "$GATE_HELPER" | grep -qF -- "$needle"; then
-    pass_msg "C: fullsend-gate.sh carries \"$needle\""
-  else
-    fail_msg "C: fullsend-gate.sh MISSING \"$needle\""
-  fi
+# Both the Step 7 merge loop and the Step 8 / hand-drive gate helper.
+for helper in "$LOOP_HELPER" "$GATE_HELPER"; do
+  hn="$(basename "$helper")"
+  for needle in 'source "$SELF_DIR/auto-merge-gate.sh"' 'check-capability-refusal.sh" --resolve-sources' 'PIPELINE_CAPABILITY_REFUSAL_SOURCES' 'REASON=$(auto_merge_should_fire'; do
+    inc
+    if grep -vE '^[[:space:]]*#' "$helper" | grep -qF -- "$needle"; then
+      pass_msg "C: $hn carries \"$needle\""
+    else
+      fail_msg "C: $hn MISSING \"$needle\""
+    fi
+  done
 done
 
 # Non-vacuity: Step 7 must call the helper INSIDE a bash fence, not in prose.
@@ -188,10 +196,10 @@ STEP7_FENCED="$(printf '%s\n' "$STEP7" | awk '
   inb { print }
 ')"
 inc
-if grep -qF 'scripts/fullsend-gate.sh' <<<"$STEP7_FENCED"; then
-  pass_msg "C: the fullsend-gate.sh call is INSIDE a bash fence (an executable call site, not prose)"
+if grep -qF 'scripts/fullsend-merge-loop.sh' <<<"$STEP7_FENCED"; then
+  pass_msg "C: the fullsend-merge-loop.sh call is INSIDE a bash fence (an executable call site, not prose)"
 else
-  fail_msg "C: fullsend-gate.sh does not appear inside any Step 7 bash fence — a prose-only gate never fires"
+  fail_msg "C: fullsend-merge-loop.sh does not appear inside any Step 7 bash fence — a prose-only gate never fires"
 fi
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@
 
 ## Structure (#1492)
 
-- Every multi-command bash fence became a `scripts/fullsend-*.sh` helper that takes the wave's issue numbers and answers `--help`: fetch-attachments, approve, preflight, gate, merge-green, block-merge, dispatch-specs, release-prs, merge-order. The shared fail-closed PR derivation lives in `scripts/_fullsend-resolve-pr.sh`.
+- Every multi-command bash fence became a `scripts/fullsend-*.sh` helper that takes the wave's issue numbers and answers `--help`: fetch-attachments, approve, preflight, gate, merge-green, block-merge, dispatch-specs, release-prs, merge-order, merge-loop. The shared fail-closed PR derivation lives in `scripts/_fullsend-resolve-pr.sh`.
 - `references/pr-eval-dispatch.md` folded into SKILL.md Step 7 (`**PR-eval invocation mode.**`), `references/scoped-halt.md` into `### Scoped halt-and-report`, and `references/merge-orchestration.md` into `## Merge orchestration (reference)`.
 - `## Usage gate (#969)` became `## Usage gate`. `tests/test-fullsend-mass-budget.sh` pins the budget: body ≤4000 words, references ≤5000, zero citations, one command per fence.
 
@@ -59,6 +59,7 @@
 - The `manual-merge` label lets the run-queue free a slot instead of waiting 90 minutes (#489).
 - `block-cage-tests-diff` stops an agent weakening the cage tests (#1304).
 - Optimistic execute (#1536): sharing a file is not sharing a hunk, so `plan-waves.sh --stage=execute` no longer serializes on shared files by default. Each PR is rebased at merge by `fullsend-merge-rebase.sh`; a textual conflict gets one bounded `rebase-fix` agent, and a second conflict is `block-mergeable` (the scoped halt). A `skip` or a re-fired gate never bypasses the greenlight matrix. `PIPELINE_OPTIMISTIC_EXECUTE=false` restores the #700 unified file-conflict graph, under which PATH D is not exempt from wave discipline: D's inline dispatch is a transport choice downstream of waving.
+- Script-driven merge loop (#1547): calibration run 41 spent ≈60 orchestrator turns (1190 s → 2050 s) hand-driving order → rebase → CI wait → gate → merge/block per PR, while sandbox CI took 10–19 s. `fullsend-merge-loop.sh` runs that chain in one call per wave and hands back only what needs an agent (`needs-fix`) or more CI time (`block-ci`, `deferred`); the `### Rebase at merge` prose became its `LOOP:` contract plus `### Re-entry`. The CI wait defaults to 300 s, not 600, and `PIPELINE_MERGE_LOOP_WALL_SECS` (540) defers the remaining issues, because the orchestrator's foreground Bash ceiling is 600 s. After a rebase push the loop waits for checks to re-register, since an empty rollup reads green. `fullsend-gate.sh` stays for Step 8 and hand-driving.
 
 ## Campaign and usage gate
 
