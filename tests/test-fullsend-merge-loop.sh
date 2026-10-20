@@ -68,7 +68,14 @@ case "$1 $2" in
       *title*) echo "feat: pr $3" ;;
       *baseRefName*) echo "$PIPELINE_BASE_BRANCH" ;;
       *mergeCommit*) echo "abc$3" ;;
-      *statusCheckRollup*) v="GH_ROLLUP_$3"; d='{"statusCheckRollup":[]}'; echo "${!v:-$d}" ;;
+      *statusCheckRollup*)
+        # first line of $FAKE_GATE_DIR/rollup-<P>.seq (consumed) when non-empty
+        rs="$FAKE_GATE_DIR/rollup-$3.seq"
+        if [ -s "$rs" ]; then
+          head -1 "$rs"; tail -n +2 "$rs" > "$rs.t"; mv "$rs.t" "$rs"
+        else
+          v="GH_ROLLUP_$3"; d='{"statusCheckRollup":[]}'; echo "${!v:-$d}"
+        fi ;;
       *) echo "" ;;
     esac ;;
   "pr checks")
@@ -238,6 +245,54 @@ has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(i) outco
 unset FAKE_REBASE_42 GH_ROLLUP_42 GH_WATCH_FLIP GH_WATCH_NOCHECKS_FIRST
 
 # ---------------------------------------------------------------------------
+scenario "(v) completed watch, rollup lags: block-ci twice then green => merged, one watch"
+reset_gate
+printf '%s\n' block-ci block-ci green > "$FAKE_GATE_DIR/7.seq"
+export FAKE_REBASE_42=done
+run 7
+rc0 "(v)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(v) outcome=merged" || fail_msg "(v) not merged: $OUT"
+[ "$(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")" = 1 ] && pass_msg "(v) exactly one watch (settle reads spend no wait)" || fail_msg "(v) watch count != 1: $(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(vi) rollup unchanged from pre-push snapshot twice, then changed: watch starts only after the change"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_WATCH_FLIP=1
+{
+  for _ in 1 2 3; do echo '{"statusCheckRollup":[{"name":"t","status":"COMPLETED","detailsUrl":"u/1"}]}'; done
+  echo '{"statusCheckRollup":[{"name":"t","status":"QUEUED","detailsUrl":"u/2"}]}'
+} > "$FAKE_GATE_DIR/rollup-42.seq"
+run 7
+rc0 "(vi)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(vi) outcome=merged" || fail_msg "(vi) not merged: $OUT"
+RB_READS=$(awk '/^gh pr checks 42 .*--watch/ { exit } /^gh pr view 42 .*statusCheckRollup/ { c++ } END { print c + 0 }' "$GH_LOG")
+[ "$RB_READS" = 4 ] && pass_msg "(vi) 4 rollup reads (pre-push + 3 settle) precede the first watch" || fail_msg "(vi) rollup reads before the first watch=$RB_READS (want 4)"
+unset FAKE_REBASE_42 GH_WATCH_FLIP
+
+# ---------------------------------------------------------------------------
+scenario "(vii) LOOP: log= names a merge-loop scratch file holding the REBASE line"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_WATCH_FLIP=1
+run 7
+rc0 "(vii)"
+LOG=$(printf '%s\n' "$OUT" | sed -n 's/^LOOP: log=//p')
+case "$LOG" in
+  "$PROJ/.claude/scratch/merge-loop/"*.log) pass_msg "(vii) LOOP: log= names a merge-loop scratch .log" ;;
+  *) fail_msg "(vii) LOOP: log= path wrong: '${LOG}' out=$OUT" ;;
+esac
+[ -n "$LOG" ] && [ -f "$LOG" ] && pass_msg "(vii) the log file exists" || fail_msg "(vii) log file missing: '${LOG}'"
+[ -n "$LOG" ] && grep -q 'REBASE=done' "$LOG" 2>/dev/null && pass_msg "(vii) the log holds the REBASE=done relay" || fail_msg "(vii) REBASE=done not in log: $(cat "$LOG" 2>/dev/null)"
+[ "$(printf '%s\n' "$OUT" | tail -1)" = "LOOP: done" ] && pass_msg "(vii) LOOP: done stays the last line" || fail_msg "(vii) last line not LOOP: done: $OUT"
+case "$(printf '%s\n' "$OUT" | tail -2 | head -1)" in
+  "LOOP: log="*) pass_msg "(vii) LOOP: log= immediately precedes the trailer" ;;
+  *) fail_msg "(vii) LOOP: log= not right before the trailer: $OUT" ;;
+esac
+unset FAKE_REBASE_42 GH_WATCH_FLIP
+
+# ---------------------------------------------------------------------------
 DEFER_F="$PROJ/.claude/scratch/merge-loop/42.deferred"
 scenario "(ii) block-mergestate settles to green: merged, no label, counter removed"
 reset_gate
@@ -280,6 +335,9 @@ GATE_MD="$ROOT/skills/fullsend/references/auto-merge-gate.md"
 grep -qF 'repeating its previous `files=`' "$GATE_MD" && pass_msg "(p) Re-entry names the repeated files= rule" || fail_msg "(p) repeated files= rule missing"
 grep -qF 'at most 3 per issue per wave' "$GATE_MD" && pass_msg "(p) Re-entry caps rebase-fix at 3 per issue per wave" || fail_msg "(p) per-wave cap missing"
 grep -qF 'A second `needs-fix` for the same issue' "$GATE_MD" && fail_msg "(p) stale second-needs-fix rule still present" || pass_msg "(p) stale second-needs-fix rule gone"
+grep -qF 'except `block-ci` (handed back) and `block-mergestate`/`block-mergeable`' "$GATE_MD" && pass_msg "(p) block-* routing names the settled merge-state tokens" || fail_msg "(p) block-* routing omits block-mergestate/block-mergeable"
+grep -qF 'reason** except `block-ci`, the loop calls' "$GATE_MD" && fail_msg "(p) stale block-ci-only routing wording still present" || pass_msg "(p) stale block-ci-only routing wording gone"
+grep -qF 'LOOP: log=<path>' "$GATE_MD" && pass_msg "(p) LOOP text block names LOOP: log=<path>" || fail_msg "(p) LOOP: log=<path> missing from the LOOP text block"
 grep -qE '^#PIPELINE_MERGE_LOOP_DEFER_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries DEFER_MAX" || fail_msg "(p) DEFER_MAX example line missing"
 
 echo ""

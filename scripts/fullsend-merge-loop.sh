@@ -21,6 +21,7 @@ fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
   ORDER: <pr> <pr> ...
   the relayed MERGE: / BLOCK: lines
   LOOP: issue=#<N> pr=#<P> outcome=<outcome>   (one per issue)
+  LOOP: log=<path>   (stderr log under .claude/scratch/merge-loop/; precedes the trailer)
   LOOP: done | LOOP: pending issues=<csv>      (trailer)
 Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>, block-ci,
 deferred, or the routed block-* token. pending = needs-fix + block-ci +
@@ -40,6 +41,15 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/_resolve-config.sh
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
+# Diagnostic log: stderr is tee'd to a per-run scratch file (named on the
+# LOOP: log= line) so the caller can read what the loop saw. Opened after the
+# config source so PIPELINE_PROJECT_ROOT from pipeline.config applies.
+DEFER_DIR="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/scratch/merge-loop"
+mkdir -p "$DEFER_DIR"
+LOG_FILE="$DEFER_DIR/$(date -u +%Y%m%dT%H%M%SZ).log"
+exec 3>&2
+exec 2> >(tee -a "$LOG_FILE" >&3)
+TEE_PID=$!
 # shellcheck source=scripts/_fullsend-resolve-pr.sh
 source "$SELF_DIR/_fullsend-resolve-pr.sh"
 # shellcheck source=scripts/detect-merge-overlap.sh
@@ -60,44 +70,63 @@ WALL="${PIPELINE_MERGE_LOOP_WALL_SECS:-540}"
 CI_RERUN="${PIPELINE_MERGE_LOOP_CI_RERUN:-1}"
 TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
 
-# rollup_count <P> — statusCheckRollup length (the gate's own source, so the
-# settle and the gate cannot disagree); empty/garbage reads as 0.
-rollup_count() {
-  local c
-  c=$(gh pr view "$1" --repo "$PIPELINE_REPO" --json statusCheckRollup 2>/dev/null \
-    | jq '.statusCheckRollup | length' 2>/dev/null)
-  case "$c" in ''|*[!0-9]*) c=0 ;; esac
-  echo "$c"
+# rollup_snapshot <P> — statusCheckRollup (the gate's own source, so the
+# settle and the gate cannot disagree) as a compact [name, status, url] list;
+# the run URL is per-head, so a new head's checks differ from the old ones.
+# StatusContext entries fall back to context/state/targetUrl; garbage => [].
+rollup_snapshot() {
+  local s
+  s=$(gh pr view "$1" --repo "$PIPELINE_REPO" --json statusCheckRollup 2>/dev/null \
+    | jq -c '.statusCheckRollup | map([(.name // .context), (.status // .state), (.detailsUrl // .targetUrl)])' 2>/dev/null)
+  case "$s" in '['*) ;; *) s='[]' ;; esac
+  echo "$s"
 }
-# settle_registration <P> — after a rebase push, wait (bounded) for checks to
-# re-register when the PR had checks before ($PRE): an empty rollup reads green.
+# settle_registration <P> — after a rebase push, wait (bounded) for the pushed
+# head's checks when the PR had checks before ($PRE): the rollup still equal
+# to the pre-push snapshot ($PRE_SNAP) is the old head's, and an empty rollup
+# reads green.
 settle_registration() {
-  local reads=0
-  while [ "$PRE" -gt 0 ] && [ "$(rollup_count "$1")" -eq 0 ] \
-    && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+  local reads=0 cur
+  while [ "$PRE" -gt 0 ] && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+    cur=$(rollup_snapshot "$1")
+    [ "$cur" = "$PRE_SNAP" ] || [ "$cur" = '[]' ] || break
     sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
   done
 }
 # wall_ok — one more CI wait still returns before the wall budget.
 wall_ok() { [ $((SECONDS + CI_WAIT)) -le "$WALL" ]; }
 # ci_wait <P> — bounded watch, output relayed to stderr; rc 3 when gh saw no
-# checks yet (`no checks reported`), else 0 (the gate decides).
+# checks yet (`no checks reported`), rc 4 when the watch timed out, else 0
+# (the gate decides). LAST_CW keeps the rc for the post-watch settle.
 ci_wait() {
-  local out
+  local out rc=0
   if [ -n "$TIMEOUT_BIN" ]; then
-    out=$("$TIMEOUT_BIN" "$CI_WAIT" gh pr checks "$1" --repo "$PIPELINE_REPO" --watch --interval 10 2>&1)
+    out=$("$TIMEOUT_BIN" "$CI_WAIT" gh pr checks "$1" --repo "$PIPELINE_REPO" --watch --interval 10 2>&1) || rc=$?
   else
     out=$(gh pr checks "$1" --repo "$PIPELINE_REPO" 2>&1)
   fi
   [ -n "$out" ] && printf '%s\n' "$out" >&2
-  case "$out" in *"no checks reported"*) return 3 ;; esac
-  return 0
+  case "$out" in *"no checks reported"*) LAST_CW=3; return 3 ;; esac
+  [ "$rc" -eq 124 ] && { LAST_CW=4; return 4; }
+  LAST_CW=0; return 0
 }
 # ci_class <P> — failed | pending (check-ci-fix-loop.sh's state mapping).
 ci_class() {
   gh pr checks "$1" --repo "$PIPELINE_REPO" --json state,link 2>/dev/null \
     | jq -r 'if any(.[]; .state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE") then "failed" else "pending" end' 2>/dev/null \
     || echo pending
+}
+# settle_ci — a COMPLETED watch can still read block-ci while the rollup lags:
+# re-gate (bounded by POLL_MAX and the wall) while REASON stays block-ci and
+# the checks read pending. Settle reads spend no wait and start no watch.
+settle_ci() {
+  local reads=0
+  while [ "$REASON" = block-ci ] && [ "$(ci_class "$PR_NUM")" = pending ] \
+    && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ] \
+    && [ $((SECONDS + ${PIPELINE_MERGEABILITY_POLL_SECS:-5})) -le "$WALL" ]; do
+    sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
+    REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  done
 }
 
 PENDING=()
@@ -144,7 +173,6 @@ route_block() {
 }
 # defer_or_route <N> <P> <token> — an unsettled merge-state token defers the
 # PR (per-PR counter, removed on merge) until DEFER_MAX re-entries, then routes.
-DEFER_DIR="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/scratch/merge-loop"
 defer_or_route() {
   local f="$DEFER_DIR/$2.deferred" c
   mkdir -p "$DEFER_DIR"
@@ -165,10 +193,13 @@ for N in "${ORDERED[@]}"; do
   if ! wall_ok; then
     loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
   fi
-  WAITS=0
+  WAITS=0; LAST_CW=-1
   if [ "${MANUAL_MERGE:-}" != 1 ]; then
-    PRE=$(rollup_count "$PR_NUM")
+    PRE_SNAP=$(rollup_snapshot "$PR_NUM")
+    PRE=$(jq length <<<"$PRE_SNAP" 2>/dev/null); case "$PRE" in ''|*[!0-9]*) PRE=0 ;; esac
     RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
+    # The helper's final REBASE= line goes to stdout; relay it to the log.
+    echo "REBASE: pr=#$PR_NUM $RB" >&2
     case "$RB" in
       "REBASE=conflict"*)
         RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
@@ -177,7 +208,8 @@ for N in "${ORDERED[@]}"; do
         PENDING+=("$N"); continue ;;
       "REBASE=done")
         # Registration settle, then wait. A watch that saw no checks is not a
-        # wait: re-settle and re-watch once (bounded by the wall).
+        # wait: re-settle and re-watch once (bounded by the wall). A timed-out
+        # watch (rc 4) is still a spent wait.
         settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
         if [ "$CW" -eq 3 ] && [ "$PRE" -gt 0 ]; then
           if ! wall_ok; then
@@ -185,11 +217,13 @@ for N in "${ORDERED[@]}"; do
           fi
           settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
         fi
-        [ "$CW" -eq 0 ] && WAITS=1 ;;
+        case "$CW" in 0|4) WAITS=1 ;; esac ;;
     esac
   fi
 
   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  # Post-watch settle: only after a COMPLETED watch (rc 0).
+  [ "$LAST_CW" -eq 0 ] && settle_ci
   # block-ci, bounded (waits per PR <= 1 + reruns): pending with no wait yet
   # => ONE wait + re-gate; failed with rerun budget left => rerun the failed
   # jobs of the RUN (never the trailing job id), one wait, re-gate.
@@ -209,6 +243,7 @@ for N in "${ORDERED[@]}"; do
     fi
     ci_wait "$PR_NUM"; WAITS=$((WAITS + 1))
     REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+    [ "$LAST_CW" -eq 0 ] && settle_ci
   done
   if [ "$DEFER" = 1 ]; then
     loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
@@ -248,9 +283,13 @@ for N in "${ORDERED[@]}"; do
   fi
 done
 
+echo "LOOP: log=$LOG_FILE"
 if [ "${#PENDING[@]}" -gt 0 ]; then
   echo "LOOP: pending issues=$(IFS=,; echo "${PENDING[*]}")"
 else
   echo "LOOP: done"
 fi
+# Restore stderr and wait for tee so the log is flushed when the caller reads it.
+exec 2>&3 3>&-
+wait "$TEE_PID" 2>/dev/null
 exit 0
