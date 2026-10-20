@@ -210,6 +210,7 @@ has_line 'LOOP: issue=#7 pr=#42 outcome=block-verdict' && pass_msg "(d) outcome=
 printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-verdict' && pass_msg "(d) BLOCK: line relayed" || fail_msg "(d) no BLOCK: line: $OUT"
 has_line 'LOOP: done' && pass_msg "(d) a routed block is not pending" || fail_msg "(d) trailer wrong: $OUT"
 grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(d) gh pr merge called" || pass_msg "(d) no gh pr merge"
+[ -e "$PROJ/.claude/scratch/merge-loop/42.deferred" ] && fail_msg "(d) terminal block-verdict wrote 42.deferred" || pass_msg "(d) terminal token never touches the deferral counter"
 
 # ---------------------------------------------------------------------------
 scenario "(g) failed check: exactly one rerun of the run id, then block-ci"
@@ -272,6 +273,14 @@ rc0 "(iv)"
 has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergestate' && pass_msg "(iv) outcome=block-mergestate" || fail_msg "(iv) outcome wrong: $OUT"
 printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-mergestate' && pass_msg "(iv) BLOCK: line relayed" || fail_msg "(iv) no BLOCK: line: $OUT"
 has_line 'LOOP: done' && pass_msg "(iv) LOOP: done" || fail_msg "(iv) trailer wrong: $OUT"
+
+# ---------------------------------------------------------------------------
+scenario "(p) prose/config pins: repeated-needs-fix rule + DEFER_MAX example"
+GATE_MD="$ROOT/skills/fullsend/references/auto-merge-gate.md"
+grep -qF 'repeating its previous `files=`' "$GATE_MD" && pass_msg "(p) Re-entry names the repeated files= rule" || fail_msg "(p) repeated files= rule missing"
+grep -qF 'at most 3 per issue per wave' "$GATE_MD" && pass_msg "(p) Re-entry caps rebase-fix at 3 per issue per wave" || fail_msg "(p) per-wave cap missing"
+grep -qF 'A second `needs-fix` for the same issue' "$GATE_MD" && fail_msg "(p) stale second-needs-fix rule still present" || pass_msg "(p) stale second-needs-fix rule gone"
+grep -qE '^#PIPELINE_MERGE_LOOP_DEFER_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries DEFER_MAX" || fail_msg "(p) DEFER_MAX example line missing"
 
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"
