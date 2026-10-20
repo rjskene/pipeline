@@ -148,7 +148,7 @@ On an Approved `/pipeline:evaluate-issue-pr` verdict fullsend auto-merges (merge
 
    **Plan gate — annotate:** under `GATE=annotate` a `Revise` triggers NO re-plan: approve HERE via `transition-issue.sh` (`plan-pending`→`plan-approved`) `--comment "plan-eval: Revise carried into execute (plan-gate=annotate)"`, record `plan_gate=annotate`, `plan_rounds=1`; execute applies `**Recommendations:**` as binding amendments. Exception: `**Scope:** structural` runs ONE binding re-plan, then approves without re-evaluating.
 
-4. **Approve** — ONE wave call for every `plan-reviewed` issue; it runs `transition-issue.sh <N> --to plan-approved --from plan-reviewed` per issue (one `TRANSITION=` line each). Steps 2/3 call it with `--from plan-pending --comment "<text>"`:
+4. **Approve** — ONE wave call for every `plan-reviewed` issue; it runs `transition-issue.sh --batch <N>... --to plan-approved --from plan-reviewed` (one `TRANSITION=` line each). Steps 2/3 call it with `--from plan-pending --comment "<text>"`:
    ```bash
    PIPELINE_REPO="$PIPELINE_REPO" bash "${CLAUDE_PLUGIN_ROOT}/scripts/fullsend-approve.sh" <issues now at plan-reviewed>
    ```

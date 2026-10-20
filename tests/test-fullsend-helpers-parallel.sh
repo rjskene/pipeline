@@ -181,6 +181,54 @@ else
   fail_msg "default cap elapsed ${O_PAR_T}s >= 4s (serial file reads)"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "T1: transition-issue.sh --batch emits one audit line per issue, argv order"
+
+export GH_LABELS="plan-reviewed"
+timed bash "$S/transition-issue.sh" --batch 11 12 13 14 --to plan-approved --from plan-reviewed
+T_OK=1
+[ "$RC" -eq 0 ] || T_OK=0
+[ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = "4" ] || T_OK=0
+i=0
+for N in 11 12 13 14; do
+  i=$((i + 1))
+  printf '%s\n' "$OUT" | sed -n "${i}p" \
+    | grep -qx "TRANSITION=ok issue=#$N to=plan-approved from=plan-reviewed comment=skipped" || T_OK=0
+done
+if [ "$T_OK" = 1 ]; then
+  pass_msg "4 TRANSITION=ok lines in argv order, rc 0"
+else
+  fail_msg "batch rc=$RC out=$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "T2: --batch argv errors exit 2 with no TRANSITION= line"
+
+timed bash "$S/transition-issue.sh" --batch --to plan-approved
+if [ "$RC" -eq 2 ] && ! printf '%s\n' "$OUT" | grep -q 'TRANSITION='; then
+  pass_msg "no issue numbers => rc 2, no audit line"
+else
+  fail_msg "no-issue batch rc=$RC out=$OUT"
+fi
+timed bash "$S/transition-issue.sh" --batch 11 12 --from plan-reviewed
+if [ "$RC" -eq 2 ] && ! printf '%s\n' "$OUT" | grep -q 'TRANSITION='; then
+  pass_msg "no --to => rc 2, no audit line"
+else
+  fail_msg "no-to batch rc=$RC out=$OUT"
+fi
+
+# ---------------------------------------------------------------------------
+scenario "T3: --batch relays --comment to every issue"
+
+timed bash "$S/transition-issue.sh" --batch 11 12 13 --to plan-approved --comment "batch audit"
+if [ "$(grep -c '^gh issue comment 1[123] .*batch audit' "$GH_LOG")" = "3" ] \
+   && [ "$(printf '%s\n' "$OUT" | grep -c 'comment=posted$')" = "3" ]; then
+  pass_msg "one 'issue comment <N>' per issue, comment=posted"
+else
+  fail_msg "comment not relayed per issue (out=$OUT)"
+fi
+unset GH_LABELS
+
 echo ""
 echo "=============================="
 echo "  PASS: $PASS   FAIL: $FAIL"
