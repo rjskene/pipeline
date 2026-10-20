@@ -174,11 +174,11 @@ if [ "$(printf '%s\n' "$O_PAR_OUT" | grep -c '^OVERLAP ')" = "6" ] && [ "$O_PAR_
 else
   fail_msg "overlap output differs or wrong (par: $O_PAR_OUT | ser: $O_SER_OUT)"
 fi
-# Serial would be 4 s (one 1 s files read per PR).
-if [ "$O_PAR_T" -lt 4 ]; then
-  pass_msg "default cap elapsed ${O_PAR_T}s < 4s (prefetch overlaps)"
+# Serial is at least 3 s on base: the pair loop's two <(_dmo_files_for_pr) process substitutions already overlap the first pair, so 4 PRs cost 3 s; the prefetch brings it to 1 s.
+if [ "$O_PAR_T" -lt 3 ]; then
+  pass_msg "default cap elapsed ${O_PAR_T}s < 3s (prefetch overlaps)"
 else
-  fail_msg "default cap elapsed ${O_PAR_T}s >= 4s (serial file reads)"
+  fail_msg "default cap elapsed ${O_PAR_T}s >= 3s (serial file reads)"
 fi
 
 # ---------------------------------------------------------------------------
