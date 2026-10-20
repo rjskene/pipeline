@@ -174,6 +174,45 @@ has_line 'LOOP: issue=#8 pr=#43 outcome=deferred' && pass_msg "(h) issue 8 defer
 printf '%s\n' "$OUT" | grep -qxE 'LOOP: pending issues=(7,8|8,7)' && pass_msg "(h) pending lists both" || fail_msg "(h) pending trailer wrong: $OUT"
 grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(h) gh pr merge called" || pass_msg "(h) no gh pr merge"
 
+# ---------------------------------------------------------------------------
+scenario "(c) REBASE=conflict: needs-fix handed back, the sibling still merges"
+reset_gate
+export FAKE_REBASE_43='conflict FILES=f.txt,g.txt'
+run 7 8
+rc0 "(c)"
+has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt" || fail_msg "(c) needs-fix line wrong: $OUT"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(c) #7 still merged" || fail_msg "(c) sibling not merged: $OUT"
+has_line 'LOOP: pending issues=8' && pass_msg "(c) LOOP: pending issues=8" || fail_msg "(c) pending trailer wrong: $OUT"
+grep -q '^gh pr merge 43' "$GH_LOG" && fail_msg "(c) gh pr merge 43 called" || pass_msg "(c) no gh pr merge 43"
+unset FAKE_REBASE_43
+
+# ---------------------------------------------------------------------------
+scenario "(d) block-verdict: routed to fullsend-block-merge.sh once"
+reset_gate
+echo block-verdict > "$FAKE_GATE_DIR/7"
+run 7
+rc0 "(d)"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(d) exactly one manual-merge label call" || fail_msg "(d) manual-merge label calls != 1"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-verdict' && pass_msg "(d) outcome=block-verdict" || fail_msg "(d) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-verdict' && pass_msg "(d) BLOCK: line relayed" || fail_msg "(d) no BLOCK: line: $OUT"
+has_line 'LOOP: done' && pass_msg "(d) a routed block is not pending" || fail_msg "(d) trailer wrong: $OUT"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(d) gh pr merge called" || pass_msg "(d) no gh pr merge"
+
+# ---------------------------------------------------------------------------
+scenario "(g) failed check: exactly one rerun of the run id, then block-ci"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export GH_CHECKS_42='[{"state":"FAILURE","link":"https://github.com/o/r/actions/runs/555/job/9"}]'
+PIPELINE_MERGE_LOOP_CI_RERUN=1 run 7
+rc0 "(g)"
+[ "$(grep -cE '^gh run rerun 555( |$).*--failed' "$GH_LOG")" = 1 ] \
+  && pass_msg "(g) exactly one gh run rerun 555 --failed" || fail_msg "(g) rerun calls wrong: $(grep 'run rerun' "$GH_LOG")"
+grep -q 'run rerun 9' "$GH_LOG" && fail_msg "(g) reran the job id" || pass_msg "(g) never reruns the trailing job id"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-ci' && pass_msg "(g) outcome=block-ci" || fail_msg "(g) outcome wrong: $OUT"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(g) a label was applied on block-ci" || pass_msg "(g) no --add-label call"
+unset GH_CHECKS_42
+
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]

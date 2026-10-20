@@ -27,7 +27,8 @@ deferred, or the routed block-* token. pending = needs-fix + block-ci +
 deferred. Exit 0 always; exit 2 with no issue argument.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
 PIPELINE_WORKTREE_PREFIX, MANUAL_MERGE, PIPELINE_MERGE_LOOP_CI_WAIT_SECS (300),
-PIPELINE_MERGE_LOOP_WALL_SECS (540), PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
+PIPELINE_MERGE_LOOP_WALL_SECS (540), PIPELINE_MERGE_LOOP_CI_RERUN (1),
+PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -53,6 +54,7 @@ esac
 
 CI_WAIT="${PIPELINE_MERGE_LOOP_CI_WAIT_SECS:-300}"
 WALL="${PIPELINE_MERGE_LOOP_WALL_SECS:-540}"
+CI_RERUN="${PIPELINE_MERGE_LOOP_CI_RERUN:-1}"
 TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
 
 # check_count <P> — registered check count; empty/garbage (gh rc=1 "no checks
@@ -152,13 +154,28 @@ for N in "${ORDERED[@]}"; do
   fi
 
   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
-  # block-ci, bounded: a pending rollup on the skip path gets ONE wait + re-gate.
-  if [ "$REASON" = block-ci ] && [ "$WAITS" -eq 0 ] && [ "$(ci_class "$PR_NUM")" = pending ]; then
-    if ! wall_ok; then
-      loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
+  # block-ci, bounded (waits per PR <= 1 + reruns): pending with no wait yet
+  # => ONE wait + re-gate; failed with rerun budget left => rerun the failed
+  # jobs of the RUN (never the trailing job id), one wait, re-gate.
+  RERUNS=0; DEFER=0
+  while [ "$REASON" = block-ci ]; do
+    if [ "$(ci_class "$PR_NUM")" = failed ]; then
+      [ "$RERUNS" -lt "$CI_RERUN" ] || break
+      RUN_ID=$(gh pr checks "$PR_NUM" --repo "$PIPELINE_REPO" --json state,link 2>/dev/null \
+        | jq -r '.[] | select(.state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE") | .link' 2>/dev/null \
+        | grep -oE 'runs/[0-9]+' | head -1 | cut -d/ -f2)
+      [ -n "$RUN_ID" ] || break
+      wall_ok || { DEFER=1; break; }
+      gh run rerun "$RUN_ID" --repo "$PIPELINE_REPO" --failed >&2; RERUNS=$((RERUNS + 1))
+    else
+      [ "$WAITS" -eq 0 ] || break
+      wall_ok || { DEFER=1; break; }
     fi
-    ci_wait "$PR_NUM"; WAITS=1
+    ci_wait "$PR_NUM"; WAITS=$((WAITS + 1))
     REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  done
+  if [ "$DEFER" = 1 ]; then
+    loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
   fi
   if [ "$REASON" = block-ci ]; then
     # Step 6b owns repair: no label, no comment.
