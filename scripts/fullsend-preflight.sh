@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # fullsend-preflight.sh — fullsend Step 7 PR-eval preflight, one call per wave.
+# Per-issue work fans out via helper_parallel_map (cap PIPELINE_HELPER_PARALLEL).
 set -uo pipefail
 
 usage() {
@@ -20,9 +21,12 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
 # shellcheck source=scripts/_fullsend-resolve-pr.sh
 source "$SELF_DIR/_fullsend-resolve-pr.sh"
+# shellcheck source=scripts/_helper-parallel.sh
+source "$SELF_DIR/_helper-parallel.sh"
 
-for N in "$@"; do
-  fullsend_resolve_pr "$N"
-  echo "PREFLIGHT issue=#$N $(bash "$SELF_DIR/pr-eval-preflight.sh" "$N" --pr "$PR_NUM" --worktree "$WT")"
-done
+_preflight_one() {
+  fullsend_resolve_pr "$1"
+  echo "PREFLIGHT issue=#$1 $(bash "$SELF_DIR/pr-eval-preflight.sh" "$1" --pr "$PR_NUM" --worktree "$WT")"
+}
+helper_parallel_map _preflight_one "$@"
 exit 0

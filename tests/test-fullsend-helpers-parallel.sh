@@ -128,6 +128,32 @@ else
   fail_msg "one-issue stdout '$OUT' != wave line 2"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "P1/P2: fullsend-preflight.sh overlaps per-issue work, same output"
+
+# The preflight floor is the in-worktree guards pr-eval-preflight.sh runs
+# (~4 s per issue), not gh, so the bound is RELATIVE: serial minus parallel.
+timed bash "$S/fullsend-preflight.sh" 11 12 13 14
+P_PAR_OUT="$OUT"; P_PAR_T="$ELAPSED"
+PIPELINE_HELPER_PARALLEL=1 timed bash "$S/fullsend-preflight.sh" 11 12 13 14
+P_SER_OUT="$OUT"; P_SER_T="$ELAPSED"
+GOT_ORDER="$(printf '%s\n' "$P_PAR_OUT" | grep '^PREFLIGHT issue=#' | sed -E 's/^PREFLIGHT issue=(#[0-9]+) .*/\1/')"
+if [ "$(printf '%s\n' "$P_PAR_OUT" | grep -c '^PREFLIGHT issue=#')" = "4" ] && [ "$GOT_ORDER" = "$EXPECT_ORDER" ]; then
+  pass_msg "P1: exactly 4 PREFLIGHT lines in argv order"
+else
+  fail_msg "P1: PREFLIGHT lines not 4-in-argv-order: $P_PAR_OUT"
+fi
+if [ "$P_PAR_OUT" = "$P_SER_OUT" ]; then
+  pass_msg "P2: cap 1 stdout byte-identical to the default cap"
+else
+  fail_msg "P2: cap 1 stdout differs: $P_SER_OUT"
+fi
+if [ $((P_SER_T - P_PAR_T)) -ge 3 ]; then
+  pass_msg "P1: serial ${P_SER_T}s - parallel ${P_PAR_T}s >= 3s"
+else
+  fail_msg "P1: serial ${P_SER_T}s - parallel ${P_PAR_T}s < 3s (not overlapped)"
+fi
+
 echo ""
 echo "=============================="
 echo "  PASS: $PASS   FAIL: $FAIL"
