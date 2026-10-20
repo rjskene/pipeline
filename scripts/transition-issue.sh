@@ -20,9 +20,13 @@
 # Usage:
 #   bash transition-issue.sh <issue> --to <label> [--from <label>]
 #                            [--comment <text>] [--repo <owner/repo>]
+#   bash transition-issue.sh --batch <N>... --to <label> [--from <label>]
+#                            [--comment <text>] [--repo <owner/repo>]
 #
 # STDOUT CONTRACT (asserted by tests/test-transition-issue.sh): EXACTLY one line
 #   TRANSITION=ok|partial|failed issue=#<N> to=<label> from=<label|-> comment=<posted|skipped|failed>
+# `--batch` (#1548) emits that line once per issue, in argv order: it re-invokes
+# this script per issue through helper_parallel_map (cap PIPELINE_HELPER_PARALLEL).
 # Both `gh` calls are redirected (`>/dev/null 2>&1`) because `gh issue edit` and
 # `gh issue comment` each print a URL on stdout — unredirected they would make
 # this 2-3 lines and break every caller that reads the audit line.
@@ -43,13 +47,40 @@
 # broken hot-path call site.
 set -uo pipefail
 
-USAGE='Usage: transition-issue.sh <issue> --to <label> [--from <label>] [--comment <text>] [--repo <owner/repo>]'
+USAGE='Usage: transition-issue.sh <issue> --to <label> [--from <label>] [--comment <text>] [--repo <owner/repo>]
+       transition-issue.sh --batch <issue>... --to <label> [--from <label>] [--comment <text>] [--repo <owner/repo>]'
 
 die_usage() {
   [ -n "${1:-}" ] && echo "transition-issue.sh: $1" >&2
   echo "$USAGE" >&2
   exit 2
 }
+
+# --batch: leading non-flag args are the issues, the rest (REST) is relayed
+# verbatim to one single-form child per issue. The single form below is untouched.
+if [ "${1:-}" = "--batch" ]; then
+  shift
+  BATCH=()
+  while [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; do BATCH+=("$1"); shift; done
+  REST=("$@")
+  [ "${#BATCH[@]}" -gt 0 ] || die_usage "--batch requires at least one issue number"
+  _ti_to=0; _ti_i=0
+  while [ "$_ti_i" -lt "${#REST[@]}" ]; do
+    case "${REST[$_ti_i]}" in
+      --to|--from|--comment|--repo)
+        [ $((_ti_i + 1)) -lt "${#REST[@]}" ] || die_usage "${REST[$_ti_i]} requires a value"
+        [ "${REST[$_ti_i]}" = "--to" ] && _ti_to=1
+        _ti_i=$((_ti_i + 2)) ;;
+      *) die_usage "unexpected --batch arg: ${REST[$_ti_i]}" ;;
+    esac
+  done
+  [ "$_ti_to" = 1 ] || die_usage "--to <label> is required"
+  # shellcheck source=scripts/_helper-parallel.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/_helper-parallel.sh"
+  _ti_one() { bash "${BASH_SOURCE[0]}" "$1" "${REST[@]}"; }
+  helper_parallel_map _ti_one "${BATCH[@]}"
+  exit 0
+fi
 
 REPO="${PIPELINE_REPO:-}"
 ISSUE=""
