@@ -81,23 +81,37 @@ settle_registration() {
 # wall_ok — one more CI wait still returns before the wall budget.
 wall_ok() { [ $((SECONDS + CI_WAIT)) -le "$WALL" ]; }
 # ci_wait <P> — bounded watch, output relayed to stderr; rc 3 when gh saw no
-# checks yet (`no checks reported`), else 0 (the gate decides).
+# checks yet (`no checks reported`), rc 4 when the watch timed out, else 0
+# (the gate decides). LAST_CW keeps the rc for the post-watch settle.
 ci_wait() {
-  local out
+  local out rc=0
   if [ -n "$TIMEOUT_BIN" ]; then
-    out=$("$TIMEOUT_BIN" "$CI_WAIT" gh pr checks "$1" --repo "$PIPELINE_REPO" --watch --interval 10 2>&1)
+    out=$("$TIMEOUT_BIN" "$CI_WAIT" gh pr checks "$1" --repo "$PIPELINE_REPO" --watch --interval 10 2>&1) || rc=$?
   else
     out=$(gh pr checks "$1" --repo "$PIPELINE_REPO" 2>&1)
   fi
   [ -n "$out" ] && printf '%s\n' "$out" >&2
-  case "$out" in *"no checks reported"*) return 3 ;; esac
-  return 0
+  case "$out" in *"no checks reported"*) LAST_CW=3; return 3 ;; esac
+  [ "$rc" -eq 124 ] && { LAST_CW=4; return 4; }
+  LAST_CW=0; return 0
 }
 # ci_class <P> — failed | pending (check-ci-fix-loop.sh's state mapping).
 ci_class() {
   gh pr checks "$1" --repo "$PIPELINE_REPO" --json state,link 2>/dev/null \
     | jq -r 'if any(.[]; .state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE") then "failed" else "pending" end' 2>/dev/null \
     || echo pending
+}
+# settle_ci — a COMPLETED watch can still read block-ci while the rollup lags:
+# re-gate (bounded by POLL_MAX and the wall) while REASON stays block-ci and
+# the checks read pending. Settle reads spend no wait and start no watch.
+settle_ci() {
+  local reads=0
+  while [ "$REASON" = block-ci ] && [ "$(ci_class "$PR_NUM")" = pending ] \
+    && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ] \
+    && [ $((SECONDS + ${PIPELINE_MERGEABILITY_POLL_SECS:-5})) -le "$WALL" ]; do
+    sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
+    REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  done
 }
 
 PENDING=()
@@ -165,7 +179,7 @@ for N in "${ORDERED[@]}"; do
   if ! wall_ok; then
     loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
   fi
-  WAITS=0
+  WAITS=0; LAST_CW=-1
   if [ "${MANUAL_MERGE:-}" != 1 ]; then
     PRE=$(rollup_count "$PR_NUM")
     RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
@@ -177,7 +191,8 @@ for N in "${ORDERED[@]}"; do
         PENDING+=("$N"); continue ;;
       "REBASE=done")
         # Registration settle, then wait. A watch that saw no checks is not a
-        # wait: re-settle and re-watch once (bounded by the wall).
+        # wait: re-settle and re-watch once (bounded by the wall). A timed-out
+        # watch (rc 4) is still a spent wait.
         settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
         if [ "$CW" -eq 3 ] && [ "$PRE" -gt 0 ]; then
           if ! wall_ok; then
@@ -185,11 +200,13 @@ for N in "${ORDERED[@]}"; do
           fi
           settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
         fi
-        [ "$CW" -eq 0 ] && WAITS=1 ;;
+        case "$CW" in 0|4) WAITS=1 ;; esac ;;
     esac
   fi
 
   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  # Post-watch settle: only after a COMPLETED watch (rc 0).
+  [ "$LAST_CW" -eq 0 ] && settle_ci
   # block-ci, bounded (waits per PR <= 1 + reruns): pending with no wait yet
   # => ONE wait + re-gate; failed with rerun budget left => rerun the failed
   # jobs of the RUN (never the trailing job id), one wait, re-gate.
@@ -209,6 +226,7 @@ for N in "${ORDERED[@]}"; do
     fi
     ci_wait "$PR_NUM"; WAITS=$((WAITS + 1))
     REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+    [ "$LAST_CW" -eq 0 ] && settle_ci
   done
   if [ "$DEFER" = 1 ]; then
     loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue

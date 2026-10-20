@@ -238,6 +238,17 @@ has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(i) outco
 unset FAKE_REBASE_42 GH_ROLLUP_42 GH_WATCH_FLIP GH_WATCH_NOCHECKS_FIRST
 
 # ---------------------------------------------------------------------------
+scenario "(v) completed watch, rollup lags: block-ci twice then green => merged, one watch"
+reset_gate
+printf '%s\n' block-ci block-ci green > "$FAKE_GATE_DIR/7.seq"
+export FAKE_REBASE_42=done
+run 7
+rc0 "(v)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(v) outcome=merged" || fail_msg "(v) not merged: $OUT"
+[ "$(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")" = 1 ] && pass_msg "(v) exactly one watch (settle reads spend no wait)" || fail_msg "(v) watch count != 1: $(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
 DEFER_F="$PROJ/.claude/scratch/merge-loop/42.deferred"
 scenario "(ii) block-mergestate settles to green: merged, no label, counter removed"
 reset_gate
