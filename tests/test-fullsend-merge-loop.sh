@@ -61,11 +61,16 @@ case "$1 $2" in
       *title*) echo "feat: pr $3" ;;
       *baseRefName*) echo "$PIPELINE_BASE_BRANCH" ;;
       *mergeCommit*) echo "abc$3" ;;
+      *statusCheckRollup*) v="GH_ROLLUP_$3"; d='{"statusCheckRollup":[]}'; echo "${!v:-$d}" ;;
       *) echo "" ;;
     esac ;;
   "pr checks")
     case "$args" in
       *" --watch "*)
+        wn="${GH_LOG%/*}/watchn"; c=$(cat "$wn" 2>/dev/null); c=$(( ${c:-0} + 1 )); echo "$c" > "$wn"
+        if [ -n "${GH_WATCH_NOCHECKS_FIRST:-}" ] && [ "$c" = 1 ]; then
+          echo "no checks reported on the 'feature/a' branch" >&2; exit 1
+        fi
         sleep "${GH_WATCH_SLEEP:-0}"
         [ -n "${GH_WATCH_FLIP:-}" ] && echo green > "$FAKE_GATE_DIR/$(( $3 - 35 ))"
         ;;
@@ -93,7 +98,7 @@ unset CLAUDE_PLUGIN_ROOT MANUAL_MERGE PIPELINE_MERGE_LOOP_WALL_SECS PIPELINE_MER
 
 # run <issues...> — OUT/RC/ERR set; the gh log is reset per run.
 run() {
-  : > "$GH_LOG"
+  : > "$GH_LOG"; : > "$TMP/watchn"
   OUT="$(cd "$PROJ" && bash "$TMP/scripts/fullsend-merge-loop.sh" "$@" 2>"$TMP/err")"; RC=$?
   ERR="$(cat "$TMP/err")"
 }
@@ -212,6 +217,17 @@ grep -q 'run rerun 9' "$GH_LOG" && fail_msg "(g) reran the job id" || pass_msg "
 has_line 'LOOP: issue=#7 pr=#42 outcome=block-ci' && pass_msg "(g) outcome=block-ci" || fail_msg "(g) outcome wrong: $OUT"
 grep -q -- '--add-label' "$GH_LOG" && fail_msg "(g) a label was applied on block-ci" || pass_msg "(g) no --add-label call"
 unset GH_CHECKS_42
+
+# ---------------------------------------------------------------------------
+scenario "(i) first watch sees no checks: re-watch once checks register, then merged"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_ROLLUP_42='{"statusCheckRollup":[{"name":"t"}]}' GH_WATCH_FLIP=1 GH_WATCH_NOCHECKS_FIRST=1
+run 7
+rc0 "(i)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(i) outcome=merged" || fail_msg "(i) not merged: $OUT"
+[ "$(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")" = 2 ] && pass_msg "(i) exactly two watches (empty one not counted)" || fail_msg "(i) watch count != 2: $(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")"
+unset FAKE_REBASE_42 GH_ROLLUP_42 GH_WATCH_FLIP GH_WATCH_NOCHECKS_FIRST
 
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"
