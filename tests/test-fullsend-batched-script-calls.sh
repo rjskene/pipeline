@@ -78,7 +78,7 @@ scan() {
       if (whole != "" && $0 ~ /^[[:space:]]*#/) next
       if (!inb) { if (is_open($0)) { inb = 1; nc = 0; hasfor = 0 } next }
       if (whole == "" && is_close($0)) { flush_fence(); inb = 0; next }
-      if ($0 ~ /^[[:space:]]*for N in /) hasfor = 1
+      if ($0 ~ /^[[:space:]]*for N in / || $0 ~ /helper_parallel_map[[:space:]]/ || $0 ~ /transition-issue\.sh" --batch /) hasfor = 1
       for (i = 1; i <= n; i++) {
         if ($0 ~ ("(bash|source)[[:space:]][^|]*[/\"]" a[i])) {
           nc++; cl[nc] = FNR; cn[nc] = a[i]
@@ -155,14 +155,27 @@ cat > "$SELF_DIR/fixture-bare.sh" <<'SELFTEST'
 #!/bin/bash
 bash "$SELF_DIR/pr-eval-preflight.sh" "$1"
 SELFTEST
+cat > "$SELF_DIR/fixture-parmap.sh" <<'SELFTEST'
+#!/bin/bash
+_f() {
+  bash "$SELF_DIR/pr-eval-preflight.sh" "$1"
+}
+helper_parallel_map _f "$@"
+SELFTEST
 H_HITS="$(scan "$SELF_DIR/fixture-helper.sh" whole)"
 B_HITS="$(scan "$SELF_DIR/fixture-bare.sh" whole)"
+P_HITS="$(scan "$SELF_DIR/fixture-parmap.sh" whole)"
 if [ "$(printf '%s\n' "$H_HITS" | grep -c 'YES$')" = "2" ] \
    && ! printf '%s\n' "$H_HITS" | grep -q 'transition-issue.sh' \
    && [ "$(printf '%s\n' "$B_HITS" | grep -c 'NO$')" = "1" ]; then
   pass_msg "whole-file helper scan: loop file reads batched, loop-less file reads un-batched, comments ignored"
 else
   fail_msg "whole-file helper scan is not trustworthy (helper: ${H_HITS:-<none>}; bare: ${B_HITS:-<none>})"
+fi
+if [ "$(printf '%s\n' "$P_HITS" | grep -c 'YES$')" = "1" ]; then
+  pass_msg "whole-file helper scan: a helper_parallel_map fan-out (#1548) reads batched"
+else
+  fail_msg "helper_parallel_map fan-out not read as batched (got: ${P_HITS:-<none>})"
 fi
 
 # ---------------------------------------------------------------------------
