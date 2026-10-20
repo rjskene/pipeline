@@ -179,6 +179,39 @@ else
   echo "  PASS: run-queue.sh no longer points at the deleted evaluate-issue-pr Step 11"
 fi
 
+# --- #1553: delta-scoped re-evaluation after a rebase-fix. The gate's re-run
+# prompt carries REEVAL=rebase-fix OLD_HEAD=… and the LOOP template relays the
+# pre-rebase head; the evaluator points at the procedure reference.
+REEVAL_REF="${ROOT}/skills/evaluate-issue-pr/references/rebase-reeval.md"
+want "re-run prompt carries REEVAL=rebase-fix OLD_HEAD=" 'REEVAL=rebase-fix OLD_HEAD='
+if grep -qF 'outcome=needs-fix files=<csv> head=<sha>' "$GATE"; then
+  echo "  PASS: LOOP template needs-fix line carries head=<sha>"
+else
+  echo "  FAIL: LOOP template lacks 'outcome=needs-fix files=<csv> head=<sha>'"
+  FAILED=$((FAILED+1))
+fi
+if [ -f "$REEVAL_REF" ]; then
+  REEVAL_WORDS=$(wc -w < "$REEVAL_REF")
+  if [ "$REEVAL_WORDS" -le 250 ]; then
+    echo "  PASS: rebase-reeval.md is $REEVAL_WORDS words (ceiling 250)"
+  else
+    echo "  FAIL: rebase-reeval.md is $REEVAL_WORDS words — must be <= 250"
+    FAILED=$((FAILED+1))
+  fi
+  for tok in 'INTERDIFF=none' 'INTERDIFF=unknown' 'full evaluation'; do
+    if grep -qF -- "$tok" "$REEVAL_REF"; then
+      echo "  PASS: rebase-reeval.md names '$tok'"
+    else
+      echo "  FAIL: rebase-reeval.md does not name '$tok'"
+      FAILED=$((FAILED+1))
+    fi
+  done
+else
+  echo "  FAIL: skills/evaluate-issue-pr/references/rebase-reeval.md missing"
+  FAILED=$((FAILED+1))
+fi
+want_skill "SKILL.md points at references/rebase-reeval.md" 'references/rebase-reeval\.md'
+
 if [ "$FAILED" -ne 0 ]; then
   echo "FAILED: $FAILED check(s)"
   exit 1

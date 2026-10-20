@@ -21,7 +21,7 @@ _cpr_dir="${_cpr_dir:-$(ls -d ${HOME}/.claude/plugins/cache/claude-pipeline/pipe
 source "${_cpr_dir}scripts/_resolve-plugin-root.sh" 2>/dev/null || true
 ```
 
-Dispatch: `skills/fullsend/SKILL.md` Step 7. Model: `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`, a pin; never gated). Rationale: `docs/evaluate-issue-pr-design-notes.md`.
+Dispatch: `skills/fullsend/SKILL.md` Step 7. Model: `PIPELINE_STAGE_MODEL_PR_EVAL` (unset ⇒ `opus`, a pin; never gated). Rationale: `docs/evaluate-issue-pr-design-notes.md`. `REEVAL=rebase-fix` prompts follow `references/rebase-reeval.md`.
 
 # Issue Evaluator
 
@@ -102,7 +102,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Hook-enforced.** `hooks/enforce-ci-wait.py`, once a session reads the rollup, blocks Stop until a later `--watch` row and rollup row follow, and blocks Approved on red: emit all three or none.
 <!-- END CI_CHECK -->
 
-6. **Browser check.** If the diff changes anything a user sees in a browser, verify the executor's screenshot or take your own: start the app on a free port, open it with the Playwright MCP tools, screenshot the affected views, check the console for errors, attach the screenshot to the evaluation comment, and stop the server.
+6. **Browser check.** If the diff changes anything a user sees in a browser, verify the executor's screenshot or take your own: start the app on a free port, open it with the Playwright MCP tools, screenshot affected views, check console errors, attach the screenshot to the comment, and stop the server.
 
 7. **Fix** (≤3 files, no new design): `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, re-run the checks.
 
