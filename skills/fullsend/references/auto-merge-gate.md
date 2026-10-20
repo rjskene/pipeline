@@ -22,6 +22,7 @@ Base-branch enforcement is layered: the gate's `baseRefName` assertion (`block-b
    LOOP: issue=#<N> pr=#<P> outcome=needs-fix files=<csv> head=<sha>
    LOOP: issue=#<N> pr=#<P> outcome=<block-* token>
    LOOP: issue=#<N> pr=#<P> outcome=deferred
+   LOOP: log=<path>   (stderr log; informational, precedes the trailer)
    LOOP: done | LOOP: pending issues=<csv>
    ```
 
@@ -35,7 +36,7 @@ Base-branch enforcement is layered: the gate's `baseRefName` assertion (`block-b
    - `finalize-issue-labels.sh "$ISSUE" --repo "$PIPELINE_REPO"` adds `merged` and strips the lifecycle set (WARN on failure).
    - Close the issue; `already closed` (auto-closed via `closingIssuesReferences`) is benign.
 
-4. **On any `block-*` reason** except `block-ci`, the loop calls `fullsend-block-merge.sh <N>:<reason>`: one `Auto-merge skipped: <reason>. Run \`gh pr merge\` manually.` comment, then `--add-label "manual-merge"` (frees the `scripts/run-queue.sh` slot; fail-open; stays as history). No other label flip, no close: Approved-but-not-merged. One blocked PR never stops its siblings.
+4. **On any `block-*` reason** except `block-ci` (handed back) and `block-mergestate`/`block-mergeable` (settled, then deferred up to `PIPELINE_MERGE_LOOP_DEFER_MAX` re-entries before routing), the loop calls `fullsend-block-merge.sh <N>:<reason>`: one `Auto-merge skipped: <reason>. Run \`gh pr merge\` manually.` comment, then `--add-label "manual-merge"` (frees the `scripts/run-queue.sh` slot; fail-open; stays as history). No other label flip, no close: Approved-but-not-merged. One blocked PR never stops its siblings.
    - `block-base-mismatch` adds a `retarget-pr.sh <PR> <base>` (or `gh pr edit <PR> --base <base>`) suggestion.
    - **`block-capability-refused` remediation:** re-dispatch the refused task to the PR-opening role (the inline execute `Agent` on PATH A/B, the orchestrator on PATH C fan-out) per `execute-issue-plan` Step 8's owner rule, then re-run the evaluation.
 
