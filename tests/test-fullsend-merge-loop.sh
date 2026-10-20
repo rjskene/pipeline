@@ -27,8 +27,15 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.t GIT_COMMITTER_NAME=t GIT_COMMITT
 mkdir -p "$TMP/scripts"
 cp -r "$ROOT/scripts/." "$TMP/scripts/"
 cat > "$TMP/scripts/auto-merge-gate.sh" <<'FAKE'
-# fake gate (test fixture): token from $FAKE_GATE_DIR/<issue>, default green
-auto_merge_should_fire() { cat "$FAKE_GATE_DIR/$1" 2>/dev/null || echo green; }
+# fake gate (test fixture): first line of $FAKE_GATE_DIR/<issue>.seq (consumed)
+# when non-empty, else the token from $FAKE_GATE_DIR/<issue>, default green
+auto_merge_should_fire() {
+  local s="$FAKE_GATE_DIR/$1.seq"
+  if [ -s "$s" ]; then
+    head -1 "$s"; tail -n +2 "$s" > "$s.t"; mv "$s.t" "$s"; return 0
+  fi
+  cat "$FAKE_GATE_DIR/$1" 2>/dev/null || echo green
+}
 FAKE
 cat > "$TMP/scripts/fullsend-merge-rebase.sh" <<'FAKE'
 #!/bin/bash
@@ -61,11 +68,16 @@ case "$1 $2" in
       *title*) echo "feat: pr $3" ;;
       *baseRefName*) echo "$PIPELINE_BASE_BRANCH" ;;
       *mergeCommit*) echo "abc$3" ;;
+      *statusCheckRollup*) v="GH_ROLLUP_$3"; d='{"statusCheckRollup":[]}'; echo "${!v:-$d}" ;;
       *) echo "" ;;
     esac ;;
   "pr checks")
     case "$args" in
       *" --watch "*)
+        wn="${GH_LOG%/*}/watchn"; c=$(cat "$wn" 2>/dev/null); c=$(( ${c:-0} + 1 )); echo "$c" > "$wn"
+        if [ -n "${GH_WATCH_NOCHECKS_FIRST:-}" ] && [ "$c" = 1 ]; then
+          echo "no checks reported on the 'feature/a' branch" >&2; exit 1
+        fi
         sleep "${GH_WATCH_SLEEP:-0}"
         [ -n "${GH_WATCH_FLIP:-}" ] && echo green > "$FAKE_GATE_DIR/$(( $3 - 35 ))"
         ;;
@@ -93,11 +105,11 @@ unset CLAUDE_PLUGIN_ROOT MANUAL_MERGE PIPELINE_MERGE_LOOP_WALL_SECS PIPELINE_MER
 
 # run <issues...> — OUT/RC/ERR set; the gh log is reset per run.
 run() {
-  : > "$GH_LOG"
+  : > "$GH_LOG"; : > "$TMP/watchn"
   OUT="$(cd "$PROJ" && bash "$TMP/scripts/fullsend-merge-loop.sh" "$@" 2>"$TMP/err")"; RC=$?
   ERR="$(cat "$TMP/err")"
 }
-reset_gate() { rm -rf "$FAKE_GATE_DIR"; mkdir -p "$FAKE_GATE_DIR"; }
+reset_gate() { rm -rf "$FAKE_GATE_DIR" "$PROJ/.claude/scratch/merge-loop"; mkdir -p "$FAKE_GATE_DIR"; }
 has_line() { printf '%s\n' "$OUT" | grep -qx -- "$1"; }
 rc0() { if [ "$RC" -eq 0 ]; then pass_msg "$1: rc 0"; else fail_msg "$1: rc=$RC err=$ERR"; fi; }
 
@@ -198,6 +210,7 @@ has_line 'LOOP: issue=#7 pr=#42 outcome=block-verdict' && pass_msg "(d) outcome=
 printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-verdict' && pass_msg "(d) BLOCK: line relayed" || fail_msg "(d) no BLOCK: line: $OUT"
 has_line 'LOOP: done' && pass_msg "(d) a routed block is not pending" || fail_msg "(d) trailer wrong: $OUT"
 grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(d) gh pr merge called" || pass_msg "(d) no gh pr merge"
+[ -e "$PROJ/.claude/scratch/merge-loop/42.deferred" ] && fail_msg "(d) terminal block-verdict wrote 42.deferred" || pass_msg "(d) terminal token never touches the deferral counter"
 
 # ---------------------------------------------------------------------------
 scenario "(g) failed check: exactly one rerun of the run id, then block-ci"
@@ -212,6 +225,62 @@ grep -q 'run rerun 9' "$GH_LOG" && fail_msg "(g) reran the job id" || pass_msg "
 has_line 'LOOP: issue=#7 pr=#42 outcome=block-ci' && pass_msg "(g) outcome=block-ci" || fail_msg "(g) outcome wrong: $OUT"
 grep -q -- '--add-label' "$GH_LOG" && fail_msg "(g) a label was applied on block-ci" || pass_msg "(g) no --add-label call"
 unset GH_CHECKS_42
+
+# ---------------------------------------------------------------------------
+scenario "(i) first watch sees no checks: re-watch once checks register, then merged"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_ROLLUP_42='{"statusCheckRollup":[{"name":"t"}]}' GH_WATCH_FLIP=1 GH_WATCH_NOCHECKS_FIRST=1
+run 7
+rc0 "(i)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(i) outcome=merged" || fail_msg "(i) not merged: $OUT"
+[ "$(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")" = 2 ] && pass_msg "(i) exactly two watches (empty one not counted)" || fail_msg "(i) watch count != 2: $(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")"
+unset FAKE_REBASE_42 GH_ROLLUP_42 GH_WATCH_FLIP GH_WATCH_NOCHECKS_FIRST
+
+# ---------------------------------------------------------------------------
+DEFER_F="$PROJ/.claude/scratch/merge-loop/42.deferred"
+scenario "(ii) block-mergestate settles to green: merged, no label, counter removed"
+reset_gate
+printf '%s\n' block-mergestate block-mergestate green > "$FAKE_GATE_DIR/7.seq"
+mkdir -p "$PROJ/.claude/scratch/merge-loop"; echo 1 > "$DEFER_F"
+run 7
+rc0 "(ii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(ii) outcome=merged" || fail_msg "(ii) not merged: $OUT"
+grep -q -- '--add-label manual-merge' "$GH_LOG" && fail_msg "(ii) manual-merge label applied" || pass_msg "(ii) no manual-merge label"
+printf '%s\n' "$OUT" | grep -q '^BLOCK:' && fail_msg "(ii) BLOCK: line emitted" || pass_msg "(ii) no BLOCK: line"
+[ -e "$DEFER_F" ] && fail_msg "(ii) 42.deferred survives the merge" || pass_msg "(ii) merge removes 42.deferred"
+
+# ---------------------------------------------------------------------------
+scenario "(iii) block-mergestate never settles: deferred, counter=1, no label"
+reset_gate
+echo block-mergestate > "$FAKE_GATE_DIR/7"
+run 7
+rc0 "(iii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=deferred' && pass_msg "(iii) outcome=deferred" || fail_msg "(iii) not deferred: $OUT"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(iii) a label was applied" || pass_msg "(iii) no --add-label call"
+[ "$(cat "$DEFER_F" 2>/dev/null)" = 1 ] && pass_msg "(iii) 42.deferred reads 1" || fail_msg "(iii) 42.deferred=$(cat "$DEFER_F" 2>/dev/null || echo missing)"
+has_line 'LOOP: pending issues=7' && pass_msg "(iii) LOOP: pending issues=7" || fail_msg "(iii) pending trailer wrong: $OUT"
+
+# ---------------------------------------------------------------------------
+scenario "(iv) deferral cap reached: routed block-mergestate once"
+reset_gate
+echo block-mergestate > "$FAKE_GATE_DIR/7"
+mkdir -p "$PROJ/.claude/scratch/merge-loop"; echo 3 > "$DEFER_F"
+run 7
+rc0 "(iv)"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(iv) exactly one manual-merge label call" || fail_msg "(iv) manual-merge label calls != 1"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergestate' && pass_msg "(iv) outcome=block-mergestate" || fail_msg "(iv) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-mergestate' && pass_msg "(iv) BLOCK: line relayed" || fail_msg "(iv) no BLOCK: line: $OUT"
+has_line 'LOOP: done' && pass_msg "(iv) LOOP: done" || fail_msg "(iv) trailer wrong: $OUT"
+
+# ---------------------------------------------------------------------------
+scenario "(p) prose/config pins: repeated-needs-fix rule + DEFER_MAX example"
+GATE_MD="$ROOT/skills/fullsend/references/auto-merge-gate.md"
+grep -qF 'repeating its previous `files=`' "$GATE_MD" && pass_msg "(p) Re-entry names the repeated files= rule" || fail_msg "(p) repeated files= rule missing"
+grep -qF 'at most 3 per issue per wave' "$GATE_MD" && pass_msg "(p) Re-entry caps rebase-fix at 3 per issue per wave" || fail_msg "(p) per-wave cap missing"
+grep -qF 'A second `needs-fix` for the same issue' "$GATE_MD" && fail_msg "(p) stale second-needs-fix rule still present" || pass_msg "(p) stale second-needs-fix rule gone"
+grep -qE '^#PIPELINE_MERGE_LOOP_DEFER_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries DEFER_MAX" || fail_msg "(p) DEFER_MAX example line missing"
 
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"

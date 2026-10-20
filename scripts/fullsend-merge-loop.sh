@@ -24,11 +24,14 @@ fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
   LOOP: done | LOOP: pending issues=<csv>      (trailer)
 Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>, block-ci,
 deferred, or the routed block-* token. pending = needs-fix + block-ci +
-deferred. Exit 0 always; exit 2 with no issue argument.
+deferred. A block-mergestate/block-mergeable token is re-gated until it
+settles, then deferred (counter .claude/scratch/merge-loop/<P>.deferred) up to
+DEFER_MAX re-entries before it is routed. Exit 0 always; exit 2 with no issue
+argument.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
 PIPELINE_WORKTREE_PREFIX, MANUAL_MERGE, PIPELINE_MERGE_LOOP_CI_WAIT_SECS (300),
 PIPELINE_MERGE_LOOP_WALL_SECS (540), PIPELINE_MERGE_LOOP_CI_RERUN (1),
-PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
+PIPELINE_MERGE_LOOP_DEFER_MAX (3), PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -57,23 +60,37 @@ WALL="${PIPELINE_MERGE_LOOP_WALL_SECS:-540}"
 CI_RERUN="${PIPELINE_MERGE_LOOP_CI_RERUN:-1}"
 TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
 
-# check_count <P> — registered check count; empty/garbage (gh rc=1 "no checks
-# reported", empty stdout) reads as 0.
-check_count() {
+# rollup_count <P> — statusCheckRollup length (the gate's own source, so the
+# settle and the gate cannot disagree); empty/garbage reads as 0.
+rollup_count() {
   local c
-  c=$(gh pr checks "$1" --repo "$PIPELINE_REPO" --json state 2>/dev/null | jq length 2>/dev/null)
+  c=$(gh pr view "$1" --repo "$PIPELINE_REPO" --json statusCheckRollup 2>/dev/null \
+    | jq '.statusCheckRollup | length' 2>/dev/null)
   case "$c" in ''|*[!0-9]*) c=0 ;; esac
   echo "$c"
 }
+# settle_registration <P> — after a rebase push, wait (bounded) for checks to
+# re-register when the PR had checks before ($PRE): an empty rollup reads green.
+settle_registration() {
+  local reads=0
+  while [ "$PRE" -gt 0 ] && [ "$(rollup_count "$1")" -eq 0 ] \
+    && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+    sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
+  done
+}
 # wall_ok — one more CI wait still returns before the wall budget.
 wall_ok() { [ $((SECONDS + CI_WAIT)) -le "$WALL" ]; }
-# ci_wait <P> — bounded watch; rc ignored (the gate decides).
+# ci_wait <P> — bounded watch, output relayed to stderr; rc 3 when gh saw no
+# checks yet (`no checks reported`), else 0 (the gate decides).
 ci_wait() {
+  local out
   if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" "$CI_WAIT" gh pr checks "$1" --repo "$PIPELINE_REPO" --watch --interval 10 >&2 2>&1
+    out=$("$TIMEOUT_BIN" "$CI_WAIT" gh pr checks "$1" --repo "$PIPELINE_REPO" --watch --interval 10 2>&1)
   else
-    gh pr checks "$1" --repo "$PIPELINE_REPO" >&2 2>&1
+    out=$(gh pr checks "$1" --repo "$PIPELINE_REPO" 2>&1)
   fi
+  [ -n "$out" ] && printf '%s\n' "$out" >&2
+  case "$out" in *"no checks reported"*) return 3 ;; esac
   return 0
 }
 # ci_class <P> — failed | pending (check-ci-fix-loop.sh's state mapping).
@@ -125,6 +142,20 @@ route_block() {
   bash "$SELF_DIR/fullsend-block-merge.sh" "$1:$3"
   loop_line "$1" "$2" "$3"
 }
+# defer_or_route <N> <P> <token> — an unsettled merge-state token defers the
+# PR (per-PR counter, removed on merge) until DEFER_MAX re-entries, then routes.
+DEFER_DIR="${PIPELINE_PROJECT_ROOT:-$(pwd)}/.claude/scratch/merge-loop"
+defer_or_route() {
+  local f="$DEFER_DIR/$2.deferred" c
+  mkdir -p "$DEFER_DIR"
+  c=$(cat "$f" 2>/dev/null); case "$c" in ''|*[!0-9]*) c=0 ;; esac
+  if [ "$c" -ge "${PIPELINE_MERGE_LOOP_DEFER_MAX:-3}" ]; then
+    route_block "$1" "$2" "$3"; return
+  fi
+  echo $((c + 1)) > "$f"
+  loop_line "$1" "$2" deferred; PENDING+=("$1")
+}
+is_mergestate() { case "$1" in block-mergestate|block-mergeable) return 0 ;; esac; return 1; }
 
 for N in "${ORDERED[@]}"; do
   ISSUE="$N"; PR_NUM="${PR_OF[$N]}"; WT="${WT_OF[$N]}"
@@ -136,7 +167,7 @@ for N in "${ORDERED[@]}"; do
   fi
   WAITS=0
   if [ "${MANUAL_MERGE:-}" != 1 ]; then
-    PRE=$(check_count "$PR_NUM")
+    PRE=$(rollup_count "$PR_NUM")
     RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
     case "$RB" in
       "REBASE=conflict"*)
@@ -145,13 +176,16 @@ for N in "${ORDERED[@]}"; do
         loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD"
         PENDING+=("$N"); continue ;;
       "REBASE=done")
-        # Registration settle: an empty post-push rollup must not read green.
-        reads=0
-        while [ "$PRE" -gt 0 ] && [ "$(check_count "$PR_NUM")" -eq 0 ] \
-          && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
-          sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
-        done
-        ci_wait "$PR_NUM"; WAITS=1 ;;
+        # Registration settle, then wait. A watch that saw no checks is not a
+        # wait: re-settle and re-watch once (bounded by the wall).
+        settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
+        if [ "$CW" -eq 3 ] && [ "$PRE" -gt 0 ]; then
+          if ! wall_ok; then
+            loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
+          fi
+          settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
+        fi
+        [ "$CW" -eq 0 ] && WAITS=1 ;;
     esac
   fi
 
@@ -179,6 +213,17 @@ for N in "${ORDERED[@]}"; do
   if [ "$DEFER" = 1 ]; then
     loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
   fi
+  # Merge-state settle: mergeStateStatus lags a sibling merge / push; re-gate
+  # (bounded by POLL_MAX and the wall) while the token stays merge-state.
+  if is_mergestate "$REASON"; then
+    reads=0
+    while is_mergestate "$REASON" && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ] \
+      && [ $((SECONDS + ${PIPELINE_MERGEABILITY_POLL_SECS:-5})) -le "$WALL" ]; do
+      sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
+      REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+    done
+    if is_mergestate "$REASON"; then defer_or_route "$N" "$PR_NUM" "$REASON"; continue; fi
+  fi
   if [ "$REASON" = block-ci ]; then
     # Step 6b owns repair: no label, no comment.
     loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N"); continue
@@ -192,8 +237,10 @@ for N in "${ORDERED[@]}"; do
     case "$MREASON" in
       green)
         [ "$MRC" -eq 0 ] || echo "WARN: issue #$N merged but fullsend-merge-green.sh exited $MRC (issue close)" >&2
+        rm -f "$DEFER_DIR/$PR_NUM.deferred"
         loop_line "$N" "$PR_NUM" "merged sha=${MLINE##*sha=}" ;;
       block-ci) loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N") ;;
+      block-mergestate|block-mergeable) defer_or_route "$N" "$PR_NUM" "$MREASON" ;;
       *) route_block "$N" "$PR_NUM" "${MREASON:-block-merge-failed}" ;;
     esac
   else
