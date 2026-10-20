@@ -154,6 +154,33 @@ else
   fail_msg "P1: serial ${P_SER_T}s - parallel ${P_PAR_T}s < 3s (not overlapped)"
 fi
 
+# ---------------------------------------------------------------------------
+scenario "O1: detect-merge-overlap.sh prefetches every PR's files concurrently"
+
+# The stub sleeps GH_FILES_SLEEP s on `pr view <P> --json files` and prints one
+# shared path per PR, so every pair overlaps.
+dmo() { ( source "$S/detect-merge-overlap.sh" && detect_merge_overlap "$@" ); }
+dmo_both() { ( source "$S/detect-merge-overlap.sh" && detect_merge_overlap "$@" && echo "ORDER $(recommend_merge_order "$@" | tr '\n' ' ')" ); }
+export GH_FILES_SLEEP=1
+timed dmo 101 102 103 104
+O_PAR_T="$ELAPSED"
+unset GH_FILES_SLEEP
+timed dmo_both 101 102 103 104
+O_PAR_OUT="$OUT"
+PIPELINE_HELPER_PARALLEL=1 timed dmo_both 101 102 103 104
+O_SER_OUT="$OUT"
+if [ "$(printf '%s\n' "$O_PAR_OUT" | grep -c '^OVERLAP ')" = "6" ] && [ "$O_PAR_OUT" = "$O_SER_OUT" ]; then
+  pass_msg "6 OVERLAP lines, identical to the PIPELINE_HELPER_PARALLEL=1 run"
+else
+  fail_msg "overlap output differs or wrong (par: $O_PAR_OUT | ser: $O_SER_OUT)"
+fi
+# Serial would be 4 s (one 1 s files read per PR).
+if [ "$O_PAR_T" -lt 4 ]; then
+  pass_msg "default cap elapsed ${O_PAR_T}s < 4s (prefetch overlaps)"
+else
+  fail_msg "default cap elapsed ${O_PAR_T}s >= 4s (serial file reads)"
+fi
+
 echo ""
 echo "=============================="
 echo "  PASS: $PASS   FAIL: $FAIL"
