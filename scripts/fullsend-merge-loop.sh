@@ -22,7 +22,7 @@ fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
   the relayed MERGE: / BLOCK: lines
   LOOP: issue=#<N> pr=#<P> outcome=<outcome>   (one per issue)
   LOOP: done | LOOP: pending issues=<csv>      (trailer)
-Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv>, block-ci,
+Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>, block-ci,
 deferred, or the routed block-* token. pending = needs-fix + block-ci +
 deferred. Exit 0 always; exit 2 with no issue argument.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
@@ -140,7 +140,9 @@ for N in "${ORDERED[@]}"; do
     RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
     case "$RB" in
       "REBASE=conflict"*)
-        loop_line "$N" "$PR_NUM" "needs-fix files=${RB#*FILES=}"
+        RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
+        RB_HEAD=-; case "$RB" in *" HEAD="*) RB_HEAD=${RB##*HEAD=} ;; esac
+        loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD"
         PENDING+=("$N"); continue ;;
       "REBASE=done")
         # Registration settle: an empty post-push rollup must not read green.

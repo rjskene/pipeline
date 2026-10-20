@@ -177,10 +177,10 @@ grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(h) gh pr merge called" || pass_ms
 # ---------------------------------------------------------------------------
 scenario "(c) REBASE=conflict: needs-fix handed back, the sibling still merges"
 reset_gate
-export FAKE_REBASE_43='conflict FILES=f.txt,g.txt'
+export FAKE_REBASE_43='conflict FILES=f.txt,g.txt HEAD=abc123'
 run 7 8
 rc0 "(c)"
-has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt" || fail_msg "(c) needs-fix line wrong: $OUT"
+has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt head=abc123' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt head=abc123" || fail_msg "(c) needs-fix line wrong: $OUT"
 has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(c) #7 still merged" || fail_msg "(c) sibling not merged: $OUT"
 has_line 'LOOP: pending issues=8' && pass_msg "(c) LOOP: pending issues=8" || fail_msg "(c) pending trailer wrong: $OUT"
 grep -q '^gh pr merge 43' "$GH_LOG" && fail_msg "(c) gh pr merge 43 called" || pass_msg "(c) no gh pr merge 43"
