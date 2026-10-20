@@ -46,7 +46,7 @@ chmod +x "$TMP/bin/gh"
 
 printf '%s\n' '#!/bin/bash' 'echo TOUCHED-RAN' > "$TMP/proj/tests/test-touched.sh"
 
-HELPERS="fetch-plan checks diff rebase-check"
+HELPERS="fetch-plan checks diff rebase-check interdiff"
 
 scenario "H0: --help"
 for h in $HELPERS; do
