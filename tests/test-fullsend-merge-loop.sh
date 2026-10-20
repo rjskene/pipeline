@@ -133,6 +133,47 @@ grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(e) gh pr merge called" || pass_ms
 has_line 'LOOP: done' && pass_msg "(e) LOOP: done" || fail_msg "(e) no LOOP: done: $OUT"
 unset GH_STATE_7
 
+# ---------------------------------------------------------------------------
+scenario "(b) REBASE=done + block-ci: CI wait on the rebased PR, then merged"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_WATCH_FLIP=1
+run 7
+rc0 "(b)"
+W=$(grep -n '^gh pr checks 42 .*--watch' "$GH_LOG" | head -1 | cut -d: -f1)
+M=$(grep -n '^gh pr merge 42 ' "$GH_LOG" | head -1 | cut -d: -f1)
+if [ -n "$W" ] && [ -n "$M" ] && [ "$W" -lt "$M" ]; then
+  pass_msg "(b) gh pr checks 42 --watch logged before gh pr merge 42"
+else
+  fail_msg "(b) watch/merge order wrong (watch=${W:-none} merge=${M:-none})"
+fi
+[ "$(grep -c '^gh pr checks 42 .*--watch' "$GH_LOG")" = 1 ] && pass_msg "(b) exactly one CI wait" || fail_msg "(b) CI wait count != 1"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(b) outcome=merged" || fail_msg "(b) not merged: $OUT"
+unset FAKE_REBASE_42 GH_WATCH_FLIP
+
+# ---------------------------------------------------------------------------
+scenario "(f) CI wait times out: block-ci handed back, no label"
+reset_gate
+echo block-ci > "$FAKE_GATE_DIR/7"
+export FAKE_REBASE_42=done GH_WATCH_SLEEP=5 GH_WATCH_FLIP=1
+PIPELINE_MERGE_LOOP_CI_WAIT_SECS=1 run 7
+rc0 "(f)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-ci' && pass_msg "(f) outcome=block-ci" || fail_msg "(f) no block-ci line: $OUT"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(f) a label was applied on block-ci" || pass_msg "(f) no --add-label call"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(f) gh pr merge called" || pass_msg "(f) no gh pr merge"
+has_line 'LOOP: pending issues=7' && pass_msg "(f) LOOP: pending issues=7" || fail_msg "(f) pending trailer wrong: $OUT"
+unset FAKE_REBASE_42 GH_WATCH_SLEEP GH_WATCH_FLIP
+
+# ---------------------------------------------------------------------------
+scenario "(h) wall guard: every issue deferred, none merged"
+reset_gate
+PIPELINE_MERGE_LOOP_WALL_SECS=0 run 7 8
+rc0 "(h)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=deferred' && pass_msg "(h) issue 7 deferred" || fail_msg "(h) issue 7 not deferred: $OUT"
+has_line 'LOOP: issue=#8 pr=#43 outcome=deferred' && pass_msg "(h) issue 8 deferred" || fail_msg "(h) issue 8 not deferred: $OUT"
+printf '%s\n' "$OUT" | grep -qxE 'LOOP: pending issues=(7,8|8,7)' && pass_msg "(h) pending lists both" || fail_msg "(h) pending trailer wrong: $OUT"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(h) gh pr merge called" || pass_msg "(h) no gh pr merge"
+
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]

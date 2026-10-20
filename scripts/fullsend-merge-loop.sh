@@ -26,7 +26,8 @@ Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv>, block-ci,
 deferred, or the routed block-* token. pending = needs-fix + block-ci +
 deferred. Exit 0 always; exit 2 with no issue argument.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
-PIPELINE_WORKTREE_PREFIX, MANUAL_MERGE.
+PIPELINE_WORKTREE_PREFIX, MANUAL_MERGE, PIPELINE_MERGE_LOOP_CI_WAIT_SECS (300),
+PIPELINE_MERGE_LOOP_WALL_SECS (540), PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -49,6 +50,36 @@ case "$CR_STATE" in
   resolved)                     export PIPELINE_CAPABILITY_REFUSAL_SOURCES="${CR_LINE##*DIR=}" ;;
   no-log-dir|unresolvable-root) echo "NOTE: capability arm skipped/DORMANT: $CR_LINE" >&2 ;;
 esac
+
+CI_WAIT="${PIPELINE_MERGE_LOOP_CI_WAIT_SECS:-300}"
+WALL="${PIPELINE_MERGE_LOOP_WALL_SECS:-540}"
+TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
+
+# check_count <P> — registered check count; empty/garbage (gh rc=1 "no checks
+# reported", empty stdout) reads as 0.
+check_count() {
+  local c
+  c=$(gh pr checks "$1" --repo "$PIPELINE_REPO" --json state 2>/dev/null | jq length 2>/dev/null)
+  case "$c" in ''|*[!0-9]*) c=0 ;; esac
+  echo "$c"
+}
+# wall_ok — one more CI wait still returns before the wall budget.
+wall_ok() { [ $((SECONDS + CI_WAIT)) -le "$WALL" ]; }
+# ci_wait <P> — bounded watch; rc ignored (the gate decides).
+ci_wait() {
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" "$CI_WAIT" gh pr checks "$1" --repo "$PIPELINE_REPO" --watch --interval 10 >&2 2>&1
+  else
+    gh pr checks "$1" --repo "$PIPELINE_REPO" >&2 2>&1
+  fi
+  return 0
+}
+# ci_class <P> — failed | pending (check-ci-fix-loop.sh's state mapping).
+ci_class() {
+  gh pr checks "$1" --repo "$PIPELINE_REPO" --json state,link 2>/dev/null \
+    | jq -r 'if any(.[]; .state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE") then "failed" else "pending" end' 2>/dev/null \
+    || echo pending
+}
 
 PENDING=()
 loop_line() { echo "LOOP: issue=#$1 pr=#$2 outcome=$3"; }
@@ -98,16 +129,42 @@ for N in "${ORDERED[@]}"; do
   TITLE=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json title --jq .title 2>/dev/null)
   check_conventional_title "$TITLE" || echo "TITLE: pr=#$PR_NUM non-conventional" >&2
 
+  if ! wall_ok; then
+    loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
+  fi
+  WAITS=0
   if [ "${MANUAL_MERGE:-}" != 1 ]; then
+    PRE=$(check_count "$PR_NUM")
     RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
     case "$RB" in
       "REBASE=conflict"*)
         loop_line "$N" "$PR_NUM" "needs-fix files=${RB#*FILES=}"
         PENDING+=("$N"); continue ;;
+      "REBASE=done")
+        # Registration settle: an empty post-push rollup must not read green.
+        reads=0
+        while [ "$PRE" -gt 0 ] && [ "$(check_count "$PR_NUM")" -eq 0 ] \
+          && [ "$reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+          sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
+        done
+        ci_wait "$PR_NUM"; WAITS=1 ;;
     esac
   fi
 
   REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  # block-ci, bounded: a pending rollup on the skip path gets ONE wait + re-gate.
+  if [ "$REASON" = block-ci ] && [ "$WAITS" -eq 0 ] && [ "$(ci_class "$PR_NUM")" = pending ]; then
+    if ! wall_ok; then
+      loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
+    fi
+    ci_wait "$PR_NUM"; WAITS=1
+    REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+  fi
+  if [ "$REASON" = block-ci ]; then
+    # Step 6b owns repair: no label, no comment.
+    loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N"); continue
+  fi
+
   if [ "$REASON" = green ]; then
     MOUT=$(bash "$SELF_DIR/fullsend-merge-green.sh" "$N"); MRC=$?
     [ -n "$MOUT" ] && printf '%s\n' "$MOUT"
@@ -117,6 +174,7 @@ for N in "${ORDERED[@]}"; do
       green)
         [ "$MRC" -eq 0 ] || echo "WARN: issue #$N merged but fullsend-merge-green.sh exited $MRC (issue close)" >&2
         loop_line "$N" "$PR_NUM" "merged sha=${MLINE##*sha=}" ;;
+      block-ci) loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N") ;;
       *) route_block "$N" "$PR_NUM" "${MREASON:-block-merge-failed}" ;;
     esac
   else
