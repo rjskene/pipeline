@@ -201,8 +201,10 @@ case "$*" in
   # `gh issue view <n> --repo R --json ...` — the number is the third token.
   "issue view"*)  cat "${CALIB_TEST_ISSUES_DIR:-}/$3.json" 2>/dev/null || echo '{}' ;;
   # <number>TAB<title>, the shape the title-scoped reap reads. 4001 carries a
-  # slate title (reapable); 4777 is an unrelated issue that must survive.
-  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
+  # run-tagged slate title and 4002 a legacy untagged one (both reapable,
+  # #1573); 4777 is an unrelated issue that must survive.
+  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc [r100000]" \
+                    4002 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
   "issue close"*|"issue delete"*) exit 0 ;;
   "issue create"*)
     n="$(cat "$CALIB_TEST_COUNTER" 2>/dev/null || echo 4100)"
@@ -943,9 +945,14 @@ LIST_CALL="$(grep -m1 '^gh issue list ' "$CALLS" 2>/dev/null)"
 expect_sub "the reap bounds gh issue list (default 30 silently truncates)" "$LIST_CALL" "--limit 200"
 
 if grep -qE '^gh issue (close|delete) 4001 ' "$CALLS" 2>/dev/null; then
-  pass_msg "the reap closes an issue carrying a slate title"
+  pass_msg "the reap closes an issue carrying a run-tagged slate title"
 else
-  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc')"
+  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc [r100000]')"
+fi
+if grep -qE '^gh issue (close|delete) 4002 ' "$CALLS" 2>/dev/null; then
+  pass_msg "the reap closes an issue carrying a legacy untagged slate title"
+else
+  fail_msg "the reap must close issue 4002 (title 'calib: 01-stale-doc')"
 fi
 if grep -qE '^gh issue (close|delete) 4777 ' "$CALLS" 2>/dev/null; then
   fail_msg "the reap deleted an unrelated issue (4777)"

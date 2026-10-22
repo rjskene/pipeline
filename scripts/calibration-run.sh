@@ -627,7 +627,8 @@ slate_titles() {
 }
 
 # reap_stale_issues — close+delete PRIOR RUNS' slate issues, and nothing else.
-# Scoped by exact title match against the slate rather than by a `calib` label,
+# Scoped by exact title match (after stripping the run tag) against the slate
+# rather than by a `calib` label,
 # so the sandbox needs no extra label seeded at create time; an issue a human
 # (or the run under test) filed in the sandbox survives. `--limit 200` because
 # `gh issue list` defaults to 30 — silent truncation would leave prior slates
@@ -641,6 +642,9 @@ reap_stale_issues() {
   fi
   while IFS="$(printf '\t')" read -r n t; do
     case "$n" in ''|*[!0-9]*) continue ;; esac
+    # #1573: strip a trailing " [r<digits>]" run tag, so tagged and legacy
+    # untagged slate issues both match; the match itself stays exact.
+    [[ "$t" =~ ^(.*)\ \[r[0-9]+\]$ ]] && t="${BASH_REMATCH[1]}"
     printf '%s\n' "$titles" | grep -qxF -- "$t" || continue
     dispatch gh issue close "$n" --repo "$CALIB_REPO" >/dev/null 2>&1
     dispatch gh issue delete "$n" --repo "$CALIB_REPO" --yes >/dev/null 2>&1
