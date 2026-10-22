@@ -121,12 +121,15 @@ else
   fail_msg "(1c) run/SKILL.md missing 'pr-eval separate inline agent / evaluator independence' note in D window"
 fi
 
-# (1d) max 3 concurrent inline D bound.
+# (1d) #1559: D width obeys the INLINE_MAX_CONCURRENT header, ONE message;
+# the old hardcoded max-3 cap must not survive.
 inc
-if printf '%s' "$RUN_BODY" | grep -qiE 'max 3 concurrent inline'; then
-  pass_msg "(1d) 'max 3 concurrent inline' D bound stated"
+if printf '%s' "$RUN_BODY" | grep -qF 'INLINE_MAX_CONCURRENT' \
+   && printf '%s' "$RUN_BODY" | grep -qiE 'ONE message' \
+   && ! printf '%s' "$RUN_BODY" | grep -qiE 'max 3 concurrent inline|max-3 (foreground )?bound'; then
+  pass_msg "(1d) D width per INLINE_MAX_CONCURRENT header in ONE message; no max-3 cap"
 else
-  fail_msg "(1d) run/SKILL.md missing 'max 3 concurrent inline' bound"
+  fail_msg "(1d) fullsend union missing INLINE_MAX_CONCURRENT / ONE message, or still states the max-3 cap"
 fi
 
 # (1e) #1238: the PLUGIN-NAMESPACED Agent(subagent_type='pipeline:tdd-implementer'
@@ -173,7 +176,7 @@ fi
 # =====================================================================
 # Group 2 — skills/fullsend/SKILL.md: split-dispatch where D fans out as a
 # concurrent inline Agent batch in the FOREGROUND while B/C run-queue runs
-# via run_in_background; D consumes zero queue slots; max 3 concurrent inline.
+# via run_in_background; D consumes zero queue slots; width per INLINE_MAX_CONCURRENT header.
 # =====================================================================
 
 echo "Group 2: fullsend/SKILL.md split-dispatch (D foreground, B/C background)"
@@ -205,12 +208,14 @@ else
   fail_msg "(2c) fullsend/SKILL.md missing 'D consumes zero queue slots / costs no run-queue slot'"
 fi
 
-# (2d) max 3 concurrent inline D bound (in fullsend too).
+# (2d) #1559: width per INLINE_MAX_CONCURRENT header (in fullsend too).
 inc
-if printf '%s' "$FULLSEND_BODY" | grep -qiE 'max 3 concurrent inline'; then
-  pass_msg "(2d) 'max 3 concurrent inline' D bound stated in fullsend"
+if printf '%s' "$FULLSEND_BODY" | grep -qF 'INLINE_MAX_CONCURRENT' \
+   && printf '%s' "$FULLSEND_BODY" | grep -qiE 'ONE message' \
+   && ! printf '%s' "$FULLSEND_BODY" | grep -qiE 'max 3 concurrent inline|max-3 (foreground )?bound'; then
+  pass_msg "(2d) fullsend width per INLINE_MAX_CONCURRENT header in ONE message; no max-3 cap"
 else
-  fail_msg "(2d) fullsend/SKILL.md missing 'max 3 concurrent inline' bound for D"
+  fail_msg "(2d) fullsend missing INLINE_MAX_CONCURRENT / ONE message, or still states the max-3 cap"
 fi
 
 # (2e) Step 1b explicitly EXCLUDES PATH D from per-stage classify/plan dispatch
