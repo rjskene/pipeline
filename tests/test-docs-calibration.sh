@@ -171,6 +171,8 @@ echo "docs/calibration.md — PIPELINE_* token set"
 # reason — the flag sets it and pipeline.config.example declares it (commented).
 # PIPELINE_CALIB_RUN_TAG joined with the per-run slate title tag (#1573): the
 # `## Knobs` table documents it and pipeline.config.example declares it.
+# PIPELINE_BRANCH_SUFFIX joined with the run-tag branch knob (#1579): the driver
+# sets it to the run tag and pipeline.config.example declares it (commented).
 TESTS=$((TESTS + 1))
 extra=""
 if [ -f "$DOC" ]; then
@@ -180,6 +182,7 @@ if [ -f "$DOC" ]; then
         -e PIPELINE_PATH_B_MODEL_EXECUTE \
         -e PIPELINE_HEADLESS_PERMISSIONS -e PIPELINE_PERMISSION_BRIDGE_TIMEOUT \
         -e PIPELINE_PLAN_GATE -e PIPELINE_PRE_PR_REVIEW -e PIPELINE_CALIB_RUN_TAG \
+        -e PIPELINE_BRANCH_SUFFIX \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then
