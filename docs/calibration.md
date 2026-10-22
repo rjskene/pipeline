@@ -34,10 +34,9 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   rows 1–6 (graded "was the spec implemented") cannot. Run 38 is the v3
   baseline: `issues=` / `reftest-pass=` totals from it on are over nine issues
   and are not comparable with v2 (six-issue) runs — compare against v2 through
-  rows 01–06 only. `tests/case-ids.sh` in the template is the deliberately
-  flaky 09 case, so until 09 is fixed the sandbox suite (and any reference test
-  that re-runs it) can go red on an unrelated row about one run in five; read a
-  stray reftest fail alongside the 09 row.
+  rows 01–06 only. From run 49 (#1572) the template has no `tests/case-ids.sh`,
+  so the sandbox suite is green on every run and totals from run 49 on are over
+  a template without the flake; runs 38–48 could red one unrelated row in five.
 
 ## Running
 
