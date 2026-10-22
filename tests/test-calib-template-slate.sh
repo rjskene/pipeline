@@ -336,15 +336,15 @@ check_count "lib/+docs/ multi-dir issues" "$lib_and_docs" 1
 echo "== template suite is green, every reference test is red =="
 # ---------------------------------------------------------------------------
 
-# tests/case-ids.sh is removed from every COPY the suite runs in: it is the
-# deliberately flaky 09 case (a real race in store_add, see
-# dev/calib/slate/09-flaky-root-cause/), red roughly one run in five until that
-# issue is fixed. Every OTHER case must stay green. The exception lives here,
-# not as a skip marker inside the template — a marker would leak the answer to
-# the 09 executor.
+# The template ships no tests/case-ids.sh since #1572: issue 09's executor
+# writes that regression case, so the pristine suite is green on every run.
+if [ ! -e "$TEMPLATE_DIR/tests/case-ids.sh" ]; then
+  pass_msg "template has no tests/case-ids.sh (09 writes it)"
+else
+  fail_msg "template still ships tests/case-ids.sh (09 writes it; #1572)"
+fi
 if [ -d "$TEMPLATE_DIR" ]; then
   cp -a "$TEMPLATE_DIR" "$TMP/baseline"
-  rm -f "$TMP/baseline/tests/case-ids.sh"
   out=$( (cd "$TMP/baseline" && bash tests/run.sh) 2>&1 )
   if [ $? -eq 0 ]; then
     pass_msg "pristine template test suite passes"
@@ -400,9 +400,6 @@ rewrite_listing_section() {
 run_reftest_01() {
   rm -rf "$TMP/sbx01"
   cp -a "$TEMPLATE_DIR" "$TMP/sbx01"
-  # The flaky 09 case (see the pristine-suite block above): reftest 01 re-runs
-  # tests/run.sh, so it would red these controls one run in five.
-  rm -f "$TMP/sbx01/tests/case-ids.sh"
   rewrite_listing_section "$TMP/sbx01/docs/usage.md" "$1" || return 9
   ( cd "$TMP/sbx01" && bash "$REFTEST_01" ) 2>&1
 }

@@ -1,1 +1,2 @@
 lib/store.sh
+tests/case-ids.sh
