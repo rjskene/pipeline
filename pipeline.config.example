@@ -24,6 +24,7 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 #PIPELINE_CALIB_REMOTE=""                           # Explicit git URL to clone the sandbox from. Empty (default) => `gh repo clone`; read site ${VAR:-}.
 #PIPELINE_CALIB_BASE_TAG="calib-base"               # Tag --reset rewinds the sandbox to (default calib-base; read site ${VAR:-calib-base}).
 #PIPELINE_CALIB_ISSUE_IDS=""                        # Pre-resolved slate issue ids. Empty (default) => whatever --reset resolved; read site ${VAR:-}.
+#PIPELINE_CALIB_RUN_TAG=""                          # Per-run tag appended to slate issue titles as " [<tag>]" (default r<ddHHMM> UTC; must match r<digits>; read site ${VAR:-r$(date -u +%d%H%M)}).
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)

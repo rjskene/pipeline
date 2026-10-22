@@ -169,6 +169,8 @@ echo "docs/calibration.md — PIPELINE_* token set"
 # declares it (commented, defaults-in-code, beside PIPELINE_TRUST_PROFILE).
 # PIPELINE_PRE_PR_REVIEW joined with the --pre-pr-review arm (#1464): same
 # reason — the flag sets it and pipeline.config.example declares it (commented).
+# PIPELINE_CALIB_RUN_TAG joined with the per-run slate title tag (#1573): the
+# `## Knobs` table documents it and pipeline.config.example declares it.
 TESTS=$((TESTS + 1))
 extra=""
 if [ -f "$DOC" ]; then
@@ -177,7 +179,7 @@ if [ -f "$DOC" ]; then
         -e PIPELINE_CALIB_TIMEOUT -e PIPELINE_HEADLESS -e PIPELINE_TRUST_PROFILE \
         -e PIPELINE_PATH_B_MODEL_EXECUTE \
         -e PIPELINE_HEADLESS_PERMISSIONS -e PIPELINE_PERMISSION_BRIDGE_TIMEOUT \
-        -e PIPELINE_PLAN_GATE -e PIPELINE_PRE_PR_REVIEW \
+        -e PIPELINE_PLAN_GATE -e PIPELINE_PRE_PR_REVIEW -e PIPELINE_CALIB_RUN_TAG \
     | tr '\n' ' ' | sed 's/ $//')" || extra=""
 fi
 if [ -z "$extra" ]; then

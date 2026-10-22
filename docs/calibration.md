@@ -79,10 +79,15 @@ A slate change (`dev/calib/slate/*/` — title, body, reference test, expected
 files; e.g. #1487's 05 rework) needs no reseed: every `--reset` (and every
 `--run`, which calls it) files the slate issues fresh from the harness checkout's
 `dev/calib/slate/`, and reference tests run from there too. `--bootstrap`
-(#1477) is only for `dev/calib/template/` changes. One caveat: the reap matches
-the CURRENT slate titles, so the previous run's issue under 05's old title
-(`fix(report): report omits the completion rate its docs promise`) is not
-reaped — close it by hand once.
+(#1477) is only for `dev/calib/template/` changes. Each run files titles as
+`<title.txt line 1> [r<ddHHMM>]` (UTC), printed as `CALIB-RUN-TAG` (also by
+`--dry-run`), so branch slugs differ per run (#1573). The slug is agent-chosen, so
+the tag is a strong nudge, not a guarantee: after the next run check `gh pr list
+--repo <sandbox> --json headRefName` and expect every head branch to carry the
+tag; if agents drop it, the follow-up is a deterministic branch knob. One caveat:
+the reap matches the current slate titles after stripping a trailing
+` [r<digits>]` run tag, so a renamed title's old issue (05's `fix(report): report
+omits the completion rate its docs promise`) is not reaped — close it by hand once.
 
 The launch exports both `CLAUDE_PLUGIN_ROOT=<harness>` and passes
 `--plugin-dir <harness>` to `claude -p`. Both are required: the env var is what
@@ -172,6 +177,7 @@ Consequences:
 | `PIPELINE_CALIB_DIR` | `$HOME/.claude/calib/pipeline-calib` | Where the sandbox clone lives. |
 | `PIPELINE_CALIB_TIMEOUT` | see `pipeline.config.example` | Wall-clock ceiling (seconds) for the headless run before it is killed and the partial summary emitted. |
 | `PIPELINE_CALIB_REPO` | `rjskene/pipeline-calib` | `owner/name` of the sandbox repo, for forks or a re-homed sandbox. |
+| `PIPELINE_CALIB_RUN_TAG` | `r<ddHHMM>` (UTC) | Tag appended to slate issue titles as ` [<tag>]`; must match `r<digits>` (exit 2 otherwise). |
 
 ## Permission bridge
 
