@@ -353,6 +353,12 @@ expect_rc "--plan-gate garbage is rejected" 2
 expect_sub "--plan-gate error names the allowed values" "$OUT" "full|single|none"
 expect_sub "--plan-gate error names the annotate value (#1435)" "$OUT" "annotate"
 
+# #1573: the reap strips only a trailing ` [r<digits>]`, so any other tag would
+# escape the next run's reap - reject it as a usage error, pinned on the message.
+PIPELINE_CALIB_RUN_TAG=bad-tag run_helper --dry-run --harness "$HARNESS"
+expect_rc "PIPELINE_CALIB_RUN_TAG=bad-tag is rejected" 2
+expect_sub "bad run-tag error names the required shape" "$OUT" "PIPELINE_CALIB_RUN_TAG must be r<digits>"
+
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
 
@@ -722,6 +728,20 @@ if [ "$N_IDS" -eq 5 ]; then
 else
   fail_msg "--reset must print CALIB-ISSUES with five numbers (got: $ISSUE_LINE)"
 fi
+# #1573: every slate title carries the per-run tag, so the executor's branch
+# slugs differ run to run (no collision with a prior run's stale branches).
+N_CREATE="$(grep -c '^gh issue create ' "$CALLS" 2>/dev/null)"
+N_TAGGED="$(grep '^gh issue create ' "$CALLS" 2>/dev/null | grep -cE ' \[r[0-9]{6}\] --body-file ')"
+if [ "$N_CREATE" -eq 5 ] && [ "$N_TAGGED" -eq 5 ]; then
+  pass_msg "--reset tags every slate issue title with [r<ddHHMM>]"
+else
+  fail_msg "--reset must tag all five slate titles (create=$N_CREATE tagged=$N_TAGGED)"
+fi
+if printf '%s\n' "$OUT" | grep -qE '^CALIB-RUN-TAG r[0-9]{6}$'; then
+  pass_msg "--reset prints the CALIB-RUN-TAG line"
+else
+  fail_msg "--reset must print 'CALIB-RUN-TAG r<ddHHMM>'"
+fi
 if grep -q '^gh issue close ' "$CALLS" 2>/dev/null; then
   pass_msg "--reset closes stale calib issues"
 else
@@ -736,6 +756,23 @@ if grep -q '^claude ' "$CALLS" 2>/dev/null; then
   fail_msg "--reset launched claude"
 else
   pass_msg "--reset never launches claude"
+fi
+
+# #1573: PIPELINE_CALIB_RUN_TAG overrides the default tag.
+rm -f "$CALLS" "$TMP/issue-counter"
+PIPELINE_CALIB_RUN_TAG=r424242 run_helper --reset --harness "$HARNESS"
+expect_rc "--reset with PIPELINE_CALIB_RUN_TAG=r424242 exits 0" 0
+N_CREATE="$(grep -c '^gh issue create ' "$CALLS" 2>/dev/null)"
+N_TAGGED="$(grep '^gh issue create ' "$CALLS" 2>/dev/null | grep -cF ' [r424242] --body-file ')"
+if [ "$N_CREATE" -eq 5 ] && [ "$N_TAGGED" -eq 5 ]; then
+  pass_msg "the override tag lands on every slate title"
+else
+  fail_msg "the override tag must land on all five titles (create=$N_CREATE tagged=$N_TAGGED)"
+fi
+if printf '%s\n' "$OUT" | grep -qxF 'CALIB-RUN-TAG r424242'; then
+  pass_msg "--reset prints the override CALIB-RUN-TAG"
+else
+  fail_msg "--reset must print 'CALIB-RUN-TAG r424242'"
 fi
 
 # ---------------------------------------------------------------------------

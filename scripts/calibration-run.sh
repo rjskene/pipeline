@@ -54,6 +54,7 @@ set -uo pipefail
 #                            sized for the six-issue v2 slate; v3 has nine)
 #   PIPELINE_CALIB_BASE_TAG  reset anchor tag         (default calib-base)
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
+#   PIPELINE_CALIB_RUN_TAG   slate title tag, r<digits> (default r<ddHHMM> UTC, #1573)
 # Plus PIPELINE_TRUST_PROFILE, which this script EXPORTS (never reads) into the
 # headless run's environment from --profile; dev/calib/template/pipeline.config
 # passes it through (${PIPELINE_TRUST_PROFILE:-strict}) so the sandbox resolvers
@@ -238,6 +239,10 @@ esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--retag|--reset|--dry-run|--run is required"
 fi
+# #1573: one tag per invocation, appended to every slate title as " [<tag>]" so
+# branch slugs differ run to run. r<digits> only: the reap strips exactly that.
+CALIB_RUN_TAG="${PIPELINE_CALIB_RUN_TAG:-r$(date -u +%d%H%M)}"
+[[ "$CALIB_RUN_TAG" =~ ^r[0-9]+$ ]] || die_usage "PIPELINE_CALIB_RUN_TAG must be r<digits> (got: $CALIB_RUN_TAG)"
 
 # ---------------------------------------------------------------------------
 # Resolution
@@ -651,7 +656,7 @@ create_slate_issues() {
     d="${d%/}"
     [ -f "$d/title.txt" ] || continue
     url="$(dispatch gh issue create --repo "$CALIB_REPO" \
-             --title "$(cat "$d/title.txt")" --body-file "$d/body.md")"
+             --title "$(head -1 "$d/title.txt") [$CALIB_RUN_TAG]" --body-file "$d/body.md")"
     n="${url##*/}"
     n="${n%$'\r'}"
     case "$n" in
@@ -662,6 +667,7 @@ create_slate_issues() {
   done
   ISSUE_IDS="${ids# }"
   [ -n "$ISSUE_IDS" ] || die_run "no slate issues were created from $SLATE_DIR"
+  printf 'CALIB-RUN-TAG %s\n' "$CALIB_RUN_TAG"
   printf 'CALIB-ISSUES %s\n' "$ISSUE_IDS"
 }
 
