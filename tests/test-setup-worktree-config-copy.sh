@@ -118,7 +118,7 @@ write_cfg "$PROJ/pipeline.config" ".env.tracked"
 echo "X=committed" > "$PROJ/.env.tracked"
 git -C "$PROJ" add pipeline.config .env.tracked && git -C "$PROJ" commit -qm seed
 push_fixture "$PROJ"
-echo 'PIPELINE_EXTRA="drift"' >> "$PROJ/pipeline.config"
+echo 'DRIFT_MARKER="drift"' >> "$PROJ/pipeline.config"
 echo "X=drift" >> "$PROJ/.env.tracked"
 set +e
 (cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ" bash "$HELPER" feature/tracked 11) >"$TMP/out-a" 2>&1
