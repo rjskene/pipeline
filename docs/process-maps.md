@@ -162,7 +162,7 @@ wave-by-wave parallelism, CI-fix retry, greenlight auto-merge.
   |                   |   C: one inline Agent() (default); with
   |                   |      PIPELINE_PATH_C_FANOUT=true, inline
   |                   |      tdd-implementer per leaf, per-leaf
-  |                   |      worktree, max 3 concurrent
+  |                   |      worktree, INLINE_MAX_CONCURRENT wide
   +--------+----------+
            |
            v

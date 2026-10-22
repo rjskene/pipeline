@@ -102,7 +102,7 @@ declare -A GRAMMAR=(
   [fullsend-gate.sh]='GATE: issue=#<N> pr=#<P> reason=<token>'
   [fullsend-merge-green.sh]='MERGE: issue=#<N> pr=#<P> reason='
   [fullsend-preflight.sh]='PREFLIGHT issue=#<N> PREFLIGHT='
-  [fullsend-dispatch-specs.sh]='DISPATCH issue=#<N>'
+  [fullsend-dispatch-specs.sh]='INLINE_MAX_CONCURRENT=<n|all>'
   [fullsend-block-merge.sh]='BLOCK: issue=#<N> pr=#<P> reason=<token>'
   [fullsend-approve.sh]='TRANSITION='
   [fullsend-merge-order.sh]='ORDER:'
@@ -237,6 +237,16 @@ if [ -f "$S/fullsend-dispatch-specs.sh" ]; then
   export GH_LABELS=""
   run bash "$S/fullsend-dispatch-specs.sh" 7
   if printf '%s\n' "$OUT" | grep -q 'PATH=B'; then pass_msg "no path label => PATH=B"; else fail_msg "dispatch B out=$OUT"; fi
+  # #1559: leading INLINE_MAX_CONCURRENT=<n|all> header, knob set per call.
+  run env -u PIPELINE_INLINE_MAX_CONCURRENT bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=all" ]; then pass_msg "knob unset => INLINE_MAX_CONCURRENT=all header"; else fail_msg "unset header out=$OUT"; fi
+  if [ "$(printf '%s\n' "$OUT" | grep -c '^DISPATCH ')" = "3" ]; then pass_msg "header keeps one DISPATCH line per issue"; else fail_msg "dispatch count out=$OUT"; fi
+  run env PIPELINE_INLINE_MAX_CONCURRENT=2 bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=2" ]; then pass_msg "knob 2 < wave 3 => INLINE_MAX_CONCURRENT=2"; else fail_msg "cap-2 header out=$OUT"; fi
+  run env PIPELINE_INLINE_MAX_CONCURRENT=5 bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=all" ]; then pass_msg "knob 5 >= wave 3 => INLINE_MAX_CONCURRENT=all"; else fail_msg "cap-5 header out=$OUT"; fi
+  run env PIPELINE_INLINE_MAX_CONCURRENT=abc bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=all" ] && grep -q 'NOTE:' "$TMP/err"; then pass_msg "bad knob => all + stderr NOTE:"; else fail_msg "bad-knob header out=$OUT err=$(cat "$TMP/err")"; fi
   unset GH_LABELS
 fi
 
