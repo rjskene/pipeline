@@ -16,6 +16,12 @@
 #         broken by ascending PR number.
 #
 # Requires: gh, jq, $PIPELINE_REPO in env.
+#
+# Both entry points prefetch every PR's file list concurrently (#1548,
+# helper_parallel_map, cap PIPELINE_HELPER_PARALLEL) before the pairwise loops.
+
+# shellcheck source=scripts/_helper-parallel.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_helper-parallel.sh"
 
 _dmo_files_for_pr() {
   # Print one path per line for the given PR. Cached per-call in $_DMO_CACHE_DIR.
@@ -28,8 +34,12 @@ _dmo_files_for_pr() {
   cat "$cache"
 }
 
+_dmo_prefetch_one() { _dmo_files_for_pr "$1" >/dev/null; }
+_dmo_prefetch() { helper_parallel_map _dmo_prefetch_one "$@"; }
+
 detect_merge_overlap() {
   _DMO_CACHE_DIR="$(mktemp -d)"
+  _dmo_prefetch "$@"
   local prs=("$@")
   local i j a b shared count
   for ((i=0; i<${#prs[@]}; i++)); do
@@ -57,6 +67,7 @@ detect_merge_overlap() {
 
 recommend_merge_order() {
   _DMO_CACHE_DIR="$(mktemp -d)"
+  _dmo_prefetch "$@"
   local prs=("$@")
   local i j a b shared
   local tmp; tmp=$(mktemp)

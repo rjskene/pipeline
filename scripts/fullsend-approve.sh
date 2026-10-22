@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # fullsend-approve.sh — fullsend Step 4 (and the Step 2/3 skip/annotate arms):
-# flip each issue to `plan-approved` through scripts/transition-issue.sh, one
-# call per wave.
+# flip each issue to `plan-approved` through ONE scripts/transition-issue.sh
+# --batch call per wave (per-issue flips fan out, #1548).
 set -uo pipefail
 
 usage() {
   cat <<'USAGE'
 Usage: fullsend-approve.sh [--from <label>] [--comment <text>] <N>...
 
-For each issue runs
-  transition-issue.sh <N> --to plan-approved --from <label> [--comment <text>]
+Runs ONE call for the whole wave:
+  transition-issue.sh --batch <N>... --to plan-approved --from <label> [--comment <text>]
 --from defaults to plan-reviewed. Emits transition-issue.sh's audit line per
 issue:
   TRANSITION=ok|partial|failed issue=#<N> to=plan-approved from=<label> comment=<posted|skipped|failed>
@@ -34,10 +34,9 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/_resolve-config.sh
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
 
-for N in "${ISSUES[@]}"; do
-  if [ "$HAVE_COMMENT" = 1 ]; then
-    bash "$SELF_DIR/transition-issue.sh" "$N" --to plan-approved --from "$FROM" --comment "$COMMENT"
-  else
-    bash "$SELF_DIR/transition-issue.sh" "$N" --to plan-approved --from "$FROM"
-  fi
-done
+[ "${#ISSUES[@]}" -gt 0 ] || exit 0
+if [ "$HAVE_COMMENT" = 1 ]; then
+  bash "$SELF_DIR/transition-issue.sh" --batch "${ISSUES[@]}" --to plan-approved --from "$FROM" --comment "$COMMENT"
+else
+  bash "$SELF_DIR/transition-issue.sh" --batch "${ISSUES[@]}" --to plan-approved --from "$FROM"
+fi

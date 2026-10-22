@@ -6,7 +6,7 @@ set -uo pipefail
 # docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md §8).
 #
 # Real-work retros cannot isolate cause: the workload differs every cycle.
-# The calibration slate holds the INPUTS fixed (six template issues at tag
+# The calibration slate holds the INPUTS fixed (nine template issues at tag
 # `calib-base` in a purpose-built consumer sandbox) so the harness version is
 # the only variable, and doubles as the end-to-end regression suite the unit
 # tests are not.
@@ -20,7 +20,7 @@ set -uo pipefail
 #   --retag      Force `calib-base` onto the sandbox HEAD (local + remote) —
 #                the explicit form, for a sandbox edited by hand (#1477).
 #   --reset      Force the sandbox back to `calib-base`, reap stale calib
-#                issues, recreate the six slate issues, and re-materialize
+#                issues, recreate the nine slate issues, and re-materialize
 #                .claude/settings.local.json from the harness template so the
 #                sandbox always carries the current cost-capture hooks. Prints
 #                `CALIB-ISSUES`.
@@ -50,8 +50,8 @@ set -uo pipefail
 #   PIPELINE_CALIB_REPO      sandbox repo slug        (default rjskene/pipeline-calib)
 #   PIPELINE_CALIB_DIR       sandbox clone dir        (default $HOME/.claude/calib/pipeline-calib)
 #   PIPELINE_CALIB_REMOTE    git URL to clone         (default: `gh repo clone`)
-#   PIPELINE_CALIB_TIMEOUT   headless run cap, sec    (default 10800: the
-#                            six-issue slate is three inline execute waves)
+#   PIPELINE_CALIB_TIMEOUT   headless run cap, sec    (default 10800,
+#                            sized for the six-issue v2 slate; v3 has nine)
 #   PIPELINE_CALIB_BASE_TAG  reset anchor tag         (default calib-base)
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
 # Plus PIPELINE_TRUST_PROFILE, which this script EXPORTS (never reads) into the
@@ -78,7 +78,7 @@ print_usage() {
   cat <<'USAGE'
 Usage: scripts/calibration-run.sh (--bootstrap|--retag|--reset|--dry-run|--run) [options]
 
-Drives the §8 calibration slate: a fixed six-issue workload run against a
+Drives the §8 calibration slate: a fixed nine-issue workload run against a
 purpose-built consumer sandbox so the harness version is the only variable.
 
 Modes (exactly one, mutually exclusive):
@@ -87,9 +87,9 @@ Modes (exactly one, mutually exclusive):
                    template sync that commits re-anchors calib-base to it.
   --retag          Force calib-base onto the sandbox HEAD (local + remote),
                    for a sandbox edited by hand. No-op when already there.
-  --reset          Force the sandbox back to calib-base, recreate the six
+  --reset          Force the sandbox back to calib-base, recreate the nine
                    slate issues, and refresh .claude/settings.local.json from
-                   the harness template. Prints `CALIB-ISSUES <n1> ... <n6>`.
+                   the harness template. Prints `CALIB-ISSUES <n1> ... <n9>`.
   --dry-run        Print the headless launch command and exit. No network
                    call, no claude launch, no sandbox mutation.
   --run            --reset, then run the launch for real, then emit the
@@ -1204,10 +1204,17 @@ issue_reftest() {
 }
 
 # issue_unexpected <issue> <slate dir> — merged-PR files MINUS expected-files.txt.
+# Only the PR(s) that CLOSE the issue count (#1523): a body closing keyword
+# (close[sd]?|fix(e[sd])?|resolve[sd]?) + `#<issue>`, case-insensitive. Only
+# when NO merged PR closes it, fall back to a digit-bounded <issue> token in
+# headRefName. A bare `#<issue>` mention never selects a PR.
 issue_unexpected() {
   local issue="$1" d="$2" expected="$2/expected-files.txt" files f n=0
-  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" \
-    '[.[] | select((.body // "") | test("#" + $n + "\\b")) | .files[]?.path] | .[]' 2>/dev/null)"
+  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" '
+    [.[] | select((.body // "") | test("\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#" + $n + "\\b"; "i"))] as $closing
+    | (if ($closing | length) > 0 then $closing
+       else [.[] | select((.headRefName // "") | test("(^|[^0-9])" + $n + "([^0-9]|$)"))] end)
+    | .[] | .files[]?.path' 2>/dev/null)"
   [ -n "$files" ] || { printf '0'; return 0; }
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -1229,6 +1236,7 @@ emit_calib_block() {
   local wall_total="$1"
   local i=0 issue d path cost wall verdicts reftest unexpected exp mismatch
   local total_cost=0 pass=0 count=0 graded=0 planted="n/a" cost_display
+  local planted_rows=0 planted_caught=0 planted_missed=0
   load_run_substrate
   detect_abort
   if [ -n "$ABORT_REASON" ]; then
@@ -1281,19 +1289,24 @@ emit_calib_block() {
     #   reftest=pass                    caught — the boundary was implemented
     #                                   correctly.
     #   reftest=fail, pr not Flagged    missed — a defective PR passed the gate.
-    # n/a when the slate carries no planted-defect dir, or the row was neither
-    # flagged nor graded. Testing the gate first is what makes `blocked` (which
-    # can only arise under a Flagged pr verdict) grade as `caught` rather than
-    # falling through to n/a.
+    # A row that is neither flagged nor graded counts toward neither caught
+    # nor missed. Testing the gate first is what makes `blocked` (which can
+    # only arise under a Flagged pr verdict) grade as `caught` rather than
+    # falling through ungraded.
+    # The slate carries more than one `*planted*` dir (#1531), so the grade
+    # AGGREGATES across them (it used to be overwritten, so the last row won):
+    # missed if ANY planted row missed; caught only when EVERY planted row was
+    # caught; n/a otherwise (no planted dir, or a planted row went ungraded).
     case "$(basename "${d:-}")" in
       *planted*)
+        planted_rows=$((planted_rows + 1))
         case "$verdicts" in
-          */Flagged) planted="caught" ;;
+          */Flagged) planted_caught=$((planted_caught + 1)) ;;
           *)
             if [ "$reftest" = "pass" ]; then
-              planted="caught"
+              planted_caught=$((planted_caught + 1))
             elif [ "$reftest" = "fail" ]; then
-              planted="missed"
+              planted_missed=$((planted_missed + 1))
             fi
             ;;
         esac
@@ -1302,6 +1315,11 @@ emit_calib_block() {
     printf 'CALIB issue=%s path=%s cost=$%s wall=%s verdicts=%s reftest=%s unexpected-files=%s%s\n' \
       "$issue" "$path" "${cost:-n/a}" "${wall:-n/a}" "$verdicts" "$reftest" "$unexpected" "$mismatch"
   done
+  if [ "$planted_missed" -gt 0 ]; then
+    planted="missed"
+  elif [ "$planted_rows" -gt 0 ] && [ "$planted_caught" -eq "$planted_rows" ]; then
+    planted="caught"
+  fi
   # A $0 total is never printable UNPRICED (#1395): render n/a on the TOTAL
   # line whenever the capture log is missing/empty, PRICING_TOTAL is empty, or
   # PRICING_TOTAL is numerically zero — the zero/missing-log arms are the ones

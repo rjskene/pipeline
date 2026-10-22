@@ -71,8 +71,8 @@ pane alone is not a stall.
      push, file an issue noting "implementation branch exists for adoption" (the
      build cost is sunk; don't toss coherent work).
   2. **Reset** the issue's branch — pull base, `git reset --hard origin/<base>`.
-  3. **Re-execute plan-pinned** — an inline execute `Agent` (general-purpose by
-     default since #1486; `tdd-implementer` per leaf under
+  3. **Re-execute plan-pinned** — an inline execute `Agent` (`pipeline:stage-executor`
+     by default since #1530; `tdd-implementer` per leaf under
      `PIPELINE_PATH_C_FANOUT=true`) pointed at the worktree, the approved plan
      embedded, plus an **absolute file tripwire**: "you may create/edit ONLY
      these N files; if implementing needs any other file, or you find yourself

@@ -5,8 +5,10 @@ set -uo pipefail
 # helpers that carry evaluate-issue-pr's multi-command shell behind one call.
 #
 #   H0  every helper answers --help with rc 0
-#   C*  checks helper: a green preflight line skips the suite; every other
-#       line (or CI checks disabled) runs tests locally, scoped to touched tests
+#   C*  checks helper: a green preflight line (bare `PREFLIGHT=ok ...` or the
+#       fullsend `PREFLIGHT issue=#N PREFLIGHT=ok ...` shape) skips the suite;
+#       every other line (or CI checks disabled) runs tests locally, scoped to
+#       touched tests
 #   D*  diff helper: PR_NUM=<n> then the diff; no PR -> STOP line, rc 1
 #   R*  rebase-check helper: REBASE=skip only on MERGEABLE + CLEAN|UNSTABLE
 #       with no file changed on both sides since the merge-base
@@ -44,7 +46,7 @@ chmod +x "$TMP/bin/gh"
 
 printf '%s\n' '#!/bin/bash' 'echo TOUCHED-RAN' > "$TMP/proj/tests/test-touched.sh"
 
-HELPERS="fetch-plan checks diff rebase-check"
+HELPERS="fetch-plan checks diff rebase-check interdiff"
 
 scenario "H0: --help"
 for h in $HELPERS; do
@@ -94,6 +96,28 @@ if ! out_has 'CI: green rollup' && out_has 'TOUCHED-RAN'; then
 else
   fail_msg "CI-disabled fallback wrong: $(tr '\n' ' ' < "$TMP/out")"
 fi
+
+for c in 'C1b|none' 'C1c|mergeable'; do
+  id=${c%%|*}; reason=${c##*|}
+  scenario "$id: fullsend-prefixed REASON=$reason line skips the local suite"
+  run_checks "PREFLIGHT issue=#12 PREFLIGHT=ok REASON=$reason PR=123 FIXED=none" STUB_NAMES='tests/test-touched.sh'
+  if out_has 'CI: green rollup' && ! out_has 'TOUCHED-RAN' && ! out_has 'SUITE-RAN'; then
+    pass_msg "prefixed REASON=$reason -> green-rollup skip line, no test run"
+  else
+    fail_msg "prefixed REASON=$reason did not skip: $(tr '\n' ' ' < "$TMP/out")"
+  fi
+done
+
+for c in 'C2b|ok REASON=ci-pending' 'C2c|block REASON=none'; do
+  id=${c%%|*}; rest=${c#*|}
+  scenario "$id: negative control — prefixed PREFLIGHT=$rest falls through"
+  run_checks "PREFLIGHT issue=#12 PREFLIGHT=$rest PR=123 FIXED=none" STUB_NAMES='tests/test-touched.sh'
+  if ! out_has 'CI: green rollup' && out_has 'TOUCHED-RAN'; then
+    pass_msg "prefixed PREFLIGHT=$rest -> touched test ran"
+  else
+    fail_msg "prefixed PREFLIGHT=$rest fallback wrong: $(tr '\n' ' ' < "$TMP/out")"
+  fi
+done
 
 scenario "C4: no touched tests -> full PIPELINE_TEST_CMD"
 run_checks 'PREFLIGHT=ok REASON=no-ci' STUB_NAMES='scripts/x.sh'

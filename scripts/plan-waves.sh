@@ -34,6 +34,9 @@ EOF
 
 STAGE="execute"
 EMIT_EDGES=0
+# Optimistic execute (#1536): default true skips execute-stage file-conflict
+# waving (explicit blockers still serialize); false restores the #700 graph.
+OPTIMISTIC="${PIPELINE_OPTIMISTIC_EXECUTE:-true}"
 NEW_ARGS=()
 for arg in "$@"; do
   case "$arg" in
@@ -135,7 +138,9 @@ for N in "${ISSUES[@]}"; do
   # dispatches D inline in the foreground (zero run-queue slots), but that is a
   # DISPATCH-mechanism choice downstream of waving — it does NOT exempt D from
   # wave discipline. Do NOT add a "skip D in conflict detection" branch here:
-  # tests/test-plan-waves-unified-graph.sh locks this contract.
+  # tests/test-plan-waves-unified-graph.sh locks this contract. The graph
+  # applies only when PIPELINE_OPTIMISTIC_EXECUTE=false (#1536); FILES[] is
+  # always computed so --emit-edges is identical across knob values.
   if [ "$STAGE" = "execute" ]; then
     # Path predicate (#811 + #1006): hoisted above both branches so the same
     # predicate guards plan-comment extraction AND body-fallback extraction.
@@ -255,7 +260,9 @@ for TIER in P0 P1 P2 P3; do
         fi
       done
 
-      if [ "$eligible" = "1" ]; then
+      # Optimistic execute (#1536): shared FILES no longer serialize; a
+      # merge-time rebase (scripts/fullsend-merge-rebase.sh) resolves overlap.
+      if [ "$eligible" = "1" ] && [ "$OPTIMISTIC" != "true" ]; then
         for F in ${FILES[$N]}; do
           for G in ${WAVE_FILES[$WAVE]}; do
             if [ "$F" = "$G" ]; then

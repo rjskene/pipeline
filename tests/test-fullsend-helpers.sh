@@ -24,7 +24,7 @@ scenario() { echo ""; echo "-- $1 --"; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-HELPERS="fullsend-fetch-attachments.sh fullsend-approve.sh fullsend-preflight.sh fullsend-gate.sh fullsend-merge-green.sh fullsend-block-merge.sh fullsend-dispatch-specs.sh fullsend-release-prs.sh fullsend-merge-order.sh"
+HELPERS="fullsend-fetch-attachments.sh fullsend-approve.sh fullsend-preflight.sh fullsend-gate.sh fullsend-merge-green.sh fullsend-block-merge.sh fullsend-dispatch-specs.sh fullsend-release-prs.sh fullsend-merge-order.sh fullsend-merge-loop.sh"
 
 # ---------------------------------------------------------------------------
 # Stub gh. Knobs: GH_PR_NUM, GH_BASE, GH_MERGE_RC, GH_CLOSE_MODE
@@ -102,10 +102,11 @@ declare -A GRAMMAR=(
   [fullsend-gate.sh]='GATE: issue=#<N> pr=#<P> reason=<token>'
   [fullsend-merge-green.sh]='MERGE: issue=#<N> pr=#<P> reason='
   [fullsend-preflight.sh]='PREFLIGHT issue=#<N> PREFLIGHT='
-  [fullsend-dispatch-specs.sh]='DISPATCH issue=#<N>'
+  [fullsend-dispatch-specs.sh]='INLINE_MAX_CONCURRENT=<n|all>'
   [fullsend-block-merge.sh]='BLOCK: issue=#<N> pr=#<P> reason=<token>'
   [fullsend-approve.sh]='TRANSITION='
   [fullsend-merge-order.sh]='ORDER:'
+  [fullsend-merge-loop.sh]='LOOP: issue=#<N> pr=#<P> outcome='
 )
 for h in "${!GRAMMAR[@]}"; do
   [ -f "$S/$h" ] || continue
@@ -150,7 +151,11 @@ fi
 scenario "fullsend-merge-green.sh: green loop order, guards, close swallow"
 
 if [ -f "$S/fullsend-merge-green.sh" ]; then
-  run bash "$S/fullsend-merge-green.sh" 9
+  # The loop re-gates each PR (#1540); this stub's `api` exits 1, so the real
+  # gate would block. Run against a fixture copy whose gate answers green.
+  mkdir -p "$TMP/s2" && cp -r "$S/." "$TMP/s2/"
+  echo 'auto_merge_should_fire() { echo green; }' > "$TMP/s2/auto-merge-gate.sh"
+  run bash "$TMP/s2/fullsend-merge-green.sh" 9
   if [ "$RC" -eq 0 ] && [ "$OUT" = "MERGE: issue=#9 pr=#none reason=block-no-pr" ]; then
     pass_msg "empty worktree => reason=block-no-pr"
   else
@@ -159,17 +164,17 @@ if [ -f "$S/fullsend-merge-green.sh" ]; then
   if grep -q 'pr merge' "$GH_LOG"; then fail_msg "gh pr merge ran with no PR"; else pass_msg "gh pr merge unreachable with no PR"; fi
 
   export GH_PR_NUM=42 GH_BASE=main
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$OUT" = "MERGE: issue=#7 pr=#42 reason=block-base-mismatch" ]; then pass_msg "TOCTOU base re-read => block-base-mismatch"; else fail_msg "base mismatch out=$OUT"; fi
   if grep -q 'pr merge' "$GH_LOG"; then fail_msg "gh pr merge ran on a base mismatch"; else pass_msg "no merge on a base mismatch"; fi
 
   export GH_BASE=evolve GH_MERGE_RC=1
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$OUT" = "MERGE: issue=#7 pr=#42 reason=block-merge-failed" ]; then pass_msg "failed merge => block-merge-failed"; else fail_msg "merge-failed out=$OUT"; fi
   if grep -q 'pr comment' "$GH_LOG"; then fail_msg "footer posted on an unmerged PR"; else pass_msg "no footer on a failed merge"; fi
 
   export GH_MERGE_RC=0 GH_CLOSE_MODE=already
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qx 'MERGE: issue=#7 pr=#42 reason=green sha=abc123'; then
     pass_msg "green => MERGE reason=green sha=<sha>, rc 0"
   else
@@ -188,7 +193,7 @@ if [ -f "$S/fullsend-merge-green.sh" ]; then
   if grep -q 'pr comment 42 .*Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at' "$GH_LOG"; then pass_msg "footer literal prefix posted"; else fail_msg "footer literal missing"; fi
 
   export GH_CLOSE_MODE=genuine
-  run bash "$S/fullsend-merge-green.sh" 7
+  run bash "$TMP/s2/fullsend-merge-green.sh" 7
   if [ "$RC" -ne 0 ]; then pass_msg "genuine close failure exits non-zero (fail-loud kept)"; else fail_msg "genuine close failure was swallowed"; fi
   unset GH_PR_NUM GH_BASE GH_MERGE_RC GH_CLOSE_MODE
 fi
@@ -232,6 +237,16 @@ if [ -f "$S/fullsend-dispatch-specs.sh" ]; then
   export GH_LABELS=""
   run bash "$S/fullsend-dispatch-specs.sh" 7
   if printf '%s\n' "$OUT" | grep -q 'PATH=B'; then pass_msg "no path label => PATH=B"; else fail_msg "dispatch B out=$OUT"; fi
+  # #1559: leading INLINE_MAX_CONCURRENT=<n|all> header, knob set per call.
+  run env -u PIPELINE_INLINE_MAX_CONCURRENT bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=all" ]; then pass_msg "knob unset => INLINE_MAX_CONCURRENT=all header"; else fail_msg "unset header out=$OUT"; fi
+  if [ "$(printf '%s\n' "$OUT" | grep -c '^DISPATCH ')" = "3" ]; then pass_msg "header keeps one DISPATCH line per issue"; else fail_msg "dispatch count out=$OUT"; fi
+  run env PIPELINE_INLINE_MAX_CONCURRENT=2 bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=2" ]; then pass_msg "knob 2 < wave 3 => INLINE_MAX_CONCURRENT=2"; else fail_msg "cap-2 header out=$OUT"; fi
+  run env PIPELINE_INLINE_MAX_CONCURRENT=5 bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=all" ]; then pass_msg "knob 5 >= wave 3 => INLINE_MAX_CONCURRENT=all"; else fail_msg "cap-5 header out=$OUT"; fi
+  run env PIPELINE_INLINE_MAX_CONCURRENT=abc bash "$S/fullsend-dispatch-specs.sh" 7 8 9
+  if [ "$(printf '%s\n' "$OUT" | head -1)" = "INLINE_MAX_CONCURRENT=all" ] && grep -q 'NOTE:' "$TMP/err"; then pass_msg "bad knob => all + stderr NOTE:"; else fail_msg "bad-knob header out=$OUT err=$(cat "$TMP/err")"; fi
   unset GH_LABELS
 fi
 

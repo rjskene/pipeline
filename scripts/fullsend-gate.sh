@@ -4,6 +4,7 @@
 # Sources scripts/auto-merge-gate.sh, threads PIPELINE_CAPABILITY_REFUSAL_SOURCES
 # via `check-capability-refusal.sh --resolve-sources` (hoisted above the loop:
 # wave-invariant), then runs auto_merge_should_fire per issue. Performs NO merge.
+# Per-issue reads fan out via helper_parallel_map (cap PIPELINE_HELPER_PARALLEL).
 set -uo pipefail
 
 usage() {
@@ -29,6 +30,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$SELF_DIR/_resolve-config.sh" ] && source "$SELF_DIR/_resolve-config.sh"
 # shellcheck source=scripts/_fullsend-resolve-pr.sh
 source "$SELF_DIR/_fullsend-resolve-pr.sh"
+# shellcheck source=scripts/_helper-parallel.sh
+source "$SELF_DIR/_helper-parallel.sh"
 
 source "$SELF_DIR/auto-merge-gate.sh"
 CR_LINE=$(bash "$SELF_DIR/check-capability-refusal.sh" --resolve-sources)
@@ -37,10 +40,10 @@ case "$CR_STATE" in
   resolved)                     export PIPELINE_CAPABILITY_REFUSAL_SOURCES="${CR_LINE##*DIR=}" ;;
   no-log-dir|unresolvable-root) echo "NOTE: capability arm skipped/DORMANT: $CR_LINE" >&2 ;;
 esac
-for N in "$@"; do
-  ISSUE="$N"
-  fullsend_resolve_pr "$N"
-  REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
-  echo "GATE: issue=#$ISSUE pr=#$PR_NUM reason=$REASON"
-done
+_gate_one() {
+  fullsend_resolve_pr "$1"
+  REASON=$(auto_merge_should_fire "$1" "$PR_NUM")
+  echo "GATE: issue=#$1 pr=#$PR_NUM reason=$REASON"
+}
+helper_parallel_map _gate_one "$@"
 exit 0
