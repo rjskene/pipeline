@@ -199,7 +199,7 @@ reset_gate
 export FAKE_REBASE_43='conflict FILES=f.txt,g.txt HEAD=abc123'
 run 7 8
 rc0 "(c)"
-has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt head=abc123' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt head=abc123" || fail_msg "(c) needs-fix line wrong: $OUT"
+has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt head=abc123 attempt=1' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt head=abc123 attempt=1" || fail_msg "(c) needs-fix line wrong: $OUT"
 has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(c) #7 still merged" || fail_msg "(c) sibling not merged: $OUT"
 has_line 'LOOP: pending issues=8' && pass_msg "(c) LOOP: pending issues=8" || fail_msg "(c) pending trailer wrong: $OUT"
 grep -q '^gh pr merge 43' "$GH_LOG" && fail_msg "(c) gh pr merge 43 called" || pass_msg "(c) no gh pr merge 43"
@@ -215,6 +215,7 @@ has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=pipeline.config head=abc
 has_line 'LOOP: pending issues=7' && pass_msg "(c2) LOOP: pending issues=7" || fail_msg "(c2) pending trailer wrong: $OUT"
 grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c2) gh pr merge called" || pass_msg "(c2) no gh pr merge"
 grep -q -- '--add-label' "$GH_LOG" && fail_msg "(c2) a label was applied" || pass_msg "(c2) no label applied"
+[ -e "$PROJ/.claude/scratch/merge-loop/42.conflicts" ] && fail_msg "(c2) reason=dirty wrote 42.conflicts" || pass_msg "(c2) reason=dirty never records 42.conflicts"
 unset FAKE_REBASE_42
 
 # ---------------------------------------------------------------------------
@@ -230,6 +231,74 @@ printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-rebase-erro
 has_line 'LOOP: done' && pass_msg "(c3) LOOP: done" || fail_msg "(c3) trailer wrong: $OUT"
 grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c3) gh pr merge called" || pass_msg "(c3) no gh pr merge"
 unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+CONF_F="$PROJ/.claude/scratch/merge-loop/42.conflicts"
+scenario "(viii) first conflict: needs-fix attempt=1, one 42.conflicts record"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+rc0 "(viii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=bin/calibctl head=aaa attempt=1' && pass_msg "(viii) needs-fix ... attempt=1" || fail_msg "(viii) needs-fix line wrong: $OUT"
+[ "$(grep -c . "$CONF_F" 2>/dev/null)" = 1 ] && pass_msg "(viii) 42.conflicts holds exactly 1 line" || fail_msg "(viii) 42.conflicts lines=$(grep -c . "$CONF_F" 2>/dev/null || echo missing)"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(x) moved head, same files: a fresh attempt=2, no label"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=bbb'
+run 7
+rc0 "(x)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=bin/calibctl head=bbb attempt=2' && pass_msg "(x) needs-fix ... head=bbb attempt=2" || fail_msg "(x) needs-fix line wrong: $OUT"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(x) a label was applied" || pass_msg "(x) no --add-label call"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(ix) same files + same head again: routed block-mergeable, not pending"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+run 7
+rc0 "(ix)"
+printf '%s\n' "$OUT" | grep -q 'outcome=needs-fix' && fail_msg "(ix) second run still needs-fix: $OUT" || pass_msg "(ix) no needs-fix on the repeat"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergeable' && pass_msg "(ix) outcome=block-mergeable" || fail_msg "(ix) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-mergeable' && pass_msg "(ix) BLOCK: line relayed" || fail_msg "(ix) no BLOCK: line: $OUT"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(ix) exactly one manual-merge label call" || fail_msg "(ix) manual-merge label calls != 1"
+printf '%s\n' "$ERR" | grep -qF 'REBASE: pr=#42 repeat=same-head' && pass_msg "(ix) stderr names repeat=same-head" || fail_msg "(ix) repeat=same-head missing: $ERR"
+has_line 'LOOP: done' && pass_msg "(ix) LOOP: done" || fail_msg "(ix) trailer wrong: $OUT"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(xi) attempt past PIPELINE_REBASE_FIX_MAX: routed block-mergeable (repeat=max)"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=bbb'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=ccc'
+PIPELINE_REBASE_FIX_MAX=2 run 7
+rc0 "(xi)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergeable' && pass_msg "(xi) outcome=block-mergeable" || fail_msg "(xi) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q 'outcome=needs-fix' && fail_msg "(xi) still needs-fix past the cap: $OUT" || pass_msg "(xi) no needs-fix past the cap"
+printf '%s\n' "$ERR" | grep -qF 'repeat=max' && pass_msg "(xi) stderr names repeat=max" || fail_msg "(xi) repeat=max missing: $ERR"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(xi) exactly one manual-merge label call" || fail_msg "(xi) manual-merge label calls != 1"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(xii) merge removes 42.conflicts"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+[ -e "$CONF_F" ] && pass_msg "(xii) 42.conflicts exists before the merge run" || fail_msg "(xii) 42.conflicts missing before the merge run"
+unset FAKE_REBASE_42
+run 7
+rc0 "(xii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(xii) outcome=merged" || fail_msg "(xii) not merged: $OUT"
+[ -e "$CONF_F" ] && fail_msg "(xii) 42.conflicts survives the merge" || pass_msg "(xii) merge removes 42.conflicts"
 
 # ---------------------------------------------------------------------------
 scenario "(d) block-verdict: routed to fullsend-block-merge.sh once"
@@ -358,14 +427,16 @@ has_line 'LOOP: done' && pass_msg "(iv) LOOP: done" || fail_msg "(iv) trailer wr
 # ---------------------------------------------------------------------------
 scenario "(p) prose/config pins: repeated-needs-fix rule + DEFER_MAX example"
 GATE_MD="$ROOT/skills/fullsend/references/auto-merge-gate.md"
-grep -qF 'repeating its previous `files=`' "$GATE_MD" && pass_msg "(p) Re-entry names the repeated files= rule" || fail_msg "(p) repeated files= rule missing"
-grep -qF 'at most 3 per issue per wave' "$GATE_MD" && pass_msg "(p) Re-entry caps rebase-fix at 3 per issue per wave" || fail_msg "(p) per-wave cap missing"
+grep -qF 'repeating its previous' "$GATE_MD" && fail_msg "(p) stale repeated files= rule still present" || pass_msg "(p) stale repeated files= rule gone"
+grep -qF 'repeat=same-head' "$GATE_MD" && pass_msg "(p) Re-entry names repeat=same-head" || fail_msg "(p) repeat=same-head missing"
+grep -qF 'PIPELINE_REBASE_FIX_MAX' "$GATE_MD" && pass_msg "(p) Re-entry names PIPELINE_REBASE_FIX_MAX" || fail_msg "(p) PIPELINE_REBASE_FIX_MAX missing"
 grep -qF 'A second `needs-fix` for the same issue' "$GATE_MD" && fail_msg "(p) stale second-needs-fix rule still present" || pass_msg "(p) stale second-needs-fix rule gone"
 grep -qF 'except `block-ci` (handed back) and `block-mergestate`/`block-mergeable`' "$GATE_MD" && pass_msg "(p) block-* routing names the settled merge-state tokens" || fail_msg "(p) block-* routing omits block-mergestate/block-mergeable"
 grep -qF 'reason** except `block-ci`, the loop calls' "$GATE_MD" && fail_msg "(p) stale block-ci-only routing wording still present" || pass_msg "(p) stale block-ci-only routing wording gone"
 grep -qF 'reason=dirty' "$GATE_MD" && pass_msg "(p) Re-entry names the reason=dirty token" || fail_msg "(p) reason=dirty token missing from Re-entry"
 grep -qF 'LOOP: log=<path>' "$GATE_MD" && pass_msg "(p) LOOP text block names LOOP: log=<path>" || fail_msg "(p) LOOP: log=<path> missing from the LOOP text block"
 grep -qE '^#PIPELINE_MERGE_LOOP_DEFER_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries DEFER_MAX" || fail_msg "(p) DEFER_MAX example line missing"
+grep -qE '^#PIPELINE_REBASE_FIX_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries REBASE_FIX_MAX" || fail_msg "(p) REBASE_FIX_MAX example line missing"
 
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"

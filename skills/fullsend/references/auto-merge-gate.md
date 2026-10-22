@@ -19,7 +19,7 @@ Base-branch enforcement is layered: the gate's `baseRefName` assertion (`block-b
    ```text
    LOOP: issue=#<N> pr=#<P> outcome=merged sha=<sha>
    LOOP: issue=#<N> pr=#<P> outcome=already-merged
-   LOOP: issue=#<N> pr=#<P> outcome=needs-fix files=<csv> head=<sha>
+   LOOP: issue=#<N> pr=#<P> outcome=needs-fix files=<csv> head=<sha> attempt=<k>
    LOOP: issue=#<N> pr=#<P> outcome=<block-* token>
    LOOP: issue=#<N> pr=#<P> outcome=deferred
    LOOP: log=<path>   (stderr log; informational, precedes the trailer)
@@ -44,7 +44,7 @@ Base-branch enforcement is layered: the gate's `baseRefName` assertion (`block-b
 
 `LOOP: done` ends the wave. Otherwise clear each pending outcome, then re-call the loop with the `pending` issues:
 - `needs-fix` (the rebase hit `conflict FILES=<csv>`; the helper aborted, branch untouched) ⇒ every such issue gets, in parallel, ONE `Agent(subagent_type='pipeline:stage-executor', model=$MODEL, description='rebase-fix #<N>')`, `$MODEL` from its `DISPATCH` line; its prompt starts `cd <worktree-abs-path>` and states "No stage SKILL.md — this prompt is the whole procedure."; then: run `git rebase origin/<base>` yourself, resolve every conflict, starting with `files=`, per the approved plan's intent, run the full suite in the foreground, push `--force-with-lease`, report `REBASE-FIX issue=#<N> files=<csv>`. Then re-dispatch pr-eval per rebased PR (Step 7 invocation, evaluator independence) after one `fullsend-preflight.sh <N>` call, its prompt carrying `REEVAL=rebase-fix OLD_HEAD=<head from the LOOP line> FILES=<files from the LOOP line>` plus the fresh `PREFLIGHT` line; first evaluations carry no `REEVAL=`. When the `LOOP:` line carries `reason=dirty`, the prompt instead states the worktree has uncommitted changes to `files=`: commit them if they belong to the issue, otherwise `git checkout -- <file>`, then rebase and push.
-- A rebase-fix with no `REBASE-FIX` line, or a `needs-fix` repeating its previous `files=` (kept from the `LOOP:` lines) ⇒ `fullsend-block-merge.sh <N>:block-mergeable`; new `files=` after a sibling merge get another rebase-fix, at most 3 per issue per wave.
+- Every `needs-fix` gets a rebase-fix (`attempt=` is informational). A repeat with no landed fix (`repeat=same-head`, including a rebase-fix that pushed nothing) or the attempt past `PIPELINE_REBASE_FIX_MAX` arrives already routed `block-mergeable`.
 - `block-ci` ⇒ Step 6b's CI wait/repair first. `deferred` ⇒ re-call as-is.
 
 Headless: the script decides; no operator prompt. Step 8's fallback and hand-driving use `fullsend-gate.sh <N>...` (`GATE: issue=#<N> pr=#<P> reason=<token>`), then `fullsend-merge-green.sh` / `fullsend-block-merge.sh`.
