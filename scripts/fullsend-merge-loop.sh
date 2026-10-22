@@ -24,15 +24,19 @@ fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
   LOOP: log=<path>   (stderr log under .claude/scratch/merge-loop/; precedes the trailer)
   LOOP: done | LOOP: pending issues=<csv>      (trailer)
 Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>
-[reason=dirty], block-ci, deferred, block-rebase-error, or the routed block-* token. pending = needs-fix + block-ci +
-deferred. A block-mergestate/block-mergeable token is re-gated until it
-settles, then deferred (counter .claude/scratch/merge-loop/<P>.deferred) up to
-DEFER_MAX re-entries before it is routed. Exit 0 always; exit 2 with no issue
-argument.
+[attempt=<k>] [reason=dirty], block-ci, deferred, block-rebase-error, or the
+routed block-* token. pending = needs-fix + block-ci + deferred. Each rebase
+conflict is recorded in .claude/scratch/merge-loop/<P>.conflicts (removed on
+merge); a repeat of a recorded files= on the same head, or the attempt past
+REBASE_FIX_MAX, is routed block-mergeable. A block-mergestate/block-mergeable
+token is re-gated until it settles, then deferred (counter
+.claude/scratch/merge-loop/<P>.deferred) up to DEFER_MAX re-entries before it
+is routed. Exit 0 always; exit 2 with no issue argument.
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
 PIPELINE_WORKTREE_PREFIX, MANUAL_MERGE, PIPELINE_MERGE_LOOP_CI_WAIT_SECS (300),
 PIPELINE_MERGE_LOOP_WALL_SECS (540), PIPELINE_MERGE_LOOP_CI_RERUN (1),
-PIPELINE_MERGE_LOOP_DEFER_MAX (3), PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
+PIPELINE_MERGE_LOOP_DEFER_MAX (3), PIPELINE_REBASE_FIX_MAX (3),
+PIPELINE_MERGEABILITY_POLL_SECS/_MAX.
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -210,6 +214,10 @@ for N in "${ORDERED[@]}"; do
         # Same files on the same head: the previous rebase-fix never landed.
         if [ "$RB_HEAD" != - ] && grep -qxF "files=$RB_FILES head=$RB_HEAD" "$CF" 2>/dev/null; then
           echo "REBASE: pr=#$PR_NUM repeat=same-head" >&2
+          route_block "$N" "$PR_NUM" block-mergeable; continue
+        fi
+        if [ "$K" -ge "${PIPELINE_REBASE_FIX_MAX:-3}" ]; then
+          echo "REBASE: pr=#$PR_NUM repeat=max" >&2
           route_block "$N" "$PR_NUM" block-mergeable; continue
         fi
         echo "files=$RB_FILES head=$RB_HEAD" >> "$CF"

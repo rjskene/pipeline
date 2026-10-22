@@ -272,6 +272,23 @@ has_line 'LOOP: done' && pass_msg "(ix) LOOP: done" || fail_msg "(ix) trailer wr
 unset FAKE_REBASE_42
 
 # ---------------------------------------------------------------------------
+scenario "(xi) attempt past PIPELINE_REBASE_FIX_MAX: routed block-mergeable (repeat=max)"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=bbb'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=ccc'
+PIPELINE_REBASE_FIX_MAX=2 run 7
+rc0 "(xi)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergeable' && pass_msg "(xi) outcome=block-mergeable" || fail_msg "(xi) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q 'outcome=needs-fix' && fail_msg "(xi) still needs-fix past the cap: $OUT" || pass_msg "(xi) no needs-fix past the cap"
+printf '%s\n' "$ERR" | grep -qF 'repeat=max' && pass_msg "(xi) stderr names repeat=max" || fail_msg "(xi) repeat=max missing: $ERR"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(xi) exactly one manual-merge label call" || fail_msg "(xi) manual-merge label calls != 1"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
 scenario "(xii) merge removes 42.conflicts"
 reset_gate
 export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
@@ -418,6 +435,7 @@ grep -qF 'reason** except `block-ci`, the loop calls' "$GATE_MD" && fail_msg "(p
 grep -qF 'reason=dirty' "$GATE_MD" && pass_msg "(p) Re-entry names the reason=dirty token" || fail_msg "(p) reason=dirty token missing from Re-entry"
 grep -qF 'LOOP: log=<path>' "$GATE_MD" && pass_msg "(p) LOOP text block names LOOP: log=<path>" || fail_msg "(p) LOOP: log=<path> missing from the LOOP text block"
 grep -qE '^#PIPELINE_MERGE_LOOP_DEFER_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries DEFER_MAX" || fail_msg "(p) DEFER_MAX example line missing"
+grep -qE '^#PIPELINE_REBASE_FIX_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries REBASE_FIX_MAX" || fail_msg "(p) REBASE_FIX_MAX example line missing"
 
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"

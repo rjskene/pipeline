@@ -122,8 +122,9 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 #PIPELINE_MERGE_LOOP_CI_WAIT_SECS="300"
 #PIPELINE_MERGE_LOOP_WALL_SECS="540"
 #PIPELINE_MERGE_LOOP_CI_RERUN="1"
-# DEFER_MAX caps re-entries of a PR whose merge-state token never settles (counter under .claude/scratch/merge-loop/), then it is routed to manual-merge.
+# DEFER_MAX caps re-entries of a PR whose merge-state token never settles (counter under .claude/scratch/merge-loop/), then it is routed to manual-merge. REBASE_FIX_MAX caps a PR's needs-fix rebase-fixes (<P>.conflicts) before block-mergeable.
 #PIPELINE_MERGE_LOOP_DEFER_MAX="3"
+#PIPELINE_REBASE_FIX_MAX="3"
 # Wave-helper read fan-out (#1548): max concurrent per-issue gh reads in fullsend-gate/preflight, detect-merge-overlap prefetch, transition-issue --batch; 1 = serial; default single-sourced in scripts/_helper-parallel.sh.
 #PIPELINE_HELPER_PARALLEL="4"
 # Inline execute dispatch width (#1559): max concurrent fullsend Step 6 execute Agents per wave; 0 = the whole conflict-free wave in ONE message; --spawn keeps run-queue MAX_AGENTS.
