@@ -45,6 +45,7 @@ case "$cmd" in
 esac
 GIT_STUB
 chmod +x "$STUB_BIN/git"
+REAL_PATH="$PATH"
 export PATH="$STUB_BIN:$PATH"
 cd "$MAIN_REPO"
 export PIPELINE_PROJECT_ROOT="$MAIN_REPO"
@@ -81,5 +82,90 @@ if grep -qE '^/?pipeline\.config$' "$REPO_ROOT/.gitignore"; then
 else
   fail_msg "pipeline.config not gitignored — worktree copy could be tracked"
 fi
+# --- Real-git cases (#1565): a TRACKED pipeline.config / env file keeps the
+# committed copy; a gitignored one is still copied from the main checkout.
+export PATH="$REAL_PATH"
+make_fixture() { # <dir> — repo with a bare origin, main pushed
+  local proj="$1"
+  mkdir -p "$proj"
+  git init -q "$proj"
+  git -C "$proj" config user.email t@t.t
+  git -C "$proj" config user.name t
+}
+push_fixture() { # <dir>
+  local proj="$1"
+  git init --bare -q "$proj.origin.git"
+  git -C "$proj" remote add origin "$proj.origin.git"
+  git -C "$proj" push -q origin HEAD:refs/heads/main
+}
+write_cfg() { # <file> <sync-envs>
+  cat > "$1" <<CFG
+PIPELINE_REPO="fake/repo"
+PIPELINE_BASE_BRANCH="main"
+PIPELINE_WORKTREE_PREFIX="wt"
+PIPELINE_INSTALL_CMD="true"
+PIPELINE_SEED_CMD=""
+PIPELINE_SYNC_ENVS="$2"
+PIPELINE_SYNC_VENVS=""
+CFG
+}
+
+# Case A: tracked config + tracked env — the main checkout drifts, the
+# worktree must keep the committed bytes and stay clean.
+PROJ="$TMP/case-a"
+make_fixture "$PROJ"
+write_cfg "$PROJ/pipeline.config" ".env.tracked"
+echo "X=committed" > "$PROJ/.env.tracked"
+git -C "$PROJ" add pipeline.config .env.tracked && git -C "$PROJ" commit -qm seed
+push_fixture "$PROJ"
+echo 'PIPELINE_EXTRA="drift"' >> "$PROJ/pipeline.config"
+echo "X=drift" >> "$PROJ/.env.tracked"
+set +e
+(cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ" bash "$HELPER" feature/tracked 11) >"$TMP/out-a" 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && pass_msg "case A: setup-worktree.sh exited 0" || { cat "$TMP/out-a"; fail_msg "case A: setup-worktree.sh exited $rc"; }
+WT="$PROJ/.claude/worktrees/wt-11-tracked"
+if [ -f "$WT/pipeline.config" ] && cmp -s "$WT/pipeline.config" <(git -C "$PROJ" show HEAD:pipeline.config); then
+  pass_msg "case A: tracked pipeline.config keeps the committed copy"
+else
+  fail_msg "case A: worktree pipeline.config differs from HEAD:pipeline.config"
+fi
+if [ -f "$WT/.env.tracked" ] && cmp -s "$WT/.env.tracked" <(git -C "$PROJ" show HEAD:.env.tracked); then
+  pass_msg "case A: tracked env file keeps the committed copy"
+else
+  fail_msg "case A: worktree .env.tracked differs from HEAD:.env.tracked"
+fi
+STATUS="$(git -C "$WT" status --porcelain 2>&1 || true)"
+[ -z "$STATUS" ] && pass_msg "case A: worktree status clean" || fail_msg "case A: worktree not clean: $STATUS"
+grep -qF 'pipeline.config is tracked; worktree keeps the committed copy' "$TMP/out-a" \
+  && pass_msg "case A: skip line printed" || fail_msg "case A: skip line missing"
+git -C "$PROJ" worktree remove --force "$WT" 2>/dev/null || true
+
+# Case B: gitignored config + untracked env — copied from the main checkout.
+PROJ="$TMP/case-b"
+make_fixture "$PROJ"
+printf 'pipeline.config\n.env.local\n' > "$PROJ/.gitignore"
+echo seed > "$PROJ/seed.txt"
+git -C "$PROJ" add .gitignore seed.txt && git -C "$PROJ" commit -qm seed
+push_fixture "$PROJ"
+write_cfg "$PROJ/pipeline.config" ".env.local"
+echo "Y=local" > "$PROJ/.env.local"
+set +e
+(cd "$PROJ" && PIPELINE_PROJECT_ROOT="$PROJ" bash "$HELPER" feature/ignored 12) >"$TMP/out-b" 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && pass_msg "case B: setup-worktree.sh exited 0" || { cat "$TMP/out-b"; fail_msg "case B: setup-worktree.sh exited $rc"; }
+WT="$PROJ/.claude/worktrees/wt-12-ignored"
+cmp -s "$PROJ/pipeline.config" "$WT/pipeline.config" \
+  && pass_msg "case B: gitignored pipeline.config copied" || fail_msg "case B: worktree pipeline.config differs from main copy"
+cmp -s "$PROJ/.env.local" "$WT/.env.local" \
+  && pass_msg "case B: untracked env file copied" || fail_msg "case B: worktree .env.local differs from main copy"
+grep -qF 'Copied pipeline.config' "$TMP/out-b" \
+  && pass_msg "case B: copy line printed" || fail_msg "case B: copy line missing"
+STATUS="$(git -C "$WT" status --porcelain 2>&1 || true)"
+[ -z "$STATUS" ] && pass_msg "case B: worktree status clean" || fail_msg "case B: worktree not clean: $STATUS"
+git -C "$PROJ" worktree remove --force "$WT" 2>/dev/null || true
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
