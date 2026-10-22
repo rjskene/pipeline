@@ -427,8 +427,9 @@ has_line 'LOOP: done' && pass_msg "(iv) LOOP: done" || fail_msg "(iv) trailer wr
 # ---------------------------------------------------------------------------
 scenario "(p) prose/config pins: repeated-needs-fix rule + DEFER_MAX example"
 GATE_MD="$ROOT/skills/fullsend/references/auto-merge-gate.md"
-grep -qF 'repeating its previous `files=`' "$GATE_MD" && pass_msg "(p) Re-entry names the repeated files= rule" || fail_msg "(p) repeated files= rule missing"
-grep -qF 'at most 3 per issue per wave' "$GATE_MD" && pass_msg "(p) Re-entry caps rebase-fix at 3 per issue per wave" || fail_msg "(p) per-wave cap missing"
+grep -qF 'repeating its previous' "$GATE_MD" && fail_msg "(p) stale repeated files= rule still present" || pass_msg "(p) stale repeated files= rule gone"
+grep -qF 'repeat=same-head' "$GATE_MD" && pass_msg "(p) Re-entry names repeat=same-head" || fail_msg "(p) repeat=same-head missing"
+grep -qF 'PIPELINE_REBASE_FIX_MAX' "$GATE_MD" && pass_msg "(p) Re-entry names PIPELINE_REBASE_FIX_MAX" || fail_msg "(p) PIPELINE_REBASE_FIX_MAX missing"
 grep -qF 'A second `needs-fix` for the same issue' "$GATE_MD" && fail_msg "(p) stale second-needs-fix rule still present" || pass_msg "(p) stale second-needs-fix rule gone"
 grep -qF 'except `block-ci` (handed back) and `block-mergestate`/`block-mergeable`' "$GATE_MD" && pass_msg "(p) block-* routing names the settled merge-state tokens" || fail_msg "(p) block-* routing omits block-mergestate/block-mergeable"
 grep -qF 'reason** except `block-ci`, the loop calls' "$GATE_MD" && fail_msg "(p) stale block-ci-only routing wording still present" || pass_msg "(p) stale block-ci-only routing wording gone"
