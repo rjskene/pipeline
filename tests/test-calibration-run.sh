@@ -201,8 +201,10 @@ case "$*" in
   # `gh issue view <n> --repo R --json ...` — the number is the third token.
   "issue view"*)  cat "${CALIB_TEST_ISSUES_DIR:-}/$3.json" 2>/dev/null || echo '{}' ;;
   # <number>TAB<title>, the shape the title-scoped reap reads. 4001 carries a
-  # slate title (reapable); 4777 is an unrelated issue that must survive.
-  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
+  # run-tagged slate title and 4002 a legacy untagged one (both reapable,
+  # #1573); 4777 is an unrelated issue that must survive.
+  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc [r100000]" \
+                    4002 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
   "issue close"*|"issue delete"*) exit 0 ;;
   "issue create"*)
     n="$(cat "$CALIB_TEST_COUNTER" 2>/dev/null || echo 4100)"
@@ -353,6 +355,12 @@ expect_rc "--plan-gate garbage is rejected" 2
 expect_sub "--plan-gate error names the allowed values" "$OUT" "full|single|none"
 expect_sub "--plan-gate error names the annotate value (#1435)" "$OUT" "annotate"
 
+# #1573: the reap strips only a trailing ` [r<digits>]`, so any other tag would
+# escape the next run's reap - reject it as a usage error, pinned on the message.
+PIPELINE_CALIB_RUN_TAG=bad-tag run_helper --dry-run --harness "$HARNESS"
+expect_rc "PIPELINE_CALIB_RUN_TAG=bad-tag is rejected" 2
+expect_sub "bad run-tag error names the required shape" "$OUT" "PIPELINE_CALIB_RUN_TAG must be r<digits>"
+
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
 
@@ -382,6 +390,12 @@ else
   fail_msg "--dry-run must print exactly one CALIB-LAUNCH line (got $N_LAUNCH)"
 fi
 LAUNCH="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+# #1573: the preview names the run tag the slate titles would carry.
+if printf '%s\n' "$OUT" | grep -qE '^CALIB-RUN-TAG r[0-9]{6}$'; then
+  pass_msg "--dry-run previews the CALIB-RUN-TAG"
+else
+  fail_msg "--dry-run must print 'CALIB-RUN-TAG r<ddHHMM>'"
+fi
 
 expect_sub "launch line runs claude headless" "$LAUNCH" "claude -p"
 expect_sub "launch line drives /pipeline:fullsend" "$LAUNCH" "/pipeline:fullsend"
@@ -722,6 +736,20 @@ if [ "$N_IDS" -eq 5 ]; then
 else
   fail_msg "--reset must print CALIB-ISSUES with five numbers (got: $ISSUE_LINE)"
 fi
+# #1573: every slate title carries the per-run tag, so the executor's branch
+# slugs differ run to run (no collision with a prior run's stale branches).
+N_CREATE="$(grep -c '^gh issue create ' "$CALLS" 2>/dev/null)"
+N_TAGGED="$(grep '^gh issue create ' "$CALLS" 2>/dev/null | grep -cE ' \[r[0-9]{6}\] --body-file ')"
+if [ "$N_CREATE" -eq 5 ] && [ "$N_TAGGED" -eq 5 ]; then
+  pass_msg "--reset tags every slate issue title with [r<ddHHMM>]"
+else
+  fail_msg "--reset must tag all five slate titles (create=$N_CREATE tagged=$N_TAGGED)"
+fi
+if printf '%s\n' "$OUT" | grep -qE '^CALIB-RUN-TAG r[0-9]{6}$'; then
+  pass_msg "--reset prints the CALIB-RUN-TAG line"
+else
+  fail_msg "--reset must print 'CALIB-RUN-TAG r<ddHHMM>'"
+fi
 if grep -q '^gh issue close ' "$CALLS" 2>/dev/null; then
   pass_msg "--reset closes stale calib issues"
 else
@@ -736,6 +764,23 @@ if grep -q '^claude ' "$CALLS" 2>/dev/null; then
   fail_msg "--reset launched claude"
 else
   pass_msg "--reset never launches claude"
+fi
+
+# #1573: PIPELINE_CALIB_RUN_TAG overrides the default tag.
+rm -f "$CALLS" "$TMP/issue-counter"
+PIPELINE_CALIB_RUN_TAG=r424242 run_helper --reset --harness "$HARNESS"
+expect_rc "--reset with PIPELINE_CALIB_RUN_TAG=r424242 exits 0" 0
+N_CREATE="$(grep -c '^gh issue create ' "$CALLS" 2>/dev/null)"
+N_TAGGED="$(grep '^gh issue create ' "$CALLS" 2>/dev/null | grep -cF ' [r424242] --body-file ')"
+if [ "$N_CREATE" -eq 5 ] && [ "$N_TAGGED" -eq 5 ]; then
+  pass_msg "the override tag lands on every slate title"
+else
+  fail_msg "the override tag must land on all five titles (create=$N_CREATE tagged=$N_TAGGED)"
+fi
+if printf '%s\n' "$OUT" | grep -qxF 'CALIB-RUN-TAG r424242'; then
+  pass_msg "--reset prints the override CALIB-RUN-TAG"
+else
+  fail_msg "--reset must print 'CALIB-RUN-TAG r424242'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -906,9 +951,14 @@ LIST_CALL="$(grep -m1 '^gh issue list ' "$CALLS" 2>/dev/null)"
 expect_sub "the reap bounds gh issue list (default 30 silently truncates)" "$LIST_CALL" "--limit 200"
 
 if grep -qE '^gh issue (close|delete) 4001 ' "$CALLS" 2>/dev/null; then
-  pass_msg "the reap closes an issue carrying a slate title"
+  pass_msg "the reap closes an issue carrying a run-tagged slate title"
 else
-  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc')"
+  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc [r100000]')"
+fi
+if grep -qE '^gh issue (close|delete) 4002 ' "$CALLS" 2>/dev/null; then
+  pass_msg "the reap closes an issue carrying a legacy untagged slate title"
+else
+  fail_msg "the reap must close issue 4002 (title 'calib: 01-stale-doc')"
 fi
 if grep -qE '^gh issue (close|delete) 4777 ' "$CALLS" 2>/dev/null; then
   fail_msg "the reap deleted an unrelated issue (4777)"
