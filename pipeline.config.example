@@ -113,6 +113,8 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 # Mergeability poll (#1545): when gh reports mergeable=UNKNOWN, rebase-check + the auto-merge gate re-read every SECS up to MAX total reads (defaults single-sourced at the read sites).
 #PIPELINE_MERGEABILITY_POLL_SECS="5"
 #PIPELINE_MERGEABILITY_POLL_MAX="12"
+# Merge retry (#1570): a merge refused as "Head branch is out of date" re-gates and retries up to MAX times, sleeping MERGEABILITY_POLL_SECS (default single-sourced at the read site).
+#PIPELINE_MERGE_RETRY_MAX="3"
 # Merge loop (scripts/fullsend-merge-loop.sh, one call per wave; defaults single-sourced at the read site):
 # CI_WAIT_SECS bounds each `gh pr checks --watch` on a rebased/pending PR; WALL_SECS defers the remaining issues so one call returns
 # before the 600 s foreground Bash ceiling; CI_RERUN caps `gh run rerun --failed` per PR.
