@@ -256,6 +256,22 @@ grep -q -- '--add-label' "$GH_LOG" && fail_msg "(x) a label was applied" || pass
 unset FAKE_REBASE_42
 
 # ---------------------------------------------------------------------------
+scenario "(ix) same files + same head again: routed block-mergeable, not pending"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+run 7
+rc0 "(ix)"
+printf '%s\n' "$OUT" | grep -q 'outcome=needs-fix' && fail_msg "(ix) second run still needs-fix: $OUT" || pass_msg "(ix) no needs-fix on the repeat"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergeable' && pass_msg "(ix) outcome=block-mergeable" || fail_msg "(ix) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-mergeable' && pass_msg "(ix) BLOCK: line relayed" || fail_msg "(ix) no BLOCK: line: $OUT"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(ix) exactly one manual-merge label call" || fail_msg "(ix) manual-merge label calls != 1"
+printf '%s\n' "$ERR" | grep -qF 'REBASE: pr=#42 repeat=same-head' && pass_msg "(ix) stderr names repeat=same-head" || fail_msg "(ix) repeat=same-head missing: $ERR"
+has_line 'LOOP: done' && pass_msg "(ix) LOOP: done" || fail_msg "(ix) trailer wrong: $OUT"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
 scenario "(xii) merge removes 42.conflicts"
 reset_gate
 export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'

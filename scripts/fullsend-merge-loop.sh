@@ -207,6 +207,11 @@ for N in "${ORDERED[@]}"; do
         # Per-PR conflict record (removed on merge): one line per rebase-fix.
         CF="$DEFER_DIR/$PR_NUM.conflicts"
         K=$(grep -c . "$CF" 2>/dev/null); case "$K" in ''|*[!0-9]*) K=0 ;; esac
+        # Same files on the same head: the previous rebase-fix never landed.
+        if [ "$RB_HEAD" != - ] && grep -qxF "files=$RB_FILES head=$RB_HEAD" "$CF" 2>/dev/null; then
+          echo "REBASE: pr=#$PR_NUM repeat=same-head" >&2
+          route_block "$N" "$PR_NUM" block-mergeable; continue
+        fi
         echo "files=$RB_FILES head=$RB_HEAD" >> "$CF"
         loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD attempt=$((K + 1))"
         PENDING+=("$N"); continue ;;
