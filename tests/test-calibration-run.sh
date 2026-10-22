@@ -703,7 +703,9 @@ fi
 
 # One-time cleanup: logs already committed AT calib-base (the 2026-10-08 state).
 git -C "$SANDBOX" add -f -- .claude/logs .claude/logs-archive
-git -C "$SANDBOX" commit --quiet -m "legacy seed that swallowed logs" >/dev/null
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$SANDBOX" commit --quiet -m "legacy seed that swallowed logs" >/dev/null
 git -C "$SANDBOX" tag -f calib-base >/dev/null
 run_helper --bootstrap --harness "$HARNESS"
 expect_rc "--bootstrap over already-committed logs exits 0" 0
@@ -729,7 +731,9 @@ scenario "Scenario 4c: --bootstrap removes tracked sandbox files the template dr
 # (tracked paths only) and leave untracked sandbox state alone.
 echo flaky > "$SANDBOX/tests-case-ids.sh"
 git -C "$SANDBOX" add -- tests-case-ids.sh
-git -C "$SANDBOX" commit --quiet -m "seed carrying a file the template later dropped" >/dev/null
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$SANDBOX" commit --quiet -m "seed carrying a file the template later dropped" >/dev/null
 git -C "$SANDBOX" tag -f calib-base >/dev/null
 mkdir -p "$SANDBOX/.claude/logs"
 echo keep > "$SANDBOX/.claude/logs/keep.txt"
