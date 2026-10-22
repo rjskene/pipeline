@@ -134,6 +134,10 @@ PIPELINE_COMMENTED
 # PIPELINE_DELTA for the EOF-fallback / no-set+a case). Same exemption class.
 PIPELINE_GAMMA
 PIPELINE_DELTA
+# #1566 commented-_CMD / commented-host-key fixture vars (PIPELINE_EPSILON for the
+# live non-command append, PIPELINE_FOO for the commented host line). Same class.
+PIPELINE_EPSILON
+PIPELINE_FOO
 
 # #1233 capability-refusal sentinel source knob. PIPELINE_CAPABILITY_REFUSAL_SOURCES
 # is an eval-caller-set-ONLY var: evaluate-issue-pr's Step 11.2 resolves the

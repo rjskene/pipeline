@@ -127,7 +127,7 @@ fi
 #     (`# KEY=default   # doctor: enable if ...`) and reported as
 #     "added (commented) — enable if applicable" — a phantom live command
 #     (e.g. `npx tsc` in a non-JS project) would otherwise run and fail;
-#   - a COMMENTED host line (`# PIPELINE_X=...`) counts as present (#1566), so
+#   - a COMMENTED host line (`# PIPELINE_<KEY>=...`) counts as present (#1566), so
 #     a deliberate comment-out is respected and a re-run is a no-op.
 # Prints a per-key report. Exits 0. The example file is the source of defaults;
 # the host file is the only thing mutated (append-only).
