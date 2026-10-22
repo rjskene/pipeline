@@ -363,6 +363,7 @@ grep -qF 'at most 3 per issue per wave' "$GATE_MD" && pass_msg "(p) Re-entry cap
 grep -qF 'A second `needs-fix` for the same issue' "$GATE_MD" && fail_msg "(p) stale second-needs-fix rule still present" || pass_msg "(p) stale second-needs-fix rule gone"
 grep -qF 'except `block-ci` (handed back) and `block-mergestate`/`block-mergeable`' "$GATE_MD" && pass_msg "(p) block-* routing names the settled merge-state tokens" || fail_msg "(p) block-* routing omits block-mergestate/block-mergeable"
 grep -qF 'reason** except `block-ci`, the loop calls' "$GATE_MD" && fail_msg "(p) stale block-ci-only routing wording still present" || pass_msg "(p) stale block-ci-only routing wording gone"
+grep -qF 'reason=dirty' "$GATE_MD" && pass_msg "(p) Re-entry names the reason=dirty token" || fail_msg "(p) reason=dirty token missing from Re-entry"
 grep -qF 'LOOP: log=<path>' "$GATE_MD" && pass_msg "(p) LOOP text block names LOOP: log=<path>" || fail_msg "(p) LOOP: log=<path> missing from the LOOP text block"
 grep -qE '^#PIPELINE_MERGE_LOOP_DEFER_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries DEFER_MAX" || fail_msg "(p) DEFER_MAX example line missing"
 
