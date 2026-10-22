@@ -63,6 +63,22 @@ case "$SUFFIX" in
     exit 2
     ;;
 esac
+# PIPELINE_BRANCH_SUFFIX (#1579): append `-<suffix>` to the branch (env or
+# pipeline.config). Validated before any git call; a branch that already ends
+# in `-<suffix>` is left as-is so a re-run neither doubles it nor forks a
+# second worktree. The slug is recomputed so WORKTREE_PATH tracks the branch.
+_bsfx="${PIPELINE_BRANCH_SUFFIX:-}"
+if [ -n "$_bsfx" ]; then
+  if ! [[ "$_bsfx" =~ ^[a-z0-9]+$ ]]; then
+    echo "ERROR: PIPELINE_BRANCH_SUFFIX must be lowercase letters and digits — got: $_bsfx" >&2
+    exit 2
+  fi
+  case "$BRANCH" in
+    *-"$_bsfx") ;;
+    *) BRANCH="$BRANCH-$_bsfx" ;;
+  esac
+  SUFFIX="${BRANCH#*/}"
+fi
 MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 WORKTREE_DIR="$MAIN_REPO/.claude/worktrees"
 if [ -n "$ISSUE_NUM" ]; then
@@ -246,6 +262,7 @@ grep -qxF '.claude/base-branch' "$WT_EXCLUDE" 2>/dev/null \
 echo ""
 echo "=== Setup complete ==="
 echo ""
+echo "  Branch:      $BRANCH"
 echo "  Worktree:    $WORKTREE_PATH"
 echo "  Base branch: $BASE_BRANCH"
 echo "  Execute issue:  claude \"/pipeline:execute-issue-plan <N>\""

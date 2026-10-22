@@ -83,10 +83,9 @@ files; e.g. #1487's 05 rework) needs no reseed: every `--reset` (and every
 `dev/calib/slate/`, and reference tests run from there too. `--bootstrap`
 (#1477) is only for `dev/calib/template/` changes. Each run files titles as
 `<title.txt line 1> [r<ddHHMM>]` (UTC), printed as `CALIB-RUN-TAG` (also by
-`--dry-run`), so branch slugs differ per run (#1573). The slug is agent-chosen, so
-the tag is a strong nudge, not a guarantee: after the next run check `gh pr list
---repo <sandbox> --json headRefName` and expect every head branch to carry the
-tag; if agents drop it, the follow-up is a deterministic branch knob. One caveat:
+`--dry-run`), so branch slugs differ per run (#1573). The driver also sets
+`PIPELINE_BRANCH_SUFFIX` to the run tag, so every sandbox feature branch ends in
+`-r<ddHHMM>` (#1579). One caveat:
 the reap matches the current slate titles after stripping a trailing
 ` [r<digits>]` run tag, so a renamed title's old issue (05's `fix(report): report
 omits the completion rate its docs promise`) is not reaped — close it by hand once.
