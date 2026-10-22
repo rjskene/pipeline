@@ -19,6 +19,11 @@ Prints ONE stdout line, exit 0 on every decision:
                                  conflicting path (U list + merge-tree);
                                  FILES=- when the push after a clean rebase failed
                                  HEAD = the pre-rebase branch tip
+  REBASE=dirty FILES=<csv> HEAD=<sha>
+                                 rebase needed but tracked files carry uncommitted
+                                 changes — nothing rebased, pushed or stashed
+  REBASE=error REASON=<line>     git refused to start the rebase (no rebase in
+                                 progress); REASON = its first stderr line
 The rebase-check diagnostic line goes to stderr. Exit 2 on usage errors or when
 <worktree-dir> is the main checkout (never touched).
 --no-gh: no gh call; REBASE_CHECK_VIEW_JSON defaults to MERGEABLE/CLEAN.
@@ -65,14 +70,38 @@ if [ "$DECISION" = skip ]; then
   exit 0
 fi
 
+# A tracked file with uncommitted edits makes git refuse the rebase outright;
+# report it instead of a phantom conflict. Untracked files never block a rebase.
+# No autostash: the dirty branch is left exactly as found.
+DIRTY=$(git -C "$WT" status --porcelain --untracked-files=no)
+if [ -n "$DIRTY" ]; then
+  DIRTY_CSV=$(printf '%s\n' "$DIRTY" | cut -c4- | sed 's/.* -> //' | paste -sd, -)
+  echo "REBASE=dirty FILES=$DIRTY_CSV HEAD=$(git -C "$WT" rev-parse HEAD)"
+  exit 0
+fi
+
 OLD_HEAD=$(git -C "$WT" rev-parse HEAD)
-if git -C "$WT" rebase "origin/$BASE" >&2; then
+RB_ERR=$(mktemp)
+trap 'rm -f "$RB_ERR"' EXIT
+RB_RC=0
+git -C "$WT" rebase "origin/$BASE" >&2 2>"$RB_ERR" || RB_RC=$?
+cat "$RB_ERR" >&2
+if [ "$RB_RC" -eq 0 ]; then
   if git -C "$WT" push --force-with-lease origin HEAD >&2; then
     echo "REBASE=done"
   else
     echo "fullsend-merge-rebase: push failed after a clean rebase" >&2
     echo "REBASE=conflict FILES=- HEAD=$OLD_HEAD"
   fi
+  exit 0
+fi
+
+# git refused to start the rebase (no REBASE_HEAD, no rebase state dir): nothing
+# to abort and no conflict to list — report the refusal and leave the branch.
+if ! git -C "$WT" rev-parse -q --verify REBASE_HEAD >/dev/null \
+   && [ ! -d "$GIT_DIR_ABS/rebase-merge" ] && [ ! -d "$GIT_DIR_ABS/rebase-apply" ]; then
+  REASON=$(sed '/^[[:space:]]*$/d' "$RB_ERR" | head -1)
+  echo "REBASE=error REASON=${REASON:-unknown}"
   exit 0
 fi
 

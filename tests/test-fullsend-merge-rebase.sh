@@ -2,7 +2,7 @@
 set -uo pipefail
 #
 # tests/test-fullsend-merge-rebase.sh — scripts/fullsend-merge-rebase.sh (#1536):
-# the deterministic merge-time rebase. One stdout line REBASE=skip|done|conflict
+# the deterministic merge-time rebase. One stdout line REBASE=skip|done|conflict|dirty|error
 # [FILES=<csv> HEAD=<pre-rebase-sha>], exit 0 on every decision; refuses the
 # main checkout (exit 2).
 #
@@ -14,6 +14,11 @@ set -uo pipefail
 #   S5b --no-gh default view is MERGEABLE/CLEAN
 #   S7 two-commit branch conflicting in f.txt AND g.txt -> FILES=f.txt,g.txt HEAD=<H0>
 #      (the rebase stops on commit 1; merge-tree surfaces the second path)
+#   S8 rebase needed + modified tracked file -> REBASE=dirty FILES=pipeline.config
+#      HEAD=<H0>; HEAD, remote tip and the unstaged edit untouched (no stash)
+#   S9 rebase needed + only an untracked file -> REBASE=done (untracked ignored)
+#   S10 git refuses the rebase (git shim, no rebase in progress)
+#      -> REBASE=error REASON=<first stderr line>; no rebase --abort
 #
 # Fixtures: a bare origin, a main checkout (git_init_sandbox) and a feature
 # checkout via `git worktree add`. Runs with --no-gh + REBASE_CHECK_VIEW_JSON; a
@@ -189,6 +194,71 @@ else
   fail_msg "S7 rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
 fi
 
+
+scenario "S8: rebase needed + modified tracked file -> REBASE=dirty, untouched"
+make_fixture s8 's/^9$/nine/' 's/^2$/two/'
+d="$TMP/s8"
+printf 'X=1\n' > "$d/wt/pipeline.config"
+git -C "$d/wt" add pipeline.config
+git -C "$d/wt" commit -q -m "tracked config"
+git -C "$d/wt" push -q origin feature/x 2>/dev/null
+H0=$(git -C "$d/wt" rev-parse HEAD)
+R0=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+printf 'Y=2\n' >> "$d/wt/pipeline.config"
+run --no-gh "$d/wt" 108
+R1=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=dirty FILES=pipeline.config HEAD=$H0" ] \
+   && [ "$(git -C "$d/wt" rev-parse HEAD)" = "$H0" ] \
+   && [ "$R1" = "$R0" ] \
+   && [ "$(git -C "$d/wt" status --porcelain)" = " M pipeline.config" ]; then
+  pass_msg "dirty reported, HEAD/remote unchanged, edit not stashed"
+else
+  fail_msg "S8 rc=$RC out=[$(cat "$TMP/out")] status=[$(git -C "$d/wt" status --porcelain)] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S9: rebase needed + only an untracked file -> REBASE=done"
+make_fixture s9 's/^9$/nine/' 's/^2$/two/'
+printf 'tmp\n' > "$TMP/s9/wt/scratch.tmp"
+run --no-gh "$TMP/s9/wt" 109
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=done" ]; then
+  pass_msg "untracked files do not block the rebase"
+else
+  fail_msg "S9 rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S10: git refuses the rebase (no rebase in progress) -> REBASE=error"
+make_fixture s10 's/^9$/nine/' 's/^2$/two/'
+d="$TMP/s10"
+REAL_GIT=$(command -v git)
+mkdir -p "$TMP/shim"
+cat > "$TMP/shim/git" <<SHIM
+#!/bin/bash
+printf '%s\n' "\$*" >> "$TMP/shim.log"
+is_rebase=0
+for w in "\$@"; do
+  [ "\$w" = rebase ] && is_rebase=1
+  [ "\$w" = --abort ] && is_rebase=0 && break
+done
+if [ "\$is_rebase" = 1 ]; then
+  echo "fatal: simulated refusal" >&2
+  exit 128
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$TMP/shim/git"
+H0=$(git -C "$d/wt" rev-parse HEAD)
+R0=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+RC=0
+env PATH="$TMP/shim:$TMP/bin:$PATH" bash "$SCRIPT" --no-gh "$d/wt" 110 > "$TMP/out" 2> "$TMP/err" || RC=$?
+R1=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=error REASON=fatal: simulated refusal" ] \
+   && ! grep -qF -- '--abort' "$TMP/shim.log" \
+   && [ "$(git -C "$d/wt" rev-parse HEAD)" = "$H0" ] \
+   && [ "$R1" = "$R0" ]; then
+  pass_msg "refused rebase reported as error, no abort, branch untouched"
+else
+  fail_msg "S10 rc=$RC out=[$(cat "$TMP/out")] log=[$(tr '\n' ' ' < "$TMP/shim.log")] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
 echo ""
 echo "=============================="
 echo "  PASS: $PASS   FAIL: $FAIL"
