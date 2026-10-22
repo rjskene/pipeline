@@ -720,6 +720,44 @@ else
   fail_msg "the cleanup deleted the archived logs from disk"
 fi
 rm -rf "$SANDBOX/.claude/logs" "$SANDBOX/.claude/logs-archive"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 4c: --bootstrap removes tracked sandbox files the template dropped (#1576)"
+# ---------------------------------------------------------------------------
+# rsync -a / tar never delete, so a file removed from the template stayed
+# tracked in the sandbox and kept riding the seed. --bootstrap must git rm it
+# (tracked paths only) and leave untracked sandbox state alone.
+echo flaky > "$SANDBOX/tests-case-ids.sh"
+git -C "$SANDBOX" add -- tests-case-ids.sh
+git -C "$SANDBOX" commit --quiet -m "seed carrying a file the template later dropped" >/dev/null
+git -C "$SANDBOX" tag -f calib-base >/dev/null
+mkdir -p "$SANDBOX/.claude/logs"
+echo keep > "$SANDBOX/.claude/logs/keep.txt"
+run_helper --bootstrap --harness "$HARNESS"
+expect_rc "--bootstrap over a dropped template file exits 0" 0
+if [ -z "$(git -C "$SANDBOX" ls-files -- tests-case-ids.sh)" ]; then
+  pass_msg "the dropped file is no longer tracked in the sandbox"
+else
+  fail_msg "the dropped file is still tracked in the sandbox"
+fi
+if [ -z "$(git -C "$SANDBOX" ls-tree -r --name-only calib-base -- tests-case-ids.sh 2>/dev/null)" ]; then
+  pass_msg "the removal is committed and calib-base re-anchored past it"
+else
+  fail_msg "calib-base still carries the dropped file"
+fi
+if [ -e "$SANDBOX/tests-case-ids.sh" ]; then
+  fail_msg "the dropped file is still on disk in the sandbox"
+else
+  pass_msg "the dropped file is removed from the sandbox working tree"
+fi
+expect_sub "--bootstrap names each removed path" "$OUT" \
+  "calib: template no longer has tests-case-ids.sh — removed from the sandbox"
+if [ -f "$SANDBOX/.claude/logs/keep.txt" ]; then
+  pass_msg "untracked sandbox state outside the template survives"
+else
+  fail_msg "the template-deletion sync removed untracked sandbox state"
+fi
+rm -rf "$SANDBOX/.claude/logs"
 # ---------------------------------------------------------------------------
 scenario "Scenario 5: --reset recreates the five slate issues"
 # ---------------------------------------------------------------------------

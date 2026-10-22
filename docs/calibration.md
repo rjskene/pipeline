@@ -69,8 +69,10 @@ the harness version, not to the workload.
 The tag follows the template (#1477). When `--bootstrap`'s template sync commits on
 top of `calib-base`, it re-anchors the tag to that commit (`git tag -f` + a force
 push, reported as `calib: calib-base re-anchored <old> -> <new>`); when nothing
-changed, the tag stays put. So `--bootstrap` after a template change is the
-documented way to roll a template fix into the slate — run `--reset` first so the
+changed, the tag stays put. The sync also `git rm`s tracked sandbox files the
+template no longer has (#1576), so a template deletion needs no hand edit. So
+`--bootstrap` after a template change is the documented way to roll a template
+fix into the slate — run `--reset` first so the
 sandbox sits on `calib-base`; a sandbox left on a post-run `main` only warns and
 keeps the old tag, since anchoring there would bake the run's merged fixes into
 the seed. Hand edits to the sandbox use `--retag` instead.

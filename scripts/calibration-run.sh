@@ -441,6 +441,18 @@ sync_template() {
   else
     ( cd "$TEMPLATE_DIR" && tar cf - . ) | ( cd "$SANDBOX" && tar xf - ) || return 1
   fi
+  # #1576: rsync -a / tar never delete, so a file the template dropped stayed
+  # tracked and kept riding the seed. Reconcile TRACKED files only — not
+  # rsync --delete, which would sweep untracked run state and has no tar
+  # equivalent. .claude/ is skipped: commit_sandbox owns it via rm --cached.
+  [ -d "$SANDBOX/.git" ] || return 0
+  local p
+  while IFS= read -r -d '' p; do
+    case "$p" in .claude/*) continue ;; esac
+    if [ -e "$TEMPLATE_DIR/$p" ] || [ -L "$TEMPLATE_DIR/$p" ]; then continue; fi
+    dispatch git -C "$SANDBOX" rm --quiet -- "$p" || return 1
+    echo "calib: template no longer has $p — removed from the sandbox"
+  done < <(git -C "$SANDBOX" ls-files -z)
 }
 
 # materialize_local_settings — refresh the sandbox's .claude/settings.local.json
