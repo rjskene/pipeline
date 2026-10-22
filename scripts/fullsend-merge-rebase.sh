@@ -19,6 +19,9 @@ Prints ONE stdout line, exit 0 on every decision:
                                  conflicting path (U list + merge-tree);
                                  FILES=- when the push after a clean rebase failed
                                  HEAD = the pre-rebase branch tip
+  REBASE=dirty FILES=<csv> HEAD=<sha>
+                                 rebase needed but tracked files carry uncommitted
+                                 changes — nothing rebased, pushed or stashed
 The rebase-check diagnostic line goes to stderr. Exit 2 on usage errors or when
 <worktree-dir> is the main checkout (never touched).
 --no-gh: no gh call; REBASE_CHECK_VIEW_JSON defaults to MERGEABLE/CLEAN.
@@ -62,6 +65,16 @@ DECISION=$(printf '%s\n' "$CHECK" | sed -n 's/.*REBASE=\([a-z]*\).*/\1/p' | tail
 
 if [ "$DECISION" = skip ]; then
   echo "REBASE=skip"
+  exit 0
+fi
+
+# A tracked file with uncommitted edits makes git refuse the rebase outright;
+# report it instead of a phantom conflict. Untracked files never block a rebase.
+# No autostash: the dirty branch is left exactly as found.
+DIRTY=$(git -C "$WT" status --porcelain --untracked-files=no)
+if [ -n "$DIRTY" ]; then
+  DIRTY_CSV=$(printf '%s\n' "$DIRTY" | cut -c4- | sed 's/.* -> //' | paste -sd, -)
+  echo "REBASE=dirty FILES=$DIRTY_CSV HEAD=$(git -C "$WT" rev-parse HEAD)"
   exit 0
 fi
 

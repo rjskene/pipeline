@@ -189,6 +189,37 @@ else
   fail_msg "S7 rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
 fi
 
+
+scenario "S8: rebase needed + modified tracked file -> REBASE=dirty, untouched"
+make_fixture s8 's/^9$/nine/' 's/^2$/two/'
+d="$TMP/s8"
+printf 'X=1\n' > "$d/wt/pipeline.config"
+git -C "$d/wt" add pipeline.config
+git -C "$d/wt" commit -q -m "tracked config"
+git -C "$d/wt" push -q origin feature/x 2>/dev/null
+H0=$(git -C "$d/wt" rev-parse HEAD)
+R0=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+printf 'Y=2\n' >> "$d/wt/pipeline.config"
+run --no-gh "$d/wt" 108
+R1=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=dirty FILES=pipeline.config HEAD=$H0" ] \
+   && [ "$(git -C "$d/wt" rev-parse HEAD)" = "$H0" ] \
+   && [ "$R1" = "$R0" ] \
+   && [ "$(git -C "$d/wt" status --porcelain)" = " M pipeline.config" ]; then
+  pass_msg "dirty reported, HEAD/remote unchanged, edit not stashed"
+else
+  fail_msg "S8 rc=$RC out=[$(cat "$TMP/out")] status=[$(git -C "$d/wt" status --porcelain)] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S9: rebase needed + only an untracked file -> REBASE=done"
+make_fixture s9 's/^9$/nine/' 's/^2$/two/'
+printf 'tmp\n' > "$TMP/s9/wt/scratch.tmp"
+run --no-gh "$TMP/s9/wt" 109
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=done" ]; then
+  pass_msg "untracked files do not block the rebase"
+else
+  fail_msg "S9 rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
 echo ""
 echo "=============================="
 echo "  PASS: $PASS   FAIL: $FAIL"
