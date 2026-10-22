@@ -248,6 +248,8 @@ if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
     echo "PIPELINE_PLAN_GATE=${PIPELINE_PLAN_GATE:-unset}"
     # #1464: same story for the --pre-pr-review arm (execute Step 8 reads it).
     echo "PIPELINE_PRE_PR_REVIEW=${PIPELINE_PRE_PR_REVIEW:-unset}"
+    # #1579: the run tag reaches setup-worktree.sh ONLY as this env var.
+    echo "PIPELINE_BRANCH_SUFFIX=${PIPELINE_BRANCH_SUFFIX:-unset}"
   } > "$CALIB_TEST_LAUNCH_ENV"
 fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
@@ -395,6 +397,15 @@ if printf '%s\n' "$OUT" | grep -qE '^CALIB-RUN-TAG r[0-9]{6}$'; then
   pass_msg "--dry-run previews the CALIB-RUN-TAG"
 else
   fail_msg "--dry-run must print 'CALIB-RUN-TAG r<ddHHMM>'"
+fi
+# #1579: the launch preview sets PIPELINE_BRANCH_SUFFIX to that same run tag.
+expect_sub "launch line sets PIPELINE_BRANCH_SUFFIX" "$LAUNCH" "PIPELINE_BRANCH_SUFFIX=r"
+DRY_TAG="$(printf '%s\n' "$OUT" | sed -n 's/^CALIB-RUN-TAG //p' | head -1)"
+DRY_BSFX="$(printf '%s\n' "$LAUNCH" | grep -oE 'PIPELINE_BRANCH_SUFFIX=[^ ]+' | head -1)"
+if [ -n "$DRY_TAG" ] && [ "$DRY_BSFX" = "PIPELINE_BRANCH_SUFFIX=$DRY_TAG" ]; then
+  pass_msg "launch-line PIPELINE_BRANCH_SUFFIX equals the printed CALIB-RUN-TAG"
+else
+  fail_msg "launch-line PIPELINE_BRANCH_SUFFIX must equal CALIB-RUN-TAG (tag: $DRY_TAG, launch: $DRY_BSFX)"
 fi
 
 expect_sub "launch line runs claude headless" "$LAUNCH" "claude -p"
@@ -2715,6 +2726,30 @@ TOTAL_OC_NA="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
 expect_sub "CALIB-TOTAL renders output_complete=n/a without the keys" "$TOTAL_OC_NA" " output_complete=n/a"
 
 export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 28: the launch sets PIPELINE_BRANCH_SUFFIX to the run tag (#1579)"
+# ---------------------------------------------------------------------------
+# Every sandbox feature branch must carry the run tag, so the driver hands the
+# session PIPELINE_BRANCH_SUFFIX=<run tag> (setup-worktree.sh appends it). Not
+# an experimental arm: unconditional, no flag. Spliced AFTER #1390's scrub, so a
+# poison value in the launching shell loses to the run tag.
+
+echo 7100 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export PIPELINE_BRANCH_SUFFIX="bogus"
+PIPELINE_CALIB_RUN_TAG=r515151 run_helper --run --harness "$HARNESS"
+expect_rc "--run with PIPELINE_CALIB_RUN_TAG=r515151 exits 0" 0
+
+LAUNCH_ENV_BSFX="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_BSFX" | grep -qxF -- "PIPELINE_BRANCH_SUFFIX=r515151"; then
+  pass_msg "the launch hands the session PIPELINE_BRANCH_SUFFIX=r515151"
+else
+  fail_msg "the launched session's environment must carry PIPELINE_BRANCH_SUFFIX=r515151 (got: $(printf '%s' "$LAUNCH_ENV_BSFX" | tr '\n' ' '))"
+fi
+unset PIPELINE_BRANCH_SUFFIX
 unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------

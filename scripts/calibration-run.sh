@@ -391,6 +391,8 @@ build_launch() {
   # `checkout --force --detach` every run, and it is not where the operator's
   # interactive session is sitting. It is spliced AFTER "${scrub[@]}" (which
   # `-u`s every inherited PIPELINE_*, #1390), so the explicit set wins.
+  # #1579: unconditional — every sandbox feature branch carries the run tag.
+  local -a branch_suffix_env=("PIPELINE_BRANCH_SUFFIX=$CALIB_RUN_TAG")
   local -a perm_argv bridge_env=()
   case "${PIPELINE_HEADLESS_PERMISSIONS:-auto}" in
     bypass) perm_argv=(--dangerously-skip-permissions) ;;
@@ -399,6 +401,7 @@ build_launch() {
   esac
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" "${plan_gate_env[@]}"
+          "${branch_suffix_env[@]}"
           "${pre_pr_env[@]}" "${path_c_fanout_env[@]}"
           PIPELINE_HEADLESS=true
           "${bridge_env[@]}"
