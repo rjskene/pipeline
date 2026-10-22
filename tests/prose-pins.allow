@@ -20,9 +20,6 @@ tests/test-doc-claims-match-scripts.sh:Comments are read ONLY via
 # Legacy merge-loop needs-fix escalation sentence pin, predates #1562.
 tests/test-fullsend-merge-loop.sh:A second `needs-fix` for the
 
-# Legacy collapsed-D (3b) sentence pin, predates #1562.
-tests/test-path-d-collapse-dispatch.sh:does NOT re-read the plan
-
 # Legacy rebase-fix prompt opener sentence pin, predates #1562.
 tests/test-rebase-fix-prompt-no-skill.sh:No stage SKILL.md — this prompt is the whole
 

@@ -32,7 +32,13 @@ assert_has() { grep -qiF "$1" "$FILE" || { echo "MISSING: $1"; fail=1; }; }
 assert_has "[issue_numbers...] [--manual-merge] [--spawn]"
 
 # (d) negative / default — the bare-fullsend inline default is preserved.
-assert_has "When \`--spawn\` is absent"
+# #1562: anchored on the `--spawn` argv bullet, not a sentence.
+spawn_bullet="$(grep -E '^- `--spawn`' "$FILE" || true)"
+if [ -z "$spawn_bullet" ]; then
+  echo "MISSING: the '- \`--spawn\`' argv bullet"; fail=1
+else
+  printf '%s' "$spawn_bullet" | grep -qiF inline || { echo "MISSING: inline default on the '- \`--spawn\`' argv bullet"; fail=1; }
+fi
 
 # (b) Step 6 has the all-paths-run-queue branch. Block-scope to the Step 6
 # block so it is distinguished from Step 7. Step 6 starts at the
@@ -41,7 +47,7 @@ step6="$(awk '/^6\. \*\*Execute \(wave N\)/{f=1} /^6b\. /{f=0} f' "$FILE")"
 if [ -z "$step6" ]; then
   echo "VIOLATION: could not locate Step 6 (Execute) block"; fail=1
 fi
-printf '%s' "$step6" | grep -qiF "When \`--spawn\` is present" || { echo "MISSING (Step 6): When \`--spawn\` is present"; fail=1; }
+printf '%s' "$step6" | grep -qF '**`--spawn` override.**' || { echo "MISSING (Step 6): **\`--spawn\` override.** label"; fail=1; }
 printf '%s' "$step6" | grep -qiF -- "--spawn" || { echo "MISSING (Step 6): --spawn"; fail=1; }
 printf '%s' "$step6" | grep -qiF "all paths" || { echo "MISSING (Step 6): all paths"; fail=1; }
 printf '%s' "$step6" | grep -qiF "run-queue" || { echo "MISSING (Step 6): run-queue"; fail=1; }
