@@ -33,6 +33,31 @@ Pre-1.0, release-please uses two conservatism flags in `release-please-config.js
 | `feat:` | patch |
 | `feat!:` / `BREAKING CHANGE:` | minor |
 
+### Promotion merge recipe
+
+release-please types the `staging → main` promotion from the MERGE COMMIT's own
+subject and footers (never from the body, never from the promoted range — see
+"Release gotchas" below). Pick the merge command from the version you want:
+
+| You want | Merge the promotion PR with |
+|----------|-----------------------------|
+| patch (`0.25.1 → 0.25.2`), any content | `gh pr merge N --merge --subject "feat: <summary> (#N)"` or `"fix(...): <summary> (#N)"` |
+| minor (`0.25.x → 0.26.0`), breaking content | `gh pr merge N --merge --subject "feat!: <summary> (#N)"` |
+| minor (`0.25.x → 0.26.0`), NON-breaking content | `gh pr merge N --merge --subject "feat: <summary> (#N)" --body "$(printf '<summary>\n\nRelease-As: 0.26.0')"` |
+| exact version, any reason | same as above with the footer value set to that version |
+
+Hard rules, each learned by a mis-cut:
+
+- Never accept the default `Merge pull request #N from …` subject — it is unparseable
+  and the whole commit (footer included) is dropped (0.25.1 first attempt, #1507).
+- The subject type must be CHANGELOG-visible (`feat`, `fix`, `perf`, `revert`); a
+  `chore:`/`docs:` subject produces empty notes and release-please skips.
+- A plain `feat:` promotion is a PATCH bump pre-1.0 (`bump-patch-for-minor-pre-major`),
+  so a minor needs either `feat!:` or the footer — #1525 shipped a ten-PR `feat:` as
+  0.25.2 when 0.26.0 was intended.
+- Check the release PR's title (`chore(main): release X.Y.Z`) BEFORE merging it; once the
+  tag exists, re-cutting means deleting the tag and GitHub Release by hand.
+
 Graduating to 1.0 (future, not now): set both flags to `false` and push to `main`. The first cut after the flip honors default semver (`feat!:` → 1.0.0). Single-PR change; no hand-cutting. Tag history is preserved — existing `-rc` tags stay as-is.
 
 ### Breaking changes
