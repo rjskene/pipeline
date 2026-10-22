@@ -1,0 +1,30 @@
+# Allow-list for tests/test-prose-pins-are-anchors.sh (issue #1562).
+# One `<test-path>:<pattern-prefix>` entry per line, `<test-path>` repo-relative
+# (tests/<file>.sh); the entry covers every prose pin in that file whose grep
+# pattern starts with <pattern-prefix> (the pattern up to the end of its first
+# 5-word run — the lint's UNLISTED line prints it). Blank lines and whole-line
+# `#` comments are ignored; every entry block must open with a `#` line saying
+# WHY the pin has no token or heading to anchor on.
+# Entries only shrink: an entry matching no prose pin fails the lint as STALE.
+# See docs/operational-notes.md section 16.
+
+# Legacy CLAUDE.md granularity-contract sentence pin (#459/#492), predates #1562.
+tests/test-claude-md-changelog-granularity.sh:one entry per merged feature
+
+# Legacy collapsed-D consume-or-produce sentence pin, predates #1562.
+tests/test-collapsed-d-consume-or-produce.sh:skip this fetch on PATH
+
+# Legacy doc-claim sentence pin (comment-trust wording), predates #1562.
+tests/test-doc-claims-match-scripts.sh:Comments are read ONLY via
+
+# Legacy merge-loop needs-fix escalation sentence pin, predates #1562.
+tests/test-fullsend-merge-loop.sh:A second `needs-fix` for the
+
+# Legacy collapsed-D (3b) sentence pin, predates #1562.
+tests/test-path-d-collapse-dispatch.sh:does NOT re-read the plan
+
+# Legacy rebase-fix prompt opener sentence pin, predates #1562.
+tests/test-rebase-fix-prompt-no-skill.sh:No stage SKILL.md — this prompt is the whole
+
+# Legacy stage-agent-types gate-arm sentence pin, predates #1562.
+tests/test-stage-agent-types.sh:stays by design; the fullsend gate arm approves
