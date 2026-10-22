@@ -199,7 +199,7 @@ reset_gate
 export FAKE_REBASE_43='conflict FILES=f.txt,g.txt HEAD=abc123'
 run 7 8
 rc0 "(c)"
-has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt head=abc123' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt head=abc123" || fail_msg "(c) needs-fix line wrong: $OUT"
+has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt head=abc123 attempt=1' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt head=abc123 attempt=1" || fail_msg "(c) needs-fix line wrong: $OUT"
 has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(c) #7 still merged" || fail_msg "(c) sibling not merged: $OUT"
 has_line 'LOOP: pending issues=8' && pass_msg "(c) LOOP: pending issues=8" || fail_msg "(c) pending trailer wrong: $OUT"
 grep -q '^gh pr merge 43' "$GH_LOG" && fail_msg "(c) gh pr merge 43 called" || pass_msg "(c) no gh pr merge 43"
@@ -215,6 +215,7 @@ has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=pipeline.config head=abc
 has_line 'LOOP: pending issues=7' && pass_msg "(c2) LOOP: pending issues=7" || fail_msg "(c2) pending trailer wrong: $OUT"
 grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c2) gh pr merge called" || pass_msg "(c2) no gh pr merge"
 grep -q -- '--add-label' "$GH_LOG" && fail_msg "(c2) a label was applied" || pass_msg "(c2) no label applied"
+[ -e "$PROJ/.claude/scratch/merge-loop/42.conflicts" ] && fail_msg "(c2) reason=dirty wrote 42.conflicts" || pass_msg "(c2) reason=dirty never records 42.conflicts"
 unset FAKE_REBASE_42
 
 # ---------------------------------------------------------------------------
@@ -230,6 +231,41 @@ printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-rebase-erro
 has_line 'LOOP: done' && pass_msg "(c3) LOOP: done" || fail_msg "(c3) trailer wrong: $OUT"
 grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c3) gh pr merge called" || pass_msg "(c3) no gh pr merge"
 unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+CONF_F="$PROJ/.claude/scratch/merge-loop/42.conflicts"
+scenario "(viii) first conflict: needs-fix attempt=1, one 42.conflicts record"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+rc0 "(viii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=bin/calibctl head=aaa attempt=1' && pass_msg "(viii) needs-fix ... attempt=1" || fail_msg "(viii) needs-fix line wrong: $OUT"
+[ "$(grep -c . "$CONF_F" 2>/dev/null)" = 1 ] && pass_msg "(viii) 42.conflicts holds exactly 1 line" || fail_msg "(viii) 42.conflicts lines=$(grep -c . "$CONF_F" 2>/dev/null || echo missing)"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(x) moved head, same files: a fresh attempt=2, no label"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=bbb'
+run 7
+rc0 "(x)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=bin/calibctl head=bbb attempt=2' && pass_msg "(x) needs-fix ... head=bbb attempt=2" || fail_msg "(x) needs-fix line wrong: $OUT"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(x) a label was applied" || pass_msg "(x) no --add-label call"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(xii) merge removes 42.conflicts"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+[ -e "$CONF_F" ] && pass_msg "(xii) 42.conflicts exists before the merge run" || fail_msg "(xii) 42.conflicts missing before the merge run"
+unset FAKE_REBASE_42
+run 7
+rc0 "(xii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(xii) outcome=merged" || fail_msg "(xii) not merged: $OUT"
+[ -e "$CONF_F" ] && fail_msg "(xii) 42.conflicts survives the merge" || pass_msg "(xii) merge removes 42.conflicts"
 
 # ---------------------------------------------------------------------------
 scenario "(d) block-verdict: routed to fullsend-block-merge.sh once"

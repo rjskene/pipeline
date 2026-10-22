@@ -204,7 +204,11 @@ for N in "${ORDERED[@]}"; do
       "REBASE=conflict"*)
         RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
         RB_HEAD=-; case "$RB" in *" HEAD="*) RB_HEAD=${RB##*HEAD=} ;; esac
-        loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD"
+        # Per-PR conflict record (removed on merge): one line per rebase-fix.
+        CF="$DEFER_DIR/$PR_NUM.conflicts"
+        K=$(grep -c . "$CF" 2>/dev/null); case "$K" in ''|*[!0-9]*) K=0 ;; esac
+        echo "files=$RB_FILES head=$RB_HEAD" >> "$CF"
+        loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD attempt=$((K + 1))"
         PENDING+=("$N"); continue ;;
       "REBASE=dirty"*)
         RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
@@ -280,6 +284,7 @@ for N in "${ORDERED[@]}"; do
       green)
         [ "$MRC" -eq 0 ] || echo "WARN: issue #$N merged but fullsend-merge-green.sh exited $MRC (issue close)" >&2
         rm -f "$DEFER_DIR/$PR_NUM.deferred"
+        rm -f "$DEFER_DIR/$PR_NUM.conflicts"
         loop_line "$N" "$PR_NUM" "merged sha=${MLINE##*sha=}" ;;
       block-ci) loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N") ;;
       block-mergestate|block-mergeable) defer_or_route "$N" "$PR_NUM" "$MREASON" ;;
