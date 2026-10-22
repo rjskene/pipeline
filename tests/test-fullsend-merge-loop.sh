@@ -206,6 +206,32 @@ grep -q '^gh pr merge 43' "$GH_LOG" && fail_msg "(c) gh pr merge 43 called" || p
 unset FAKE_REBASE_43
 
 # ---------------------------------------------------------------------------
+scenario "(c2) REBASE=dirty: needs-fix reason=dirty handed back, no merge, no label"
+reset_gate
+export FAKE_REBASE_42='dirty FILES=pipeline.config HEAD=abc123'
+run 7
+rc0 "(c2)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=pipeline.config head=abc123 reason=dirty' && pass_msg "(c2) outcome=needs-fix ... reason=dirty" || fail_msg "(c2) needs-fix line wrong: $OUT"
+has_line 'LOOP: pending issues=7' && pass_msg "(c2) LOOP: pending issues=7" || fail_msg "(c2) pending trailer wrong: $OUT"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c2) gh pr merge called" || pass_msg "(c2) no gh pr merge"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(c2) a label was applied" || pass_msg "(c2) no label applied"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(c3) REBASE=error: routed block-rebase-error once, not pending"
+reset_gate
+export FAKE_REBASE_42='error REASON=fatal: simulated refusal'
+run 7
+rc0 "(c3)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-rebase-error' && pass_msg "(c3) outcome=block-rebase-error" || fail_msg "(c3) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-rebase-error' && pass_msg "(c3) BLOCK: line relayed" || fail_msg "(c3) no BLOCK: line: $OUT"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(c3) exactly one manual-merge label call" || fail_msg "(c3) manual-merge label calls != 1"
+has_line 'LOOP: done' && pass_msg "(c3) LOOP: done" || fail_msg "(c3) trailer wrong: $OUT"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c3) gh pr merge called" || pass_msg "(c3) no gh pr merge"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
 scenario "(d) block-verdict: routed to fullsend-block-merge.sh once"
 reset_gate
 echo block-verdict > "$FAKE_GATE_DIR/7"

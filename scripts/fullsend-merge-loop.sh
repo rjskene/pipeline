@@ -5,8 +5,8 @@
 # turn per wave instead of one per helper call: PR derivation (fail-closed) ->
 # merge order (fewest-overlap-first) -> per PR: fullsend-merge-rebase.sh ->
 # auto_merge_should_fire -> fullsend-merge-green.sh / fullsend-block-merge.sh.
-# Every outcome the loop cannot settle itself (a rebase conflict) is handed back
-# as a LOOP: line; the orchestrator re-enters per
+# Every outcome the loop cannot settle itself (a rebase conflict or a dirty
+# worktree) is handed back as a LOOP: line; the orchestrator re-enters per
 # skills/fullsend/references/auto-merge-gate.md `### Re-entry`.
 set -uo pipefail
 
@@ -23,8 +23,8 @@ fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
   LOOP: issue=#<N> pr=#<P> outcome=<outcome>   (one per issue)
   LOOP: log=<path>   (stderr log under .claude/scratch/merge-loop/; precedes the trailer)
   LOOP: done | LOOP: pending issues=<csv>      (trailer)
-Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>, block-ci,
-deferred, or the routed block-* token. pending = needs-fix + block-ci +
+Outcomes: merged sha=<sha>, already-merged, needs-fix files=<csv> head=<sha>
+[reason=dirty], block-ci, deferred, block-rebase-error, or the routed block-* token. pending = needs-fix + block-ci +
 deferred. A block-mergestate/block-mergeable token is re-gated until it
 settles, then deferred (counter .claude/scratch/merge-loop/<P>.deferred) up to
 DEFER_MAX re-entries before it is routed. Exit 0 always; exit 2 with no issue
@@ -206,6 +206,13 @@ for N in "${ORDERED[@]}"; do
         RB_HEAD=-; case "$RB" in *" HEAD="*) RB_HEAD=${RB##*HEAD=} ;; esac
         loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD"
         PENDING+=("$N"); continue ;;
+      "REBASE=dirty"*)
+        RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
+        RB_HEAD=-; case "$RB" in *" HEAD="*) RB_HEAD=${RB##*HEAD=} ;; esac
+        loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD reason=dirty"
+        PENDING+=("$N"); continue ;;
+      "REBASE=error"*)
+        route_block "$N" "$PR_NUM" block-rebase-error; continue ;;
       "REBASE=done")
         # Registration settle, then wait. A watch that saw no checks is not a
         # wait: re-settle and re-watch once (bounded by the wall). A timed-out
