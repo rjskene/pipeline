@@ -22,6 +22,8 @@ Prints ONE stdout line, exit 0 on every decision:
   REBASE=dirty FILES=<csv> HEAD=<sha>
                                  rebase needed but tracked files carry uncommitted
                                  changes — nothing rebased, pushed or stashed
+  REBASE=error REASON=<line>     git refused to start the rebase (no rebase in
+                                 progress); REASON = its first stderr line
 The rebase-check diagnostic line goes to stderr. Exit 2 on usage errors or when
 <worktree-dir> is the main checkout (never touched).
 --no-gh: no gh call; REBASE_CHECK_VIEW_JSON defaults to MERGEABLE/CLEAN.
@@ -79,13 +81,27 @@ if [ -n "$DIRTY" ]; then
 fi
 
 OLD_HEAD=$(git -C "$WT" rev-parse HEAD)
-if git -C "$WT" rebase "origin/$BASE" >&2; then
+RB_ERR=$(mktemp)
+trap 'rm -f "$RB_ERR"' EXIT
+RB_RC=0
+git -C "$WT" rebase "origin/$BASE" >&2 2>"$RB_ERR" || RB_RC=$?
+cat "$RB_ERR" >&2
+if [ "$RB_RC" -eq 0 ]; then
   if git -C "$WT" push --force-with-lease origin HEAD >&2; then
     echo "REBASE=done"
   else
     echo "fullsend-merge-rebase: push failed after a clean rebase" >&2
     echo "REBASE=conflict FILES=- HEAD=$OLD_HEAD"
   fi
+  exit 0
+fi
+
+# git refused to start the rebase (no REBASE_HEAD, no rebase state dir): nothing
+# to abort and no conflict to list — report the refusal and leave the branch.
+if ! git -C "$WT" rev-parse -q --verify REBASE_HEAD >/dev/null \
+   && [ ! -d "$GIT_DIR_ABS/rebase-merge" ] && [ ! -d "$GIT_DIR_ABS/rebase-apply" ]; then
+  REASON=$(sed '/^[[:space:]]*$/d' "$RB_ERR" | head -1)
+  echo "REBASE=error REASON=${REASON:-unknown}"
   exit 0
 fi
 
