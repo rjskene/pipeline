@@ -390,6 +390,12 @@ else
   fail_msg "--dry-run must print exactly one CALIB-LAUNCH line (got $N_LAUNCH)"
 fi
 LAUNCH="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+# #1573: the preview names the run tag the slate titles would carry.
+if printf '%s\n' "$OUT" | grep -qE '^CALIB-RUN-TAG r[0-9]{6}$'; then
+  pass_msg "--dry-run previews the CALIB-RUN-TAG"
+else
+  fail_msg "--dry-run must print 'CALIB-RUN-TAG r<ddHHMM>'"
+fi
 
 expect_sub "launch line runs claude headless" "$LAUNCH" "claude -p"
 expect_sub "launch line drives /pipeline:fullsend" "$LAUNCH" "/pipeline:fullsend"

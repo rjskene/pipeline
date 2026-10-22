@@ -1476,6 +1476,7 @@ case "$MODE" in
     [ -n "$PLAN_GATE" ] && ARM_TOKENS+=("plan_gate=$PLAN_GATE")
     [ -n "$PRE_PR_REVIEW" ] && ARM_TOKENS+=("pre_pr_review=$PRE_PR_REVIEW")
     [ -n "$PATH_C_FANOUT" ] && ARM_TOKENS+=("path_c_fanout=$PATH_C_FANOUT")
+    printf 'CALIB-RUN-TAG %s\n' "$CALIB_RUN_TAG"
     dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;
