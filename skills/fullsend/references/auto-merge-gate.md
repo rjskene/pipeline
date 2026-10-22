@@ -30,7 +30,7 @@ Base-branch enforcement is layered: the gate's `baseRefName` assertion (`block-b
 
 3. **On `green`:** the loop calls `fullsend-merge-green.sh <N>`, which re-gates with `auto_merge_should_fire` immediately before `gh pr merge`, so a moved head never merges on a stale token. Its order is load-bearing:
    - **TOCTOU re-check** — re-read `baseRefName` right before the merge; a mismatch emits `block-base-mismatch`, no merge.
-   - Merge synchronously (NOT `--auto`) with `--merge --delete-branch`; a failure emits `block-merge-failed`.
+   - Merge synchronously (NOT `--auto`) with `--merge --delete-branch`; a failure emits `block-merge-failed`; a "Head branch is out of date" refusal re-gates and retries up to `PIPELINE_MERGE_RETRY_MAX` (default 3) times first, and the token carries `detail="<first stderr line>"`.
    - Capture the merge SHA, then rewrite the eval comment's branch-pinned screenshot URLs to it (fail-soft; `PIPELINE_SCREENSHOT_REWRITE_ENABLED=false` skips).
    - Post the `Auto-merged: eval Approved + CI SUCCESS + MERGEABLE/CLEAN at <ts>` footer (Step 8 greps this prefix), then the green `MERGE:` line.
    - `finalize-issue-labels.sh "$ISSUE" --repo "$PIPELINE_REPO"` adds `merged` and strips the lifecycle set (WARN on failure).
