@@ -6,6 +6,7 @@
 #   (b) evaluate SKILL carries the evaluate-form directive sentence.
 #   (c) every deleted browser-eval path is absent.
 #   (d) no residual reference to the removed surface in live sources.
+#   (e) plan-issue template's `**Frontend changes:**` line names user-visible outcomes.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -14,6 +15,7 @@ FAIL() { echo "FAIL: $*"; fail=1; }
 
 EXEC=skills/execute-issue-plan/SKILL.md
 EVAL=skills/evaluate-issue-pr/SKILL.md
+PLAN=skills/plan-issue/SKILL.md
 LEAD='If the diff changes anything a user sees in a browser'
 
 # (a) execute directive
@@ -61,6 +63,11 @@ if [ -n "$hits" ]; then
   FAIL "(d) residual browser-eval references:"
   printf '  %s\n' $hits
 fi
+
+# (e) plan template outcome clause
+for needle in '**Frontend changes:**' 'one line per user-visible outcome'; do
+  grep -qF -- "$needle" "$PLAN" || FAIL "(e) $PLAN missing: $needle"
+done
 
 [ "$fail" -eq 0 ] || exit 1
 echo "PASS: browser directive pinned; browser-eval structure removed"
