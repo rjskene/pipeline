@@ -8,7 +8,9 @@
     "allow": [
       "Bash(bash tests/run.sh)",
       "Bash(bash tests/run.sh:*)",
-      "Bash(bash bin/calibctl:*)"
+      "Bash(bash bin/calibctl:*)",
+      "mcp__playwright",
+      "Bash(python3 -m http.server:*)"
     ],
     "deny": []
   },

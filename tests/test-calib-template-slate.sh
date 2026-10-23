@@ -45,7 +45,8 @@ echo "== (a) template layout =="
 # ---------------------------------------------------------------------------
 
 for rel in pipeline.config claude-settings.local.json .gitignore README.md \
-           tests/run.sh .github/workflows/ci.yml docs/usage.md docs/architecture.md; do
+           tests/run.sh .github/workflows/ci.yml docs/usage.md docs/architecture.md \
+           web/index.html web/tasks.js web/app.js tests/case-web.sh; do
   if [ -f "$TEMPLATE_DIR/$rel" ]; then
     pass_msg "template carries $rel"
   else
@@ -170,6 +171,18 @@ PY
     pass_msg "enabledPlugins['$plugin'] is false"
   else
     fail_msg "enabledPlugins['$plugin'] is $got (want False)"
+  fi
+done
+
+# The web view (slate issue 10, #1584): the sandbox executor drives the page with
+# the Playwright MCP tools and serves it with python3 -m http.server. Both must be
+# pre-allowed, or the headless run stalls on the classifier / permission bridge.
+for entry in "mcp__playwright" "Bash(python3 -m http.server:*)"; do
+  if python3 -c 'import json,sys; a=json.load(open(sys.argv[1])).get("permissions",{}).get("allow",[]); sys.exit(0 if sys.argv[2] in a else 1)' \
+       "$settings" "$entry" 2>/dev/null; then
+    pass_msg "permissions.allow carries $entry"
+  else
+    fail_msg "permissions.allow is missing $entry"
   fi
 done
 
