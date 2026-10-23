@@ -4,7 +4,7 @@
 #   dev/calib/template/ — a consumer-shaped sandbox project the pipeline can be
 #                         pointed at (its own pipeline.config, its own test
 #                         runner, its own CI workflow).
-#   dev/calib/slate/    — nine canned issues (title/body/reference test/expected
+#   dev/calib/slate/    — ten canned issues (title/body/reference test/expected
 #                         files) covering the routing shapes the calibration
 #                         run needs: docs-only, quick-fix, plain feature,
 #                         high-uncertainty (race + auth), multi-directory, and
@@ -14,7 +14,9 @@
 #                         v3's three probes the trivial path fails (#1531): a
 #                         planted regression (reviewer), an underspecified
 #                         convention (planner), a flaky test whose cause is a
-#                         real race (executor).
+#                         real race (executor) — plus a browser surface (#1584):
+#                         a filter box on the template's static web view, which
+#                         the executor and evaluator drive in a browser.
 #
 # Nothing here shells out to the network or to `gh`; every assertion is a
 # filesystem / content / exit-code check, plus a live run of the template test
@@ -270,10 +272,10 @@ echo "== (d) slate shape =="
 # ---------------------------------------------------------------------------
 
 mapfile -t slate_dirs < <(find "$SLATE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
-if [ "${#slate_dirs[@]}" -eq 9 ]; then
-  pass_msg "slate has exactly 9 issue directories"
+if [ "${#slate_dirs[@]}" -eq 10 ]; then
+  pass_msg "slate has exactly 10 issue directories"
 else
-  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 9)"
+  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 10)"
 fi
 
 for d in "${slate_dirs[@]}"; do
@@ -336,12 +338,13 @@ check_count() {
 }
 check_count "docs-only issues" "$docs_only" 1
 check_count "quick-fix issues" "$quick_fix" 1
-# 4, not 1: the planted-defect slate issue (#1395) is the second `feat(`-titled
-# one, and slate v3's 07-planted-regression and 08-underspecified-convention
-# (#1531) the third and fourth. The other four counts stay at 1 — a new dir must
+# 5, not 1: the planted-defect slate issue (#1395) is the second `feat(`-titled
+# one, slate v3's 07-planted-regression and 08-underspecified-convention
+# (#1531) the third and fourth, and 10-web-filter (#1584) the fifth. The other
+# four counts stay at 1 — a new dir must
 # not perturb them, so a body that says `quick fix`, or names both `race` and
 # `auth`, or spans lib/ + docs/, would red one of the rows below.
-check_count "feat-titled issues" "$feature" 4
+check_count "feat-titled issues" "$feature" 5
 check_count "race+auth issues" "$race_auth" 1
 check_count "lib/+docs/ multi-dir issues" "$lib_and_docs" 1
 
