@@ -2,7 +2,7 @@
 
 Real-work retros cannot isolate cause: every cycle's workload differs, so a cost or
 latency delta between cycles says nothing about the harness. The calibration slate
-holds the *inputs* fixed — same sandbox repo, same nine issues, same base commit —
+holds the *inputs* fixed — same sandbox repo, same ten issues, same base commit —
 so the harness version under test is the only variable. It doubles as the
 end-to-end regression suite the unit tests are not.
 
@@ -14,7 +14,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   project (scripts, tests, docs, CI workflow, `pipeline.config`, seeded labels).
 - **Clone location:** `${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}` —
   inside the boundary the sandbox session already allows, so no config change.
-- **Slate:** nine template issues committed at tag `calib-base`, each with a
+- **Slate:** ten template issues committed at tag `calib-base`, each with a
   reference test and an expected-files list:
 
   | Issue | Path | Exercises |
@@ -28,6 +28,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   | small filter whose natural implementation silently changes untested existing behaviour (planted regression) | B | pr-eval reviewer yield — reads the diff's callers, not the summary |
   | CSV export whose format is fixed only by the codebase's documented output conventions | B | planner reads the codebase before inventing a format |
   | intermittently failing test whose cause is a real race | B | executor fixes the cause, not the test |
+  | filter box on a static web page (live title filter, `?q=` parameter) | B | browser check: execute 6c drives the outcomes, evaluate 6 re-drives them |
 
   **Slate v3 (#1531).** The last three rows are the v3 probes; the trivial path
   fails each of them, so they can tell a careful harness from a cheap one where
@@ -37,6 +38,9 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   rows 01–06 only. From run 49 (#1572) the template has no `tests/case-ids.sh`,
   so the sandbox suite is green on every run and totals from run 49 on are over
   a template without the flake; runs 38–48 could red one unrelated row in five.
+  The browser-surface row (#1584) exists from run 51 on: `issues=` /
+  `reftest-pass=` totals from run 51 are over ten issues — compare with runs
+  38–50 through rows 01–09 only.
 
 ## Running
 
@@ -53,7 +57,7 @@ bash scripts/calibration-run.sh --bootstrap|--retag|--reset|--dry-run|--run \
 |---|---|---|
 | `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. A template sync that commits re-anchors `calib-base` to it. | no |
 | `--retag` | Force `calib-base` onto the sandbox `HEAD`, locally and on the remote — for a sandbox edited and committed by hand. No-op when the tag is already there. | no |
-| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the nine slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
+| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the ten slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
