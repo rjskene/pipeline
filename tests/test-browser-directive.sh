@@ -25,7 +25,8 @@ for needle in '**6c. Browser check.**' "$LEAD" 'Playwright MCP tools' \
 done
 
 # (b) evaluate directive
-for needle in "$LEAD" "verify the executor's screenshot or take your own" 'Playwright MCP tools'; do
+for needle in "$LEAD" 'evidence, not proof' 'Playwright MCP tools' \
+  'browser_snapshot' 'Browser check: skipped'; do
   grep -qF -- "$needle" "$EVAL" || FAIL "(b) $EVAL missing: $needle"
 done
 
