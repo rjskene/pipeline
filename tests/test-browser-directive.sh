@@ -6,6 +6,7 @@
 #   (b) evaluate SKILL carries the evaluate-form directive sentence.
 #   (c) every deleted browser-eval path is absent.
 #   (d) no residual reference to the removed surface in live sources.
+#   (e) plan-issue template's `**Frontend changes:**` line names user-visible outcomes.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -14,15 +15,18 @@ FAIL() { echo "FAIL: $*"; fail=1; }
 
 EXEC=skills/execute-issue-plan/SKILL.md
 EVAL=skills/evaluate-issue-pr/SKILL.md
-LEAD='If the diff changes anything a user sees in a browser'
+PLAN=skills/plan-issue/SKILL.md
+LEAD='If the diff changes anything a user sees or does in a browser'
 
 # (a) execute directive
-for needle in '**6c. Browser check.**' "$LEAD" 'Playwright MCP tools'; do
+for needle in '**6c. Browser check.**' "$LEAD" 'Playwright MCP tools' \
+  'prove the behaviour, not the rendering' 'browser_snapshot' 'Browser check: skipped'; do
   grep -qF -- "$needle" "$EXEC" || FAIL "(a) $EXEC missing: $needle"
 done
 
 # (b) evaluate directive
-for needle in "$LEAD" "verify the executor's screenshot or take your own" 'Playwright MCP tools'; do
+for needle in "$LEAD" 'evidence, not proof' 'Playwright MCP tools' \
+  'browser_snapshot' 'Browser check: skipped'; do
   grep -qF -- "$needle" "$EVAL" || FAIL "(b) $EVAL missing: $needle"
 done
 
@@ -61,6 +65,11 @@ if [ -n "$hits" ]; then
   FAIL "(d) residual browser-eval references:"
   printf '  %s\n' $hits
 fi
+
+# (e) plan template outcome clause
+for needle in '**Frontend changes:**' 'one line per user-visible outcome'; do
+  grep -qF -- "$needle" "$PLAN" || FAIL "(e) $PLAN missing: $needle"
+done
 
 [ "$fail" -eq 0 ] || exit 1
 echo "PASS: browser directive pinned; browser-eval structure removed"
