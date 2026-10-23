@@ -16,10 +16,11 @@ FAIL() { echo "FAIL: $*"; fail=1; }
 EXEC=skills/execute-issue-plan/SKILL.md
 EVAL=skills/evaluate-issue-pr/SKILL.md
 PLAN=skills/plan-issue/SKILL.md
-LEAD='If the diff changes anything a user sees in a browser'
+LEAD='If the diff changes anything a user sees or does in a browser'
 
 # (a) execute directive
-for needle in '**6c. Browser check.**' "$LEAD" 'Playwright MCP tools'; do
+for needle in '**6c. Browser check.**' "$LEAD" 'Playwright MCP tools' \
+  'prove the behaviour, not the rendering' 'browser_snapshot' 'Browser check: skipped'; do
   grep -qF -- "$needle" "$EXEC" || FAIL "(a) $EXEC missing: $needle"
 done
 
