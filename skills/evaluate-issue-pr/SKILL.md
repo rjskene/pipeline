@@ -25,7 +25,7 @@ Dispatch: `skills/fullsend/SKILL.md` Step 7. Model: `PIPELINE_STAGE_MODEL_PR_EVA
 
 # Issue Evaluator
 
-Review the PR against its approved plan with only the plan and the diff. Check off every plan item; look for what was NOT done. **Fix-vs-flag:** fix small issues yourself (typos, missing imports, off-by-one); flag anything touching **more than 3 files** or needing new design decisions.
+Review the PR against its approved plan: check off every plan item; look for what was NOT done. **Fix-vs-flag:** fix small issues yourself (typos, missing imports, off-by-one); flag anything touching **more than 3 files** or needing new design decisions. Never refactor beyond the plan.
 
 ## Executable verification (guard / gate / matcher / assertion / security claims)
 
@@ -56,14 +56,14 @@ A guard that passes is not evidence until you have seen it fail on something.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-fetch-plan.sh" <N>
    ```
-   **Plan amendments:** when it prints `PLAN-AMENDMENTS` (verdict `Revise`), the `**Recommendations:**` join the plan of record: Phase 1 scores plan + amendments, an implemented amendment is on-plan, and an unimplemented one is a Phase 1 `**Dropped amendment:** <recommendation>` finding, BLOCKING like a missing plan item.
+   **Plan amendments:** when it prints `PLAN-AMENDMENTS` (verdict `Revise`; silent on `Approve` or no evaluation, when the plan alone is the record), the `**Recommendations:**` join the plan of record: Phase 1 scores plan + amendments, an implemented amendment is on-plan, and an unimplemented one is a Phase 1 `**Dropped amendment:** <recommendation>` finding, BLOCKING like a missing plan item.
 
 2. **Fetch the PR diff.** Prints `PR_NUM=<PR>` and the diff; rc 1 ⇒ STOP.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-diff.sh"
    ```
 
-3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/`, invoke `Read` exactly once before scoring.
+3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null` (absent when the issue had no attachments: nothing to read), `Read` it once before scoring.
 
 4. **Two-phase review.** Run the orchestrator-injected review skills (`PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR`) first if present.
 
@@ -86,7 +86,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    - no line — run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pr-eval-preflight.sh" <N> --pr <PR>` once.
    - `block` — STOP: no verdict, report `block-<REASON>`.
 
-   The line is STALE after any `git push` (Step 7 fixes, Step 8 rebase): then, and on `ci-pending`, re-emit the triple as THREE SEPARATE foreground `bash` calls (the hook compares row timestamps), PR number for `<PR>`:
+   The line is STALE after any `git push` (Step 7 fixes, Step 8 rebase): then, and on `ci-pending`, re-emit the triple as THREE SEPARATE foreground `bash` calls:
    ```bash
    gh pr view <PR> --repo $PIPELINE_REPO --json statusCheckRollup
    ```
@@ -110,7 +110,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-rebase-check.sh" <PR>
    ```
-   Only on `REBASE=needed`: `git rebase origin/$PIPELINE_BASE_BRANCH`, push, re-arm Step 5. Textual conflict ⇒ `git rebase --abort`, evaluate the un-rebased branch, record `REBASE=conflict` (merge stage fixes it). Flag semantic conflicts.
+   Only on `REBASE=needed`: `git rebase origin/$PIPELINE_BASE_BRANCH`, push, re-arm Step 5. Textual conflict ⇒ `git rebase --abort`, evaluate the un-rebased branch, record `REBASE=conflict`. Flag semantic conflicts.
 
 9. **Post** `gh pr comment <PR> --repo $PIPELINE_REPO --body "<evaluation>"`:
 
@@ -142,5 +142,5 @@ A guard that passes is not evidence until you have seen it fail on something.
 
 ## Constraints
 - Never read executor logs. Only inputs: the trust-gated plan comment plus its trusted `## Plan Evaluation` when the verdict is `Revise`, PR diff, worktree code.
-- Fixes stay minimal; never skip tsc or tests. Commits go to the feature branch; PRs target `PIPELINE_BASE_BRANCH`.
+- Never skip tsc or tests. Commits go to the feature branch; PRs target `PIPELINE_BASE_BRANCH`.
 - Never merge, close issues, or change `pr-open` labels.
