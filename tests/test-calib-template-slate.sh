@@ -56,6 +56,16 @@ for rel in pipeline.config claude-settings.local.json .gitignore README.md \
   fi
 done
 
+# #1590: Claude Code loads project MCP servers from the session cwd's
+# .mcp.json; without one the sandbox has no Playwright tools for the browser
+# check (run 51: execute skipped it, evaluate drove Chrome by hand).
+if python3 -c 'import json,sys; sys.exit(0 if "playwright" in json.load(open(sys.argv[1])).get("mcpServers",{}) else 1)' \
+     "$TEMPLATE_DIR/.mcp.json" 2>/dev/null; then
+  pass_msg "template .mcp.json names a playwright server"
+else
+  fail_msg "template .mcp.json missing or names no playwright server"
+fi
+
 if [ -x "$TEMPLATE_DIR/tests/run.sh" ]; then
   pass_msg "template tests/run.sh is executable"
 else

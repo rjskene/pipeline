@@ -40,7 +40,9 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   a template without the flake; runs 38–48 could red one unrelated row in five.
   The browser-surface row (#1584) exists from run 51 on: `issues=` /
   `reftest-pass=` totals from run 51 are over ten issues — compare with runs
-  38–50 through rows 01–09 only.
+  38–50 through rows 01–09 only. The template ships `.mcp.json`, so the sandbox
+  session has the Playwright MCP tools the browser check needs; runs 52 on
+  exercise it, run 51 did not (#1590).
 
 ## Running
 

@@ -22,6 +22,8 @@ From the root of your project, inside Claude Code:
 
 After init reports `bootstrap complete`, run `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) to start the workflow.
 
+The execute and evaluate browser check needs a Playwright MCP server in your project's root `.mcp.json`; copying the pipeline repo's [`.mcp.json`](../.mcp.json) is enough.
+
 ### Staying current after a plugin update
 
 After you `/plugin update` and `/reload-plugins`, the read-only doctor-on-update detector (`hooks/doctor-on-update.sh`) fires on your next prompt and directs the model to run the doctor reconcile for you — `/pipeline:doctor --fix config` (append any new `PIPELINE_*` knobs from `pipeline.config.example` into your host `pipeline.config`, never overwriting your values) plus `/pipeline:doctor --fix labels` (seed any new GitHub labels). It also names any new keys that still "need your value". Opt out with `PIPELINE_DOCTOR_ON_UPDATE_ENABLED="false"`. You can always run those two commands by hand. See [plugin-architecture.md](plugin-architecture.md) for the detector contract.
