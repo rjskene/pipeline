@@ -102,7 +102,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Hook-enforced.** `hooks/enforce-ci-wait.py`, once a session reads the rollup, blocks Stop until a later `--watch` row and rollup row follow, and blocks Approved on red: emit all three or none.
 <!-- END CI_CHECK -->
 
-6. **Browser check.** If the diff changes anything a user sees or does in a browser, the executor's screenshot is evidence, not proof: start the app on a free port, drive each `**Frontend changes:**` outcome yourself with the Playwright MCP tools, confirm the expected state from `browser_snapshot`, check console and network for errors, attach your own screenshots to the comment, and stop the server. A PR body carrying `Browser check: skipped` makes this step mandatory.
+6. **Browser check.** If the diff changes anything a user sees or does in a browser, the executor's browser notes are evidence, not proof: start the app on a free port, drive each `**Frontend changes:**` outcome yourself with the Playwright MCP tools, confirm the expected state from `browser_snapshot`, check console and network for errors, attach your own screenshots to the comment, and stop the server. A PR body carrying `Browser check: skipped` makes this step mandatory.
 
 7. **Fix** (≤3 files, no new design): `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, re-run the checks.
 

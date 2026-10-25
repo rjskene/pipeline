@@ -20,7 +20,8 @@ LEAD='If the diff changes anything a user sees or does in a browser'
 
 # (a) execute directive
 for needle in '**6c. Browser check.**' "$LEAD" 'Playwright MCP tools' \
-  'prove the behaviour, not the rendering' 'browser_snapshot' 'Browser check: skipped'; do
+  'prove the behaviour, not the rendering' 'browser_snapshot' 'Browser check: skipped' \
+  'screenshots stay local'; do
   grep -qF -- "$needle" "$EXEC" || FAIL "(a) $EXEC missing: $needle"
 done
 
