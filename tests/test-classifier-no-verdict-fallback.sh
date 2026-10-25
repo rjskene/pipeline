@@ -56,7 +56,7 @@ done
 # ---------------------------------------------------------------------------
 scenario "N3: tdd-implementer tools line untouched"
 T="$(frontmatter "$TDD" | grep -E '^tools:' | head -1)"
-if [ "$T" = "tools: Read, Write, Edit, Bash, Grep, Glob, mcp__playwright__*" ]; then pass_msg "tools line unchanged"; else
+if [ "$T" = "tools: Read, Write, Edit, Bash, Grep, Glob, ToolSearch, mcp__playwright__*" ]; then pass_msg "tools line unchanged"; else
   fail_msg "tools line changed: '$T'"; fi
 
 # ---------------------------------------------------------------------------

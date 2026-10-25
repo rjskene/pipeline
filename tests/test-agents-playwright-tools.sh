@@ -13,6 +13,9 @@ set -uo pipefail
 #   P4  dispatch-routing.md no longer routes browser issues to the built-in
 #       type on the claim that the stage types carry no Playwright MCP tools
 #   P5  negative controls for the matchers
+#   P6  execute-issue-plan and evaluate-issue-pr load the deferred Playwright
+#       tools via `ToolSearch` (`select:mcp__playwright__browser_navigate`);
+#       P1 also requires `ToolSearch` on the three `tools:` lines (#1595)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROUTING="$ROOT/skills/fullsend/references/dispatch-routing.md"
@@ -27,6 +30,7 @@ frontmatter() { awk 'NR==1 && /^---$/ { infm=1; next } infm && /^---$/ { exit } 
 tools_line() { frontmatter "$1" | grep -E '^tools:' | head -1; }
 has_playwright() { printf '%s\n' "$1" | grep -qE '(^|[ ,:])mcp__playwright__\*([ ,]|$)'; }
 names_tool() { printf '%s\n' "$1" | grep -qE "(^|[^A-Za-z_])$2([^A-Za-z_]|\$)"; }
+has_toolsearch() { names_tool "$1" ToolSearch; }
 
 AGENTS="stage-executor stage-reader tdd-implementer"
 
@@ -38,6 +42,8 @@ for a in $AGENTS; do
   T="$(tools_line "$f")"
   if has_playwright "$T"; then pass_msg "$a: tools names mcp__playwright__*"; else
     fail_msg "$a: tools line '$T' lacks mcp__playwright__*"; fi
+  if has_toolsearch "$T"; then pass_msg "$a: tools names ToolSearch"; else
+    fail_msg "$a: tools line '$T' lacks ToolSearch"; fi
 done
 
 # ---------------------------------------------------------------------------
@@ -87,6 +93,16 @@ scenario "P5: negative controls"
 if has_playwright "tools: Read, Write, Edit, Bash, Grep, Glob"; then fail_msg "matcher accepts a line without the entry"; else pass_msg "matcher rejects a line without the entry"; fi
 if has_playwright "tools: Read, mcp__playwright__browser_click"; then fail_msg "matcher accepts a single tool for the wildcard"; else pass_msg "matcher rejects a single tool for the wildcard"; fi
 if names_tool "tools: Read, Glob, Skill" Skill; then pass_msg "names_tool catches Skill"; else fail_msg "names_tool misses Skill"; fi
+if has_toolsearch "tools: Read, mcp__playwright__*"; then fail_msg "has_toolsearch accepts a line without ToolSearch"; else pass_msg "has_toolsearch rejects a line without ToolSearch"; fi
+
+# ---------------------------------------------------------------------------
+scenario "P6: skills load the deferred Playwright tools via ToolSearch"
+for s in execute-issue-plan evaluate-issue-pr; do
+  f="$ROOT/skills/$s/SKILL.md"
+  for needle in 'ToolSearch' 'select:mcp__playwright__browser_navigate'; do
+    if grep -qF "$needle" "$f"; then pass_msg "$s: names $needle"; else fail_msg "$s: lacks $needle"; fi
+  done
+done
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

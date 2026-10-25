@@ -1,7 +1,7 @@
 ---
 name: tdd-implementer
 description: Implements a single task using strict test-driven development. Writes a failing test, watches it fail for the right reason, writes the minimum code to make it pass, watches it pass, commits. Use this subagent for every task dispatched on PATH C (multi-task) pipeline issues. Never dispatches further subagents and never invokes skills - it is a leaf executor.
-tools: Read, Write, Edit, Bash, Grep, Glob, mcp__playwright__*
+tools: Read, Write, Edit, Bash, Grep, Glob, ToolSearch, mcp__playwright__*
 model: inherit
 color: green
 ---
