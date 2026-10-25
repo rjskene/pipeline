@@ -65,8 +65,8 @@ check_fm() {
     fail_msg "$name: tools line is '$(printf '%s\n' "$fm" | grep '^tools:')', want 'tools: $tools'"; fi
   if printf '%s\n' "$fm" | grep -q '^description: .'; then pass_msg "$name: description line"; else fail_msg "$name: no description line"; fi
 }
-check_fm "$READER" stage-reader "Read, Write, Edit, Bash, Grep, Glob, mcp__playwright__*"
-check_fm "$EXECUTOR" stage-executor "Read, Write, Edit, Bash, Grep, Glob, Agent, mcp__playwright__*"
+check_fm "$READER" stage-reader "Read, Write, Edit, Bash, Grep, Glob, ToolSearch, mcp__playwright__*"
+check_fm "$EXECUTOR" stage-executor "Read, Write, Edit, Bash, Grep, Glob, Agent, ToolSearch, mcp__playwright__*"
 
 # ---------------------------------------------------------------------------
 scenario "S3: no model line"

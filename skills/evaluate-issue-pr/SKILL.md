@@ -63,7 +63,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-diff.sh"
    ```
 
-3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null` (absent when the issue had no attachments: nothing to read), `Read` it once before scoring.
+3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null`, `Read` it once before scoring.
 
 4. **Two-phase review.** Run the orchestrator-injected review skills (`PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR`) first if present.
 
@@ -102,7 +102,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Hook-enforced.** `hooks/enforce-ci-wait.py`, once a session reads the rollup, blocks Stop until a later `--watch` row and rollup row follow, and blocks Approved on red: emit all three or none.
 <!-- END CI_CHECK -->
 
-6. **Browser check.** If the diff changes anything a user sees or does in a browser, the executor's browser notes are evidence, not proof: start the app on a free port, drive each `**Frontend changes:**` outcome yourself with the Playwright MCP tools, confirm the expected state from `browser_snapshot`, check console and network for errors, attach your own screenshots to the comment, and stop the server. A PR body carrying `Browser check: skipped` makes this step mandatory.
+6. **Browser check.** If the diff changes anything a user sees or does in a browser, the executor's browser notes are evidence, not proof: start the app on a free port, drive each `**Frontend changes:**` outcome yourself with the Playwright MCP tools (load them first via `ToolSearch` `select:mcp__playwright__browser_navigate,mcp__playwright__browser_snapshot`), confirm the expected state from `browser_snapshot`, check console and network for errors, attach your own screenshots to the comment, and stop the server. A PR body carrying `Browser check: skipped` makes this step mandatory.
 
 7. **Fix** (≤3 files, no new design): `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, re-run the checks.
 
