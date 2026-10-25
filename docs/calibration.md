@@ -70,7 +70,9 @@ tree under test — it defaults to this repo's root.
 
 `--reset` is what makes a run comparable to the previous one: inputs are pinned to
 the `calib-base` tag, so a delta between two `CALIB-TOTAL` lines is attributable to
-the harness version, not to the workload.
+the harness version, not to the workload. Both `--reset` and `--bootstrap` first
+remove untracked files outside `.claude/` (ignored files stay), so stray tool output
+never reaches the seed (#1599).
 
 The tag follows the template (#1477). When `--bootstrap`'s template sync commits on
 top of `calib-base`, it re-anchors the tag to that commit (`git tag -f` + a force
