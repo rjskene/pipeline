@@ -66,6 +66,26 @@ else
   fail_msg "template .mcp.json missing or names no playwright server"
 fi
 
+# #1598: the server writes snapshots / console logs into its output dir; the
+# default `.playwright-mcp/` landed untracked in the project root (run 52).
+# Byte-identity makes a check on either copy cover both.
+if cmp -s "$ROOT/.mcp.json" "$TEMPLATE_DIR/.mcp.json"; then
+  pass_msg "template .mcp.json is byte-identical to the repo .mcp.json"
+else
+  fail_msg "template .mcp.json differs from the repo .mcp.json"
+fi
+
+for mcp in "$ROOT/.mcp.json" "$TEMPLATE_DIR/.mcp.json"; do
+  out_dir=$(python3 -c 'import json,sys
+a=json.load(open(sys.argv[1]))["mcpServers"]["playwright"]["args"]
+print(a[a.index("--output-dir")+1] if "--output-dir" in a else "")' "$mcp" 2>/dev/null)
+  if [ "$out_dir" = ".claude/scratch/playwright" ]; then
+    pass_msg "${mcp#"$ROOT"/} routes Playwright output to .claude/scratch/playwright"
+  else
+    fail_msg "${mcp#"$ROOT"/} --output-dir is '${out_dir}', want .claude/scratch/playwright"
+  fi
+done
+
 if [ -x "$TEMPLATE_DIR/tests/run.sh" ]; then
   pass_msg "template tests/run.sh is executable"
 else
