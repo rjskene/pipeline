@@ -42,7 +42,9 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   `reftest-pass=` totals from run 51 are over ten issues — compare with runs
   38–50 through rows 01–09 only. The template ships `.mcp.json`, so the sandbox
   session has the Playwright MCP tools the browser check needs; runs 52 on
-  exercise it, run 51 did not (#1590).
+  exercise it, run 51 did not (#1590). Run 52 left the server's default
+  `.playwright-mcp/` in the sandbox root; later runs write it to
+  `.claude/scratch/playwright/`, the output dir the template `.mcp.json` sets (#1598).
 
 ## Running
 

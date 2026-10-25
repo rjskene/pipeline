@@ -22,7 +22,7 @@ From the root of your project, inside Claude Code:
 
 After init reports `bootstrap complete`, run `/pipeline:status` (formerly `/pipeline:run`, retained as a deprecated alias) to start the workflow.
 
-The execute and evaluate browser check needs a Playwright MCP server in your project's root `.mcp.json`; copying the pipeline repo's [`.mcp.json`](../.mcp.json) is enough.
+The execute and evaluate browser check needs a Playwright MCP server in your project's root `.mcp.json`; copying the pipeline repo's [`.mcp.json`](../.mcp.json) is enough, and its `--output-dir` puts the browser-check snapshots, console logs and screenshots in the gitignored `.claude/scratch/playwright/`.
 
 ### Staying current after a plugin update
 
