@@ -434,6 +434,21 @@ ensure_clone() {
   fi
 }
 
+# clean_untracked — remove untracked, non-ignored files outside .claude/ from
+# the sandbox (#1599). After calibration run 52 the Playwright MCP server's
+# .playwright-mcp/ directory survived --reset and --bootstrap committed it into
+# the seed. No -x: ignored files (.calib/, .claude/logs/) are never touched;
+# ':(exclude).claude' keeps untracked .claude/ state. The count comes from
+# ls-files (same pathspec), since `git clean -d` reports a directory as one entry.
+clean_untracked() {
+  [ -d "$SANDBOX/.git" ] || return 0
+  local n
+  n="$(git -C "$SANDBOX" ls-files --others --exclude-standard -- . ':(exclude).claude' | wc -l)"
+  [ "$n" -gt 0 ] || return 0
+  dispatch git -C "$SANDBOX" clean -fdq -- . ':(exclude).claude' || return 1
+  echo "calib: removed $n untracked file(s)"
+}
+
 sync_template() {
   if [ ! -d "$TEMPLATE_DIR" ]; then
     warn "no template at $TEMPLATE_DIR — nothing to sync"
@@ -577,6 +592,7 @@ seed_labels() {
 cmd_bootstrap() {
   ensure_remote_repo          || return 1
   ensure_clone                || die_run "could not clone the sandbox into $SANDBOX"
+  clean_untracked             || die_run "could not clean untracked files from the sandbox"
   sync_template               || die_run "template sync failed"
   materialize_local_settings  || die_run "could not materialize the sandbox local-settings file"
   local pre_head old_base
@@ -813,6 +829,7 @@ cmd_reset() {
   git -C "$SANDBOX" reset --hard --quiet "$BASE_TAG" || die_run "could not reset the sandbox to $BASE_TAG"
   dispatch git -C "$SANDBOX" push --quiet --force-with-lease origin main \
     || die_run "could not force the sandbox main branch back to $BASE_TAG"
+  clean_untracked || die_run "could not clean untracked files from the sandbox"
   # Refresh AFTER the hard reset, every time: --bootstrap was the only writer
   # of the sandbox's local-settings file, and it is untracked on the operator's
   # host, so `git reset --hard` never touches it (#1395).
