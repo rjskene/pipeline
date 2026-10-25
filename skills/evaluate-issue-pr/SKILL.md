@@ -42,7 +42,7 @@ This section fires **per claim**, not per evaluation.
 - **Execute, do not read.** Run the artifact. Record the exact command and the exact observed token / exit code.
 - **Run a negative control.** Also run a variant that MUST be rejected. The positive and negative inputs differ in exactly ONE property — the property under test. Report both results. Prefix direct hook probes (synthetic payload piped to `python3 hooks/<name>.py`) with `PIPELINE_LOGS_ENABLED=false`, positive and negative alike, so no `hook-denials.jsonl` row lands; exit code and stderr are the evidence.
 - **Same result on both means UNVERIFIED.** If the positive and negative inputs produce the same outcome, the guard is not looking — Verdict: Revise (plan-eval) / Flagged (pr-eval). A green result alone cannot distinguish "correct" from "checked nothing".
-- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable. To rebuild part of a fixture, create a fresh `mktemp -d -p "$PWD/.claude/scratch"` subdir; never remove a variable-held path.
+- **Build a fixture when needed.** If the artifact cannot run in place, build a throwaway fixture (`mktemp -d -p "$PWD/.claude/scratch"` — absolute, usable as a git remote or `-C` target; `git init`; a synthetic plan/issue) and run the REAL artifact against it, never a simulation of its logic. Clean up literally: `rm -rf .claude/scratch/<name>`, never a variable. To rebuild part of a fixture, create a fresh `mktemp -d -p "$PWD/.claude/scratch"` subdir; never remove a variable-held path — only literal-path cleanup passes the deletion guard.
 - **Vacuity check on REDs.** A RED that fails for an incidental reason (arg-parse error, missing file, import error, wrong path) is vacuous. Remove the incidental cause and confirm it still fails for the STATED reason.
 - **No silent fallback to reading.** When a claim genuinely cannot be executed, report `not-executed: <reason>`. An unexecuted guard claim is NEVER reported as verified.
 
@@ -63,7 +63,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-diff.sh"
    ```
 
-3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null` (absent when the issue had no attachments: nothing to read), `Read` it once before scoring.
+3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null`, `Read` it once before scoring.
 
 4. **Two-phase review.** Run the orchestrator-injected review skills (`PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR`) first if present.
 
