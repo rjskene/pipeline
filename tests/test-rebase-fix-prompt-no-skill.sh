@@ -27,6 +27,12 @@ else
   bad "R2: rebase-fix prompt lacks the no-stage-SKILL.md declaration"
 fi
 
+if printf '%s\n' "$line" | grep -qF 'FLAKY=<test>'; then
+  ok "R5: rebase-fix prompt caps a flake at one re-run (FLAKY=<test>)"
+else
+  bad "R5: rebase-fix prompt lacks the one re-run cap (FLAKY=<test>)"
+fi
+
 SENT='When the prompt says it carries no stage skill, the prompt itself is the procedure.'
 ANCHOR='Load the stage by Reading the absolute'
 if grep -qF "$SENT" "$AGENT"; then
