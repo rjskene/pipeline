@@ -1043,7 +1043,7 @@ load_run_substrate() {
   # mergedAt carries both the merged filter and each issue's wall-clock end;
   # comments carry the PR-eval verdict — so no second round trip per PR.
   PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state all --limit 50 \
-    --json number,body,headRefName,files,mergedAt,comments,state 2>/dev/null)"
+    --json number,body,headRefName,files,mergedAt,comments,state,mergeCommit 2>/dev/null)"
   [ -n "$PRS_JSON" ] || PRS_JSON="[]"
   MERGED_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.mergedAt != null)]' 2>/dev/null)"
   [ -n "$MERGED_JSON" ] || MERGED_JSON="[]"
@@ -1054,6 +1054,11 @@ load_run_substrate() {
   # rather than a blocked gate. `state` joins the --json list above for this.
   OPEN_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.state == "OPEN")]' 2>/dev/null)"
   [ -n "$OPEN_JSON" ] || OPEN_JSON="[]"
+  # ONE fetch per grade so issue_unexpected() can read each merged PR's merge
+  # commit locally (#1604). Done here, not in issue_unexpected: that runs in a
+  # command substitution, so a fetch-once flag there would not persist.
+  dispatch git -C "$SANDBOX" fetch -q origin 2>/dev/null \
+    || warn "grade fetch failed — unexpected-files may fall back to GitHub file lists"
 }
 
 # load_issue_json <issue> — ONE `gh issue view` per issue, cached and fetched
@@ -1250,13 +1255,37 @@ issue_reftest() {
 # (close[sd]?|fix(e[sd])?|resolve[sd]?) + `#<issue>`, case-insensitive. Only
 # when NO merged PR closes it, fall back to a digit-bounded <issue> token in
 # headRefName. A bare `#<issue>` mention never selects a PR.
+# Each selected PR's files come from its merge commit's first-parent diff in
+# the sandbox clone (#1604): since #1602 stacks overlapping PRs, GitHub's PR
+# file list also carries the stacked predecessors' files. When the merge
+# commit is absent/unreachable or the diff fails, that PR falls back to
+# GitHub's `.files[].path` list with one stderr note.
 issue_unexpected() {
   local issue="$1" d="$2" expected="$2/expected-files.txt" files f n=0
-  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" '
+  local prs pr oid paths reason
+  prs="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" '
     [.[] | select((.body // "") | test("\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#" + $n + "\\b"; "i"))] as $closing
     | (if ($closing | length) > 0 then $closing
        else [.[] | select((.headRefName // "") | test("(^|[^0-9])" + $n + "([^0-9]|$)"))] end)
-    | .[] | .files[]?.path' 2>/dev/null)"
+    | .[] | {o: (.mergeCommit.oid // ""), f: [.files[]?.path]} | @json' 2>/dev/null)"
+  files=""
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    oid="$(printf '%s' "$pr" | jq -r '.o' 2>/dev/null)"
+    reason=""
+    if [ -z "$oid" ]; then
+      reason="no merge commit"
+    elif ! git -C "${SANDBOX:-.}" cat-file -e "$oid^{commit}" 2>/dev/null; then
+      reason="merge commit not reachable"
+    elif ! paths="$(git -C "${SANDBOX:-.}" diff --name-only "$oid^1" "$oid" 2>/dev/null)"; then
+      reason="git diff failed"
+    fi
+    if [ -n "$reason" ]; then
+      paths="$(printf '%s' "$pr" | jq -r '.f[]' 2>/dev/null)"
+      echo "calib: unexpected-files for #$issue from GitHub file list ($reason)" >&2
+    fi
+    [ -n "$paths" ] && files="${files:+$files$'\n'}$paths"
+  done <<< "$prs"
   [ -n "$files" ] || { printf '0'; return 0; }
   while IFS= read -r f; do
     [ -n "$f" ] || continue

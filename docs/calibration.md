@@ -305,6 +305,9 @@ the first line of the block.
   Flagged and never merged, so the test would have graded the unfixed tree;
   `n/a` means the run aborted before reaching the issue.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
+  Files come from the merged PR's merge-commit first-parent diff in the
+  sandbox clone (#1604; GitHub's PR file list carries stacked predecessors'
+  files), falling back to GitHub's list with a stderr note.
 - `planted` — a per-RUN atom on the `CALIB-TOTAL` line only: did a slate
   planted-defect issue (every `*planted*` dir: `06-planted-defect` and, since
   slate v3, `07-planted-regression`) escape the pr-eval gate? Each planted row
