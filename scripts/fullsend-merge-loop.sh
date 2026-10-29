@@ -3,8 +3,11 @@
 #
 # Composes the existing helpers in one process so the orchestrator spends one
 # turn per wave instead of one per helper call: PR derivation (fail-closed) ->
-# merge order (fewest-overlap-first) -> per PR: fullsend-merge-rebase.sh ->
-# auto_merge_should_fire -> fullsend-merge-green.sh / fullsend-block-merge.sh.
+# merge order (fewest-overlap-first) -> Phase A (no CI waits): per PR
+# fullsend-merge-rebase.sh, overlapping PRs stacked (--onto) on the previous
+# member's tip (#1602) -> Phase B, in ORDER: CI wait -> auto_merge_should_fire
+# -> fullsend-merge-green.sh / fullsend-block-merge.sh. A stacked member that
+# does not merge un-stacks its successors (--onto <base> --from <pred>).
 # Every outcome the loop cannot settle itself (a rebase conflict or a dirty
 # worktree) is handed back as a LOOP: line; the orchestrator re-enters per
 # skills/fullsend/references/auto-merge-gate.md `### Re-entry`.
@@ -15,9 +18,14 @@ usage() {
 Usage: fullsend-merge-loop.sh <N>...
 
 For the wave's issues whose evaluator returned: derive worktree -> branch -> PR
-(fail-closed), order the PRs fewest-overlap-first, then per PR run
-fullsend-merge-rebase.sh -> the gate (auto_merge_should_fire) ->
-fullsend-merge-green.sh or fullsend-block-merge.sh. Prints, on stdout:
+(fail-closed), order the PRs fewest-overlap-first, then Phase A (no CI
+waits): per PR fullsend-merge-rebase.sh — a PR sharing a file with a sibling is
+stacked onto the previous stacked member's tip (stderr STACK: pr=#<P>
+onto=<sha>); Phase B, in ORDER: CI wait -> the gate (auto_merge_should_fire)
+-> fullsend-merge-green.sh or fullsend-block-merge.sh. A stacked member that
+does not merge un-stacks every later one (stderr UNSTACK: pr=#<P> onto=<sha>
+from=<sha>; outcome deferred); .claude/scratch/merge-loop/<P>.stack holds
+pred=/orig= while stacked. Prints, on stdout:
   ORDER: <pr> <pr> ...
   the relayed MERGE: / BLOCK: lines
   LOOP: issue=#<N> pr=#<P> outcome=<outcome>   (one per issue)
@@ -160,8 +168,14 @@ done
 
 # Order (advisory overlap scan to stderr; never blocks).
 PR_ORDER=("${PRS[@]}")
+declare -A OVERLAPS=()
 if [ "${#PRS[@]}" -ge 2 ]; then
-  detect_merge_overlap "${PRS[@]}" >&2
+  OV=$(detect_merge_overlap "${PRS[@]}")
+  [ -n "$OV" ] && printf '%s\n' "$OV" >&2
+  # Stack membership: any PR named in an OVERLAP pair.
+  while read -r OV_TAG OV_A OV_B _; do
+    [ "$OV_TAG" = OVERLAP ] && OVERLAPS[$OV_A]=1 && OVERLAPS[$OV_B]=1
+  done <<<"$OV"
   # shellcheck disable=SC2207  # PR numbers: word-splitting is the intent
   PR_ORDER=( $(recommend_merge_order "${PRS[@]}") )
 fi
@@ -189,21 +203,85 @@ defer_or_route() {
 }
 is_mergestate() { case "$1" in block-mergestate|block-mergeable) return 0 ;; esac; return 1; }
 
-for N in "${ORDERED[@]}"; do
-  ISSUE="$N"; PR_NUM="${PR_OF[$N]}"; WT="${WT_OF[$N]}"
+# Phase A — rebase every PR, no CI waits and no wall defer. A PR with a
+# sibling overlap is stacked onto TIP (initially origin/<base>): done/skip
+# advances TIP to its head; conflict/dirty/error leave TIP (the next member
+# stacks over the gap). The pre-push rollup snapshot is captured here.
+declare -A STACKED=() PRED_OF=() ORIG_OF=() RB_OF=() PRE_OF=() PRE_SNAP_OF=()
+STACK_ON=0; TIP=""; BASE_TIP0=""
+if [ "${MANUAL_MERGE:-}" != 1 ] && [ "${#OVERLAPS[@]}" -gt 0 ]; then
+  for N in "${ORDERED[@]}"; do
+    [ -n "${OVERLAPS[${PR_OF[$N]}]:-}" ] || continue
+    git -C "${WT_OF[$N]}" fetch -q origin "$PIPELINE_BASE_BRANCH" >/dev/null 2>&1
+    TIP=$(git -C "${WT_OF[$N]}" rev-parse --verify -q "origin/$PIPELINE_BASE_BRANCH" 2>/dev/null)
+    break
+  done
+  if [ -n "$TIP" ]; then
+    STACK_ON=1; BASE_TIP0="$TIP"
+  else
+    echo "NOTE: stack disabled (origin/$PIPELINE_BASE_BRANCH unresolved)" >&2
+  fi
+fi
+if [ "${MANUAL_MERGE:-}" != 1 ]; then
+  for N in "${ORDERED[@]}"; do
+    P="${PR_OF[$N]}"; WT="${WT_OF[$N]}"
+    PRE_SNAP_OF[$N]=$(rollup_snapshot "$P")
+    PRE=$(jq length <<<"${PRE_SNAP_OF[$N]}" 2>/dev/null); case "$PRE" in ''|*[!0-9]*) PRE=0 ;; esac
+    PRE_OF[$N]="$PRE"
+    ORIG_OF[$N]=$(git -C "$WT" rev-parse -q --verify HEAD 2>/dev/null)
+    if [ "$STACK_ON" = 1 ] && [ -n "${OVERLAPS[$P]:-}" ]; then
+      echo "STACK: pr=#$P onto=$TIP" >&2
+      RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" --onto "$TIP" "$WT" "$P" | tail -1)
+      case "$RB" in
+        REBASE=done|REBASE=skip)
+          STACKED[$N]=1; PRED_OF[$N]="$TIP"
+          echo "pred=$TIP orig=${ORIG_OF[$N]}" > "$DEFER_DIR/$P.stack"
+          TIP=$(git -C "$WT" rev-parse HEAD) ;;
+      esac
+    else
+      RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$P" | tail -1)
+    fi
+    # The helper's final REBASE= line goes to stdout; relay it to the log.
+    RB_OF[$N]="$RB"
+    echo "REBASE: pr=#$P $RB" >&2
+  done
+fi
+
+# unstack <N> — drop every earlier stacked member's commits from N's branch
+# (--onto the current origin/<base> --from its recorded pred); if that rebase
+# fails, restore the pre-stack head. Either way the PR is deferred.
+unstack() {
+  local B UR
+  git -C "$WT" fetch -q origin "$PIPELINE_BASE_BRANCH" >/dev/null 2>&1
+  B=$(git -C "$WT" rev-parse --verify -q "origin/$PIPELINE_BASE_BRANCH" 2>/dev/null)
+  B="${B:-$BASE_TIP0}"
+  echo "UNSTACK: pr=#$PR_NUM onto=$B from=${PRED_OF[$1]}" >&2
+  UR=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" --onto "$B" --from "${PRED_OF[$1]}" "$WT" "$PR_NUM" | tail -1)
+  echo "REBASE: pr=#$PR_NUM $UR" >&2
+  case "$UR" in
+    REBASE=done|REBASE=skip) ;;
+    *)
+      if [ -n "${ORIG_OF[$1]}" ]; then
+        git -C "$WT" reset -q --hard "${ORIG_OF[$1]}" >&2
+        git -C "$WT" push -q --force-with-lease origin HEAD >&2
+      fi ;;
+  esac
+  rm -f "$DEFER_DIR/$PR_NUM.stack"
+  loop_line "$1" "$PR_NUM" deferred; PENDING+=("$1")
+}
+
+# Phase B — per PR in ORDER: wait (only when Phase A pushed), gate, merge.
+merge_one() {
   TITLE=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json title --jq .title 2>/dev/null)
   check_conventional_title "$TITLE" || echo "TITLE: pr=#$PR_NUM non-conventional" >&2
 
   if ! wall_ok; then
-    loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
+    loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); return
   fi
   WAITS=0; LAST_CW=-1
   if [ "${MANUAL_MERGE:-}" != 1 ]; then
-    PRE_SNAP=$(rollup_snapshot "$PR_NUM")
-    PRE=$(jq length <<<"$PRE_SNAP" 2>/dev/null); case "$PRE" in ''|*[!0-9]*) PRE=0 ;; esac
-    RB=$(bash "$SELF_DIR/fullsend-merge-rebase.sh" "$WT" "$PR_NUM" | tail -1)
-    # The helper's final REBASE= line goes to stdout; relay it to the log.
-    echo "REBASE: pr=#$PR_NUM $RB" >&2
+    # Phase A's rebase result and pre-push snapshot.
+    PRE_SNAP="${PRE_SNAP_OF[$N]}"; PRE="${PRE_OF[$N]}"; RB="${RB_OF[$N]}"
     case "$RB" in
       "REBASE=conflict"*)
         RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
@@ -214,22 +292,22 @@ for N in "${ORDERED[@]}"; do
         # Same files on the same head: the previous rebase-fix never landed.
         if [ "$RB_HEAD" != - ] && grep -qxF "files=$RB_FILES head=$RB_HEAD" "$CF" 2>/dev/null; then
           echo "REBASE: pr=#$PR_NUM repeat=same-head" >&2
-          route_block "$N" "$PR_NUM" block-mergeable; continue
+          route_block "$N" "$PR_NUM" block-mergeable; return
         fi
         if [ "$K" -ge "${PIPELINE_REBASE_FIX_MAX:-3}" ]; then
           echo "REBASE: pr=#$PR_NUM repeat=max" >&2
-          route_block "$N" "$PR_NUM" block-mergeable; continue
+          route_block "$N" "$PR_NUM" block-mergeable; return
         fi
         echo "files=$RB_FILES head=$RB_HEAD" >> "$CF"
         loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD attempt=$((K + 1))"
-        PENDING+=("$N"); continue ;;
+        PENDING+=("$N"); return ;;
       "REBASE=dirty"*)
         RB_FILES=${RB#*FILES=}; RB_FILES=${RB_FILES%% *}
         RB_HEAD=-; case "$RB" in *" HEAD="*) RB_HEAD=${RB##*HEAD=} ;; esac
         loop_line "$N" "$PR_NUM" "needs-fix files=$RB_FILES head=$RB_HEAD reason=dirty"
-        PENDING+=("$N"); continue ;;
+        PENDING+=("$N"); return ;;
       "REBASE=error"*)
-        route_block "$N" "$PR_NUM" block-rebase-error; continue ;;
+        route_block "$N" "$PR_NUM" block-rebase-error; return ;;
       "REBASE=done")
         # Registration settle, then wait. A watch that saw no checks is not a
         # wait: re-settle and re-watch once (bounded by the wall). A timed-out
@@ -237,7 +315,7 @@ for N in "${ORDERED[@]}"; do
         settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
         if [ "$CW" -eq 3 ] && [ "$PRE" -gt 0 ]; then
           if ! wall_ok; then
-            loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
+            loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); return
           fi
           settle_registration "$PR_NUM"; ci_wait "$PR_NUM"; CW=$?
         fi
@@ -270,7 +348,7 @@ for N in "${ORDERED[@]}"; do
     [ "$LAST_CW" -eq 0 ] && settle_ci
   done
   if [ "$DEFER" = 1 ]; then
-    loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); continue
+    loop_line "$N" "$PR_NUM" deferred; PENDING+=("$N"); return
   fi
   # Merge-state settle: mergeStateStatus lags a sibling merge / push; re-gate
   # (bounded by POLL_MAX and the wall) while the token stays merge-state.
@@ -281,11 +359,11 @@ for N in "${ORDERED[@]}"; do
       sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"; reads=$((reads + 1))
       REASON=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
     done
-    if is_mergestate "$REASON"; then defer_or_route "$N" "$PR_NUM" "$REASON"; continue; fi
+    if is_mergestate "$REASON"; then defer_or_route "$N" "$PR_NUM" "$REASON"; return; fi
   fi
   if [ "$REASON" = block-ci ]; then
     # Step 6b owns repair: no label, no comment.
-    loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N"); continue
+    loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N"); return
   fi
 
   if [ "$REASON" = green ]; then
@@ -297,7 +375,8 @@ for N in "${ORDERED[@]}"; do
       green)
         [ "$MRC" -eq 0 ] || echo "WARN: issue #$N merged but fullsend-merge-green.sh exited $MRC (issue close)" >&2
         rm -f "$DEFER_DIR/$PR_NUM.deferred"
-        rm -f "$DEFER_DIR/$PR_NUM.conflicts"
+        rm -f "$DEFER_DIR/$PR_NUM.conflicts" "$DEFER_DIR/$PR_NUM.stack"
+        MERGED=1
         loop_line "$N" "$PR_NUM" "merged sha=${MLINE##*sha=}" ;;
       block-ci) loop_line "$N" "$PR_NUM" block-ci; PENDING+=("$N") ;;
       block-mergestate|block-mergeable) defer_or_route "$N" "$PR_NUM" "$MREASON" ;;
@@ -305,6 +384,23 @@ for N in "${ORDERED[@]}"; do
     esac
   else
     route_block "$N" "$PR_NUM" "$REASON"
+  fi
+}
+
+BROKEN=0
+for N in "${ORDERED[@]}"; do
+  ISSUE="$N"; PR_NUM="${PR_OF[$N]}"; WT="${WT_OF[$N]}"
+  # Un-stack first: it spends no CI wait, so the wall never defers it.
+  if [ -n "${STACKED[$N]:-}" ] && [ "$BROKEN" = 1 ]; then
+    unstack "$N"; continue
+  fi
+  MERGED=0
+  merge_one
+  # A stacked member that did not merge breaks the chain; all its stacked
+  # predecessors merged, so its own branch carries only its commits.
+  if [ -n "${STACKED[$N]:-}" ]; then
+    [ "$MERGED" = 1 ] || BROKEN=1
+    rm -f "$DEFER_DIR/$PR_NUM.stack"
   fi
 done
 

@@ -19,6 +19,15 @@ set -uo pipefail
 #   S9 rebase needed + only an untracked file -> REBASE=done (untracked ignored)
 #   S10 git refuses the rebase (git shim, no rebase in progress)
 #      -> REBASE=error REASON=<first stderr line>; no rebase --abort
+#   S11 --onto <sibling-tip> on a clean stack -> REBASE=done, sibling ancestor,
+#       origin feature/x == HEAD
+#   S12 --onto <ref> already contained in HEAD -> REBASE=skip, no push
+#   S13 --onto <base-sha> --from <Y> on a branch stacked over Y -> REBASE=done,
+#       Y's commits dropped, own change kept
+#   S14 --onto <sibling-tip> editing the same line -> REBASE=conflict FILES=f.txt
+#       HEAD=<H0>, clean abort
+#   S15 --onto rebases even when the check would say skip (MERGEABLE/CLEAN)
+#   S16 --from without --onto -> usage exit 2
 #
 # Fixtures: a bare origin, a main checkout (git_init_sandbox) and a feature
 # checkout via `git worktree add`. Runs with --no-gh + REBASE_CHECK_VIEW_JSON; a
@@ -259,6 +268,99 @@ if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=error REASON=fatal: simula
 else
   fail_msg "S10 rc=$RC out=[$(cat "$TMP/out")] log=[$(tr '\n' ' ' < "$TMP/shim.log")] err=[$(tr '\n' ' ' < "$TMP/err")]"
 fi
+# add_sibling <name> <sed-edit> — a feature/y worktree off main's first commit
+# with one commit on f.txt, pushed to origin; prints nothing, sets Y.
+add_sibling() {
+  local d="$TMP/$1"
+  git -C "$d/main" worktree add -q -b feature/y "$d/wty" main~1 2>/dev/null
+  sed -i "$2" "$d/wty/f.txt"
+  git -C "$d/wty" commit -q -am sibling
+  git -C "$d/wty" push -q -u origin feature/y 2>/dev/null
+  Y=$(git -C "$d/wty" rev-parse HEAD)
+}
+
+scenario "S11: --onto <sibling-tip> on a clean stack -> REBASE=done"
+make_fixture s11 "" 's/^2$/two/'
+add_sibling s11 's/^9$/nine/'
+d="$TMP/s11"
+run --no-gh --onto "$Y" "$d/wt" 111
+LOCAL=$(git -C "$d/wt" rev-parse HEAD)
+REMOTE=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=done" ] \
+   && git -C "$d/wt" merge-base --is-ancestor "$Y" HEAD \
+   && [ "$LOCAL" = "$REMOTE" ]; then
+  pass_msg "stacked onto the sibling tip and pushed (origin feature/x == HEAD)"
+else
+  fail_msg "S11 rc=$RC out=[$(cat "$TMP/out")] local=$LOCAL remote=$REMOTE err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S12: --onto <ref> already in HEAD -> REBASE=skip, no push"
+make_fixture s12 "" 's/^2$/two/'
+d="$TMP/s12"
+H0=$(git -C "$d/wt" rev-parse HEAD)
+R0=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+run --no-gh --onto "$(git -C "$d/wt" rev-parse HEAD~1)" "$d/wt" 112
+R1=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=skip" ] \
+   && [ "$(git -C "$d/wt" rev-parse HEAD)" = "$H0" ] && [ "$R1" = "$R0" ]; then
+  pass_msg "already on the ref: skip, HEAD and origin unchanged"
+else
+  fail_msg "S12 rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S13: --onto <base-sha> --from <Y> drops Y's commits"
+make_fixture s13 "" 's/^2$/two/'
+add_sibling s13 's/^9$/nine/'
+d="$TMP/s13"
+git -C "$d/wt" rebase -q "$Y" >/dev/null 2>&1
+git -C "$d/wt" push -q --force-with-lease origin HEAD 2>/dev/null
+BASE_SHA=$(git -C "$d/main" rev-parse main)
+run --no-gh --onto "$BASE_SHA" --from "$Y" "$d/wt" 113
+LOCAL=$(git -C "$d/wt" rev-parse HEAD)
+REMOTE=$(git -C "$d/wt" ls-remote origin refs/heads/feature/x | cut -f1)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=done" ] \
+   && ! git -C "$d/wt" merge-base --is-ancestor "$Y" HEAD \
+   && git -C "$d/wt" merge-base --is-ancestor "$BASE_SHA" HEAD \
+   && [ "$(sed -n 2p "$d/wt/f.txt")" = two ] && [ "$(sed -n 9p "$d/wt/f.txt")" = 9 ] \
+   && [ "$LOCAL" = "$REMOTE" ]; then
+  pass_msg "un-stacked: Y dropped, own change kept, pushed"
+else
+  fail_msg "S13 rc=$RC out=[$(cat "$TMP/out")] f=[$(tr '\n' ' ' < "$d/wt/f.txt")] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S14: --onto a sibling editing the same line -> REBASE=conflict FILES=f.txt"
+make_fixture s14 "" 's/^2$/two/'
+add_sibling s14 's/^2$/sib-two/'
+d="$TMP/s14"
+H0=$(git -C "$d/wt" rev-parse HEAD)
+run --no-gh --onto "$Y" "$d/wt" 114
+GD=$(git -C "$d/wt" rev-parse --absolute-git-dir)
+if [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=conflict FILES=f.txt HEAD=$H0" ] \
+   && [ "$(git -C "$d/wt" rev-parse HEAD)" = "$H0" ] \
+   && [ -z "$(git -C "$d/wt" status --porcelain)" ] \
+   && [ ! -d "$GD/rebase-merge" ] && [ ! -d "$GD/rebase-apply" ]; then
+  pass_msg "stack conflict reported, rebase aborted, worktree clean"
+else
+  fail_msg "S14 rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S15: --onto bypasses the rebase check (MERGEABLE/CLEAN still rebases)"
+make_fixture s15 "" 's/^2$/two/'
+add_sibling s15 's/^9$/nine/'
+d="$TMP/s15"
+run --no-gh "$d/wt" 115
+NOONTO=$(cat "$TMP/out")
+REBASE_CHECK_VIEW_JSON='{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}' run --no-gh --onto "$Y" "$d/wt" 115
+if [ "$NOONTO" = "REBASE=skip" ] && [ "$RC" -eq 0 ] && [ "$(cat "$TMP/out")" = "REBASE=done" ] \
+   && git -C "$d/wt" merge-base --is-ancestor "$Y" HEAD; then
+  pass_msg "check says skip, --onto still stacks (the stack decides)"
+else
+  fail_msg "S15 no-onto=[$NOONTO] rc=$RC out=[$(cat "$TMP/out")] err=[$(tr '\n' ' ' < "$TMP/err")]"
+fi
+
+scenario "S16: --from without --onto -> usage exit 2"
+run --no-gh --from "$Y" "$TMP/s15/wt" 116
+[ "$RC" -eq 2 ] && pass_msg "--from alone rc 2" || fail_msg "S16 rc=$RC"
 echo ""
 echo "=============================="
 echo "  PASS: $PASS   FAIL: $FAIL"
