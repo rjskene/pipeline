@@ -222,8 +222,7 @@ fi
 # (D's classify+plan run inside the collapsed foreground inline Agent at execute).
 inc
 STEP1B_D=$(near "$FULLSEND_SKILL" "1b. Dispatch plan (classify inline)" "PATH D exclusion" 1400)
-STEP1B_D2=$(near "$FULLSEND_SKILL" "1b. Dispatch plan (classify inline)" "EXCLUDED from this per-stage classify/plan dispatch" 1400)
-if [ "$STEP1B_D" = "OK" ] || [ "$STEP1B_D2" = "OK" ]; then
+if [ "$STEP1B_D" = "OK" ]; then
   pass_msg "(2e) fullsend Step 1b EXCLUDES PATH D from per-stage classify/plan dispatch"
 else
   fail_msg "(2e) fullsend Step 1b missing explicit PATH D exclusion from per-stage classify/plan dispatch"
@@ -272,12 +271,14 @@ else
   fail_msg "(3a) execute-issue-plan/SKILL.md missing 'carries classify+plan context forward'"
 fi
 
-# (3b) does NOT re-read the plan comment.
+# (3b) does NOT re-read the plan comment. #1562: anchored on the **PRODUCE**
+# mode label + the `re-read` token, not the sentence.
 inc
-if printf '%s' "$EXECUTE_BODY" | grep -qiE 'does NOT re-read the plan comment|no re-read of the plan comment|skip(s|ping)? the plan-comment re-?read'; then
-  pass_msg "(3b) collapsed D agent does NOT re-read the plan comment"
+if printf '%s' "$EXECUTE_BODY" | grep -qF '**PRODUCE**' \
+   && printf '%s' "$EXECUTE_BODY" | grep -qiF 're-read'; then
+  pass_msg "(3b) collapsed D agent PRODUCE mode names the plan re-read skip"
 else
-  fail_msg "(3b) execute-issue-plan/SKILL.md missing 'does NOT re-read the plan comment'"
+  fail_msg "(3b) collapsed-inline-d.md missing the '**PRODUCE**' mode label or the 're-read' token"
 fi
 
 # (3c) emits a ## Classification checkpoint + path label as an inline side-effect.

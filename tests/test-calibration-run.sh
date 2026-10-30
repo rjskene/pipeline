@@ -201,8 +201,10 @@ case "$*" in
   # `gh issue view <n> --repo R --json ...` — the number is the third token.
   "issue view"*)  cat "${CALIB_TEST_ISSUES_DIR:-}/$3.json" 2>/dev/null || echo '{}' ;;
   # <number>TAB<title>, the shape the title-scoped reap reads. 4001 carries a
-  # slate title (reapable); 4777 is an unrelated issue that must survive.
-  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
+  # run-tagged slate title and 4002 a legacy untagged one (both reapable,
+  # #1573); 4777 is an unrelated issue that must survive.
+  "issue list"*)  printf '%s\t%s\n' 4001 "calib: 01-stale-doc [r100000]" \
+                    4002 "calib: 01-stale-doc" 4777 "unrelated issue" ;;
   "issue close"*|"issue delete"*) exit 0 ;;
   "issue create"*)
     n="$(cat "$CALIB_TEST_COUNTER" 2>/dev/null || echo 4100)"
@@ -246,6 +248,8 @@ if [ -n "${CALIB_TEST_LAUNCH_ENV:-}" ]; then
     echo "PIPELINE_PLAN_GATE=${PIPELINE_PLAN_GATE:-unset}"
     # #1464: same story for the --pre-pr-review arm (execute Step 8 reads it).
     echo "PIPELINE_PRE_PR_REVIEW=${PIPELINE_PRE_PR_REVIEW:-unset}"
+    # #1579: the run tag reaches setup-worktree.sh ONLY as this env var.
+    echo "PIPELINE_BRANCH_SUFFIX=${PIPELINE_BRANCH_SUFFIX:-unset}"
   } > "$CALIB_TEST_LAUNCH_ENV"
 fi
 if [ -x "${CALIB_TEST_CLAUDE_SCRIPT:-}" ]; then
@@ -353,6 +357,12 @@ expect_rc "--plan-gate garbage is rejected" 2
 expect_sub "--plan-gate error names the allowed values" "$OUT" "full|single|none"
 expect_sub "--plan-gate error names the annotate value (#1435)" "$OUT" "annotate"
 
+# #1573: the reap strips only a trailing ` [r<digits>]`, so any other tag would
+# escape the next run's reap - reject it as a usage error, pinned on the message.
+PIPELINE_CALIB_RUN_TAG=bad-tag run_helper --dry-run --harness "$HARNESS"
+expect_rc "PIPELINE_CALIB_RUN_TAG=bad-tag is rejected" 2
+expect_sub "bad run-tag error names the required shape" "$OUT" "PIPELINE_CALIB_RUN_TAG must be r<digits>"
+
 run_helper --dry-run --profile lean --model opus
 expect_rc "--profile lean --model opus is accepted" 0
 
@@ -382,6 +392,21 @@ else
   fail_msg "--dry-run must print exactly one CALIB-LAUNCH line (got $N_LAUNCH)"
 fi
 LAUNCH="$(printf '%s\n' "$OUT" | grep '^CALIB-LAUNCH ' | head -1)"
+# #1573: the preview names the run tag the slate titles would carry.
+if printf '%s\n' "$OUT" | grep -qE '^CALIB-RUN-TAG r[0-9]{6}$'; then
+  pass_msg "--dry-run previews the CALIB-RUN-TAG"
+else
+  fail_msg "--dry-run must print 'CALIB-RUN-TAG r<ddHHMM>'"
+fi
+# #1579: the launch preview sets PIPELINE_BRANCH_SUFFIX to that same run tag.
+expect_sub "launch line sets PIPELINE_BRANCH_SUFFIX" "$LAUNCH" "PIPELINE_BRANCH_SUFFIX=r"
+DRY_TAG="$(printf '%s\n' "$OUT" | sed -n 's/^CALIB-RUN-TAG //p' | head -1)"
+DRY_BSFX="$(printf '%s\n' "$LAUNCH" | grep -oE 'PIPELINE_BRANCH_SUFFIX=[^ ]+' | head -1)"
+if [ -n "$DRY_TAG" ] && [ "$DRY_BSFX" = "PIPELINE_BRANCH_SUFFIX=$DRY_TAG" ]; then
+  pass_msg "launch-line PIPELINE_BRANCH_SUFFIX equals the printed CALIB-RUN-TAG"
+else
+  fail_msg "launch-line PIPELINE_BRANCH_SUFFIX must equal CALIB-RUN-TAG (tag: $DRY_TAG, launch: $DRY_BSFX)"
+fi
 
 expect_sub "launch line runs claude headless" "$LAUNCH" "claude -p"
 expect_sub "launch line drives /pipeline:fullsend" "$LAUNCH" "/pipeline:fullsend"
@@ -689,7 +714,9 @@ fi
 
 # One-time cleanup: logs already committed AT calib-base (the 2026-10-08 state).
 git -C "$SANDBOX" add -f -- .claude/logs .claude/logs-archive
-git -C "$SANDBOX" commit --quiet -m "legacy seed that swallowed logs" >/dev/null
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$SANDBOX" commit --quiet -m "legacy seed that swallowed logs" >/dev/null
 git -C "$SANDBOX" tag -f calib-base >/dev/null
 run_helper --bootstrap --harness "$HARNESS"
 expect_rc "--bootstrap over already-committed logs exits 0" 0
@@ -706,6 +733,46 @@ else
   fail_msg "the cleanup deleted the archived logs from disk"
 fi
 rm -rf "$SANDBOX/.claude/logs" "$SANDBOX/.claude/logs-archive"
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 4c: --bootstrap removes tracked sandbox files the template dropped (#1576)"
+# ---------------------------------------------------------------------------
+# rsync -a / tar never delete, so a file removed from the template stayed
+# tracked in the sandbox and kept riding the seed. --bootstrap must git rm it
+# (tracked paths only) and leave untracked sandbox state alone.
+echo flaky > "$SANDBOX/tests-case-ids.sh"
+git -C "$SANDBOX" add -- tests-case-ids.sh
+GIT_AUTHOR_NAME="calib test" GIT_AUTHOR_EMAIL="calib@example.invalid" \
+GIT_COMMITTER_NAME="calib test" GIT_COMMITTER_EMAIL="calib@example.invalid" \
+  git -C "$SANDBOX" commit --quiet -m "seed carrying a file the template later dropped" >/dev/null
+git -C "$SANDBOX" tag -f calib-base >/dev/null
+mkdir -p "$SANDBOX/.claude/logs"
+echo keep > "$SANDBOX/.claude/logs/keep.txt"
+run_helper --bootstrap --harness "$HARNESS"
+expect_rc "--bootstrap over a dropped template file exits 0" 0
+if [ -z "$(git -C "$SANDBOX" ls-files -- tests-case-ids.sh)" ]; then
+  pass_msg "the dropped file is no longer tracked in the sandbox"
+else
+  fail_msg "the dropped file is still tracked in the sandbox"
+fi
+if [ -z "$(git -C "$SANDBOX" ls-tree -r --name-only calib-base -- tests-case-ids.sh 2>/dev/null)" ]; then
+  pass_msg "the removal is committed and calib-base re-anchored past it"
+else
+  fail_msg "calib-base still carries the dropped file"
+fi
+if [ -e "$SANDBOX/tests-case-ids.sh" ]; then
+  fail_msg "the dropped file is still on disk in the sandbox"
+else
+  pass_msg "the dropped file is removed from the sandbox working tree"
+fi
+expect_sub "--bootstrap names each removed path" "$OUT" \
+  "calib: template no longer has tests-case-ids.sh — removed from the sandbox"
+if [ -f "$SANDBOX/.claude/logs/keep.txt" ]; then
+  pass_msg "untracked sandbox state outside the template survives"
+else
+  fail_msg "the template-deletion sync removed untracked sandbox state"
+fi
+rm -rf "$SANDBOX/.claude/logs"
 # ---------------------------------------------------------------------------
 scenario "Scenario 5: --reset recreates the five slate issues"
 # ---------------------------------------------------------------------------
@@ -722,6 +789,20 @@ if [ "$N_IDS" -eq 5 ]; then
 else
   fail_msg "--reset must print CALIB-ISSUES with five numbers (got: $ISSUE_LINE)"
 fi
+# #1573: every slate title carries the per-run tag, so the executor's branch
+# slugs differ run to run (no collision with a prior run's stale branches).
+N_CREATE="$(grep -c '^gh issue create ' "$CALLS" 2>/dev/null)"
+N_TAGGED="$(grep '^gh issue create ' "$CALLS" 2>/dev/null | grep -cE ' \[r[0-9]{6}\] --body-file ')"
+if [ "$N_CREATE" -eq 5 ] && [ "$N_TAGGED" -eq 5 ]; then
+  pass_msg "--reset tags every slate issue title with [r<ddHHMM>]"
+else
+  fail_msg "--reset must tag all five slate titles (create=$N_CREATE tagged=$N_TAGGED)"
+fi
+if printf '%s\n' "$OUT" | grep -qE '^CALIB-RUN-TAG r[0-9]{6}$'; then
+  pass_msg "--reset prints the CALIB-RUN-TAG line"
+else
+  fail_msg "--reset must print 'CALIB-RUN-TAG r<ddHHMM>'"
+fi
 if grep -q '^gh issue close ' "$CALLS" 2>/dev/null; then
   pass_msg "--reset closes stale calib issues"
 else
@@ -736,6 +817,23 @@ if grep -q '^claude ' "$CALLS" 2>/dev/null; then
   fail_msg "--reset launched claude"
 else
   pass_msg "--reset never launches claude"
+fi
+
+# #1573: PIPELINE_CALIB_RUN_TAG overrides the default tag.
+rm -f "$CALLS" "$TMP/issue-counter"
+PIPELINE_CALIB_RUN_TAG=r424242 run_helper --reset --harness "$HARNESS"
+expect_rc "--reset with PIPELINE_CALIB_RUN_TAG=r424242 exits 0" 0
+N_CREATE="$(grep -c '^gh issue create ' "$CALLS" 2>/dev/null)"
+N_TAGGED="$(grep '^gh issue create ' "$CALLS" 2>/dev/null | grep -cF ' [r424242] --body-file ')"
+if [ "$N_CREATE" -eq 5 ] && [ "$N_TAGGED" -eq 5 ]; then
+  pass_msg "the override tag lands on every slate title"
+else
+  fail_msg "the override tag must land on all five titles (create=$N_CREATE tagged=$N_TAGGED)"
+fi
+if printf '%s\n' "$OUT" | grep -qxF 'CALIB-RUN-TAG r424242'; then
+  pass_msg "--reset prints the override CALIB-RUN-TAG"
+else
+  fail_msg "--reset must print 'CALIB-RUN-TAG r424242'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -906,9 +1004,14 @@ LIST_CALL="$(grep -m1 '^gh issue list ' "$CALLS" 2>/dev/null)"
 expect_sub "the reap bounds gh issue list (default 30 silently truncates)" "$LIST_CALL" "--limit 200"
 
 if grep -qE '^gh issue (close|delete) 4001 ' "$CALLS" 2>/dev/null; then
-  pass_msg "the reap closes an issue carrying a slate title"
+  pass_msg "the reap closes an issue carrying a run-tagged slate title"
 else
-  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc')"
+  fail_msg "the reap must close issue 4001 (title 'calib: 01-stale-doc [r100000]')"
+fi
+if grep -qE '^gh issue (close|delete) 4002 ' "$CALLS" 2>/dev/null; then
+  pass_msg "the reap closes an issue carrying a legacy untagged slate title"
+else
+  fail_msg "the reap must close issue 4002 (title 'calib: 01-stale-doc')"
 fi
 if grep -qE '^gh issue (close|delete) 4777 ' "$CALLS" 2>/dev/null; then
   fail_msg "the reap deleted an unrelated issue (4777)"
@@ -2623,6 +2726,30 @@ TOTAL_OC_NA="$(printf '%s\n' "$OUT" | grep '^CALIB-TOTAL ' | head -1)"
 expect_sub "CALIB-TOTAL renders output_complete=n/a without the keys" "$TOTAL_OC_NA" " output_complete=n/a"
 
 export CALIB_TEST_PRICING_JSON="$TMP/pricing.json"
+unset CALIB_TEST_CLAUDE_SCRIPT
+
+# ---------------------------------------------------------------------------
+scenario "Scenario 28: the launch sets PIPELINE_BRANCH_SUFFIX to the run tag (#1579)"
+# ---------------------------------------------------------------------------
+# Every sandbox feature branch must carry the run tag, so the driver hands the
+# session PIPELINE_BRANCH_SUFFIX=<run tag> (setup-worktree.sh appends it). Not
+# an experimental arm: unconditional, no flag. Spliced AFTER #1390's scrub, so a
+# poison value in the launching shell loses to the run tag.
+
+echo 7100 > "$TMP/issue-counter"
+rm -f "$COST_LOG" "$CALLS" "$LAUNCH_ENV"
+export CALIB_TEST_CLAUDE_SCRIPT="$TMP/claude-noop.sh"
+export PIPELINE_BRANCH_SUFFIX="bogus"
+PIPELINE_CALIB_RUN_TAG=r515151 run_helper --run --harness "$HARNESS"
+expect_rc "--run with PIPELINE_CALIB_RUN_TAG=r515151 exits 0" 0
+
+LAUNCH_ENV_BSFX="$(cat "$LAUNCH_ENV" 2>/dev/null)"
+if printf '%s\n' "$LAUNCH_ENV_BSFX" | grep -qxF -- "PIPELINE_BRANCH_SUFFIX=r515151"; then
+  pass_msg "the launch hands the session PIPELINE_BRANCH_SUFFIX=r515151"
+else
+  fail_msg "the launched session's environment must carry PIPELINE_BRANCH_SUFFIX=r515151 (got: $(printf '%s' "$LAUNCH_ENV_BSFX" | tr '\n' ' '))"
+fi
+unset PIPELINE_BRANCH_SUFFIX
 unset CALIB_TEST_CLAUDE_SCRIPT
 
 # ---------------------------------------------------------------------------

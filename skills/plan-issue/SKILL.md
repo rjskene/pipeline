@@ -134,7 +134,7 @@ Receive an issue number as argument (or from context).
 
    **DB schema changes:** (or "None")
    **API changes:** (or "None")
-   **Frontend changes:** (or "None")
+   **Frontend changes:** (or "None") — one line per user-visible outcome, as what the user does and what they then see; execute 6c proves each in a browser
    **Test changes:** (or "None") — one test file per `bash` invocation
    **Design decisions:** (architecture, data structures, algorithms, mode behaviors)
    **Risks/unknowns:** (or "None")

@@ -8,7 +8,7 @@ set -uo pipefail
 # when no merged PR closes it. A bare `#N` mention must not select a PR.
 #
 # HERMETIC: only the single function is extracted and evaluated; it reads
-# $MERGED_JSON and the slate dir, nothing else.
+# $MERGED_JSON, the slate dir and (#1604) a local temp git repo as $SANDBOX.
 #
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -70,6 +70,42 @@ check "(e) bare mention does not select" 0
 # (f) digit boundary (regression guard): #4201 / feature/4201-x must not select 420.
 MERGED_JSON='[{"number":5,"body":"Closes #4201","headRefName":"feature/4201-x","files":[{"path":"c.sh"}]}]'
 check "(f) #4201 does not select issue 420" 0
+
+# --- merge-commit source (#1604) -------------------------------------------
+# Since #1602 stacks overlapping PRs, GitHub's PR file list carries the
+# stacked predecessor's files. The count must come from the merge commit's
+# first-parent diff in the sandbox clone instead.
+source "$ROOT/tests/_lib/git-sandbox.sh"
+REPO="$TMP/repo"
+mkdir -p "$REPO"
+git_init_sandbox "$REPO"
+git -C "$REPO" checkout -q -b main
+echo base > "$REPO/base.txt"
+git -C "$REPO" add base.txt && git -C "$REPO" commit -q -m base
+git -C "$REPO" checkout -q -b pred
+echo p > "$REPO/p.sh"
+git -C "$REPO" add p.sh && git -C "$REPO" commit -q -m pred
+git -C "$REPO" checkout -q main && git -C "$REPO" merge -q --no-ff -m "merge pred" pred
+git -C "$REPO" checkout -q -b succ pred
+echo a > "$REPO/a.sh"
+git -C "$REPO" add a.sh && git -C "$REPO" commit -q -m succ
+git -C "$REPO" checkout -q main && git -C "$REPO" merge -q --no-ff -m "merge succ" succ
+M="$(git -C "$REPO" rev-parse HEAD)"
+SANDBOX="$REPO"
+
+# (i) GitHub-style stacked list (a.sh + predecessor's p.sh); merge diff = a.sh.
+MERGED_JSON="[{\"number\":6,\"body\":\"Closes #420\",\"headRefName\":\"feature/succ\",\"mergeCommit\":{\"oid\":\"$M\"},\"files\":[{\"path\":\"a.sh\"},{\"path\":\"p.sh\"}]}]"
+check "(i) stacked predecessor file excluded via merge-commit diff" 0
+
+# (ii) unreachable oid falls back to the GitHub list, with a stderr note.
+MERGED_JSON="[{\"number\":6,\"body\":\"Closes #420\",\"headRefName\":\"feature/succ\",\"mergeCommit\":{\"oid\":\"0000000000000000000000000000000000000000\"},\"files\":[{\"path\":\"a.sh\"},{\"path\":\"p.sh\"}]}]"
+check "(ii) unreachable merge commit falls back to GitHub file list" 1
+issue_unexpected 420 "$TMP/slate" >/dev/null 2>"$TMP/err"
+if grep -qF "calib: unexpected-files for #420 from GitHub file list" "$TMP/err"; then
+  pass_msg "(ii) fallback prints stderr note"
+else
+  fail_msg "(ii) fallback stderr note missing: '$(cat "$TMP/err")'"
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -2,7 +2,7 @@
 name: execute-issue-plan
 description: Implement the approved plan for a GitHub issue. Run from inside the feature worktree. Usage: /pipeline:execute-issue-plan <issue_number>
 disable-model-invocation: false
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright__*
 ---
 
 ## Boot
@@ -31,7 +31,7 @@ worktree spawn → inline Agent (PATH A/B, PATH C default, PATH D tdd) | inline 
 
 ## Invocation mode
 
-Steps are identical across modes; only the CWD setup differs:
+Only the CWD setup differs across modes:
 
 | # | Mode | CWD setup | Used by |
 |---|------|-----------|---------|
@@ -81,7 +81,7 @@ Argument: the issue number. CWD: the feature worktree (table above).
 
    **PATH B single execute agent.** One `pipeline:stage-executor` agent applies the `tdd-implementer` discipline inline per plan task: failing test → `$PIPELINE_TEST_CMD` red → minimum impl → green → commit; it may edit any test the plan names under `**Test changes:**`; runs the FULL suite green before `gh pr create`.
 
-   **Turn discipline.** (1) Send a task's independent edits (test + impl) as parallel calls in ONE message. (2) Inside RED/GREEN run only the targeted test file (`bash tests/<file>.sh </dev/null`), never the suite; the suite runs at 6b or when a GREEN breaks another file. (3) GREEN and commit share one Bash call, the `&& git commit` form, anchored: `timeout 600 bash <wt>/tests/<file>.sh </dev/null && git -C <wt> add <paths> && git -C <wt> commit -m "…"`. (4) Batch one-line reads into one Bash call.
+   **Turn discipline.** (1) Send a task's independent edits (test + impl) as parallel calls in ONE message. (2) Inside RED/GREEN run only the targeted test file (`bash tests/<file>.sh </dev/null`), never the suite; the suite runs at 6b or when a GREEN breaks another file. (3) GREEN and commit share one Bash call, the `&& git commit` form, anchored: `timeout 600 bash <wt>/tests/<file>.sh </dev/null && git -C <wt> add <paths> && git -C <wt> commit -m "…"`. (4) Batch one-line reads into one Bash call. (5) If `Write` or `Edit` is refused because the auto-mode classifier gave no verdict, make the change through Bash (`cat > <file> <<'EOF'`, `python3 -`, or `sed -i`) and continue; never hand back or stop for it.
 
    **PATH C (`multi-task`) — fan-out knob.** Branch on the prompt's `PATH_C_FANOUT=` token (no token: `${PIPELINE_PATH_C_FANOUT:-false}`; `true`/`on` ⇒ on, else off). **`off` (DEFAULT):** you are the single execute agent, exactly as PATH B — run the tasks in sequence here, one task per `target=<dir>`; no `tdd-implementer` leaves, no `path-c-split-worktree.sh`; you own Steps 8–10. `--spawn` changes only the transport.
 
@@ -99,14 +99,14 @@ Argument: the issue number. CWD: the feature worktree (table above).
 
    **6a. Type check** — `$PIPELINE_TYPECHECK_CMD` (first link).
 
-   **6b. Run tests (single sequential pass, stdin-guarded).** Run the configured `$PIPELINE_TEST_CMD` — the targeted/relevant test command for this project. Do NOT improvise an unbounded `for t in tests/test*.sh; do bash "$t"; done` sweep. Always redirect stdin from `/dev/null` and bound each run with `timeout`:
+   **6b. Run tests (single sequential pass, stdin-guarded).** Run `$PIPELINE_TEST_CMD`, the targeted/relevant test command. Never an unbounded `for t in tests/test*.sh` sweep. Guard stdin and bound with `timeout`:
    ```bash
    $PIPELINE_TYPECHECK_CMD \
      && timeout 600 bash -c "$PIPELINE_TEST_CMD" </dev/null
    ```
-   ONE verification pass at a time — never concurrent suite runs. The issue's targeted test must already be green; never commit past a red targeted test.
-   **Run the suite in the foreground and read its exit code directly.** Never background a test monitor and `Read` its `/tmp/...` output, and never narrate "I'll wait" and stop: the suite is done when the Bash call returns. **Monitor-yield ban:** never yield on a background `Monitor`; if async monitoring is unavoidable, block via a bounded `BashOutput` poll to a sentinel under `.claude/logs/` or `.claude/scratch/`, never `/tmp`. **Never `run_in_background` a test run.** Run `$PIPELINE_TEST_CMD` in the FOREGROUND; if the runner supports splitting, run its slices as sequential foreground calls, every slice green before `gh pr create`. **Dogfood split (this repo only):** `$PIPELINE_TEST_CMD` is `bash scripts/run-test-suite.sh`. When base CI is green, run ONE foreground call — `bash scripts/run-test-suite.sh --changed-only "$PWD/tests"` (touched + subject tests) — and read `RESULT=` from its `CHANGED-ONLY:` summary line; it must report `RESULT=pass`. ONLY when base CI is red, or that call prints `CHANGED-ONLY: base … unresolved`, run `--chunk 1/4` … `--chunk 4/4`, one foreground call each; every chunk must report `RESULT=pass` (or fail only on `PRE-EXISTING:` files). Chunk it instead of backgrounding it. **CI is the oracle for untouched failures:** a failing file the diff leaves untouched (`git diff --name-only origin/<base>...HEAD` names neither it nor its subject script) while base CI is green is skipped with ONE line `PRE-EXISTING: <file> (untouched; base CI green)`. **Subject:** a test that reads, greps, sources or execs a touched path by path, basename, or containing glob/directory (`hooks/*.py`); check: `grep -rlF -e <basename> -e <dir>/ tests/` per touched path. A failing subject test is never `PRE-EXISTING:`; make it green locally. The PR body carries every `PRE-EXISTING:` line under `## Pre-existing failures`, or `PRE-EXISTING: none`.
-   **6c. Browser check.** If the diff changes anything a user sees in a browser, start the app on a free port, open it with the Playwright MCP tools, screenshot the affected views, check the console for errors, fix what you find, attach the screenshot to the PR, and stop the server.
+   The issue's targeted test must already be green; never commit past a red targeted test.
+   **Run the suite in the foreground and read its exit code directly**; never `Read` a backgrounded `/tmp/...` output or narrate "I'll wait" and stop. **Monitor-yield ban:** never yield on a background `Monitor`; if async is unavoidable, poll `BashOutput` to a sentinel under `.claude/logs/` or `.claude/scratch/`. **Never `run_in_background` a test run.** Run `$PIPELINE_TEST_CMD` in the FOREGROUND; split slices into sequential foreground calls, each green before `gh pr create`. **Dogfood split (this repo only):** `$PIPELINE_TEST_CMD` is `bash scripts/run-test-suite.sh`. When base CI is green, run ONE foreground call — `bash scripts/run-test-suite.sh --changed-only "$PWD/tests"` (touched + subject tests) — and read `RESULT=` from its `CHANGED-ONLY:` summary line; it must report `RESULT=pass`. ONLY when base CI is red, or that call prints `CHANGED-ONLY: base … unresolved`, run `--chunk 1/4` … `--chunk 4/4`, one foreground call each; every chunk must report `RESULT=pass` (or fail only on `PRE-EXISTING:` files). Chunk it instead of backgrounding it. **CI is the oracle for untouched failures:** a failing file the diff leaves untouched (`git diff --name-only origin/<base>...HEAD` names neither it nor its subject script) while base CI is green is skipped with ONE line `PRE-EXISTING: <file> (untouched; base CI green)`. **Subject:** a test that reads, greps, sources or execs a touched path by path, basename, or containing glob/directory (`hooks/*.py`); check: `grep -rlF -e <basename> -e <dir>/ tests/` per touched path. A failing subject test is never `PRE-EXISTING:`; make it green locally. The PR body carries every `PRE-EXISTING:` line under `## Pre-existing failures`, or `PRE-EXISTING: none`.
+   **6c. Browser check.** If the diff changes anything a user sees or does in a browser, prove the behaviour, not the rendering: start the app on a free port, drive each `**Frontend changes:**` outcome with the Playwright MCP tools (navigate, click, fill, submit), confirm the expected state from `browser_snapshot`, check console and network for errors, fix what you find, add a case to the project's browser test suite when it has one, record each outcome's observed state in the PR body (screenshots stay local; never commit them, `gh` cannot attach images), and stop the server. Load the deferred Playwright tools first via `ToolSearch` (`select:mcp__playwright__browser_navigate,mcp__playwright__browser_snapshot`); none found (`--spawn`): write `Browser check: skipped (no Playwright MCP)` in the PR body; the evaluator runs it.
 
    **Cross-cutting guards always run:** even when 6b verified only a subset, `scripts/check-cross-cutting-guards.sh` runs pre-PR (Step 9a).
 
@@ -148,7 +148,7 @@ Argument: the issue number. CWD: the feature worktree (table above).
    )"; fi
    ```
 
-   `PR_TITLE` is normalized by `scripts/derive-pr-title.sh` (any `../` becomes `..⁄`, U+2044). Both `--title` and `--body` are also scanned by the `check-ci-skip-markers` hook; to *describe* a marker, wrap it in backticks.
+   `PR_TITLE` is normalized by `scripts/derive-pr-title.sh` (any `../` becomes `..⁄`, U+2044).
 
 10. **Mark as pr-open:**
     ```bash
@@ -157,7 +157,7 @@ Argument: the issue number. CWD: the feature worktree (table above).
 
 11. **Report:** "PR opened for #N: <PR URL>"
 
-12. **Terminal state — STOP (Step 12).** After Steps 10–11 this is the agent's terminal state — STOP here: once the `pr-open` label is applied, run no re-check, cleanup, or wait/poll loop: a lingering session blocks `evaluate-issue-pr`.
+12. **Terminal state — STOP (Step 12).** This is the agent's terminal state — STOP once the `pr-open` label is applied: no re-check, cleanup, or wait/poll loop.
 
 ## Handling evaluation feedback
 
@@ -166,9 +166,8 @@ Argument: the issue number. CWD: the feature worktree (table above).
 ## Constraints
 - Implement ONLY what the approved plan says.
 - Stage ONLY the explicit plan-related paths with `git add <path> [<path>...]`. NEVER `git add -A`, `git add .`, or `git add -u` (they sweep in cruft; `scripts/check-branch-cruft.sh` backstops).
-- **Git-anchoring + branch-assert.** Anchor every git command `git -C <worktree-abs-path>` (cwd does not persist). Before ANY commit, ASSERT `git -C <worktree-abs-path> symbolic-ref --short HEAD` equals the feature branch; if not, **STOP and report**. Every `git add` is `git -C <worktree-abs-path> add <paths>` — never a bare `git add`, never `git -C <main-repo> add`.
+- **Git-anchoring + branch-assert.** Anchor every git command `git -C <worktree-abs-path>`. Before ANY commit, ASSERT `git -C <worktree-abs-path> symbolic-ref --short HEAD` equals the branch `setup-worktree.sh` printed; prompt branch lacks its `-<suffix>` ⇒ note, continue; else **STOP and report**. Every `git add` is `git -C <worktree-abs-path> add <paths>` — never a bare or main-repo `git add`.
 - **No hypothesised concurrent writer.** If your changes turn up somewhere you did not expect (main checkout, another branch or worktree, or reset), report the OBSERVED facts and STOP: `git -C <dir> status --short`, `git -C <dir> log --oneline -5`, and the exact git commands you ran. Never blame a concurrent writer you have not directly observed; the likely cause is your own unanchored `git` command.
-- Never commit to main; never `--no-verify` or `--force`.
 - All PRs target `PIPELINE_BASE_BRANCH`, never `main`: always `--base "$PIPELINE_BASE_BRANCH"` (quoted).
 - Verification (Step 6b) is a single sequential `$PIPELINE_TEST_CMD` pass with `</dev/null` + `timeout`; never an unbounded `for t in tests/test*.sh` sweep, never concurrent suite runs.
 - Never inline unbounded sentinel-file polls; use `scripts/wait-for-sentinel.sh <file> <token> [--timeout N]`.

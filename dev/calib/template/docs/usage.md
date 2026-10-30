@@ -74,6 +74,12 @@ bash bin/calibctl auth revoke
 Tokens are 32 hex characters and live in `$CALIB_HOME/auth.token`. `show` and
 `revoke` exit 6 when no token has been issued.
 
+## The web view
+
+`web/index.html` shows the tasks in `web/tasks.js` as a table: every task, in
+id order, with the columns in the `list` column order (`id`, `status`,
+`priority`, `title`). See the README for how to serve it.
+
 ## Output conventions
 
 `list` and `report` are for people. Anything that writes tabular,

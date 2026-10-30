@@ -122,7 +122,13 @@ fi
 #     single-sourced at the read site (${VAR:-default}), NOT required live keys
 #     — they are skipped, never force-appended;
 #   - surface placeholder / no-safe-default keys (empty default, owner/repo,
-#     /path/...) as "added — needs your value".
+#     /path/...) as "added — needs your value";
+#   - command keys (name ends in `_CMD`, #1566) are appended COMMENTED
+#     (`# KEY=default   # doctor: enable if ...`) and reported as
+#     "added (commented) — enable if applicable" — a phantom live command
+#     (e.g. `npx tsc` in a non-JS project) would otherwise run and fail;
+#   - a COMMENTED host line (`# PIPELINE_<KEY>=...`) counts as present (#1566), so
+#     a deliberate comment-out is respected and a re-run is a no-op.
 # Prints a per-key report. Exits 0. The example file is the source of defaults;
 # the host file is the only thing mutated (append-only).
 # --------------------------------------------------------------------------
@@ -147,9 +153,10 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
     exit 1
   fi
 
-  # Extract the set of PIPELINE_* keys already present (uncommented) in the host.
-  cfg_host_keys="$(grep -oE '^[[:space:]]*PIPELINE_[A-Z0-9_]+=' "$CFG_HOST" 2>/dev/null \
-                   | sed -E 's/^[[:space:]]*//; s/=$//' | sort -u)"
+  # Extract the set of PIPELINE_* keys already present in the host — commented
+  # lines count as present (#1566), so a commented-out key is never re-added.
+  cfg_host_keys="$(grep -oE '^[[:space:]]*(#[[:space:]]*)?PIPELINE_[A-Z0-9_]+=' "$CFG_HOST" 2>/dev/null \
+                   | sed -E 's/^[[:space:]]*(#[[:space:]]*)?//; s/=$//' | sort -u)"
 
   # Decide whether an example default value has no safe default (placeholder).
   # Empty string, owner/repo sentinel, and /path/... sentinels are all
@@ -169,6 +176,7 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
 
   cfg_added=()
   cfg_needs_value=()
+  cfg_commented=()
   # Lines to insert (collected before writing, so we can do one atomic insert).
   cfg_new_lines=()
 
@@ -178,13 +186,22 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
     # before any trailing inline comment). Keep quoting in the value verbatim.
     ex_key="$(printf '%s' "$ex_line" | sed -E 's/^[[:space:]]*(PIPELINE_[A-Z0-9_]+)=.*/\1/')"
     [ -n "$ex_key" ] || continue
-    # Already present in host (uncommented)? Skip — never overwrite.
+    # Already present in host (commented or not)? Skip — never overwrite.
     if printf '%s\n' "$cfg_host_keys" | grep -Fxq "$ex_key"; then
       continue
     fi
     # Value = text after first `=`, trimmed of a trailing `  # comment`.
     ex_val="$(printf '%s' "$ex_line" | sed -E 's/^[[:space:]]*PIPELINE_[A-Z0-9_]+=//')"
     ex_val="$(printf '%s' "$ex_val" | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//')"
+    # Command keys are appended commented (#1566); a commented line never runs
+    # empty, so it skips the needs-a-value check.
+    case "$ex_key" in
+      *_CMD)
+        cfg_new_lines+=("# $ex_key=$ex_val   # doctor: enable if this project has one")
+        cfg_commented+=("$ex_key=$ex_val")
+        continue
+        ;;
+    esac
     cfg_new_lines+=("$(printf '%s=%s' "$ex_key" "$ex_val")")
     cfg_added+=("$ex_key=$ex_val")
     if cfg_is_placeholder "$ex_key" "$ex_val"; then
@@ -224,12 +241,15 @@ if [ "${1:-}" = "--fix" ] && [ "${2:-}" = "config" ]; then
   # this reconcile mode does not touch GitHub. Report the line so the
   # change-report shape is complete; the model relays the `--fix labels` result.
   echo "labels added: see /pipeline:doctor --fix labels (idempotent label seed)"
-  if [ "${#cfg_added[@]}" -eq 0 ]; then
+  if [ "${#cfg_added[@]}" -eq 0 ] && [ "${#cfg_commented[@]}" -eq 0 ]; then
     echo "envvars added: none (host pipeline.config already has every example key)"
   else
     echo "envvars added:"
-    for kv in "${cfg_added[@]}"; do
+    for kv in ${cfg_added[@]+"${cfg_added[@]}"}; do
       echo "  $kv"
+    done
+    for kv in ${cfg_commented[@]+"${cfg_commented[@]}"}; do
+      echo "  $kv — added (commented) — enable if applicable"
     done
   fi
   if [ "${#cfg_needs_value[@]}" -gt 0 ]; then

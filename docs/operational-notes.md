@@ -353,3 +353,14 @@ run reports a high `bridge_prompts`, that knob is the rollback, not a revert.
 The hook is INERT with no queue dir exported: it exits 0 having emitted nothing
 and having read nothing, which is what makes its matcher-`*` registration safe in
 your live interactive sessions.
+
+## 16. Prose pins name tokens, not sentences (issue #1562)
+
+A test that greps skill prose pins knob names, script names, `LOOP:`/`GATE:`/`DISPATCH`
+contract lines and step headings, never sentences: a sentence pin breaks on every
+rewording, and the rewording is usually the improvement. `tests/test-prose-pins-are-anchors.sh`
+enforces this, flagging a 5+-word grep pattern run against a SKILL.md, `references/`,
+`agents/` or `$*_BODY`-style input. Add an entry to `tests/prose-pins.allow` only for a
+pin with no token or heading to anchor on, as `<path>:<pattern-prefix>` under a `#`
+justification comment. The list only shrinks: an entry that matches no pin fails the
+lint as `STALE:`, so converting a pin means deleting its entry in the same change.

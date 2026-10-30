@@ -228,9 +228,9 @@ fi
 
 echo "=== (i) Step 11.4 names the re-dispatch remediation for the token ==="
 if require_file "$EVAL_SKILL" "(i)"; then
-  I_REGION="$(region_after "$EVAL_SKILL" 'On any `block-*` reason')"
+  I_REGION="$(region_after "$EVAL_SKILL" 'fullsend-block-merge.sh <N>:<reason>')"
   if [ -z "$I_REGION" ]; then
-    fail "(i) Step 11.4 ('On any \`block-*\` reason') not found in $EVAL_SKILL"
+    fail "(i) Step 11.4 ('fullsend-block-merge.sh <N>:<reason>') not found in $EVAL_SKILL"
   else
     if printf '%s' "$I_REGION" | grep -qF "$TOKEN"; then
       pass "(i) Step 11.4 names $TOKEN"

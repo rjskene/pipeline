@@ -4,7 +4,7 @@
 #   dev/calib/template/ — a consumer-shaped sandbox project the pipeline can be
 #                         pointed at (its own pipeline.config, its own test
 #                         runner, its own CI workflow).
-#   dev/calib/slate/    — nine canned issues (title/body/reference test/expected
+#   dev/calib/slate/    — ten canned issues (title/body/reference test/expected
 #                         files) covering the routing shapes the calibration
 #                         run needs: docs-only, quick-fix, plain feature,
 #                         high-uncertainty (race + auth), multi-directory, and
@@ -14,7 +14,9 @@
 #                         v3's three probes the trivial path fails (#1531): a
 #                         planted regression (reviewer), an underspecified
 #                         convention (planner), a flaky test whose cause is a
-#                         real race (executor).
+#                         real race (executor) — plus a browser surface (#1584):
+#                         a filter box on the template's static web view, which
+#                         the executor and evaluator drive in a browser.
 #
 # Nothing here shells out to the network or to `gh`; every assertion is a
 # filesystem / content / exit-code check, plus a live run of the template test
@@ -45,11 +47,42 @@ echo "== (a) template layout =="
 # ---------------------------------------------------------------------------
 
 for rel in pipeline.config claude-settings.local.json .gitignore README.md \
-           tests/run.sh .github/workflows/ci.yml docs/usage.md docs/architecture.md; do
+           tests/run.sh .github/workflows/ci.yml docs/usage.md docs/architecture.md \
+           web/index.html web/tasks.js web/app.js tests/case-web.sh; do
   if [ -f "$TEMPLATE_DIR/$rel" ]; then
     pass_msg "template carries $rel"
   else
     fail_msg "template missing $rel"
+  fi
+done
+
+# #1590: Claude Code loads project MCP servers from the session cwd's
+# .mcp.json; without one the sandbox has no Playwright tools for the browser
+# check (run 51: execute skipped it, evaluate drove Chrome by hand).
+if python3 -c 'import json,sys; sys.exit(0 if "playwright" in json.load(open(sys.argv[1])).get("mcpServers",{}) else 1)' \
+     "$TEMPLATE_DIR/.mcp.json" 2>/dev/null; then
+  pass_msg "template .mcp.json names a playwright server"
+else
+  fail_msg "template .mcp.json missing or names no playwright server"
+fi
+
+# #1598: the server writes snapshots / console logs into its output dir; the
+# default `.playwright-mcp/` landed untracked in the project root (run 52).
+# Byte-identity makes a check on either copy cover both.
+if cmp -s "$ROOT/.mcp.json" "$TEMPLATE_DIR/.mcp.json"; then
+  pass_msg "template .mcp.json is byte-identical to the repo .mcp.json"
+else
+  fail_msg "template .mcp.json differs from the repo .mcp.json"
+fi
+
+for mcp in "$ROOT/.mcp.json" "$TEMPLATE_DIR/.mcp.json"; do
+  out_dir=$(python3 -c 'import json,sys
+a=json.load(open(sys.argv[1]))["mcpServers"]["playwright"]["args"]
+print(a[a.index("--output-dir")+1] if "--output-dir" in a else "")' "$mcp" 2>/dev/null)
+  if [ "$out_dir" = ".claude/scratch/playwright" ]; then
+    pass_msg "${mcp#"$ROOT"/} routes Playwright output to .claude/scratch/playwright"
+  else
+    fail_msg "${mcp#"$ROOT"/} --output-dir is '${out_dir}', want .claude/scratch/playwright"
   fi
 done
 
@@ -173,6 +206,18 @@ PY
   fi
 done
 
+# The web view (slate issue 10, #1584): the sandbox executor drives the page with
+# the Playwright MCP tools and serves it with python3 -m http.server. Both must be
+# pre-allowed, or the headless run stalls on the classifier / permission bridge.
+for entry in "mcp__playwright" "Bash(python3 -m http.server:*)"; do
+  if python3 -c 'import json,sys; a=json.load(open(sys.argv[1])).get("permissions",{}).get("allow",[]); sys.exit(0 if sys.argv[2] in a else 1)' \
+       "$settings" "$entry" 2>/dev/null; then
+    pass_msg "permissions.allow carries $entry"
+  else
+    fail_msg "permissions.allow is missing $entry"
+  fi
+done
+
 # ---------------------------------------------------------------------------
 echo "== (c2) sandbox claude settings register the plugin logging hooks =="
 # ---------------------------------------------------------------------------
@@ -257,10 +302,10 @@ echo "== (d) slate shape =="
 # ---------------------------------------------------------------------------
 
 mapfile -t slate_dirs < <(find "$SLATE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
-if [ "${#slate_dirs[@]}" -eq 9 ]; then
-  pass_msg "slate has exactly 9 issue directories"
+if [ "${#slate_dirs[@]}" -eq 10 ]; then
+  pass_msg "slate has exactly 10 issue directories"
 else
-  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 9)"
+  fail_msg "slate has ${#slate_dirs[@]} issue directories (want exactly 10)"
 fi
 
 for d in "${slate_dirs[@]}"; do
@@ -323,12 +368,13 @@ check_count() {
 }
 check_count "docs-only issues" "$docs_only" 1
 check_count "quick-fix issues" "$quick_fix" 1
-# 4, not 1: the planted-defect slate issue (#1395) is the second `feat(`-titled
-# one, and slate v3's 07-planted-regression and 08-underspecified-convention
-# (#1531) the third and fourth. The other four counts stay at 1 — a new dir must
+# 5, not 1: the planted-defect slate issue (#1395) is the second `feat(`-titled
+# one, slate v3's 07-planted-regression and 08-underspecified-convention
+# (#1531) the third and fourth, and 10-web-filter (#1584) the fifth. The other
+# four counts stay at 1 — a new dir must
 # not perturb them, so a body that says `quick fix`, or names both `race` and
 # `auth`, or spans lib/ + docs/, would red one of the rows below.
-check_count "feat-titled issues" "$feature" 4
+check_count "feat-titled issues" "$feature" 5
 check_count "race+auth issues" "$race_auth" 1
 check_count "lib/+docs/ multi-dir issues" "$lib_and_docs" 1
 
@@ -336,15 +382,15 @@ check_count "lib/+docs/ multi-dir issues" "$lib_and_docs" 1
 echo "== template suite is green, every reference test is red =="
 # ---------------------------------------------------------------------------
 
-# tests/case-ids.sh is removed from every COPY the suite runs in: it is the
-# deliberately flaky 09 case (a real race in store_add, see
-# dev/calib/slate/09-flaky-root-cause/), red roughly one run in five until that
-# issue is fixed. Every OTHER case must stay green. The exception lives here,
-# not as a skip marker inside the template — a marker would leak the answer to
-# the 09 executor.
+# The template ships no tests/case-ids.sh since #1572: issue 09's executor
+# writes that regression case, so the pristine suite is green on every run.
+if [ ! -e "$TEMPLATE_DIR/tests/case-ids.sh" ]; then
+  pass_msg "template has no tests/case-ids.sh (09 writes it)"
+else
+  fail_msg "template still ships tests/case-ids.sh (09 writes it; #1572)"
+fi
 if [ -d "$TEMPLATE_DIR" ]; then
   cp -a "$TEMPLATE_DIR" "$TMP/baseline"
-  rm -f "$TMP/baseline/tests/case-ids.sh"
   out=$( (cd "$TMP/baseline" && bash tests/run.sh) 2>&1 )
   if [ $? -eq 0 ]; then
     pass_msg "pristine template test suite passes"
@@ -400,9 +446,6 @@ rewrite_listing_section() {
 run_reftest_01() {
   rm -rf "$TMP/sbx01"
   cp -a "$TEMPLATE_DIR" "$TMP/sbx01"
-  # The flaky 09 case (see the pristine-suite block above): reftest 01 re-runs
-  # tests/run.sh, so it would red these controls one run in five.
-  rm -f "$TMP/sbx01/tests/case-ids.sh"
   rewrite_listing_section "$TMP/sbx01/docs/usage.md" "$1" || return 9
   ( cd "$TMP/sbx01" && bash "$REFTEST_01" ) 2>&1
 }

@@ -100,10 +100,11 @@ fi
 #    setting up wave N+1).
 # ---------------------------------------------------------------------------
 inc
-if grep -qiE "wait for wave N.?s.*merge before|before setting up wave N\+1|PRs to merge before" <<< "$EXEC_REGION"; then
-  pass_msg "execute region has an inter-wave merge gate phrasing"
+# #1562: anchored on the step heading, not a sentence.
+if grep -qE '^### Inter-wave base refresh' <<< "$EXEC_REGION"; then
+  pass_msg "execute region has the '### Inter-wave base refresh' inter-wave gate heading"
 else
-  fail_msg "execute region lacks an inter-wave merge gate (e.g. 'wait for wave N's PRs to merge before setting up wave N+1')"
+  fail_msg "execute region lacks the '### Inter-wave base refresh' inter-wave gate heading"
 fi
 
 # ---------------------------------------------------------------------------
@@ -194,10 +195,12 @@ else
 fi
 
 inc
-if grep -qiE 'independent later-wave issues.*(outside the closure)?.*(may|can) still proceed|outside the closure.*may still proceed|may still proceed off the current merged base' <<< "$EXEC_REGION"; then
-  pass_msg "execute region states independent later-wave issues (outside closure) may still proceed off the merged base"
+# #1562: anchored on the halt heading + the in-closure report contract line.
+if grep -qE '^### Scoped halt-and-report' <<< "$EXEC_REGION" \
+   && grep -qF 'Skipped (depends on blocked #<N>)' <<< "$EXEC_REGION"; then
+  pass_msg "execute region has '### Scoped halt-and-report' + the 'Skipped (depends on blocked #<N>)' contract line"
 else
-  fail_msg "execute region lacks 'independent later-wave issues outside the closure may still proceed off the current merged base'"
+  fail_msg "execute region lacks '### Scoped halt-and-report' or the 'Skipped (depends on blocked #<N>)' contract line"
 fi
 
 # transient-block discrimination: distinguish block-ci/pending (defer to 6b

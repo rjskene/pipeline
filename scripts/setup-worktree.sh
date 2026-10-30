@@ -63,6 +63,22 @@ case "$SUFFIX" in
     exit 2
     ;;
 esac
+# PIPELINE_BRANCH_SUFFIX (#1579): append `-<suffix>` to the branch (env or
+# pipeline.config). Validated before any git call; a branch that already ends
+# in `-<suffix>` is left as-is so a re-run neither doubles it nor forks a
+# second worktree. The slug is recomputed so WORKTREE_PATH tracks the branch.
+_bsfx="${PIPELINE_BRANCH_SUFFIX:-}"
+if [ -n "$_bsfx" ]; then
+  if ! [[ "$_bsfx" =~ ^[a-z0-9]+$ ]]; then
+    echo "ERROR: PIPELINE_BRANCH_SUFFIX must be lowercase letters and digits — got: $_bsfx" >&2
+    exit 2
+  fi
+  case "$BRANCH" in
+    *-"$_bsfx") ;;
+    *) BRANCH="$BRANCH-$_bsfx" ;;
+  esac
+  SUFFIX="${BRANCH#*/}"
+fi
 MAIN_REPO="${PIPELINE_PROJECT_ROOT:-$(pwd)}"
 WORKTREE_DIR="$MAIN_REPO/.claude/worktrees"
 if [ -n "$ISSUE_NUM" ]; then
@@ -148,14 +164,24 @@ fi
 # in execute-issue-plan / evaluate-issue-pr Boot resolves PIPELINE_* vars. Worktrees
 # live under .claude/worktrees/ inside the project root, so a worktree session's own
 # root is the worktree: it reads the config sitting beside itself, not the main
-# checkout's. gitignored + host-specific, so this is a runtime copy, not tracked (#529).
+# checkout's. Usually gitignored + host-specific, so this is a runtime copy (#529).
+# The copy applies only when the file is untracked in the worktree's checkout; a
+# tracked one is already correct there, and copying would dirty it (#1565).
 if [ -f "$MAIN_REPO/pipeline.config" ]; then
-  cp "$MAIN_REPO/pipeline.config" "$WORKTREE_PATH/pipeline.config"
-  echo "  Copied pipeline.config"
+  if git -C "$WORKTREE_PATH" ls-files --error-unmatch pipeline.config >/dev/null 2>&1; then
+    echo "  pipeline.config is tracked; worktree keeps the committed copy"
+  else
+    cp "$MAIN_REPO/pipeline.config" "$WORKTREE_PATH/pipeline.config"
+    echo "  Copied pipeline.config"
+  fi
 fi
-# Sync .env files
+# Sync .env files (same tracked-file guard, #1565)
 for envfile in ${PIPELINE_SYNC_ENVS:-}; do
   if [ -f "$MAIN_REPO/$envfile" ]; then
+    if git -C "$WORKTREE_PATH" ls-files --error-unmatch "$envfile" >/dev/null 2>&1; then
+      echo "  $envfile is tracked; worktree keeps the committed copy"
+      continue
+    fi
     mkdir -p "$WORKTREE_PATH/$(dirname "$envfile")"
     cp "$MAIN_REPO/$envfile" "$WORKTREE_PATH/$envfile"
     echo "  Copied $envfile"
@@ -236,6 +262,7 @@ grep -qxF '.claude/base-branch' "$WT_EXCLUDE" 2>/dev/null \
 echo ""
 echo "=== Setup complete ==="
 echo ""
+echo "  Branch:      $BRANCH"
 echo "  Worktree:    $WORKTREE_PATH"
 echo "  Base branch: $BASE_BRANCH"
 echo "  Execute issue:  claude \"/pipeline:execute-issue-plan <N>\""

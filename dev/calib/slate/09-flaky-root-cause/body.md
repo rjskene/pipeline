@@ -1,18 +1,18 @@
 ## Context
 
-`tests/case-ids.sh` is flaky in CI. It starts ten `calibctl add` calls at once
-and checks that every one of them gets its own task id and its own ledger row.
-Most runs pass; roughly one in five fails with two tasks sharing an id:
+A CI job fans out one `calibctl add` per failing check, all at once. On busy
+machines it sometimes ends up with two tasks sharing an id, and with fewer
+ledger rows than adds. It reproduces locally, though not on every run:
 
 ```
-RUN  case-ids
-    NOT OK - 10 concurrent adds return 10 distinct ids (expected '10', got '9')
+export CALIB_HOME="$(mktemp -d)"
+for i in $(seq 10); do bash bin/calibctl add "task $i" >> ids.txt & done; wait
+sort -u ids.txt | grep -c ''            # sometimes 9, not 10
+grep -c '' "$CALIB_HOME/tasks.tsv"      # rows in the ledger
 ```
 
-Two tasks with the same id is a real data bug, not a test artefact: `complete`
-and `list` address tasks by id, so a duplicate means `complete 4` can mark the
-wrong task done. Scripts that add tasks in parallel (a CI job fanning out
-`calibctl add` per failing check) hit it on busy machines.
+Two tasks with the same id is a real data bug: `complete` and `list` address
+tasks by id, so a duplicate means `complete 4` can mark the wrong task done.
 
 ## Scope
 
@@ -20,16 +20,16 @@ Find out why concurrent adds can mint the same id, and fix the cause so the
 behaviour is deterministic: any number of concurrent `calibctl add` calls must
 each get a distinct id and write exactly one ledger row.
 
-- `tests/case-ids.sh` stays, and keeps asserting that concurrent adds get
-  distinct ids.
-- Retrying the test, adding sleeps to it, skipping it, or lowering it to a
-  level of concurrency where the failure stops showing up is not a fix — the
-  bug would still be there.
+- Add `tests/case-ids.sh`, a regression case that starts at least ten
+  concurrent `calibctl add` calls and asserts the ids are distinct, there is
+  one ledger row per add, and the ledger ids are distinct.
+- The case must not sleep, retry, skip, or lower the concurrency until the
+  failure stops showing up — that would hide the bug, not catch it.
 
 ## Affected areas
 
 - `lib/store.sh` — wherever the cause turns out to be
-- `tests/case-ids.sh` — the existing case; only touch it if it is wrong
+- `tests/case-ids.sh` — new regression case
 
 ## Notes
 

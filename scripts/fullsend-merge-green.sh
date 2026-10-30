@@ -6,7 +6,9 @@
 #   PR derivation (fail-closed) -> TOCTOU baseRefName re-read -> re-gate
 #   (auto_merge_should_fire on live PR state; non-green => MERGE: reason=<token>,
 #   no merge) -> guarded
-#   `gh pr merge --merge --delete-branch` (synchronous, never auto-merge) -> merge
+#   `gh pr merge --merge --delete-branch` (synchronous, never auto-merge; a
+#   "Head branch is out of date" refusal sleeps, re-gates and retries, bounded
+#   by PIPELINE_MERGE_RETRY_MAX) -> merge
 #   SHA capture -> screenshot-URL rewrite (after the SHA it pins to, before the
 #   footer) -> `Auto-merged:` footer -> green MERGE: line (before the label flip,
 #   so the fail-loud exit below can never hide a completed merge) ->
@@ -21,11 +23,12 @@ usage() {
 Usage: fullsend-merge-green.sh <N>...
 
 Merges each greenlit issue's PR and prints ONE line per issue:
-  MERGE: issue=#<N> pr=#<P> reason=<green|block-base-mismatch|block-no-pr|block-merge-failed|<any fullsend-gate.sh block-* token>> [sha=<sha>]
+  MERGE: issue=#<N> pr=#<P> reason=<green|block-base-mismatch|block-no-pr|block-merge-failed|<any fullsend-gate.sh block-* token>> [sha=<sha>] [detail="<first stderr line, <=120 chars>"]
 Every block-* line still needs fullsend-block-merge.sh. Exit 1 only on a
 genuine `gh issue close` failure (fail-loud).
 Env: PIPELINE_REPO, PIPELINE_BASE_BRANCH, PIPELINE_PROJECT_ROOT,
-PIPELINE_WORKTREE_PREFIX, PIPELINE_SCREENSHOT_REWRITE_ENABLED (default true).
+PIPELINE_WORKTREE_PREFIX, PIPELINE_SCREENSHOT_REWRITE_ENABLED (default true),
+PIPELINE_MERGE_RETRY_MAX (default 3), PIPELINE_MERGEABILITY_POLL_SECS (default 5).
 USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -55,8 +58,28 @@ for N in "$@"; do
   fi
   REGATE=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
   [ "$REGATE" = green ] || { echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=$REGATE"; continue; }
-  gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch \
-    || { echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=block-merge-failed"; continue; }
+  MAX=${PIPELINE_MERGE_RETRY_MAX:-3}; SECS=${PIPELINE_MERGEABILITY_POLL_SECS:-5}; k=0
+  while :; do
+    # stderr-only capture: gh stdout stays on stdout (fd 3), MERR gets stderr.
+    { MERR=$(gh pr merge "$PR_NUM" --repo "$PIPELINE_REPO" --merge --delete-branch 2>&1 1>&3 3>&-); MRC=$?; } 3>&1
+    [ -n "$MERR" ] && printf '%s\n' "$MERR" >&2
+    [ "$MRC" -eq 0 ] && break
+    if printf '%s' "$MERR" | grep -qi 'head branch is out of date' && [ "$k" -lt "$MAX" ]; then
+      k=$((k + 1))
+      echo "fullsend-merge-green: pr=#$PR_NUM merge refused (head out of date), retry $k/$MAX in ${SECS}s" >&2
+      sleep "$SECS"
+      REGATE=$(auto_merge_should_fire "$ISSUE" "$PR_NUM")
+      [ "$REGATE" = green ] || { echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=$REGATE"; continue 2; }
+      continue
+    fi
+    DETAIL=$(printf '%s\n' "$MERR" | head -1 | tr -d '"\r' | sed 's/ reason=/ reason:/g' | cut -c1-120)
+    if [ -n "$DETAIL" ]; then
+      echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=block-merge-failed detail=\"$DETAIL\""
+    else
+      echo "MERGE: issue=#$ISSUE pr=#$PR_NUM reason=block-merge-failed"
+    fi
+    continue 2
+  done
   SHA=$(gh pr view "$PR_NUM" --repo "$PIPELINE_REPO" --json mergeCommit --jq .mergeCommit.oid)
   if [ -n "$SHA" ] && [ "${PIPELINE_SCREENSHOT_REWRITE_ENABLED:-true}" = "true" ]; then
     bash "$SELF_DIR/rewrite-eval-screenshot-urls.sh" "$PR_NUM" "$SHA" \

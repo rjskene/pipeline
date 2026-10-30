@@ -1,6 +1,6 @@
 # The calibration slate
 
-Nine canned issues, filed against the sandbox built from `dev/calib/template`,
+Ten canned issues, filed against the sandbox built from `dev/calib/template`,
 chosen to cover the routing shapes a calibration run needs to distinguish.
 
 | dir | shape | expected routing pressure | path |
@@ -13,14 +13,19 @@ chosen to cover the routing shapes a calibration run needs to distinguish.
 | `06-planted-defect` | a feature with a planted boundary defect the PR evaluator should catch | pr-eval gate yield | B |
 | `07-planted-regression` | a small filter whose natural implementation silently changes untested existing behaviour | pr-eval reviewer yield | B |
 | `08-underspecified-convention` | an output format fixed only by the codebase's documented conventions | planner reads the codebase | B |
-| `09-flaky-root-cause` | an intermittent test whose cause is a real race | executor fixes the cause, not the test | B |
+| `09-flaky-root-cause` | a race reported from CI with a reproduction; the executor fixes the cause and writes the regression case | executor fixes the cause, not the test | B |
+| `10-web-filter` | a filter box on a static page; the executor proves it in a browser, the evaluator re-drives it | browser check (execute 6c / evaluate 6) | B |
 
 **Slate v3** (#1531) is rows 07–09: nine issues from calibration run 38 on, so
 run totals are not comparable with v2 (six-issue) runs — compare against v2
 through rows 01–06, which are unchanged. `planted=` grades every `*planted*`
 row (06 and 07): `missed` if any missed, `caught` only when all were caught.
-The template's `tests/case-ids.sh` is 09's deliberately flaky case; it stays
-red about one run in five until 09 is fixed.
+From calibration run 49 (#1572) the template has no `tests/case-ids.sh`, so the
+sandbox suite is green on every run and totals from run 49 on are over a
+template without the flake; runs 38–48 could red one unrelated row in five.
+Row 10 (#1584) exists from calibration run 51 on, so `issues=` /
+`reftest-pass=` totals from run 51 are over ten issues — compare with runs
+38–50 through rows 01–09, which are unchanged.
 
 `path` is the expected classification. `scripts/calibration-run.sh` reads this
 column and appends `path-mismatch=<path>` to a `CALIB` line whose classified
