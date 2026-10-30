@@ -305,6 +305,23 @@ else
   fail_msg "script must read the telemetry knobs with :- defaults"
 fi
 
+# --- (13) skill surface ---
+inc_case "(13) skills/tokenomics/SKILL.md documents --export"
+SKILL13="$REPO_ROOT/skills/tokenomics/SKILL.md"
+DESC13="$(awk 'NR==1 && /^---$/ {fm=1; next} fm && /^---$/ {exit} fm && /^description:/ {print}' "$SKILL13")"
+if printf '%s' "$DESC13" | grep -qF -- '--export'; then
+  pass_msg "frontmatter description names --export"
+else
+  fail_msg "frontmatter description must name --export (got: $DESC13)"
+fi
+for tok in EXPORT POSTED POST-FAILED; do
+  if grep -qw -- "$tok" "$SKILL13"; then
+    pass_msg "SKILL.md body names $tok"
+  else
+    fail_msg "SKILL.md body must name $tok"
+  fi
+done
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

@@ -25,7 +25,7 @@ inc()      { TESTS=$((TESTS + 1)); }
 [ -f "$CAPTURE" ] || { echo "ERROR: $CAPTURE not found" >&2; exit 1; }
 
 # --- Static scan: each script invocation in SKILL.md carries the wrap prefix ---
-HELPERS=(capture-agent-costs.sh cost-latency-report.sh)
+HELPERS=(capture-agent-costs.sh cost-latency-report.sh tokenomics-export.sh)
 REQUIRED_VARS=(PIPELINE_REPO= PIPELINE_LOGS_ENABLED= CLAUDE_PROJECT_DIR=)
 
 scan_lines() {
