@@ -7,11 +7,17 @@ set -uo pipefail
 #
 # Substrate (the test-fullsend-merge-green-regate.sh shape): a fixture COPY of
 # scripts/ whose auto-merge-gate.sh reads its token from $FAKE_GATE_DIR/<issue>
-# (default green) and whose fullsend-merge-rebase.sh prints
-# REBASE=${FAKE_REBASE_<PR>:-skip}; a stub `gh` on PATH that logs every call;
+# (default green) and whose fullsend-merge-rebase.sh logs `rebase pr=<P>
+# onto=<v|-> from=<v|->` to $GH_LOG and prints exactly one line,
+# REBASE=${FAKE_UNSTACK_<PR>:-done} with --from, else REBASE=${FAKE_REBASE_<PR>:-skip}
+# (a `done` stamps $TMP/pushed-<P>; the --watch stub sleeps only what is left of
+# GH_WATCH_SLEEP since that push); a stub `gh` on PATH that logs every call;
 # real `git init` worktree dirs supplying the branches. PR = issue + 35.
+# s1-s5 (#1602) seed the worktrees with commits and an origin => stacking on.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/_lib/git-sandbox.sh
+source "$ROOT/tests/_lib/git-sandbox.sh"
 
 PASS=0
 FAIL=0
@@ -39,9 +45,16 @@ auto_merge_should_fire() {
 FAKE
 cat > "$TMP/scripts/fullsend-merge-rebase.sh" <<'FAKE'
 #!/bin/bash
-# fake rebase (test fixture): $1 worktree, $2 PR
-v="FAKE_REBASE_$2"
-echo "REBASE=${!v:-skip}"
+# fake rebase (test fixture): [--onto <ref> [--from <sha>]] <worktree> <PR>
+p="${@: -1}"
+onto=-; from=-
+while [ "$#" -gt 2 ]; do
+  case "$1" in --onto) onto="$2"; shift 2 ;; --from) from="$2"; shift 2 ;; *) shift ;; esac
+done
+echo "rebase pr=$p onto=$onto from=$from" >> "$GH_LOG"
+if [ "$from" != - ]; then v="FAKE_UNSTACK_$p"; r="${!v:-done}"; else v="FAKE_REBASE_$p"; r="${!v:-skip}"; fi
+[ "$r" = done ] && date +%s > "${GH_LOG%/*}/pushed-$p"
+echo "REBASE=$r"
 FAKE
 
 mkdir -p "$TMP/bin"
@@ -85,7 +98,11 @@ case "$1 $2" in
         if [ -n "${GH_WATCH_NOCHECKS_FIRST:-}" ] && [ "$c" = 1 ]; then
           echo "no checks reported on the 'feature/a' branch" >&2; exit 1
         fi
-        sleep "${GH_WATCH_SLEEP:-0}"
+        # CI started at the PR's push: wait only what is left of the sleep.
+        ws="${GH_WATCH_SLEEP:-0}"; pf="${GH_LOG%/*}/pushed-$3"
+        if [ -f "$pf" ]; then ws=$(( ws - ($(date +%s) - $(cat "$pf")) )); [ "$ws" -lt 0 ] && ws=0; fi
+        echo "$3 $ws" >> "${GH_LOG%/*}/watch-slept"
+        sleep "$ws"
         [ -n "${GH_WATCH_FLIP:-}" ] && echo green > "$FAKE_GATE_DIR/$(( $3 - 35 ))"
         ;;
       *) v="GH_CHECKS_$3"; echo "${!v:-[]}" ;;
@@ -112,7 +129,7 @@ unset CLAUDE_PLUGIN_ROOT MANUAL_MERGE PIPELINE_MERGE_LOOP_WALL_SECS PIPELINE_MER
 
 # run <issues...> — OUT/RC/ERR set; the gh log is reset per run.
 run() {
-  : > "$GH_LOG"; : > "$TMP/watchn"
+  : > "$GH_LOG"; : > "$TMP/watchn"; : > "$TMP/watch-slept"; rm -f "$TMP"/pushed-*
   OUT="$(cd "$PROJ" && bash "$TMP/scripts/fullsend-merge-loop.sh" "$@" 2>"$TMP/err")"; RC=$?
   ERR="$(cat "$TMP/err")"
 }
@@ -199,11 +216,106 @@ reset_gate
 export FAKE_REBASE_43='conflict FILES=f.txt,g.txt HEAD=abc123'
 run 7 8
 rc0 "(c)"
-has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt head=abc123' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt head=abc123" || fail_msg "(c) needs-fix line wrong: $OUT"
+has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=f.txt,g.txt head=abc123 attempt=1' && pass_msg "(c) #8 outcome=needs-fix files=f.txt,g.txt head=abc123 attempt=1" || fail_msg "(c) needs-fix line wrong: $OUT"
 has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(c) #7 still merged" || fail_msg "(c) sibling not merged: $OUT"
 has_line 'LOOP: pending issues=8' && pass_msg "(c) LOOP: pending issues=8" || fail_msg "(c) pending trailer wrong: $OUT"
 grep -q '^gh pr merge 43' "$GH_LOG" && fail_msg "(c) gh pr merge 43 called" || pass_msg "(c) no gh pr merge 43"
 unset FAKE_REBASE_43
+
+# ---------------------------------------------------------------------------
+scenario "(c2) REBASE=dirty: needs-fix reason=dirty handed back, no merge, no label"
+reset_gate
+export FAKE_REBASE_42='dirty FILES=pipeline.config HEAD=abc123'
+run 7
+rc0 "(c2)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=pipeline.config head=abc123 reason=dirty' && pass_msg "(c2) outcome=needs-fix ... reason=dirty" || fail_msg "(c2) needs-fix line wrong: $OUT"
+has_line 'LOOP: pending issues=7' && pass_msg "(c2) LOOP: pending issues=7" || fail_msg "(c2) pending trailer wrong: $OUT"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c2) gh pr merge called" || pass_msg "(c2) no gh pr merge"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(c2) a label was applied" || pass_msg "(c2) no label applied"
+[ -e "$PROJ/.claude/scratch/merge-loop/42.conflicts" ] && fail_msg "(c2) reason=dirty wrote 42.conflicts" || pass_msg "(c2) reason=dirty never records 42.conflicts"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(c3) REBASE=error: routed block-rebase-error once, not pending"
+reset_gate
+export FAKE_REBASE_42='error REASON=fatal: simulated refusal'
+run 7
+rc0 "(c3)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-rebase-error' && pass_msg "(c3) outcome=block-rebase-error" || fail_msg "(c3) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-rebase-error' && pass_msg "(c3) BLOCK: line relayed" || fail_msg "(c3) no BLOCK: line: $OUT"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(c3) exactly one manual-merge label call" || fail_msg "(c3) manual-merge label calls != 1"
+has_line 'LOOP: done' && pass_msg "(c3) LOOP: done" || fail_msg "(c3) trailer wrong: $OUT"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(c3) gh pr merge called" || pass_msg "(c3) no gh pr merge"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+CONF_F="$PROJ/.claude/scratch/merge-loop/42.conflicts"
+scenario "(viii) first conflict: needs-fix attempt=1, one 42.conflicts record"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+rc0 "(viii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=bin/calibctl head=aaa attempt=1' && pass_msg "(viii) needs-fix ... attempt=1" || fail_msg "(viii) needs-fix line wrong: $OUT"
+[ "$(grep -c . "$CONF_F" 2>/dev/null)" = 1 ] && pass_msg "(viii) 42.conflicts holds exactly 1 line" || fail_msg "(viii) 42.conflicts lines=$(grep -c . "$CONF_F" 2>/dev/null || echo missing)"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(x) moved head, same files: a fresh attempt=2, no label"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=bbb'
+run 7
+rc0 "(x)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=needs-fix files=bin/calibctl head=bbb attempt=2' && pass_msg "(x) needs-fix ... head=bbb attempt=2" || fail_msg "(x) needs-fix line wrong: $OUT"
+grep -q -- '--add-label' "$GH_LOG" && fail_msg "(x) a label was applied" || pass_msg "(x) no --add-label call"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(ix) same files + same head again: routed block-mergeable, not pending"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+run 7
+rc0 "(ix)"
+printf '%s\n' "$OUT" | grep -q 'outcome=needs-fix' && fail_msg "(ix) second run still needs-fix: $OUT" || pass_msg "(ix) no needs-fix on the repeat"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergeable' && pass_msg "(ix) outcome=block-mergeable" || fail_msg "(ix) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-mergeable' && pass_msg "(ix) BLOCK: line relayed" || fail_msg "(ix) no BLOCK: line: $OUT"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(ix) exactly one manual-merge label call" || fail_msg "(ix) manual-merge label calls != 1"
+printf '%s\n' "$ERR" | grep -qF 'REBASE: pr=#42 repeat=same-head' && pass_msg "(ix) stderr names repeat=same-head" || fail_msg "(ix) repeat=same-head missing: $ERR"
+has_line 'LOOP: done' && pass_msg "(ix) LOOP: done" || fail_msg "(ix) trailer wrong: $OUT"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(xi) attempt past PIPELINE_REBASE_FIX_MAX: routed block-mergeable (repeat=max)"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=bbb'
+run 7
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=ccc'
+PIPELINE_REBASE_FIX_MAX=2 run 7
+rc0 "(xi)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=block-mergeable' && pass_msg "(xi) outcome=block-mergeable" || fail_msg "(xi) outcome wrong: $OUT"
+printf '%s\n' "$OUT" | grep -q 'outcome=needs-fix' && fail_msg "(xi) still needs-fix past the cap: $OUT" || pass_msg "(xi) no needs-fix past the cap"
+printf '%s\n' "$ERR" | grep -qF 'repeat=max' && pass_msg "(xi) stderr names repeat=max" || fail_msg "(xi) repeat=max missing: $ERR"
+[ "$(grep -c '^gh issue edit 7 .*--add-label manual-merge' "$GH_LOG")" = 1 ] \
+  && pass_msg "(xi) exactly one manual-merge label call" || fail_msg "(xi) manual-merge label calls != 1"
+unset FAKE_REBASE_42
+
+# ---------------------------------------------------------------------------
+scenario "(xii) merge removes 42.conflicts"
+reset_gate
+export FAKE_REBASE_42='conflict FILES=bin/calibctl HEAD=aaa'
+run 7
+[ -e "$CONF_F" ] && pass_msg "(xii) 42.conflicts exists before the merge run" || fail_msg "(xii) 42.conflicts missing before the merge run"
+unset FAKE_REBASE_42
+run 7
+rc0 "(xii)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(xii) outcome=merged" || fail_msg "(xii) not merged: $OUT"
+[ -e "$CONF_F" ] && fail_msg "(xii) 42.conflicts survives the merge" || pass_msg "(xii) merge removes 42.conflicts"
 
 # ---------------------------------------------------------------------------
 scenario "(d) block-verdict: routed to fullsend-block-merge.sh once"
@@ -330,15 +442,141 @@ printf '%s\n' "$OUT" | grep -q '^BLOCK: issue=#7 pr=#42 reason=block-mergestate'
 has_line 'LOOP: done' && pass_msg "(iv) LOOP: done" || fail_msg "(iv) trailer wrong: $OUT"
 
 # ---------------------------------------------------------------------------
+# Stacked merge (#1602). seed_stack: a bare origin with an `evolve` commit;
+# each worktree gets one distinct commit on top of it => origin/evolve resolves
+# and stacking is on (the commit-less scenarios above take the old path).
+seed_stack() {
+  if [ ! -d "$TMP/origin.git" ]; then
+    git init -q --bare "$TMP/origin.git"
+    mkdir -p "$TMP/seed"; git_init_sandbox "$TMP/seed"
+    git -C "$TMP/seed" checkout -q -b evolve
+    echo base > "$TMP/seed/base.txt"; git -C "$TMP/seed" add base.txt
+    git -C "$TMP/seed" commit -q -m base
+    git -C "$TMP/seed" push -q "$TMP/origin.git" evolve 2>/dev/null
+    for spec in 7:a 8:b 9:c; do
+      n=${spec%%:*}; x=${spec#*:}; wt="$PROJ/.claude/worktrees/wt-$n-$x"
+      git_init_sandbox "$wt"
+      git -C "$wt" remote add origin "$TMP/origin.git" 2>/dev/null || true
+      git -C "$wt" fetch -q origin 2>/dev/null
+      git -C "$wt" checkout -q -B "feature/$x" origin/evolve
+      echo "$n" > "$wt/own-$n.txt"; git -C "$wt" add "own-$n.txt"
+      git -C "$wt" commit -q -m "own $n"
+    done
+  fi
+  BASE_SHA=$(git -C "$TMP/seed" rev-parse HEAD)
+  H42=$(git -C "$PROJ/.claude/worktrees/wt-7-a" rev-parse HEAD)
+  H43=$(git -C "$PROJ/.claude/worktrees/wt-8-b" rev-parse HEAD)
+  H44=$(git -C "$PROJ/.claude/worktrees/wt-9-c" rev-parse HEAD)
+}
+first_line() { grep -n -- "$1" "$GH_LOG" | head -1 | cut -d: -f1; }
+no_stack_left() {
+  if ls "$PROJ/.claude/scratch/merge-loop/"*.stack >/dev/null 2>&1; then
+    fail_msg "$1: .stack record(s) left: $(ls "$PROJ/.claude/scratch/merge-loop/"*.stack)"
+  else
+    pass_msg "$1: no .stack record left"
+  fi
+}
+export_shared() { export GH_FILES_42='bin/calibctl' GH_FILES_43='bin/calibctl' GH_FILES_44='bin/calibctl'; }
+
+# ---------------------------------------------------------------------------
+scenario "(s1) three PRs share a file, all clean: stacked, one blocking wait, merged in order"
+reset_gate; seed_stack; export_shared
+export FAKE_REBASE_42=done FAKE_REBASE_43=done FAKE_REBASE_44=done GH_WATCH_SLEEP=3
+T0=$SECONDS
+PIPELINE_MERGE_LOOP_CI_WAIT_SECS=5 run 7 8 9
+ELAPSED=$((SECONDS - T0))
+rc0 "(s1)"
+has_line 'ORDER: 42 43 44' && pass_msg "(s1) ORDER: 42 43 44" || fail_msg "(s1) ORDER wrong: $OUT"
+R42=$(first_line "^rebase pr=42 onto=$BASE_SHA from=-$"); R43=$(first_line "^rebase pr=43 onto=$H42 from=-$"); R44=$(first_line "^rebase pr=44 onto=$H43 from=-$")
+if [ -n "$R42" ] && [ -n "$R43" ] && [ -n "$R44" ] && [ "$R42" -lt "$R43" ] && [ "$R43" -lt "$R44" ]; then
+  pass_msg "(s1) stacked: 42 onto origin/evolve, 43 onto 42's head, 44 onto 43's head"
+else
+  fail_msg "(s1) stacked rebase lines wrong: $(grep '^rebase' "$GH_LOG" | tr '\n' ';')"
+fi
+LASTRB=$(grep -n '^rebase ' "$GH_LOG" | tail -1 | cut -d: -f1); FW=$(first_line ' --watch')
+[ -n "$LASTRB" ] && [ -n "$FW" ] && [ "$LASTRB" -lt "$FW" ] && pass_msg "(s1) every rebase push precedes the first --watch" || fail_msg "(s1) a rebase follows a watch (last rebase=${LASTRB:-none} first watch=${FW:-none})"
+printf '%s\n' "$ERR" | grep -qxF "STACK: pr=#43 onto=$H42" && pass_msg "(s1) stderr STACK: pr=#43 onto=<42-head>" || fail_msg "(s1) STACK line missing: $ERR"
+[ "$(grep -c ' --watch' "$GH_LOG")" = 3 ] && pass_msg "(s1) three watches" || fail_msg "(s1) watch count=$(grep -c ' --watch' "$GH_LOG")"
+[ "$(awk '$2 >= 2' "$TMP/watch-slept" | wc -l | tr -d ' ')" = 1 ] && pass_msg "(s1) exactly one watch blocks for the full sleep" || fail_msg "(s1) blocking watches: $(tr '\n' ';' < "$TMP/watch-slept")"
+[ "$ELAPSED" -lt 6 ] && pass_msg "(s1) elapsed ${ELAPSED}s < two full sleeps" || fail_msg "(s1) elapsed ${ELAPSED}s >= 6 (serial waits)"
+L7=$(printf '%s\n' "$OUT" | grep -nx 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' | cut -d: -f1)
+L8=$(printf '%s\n' "$OUT" | grep -nx 'LOOP: issue=#8 pr=#43 outcome=merged sha=abc43' | cut -d: -f1)
+L9=$(printf '%s\n' "$OUT" | grep -nx 'LOOP: issue=#9 pr=#44 outcome=merged sha=abc44' | cut -d: -f1)
+[ -n "$L7" ] && [ -n "$L8" ] && [ -n "$L9" ] && [ "$L7" -lt "$L8" ] && [ "$L8" -lt "$L9" ] && pass_msg "(s1) three merged LOOP lines in ORDER" || fail_msg "(s1) merged lines wrong: $OUT"
+has_line 'LOOP: done' && pass_msg "(s1) LOOP: done" || fail_msg "(s1) trailer wrong: $OUT"
+no_stack_left "(s1)"
+unset FAKE_REBASE_42 FAKE_REBASE_43 FAKE_REBASE_44 GH_WATCH_SLEEP
+
+# ---------------------------------------------------------------------------
+scenario "(s2) middle member conflicts: needs-fix, the third stacks onto the first"
+reset_gate; seed_stack; export_shared
+export FAKE_REBASE_42=done FAKE_REBASE_43='conflict FILES=bin/calibctl HEAD=x' FAKE_REBASE_44=done
+run 7 8 9
+rc0 "(s2)"
+has_line 'LOOP: issue=#8 pr=#43 outcome=needs-fix files=bin/calibctl head=x attempt=1' && pass_msg "(s2) #8 needs-fix" || fail_msg "(s2) needs-fix line wrong: $OUT"
+grep -qx "rebase pr=44 onto=$H42 from=-" "$GH_LOG" && pass_msg "(s2) 44 stacks onto 42's head" || fail_msg "(s2) 44 onto wrong: $(grep '^rebase' "$GH_LOG" | tr '\n' ';')"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && has_line 'LOOP: issue=#9 pr=#44 outcome=merged sha=abc44' && pass_msg "(s2) 42 and 44 merged" || fail_msg "(s2) not merged: $OUT"
+has_line 'LOOP: pending issues=8' && pass_msg "(s2) LOOP: pending issues=8" || fail_msg "(s2) trailer wrong: $OUT"
+no_stack_left "(s2)"
+unset FAKE_REBASE_42 FAKE_REBASE_43 FAKE_REBASE_44
+
+# ---------------------------------------------------------------------------
+scenario "(s3) middle member block-ci after a push: the third is un-stacked and deferred"
+reset_gate; seed_stack; export_shared
+echo block-ci > "$FAKE_GATE_DIR/8"
+export FAKE_REBASE_43=done GH_WATCH_SLEEP=3
+PIPELINE_MERGE_LOOP_CI_WAIT_SECS=1 run 7 8 9
+rc0 "(s3)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(s3) 42 merged" || fail_msg "(s3) 42 not merged: $OUT"
+has_line 'LOOP: issue=#8 pr=#43 outcome=block-ci' && pass_msg "(s3) 43 block-ci" || fail_msg "(s3) 43 outcome wrong: $OUT"
+grep -qx "rebase pr=44 onto=$BASE_SHA from=$H43" "$GH_LOG" && pass_msg "(s3) 44 un-stacked: --onto <base> --from <43-head>" || fail_msg "(s3) no un-stack rebase: $(grep '^rebase' "$GH_LOG" | tr '\n' ';')"
+printf '%s\n' "$ERR" | grep -qxF "UNSTACK: pr=#44 onto=$BASE_SHA from=$H43" && pass_msg "(s3) stderr UNSTACK: pr=#44" || fail_msg "(s3) UNSTACK line missing: $ERR"
+has_line 'LOOP: issue=#9 pr=#44 outcome=deferred' && pass_msg "(s3) 44 deferred" || fail_msg "(s3) 44 not deferred: $OUT"
+grep -q '^gh pr merge 44' "$GH_LOG" && fail_msg "(s3) gh pr merge 44 called" || pass_msg "(s3) no gh pr merge 44"
+has_line 'LOOP: pending issues=8,9' && pass_msg "(s3) LOOP: pending issues=8,9" || fail_msg "(s3) trailer wrong: $OUT"
+no_stack_left "(s3)"
+unset FAKE_REBASE_43 GH_WATCH_SLEEP
+
+# ---------------------------------------------------------------------------
+scenario "(s4) an independent PR (no overlap, skip) is never stacked or pushed"
+reset_gate; seed_stack
+export GH_FILES_42='x.txt' GH_FILES_43='bin/calibctl' GH_FILES_44='bin/calibctl'
+run 7 8 9
+rc0 "(s4)"
+grep -qx 'rebase pr=42 onto=- from=-' "$GH_LOG" && pass_msg "(s4) 42 takes the independent rebase (onto=-)" || fail_msg "(s4) 42 rebase line wrong: $(grep '^rebase' "$GH_LOG" | tr '\n' ';')"
+grep -q '^gh pr checks 42 .*--watch' "$GH_LOG" && fail_msg "(s4) watched 42" || pass_msg "(s4) no --watch for 42"
+printf '%s\n' "$ERR" | grep -q '^STACK: pr=#42 ' && fail_msg "(s4) 42 stacked" || pass_msg "(s4) no STACK line for 42"
+has_line 'LOOP: issue=#7 pr=#42 outcome=merged sha=abc42' && pass_msg "(s4) 42 merged" || fail_msg "(s4) 42 not merged: $OUT"
+no_stack_left "(s4)"
+
+# ---------------------------------------------------------------------------
+scenario "(s5) wall exhausted: the first member defers, its successors are un-stacked"
+reset_gate; seed_stack; export_shared
+export FAKE_REBASE_42=done FAKE_REBASE_43=done FAKE_REBASE_44=done
+PIPELINE_MERGE_LOOP_WALL_SECS=0 run 7 8 9
+rc0 "(s5)"
+has_line 'LOOP: issue=#7 pr=#42 outcome=deferred' && pass_msg "(s5) 42 deferred" || fail_msg "(s5) 42 not deferred: $OUT"
+grep -qx "rebase pr=43 onto=$BASE_SHA from=$H42" "$GH_LOG" && pass_msg "(s5) 43 un-stacked from 42's head" || fail_msg "(s5) 43 un-stack missing: $(grep '^rebase' "$GH_LOG" | tr '\n' ';')"
+grep -qx "rebase pr=44 onto=$BASE_SHA from=$H43" "$GH_LOG" && pass_msg "(s5) 44 un-stacked from 43's head" || fail_msg "(s5) 44 un-stack missing: $(grep '^rebase' "$GH_LOG" | tr '\n' ';')"
+printf '%s\n' "$ERR" | grep -q '^UNSTACK: pr=#43 ' && printf '%s\n' "$ERR" | grep -q '^UNSTACK: pr=#44 ' && pass_msg "(s5) stderr UNSTACK for 43 and 44" || fail_msg "(s5) UNSTACK lines missing: $ERR"
+has_line 'LOOP: issue=#8 pr=#43 outcome=deferred' && has_line 'LOOP: issue=#9 pr=#44 outcome=deferred' && pass_msg "(s5) 43 and 44 deferred" || fail_msg "(s5) not deferred: $OUT"
+grep -q '^gh pr merge' "$GH_LOG" && fail_msg "(s5) gh pr merge called" || pass_msg "(s5) no gh pr merge"
+no_stack_left "(s5)"
+unset FAKE_REBASE_42 FAKE_REBASE_43 FAKE_REBASE_44 GH_FILES_42 GH_FILES_43 GH_FILES_44
+
+# ---------------------------------------------------------------------------
 scenario "(p) prose/config pins: repeated-needs-fix rule + DEFER_MAX example"
 GATE_MD="$ROOT/skills/fullsend/references/auto-merge-gate.md"
-grep -qF 'repeating its previous `files=`' "$GATE_MD" && pass_msg "(p) Re-entry names the repeated files= rule" || fail_msg "(p) repeated files= rule missing"
-grep -qF 'at most 3 per issue per wave' "$GATE_MD" && pass_msg "(p) Re-entry caps rebase-fix at 3 per issue per wave" || fail_msg "(p) per-wave cap missing"
+grep -qF 'repeating its previous' "$GATE_MD" && fail_msg "(p) stale repeated files= rule still present" || pass_msg "(p) stale repeated files= rule gone"
+grep -qF 'repeat=same-head' "$GATE_MD" && pass_msg "(p) Re-entry names repeat=same-head" || fail_msg "(p) repeat=same-head missing"
+grep -qF 'PIPELINE_REBASE_FIX_MAX' "$GATE_MD" && pass_msg "(p) Re-entry names PIPELINE_REBASE_FIX_MAX" || fail_msg "(p) PIPELINE_REBASE_FIX_MAX missing"
 grep -qF 'A second `needs-fix` for the same issue' "$GATE_MD" && fail_msg "(p) stale second-needs-fix rule still present" || pass_msg "(p) stale second-needs-fix rule gone"
 grep -qF 'except `block-ci` (handed back) and `block-mergestate`/`block-mergeable`' "$GATE_MD" && pass_msg "(p) block-* routing names the settled merge-state tokens" || fail_msg "(p) block-* routing omits block-mergestate/block-mergeable"
 grep -qF 'reason** except `block-ci`, the loop calls' "$GATE_MD" && fail_msg "(p) stale block-ci-only routing wording still present" || pass_msg "(p) stale block-ci-only routing wording gone"
+grep -qF 'reason=dirty' "$GATE_MD" && pass_msg "(p) Re-entry names the reason=dirty token" || fail_msg "(p) reason=dirty token missing from Re-entry"
 grep -qF 'LOOP: log=<path>' "$GATE_MD" && pass_msg "(p) LOOP text block names LOOP: log=<path>" || fail_msg "(p) LOOP: log=<path> missing from the LOOP text block"
 grep -qE '^#PIPELINE_MERGE_LOOP_DEFER_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries DEFER_MAX" || fail_msg "(p) DEFER_MAX example line missing"
+grep -qE '^#PIPELINE_REBASE_FIX_MAX="3"' "$ROOT/pipeline.config.example" && pass_msg "(p) pipeline.config.example carries REBASE_FIX_MAX" || fail_msg "(p) REBASE_FIX_MAX example line missing"
 
 echo ""
 echo "  PASS: $PASS   FAIL: $FAIL"

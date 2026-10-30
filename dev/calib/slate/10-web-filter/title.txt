@@ -1,0 +1,1 @@
+feat(web): filter the ledger view by title text

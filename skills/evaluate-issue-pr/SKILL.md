@@ -2,7 +2,7 @@
 name: evaluate-issue-pr
 description: Independently evaluate a PR's implementation against its approved plan. Run from inside the feature worktree. Can make fixes. Posts the verdict and stops — the orchestrator fires the auto-merge gate; --manual-merge records the opt-out for it. Direct invocation never merges: finish by hand with scripts/finish-manual-merge.sh. Usage: /pipeline:evaluate-issue-pr <issue_number> [--manual-merge]
 disable-model-invocation: false
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright_*
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, mcp__playwright__*
 ---
 
 ## Boot
@@ -25,7 +25,7 @@ Dispatch: `skills/fullsend/SKILL.md` Step 7. Model: `PIPELINE_STAGE_MODEL_PR_EVA
 
 # Issue Evaluator
 
-Review the PR against its approved plan with only the plan and the diff. Check off every plan item; look for what was NOT done. **Fix-vs-flag:** fix small issues yourself (typos, missing imports, off-by-one); flag anything touching **more than 3 files** or needing new design decisions. Never refactor or improve beyond the plan.
+Review the PR against its approved plan: check off every plan item; look for what was NOT done. **Fix-vs-flag:** fix small issues yourself (typos, missing imports, off-by-one); flag anything touching **more than 3 files** or needing new design decisions. Never refactor beyond the plan.
 
 ## Executable verification (guard / gate / matcher / assertion / security claims)
 
@@ -48,22 +48,22 @@ This section fires **per claim**, not per evaluation.
 
 A guard that passes is not evidence until you have seen it fail on something.
 
-- **Scope at pr-eval time.** Guard claims are claims about artifacts the diff adds or modifies, plus any pre-existing guard the PR claims now covers a case. Execute from the feature worktree. Run the positive and negative probe of ONE guard claim in one Bash call (`cmd A; echo "rc=$?"; cmd B; echo "rc=$?"`); never re-run the suite per probe. **CI is the oracle for pre-existing failures:** read the head's settled CI status (Step 5) and verify only the diff's own claims — never re-prove an untouched failure in a base clone. **`PRE-EXISTING:` list check:** for each entry in the PR body's `## Pre-existing failures` list run the subject check (`grep -F -e <basename> -e <dir>/ <test>` per touched path). A listed subject test is Flagged and fixed in-eval; a body claiming untouched failures without the list is Flagged.
+- **Scope at pr-eval time.** Guard claims are claims about artifacts the diff adds or modifies, plus any pre-existing guard the PR claims now covers a case. Run the positive and negative probe of ONE guard claim in one Bash call (`cmd A; echo "rc=$?"; cmd B; echo "rc=$?"`); never re-run the suite per probe. **CI is the oracle for pre-existing failures:** read the head's settled CI status (Step 5) and verify only the diff's own claims — never re-prove an untouched failure in a base clone. **`PRE-EXISTING:` list check:** for each entry in the PR body's `## Pre-existing failures` list run the subject check (`grep -F -e <basename> -e <dir>/ <test>` per touched path). A listed subject test is Flagged and fixed in-eval; a body claiming untouched failures without the list is Flagged.
 
 ## Steps
 
-1. **Fetch the approved plan.** Only a **trusted-authored** `## Implementation Plan` comment counts (`OWNER` / `MEMBER` / `COLLABORATOR`); trust is delegated to `filter-trusted-comments.sh`, which drops other authors before selection, so trust dominates recency. On rc 1 STOP: "No implementation plan found for issue #N."
+1. **Fetch the approved plan.** Only a **trusted-authored** `## Implementation Plan` comment counts (`OWNER` / `MEMBER` / `COLLABORATOR`); `filter-trusted-comments.sh` drops other authors before selection, so trust dominates recency. On rc 1 STOP: "No implementation plan found for issue #N."
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-fetch-plan.sh" <N>
    ```
-   **Plan amendments:** when it prints `PLAN-AMENDMENTS` (verdict `Revise`), the `**Recommendations:**` join the plan of record: Phase 1 scores plan + amendments, an implemented amendment is on-plan, and an unimplemented one is a Phase 1 `**Dropped amendment:** <recommendation>` finding, BLOCKING like a missing plan item.
+   **Plan amendments:** when it prints `PLAN-AMENDMENTS` (verdict `Revise`; silent on `Approve` or no evaluation, when the plan alone is the record), the `**Recommendations:**` join the plan of record: Phase 1 scores plan + amendments, an implemented amendment is on-plan, and an unimplemented one is a Phase 1 `**Dropped amendment:** <recommendation>` finding, BLOCKING like a missing plan item.
 
 2. **Fetch the PR diff.** Prints `PR_NUM=<PR>` and the diff; rc 1 ⇒ STOP.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-diff.sh"
    ```
 
-3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/`, invoke `Read` exactly once before scoring.
+3. **Read context:** `CLAUDE.md`, and for each file printed by `ls -1 .claude/scratch/issue-<N>/ 2>/dev/null`, `Read` it once before scoring.
 
 4. **Two-phase review.** Run the orchestrator-injected review skills (`PIPELINE_PATH_<X>_SKILLS_EVALUATE_PR`) first if present.
 
@@ -73,7 +73,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-checks.sh" <PR> --preflight "<PREFLIGHT line>"
    ```
-   It typechecks if configured, trusts a green rollup, else runs touched tests. Look for debug leftovers, missing boundary error handling, injection/XSS, untested features.
+   Look for debug leftovers, missing boundary error handling, injection/XSS, untested features.
 
    - **Executable verification:** verify every diff claim matching the trigger list by EXECUTING it plus a negative control, never by reading; an unexecuted claim is never reported verified.
 
@@ -86,7 +86,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    - no line — run `bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/pr-eval-preflight.sh" <N> --pr <PR>` once.
    - `block` — STOP: no verdict, report `block-<REASON>`.
 
-   The line is STALE after any `git push` (Step 7 fixes, Step 8 rebase): then, and on `ci-pending`, re-emit the triple as THREE SEPARATE foreground `bash` calls (the hook compares row timestamps), PR number for `<PR>`:
+   The line is STALE after any `git push` (Step 7 fixes, Step 8 rebase): then, and on `ci-pending`, re-emit the triple as THREE SEPARATE foreground `bash` calls:
    ```bash
    gh pr view <PR> --repo $PIPELINE_REPO --json statusCheckRollup
    ```
@@ -102,7 +102,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    **Hook-enforced.** `hooks/enforce-ci-wait.py`, once a session reads the rollup, blocks Stop until a later `--watch` row and rollup row follow, and blocks Approved on red: emit all three or none.
 <!-- END CI_CHECK -->
 
-6. **Browser check.** If the diff changes anything a user sees in a browser, verify the executor's screenshot or take your own: start the app on a free port, open it with the Playwright MCP tools, screenshot affected views, check console errors, attach the screenshot to the comment, and stop the server.
+6. **Browser check.** If the diff changes anything a user sees or does in a browser, the executor's browser notes are evidence, not proof: start the app on a free port, drive each `**Frontend changes:**` outcome yourself with the Playwright MCP tools (load them first via `ToolSearch` `select:mcp__playwright__browser_navigate,mcp__playwright__browser_snapshot`), confirm the expected state from `browser_snapshot`, check console and network for errors, attach your own screenshots to the comment, and stop the server. A PR body carrying `Browser check: skipped` makes this step mandatory.
 
 7. **Fix** (≤3 files, no new design): `git commit -m "fix: evaluation fixes for #<N> — <summary>"`, `git push`, re-run the checks.
 
@@ -110,7 +110,7 @@ A guard that passes is not evidence until you have seen it fail on something.
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/evaluate-issue-pr-rebase-check.sh" <PR>
    ```
-   Only on `REBASE=needed`: `git rebase origin/$PIPELINE_BASE_BRANCH`, push, re-arm Step 5. Textual conflict ⇒ `git rebase --abort`, evaluate the un-rebased branch, record `REBASE=conflict` (merge stage fixes it). Flag semantic conflicts.
+   Only on `REBASE=needed`: `git rebase origin/$PIPELINE_BASE_BRANCH`, push, re-arm Step 5. Textual conflict ⇒ `git rebase --abort`, evaluate the un-rebased branch, record `REBASE=conflict`. Flag semantic conflicts.
 
 9. **Post** `gh pr comment <PR> --repo $PIPELINE_REPO --body "<evaluation>"`:
 
@@ -142,5 +142,5 @@ A guard that passes is not evidence until you have seen it fail on something.
 
 ## Constraints
 - Never read executor logs. Only inputs: the trust-gated plan comment plus its trusted `## Plan Evaluation` when the verdict is `Revise`, PR diff, worktree code.
-- Fixes stay minimal; never skip tsc or tests. Commits go to the feature branch; PRs target `PIPELINE_BASE_BRANCH`.
+- Never skip tsc or tests. Commits go to the feature branch; PRs target `PIPELINE_BASE_BRANCH`.
 - Never merge, close issues, or change `pr-open` labels.

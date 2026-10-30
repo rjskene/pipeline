@@ -24,7 +24,9 @@ PIPELINE_BASE_BRANCH="staging"                     # PR target branch (default: 
 #PIPELINE_CALIB_REMOTE=""                           # Explicit git URL to clone the sandbox from. Empty (default) => `gh repo clone`; read site ${VAR:-}.
 #PIPELINE_CALIB_BASE_TAG="calib-base"               # Tag --reset rewinds the sandbox to (default calib-base; read site ${VAR:-calib-base}).
 #PIPELINE_CALIB_ISSUE_IDS=""                        # Pre-resolved slate issue ids. Empty (default) => whatever --reset resolved; read site ${VAR:-}.
+#PIPELINE_CALIB_RUN_TAG=""                          # Per-run tag appended to slate issue titles as " [<tag>]" (default r<ddHHMM> UTC; must match r<digits>; read site ${VAR:-r$(date -u +%d%H%M)}).
 PIPELINE_WORKTREE_PREFIX="wt"                      # Worktree dir prefix (wt-<issue>-<slug>)
+#PIPELINE_BRANCH_SUFFIX=""                          # Appended as -<suffix> to every feature branch setup-worktree.sh creates (lowercase letters/digits); the calibration driver sets it per run.
 PIPELINE_INSTALL_CMD="npm ci"                      # Dependency install command (run from project root)
 PIPELINE_SEED_CMD=""                               # DB seed command (optional, leave empty to skip)
 # PIPELINE_TEST_CMD: the executor runs this as a SINGLE sequential verification pass
@@ -113,14 +115,17 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 # Mergeability poll (#1545): when gh reports mergeable=UNKNOWN, rebase-check + the auto-merge gate re-read every SECS up to MAX total reads (defaults single-sourced at the read sites).
 #PIPELINE_MERGEABILITY_POLL_SECS="5"
 #PIPELINE_MERGEABILITY_POLL_MAX="12"
+# Merge retry (#1570): a merge refused as "Head branch is out of date" re-gates and retries up to MAX times, sleeping MERGEABILITY_POLL_SECS (default single-sourced at the read site).
+#PIPELINE_MERGE_RETRY_MAX="3"
 # Merge loop (scripts/fullsend-merge-loop.sh, one call per wave; defaults single-sourced at the read site):
 # CI_WAIT_SECS bounds each `gh pr checks --watch` on a rebased/pending PR; WALL_SECS defers the remaining issues so one call returns
 # before the 600 s foreground Bash ceiling; CI_RERUN caps `gh run rerun --failed` per PR.
 #PIPELINE_MERGE_LOOP_CI_WAIT_SECS="300"
 #PIPELINE_MERGE_LOOP_WALL_SECS="540"
 #PIPELINE_MERGE_LOOP_CI_RERUN="1"
-# DEFER_MAX caps re-entries of a PR whose merge-state token never settles (counter under .claude/scratch/merge-loop/), then it is routed to manual-merge.
+# DEFER_MAX caps re-entries of a PR whose merge-state token never settles (counter under .claude/scratch/merge-loop/), then it is routed to manual-merge. REBASE_FIX_MAX caps a PR's needs-fix rebase-fixes (<P>.conflicts) before block-mergeable.
 #PIPELINE_MERGE_LOOP_DEFER_MAX="3"
+#PIPELINE_REBASE_FIX_MAX="3"
 # Wave-helper read fan-out (#1548): max concurrent per-issue gh reads in fullsend-gate/preflight, detect-merge-overlap prefetch, transition-issue --batch; 1 = serial; default single-sourced in scripts/_helper-parallel.sh.
 #PIPELINE_HELPER_PARALLEL="4"
 # Inline execute dispatch width (#1559): max concurrent fullsend Step 6 execute Agents per wave; 0 = the whole conflict-free wave in ONE message; --spawn keeps run-queue MAX_AGENTS.

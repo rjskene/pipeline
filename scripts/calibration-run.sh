@@ -54,6 +54,7 @@ set -uo pipefail
 #                            sized for the six-issue v2 slate; v3 has nine)
 #   PIPELINE_CALIB_BASE_TAG  reset anchor tag         (default calib-base)
 #   PIPELINE_CALIB_ISSUE_IDS pre-resolved slate ids   (default: --reset's output)
+#   PIPELINE_CALIB_RUN_TAG   slate title tag, r<digits> (default r<ddHHMM> UTC, #1573)
 # Plus PIPELINE_TRUST_PROFILE, which this script EXPORTS (never reads) into the
 # headless run's environment from --profile; dev/calib/template/pipeline.config
 # passes it through (${PIPELINE_TRUST_PROFILE:-strict}) so the sandbox resolvers
@@ -238,6 +239,10 @@ esac
 if [ -z "$MODE" ]; then
   die_usage "one of --bootstrap|--retag|--reset|--dry-run|--run is required"
 fi
+# #1573: one tag per invocation, appended to every slate title as " [<tag>]" so
+# branch slugs differ run to run. r<digits> only: the reap strips exactly that.
+CALIB_RUN_TAG="${PIPELINE_CALIB_RUN_TAG:-r$(date -u +%d%H%M)}"
+[[ "$CALIB_RUN_TAG" =~ ^r[0-9]+$ ]] || die_usage "PIPELINE_CALIB_RUN_TAG must be r<digits> (got: $CALIB_RUN_TAG)"
 
 # ---------------------------------------------------------------------------
 # Resolution
@@ -386,6 +391,8 @@ build_launch() {
   # `checkout --force --detach` every run, and it is not where the operator's
   # interactive session is sitting. It is spliced AFTER "${scrub[@]}" (which
   # `-u`s every inherited PIPELINE_*, #1390), so the explicit set wins.
+  # #1579: unconditional — every sandbox feature branch carries the run tag.
+  local -a branch_suffix_env=("PIPELINE_BRANCH_SUFFIX=$CALIB_RUN_TAG")
   local -a perm_argv bridge_env=()
   case "${PIPELINE_HEADLESS_PERMISSIONS:-auto}" in
     bypass) perm_argv=(--dangerously-skip-permissions) ;;
@@ -394,6 +401,7 @@ build_launch() {
   esac
   LAUNCH=(env "${scrub[@]}" -u ALLOW_ORCHESTRATOR_EDIT "CLAUDE_PLUGIN_ROOT=$LAUNCH_HARNESS"
           "PIPELINE_TRUST_PROFILE=$PROFILE" "${bexec_env[@]}" "${plan_gate_env[@]}"
+          "${branch_suffix_env[@]}"
           "${pre_pr_env[@]}" "${path_c_fanout_env[@]}"
           PIPELINE_HEADLESS=true
           "${bridge_env[@]}"
@@ -426,6 +434,21 @@ ensure_clone() {
   fi
 }
 
+# clean_untracked — remove untracked, non-ignored files outside .claude/ from
+# the sandbox (#1599). After calibration run 52 the Playwright MCP server's
+# .playwright-mcp/ directory survived --reset and --bootstrap committed it into
+# the seed. No -x: ignored files (.calib/, .claude/logs/) are never touched;
+# ':(exclude).claude' keeps untracked .claude/ state. The count comes from
+# ls-files (same pathspec), since `git clean -d` reports a directory as one entry.
+clean_untracked() {
+  [ -d "$SANDBOX/.git" ] || return 0
+  local n
+  n="$(git -C "$SANDBOX" ls-files --others --exclude-standard -- . ':(exclude).claude' | wc -l)"
+  [ "$n" -gt 0 ] || return 0
+  dispatch git -C "$SANDBOX" clean -fdq -- . ':(exclude).claude' || return 1
+  echo "calib: removed $n untracked file(s)"
+}
+
 sync_template() {
   if [ ! -d "$TEMPLATE_DIR" ]; then
     warn "no template at $TEMPLATE_DIR — nothing to sync"
@@ -436,6 +459,18 @@ sync_template() {
   else
     ( cd "$TEMPLATE_DIR" && tar cf - . ) | ( cd "$SANDBOX" && tar xf - ) || return 1
   fi
+  # #1576: rsync -a / tar never delete, so a file the template dropped stayed
+  # tracked and kept riding the seed. Reconcile TRACKED files only — not
+  # rsync --delete, which would sweep untracked run state and has no tar
+  # equivalent. .claude/ is skipped: commit_sandbox owns it via rm --cached.
+  [ -d "$SANDBOX/.git" ] || return 0
+  local p
+  while IFS= read -r -d '' p; do
+    case "$p" in .claude/*) continue ;; esac
+    if [ -e "$TEMPLATE_DIR/$p" ] || [ -L "$TEMPLATE_DIR/$p" ]; then continue; fi
+    dispatch git -C "$SANDBOX" rm --quiet -- "$p" || return 1
+    echo "calib: template no longer has $p — removed from the sandbox"
+  done < <(git -C "$SANDBOX" ls-files -z)
 }
 
 # materialize_local_settings — refresh the sandbox's .claude/settings.local.json
@@ -557,6 +592,7 @@ seed_labels() {
 cmd_bootstrap() {
   ensure_remote_repo          || return 1
   ensure_clone                || die_run "could not clone the sandbox into $SANDBOX"
+  clean_untracked             || die_run "could not clean untracked files from the sandbox"
   sync_template               || die_run "template sync failed"
   materialize_local_settings  || die_run "could not materialize the sandbox local-settings file"
   local pre_head old_base
@@ -622,7 +658,8 @@ slate_titles() {
 }
 
 # reap_stale_issues — close+delete PRIOR RUNS' slate issues, and nothing else.
-# Scoped by exact title match against the slate rather than by a `calib` label,
+# Scoped by exact title match (after stripping the run tag) against the slate
+# rather than by a `calib` label,
 # so the sandbox needs no extra label seeded at create time; an issue a human
 # (or the run under test) filed in the sandbox survives. `--limit 200` because
 # `gh issue list` defaults to 30 — silent truncation would leave prior slates
@@ -636,6 +673,9 @@ reap_stale_issues() {
   fi
   while IFS="$(printf '\t')" read -r n t; do
     case "$n" in ''|*[!0-9]*) continue ;; esac
+    # #1573: strip a trailing " [r<digits>]" run tag, so tagged and legacy
+    # untagged slate issues both match; the match itself stays exact.
+    [[ "$t" =~ ^(.*)\ \[r[0-9]+\]$ ]] && t="${BASH_REMATCH[1]}"
     printf '%s\n' "$titles" | grep -qxF -- "$t" || continue
     dispatch gh issue close "$n" --repo "$CALIB_REPO" >/dev/null 2>&1
     dispatch gh issue delete "$n" --repo "$CALIB_REPO" --yes >/dev/null 2>&1
@@ -651,7 +691,7 @@ create_slate_issues() {
     d="${d%/}"
     [ -f "$d/title.txt" ] || continue
     url="$(dispatch gh issue create --repo "$CALIB_REPO" \
-             --title "$(cat "$d/title.txt")" --body-file "$d/body.md")"
+             --title "$(head -1 "$d/title.txt") [$CALIB_RUN_TAG]" --body-file "$d/body.md")"
     n="${url##*/}"
     n="${n%$'\r'}"
     case "$n" in
@@ -662,6 +702,7 @@ create_slate_issues() {
   done
   ISSUE_IDS="${ids# }"
   [ -n "$ISSUE_IDS" ] || die_run "no slate issues were created from $SLATE_DIR"
+  printf 'CALIB-RUN-TAG %s\n' "$CALIB_RUN_TAG"
   printf 'CALIB-ISSUES %s\n' "$ISSUE_IDS"
 }
 
@@ -788,6 +829,7 @@ cmd_reset() {
   git -C "$SANDBOX" reset --hard --quiet "$BASE_TAG" || die_run "could not reset the sandbox to $BASE_TAG"
   dispatch git -C "$SANDBOX" push --quiet --force-with-lease origin main \
     || die_run "could not force the sandbox main branch back to $BASE_TAG"
+  clean_untracked || die_run "could not clean untracked files from the sandbox"
   # Refresh AFTER the hard reset, every time: --bootstrap was the only writer
   # of the sandbox's local-settings file, and it is untracked on the operator's
   # host, so `git reset --hard` never touches it (#1395).
@@ -1001,7 +1043,7 @@ load_run_substrate() {
   # mergedAt carries both the merged filter and each issue's wall-clock end;
   # comments carry the PR-eval verdict — so no second round trip per PR.
   PRS_JSON="$(dispatch gh pr list --repo "$CALIB_REPO" --state all --limit 50 \
-    --json number,body,headRefName,files,mergedAt,comments,state 2>/dev/null)"
+    --json number,body,headRefName,files,mergedAt,comments,state,mergeCommit 2>/dev/null)"
   [ -n "$PRS_JSON" ] || PRS_JSON="[]"
   MERGED_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.mergedAt != null)]' 2>/dev/null)"
   [ -n "$MERGED_JSON" ] || MERGED_JSON="[]"
@@ -1012,6 +1054,11 @@ load_run_substrate() {
   # rather than a blocked gate. `state` joins the --json list above for this.
   OPEN_JSON="$(printf '%s' "$PRS_JSON" | jq -c '[.[] | select(.state == "OPEN")]' 2>/dev/null)"
   [ -n "$OPEN_JSON" ] || OPEN_JSON="[]"
+  # ONE fetch per grade so issue_unexpected() can read each merged PR's merge
+  # commit locally (#1604). Done here, not in issue_unexpected: that runs in a
+  # command substitution, so a fetch-once flag there would not persist.
+  dispatch git -C "$SANDBOX" fetch -q origin 2>/dev/null \
+    || warn "grade fetch failed — unexpected-files may fall back to GitHub file lists"
 }
 
 # load_issue_json <issue> — ONE `gh issue view` per issue, cached and fetched
@@ -1208,13 +1255,37 @@ issue_reftest() {
 # (close[sd]?|fix(e[sd])?|resolve[sd]?) + `#<issue>`, case-insensitive. Only
 # when NO merged PR closes it, fall back to a digit-bounded <issue> token in
 # headRefName. A bare `#<issue>` mention never selects a PR.
+# Each selected PR's files come from its merge commit's first-parent diff in
+# the sandbox clone (#1604): since #1602 stacks overlapping PRs, GitHub's PR
+# file list also carries the stacked predecessors' files. When the merge
+# commit is absent/unreachable or the diff fails, that PR falls back to
+# GitHub's `.files[].path` list with one stderr note.
 issue_unexpected() {
   local issue="$1" d="$2" expected="$2/expected-files.txt" files f n=0
-  files="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" '
+  local prs pr oid paths reason
+  prs="$(printf '%s' "$MERGED_JSON" | jq -r --arg n "$issue" '
     [.[] | select((.body // "") | test("\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#" + $n + "\\b"; "i"))] as $closing
     | (if ($closing | length) > 0 then $closing
        else [.[] | select((.headRefName // "") | test("(^|[^0-9])" + $n + "([^0-9]|$)"))] end)
-    | .[] | .files[]?.path' 2>/dev/null)"
+    | .[] | {o: (.mergeCommit.oid // ""), f: [.files[]?.path]} | @json' 2>/dev/null)"
+  files=""
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    oid="$(printf '%s' "$pr" | jq -r '.o' 2>/dev/null)"
+    reason=""
+    if [ -z "$oid" ]; then
+      reason="no merge commit"
+    elif ! git -C "${SANDBOX:-.}" cat-file -e "$oid^{commit}" 2>/dev/null; then
+      reason="merge commit not reachable"
+    elif ! paths="$(git -C "${SANDBOX:-.}" diff --name-only "$oid^1" "$oid" 2>/dev/null)"; then
+      reason="git diff failed"
+    fi
+    if [ -n "$reason" ]; then
+      paths="$(printf '%s' "$pr" | jq -r '.f[]' 2>/dev/null)"
+      echo "calib: unexpected-files for #$issue from GitHub file list ($reason)" >&2
+    fi
+    [ -n "$paths" ] && files="${files:+$files$'\n'}$paths"
+  done <<< "$prs"
   [ -n "$files" ] || { printf '0'; return 0; }
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -1466,6 +1537,7 @@ case "$MODE" in
     [ -n "$PLAN_GATE" ] && ARM_TOKENS+=("plan_gate=$PLAN_GATE")
     [ -n "$PRE_PR_REVIEW" ] && ARM_TOKENS+=("pre_pr_review=$PRE_PR_REVIEW")
     [ -n "$PATH_C_FANOUT" ] && ARM_TOKENS+=("path_c_fanout=$PATH_C_FANOUT")
+    printf 'CALIB-RUN-TAG %s\n' "$CALIB_RUN_TAG"
     dispatch "${LAUNCH[@]}" "${ARM_TOKENS[@]}"
     exit 0
     ;;

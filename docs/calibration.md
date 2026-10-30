@@ -2,7 +2,7 @@
 
 Real-work retros cannot isolate cause: every cycle's workload differs, so a cost or
 latency delta between cycles says nothing about the harness. The calibration slate
-holds the *inputs* fixed — same sandbox repo, same nine issues, same base commit —
+holds the *inputs* fixed — same sandbox repo, same ten issues, same base commit —
 so the harness version under test is the only variable. It doubles as the
 end-to-end regression suite the unit tests are not.
 
@@ -14,7 +14,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   project (scripts, tests, docs, CI workflow, `pipeline.config`, seeded labels).
 - **Clone location:** `${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}` —
   inside the boundary the sandbox session already allows, so no config change.
-- **Slate:** nine template issues committed at tag `calib-base`, each with a
+- **Slate:** ten template issues committed at tag `calib-base`, each with a
   reference test and an expected-files list:
 
   | Issue | Path | Exercises |
@@ -28,16 +28,23 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   | small filter whose natural implementation silently changes untested existing behaviour (planted regression) | B | pr-eval reviewer yield — reads the diff's callers, not the summary |
   | CSV export whose format is fixed only by the codebase's documented output conventions | B | planner reads the codebase before inventing a format |
   | intermittently failing test whose cause is a real race | B | executor fixes the cause, not the test |
+  | filter box on a static web page (live title filter, `?q=` parameter) | B | browser check: execute 6c drives the outcomes, evaluate 6 re-drives them |
 
   **Slate v3 (#1531).** The last three rows are the v3 probes; the trivial path
   fails each of them, so they can tell a careful harness from a cheap one where
   rows 1–6 (graded "was the spec implemented") cannot. Run 38 is the v3
   baseline: `issues=` / `reftest-pass=` totals from it on are over nine issues
   and are not comparable with v2 (six-issue) runs — compare against v2 through
-  rows 01–06 only. `tests/case-ids.sh` in the template is the deliberately
-  flaky 09 case, so until 09 is fixed the sandbox suite (and any reference test
-  that re-runs it) can go red on an unrelated row about one run in five; read a
-  stray reftest fail alongside the 09 row.
+  rows 01–06 only. From run 49 (#1572) the template has no `tests/case-ids.sh`,
+  so the sandbox suite is green on every run and totals from run 49 on are over
+  a template without the flake; runs 38–48 could red one unrelated row in five.
+  The browser-surface row (#1584) exists from run 51 on: `issues=` /
+  `reftest-pass=` totals from run 51 are over ten issues — compare with runs
+  38–50 through rows 01–09 only. The template ships `.mcp.json`, so the sandbox
+  session has the Playwright MCP tools the browser check needs; runs 52 on
+  exercise it, run 51 did not (#1590). Run 52 left the server's default
+  `.playwright-mcp/` in the sandbox root; later runs write it to
+  `.claude/scratch/playwright/`, the output dir the template `.mcp.json` sets (#1598).
 
 ## Running
 
@@ -54,7 +61,7 @@ bash scripts/calibration-run.sh --bootstrap|--retag|--reset|--dry-run|--run \
 |---|---|---|
 | `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. A template sync that commits re-anchors `calib-base` to it. | no |
 | `--retag` | Force `calib-base` onto the sandbox `HEAD`, locally and on the remote — for a sandbox edited and committed by hand. No-op when the tag is already there. | no |
-| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the nine slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
+| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the ten slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
@@ -65,13 +72,17 @@ tree under test — it defaults to this repo's root.
 
 `--reset` is what makes a run comparable to the previous one: inputs are pinned to
 the `calib-base` tag, so a delta between two `CALIB-TOTAL` lines is attributable to
-the harness version, not to the workload.
+the harness version, not to the workload. Both `--reset` and `--bootstrap` first
+remove untracked files outside `.claude/` (ignored files stay), so stray tool output
+never reaches the seed (#1599).
 
 The tag follows the template (#1477). When `--bootstrap`'s template sync commits on
 top of `calib-base`, it re-anchors the tag to that commit (`git tag -f` + a force
 push, reported as `calib: calib-base re-anchored <old> -> <new>`); when nothing
-changed, the tag stays put. So `--bootstrap` after a template change is the
-documented way to roll a template fix into the slate — run `--reset` first so the
+changed, the tag stays put. The sync also `git rm`s tracked sandbox files the
+template no longer has (#1576), so a template deletion needs no hand edit. So
+`--bootstrap` after a template change is the documented way to roll a template
+fix into the slate — run `--reset` first so the
 sandbox sits on `calib-base`; a sandbox left on a post-run `main` only warns and
 keeps the old tag, since anchoring there would bake the run's merged fixes into
 the seed. Hand edits to the sandbox use `--retag` instead.
@@ -80,10 +91,14 @@ A slate change (`dev/calib/slate/*/` — title, body, reference test, expected
 files; e.g. #1487's 05 rework) needs no reseed: every `--reset` (and every
 `--run`, which calls it) files the slate issues fresh from the harness checkout's
 `dev/calib/slate/`, and reference tests run from there too. `--bootstrap`
-(#1477) is only for `dev/calib/template/` changes. One caveat: the reap matches
-the CURRENT slate titles, so the previous run's issue under 05's old title
-(`fix(report): report omits the completion rate its docs promise`) is not
-reaped — close it by hand once.
+(#1477) is only for `dev/calib/template/` changes. Each run files titles as
+`<title.txt line 1> [r<ddHHMM>]` (UTC), printed as `CALIB-RUN-TAG` (also by
+`--dry-run`), so branch slugs differ per run (#1573). The driver also sets
+`PIPELINE_BRANCH_SUFFIX` to the run tag, so every sandbox feature branch ends in
+`-r<ddHHMM>` (#1579). One caveat:
+the reap matches the current slate titles after stripping a trailing
+` [r<digits>]` run tag, so a renamed title's old issue (05's `fix(report): report
+omits the completion rate its docs promise`) is not reaped — close it by hand once.
 
 The launch exports both `CLAUDE_PLUGIN_ROOT=<harness>` and passes
 `--plugin-dir <harness>` to `claude -p`. Both are required: the env var is what
@@ -173,6 +188,7 @@ Consequences:
 | `PIPELINE_CALIB_DIR` | `$HOME/.claude/calib/pipeline-calib` | Where the sandbox clone lives. |
 | `PIPELINE_CALIB_TIMEOUT` | see `pipeline.config.example` | Wall-clock ceiling (seconds) for the headless run before it is killed and the partial summary emitted. |
 | `PIPELINE_CALIB_REPO` | `rjskene/pipeline-calib` | `owner/name` of the sandbox repo, for forks or a re-homed sandbox. |
+| `PIPELINE_CALIB_RUN_TAG` | `r<ddHHMM>` (UTC) | Tag appended to slate issue titles as ` [<tag>]`; must match `r<digits>` (exit 2 otherwise). |
 
 ## Permission bridge
 
@@ -289,6 +305,9 @@ the first line of the block.
   Flagged and never merged, so the test would have graded the unfixed tree;
   `n/a` means the run aborted before reaching the issue.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
+  Files come from the merged PR's merge-commit first-parent diff in the
+  sandbox clone (#1604; GitHub's PR file list carries stacked predecessors'
+  files), falling back to GitHub's list with a stderr note.
 - `planted` — a per-RUN atom on the `CALIB-TOTAL` line only: did a slate
   planted-defect issue (every `*planted*` dir: `06-planted-defect` and, since
   slate v3, `07-planted-regression`) escape the pr-eval gate? Each planted row
