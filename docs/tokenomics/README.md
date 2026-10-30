@@ -8,6 +8,8 @@ human-readable analysis layer; the machine layer is the per-day aggregate store
 `docs/tokenomics-history-2026-05-29-to-06-02.md`. Dollar figures are lower bounds whenever the
 entry's coverage block says so.
 
+To share a redacted aggregate of these figures, see "Telemetry export" in [observability.md](../observability.md).
+
 ## Index
 
 - [`2026-06-11-window-2026-06-04-to-06-10.md`](2026-06-11-window-2026-06-04-to-06-10.md) — window 2026-06-04 → 2026-06-10.

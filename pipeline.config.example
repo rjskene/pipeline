@@ -229,6 +229,21 @@ PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ=0.50
 #PIPELINE_PRICE_CLAUDE_FABLE_5_1_CACHE_CREATION=12.50
 #PIPELINE_PRICE_CLAUDE_FABLE_5_1_CACHE_READ=0.25
 
+# --- Telemetry export (#1617) ---
+# `/pipeline:tokenomics --export` renders a redacted cost summary of this
+# repo's own capture log under .claude/scratch/telemetry/. With the explicit
+# `--post` it writes a PUBLIC comment on the drop-box issue below, under the
+# operator's own gh identity. Nothing posts without `--post` (`--dry-run`
+# prints the body and the gh command instead).
+# Exported: plugin version, window, hashed repo_id, record count, per-day /
+#   per-stage+model / per-agent_kind token + cost + p50 duration aggregates.
+# Never exported: agent/session ids, record keys, issue numbers, descriptions,
+#   paths, branches, hostnames, the repo name.
+# Defaults live in code (${PIPELINE_TELEMETRY_REPO:-rjskene/pipeline},
+# ${PIPELINE_TELEMETRY_ISSUE:-1615}); uncomment only to retarget.
+#PIPELINE_TELEMETRY_REPO="rjskene/pipeline"
+#PIPELINE_TELEMETRY_ISSUE=1615
+
 # --- Rolling-window usage read-out (issue #725, dogfood-only phase 1) ---
 #
 # Read-only operator surface over the gated agent-cost capture
