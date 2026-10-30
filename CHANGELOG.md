@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.5](https://github.com/rjskene/pipeline/compare/v0.25.4...v0.25.5) (2026-10-30)
+
+
+### Features
+
+* stacked merge-time rebase, rebase-fix flake cap, calibration grader on merge commits (waves 49–63) ([8b59395](https://github.com/rjskene/pipeline/commit/8b59395dec4cefcf07de857f9cbea8029e226eb6))
+* stacked merge-time rebase, rebase-fix flake cap, calibration grader on merge commits (waves 49–63) ([#1613](https://github.com/rjskene/pipeline/issues/1613)) ([2a28eee](https://github.com/rjskene/pipeline/commit/2a28eee3797ed3b5e2f8d1a8e642e8f27b31a60f))
+
 ## [0.25.4](https://github.com/rjskene/pipeline/compare/v0.25.3...v0.25.4) (2026-10-30)
 
 
