@@ -203,6 +203,85 @@ else
   fail_msg "md should carry a stages table then a days table: $(cat "$MD")"
 fi
 
+# --- (7) --post --dry-run ---
+inc_case "(7) --post --dry-run prints the body + the exact gh command, calls no gh comment"
+: > "$TMP/gh.argv"
+OUT7="$(run_export PIPELINE_LOGS_ENABLED=true bash "$EXPORT" --since 2026-10-01 --until 2026-10-07 --post --dry-run 2>/dev/null)"
+RC7=$?
+BODY7="$(printf '%s\n' "$OUT7" | grep -oE 'gh issue comment 1615 --repo rjskene/pipeline --body-file [^ ]+$' | sed -E 's/.*--body-file //')"
+if [ "$RC7" -eq 0 ] && [ -n "$BODY7" ] && [ -f "$BODY7" ]; then
+  pass_msg "dry-run prints 'gh issue comment 1615 --repo rjskene/pipeline --body-file <path>' (path exists)"
+else
+  fail_msg "dry-run should print the exact gh command line (rc=$RC7 out=$OUT7)"
+fi
+MD_LN7="$(printf '%s\n' "$OUT7" | grep -n '^plugin ' | head -1 | cut -d: -f1)"
+FENCE_LN7="$(printf '%s\n' "$OUT7" | grep -n '^```json$' | head -1 | cut -d: -f1)"
+if [ -n "$MD_LN7" ] && [ -n "$FENCE_LN7" ] && [ "$MD_LN7" -lt "$FENCE_LN7" ] \
+   && printf '%s\n' "$OUT7" | grep -q '"schema_version"'; then
+  pass_msg "dry-run prints the body: md, then a \`\`\`json fenced block holding the JSON"
+else
+  fail_msg "dry-run body should be md then a json fence: $OUT7"
+fi
+if grep -q '^issue comment' "$TMP/gh.argv"; then
+  fail_msg "dry-run must not call gh issue comment ($(cat "$TMP/gh.argv"))"
+else
+  pass_msg "dry-run makes no gh issue comment call"
+fi
+
+# --- (8) --post ---
+inc_case "(8) --post files the body on rjskene/pipeline#1615"
+: > "$TMP/gh.argv"
+OUT8="$(run_export PIPELINE_LOGS_ENABLED=true bash "$EXPORT" --since 2026-10-01 --until 2026-10-07 --post 2>/dev/null)"
+RC8=$?
+if grep -qE '^issue comment 1615 --repo rjskene/pipeline --body-file [^ ]+\.body\.md$' "$TMP/gh.argv"; then
+  pass_msg "gh shim recorded 'issue comment 1615 --repo rjskene/pipeline --body-file <path>'"
+else
+  fail_msg "--post should call gh issue comment 1615 --repo rjskene/pipeline --body-file <path> (argv: $(cat "$TMP/gh.argv"))"
+fi
+if [ "$RC8" -eq 0 ] && printf '%s\n' "$OUT8" | grep -qxF 'POSTED url=https://github.com/rjskene/pipeline/issues/1615#issuecomment-1'; then
+  pass_msg "stdout carries POSTED url=<comment url>"
+else
+  fail_msg "expected POSTED url=... (rc=$RC8 out=$OUT8)"
+fi
+
+# --- (9) POST-FAILED ---
+inc_case "(9) a failing gh issue comment -> POST-FAILED rc=1, exit 0, files kept"
+OUT9="$(run_export PIPELINE_LOGS_ENABLED=true GH_SHIM_RC=1 bash "$EXPORT" --since 2026-10-01 --until 2026-10-07 --post 2>/dev/null)"
+RC9=$?
+J9="$(printf '%s\n' "$OUT9" | grep '^EXPORT ' | sed -E 's/.*json=([^ ]+).*/\1/')"
+M9="$(printf '%s\n' "$OUT9" | grep '^EXPORT ' | sed -E 's/.* md=([^ ]+).*/\1/')"
+if [ "$RC9" -eq 0 ] && printf '%s\n' "$OUT9" | grep -qxF 'POST-FAILED rc=1' && [ -f "$J9" ] && [ -f "$M9" ]; then
+  pass_msg "POST-FAILED rc=1, exit 0, json/md still exist"
+else
+  fail_msg "expected POST-FAILED rc=1 + exit 0 + files kept (rc=$RC9 out=$OUT9)"
+fi
+if printf '%s\n' "$OUT9" | grep -q '^POSTED'; then
+  fail_msg "a failed post must not print POSTED"
+else
+  pass_msg "a failed post prints no POSTED line"
+fi
+
+# --- (10) knob override ---
+inc_case "(10) PIPELINE_TELEMETRY_REPO / PIPELINE_TELEMETRY_ISSUE retarget the post"
+: > "$TMP/gh.argv"
+run_export PIPELINE_LOGS_ENABLED=true PIPELINE_TELEMETRY_REPO=o/r PIPELINE_TELEMETRY_ISSUE=7 \
+  bash "$EXPORT" --since 2026-10-01 --until 2026-10-07 --post >/dev/null 2>&1
+if grep -qE '^issue comment 7 --repo o/r --body-file ' "$TMP/gh.argv"; then
+  pass_msg "post targets 'issue comment 7 --repo o/r'"
+else
+  fail_msg "override should target issue comment 7 --repo o/r (argv: $(cat "$TMP/gh.argv"))"
+fi
+
+# --- (11) consent contract ---
+inc_case "(11) without --post no gh issue comment is ever made"
+: > "$TMP/gh.argv"
+run_export PIPELINE_LOGS_ENABLED=true bash "$EXPORT" --since 2026-10-01 --until 2026-10-07 >/dev/null 2>&1
+if grep -q '^issue comment' "$TMP/gh.argv"; then
+  fail_msg "export without --post called gh issue comment ($(cat "$TMP/gh.argv"))"
+else
+  pass_msg "no --post -> no gh issue comment"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

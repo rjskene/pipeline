@@ -6,7 +6,11 @@
 # (.claude/logs/agent-costs.jsonl) into
 #   ${CLAUDE_PROJECT_DIR:-.}/.claude/scratch/telemetry/export-<ts>.{json,md}
 # and, ONLY with the explicit --post, files it as a comment on the telemetry
-# drop-box issue under the operator's own gh identity.
+# drop-box issue (${PIPELINE_TELEMETRY_REPO:-rjskene/pipeline}
+# #${PIPELINE_TELEMETRY_ISSUE:-1615}) under the operator's own gh identity.
+# --dry-run prints the body (export-<ts>.body.md) and the exact gh command
+# without calling gh. A failed post prints POST-FAILED rc=<n> and still exits 0
+# (the files stay for a re-run or a manual post).
 #
 # One aggregation substrate: per-record pricing, dedup, usage_complete scoping
 # and the window all come from cost-latency-report.sh
@@ -164,4 +168,32 @@ jq -n --arg pv "$PLUGIN_VERSION" --arg at "$EXPORTED_AT" --arg since "$SINCE" \
 RECORDS_N="$(jq -r '.records_n' "$OUT_JSON")"
 DAYS_N="$(jq -r '.days | length' "$OUT_JSON")"
 echo "EXPORT json=$OUT_JSON md=$OUT_MD records=$RECORDS_N days=$DAYS_N"
+
+# --- --post / --dry-run: the telemetry drop-box (consent = the explicit --post) ---
+TELEMETRY_REPO="${PIPELINE_TELEMETRY_REPO:-rjskene/pipeline}"
+TELEMETRY_ISSUE="${PIPELINE_TELEMETRY_ISSUE:-1615}"
+OUT_BODY="$OUT_DIR/export-$TS.body.md"
+{
+  cat "$OUT_MD"
+  echo ""
+  echo '```json'
+  jq '.' "$OUT_JSON"
+  echo '```'
+} > "$OUT_BODY"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  cat "$OUT_BODY"
+  echo "gh issue comment $TELEMETRY_ISSUE --repo $TELEMETRY_REPO --body-file $OUT_BODY"
+  exit 0
+fi
+
+if [ "$POST" -eq 1 ]; then
+  url="$(gh issue comment "$TELEMETRY_ISSUE" --repo "$TELEMETRY_REPO" --body-file "$OUT_BODY" 2>/dev/null)"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "POSTED url=$(printf '%s\n' "$url" | tail -1)"
+  else
+    echo "POST-FAILED rc=$rc"
+  fi
+fi
 exit 0
