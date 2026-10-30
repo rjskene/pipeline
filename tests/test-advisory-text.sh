@@ -29,11 +29,11 @@ MANIFEST_HOOKS=(
   check-ci-skip-markers.py
   enforce-path-c-delegation.py
   enforce-ci-wait.py
-)
-DOGFOOD_HOOKS=(
   log-tool-use.sh
   log_subagent.py
 )
+# Empty since #1616: the log hooks now ship (gated) in the plugin manifest.
+DOGFOOD_HOOKS=()
 # Retired (#1418): the plugin no longer ships these, but the table KEEPS their
 # rows so advisory_for_hook answers rc=0 with delete-local guidance for the two
 # hooks a consumer is most likely to still carry locally.

@@ -4,6 +4,40 @@
 # `timeout` exits 124 on the deadline; `|| true` keeps the hook exit 0, and the
 # empty INPUT then flows to the existing jq -r '.tool_name' → empty → clean skip.
 INPUT=$(timeout 5 cat || true)
+# PIPELINE_LOGS_ENABLED gate (#1616): this hook ships in the published plugin
+# manifest, so it is inert unless the flag resolves to exactly "true". Process
+# env wins when SET (even "false"); else parse ${CLAUDE_PROJECT_DIR:-.}/pipeline.config
+# (last assignment wins; mirrors capture_agent_cost._flag_from_config). Pure bash
+# (no grep/sed): the jq-missing PATH sandbox carries only cat/date/mkdir/tr. Runs
+# BEFORE the jq-missing branch so gate-off writes nothing, not even hook-errors.log.
+# Kept inline (not sourced) because the hook is also copied standalone.
+if [ -n "${PIPELINE_LOGS_ENABLED+x}" ]; then
+    _logs_flag="$PIPELINE_LOGS_ENABLED"
+else
+    _logs_flag=""
+    _logs_cfg="${CLAUDE_PROJECT_DIR:-.}/pipeline.config"
+    _logs_re='^[[:space:]]*(export[[:space:]]+)?PIPELINE_LOGS_ENABLED[[:space:]]*=(.*)$'
+    if [ -r "$_logs_cfg" ]; then
+        while IFS= read -r _logs_line || [ -n "$_logs_line" ]; do
+            [[ "$_logs_line" =~ $_logs_re ]] || continue
+            _logs_raw="${BASH_REMATCH[2]}"
+            # trim leading whitespace
+            _logs_raw="${_logs_raw#"${_logs_raw%%[![:space:]]*}"}"
+            # drop a trailing inline comment only when the value is unquoted
+            case "$_logs_raw" in \"*|\'*) ;; *) _logs_raw="${_logs_raw%%#*}" ;; esac
+            # trim trailing whitespace
+            _logs_raw="${_logs_raw%"${_logs_raw##*[![:space:]]}"}"
+            if [ "${#_logs_raw}" -ge 2 ]; then
+                _logs_q="${_logs_raw:0:1}"
+                if { [ "$_logs_q" = '"' ] || [ "$_logs_q" = "'" ]; } && [ "${_logs_raw: -1}" = "$_logs_q" ]; then
+                    _logs_raw="${_logs_raw:1:${#_logs_raw}-2}"
+                fi
+            fi
+            _logs_flag="$_logs_raw"
+        done < "$_logs_cfg"
+    fi
+fi
+[ "$_logs_flag" = "true" ] || exit 0
 if ! command -v jq >/dev/null 2>&1; then
     LOG_DIR="${CLAUDE_PROJECT_DIR:-.}/.claude/logs"
     mkdir -p "$LOG_DIR"

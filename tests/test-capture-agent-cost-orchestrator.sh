@@ -153,13 +153,13 @@ COUNT3="$(wc -l < "$OUT2" | tr -d ' ')"
 [ "$COUNT3" = "2" ] || fail "case2: no-growth re-fire must write NO record (count stayed at 2), got $COUNT3"
 
 # ---------------------------------------------------------------------------
-# Case 3: this repo's .claude/settings.json registers a Stop hook pointing at
-# capture_agent_cost.py (dogfood-only; not in the published plugin manifest).
+# Case 3: the published plugin manifest registers a Stop hook pointing at
+# capture_agent_cost.py (#1616; gated by PIPELINE_LOGS_ENABLED, default off).
 # ---------------------------------------------------------------------------
-SETTINGS="$REPO_ROOT/.claude/settings.json"
-[ -f "$SETTINGS" ] || fail "case3: settings.json not found at $SETTINGS"
+MANIFEST="$REPO_ROOT/.claude-plugin/plugin.json"
+[ -f "$MANIFEST" ] || fail "case3: plugin manifest not found at $MANIFEST"
 
-python3 - "$SETTINGS" <<'PY' || fail "case3: no Stop hook references capture_agent_cost.py"
+python3 - "$MANIFEST" <<'PY' || fail "case3: no Stop hook references capture_agent_cost.py"
 import json, sys
 d = json.load(open(sys.argv[1]))
 stop = d.get("hooks", {}).get("Stop", [])

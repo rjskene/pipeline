@@ -135,7 +135,7 @@ BRIDGE_Q="$(mktemp -d)"
 
 # name|env-prefix(space-separated VAR=val, or empty)
 PY_HOOKS=(
-  "log_subagent.py|"
+  "log_subagent.py|PIPELINE_LOGS_ENABLED=true"
   "capture_agent_cost.py|PIPELINE_LOGS_ENABLED=true"
   "enforce-ci-wait.py|CLAUDE_PIPELINE_SKILL=evaluate-issue-pr"
   "enforce-path-c-delegation.py|CLAUDE_PIPELINE_ISSUE_NUMBER=917"
@@ -190,7 +190,10 @@ else
   # (a) self-limited exit on never-closing stdin (run in a writable scratch dir
   # so the hook's mkdir/log write does not touch unexpected paths).
   TMP3="$(mktemp -d)"
-  run_with_blocking_stdin env "CLAUDE_PROJECT_DIR=$TMP3" bash "$BASH_HOOK"
+  # PIPELINE_LOGS_ENABLED=true is belt-and-braces (#1616): the gate runs after
+  # the bounded read, so the timeout is exercised either way; opting in keeps
+  # the hook on its full logging path.
+  run_with_blocking_stdin env "CLAUDE_PROJECT_DIR=$TMP3" PIPELINE_LOGS_ENABLED=true bash "$BASH_HOOK"
   rm -rf "$TMP3"
   if [ "$RUN_RC" = "0" ] && [ "$RUN_ELAPSED" -lt 8 ]; then
     pass_msg "3[log-tool-use.sh]: exit 0 in ${RUN_ELAPSED}s on never-closing stdin (not 124-via-kill)"

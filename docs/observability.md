@@ -1,10 +1,10 @@
 # Observability (dogfood-only)
 
-Logging hooks and substrate for this repo's own dogfood operation. Most are registered in this repo's `.claude/settings.json` only; the published `pipeline@claude-pipeline` plugin manifest does NOT register them, so consumer installs produce no `.claude/logs/subagents/` or `.claude/logs/tool-use.log` files.
+Logging hooks and substrate for this repo's own dogfood operation. Since #1616 the tool-use log, subagent log and agent-cost-capture hooks (`hooks/log-tool-use.sh`, `hooks/log_subagent.py`, `hooks/capture_agent_cost.py`) ship in the published `pipeline@claude-pipeline` plugin manifest, but they are inert until `PIPELINE_LOGS_ENABLED=true` (see [the gate below](#pipeline_logs_enabled-gate)): a consumer install on the default `false` produces no `.claude/logs/subagents/` or `.claude/logs/tool-use.log` files. This repo's `.claude/settings.json` no longer registers them — the dogfood local-marketplace install loads the manifest, so a settings copy would double-fire.
 
 ## Subagent log
 
-**dogfood-only.** `.claude/hooks/log_subagent.py` is a PostToolUse hook that logs every Agent tool invocation. It writes per-agent JSON files to `.claude/logs/subagents/`, a consolidated TSV to `.claude/logs/subagents.log`, and errors to `.claude/logs/subagent-hook-errors.log`. All logs are gitignored and the hook uses fail-open semantics (errors are swallowed so they never block tool use).
+**Gated (`PIPELINE_LOGS_ENABLED`), manifest-registered.** `hooks/log_subagent.py` is a PostToolUse hook that logs every Agent tool invocation. It writes per-agent JSON files to `.claude/logs/subagents/`, a consolidated TSV to `.claude/logs/subagents.log`, and errors to `.claude/logs/subagent-hook-errors.log`. All logs are gitignored and the hook uses fail-open semantics (errors are swallowed so they never block tool use).
 
 **Result capture (#1233).** The real PostToolUse(Agent) payload carries no `result` key — the leaf's returned text is sourced from the `content` list of `{"type": "text", "text": ...}` blocks (`status == "completed"`); the legacy top-level `result` key is a back-compat fallback only, for synthetic/older payload shapes. `status == "async_launched"` (background dispatch) is a coverage hole: the leaf's result is never delivered to this hook, so `.result` is recorded empty and `.status` is the only signal that distinguishes "backgrounded, no result yet" from "the leaf genuinely returned nothing".
 
@@ -14,7 +14,7 @@ Logging hooks and substrate for this repo's own dogfood operation. Most are regi
 
 ## Tool-use log
 
-**dogfood-only.** `.claude/logs/tool-use.log` is a tab-separated per-tool-call log (timestamp, tool, session, summary) written by `.claude/hooks/log-tool-use.sh` (PostToolUse `*`). Correlate with `subagents.log` via the `session` field to reconstruct the tool sequence inside each subagent — useful for verifying TDD order (Write test → Bash pytest fail → Write impl → Bash pytest pass). Log rotation is not automated; `cleanup-worktree.sh` copies per-issue logs to the root `.claude/logs/tool-use-issue-<N>.log` on worktree teardown.
+**Gated (`PIPELINE_LOGS_ENABLED`), manifest-registered.** `.claude/logs/tool-use.log` is a tab-separated per-tool-call log (timestamp, tool, session, summary) written by `hooks/log-tool-use.sh` (PostToolUse `*`). Correlate with `subagents.log` via the `session` field to reconstruct the tool sequence inside each subagent — useful for verifying TDD order (Write test → Bash pytest fail → Write impl → Bash pytest pass). Log rotation is not automated; `cleanup-worktree.sh` copies per-issue logs to the root `.claude/logs/tool-use-issue-<N>.log` on worktree teardown.
 
 ## Hook-denial log
 
@@ -38,7 +38,9 @@ Use `bash ${CLAUDE_PLUGIN_ROOT}/scripts/review-audits.sh [--last N | --path X | 
 
 ## PIPELINE_LOGS_ENABLED gate
 
-`PIPELINE_LOGS_ENABLED` (in `pipeline.config`) gates plugin writes to `.claude/logs/` — `runs.log`, `queue-*.log`, `queue-pending.txt`, per-issue `tool-use-issue-<N>.log` copies emitted by `cleanup-worktree.sh`, the analyze-mode shortlist JSON, and ci-fix attempt logs. **Default is `false`** so installing the plugin imposes no logging on consumer projects. **This repo's gitignored `pipeline.config` sets `PIPELINE_LOGS_ENABLED=true`** as a dogfood override so `scripts/capture-agent-costs.sh`, `scripts/review-audits.sh`, and `scripts/metrics-snapshot.sh` keep receiving the `runs.log` substrate they need.
+`PIPELINE_LOGS_ENABLED` (in `pipeline.config`) gates plugin writes to `.claude/logs/` — `runs.log`, `queue-*.log`, `queue-pending.txt`, per-issue `tool-use-issue-<N>.log` copies emitted by `cleanup-worktree.sh`, the analyze-mode shortlist JSON, ci-fix attempt logs, and the manifest-registered hook streams `tool-use.log`, `subagents.log`, `subagents/` and `agent-costs.jsonl` (#1616). The three hooks resolve the flag identically: process env wins when set (even `false`), else `$CLAUDE_PROJECT_DIR/pipeline.config`; enabled only on exactly `true`. Gate-off is zero disk touch (no `mkdir`, no `hook-errors.log` breadcrumb). **Default is `false`** so installing the plugin imposes no logging on consumer projects. **This repo's gitignored `pipeline.config` sets `PIPELINE_LOGS_ENABLED=true`** as a dogfood override so `scripts/capture-agent-costs.sh`, `scripts/review-audits.sh`, and `scripts/metrics-snapshot.sh` keep receiving the `runs.log` substrate they need.
+
+With `PIPELINE_LOGS_ENABLED=true`, `tool-use.log` now exists in consumer projects, which activates `hooks/enforce-ci-wait.py`'s evaluate-issue-pr CI-wait checks (inert today because the log is absent); gate-off consumers are unchanged.
 
 **Carve-out:** `hooks/enforce-path-c-delegation.py` and `hooks/enforce-ci-wait.py` still write `.claude/logs/enforce-*-errors.log` on hook fail-open paths — that emergency-diagnosis stream is intentionally ungated.
 

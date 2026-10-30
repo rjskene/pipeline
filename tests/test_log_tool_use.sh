@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOOK="$SCRIPT_DIR/../hooks/log-tool-use.sh"
 tmpdir=$(mktemp -d); trap 'rm -rf "$tmpdir"' EXIT
-export CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="test-sess-42"
+export CLAUDE_PROJECT_DIR="$tmpdir" CLAUDE_SESSION_ID="test-sess-42" PIPELINE_LOGS_ENABLED=true
 
 TOOLS=(
   '{"tool_name":"Write","session_id":"s1","tool_input":{"file_path":"/tmp/f.txt"}}'
