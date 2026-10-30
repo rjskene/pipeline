@@ -44,9 +44,15 @@ POST=0
 DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --since)    SINCE="${2:-}"; shift 2 ;;
+    --since|--until)
+      # A trailing flag with no value would make `shift 2` a no-op (infinite loop).
+      if [ $# -lt 2 ]; then
+        echo "tokenomics-export: ERROR: $1 needs a value (YYYY-MM-DD)" >&2
+        exit 1
+      fi
+      if [ "$1" = "--since" ]; then SINCE="$2"; else UNTIL="$2"; fi
+      shift 2 ;;
     --since=*)  SINCE="${1#--since=}"; shift ;;
-    --until)    UNTIL="${2:-}"; shift 2 ;;
     --until=*)  UNTIL="${1#--until=}"; shift ;;
     --post)     POST=1; shift ;;
     --dry-run)  DRY_RUN=1; shift ;;

@@ -322,6 +322,18 @@ for tok in EXPORT POSTED POST-FAILED; do
   fi
 done
 
+# --- (14) a trailing --since / --until with no value fails fast ---
+inc_case "(14) a trailing --since / --until with no value exits 1 (no hang)"
+for flag in --since --until; do
+  timeout 20 env PIPELINE_LOGS_ENABLED=true PIPELINE_REPO=o/r CLAUDE_PROJECT_DIR="$TMP" bash "$EXPORT" "$flag" >/dev/null 2>&1
+  RC14=$?
+  if [ "$RC14" -eq 1 ]; then
+    pass_msg "trailing $flag -> exit 1"
+  else
+    fail_msg "trailing $flag should exit 1, got rc=$RC14 (124 = hung)"
+  fi
+done
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
