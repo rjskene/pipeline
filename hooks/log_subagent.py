@@ -30,6 +30,28 @@ from subagent_log_utils import (
 )
 
 
+def _logs_enabled() -> bool:
+    """PIPELINE_LOGS_ENABLED gate (#1616) — mirrors _deny_log._logs_enabled.
+
+    Process env wins when SET (even "false"); else pipeline.config at the
+    project dir. Enabled only on exactly "true"."""
+    env_value = os.environ.get("PIPELINE_LOGS_ENABLED")
+    if env_value is not None:
+        return env_value == "true"
+    from _pipeline_config import read as _read_config
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    return _read_config("PIPELINE_LOGS_ENABLED", "", project_dir=project_dir) == "true"
+
+
+# Gate BEFORE the stdin read: gate-off is zero disk touch. Fail-open (no write).
+try:
+    _gate_open = _logs_enabled()
+except Exception:
+    _gate_open = False
+if not _gate_open:
+    sys.exit(0)
+
+
 def log_error(message: str) -> None:
     """Best-effort error logging — swallows its own exceptions."""
     try:
