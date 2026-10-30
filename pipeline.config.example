@@ -145,7 +145,10 @@ PIPELINE_RELEASE_PR_LABEL="autorelease: pending"   # Label that identifies relea
 # PIPELINE_LOGS_ENABLED gates plugin writes to .claude/logs/ — specifically
 # runs.log, queue-*.log, queue-pending.txt, per-issue tool-use copies
 # emitted by cleanup-worktree.sh, the analyze-mode shortlist JSON, and the
-# ci-fix attempt logs.
+# ci-fix attempt logs. It also enables the plugin-manifest hook streams
+# (tool-use.log, subagents.log via hooks/log-tool-use.sh + hooks/log_subagent.py)
+# and forward cost capture (agent-costs.jsonl via hooks/capture_agent_cost.py),
+# #1616 — all three are inert unless this resolves to exactly "true".
 #
 # Default is "false" so installing the plugin does not impose logging on a
 # consumer project. Trade-off: you lose the crash-diagnosis substrate by

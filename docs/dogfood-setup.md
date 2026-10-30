@@ -96,6 +96,10 @@ non-FF state, missing git). It MUST never block session start.
 
 ## Doctor-on-update detector (#1038)
 
+The log and cost-capture hooks (`log-tool-use.sh`, `log_subagent.py`,
+`capture_agent_cost.py`) are no longer in this chain: since #1616 they
+load from the plugin manifest, gated by `PIPELINE_LOGS_ENABLED`.
+
 The dogfood `.claude/settings.json` chain also registers the read-only
 plugin-version-change detector `hooks/doctor-on-update.sh` on BOTH
 `UserPromptSubmit` (beside `dogfood-heal-symlink.sh`) and `SessionStart`
