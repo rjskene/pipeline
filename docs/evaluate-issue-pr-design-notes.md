@@ -36,7 +36,7 @@
 
 ## Rebase
 
-- Feature PRs land as merge-commits (#459), so an advanced base alone is not a reason to rebase, and a needless rebase forces a CI re-watch. The helper rebases nothing; it reports `REBASE=needed` only when the PR is not `MERGEABLE` + `CLEAN`/`UNSTABLE` or a file changed on both sides since the merge-base.
+- Feature PRs land as merge-commits (#459), so an advanced base alone is not a reason to rebase, and a needless rebase forces a CI re-watch. The helper rebases nothing; it reports `REBASE=needed` only when the PR is not `MERGEABLE` (after settling `UNKNOWN`), `DIRTY`, or a file changed on both sides since the merge-base.
 - Mergeability is read in Step 8, never from the preflight's `REASON`: `REASON` carries exactly one advisory, so a concurrent `ci-pending` hides `mergeable` and the PR would strand on the gate's `block-mergeable` (#1445). That query is not a rollup read, so the CI-wait hook stays out of scope.
 
 ## Output

@@ -34,6 +34,12 @@ calib() {
   bash "$CALIBCTL" "$@"
 }
 
+# t_add_quoted_task — add a task whose title holds a comma and a double quote,
+# for cases that check how output handles awkward titles. Prints the new id.
+t_add_quoted_task() {
+  calib add 'say "hi", then leave' --priority low
+}
+
 assert_eq() {
   local expected="$1" actual="$2" label="$3"
   if [ "$expected" = "$actual" ]; then

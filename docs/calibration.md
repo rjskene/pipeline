@@ -2,7 +2,7 @@
 
 Real-work retros cannot isolate cause: every cycle's workload differs, so a cost or
 latency delta between cycles says nothing about the harness. The calibration slate
-holds the *inputs* fixed — same sandbox repo, same six issues, same base commit —
+holds the *inputs* fixed — same sandbox repo, same nine issues, same base commit —
 so the harness version under test is the only variable. It doubles as the
 end-to-end regression suite the unit tests are not.
 
@@ -14,7 +14,7 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   project (scripts, tests, docs, CI workflow, `pipeline.config`, seeded labels).
 - **Clone location:** `${PIPELINE_CALIB_DIR:-$HOME/.claude/calib/pipeline-calib}` —
   inside the boundary the sandbox session already allows, so no config change.
-- **Slate:** six template issues committed at tag `calib-base`, each with a
+- **Slate:** nine template issues committed at tag `calib-base`, each with a
   reference test and an expected-files list:
 
   | Issue | Path | Exercises |
@@ -25,6 +25,19 @@ Spec: `docs/superpowers/specs/2026-09-05-harness-evolve-loop-design.md` section 
   | body with `race`/`auth` vocabulary | B + W2 | carve-out routing to opus |
   | three independent deliverables in `lib/`, `bin/`, `docs/` | C | per-leaf worktree fan-out, cherry-pick reassembly |
   | planted boundary defect | B | pr-eval gate yield |
+  | small filter whose natural implementation silently changes untested existing behaviour (planted regression) | B | pr-eval reviewer yield — reads the diff's callers, not the summary |
+  | CSV export whose format is fixed only by the codebase's documented output conventions | B | planner reads the codebase before inventing a format |
+  | intermittently failing test whose cause is a real race | B | executor fixes the cause, not the test |
+
+  **Slate v3 (#1531).** The last three rows are the v3 probes; the trivial path
+  fails each of them, so they can tell a careful harness from a cheap one where
+  rows 1–6 (graded "was the spec implemented") cannot. Run 38 is the v3
+  baseline: `issues=` / `reftest-pass=` totals from it on are over nine issues
+  and are not comparable with v2 (six-issue) runs — compare against v2 through
+  rows 01–06 only. `tests/case-ids.sh` in the template is the deliberately
+  flaky 09 case, so until 09 is fixed the sandbox suite (and any reference test
+  that re-runs it) can go red on an unrelated row about one run in five; read a
+  stray reftest fail alongside the 09 row.
 
 ## Running
 
@@ -41,7 +54,7 @@ bash scripts/calibration-run.sh --bootstrap|--retag|--reset|--dry-run|--run \
 |---|---|---|
 | `--bootstrap` | Clone the sandbox to the calib dir if absent; verify the `calib-base` tag and the slate templates are present. Idempotent. A template sync that commits re-anchors `calib-base` to it. | no |
 | `--retag` | Force `calib-base` onto the sandbox `HEAD`, locally and on the remote — for a sandbox edited and committed by hand. No-op when the tag is already there. | no |
-| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the six slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
+| `--reset` | Close open PRs, delete every remote branch but `main`, force-reset the sandbox default branch to `calib-base`, close/delete leftover run issues, recreate the nine slate issues from their templates, and refresh `.claude/settings.local.json` from the harness template. `--reset --dry-run` previews the PR/branch sweep and the settings refresh for free. | no |
 | `--dry-run` | Print the exact `claude -p` launch (env, `--plugin-dir`, prompt, timeout) and the artifact path, then exit without launching. Use this to review a run before paying for it. | no |
 | `--run` | `--reset`, then launch the headless run, wait, and emit the `CALIB` summary. | **yes** |
 
@@ -276,15 +289,21 @@ the first line of the block.
   Flagged and never merged, so the test would have graded the unfixed tree;
   `n/a` means the run aborted before reaching the issue.
 - `unexpected-files` — files touched beyond the issue's expected-files list.
-- `planted` — a per-RUN atom on the `CALIB-TOTAL` line only: did the slate's
-  planted-boundary-defect issue escape the pr-eval gate? Graded gate-first:
+- `planted` — a per-RUN atom on the `CALIB-TOTAL` line only: did a slate
+  planted-defect issue (every `*planted*` dir: `06-planted-defect` and, since
+  slate v3, `07-planted-regression`) escape the pr-eval gate? Each planted row
+  is graded gate-first:
 
   | observation | grade |
   |---|---|
   | pr-eval verdict is `Flagged` | `caught`, regardless of `reftest` — the escape was stopped at the gate, so a tree the fix never reached says nothing |
   | `reftest=pass` | `caught` — the boundary was implemented correctly |
   | `reftest=fail` with a non-Flagged pr verdict | `missed` — a defective PR passed the gate |
-  | no `*planted*` slate dir, or the row was neither flagged nor graded | `n/a` |
+  | the row was neither flagged nor graded | ungraded |
+
+  The atom aggregates across the planted rows (#1531): `missed` if ANY planted
+  row missed; `caught` only when EVERY planted row was caught; otherwise `n/a`
+  (no `*planted*` dir, or a planted row went ungraded with none missed).
 - `hooks` — a per-RUN atom on the `CALIB-TOTAL` line only: `on` (default) or
   `off`, the arm `--hooks` launched under (#1409, see Running above).
 - `bexec` — a per-RUN atom on the `CALIB-TOTAL` line only, and the only

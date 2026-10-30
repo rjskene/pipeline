@@ -150,7 +150,7 @@ Only a **trusted-authored** `## Implementation Plan` counts: OWNER / MEMBER / CO
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/transition-issue.sh" <N> --to plan-reviewed --from plan-pending
    ```
-   Revise: no label change (`plan-pending` stays).
+   Revise: no label change (`plan-pending` stays by design; the fullsend gate arm approves or re-plans).
 
 7. **Report:** end with zero or more `HARNESS-FRICTION: <what the doc/hook said> | <what was true>` lines.
 

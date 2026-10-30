@@ -1,6 +1,6 @@
 # The calibration slate
 
-Six canned issues, filed against the sandbox built from `dev/calib/template`,
+Nine canned issues, filed against the sandbox built from `dev/calib/template`,
 chosen to cover the routing shapes a calibration run needs to distinguish.
 
 | dir | shape | expected routing pressure | path |
@@ -11,6 +11,16 @@ chosen to cover the routing shapes a calibration run needs to distinguish.
 | `04-race-auth` | a concurrency bug with an explicitly under-specified fix | high uncertainty | B |
 | `05-two-dir`   | three independent deliverables in `lib/`, `bin/`, `docs/`, each with its own test | PATH C fan-out | C |
 | `06-planted-defect` | a feature with a planted boundary defect the PR evaluator should catch | pr-eval gate yield | B |
+| `07-planted-regression` | a small filter whose natural implementation silently changes untested existing behaviour | pr-eval reviewer yield | B |
+| `08-underspecified-convention` | an output format fixed only by the codebase's documented conventions | planner reads the codebase | B |
+| `09-flaky-root-cause` | an intermittent test whose cause is a real race | executor fixes the cause, not the test | B |
+
+**Slate v3** (#1531) is rows 07–09: nine issues from calibration run 38 on, so
+run totals are not comparable with v2 (six-issue) runs — compare against v2
+through rows 01–06, which are unchanged. `planted=` grades every `*planted*`
+row (06 and 07): `missed` if any missed, `caught` only when all were caught.
+The template's `tests/case-ids.sh` is 09's deliberately flaky case; it stays
+red about one run in five until 09 is fixed.
 
 `path` is the expected classification. `scripts/calibration-run.sh` reads this
 column and appends `path-mismatch=<path>` to a `CALIB` line whose classified

@@ -50,6 +50,11 @@
 #         (default `next`) is ALSO accepted when the PR's issue carries
 #         ${PIPELINE_NEXT_LABEL:-next} or the legacy alias
 #         `next-major-release`; otherwise a `next` base still blocks.
+#       - An UNKNOWN mergeable (GitHub computes it lazily) is settled before
+#         block-mergeable (#1545): re-read `--json mergeable,mergeStateStatus`
+#         (never the rollup) every PIPELINE_MERGEABILITY_POLL_SECS (default 5)
+#         up to PIPELINE_MERGEABILITY_POLL_MAX total reads (default 12, the
+#         rollup read counting as #1); still UNKNOWN => block-mergeable.
 #   parse_manual_merge_argv <args>...
 #       - sets MANUAL_MERGE=1 when --manual-merge appears in argv at any
 #         position; prints the remaining args (one per line) to stdout.
@@ -219,11 +224,21 @@ auto_merge_should_fire() {
     return 1
   fi
   mergeable=$(echo "$rollup" | jq -r '.mergeable' 2>/dev/null | tr -d '\r')
+  mergestate=$(echo "$rollup" | jq -r '.mergeStateStatus' 2>/dev/null | tr -d '\r')
+  # Settle a lazily-computed UNKNOWN (#1545): re-read mergeability only (never
+  # the rollup), the rollup read counting as read 1.
+  local _amg_reads=1 _amg_view
+  while [ "$mergeable" = "UNKNOWN" ] && [ "$_amg_reads" -lt "${PIPELINE_MERGEABILITY_POLL_MAX:-12}" ]; do
+    sleep "${PIPELINE_MERGEABILITY_POLL_SECS:-5}"
+    _amg_view=$(gh pr view "$pr" --repo "$PIPELINE_REPO" --json mergeable,mergeStateStatus 2>/dev/null)
+    mergeable=$(echo "$_amg_view" | jq -r '.mergeable' 2>/dev/null | tr -d '\r')
+    mergestate=$(echo "$_amg_view" | jq -r '.mergeStateStatus' 2>/dev/null | tr -d '\r')
+    _amg_reads=$((_amg_reads + 1))
+  done
   if [ "$mergeable" != "MERGEABLE" ]; then
     echo block-mergeable
     return 1
   fi
-  mergestate=$(echo "$rollup" | jq -r '.mergeStateStatus' 2>/dev/null | tr -d '\r')
   if [ "$mergestate" != "CLEAN" ]; then
     echo block-mergestate
     return 1
