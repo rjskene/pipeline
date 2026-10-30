@@ -282,6 +282,29 @@ else
   pass_msg "no --post -> no gh issue comment"
 fi
 
+# --- (12) pipeline.config.example knobs ---
+inc_case "(12) pipeline.config.example documents the telemetry knobs; script reads them with defaults"
+EXAMPLE="$REPO_ROOT/pipeline.config.example"
+if grep -qxF '#PIPELINE_TELEMETRY_REPO="rjskene/pipeline"' "$EXAMPLE" \
+   && grep -qxF '#PIPELINE_TELEMETRY_ISSUE=1615' "$EXAMPLE"; then
+  pass_msg "example carries the commented #PIPELINE_TELEMETRY_REPO / #PIPELINE_TELEMETRY_ISSUE keys"
+else
+  fail_msg "example must carry #PIPELINE_TELEMETRY_REPO=\"rjskene/pipeline\" and #PIPELINE_TELEMETRY_ISSUE=1615"
+fi
+BLOCK12="$(sed -n '/^# --- Telemetry export (#1617) ---/,/^#PIPELINE_TELEMETRY_ISSUE=/p' "$EXAMPLE")"
+if printf '%s' "$BLOCK12" | grep -qF -- '--post' && printf '%s' "$BLOCK12" | grep -qiF 'public' \
+   && printf '%s' "$BLOCK12" | grep -qF 'gh identity'; then
+  pass_msg "the telemetry comment block mentions --post, public and gh identity"
+else
+  fail_msg "the '# --- Telemetry export (#1617) ---' block must mention --post, public and gh identity"
+fi
+if grep -qF '${PIPELINE_TELEMETRY_REPO:-rjskene/pipeline}' "$EXPORT" \
+   && grep -qF '${PIPELINE_TELEMETRY_ISSUE:-1615}' "$EXPORT"; then
+  pass_msg "script reads \${PIPELINE_TELEMETRY_REPO:-rjskene/pipeline} / \${PIPELINE_TELEMETRY_ISSUE:-1615}"
+else
+  fail_msg "script must read the telemetry knobs with :- defaults"
+fi
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
