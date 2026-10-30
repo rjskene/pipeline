@@ -1,5 +1,78 @@
 # Changelog
 
+## [0.25.4](https://github.com/rjskene/pipeline/compare/v0.25.3...v0.25.4) (2026-10-30)
+
+
+### Features
+
+* **calib:** slate 08 underspecified-convention probe ([00cf04b](https://github.com/rjskene/pipeline/commit/00cf04bfc7ab453bc587634d3309e445b6a04ccd))
+* **calib:** slate 09 flaky-root-cause probe ([417d0f7](https://github.com/rjskene/pipeline/commit/417d0f7dd08fa5bde4846f7de131b6d772a94fb2))
+* **calib:** slate v3 — regression, convention and flaky-test probes ([eb58b4a](https://github.com/rjskene/pipeline/commit/eb58b4afe6e095d3c836085bbe32879d76102bd0))
+* **calib:** slate v3 — regression, convention and flaky-test probes the current slate cannot fail ([0e03dc1](https://github.com/rjskene/pipeline/commit/0e03dc1d182d7c6b07d5b0f19bb5836fd38097eb))
+* **dispatch:** add stage-reader and stage-executor agent types ([75a12c5](https://github.com/rjskene/pipeline/commit/75a12c517cdc9b2471fd361ea4c44d9a791d4239))
+* **dispatch:** lean per-stage agent types ([4c0a4c3](https://github.com/rjskene/pipeline/commit/4c0a4c36a3f063df090ed2a1eb10d52d8ebc7620))
+* **dispatch:** lean per-stage agent types — stop booting stage agents with the full tool catalogue ([94172b1](https://github.com/rjskene/pipeline/commit/94172b1a174f2c062f2d11982a8389f08c685d67))
+* **evaluate-issue-pr:** delta-scoped re-evaluation after a rebase-fix ([728ee7c](https://github.com/rjskene/pipeline/commit/728ee7c79555f12d828bb1e95751da71bfe0d5cb))
+* **evaluate-issue-pr:** delta-scoped re-evaluation after a rebase-fix ([0e5b765](https://github.com/rjskene/pipeline/commit/0e5b7657db8c41bb4f06a7e56dd1401e8c51bc85))
+* **evaluate-issue-pr:** interdiff helper for rebase-fix re-evaluation ([a341ae4](https://github.com/rjskene/pipeline/commit/a341ae4b2276e6e0575a5970108803fad0ae3759))
+* **fullsend:** fullsend-merge-rebase.sh — deterministic merge-time rebase ([fde2e69](https://github.com/rjskene/pipeline/commit/fde2e692e47e56fd77949c14933f0c5e46127a74)), closes [#1536](https://github.com/rjskene/pipeline/issues/1536)
+* **fullsend:** inline execute dispatch width is a knob, default whole wave ([745d56a](https://github.com/rjskene/pipeline/commit/745d56a995fd891e5d5930bd117b0b7c5b15fc47))
+* **fullsend:** inline execute dispatch width is a knob, default whole wave ([d20dbf1](https://github.com/rjskene/pipeline/commit/d20dbf188583afe1d0117068b1fd0075b9b96e43))
+* **fullsend:** merge loop hands back needs-fix/block-ci, reruns failed CI once ([435a17e](https://github.com/rjskene/pipeline/commit/435a17e022bdc71756772ea9ef5d76321021b5a1))
+* **fullsend:** merge loop relays head=&lt;sha&gt; on needs-fix ([cf52740](https://github.com/rjskene/pipeline/commit/cf5274054f0033c71c7298cceb87f9aea31e991b))
+* **fullsend:** merge loop waits for CI on rebased PRs ([653a8ab](https://github.com/rjskene/pipeline/commit/653a8abb43c28891ef9016fb1499e389845da4e7))
+* **fullsend:** merge rebase reports the pre-rebase HEAD on conflict ([7dd2703](https://github.com/rjskene/pipeline/commit/7dd270314fcd9980e32416685bfd259086a1f6e3))
+* **fullsend:** optimistic parallel execute — rebase at merge instead of file-conflict waves ([582abc5](https://github.com/rjskene/pipeline/commit/582abc525cd43bbf04cbec70f9b9389933bc448f))
+* **fullsend:** optimistic parallel execute — rebase at merge instead of file-conflict waves ([7b97a6a](https://github.com/rjskene/pipeline/commit/7b97a6ac1fd63d8d6b52ec6e0e03edcb68c12a4c)), closes [#1536](https://github.com/rjskene/pipeline/issues/1536)
+* **fullsend:** script-driven merge loop (fullsend-merge-loop.sh) ([d25a77e](https://github.com/rjskene/pipeline/commit/d25a77ee130fdfef2c18f948af132a9b421ad825))
+* **fullsend:** script-driven merge loop (fullsend-merge-loop.sh) ([8a6cc6b](https://github.com/rjskene/pipeline/commit/8a6cc6b17d1f2ea76089d585fe1b7d0a24e5c794))
+* **plan-waves:** PIPELINE_OPTIMISTIC_EXECUTE skips execute-stage file-conflict waving ([3bfbe62](https://github.com/rjskene/pipeline/commit/3bfbe623432f71e50d31d5acb3d7ad4115bf3ff3)), closes [#1536](https://github.com/rjskene/pipeline/issues/1536)
+* script-driven merge loop, parallel wave reads, delta re-eval, whole-wave execute dispatch ([dfcf249](https://github.com/rjskene/pipeline/commit/dfcf24994aec50e66f0a50b376fd8038fd287b46))
+* script-driven merge loop, parallel wave reads, delta re-eval, whole-wave execute dispatch ([#1611](https://github.com/rjskene/pipeline/issues/1611)) ([1fe77bc](https://github.com/rjskene/pipeline/commit/1fe77bc408177f29b6ac550625d928f1b3525050))
+
+
+### Bug Fixes
+
+* **calib:** aggregate planted= across every planted slate row ([f5415cd](https://github.com/rjskene/pipeline/commit/f5415cd8de4eabca3023d73e2d53de07d4c83d46))
+* **calib:** count unexpected-files only from the PR that closes the issue ([#1523](https://github.com/rjskene/pipeline/issues/1523)) ([fc31e73](https://github.com/rjskene/pipeline/commit/fc31e73b4056c193dce6c5681674376850f8ec09))
+* **calib:** unexpected-files counts PRs that merely mention the issue number ([d321258](https://github.com/rjskene/pipeline/commit/d321258b0bd19c476f37d04c56c5d18150442458))
+* **dispatch:** drop the Skill tool from stage agent types ([209adcc](https://github.com/rjskene/pipeline/commit/209adcc46cc7027999344f631a6ff547507c1d44)), closes [#1534](https://github.com/rjskene/pipeline/issues/1534)
+* **dispatch:** drop the Skill tool from stage agent types — the skills catalogue costs 9.5k tokens per boot ([ca2d4fe](https://github.com/rjskene/pipeline/commit/ca2d4fecead0d9395f708af2202cfd37fa7a1615))
+* **dispatch:** give plan-eval its own terminal contract — Revise leaves plan-pending by design ([d8f903b](https://github.com/rjskene/pipeline/commit/d8f903bdb86d83025d9d5a10697c2c1b4b42a646))
+* **dispatch:** give plan-eval its own terminal contract — Revise leaves plan-pending by design ([b385a13](https://github.com/rjskene/pipeline/commit/b385a1356eb69ede5b7374067dbc68258c97c6d5)), closes [#1541](https://github.com/rjskene/pipeline/issues/1541)
+* **dispatch:** keep fullsend within its word ceiling ([36bfacc](https://github.com/rjskene/pipeline/commit/36bfaccdbb0193b3ce2b1c92317d776fbea8f971)), closes [#1534](https://github.com/rjskene/pipeline/issues/1534)
+* **dispatch:** keep PATH B on the inline pr-eval mode line ([d551bcd](https://github.com/rjskene/pipeline/commit/d551bcd627017902d94321935b190560a0990f09)), closes [#1534](https://github.com/rjskene/pipeline/issues/1534)
+* **dispatch:** stage prompts load the skill by Read ([bf42d14](https://github.com/rjskene/pipeline/commit/bf42d14df2865d00e5ef0c2fd971ea589789fcb1)), closes [#1534](https://github.com/rjskene/pipeline/issues/1534)
+* evaluation fixes for [#1548](https://github.com/rjskene/pipeline/issues/1548) — O1 bound -lt 3 (serial is 3 s on base) ([2dc9080](https://github.com/rjskene/pipeline/commit/2dc9080e0580c74c9eb55b1fdce332dff9f7a4d7))
+* **fullsend:** list every conflicting path in merge-rebase FILES= ([6bfaf22](https://github.com/rjskene/pipeline/commit/6bfaf22843a940e9f306e78ec119ccc5ff26563a))
+* **fullsend:** merge loop counts a CI wait only when checks were observed ([bd58678](https://github.com/rjskene/pipeline/commit/bd58678aadc85422d22ec74928729f8802e122c9))
+* **fullsend:** merge loop settles the post-watch rollup ([2707a44](https://github.com/rjskene/pipeline/commit/2707a44c45dc6e3a77bc3647214e358f5cc82717))
+* **fullsend:** merge loop settles the post-watch rollup and logs its stderr ([493f601](https://github.com/rjskene/pipeline/commit/493f601d593e3158968a93772221f6880c95c000))
+* **fullsend:** merge loop settles transient merge-state and CI registration instead of labelling ([cc9d232](https://github.com/rjskene/pipeline/commit/cc9d2320bd7c04f4dceba9ea2d12be57ccd199c5))
+* **fullsend:** merge loop settles transient merge-state and CI registration instead of labelling ([99affde](https://github.com/rjskene/pipeline/commit/99affde77d3350a4b0ba0d05f6ceaa219e8a4b2a)), closes [#1555](https://github.com/rjskene/pipeline/issues/1555)
+* **fullsend:** merge loop tees its stderr to a scratch log ([29a8894](https://github.com/rjskene/pipeline/commit/29a88945f3a8845568597033f39e8148da898fff))
+* **fullsend:** namespace-safe rebase-check reference in fullsend-merge-rebase.sh ([c594d1b](https://github.com/rjskene/pipeline/commit/c594d1b4c3b794c99cf0493538ca413ef96804dd))
+* **fullsend:** re-entry allows a rebase-fix per new conflict file set ([9cb59df](https://github.com/rjskene/pipeline/commit/9cb59df5801b47dff8cf674b8ee194e23a368e78))
+* **fullsend:** re-gate each PR immediately before merging ([2723ce4](https://github.com/rjskene/pipeline/commit/2723ce40c4cecb20eaa2abfa12b28d4edac9ccd9))
+* **fullsend:** re-gate each PR immediately before merging ([de642aa](https://github.com/rjskene/pipeline/commit/de642aa641c39a9eba06f64b2e8e327de7fe13e2)), closes [#1540](https://github.com/rjskene/pipeline/issues/1540)
+* **fullsend:** rebase-fix prompt declares it carries no stage skill ([5f58cc5](https://github.com/rjskene/pipeline/commit/5f58cc511feee03b79dcc6fa10b0f052a7a5ca8e))
+* **fullsend:** rebase-fix prompt declares it carries no stage skill ([4c3c925](https://github.com/rjskene/pipeline/commit/4c3c925ec5bf0e196e9d9052d20bc3ed153cbd83))
+* **fullsend:** registration settle waits for the pushed head's checks ([c5ed472](https://github.com/rjskene/pipeline/commit/c5ed47282cf8fe7c7bd1315979845e4fbe9e2511))
+* **fullsend:** settle UNKNOWN mergeability before deciding; never rebase a non-overlapping PR ([313745d](https://github.com/rjskene/pipeline/commit/313745d9c9bb6a384b0e87b05c0e7d3689904e84))
+* **fullsend:** settle UNKNOWN mergeability before deciding; never rebase a non-overlapping PR ([0db4d02](https://github.com/rjskene/pipeline/commit/0db4d02e5c0179dfc764f72a912d7699f6b9cc5f))
+* **fullsend:** settle UNKNOWN mergeability in the auto-merge gate ([e00a2e7](https://github.com/rjskene/pipeline/commit/e00a2e730a983d798a44b4931d57aa77af65ec26))
+* **pr-eval:** trust the green rollup when the preflight line carries the fullsend issue prefix ([3b61201](https://github.com/rjskene/pipeline/commit/3b612013abea7e30fde010127af92579251fb907))
+* **pr-eval:** trust the green rollup when the preflight line carries the fullsend issue prefix ([07e123d](https://github.com/rjskene/pipeline/commit/07e123d610a0615cf3aaacd994508bca93e91b63)), closes [#1539](https://github.com/rjskene/pipeline/issues/1539)
+
+
+### Performance Improvements
+
+* **fullsend:** parallelize per-issue gh reads in the wave helpers ([7b69311](https://github.com/rjskene/pipeline/commit/7b693115ff1a0f9fa6be5c3ad8fc8844e2d2c151))
+* **fullsend:** parallelize per-issue gh reads in the wave helpers ([7107fcb](https://github.com/rjskene/pipeline/commit/7107fcb07aaa1b6614197e1ab3c9a52f131e8c4b)), closes [#1548](https://github.com/rjskene/pipeline/issues/1548)
+* **fullsend:** parallelize per-issue gh reads in the wave helpers ([6b50632](https://github.com/rjskene/pipeline/commit/6b50632147dc157d11f0fe37836259c0d5a82dc6)), closes [#1548](https://github.com/rjskene/pipeline/issues/1548)
+* **fullsend:** parallelize per-issue gh reads in the wave helpers ([187b44b](https://github.com/rjskene/pipeline/commit/187b44bde3a43fa261c6ab04f09d1718ed0b6f2e)), closes [#1548](https://github.com/rjskene/pipeline/issues/1548)
+* **fullsend:** parallelize per-issue gh reads in the wave helpers ([37554c0](https://github.com/rjskene/pipeline/commit/37554c0ee462e0231d5b6e2f6ebd124b81e90024)), closes [#1548](https://github.com/rjskene/pipeline/issues/1548)
+
 ## [0.25.3](https://github.com/rjskene/pipeline/compare/v0.25.2...v0.25.3) (2026-10-19)
 
 
