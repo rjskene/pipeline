@@ -66,6 +66,16 @@ every execute since #1420 retired the split-role RED/GREEN lane; the `red`/`gree
 rows already on disk are historical and are still parsed and priced, so windows
 spanning the cutover keep reporting.
 
+## Telemetry export (`/pipeline:tokenomics --export`)
+
+`/pipeline:tokenomics --export [--post] [--dry-run] [--since D] [--until D]` (#1617) runs the Step-1 backfill, then `scripts/tokenomics-export.sh`, which renders a redacted cost summary of this repo's own `agent-costs.jsonl`. Gated by `PIPELINE_LOGS_ENABLED` (gated off: `SKIP_LOGGING_DISABLED`, exit 0, no writes). Default window: 30 inclusive UTC days ending today, by `ts_start`.
+
+- **What is exported** — one JSON object: `schema_version` (1), `plugin_version`, `exported_at`, `window {since, until}`, `repo_id`, `records_n`, `days` (the `--emit-day-json` objects), `stages` (per `{stage, model}`: `n`, token buckets, `cost_usd`, `duration_ms_p50`, sorted by cost), `kinds` (per `agent_kind`: `n`, `cost_usd`). Records, days and pricing come from `cost-latency-report.sh` (`--emit-priced-records-json` + `--emit-day-json`), so they share one dedup, window and price table.
+- **Where it lands** — `.claude/scratch/telemetry/export-<ts>.{json,md,body.md}`; stdout prints `EXPORT json=<path> md=<path> records=<n> days=<d>`. `body.md` is the markdown plus the JSON in a fenced block.
+- **Redaction contract** — the report projects each record to `{stage, model, agent_kind, tokens, duration_ms, ts_start, cost_usd}` before it reaches the export. Never exported: agent/session ids, record keys, issue numbers, descriptions, paths, branches, hostnames, the repo name. The repo appears only as `repo_id`, the first 12 hex of `sha256(PIPELINE_REPO)`.
+- **Consent model** — only the explicit `--post` calls `gh issue comment`, under the operator's own gh identity, as a PUBLIC comment. No hook, `/pipeline:fullsend` stage or cron posts. `--dry-run` prints the body and the exact `gh issue comment … --body-file <path>` line instead. A failed post prints `POST-FAILED rc=<n>`, exits 0 and keeps the files; success prints `POSTED url=<comment url>`.
+- **Drop-box** — `${PIPELINE_TELEMETRY_REPO:-rjskene/pipeline}` issue `${PIPELINE_TELEMETRY_ISSUE:-1615}` (labels `telemetry` + `excluded`, so it stays out of every action queue). Both knobs are commented in `pipeline.config.example`; defaults live in code.
+
 ## Log retention (`scripts/prune-logs.sh`)
 
 `.claude/logs/` grows without bound once `PIPELINE_LOGS_ENABLED=true` — nothing prunes the per-issue / per-queue transcripts it accumulates. `scripts/prune-logs.sh` (issue #1353) is a retention pass over that directory, **dry run by default**:
