@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.25.6](https://github.com/rjskene/pipeline/compare/v0.25.5...v0.25.6) (2026-10-31)
+
+
+### Features
+
+* **observability:** gate log-tool-use.sh and log_subagent.py on PIPELINE_LOGS_ENABLED ([f798f76](https://github.com/rjskene/pipeline/commit/f798f7629f670f90c75949d7d094d9743f1db90f)), closes [#1616](https://github.com/rjskene/pipeline/issues/1616)
+* **observability:** publish the gated log and cost-capture hooks in the plugin manifest ([86ec0eb](https://github.com/rjskene/pipeline/commit/86ec0eb384deb87895a2e72b262dcaac7da47e2e))
+* **observability:** publish the gated log and cost-capture hooks in the plugin manifest ([139976d](https://github.com/rjskene/pipeline/commit/139976d95658536e9da5cb6f77c41d2893c8d8f4)), closes [#1616](https://github.com/rjskene/pipeline/issues/1616)
+* opt-in telemetry — tokenomics --export --post and the gated capture hooks in the plugin manifest (wave 64) ([b46c45a](https://github.com/rjskene/pipeline/commit/b46c45ac39c00b6448b981b31fd4fb48d6558f63))
+* opt-in telemetry — tokenomics --export --post and the gated capture hooks in the plugin manifest (wave 64) ([#1623](https://github.com/rjskene/pipeline/issues/1623)) ([8417c3c](https://github.com/rjskene/pipeline/commit/8417c3cd1278cb49b3fa11a7f66633aacffdb32f))
+* **tokenomics:** --export renders a redacted cost summary; --post files it on the telemetry drop-box ([624c3c1](https://github.com/rjskene/pipeline/commit/624c3c1a74af00536eef9413e545b7c0f1b11781))
+* **tokenomics:** --export renders a redacted cost summary; --post files it on the telemetry drop-box ([3328bac](https://github.com/rjskene/pipeline/commit/3328bac31d3fccf75713f7360d38b9a76619b7d7))
+* **tokenomics:** /pipeline:tokenomics --export relays the redacted export ([e6d05a3](https://github.com/rjskene/pipeline/commit/e6d05a36cfe0df723f9064d9e92ec3dc42dbeed9))
+* **tokenomics:** cost-latency-report --emit-priced-records-json machine mode ([7022590](https://github.com/rjskene/pipeline/commit/7022590383e6d64cc15fcfa195c462bce00ded8c))
+* **tokenomics:** document PIPELINE_TELEMETRY_REPO / PIPELINE_TELEMETRY_ISSUE ([12bbf7f](https://github.com/rjskene/pipeline/commit/12bbf7f4dba68f0c1599f2443f1145c966e7ff2f))
+* **tokenomics:** tokenomics-export --post / --dry-run on the telemetry drop-box ([9f7e8d6](https://github.com/rjskene/pipeline/commit/9f7e8d6ab864ab97b382d43ce995de3bcc4b4fde))
+
+
+### Bug Fixes
+
+* evaluation fixes for [#1617](https://github.com/rjskene/pipeline/issues/1617) — trailing --since/--until exits 1 instead of looping ([489a24e](https://github.com/rjskene/pipeline/commit/489a24e49aeb356ff89a5abe05781b36d4936075))
+* **tokenomics:** cost-latency-report exits 1 on a trailing --since/--until instead of spinning ([1b910ad](https://github.com/rjskene/pipeline/commit/1b910ad02a11fc2fd76cf93cc0d8634f3ac5f1f0)), closes [#1620](https://github.com/rjskene/pipeline/issues/1620)
+* **tokenomics:** cost-latency-report spins forever on a trailing --since/--until with no value ([bde721e](https://github.com/rjskene/pipeline/commit/bde721e1a6ebe10602bb7060b8c614f5ed0fe8b5))
+
 ## [0.25.5](https://github.com/rjskene/pipeline/compare/v0.25.4...v0.25.5) (2026-10-30)
 
 
