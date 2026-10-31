@@ -2952,6 +2952,25 @@ else
   fail_msg "(g) --help must mention --emit-priced-records-json"
 fi
 rm -rf "$TMP51"
+# --- Scenario 52: a trailing value-taking flag fails closed (#1620) ---
+# `--since` given last made `shift 2` a no-op, so the argv loop spun forever.
+inc_scenario "Scenario 52: trailing --since / --until with no value exits 1 (no hang)"
+ERR52="$(mktemp)"
+for flag in --since --until; do
+  timeout 20 bash "$HELPER" "$flag" >/dev/null 2>"$ERR52" </dev/null
+  RC52=$?
+  if [ "$RC52" -eq 1 ]; then
+    pass_msg "trailing $flag -> exit 1"
+  else
+    fail_msg "trailing $flag should exit 1, got rc=$RC52 (124 = hung)"
+  fi
+  if grep -qF 'Usage: cost-latency-report.sh' "$ERR52"; then
+    pass_msg "trailing $flag prints the usage line on stderr"
+  else
+    fail_msg "trailing $flag should print the usage line on stderr (got: $(head -1 "$ERR52"))"
+  fi
+done
+rm -f "$ERR52"
 
 echo ""
 echo "== RESULTS =="
