@@ -30,7 +30,8 @@ assert "hooks.PermissionRequest has exactly one entry with matcher '*'" "python3
 assert "the PermissionRequest hook runs python3 \${CLAUDE_PLUGIN_ROOT}/hooks/permission-bridge.py" "python3 -c 'import json,sys; hs=json.load(open(\"$MANIFEST\"))[\"hooks\"][\"PermissionRequest\"][0][\"hooks\"]; sys.exit(0 if len(hs)==1 and hs[0].get(\"type\")==\"command\" and hs[0].get(\"command\")==\"python3 \${CLAUDE_PLUGIN_ROOT}/hooks/permission-bridge.py\" else 1)' 2>/dev/null"
 assert "the PermissionRequest hook declares timeout 900" "python3 -c 'import json,sys; hs=json.load(open(\"$MANIFEST\"))[\"hooks\"][\"PermissionRequest\"][0][\"hooks\"]; sys.exit(0 if hs[0].get(\"timeout\")==900 else 1)' 2>/dev/null"
 assert "the PermissionRequest hook file exists under plugin root" "[ -f '$REPO_ROOT/hooks/permission-bridge.py' ]"
-assert "hooks.PostToolUse is absent (consumer install ships no log-* hooks)" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}); sys.exit(0 if \"PostToolUse\" not in h else 1)' 2>/dev/null"
+# #1616 — the gated (PIPELINE_LOGS_ENABLED) log and cost-capture hooks ship in the manifest.
+assert "hooks.PostToolUse is a non-empty array" "python3 -c 'import json,sys; h=json.load(open(\"$MANIFEST\")).get(\"hooks\",{}).get(\"PostToolUse\"); sys.exit(0 if isinstance(h,list) and h else 1)' 2>/dev/null"
 # Skills are auto-discovered from ${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md;
 # the manifest must NOT enumerate them (presence of a top-level `skills` field
 # would indicate explicit registration — wrong path).

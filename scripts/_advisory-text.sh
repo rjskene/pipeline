@@ -27,8 +27,8 @@ check-ci-skip-markers.py|capability preserved: plugin manifest registers ${CLAUD
 enforce-path-c-delegation.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-path-c-delegation.py
 restrict_paths.py|retired: the plugin no longer ships this hook — delete the local copy
 enforce-ci-wait.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/enforce-ci-wait.py
-log-tool-use.sh|dogfood-only, not part of the published plugin manifest — no functional change
-log_subagent.py|dogfood-only, not part of the published plugin manifest — no functional change
+log-tool-use.sh|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.sh (opt-in via PIPELINE_LOGS_ENABLED)
+log_subagent.py|capability preserved: plugin manifest registers ${CLAUDE_PLUGIN_ROOT}/hooks/log_subagent.py (opt-in via PIPELINE_LOGS_ENABLED)
 TABLE
   unset __k __v
 fi

@@ -77,7 +77,7 @@ run_hook() {
   local proj="$TMP/proj-$case_name"
   mkdir -p "$proj/.claude/logs"
 
-  env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$proj" python3 "$HOOK"
+  env PIPELINE_LOGS_ENABLED=true CLAUDE_PROJECT_DIR="$proj" python3 "$HOOK"
   HOOK_RC=$?
 
   JSON_FILE="$(ls -1 "$proj/.claude/logs/subagents"/*.json 2>/dev/null | head -1)"

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment": "dogfood-only. Registers (1) the PostToolUse tool-use/subagent logging hooks (issue #95) and (2) the PreToolUse enforce-comment-trust hook (issue #549) — none is part of the published plugin manifest. See CLAUDE.md > 'Observability'. Also registers (3) the SessionStart dogfood-refresh hook (issue #611) and (4) the UserPromptSubmit dogfood-heal-symlink hook (issue #624). Also registers (5) the PostToolUse(Agent) agent-cost-capture hook (issue #642; re-pointed from SubagentStop+Stop in #660 because those payloads lack usage/description, and from a Task matcher to the correct Agent tool name), gated by PIPELINE_LOGS_ENABLED.",
+  "_comment": "dogfood-only. Registers (1) the PreToolUse enforce-comment-trust hook (issue #549), (2) the SessionStart dogfood-refresh hook (issue #611) and (3) the UserPromptSubmit dogfood-heal-symlink hook (issue #624) — none is part of the published plugin manifest. The tool-use/subagent logging hooks and the agent-cost-capture hook are no longer registered here: since #1616 they ship in the published plugin manifest, gated by PIPELINE_LOGS_ENABLED, and the dogfood local-marketplace install loads that manifest (registering them here too would double-fire). See CLAUDE.md > 'Observability'.",
   "hooks": {
     "PreToolUse": [
       {
@@ -33,30 +33,6 @@
         ]
       }
     ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PROJECT_DIR:-.}/hooks/log-tool-use.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ${CLAUDE_PROJECT_DIR:-.}/hooks/log_subagent.py"
-          },
-          {
-            "type": "command",
-            "command": "python3 ${CLAUDE_PROJECT_DIR:-.}/hooks/capture_agent_cost.py"
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "matcher": "*",
@@ -73,17 +49,6 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PROJECT_DIR:-.}/hooks/doctor-on-update.sh"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ${CLAUDE_PROJECT_DIR:-.}/hooks/capture_agent_cost.py"
           }
         ]
       }

@@ -50,7 +50,7 @@ PAYLOAD='{
   }
 }'
 
-env -u PIPELINE_LOGS_ENABLED CLAUDE_PROJECT_DIR="$PROJ" \
+env PIPELINE_LOGS_ENABLED=true CLAUDE_PROJECT_DIR="$PROJ" \
   python3 "$HOOK" <<<"$PAYLOAD" \
   || fail "hook exited non-zero"
 
