@@ -1,6 +1,6 @@
 ---
 name: tokenomics
-description: Dogfood-only usage analysis — backfill agent token costs then render the per-bucket/stage/structure cost+latency report with B→D breakeven, coverage-health, trend, and concurrency assessment over the gated agent-costs log. Usage: /pipeline:tokenomics
+description: Dogfood-only usage analysis — backfill agent token costs then render the per-bucket/stage/structure cost+latency report with B→D breakeven, coverage-health, trend, and concurrency assessment over the gated agent-costs log; --export renders a redacted summary (--post files it on the telemetry drop-box). Usage: /pipeline:tokenomics [--export [--post] [--dry-run] [--since D] [--until D]]
 disable-model-invocation: false
 allowed-tools: Read, Bash, Glob, Grep
 ---
@@ -30,6 +30,16 @@ backfill (capture-agent-costs.sh) → report (cost-latency-report.sh --tokenomic
 ```
 
 This is a two-script pipeline: a retroactive backfill that refreshes the gated cost log, then the tokenomics report that joins it against merged PRs. The scripts print to stdout/stderr but their output is **not** user-visible on its own — you MUST relay every table into the assistant reply (Step 3).
+
+## Export mode (--export)
+
+With `--export`, run Step 1, then this in place of Steps 2–4 (`<flags>` = the `--post` / `--dry-run` / `--since` / `--until` you were given):
+
+```bash
+PIPELINE_REPO="$PIPELINE_REPO" PIPELINE_LOGS_ENABLED="$PIPELINE_LOGS_ENABLED" PIPELINE_TELEMETRY_REPO="${PIPELINE_TELEMETRY_REPO:-}" PIPELINE_TELEMETRY_ISSUE="${PIPELINE_TELEMETRY_ISSUE:-}" CLAUDE_PROJECT_DIR="$(pwd)" bash "${CLAUDE_PLUGIN_ROOT}/scripts/tokenomics-export.sh" <flags>
+```
+
+Relay the `EXPORT` / `POSTED` / `POST-FAILED` line and the markdown verbatim. `--post` is the only consent: never add it yourself.
 
 ## Step 1 — Backfill
 

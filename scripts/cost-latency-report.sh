@@ -56,6 +56,7 @@ SINCE=""
 UNTIL=""
 PERDAY=0
 EMIT_DAY_JSON=0
+EMIT_PRICED_RECORDS_JSON=0
 HISTORY=""
 
 print_usage() {
@@ -118,6 +119,14 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
                        active_loc, per_loc{...|null}, priced_n, cost{...},
                        cost_per_n, cost_per_loc, usage_complete_floor}. Consumed
                        by snapshot-tokenomics-history.sh.
+  --emit-priced-records-json
+                       Machine mode: emit one compact JSON object per
+                       reconciled capture record (same dedup / usage_complete /
+                       [--since,--until] window as the tables; JSON Lines) and
+                       exit 0. Each object carries ONLY {stage, model,
+                       agent_kind, tokens, duration_ms, ts_start, cost_usd};
+                       cost_usd is null for model=="" rows. Consumed by
+                       tokenomics-export.sh (#1617).
   --history PATH       Render a table from a persisted per-day store (the JSON
                        Lines written by snapshot-tokenomics-history.sh) instead
                        of the live capture log. Reads ONLY the store — no PR
@@ -128,29 +137,40 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
 USAGE
 }
 
+# need_value FLAG ARGC — a trailing value-taking flag would make `shift 2` a
+# no-op (infinite loop); fail closed with the usage line instead (#1620).
+need_value() {
+  if [ "$2" -lt 2 ]; then
+    echo "cost-latency-report: ERROR: $1 needs a value" >&2
+    print_usage >&2
+    exit 1
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)            print_usage; exit 0 ;;
-    --limit)              LIMIT="${2:-}"; shift 2 ;;
+    --limit)              need_value "$1" $#; LIMIT="$2"; shift 2 ;;
     --limit=*)            LIMIT="${1#--limit=}"; shift ;;
-    --fixture)            FIXTURE_DIR="${2:-}"; shift 2 ;;
+    --fixture)            need_value "$1" $#; FIXTURE_DIR="$2"; shift 2 ;;
     --fixture=*)          FIXTURE_DIR="${1#--fixture=}"; shift ;;
     --dry-run)            DRY_RUN=1; shift ;;
     --emit-rows-json)     EMIT_ROWS_JSON=1; shift ;;
     --emit-pricing-json)  EMIT_PRICING_JSON=1; shift ;;
     --tokenomics)         TOKENOMICS=1; shift ;;
-    --over-served-loc)    OVER_SERVED_LOC="${2:-}"; shift 2 ;;
+    --over-served-loc)    need_value "$1" $#; OVER_SERVED_LOC="$2"; shift 2 ;;
     --over-served-loc=*)  OVER_SERVED_LOC="${1#--over-served-loc=}"; shift ;;
-    --top-n)              TOPN="${2:-}"; shift 2 ;;
+    --top-n)              need_value "$1" $#; TOPN="$2"; shift 2 ;;
     --top-n=*)            TOPN="${1#--top-n=}"; shift ;;
-    --capture-log)        CAPTURE_LOG="${2:-}"; shift 2 ;;
+    --capture-log)        need_value "$1" $#; CAPTURE_LOG="$2"; shift 2 ;;
     --capture-log=*)      CAPTURE_LOG="${1#--capture-log=}"; shift ;;
-    --since)              SINCE="${2:-}"; shift 2 ;;
+    --since)              need_value "$1" $#; SINCE="$2"; shift 2 ;;
     --since=*)            SINCE="${1#--since=}"; shift ;;
-    --until)              UNTIL="${2:-}"; shift 2 ;;
+    --until)              need_value "$1" $#; UNTIL="$2"; shift 2 ;;
     --until=*)            UNTIL="${1#--until=}"; shift ;;
     --per-day)            PERDAY=1; shift ;;
     --emit-day-json)      EMIT_DAY_JSON=1; shift ;;
+    --emit-priced-records-json) EMIT_PRICED_RECORDS_JSON=1; shift ;;
     --history)
       # Optional PATH arg: bare --history (or followed by another flag) uses the
       # default resolved store via the __DEFAULT__ sentinel.
@@ -1047,6 +1067,40 @@ if [ "$EMIT_PRICING_JSON" -eq 1 ]; then
       output_complete_rows: $oc_complete, output_incomplete_rows: $oc_incomplete}'
   # stdout stays pure JSON; the #1470 disclosure goes to stderr.
   output_note_line "${_oc_incomplete:-0}" >&2
+  exit 0
+fi
+
+# --- emit one priced, redacted object per reconciled record (#1617) ---
+# Same substrate as compute_pricing / priced_records_tsv (one price table, one
+# dedup/window). Projects to 7 non-identifying keys so ids, issue numbers and
+# descriptions never leave this process. stdout stays pure JSON Lines; price
+# WARNs go to stderr.
+if [ "$EMIT_PRICED_RECORDS_JSON" -eq 1 ]; then
+  _PRJ_PROJECT='{stage: (.stage // ""), model: (.model // ""), agent_kind: (.agent_kind // ""),
+    tokens: ((.tokens // {}) | {input: (.input // 0), output: (.output // 0),
+      cache_creation: (.cache_creation // 0), cache_read: (.cache_read // 0), total: (.total // 0)}),
+    duration_ms: (.duration_ms // null), ts_start: (.ts_start // null), cost_usd: $cost}'
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    model="$(printf '%s' "$line" | jqr -r '.model // ""' 2>/dev/null)"
+    if [ -z "$model" ] || [ "$model" = "null" ]; then
+      printf '%s' "$line" | jqr -c --argjson cost null "$_PRJ_PROJECT" 2>/dev/null
+      continue
+    fi
+    norm="$(price_model_normalize "$model")"
+    price_check_row "$norm" "$model"
+    r_in="$(price_rate "$norm" INPUT)"
+    r_out="$(price_rate "$norm" OUTPUT)"
+    r_cc="$(price_rate "$norm" CACHE_CREATION)"
+    r_cr="$(price_rate "$norm" CACHE_READ)"
+    _prj_cost="$(printf '%s' "$line" | jqr -r '
+        .tokens // {} | [(.input//0),(.output//0),(.cache_creation//0),(.cache_read//0)] | @tsv' 2>/dev/null \
+      | awk -F'\t' -v ri="$r_in" -v ro="$r_out" -v rcc="$r_cc" -v rcr="$r_cr" '
+          { t = ($1/1e6)*ri + ($2/1e6)*ro + ($3/1e6)*rcc + ($4/1e6)*rcr }
+          END { printf "%.6f", t }')"
+    [ -z "$_prj_cost" ] && _prj_cost=null
+    printf '%s' "$line" | jqr -c --argjson cost "$_prj_cost" "$_PRJ_PROJECT" 2>/dev/null
+  done < <(printf '%s' "$CAPTURE_JSON" | jqr -c '.[]' 2>/dev/null)
   exit 0
 fi
 

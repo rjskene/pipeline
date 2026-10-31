@@ -180,12 +180,17 @@ else
 fi
 
 # #1404: Claude Code refuses ${CLAUDE_PLUGIN_ROOT} in a settings-level hook —
-# the template keeps the placeholder to document intent, but calibration-run.sh
-# substitutes it for the absolute staged-harness path on every reset. The
-# $comment has to say so, or a reader sees a dead-looking variable with no clue
-# the launcher is the one making it work.
+# when the template carries the placeholder, calibration-run.sh substitutes it
+# for the absolute staged-harness path on every reset, and the $comment has to
+# say so, or a reader sees a dead-looking variable with no clue the launcher is
+# the one making it work. Since #1616 the template carries no hooks (they come
+# from the plugin manifest via --plugin-dir), so the check applies only when a
+# placeholder is present.
 comment=$(python3 -c "import json; print(json.load(open('$settings')).get('\$comment', ''))" 2>/dev/null)
-if printf '%s' "$comment" | grep -qi 'substitut'; then
+body_sans_comment=$(python3 -c "import json; d=json.load(open('$settings')); d.pop('\$comment', None); print(json.dumps(d))" 2>/dev/null)
+if ! printf '%s' "$body_sans_comment" | grep -qF '${CLAUDE_PLUGIN_ROOT}'; then
+  pass_msg 'template carries no ${CLAUDE_PLUGIN_ROOT} placeholder (no launcher substitution to document)'
+elif printf '%s' "$comment" | grep -qi 'substitut'; then
   pass_msg '$comment documents that the launcher substitutes ${CLAUDE_PLUGIN_ROOT}'
 else
   fail_msg '$comment does not document the launcher substitution of ${CLAUDE_PLUGIN_ROOT}'
@@ -219,27 +224,47 @@ for entry in "mcp__playwright" "Bash(python3 -m http.server:*)"; do
 done
 
 # ---------------------------------------------------------------------------
-echo "== (c2) sandbox claude settings register the plugin logging hooks =="
+echo "== (c2) sandbox gets the logging hooks from the plugin manifest, not settings =="
 # ---------------------------------------------------------------------------
 # The sandbox must record tool use, subagent dispatches and agent cost, or a
-# calibration run grades `cost=` as n/a. The hooks live in the plugin build
-# under calibration, so every command is rooted at the plugin root — the
-# sandbox project has no hooks/ directory of its own. The dogfood-only hooks
-# (comment-trust, dogfood refresh/heal, doctor-on-update) are NOT carried.
+# calibration run grades `cost=` as n/a. Since #1616 those hooks ship (gated by
+# PIPELINE_LOGS_ENABLED) in the plugin manifest, which calibration-run.sh
+# loads via `--plugin-dir "$LAUNCH_HARNESS"` — so the template settings must
+# NOT register them too (double-firing). No `hooks` key at all is a pass. The
+# dogfood-only hooks (comment-trust, dogfood refresh/heal, doctor-on-update)
+# are still NOT carried.
 
-hooks_report=$(python3 - "$settings" <<'PY' 2>/dev/null
+hooks_report=$(python3 - "$settings" "$ROOT/.claude-plugin/plugin.json" <<'PY' 2>/dev/null
 import json, sys
 
 data = json.load(open(sys.argv[1]))
-hooks = data.get("hooks")
-if not isinstance(hooks, dict) or not hooks:
-    print("no-hooks-key")
-    sys.exit(0)
+manifest = json.load(open(sys.argv[2]))
+moved = ("log-tool-use.sh", "log_subagent.py", "capture_agent_cost.py")
+
+
+def every_command(hooks):
+    if not isinstance(hooks, dict):
+        return
+    for entries in hooks.values():
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                yield hook.get("command", "")
+
+
+tmpl = list(every_command(data.get("hooks")))
+carried_obs = [c for c in tmpl if any(m in c for m in moved)]
+print("no-observability-in-template", not carried_obs, " ".join(carried_obs))
+
+dogfood_only = ("enforce-comment-trust", "dogfood-", "doctor-on-update")
+carried = [c for c in tmpl if any(t in c for t in dogfood_only)]
+print("no-dogfood-only", not carried, " ".join(carried))
+
+mhooks = manifest.get("hooks", {})
 
 
 def commands(event, matcher):
     out = []
-    for entry in hooks.get(event, []):
+    for entry in mhooks.get(event, []):
         if entry.get("matcher") != matcher:
             continue
         for hook in entry.get("hooks", []):
@@ -247,34 +272,14 @@ def commands(event, matcher):
     return out
 
 
-def every_command():
-    for entries in hooks.values():
-        for entry in entries:
-            for hook in entry.get("hooks", []):
-                yield hook.get("command", "")
-
-
 def has(cmds, needle):
     return any(needle in cmd for cmd in cmds)
 
 
-post_star = commands("PostToolUse", "*")
-post_agent = commands("PostToolUse", "Agent")
-stop_star = commands("Stop", "*")
-
-print("has-hooks True")
-print("post-star-tool-use", has(post_star, "log-tool-use.sh"))
-print("post-agent-subagent", has(post_agent, "log_subagent.py"))
-print("post-agent-cost", has(post_agent, "capture_agent_cost.py"))
-print("stop-cost", has(stop_star, "capture_agent_cost.py"))
-
-prefixes = ("bash ${CLAUDE_PLUGIN_ROOT}/hooks/", "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/")
-stray = [c for c in every_command() if not c.startswith(prefixes)]
-print("plugin-root-rooted", not stray, " ".join(stray))
-
-dogfood_only = ("enforce-comment-trust", "dogfood-", "doctor-on-update")
-carried = [c for c in every_command() if any(t in c for t in dogfood_only)]
-print("no-dogfood-only", not carried, " ".join(carried))
+print("manifest-tool-use", has(commands("PostToolUse", "*"), "${CLAUDE_PLUGIN_ROOT}/hooks/log-tool-use.sh"))
+print("manifest-subagent", has(commands("PostToolUse", "Agent"), "${CLAUDE_PLUGIN_ROOT}/hooks/log_subagent.py"))
+print("manifest-cost", has(commands("PostToolUse", "Agent"), "${CLAUDE_PLUGIN_ROOT}/hooks/capture_agent_cost.py"))
+print("manifest-stop-cost", has(commands("Stop", "*"), "${CLAUDE_PLUGIN_ROOT}/hooks/capture_agent_cost.py"))
 PY
 )
 
@@ -285,17 +290,16 @@ hook_check() {
   if [ "$got" = "True" ]; then
     pass_msg "$desc"
   else
-    fail_msg "$desc — got '${got:-no hooks key}'${detail:+ (offenders: $detail)}"
+    fail_msg "$desc — got '${got:-no report}'${detail:+ (offenders: $detail)}"
   fi
 }
 
-hook_check has-hooks "claude-settings.local.json declares a hooks object"
-hook_check post-star-tool-use "PostToolUse '*' logs tool use"
-hook_check post-agent-subagent "PostToolUse 'Agent' logs subagent dispatches"
-hook_check post-agent-cost "PostToolUse 'Agent' captures agent cost"
-hook_check stop-cost "Stop '*' captures agent cost"
-hook_check plugin-root-rooted "every hook command is rooted at the plugin root's hooks/ dir"
+hook_check no-observability-in-template "claude-settings.local.json registers no log-tool-use.sh / log_subagent.py / capture_agent_cost.py"
 hook_check no-dogfood-only "no dogfood-only hook is carried into the sandbox"
+hook_check manifest-tool-use "plugin manifest PostToolUse '*' logs tool use"
+hook_check manifest-subagent "plugin manifest PostToolUse 'Agent' logs subagent dispatches"
+hook_check manifest-cost "plugin manifest PostToolUse 'Agent' captures agent cost"
+hook_check manifest-stop-cost "plugin manifest Stop '*' captures agent cost"
 
 # ---------------------------------------------------------------------------
 echo "== (d) slate shape =="

@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MANIFEST="$REPO_ROOT/.claude-plugin/plugin.json"
 SANDBOX=$(mktemp -d)
 trap 'rm -rf "$SANDBOX"' EXIT
-printf 'PIPELINE_BASE_BRANCH="staging"\n' > "$SANDBOX/pipeline.config"
+printf 'PIPELINE_BASE_BRANCH="staging"\nPIPELINE_LOGS_ENABLED=true\n' > "$SANDBOX/pipeline.config"
 
 PASS=0
 FAIL=0

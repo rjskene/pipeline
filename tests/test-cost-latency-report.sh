@@ -2867,6 +2867,111 @@ fi
 rm -f "$TMP50_ERR"
 rm -rf "$TMP50"
 
+# ---------------------------------------------------------------------------
+# Scenario 51 (#1617): --emit-priced-records-json machine mode. JSON Lines, one
+# compact object per RECONCILED record (record_key dedup, agent_id pair ->
+# max tokens.total, usage_complete!=false, --since/--until window), projected
+# to exactly 7 non-identifying keys, priced through the report's own table.
+# ---------------------------------------------------------------------------
+inc_scenario "Scenario 51: --emit-priced-records-json projects reconciled priced records (#1617)"
+
+TMP51="$(mktemp -d)"
+printf '%s\n' '[]' > "$TMP51/prs.json"
+{
+  # record_key duplicate (K51A twice; last write wins — the 10000-total row)
+  printf '%s\n' '{"schema_version":2,"issue":"251","stage":"plan","session_id":"s51","agent_id":"a51","model":"claude-opus-4-8","agent_kind":"subagent","record_key":"K51A","description":"D51","tokens":{"input":10,"output":20,"cache_creation":30,"cache_read":40,"total":100},"duration_ms":111,"ts_start":"2026-10-02T10:00:00Z"}'
+  printf '%s\n' '{"schema_version":2,"issue":"251","stage":"plan","session_id":"s51","agent_id":"a51","model":"claude-opus-4-8","agent_kind":"subagent","record_key":"K51A","description":"D51","tokens":{"input":1000,"output":2000,"cache_creation":3000,"cache_read":4000,"total":10000},"duration_ms":1500,"ts_start":"2026-10-02T10:00:00Z"}'
+  # agent_id forward/retro pair (different record_key; keep max tokens.total = 900)
+  printf '%s\n' '{"schema_version":2,"issue":"251","stage":"execute","session_id":"s51f","agent_id":"b51","model":"claude-sonnet-4-6","agent_kind":"subagent","record_key":"K51F","tokens":{"input":100,"output":100,"cache_creation":100,"cache_read":200,"total":500},"duration_ms":700,"ts_start":"2026-10-03T10:00:00Z"}'
+  printf '%s\n' '{"schema_version":2,"issue":"251","stage":"execute","session_id":"s51r","agent_id":"b51","model":"claude-sonnet-4-6","agent_kind":"subagent","record_key":"K51R","tokens":{"input":100,"output":200,"cache_creation":200,"cache_read":400,"total":900},"duration_ms":800,"ts_start":"2026-10-03T10:00:05Z"}'
+  # model "" row -> cost_usd null
+  printf '%s\n' '{"schema_version":2,"issue":"251","stage":"classify","session_id":"s51m","model":"","agent_kind":"main","record_key":"K51M","tokens":{"input":5,"output":5,"cache_creation":0,"cache_read":0,"total":10},"duration_ms":50,"ts_start":"2026-10-04T10:00:00Z"}'
+  # usage_complete:false lower-bound -> absent
+  printf '%s\n' '{"schema_version":2,"issue":"251","stage":"review","session_id":"s51l","agent_id":"c51","model":"claude-opus-4-8","agent_kind":"subagent","record_key":"K51L","usage_complete":false,"tokens":{"input":1,"output":1,"cache_creation":1,"cache_read":1,"total":4},"duration_ms":9,"ts_start":"2026-10-05T10:00:00Z"}'
+  # outside --since -> absent
+  printf '%s\n' '{"schema_version":2,"issue":"251","stage":"review","session_id":"s51o","agent_id":"d51","model":"claude-opus-4-8","agent_kind":"subagent","record_key":"K51O","tokens":{"input":1,"output":1,"cache_creation":1,"cache_read":1,"total":4},"duration_ms":9,"ts_start":"2026-09-15T10:00:00Z"}'
+} > "$TMP51/capture.jsonl"
+OUT51="$(env -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_INPUT -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_OUTPUT \
+             -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_OPUS_4_8_CACHE_READ \
+             -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_INPUT -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_OUTPUT \
+             -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_CREATION -u PIPELINE_PRICE_CLAUDE_SONNET_4_6_CACHE_READ \
+         bash "$HELPER" --fixture "$TMP51" --since 2026-10-01 --until 2026-10-07 --emit-priced-records-json 2>/dev/null)"
+RC51=$?
+if [ "$RC51" -eq 0 ]; then
+  pass_msg "--emit-priced-records-json exits 0"
+else
+  fail_msg "--emit-priced-records-json exited rc=$RC51 (out: $OUT51)"
+fi
+# (a) JSON Lines — every non-empty line parses as one object
+N51="$(printf '%s\n' "$OUT51" | grep -c .)"
+OBJ51="$(printf '%s\n' "$OUT51" | jq -c 'select(type=="object")' 2>/dev/null | grep -c .)"
+if [ "$N51" = "3" ] && [ "$OBJ51" = "3" ]; then
+  pass_msg "(a) JSON Lines: 3 objects, one per reconciled record"
+else
+  fail_msg "(a) expected 3 JSON-Lines objects, got lines=$N51 objects=$OBJ51 (out: $OUT51)"
+fi
+# (b) exact key set
+KEYS51="$(printf '%s\n' "$OUT51" | jq -r 'keys | join(",")' 2>/dev/null | sort -u)"
+if [ "$KEYS51" = "agent_kind,cost_usd,duration_ms,model,stage,tokens,ts_start" ]; then
+  pass_msg "(b) key set is exactly {stage, model, agent_kind, tokens, duration_ms, ts_start, cost_usd}"
+else
+  fail_msg "(b) key set mismatch: [$KEYS51]"
+fi
+# (c) the duplicate and the pair each collapse to one row; the pair keeps max total
+PLAN51="$(printf '%s\n' "$OUT51" | jq -r 'select(.stage=="plan") | .tokens.total' 2>/dev/null)"
+EXEC51="$(printf '%s\n' "$OUT51" | jq -r 'select(.stage=="execute") | .tokens.total' 2>/dev/null)"
+if [ "$PLAN51" = "10000" ] && [ "$EXEC51" = "900" ]; then
+  pass_msg "(c) record_key duplicate -> one row (last write); agent_id pair -> one row (max tokens.total 900)"
+else
+  fail_msg "(c) expected plan=10000 execute=900, got plan=[$PLAN51] execute=[$EXEC51]"
+fi
+# (d) lower-bound and out-of-window rows absent
+if printf '%s\n' "$OUT51" | jq -e 'select(.stage=="review")' >/dev/null 2>&1; then
+  fail_msg "(d) usage_complete:false / out-of-window rows must be absent"
+else
+  pass_msg "(d) usage_complete:false and out-of-window rows are absent"
+fi
+# (e) claude-opus-4-8 cost = 1000*5 + 2000*25 + 3000*6.25 + 4000*0.50 per 1e6 = 0.07575
+COST51="$(printf '%s\n' "$OUT51" | jq -r 'select(.stage=="plan") | .cost_usd' 2>/dev/null)"
+if awk -v c="$COST51" 'BEGIN { exit !(c != "" && (c - 0.07575) < 1e-9 && (0.07575 - c) < 1e-9) }'; then
+  pass_msg "(e) claude-opus-4-8 row cost_usd == sum(bucket/1e6 x baked rate) == 0.07575"
+else
+  fail_msg "(e) claude-opus-4-8 cost_usd should be 0.07575, got [$COST51]"
+fi
+# (f) model "" row -> cost_usd null
+NULL51="$(printf '%s\n' "$OUT51" | jq -r 'select(.stage=="classify") | (.cost_usd == null)' 2>/dev/null)"
+if [ "$NULL51" = "true" ]; then
+  pass_msg "(f) model \"\" row carries cost_usd: null"
+else
+  fail_msg "(f) model \"\" row should carry cost_usd null, got [$NULL51]"
+fi
+# (g) --help names the flag
+if bash "$HELPER" --help 2>&1 | grep -q -- '--emit-priced-records-json'; then
+  pass_msg "(g) --help mentions --emit-priced-records-json"
+else
+  fail_msg "(g) --help must mention --emit-priced-records-json"
+fi
+rm -rf "$TMP51"
+# --- Scenario 52: a trailing value-taking flag fails closed (#1620) ---
+# `--since` given last made `shift 2` a no-op, so the argv loop spun forever.
+inc_scenario "Scenario 52: trailing --since / --until with no value exits 1 (no hang)"
+ERR52="$(mktemp)"
+for flag in --since --until; do
+  timeout 20 bash "$HELPER" "$flag" >/dev/null 2>"$ERR52" </dev/null
+  RC52=$?
+  if [ "$RC52" -eq 1 ]; then
+    pass_msg "trailing $flag -> exit 1"
+  else
+    fail_msg "trailing $flag should exit 1, got rc=$RC52 (124 = hung)"
+  fi
+  if grep -qF 'Usage: cost-latency-report.sh' "$ERR52"; then
+    pass_msg "trailing $flag prints the usage line on stderr"
+  else
+    fail_msg "trailing $flag should print the usage line on stderr (got: $(head -1 "$ERR52"))"
+  fi
+done
+rm -f "$ERR52"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"

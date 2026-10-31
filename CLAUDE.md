@@ -42,7 +42,7 @@ Consumers continue to install `pipeline@claude-pipeline` from the GitHub marketp
 The pipeline writes **nothing** to the consumer project's `.claude/{skills,hooks,scripts,agents}/` or `.claude/settings.json`. All plugin assets live under `~/.claude/plugins/claude-pipeline/` (read at runtime via `${CLAUDE_PLUGIN_ROOT}`).
 
 **Runtime allow-list (consumer-owned, pipeline may read/write):**
-- `.claude/logs/` — observability artifacts (tool-use, subagents, runs). Plugin writes here are opt-in via `PIPELINE_LOGS_ENABLED` (default `false`); the allow-list permission is unchanged, but the plugin's default behavior is now no-write.
+- `.claude/logs/` — observability artifacts (tool-use, subagents, runs). Plugin writes here are opt-in via `PIPELINE_LOGS_ENABLED` (default `false`) — including the manifest-registered hook streams (`tool-use.log`, `subagents.log`) and forward cost capture (`agent-costs.jsonl`); the allow-list permission is unchanged, but the plugin's default behavior is now no-write.
 - `.claude/worktrees/` — pipeline-managed worktree checkouts.
 - `.claude/scratch/` — ephemeral evidence ingested from issue/comment attachments by `scripts/filter-trusted-comments.sh fetch-attachments <N>` (the hook-sanctioned wrapper around `fetch-issue-attachments.sh`; a direct call is denied by `enforce-comment-trust.py`) (slate-gated by `/pipeline:fullsend` step 1a or `/pipeline:plan-issue` step 3b; never run from worktrees), and Playwright MCP browser-check output (`.claude/scratch/playwright/`, set by `.mcp.json` `--output-dir`). Gitignored by default; auto-pruning is a follow-up.
 
@@ -69,7 +69,7 @@ Tracker issues (label: `tracker`) are coordination artifacts that roll up child 
 
 ## Observability (dogfood-only)
 
-This repo's `.claude/settings.json` registers tool-use and subagent logging hooks; the published `pipeline@claude-pipeline` plugin manifest does NOT. See [docs/observability.md](docs/observability.md) for the log streams and `PIPELINE_LOGS_ENABLED` gating.
+The tool-use, subagent logging and agent-cost-capture hooks ship in the published `pipeline@claude-pipeline` plugin manifest, opt-in via `PIPELINE_LOGS_ENABLED` (default `false`); this repo's `.claude/settings.json` no longer registers them (#1616). See [docs/observability.md](docs/observability.md) for the log streams and `PIPELINE_LOGS_ENABLED` gating.
 
 Agent token cost + latency are captured to the gated `agent-costs.jsonl` log and surfaced by `/pipeline:tokenomics` (dogfood-only, #721) — per-bucket/stage/structure cost with B→D breakeven. See [docs/observability.md](docs/observability.md#agent-cost-capture--pipelinetokenomics) and the cost analysis in [docs/cost-architecture.md](docs/cost-architecture.md).
 

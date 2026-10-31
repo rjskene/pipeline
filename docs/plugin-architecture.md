@@ -24,9 +24,9 @@ All slash commands are namespaced under `pipeline:` (`/pipeline:plan-issue`, `/p
 
 Legacy install (`install.sh`, the `.claude-pipeline/` subtree, and the subtree-drift tooling) has been retired. Existing subtree consumers run `scripts/migrate-from-subtree.sh` once and then install the plugin.
 
-## Observability hooks are dogfood-only
+## Observability hooks are opt-in
 
-`log-tool-use.sh` and `log_subagent.py` are registered via this repo's `.claude/settings.json` only; they are not part of the published manifest. See [observability.md](observability.md).
+`log-tool-use.sh`, `log_subagent.py` and `capture_agent_cost.py` are registered in the published manifest (#1616) and gated by `PIPELINE_LOGS_ENABLED` (default `false`): each hook exits before writing anything unless the flag resolves to exactly `true` (process env, else `pipeline.config`). This repo's `.claude/settings.json` no longer registers them. See [observability.md](observability.md).
 
 ## Bash subshells & CLAUDE_PLUGIN_ROOT resolution
 

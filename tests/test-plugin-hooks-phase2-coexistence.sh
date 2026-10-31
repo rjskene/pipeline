@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SANDBOX=$(mktemp -d)
 trap 'rm -rf "$SANDBOX"' EXIT
 mkdir -p "$SANDBOX/.claude/hooks" "$SANDBOX/.claude/logs"
-printf 'PIPELINE_BASE_BRANCH="staging"\n' > "$SANDBOX/pipeline.config"
+printf 'PIPELINE_BASE_BRANCH="staging"\nPIPELINE_LOGS_ENABLED=true\n' > "$SANDBOX/pipeline.config"
 
 # Stand up a consumer copy of log-tool-use.sh + enforce-base-branch.py
 # (the simulated subtree-install).
