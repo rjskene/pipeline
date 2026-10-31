@@ -128,26 +128,36 @@ Usage: cost-latency-report.sh [--limit N] [--fixture DIR] [--dry-run]
 USAGE
 }
 
+# need_value FLAG ARGC — a trailing value-taking flag would make `shift 2` a
+# no-op (infinite loop); fail closed with the usage line instead (#1620).
+need_value() {
+  if [ "$2" -lt 2 ]; then
+    echo "cost-latency-report: ERROR: $1 needs a value" >&2
+    print_usage >&2
+    exit 1
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)            print_usage; exit 0 ;;
-    --limit)              LIMIT="${2:-}"; shift 2 ;;
+    --limit)              need_value "$1" $#; LIMIT="$2"; shift 2 ;;
     --limit=*)            LIMIT="${1#--limit=}"; shift ;;
-    --fixture)            FIXTURE_DIR="${2:-}"; shift 2 ;;
+    --fixture)            need_value "$1" $#; FIXTURE_DIR="$2"; shift 2 ;;
     --fixture=*)          FIXTURE_DIR="${1#--fixture=}"; shift ;;
     --dry-run)            DRY_RUN=1; shift ;;
     --emit-rows-json)     EMIT_ROWS_JSON=1; shift ;;
     --emit-pricing-json)  EMIT_PRICING_JSON=1; shift ;;
     --tokenomics)         TOKENOMICS=1; shift ;;
-    --over-served-loc)    OVER_SERVED_LOC="${2:-}"; shift 2 ;;
+    --over-served-loc)    need_value "$1" $#; OVER_SERVED_LOC="$2"; shift 2 ;;
     --over-served-loc=*)  OVER_SERVED_LOC="${1#--over-served-loc=}"; shift ;;
-    --top-n)              TOPN="${2:-}"; shift 2 ;;
+    --top-n)              need_value "$1" $#; TOPN="$2"; shift 2 ;;
     --top-n=*)            TOPN="${1#--top-n=}"; shift ;;
-    --capture-log)        CAPTURE_LOG="${2:-}"; shift 2 ;;
+    --capture-log)        need_value "$1" $#; CAPTURE_LOG="$2"; shift 2 ;;
     --capture-log=*)      CAPTURE_LOG="${1#--capture-log=}"; shift ;;
-    --since)              SINCE="${2:-}"; shift 2 ;;
+    --since)              need_value "$1" $#; SINCE="$2"; shift 2 ;;
     --since=*)            SINCE="${1#--since=}"; shift ;;
-    --until)              UNTIL="${2:-}"; shift 2 ;;
+    --until)              need_value "$1" $#; UNTIL="$2"; shift 2 ;;
     --until=*)            UNTIL="${1#--until=}"; shift ;;
     --per-day)            PERDAY=1; shift ;;
     --emit-day-json)      EMIT_DAY_JSON=1; shift ;;

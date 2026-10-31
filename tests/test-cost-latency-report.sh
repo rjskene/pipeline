@@ -2867,6 +2867,26 @@ fi
 rm -f "$TMP50_ERR"
 rm -rf "$TMP50"
 
+# --- Scenario 51: a trailing value-taking flag fails closed (#1620) ---
+# `--since` given last made `shift 2` a no-op, so the argv loop spun forever.
+inc_scenario "Scenario 51: trailing --since / --until with no value exits 1 (no hang)"
+ERR51="$(mktemp)"
+for flag in --since --until; do
+  timeout 20 bash "$HELPER" "$flag" >/dev/null 2>"$ERR51" </dev/null
+  RC51=$?
+  if [ "$RC51" -eq 1 ]; then
+    pass_msg "trailing $flag -> exit 1"
+  else
+    fail_msg "trailing $flag should exit 1, got rc=$RC51 (124 = hung)"
+  fi
+  if grep -qF 'Usage: cost-latency-report.sh' "$ERR51"; then
+    pass_msg "trailing $flag prints the usage line on stderr"
+  else
+    fail_msg "trailing $flag should print the usage line on stderr (got: $(head -1 "$ERR51"))"
+  fi
+done
+rm -f "$ERR51"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
