@@ -484,6 +484,46 @@ run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false PIPELINE_USAGE_GATE_FIV
 assert_gate_line "both-muted"
 assert_field "both-muted" "decision=proceed"
 
+# --- Scenario 21: null five_hour (idle 5h window) — #1625 ---
+# The endpoint returns "five_hour": null when no 5h window is active (idle).
+# Idle is treated as 0% (never trips pause-5h); the 7d check still runs.
+# A non-null five_hour without numeric utilization, or a null seven_day,
+# stays parse-error (regression pins).
+inc_scenario "Scenario 21: null five_hour (idle 5h window) is 0%, 7d still gates"
+
+# 21a: idle 5h + 7d under (23) -> proceed five_hour=0%.
+run_gate --fixture "$FIXTURE_DIR/five-hour-idle.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-idle-7d-under"
+assert_field "5h-idle-7d-under" "decision=proceed"
+assert_field "5h-idle-7d-under" "five_hour=0%"
+assert_field "5h-idle-7d-under" "seven_day=23%"
+assert_field "5h-idle-7d-under" "resume_at=--"
+
+# 21b: idle 5h + 7d over (93) -> halt-7d (the 7d halt is NOT disabled by an idle 5h window).
+run_gate --fixture "$FIXTURE_DIR/five-hour-idle-seven-day-over.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-idle-7d-over"
+assert_field "5h-idle-7d-over" "decision=halt-7d"
+assert_field "5h-idle-7d-over" "five_hour=0%"
+assert_field "5h-idle-7d-over" "seven_day=93%"
+assert_field "5h-idle-7d-over" "resume_at=--"
+
+# 21c: non-null five_hour with null utilization -> still parse-error (pin).
+run_gate --fixture "$FIXTURE_DIR/five-hour-no-utilization.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-no-utilization"
+assert_field "5h-no-utilization" "decision=skip reason=parse-error"
+
+# 21d: idle 5h + null seven_day -> still parse-error (pin).
+run_gate --fixture "$FIXTURE_DIR/five-hour-idle-seven-day-null.json" --now "$NOW" --credentials "$CREDS"
+assert_gate_line "5h-idle-7d-null"
+assert_field "5h-idle-7d-null" "decision=skip reason=parse-error"
+
+# 21e: idle 5h, threshold 0, 7d muted -> proceed (an idle window never trips pause-5h).
+run_gate_env PIPELINE_USAGE_GATE_SEVEN_DAY_ENABLED=false -- \
+  --fixture "$FIXTURE_DIR/five-hour-idle.json" --now "$NOW" --credentials "$CREDS" --threshold 0
+assert_gate_line "5h-idle-threshold-0"
+assert_field "5h-idle-threshold-0" "decision=proceed"
+assert_field "5h-idle-threshold-0" "resume_at=--"
+
 echo ""
 echo "== RESULTS =="
 echo "Passed: $PASS"
