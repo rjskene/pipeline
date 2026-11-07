@@ -25,6 +25,9 @@ set -uo pipefail
 #      (resume_at = five_hour.resets_at + 5 min — fixed buffer, not a knob)
 #   6. otherwise                                  -> proceed
 #
+#   five_hour null/absent (idle window, #1625) -> treated as 0%, never trips
+#   pause-5h; the 7d check still runs.
+#
 # SECURITY: the bearer token lives in a shell variable only — never echoed,
 # never logged, never placed on a process argv (curl reads it via --config on
 # stdin, so it cannot surface in /proc/*/cmdline). NEVER add `set -x` here.
@@ -182,9 +185,10 @@ EOF
 fi
 
 # --- parse ------------------------------------------------------------------
-PARSED="$(jq -r '[
-    (.five_hour.utilization // "missing"),
-    (.five_hour.resets_at // "missing"),
+# A null/absent five_hour is an idle 5h window (#1625), not a parse error.
+PARSED="$(jq -r '(.five_hour == null) as $idle | [
+    (if $idle then "idle" else (.five_hour.utilization // "missing") end),
+    (if $idle then "idle" else (.five_hour.resets_at // "missing") end),
     (.seven_day.utilization // "missing")
   ] | @tsv' "$BODY_TMP" 2>/dev/null)"
 if [ -z "$PARSED" ]; then
@@ -192,10 +196,20 @@ if [ -z "$PARSED" ]; then
 fi
 IFS=$'\t' read -r FIVE_HOUR_UTIL FIVE_HOUR_RESETS_AT SEVEN_DAY_UTIL <<<"$PARSED"
 
+FIVE_HOUR_IDLE=false
+if [ "$FIVE_HOUR_UTIL" = "idle" ]; then
+  FIVE_HOUR_IDLE=true
+  FIVE_HOUR_UTIL=0
+  FIVE_HOUR_RESETS_AT=""
+fi
+
 num_re='^[0-9]+(\.[0-9]+)?$'
 if ! printf '%s' "$FIVE_HOUR_UTIL" | grep -qE "$num_re" \
-  || ! printf '%s' "$SEVEN_DAY_UTIL" | grep -qE "$num_re" \
-  || [ "$FIVE_HOUR_RESETS_AT" = "missing" ] || [ -z "$FIVE_HOUR_RESETS_AT" ]; then
+  || ! printf '%s' "$SEVEN_DAY_UTIL" | grep -qE "$num_re"; then
+  emit "skip" "parse-error"
+fi
+if [ "$FIVE_HOUR_IDLE" = "false" ] \
+  && { [ "$FIVE_HOUR_RESETS_AT" = "missing" ] || [ -z "$FIVE_HOUR_RESETS_AT" ]; }; then
   emit "skip" "parse-error"
 fi
 
@@ -209,9 +223,10 @@ SEVEN_DAY_PCT="$(awk -v v="$SEVEN_DAY_UTIL" 'BEGIN{printf "%g%%", v}')"
 # 7d taking precedence in the surfaced reason. Active-window precedence
 # (enabled 7d over -> halt-7d, wins over 5h) is unchanged.
 DECISION_TSV="$(awk -v fh="$FIVE_HOUR_UTIL" -v sd="$SEVEN_DAY_UTIL" -v t="$THRESHOLD" \
-  -v sd_on="$SEVEN_DAY_ENABLED" -v fh_on="$FIVE_HOUR_ENABLED" 'BEGIN{
+  -v sd_on="$SEVEN_DAY_ENABLED" -v fh_on="$FIVE_HOUR_ENABLED" -v fh_idle="$FIVE_HOUR_IDLE" 'BEGIN{
   decision="proceed"; reason="";
-  sd_over = (sd >= t); fh_over = (fh >= t);
+  # An idle 5h window (#1625) never trips, even at --threshold 0.
+  sd_over = (sd >= t); fh_over = (fh_idle != "true" && fh >= t);
   # Active-window decisions first (7d halt wins over 5h pause).
   if (sd_on == "true" && sd_over)      decision = "halt-7d";
   else if (fh_on == "true" && fh_over) decision = "pause-5h";
